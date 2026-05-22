@@ -7,7 +7,7 @@
 #   - Saved Views / Bookmarks sidebar panel
 # ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 
 st.set_page_config(
     page_title="OVERWATCH — Snowflake DBA Monitor",
@@ -39,7 +39,6 @@ if "active_company" not in st.session_state:
 
 
 # ── Role resolution (cached 5 min) ────────────────────────────────────────────
-@st.cache_data(ttl=300, show_spinner=False)
 def _get_current_role() -> str:
     try:
         return (get_session().sql("SELECT CURRENT_ROLE() AS r").collect()[0]["R"] or "").upper()
@@ -202,6 +201,37 @@ with st.sidebar:
     st.divider()
 
     # ── Settings ──────────────────────────────────────────────────────────────
+    with st.expander("Global Filters", expanded=False):
+        default_end = datetime.now().date()
+        default_start = default_end - timedelta(days=7)
+        date_range = st.date_input(
+            "Date range",
+            value=(
+                st.session_state.get("global_start_date", default_start),
+                st.session_state.get("global_end_date", default_end),
+            ),
+            key="_global_date_range_input",
+        )
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            st.session_state["global_start_date"] = date_range[0]
+            st.session_state["global_end_date"] = date_range[1]
+        st.text_input("Warehouse contains", key="global_warehouse")
+        st.text_input("User contains", key="global_user")
+        st.text_input("Role contains", key="global_role")
+        st.text_input("Database contains", key="global_database")
+
+        if st.button("Clear Global Filters", key="global_filters_clear"):
+            for _k in [
+                "global_start_date", "global_end_date", "global_warehouse",
+                "global_user", "global_role", "global_database",
+                "_global_date_range_input",
+            ]:
+                st.session_state.pop(_k, None)
+            clear_all_cache()
+            st.rerun()
+
+    st.divider()
+
     with st.expander("⚙️ Settings", expanded=False):
         render_theme_picker()
         st.divider()

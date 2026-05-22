@@ -1,5 +1,7 @@
 # utils/data.py — DataFrame normalization: Decimal/Timestamp handling
 import pandas as pd
+import streamlit as st
+from config import COMPANY_CONFIG, DEFAULT_COMPANY
 
 # Columns that should always be numeric
 _NUMERIC_COLS = {
@@ -33,6 +35,71 @@ _DATE_COLS = {
 }
 
 
+def _company_warehouse_mask(series: pd.Series, company: str) -> pd.Series:
+    cfg = COMPANY_CONFIG.get(company, COMPANY_CONFIG.get(DEFAULT_COMPANY, {}))
+    values = series.fillna("").astype(str).str.upper()
+    include = [str(p).upper() for p in cfg.get("wh_patterns", [])]
+    exclude = [str(p).upper() for p in cfg.get("wh_exclude_patterns", [])]
+
+    if company == "ALL" or (not include and not exclude):
+        return pd.Series(True, index=series.index)
+
+    mask = pd.Series(False if include else True, index=series.index)
+    for pattern in include:
+        if pattern == "%":
+            mask = pd.Series(True, index=series.index)
+        elif pattern.endswith("%"):
+            mask = mask | values.str.startswith(pattern[:-1])
+        else:
+            mask = mask | values.eq(pattern)
+
+    for pattern in exclude:
+        if pattern.endswith("%"):
+            mask = mask & ~values.str.startswith(pattern[:-1])
+        else:
+            mask = mask & ~values.eq(pattern)
+    return mask
+
+
+def _company_database_mask(series: pd.Series, company: str) -> pd.Series:
+    cfg = COMPANY_CONFIG.get(company, COMPANY_CONFIG.get(DEFAULT_COMPANY, {}))
+    values = series.fillna("").astype(str).str.upper()
+    include = [str(p).upper() for p in cfg.get("db_patterns", [])]
+    exclude = str(cfg.get("exclude_db_pattern", "")).upper()
+
+    if company == "ALL" or (not include and not exclude):
+        return pd.Series(True, index=series.index)
+
+    mask = pd.Series(False if include else True, index=series.index)
+    for pattern in include:
+        if pattern == "%":
+            mask = pd.Series(True, index=series.index)
+        elif pattern.endswith("%"):
+            mask = mask | values.str.startswith(pattern[:-1])
+        else:
+            mask = mask | values.eq(pattern)
+
+    if exclude:
+        if exclude.endswith("%"):
+            mask = mask & ~values.str.startswith(exclude[:-1])
+        else:
+            mask = mask & ~values.eq(exclude)
+    return mask
+
+
+def _apply_company_scope(df: pd.DataFrame) -> pd.DataFrame:
+    company = st.session_state.get("active_company", DEFAULT_COMPANY)
+    if company == "ALL" or df is None or df.empty:
+        return df
+    for col in ("WAREHOUSE_NAME", "WAREHOUSE"):
+        if col in df.columns:
+            return df[_company_warehouse_mask(df[col], company)].copy()
+    for col in ("DATABASE_NAME", "DATABASE"):
+        if col in df.columns:
+            return df[_company_database_mask(df[col], company)].copy()
+    return df
+
+
 def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize Snowflake Decimal/Timestamp types for Pandas compatibility.
     - Upper-cases all column names (Snowflake returns uppercase by default)
@@ -53,7 +120,7 @@ def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
         if hasattr(df[col], 'dt') and df[col].dt.tz is not None:
             df[col] = df[col].dt.tz_convert(None)
 
-    return df
+    return _apply_company_scope(df)
 
 
 def safe_strip_tz(series: pd.Series) -> pd.Series:

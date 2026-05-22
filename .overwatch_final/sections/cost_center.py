@@ -39,16 +39,17 @@ def render():
                 SELECT
                     q.user_name,
                     q.warehouse_name,
+                    q.warehouse_size,
                     COUNT(*)                                     AS query_count,
                     ROUND(AVG(q.total_elapsed_time)/1000, 2)    AS avg_elapsed_sec,
                     ROUND(SUM(pqc.metered_credits), 4)          AS total_credits,
                     ROUND(SUM(q.bytes_scanned)/POWER(1024,3),2) AS total_gb_scanned
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                 LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
-                WHERE q.start_time >= DATEADD('days', -{days}, CURRENT_TIMESTAMP())
+                WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
                   AND q.warehouse_name IS NOT NULL
                   {wf} {uf} {gf}
-                GROUP BY q.user_name, q.warehouse_name
+                GROUP BY q.user_name, q.warehouse_name, q.warehouse_size
                 ORDER BY total_credits DESC
                 LIMIT 200
                 """).to_pandas())
@@ -107,13 +108,26 @@ def render():
         if st.button("Load Burn Rate", key="br_load"):
             try:
                 df_br = normalize_df(session.sql(f"""
-                    SELECT DATE_TRUNC('day', start_time) AS day,
-                           warehouse_name,
-                           SUM(credits_used) AS daily_credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                    WHERE start_time >= DATEADD('days', -{br_days}, CURRENT_TIMESTAMP())
-                    {wf_br}
-                    GROUP BY day, warehouse_name
+                    WITH latest_size AS (
+                        SELECT warehouse_name, warehouse_size
+                        FROM (
+                            SELECT warehouse_name, warehouse_size,
+                                   ROW_NUMBER() OVER (PARTITION BY warehouse_name ORDER BY start_time DESC) AS rn
+                            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                            WHERE start_time >= DATEADD('day', -{br_days}, CURRENT_TIMESTAMP())
+                              AND warehouse_name IS NOT NULL
+                        )
+                        WHERE rn = 1
+                    )
+                    SELECT DATE_TRUNC('day', m.start_time) AS day,
+                           m.warehouse_name,
+                           ls.warehouse_size,
+                           SUM(m.credits_used) AS daily_credits
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
+                    LEFT JOIN latest_size ls ON m.warehouse_name = ls.warehouse_name
+                    WHERE m.start_time >= DATEADD('day', -{br_days}, CURRENT_TIMESTAMP())
+                    {get_wh_filter_clause("m.warehouse_name")}
+                    GROUP BY day, m.warehouse_name, ls.warehouse_size
                     ORDER BY day
                 """).to_pandas())
                 st.session_state["df_br"] = df_br
@@ -147,11 +161,12 @@ def render():
         st.header("📈 Credit Forecast (30-day Linear Projection)")
         if st.button("Generate Forecast", key="fc_load"):
             try:
-                df_fc = normalize_df(session.sql("""
+                df_fc = normalize_df(session.sql(f"""
                     SELECT DATE_TRUNC('day', start_time) AS day,
                            SUM(credits_used) AS daily_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
                     WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+                    {get_wh_filter_clause("warehouse_name")}
                     GROUP BY day ORDER BY day
                 """).to_pandas())
                 st.session_state["df_fc"] = df_fc
@@ -177,11 +192,12 @@ def render():
         )
         if st.button("Load Budget Comparison", key="bva_load"):
             try:
-                df_bva = normalize_df(session.sql("""
+                df_bva = normalize_df(session.sql(f"""
                     SELECT DATE_TRUNC('month', start_time) AS month,
                            SUM(credits_used) AS actual_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
                     WHERE start_time >= DATEADD('month', -6, CURRENT_TIMESTAMP())
+                    {get_wh_filter_clause("warehouse_name")}
                     GROUP BY month ORDER BY month
                 """).to_pandas())
                 st.session_state["df_bva"] = df_bva
@@ -238,9 +254,9 @@ def render():
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                 LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
                 LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY t ON q.query_id = t.query_id
-                WHERE q.start_time >= DATEADD('days', -{attr_days}, CURRENT_TIMESTAMP())
+                WHERE q.start_time >= DATEADD('day', -{attr_days}, CURRENT_TIMESTAMP())
                   AND q.warehouse_name IS NOT NULL
-                  {gf}
+                  {get_wh_filter_clause("q.warehouse_name")} {gf}
                 GROUP BY {group_cols}
                 ORDER BY total_credits DESC
                 LIMIT 200
@@ -255,9 +271,9 @@ def render():
             st.dataframe(df_attr, use_container_width=True)
             dim_col = (
                 "role_name" if attr_mode == "Role" else
-                "database_name" if attr_mode == "Database / Schema" else
-                "client_application_id" if attr_mode == "Application / Client" else
-                "query_tag"
+                "database_schema" if attr_mode == "Database / Schema" else
+                "application_client" if attr_mode == "Application / Client" else
+                "lineage_dimension"
             )
             render_drillable_bar_chart(
                 df_attr, dimension="DIMENSION", measure="EST_COST",
@@ -289,15 +305,17 @@ def render():
                         {company_expr}         AS company,
                         q.user_name,
                         q.warehouse_name,
+                        q.warehouse_size,
                         COUNT(*)               AS query_count,
                         SUM(COALESCE(pqc.metered_credits,0)) AS total_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                     LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
-                    WHERE q.start_time >= DATEADD('days', -{cb_days}, CURRENT_TIMESTAMP())
+                    WHERE q.start_time >= DATEADD('day', -{cb_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
-                    GROUP BY company, q.user_name, q.warehouse_name
+                      {get_wh_filter_clause("q.warehouse_name")}
+                    GROUP BY company, q.user_name, q.warehouse_name, q.warehouse_size
                 )
-                SELECT company, user_name, warehouse_name, query_count,
+                SELECT company, user_name, warehouse_name, warehouse_size, query_count,
                        ROUND(total_credits, 4) AS total_credits
                 FROM query_costs
                 ORDER BY total_credits DESC

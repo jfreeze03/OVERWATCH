@@ -1,7 +1,7 @@
 # sections/warehouse_health.py — Warehouse stats, scaling events, idle detection, spill, heatmap
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart
+from utils import get_session, normalize_df, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart, get_wh_filter_clause
 from config import THRESHOLDS
 
 
@@ -32,8 +32,9 @@ def render():
                            SUM(CASE WHEN q.execution_status='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS error_count,
                            SUM(q.bytes_scanned)/POWER(1024,3)  AS total_gb_scanned
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                    WHERE q.start_time >= DATEADD('days', -{wh_days}, CURRENT_TIMESTAMP())
+                    WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("q.warehouse_name")}
                     GROUP BY q.warehouse_name, q.warehouse_size
                     ORDER BY total_queries DESC
                 """).to_pandas())
@@ -80,12 +81,25 @@ def render():
             if st.button("Load Scaling Events", key="wh_scale_load"):
                 try:
                     df_scale = normalize_df(session.sql(f"""
-                        SELECT warehouse_name, start_time, end_time,
-                               credits_used, credits_used_compute,
-                               credits_used_cloud_services
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                        WHERE start_time >= DATEADD('days', -{wh_days}, CURRENT_TIMESTAMP())
-                        ORDER BY credits_used DESC LIMIT 200
+                        WITH latest_size AS (
+                            SELECT warehouse_name, warehouse_size
+                            FROM (
+                                SELECT warehouse_name, warehouse_size,
+                                       ROW_NUMBER() OVER (PARTITION BY warehouse_name ORDER BY start_time DESC) AS rn
+                                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                                WHERE start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
+                                  AND warehouse_name IS NOT NULL
+                            )
+                            WHERE rn = 1
+                        )
+                        SELECT m.warehouse_name, ls.warehouse_size, m.start_time, m.end_time,
+                               m.credits_used, m.credits_used_compute,
+                               m.credits_used_cloud_services
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
+                        LEFT JOIN latest_size ls ON m.warehouse_name = ls.warehouse_name
+                        WHERE m.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
+                          {get_wh_filter_clause("m.warehouse_name")}
+                        ORDER BY m.credits_used DESC LIMIT 200
                     """).to_pandas())
                     st.dataframe(df_scale, use_container_width=True)
                     download_csv(df_scale, "scaling_events.csv")
@@ -106,9 +120,10 @@ def render():
                            ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3),2) AS remote_spill_gb,
                            ROUND(AVG(total_elapsed_time)/1000,2)                       AS avg_elapsed_sec
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('days', -{sp_days}, CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
                       AND (bytes_spilled_to_local_storage > 0 OR bytes_spilled_to_remote_storage > 0)
                       AND warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name, warehouse_size
                     ORDER BY local_spill_gb + remote_spill_gb DESC
                 """).to_pandas())
@@ -151,8 +166,9 @@ def render():
                            COUNT(*)              AS query_count,
                            ROUND(AVG(total_elapsed_time)/1000,2) AS avg_elapsed_sec
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('days', -{hm_days}, CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('day', -{hm_days}, CURRENT_TIMESTAMP())
                       AND warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name, day_of_week, hour_of_day
                     ORDER BY warehouse_name, day_of_week, hour_of_day
                 """).to_pandas())

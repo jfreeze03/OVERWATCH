@@ -83,7 +83,7 @@ def build_metered_credit_cte(
     if hours_back:
         time_filter = f"DATEADD('hours', -{hours_back}, CURRENT_TIMESTAMP())"
     else:
-        time_filter = f"DATEADD('days', -{days_back or 7}, CURRENT_TIMESTAMP())"
+        time_filter = f"DATEADD('day', -{days_back or 7}, CURRENT_TIMESTAMP())"
 
     upper_bound = (
         "CURRENT_TIMESTAMP()"

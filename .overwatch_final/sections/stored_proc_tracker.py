@@ -9,6 +9,7 @@ from utils import (
     build_metered_credit_cte,
     render_query_drilldown,
     safe_sql,
+    get_wh_filter_clause,
 )
 
 
@@ -36,7 +37,8 @@ def render():
                            SUBSTR(query_text, 1, 500) AS call_text
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE query_type = 'CALL'
-                      AND start_time >= DATEADD('days', -{sp_days}, CURRENT_TIMESTAMP())
+                      AND start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
+                      {get_wh_filter_clause("warehouse_name")}
                 ),
                 children AS (
                     SELECT COALESCE(q.root_query_id, q.query_id) AS root_query_id,
@@ -49,7 +51,8 @@ def render():
                            SUBSTR(q.query_text, 1, 500) AS child_query_text
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                     LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
-                    WHERE q.start_time >= DATEADD('days', -{sp_days}, CURRENT_TIMESTAMP())
+                    WHERE q.start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
+                      {get_wh_filter_clause("q.warehouse_name")}
                 )
                 SELECT c.procedure_name,
                        c.user_name,
@@ -101,17 +104,20 @@ def render():
                     SELECT query_id AS root_query_id
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE query_type = 'CALL'
-                      AND start_time >= DATEADD('days', -{sp_days}, CURRENT_TIMESTAMP())
+                      AND start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
+                      {get_wh_filter_clause("warehouse_name")}
                       AND (REGEXP_SUBSTR(query_text, 'CALL\\\\s+([^\\\\(]+)', 1, 1, 'i', 1) = '{proc_safe}'
                            OR query_text ILIKE '%{proc_safe}%')
                 )
-                SELECT q.query_id, q.user_name, q.warehouse_name, q.execution_status,
+                SELECT q.query_id, q.user_name, q.warehouse_name, q.warehouse_size, q.execution_status,
                        q.query_type, q.start_time,
                        q.total_elapsed_time/1000 AS elapsed_sec,
                        q.bytes_scanned/POWER(1024,3) AS gb_scanned,
                        SUBSTR(q.query_text,1,4000) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                 JOIN roots r ON COALESCE(q.root_query_id, q.query_id) = r.root_query_id
+                WHERE 1=1
+                  {get_wh_filter_clause("q.warehouse_name")}
                 ORDER BY q.start_time
                 LIMIT 500
                 """).to_pandas())

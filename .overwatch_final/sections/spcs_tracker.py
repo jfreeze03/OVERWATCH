@@ -21,7 +21,7 @@ def render():
                        SUM(credits_used)             AS daily_credits,
                        COUNT(*)                      AS service_count
                 FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWPARK_CONTAINER_SERVICES_HISTORY
-                WHERE start_time >= DATEADD('days', -{spcs_days}, CURRENT_TIMESTAMP())
+                WHERE start_time >= DATEADD('day', -{spcs_days}, CURRENT_TIMESTAMP())
                 GROUP BY compute_pool_name, usage_date
                 ORDER BY usage_date DESC, daily_credits DESC
             """).to_pandas())

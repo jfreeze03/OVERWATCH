@@ -24,7 +24,7 @@ def render():
                            SUM(bytes_transferred)/POWER(1024,3) AS gb_transferred,
                            SUM(credits_used)                    AS credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.DATA_TRANSFER_HISTORY
-                    WHERE start_time >= DATEADD('days', -{ds_days}, CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('day', -{ds_days}, CURRENT_TIMESTAMP())
                     GROUP BY source_cloud, source_region, target_cloud, target_region, day
                     ORDER BY credits DESC
                 """).to_pandas())

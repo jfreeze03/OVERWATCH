@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from utils import (
     get_session, normalize_df, format_credits, credits_to_dollars, download_csv,
-    render_drillable_bar_chart,
+    render_drillable_bar_chart, get_wh_filter_clause,
 )
 from config import THRESHOLDS
 
@@ -30,20 +30,24 @@ def render():
                            DATE_TRUNC('hour', start_time) AS hour_bucket,
                            SUM(credits_used) AS hourly_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                    WHERE start_time >= DATEADD('days', -{idle_days}, CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('day', -{idle_days}, CURRENT_TIMESTAMP())
                       AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name, hour_bucket
                 ),
                 query_activity AS (
                     SELECT warehouse_name,
+                           MAX(warehouse_size) AS warehouse_size,
                            DATE_TRUNC('hour', start_time) AS hour_bucket,
                            COUNT(*) AS query_count
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('days', -{idle_days}, CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('day', -{idle_days}, CURRENT_TIMESTAMP())
                       AND warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name, hour_bucket
                 )
                 SELECT m.warehouse_name,
+                       MAX(qa.warehouse_size) AS warehouse_size,
                        SUM(m.hourly_credits) AS idle_credits,
                        COUNT(*)              AS idle_hours
                 FROM metering m
@@ -101,9 +105,10 @@ def render():
                            SUM(total_elapsed_time)/1000          AS total_wasted_sec,
                            SUM(credits_used_cloud_services)      AS cloud_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('days', -{dup_days}, CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('day', -{dup_days}, CURRENT_TIMESTAMP())
                       AND execution_status = 'SUCCESS'
                       AND warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY query_sig
                     HAVING COUNT(*) >= 5
                     ORDER BY execution_count DESC
@@ -140,8 +145,9 @@ def render():
                     LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
                       ON q.warehouse_name = m.warehouse_name
                      AND DATE_TRUNC('hour', q.start_time) = DATE_TRUNC('hour', m.start_time)
-                    WHERE q.start_time >= DATEADD('days', -{sz_days}, CURRENT_TIMESTAMP())
+                    WHERE q.start_time >= DATEADD('day', -{sz_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("q.warehouse_name")}
                     GROUP BY q.warehouse_name, q.warehouse_size
                     ORDER BY total_credits DESC
                 """).to_pandas())

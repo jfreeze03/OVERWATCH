@@ -1,7 +1,7 @@
 # sections/query_search.py — Query search & history browser
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, safe_sql, download_csv, render_query_drilldown
+from utils import get_session, normalize_df, safe_sql, download_csv, render_query_drilldown, get_wh_filter_clause
 
 
 def render():
@@ -30,15 +30,16 @@ def render():
 
         try:
             df_qs = normalize_df(session.sql(f"""
-                SELECT query_id, user_name, warehouse_name, execution_status,
+                SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
                        start_time, total_elapsed_time/1000 AS elapsed_sec,
                        bytes_scanned/POWER(1024,3) AS gb_scanned,
                        rows_produced,
                        credits_used_cloud_services AS cloud_credits,
                        SUBSTR(query_text,1,500) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                WHERE start_time >= DATEADD('days', -{days_back}, CURRENT_TIMESTAMP())
+                WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
                   AND query_text ILIKE '%{kw_safe}%'
+                  {get_wh_filter_clause("warehouse_name")}
                   {user_cl} {status_cl}
                 ORDER BY start_time DESC
                 LIMIT 500

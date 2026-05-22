@@ -41,8 +41,32 @@ def safe_sql(value: str) -> str:
 # Each tier must be a separate decorated function because @st.cache_data TTL
 # is fixed at decoration time — it cannot be passed as a runtime argument.
 
+def _cache_context() -> str:
+    try:
+        sess = get_session()
+        row = sess.sql("""
+            SELECT CURRENT_USER() AS user_name, CURRENT_ROLE() AS role_name
+        """).collect()[0]
+        user_name = row[0]
+        role_name = row[1]
+    except Exception:
+        user_name = "unknown"
+        role_name = "unknown"
+    return "|".join([
+        str(user_name),
+        str(role_name),
+        str(st.session_state.get("active_company", "")),
+        str(st.session_state.get("global_start_date", "")),
+        str(st.session_state.get("global_end_date", "")),
+        str(st.session_state.get("global_warehouse", "")),
+        str(st.session_state.get("global_user", "")),
+        str(st.session_state.get("global_role", "")),
+        str(st.session_state.get("global_database", "")),
+    ])
+
+
 @st.cache_data(ttl=CACHE_TIERS["live"], show_spinner=False)
-def _cached_live(query_text: str, _salt: str = "") -> pd.DataFrame:
+def _cached_live(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
     except Exception as e:
@@ -51,7 +75,7 @@ def _cached_live(query_text: str, _salt: str = "") -> pd.DataFrame:
 
 
 @st.cache_data(ttl=CACHE_TIERS["recent"], show_spinner=False)
-def _cached_recent(query_text: str, _salt: str = "") -> pd.DataFrame:
+def _cached_recent(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
     except Exception as e:
@@ -60,7 +84,7 @@ def _cached_recent(query_text: str, _salt: str = "") -> pd.DataFrame:
 
 
 @st.cache_data(ttl=CACHE_TIERS["historical"], show_spinner=False)
-def _cached_historical(query_text: str, _salt: str = "") -> pd.DataFrame:
+def _cached_historical(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
     except Exception as e:
@@ -69,7 +93,7 @@ def _cached_historical(query_text: str, _salt: str = "") -> pd.DataFrame:
 
 
 @st.cache_data(ttl=CACHE_TIERS["metadata"], show_spinner=False)
-def _cached_metadata(query_text: str, _salt: str = "") -> pd.DataFrame:
+def _cached_metadata(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
     except Exception as e:
@@ -79,7 +103,7 @@ def _cached_metadata(query_text: str, _salt: str = "") -> pd.DataFrame:
 
 # Backward-compatible 5-min cache — for callers that don't pass tier=
 @st.cache_data(ttl=CACHE_TIERS["recent"], show_spinner=False)
-def run_query_cached(query_text: str, _cache_salt: str = "") -> pd.DataFrame:
+def run_query_cached(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     """Backward-compatible runner. Prefer run_query(tier=...) for new code."""
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
@@ -120,9 +144,10 @@ def run_query(
     with st.spinner(spinner_msg):
         try:
             if use_cache:
-                salt = st.session_state.get(f"_refresh_salt_{ttl_key}", "")
+                cache_salt = st.session_state.get(f"_refresh_salt_{ttl_key}", "")
+                context = _cache_context()
                 fn   = _TIER_FN.get(tier, _cached_recent)
-                return fn(query_text, salt)
+                return fn(query_text, context, cache_salt)
             # Bypass cache — always wrapped in try/except
             try:
                 return normalize_df(get_session().sql(query_text).to_pandas())

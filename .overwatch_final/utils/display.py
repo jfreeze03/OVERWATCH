@@ -117,7 +117,9 @@ def render_query_drilldown(
     with st.expander(f"Details for `{qid}`", expanded=True):
         m1,m2,m3,m4 = st.columns(4)
         m1.metric("User",       str(row.get("USER_NAME","N/A")))
-        m2.metric("Warehouse",  str(row.get("WAREHOUSE_NAME","N/A")))
+        wh_name = str(row.get("WAREHOUSE_NAME","N/A"))
+        wh_size = str(row.get("WAREHOUSE_SIZE","") or "")
+        m2.metric("Warehouse", f"{wh_name} ({wh_size})" if wh_size else wh_name)
         m3.metric("Elapsed Sec",f"{float(row.get('ELAPSED_SEC',0) or 0):,.1f}")
         est_cr = float(row.get("TOTAL_EST_CREDITS", row.get("EST_COMPUTE_CREDITS",0)) or 0)
         m4.metric("Est. Credits", format_credits(est_cr))
@@ -151,7 +153,7 @@ def render_warehouse_drilldown(
         return
     wh_safe = safe_sql(warehouse_name)
     df_wh = run_query(f"""
-        SELECT query_id, user_name, warehouse_name, execution_status, start_time,
+        SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status, start_time,
                total_elapsed_time/1000          AS elapsed_sec,
                compilation_time/1000            AS compile_sec,
                execution_time/1000              AS exec_sec,
@@ -186,14 +188,30 @@ def render_entity_query_drilldown(
     allowed = {
         "warehouse_name","user_name","role_name","database_name",
         "schema_name","query_id","query_tag","client_application_id",
+        "database_schema","application_client","lineage_dimension",
     }
     if col not in allowed:
         st.info(f"Drill-down not configured for `{entity_column}`.")
         return
     value       = safe_sql(str(entity_value))
-    where_clause = f"query_id = '{value}'" if col == "query_id" else f"{col} = '{value}'"
+    if col == "query_id":
+        where_clause = f"query_id = '{value}'"
+    elif col == "database_schema":
+        where_clause = (
+            "COALESCE(database_name,'UNKNOWN')||'.'||COALESCE(schema_name,'UNKNOWN') "
+            f"= '{value}'"
+        )
+    elif col == "application_client":
+        where_clause = f"COALESCE(client_application_id, query_tag, 'UNKNOWN') = '{value}'"
+    elif col == "lineage_dimension":
+        where_clause = (
+            "COALESCE(REGEXP_SUBSTR(query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), "
+            f"root_query_id, 'ADHOC') = '{value}'"
+        )
+    else:
+        where_clause = f"{col} = '{value}'"
     df_detail   = run_query(f"""
-        SELECT query_id, user_name, role_name, warehouse_name, database_name, schema_name,
+        SELECT query_id, user_name, role_name, warehouse_name, warehouse_size, database_name, schema_name,
                query_type, execution_status, start_time,
                total_elapsed_time/1000          AS elapsed_sec,
                compilation_time/1000            AS compile_sec,

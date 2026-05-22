@@ -40,7 +40,7 @@ def build_annotation_ddl(
 ) -> str:
     """Generate DDL for the OVERWATCH_ANNOTATIONS table.
 
-    Annotations let DBAs mark known events (migration windows, load tests,
+    Annotations let DBAs mark known events (load tests, deployments,
     planned downtime) so the anomaly log and alert task can suppress
     re-alerting during those windows.
 
@@ -52,7 +52,7 @@ def build_annotation_ddl(
     """
     return f"""-- ─────────────────────────────────────────────────────────────────
 -- OVERWATCH Annotation System
--- Prevents re-alerting on known events (migration windows, load tests, etc.)
+-- Prevents re-alerting on known events (load tests, deployments, etc.)
 -- Run once as SYSADMIN or DBA role.
 -- ─────────────────────────────────────────────────────────────────
 
@@ -64,20 +64,20 @@ CREATE TABLE IF NOT EXISTS {db}.{schema}.{ANNOTATION_TABLE} (
     ENTITY_TYPE     VARCHAR(50),         -- WAREHOUSE | TASK | USER | GLOBAL
     WINDOW_START    TIMESTAMP_NTZ NOT NULL,
     WINDOW_END      TIMESTAMP_NTZ NOT NULL,
-    ANNOTATION_TYPE VARCHAR(100),        -- MIGRATION | LOAD_TEST | PLANNED_MAINTENANCE | OTHER
+    ANNOTATION_TYPE VARCHAR(100),        -- DEPLOYMENT | LOAD_TEST | PLANNED_MAINTENANCE | OTHER
     DESCRIPTION     VARCHAR(2000),
     SUPPRESS_ALERTS BOOLEAN DEFAULT TRUE,
     ACTIVE          BOOLEAN DEFAULT TRUE
 );
 
--- Example annotations for Teradata migration windows:
+-- Example annotations for planned Snowflake load windows:
 -- INSERT INTO {db}.{schema}.{ANNOTATION_TABLE}
 --     (ENTITY, ENTITY_TYPE, WINDOW_START, WINDOW_END, ANNOTATION_TYPE, DESCRIPTION)
 -- VALUES
 --     ('WH_ALFA_LOAD', 'WAREHOUSE',
 --      '2025-06-01 00:00:00'::TIMESTAMP_NTZ,
 --      '2025-06-03 23:59:59'::TIMESTAMP_NTZ,
---      'MIGRATION', 'Teradata → Snowflake initial data load — expect 5-10x credit spike');
+--      'LOAD_TEST', 'Large Snowflake backfill on WH_ALFA_LOAD - expect elevated credit usage');
 
 -- View active annotations:
 -- SELECT * FROM {db}.{schema}.{ANNOTATION_TABLE}
@@ -152,7 +152,7 @@ spikes AS (
     WHERE d.day = s.latest_day
       AND d.daily_credits > s.avg_credits * (1 + {spike_pct}/100.0)
       AND s.avg_credits > 0.1
-      -- Skip annotated windows (migration, load tests, planned maintenance)
+      -- Skip annotated windows (load tests, deployments, planned maintenance)
       AND NOT EXISTS (
           SELECT 1 FROM {db}.{schema}.{ANNOTATION_TABLE} ann
           WHERE ann.active = TRUE

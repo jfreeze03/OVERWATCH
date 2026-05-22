@@ -39,7 +39,7 @@ def render():
                 SELECT
                     q.user_name,
                     q.warehouse_name,
-                    q.warehouse_size,
+                    MAX(q.warehouse_size) AS warehouse_size,
                     COUNT(*)                                     AS query_count,
                     ROUND(AVG(q.total_elapsed_time)/1000, 2)    AS avg_elapsed_sec,
                     ROUND(SUM(pqc.metered_credits), 4)          AS total_credits,
@@ -49,7 +49,7 @@ def render():
                 WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
                   AND q.warehouse_name IS NOT NULL
                   {wf} {uf} {gf}
-                GROUP BY q.user_name, q.warehouse_name, q.warehouse_size
+                GROUP BY q.user_name, q.warehouse_name
                 ORDER BY total_credits DESC
                 LIMIT 200
                 """).to_pandas())
@@ -305,7 +305,7 @@ def render():
                         {company_expr}         AS company,
                         q.user_name,
                         q.warehouse_name,
-                        q.warehouse_size,
+                        MAX(q.warehouse_size) AS warehouse_size,
                         COUNT(*)               AS query_count,
                         SUM(COALESCE(pqc.metered_credits,0)) AS total_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
@@ -313,7 +313,7 @@ def render():
                     WHERE q.start_time >= DATEADD('day', -{cb_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
                       {get_wh_filter_clause("q.warehouse_name")}
-                    GROUP BY company, q.user_name, q.warehouse_name, q.warehouse_size
+                    GROUP BY company, q.user_name, q.warehouse_name
                 )
                 SELECT company, user_name, warehouse_name, warehouse_size, query_count,
                        ROUND(total_credits, 4) AS total_credits

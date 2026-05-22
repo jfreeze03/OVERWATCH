@@ -22,7 +22,7 @@ definition_version: 1
 #     -- Required for ALL ACCOUNT_USAGE queries (every section)
 #     GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE <role>;
 #
-#     -- Required for OVERWATCH internal tables (bookmarks, annotations, ROI)
+#     -- Required for OVERWATCH internal tables (bookmarks, annotations, Snowflake value)
 #     GRANT SELECT, INSERT, UPDATE, DELETE
 #       ON ALL TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
 #

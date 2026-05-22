@@ -116,6 +116,7 @@ NAV_GROUPS = {
         "💸 Cost Center",
         "💡 Optimization",
         "💡 Recommendations & Anomalies",
+        "Snowflake Value",
         "🤖 AI & Cortex Monitor",
     ],
     "SECURITY & OPS": [
@@ -124,7 +125,6 @@ NAV_GROUPS = {
         "📦 Stored Proc Tracker",
         "🌐 Data Sharing",
         "🛠️ DBA Tools",
-        "🔄 Migration Confidence",
     ],
 }
 
@@ -151,13 +151,13 @@ ROLE_SECTIONS = {
         "🗄️ Storage Monitor",
         "🤖 AI & Cortex Monitor",
     ],
-    # Managers / leadership — executive summary, cost, recommendations, migration status
+    # Managers / leadership — executive summary, cost, recommendations, Snowflake value
     "MANAGER": [
         "🏠 Account Health",
         "💸 Cost Center",
         "💡 Recommendations & Anomalies",
+        "Snowflake Value",
         "🗄️ Storage Monitor",
-        "🔄 Migration Confidence",
         "🤖 AI & Cortex Monitor",
     ],
     # Report / BI roles — same as analyst

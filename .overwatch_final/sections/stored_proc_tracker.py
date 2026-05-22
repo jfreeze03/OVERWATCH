@@ -70,7 +70,7 @@ def render():
                        c.user_name,
                        c.role_name,
                        c.warehouse_name,
-                       c.warehouse_size,
+                       MAX(c.warehouse_size) AS warehouse_size,
                        c.call_text AS query_text,
                        COUNT(DISTINCT c.root_query_id) AS call_count,
                        COUNT(DISTINCT ch.query_id) AS downstream_query_count,
@@ -83,7 +83,7 @@ def render():
                 FROM calls c
                 LEFT JOIN children ch ON c.root_query_id = ch.root_query_id
                 GROUP BY c.procedure_name, c.user_name, c.role_name, c.warehouse_name,
-                         c.warehouse_size, c.call_text
+                         c.call_text
                 ORDER BY metered_credits DESC, total_elapsed_sec DESC
                 LIMIT 200
             """).to_pandas())

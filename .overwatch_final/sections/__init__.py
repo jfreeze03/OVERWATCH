@@ -26,8 +26,8 @@ _MODULE_MAP: dict[str, str] = {
     "🌐 Data Sharing":                "sections.data_sharing",
     "⚙️ Task Management":             "sections.task_management",
     "💡 Recommendations & Anomalies": "sections.recommendations",
+    "Snowflake Value":                "sections.snowflake_value",
     "🛠️ DBA Tools":                   "sections.dba_tools",
-    "🔄 Migration Confidence":        "sections.migration_confidence",
     "🤖 AI & Cortex Monitor":         "sections.cortex_monitor",
 }
 

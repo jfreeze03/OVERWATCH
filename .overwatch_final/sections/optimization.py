@@ -135,7 +135,7 @@ def render():
             try:
                 df_sz = normalize_df(session.sql(f"""
                     SELECT q.warehouse_name,
-                           q.warehouse_size,
+                           MAX(q.warehouse_size) AS warehouse_size,
                            COUNT(*)                                AS total_queries,
                            AVG(q.queued_overload_time)/1000        AS avg_queue_sec,
                            SUM(q.bytes_spilled_to_remote_storage)/POWER(1024,3) AS remote_spill_gb,
@@ -148,7 +148,7 @@ def render():
                     WHERE q.start_time >= DATEADD('day', -{sz_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
                       {get_wh_filter_clause("q.warehouse_name")}
-                    GROUP BY q.warehouse_name, q.warehouse_size
+                    GROUP BY q.warehouse_name
                     ORDER BY total_credits DESC
                 """).to_pandas())
                 st.session_state["opt_df_sz"] = df_sz

@@ -31,7 +31,7 @@ def _build_briefing_prompt(data: dict, credit_price: float, company: str) -> str
     queued   = data.get("queued",   0)
     stor_tb  = data.get("stor_tb",  0)
     contract_pct = data.get("contract_pct", None)
-    migration_pct = data.get("migration_pct", None)
+    snowflake_value_monthly = data.get("snowflake_value_monthly", None)
     top_driver    = data.get("top_driver",   "")
     top_driver_cost = data.get("top_driver_cost", 0)
     failed_task   = data.get("failed_task",   "")
@@ -41,10 +41,10 @@ def _build_briefing_prompt(data: dict, credit_price: float, company: str) -> str
         if contract_pct is not None
         else "Contract utilization data not available."
     )
-    migration_line = (
-        f"Teradata-to-Snowflake migration is {migration_pct:.1f}% complete (by table row-count parity)."
-        if migration_pct is not None
-        else "Migration progress data not available."
+    value_line = (
+        f"Tracked Snowflake optimization value is ${snowflake_value_monthly:,.2f} per month."
+        if snowflake_value_monthly is not None
+        else "Snowflake optimization value tracking has no logged savings yet."
     )
     task_line = (
         f"A task failure was detected: {failed_task}."
@@ -68,11 +68,11 @@ Data:
 - Queued queries (current): {queued}
 - Storage: {stor_tb:.1f} TB
 - {contract_line}
-- {migration_line}
+- {value_line}
 - {task_line}
 
 Write the briefing now. Start with yesterday's overall performance summary, then highlight risks,
-then migration status, then one recommended action for leadership."""
+then Snowflake optimization value, then one recommended action for leadership."""
 
 
 def render():
@@ -154,7 +154,7 @@ def render():
                 """),
                 ("cost_drivers", f"""
                     WITH {build_metered_credit_cte(hours_back=48, include_recent=True)}
-                    SELECT q.user_name, q.warehouse_name, q.warehouse_size,
+                    SELECT q.user_name, q.warehouse_name, MAX(q.warehouse_size) AS warehouse_size,
                            COUNT(*) AS query_count,
                            ROUND(SUM(COALESCE(pqc.metered_credits,0)), 4) AS total_credits,
                            ROUND(SUM(q.bytes_scanned)/POWER(1024,3), 2) AS gb_scanned
@@ -163,7 +163,7 @@ def render():
                     WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
                       {wh_filter_q} {db_filter_q} {user_filter_q} {global_filter_q}
-                    GROUP BY q.user_name, q.warehouse_name, q.warehouse_size
+                    GROUP BY q.user_name, q.warehouse_name
                     ORDER BY total_credits DESC
                     LIMIT 5
                 """),
@@ -468,20 +468,11 @@ def render():
             "Designed to be copied into an email or Teams message to leadership — no dashboard login required."
         )
 
-        col_b1, col_b2 = st.columns([2, 1])
-        with col_b1:
-            briefing_window = st.selectbox(
-                "Report window",
-                ["Last 24 hours", "Last 7 days", "Last 30 days"],
-                key="br_window",
-            )
-        with col_b2:
-            include_migration = st.checkbox(
-                "Include migration progress",
-                value=True,
-                key="br_incl_migration",
-                help="Reads from MIGRATION_RECON table. Requires migration recon runs.",
-            )
+        briefing_window = st.selectbox(
+            "Report window",
+            ["Last 24 hours", "Last 7 days", "Last 30 days"],
+            key="br_window",
+        )
 
         hours_map = {"Last 24 hours": 24, "Last 7 days": 168, "Last 30 days": 720}
         br_hours  = hours_map[briefing_window]
@@ -562,29 +553,22 @@ def render():
                 except Exception:
                     br_data["contract_pct"] = None
 
-                # Migration progress
-                migration_pct = None
-                if include_migration:
+                # Snowflake optimization value tracking
+                snowflake_value_monthly = None
+                try:
                     from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
-                    recon_tbl = f"{ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.MIGRATION_RECON"
-                    try:
-                        df_mig = normalize_df(session.sql(f"""
-                            WITH latest AS (
-                                SELECT MAX(RECON_DATE) AS latest_date FROM {recon_tbl}
-                            )
-                            SELECT
-                                COUNT(*) AS total_tables,
-                                SUM(CASE WHEN STATUS = 'PASS' THEN 1 ELSE 0 END) AS passed_tables,
-                                ROUND(SUM(CASE WHEN STATUS='PASS' THEN 1 ELSE 0 END)*100.0
-                                      / NULLIF(COUNT(*),0), 1) AS pct_complete
-                            FROM {recon_tbl} r, latest l
-                            WHERE r.RECON_DATE = l.latest_date
-                        """).to_pandas())
-                        if not df_mig.empty:
-                            migration_pct = float(df_mig["PCT_COMPLETE"].iloc[0] or 0)
-                    except Exception:
-                        migration_pct = None
-                br_data["migration_pct"] = migration_pct
+                    value_tbl = f"{ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.OVERWATCH_ROI_LOG"
+                    df_value = normalize_df(session.sql(f"""
+                        SELECT ROUND(SUM(SAVINGS_MONTHLY), 2) AS monthly_value
+                        FROM {value_tbl}
+                        WHERE LOGGED_DATE >= DATEADD('day', -365, CURRENT_DATE())
+                    """).to_pandas())
+                    if not df_value.empty:
+                        raw_value = df_value["MONTHLY_VALUE"].iloc[0]
+                        snowflake_value_monthly = float(raw_value) if pd.notna(raw_value) else None
+                except Exception:
+                    snowflake_value_monthly = None
+                br_data["snowflake_value_monthly"] = snowflake_value_monthly
 
                 # ── Extract values ────────────────────────────────────────────
                 cr24     = float(br_data["credits"]["PERIOD_CREDITS"].iloc[0])  if not br_data["credits"].empty else 0
@@ -609,7 +593,7 @@ def render():
                     "failures": failures, "queued": queued,
                     "stor_tb": stor_tb,
                     "contract_pct": br_data.get("contract_pct"),
-                    "migration_pct": migration_pct,
+                    "snowflake_value_monthly": snowflake_value_monthly,
                     "top_driver": top_driver,
                     "top_driver_cost": top_driver_cost,
                     "failed_task": failed_task,
@@ -636,7 +620,7 @@ def render():
                         f"The top cost driver was {top_driver} at ${top_driver_cost:,.2f}. "
                         f"There were {failures} query failures recorded. "
                         f"Storage stands at {stor_tb:.1f} TB. "
-                        f"{'Migration is ' + str(migration_pct) + '% complete.' if migration_pct else ''}\n\n"
+                        f"{'Tracked Snowflake optimization value is $' + format(snowflake_value_monthly, ',.2f') + ' per month.' if snowflake_value_monthly else ''}\n\n"
                         f"(Cortex AI unavailable: {e}. Plain summary generated from raw metrics.)"
                     )
 

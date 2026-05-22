@@ -22,7 +22,7 @@ def render():
             try:
                 df_w = normalize_df(session.sql(f"""
                     SELECT q.warehouse_name,
-                           q.warehouse_size,
+                           MAX(q.warehouse_size) AS warehouse_size,
                            COUNT(*)                            AS total_queries,
                            AVG(q.total_elapsed_time)/1000      AS avg_elapsed_sec,
                            PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time)/1000 AS p95_elapsed_sec,
@@ -35,7 +35,7 @@ def render():
                     WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
                       {get_wh_filter_clause("q.warehouse_name")}
-                    GROUP BY q.warehouse_name, q.warehouse_size
+                    GROUP BY q.warehouse_name
                     ORDER BY total_queries DESC
                 """).to_pandas())
                 st.session_state["wh_df_wh"] = df_w
@@ -114,7 +114,7 @@ def render():
         if st.button("Load Spill Data", key="sp_load"):
             try:
                 df_sp = normalize_df(session.sql(f"""
-                    SELECT warehouse_name, warehouse_size,
+                    SELECT warehouse_name, MAX(warehouse_size) AS warehouse_size,
                            COUNT(*) AS spill_query_count,
                            ROUND(SUM(bytes_spilled_to_local_storage)/POWER(1024,3),2)  AS local_spill_gb,
                            ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3),2) AS remote_spill_gb,
@@ -124,7 +124,7 @@ def render():
                       AND (bytes_spilled_to_local_storage > 0 OR bytes_spilled_to_remote_storage > 0)
                       AND warehouse_name IS NOT NULL
                       {get_wh_filter_clause("warehouse_name")}
-                    GROUP BY warehouse_name, warehouse_size
+                    GROUP BY warehouse_name
                     ORDER BY local_spill_gb + remote_spill_gb DESC
                 """).to_pandas())
                 st.session_state["wh_df_sp"] = df_sp

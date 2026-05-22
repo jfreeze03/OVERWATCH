@@ -60,13 +60,13 @@ def render():
             # Spilling warehouses
             try:
                 df_spill = normalize_df(session.sql(f"""
-                    SELECT warehouse_name, warehouse_size,
+                    SELECT warehouse_name, MAX(warehouse_size) AS warehouse_size,
                            ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3),2) AS remote_gb
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
                       AND bytes_spilled_to_remote_storage > 0 AND warehouse_name IS NOT NULL
                       {get_wh_filter_clause("warehouse_name")}
-                    GROUP BY warehouse_name, warehouse_size
+                    GROUP BY warehouse_name
                     HAVING remote_gb > 5 ORDER BY remote_gb DESC LIMIT 10
                 """).to_pandas())
                 for _, row in df_spill.iterrows():

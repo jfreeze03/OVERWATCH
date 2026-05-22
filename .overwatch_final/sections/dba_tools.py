@@ -33,6 +33,18 @@ _WH_PARAM_HELP = {
 }
 
 _SIZE_OPTS = ["X-Small","Small","Medium","Large","X-Large","2X-Large","3X-Large","4X-Large","5X-Large","6X-Large"]
+_SIZE_SQL = {
+    "X-Small": "XSMALL",
+    "Small": "SMALL",
+    "Medium": "MEDIUM",
+    "Large": "LARGE",
+    "X-Large": "XLARGE",
+    "2X-Large": "XXLARGE",
+    "3X-Large": "XXXLARGE",
+    "4X-Large": "X4LARGE",
+    "5X-Large": "X5LARGE",
+    "6X-Large": "X6LARGE",
+}
 _SCALE_OPTS = ["STANDARD","ECONOMY"]
 
 
@@ -50,6 +62,23 @@ def _scope_warehouse_names(df: pd.DataFrame, name_col: str = "name") -> pd.DataF
     if company == "ALFA":
         return df[~df[name_col].astype(str).str.upper().str.startswith("WH_TRXS_")]
     return df
+
+
+def _quote_identifier(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _as_bool(value, default: bool = False) -> bool:
+    if value is None or str(value).lower() in ("", "nan", "none"):
+        return default
+    return str(value).strip().lower() in ("true", "yes", "1", "on")
+
+
+def _as_int(value, default: int) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return default
 
 
 def render():
@@ -197,14 +226,11 @@ def render():
                         )
                         new_auto_resume = st.checkbox(
                             "Auto Resume",
-                            value=str(_get("auto_resume","true")).lower() == "true",
+                            value=_as_bool(_get("auto_resume","true"), True),
                             key=f"wh_ar_{sel_wh}",
                             help=_WH_PARAM_HELP["AUTO_RESUME"],
                         )
-                        try:
-                            curr_sus = int(float(_get("auto_suspend","600")))
-                        except Exception:
-                            curr_sus = 600
+                        curr_sus = _as_int(_get("auto_suspend","600"), 600)
                         new_auto_suspend = st.number_input(
                             "AUTO_SUSPEND (seconds, 0=never)",
                             min_value=0, max_value=86400, value=curr_sus, step=60,
@@ -214,30 +240,21 @@ def render():
 
                     with c2:
                         st.markdown("**Timeouts**")
-                        try:
-                            curr_stmt_to = int(float(_get("statement_timeout_in_seconds","0")))
-                        except Exception:
-                            curr_stmt_to = 0
+                        curr_stmt_to = _as_int(_get("statement_timeout_in_seconds","0"), 0)
                         new_stmt_timeout = st.number_input(
                             "STATEMENT_TIMEOUT (sec, 0=no limit)",
                             min_value=0, max_value=604800, value=curr_stmt_to, step=300,
                             key=f"wh_stmto_{sel_wh}",
                             help=_WH_PARAM_HELP["STATEMENT_TIMEOUT_IN_SECONDS"],
                         )
-                        try:
-                            curr_q_to = int(float(_get("statement_queued_timeout_in_seconds","0")))
-                        except Exception:
-                            curr_q_to = 0
+                        curr_q_to = _as_int(_get("statement_queued_timeout_in_seconds","0"), 0)
                         new_queue_timeout = st.number_input(
                             "QUEUE_TIMEOUT (sec, 0=no limit)",
                             min_value=0, max_value=86400, value=curr_q_to, step=60,
                             key=f"wh_qto_{sel_wh}",
                             help=_WH_PARAM_HELP["STATEMENT_QUEUED_TIMEOUT_IN_SECONDS"],
                         )
-                        try:
-                            curr_concur = int(float(_get("max_concurrency_level","8")))
-                        except Exception:
-                            curr_concur = 8
+                        curr_concur = _as_int(_get("max_concurrency_level","8"), 8)
                         new_concurrency = st.number_input(
                             "MAX_CONCURRENCY_LEVEL",
                             min_value=1, max_value=10, value=min(max(curr_concur,1),10),
@@ -255,11 +272,8 @@ def render():
                             key=f"wh_sp_{sel_wh}",
                             help=_WH_PARAM_HELP["SCALING_POLICY"],
                         )
-                        try:
-                            curr_min = int(float(_get("min_cluster_count","1")))
-                            curr_max = int(float(_get("max_cluster_count","1")))
-                        except Exception:
-                            curr_min, curr_max = 1, 1
+                        curr_min = _as_int(_get("min_cluster_count","1"), 1)
+                        curr_max = _as_int(_get("max_cluster_count","1"), 1)
                         new_min_clusters = st.number_input(
                             "MIN_CLUSTER_COUNT",
                             min_value=1, max_value=10, value=max(curr_min,1),
@@ -272,17 +286,14 @@ def render():
                             key=f"wh_maxc_{sel_wh}",
                             help=_WH_PARAM_HELP["MAX_CLUSTER_COUNT"],
                         )
-                        curr_qas = str(_get("enable_query_acceleration","false")).lower() == "true"
+                        curr_qas = _as_bool(_get("enable_query_acceleration","false"), False)
                         new_qas  = st.checkbox(
                             "Enable QAS",
                             value=curr_qas,
                             key=f"wh_qas_{sel_wh}",
                             help=_WH_PARAM_HELP["ENABLE_QUERY_ACCELERATION"],
                         )
-                        try:
-                            curr_qas_sf = int(float(_get("query_acceleration_max_scale_factor","8")))
-                        except Exception:
-                            curr_qas_sf = 8
+                        curr_qas_sf = _as_int(_get("query_acceleration_max_scale_factor","8"), 8)
                         new_qas_sf = st.number_input(
                             "QAS Max Scale Factor (0=unlimited)",
                             min_value=0, max_value=100, value=curr_qas_sf,
@@ -295,11 +306,10 @@ def render():
 
                 if apply:
                     # Build ALTER WAREHOUSE statement from changed params
-                    stmts = []
-                    safe_wh = safe_sql(sel_wh)
+                    safe_wh = _quote_identifier(sel_wh)
 
                     params = [
-                        f"WAREHOUSE_SIZE = '{new_size}'",
+                        f"WAREHOUSE_SIZE = {_SIZE_SQL.get(new_size, 'XSMALL')}",
                         f"AUTO_SUSPEND = {int(new_auto_suspend)}",
                         f"AUTO_RESUME = {'TRUE' if new_auto_resume else 'FALSE'}",
                         f"STATEMENT_TIMEOUT_IN_SECONDS = {int(new_stmt_timeout)}",

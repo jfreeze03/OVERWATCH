@@ -13,6 +13,16 @@ from utils import (
 )
 
 
+def _query_history_has_root_query_id(session) -> bool:
+    try:
+        df_cols = session.sql(
+            "SHOW COLUMNS LIKE 'ROOT_QUERY_ID' IN VIEW SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+        ).to_pandas()
+        return not df_cols.empty
+    except Exception:
+        return False
+
+
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
@@ -24,6 +34,8 @@ def render():
 
     if st.button("Load Stored Proc Usage", key="sp_load"):
         try:
+            has_root_query_id = _query_history_has_root_query_id(session)
+            root_expr = "COALESCE(q.root_query_id, q.query_id)" if has_root_query_id else "q.query_id"
             df_sp = normalize_df(session.sql(f"""
                 WITH {build_metered_credit_cte(days_back=sp_days, include_recent=True)},
                 calls AS (
@@ -41,7 +53,7 @@ def render():
                       {get_wh_filter_clause("warehouse_name")}
                 ),
                 children AS (
-                    SELECT COALESCE(q.root_query_id, q.query_id) AS root_query_id,
+                    SELECT {root_expr} AS root_query_id,
                            q.query_id,
                            q.query_type,
                            q.total_elapsed_time,
@@ -76,11 +88,14 @@ def render():
                 LIMIT 200
             """).to_pandas())
             st.session_state["spt_df_sp_tracker"] = df_sp
+            st.session_state["spt_has_root_query_id"] = has_root_query_id
         except Exception as e:
             st.error(f"Error: {e}")
 
     if st.session_state.get("spt_df_sp_tracker") is not None and not st.session_state["spt_df_sp_tracker"].empty:
         df_sp = st.session_state["spt_df_sp_tracker"]
+        if not st.session_state.get("spt_has_root_query_id", False):
+            st.info("ROOT_QUERY_ID is not available in this Snowflake account. Showing outer CALL cost only.")
         total_credits = df_sp["METERED_CREDITS"].sum() + df_sp["CLOUD_CREDITS"].sum()
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Unique Proc Signatures", df_sp["QUERY_TEXT"].nunique())
@@ -98,6 +113,10 @@ def render():
         selected_proc = st.selectbox("Open downstream query detail", proc_options, key="sp_downstream_select")
         if selected_proc and st.button("Load Downstream Queries", key="sp_downstream_load"):
             try:
+                has_root_query_id = st.session_state.get("spt_has_root_query_id")
+                if has_root_query_id is None:
+                    has_root_query_id = _query_history_has_root_query_id(session)
+                root_expr = "COALESCE(q.root_query_id, q.query_id)" if has_root_query_id else "q.query_id"
                 proc_safe = safe_sql(selected_proc)
                 df_child = normalize_df(session.sql(f"""
                 WITH roots AS (
@@ -115,7 +134,7 @@ def render():
                        q.bytes_scanned/POWER(1024,3) AS gb_scanned,
                        SUBSTR(q.query_text,1,4000) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                JOIN roots r ON COALESCE(q.root_query_id, q.query_id) = r.root_query_id
+                JOIN roots r ON {root_expr} = r.root_query_id
                 WHERE 1=1
                   {get_wh_filter_clause("q.warehouse_name")}
                 ORDER BY q.start_time

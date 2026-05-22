@@ -1,8 +1,58 @@
 # sections/task_management.py — Task history, ETL audit framework, execute task
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, download_csv, safe_sql
+from utils import (
+    build_action_queue_ddl,
+    download_csv,
+    get_session,
+    make_action_id,
+    normalize_df,
+    safe_sql,
+    upsert_actions,
+)
 from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ETL_AUDIT_TABLE
+
+
+def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
+    if df is None or df.empty:
+        st.info("No task findings to queue.")
+        return
+    company = st.session_state.get("active_company", "ALFA")
+    actions = []
+    for _, row in df.head(200).iterrows():
+        name = str(row.get("NAME") or row.get("PIPELINE_NAME") or "Unknown task")
+        err = str(row.get("ERROR_MESSAGE") or "")[:1000]
+        state = str(row.get("STATE") or row.get("STATUS") or "FAILED")
+        finding = f"{name} finished with {state}"
+        if err:
+            finding += f": {err[:250]}"
+        actions.append({
+            "Action ID": make_action_id("Task Reliability", name, finding),
+            "Source": source,
+            "Severity": "High",
+            "Category": "Reliability",
+            "Entity Type": "Task/Pipeline",
+            "Entity": name,
+            "Owner": "Data Engineering",
+            "Finding": finding,
+            "Action": "Review error message, fix upstream dependency or SQL failure, then retry the task/pipeline.",
+            "Estimated Monthly Savings": 0.0,
+            "Generated SQL Fix": f"-- Review task or pipeline: {name}\n-- EXECUTE TASK <database>.<schema>.{name};",
+            "Proof Query": "TASK_HISTORY or ETL audit failure row.",
+            "Company": company,
+        })
+    try:
+        saved = upsert_actions(session, actions)
+        st.success(f"Saved {saved} task reliability findings to the action queue.")
+    except Exception as e:
+        st.error(f"Could not save to action queue: {e}")
+        st.download_button(
+            "Download Action Queue DDL",
+            build_action_queue_ddl(),
+            file_name="overwatch_action_queue_setup.sql",
+            mime="text/plain",
+            key=f"tm_queue_ddl_{source}",
+        )
 
 
 def render():
@@ -65,6 +115,8 @@ def render():
             if not failed_tasks.empty:
                 st.subheader("❌ Failed Tasks")
                 st.dataframe(failed_tasks.head(20), use_container_width=True)
+                if st.button("Save failed tasks to Action Queue", key="tm_failed_queue"):
+                    _queue_task_findings(session, failed_tasks, "Task Management - Task History")
 
             st.subheader("Full History")
             st.dataframe(th, use_container_width=True, height=400)
@@ -110,6 +162,8 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.{ETL_AUDIT_TABLE} (
             c3.metric("Failed",  len(err), delta_color="inverse")
             st.dataframe(df_e, use_container_width=True)
             download_csv(df_e, "etl_audit.csv")
+            if not err.empty and st.button("Save failed ETL runs to Action Queue", key="tm_etl_queue"):
+                _queue_task_findings(session, err, "Task Management - ETL Audit")
 
     # ── EXECUTE TASK ──────────────────────────────────────────────────────────
     with tab_execute:

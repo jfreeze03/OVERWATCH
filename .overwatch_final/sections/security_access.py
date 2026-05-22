@@ -1,8 +1,73 @@
 # sections/security_access.py — Login audit, roles & privileges, data lineage, MFA, exfiltration
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, download_csv, get_wh_filter_clause
+from utils import (
+    build_action_queue_ddl,
+    download_csv,
+    get_session,
+    get_wh_filter_clause,
+    make_action_id,
+    normalize_df,
+    upsert_actions,
+)
 from config import THRESHOLDS
+
+
+def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, severity: str = "High") -> None:
+    if df is None or df.empty:
+        st.info("No security findings to queue.")
+        return
+    company = st.session_state.get("active_company", "ALFA")
+    actions = []
+    for _, row in df.head(200).iterrows():
+        user = str(row.get("USER_NAME") or row.get("GRANTEE_NAME") or "Unknown user")
+        if finding_type == "Failed Login":
+            entity = user
+            finding = f"{user} had {int(row.get('ATTEMPT_COUNT', 0) or 0)} failed login attempts from {row.get('CLIENT_IP', 'unknown IP')}"
+            action = "Validate whether attempts are expected; review identity provider logs and lock/disable user if suspicious."
+            proof = "LOGIN_HISTORY failed login attempts."
+        elif finding_type == "Dormant User":
+            entity = user
+            finding = f"{user} is active but has been dormant for {int(row.get('DAYS_SINCE_LOGIN', 0) or 0)} days"
+            action = "Confirm ownership and disable or remove roles if the account is no longer needed."
+            proof = "USERS joined to LOGIN_HISTORY and QUERY_HISTORY."
+        elif finding_type == "No MFA":
+            entity = user
+            finding = f"{user} is active without MFA coverage"
+            action = "Enable MFA or move user to federated authentication with enforced MFA."
+            proof = "ACCOUNT_USAGE.USERS ext_authn_duo / MFA signal."
+        else:
+            entity = str(row.get("QUERY_ID") or user)
+            finding = f"{user} produced anomalously high result output: {row.get('GB_WRITTEN', '')} GB"
+            action = "Review query text, business need, destination, and user activity before approving data movement."
+            proof = "QUERY_HISTORY bytes_written_to_result compared with user baseline."
+        actions.append({
+            "Action ID": make_action_id("Security", entity, finding),
+            "Source": f"Security & Access - {finding_type}",
+            "Severity": severity,
+            "Category": "Security",
+            "Entity Type": "User" if finding_type != "Exfiltration" else "Query",
+            "Entity": entity,
+            "Owner": "Security/DBA",
+            "Finding": finding,
+            "Action": action,
+            "Estimated Monthly Savings": 0.0,
+            "Generated SQL Fix": "-- Review security context before disabling users, revoking access, or changing authentication controls.",
+            "Proof Query": proof,
+            "Company": company,
+        })
+    try:
+        saved = upsert_actions(session, actions)
+        st.success(f"Saved {saved} security findings to the action queue.")
+    except Exception as e:
+        st.error(f"Could not save to action queue: {e}")
+        st.download_button(
+            "Download Action Queue DDL",
+            build_action_queue_ddl(),
+            file_name="overwatch_action_queue_setup.sql",
+            mime="text/plain",
+            key=f"sec_queue_ddl_{finding_type}",
+        )
 
 
 def render():
@@ -65,6 +130,8 @@ def render():
             st.subheader("Failed Login Attempts")
             st.dataframe(st.session_state["sec_df_failed_logins"], use_container_width=True)
             download_csv(st.session_state["sec_df_failed_logins"], "failed_logins.csv")
+            if st.button("Save failed-login findings to Action Queue", key="sec_failed_login_queue"):
+                _queue_security_findings(session, st.session_state["sec_df_failed_logins"], "Failed Login", "Medium")
 
         if st.session_state.get("sec_df_login_trend") is not None and not st.session_state["sec_df_login_trend"].empty:
             df_t = st.session_state["sec_df_login_trend"]
@@ -133,6 +200,8 @@ def render():
             st.warning(f"⚠️ {len(df_d)} users inactive > {dormant_days} days — review for deactivation.")
             st.dataframe(df_d, use_container_width=True)
             download_csv(df_d, "dormant_users.csv")
+            if st.button("Save dormant users to Action Queue", key="sec_dormant_queue"):
+                _queue_security_findings(session, df_d, "Dormant User", "Medium")
 
     # ── MFA COVERAGE ──────────────────────────────────────────────────────────
     with tab_mfa:
@@ -164,6 +233,8 @@ def render():
                 st.warning(f"⚠️ {len(no_mfa)} active user(s) without MFA enabled.")
                 st.dataframe(no_mfa, use_container_width=True)
                 download_csv(no_mfa, "users_without_mfa.csv")
+                if st.button("Save MFA findings to Action Queue", key="sec_mfa_queue"):
+                    _queue_security_findings(session, no_mfa, "No MFA", "High")
             else:
                 st.success("✅ All active users have MFA enabled.")
 
@@ -213,6 +284,8 @@ def render():
                 st.error(f"⚠️ {len(df_ex)} queries with anomalously high data output (>2σ above user baseline).")
                 st.dataframe(df_ex, use_container_width=True)
                 download_csv(df_ex, "exfiltration_signals.csv")
+                if st.button("Save exfiltration signals to Action Queue", key="sec_exfil_queue"):
+                    _queue_security_findings(session, df_ex, "Exfiltration", "Critical")
             else:
                 st.success("✅ No unusual data exfiltration patterns detected.")
 

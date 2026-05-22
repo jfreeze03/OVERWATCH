@@ -10,7 +10,58 @@ from utils import (
     get_db_filter_clause, get_wh_filter_clause, get_user_filter_clause,
     get_global_filter_clause, get_company_case_expr,
     render_drillable_bar_chart, render_entity_query_drilldown,
+    build_action_queue_ddl, make_action_id, upsert_actions,
 )
+
+
+def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source: str) -> None:
+    if df is None or df.empty:
+        st.info("No cost outliers to queue.")
+        return
+    company = st.session_state.get("active_company", "ALFA")
+    actions = []
+    baseline = float(df["TOTAL_CREDITS"].median() or 0) if "TOTAL_CREDITS" in df.columns else 0
+    candidates = df.sort_values("TOTAL_CREDITS", ascending=False).head(20)
+    for _, row in candidates.iterrows():
+        user = str(row.get("USER_NAME") or "Unknown user")
+        wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
+        credits = float(row.get("TOTAL_CREDITS", 0) or 0)
+        est_cost = credits_to_dollars(credits, credit_price)
+        if baseline > 0 and credits < baseline * 2 and est_cost < 500:
+            continue
+        entity = f"{user} on {wh}"
+        monthly_savings = max(0.0, est_cost * 0.15)
+        finding = f"{entity} consumed {credits:,.2f} credits (${est_cost:,.2f}) in the selected window"
+        actions.append({
+            "Action ID": make_action_id("Cost Outlier", entity, finding),
+            "Source": source,
+            "Severity": "Medium" if est_cost < 2500 else "High",
+            "Category": "Cost",
+            "Entity Type": "User/Warehouse",
+            "Entity": entity,
+            "Owner": user if user and user != "Unknown user" else "DBA",
+            "Finding": finding,
+            "Action": "Review query patterns, warehouse sizing, cache use, and whether the workload can be optimized or scheduled differently.",
+            "Estimated Monthly Savings": round(monthly_savings, 2),
+            "Generated SQL Fix": "-- Use Cost Center drilldown to identify top query patterns before applying warehouse/query changes.",
+            "Proof Query": "Cost Center metered credit attribution query.",
+            "Company": company,
+        })
+    if not actions:
+        st.success("No cost outliers crossed the queue threshold.")
+        return
+    try:
+        saved = upsert_actions(session, actions)
+        st.success(f"Saved {saved} cost outliers to the action queue.")
+    except Exception as e:
+        st.error(f"Could not save to action queue: {e}")
+        st.download_button(
+            "Download Action Queue DDL",
+            build_action_queue_ddl(),
+            file_name="overwatch_action_queue_setup.sql",
+            mime="text/plain",
+            key=f"cc_queue_ddl_{source}",
+        )
 
 
 def render():
@@ -98,6 +149,8 @@ def render():
                     )
 
             download_csv(df_l, "cost_leaderboard.csv")
+            if st.button("Save top cost outliers to Action Queue", key="cc_lead_queue"):
+                _queue_cost_outliers(session, df_l, credit_price, "Cost Center - User Leaderboard")
 
     # ── BURN RATE ─────────────────────────────────────────────────────────────
     with tab_burn:
@@ -353,6 +406,8 @@ def render():
             df_show = df_cb if company_filter == "All" else df_cb[df_cb["COMPANY"] == company_filter]
             st.dataframe(df_show, use_container_width=True)
             download_csv(df_show, "chargeback_detail.csv")
+            if st.button("Save chargeback outliers to Action Queue", key="cc_chargeback_queue"):
+                _queue_cost_outliers(session, df_show, credit_price, "Cost Center - Chargeback")
 
     # ── CONTRACT / COMMITMENT UTILIZATION ─────────────────────────────────────
     with tab_contract:

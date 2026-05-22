@@ -54,7 +54,7 @@ def clear_all_cache():
         '_data_','_ts_','df_','cortex_','cc_',
         'ah_','cm_','ds_','dba_','lm_','mc_','ocm_',
         'opt_','qa_','qs_','rec_','sec_','spcs_','stor_',
-        'spt_','tm_','wh_',
+        'spt_','tm_','wh_','uo_','aa_','dd_',
         'recommendations','anomalies','health_data','morning_data',
         'tg_list','tg_hist','cm_base_',
     )

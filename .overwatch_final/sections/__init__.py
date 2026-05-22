@@ -12,7 +12,10 @@ import streamlit as st
 # Modules are NOT imported here — importlib loads them on first dispatch call.
 _MODULE_MAP: dict[str, str] = {
     "🏠 Account Health":              "sections.account_health",
+    "Usage Overview":                "sections.usage_overview",
+    "Adoption Analytics":            "sections.adoption_analytics",
     "🔴 Live Monitor":                "sections.live_monitor",
+    "Detailed Diagnosis":            "sections.detailed_diagnosis",
     "🔍 Query Analysis":              "sections.query_analysis",
     "🕰️ Query Search & History":     "sections.query_search",
     "🏭 Warehouse Health":            "sections.warehouse_health",

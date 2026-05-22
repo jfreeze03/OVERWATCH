@@ -102,7 +102,10 @@ COMPANY_CONFIG = {
 NAV_GROUPS = {
     "MONITORING": [
         "🏠 Account Health",
+        "Usage Overview",
+        "Adoption Analytics",
         "🔴 Live Monitor",
+        "Detailed Diagnosis",
         "🔍 Query Analysis",
         "🕰️ Query Search & History",
         "🏭 Warehouse Health",
@@ -146,6 +149,9 @@ ROLE_SECTIONS = {
     # Business analysts — cost visibility + query search, no admin/DBA tools
     "ANALYST": [
         "🏠 Account Health",
+        "Usage Overview",
+        "Adoption Analytics",
+        "Detailed Diagnosis",
         "🔍 Query Analysis",
         "🕰️ Query Search & History",
         "💸 Cost Center",
@@ -156,6 +162,9 @@ ROLE_SECTIONS = {
     # Managers / leadership — executive summary, cost, recommendations, Snowflake value
     "MANAGER": [
         "🏠 Account Health",
+        "Usage Overview",
+        "Adoption Analytics",
+        "Detailed Diagnosis",
         "💸 Cost Center",
         "💡 Recommendations & Anomalies",
         "Snowflake Value",
@@ -165,6 +174,9 @@ ROLE_SECTIONS = {
     # Report / BI roles — same as analyst
     "REPORT": [
         "🏠 Account Health",
+        "Usage Overview",
+        "Adoption Analytics",
+        "Detailed Diagnosis",
         "🔍 Query Analysis",
         "🕰️ Query Search & History",
         "💸 Cost Center",

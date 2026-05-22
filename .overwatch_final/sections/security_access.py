@@ -1,7 +1,7 @@
 # sections/security_access.py — Login audit, roles & privileges, data lineage, MFA, exfiltration
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, download_csv
+from utils import get_session, normalize_df, download_csv, get_wh_filter_clause
 from config import THRESHOLDS
 
 
@@ -24,7 +24,7 @@ def render():
                            COUNT(DISTINCT user_name) AS distinct_users,
                            COUNT(DISTINCT client_ip) AS distinct_ips
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('days', -{sec_days}, CURRENT_TIMESTAMP())
+                    WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
                     GROUP BY is_success
                 """),
                 ("df_failed_logins", f"""
@@ -32,7 +32,7 @@ def render():
                            COUNT(*) AS attempt_count,
                            MAX(event_timestamp) AS last_attempt
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('days', -{sec_days}, CURRENT_TIMESTAMP())
+                    WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
                       AND is_success = 'NO'
                     GROUP BY user_name, client_ip, reported_client_type, error_code
                     ORDER BY attempt_count DESC LIMIT 50
@@ -41,7 +41,7 @@ def render():
                     SELECT DATE_TRUNC('day', event_timestamp) AS day,
                            is_success, COUNT(*) AS event_count
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('days', -{sec_days}, CURRENT_TIMESTAMP())
+                    WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
                     GROUP BY day, is_success ORDER BY day
                 """),
             ]:
@@ -173,7 +173,7 @@ def render():
         st.caption("Users with >2σ BYTES_WRITTEN_TO_RESULT vs their 30-day baseline.")
         if st.button("Check Exfiltration", key="exfil_load"):
             try:
-                df_ex = normalize_df(session.sql("""
+                df_ex = normalize_df(session.sql(f"""
                 WITH user_baseline AS (
                     SELECT user_name,
                            AVG(bytes_written_to_result) AS avg_bytes,
@@ -184,14 +184,15 @@ def render():
                     GROUP BY user_name HAVING COUNT(*) >= 5
                 ),
                 recent AS (
-                    SELECT user_name, query_id, start_time,
+                    SELECT user_name, query_id, warehouse_name, warehouse_size, start_time,
                            bytes_written_to_result/POWER(1024,3) AS gb_written,
                            rows_produced
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -3, CURRENT_TIMESTAMP())
                       AND bytes_written_to_result > 0
+                      {get_wh_filter_clause("warehouse_name")}
                 )
-                SELECT r.user_name, r.query_id, r.start_time,
+                SELECT r.user_name, r.query_id, r.warehouse_name, r.warehouse_size, r.start_time,
                        ROUND(r.gb_written, 3)                           AS gb_written,
                        r.rows_produced,
                        ROUND(b.avg_bytes/POWER(1024,3), 3)              AS avg_gb_baseline,
@@ -231,7 +232,7 @@ def render():
                            base_objects_accessed,
                            direct_objects_accessed
                     FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY
-                    WHERE query_start_time >= DATEADD('days', -{lin_days}, CURRENT_TIMESTAMP())
+                    WHERE query_start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
                     ORDER BY query_start_time DESC
                     LIMIT 500
                 """).to_pandas())

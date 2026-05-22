@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from utils import (
     get_session, normalize_df, format_credits, credits_to_dollars,
-    download_csv, build_alert_task_sql, send_teams_alert,
+    download_csv, build_alert_task_sql, send_teams_alert, get_wh_filter_clause,
 )
 from config import THRESHOLDS, ALERT_DB, ALERT_SCHEMA, ALERT_TABLE
 
@@ -26,18 +26,20 @@ def render():
 
             # Idle warehouses
             try:
-                df_idle = normalize_df(session.sql("""
+                df_idle = normalize_df(session.sql(f"""
                 WITH metering AS (
                     SELECT warehouse_name, DATE_TRUNC('hour',start_time) AS h, SUM(credits_used) AS cr
                     FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                    WHERE start_time >= DATEADD('days',-7,CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
                       AND start_time <  DATEADD('hour',-24,CURRENT_TIMESTAMP())
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name, h
                 ),
                 qa AS (
                     SELECT warehouse_name, DATE_TRUNC('hour',start_time) AS h, COUNT(*) AS qc
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('days',-7,CURRENT_TIMESTAMP()) AND warehouse_name IS NOT NULL
+                    WHERE start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP()) AND warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name, h
                 )
                 SELECT m.warehouse_name, SUM(m.cr) AS idle_credits, COUNT(*) AS idle_hours
@@ -57,12 +59,13 @@ def render():
 
             # Spilling warehouses
             try:
-                df_spill = normalize_df(session.sql("""
+                df_spill = normalize_df(session.sql(f"""
                     SELECT warehouse_name, warehouse_size,
                            ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3),2) AS remote_gb
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('days',-7,CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
                       AND bytes_spilled_to_remote_storage > 0 AND warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name, warehouse_size
                     HAVING remote_gb > 5 ORDER BY remote_gb DESC LIMIT 10
                 """).to_pandas())
@@ -80,7 +83,7 @@ def render():
                 df_ftask = normalize_df(session.sql("""
                     SELECT name AS task_name, COUNT(*) AS failures
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-                    WHERE scheduled_time >= DATEADD('days',-7,CURRENT_TIMESTAMP()) AND state='FAILED'
+                    WHERE scheduled_time >= DATEADD('day',-7,CURRENT_TIMESTAMP()) AND state='FAILED'
                     GROUP BY name HAVING failures > 3 ORDER BY failures DESC LIMIT 5
                 """).to_pandas())
                 for _, row in df_ftask.iterrows():
@@ -97,8 +100,9 @@ def render():
                 df_err = normalize_df(session.sql(f"""
                     SELECT warehouse_name, COUNT(*) AS failures
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('days',-7,CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
                       AND execution_status = 'FAILED_WITH_ERROR' AND warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name HAVING failures > {THRESHOLDS['error_rate_high']}
                     ORDER BY failures DESC LIMIT 5
                 """).to_pandas())
@@ -150,6 +154,7 @@ def render():
                            SUM(credits_used)             AS daily_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
                     WHERE start_time >= DATEADD('day', -{anom_days}, CURRENT_TIMESTAMP())
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name, day
                 ),
                 stats AS (

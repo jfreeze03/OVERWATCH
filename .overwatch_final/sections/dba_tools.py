@@ -11,7 +11,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, safe_sql, format_credits, download_csv
+from utils import (
+    get_session, normalize_df, safe_sql, format_credits, download_csv,
+    get_wh_filter_clause, get_active_company,
+)
 
 # ── Snowflake warehouse parameter documentation ──────────────────────────────
 _WH_PARAM_HELP = {
@@ -35,6 +38,18 @@ _SCALE_OPTS = ["STANDARD","ECONOMY"]
 
 def _load_button(label, key):
     return st.button(label, key=key)
+
+
+def _scope_warehouse_names(df: pd.DataFrame, name_col: str = "name") -> pd.DataFrame:
+    """Apply ALFA/Trexis warehouse visibility to SHOW-style result sets."""
+    if df is None or df.empty or name_col not in df.columns:
+        return df
+    company = get_active_company()
+    if company == "Trexis":
+        return df[df[name_col].astype(str).str.upper().str.startswith("WH_TRXS_")]
+    if company == "ALFA":
+        return df[~df[name_col].astype(str).str.upper().str.startswith("WH_TRXS_")]
+    return df
 
 
 def render():
@@ -67,7 +82,7 @@ def render():
         if _load_button("Load Kill List", "kl_load"):
             try:
                 df = normalize_df(session.sql(f"""
-                    SELECT query_id, user_name, warehouse_name, execution_status, start_time,
+                    SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status, start_time,
                            DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) AS elapsed_sec,
                            SUBSTR(query_text,1,500) AS query_text
                     FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
@@ -75,6 +90,7 @@ def render():
                         RESULT_LIMIT=>500))
                     WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED')
                       AND DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) > {kill_min}
+                      {get_wh_filter_clause("warehouse_name")}
                     ORDER BY elapsed_sec DESC
                 """).to_pandas())
                 st.session_state["dba_df_kl"] = df
@@ -111,6 +127,7 @@ def render():
                 try:
                     df_raw = session.sql("SHOW WAREHOUSES").to_pandas()
                     df_raw.columns = [c.lower() for c in df_raw.columns]
+                    df_raw = _scope_warehouse_names(df_raw, "name")
                     st.session_state["dba_df_wh_cfg"] = df_raw
                 except Exception as e:
                     st.error(f"SHOW WAREHOUSES failed: {e}")
@@ -410,11 +427,24 @@ def render():
         if _load_button("Load QAS Data", "qas_load"):
             try:
                 st.session_state["dba_df_qas"] = normalize_df(session.sql(f"""
-                    SELECT warehouse_name, DATE_TRUNC('day', start_time) AS day,
-                           SUM(credits_used) AS daily_credits, COUNT(*) AS query_count
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_ACCELERATION_HISTORY
-                    WHERE start_time >= DATEADD('day', -{qas_days}, CURRENT_TIMESTAMP())
-                    GROUP BY warehouse_name, day ORDER BY daily_credits DESC
+                    WITH latest_size AS (
+                        SELECT warehouse_name, warehouse_size
+                        FROM (
+                            SELECT warehouse_name, warehouse_size,
+                                   ROW_NUMBER() OVER (PARTITION BY warehouse_name ORDER BY start_time DESC) AS rn
+                            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                            WHERE start_time >= DATEADD('day', -{qas_days}, CURRENT_TIMESTAMP())
+                              AND warehouse_name IS NOT NULL
+                        )
+                        WHERE rn = 1
+                    )
+                    SELECT q.warehouse_name, ls.warehouse_size, DATE_TRUNC('day', q.start_time) AS day,
+                           SUM(q.credits_used) AS daily_credits, COUNT(*) AS query_count
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_ACCELERATION_HISTORY q
+                    LEFT JOIN latest_size ls ON q.warehouse_name = ls.warehouse_name
+                    WHERE q.start_time >= DATEADD('day', -{qas_days}, CURRENT_TIMESTAMP())
+                      {get_wh_filter_clause("q.warehouse_name")}
+                    GROUP BY q.warehouse_name, ls.warehouse_size, day ORDER BY daily_credits DESC
                 """).to_pandas())
             except Exception as e:
                 st.info(f"QAS data unavailable: {e}")
@@ -482,11 +512,39 @@ GROUP BY warehouse_name, hour_bucket;"""
         if st.button("Load Dynamic Tables", key="dyn_load"):
             try:
                 st.session_state["dba_df_dyn"] = normalize_df(session.sql("""
-                    SELECT database_name, schema_name, name, state, target_lag_sec,
-                           refresh_mode, last_completed_refresh_state,
-                           last_completed_refresh_duration_ms/1000 AS refresh_sec
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLES
-                    WHERE deleted IS NULL ORDER BY last_completed_refresh_duration_ms DESC NULLS LAST LIMIT 500
+                    WITH live_dt AS (
+                        SELECT database_name, schema_name, name, state, target_lag_sec,
+                               refresh_mode, last_completed_refresh_state,
+                               last_completed_refresh_state_message,
+                               maximum_lag_sec,
+                               time_within_target_lag_ratio,
+                               executing_refresh_query_id
+                        FROM TABLE(INFORMATION_SCHEMA.DYNAMIC_TABLES(RESULT_LIMIT => 10000))
+                    ),
+                    recent_refresh AS (
+                        SELECT database_name, schema_name, name,
+                               state AS last_refresh_state,
+                               completed_time AS last_refresh_completed_time,
+                               credits_used,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY database_name, schema_name, name
+                                   ORDER BY completed_time DESC
+                               ) AS rn
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY
+                        WHERE refresh_start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+                    )
+                    SELECT l.*,
+                           r.last_refresh_state,
+                           r.last_refresh_completed_time,
+                           r.credits_used AS last_refresh_credits
+                    FROM live_dt l
+                    LEFT JOIN recent_refresh r
+                      ON l.database_name = r.database_name
+                     AND l.schema_name = r.schema_name
+                     AND l.name = r.name
+                     AND r.rn = 1
+                    ORDER BY l.maximum_lag_sec DESC NULLS LAST, l.name
+                    LIMIT 500
                 """).to_pandas())
             except Exception as e:
                 st.info(f"Dynamic table data unavailable: {e}")
@@ -498,20 +556,49 @@ GROUP BY warehouse_name, hour_bucket;"""
         st.header("🔁 Replication")
         repl_days = st.slider("Lookback (days)", 1, 90, 30, key="repl_days")
         if st.button("Load Replication History", key="repl_load"):
+            repl_sql_primary = f"""
+                SELECT database_name,
+                       replication_group_name,
+                       phase_name,
+                       start_time,
+                       end_time,
+                       DATEDIFF('minute', start_time, end_time) AS duration_min,
+                       credits_used,
+                       bytes_transferred/POWER(1024,3) AS gb_transferred
+                FROM SNOWFLAKE.ACCOUNT_USAGE.REPLICATION_GROUP_USAGE_HISTORY
+                WHERE start_time >= DATEADD('day', -{repl_days}, CURRENT_TIMESTAMP())
+                ORDER BY start_time DESC
+                LIMIT 500
+            """
+            repl_sql_fallback = f"""
+                SELECT database_name,
+                       replication_group_name,
+                       phase_name,
+                       start_time,
+                       end_time,
+                       DATEDIFF('minute', start_time, end_time) AS duration_min,
+                       credits_used,
+                       bytes_transferred/POWER(1024,3) AS gb_transferred
+                FROM SNOWFLAKE.ACCOUNT_USAGE.REPLICATION_USAGE_HISTORY
+                WHERE start_time >= DATEADD('day', -{repl_days}, CURRENT_TIMESTAMP())
+                ORDER BY start_time DESC
+                LIMIT 500
+            """
             try:
-                st.session_state["dba_df_repl"] = normalize_df(session.sql(f"""
-                    SELECT database_name, replication_group_name, phase_name, start_time, end_time,
-                           DATEDIFF('minute', start_time, end_time) AS duration_min,
-                           credits_used, bytes_transferred/POWER(1024,3) AS gb_transferred
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.REPLICATION_USAGE_HISTORY
-                    WHERE start_time >= DATEADD('day', -{repl_days}, CURRENT_TIMESTAMP())
-                    ORDER BY start_time DESC LIMIT 500
-                """).to_pandas())
-            except Exception as e:
-                st.info(f"Replication data unavailable: {e}")
+                st.session_state["dba_df_repl"] = normalize_df(session.sql(repl_sql_primary).to_pandas())
+                st.session_state["dba_repl_source"] = "REPLICATION_GROUP_USAGE_HISTORY"
+            except Exception as primary_error:
+                try:
+                    st.session_state["dba_df_repl"] = normalize_df(session.sql(repl_sql_fallback).to_pandas())
+                    st.session_state["dba_repl_source"] = "REPLICATION_USAGE_HISTORY"
+                except Exception as fallback_error:
+                    st.info(f"Replication data unavailable: {fallback_error}")
+                    st.caption(f"Primary view also failed: {primary_error}")
         if st.session_state.get("dba_df_repl") is not None and not st.session_state["dba_df_repl"].empty:
+            st.caption(f"Source: {st.session_state.get('dba_repl_source', 'replication usage history')}")
             st.metric("Replication Credits", format_credits(st.session_state["dba_df_repl"]["CREDITS_USED"].sum()))
             st.dataframe(st.session_state["dba_df_repl"], use_container_width=True)
+            download_csv(st.session_state["dba_df_repl"], "replication_history.csv")
 
     with tabs[13]:
         st.header("💻 Serverless Costs")
@@ -771,8 +858,8 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             if st.button("Load Running Task Queries", key="tg_run_load"):
                 try:
                     # IS gives live data; task queries have query_tag or client context
-                    df_tq = normalize_df(session.sql("""
-                        SELECT query_id, user_name, warehouse_name, execution_status,
+                    df_tq = normalize_df(session.sql(f"""
+                        SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
                                start_time,
                                DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) AS elapsed_sec,
                                query_tag,
@@ -781,6 +868,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                             END_TIME_RANGE_START=>DATEADD('hours',-2,CURRENT_TIMESTAMP()),
                             RESULT_LIMIT=>500))
                         WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED')
+                          {get_wh_filter_clause("warehouse_name")}
                           AND (
                               query_tag IS NOT NULL
                               OR LOWER(query_text) LIKE '%execute task%'
@@ -792,8 +880,8 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 except Exception as e:
                     # Fallback: all running queries
                     try:
-                        df_tq = normalize_df(session.sql("""
-                            SELECT query_id, user_name, warehouse_name, execution_status,
+                        df_tq = normalize_df(session.sql(f"""
+                            SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
                                    start_time,
                                    DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) AS elapsed_sec,
                                    query_tag,
@@ -802,6 +890,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 END_TIME_RANGE_START=>DATEADD('hours',-1,CURRENT_TIMESTAMP()),
                                 RESULT_LIMIT=>200))
                             WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED')
+                              {get_wh_filter_clause("warehouse_name")}
                             ORDER BY elapsed_sec DESC
                         """).to_pandas())
                         st.session_state["dba_df_tg_running"] = df_tq

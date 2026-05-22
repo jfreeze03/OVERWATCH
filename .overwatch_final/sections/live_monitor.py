@@ -15,7 +15,7 @@ from datetime import datetime
 from utils import (
     get_session, normalize_df, safe_sql, format_credits,
     credits_to_dollars, estimate_live_credits, download_csv,
-    render_query_drilldown,
+    render_query_drilldown, get_wh_filter_clause,
 )
 from config import THRESHOLDS
 
@@ -64,6 +64,7 @@ def render():
             _session  = get_session()
             wh_safe   = safe_sql(wh_filter)
             wh_clause = f"AND warehouse_name ILIKE '%{wh_safe}%'" if wh_safe else ""
+            company_wh_clause = get_wh_filter_clause("warehouse_name")
             st_clause = f"AND execution_status = '{status_filter}'" if status_filter != "ALL" else ""
 
             if auto_refresh:
@@ -81,6 +82,7 @@ def render():
                 RESULT_LIMIT=>500))
             WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
               {wh_clause}
+              {company_wh_clause}
             ORDER BY elapsed_sec DESC
             """
             df_live = pd.DataFrame()
@@ -100,6 +102,7 @@ def render():
                         WHERE start_time >= DATEADD('minutes',-10,CURRENT_TIMESTAMP())
                           AND execution_status IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
                           {wh_clause}
+                          {company_wh_clause}
                         ORDER BY start_time DESC LIMIT 100
                     """).to_pandas())
                 except Exception as fallback_err:
@@ -134,14 +137,14 @@ def render():
             st.subheader("🟡 Recent (last 4h, ACCOUNT_USAGE)")
             try:
                 df_recent = normalize_df(_session.sql(f"""
-                    SELECT query_id, user_name, warehouse_name, execution_status,
+                    SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
                            start_time, total_elapsed_time/1000 AS elapsed_sec,
                            bytes_scanned/POWER(1024,3) AS gb_scanned,
                            rows_produced, credits_used_cloud_services AS cloud_credits,
                            SUBSTR(query_text,1,300) AS query_text
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('hours',-4,CURRENT_TIMESTAMP())
-                      {wh_clause} {st_clause}
+                      {wh_clause} {company_wh_clause} {st_clause}
                     ORDER BY start_time DESC LIMIT 500
                 """).to_pandas())
                 if not df_recent.empty:
@@ -165,6 +168,7 @@ def render():
                            AVG(total_elapsed_time)/1000   AS avg_elapsed_sec
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('hours', -{tl_hours}, CURRENT_TIMESTAMP())
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY time_bucket, execution_status
                     ORDER BY time_bucket
                 """).to_pandas())
@@ -207,14 +211,15 @@ def render():
         with s2:
             if st.button("Load Lock Waits", key="lm_lock_load"):
                 try:
-                    df_lock = normalize_df(session.sql("""
-                        SELECT query_id, user_name, warehouse_name,
+                    df_lock = normalize_df(session.sql(f"""
+                        SELECT query_id, user_name, warehouse_name, warehouse_size,
                                start_time,
                                transaction_blocked_time / 1000  AS blocked_sec,
                                SUBSTR(query_text, 1, 300)       AS query_text
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                         WHERE start_time >= DATEADD('day', -1, CURRENT_TIMESTAMP())
                           AND transaction_blocked_time > 5000
+                          {get_wh_filter_clause("warehouse_name")}
                         ORDER BY transaction_blocked_time DESC LIMIT 100
                     """).to_pandas())
                     st.session_state["lm_df_lock"] = df_lock

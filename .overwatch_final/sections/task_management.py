@@ -37,7 +37,7 @@ def render():
                            query_start_time, error_code, error_message,
                            DATEDIFF('second', query_start_time, completed_time) AS duration_sec
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-                    WHERE scheduled_time >= DATEADD('days', -{th_days}, CURRENT_TIMESTAMP())
+                    WHERE scheduled_time >= DATEADD('day', -{th_days}, CURRENT_TIMESTAMP())
                     ORDER BY scheduled_time DESC
                     LIMIT 1000
                 """).to_pandas())

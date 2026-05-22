@@ -6,6 +6,8 @@ from utils import (
     get_session, run_query, normalize_df, format_credits,
     credits_to_dollars, download_csv, mark_loaded, show_loaded_time,
     build_metered_credit_cte, render_drillable_bar_chart, render_query_drilldown,
+    get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
+    get_global_filter_clause,
 )
 
 
@@ -77,6 +79,13 @@ def render():
     session      = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     company      = st.session_state.get("active_company", "ALFA")
+    wh_filter_q = get_wh_filter_clause("q.warehouse_name", company)
+    wh_filter_m = get_wh_filter_clause("warehouse_name", company)
+    db_filter_q = get_db_filter_clause("q.database_name", company)
+    user_filter_q = get_user_filter_clause("q.user_name", company)
+    global_filter_q = get_global_filter_clause(
+        "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+    )
 
     tab_overview, tab_resmon, tab_morning, tab_briefing = st.tabs([
         "Overview", "Resource Monitors", "Morning Report", "📋 Executive Briefing"
@@ -87,14 +96,29 @@ def render():
         st.header("🏠 Account Health — Command Center")
 
         cache_age = 999
+        filter_sig = "|".join([
+            str(company),
+            str(st.session_state.get("global_start_date", "")),
+            str(st.session_state.get("global_end_date", "")),
+            str(st.session_state.get("global_warehouse", "")),
+            str(st.session_state.get("global_user", "")),
+            str(st.session_state.get("global_role", "")),
+            str(st.session_state.get("global_database", "")),
+        ])
         last_ts = st.session_state.get("_health_ts")
         if last_ts:
             cache_age = (datetime.now() - datetime.fromisoformat(last_ts)).total_seconds()
 
-        if st.button("🔄 Refresh Health", key="health_refresh") or cache_age > 60 or "health_data" not in st.session_state:
+        refresh_health = st.button("🔄 Refresh Health", key="health_refresh")
+        if (
+            refresh_health
+            or cache_age > 60
+            or "health_data" not in st.session_state
+            or st.session_state.get("_health_filter_sig") != filter_sig
+        ):
             hd = {}
             for key, sql in [
-                ("live", """
+                ("live", f"""
                     SELECT COUNT(*) AS active_count,
                            SUM(CASE WHEN execution_status='QUEUED'  THEN 1 ELSE 0 END) AS queued_count,
                            SUM(CASE WHEN execution_status='BLOCKED' THEN 1 ELSE 0 END) AS blocked_count
@@ -102,46 +126,48 @@ def render():
                         END_TIME_RANGE_START=>DATEADD('hours',-1,CURRENT_TIMESTAMP()),
                         RESULT_LIMIT=>500))
                     WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
+                      {wh_filter_m}
                 """),
-                ("burn", """
-                    SELECT SUM(CASE WHEN start_time >= DATEADD('hours',-48,CURRENT_TIMESTAMP())
-                                    AND  start_time <  DATEADD('hours',-24,CURRENT_TIMESTAMP())
+                ("burn", f"""
+                    SELECT SUM(CASE WHEN start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
                                THEN credits_used ELSE 0 END) AS last_24h,
-                           SUM(CASE WHEN start_time >= DATEADD('hours',-72,CURRENT_TIMESTAMP())
-                                    AND  start_time <  DATEADD('hours',-48,CURRENT_TIMESTAMP())
+                           SUM(CASE WHEN start_time >= DATEADD('hours',-48,CURRENT_TIMESTAMP())
+                                    AND  start_time <  DATEADD('hours',-24,CURRENT_TIMESTAMP())
                                THEN credits_used ELSE 0 END) AS prior_24h
                     FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-                    WHERE start_time >= DATEADD('hours',-72,CURRENT_TIMESTAMP())
-                      AND start_time <  DATEADD('hours',-24,CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('hours',-48,CURRENT_TIMESTAMP())
+                      {wh_filter_m}
                 """),
-                ("errors", """
+                ("errors", f"""
                     SELECT COUNT(*) AS err_count
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                    WHERE q.start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
                       AND execution_status = 'FAILED_WITH_ERROR'
+                      {wh_filter_q} {db_filter_q} {user_filter_q}
                 """),
-                ("storage", """
+                ("storage", f"""
                     SELECT ROUND(SUM(average_database_bytes+average_failsafe_bytes)/POWER(1024,4),2) AS storage_tb
                     FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
                     WHERE usage_date = (SELECT MAX(usage_date)
                                         FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY)
+                      {get_db_filter_clause("database_name", company)}
                 """),
                 ("cost_drivers", f"""
-                    WITH {build_metered_credit_cte(hours_back=48, include_recent=False)}
-                    SELECT q.user_name, q.warehouse_name,
+                    WITH {build_metered_credit_cte(hours_back=48, include_recent=True)}
+                    SELECT q.user_name, q.warehouse_name, q.warehouse_size,
                            COUNT(*) AS query_count,
                            ROUND(SUM(COALESCE(pqc.metered_credits,0)), 4) AS total_credits,
                            ROUND(SUM(q.bytes_scanned)/POWER(1024,3), 2) AS gb_scanned
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                     LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
-                    WHERE q.start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
-                      AND q.start_time < DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                    WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
-                    GROUP BY q.user_name, q.warehouse_name
+                      {wh_filter_q} {db_filter_q} {user_filter_q} {global_filter_q}
+                    GROUP BY q.user_name, q.warehouse_name, q.warehouse_size
                     ORDER BY total_credits DESC
                     LIMIT 5
                 """),
-                ("failed_jobs", """
+                ("failed_jobs", f"""
                     SELECT COALESCE(name, root_task_id, query_id) AS job_name,
                            database_name, schema_name,
                            COUNT(*) AS failures,
@@ -150,23 +176,26 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
                     WHERE scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
                       AND state = 'FAILED'
+                      {get_db_filter_clause("database_name", company)}
                     GROUP BY COALESCE(name, root_task_id, query_id), database_name, schema_name
                     ORDER BY failures DESC, last_failure DESC
                     LIMIT 5
                 """),
-                ("what_changed", """
+                ("what_changed", f"""
                     WITH today AS (
                         SELECT COUNT(*) AS q, SUM(credits_used_cloud_services) AS cloud_cr,
                                SUM(CASE WHEN execution_status='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS fails
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                        WHERE start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                        WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                          {wh_filter_q} {db_filter_q} {user_filter_q}
                     ),
                     yday AS (
                         SELECT COUNT(*) AS q, SUM(credits_used_cloud_services) AS cloud_cr,
                                SUM(CASE WHEN execution_status='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS fails
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                        WHERE start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
-                          AND start_time <  DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                        WHERE q.start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
+                          AND q.start_time <  DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                          {wh_filter_q} {db_filter_q} {user_filter_q}
                     )
                     SELECT today.q - yday.q AS query_delta,
                            ROUND(today.cloud_cr - yday.cloud_cr, 4) AS cloud_credit_delta,
@@ -181,6 +210,7 @@ def render():
 
             st.session_state["health_data"] = hd
             st.session_state["_health_ts"]  = datetime.now().isoformat()
+            st.session_state["_health_filter_sig"] = filter_sig
             mark_loaded("account_health")
 
         hd = st.session_state.get("health_data", {})
@@ -284,12 +314,13 @@ def render():
         st.divider()
         st.markdown("**🏭 Warehouse Pressure (last 1h)**")
         try:
-            df_wp = normalize_df(session.sql("""
-                SELECT warehouse_name, COUNT(*) AS queries,
+            df_wp = normalize_df(session.sql(f"""
+                SELECT warehouse_name, MAX(warehouse_size) AS warehouse_size, COUNT(*) AS queries,
                        SUM(CASE WHEN execution_status IN ('QUEUED','BLOCKED') THEN 1 ELSE 0 END) AS queued
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                 WHERE start_time >= DATEADD('hours',-1,CURRENT_TIMESTAMP())
                   AND warehouse_name IS NOT NULL
+                  {wh_filter_m}
                 GROUP BY warehouse_name ORDER BY queries DESC LIMIT 8
             """).to_pandas())
             if not df_wp.empty:

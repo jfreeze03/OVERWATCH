@@ -6,7 +6,7 @@
 #   Trexis: WH_TRXS_* only
 #
 # Filter strategy per mode:
-#   ALFA  → WH_ALFA_* + named ALFA WHs, exclude WH_TRXS_*
+#   ALFA  → all non-Trexis warehouses, plus ALFA database/user patterns
 #   Trexis → WH_TRXS_* only
 #   ALL   → no filter, but get_company_case_expr() labels every row
 # ─────────────────────────────────────────────────────────────────────────────
@@ -59,8 +59,7 @@ def get_wh_filter_clause(column: str = "warehouse_name", company: str = None) ->
     """
     Return SQL WHERE fragment to filter by warehouse.
 
-    ALFA:   AND (col ILIKE 'WH_ALFA_%' OR col = 'BI_COMPUTE_WH' OR ...)
-              AND (col NOT ILIKE 'WH_TRXS_%')
+    ALFA:   AND (col ILIKE '%') AND (col NOT ILIKE 'WH_TRXS_%')
     Trexis: AND (col ILIKE 'WH_TRXS_%')
     ALL:    '' — no filter; use get_company_case_expr() to label rows instead
     """
@@ -78,7 +77,7 @@ def get_wh_filter_clause(column: str = "warehouse_name", company: str = None) ->
         clauses.append(f"({like_parts})")
     if exclude:
         not_parts = " AND ".join(
-            f"{column} = '{p}'" if "%" not in p else f"{column} NOT ILIKE '{p}'"
+            f"{column} <> '{p}'" if "%" not in p else f"{column} NOT ILIKE '{p}'"
             for p in exclude
         )
         clauses.append(f"({not_parts})")

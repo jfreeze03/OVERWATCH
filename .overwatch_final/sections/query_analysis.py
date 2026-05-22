@@ -4,7 +4,7 @@ import pandas as pd
 from utils import (
     get_session, run_query, normalize_df, safe_sql,
     format_credits, credits_to_dollars, download_csv,
-    render_query_drilldown, build_metered_credit_cte,
+    render_query_drilldown, build_metered_credit_cte, get_wh_filter_clause,
 )
 from config import THRESHOLDS
 
@@ -45,8 +45,9 @@ def render():
                     SUBSTR(q.query_text,1,500)             AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                 LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
-                WHERE q.start_time >= DATEADD('days', -{days}, CURRENT_TIMESTAMP())
+                WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
                   AND q.warehouse_name IS NOT NULL
+                  {get_wh_filter_clause("q.warehouse_name")}
                   AND q.total_elapsed_time > {THRESHOLDS['query_duration_alert_sec'] * 1000}
                 ORDER BY q.total_elapsed_time DESC
                 LIMIT 500
@@ -82,7 +83,7 @@ def render():
 
         if st.button("Detect Degradation", key="deg_load"):
             try:
-                df_deg = normalize_df(session.sql("""
+                df_deg = normalize_df(session.sql(f"""
                 WITH sig_recent AS (
                     SELECT SUBSTR(query_text,1,200) AS sig,
                            AVG(total_elapsed_time)/1000 AS avg_sec,
@@ -90,6 +91,7 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
                       AND warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY sig HAVING cnt >= 5
                 ),
                 sig_prior AS (
@@ -100,6 +102,7 @@ def render():
                     WHERE start_time >= DATEADD('day',-14,CURRENT_TIMESTAMP())
                       AND start_time <  DATEADD('day',-7,CURRENT_TIMESTAMP())
                       AND warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("warehouse_name")}
                     GROUP BY sig HAVING cnt >= 5
                 )
                 SELECT r.sig, r.avg_sec AS recent_sec, p.avg_sec AS prior_sec,

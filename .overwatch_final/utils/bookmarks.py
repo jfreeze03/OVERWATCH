@@ -57,16 +57,6 @@ def _restore_state(state: dict) -> None:
         if v is not None:
             st.session_state[k] = v
 
-    # Also poke the nav group radios so sidebar highlights correctly
-    section = state.get("nav_section")
-    if section:
-        from config import NAV_GROUPS
-        for group_name, group_sections in NAV_GROUPS.items():
-            if section in group_sections:
-                st.session_state[f"nav_{group_name}"] = section
-                break
-
-
 def save_bookmark(session, name: str, shared: bool = False) -> bool:
     """Write current navigation state to OVERWATCH_BOOKMARKS. Returns True on success."""
     try:

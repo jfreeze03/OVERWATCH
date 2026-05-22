@@ -617,15 +617,6 @@ def inject_theme() -> None:
     combined = _STRUCTURAL_CSS.replace("{vars}", vars_block)
     st.markdown(combined, unsafe_allow_html=True)
 
-    # Inject theme-specific body class for targeted overrides
-    # (corporate needs white sidebar text; terminal gets scanlines)
-    body_class = f"{theme_key}-extra"
-    st.markdown(
-        f"<script>document.body.classList.add('{body_class}');"
-        f"document.body.classList.forEach(c=>{{ if(c.endsWith('-extra')&&c!=='{body_class}') document.body.classList.remove(c); }});</script>",
-        unsafe_allow_html=True,
-    )
-
 
 def render_theme_picker(persist: bool = False) -> None:
     """

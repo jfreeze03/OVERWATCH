@@ -111,6 +111,14 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+    active_section = st.session_state.get("nav_section", visible_sections[0])
+    if active_section not in visible_sections:
+        active_section = visible_sections[0]
+        st.session_state["nav_section"] = active_section
+
+    def _set_section(section: str) -> None:
+        st.session_state["nav_section"] = section
+
     for group_name, group_all in NAV_GROUPS.items():
         group_visible = [s for s in group_all if s in visible_sections]
         if not group_visible:
@@ -120,20 +128,16 @@ with st.sidebar:
             f"font-weight:700;margin:8px 0 4px;'>{group_name}</div>",
             unsafe_allow_html=True,
         )
-        st.radio(group_name, group_visible, key=f"nav_{group_name}", label_visibility="collapsed")
-
-    # Resolve active section
-    active_section = st.session_state.get("nav_section", visible_sections[0])
-    if active_section not in visible_sections:
-        active_section = visible_sections[0]
-        st.session_state["nav_section"] = active_section
-    for group_name in NAV_GROUPS:
-        val = st.session_state.get(f"nav_{group_name}")
-        if val and val != st.session_state.get(f"_prev_nav_{group_name}"):
-            if val in visible_sections:
-                st.session_state["nav_section"] = val
-                active_section = val
-        st.session_state[f"_prev_nav_{group_name}"] = val
+        for section_name in group_visible:
+            is_active = section_name == active_section
+            st.button(
+                f"● {section_name}" if is_active else section_name,
+                key=f"nav_btn_{group_name}_{section_name}",
+                type="primary" if is_active else "secondary",
+                use_container_width=True,
+                on_click=_set_section,
+                args=(section_name,),
+            )
 
     st.divider()
 

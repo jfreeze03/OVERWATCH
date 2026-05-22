@@ -2,7 +2,7 @@
 import pandas as pd
 import streamlit as st
 
-from config import THRESHOLDS, ALERT_DB, ALERT_SCHEMA, ALERT_TABLE
+from config import THRESHOLDS, ALERT_DB, ALERT_SCHEMA, ALERT_TABLE, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
 from utils import (
     build_action_queue_ddl,
     build_alert_task_sql,
@@ -104,6 +104,63 @@ def _render_queue(session):
         st.success("Action updated.")
         st.session_state["rec_action_queue"] = load_action_queue(session)
         st.rerun()
+
+    if row.get("STATUS") == "Fixed" and float(row.get("EST_MONTHLY_SAVINGS") or 0) > 0:
+        st.divider()
+        st.subheader("Log Fixed Action to Snowflake Value")
+        monthly_savings = float(row.get("EST_MONTHLY_SAVINGS") or 0)
+        savings_credits = monthly_savings / 30 / max(st.session_state.get("credit_price", 3.00), 0.01)
+        if st.button("Create Snowflake Value entry", key="queue_log_value"):
+            try:
+                value_table = f"{ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.OVERWATCH_ROI_LOG"
+                desc = str(row.get("RECOMMENDED_ACTION") or row.get("FINDING") or "").replace("'", "''")[:1000]
+                entity = str(row.get("ENTITY_NAME") or "").replace("'", "''")[:500]
+                notes = f"Created from action queue item {selected}".replace("'", "''")
+                session.sql(f"""
+                    INSERT INTO {value_table}
+                        (CATEGORY, DESCRIPTION, ENTITY, BASELINE_CREDITS,
+                         CURRENT_CREDITS, SAVINGS_CREDITS, SAVINGS_MONTHLY, VERIFIED, NOTES)
+                    VALUES (
+                        'Action Queue', '{desc}', '{entity}',
+                        {savings_credits}, 0, {savings_credits},
+                        {monthly_savings}, TRUE, '{notes}'
+                    )
+                """).collect()
+                st.success(f"Logged ${monthly_savings:,.2f}/month to Snowflake Value.")
+            except Exception as e:
+                st.error(f"Could not log Snowflake Value: {e}")
+                st.info("Run the Snowflake Value setup DDL first.")
+
+
+def _alert_actions(df_alerts: pd.DataFrame) -> list[dict]:
+    actions = []
+    company = _active_company()
+    for _, row in df_alerts.head(200).iterrows():
+        alert_type = str(row.get("ALERT_TYPE") or "Alert")
+        severity = str(row.get("SEVERITY") or "Medium").title()
+        if severity.upper() == "HIGH":
+            severity = "High"
+        elif severity.upper() == "MEDIUM":
+            severity = "Medium"
+        entity = str(row.get("ENTITY") or "Snowflake account")
+        detail = str(row.get("DETAIL") or "")
+        alert_id = str(row.get("ALERT_ID") or row.get("ALERT_DATE") or "")
+        actions.append({
+            "Action ID": make_action_id("Alert", entity, f"{alert_type}|{detail}|{alert_id}"),
+            "Source": "Alert History",
+            "Severity": severity if severity in ["Critical", "High", "Medium", "Low"] else "Medium",
+            "Category": "Alert",
+            "Entity Type": "Alert Entity",
+            "Entity": entity,
+            "Owner": str(row.get("OWNER") or "DBA"),
+            "Finding": f"{alert_type}: {detail}",
+            "Action": str(row.get("SUGGESTED_ACTION") or "Review alert detail and related dashboard drilldown."),
+            "Estimated Monthly Savings": 0.0,
+            "Generated SQL Fix": "-- Review alert evidence before applying a fix.",
+            "Proof Query": f"SELECT * FROM {ALERT_DB}.{ALERT_SCHEMA}.{ALERT_TABLE} WHERE ALERT_ID = {alert_id};" if alert_id.isdigit() else "OVERWATCH alert history row.",
+            "Company": company,
+        })
+    return actions
 
 
 def render():
@@ -399,7 +456,26 @@ def render():
                             df_ah = df_ah[df_ah["STATUS"] == status]
                     st.dataframe(df_ah, use_container_width=True)
                     download_csv(df_ah, "alert_history.csv")
+                    st.session_state["rec_alert_history"] = df_ah
                 else:
                     st.info("No alerts recorded yet.")
+                    st.session_state["rec_alert_history"] = pd.DataFrame()
             except Exception as e:
                 st.info(f"Alert table not found. Run the setup SQL first. ({e})")
+
+        df_alerts = st.session_state.get("rec_alert_history")
+        if df_alerts is not None and not df_alerts.empty:
+            if st.button("Save alert history to Action Queue", key="alert_history_to_queue"):
+                try:
+                    saved = upsert_actions(session, _alert_actions(df_alerts))
+                    st.success(f"Saved {saved} alert actions to the persistent action queue.")
+                    st.session_state.pop("rec_action_queue", None)
+                except Exception as e:
+                    st.error(f"Could not save alerts to action queue: {e}")
+                    st.download_button(
+                        "Download Action Queue DDL",
+                        build_action_queue_ddl(),
+                        file_name="overwatch_action_queue_setup.sql",
+                        mime="text/plain",
+                        key="alert_action_queue_ddl",
+                    )

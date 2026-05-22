@@ -1,6 +1,64 @@
 # sections/object_change_monitor.py - Who changed what?
 import streamlit as st
-from utils import get_session, normalize_df, download_csv, safe_sql
+from utils import (
+    build_action_queue_ddl,
+    download_csv,
+    get_session,
+    make_action_id,
+    normalize_df,
+    safe_sql,
+    upsert_actions,
+)
+
+
+def _active_company() -> str:
+    return st.session_state.get("active_company", "ALFA")
+
+
+def _queue_changes(session, df, source: str, category: str, entity_type: str, severity: str) -> None:
+    if df is None or df.empty:
+        st.info("Nothing to queue from this result set.")
+        return
+    actions = []
+    company = _active_company()
+    for _, row in df.head(200).iterrows():
+        entity = (
+            row.get("DATABASE_NAME")
+            or row.get("SCHEMA_NAME")
+            or row.get("USER_NAME")
+            or row.get("QUERY_ID")
+            or "Snowflake account"
+        )
+        change_type = str(row.get("CHANGE_TYPE") or row.get("DRIFT_INDICATOR") or category)
+        qid = str(row.get("QUERY_ID") or "")
+        finding = f"{change_type} by {row.get('USER_NAME', 'unknown')} at {row.get('START_TIME', '')}"
+        actions.append({
+            "Action ID": make_action_id(category, str(entity), f"{finding}|{qid}"),
+            "Source": source,
+            "Severity": severity,
+            "Category": category,
+            "Entity Type": entity_type,
+            "Entity": str(entity),
+            "Owner": "DBA",
+            "Finding": finding,
+            "Action": "Review change for approval, ownership, policy impact, and drift risk.",
+            "Estimated Monthly Savings": 0.0,
+            "Generated SQL Fix": "-- Review the captured query text before reverting or approving this change.",
+            "Proof Query": f"QUERY_HISTORY query_id = '{qid}'",
+            "Company": company,
+        })
+    try:
+        saved = upsert_actions(session, actions)
+        st.success(f"Saved {saved} findings to the action queue.")
+    except Exception as e:
+        st.error(f"Could not save to action queue: {e}")
+        st.download_button(
+            "Download Action Queue DDL",
+            build_action_queue_ddl(),
+            file_name="overwatch_action_queue_setup.sql",
+            mime="text/plain",
+            key=f"ocm_queue_ddl_{source}",
+        )
 
 
 def render():
@@ -58,6 +116,8 @@ def render():
                 st.dataframe(df.groupby(["CHANGE_TYPE", "USER_NAME"]).size().reset_index(name="COUNT"), use_container_width=True)
             st.dataframe(df, use_container_width=True)
             download_csv(df, "object_changes.csv")
+            if st.button("Save object changes to Action Queue", key="ocm_obj_queue"):
+                _queue_changes(session, df, "Object Change Monitor", "Governance", "Object", "Medium")
 
     with tab_access:
         if st.button("Load Grant / Role Changes", key="ocm_grant_load"):
@@ -85,7 +145,10 @@ def render():
             except Exception as e:
                 st.error(f"Access change scan failed: {e}")
         if st.session_state.get("ocm_df_access_changes") is not None:
-            st.dataframe(st.session_state["ocm_df_access_changes"], use_container_width=True)
+            df = st.session_state["ocm_df_access_changes"]
+            st.dataframe(df, use_container_width=True)
+            if st.button("Save access changes to Action Queue", key="ocm_access_queue"):
+                _queue_changes(session, df, "Access Change Monitor", "Security", "Grant/Role", "High")
 
     with tab_policy:
         if st.button("Load Masking / Tag Policy Changes", key="ocm_policy_load"):
@@ -110,7 +173,10 @@ def render():
             except Exception as e:
                 st.error(f"Policy change scan failed: {e}")
         if st.session_state.get("ocm_df_policy_changes") is not None:
-            st.dataframe(st.session_state["ocm_df_policy_changes"], use_container_width=True)
+            df = st.session_state["ocm_df_policy_changes"]
+            st.dataframe(df, use_container_width=True)
+            if st.button("Save policy changes to Action Queue", key="ocm_policy_queue"):
+                _queue_changes(session, df, "Policy Change Monitor", "Security", "Policy/Tag", "High")
 
     with tab_drift:
         if st.button("Load Drift Indicators", key="ocm_drift_load"):
@@ -133,5 +199,8 @@ def render():
             except Exception as e:
                 st.error(f"Drift scan failed: {e}")
         if st.session_state.get("ocm_df_drift") is not None:
-            st.dataframe(st.session_state["ocm_df_drift"], use_container_width=True)
-            download_csv(st.session_state["ocm_df_drift"], "terraform_drift_indicators.csv")
+            df = st.session_state["ocm_df_drift"]
+            st.dataframe(df, use_container_width=True)
+            download_csv(df, "terraform_drift_indicators.csv")
+            if st.button("Save drift indicators to Action Queue", key="ocm_drift_queue"):
+                _queue_changes(session, df, "Terraform Drift Monitor", "Governance", "Drift", "High")

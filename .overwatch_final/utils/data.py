@@ -1,0 +1,64 @@
+# utils/data.py — DataFrame normalization: Decimal/Timestamp handling
+import pandas as pd
+
+# Columns that should always be numeric
+_NUMERIC_COLS = {
+    'CREDITS_USED', 'CREDITS_USED_COMPUTE', 'CREDITS_USED_CLOUD_SERVICES',
+    'TOTAL_CREDITS', 'COMPUTE_CREDITS', 'CLOUD_CREDITS', 'CLOUD_SERVICES_CREDITS',
+    'TOTAL_ELAPSED_TIME', 'BYTES_SCANNED', 'BYTES_WRITTEN',
+    'CREDITS_PER_QUERY', 'COST', 'CREDITS_BILLED', 'CREDITS',
+    'EST_COMPUTE_CREDITS', 'TOTAL_EST_CREDITS', 'ELAPSED_SEC',
+    'EXEC_SEC', 'COMPILE_SEC', 'QUEUED_SEC', 'MB_SCANNED',
+    'ROWS_PRODUCED', 'LOCAL_SPILL_GB', 'REMOTE_SPILL_GB', 'GB_SCANNED',
+    'AVG_ELAPSED_SEC', 'P95_ELAPSED_SEC', 'MAX_ELAPSED_SEC',
+    'METERED_CREDITS', 'EST_CREDITS', 'DAY_CREDITS', 'DAILY_CREDITS',
+    'HYBRID_TABLE_GB', 'ARCHIVE_COOL_GB', 'ARCHIVE_COLD_GB',
+    'STORAGE_GB', 'STAGE_GB', 'FAILSAFE_GB', 'TOTAL_STORAGE_GB',
+    'TOKEN_CREDITS', 'TOTAL_TOKENS', 'CREDITS_BILLED',
+    'IDLE_CREDITS', 'IDLE_HOURS', 'REMOTE_SPILL_GB',
+    'CREDIT_QUOTA', 'USED_CREDITS', 'REMAINING_CREDITS',
+    'QUERY_COUNT', 'FAIL_COUNT', 'FAILURES', 'ERR_COUNT',
+    'ACTIVE_COUNT', 'QUEUED_COUNT', 'BLOCKED_COUNT',
+    'STORAGE_BYTES', 'FAILSAFE_BYTES', 'STAGE_BYTES',
+    'HOURLY_COMPUTE_CREDITS', 'EXEC_MS', 'HOUR_TOTAL_EXEC_MS',
+}
+
+# Columns that should always be datetime
+_DATE_COLS = {
+    'START_TIME', 'END_TIME', 'USAGE_DATE', 'DATE',
+    'TIME_BUCKET', 'HOUR_BUCKET', 'SCHEDULED_TIME',
+    'COMPLETED_TIME', 'LAST_LOGIN', 'CREATED_ON',
+    'LAST_QUERY_TIME', 'FIRST_USAGE', 'LAST_USAGE',
+    'LAST_LOAD_TIME', 'USAGE_TIME',
+}
+
+
+def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize Snowflake Decimal/Timestamp types for Pandas compatibility.
+    - Upper-cases all column names (Snowflake returns uppercase by default)
+    - Converts known numeric columns to float
+    - Converts known timestamp columns to timezone-naive datetime
+    """
+    if df is None or df.empty:
+        return df if df is not None else pd.DataFrame()
+
+    df = df.copy()
+    df.columns = [c.upper() for c in df.columns]
+
+    for col in set(df.columns) & _NUMERIC_COLS:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(float)
+
+    for col in set(df.columns) & _DATE_COLS:
+        df[col] = pd.to_datetime(df[col], errors='coerce')
+        if hasattr(df[col], 'dt') and df[col].dt.tz is not None:
+            df[col] = df[col].dt.tz_convert(None)
+
+    return df
+
+
+def safe_strip_tz(series: pd.Series) -> pd.Series:
+    """Safely strip timezone info from a datetime Series without raising errors."""
+    s = pd.to_datetime(series, errors='coerce')
+    if hasattr(s, 'dt') and s.dt.tz is not None:
+        return s.dt.tz_convert(None)
+    return s

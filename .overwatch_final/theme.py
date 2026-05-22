@@ -1,0 +1,731 @@
+# theme.py — OVERWATCH V3 · 5-theme system
+# ─────────────────────────────────────────────────────────────────────────────
+# THEMES:
+#   1. midnight   — Original dark glassmorphism (cyan/indigo/purple)
+#   2. corporate  — Traditional light: white cards, navy sidebar, ALFA blue
+#   3. terminal   — Hacker green-on-black: monospace font, CRT scanlines
+#   4. aurora     — Dark with shifting teal-to-emerald gradient accents
+#   5. carbon     — Dark charcoal + hot orange: industrial/ops aesthetic
+#
+# Architecture: All structural styles reference CSS custom properties.
+# Switching theme = injecting a new :root { } block. Zero JS required.
+# Theme picker renders as 5 clickable swatches in the sidebar Settings.
+# Preference persists in session_state; optional DB persistence via Bookmarks.
+#
+# Usage in app.py:
+#   from theme import inject_theme, render_theme_picker
+#   inject_theme()
+#   # inside sidebar Settings expander:
+#   render_theme_picker()
+# ─────────────────────────────────────────────────────────────────────────────
+import streamlit as st
+
+_DEFAULT_THEME = "midnight"
+
+# ── Theme metadata (used for the picker UI) ───────────────────────────────────
+THEMES = {
+    "midnight": {
+        "label":    "Midnight",
+        "emoji":    "🌌",
+        "swatch":   "#38bdf8",
+        "bg":       "#0a0e1a",
+        "desc":     "Dark glassmorphism · cyan accent",
+    },
+    "corporate": {
+        "label":    "Corporate",
+        "emoji":    "🏢",
+        "swatch":   "#1e3a8a",
+        "bg":       "#f8fafc",
+        "desc":     "Traditional light · navy & ALFA blue",
+    },
+    "terminal": {
+        "label":    "Terminal",
+        "emoji":    "💻",
+        "swatch":   "#00ff41",
+        "bg":       "#0a0a0a",
+        "desc":     "Green-on-black · monospace · CRT glow",
+    },
+    "aurora": {
+        "label":    "Aurora",
+        "emoji":    "🌌",
+        "swatch":   "#2dd4bf",
+        "bg":       "#0d1117",
+        "desc":     "Dark · teal-to-emerald gradients",
+    },
+    "carbon": {
+        "label":    "Carbon",
+        "emoji":    "🔥",
+        "swatch":   "#f97316",
+        "bg":       "#111111",
+        "desc":     "Charcoal · hot orange · industrial",
+    },
+}
+
+# ── CSS variable blocks — one per theme ───────────────────────────────────────
+
+_VARS = {
+
+# ─── 1. MIDNIGHT — original dark glassmorphism ───────────────────────────────
+"midnight": """
+:root {
+    --bg-app:          linear-gradient(135deg, #0a0e1a 0%, #0d1525 50%, #0a1628 100%);
+    --bg-sidebar:      linear-gradient(180deg, #0d1525 0%, #111d33 100%);
+    --bg-card:         rgba(15, 23, 42, 0.60);
+    --bg-card-hover:   rgba(15, 23, 42, 0.85);
+    --bg-input:        rgba(15, 23, 42, 0.80);
+    --bg-tab-list:     rgba(15, 23, 42, 0.40);
+    --bg-expander:     rgba(15, 23, 42, 0.40);
+
+    --border-subtle:   rgba(56, 189, 248, 0.10);
+    --border-normal:   rgba(56, 189, 248, 0.20);
+    --border-strong:   rgba(56, 189, 248, 0.45);
+    --border-sidebar:  rgba(56, 189, 248, 0.10);
+
+    --text-primary:    #e2e8f0;
+    --text-secondary:  #94a3b8;
+    --text-muted:      #64748b;
+    --text-input:      #e2e8f0;
+    --text-heading:    transparent;
+
+    --accent:          #38bdf8;
+    --accent-rgb:      56, 189, 248;
+    --accent2:         #818cf8;
+    --accent3:         #c084fc;
+    --h1-gradient:     linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
+
+    --metric-shadow:        0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+    --metric-hover-shadow:  0 8px 32px rgba(56,189,248,0.12), inset 0 1px 0 rgba(255,255,255,0.08);
+    --btn-bg:          linear-gradient(135deg, rgba(56,189,248,0.15), rgba(129,140,248,0.15));
+    --btn-bg-hover:    linear-gradient(135deg, rgba(56,189,248,0.30), rgba(129,140,248,0.30));
+    --btn-border:      rgba(56, 189, 248, 0.30);
+    --btn-hover-shadow: 0 0 20px rgba(56,189,248,0.20);
+    --slider-track:    linear-gradient(90deg, #2563eb, #38bdf8);
+    --tab-active-bg:   rgba(56, 189, 248, 0.15);
+    --tab-active-col:  #38bdf8;
+    --hr-bg:           linear-gradient(90deg, transparent, rgba(56,189,248,0.30), transparent);
+    --scrollbar-track: rgba(15, 23, 42, 0.50);
+    --scrollbar-thumb: rgba(56, 189, 248, 0.30);
+    --scrollbar-hover: rgba(56, 189, 248, 0.55);
+    --font-body:       'Inter', 'DM Sans', system-ui, sans-serif;
+    --font-mono:       'DM Mono', 'Fira Code', monospace;
+    --extra-css:       '';
+}
+""",
+
+# ─── 2. CORPORATE — traditional light, navy sidebar, ALFA blue ───────────────
+"corporate": """
+:root {
+    --bg-app:          #f1f5f9;
+    --bg-sidebar:      linear-gradient(180deg, #1e3a8a 0%, #1e40af 100%);
+    --bg-card:         #ffffff;
+    --bg-card-hover:   #f8fafc;
+    --bg-input:        #ffffff;
+    --bg-tab-list:     #e2e8f0;
+    --bg-expander:     #f8fafc;
+
+    --border-subtle:   #e2e8f0;
+    --border-normal:   #cbd5e1;
+    --border-strong:   #1e3a8a;
+    --border-sidebar:  rgba(255,255,255,0.15);
+
+    --text-primary:    #0f172a;
+    --text-secondary:  #475569;
+    --text-muted:      #94a3b8;
+    --text-input:      #0f172a;
+    --text-heading:    #1e3a8a;
+
+    --accent:          #1d4ed8;
+    --accent-rgb:      29, 78, 216;
+    --accent2:         #1e40af;
+    --accent3:         #1e3a8a;
+    --h1-gradient:     linear-gradient(90deg, #1e3a8a, #1d4ed8, #2563eb);
+
+    --metric-shadow:        0 1px 4px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+    --metric-hover-shadow:  0 4px 16px rgba(29,78,216,0.12), 0 2px 6px rgba(0,0,0,0.06);
+    --btn-bg:          linear-gradient(135deg, rgba(29,78,216,0.08), rgba(30,58,138,0.08));
+    --btn-bg-hover:    linear-gradient(135deg, rgba(29,78,216,0.18), rgba(30,58,138,0.18));
+    --btn-border:      rgba(29, 78, 216, 0.40);
+    --btn-hover-shadow: 0 2px 12px rgba(29,78,216,0.18);
+    --slider-track:    linear-gradient(90deg, #1e3a8a, #2563eb);
+    --tab-active-bg:   rgba(29, 78, 216, 0.10);
+    --tab-active-col:  #1d4ed8;
+    --hr-bg:           linear-gradient(90deg, transparent, #cbd5e1, transparent);
+    --scrollbar-track: #f1f5f9;
+    --scrollbar-thumb: rgba(29, 78, 216, 0.25);
+    --scrollbar-hover: rgba(29, 78, 216, 0.45);
+    --font-body:       'Georgia', 'Times New Roman', serif;
+    --font-mono:       'Courier New', monospace;
+    --extra-css:       '';
+}
+""",
+
+# ─── 3. TERMINAL — green-on-black, monospace, CRT scanline overlay ───────────
+"terminal": """
+:root {
+    --bg-app:          #0a0a0a;
+    --bg-sidebar:      #0d0d0d;
+    --bg-card:         rgba(0, 255, 65, 0.04);
+    --bg-card-hover:   rgba(0, 255, 65, 0.08);
+    --bg-input:        rgba(0, 0, 0, 0.80);
+    --bg-tab-list:     rgba(0, 255, 65, 0.04);
+    --bg-expander:     rgba(0, 0, 0, 0.60);
+
+    --border-subtle:   rgba(0, 255, 65, 0.15);
+    --border-normal:   rgba(0, 255, 65, 0.30);
+    --border-strong:   rgba(0, 255, 65, 0.60);
+    --border-sidebar:  rgba(0, 255, 65, 0.20);
+
+    --text-primary:    #00ff41;
+    --text-secondary:  #00cc33;
+    --text-muted:      #006614;
+    --text-input:      #00ff41;
+    --text-heading:    transparent;
+
+    --accent:          #00ff41;
+    --accent-rgb:      0, 255, 65;
+    --accent2:         #00cc33;
+    --accent3:         #39ff14;
+    --h1-gradient:     linear-gradient(90deg, #00ff41, #39ff14, #00cc33);
+
+    --metric-shadow:        0 0 12px rgba(0,255,65,0.15), 0 0 4px rgba(0,255,65,0.08);
+    --metric-hover-shadow:  0 0 24px rgba(0,255,65,0.30), 0 0 8px rgba(0,255,65,0.15);
+    --btn-bg:          rgba(0, 255, 65, 0.08);
+    --btn-bg-hover:    rgba(0, 255, 65, 0.18);
+    --btn-border:      rgba(0, 255, 65, 0.40);
+    --btn-hover-shadow: 0 0 16px rgba(0,255,65,0.35);
+    --slider-track:    linear-gradient(90deg, #006614, #00ff41);
+    --tab-active-bg:   rgba(0, 255, 65, 0.12);
+    --tab-active-col:  #00ff41;
+    --hr-bg:           linear-gradient(90deg, transparent, rgba(0,255,65,0.40), transparent);
+    --scrollbar-track: #0d0d0d;
+    --scrollbar-thumb: rgba(0, 255, 65, 0.30);
+    --scrollbar-hover: rgba(0, 255, 65, 0.60);
+    --font-body:       'Courier New', 'Lucida Console', monospace;
+    --font-mono:       'Courier New', monospace;
+    --extra-css:       'scanlines';
+}
+""",
+
+# ─── 4. AURORA — dark midnight with shifting teal-emerald-cyan accents ────────
+"aurora": """
+:root {
+    --bg-app:          linear-gradient(160deg, #0d1117 0%, #0d1f2d 40%, #0d1a0f 100%);
+    --bg-sidebar:      linear-gradient(180deg, #0d1117 0%, #0d1f1c 100%);
+    --bg-card:         rgba(13, 31, 29, 0.65);
+    --bg-card-hover:   rgba(13, 31, 29, 0.90);
+    --bg-input:        rgba(13, 31, 29, 0.80);
+    --bg-tab-list:     rgba(13, 31, 29, 0.45);
+    --bg-expander:     rgba(13, 31, 29, 0.45);
+
+    --border-subtle:   rgba(45, 212, 191, 0.12);
+    --border-normal:   rgba(45, 212, 191, 0.25);
+    --border-strong:   rgba(45, 212, 191, 0.50);
+    --border-sidebar:  rgba(45, 212, 191, 0.12);
+
+    --text-primary:    #ecfdf5;
+    --text-secondary:  #6ee7b7;
+    --text-muted:      #374151;
+    --text-input:      #ecfdf5;
+    --text-heading:    transparent;
+
+    --accent:          #2dd4bf;
+    --accent-rgb:      45, 212, 191;
+    --accent2:         #34d399;
+    --accent3:         #6ee7b7;
+    --h1-gradient:     linear-gradient(90deg, #2dd4bf, #34d399, #059669);
+
+    --metric-shadow:        0 4px 24px rgba(0,0,0,0.40), inset 0 1px 0 rgba(45,212,191,0.08);
+    --metric-hover-shadow:  0 8px 32px rgba(45,212,191,0.15), inset 0 1px 0 rgba(45,212,191,0.12);
+    --btn-bg:          linear-gradient(135deg, rgba(45,212,191,0.12), rgba(52,211,153,0.12));
+    --btn-bg-hover:    linear-gradient(135deg, rgba(45,212,191,0.28), rgba(52,211,153,0.28));
+    --btn-border:      rgba(45, 212, 191, 0.30);
+    --btn-hover-shadow: 0 0 20px rgba(45,212,191,0.22);
+    --slider-track:    linear-gradient(90deg, #059669, #2dd4bf);
+    --tab-active-bg:   rgba(45, 212, 191, 0.14);
+    --tab-active-col:  #2dd4bf;
+    --hr-bg:           linear-gradient(90deg, transparent, rgba(45,212,191,0.30), transparent);
+    --scrollbar-track: rgba(13, 31, 29, 0.50);
+    --scrollbar-thumb: rgba(45, 212, 191, 0.28);
+    --scrollbar-hover: rgba(45, 212, 191, 0.55);
+    --font-body:       'Inter', system-ui, sans-serif;
+    --font-mono:       'JetBrains Mono', 'Fira Code', monospace;
+    --extra-css:       '';
+}
+""",
+
+# ─── 5. CARBON — charcoal + hot orange, industrial ops aesthetic ─────────────
+"carbon": """
+:root {
+    --bg-app:          linear-gradient(160deg, #111111 0%, #1a1a1a 50%, #111111 100%);
+    --bg-sidebar:      linear-gradient(180deg, #0f0f0f 0%, #1a1a1a 100%);
+    --bg-card:         rgba(30, 30, 30, 0.80);
+    --bg-card-hover:   rgba(40, 40, 40, 0.95);
+    --bg-input:        rgba(20, 20, 20, 0.90);
+    --bg-tab-list:     rgba(20, 20, 20, 0.60);
+    --bg-expander:     rgba(25, 25, 25, 0.70);
+
+    --border-subtle:   rgba(249, 115, 22, 0.12);
+    --border-normal:   rgba(249, 115, 22, 0.25);
+    --border-strong:   rgba(249, 115, 22, 0.55);
+    --border-sidebar:  rgba(249, 115, 22, 0.15);
+
+    --text-primary:    #f5f5f5;
+    --text-secondary:  #a3a3a3;
+    --text-muted:      #525252;
+    --text-input:      #f5f5f5;
+    --text-heading:    transparent;
+
+    --accent:          #f97316;
+    --accent-rgb:      249, 115, 22;
+    --accent2:         #fb923c;
+    --accent3:         #fdba74;
+    --h1-gradient:     linear-gradient(90deg, #f97316, #fb923c, #fbbf24);
+
+    --metric-shadow:        0 4px 20px rgba(0,0,0,0.50), inset 0 1px 0 rgba(255,255,255,0.04);
+    --metric-hover-shadow:  0 8px 30px rgba(249,115,22,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
+    --btn-bg:          linear-gradient(135deg, rgba(249,115,22,0.12), rgba(251,146,60,0.12));
+    --btn-bg-hover:    linear-gradient(135deg, rgba(249,115,22,0.28), rgba(251,146,60,0.28));
+    --btn-border:      rgba(249, 115, 22, 0.35);
+    --btn-hover-shadow: 0 0 20px rgba(249,115,22,0.25);
+    --slider-track:    linear-gradient(90deg, #c2410c, #f97316);
+    --tab-active-bg:   rgba(249, 115, 22, 0.14);
+    --tab-active-col:  #f97316;
+    --hr-bg:           linear-gradient(90deg, transparent, rgba(249,115,22,0.35), transparent);
+    --scrollbar-track: rgba(15, 15, 15, 0.60);
+    --scrollbar-thumb: rgba(249, 115, 22, 0.30);
+    --scrollbar-hover: rgba(249, 115, 22, 0.55);
+    --font-body:       'Inter', 'Roboto', system-ui, sans-serif;
+    --font-mono:       'JetBrains Mono', 'Consolas', monospace;
+    --extra-css:       '';
+}
+""",
+}
+
+# ── Shared structural styles (all colors via variables) ───────────────────────
+_STRUCTURAL_CSS = """
+<style>
+{vars}
+
+/* ═══════════════════════════════════════════ OVERWATCH V3 THEME ENGINE ═══ */
+
+/* ── Base ── */
+.stApp, .stApp > * {
+    background: var(--bg-app) !important;
+    font-family: var(--font-body) !important;
+}
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: var(--bg-sidebar) !important;
+    border-right: 1px solid var(--border-sidebar) !important;
+}
+[data-testid="stSidebar"] .stRadio > label,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] span {
+    color: var(--text-secondary) !important;
+    font-family: var(--font-body) !important;
+}
+[data-testid="stSidebar"] .stRadio > div > label:hover {
+    color: var(--accent) !important;
+    background: rgba(var(--accent-rgb), 0.06);
+    border-radius: 6px;
+}
+[data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {
+    background: rgba(var(--accent-rgb), 0.12);
+    border-left: 3px solid var(--accent);
+    padding-left: 12px;
+    border-radius: 0 6px 6px 0;
+}
+
+/* ── Metric cards ── */
+[data-testid="stMetric"] {
+    background: var(--bg-card) !important;
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 12px !important;
+    padding: 16px 20px !important;
+    box-shadow: var(--metric-shadow) !important;
+    transition: all 0.25s ease;
+}
+[data-testid="stMetric"]:hover {
+    border-color: var(--border-strong) !important;
+    box-shadow: var(--metric-hover-shadow) !important;
+    transform: translateY(-2px);
+}
+[data-testid="stMetricLabel"] {
+    color: var(--text-muted) !important;
+    font-size: 0.72rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-family: var(--font-body) !important;
+}
+[data-testid="stMetricValue"] {
+    color: var(--text-primary) !important;
+    font-weight: 700 !important;
+    font-size: 1.5rem !important;
+    font-family: var(--font-body) !important;
+}
+
+/* ── Headings ── */
+h1 {
+    background: var(--h1-gradient) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.5px;
+    font-family: var(--font-body) !important;
+}
+h2, h3 {
+    color: var(--text-primary) !important;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 8px;
+    font-family: var(--font-body) !important;
+}
+p, li, span, div { color: var(--text-primary); font-family: var(--font-body) !important; }
+
+/* ── DataFrames ── */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+/* ── Buttons ── */
+.stButton > button {
+    background: var(--btn-bg) !important;
+    border: 1px solid var(--btn-border) !important;
+    color: var(--text-primary) !important;
+    border-radius: 8px !important;
+    font-weight: 600;
+    font-family: var(--font-body) !important;
+    transition: all 0.25s ease;
+    backdrop-filter: blur(8px);
+}
+.stButton > button:hover {
+    background: var(--btn-bg-hover) !important;
+    border-color: var(--border-strong) !important;
+    box-shadow: var(--btn-hover-shadow) !important;
+    transform: translateY(-1px);
+}
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, var(--accent), var(--accent2)) !important;
+    border: none !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.35) !important;
+}
+.stButton > button[kind="primary"]:hover {
+    box-shadow: 0 6px 24px rgba(var(--accent-rgb), 0.55) !important;
+}
+
+/* ── Expanders ── */
+[data-testid="stExpander"] {
+    background: var(--bg-expander) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 10px;
+    backdrop-filter: blur(8px);
+}
+
+/* ── Dividers ── */
+hr {
+    border: none !important;
+    height: 1px;
+    background: var(--hr-bg) !important;
+    margin: 24px 0;
+}
+
+/* ── Charts ── */
+[data-testid="stArrowVegaLiteChart"],
+[data-testid="stVegaLiteChart"] {
+    background: transparent !important;
+    border-radius: 10px;
+}
+
+/* ── Inputs ── */
+.stSelectbox > div > div,
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border-normal) !important;
+    border-radius: 8px !important;
+    color: var(--text-input) !important;
+    font-family: var(--font-body) !important;
+}
+.stSelectbox > div > div:focus-within,
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: var(--border-strong) !important;
+    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.12) !important;
+}
+
+/* ── Slider ── */
+.stSlider > div > div > div > div {
+    background: var(--slider-track) !important;
+}
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+    background: var(--bg-tab-list);
+    border-radius: 10px;
+    padding: 4px;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px;
+    color: var(--text-secondary) !important;
+    font-weight: 500;
+    font-family: var(--font-body) !important;
+}
+.stTabs [aria-selected="true"] {
+    background: var(--tab-active-bg) !important;
+    color: var(--tab-active-col) !important;
+}
+
+/* ── Captions ── */
+.stCaption, [data-testid="stCaptionContainer"] {
+    color: var(--text-muted) !important;
+    font-family: var(--font-body) !important;
+}
+
+/* ── Code blocks ── */
+code, pre, .stCodeBlock {
+    font-family: var(--font-mono) !important;
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 6px;
+    color: var(--accent) !important;
+}
+
+/* ── Scrollbars ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
+
+/* ── Animations ── */
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+@keyframes aurora-shift {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+.live-indicator { animation: pulse 2s ease-in-out infinite; }
+
+/* ── Status badges ── */
+.status-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 12px;
+    font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.badge-healthy  { background: rgba(34,197,94,0.20); color:#4ade80; border:1px solid rgba(34,197,94,0.30); }
+.badge-warning  { background: rgba(251,191,36,0.20); color:#fbbf24; border:1px solid rgba(251,191,36,0.30); }
+.badge-critical { background: rgba(239,68,68,0.20);  color:#f87171; border:1px solid rgba(239,68,68,0.30); }
+
+/* ── Metric card container (custom) ── */
+.metric-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px; padding: 24px; margin: 8px 0;
+    backdrop-filter: blur(12px);
+}
+.glow-text { text-shadow: 0 0 10px rgba(var(--accent-rgb), 0.5); }
+.stAlert { border-radius: 10px; backdrop-filter: blur(8px); }
+
+/* ═══════════════════ TERMINAL theme extras ═══════════════════ */
+.terminal-extra .stApp::before {
+    content: '';
+    position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0,0,0,0.03) 0px,
+        rgba(0,0,0,0.03) 1px,
+        transparent 1px,
+        transparent 2px
+    );
+}
+
+/* ═══════════════════ CORPORATE theme extras ═══════════════════ */
+/* Sidebar text needs to be white on navy background */
+.corporate-extra [data-testid="stSidebar"] label,
+.corporate-extra [data-testid="stSidebar"] span,
+.corporate-extra [data-testid="stSidebar"] .stRadio > label,
+.corporate-extra [data-testid="stSidebar"] p {
+    color: rgba(255,255,255,0.85) !important;
+}
+.corporate-extra [data-testid="stSidebar"] .stRadio > div > label:hover {
+    color: #ffffff !important;
+    background: rgba(255,255,255,0.10);
+}
+.corporate-extra [data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {
+    background: rgba(255,255,255,0.15);
+    border-left: 3px solid #ffffff;
+}
+/* Corporate: body text stays dark on light backgrounds */
+.corporate-extra p,
+.corporate-extra li,
+.corporate-extra span,
+.corporate-extra label:not([data-testid="stSidebar"] *) {
+    color: #0f172a !important;
+}
+.corporate-extra h2, .corporate-extra h3 {
+    color: #1e3a8a !important;
+}
+/* Corporate metrics: white cards, dark text */
+.corporate-extra [data-testid="stMetricValue"] { color: #0f172a !important; }
+.corporate-extra [data-testid="stMetricLabel"] { color: #475569 !important; }
+
+</style>
+"""
+
+# ── Theme picker HTML ─────────────────────────────────────────────────────────
+_PICKER_CSS = """
+<style>
+.theme-picker { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.theme-btn {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-radius: 8px; cursor: pointer;
+    border: 1.5px solid transparent;
+    transition: all 0.18s ease;
+    font-size: 0.78rem; font-weight: 500;
+}
+.theme-btn:hover { filter: brightness(1.15); transform: translateX(2px); }
+.theme-btn.active { border-color: var(--accent) !important; }
+.theme-swatch {
+    width: 18px; height: 18px; border-radius: 50%;
+    flex-shrink: 0; border: 2px solid rgba(255,255,255,0.15);
+}
+.theme-name { color: var(--text-primary); font-weight: 600; font-size: 0.75rem; }
+.theme-desc { color: var(--text-muted); font-size: 0.65rem; margin-top: 1px; }
+</style>
+"""
+
+
+def _get_theme() -> str:
+    return st.session_state.get("active_theme", _DEFAULT_THEME)
+
+
+def inject_theme() -> None:
+    """
+    Inject CSS variables + structural styles for the current theme.
+    Call once at the top of app.py before any other st.* calls.
+    Also applies theme-specific body class for extra overrides.
+    """
+    theme_key = _get_theme()
+    vars_block = _VARS.get(theme_key, _VARS[_DEFAULT_THEME])
+
+    # Inject the :root variables + structural CSS
+    combined = _STRUCTURAL_CSS.replace("{vars}", vars_block)
+    st.markdown(combined, unsafe_allow_html=True)
+
+    # Inject theme-specific body class for targeted overrides
+    # (corporate needs white sidebar text; terminal gets scanlines)
+    body_class = f"{theme_key}-extra"
+    st.markdown(
+        f"<script>document.body.classList.add('{body_class}');"
+        f"document.body.classList.forEach(c=>{{ if(c.endsWith('-extra')&&c!=='{body_class}') document.body.classList.remove(c); }});</script>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_theme_picker(persist: bool = False) -> None:
+    """
+    Render the 5-theme picker as clickable swatch buttons.
+    Place this inside the sidebar Settings expander in app.py.
+
+    Each button shows: colored swatch circle + theme name + one-line description.
+    The active theme gets a highlight border.
+
+    Args:
+        persist: Write preference to OVERWATCH_BOOKMARKS for cross-session persistence.
+    """
+    current = _get_theme()
+
+    st.markdown(
+        "<div style='font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;"
+        "letter-spacing:1px;margin-bottom:6px;'>Theme</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Render one button per theme
+    for key, meta in THEMES.items():
+        is_active  = key == current
+        bg_color   = f"rgba({','.join(str(int(meta['swatch'].lstrip('#')[i:i+2], 16)) for i in (0,2,4))}, 0.12)"
+        border_col = meta["swatch"] if is_active else "transparent"
+        label_color = "#0f172a" if meta["bg"].startswith("#f") else "#e2e8f0"
+
+        btn_html = f"""
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;
+                    border-radius:8px;cursor:pointer;margin-bottom:4px;
+                    background:{bg_color};
+                    border:1.5px solid {border_col};
+                    transition:all 0.18s ease;">
+            <div style="width:16px;height:16px;border-radius:50%;flex-shrink:0;
+                        background:{meta['swatch']};border:2px solid rgba(255,255,255,0.2);"></div>
+            <div>
+                <div style="font-size:0.75rem;font-weight:600;color:{label_color};">
+                    {meta['emoji']} {meta['label']}
+                    {"  ✓" if is_active else ""}
+                </div>
+                <div style="font-size:0.62rem;color:#94a3b8;margin-top:1px;">{meta['desc']}</div>
+            </div>
+        </div>
+        """
+        st.markdown(btn_html, unsafe_allow_html=True)
+
+        if st.button(
+            f"Select {meta['label']}",
+            key=f"theme_btn_{key}",
+            disabled=is_active,
+            use_container_width=True,
+        ):
+            st.session_state["active_theme"] = key
+            if persist:
+                _save_theme_preference(key)
+            st.rerun()
+
+
+def restore_theme_preference() -> None:
+    """
+    Restore a persisted theme from OVERWATCH_BOOKMARKS on first session load.
+    Call before inject_theme() in app.py. Only needed when persist=True.
+    """
+    if "active_theme" in st.session_state:
+        return
+    try:
+        from utils.session import get_session
+        from config import ALERT_DB, ALERT_SCHEMA
+        session = get_session()
+        rows = session.sql(f"""
+            SELECT STATE_JSON FROM {ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_BOOKMARKS
+            WHERE SF_USER = CURRENT_USER()
+              AND BOOKMARK_NAME = '_theme_pref'
+            ORDER BY CREATED_AT DESC LIMIT 1
+        """).collect()
+        if rows:
+            import json
+            state = json.loads(rows[0]["STATE_JSON"] or "{}")
+            saved = state.get("active_theme", _DEFAULT_THEME)
+            if saved in THEMES:
+                st.session_state["active_theme"] = saved
+    except Exception:
+        pass
+
+
+def _save_theme_preference(theme_key: str) -> None:
+    import json
+    try:
+        from utils.session import get_session
+        from config import ALERT_DB, ALERT_SCHEMA
+        session = get_session()
+        state_json = json.dumps({"active_theme": theme_key}).replace("'", "''")
+        session.sql(f"""
+            DELETE FROM {ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_BOOKMARKS
+            WHERE SF_USER = CURRENT_USER() AND BOOKMARK_NAME = '_theme_pref'
+        """).collect()
+        session.sql(f"""
+            INSERT INTO {ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_BOOKMARKS
+                (BOOKMARK_NAME, SECTION, STATE_JSON, IS_SHARED)
+            VALUES ('_theme_pref', '', PARSE_JSON('{state_json}'), FALSE)
+        """).collect()
+    except Exception:
+        pass

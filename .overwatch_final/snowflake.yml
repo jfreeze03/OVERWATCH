@@ -1,0 +1,55 @@
+definition_version: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OVERWATCH V3 — Streamlit-in-Snowflake (SiS) Deployment Manifest
+# Account:   ALFA Insurance
+# App:       DBA_MAINT_DB.PUBLIC.OVERWATCHV3
+# Stage:     DBA_MAINT_DB.PUBLIC.OVERWATCH_STAGE
+# Roles:     SNOW_ACCOUNTADMIN, SNOW_SYSADMIN
+# Warehouse: COMPUTE_WH
+#
+# execute_as: CALLER (SiS default — intentionally not set to OWNER)
+# ─────────────────────────────────────────────────────────────────────────────
+# CALLER MODE MEANS:
+#   Every SQL statement executes with the privileges of whoever opened the app.
+#   SNOW_ACCOUNTADMIN and SNOW_SYSADMIN have full access — all OVERWATCH
+#   features work without any additional grants.
+#
+# IMPLICATION FOR FUTURE USERS:
+#   If you ever add ANALYST or MANAGER roles to ROLE_SECTIONS, those users
+#   will need explicit grants before their OVERWATCH session can query:
+#
+#     -- Required for ALL ACCOUNT_USAGE queries (every section)
+#     GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE <role>;
+#
+#     -- Required for OVERWATCH internal tables (bookmarks, annotations, ROI)
+#     GRANT SELECT, INSERT, UPDATE, DELETE
+#       ON ALL TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
+#
+#     -- Required for DBA Tools: SHOW WAREHOUSES, IS.QUERY_HISTORY
+#     GRANT MONITOR ON ACCOUNT TO ROLE <role>;
+#
+#   Without IMPORTED PRIVILEGES on SNOWFLAKE, every ACCOUNT_USAGE query
+#   returns a permissions error and the section shows an empty state.
+#   This is the single most common misconfiguration when expanding OVERWATCH
+#   to non-admin users.
+# ─────────────────────────────────────────────────────────────────────────────
+
+streamlit:
+  name: OVERWATCHV3
+  stage: DBA_MAINT_DB.PUBLIC.OVERWATCH_STAGE
+  main_file: app.py
+  title: "OVERWATCH — Snowflake DBA Monitor"
+  comment: "v3 — Modular DBA command center for ALFA Insurance"
+
+  # Warehouse used by SiS for Python execution. SQL queries run here unless
+  # the session executes USE WAREHOUSE first.
+  query_warehouse: COMPUTE_WH
+
+  artifacts:
+    - app.py
+    - config.py
+    - theme.py
+    - environment.yml
+    - utils/
+    - sections/

@@ -1,0 +1,181 @@
+# sections/warehouse_health.py — Warehouse stats, scaling events, idle detection, spill, heatmap
+import streamlit as st
+import pandas as pd
+from utils import get_session, normalize_df, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart
+from config import THRESHOLDS
+
+
+def render():
+    session = get_session()
+    credit_price = st.session_state.get("credit_price", 3.00)
+
+    tab_overview, tab_spill, tab_heatmap = st.tabs([
+        "Overview & Scaling", "Spill & Memory", "Workload Heatmap"
+    ])
+
+    # ── OVERVIEW ──────────────────────────────────────────────────────────────
+    with tab_overview:
+        st.header("🏭 Warehouse Health Overview")
+        wh_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_days")
+
+        if st.button("Load Warehouse Data", key="wh_load"):
+            try:
+                df_w = normalize_df(session.sql(f"""
+                    SELECT q.warehouse_name,
+                           q.warehouse_size,
+                           COUNT(*)                            AS total_queries,
+                           AVG(q.total_elapsed_time)/1000      AS avg_elapsed_sec,
+                           PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time)/1000 AS p95_elapsed_sec,
+                           AVG(q.queued_overload_time)/1000    AS avg_queued_sec,
+                           SUM(q.bytes_spilled_to_remote_storage)/POWER(1024,3)  AS total_remote_spill_gb,
+                           AVG(q.percentage_scanned_from_cache) AS avg_cache_pct,
+                           SUM(CASE WHEN q.execution_status='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS error_count,
+                           SUM(q.bytes_scanned)/POWER(1024,3)  AS total_gb_scanned
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                    WHERE q.start_time >= DATEADD('days', -{wh_days}, CURRENT_TIMESTAMP())
+                      AND q.warehouse_name IS NOT NULL
+                    GROUP BY q.warehouse_name, q.warehouse_size
+                    ORDER BY total_queries DESC
+                """).to_pandas())
+                st.session_state["wh_df_wh"] = df_w
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+        if st.session_state.get("wh_df_wh") is not None and not st.session_state["wh_df_wh"].empty:
+            df_w = st.session_state["wh_df_wh"]
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Warehouses Active", len(df_w))
+            c2.metric("Total Queries",     f"{int(df_w['TOTAL_QUERIES'].sum()):,}")
+            c3.metric("Total Remote Spill", f"{df_w['TOTAL_REMOTE_SPILL_GB'].sum():.1f} GB")
+
+            # Flag warehouses needing attention
+            for _, row in df_w.iterrows():
+                issues = []
+                if row.get("AVG_QUEUED_SEC", 0) > 2:
+                    issues.append(f"Queue avg {row['AVG_QUEUED_SEC']:.1f}s — consider multi-cluster or upsize")
+                if row.get("TOTAL_REMOTE_SPILL_GB", 0) > THRESHOLDS["spill_warning_gb"]:
+                    issues.append(f"Remote spill {row['TOTAL_REMOTE_SPILL_GB']:.1f} GB — upsize")
+                if issues:
+                    st.warning(f"**{row['WAREHOUSE_NAME']}** ({row.get('WAREHOUSE_SIZE','')}): {' | '.join(issues)}")
+
+            st.dataframe(df_w, use_container_width=True)
+
+            # Cache efficiency chart
+            st.subheader("Cache Hit % by Warehouse")
+            render_drillable_bar_chart(
+                df_w,
+                dimension="WAREHOUSE_NAME",
+                measure="AVG_CACHE_PCT",
+                key="wh_cache_pct",
+                drilldown_column="warehouse_name",
+                lookback_hours=wh_days * 24,
+            )
+
+            download_csv(df_w, "warehouse_health.csv")
+
+            # Scaling events
+            st.divider()
+            st.subheader("Scaling Events (WAREHOUSE_METERING_HISTORY)")
+            if st.button("Load Scaling Events", key="wh_scale_load"):
+                try:
+                    df_scale = normalize_df(session.sql(f"""
+                        SELECT warehouse_name, start_time, end_time,
+                               credits_used, credits_used_compute,
+                               credits_used_cloud_services
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+                        WHERE start_time >= DATEADD('days', -{wh_days}, CURRENT_TIMESTAMP())
+                        ORDER BY credits_used DESC LIMIT 200
+                    """).to_pandas())
+                    st.dataframe(df_scale, use_container_width=True)
+                    download_csv(df_scale, "scaling_events.csv")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    # ── SPILL ─────────────────────────────────────────────────────────────────
+    with tab_spill:
+        st.header("⚡ Spill & Memory Pressure")
+        sp_days = st.slider("Lookback (days)", 1, 30, 7, key="sp_days")
+
+        if st.button("Load Spill Data", key="sp_load"):
+            try:
+                df_sp = normalize_df(session.sql(f"""
+                    SELECT warehouse_name, warehouse_size,
+                           COUNT(*) AS spill_query_count,
+                           ROUND(SUM(bytes_spilled_to_local_storage)/POWER(1024,3),2)  AS local_spill_gb,
+                           ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3),2) AS remote_spill_gb,
+                           ROUND(AVG(total_elapsed_time)/1000,2)                       AS avg_elapsed_sec
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                    WHERE start_time >= DATEADD('days', -{sp_days}, CURRENT_TIMESTAMP())
+                      AND (bytes_spilled_to_local_storage > 0 OR bytes_spilled_to_remote_storage > 0)
+                      AND warehouse_name IS NOT NULL
+                    GROUP BY warehouse_name, warehouse_size
+                    ORDER BY local_spill_gb + remote_spill_gb DESC
+                """).to_pandas())
+                st.session_state["wh_df_sp"] = df_sp
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+        if st.session_state.get("wh_df_sp") is not None and not st.session_state["wh_df_sp"].empty:
+            df_sp = st.session_state["wh_df_sp"]
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Spilling Warehouses", len(df_sp))
+            c2.metric("Total Local Spill",  f"{df_sp['LOCAL_SPILL_GB'].sum():.1f} GB")
+            c3.metric("Total Remote Spill", f"{df_sp['REMOTE_SPILL_GB'].sum():.1f} GB")
+            st.dataframe(df_sp, use_container_width=True)
+            df_sp["TOTAL_SPILL_GB"] = df_sp["LOCAL_SPILL_GB"] + df_sp["REMOTE_SPILL_GB"]
+            render_drillable_bar_chart(
+                df_sp,
+                dimension="WAREHOUSE_NAME",
+                measure="TOTAL_SPILL_GB",
+                key="wh_spill_total",
+                drilldown_column="warehouse_name",
+                lookback_hours=sp_days * 24,
+            )
+            for _, row in df_sp.iterrows():
+                if row["REMOTE_SPILL_GB"] > 10:
+                    st.error(f"**{row['WAREHOUSE_NAME']}**: {row['REMOTE_SPILL_GB']:.1f} GB remote spill — upsize immediately")
+            download_csv(df_sp, "spill_report.csv")
+
+    # ── HEATMAP ───────────────────────────────────────────────────────────────
+    with tab_heatmap:
+        st.header("🌡️ Workload Concurrency Heatmap")
+        hm_days = st.slider("Lookback (days)", 7, 90, 30, key="hm_days")
+
+        if st.button("Build Heatmap", key="hm_build"):
+            try:
+                df_hm = normalize_df(session.sql(f"""
+                    SELECT warehouse_name,
+                           DAYOFWEEK(start_time) AS day_of_week,
+                           HOUR(start_time)      AS hour_of_day,
+                           COUNT(*)              AS query_count,
+                           ROUND(AVG(total_elapsed_time)/1000,2) AS avg_elapsed_sec
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                    WHERE start_time >= DATEADD('days', -{hm_days}, CURRENT_TIMESTAMP())
+                      AND warehouse_name IS NOT NULL
+                    GROUP BY warehouse_name, day_of_week, hour_of_day
+                    ORDER BY warehouse_name, day_of_week, hour_of_day
+                """).to_pandas())
+                st.session_state["wh_df_hm"] = df_hm
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+        if st.session_state.get("wh_df_hm") is not None and not st.session_state["wh_df_hm"].empty:
+            df_hm = st.session_state["wh_df_hm"]
+            whs = df_hm["WAREHOUSE_NAME"].unique()
+            sel_wh = st.selectbox("Warehouse", whs, key="hm_wh_sel")
+
+            if sel_wh:
+                wh_data = df_hm[df_hm["WAREHOUSE_NAME"] == sel_wh]
+                pivot = wh_data.pivot_table(
+                    index="DAY_OF_WEEK", columns="HOUR_OF_DAY",
+                    values="QUERY_COUNT", aggfunc="sum"
+                ).fillna(0)
+                day_names = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+                pivot.index = pivot.index.map(lambda x: day_names.get(int(x), str(x)))
+                st.subheader(f"Query Volume Heatmap — {sel_wh}")
+                st.dataframe(pivot.style.background_gradient(cmap="YlOrRd"), use_container_width=True)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Total Queries", f"{int(wh_data['QUERY_COUNT'].sum()):,}")
+                c2.metric("Peak Hour",     f"{int(pivot.max().max()):,}")
+                c3.metric("Avg Elapsed",   f"{wh_data['AVG_ELAPSED_SEC'].mean():.1f}s")

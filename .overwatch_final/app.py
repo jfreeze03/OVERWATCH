@@ -1,0 +1,303 @@
+# app.py — OVERWATCH V3 · Main Entry Point
+# ─────────────────────────────────────────────────────────────────────────────
+# Includes:
+#   - Role-based section visibility (ROLE_SECTIONS in config.py)
+#   - ALFA default company seeded before radio renders
+#   - Cache invalidation on company switch
+#   - Saved Views / Bookmarks sidebar panel
+# ─────────────────────────────────────────────────────────────────────────────
+import streamlit as st
+from datetime import datetime
+
+st.set_page_config(
+    page_title="OVERWATCH — Snowflake DBA Monitor",
+    page_icon="👁️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+from theme import inject_theme, render_theme_picker
+from config import (
+    ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
+    DEFAULT_COMPANY, ROLE_SECTIONS,
+)
+from utils.display import clear_all_cache
+from utils.session import get_session
+from utils.query import safe_sql
+from utils.company_filter import invalidate_company_cache
+from utils.bookmarks import (
+    build_bookmark_ddl, save_bookmark, load_bookmarks,
+    apply_bookmark, delete_bookmark,
+)
+import sections
+
+inject_theme()
+
+# ── Seed ALFA default before radio ────────────────────────────────────────────
+if "active_company" not in st.session_state:
+    st.session_state["active_company"] = DEFAULT_COMPANY
+
+
+# ── Role resolution (cached 5 min) ────────────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_current_role() -> str:
+    try:
+        return (get_session().sql("SELECT CURRENT_ROLE() AS r").collect()[0]["R"] or "").upper()
+    except Exception:
+        return ""
+
+
+def _resolve_visible_sections() -> list[str]:
+    role = _get_current_role()
+    for key, sec_list in ROLE_SECTIONS.items():
+        if key in role:
+            return sec_list
+    return ALL_SECTIONS
+
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    # Header
+    st.markdown("""
+    <div style="text-align:center; padding:16px 0;">
+        <div style="font-size:2.5rem; margin-bottom:4px;">👁️</div>
+        <div style="font-size:1.2rem; font-weight:800;
+                    background:linear-gradient(90deg,#38bdf8,#818cf8);
+                    -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
+            OVERWATCH
+        </div>
+        <div style="font-size:0.7rem; color:#64748b; letter-spacing:2px; text-transform:uppercase;">
+            Snowflake DBA Command Center
+        </div>
+        <div style="margin-top:8px;">
+            <span class="status-badge badge-healthy live-indicator">● LIVE</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.divider()
+
+    # ── Company filter ────────────────────────────────────────────────────────
+    _prev_company = st.session_state.get("_prev_active_company", DEFAULT_COMPANY)
+    active_company = st.radio(
+        "Company view",
+        list(COMPANY_CONFIG.keys()),
+        horizontal=True,
+        key="active_company",
+    )
+    if _prev_company != active_company:
+        invalidate_company_cache()
+    st.session_state["_prev_active_company"] = active_company
+
+    st.divider()
+
+    # ── Navigation ────────────────────────────────────────────────────────────
+    visible_sections = _resolve_visible_sections()
+    current_role     = _get_current_role()
+    matched_profile  = next((k for k in ROLE_SECTIONS if k in current_role), "DBA")
+    profile_color    = {
+        "ANALYST": "#fbbf24", "MANAGER": "#c084fc", "REPORT": "#fbbf24",
+    }.get(matched_profile, "#38bdf8")
+    role_label = current_role[:20] or "DBA"
+
+    st.markdown(
+        f"<div style='font-size:0.65rem; color:{profile_color}; font-weight:700; "
+        f"letter-spacing:1px; margin-bottom:6px;'>"
+        f"🔑 {role_label} · {matched_profile} VIEW</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div style='font-size:0.7rem;color:#64748b;text-transform:uppercase;"
+        "letter-spacing:1px;margin-bottom:4px;'>Navigate</div>",
+        unsafe_allow_html=True,
+    )
+
+    for group_name, group_all in NAV_GROUPS.items():
+        group_visible = [s for s in group_all if s in visible_sections]
+        if not group_visible:
+            continue
+        st.markdown(
+            f"<div style='font-size:0.65rem;color:#38bdf8;letter-spacing:1.5px;"
+            f"font-weight:700;margin:8px 0 4px;'>{group_name}</div>",
+            unsafe_allow_html=True,
+        )
+        st.radio(group_name, group_visible, key=f"nav_{group_name}", label_visibility="collapsed")
+
+    # Resolve active section
+    active_section = st.session_state.get("nav_section", visible_sections[0])
+    if active_section not in visible_sections:
+        active_section = visible_sections[0]
+        st.session_state["nav_section"] = active_section
+    for group_name in NAV_GROUPS:
+        val = st.session_state.get(f"nav_{group_name}")
+        if val and val != st.session_state.get(f"_prev_nav_{group_name}"):
+            if val in visible_sections:
+                st.session_state["nav_section"] = val
+                active_section = val
+        st.session_state[f"_prev_nav_{group_name}"] = val
+
+    st.divider()
+
+    # ── Saved Views / Bookmarks ───────────────────────────────────────────────
+    with st.expander("🔖 Saved Views", expanded=False):
+        _session = get_session()
+        bookmarks = load_bookmarks(_session)
+
+        if bookmarks:
+            st.markdown(
+                "<div style='font-size:0.75rem;color:#94a3b8;margin-bottom:6px;'>"
+                "Click a bookmark to jump directly to that view.</div>",
+                unsafe_allow_html=True,
+            )
+            for bm in bookmarks:
+                shared_badge = " 🌐" if bm["shared"] else ""
+                uses_badge   = f" · {bm['uses']}×" if bm["uses"] else ""
+                col_bm, col_del = st.columns([5, 1])
+                with col_bm:
+                    if st.button(
+                        f"{'📌' if bm['shared'] else '🔖'} {bm['name']}{shared_badge}{uses_badge}",
+                        key=f"bm_apply_{bm['id']}",
+                        help=f"Section: {bm['section']}\nCreated: {bm['created']}",
+                        use_container_width=True,
+                    ):
+                        apply_bookmark(_session, bm)  # calls st.rerun()
+                with col_del:
+                    if st.button("✕", key=f"bm_del_{bm['id']}", help="Delete bookmark"):
+                        if delete_bookmark(_session, bm["id"]):
+                            st.rerun()
+        else:
+            st.caption("No saved views yet.")
+
+        st.divider()
+        st.markdown(
+            "<div style='font-size:0.72rem;color:#64748b;'>Save current view</div>",
+            unsafe_allow_html=True,
+        )
+        new_bm_name = st.text_input(
+            "Bookmark name",
+            placeholder="e.g. Monday Credit Check",
+            label_visibility="collapsed",
+            key="bm_name_input",
+            max_chars=100,
+        )
+        bm_shared = st.checkbox("Share with all users", key="bm_shared_toggle")
+        if st.button("💾 Save View", key="bm_save_btn", disabled=not new_bm_name):
+            if save_bookmark(_session, new_bm_name, bm_shared):
+                st.success(f"✅ Saved '{new_bm_name}'")
+                st.session_state.pop("bm_name_input", None)
+                st.rerun()
+
+        # Setup DDL (hidden until needed)
+        with st.expander("📋 Setup DDL", expanded=False):
+            ddl = build_bookmark_ddl()
+            st.code(ddl[:400] + "...", language="sql")
+            st.download_button(
+                "📥 Full DDL",
+                ddl,
+                file_name="overwatch_bookmarks_setup.sql",
+                mime="text/plain",
+                key="bm_ddl_dl",
+            )
+
+    st.divider()
+
+    # ── Settings ──────────────────────────────────────────────────────────────
+    with st.expander("⚙️ Settings", expanded=False):
+        render_theme_picker()
+        st.divider()
+        credit_price = st.number_input(
+            "$/credit (compute)",
+            min_value=0.50, max_value=20.00,
+            value=st.session_state.get("credit_price", DEFAULTS["credit_price"]),
+            step=0.10, key="_credit_price_input",
+        )
+        st.session_state["credit_price"] = credit_price
+
+        storage_cost = st.number_input(
+            "$/TB/month (storage)",
+            min_value=1.0, max_value=100.0,
+            value=st.session_state.get("storage_cost_per_tb", DEFAULTS["storage_cost_per_tb"]),
+            step=1.0, key="_storage_cost_input",
+        )
+        st.session_state["storage_cost_per_tb"] = storage_cost
+
+        st.selectbox(
+            "Live refresh interval",
+            [15, 30, 60, 120], index=1,
+            format_func=lambda x: f"{x}s",
+            key="rt_interval",
+        )
+
+    st.divider()
+
+    company_color = COMPANY_CONFIG.get(active_company, {}).get("color", "#38bdf8")
+    st.markdown(f"""
+    <div style="font-size:0.65rem; color:#475569; text-align:center;">
+        <div style="color:{company_color}; font-weight:700; margin-bottom:4px;">{active_company} view</div>
+        <div>💰 ${credit_price:.2f}/credit</div>
+        <div style="margin-top:4px;">ACCOUNT_USAGE ≤45min lag · IS: live</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ── Main header ───────────────────────────────────────────────────────────────
+h1, h2, h3 = st.columns([3, 2, 1])
+with h1:
+    company_color = COMPANY_CONFIG.get(active_company, {}).get("color", "#38bdf8")
+    st.markdown(f"""
+    <h1 style="margin:0;padding:0;font-size:2rem;">
+        👁️ OVERWATCH
+        <span style="font-size:0.75rem;font-weight:400;color:{company_color};
+                     background:rgba(255,255,255,0.05);border:1px solid {company_color}33;
+                     border-radius:4px;padding:2px 8px;margin-left:8px;">{active_company}</span>
+    </h1>
+    """, unsafe_allow_html=True)
+with h2:
+    st.markdown(f"""
+    <div style="text-align:right;padding-top:12px;">
+        <span style="color:#64748b;font-size:0.75rem;">
+            {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · ${credit_price:.2f}/cr
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+with h3:
+    if st.button("🔄 Refresh All", key="global_refresh"):
+        clear_all_cache()
+        st.rerun()
+
+# ── Ask OVERWATCH ─────────────────────────────────────────────────────────────
+with st.expander("🤖 Ask OVERWATCH  (Cortex AI)", expanded=False):
+    ask_q = st.text_input(
+        "Ask a question about your Snowflake usage...",
+        placeholder="e.g. Who spent the most credits last week?",
+        key="ask_overwatch_input",
+        max_chars=500,
+    )
+    if ask_q and st.button("Ask", key="ask_overwatch_btn"):
+        with st.spinner("Thinking with Cortex..."):
+            try:
+                safe_q      = safe_sql(ask_q)
+                prompt      = (
+                    "You are OVERWATCH, a Snowflake monitoring assistant for ALFA Insurance. "
+                    f"Current company filter: {active_company}. "
+                    f"User role: {current_role or 'unknown'}. "
+                    f'The user asked: "{safe_q}" '
+                    "Respond with: 1) a concise answer, 2) which OVERWATCH section to navigate to, "
+                    "3) recommended filters. Be brief and technical."
+                )
+                result = get_session().sql(
+                    f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', '{prompt.replace(chr(39), chr(39)+chr(39))}') AS answer"
+                ).collect()
+                st.markdown(result[0]["ANSWER"])
+            except Exception as e:
+                st.info(f"Cortex AI unavailable ({e}).")
+
+st.markdown("---")
+
+# ── Section dispatch ──────────────────────────────────────────────────────────
+active_section = st.session_state.get("nav_section", visible_sections[0])
+if active_section not in visible_sections:
+    active_section = visible_sections[0]
+    st.session_state["nav_section"] = active_section
+
+sections.dispatch(active_section)

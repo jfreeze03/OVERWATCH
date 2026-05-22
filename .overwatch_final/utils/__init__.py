@@ -1,0 +1,55 @@
+# utils/__init__.py — re-exports all shared utilities
+from .session import get_session
+from .query import run_query, run_query_cached, force_refresh, safe_sql
+from .data import normalize_df, safe_strip_tz
+from .cost import (
+    format_credits, credits_to_dollars, estimate_live_credits,
+    build_metered_credit_cte, CREDIT_RATES, COMPUTE_CREDIT_CASE
+)
+from .display import (
+    download_csv, show_loaded_time, mark_loaded, clear_all_cache,
+    render_query_drilldown, render_warehouse_drilldown,
+    render_drillable_bar_chart, render_entity_query_drilldown,
+)
+from .company_filter import (
+    get_active_company, get_db_filter_clause, get_wh_filter_clause,
+    get_user_filter_clause, get_combined_filter_clause,
+    get_global_date_clause, get_global_wh_filter_clause,
+    get_global_user_filter_clause, get_global_role_filter_clause,
+    get_global_db_filter_clause, get_global_filter_clause,
+    get_company_case_expr,
+    invalidate_company_cache,
+)
+from .helpers import paginate_df
+from .alerts import build_alert_task_sql, send_teams_alert, build_annotation_ddl
+from .logging import (
+    build_usage_log_ddl, log_section_load, set_logging_enabled,
+    is_logging_enabled, SectionTimer,
+)
+from .bookmarks import (
+    build_bookmark_ddl, save_bookmark, load_bookmarks,
+    apply_bookmark, delete_bookmark,
+)
+
+__all__ = [
+    "get_session",
+    "run_query", "run_query_cached", "force_refresh", "safe_sql",
+    "normalize_df", "safe_strip_tz",
+    "format_credits", "credits_to_dollars", "estimate_live_credits",
+    "build_metered_credit_cte", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
+    "download_csv", "show_loaded_time", "mark_loaded", "clear_all_cache",
+    "render_query_drilldown", "render_warehouse_drilldown",
+    "render_drillable_bar_chart", "render_entity_query_drilldown",
+    "get_active_company", "get_db_filter_clause", "get_wh_filter_clause",
+    "get_user_filter_clause", "get_combined_filter_clause",
+    "get_global_date_clause", "get_global_wh_filter_clause",
+    "get_global_user_filter_clause", "get_global_role_filter_clause",
+    "get_global_db_filter_clause", "get_global_filter_clause",
+    "get_company_case_expr", "invalidate_company_cache",
+    "paginate_df",
+    "build_alert_task_sql", "send_teams_alert", "build_annotation_ddl",
+    "build_usage_log_ddl", "log_section_load", "set_logging_enabled",
+    "is_logging_enabled", "SectionTimer",
+    "build_bookmark_ddl", "save_bookmark", "load_bookmarks",
+    "apply_bookmark", "delete_bookmark",
+]

@@ -99,6 +99,53 @@ with st.sidebar:
     }.get(matched_profile, "#38bdf8")
     role_label = current_role[:20] or "DBA"
 
+    with st.expander("Command Palette", expanded=False):
+        cmd = st.text_input(
+            "Search or jump",
+            placeholder="warehouse, user, query_id, task, database, cost, alerts",
+            key="command_palette_input",
+        )
+        cmd_type = st.selectbox(
+            "Target",
+            ["Auto", "Warehouse", "User", "Query ID", "Task", "Database", "Section"],
+            key="command_palette_type",
+        )
+        if st.button("Go", key="command_palette_go", disabled=not cmd):
+            value = str(cmd).strip()
+            upper = value.upper()
+            target = "🏠 Account Health"
+            if cmd_type == "Warehouse" or (cmd_type == "Auto" and ("WH" in upper or "WAREHOUSE" in upper)):
+                st.session_state["global_warehouse"] = value
+                st.session_state["wh_filter"] = value
+                target = "🏭 Warehouse Health"
+            elif cmd_type == "User":
+                st.session_state["global_user"] = value
+                target = "💸 Cost Center"
+            elif cmd_type == "Query ID" or (cmd_type == "Auto" and len(value) >= 20 and "-" in value):
+                st.session_state["qs_qid"] = value
+                target = "🕰️ Query Search & History"
+            elif cmd_type == "Task" or (cmd_type == "Auto" and "TASK" in upper):
+                st.session_state["tm_search"] = value
+                target = "⚙️ Task Management"
+            elif cmd_type == "Database" or (cmd_type == "Auto" and upper.startswith(("DB_", "ALFA", "TRXS"))):
+                st.session_state["global_database"] = value
+                target = "🗄️ Storage Monitor"
+            elif "COST" in upper or "SPEND" in upper:
+                target = "💸 Cost Center"
+            elif "ALERT" in upper or "RECOMMEND" in upper or "ACTION" in upper:
+                target = "💡 Recommendations & Anomalies"
+            elif "VALUE" in upper or "ROI" in upper or "SAVING" in upper:
+                target = "Snowflake Value"
+            elif "DBA" in upper or "WAREHOUSE SETTING" in upper:
+                target = "🛠️ DBA Tools"
+            else:
+                for section in visible_sections:
+                    if upper in section.upper():
+                        target = section
+                        break
+            st.session_state["nav_section"] = target if target in visible_sections else visible_sections[0]
+            st.rerun()
+
     st.markdown(
         f"<div style='font-size:0.65rem; color:{profile_color}; font-weight:700; "
         f"letter-spacing:1px; margin-bottom:6px;'>"

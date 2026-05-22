@@ -65,6 +65,7 @@ def render():
                 st.session_state["ocm_df_access_changes"] = normalize_df(session.sql(f"""
                 SELECT query_id, user_name, role_name, start_time,
                        CASE
+                         WHEN query_text ILIKE '%OWNERSHIP%' THEN 'OWNER CHANGE'
                          WHEN query_text ILIKE 'GRANT%' THEN 'GRANT'
                          WHEN query_text ILIKE 'REVOKE%' THEN 'REVOKE'
                          WHEN query_text ILIKE 'CREATE%ROLE%' THEN 'CREATE ROLE'
@@ -75,7 +76,7 @@ def render():
                        SUBSTR(query_text, 1, 1500) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                 WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
-                  AND (query_text ILIKE 'GRANT%' OR query_text ILIKE 'REVOKE%'
+                  AND (query_text ILIKE 'GRANT%' OR query_text ILIKE 'REVOKE%' OR query_text ILIKE '%OWNERSHIP%'
                        OR query_text ILIKE 'CREATE%ROLE%' OR query_text ILIKE 'ALTER%ROLE%' OR query_text ILIKE 'DROP%ROLE%')
                   {filter_clause}
                 ORDER BY start_time DESC

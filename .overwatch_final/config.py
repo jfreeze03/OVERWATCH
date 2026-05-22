@@ -109,6 +109,7 @@ NAV_GROUPS = {
     ],
     "INFRASTRUCTURE": [
         "🗄️ Storage Monitor",
+        "Pipeline Health",
         "🐳 SPCS Tracker",
         "⚙️ Task Management",
     ],
@@ -149,6 +150,7 @@ ROLE_SECTIONS = {
         "🕰️ Query Search & History",
         "💸 Cost Center",
         "🗄️ Storage Monitor",
+        "Pipeline Health",
         "🤖 AI & Cortex Monitor",
     ],
     # Managers / leadership — executive summary, cost, recommendations, Snowflake value
@@ -167,6 +169,7 @@ ROLE_SECTIONS = {
         "🕰️ Query Search & History",
         "💸 Cost Center",
         "🗄️ Storage Monitor",
+        "Pipeline Health",
     ],
     # DBA / admin / sysadmin — full access (default fallback also gives full access)
     "DBA":         ALL_SECTIONS,
@@ -183,3 +186,6 @@ ETL_AUDIT_TABLE  = "ETL_RUN_AUDIT"
 ALERT_DB     = "DBA_MAINT_DB"
 ALERT_SCHEMA = "OVERWATCH"
 ALERT_TABLE  = "OVERWATCH_ALERTS"
+
+# Persistent action queue for recommendations, alerts, and operator follow-up.
+ACTION_QUEUE_TABLE = "OVERWATCH_ACTION_QUEUE"

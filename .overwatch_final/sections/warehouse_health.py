@@ -1,7 +1,7 @@
 # sections/warehouse_health.py — Warehouse stats, scaling events, idle detection, spill, heatmap
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart, get_wh_filter_clause
+from utils import get_session, normalize_df, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart, get_wh_filter_clause, build_metered_credit_cte
 from config import THRESHOLDS
 
 
@@ -9,8 +9,8 @@ def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
 
-    tab_overview, tab_spill, tab_heatmap = st.tabs([
-        "Overview & Scaling", "Spill & Memory", "Workload Heatmap"
+    tab_overview, tab_efficiency, tab_spill, tab_heatmap = st.tabs([
+        "Overview & Scaling", "Efficiency", "Spill & Memory", "Workload Heatmap"
     ])
 
     # ── OVERVIEW ──────────────────────────────────────────────────────────────
@@ -105,6 +105,57 @@ def render():
                     download_csv(df_scale, "scaling_events.csv")
                 except Exception as e:
                     st.error(f"Error: {e}")
+
+    with tab_efficiency:
+        st.header("Warehouse Efficiency Scorecard")
+        eff_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_eff_days")
+        if st.button("Load Efficiency Metrics", key="wh_eff_load"):
+            try:
+                df_eff = normalize_df(session.sql(f"""
+                    WITH {build_metered_credit_cte(days_back=eff_days, include_recent=True)}
+                    SELECT q.warehouse_name,
+                           MAX(q.warehouse_size) AS warehouse_size,
+                           COUNT(*) AS query_count,
+                           ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS metered_credits,
+                           ROUND(SUM(COALESCE(pqc.metered_credits, 0)) / NULLIF(COUNT(*), 0), 6) AS credits_per_query,
+                           ROUND(SUM(q.queued_overload_time) / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS queue_sec_per_credit,
+                           ROUND(SUM(q.bytes_spilled_to_remote_storage) / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS remote_spill_gb_per_credit,
+                           ROUND(AVG(q.percentage_scanned_from_cache), 2) AS avg_cache_pct,
+                           ROUND(100
+                                 - LEAST(COALESCE(SUM(q.queued_overload_time) / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
+                                 - LEAST(COALESCE(SUM(q.bytes_spilled_to_remote_storage) / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
+                                 - LEAST(COALESCE(SUM(COALESCE(pqc.metered_credits, 0)) / NULLIF(COUNT(*), 0), 0) * 10, 25),
+                                 1) AS efficiency_score
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                    LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+                    WHERE q.start_time >= DATEADD('day', -{eff_days}, CURRENT_TIMESTAMP())
+                      AND q.warehouse_name IS NOT NULL
+                      {get_wh_filter_clause("q.warehouse_name")}
+                    GROUP BY q.warehouse_name
+                    ORDER BY efficiency_score ASC, metered_credits DESC
+                    LIMIT 200
+                """).to_pandas())
+                st.session_state["wh_efficiency"] = df_eff
+            except Exception as e:
+                st.error(f"Efficiency metrics unavailable: {e}")
+
+        df_eff = st.session_state.get("wh_efficiency")
+        if df_eff is not None and not df_eff.empty:
+            low = df_eff[df_eff["EFFICIENCY_SCORE"] < 70]
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Warehouses scored", len(df_eff))
+            c2.metric("Under 70 score", len(low), delta_color="inverse")
+            c3.metric("Total metered credits", format_credits(float(df_eff["METERED_CREDITS"].sum())))
+            st.dataframe(df_eff, use_container_width=True)
+            render_drillable_bar_chart(
+                df_eff,
+                dimension="WAREHOUSE_NAME",
+                measure="EFFICIENCY_SCORE",
+                key="wh_efficiency_score",
+                drilldown_column="warehouse_name",
+                lookback_hours=eff_days * 24,
+            )
+            download_csv(df_eff, "warehouse_efficiency.csv")
 
     # ── SPILL ─────────────────────────────────────────────────────────────────
     with tab_spill:

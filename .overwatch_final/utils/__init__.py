@@ -30,6 +30,10 @@ from .bookmarks import (
     build_bookmark_ddl, save_bookmark, load_bookmarks,
     apply_bookmark, delete_bookmark,
 )
+from .action_queue import (
+    build_action_queue_ddl, make_action_id, upsert_actions,
+    load_action_queue, update_action_status,
+)
 
 __all__ = [
     "get_session",
@@ -52,4 +56,6 @@ __all__ = [
     "is_logging_enabled", "SectionTimer",
     "build_bookmark_ddl", "save_bookmark", "load_bookmarks",
     "apply_bookmark", "delete_bookmark",
+    "build_action_queue_ddl", "make_action_id", "upsert_actions",
+    "load_action_queue", "update_action_status",
 ]

@@ -9,6 +9,7 @@ from utils import (
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
     get_global_filter_clause,
 )
+from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
 
 
 def _drill_to(section: str, wh_filter: str = "", user_filter: str = ""):
@@ -152,6 +153,20 @@ def render():
                                         FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY)
                       {get_db_filter_clause("database_name", company)}
                 """),
+                ("snowflake_value", f"""
+                    SELECT ROUND(SUM(SAVINGS_MONTHLY), 2) AS monthly_value,
+                           COUNT(*) AS value_entries,
+                           SUM(CASE WHEN VERIFIED THEN 1 ELSE 0 END) AS verified_entries
+                    FROM {ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.OVERWATCH_ROI_LOG
+                    WHERE LOGGED_DATE >= DATEADD('day', -365, CURRENT_DATE())
+                """),
+                ("action_backlog", f"""
+                    SELECT COUNT(*) AS open_actions,
+                           SUM(CASE WHEN SEVERITY IN ('Critical','High') THEN 1 ELSE 0 END) AS high_actions,
+                           ROUND(SUM(COALESCE(EST_MONTHLY_SAVINGS,0)), 2) AS open_monthly_savings
+                    FROM {ALERT_DB}.{ALERT_SCHEMA}.{ACTION_QUEUE_TABLE}
+                    WHERE STATUS NOT IN ('Fixed','Ignored')
+                """),
                 ("cost_drivers", f"""
                     WITH {build_metered_credit_cte(hours_back=48, include_recent=True)}
                     SELECT q.user_name, q.warehouse_name, MAX(q.warehouse_size) AS warehouse_size,
@@ -219,20 +234,26 @@ def render():
         burn_df    = hd.get("burn",    pd.DataFrame())
         err_df     = hd.get("errors",  pd.DataFrame())
         storage_df = hd.get("storage", pd.DataFrame())
+        value_df   = hd.get("snowflake_value", pd.DataFrame())
+        backlog_df = hd.get("action_backlog", pd.DataFrame())
         live_val  = int(live_df["ACTIVE_COUNT"].iloc[0])   if not live_df.empty    else 0
         queued    = int(live_df["QUEUED_COUNT"].iloc[0])   if not live_df.empty    else 0
         last24    = float(burn_df["LAST_24H"].iloc[0])     if not burn_df.empty    else 0
         prior24   = float(burn_df["PRIOR_24H"].iloc[0])    if not burn_df.empty    else 0
         err_count = int(err_df["ERR_COUNT"].iloc[0])       if not err_df.empty     else 0
         stor_tb   = float(storage_df["STORAGE_TB"].iloc[0]) if not storage_df.empty else 0
+        sf_value  = float(value_df["MONTHLY_VALUE"].iloc[0]) if not value_df.empty and pd.notna(value_df["MONTHLY_VALUE"].iloc[0]) else 0
+        open_actions = int(backlog_df["OPEN_ACTIONS"].iloc[0]) if not backlog_df.empty and pd.notna(backlog_df["OPEN_ACTIONS"].iloc[0]) else 0
+        high_actions = int(backlog_df["HIGH_ACTIONS"].iloc[0]) if not backlog_df.empty and pd.notna(backlog_df["HIGH_ACTIONS"].iloc[0]) else 0
         pct_delta = ((last24 - prior24) / prior24 * 100) if prior24 > 0 else 0
         health_score = max(0, min(100,
             100 - min(err_count,50) - min(queued*4,20)
                 - min(max(pct_delta,0)/2,20) - min(live_val,10)
+                - min(high_actions * 3, 15)
         ))
         score_label = "Healthy" if health_score >= 85 else ("Watch" if health_score >= 70 else "At Risk")
 
-        k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
+        k1, k2, k3, k4, k5, k6, k7, k8 = st.columns(8)
         k1.metric("Health Score",   f"{health_score:.0f}", score_label)
         k2.metric("Active Queries", live_val)
         k3.metric("Queued",         queued)
@@ -240,6 +261,7 @@ def render():
         k5.metric("Cost (24h)",     f"${credits_to_dollars(last24):,.0f}")
         k6.metric("Storage",        f"{stor_tb:.1f} TB")
         k7.metric("Failed (24h)",   err_count, delta_color="inverse")
+        k8.metric("Open Actions",   open_actions, f"{high_actions} high", delta_color="inverse")
 
         st.divider()
         show_loaded_time("account_health")
@@ -269,7 +291,7 @@ def render():
 
         st.divider()
         st.markdown("**Executive Landing Signals**")
-        e1, e2, e3 = st.columns(3)
+        e1, e2, e3, e4 = st.columns(4)
 
         with e1:
             st.markdown("**Top 5 cost drivers today**")
@@ -310,6 +332,13 @@ def render():
                 st.metric("Failures",     f"{int(row.get('FAILURE_DELTA',0) or 0):+,}", delta_color="inverse")
             else:
                 st.info("Change summary unavailable.")
+
+        with e4:
+            st.markdown("**Snowflake value & action backlog**")
+            st.metric("Tracked monthly value", f"${sf_value:,.0f}")
+            st.metric("Open action backlog", f"{open_actions:,}", f"{high_actions} high")
+            if st.button("Open Action Queue", key="ah_open_action_queue"):
+                _drill_to("💡 Recommendations & Anomalies")
 
         st.divider()
         st.markdown("**🏭 Warehouse Pressure (last 1h)**")

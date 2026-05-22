@@ -73,8 +73,8 @@ def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, sever
 def render():
     session = get_session()
 
-    tab_login, tab_roles, tab_mfa, tab_exfil, tab_lineage = st.tabs([
-        "Login Audit", "Roles & Grants", "MFA Coverage", "Exfiltration Signals", "Data Lineage"
+    tab_login, tab_posture, tab_roles, tab_mfa, tab_exfil, tab_lineage = st.tabs([
+        "Login Audit", "Login Posture", "Roles & Grants", "MFA Coverage", "Exfiltration Signals", "Data Lineage"
     ])
 
     # ── LOGIN AUDIT ───────────────────────────────────────────────────────────
@@ -138,6 +138,93 @@ def render():
             pivot = df_t.pivot_table(index="DAY", columns="IS_SUCCESS", values="EVENT_COUNT", aggfunc="sum").fillna(0)
             st.subheader("Login Trend")
             st.line_chart(pivot)
+
+    with tab_posture:
+        st.header("Login Posture")
+        posture_days = st.slider("Posture lookback (days)", 1, 90, 30, key="sec_posture_days")
+        if st.button("Load Login Posture", key="sec_posture_load"):
+            for key, sql in [
+                ("sec_login_ips", f"""
+                    SELECT client_ip, COUNT(*) AS login_events,
+                           COUNT(DISTINCT user_name) AS users,
+                           SUM(IFF(is_success = 'NO', 1, 0)) AS failed_events,
+                           MAX(event_timestamp) AS last_seen
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                    WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
+                    GROUP BY client_ip
+                    ORDER BY login_events DESC
+                    LIMIT 50
+                """),
+                ("sec_login_clients", f"""
+                    SELECT COALESCE(reported_client_type, 'UNKNOWN') AS reported_client_type,
+                           COALESCE(reported_client_version, 'UNKNOWN') AS reported_client_version,
+                           COUNT(*) AS login_events,
+                           COUNT(DISTINCT user_name) AS users,
+                           SUM(IFF(is_success = 'NO', 1, 0)) AS failed_events
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                    WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
+                    GROUP BY reported_client_type, reported_client_version
+                    ORDER BY login_events DESC
+                    LIMIT 50
+                """),
+                ("sec_login_factors", f"""
+                    SELECT COALESCE(first_authentication_factor, 'UNKNOWN') AS first_factor,
+                           COALESCE(second_authentication_factor, 'NONE') AS second_factor,
+                           COUNT(*) AS login_events,
+                           SUM(IFF(is_success = 'NO', 1, 0)) AS failed_events
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                    WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
+                    GROUP BY first_factor, second_factor
+                    ORDER BY login_events DESC
+                    LIMIT 50
+                """),
+                ("sec_login_errors", f"""
+                    SELECT COALESCE(error_code, 'NONE') AS error_code,
+                           COUNT(*) AS event_count,
+                           COUNT(DISTINCT user_name) AS users,
+                           COUNT(DISTINCT client_ip) AS ips
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                    WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
+                    GROUP BY error_code
+                    ORDER BY event_count DESC
+                    LIMIT 50
+                """),
+            ]:
+                try:
+                    st.session_state[key] = normalize_df(session.sql(sql).to_pandas())
+                except Exception:
+                    st.session_state[key] = pd.DataFrame()
+
+        c1, c2 = st.columns(2)
+        with c1:
+            ips = st.session_state.get("sec_login_ips")
+            st.subheader("Top IPs")
+            if ips is not None and not ips.empty:
+                st.bar_chart(ips.set_index("CLIENT_IP")["LOGIN_EVENTS"])
+                st.dataframe(ips, use_container_width=True, height=300)
+                download_csv(ips, "login_posture_ips.csv")
+        with c2:
+            clients = st.session_state.get("sec_login_clients")
+            st.subheader("Client Types / Versions")
+            if clients is not None and not clients.empty:
+                st.bar_chart(clients.set_index("REPORTED_CLIENT_TYPE")["LOGIN_EVENTS"])
+                st.dataframe(clients, use_container_width=True, height=300)
+                download_csv(clients, "login_posture_clients.csv")
+
+        c3, c4 = st.columns(2)
+        with c3:
+            factors = st.session_state.get("sec_login_factors")
+            st.subheader("Authentication Factors")
+            if factors is not None and not factors.empty:
+                st.dataframe(factors, use_container_width=True, height=300)
+                download_csv(factors, "login_posture_auth_factors.csv")
+        with c4:
+            errors = st.session_state.get("sec_login_errors")
+            st.subheader("Login Error Codes")
+            if errors is not None and not errors.empty:
+                st.bar_chart(errors.set_index("ERROR_CODE")["EVENT_COUNT"])
+                st.dataframe(errors, use_container_width=True, height=300)
+                download_csv(errors, "login_posture_error_codes.csv")
 
     # ── ROLES & GRANTS ────────────────────────────────────────────────────────
     with tab_roles:

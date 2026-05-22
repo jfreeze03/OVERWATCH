@@ -1,8 +1,58 @@
 # sections/warehouse_health.py — Warehouse stats, scaling events, idle detection, spill, heatmap
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart, get_wh_filter_clause, build_metered_credit_cte
+from utils import (
+    get_session, normalize_df, format_credits, credits_to_dollars,
+    download_csv, render_drillable_bar_chart, get_wh_filter_clause,
+    build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
+)
 from config import THRESHOLDS
+
+
+def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
+    if df_eff is None or df_eff.empty:
+        st.info("No efficiency findings to queue.")
+        return
+    company = st.session_state.get("active_company", "ALFA")
+    actions = []
+    for _, row in df_eff[df_eff["EFFICIENCY_SCORE"] < 70].head(100).iterrows():
+        wh = str(row.get("WAREHOUSE_NAME", ""))
+        score = float(row.get("EFFICIENCY_SCORE", 0) or 0)
+        queue = float(row.get("QUEUE_SEC_PER_CREDIT", 0) or 0)
+        spill = float(row.get("REMOTE_SPILL_GB_PER_CREDIT", 0) or 0)
+        credits = float(row.get("METERED_CREDITS", 0) or 0)
+        severity = "High" if score < 50 or queue > 10 or spill > 5 else "Medium"
+        finding = f"{wh} efficiency score is {score:.1f}; queue sec/credit={queue:.2f}, spill GB/credit={spill:.2f}"
+        actions.append({
+            "Action ID": make_action_id("Warehouse Efficiency", wh, finding),
+            "Source": "Warehouse Health - Efficiency",
+            "Severity": severity,
+            "Category": "Performance",
+            "Entity Type": "Warehouse",
+            "Entity": wh,
+            "Owner": "DBA",
+            "Finding": finding,
+            "Action": "Review queue, spill, cache, and credit/query patterns; tune size, clustering, workload routing, or query design.",
+            "Estimated Monthly Savings": 0.0,
+            "Generated SQL Fix": f"-- Review {wh}. If queue dominates, consider multi-cluster or larger size. If spill dominates, inspect top spilling queries.",
+            "Proof Query": f"Warehouse efficiency scorecard over recent query history; metered credits={credits:.2f}.",
+            "Company": company,
+        })
+    if not actions:
+        st.success("No warehouses below the queue threshold.")
+        return
+    try:
+        saved = upsert_actions(session, actions)
+        st.success(f"Saved {saved} warehouse efficiency findings to the action queue.")
+    except Exception as e:
+        st.error(f"Could not save to action queue: {e}")
+        st.download_button(
+            "Download Action Queue DDL",
+            build_action_queue_ddl(),
+            file_name="overwatch_action_queue_setup.sql",
+            mime="text/plain",
+            key="wh_eff_queue_ddl",
+        )
 
 
 def render():
@@ -156,6 +206,8 @@ def render():
                 lookback_hours=eff_days * 24,
             )
             download_csv(df_eff, "warehouse_efficiency.csv")
+            if st.button("Save low-efficiency warehouses to Action Queue", key="wh_eff_queue"):
+                _queue_efficiency_findings(session, df_eff)
 
     # ── SPILL ─────────────────────────────────────────────────────────────────
     with tab_spill:

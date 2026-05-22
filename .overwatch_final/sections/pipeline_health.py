@@ -3,12 +3,70 @@ import pandas as pd
 import streamlit as st
 
 from utils import (
+    build_action_queue_ddl,
     download_csv,
     get_db_filter_clause,
     get_session,
+    make_action_id,
     normalize_df,
     render_drillable_bar_chart,
+    upsert_actions,
 )
+
+
+def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> None:
+    if df is None or df.empty:
+        st.info("Nothing to queue from this result set.")
+        return
+    company = st.session_state.get("active_company", "ALFA")
+    actions = []
+    for _, row in df.head(200).iterrows():
+        db = row.get("DATABASE_NAME", "")
+        schema = row.get("SCHEMA_NAME", "")
+        table = row.get("TABLE_NAME", "")
+        entity = ".".join([str(v) for v in [db, schema, table] if v])
+        if finding_type == "Freshness":
+            severity = "High" if float(row.get("HOURS_SINCE_CHANGE", 0) or 0) >= 72 else "Medium"
+            finding = f"{entity} has not changed for {int(row.get('HOURS_SINCE_CHANGE', 0) or 0)} hours"
+            action = "Confirm upstream pipeline SLA, source feed health, and whether the table is still business critical."
+            proof = "ACCOUNT_USAGE.TABLES last_altered freshness scan"
+        elif finding_type == "Load Failure":
+            severity = "High"
+            finding = f"{entity} has {int(row.get('FILE_COUNT', 0) or 0)} failed load files with status {row.get('STATUS', '')}"
+            action = "Review COPY_HISTORY error, repair source file/stage issue, and reload failed files."
+            proof = "ACCOUNT_USAGE.COPY_HISTORY non-loaded status scan"
+        else:
+            severity = "Medium"
+            finding = f"{entity} is on volume watch: {row.get('WATCH_REASON', '')}; {float(row.get('SIZE_GB', 0) or 0):,.1f} GB"
+            action = "Review retention, clustering, time travel, and whether old data can be archived or dropped."
+            proof = "ACCOUNT_USAGE.TABLES size and last_altered scan"
+        actions.append({
+            "Action ID": make_action_id("Pipeline", entity, finding),
+            "Source": f"Pipeline Health - {finding_type}",
+            "Severity": severity,
+            "Category": "Pipeline",
+            "Entity Type": "Table",
+            "Entity": entity,
+            "Owner": "Data Engineering",
+            "Finding": finding,
+            "Action": action,
+            "Estimated Monthly Savings": 0.0,
+            "Generated SQL Fix": "-- Review pipeline/table ownership before changing data or retention settings.",
+            "Proof Query": proof,
+            "Company": company,
+        })
+    try:
+        saved = upsert_actions(session, actions)
+        st.success(f"Saved {saved} pipeline findings to the action queue.")
+    except Exception as e:
+        st.error(f"Could not save to action queue: {e}")
+        st.download_button(
+            "Download Action Queue DDL",
+            build_action_queue_ddl(),
+            file_name="overwatch_action_queue_setup.sql",
+            mime="text/plain",
+            key=f"pipe_queue_ddl_{finding_type}",
+        )
 
 
 def render():
@@ -63,6 +121,8 @@ def render():
                     lookback_hours=stale_hours,
                 )
                 download_csv(df_fresh, "pipeline_freshness_watchlist.csv")
+                if st.button("Save freshness findings to Action Queue", key="pipe_fresh_queue"):
+                    _queue_pipeline_findings(session, df_fresh, "Freshness")
 
     with tab_loads:
         st.header("Load Failure Monitor")
@@ -97,6 +157,8 @@ def render():
                 st.metric("Failed load groups", len(df_loads))
                 st.dataframe(df_loads, use_container_width=True)
                 download_csv(df_loads, "pipeline_load_failures.csv")
+                if st.button("Save load failures to Action Queue", key="pipe_load_queue"):
+                    _queue_pipeline_findings(session, df_loads, "Load Failure")
 
     with tab_volume:
         st.header("Table Volume Watch")
@@ -138,3 +200,5 @@ def render():
                 c2.metric("Total watchlist GB", f"{float(df_volume['SIZE_GB'].sum() or 0):,.1f}")
                 st.dataframe(df_volume, use_container_width=True)
                 download_csv(df_volume, "pipeline_volume_watch.csv")
+                if st.button("Save volume watch to Action Queue", key="pipe_volume_queue"):
+                    _queue_pipeline_findings(session, df_volume, "Volume")

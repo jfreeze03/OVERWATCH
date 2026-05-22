@@ -34,6 +34,7 @@ from .action_queue import (
     build_action_queue_ddl, make_action_id, upsert_actions,
     load_action_queue, update_action_status,
 )
+from .setup_bundle import build_overwatch_setup_bundle, build_snowflake_value_ddl
 
 __all__ = [
     "get_session",
@@ -58,4 +59,5 @@ __all__ = [
     "apply_bookmark", "delete_bookmark",
     "build_action_queue_ddl", "make_action_id", "upsert_actions",
     "load_action_queue", "update_action_status",
+    "build_overwatch_setup_bundle", "build_snowflake_value_ddl",
 ]

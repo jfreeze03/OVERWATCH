@@ -1258,8 +1258,23 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
         st.header("📊 OVERWATCH Usage Log")
         st.caption("Tracks which sections are loaded, by whom, how often, and how fast.")
         from utils.logging import build_usage_log_ddl, set_logging_enabled, is_logging_enabled
+        from utils import build_overwatch_setup_bundle
         from config import ALERT_DB, ALERT_SCHEMA
         log_tbl = f"{ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_USAGE_LOG"
+
+        with st.expander("Full OVERWATCH persistent setup bundle"):
+            setup_sql = build_overwatch_setup_bundle()
+            preview = setup_sql[:5000]
+            if len(setup_sql) > 5000:
+                preview += "\n\n-- truncated in preview; download for full script"
+            st.code(preview, language="sql")
+            st.download_button(
+                "Download Full Setup Bundle",
+                setup_sql,
+                file_name="overwatch_full_setup.sql",
+                mime="text/plain",
+                key="overwatch_full_setup_download",
+            )
 
         with st.expander("📋 Setup DDL"):
             st.code(build_usage_log_ddl(), language="sql")

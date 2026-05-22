@@ -1,2 +1,6 @@
 __pycache__/
 *.py[cod]
+.venv/
+.streamlit/secrets.toml
+.streamlit/*.toml
+!.streamlit/config.toml

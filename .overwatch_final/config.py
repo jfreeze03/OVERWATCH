@@ -114,6 +114,7 @@ NAV_GROUPS = {
     "INFRASTRUCTURE": [
         "🗄️ Storage Monitor",
         "Pipeline Health",
+        "Platform Topology",
         "🐳 SPCS Tracker",
         "⚙️ Task Management",
     ],
@@ -160,6 +161,7 @@ ROLE_SECTIONS = {
         "💸 Cost Center",
         "🗄️ Storage Monitor",
         "Pipeline Health",
+        "Platform Topology",
         "🤖 AI & Cortex Monitor",
     ],
     # Managers / leadership — executive summary, cost, recommendations, Snowflake value
@@ -175,6 +177,7 @@ ROLE_SECTIONS = {
         "Snowflake Value",
         "🗄️ Storage Monitor",
         "🤖 AI & Cortex Monitor",
+        "Platform Topology",
     ],
     # Report / BI roles — same as analyst
     "REPORT": [
@@ -189,6 +192,7 @@ ROLE_SECTIONS = {
         "Credit Contract",
         "🗄️ Storage Monitor",
         "Pipeline Health",
+        "Platform Topology",
     ],
     # DBA / admin / sysadmin — full access (default fallback also gives full access)
     "DBA":         ALL_SECTIONS,

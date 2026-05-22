@@ -25,6 +25,7 @@ _MODULE_MAP: dict[str, str] = {
     "💡 Optimization":                "sections.optimization",
     "🗄️ Storage Monitor":            "sections.storage_monitor",
     "Pipeline Health":                "sections.pipeline_health",
+    "Platform Topology":             "sections.platform_topology",
     "🐳 SPCS Tracker":                "sections.spcs_tracker",
     "🔒 Security & Access":           "sections.security_access",
     "🔀 Who Changed What?":           "sections.object_change_monitor",  # FIX: emoji added

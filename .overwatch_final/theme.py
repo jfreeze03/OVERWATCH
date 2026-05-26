@@ -382,9 +382,12 @@ h2, h3 {
     padding-bottom: 8px;
     font-family: var(--font-body) !important;
 }
-p, li, div { color: var(--text-primary); font-family: var(--font-body) !important; }
-span:not([class*="material"]) { color: var(--text-primary); font-family: var(--font-body) !important; }
-span[class*="material"] { font-family: "Material Symbols Rounded", "Material Icons" !important; }
+p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
+[data-testid="stMarkdownContainer"],
+[data-testid="stMarkdownContainer"] *:not([class*="icon"]):not([class*="material"]) {
+    color: inherit;
+    font-family: var(--font-body);
+}
 
 /* ── DataFrames ── */
 [data-testid="stDataFrame"] {

@@ -228,13 +228,14 @@ def render():
 
     # ── ROLES & GRANTS ────────────────────────────────────────────────────────
     with tab_roles:
-        st.header("🛡️ Roles & Privilege Grants")
+        st.header("🛡️ Roles & Grants")
         if st.button("Load Grants", key="grants_load"):
             try:
                 df_grants = normalize_df(session.sql("""
-                    SELECT grantee_name, role, privilege, granted_on,
-                           name AS object_name, granted_by, created_on
+                    SELECT grantee_name, role, granted_to, granted_by,
+                           created_on, deleted_on
                     FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+                    WHERE deleted_on IS NULL
                     ORDER BY created_on DESC LIMIT 500
                 """).to_pandas())
                 st.session_state["sec_df_grants"] = df_grants

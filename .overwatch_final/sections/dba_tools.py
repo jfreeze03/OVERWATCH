@@ -89,7 +89,6 @@ def render():
         "⚙️ Warehouse Settings",       # Tab 1 — REWRITTEN
         "Data Loading",
         "Network & Sessions",
-        "Dormant Users",
         "Unused Objects",
         "Snowpipe Monitor",
         "QAS Monitor",
@@ -391,10 +390,6 @@ def render():
             st.dataframe(st.session_state["dba_df_long_sess"], use_container_width=True)
 
     with tabs[4]:
-        st.header("💤 Dormant Users")
-        st.info("Use Security & Access → Roles & Grants for the full dormant-user scan.")
-
-    with tabs[5]:
         st.header("🗑️ Unused Objects")
         if _load_button("Find Unused Tables", "unused_load"):
             try:
@@ -411,7 +406,7 @@ def render():
         if st.session_state.get("dba_df_unused") is not None:
             st.dataframe(st.session_state["dba_df_unused"], use_container_width=True)
 
-    with tabs[6]:
+    with tabs[5]:
         st.header("🔧 Snowpipe Monitor")
         sp_days = st.slider("Lookback (days)", 1, 14, 3, key="spipe_days")
         if _load_button("Load Pipe Usage", "spipe_load"):
@@ -430,7 +425,7 @@ def render():
         if st.session_state.get("dba_df_pipe") is not None:
             st.dataframe(st.session_state["dba_df_pipe"], use_container_width=True)
 
-    with tabs[7]:
+    with tabs[6]:
         st.header("⚡ QAS Monitor")
         qas_days = st.slider("Lookback (days)", 1, 30, 7, key="qas_days")
         if _load_button("Load QAS Data", "qas_load"):
@@ -460,7 +455,7 @@ def render():
         if st.session_state.get("dba_df_qas") is not None:
             st.dataframe(st.session_state["dba_df_qas"], use_container_width=True)
 
-    with tabs[8]:
+    with tabs[7]:
         st.header("📐 Schema Compare")
         c1, c2 = st.columns(2)
         with c1:
@@ -480,7 +475,7 @@ def render():
             except Exception as e:
                 st.error(f"Compare failed: {e}")
 
-    with tabs[9]:
+    with tabs[8]:
         st.header("🔎 Recent Objects")
         obj_days = st.slider("Created/altered within (days)", 1, 90, 30, key="obj_days")
         obj_db_clause = f"AND table_catalog ILIKE '%{safe_sql(st.text_input('Database filter', key='obj_db_filter'))}%'" if st.session_state.get("obj_db_filter") else ""
@@ -502,7 +497,7 @@ def render():
             st.dataframe(st.session_state["dba_df_recent_objects"], use_container_width=True)
             download_csv(st.session_state["dba_df_recent_objects"], "recent_objects.csv")
 
-    with tabs[10]:
+    with tabs[9]:
         st.header("Pre-Aggregation DDL")
         preagg_db = st.text_input("Target database", value="DBA_MAINT_DB", key="preagg_db")
         preagg_schema = st.text_input("Target schema", value="OVERWATCH",   key="preagg_schema")
@@ -516,7 +511,7 @@ GROUP BY warehouse_name, hour_bucket;"""
         st.code(preagg_sql, language="sql")
         st.download_button("Download Pre-Aggregation SQL", preagg_sql, file_name="overwatch_preagg.sql", mime="text/plain")
 
-    with tabs[11]:
+    with tabs[10]:
         st.header("🔄 Dynamic Tables")
         if st.button("Load Dynamic Tables", key="dyn_load"):
             try:
@@ -561,7 +556,7 @@ GROUP BY warehouse_name, hour_bucket;"""
             st.dataframe(st.session_state["dba_df_dyn"], use_container_width=True)
             download_csv(st.session_state["dba_df_dyn"], "dynamic_tables.csv")
 
-    with tabs[12]:
+    with tabs[11]:
         st.header("🔁 Replication")
         repl_days = st.slider("Lookback (days)", 1, 90, 30, key="repl_days")
         if st.button("Load Replication History", key="repl_load"):
@@ -609,7 +604,7 @@ GROUP BY warehouse_name, hour_bucket;"""
             st.dataframe(st.session_state["dba_df_repl"], use_container_width=True)
             download_csv(st.session_state["dba_df_repl"], "replication_history.csv")
 
-    with tabs[13]:
+    with tabs[12]:
         st.header("💻 Serverless Costs")
         sv_days = st.slider("Lookback (days)", 7, 90, 30, key="sv_days")
         if st.button("Load Serverless Costs", key="sv_load"):
@@ -633,7 +628,7 @@ GROUP BY warehouse_name, hour_bucket;"""
             download_csv(df_sv, "serverless_costs.csv")
 
     # ── TAB 14: CORTEX AI LIMITS ──────────────────────────────────────────────
-    with tabs[14]:
+    with tabs[13]:
         st.header("🤖 Cortex AI Limits")
         st.caption(
             "View and modify Cortex AI service limits for your account. "
@@ -842,7 +837,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 """, language="sql")
 
     # ── TAB 15: TASK GRAPH CONTROL ────────────────────────────────────────────
-    with tabs[15]:
+    with tabs[14]:
         st.header("🔀 Task Graph Control")
         st.caption(
             "Cancel running queries spawned by tasks, cancel task graphs mid-run, "
@@ -1252,7 +1247,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     download_csv(df_dag, f"dag_{sel_dag}.csv")
 
     # ── TAB 16: USAGE LOG (carried forward) ───────────────────────────────────
-    with tabs[16]:
+    with tabs[15]:
         st.header("📊 OVERWATCH Usage Log")
         st.caption("Tracks which sections are loaded, by whom, how often, and how fast.")
         from utils.logging import build_usage_log_ddl, set_logging_enabled, is_logging_enabled

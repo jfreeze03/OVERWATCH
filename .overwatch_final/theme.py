@@ -32,11 +32,11 @@ THEMES = {
         "desc":     "Dark glassmorphism · cyan accent",
     },
     "corporate": {
-        "label":    "Corporate",
-        "emoji":    "🏢",
-        "swatch":   "#1e3a8a",
-        "bg":       "#f8fafc",
-        "desc":     "Traditional light · navy & ALFA blue",
+        "label":    "ALFA",
+        "emoji":    "🔴",
+        "swatch":   "#b00020",
+        "bg":       "#f7f6f3",
+        "desc":     "Clean light - ALFA red & teal",
     },
     "terminal": {
         "label":    "Terminal",
@@ -115,46 +115,46 @@ _VARS = {
 # ─── 2. CORPORATE — traditional light, navy sidebar, ALFA blue ───────────────
 "corporate": """
 :root {
-    --bg-app:          #f1f5f9;
-    --bg-sidebar:      linear-gradient(180deg, #1e3a8a 0%, #1e40af 100%);
+    --bg-app:          #f7f6f3;
+    --bg-sidebar:      #ffffff;
     --bg-card:         #ffffff;
-    --bg-card-hover:   #f8fafc;
+    --bg-card-hover:   #fbfaf8;
     --bg-input:        #ffffff;
-    --bg-tab-list:     #e2e8f0;
-    --bg-expander:     #f8fafc;
+    --bg-tab-list:     #f0efec;
+    --bg-expander:     #ffffff;
 
-    --border-subtle:   #e2e8f0;
-    --border-normal:   #cbd5e1;
-    --border-strong:   #1e3a8a;
-    --border-sidebar:  rgba(255,255,255,0.15);
+    --border-subtle:   #e4e1dc;
+    --border-normal:   #cfcac3;
+    --border-strong:   #5aa0b6;
+    --border-sidebar:  #d8d4ce;
 
-    --text-primary:    #0f172a;
-    --text-secondary:  #475569;
-    --text-muted:      #94a3b8;
-    --text-input:      #0f172a;
-    --text-heading:    #1e3a8a;
+    --text-primary:    #2f3437;
+    --text-secondary:  #4d5559;
+    --text-muted:      #7b8387;
+    --text-input:      #2f3437;
+    --text-heading:    #b00020;
 
-    --accent:          #1d4ed8;
-    --accent-rgb:      29, 78, 216;
-    --accent2:         #1e40af;
-    --accent3:         #1e3a8a;
-    --h1-gradient:     linear-gradient(90deg, #1e3a8a, #1d4ed8, #2563eb);
+    --accent:          #b00020;
+    --accent-rgb:      176, 0, 32;
+    --accent2:         #5aa0b6;
+    --accent3:         #2f7f95;
+    --h1-gradient:     linear-gradient(90deg, #b00020 0%, #b00020 46%, #3a3d40 46%, #3a3d40 100%);
 
-    --metric-shadow:        0 1px 4px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
-    --metric-hover-shadow:  0 4px 16px rgba(29,78,216,0.12), 0 2px 6px rgba(0,0,0,0.06);
-    --btn-bg:          linear-gradient(135deg, rgba(29,78,216,0.08), rgba(30,58,138,0.08));
-    --btn-bg-hover:    linear-gradient(135deg, rgba(29,78,216,0.18), rgba(30,58,138,0.18));
-    --btn-border:      rgba(29, 78, 216, 0.40);
-    --btn-hover-shadow: 0 2px 12px rgba(29,78,216,0.18);
-    --slider-track:    linear-gradient(90deg, #1e3a8a, #2563eb);
-    --tab-active-bg:   rgba(29, 78, 216, 0.10);
-    --tab-active-col:  #1d4ed8;
-    --hr-bg:           linear-gradient(90deg, transparent, #cbd5e1, transparent);
-    --scrollbar-track: #f1f5f9;
-    --scrollbar-thumb: rgba(29, 78, 216, 0.25);
-    --scrollbar-hover: rgba(29, 78, 216, 0.45);
-    --font-body:       'Georgia', 'Times New Roman', serif;
-    --font-mono:       'Courier New', monospace;
+    --metric-shadow:        0 1px 8px rgba(47,52,55,0.08), 0 1px 2px rgba(47,52,55,0.06);
+    --metric-hover-shadow:  0 8px 22px rgba(90,160,182,0.18), 0 3px 8px rgba(47,52,55,0.08);
+    --btn-bg:          linear-gradient(135deg, rgba(90,160,182,0.10), rgba(176,0,32,0.04));
+    --btn-bg-hover:    linear-gradient(135deg, rgba(90,160,182,0.20), rgba(176,0,32,0.08));
+    --btn-border:      rgba(90, 160, 182, 0.55);
+    --btn-hover-shadow: 0 2px 12px rgba(90,160,182,0.22);
+    --slider-track:    linear-gradient(90deg, #b00020, #5aa0b6);
+    --tab-active-bg:   rgba(176, 0, 32, 0.10);
+    --tab-active-col:  #b00020;
+    --hr-bg:           linear-gradient(90deg, transparent, #d8d4ce, transparent);
+    --scrollbar-track: #f2f0ec;
+    --scrollbar-thumb: rgba(90, 160, 182, 0.35);
+    --scrollbar-hover: rgba(176, 0, 32, 0.35);
+    --font-body:       'Inter', 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+    --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
     --extra-css:       '';
 }
 """,
@@ -177,7 +177,7 @@ _VARS = {
 
     --text-primary:    #00ff41;
     --text-secondary:  #00cc33;
-    --text-muted:      #006614;
+    --text-muted:      #66b37a;
     --text-input:      #00ff41;
     --text-heading:    transparent;
 
@@ -224,7 +224,7 @@ _VARS = {
 
     --text-primary:    #ecfdf5;
     --text-secondary:  #6ee7b7;
-    --text-muted:      #374151;
+    --text-muted:      #8fb8aa;
     --text-input:      #ecfdf5;
     --text-heading:    transparent;
 
@@ -505,12 +505,16 @@ hr {
     background: var(--bg-tab-list);
     border-radius: 10px;
     padding: 4px;
+    overflow-x: auto;
+    scrollbar-width: thin;
 }
 .stTabs [data-baseweb="tab"] {
     border-radius: 8px;
     color: var(--text-secondary) !important;
     font-weight: 500;
     font-family: var(--font-body) !important;
+    min-height: 36px;
+    white-space: nowrap;
 }
 .stTabs [aria-selected="true"] {
     background: var(--tab-active-bg) !important;
@@ -584,34 +588,106 @@ code, pre, .stCodeBlock {
 .corporate-extra [data-testid="stSidebar"] label,
 .corporate-extra [data-testid="stSidebar"] .stRadio > label,
 .corporate-extra [data-testid="stSidebar"] p {
-    color: rgba(255,255,255,0.85) !important;
+    color: #2f3437 !important;
 }
 .corporate-extra [data-testid="stSidebar"] .stRadio > div > label:hover {
-    color: #ffffff !important;
-    background: rgba(255,255,255,0.10);
+    color: #b00020 !important;
+    background: rgba(176,0,32,0.06);
 }
 .corporate-extra [data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {
-    background: rgba(255,255,255,0.15);
-    border-left: 3px solid #ffffff;
+    color: #b00020 !important;
+    background: rgba(176,0,32,0.10);
+    border-left: 3px solid #b00020;
 }
 /* Corporate: body text stays dark on light backgrounds */
 .corporate-extra p,
 .corporate-extra li,
-.corporate-extra span,
 .corporate-extra label:not([data-testid="stSidebar"] *) {
-    color: #0f172a !important;
+    color: #2f3437 !important;
 }
 .corporate-extra h2, .corporate-extra h3 {
-    color: #1e3a8a !important;
+    color: #b00020 !important;
 }
 /* Corporate metrics: white cards, dark text */
-.corporate-extra [data-testid="stMetricValue"] { color: #0f172a !important; }
-.corporate-extra [data-testid="stMetricLabel"] { color: #475569 !important; }
+.corporate-extra [data-testid="stMetric"] {
+    border-top: 3px solid rgba(176,0,32,0.72) !important;
+}
+.corporate-extra [data-testid="stMetricValue"] { color: #2f3437 !important; }
+.corporate-extra [data-testid="stMetricLabel"] { color: #6c7478 !important; }
+.corporate-extra .stTabs [data-baseweb="tab-list"] {
+    border-bottom: 2px solid rgba(176,0,32,0.65);
+}
+.corporate-extra .stTabs [data-baseweb="tab"] {
+    color: #4d5559 !important;
+    font-weight: 650;
+}
 
 </style>
 """
 
 # ── Theme picker HTML ─────────────────────────────────────────────────────────
+_THEME_EXTRAS = {
+    "corporate": """
+<style>
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stRadio > label,
+[data-testid="stSidebar"] p {
+    color: #2f3437 !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    color: #2f3437 !important;
+    background: #ffffff !important;
+    border-color: #d8d4ce !important;
+    box-shadow: none !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    color: #b00020 !important;
+    background: rgba(176,0,32,0.06) !important;
+    border-color: rgba(176,0,32,0.28) !important;
+}
+[data-testid="stSidebar"] .stRadio > div > label:hover {
+    color: #b00020 !important;
+    background: rgba(176,0,32,0.06);
+}
+[data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {
+    color: #b00020 !important;
+    background: rgba(176,0,32,0.10);
+    border-left: 3px solid #b00020;
+}
+[data-testid="stMetric"] {
+    border-top: 3px solid rgba(176,0,32,0.72) !important;
+}
+[data-testid="stMetricValue"] { color: #2f3437 !important; }
+[data-testid="stMetricLabel"] { color: #6c7478 !important; }
+.stTabs [data-baseweb="tab-list"] {
+    border-bottom: 2px solid rgba(176,0,32,0.65);
+}
+.stTabs [data-baseweb="tab"] {
+    color: #4d5559 !important;
+    font-weight: 650;
+}
+.stTabs [aria-selected="true"] {
+    color: #b00020 !important;
+}
+</style>
+""",
+    "terminal": """
+<style>
+.stApp::before {
+    content: '';
+    position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0,0,0,0.03) 0px,
+        rgba(0,0,0,0.03) 1px,
+        transparent 1px,
+        transparent 2px
+    );
+}
+</style>
+""",
+}
+
 _PICKER_CSS = """
 <style>
 .theme-picker { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
@@ -648,7 +724,7 @@ def inject_theme() -> None:
     vars_block = _VARS.get(theme_key, _VARS[_DEFAULT_THEME])
 
     # Inject the :root variables + structural CSS
-    combined = _STRUCTURAL_CSS.replace("{vars}", vars_block)
+    combined = _STRUCTURAL_CSS.replace("{vars}", vars_block) + _THEME_EXTRAS.get(theme_key, "")
     st.markdown(combined, unsafe_allow_html=True)
 
 

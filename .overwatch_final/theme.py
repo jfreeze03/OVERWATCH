@@ -382,7 +382,9 @@ h2, h3 {
     padding-bottom: 8px;
     font-family: var(--font-body) !important;
 }
-p, li, span, div { color: var(--text-primary); font-family: var(--font-body) !important; }
+p, li, div { color: var(--text-primary); font-family: var(--font-body) !important; }
+span:not([class*="material"]) { color: var(--text-primary); font-family: var(--font-body) !important; }
+span[class*="material"] { font-family: "Material Symbols Rounded", "Material Icons" !important; }
 
 /* ── DataFrames ── */
 [data-testid="stDataFrame"] {
@@ -630,6 +632,21 @@ def render_theme_picker(persist: bool = False) -> None:
         persist: Write preference to OVERWATCH_BOOKMARKS for cross-session persistence.
     """
     current = _get_theme()
+    options = list(THEMES.keys())
+    index = options.index(current) if current in options else 0
+    selected = st.radio(
+        "Theme",
+        options,
+        index=index,
+        format_func=lambda key: f"{THEMES[key]['emoji']} {THEMES[key]['label']} - {THEMES[key]['desc']}",
+        key="theme_picker_radio",
+    )
+    if selected != current:
+        st.session_state["active_theme"] = selected
+        if persist:
+            _save_theme_preference(selected)
+        st.rerun()
+    return
 
     st.markdown(
         "<div style='font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;"

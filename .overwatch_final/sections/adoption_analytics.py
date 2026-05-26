@@ -115,7 +115,7 @@ def _load_adoption(session, days: int) -> dict:
 
     applications = normalize_df(session.sql(f"""
         SELECT
-            COALESCE(q.client_application_id, 'UNKNOWN') AS client_application,
+            COALESCE(q.query_tag, 'UNTAGGED') AS client_application,
             COUNT(*) AS query_count,
             COUNT(DISTINCT q.user_name) AS users,
             ROUND(100 * SUM(IFF(q.error_code IS NOT NULL, 1, 0)) / NULLIF(COUNT(*), 0), 1) AS error_rate
@@ -170,7 +170,7 @@ def render():
     m4.metric("Time/Query", f"{_metric(summary, 'AVG_TIME_PER_QUERY_SEC'):,.2f}s")
     m5.metric("Error Rate", f"{_metric(summary, 'ERROR_RATE'):,.1f}%")
 
-    tab_trend, tab_wh, tab_db, tab_role = st.tabs(["Trend", "Warehouse Adoption", "Database Adoption", "Role & Client Mix"])
+    tab_trend, tab_wh, tab_db, tab_role = st.tabs(["Trend", "Warehouse Adoption", "Database Adoption", "Role & Workload Mix"])
 
     with tab_trend:
         trend = data["trend"]
@@ -213,7 +213,7 @@ def render():
             st.dataframe(role, use_container_width=True, height=360)
             download_csv(role, "adoption_role_query_type.csv")
         with c2:
-            st.subheader("Top Client Applications")
+            st.subheader("Top Query Tags")
             if not apps.empty:
                 chart = alt.Chart(apps).mark_bar().encode(
                     x=alt.X("QUERY_COUNT:Q", title="Queries"),
@@ -222,4 +222,4 @@ def render():
                     color=alt.value("#c084fc"),
                 ).properties(height=360)
                 st.altair_chart(chart, use_container_width=True)
-            download_csv(apps, "adoption_client_applications.csv")
+            download_csv(apps, "adoption_query_tags.csv")

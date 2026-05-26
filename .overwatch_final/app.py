@@ -54,6 +54,23 @@ def _resolve_visible_sections() -> list[str]:
     return ALL_SECTIONS
 
 
+NAV_ALIASES = {
+    "Usage Overview": "📊 Usage Overview",
+    "Adoption Analytics": "📈 Adoption Analytics",
+    "Service Health": "🩺 Service Health",
+    "Detailed Diagnosis": "🧪 Detailed Diagnosis",
+    "Pipeline Health": "🚚 Pipeline Health",
+    "Platform Topology": "🕸️ Platform Topology",
+    "Credit Contract": "📉 Credit Contract",
+    "Snowflake Value": "🏆 Snowflake Value",
+    "💡 Optimization": "🏭 Warehouse Health",
+}
+
+
+def _normalize_nav_section(section: str) -> str:
+    return NAV_ALIASES.get(section, section)
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     # Header
@@ -135,7 +152,7 @@ with st.sidebar:
             elif "ALERT" in upper or "RECOMMEND" in upper or "ACTION" in upper:
                 target = "💡 Recommendations & Anomalies"
             elif "VALUE" in upper or "ROI" in upper or "SAVING" in upper:
-                target = "Snowflake Value"
+                target = "🏆 Snowflake Value"
             elif "DBA" in upper or "WAREHOUSE SETTING" in upper:
                 target = "🛠️ DBA Tools"
             else:
@@ -158,7 +175,7 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    active_section = st.session_state.get("nav_section", visible_sections[0])
+    active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))
     if active_section not in visible_sections:
         active_section = visible_sections[0]
         st.session_state["nav_section"] = active_section
@@ -376,7 +393,7 @@ with st.expander("🤖 Ask OVERWATCH  (Cortex AI)", expanded=False):
 st.markdown("---")
 
 # ── Section dispatch ──────────────────────────────────────────────────────────
-active_section = st.session_state.get("nav_section", visible_sections[0])
+active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))
 if active_section not in visible_sections:
     active_section = visible_sections[0]
     st.session_state["nav_section"] = active_section

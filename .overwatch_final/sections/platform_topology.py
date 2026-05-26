@@ -76,7 +76,7 @@ def _load_topology(session, days: int) -> dict:
 
     app_flow = normalize_df(session.sql(f"""
         SELECT
-            COALESCE(q.client_application_id, 'UNKNOWN') AS client_application,
+            COALESCE(q.query_tag, 'UNTAGGED') AS client_application,
             q.warehouse_name,
             COALESCE(q.database_name, 'UNKNOWN') AS database_name,
             COUNT(DISTINCT q.user_name) AS users,

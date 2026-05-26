@@ -187,7 +187,7 @@ def render_entity_query_drilldown(
     col = entity_column.lower()
     allowed = {
         "warehouse_name","user_name","role_name","database_name",
-        "schema_name","query_id","query_tag","client_application_id",
+        "schema_name","query_id","query_tag",
         "database_schema","application_client","lineage_dimension",
     }
     if col not in allowed:
@@ -202,7 +202,7 @@ def render_entity_query_drilldown(
             f"= '{value}'"
         )
     elif col == "application_client":
-        where_clause = f"COALESCE(client_application_id, query_tag, 'UNKNOWN') = '{value}'"
+        where_clause = f"COALESCE(query_tag, 'UNTAGGED') = '{value}'"
     elif col == "lineage_dimension":
         where_clause = (
             "COALESCE(REGEXP_SUBSTR(query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), "

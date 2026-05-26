@@ -199,7 +199,7 @@ def render():
                     df_sess = normalize_df(session.sql("""
                         SELECT session_id, user_name, created_on,
                                DATEDIFF('minute', created_on, CURRENT_TIMESTAMP()) AS session_min,
-                               client_application_id, authentication_method
+                               authentication_method
                         FROM SNOWFLAKE.ACCOUNT_USAGE.SESSIONS
                         WHERE created_on >= DATEADD('day', -1, CURRENT_TIMESTAMP())
                         ORDER BY session_min DESC LIMIT 200

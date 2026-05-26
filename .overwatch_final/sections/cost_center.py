@@ -289,8 +289,8 @@ def render():
                 select_cols = "COALESCE(q.database_name,'UNKNOWN')||'.'||COALESCE(q.schema_name,'UNKNOWN') AS dimension"
                 group_cols  = "COALESCE(q.database_name,'UNKNOWN')||'.'||COALESCE(q.schema_name,'UNKNOWN')"
             elif attr_mode == "Application / Client":
-                select_cols = "COALESCE(q.client_application_id, q.query_tag, 'UNKNOWN') AS dimension"
-                group_cols  = "COALESCE(q.client_application_id, q.query_tag, 'UNKNOWN')"
+                select_cols = "COALESCE(q.query_tag, 'UNTAGGED') AS dimension"
+                group_cols  = "COALESCE(q.query_tag, 'UNTAGGED')"
             else:
                 select_cols = "COALESCE(t.name, REGEXP_SUBSTR(q.query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), q.root_query_id, 'ADHOC') AS dimension"
                 group_cols  = "COALESCE(t.name, REGEXP_SUBSTR(q.query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), q.root_query_id, 'ADHOC')"

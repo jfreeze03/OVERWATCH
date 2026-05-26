@@ -379,8 +379,7 @@ def render():
             try:
                 st.session_state["dba_df_long_sess"] = normalize_df(session.sql("""
                     SELECT session_id, user_name, created_on,
-                           DATEDIFF('hour', created_on, CURRENT_TIMESTAMP()) AS session_hours,
-                           client_application_id
+                           DATEDIFF('hour', created_on, CURRENT_TIMESTAMP()) AS session_hours
                     FROM SNOWFLAKE.ACCOUNT_USAGE.SESSIONS
                     WHERE created_on >= DATEADD('day', -7, CURRENT_TIMESTAMP())
                       AND DATEDIFF('hour', created_on, CURRENT_TIMESTAMP()) > 8
@@ -882,7 +881,6 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                           AND (
                               query_tag IS NOT NULL
                               OR LOWER(query_text) LIKE '%execute task%'
-                              OR client_application_id LIKE '%task%'
                           )
                         ORDER BY elapsed_sec DESC
                     """).to_pandas())

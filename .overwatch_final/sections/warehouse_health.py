@@ -59,8 +59,8 @@ def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
 
-    tab_overview, tab_efficiency, tab_spill, tab_heatmap = st.tabs([
-        "Overview & Scaling", "Efficiency", "Spill & Memory", "Workload Heatmap"
+    tab_overview, tab_efficiency, tab_spill, tab_heatmap, tab_optimization = st.tabs([
+        "Overview & Scaling", "Efficiency", "Spill & Memory", "Workload Heatmap", "Optimization Advisor"
     ])
 
     # ── OVERVIEW ──────────────────────────────────────────────────────────────
@@ -298,3 +298,8 @@ def render():
                 c1.metric("Total Queries", f"{int(wh_data['QUERY_COUNT'].sum()):,}")
                 c2.metric("Peak Hour",     f"{int(pivot.max().max()):,}")
                 c3.metric("Avg Elapsed",   f"{wh_data['AVG_ELAPSED_SEC'].mean():.1f}s")
+
+    with tab_optimization:
+        from sections.optimization import render as render_optimization
+
+        render_optimization()

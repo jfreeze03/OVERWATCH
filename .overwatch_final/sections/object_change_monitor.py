@@ -182,16 +182,16 @@ def render():
         if st.button("Load Drift Indicators", key="ocm_drift_load"):
             try:
                 st.session_state["ocm_df_drift"] = normalize_df(session.sql(f"""
-                SELECT query_id, user_name, role_name, client_application_id, query_tag,
+                SELECT query_id, user_name, role_name, query_tag,
                        start_time, SUBSTR(query_text, 1, 1500) AS query_text,
                        CASE
-                         WHEN client_application_id ILIKE '%terraform%' OR query_tag ILIKE '%terraform%' THEN 'IaC managed'
+                         WHEN query_tag ILIKE '%terraform%' THEN 'IaC managed'
                          ELSE 'Manual / non-IaC'
                        END AS drift_indicator
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                 WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
                   AND (query_text ILIKE 'CREATE%' OR query_text ILIKE 'ALTER%' OR query_text ILIKE 'DROP%' OR query_text ILIKE 'GRANT%' OR query_text ILIKE 'REVOKE%')
-                  AND NOT (client_application_id ILIKE '%terraform%' OR query_tag ILIKE '%terraform%')
+                  AND NOT (query_tag ILIKE '%terraform%')
                   {filter_clause}
                 ORDER BY start_time DESC
                 LIMIT 1000

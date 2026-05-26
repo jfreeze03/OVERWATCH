@@ -163,17 +163,8 @@ with st.sidebar:
             st.session_state["nav_section"] = target if target in visible_sections else visible_sections[0]
             st.rerun()
 
-    st.markdown(
-        f"<div style='font-size:0.65rem; color:{profile_color}; font-weight:700; "
-        f"letter-spacing:1px; margin-bottom:6px;'>"
-        f"🔑 {role_label} · {matched_profile} VIEW</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "<div style='font-size:0.7rem;color:#64748b;text-transform:uppercase;"
-        "letter-spacing:1px;margin-bottom:4px;'>Navigate</div>",
-        unsafe_allow_html=True,
-    )
+    st.caption(f"{role_label} · {matched_profile} VIEW")
+    st.caption("NAVIGATE")
 
     active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))
     if active_section not in visible_sections:
@@ -187,11 +178,7 @@ with st.sidebar:
         group_visible = [s for s in group_all if s in visible_sections]
         if not group_visible:
             continue
-        st.markdown(
-            f"<div style='font-size:0.65rem;color:#38bdf8;letter-spacing:1.5px;"
-            f"font-weight:700;margin:8px 0 4px;'>{group_name}</div>",
-            unsafe_allow_html=True,
-        )
+        st.caption(group_name)
         for section_name in group_visible:
             is_active = section_name == active_section
             st.button(
@@ -211,11 +198,7 @@ with st.sidebar:
         bookmarks = load_bookmarks(_session)
 
         if bookmarks:
-            st.markdown(
-                "<div style='font-size:0.75rem;color:#94a3b8;margin-bottom:6px;'>"
-                "Click a bookmark to jump directly to that view.</div>",
-                unsafe_allow_html=True,
-            )
+            st.caption("Click a bookmark to jump directly to that view.")
             for bm in bookmarks:
                 shared_badge = " 🌐" if bm["shared"] else ""
                 uses_badge   = f" · {bm['uses']}×" if bm["uses"] else ""
@@ -236,10 +219,7 @@ with st.sidebar:
             st.caption("No saved views yet.")
 
         st.divider()
-        st.markdown(
-            "<div style='font-size:0.72rem;color:#64748b;'>Save current view</div>",
-            unsafe_allow_html=True,
-        )
+        st.caption("Save current view")
         new_bm_name = st.text_input(
             "Bookmark name",
             placeholder="e.g. Monday Credit Check",

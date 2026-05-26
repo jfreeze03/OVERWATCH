@@ -320,10 +320,40 @@ _STRUCTURAL_CSS = """
     border-right: 1px solid var(--border-sidebar) !important;
 }
 [data-testid="stSidebar"] .stRadio > label,
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] span {
+[data-testid="stSidebar"] label {
     color: var(--text-secondary) !important;
     font-family: var(--font-body) !important;
+}
+[data-testid="stIconMaterial"],
+[data-testid="stSidebar"] [data-testid="stIconMaterial"],
+[data-testid="stSidebar"] span[class*="material"],
+[data-testid="stSidebar"] span[class*="icon"] {
+    font-family: "Material Symbols Rounded", "Material Icons" !important;
+    color: inherit !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    font-feature-settings: "liga" !important;
+    -webkit-font-feature-settings: "liga" !important;
+}
+[data-testid="stSidebar"] [data-testid="stIconMaterial"] {
+    font-size: 0 !important;
+    line-height: 0 !important;
+    overflow: hidden !important;
+    width: 0.8rem !important;
+    min-width: 0.8rem !important;
+    height: 0.8rem !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+[data-testid="stSidebar"] [data-testid="stIconMaterial"]::before {
+    content: "";
+    width: 0.38rem;
+    height: 0.38rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(45deg);
+    opacity: 0.8;
 }
 [data-testid="stSidebar"] .stRadio > div > label:hover {
     color: var(--accent) !important;
@@ -552,7 +582,6 @@ code, pre, .stCodeBlock {
 /* ═══════════════════ CORPORATE theme extras ═══════════════════ */
 /* Sidebar text needs to be white on navy background */
 .corporate-extra [data-testid="stSidebar"] label,
-.corporate-extra [data-testid="stSidebar"] span,
 .corporate-extra [data-testid="stSidebar"] .stRadio > label,
 .corporate-extra [data-testid="stSidebar"] p {
     color: rgba(255,255,255,0.85) !important;

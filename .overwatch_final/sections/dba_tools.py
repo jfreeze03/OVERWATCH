@@ -14,6 +14,13 @@ import pandas as pd
 from utils import (
     get_session, normalize_df, safe_sql, format_credits, download_csv,
     get_wh_filter_clause, get_active_company,
+    build_overwatch_setup_bundle, build_bookmark_ddl, build_annotation_ddl,
+    build_action_queue_ddl, build_snowflake_value_ddl, build_usage_log_ddl,
+    build_alert_task_sql,
+)
+from config import (
+    ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
+    ACTION_QUEUE_TABLE, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA,
 )
 
 # ── Snowflake warehouse parameter documentation ──────────────────────────────
@@ -81,6 +88,62 @@ def _as_int(value, default: int) -> int:
         return default
 
 
+def _table_exists(session, db: str, schema: str, table: str):
+    try:
+        row = session.sql(f"""
+            SELECT COUNT(*) AS CNT
+            FROM {db}.INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = '{safe_sql(schema.upper())}'
+              AND TABLE_NAME = '{safe_sql(table.upper())}'
+        """).collect()[0]
+        return int(row["CNT"]) > 0
+    except Exception:
+        return None
+
+
+def _task_exists(session, db: str, schema: str, task_name: str):
+    try:
+        rows = session.sql(
+            f"SHOW TASKS LIKE '{safe_sql(task_name.upper())}' IN SCHEMA {db}.{schema}"
+        ).collect()
+        return len(rows) > 0
+    except Exception:
+        return None
+
+
+def _setup_status_df(session) -> pd.DataFrame:
+    checks = [
+        ("Saved Views", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_BOOKMARKS", build_bookmark_ddl),
+        ("Annotation Windows", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_ANNOTATIONS", build_annotation_ddl),
+        ("Alert History", "TABLE", ALERT_DB, ALERT_SCHEMA, ALERT_TABLE, None),
+        ("Action Queue", "TABLE", ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, build_action_queue_ddl),
+        ("Snowflake Value Log", "TABLE", ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, "OVERWATCH_ROI_LOG", build_snowflake_value_ddl),
+        ("Usage Log", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_USAGE_LOG", build_usage_log_ddl),
+        ("Anomaly Alert Task", "TASK", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_ANOMALY_CHECK", build_alert_task_sql),
+    ]
+    rows = []
+    for feature, object_type, db, schema, object_name, ddl_builder in checks:
+        exists = (
+            _task_exists(session, db, schema, object_name)
+            if object_type == "TASK"
+            else _table_exists(session, db, schema, object_name)
+        )
+        if exists is True:
+            status = "Present"
+        elif exists is False:
+            status = "Missing"
+        else:
+            status = "Unknown"
+        rows.append({
+            "FEATURE": feature,
+            "OBJECT_TYPE": object_type,
+            "OBJECT_NAME": f"{db}.{schema}.{object_name}",
+            "STATUS": status,
+            "SETUP_SQL_INCLUDED": "Yes" if ddl_builder else "Via alert task setup",
+        })
+    return pd.DataFrame(rows)
+
+
 def render():
     session = get_session()
 
@@ -101,6 +164,7 @@ def render():
         "🤖 Cortex AI Limits",         # Tab 14 — NEW
         "🔀 Task Graph Control",        # Tab 15 — NEW
         "📊 Usage Log",                 # Tab 16
+        "🔧 First-Time Setup",
     ])
 
     # ── TAB 0: QUERY KILL LIST ────────────────────────────────────────────────
@@ -1304,3 +1368,64 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             st.bar_chart(df_ul.set_index(lbl)["LOAD_COUNT"])
             st.dataframe(df_ul, use_container_width=True)
             download_csv(df_ul, f"usage_log_{ul_group.lower()}.csv")
+
+    # Setup bundle and install readiness
+    with tabs[16]:
+        st.header("🔧 First-Time Setup")
+        st.caption(
+            "Check the persistent OVERWATCH objects used by saved views, annotations, "
+            "action queue, alert history, usage logging, and value tracking."
+        )
+
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            if st.button("Check Setup Status", key="setup_status_load"):
+                st.session_state["dba_setup_status"] = _setup_status_df(session)
+        with c2:
+            st.info(
+                "Run the setup SQL with a role that can create tables and tasks in "
+                f"{ALERT_DB}.{ALERT_SCHEMA}. Review the alert task warehouse and schedule "
+                "before enabling it."
+            )
+
+        if st.session_state.get("dba_setup_status") is not None:
+            status_df = st.session_state["dba_setup_status"]
+            missing_count = int((status_df["STATUS"] == "Missing").sum())
+            unknown_count = int((status_df["STATUS"] == "Unknown").sum())
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Objects Checked", f"{len(status_df):,}")
+            m2.metric("Missing", f"{missing_count:,}")
+            m3.metric("Unknown", f"{unknown_count:,}")
+            st.dataframe(status_df, use_container_width=True, hide_index=True)
+
+        setup_sql = build_overwatch_setup_bundle()
+        st.download_button(
+            "Download Full Setup SQL",
+            setup_sql,
+            file_name="overwatch_first_time_setup.sql",
+            mime="text/plain",
+            key="first_time_setup_download",
+        )
+
+        with st.expander("Preview full setup SQL"):
+            preview = setup_sql[:8000]
+            if len(setup_sql) > 8000:
+                preview += "\n\n-- Preview truncated. Download the full setup SQL above."
+            st.code(preview, language="sql")
+
+        st.subheader("Individual setup scripts")
+        setup_parts = {
+            "Saved Views": build_bookmark_ddl(),
+            "Annotation Windows": build_annotation_ddl(),
+            "Action Queue": build_action_queue_ddl(),
+            "Snowflake Value Log": build_snowflake_value_ddl(),
+            "Usage Log": build_usage_log_ddl(),
+            "Alert History + Optional Task": build_alert_task_sql(),
+        }
+        selected_part = st.selectbox(
+            "Script",
+            list(setup_parts.keys()),
+            key="first_time_setup_part",
+        )
+        st.code(setup_parts[selected_part], language="sql")

@@ -45,13 +45,39 @@ def _record_query_telemetry(query_text: str, ttl_key: str, tier: str, elapsed_ms
 
 
 def _show_query_warning(prefix: str, error: Exception) -> None:
-    message = f"{prefix}: {error}"
+    message = f"{prefix}: {format_snowflake_error(error)}"
     seen = st.session_state.setdefault("_overwatch_query_warning_hashes", set())
     warning_hash = hashlib.sha1(message.encode("utf-8", errors="ignore")).hexdigest()[:12]
     if warning_hash in seen:
         return
     seen.add(warning_hash)
     st.warning(message)
+
+
+def format_snowflake_error(error: Exception, max_len: int = 320) -> str:
+    """Return a short UI-safe Snowflake error message."""
+    text = str(error or "").strip()
+    if not text:
+        return "Snowflake returned an empty error."
+
+    lower = text.lower()
+    if "requested information on the current user is not accessible in stored procedure" in lower:
+        return (
+            "Snowflake blocked this live metadata call in the Streamlit execution context. "
+            "Use the ACCOUNT_USAGE fallback or a role/context that can query live metadata."
+        )
+    if "invalid identifier" in lower:
+        match = re.search(r"invalid identifier ['\"]?([^'\"\n]+)['\"]?", text, flags=re.IGNORECASE)
+        ident = match.group(1).strip() if match else "a column"
+        return f"Snowflake does not expose {ident} in this account/view for the current role."
+    if "does not exist or not authorized" in lower or "not authorized" in lower:
+        return "The current role cannot access this Snowflake object or operation."
+    if "insufficient privileges" in lower or "insufficient privilege" in lower:
+        return "The current role does not have the required Snowflake privilege for this action."
+
+    text = re.sub(r"^\(\d+\):\s*[0-9a-f-]+:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text)
+    return text if len(text) <= max_len else text[: max_len - 3] + "..."
 
 
 def get_query_telemetry() -> pd.DataFrame:

@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from utils import (
+    format_snowflake_error,
     get_active_company,
     get_db_filter_clause,
     get_session,
@@ -65,7 +66,7 @@ def render():
                     """, ttl_key=f"cortex_users_{company}_{cc_days}", tier="standard")
                     st.session_state["cm_cc_users_data"] = df_cc
                 except Exception as e:
-                    st.warning(f"Cortex Code data unavailable: {e}")
+                    st.warning(f"Cortex Code data unavailable: {format_snowflake_error(e)}")
                     st.info("Ensure CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY is available in your account (requires Cortex features enabled).")
 
         if st.session_state.get("cm_cc_users_data") is not None and not st.session_state["cm_cc_users_data"].empty:
@@ -149,7 +150,7 @@ def render():
                     else:
                         st.success("✅ No cost-per-request spikes detected.")
                 except Exception as e:
-                    st.warning(f"Spike detection unavailable: {e}")
+                    st.warning(f"Spike detection unavailable: {format_snowflake_error(e)}")
 
     # ── DAILY TRENDS ──────────────────────────────────────────────────────────
     with tab_trends:
@@ -183,7 +184,7 @@ def render():
                     """, ttl_key=f"cortex_trends_{company}_{cc_trend_days}", tier="standard")
                     st.session_state["cm_cc_trends_data"] = df_trend
                 except Exception as e:
-                    st.warning(f"Trends unavailable: {e}")
+                    st.warning(f"Trends unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("cm_cc_trends_data") is not None and not st.session_state["cm_cc_trends_data"].empty:
             df_tr = st.session_state["cm_cc_trends_data"]
@@ -283,7 +284,7 @@ def render():
                     """, ttl_key=f"cortex_anomalies_{company}_{cc_anom_days}", tier="standard")
                     st.session_state["cm_cc_anom_data"] = df_anom
                 except Exception as e:
-                    st.warning(f"Anomaly detection unavailable: {e}")
+                    st.warning(f"Anomaly detection unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("cm_cc_anom_data") is not None and not st.session_state["cm_cc_anom_data"].empty:
             df_an = st.session_state["cm_cc_anom_data"]
@@ -339,7 +340,7 @@ def render():
                 """, ttl_key=f"cortex_predictive_{company}", tier="standard")
                 st.session_state["cm_cc_pred_data"] = df_pred
             except Exception as e:
-                st.warning(f"Projection data unavailable: {e}")
+                st.warning(f"Projection data unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("cm_cc_pred_data") is not None and not st.session_state["cm_cc_pred_data"].empty:
             df_p = st.session_state["cm_cc_pred_data"].copy()
@@ -405,4 +406,4 @@ def render():
                     else:
                         st.info("No materialized view refresh activity in the last 7 days.")
                 except Exception as e:
-                    st.warning(f"MV refresh history unavailable: {e}")
+                    st.warning(f"MV refresh history unavailable: {format_snowflake_error(e)}")

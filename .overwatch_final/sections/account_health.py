@@ -8,6 +8,7 @@ from utils import (
     build_metered_credit_cte, render_drillable_bar_chart, render_query_drilldown,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
     get_global_filter_clause, company_value_allowed,
+    format_snowflake_error,
 )
 
 
@@ -160,7 +161,7 @@ def render():
                     LIMIT 5
                 """),
                 ("failed_jobs", f"""
-                    SELECT COALESCE(task_name, root_task_id, query_id) AS job_name,
+                    SELECT COALESCE(root_task_id, query_id) AS job_name,
                            database_name, schema_name,
                            COUNT(*) AS failures,
                            MAX(scheduled_time) AS last_failure,
@@ -169,7 +170,7 @@ def render():
                     WHERE scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
                       AND state = 'FAILED'
                       {get_db_filter_clause("database_name", company)}
-                    GROUP BY COALESCE(task_name, root_task_id, query_id), database_name, schema_name
+                    GROUP BY COALESCE(root_task_id, query_id), database_name, schema_name
                     ORDER BY failures DESC, last_failure DESC
                     LIMIT 5
                 """),
@@ -342,7 +343,7 @@ def render():
                         if st.button(wh_name, key=f"ah_wh_drill_{wh_name}"):
                             _drill_to("🏭 Warehouse Health", wh_filter=wh_name)
         except Exception as e:
-            st.caption(f"Warehouse pressure unavailable: {e}")
+            st.caption(f"Warehouse pressure unavailable: {format_snowflake_error(e)}")
 
     # ── RESOURCE MONITORS ─────────────────────────────────────────────────────
     with tab_resmon:
@@ -367,7 +368,7 @@ def render():
                     df_rm = df_rm[df_rm["WAREHOUSES"].apply(_monitor_in_company)]
                 st.session_state["ah_df_resmon"] = df_rm
             except Exception as e:
-                st.warning(f"Resource monitor data unavailable: {e}")
+                st.warning(f"Resource monitor data unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("ah_df_resmon") is not None and not st.session_state["ah_df_resmon"].empty:
             df_rm = st.session_state["ah_df_resmon"]
@@ -525,12 +526,12 @@ def render():
                         ORDER BY credits DESC LIMIT 1
                     """,
                     "failed_tasks": f"""
-                        SELECT COALESCE(task_name, query_id) AS task_name, COUNT(*) AS failures
+                        SELECT COALESCE(root_task_id, query_id) AS task_name, COUNT(*) AS failures
                         FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
                         WHERE scheduled_time >= DATEADD('hours',-{br_hours},CURRENT_TIMESTAMP())
                           AND state = 'FAILED'
                           {get_db_filter_clause("database_name", company)}
-                        GROUP BY COALESCE(task_name, query_id) ORDER BY failures DESC LIMIT 1
+                        GROUP BY COALESCE(root_task_id, query_id) ORDER BY failures DESC LIMIT 1
                     """,
                     "storage": f"""
                         SELECT ROUND(SUM(average_database_bytes+average_failsafe_bytes)/POWER(1024,4),2) AS storage_tb
@@ -620,7 +621,7 @@ def render():
                         f"The top cost driver was {top_driver} at ${top_driver_cost:,.2f}. "
                         f"There were {failures} query failures recorded. "
                         f"Storage stands at {stor_tb:.1f} TB.\n\n"
-                        f"(Cortex AI unavailable: {e}. Plain summary generated from raw metrics.)"
+                        f"(Cortex AI unavailable: {format_snowflake_error(e)}. Plain summary generated from raw metrics.)"
                     )
 
                 st.session_state["ah_briefing_text"] = briefing_text

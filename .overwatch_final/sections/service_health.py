@@ -9,6 +9,7 @@ from utils import (
     get_session,
     get_user_filter_clause,
     get_wh_filter_clause,
+    format_snowflake_error,
     run_query,
     upsert_actions,
 )
@@ -71,7 +72,7 @@ def _load_service_health(session, hours: int) -> dict:
             COUNT(*) AS task_runs,
             SUM(IFF(state = 'FAILED', 1, 0)) AS failed_tasks,
             SUM(IFF(state = 'SUCCEEDED', 1, 0)) AS succeeded_tasks,
-            COUNT(DISTINCT name) AS distinct_tasks
+            COUNT(DISTINCT COALESCE(root_task_id, query_id)) AS distinct_tasks
         FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
         WHERE scheduled_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           {db_task}
@@ -145,7 +146,7 @@ def render():
             try:
                 st.session_state["svc_data"] = _load_service_health(session, hours)
             except Exception as e:
-                st.warning(f"Service health data unavailable in this role/context: {e}")
+                st.warning(f"Service health data unavailable in this role/context: {format_snowflake_error(e)}")
 
     data = st.session_state.get("svc_data")
     if not data:

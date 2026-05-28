@@ -3,7 +3,7 @@ from .session import get_session
 from .query import (
     run_query, run_query_cached, run_query_or_raise, force_refresh,
     safe_sql, safe_identifier, safe_schedule, sql_literal,
-    get_query_telemetry, clear_query_telemetry,
+    get_query_telemetry, clear_query_telemetry, format_snowflake_error,
 )
 from .data import normalize_df, safe_strip_tz
 from .cost import (
@@ -45,7 +45,7 @@ __all__ = [
     "get_session",
     "run_query", "run_query_cached", "run_query_or_raise", "force_refresh",
     "safe_sql", "safe_identifier", "safe_schedule", "sql_literal",
-    "get_query_telemetry", "clear_query_telemetry",
+    "get_query_telemetry", "clear_query_telemetry", "format_snowflake_error",
     "normalize_df", "safe_strip_tz",
     "format_credits", "credits_to_dollars", "estimate_live_credits",
     "build_metered_credit_cte", "build_idle_warehouse_sql",

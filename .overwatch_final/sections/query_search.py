@@ -3,6 +3,7 @@ import streamlit as st
 
 from utils import (
     download_csv,
+    format_snowflake_error,
     get_active_company,
     get_global_filter_clause,
     get_session,
@@ -66,7 +67,7 @@ def render():
             """, ttl_key=f"query_search_{company}_{search_text}_{user_filter}_{status_filter}_{days_back}", tier="historical")
             st.session_state["qs_df_qs"] = df_qs
         except Exception as e:
-            st.warning(f"Query search unavailable in this role/context: {e}")
+            st.warning(f"Query search unavailable: {format_snowflake_error(e)}")
 
     df_q = st.session_state.get("qs_df_qs")
     if df_q is not None:

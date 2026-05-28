@@ -7,6 +7,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import importlib
 import streamlit as st
+from utils import format_snowflake_error
 
 # Maps nav label → dotted module path.
 # Modules are NOT imported here — importlib loads them on first dispatch call.
@@ -61,7 +62,7 @@ def dispatch(active_section: str) -> None:
         try:
             _loaded[module_path] = importlib.import_module(module_path)
         except ImportError as e:
-            st.error(f"Failed to load section `{active_section}`: {e}")
+            st.error(f"Failed to load section `{active_section}`: {format_snowflake_error(e)}")
             return
 
     _loaded[module_path].render()

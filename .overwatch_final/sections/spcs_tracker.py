@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from utils import (
+    format_snowflake_error,
     get_active_company,
     get_session,
     format_credits,
@@ -42,7 +43,7 @@ def render():
             """, ttl_key=f"spcs_usage_{company}_{spcs_days}", tier="standard")
             st.session_state["spcs_df_spcs"] = df_spcs
         except Exception as e:
-            st.warning(f"SPCS history unavailable: {e}. Requires SPCS configured in your account.")
+            st.warning(f"SPCS history unavailable: {format_snowflake_error(e)} Requires SPCS configured in your account.")
             st.session_state["spcs_df_spcs"] = pd.DataFrame()
 
     if st.session_state.get("spcs_df_spcs") is not None and not st.session_state["spcs_df_spcs"].empty:

@@ -17,6 +17,7 @@ from utils import (
     credits_to_dollars, estimate_live_credits, download_csv,
     render_query_drilldown, get_active_company, get_user_filter_clause,
     get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
+    format_snowflake_error,
 )
 from config import THRESHOLDS
 
@@ -89,8 +90,11 @@ def render():
             """
             df_live = pd.DataFrame()
             try:
+                if st.session_state.get("_overwatch_disable_info_schema_qh"):
+                    raise RuntimeError("INFORMATION_SCHEMA query history disabled after prior failure")
                 df_live = run_query_or_raise(live_sql)
-            except Exception:
+            except Exception as live_err:
+                st.session_state["_overwatch_disable_info_schema_qh"] = True
                 # IS unavailable (e.g. serverless context) — fall back to AU
                 st.info("ℹ️ INFORMATION_SCHEMA unavailable — using ACCOUNT_USAGE fallback.")
                 try:
@@ -102,13 +106,13 @@ def render():
                                bytes_scanned/POWER(1024,2) AS mb_scanned, rows_produced
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                         WHERE start_time >= DATEADD('minutes',-10,CURRENT_TIMESTAMP())
-                          AND execution_status IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
+                          AND UPPER(execution_status) IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
                           {wh_clause}
                           {company_wh_clause}
                         ORDER BY start_time DESC LIMIT 100
                     """)
                 except Exception as fallback_err:
-                    st.warning(f"Live query data unavailable: {fallback_err}")
+                    st.warning(f"Live query data unavailable: {format_snowflake_error(fallback_err)}")
 
             if not df_live.empty:
                 df_live["EST_COMPUTE_CREDITS"] = df_live.apply(estimate_live_credits, axis=1)
@@ -135,7 +139,7 @@ def render():
                         _session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_qid)})").collect()
                         st.success(f"✅ Cancel sent for `{kill_qid}`")
                     except Exception as e:
-                        st.error(f"Cancel failed: {e}")
+                        st.error(f"Cancel failed: {format_snowflake_error(e)}")
             else:
                 st.success("✅ No active queries right now.")
 
@@ -158,7 +162,7 @@ def render():
                     st.dataframe(df_recent, use_container_width=True, height=350)
                     download_csv(df_recent, "recent_queries.csv")
             except Exception as e:
-                st.caption(f"Recent query data unavailable: {e}")
+                st.caption(f"Recent query data unavailable: {format_snowflake_error(e)}")
 
         _live_panel()
 
@@ -181,7 +185,7 @@ def render():
                 """, ttl_key=f"live_timeline_{company}_{tl_hours}", tier="standard")
                 st.session_state["lm_df_tl"] = df_tl
             except Exception as e:
-                st.warning(f"Timeline data unavailable in this role/context: {e}")
+                st.warning(f"Timeline data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("lm_df_tl") is not None and not st.session_state["lm_df_tl"].empty:
             df_t = st.session_state["lm_df_tl"]
@@ -214,7 +218,7 @@ def render():
                     """.format(user_filter=get_user_filter_clause("user_name")), ttl_key=f"live_sessions_{company}", tier="standard")
                     st.session_state["lm_df_sessions"] = df_sess
                 except Exception as e:
-                    st.warning(f"Sessions view unavailable: {e}")
+                    st.warning(f"Sessions view unavailable: {format_snowflake_error(e)}")
 
         with s2:
             if st.button("Load Lock Waits", key="lm_lock_load"):
@@ -232,7 +236,7 @@ def render():
                     """, ttl_key=f"live_lock_waits_{company}", tier="standard")
                     st.session_state["lm_df_lock"] = df_lock
                 except Exception as e:
-                    st.warning(f"Lock wait history unavailable: {e}")
+                    st.warning(f"Lock wait history unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("lm_df_sessions") is not None and not st.session_state["lm_df_sessions"].empty:
             df_s = st.session_state["lm_df_sessions"]

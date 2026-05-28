@@ -3,6 +3,7 @@ import streamlit as st
 
 from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
 from utils import (
+    format_snowflake_error,
     get_active_company,
     get_session,
     credits_to_dollars,
@@ -117,7 +118,7 @@ ALTER TABLE {VALUE_TABLE} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
             st.session_state["sf_value_detail"] = df_detail
             st.session_state["sf_value_app_cost"] = df_app_cost
         except Exception as e:
-            st.info(f"Snowflake value table not found. Run the setup DDL first. ({e})")
+            st.info(f"Snowflake value table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
             st.session_state["sf_value_summary"] = None
             st.session_state["sf_value_detail"] = None
 
@@ -228,5 +229,5 @@ ALTER TABLE {VALUE_TABLE} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
             st.session_state.pop("sf_value_detail", None)
             st.rerun()
         except Exception as e:
-            st.error(f"Failed to save Snowflake value: {e}")
+            st.error(f"Failed to save Snowflake value: {format_snowflake_error(e)}")
             st.info("Run the setup DDL above first.")

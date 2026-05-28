@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 from utils import (
     get_session, format_credits, credits_to_dollars, download_csv,
+    format_snowflake_error,
     render_drillable_bar_chart, get_active_company, get_wh_filter_clause,
     get_global_filter_clause, run_query, build_idle_warehouse_sql,
     metric_confidence_label,
@@ -45,7 +46,7 @@ def render():
                 )
                 st.session_state["opt_df_idle"] = df_idle
             except Exception as e:
-                st.warning(f"Idle warehouse scan unavailable in this role/context: {e}")
+                st.warning(f"Idle warehouse scan unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("opt_df_idle") is not None and not st.session_state["opt_df_idle"].empty:
             df_i = st.session_state["opt_df_idle"]
@@ -101,7 +102,7 @@ def render():
                 """, ttl_key=f"optimization_duplicates_{company}_{dup_days}", tier="standard")
                 st.session_state["opt_df_dup"] = df_dup
             except Exception as e:
-                st.warning(f"Spill analysis unavailable in this role/context: {e}")
+                st.warning(f"Duplicate query analysis unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("opt_df_dup") is not None and not st.session_state["opt_df_dup"].empty:
             df_d = st.session_state["opt_df_dup"]
@@ -158,7 +159,7 @@ def render():
                 """, ttl_key=f"optimization_sizing_{company}_{sz_days}", tier="historical")
                 st.session_state["opt_df_sz"] = df_sz
             except Exception as e:
-                st.warning(f"Warehouse recommendation scan unavailable in this role/context: {e}")
+                st.warning(f"Warehouse recommendation scan unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("opt_df_sz") is not None and not st.session_state["opt_df_sz"].empty:
             df_s = st.session_state["opt_df_sz"]

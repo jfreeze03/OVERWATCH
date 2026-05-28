@@ -3,6 +3,7 @@ import streamlit as st
 
 from utils import (
     download_csv,
+    format_snowflake_error,
     get_active_company,
     get_global_filter_clause,
     get_session,
@@ -124,7 +125,7 @@ def render():
                 st.session_state["dd_df"] = _load_diagnosis(session, days, mode, limit)
                 st.session_state["dd_loaded_mode"] = mode
             except Exception as e:
-                st.warning(f"Diagnosis data unavailable in this role/context: {e}")
+                st.warning(f"Diagnosis data unavailable: {format_snowflake_error(e)}")
 
     df = st.session_state.get("dd_df")
     loaded_mode = st.session_state.get("dd_loaded_mode", mode)

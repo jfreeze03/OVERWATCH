@@ -8,6 +8,7 @@ from utils import (
     format_credits,
     credits_to_dollars,
     download_csv,
+    format_snowflake_error,
     run_query,
 )
 
@@ -44,7 +45,7 @@ def render():
                 """, ttl_key=f"data_sharing_transfer_{company}_{ds_days}", tier="standard")
                 st.session_state["ds_df_dt"] = df_dt
             except Exception as e:
-                st.warning(f"Data-share usage unavailable in this role/context: {e}")
+                st.warning(f"Data-share usage unavailable in this role/context: {format_snowflake_error(e)}")
 
     with c2:
         if st.button("Load Shared Databases", key="ds_db_load"):
@@ -60,7 +61,7 @@ def render():
                 """, ttl_key=f"data_sharing_databases_{company}", tier="standard")
                 st.session_state["ds_df_shared_db"] = df_db
             except Exception as e:
-                st.warning(f"Data-share metadata unavailable in this role/context: {e}")
+                st.warning(f"Data-share metadata unavailable in this role/context: {format_snowflake_error(e)}")
 
     if st.session_state.get("ds_df_dt") is not None and not st.session_state["ds_df_dt"].empty:
         df_d = st.session_state["ds_df_dt"]

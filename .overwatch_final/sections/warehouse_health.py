@@ -6,7 +6,7 @@ from utils import (
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
     get_active_company, get_global_filter_clause,
     build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
-    run_query,
+    run_query, format_snowflake_error,
 )
 from config import THRESHOLDS
 
@@ -47,7 +47,7 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
         saved = upsert_actions(session, actions)
         st.success(f"Saved {saved} warehouse efficiency findings to the action queue.")
     except Exception as e:
-        st.error(f"Could not save to action queue: {e}")
+        st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
         st.download_button(
             "Download Action Queue DDL",
             build_action_queue_ddl(),
@@ -107,7 +107,7 @@ def render():
                 """, ttl_key=f"wh_overview_{company}_{wh_days}", tier="historical")
                 st.session_state["wh_df_wh"] = df_w
             except Exception as e:
-                st.warning(f"Warehouse overview unavailable in this role/context: {e}")
+                st.warning(f"Warehouse overview unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("wh_df_wh") is not None and not st.session_state["wh_df_wh"].empty:
             df_w = st.session_state["wh_df_wh"]
@@ -172,7 +172,7 @@ def render():
                     st.dataframe(df_scale, use_container_width=True)
                     download_csv(df_scale, "scaling_events.csv")
                 except Exception as e:
-                    st.warning(f"Scaling events unavailable in this role/context: {e}")
+                    st.warning(f"Scaling events unavailable in this role/context: {format_snowflake_error(e)}")
 
     with tab_efficiency:
         st.header("Warehouse Efficiency Scorecard")
@@ -205,7 +205,7 @@ def render():
                 """, ttl_key=f"wh_efficiency_{company}_{eff_days}", tier="historical")
                 st.session_state["wh_efficiency"] = df_eff
             except Exception as e:
-                st.warning(f"Efficiency metrics unavailable in this role/context: {e}")
+                st.warning(f"Efficiency metrics unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_eff = st.session_state.get("wh_efficiency")
         if df_eff is not None and not df_eff.empty:
@@ -250,7 +250,7 @@ def render():
                 """, ttl_key=f"wh_spill_{company}_{sp_days}", tier="historical")
                 st.session_state["wh_df_sp"] = df_sp
             except Exception as e:
-                st.warning(f"Spill data unavailable in this role/context: {e}")
+                st.warning(f"Spill data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("wh_df_sp") is not None and not st.session_state["wh_df_sp"].empty:
             df_sp = st.session_state["wh_df_sp"]
@@ -295,7 +295,7 @@ def render():
                 """, ttl_key=f"wh_heatmap_{company}_{hm_days}", tier="historical")
                 st.session_state["wh_df_hm"] = df_hm
             except Exception as e:
-                st.warning(f"Workload heatmap unavailable in this role/context: {e}")
+                st.warning(f"Workload heatmap unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("wh_df_hm") is not None and not st.session_state["wh_df_hm"].empty:
             df_hm = st.session_state["wh_df_hm"]

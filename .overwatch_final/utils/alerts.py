@@ -4,7 +4,7 @@ import json
 import urllib.request
 import streamlit as st
 from config import ALERT_DB, ALERT_SCHEMA, ALERT_TABLE, THRESHOLDS
-from .query import safe_identifier, safe_schedule, sql_literal
+from .query import format_snowflake_error, safe_identifier, safe_schedule, sql_literal
 
 
 ANNOTATION_TABLE = "OVERWATCH_ANNOTATIONS"
@@ -31,7 +31,7 @@ def send_teams_alert(webhook_url: str, message: str, title: str = "OVERWATCH Ale
         with urllib.request.urlopen(req, timeout=5) as resp:
             return 200 <= resp.status < 300
     except Exception as e:
-        st.warning(f"Teams alert failed: {e}")
+        st.warning(f"Teams alert failed: {format_snowflake_error(e)}")
         return False
 
 

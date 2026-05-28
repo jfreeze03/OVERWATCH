@@ -5,6 +5,7 @@ from utils import (
     build_action_queue_ddl,
     company_value_allowed,
     download_csv,
+    format_snowflake_error,
     get_db_filter_clause,
     get_session,
     make_action_id,
@@ -49,7 +50,7 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
         saved = upsert_actions(session, actions)
         st.success(f"Saved {saved} task reliability findings to the action queue.")
     except Exception as e:
-        st.error(f"Could not save to action queue: {e}")
+        st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
         st.download_button(
             "Download Action Queue DDL",
             build_action_queue_ddl(),
@@ -186,7 +187,7 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                 """, ttl_key="task_management_etl_audit", tier="standard")
                 st.session_state["tm_df_etl"] = df_etl
             except Exception as e:
-                st.info(f"Audit table not found — run the setup DDL above first. ({e})")
+                st.info(f"Audit table not found. Run the setup DDL above first. ({format_snowflake_error(e)})")
 
         if st.session_state.get("tm_df_etl") is not None and not st.session_state["tm_df_etl"].empty:
             df_e = st.session_state["tm_df_etl"]
@@ -237,4 +238,4 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                             session.sql(f"EXECUTE TASK {full}").collect()
                             st.success(f"✅ Task `{full}` triggered.")
                         except Exception as e:
-                            st.error(f"Execution failed: {e}")
+                            st.error(f"Execution failed: {format_snowflake_error(e)}")

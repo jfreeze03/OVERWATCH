@@ -11,6 +11,7 @@ from utils import (
     company_value_allowed,
     credits_to_dollars,
     download_csv,
+    format_snowflake_error,
     format_credits,
     get_db_filter_clause,
     get_global_filter_clause,
@@ -61,7 +62,7 @@ def _render_queue(session):
         try:
             st.session_state["rec_action_queue"] = load_action_queue(session)
         except Exception as e:
-            st.info(f"Action queue table not found. Run the setup DDL first. ({e})")
+            st.info(f"Action queue table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
             st.session_state["rec_action_queue"] = pd.DataFrame()
 
     df_queue = st.session_state.get("rec_action_queue")
@@ -139,7 +140,7 @@ def _render_queue(session):
                 """).collect()
                 st.success(f"Logged ${monthly_savings:,.2f}/month to Snowflake Value.")
             except Exception as e:
-                st.error(f"Could not log Snowflake Value: {e}")
+                st.error(f"Could not log Snowflake Value: {format_snowflake_error(e)}")
                 st.info("Run the Snowflake Value setup DDL first.")
 
 
@@ -257,7 +258,7 @@ def _render_annotations(session):
                 st.success("Annotation created.")
                 st.session_state.pop("rec_annotations", None)
             except Exception as e:
-                st.info(f"Annotation table unavailable or insert failed. Run the setup DDL first. ({e})")
+                st.info(f"Annotation table unavailable or insert failed. Run the setup DDL first. ({format_snowflake_error(e)})")
 
     if st.button("Load Annotations", key="annotation_load"):
         try:
@@ -270,7 +271,7 @@ def _render_annotations(session):
                 LIMIT 200
             """, ttl_key="rec_annotations", tier="metadata")
         except Exception as e:
-            st.info(f"Annotation table not found. Run the setup DDL first. ({e})")
+            st.info(f"Annotation table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
             st.session_state["rec_annotations"] = pd.DataFrame()
 
     df_ann = st.session_state.get("rec_annotations")
@@ -293,7 +294,7 @@ def _render_annotations(session):
                     st.success(f"Annotation {int(selected_id)} deactivated.")
                     st.session_state.pop("rec_annotations", None)
                 except Exception as e:
-                    st.error(f"Deactivate failed: {e}")
+                    st.error(f"Deactivate failed: {format_snowflake_error(e)}")
 
 
 def render():
@@ -385,12 +386,12 @@ def render():
 
             try:
                 df_ftask = run_query(f"""
-                    SELECT COALESCE(task_name, query_id) AS task_name, COUNT(*) AS failures
+                    SELECT COALESCE(root_task_id, query_id) AS task_name, COUNT(*) AS failures
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
                     WHERE scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
                       AND state = 'FAILED'
                       {get_db_filter_clause("database_name", company)}
-                    GROUP BY COALESCE(task_name, query_id)
+                    GROUP BY COALESCE(root_task_id, query_id)
                     HAVING failures > 3
                     ORDER BY failures DESC
                     LIMIT 5
@@ -478,7 +479,7 @@ def render():
                     st.success(f"Saved {saved} findings to the persistent action queue.")
                     st.session_state.pop("rec_action_queue", None)
                 except Exception as e:
-                    st.error(f"Action queue save failed: {e}")
+                    st.error(f"Action queue save failed: {format_snowflake_error(e)}")
                     st.info("Run the Action Queue setup DDL first.")
         elif st.session_state.get("rec_recommendations") == []:
             st.success("No actionable findings. Account looks healthy.")
@@ -528,7 +529,7 @@ def render():
                 """, ttl_key=f"rec_anomaly_{_active_company()}_{anom_days}", tier="historical")
                 st.session_state["rec_anomalies"] = df_anom
             except Exception as e:
-                st.warning(f"Recommendation scan unavailable in this role/context: {e}")
+                st.warning(f"Recommendation scan unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_an = st.session_state.get("rec_anomalies")
         if df_an is not None:
@@ -598,7 +599,7 @@ def render():
                     st.info("No alerts recorded yet.")
                     st.session_state["rec_alert_history"] = pd.DataFrame()
             except Exception as e:
-                st.info(f"Alert table not found. Run the setup SQL first. ({e})")
+                st.info(f"Alert table not found. Run the setup SQL first. ({format_snowflake_error(e)})")
 
         df_alerts = st.session_state.get("rec_alert_history")
         if df_alerts is not None and not df_alerts.empty:
@@ -608,7 +609,7 @@ def render():
                     st.success(f"Saved {saved} alert actions to the persistent action queue.")
                     st.session_state.pop("rec_action_queue", None)
                 except Exception as e:
-                    st.error(f"Could not save alerts to action queue: {e}")
+                    st.error(f"Could not save alerts to action queue: {format_snowflake_error(e)}")
                     st.download_button(
                         "Download Action Queue DDL",
                         build_action_queue_ddl(),

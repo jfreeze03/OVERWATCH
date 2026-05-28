@@ -11,7 +11,7 @@ import pandas as pd
 import altair as alt
 from datetime import datetime
 from .cost import format_credits, credits_to_dollars
-from .query import run_query, run_query_or_raise, sql_literal
+from .query import format_snowflake_error, run_query, run_query_or_raise, sql_literal
 from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause
 
 CHART_COLORS = [
@@ -138,7 +138,7 @@ def render_query_drilldown(
                 )
                 st.dataframe(ops_df, use_container_width=True, height=350)
             except Exception as e:
-                st.info(f"Operator stats unavailable: {e}")
+                st.info(f"Operator stats unavailable: {format_snowflake_error(e)}")
 
 
 # ── Warehouse drill-down ───────────────────────────────────────────────────────
@@ -211,7 +211,7 @@ def render_entity_query_drilldown(
     elif col == "lineage_dimension":
         where_clause = (
             "COALESCE(REGEXP_SUBSTR(query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), "
-            f"root_query_id, 'ADHOC') = {value}"
+            f"query_type, 'ADHOC') = {value}"
         )
     else:
         where_clause = f"{col} = {value}"

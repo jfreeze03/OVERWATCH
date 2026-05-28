@@ -5,6 +5,7 @@ import streamlit as st
 from utils import (
     download_csv,
     get_active_company,
+    format_snowflake_error,
     get_global_filter_clause,
     get_session,
     get_user_filter_clause,
@@ -109,7 +110,7 @@ def render():
             try:
                 st.session_state["topology_data"] = _load_topology(session, days)
             except Exception as e:
-                st.warning(f"Platform topology unavailable in this role/context: {e}")
+                st.warning(f"Platform topology unavailable in this role/context: {format_snowflake_error(e)}")
 
     data = st.session_state.get("topology_data")
     if not data:

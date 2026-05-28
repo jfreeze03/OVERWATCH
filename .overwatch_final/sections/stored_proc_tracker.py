@@ -4,6 +4,7 @@ from utils import (
     get_session,
     run_query,
     run_query_or_raise,
+    format_snowflake_error,
     format_credits,
     credits_to_dollars,
     download_csv,
@@ -108,7 +109,7 @@ def render():
             st.session_state["spt_df_sp_tracker"] = df_sp
             st.session_state["spt_has_root_query_id"] = has_root_query_id
         except Exception as e:
-            st.warning(f"Stored procedure cost data unavailable in this role/context: {e}")
+            st.warning(f"Stored procedure cost data unavailable: {format_snowflake_error(e)}")
 
     if st.session_state.get("spt_df_sp_tracker") is not None and not st.session_state["spt_df_sp_tracker"].empty:
         df_sp = st.session_state["spt_df_sp_tracker"]
@@ -161,4 +162,4 @@ def render():
                 """, ttl_key=f"stored_proc_child_{company}_{sp_days}_{selected_proc}", tier="standard")
                 render_query_drilldown(df_child, key="sp_child_queries", title="Stored procedure child-query drill-down")
             except Exception as e:
-                st.info(f"Downstream detail unavailable: {e}")
+                st.info(f"Downstream detail unavailable: {format_snowflake_error(e)}")

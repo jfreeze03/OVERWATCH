@@ -5,6 +5,7 @@ import streamlit as st
 from utils import (
     download_csv,
     format_credits,
+    format_snowflake_error,
     get_active_company,
     get_db_filter_clause,
     get_global_filter_clause,
@@ -177,7 +178,7 @@ def render():
             try:
                 st.session_state["uo_data"] = _load_overview(session, days)
             except Exception as e:
-                st.warning(f"Usage overview unavailable in this role/context: {e}")
+                st.warning(f"Usage overview unavailable: {format_snowflake_error(e)}")
 
     data = st.session_state.get("uo_data")
     if not data:

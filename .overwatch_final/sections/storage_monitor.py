@@ -8,6 +8,7 @@ from utils import (
     format_credits,
     credits_to_dollars,
     download_csv,
+    format_snowflake_error,
     run_query,
 )
 
@@ -67,7 +68,7 @@ def render():
             """, ttl_key=f"storage_trend_{company}_{stor_days}", tier="historical")
             st.session_state["stor_df_stor"] = df_stor
         except Exception as e:
-            st.warning(f"Storage data unavailable in this role/context: {e}")
+            st.warning(f"Storage data unavailable in this role/context: {format_snowflake_error(e)}")
 
     if st.session_state.get("stor_df_stor") is not None and not st.session_state["stor_df_stor"].empty:
         df_st = st.session_state["stor_df_stor"]
@@ -104,7 +105,7 @@ def render():
                 st.dataframe(df_db, use_container_width=True)
                 download_csv(df_db, "db_storage_detail.csv")
             except Exception as e:
-                st.warning(f"Large table data unavailable in this role/context: {e}")
+                st.warning(f"Large table data unavailable in this role/context: {format_snowflake_error(e)}")
 
         download_csv(df_st, "storage_trend.csv")
 
@@ -128,4 +129,4 @@ def render():
             st.dataframe(df_tbl, use_container_width=True)
             download_csv(df_tbl, "table_storage.csv")
         except Exception as e:
-            st.warning(f"Time Travel/Failsafe data unavailable in this role/context: {e}")
+            st.warning(f"Time Travel/Failsafe data unavailable in this role/context: {format_snowflake_error(e)}")

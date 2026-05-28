@@ -159,19 +159,21 @@ def get_combined_filter_clause(
     company: str = None,
 ) -> str:
     """
-    Return every available company boundary filter.
+    Return the strongest available company boundary filter.
 
-    Queries that expose more than one company-bearing dimension should be
-    constrained by all of them. This keeps ALFA/Trexis selection from leaking
-    through a user, warehouse, or database column that happened not to be the
-    single preferred filter.
+    Warehouse/database names are stronger company signals than user names
+    because shared/admin users can operate across company-specific resources.
+    User-name scoping is kept for user-only views such as login/grant reports.
     """
     company = company or get_active_company()
-    return " ".join(filter(None, [
+    strong_clauses = [
         get_wh_filter_clause(wh_col, company) if wh_col else "",
         get_db_filter_clause(db_col, company) if db_col else "",
-        get_user_filter_clause(user_col, company) if user_col else "",
-    ])).strip()
+    ]
+    strong_clauses = [clause for clause in strong_clauses if clause]
+    if strong_clauses:
+        return " ".join(strong_clauses).strip()
+    return get_user_filter_clause(user_col, company).strip() if user_col else ""
 
 
 # ── ALL-mode classification expression ───────────────────────────────────────

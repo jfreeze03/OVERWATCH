@@ -10,7 +10,7 @@
 import json
 import streamlit as st
 from config import ALERT_DB, ALERT_SCHEMA
-from .query import safe_identifier, sql_literal
+from .query import format_snowflake_error, safe_identifier, sql_literal
 
 BOOKMARK_TABLE = (
     f"{safe_identifier(ALERT_DB)}."
@@ -93,7 +93,7 @@ def save_bookmark(session, name: str, shared: bool = False) -> bool:
         """).collect()
         return True
     except Exception as e:
-        st.warning(f"Bookmark save failed: {e}")
+        st.warning(f"Bookmark save failed: {format_snowflake_error(e)}")
         return False
 
 
@@ -157,5 +157,5 @@ def delete_bookmark(session, bookmark_id: int) -> bool:
         session.sql(f"DELETE FROM {BOOKMARK_TABLE} WHERE BOOKMARK_ID = {int(bookmark_id)}").collect()
         return True
     except Exception as e:
-        st.warning(f"Delete failed: {e}")
+        st.warning(f"Delete failed: {format_snowflake_error(e)}")
         return False

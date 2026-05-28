@@ -3,6 +3,7 @@ import streamlit as st
 from utils import (
     build_action_queue_ddl,
     download_csv,
+    format_snowflake_error,
     get_global_filter_clause,
     get_session,
     make_action_id,
@@ -52,7 +53,7 @@ def _queue_changes(session, df, source: str, category: str, entity_type: str, se
         saved = upsert_actions(session, actions)
         st.success(f"Saved {saved} findings to the action queue.")
     except Exception as e:
-        st.error(f"Could not save to action queue: {e}")
+        st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
         st.download_button(
             "Download Action Queue DDL",
             build_action_queue_ddl(),
@@ -120,7 +121,7 @@ def render():
                 LIMIT {row_limit}
                 """, ttl_key=f"ocm_objects_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
             except Exception as e:
-                st.warning(f"Object change scan unavailable in this role/context: {e}")
+                st.warning(f"Object change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_object_changes") is not None:
             df = st.session_state["ocm_df_object_changes"]
             if not df.empty:
@@ -155,7 +156,7 @@ def render():
                 LIMIT {row_limit}
                 """, ttl_key=f"ocm_access_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
             except Exception as e:
-                st.warning(f"Access change scan unavailable in this role/context: {e}")
+                st.warning(f"Access change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_access_changes") is not None:
             df = st.session_state["ocm_df_access_changes"]
             st.dataframe(df, use_container_width=True)
@@ -184,7 +185,7 @@ def render():
                 LIMIT {row_limit}
                 """, ttl_key=f"ocm_policy_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
             except Exception as e:
-                st.warning(f"Policy change scan unavailable in this role/context: {e}")
+                st.warning(f"Policy change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_policy_changes") is not None:
             df = st.session_state["ocm_df_policy_changes"]
             st.dataframe(df, use_container_width=True)
@@ -211,7 +212,7 @@ def render():
                 LIMIT {row_limit}
                 """, ttl_key=f"ocm_drift_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
             except Exception as e:
-                st.warning(f"Drift scan unavailable in this role/context: {e}")
+                st.warning(f"Drift scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_drift") is not None:
             df = st.session_state["ocm_df_drift"]
             st.dataframe(df, use_container_width=True)

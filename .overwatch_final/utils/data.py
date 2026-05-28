@@ -87,17 +87,68 @@ def _company_database_mask(series: pd.Series, company: str) -> pd.Series:
     return mask
 
 
+def _company_user_mask(series: pd.Series, company: str) -> pd.Series:
+    cfg = COMPANY_CONFIG.get(company, COMPANY_CONFIG.get(DEFAULT_COMPANY, {}))
+    values = series.fillna("").astype(str).str.upper()
+    include = [str(p).upper() for p in cfg.get("user_patterns", [])]
+    exclude = [str(p).upper() for p in cfg.get("user_exclude_patterns", [])]
+
+    if company == "ALL" or (not include and not exclude):
+        return pd.Series(True, index=series.index)
+
+    mask = pd.Series(False if include else True, index=series.index)
+    for pattern in include:
+        if pattern == "%":
+            mask = pd.Series(True, index=series.index)
+        elif pattern.endswith("%"):
+            mask = mask | values.str.startswith(pattern[:-1])
+        else:
+            mask = mask | values.eq(pattern)
+
+    for pattern in exclude:
+        if pattern.endswith("%"):
+            mask = mask & ~values.str.startswith(pattern[:-1])
+        else:
+            mask = mask & ~values.eq(pattern)
+    return mask
+
+
+def _has_value(series: pd.Series) -> pd.Series:
+    return series.notna() & (series.astype(str).str.strip() != "")
+
+
 def _apply_company_scope(df: pd.DataFrame) -> pd.DataFrame:
     company = st.session_state.get("active_company", DEFAULT_COMPANY)
     if company == "ALL" or df is None or df.empty:
         return df
+
+    strong_checks = []
     for col in ("WAREHOUSE_NAME", "WAREHOUSE"):
         if col in df.columns:
-            return df[_company_warehouse_mask(df[col], company)].copy()
-    for col in ("DATABASE_NAME", "DATABASE"):
+            strong_checks.append((_has_value(df[col]), _company_warehouse_mask(df[col], company)))
+            break
+    for col in ("DATABASE_NAME", "DATABASE", "TABLE_CATALOG"):
         if col in df.columns:
-            return df[_company_database_mask(df[col], company)].copy()
-    return df
+            strong_checks.append((_has_value(df[col]), _company_database_mask(df[col], company)))
+            break
+
+    checks = strong_checks
+    if not checks:
+        for col in ("USER_NAME", "GRANTEE_NAME"):
+            if col in df.columns:
+                checks.append((_has_value(df[col]), _company_user_mask(df[col], company)))
+                break
+
+    if not checks:
+        return df
+
+    any_company_signal = pd.Series(False, index=df.index)
+    allowed = pd.Series(True, index=df.index)
+    for has_signal, mask in checks:
+        any_company_signal = any_company_signal | has_signal
+        allowed = allowed & (~has_signal | mask)
+
+    return df[any_company_signal & allowed].copy()
 
 
 def normalize_df(df: pd.DataFrame) -> pd.DataFrame:

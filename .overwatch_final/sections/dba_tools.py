@@ -19,6 +19,7 @@ from utils import (
     build_action_queue_ddl, build_snowflake_value_ddl, build_usage_log_ddl,
     build_alert_task_sql,
     run_query, run_query_or_raise, sql_literal, safe_identifier,
+    format_snowflake_error,
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
@@ -243,7 +244,7 @@ def render():
                 st.session_state["dba_df_kl"] = df
             except Exception as e:
                 st.session_state["dba_df_kl"] = pd.DataFrame()
-                st.caption(f"Query activity unavailable: {e}")
+                st.caption(f"Query activity unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("dba_df_kl") is not None and not st.session_state["dba_df_kl"].empty:
             df = st.session_state["dba_df_kl"]
@@ -265,7 +266,7 @@ def render():
                     session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_id)})").collect()
                     st.success(f"✅ Cancel sent for `{kill_id}`")
                 except Exception as e:
-                    st.error(f"Cancel failed: {e}")
+                    st.error(f"Cancel failed: {format_snowflake_error(e)}")
         elif st.session_state.get("dba_df_kl") is not None:
             st.success(f"✅ No queries running > {kill_min}s")
 
@@ -297,7 +298,7 @@ def render():
                     st.session_state["_dba_wh_cfg_company"] = active_company
                     st.session_state.pop("_dba_wh_cfg_failed_company", None)
                 except Exception as e:
-                    st.warning(f"Warehouse list unavailable in this role/context: {e}")
+                    st.warning(f"Warehouse list unavailable in this role/context: {format_snowflake_error(e)}")
                     st.session_state["dba_df_wh_cfg"] = pd.DataFrame()
                     st.session_state["_dba_wh_cfg_company"] = active_company
                     st.session_state["_dba_wh_cfg_failed_company"] = active_company
@@ -502,7 +503,7 @@ def render():
                                         f"Multi-cluster and QAS require Enterprise or higher."
                                     )
                                 else:
-                                    st.error(f"ALTER failed: {e}")
+                                    st.error(f"ALTER failed: {format_snowflake_error(e)}")
 
     # ── TAB 2: DATA LOADING ───────────────────────────────────────────────────
     with tabs[2]:
@@ -519,7 +520,7 @@ def render():
                     ORDER BY last_load_time DESC LIMIT 500
                 """, ttl_key=f"dba_copy_{company}_{load_days}", tier="standard")
             except Exception as e:
-                st.warning(f"Copy history unavailable: {e}")
+                st.warning(f"Copy history unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_copy") is not None and not st.session_state["dba_df_copy"].empty:
             st.dataframe(st.session_state["dba_df_copy"], use_container_width=True)
             download_csv(st.session_state["dba_df_copy"], "copy_history.csv")
@@ -539,7 +540,7 @@ def render():
                     ORDER BY session_hours DESC LIMIT 100
                 """, ttl_key=f"dba_long_sessions_{company}", tier="standard")
             except Exception as e:
-                st.info(f"Sessions unavailable: {e}")
+                st.info(f"Sessions unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_long_sess") is not None:
             st.dataframe(st.session_state["dba_df_long_sess"], use_container_width=True)
 
@@ -557,7 +558,7 @@ def render():
                     ORDER BY bytes DESC NULLS LAST LIMIT 200
                 """, ttl_key=f"dba_unused_tables_{company}", tier="standard")
             except Exception as e:
-                st.warning(f"Unused table scan unavailable: {e}")
+                st.warning(f"Unused table scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_unused") is not None:
             st.dataframe(st.session_state["dba_df_unused"], use_container_width=True)
 
@@ -576,7 +577,7 @@ def render():
                     GROUP BY pipe_name, day ORDER BY daily_credits DESC
                 """, ttl_key=f"dba_pipe_{company}_{sp_days}", tier="standard")
             except Exception as e:
-                st.warning(f"Snowpipe usage unavailable: {e}")
+                st.warning(f"Snowpipe usage unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_pipe") is not None:
             st.dataframe(st.session_state["dba_df_pipe"], use_container_width=True)
 
@@ -606,7 +607,7 @@ def render():
                     GROUP BY q.warehouse_name, ls.warehouse_size, day ORDER BY daily_credits DESC
                 """, ttl_key=f"dba_qas_{company}_{qas_days}", tier="standard")
             except Exception as e:
-                st.info(f"QAS data unavailable: {e}")
+                st.info(f"QAS data unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_qas") is not None:
             st.dataframe(st.session_state["dba_df_qas"], use_container_width=True)
 
@@ -647,7 +648,7 @@ def render():
                 st.dataframe(df_cmp, use_container_width=True)
                 download_csv(df_cmp, "schema_compare.csv")
             except Exception as e:
-                st.error(f"Compare failed: {e}")
+                st.error(f"Compare failed: {format_snowflake_error(e)}")
 
     with tabs[8]:
         st.header("🔎 Recent Objects")
@@ -671,7 +672,7 @@ def render():
                     ORDER BY GREATEST(created, last_altered) DESC LIMIT 500
                 """, ttl_key=f"dba_recent_objects_{company}_{obj_days}_{st.session_state.get('obj_db_filter', '')}", tier="metadata")
             except Exception as e:
-                st.warning(f"Recent objects unavailable: {e}")
+                st.warning(f"Recent objects unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_recent_objects") is not None:
             st.dataframe(st.session_state["dba_df_recent_objects"], use_container_width=True)
             download_csv(st.session_state["dba_df_recent_objects"], "recent_objects.csv")
@@ -700,20 +701,40 @@ GROUP BY warehouse_name, hour_bucket;"""
                 if not df_dyn.empty:
                     try:
                         df_refresh = run_query_or_raise(f"""
-                            SELECT database_name, schema_name, name,
-                                   completed_time AS last_refresh_completed_time,
-                                   credits_used,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY database_name, schema_name, name
-                                       ORDER BY completed_time DESC
-                                   ) AS rn
+                            SELECT *
                             FROM SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY
                             WHERE refresh_start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
                               {get_db_filter_clause("database_name")}
+                            ORDER BY refresh_start_time DESC
+                            LIMIT 5000
                         """)
                         if not df_refresh.empty and all(c in df_dyn.columns for c in ["DATABASE_NAME", "SCHEMA_NAME", "NAME"]):
+                            refresh_cols = {
+                                "STATE": "LAST_REFRESH_STATE",
+                                "STATE_CODE": "LAST_REFRESH_STATE_CODE",
+                                "STATE_MESSAGE": "LAST_REFRESH_MESSAGE",
+                                "REFRESH_START_TIME": "LAST_REFRESH_START_TIME",
+                                "REFRESH_END_TIME": "LAST_REFRESH_END_TIME",
+                                "QUERY_ID": "LAST_REFRESH_QUERY_ID",
+                            }
+                            df_refresh = df_refresh.rename(
+                                columns={src: dst for src, dst in refresh_cols.items() if src in df_refresh.columns}
+                            )
+                            if "LAST_REFRESH_START_TIME" in df_refresh.columns:
+                                df_refresh = df_refresh.sort_values("LAST_REFRESH_START_TIME", ascending=False)
+                            keep_cols = [
+                                c for c in [
+                                    "DATABASE_NAME", "SCHEMA_NAME", "NAME",
+                                    "LAST_REFRESH_STATE", "LAST_REFRESH_STATE_CODE", "LAST_REFRESH_MESSAGE",
+                                    "REFRESH_ACTION", "REFRESH_TRIGGER",
+                                    "LAST_REFRESH_START_TIME", "LAST_REFRESH_END_TIME",
+                                    "TARGET_LAG_SEC", "LAST_REFRESH_QUERY_ID",
+                                ]
+                                if c in df_refresh.columns
+                            ]
+                            df_refresh = df_refresh[keep_cols].drop_duplicates(["DATABASE_NAME", "SCHEMA_NAME", "NAME"])
                             df_dyn = df_dyn.merge(
-                                df_refresh[df_refresh["RN"] == 1].drop(columns=["RN"], errors="ignore"),
+                                df_refresh,
                                 how="left",
                                 on=["DATABASE_NAME", "SCHEMA_NAME", "NAME"],
                             )
@@ -721,7 +742,7 @@ GROUP BY warehouse_name, hour_bucket;"""
                         pass
                 st.session_state["dba_df_dyn"] = df_dyn
             except Exception as e:
-                st.info(f"Dynamic table data unavailable: {e}")
+                st.info(f"Dynamic table data unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_dyn") is not None:
             st.dataframe(st.session_state["dba_df_dyn"], use_container_width=True)
             download_csv(st.session_state["dba_df_dyn"], "dynamic_tables.csv")
@@ -768,8 +789,8 @@ GROUP BY warehouse_name, hour_bucket;"""
                     st.session_state["dba_df_repl"] = run_query_or_raise(repl_sql_fallback)
                     st.session_state["dba_repl_source"] = "REPLICATION_USAGE_HISTORY"
                 except Exception as fallback_error:
-                    st.info(f"Replication data unavailable: {fallback_error}")
-                    st.caption(f"Primary view also failed: {primary_error}")
+                    st.info(f"Replication data unavailable: {format_snowflake_error(fallback_error)}")
+                    st.caption(f"Primary view also failed: {format_snowflake_error(primary_error)}")
         if st.session_state.get("dba_df_repl") is not None and not st.session_state["dba_df_repl"].empty:
             st.caption(f"Source: {st.session_state.get('dba_repl_source', 'replication usage history')}")
             st.metric("Replication Credits", format_credits(st.session_state["dba_df_repl"]["CREDITS_USED"].sum()))
@@ -797,7 +818,7 @@ GROUP BY warehouse_name, hour_bucket;"""
                         GROUP BY service_type, usage_date ORDER BY daily_credits DESC
                     """, ttl_key=f"dba_serverless_{company}_{sv_days}", tier="standard")
                 except Exception as e:
-                    st.warning(f"Serverless costs unavailable: {e}")
+                    st.warning(f"Serverless costs unavailable: {format_snowflake_error(e)}")
             if st.session_state.get("dba_df_serverless") is not None and not st.session_state["dba_df_serverless"].empty:
                 df_sv = st.session_state["dba_df_serverless"]
                 svc   = df_sv.groupby("SERVICE_TYPE")["DAILY_CREDITS"].sum().reset_index().sort_values("DAILY_CREDITS", ascending=False)
@@ -825,7 +846,7 @@ GROUP BY warehouse_name, hour_bucket;"""
                 results["cortex_params"] = df_params
             except Exception as e:
                 results["cortex_params"] = pd.DataFrame()
-                st.caption(f"Account parameters unavailable: {e}")
+                st.caption(f"Account parameters unavailable: {format_snowflake_error(e)}")
 
             # Also check AI_SERVICES parameters
             try:
@@ -973,7 +994,7 @@ ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
                                 session.sql(stmt).collect()
                                 applied.append(stmt)
                             except Exception as e:
-                                failed.append(f"{stmt} → {e}")
+                                failed.append(f"{stmt} -> {format_snowflake_error(e)}")
 
                         if applied:
                             st.success(f"✅ {len(applied)} parameter(s) updated successfully.")
@@ -1065,7 +1086,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     """)
                     st.session_state["dba_df_tg_running"] = df_tq
                 except Exception as e:
-                    st.info(f"Task query activity is unavailable in this role/context: {e}")
+                    st.info(f"Task query activity is unavailable in this role/context: {format_snowflake_error(e)}")
                     st.session_state["dba_df_tg_running"] = pd.DataFrame()
 
             if st.session_state.get("dba_df_tg_running") is not None:
@@ -1092,7 +1113,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                             session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(cancel_qid)})").collect()
                             st.success(f"✅ Cancel sent for `{cancel_qid}`")
                         except Exception as e:
-                            st.error(f"Cancel failed: {e}")
+                            st.error(f"Cancel failed: {format_snowflake_error(e)}")
                 else:
                     st.success("No task-related queries currently running.")
 
@@ -1121,7 +1142,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     """)
                     st.session_state["dba_df_task_runs"] = df_runs
                 except Exception as e:
-                    st.warning(f"Task run history unavailable: {e}")
+                    st.warning(f"Task run history unavailable: {format_snowflake_error(e)}")
 
             if st.session_state.get("dba_df_task_runs") is not None and not st.session_state["dba_df_task_runs"].empty:
                 df_r = st.session_state["dba_df_task_runs"]
@@ -1164,7 +1185,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                         st.session_state.pop("dba_df_task_runs", None)
                                         st.rerun()
                                     except Exception as e:
-                                        st.error(f"Cancel graph failed: {e}")
+                                        st.error(f"Cancel graph failed: {format_snowflake_error(e)}")
                                         st.info(
                                             "SYSTEM$CANCEL_TASK_GRAPH requires the task to be running and the caller to have "
                                             "OPERATE privilege on the root task, or ACCOUNTADMIN."
@@ -1190,7 +1211,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                     session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(str(sel_qid))})").collect()
                                     st.success(f"✅ Cancel sent for `{sel_qid}`")
                                 except Exception as e:
-                                    st.error(f"Cancel failed: {e}")
+                                    st.error(f"Cancel failed: {format_snowflake_error(e)}")
                 else:
                     st.success("No task runs currently executing.")
                     st.subheader("Recent History (last 6h)")
@@ -1211,7 +1232,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     df_tasks = _load_task_inventory(session)
                     st.session_state["dba_df_tg_tasks"] = df_tasks
                 except Exception as e:
-                    st.warning(f"Task inventory unavailable: {e}")
+                    st.warning(f"Task inventory unavailable: {format_snowflake_error(e)}")
 
             df_tasks = st.session_state.get("dba_df_tg_tasks", pd.DataFrame())
             if not df_tasks.empty:
@@ -1258,7 +1279,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 st.session_state.pop("dba_df_tg_tasks", None)
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"Suspend failed: {e}")
+                                st.error(f"Suspend failed: {format_snowflake_error(e)}")
 
                     with col_s2:
                         if st.button("▶ Resume", key="tg_resume", disabled=(state=="started" or not task_confirmed)):
@@ -1268,7 +1289,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 st.session_state.pop("dba_df_tg_tasks", None)
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"Resume failed: {e}")
+                                st.error(f"Resume failed: {format_snowflake_error(e)}")
 
                     with col_s3:
                         if st.button("▶▶ Execute Now", key="tg_execute", disabled=not task_confirmed):
@@ -1276,7 +1297,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 session.sql(f"EXECUTE TASK {full_n}").collect()
                                 st.success(f"✅ `{sel_task}` triggered.")
                             except Exception as e:
-                                st.error(f"Execute failed: {e}")
+                                st.error(f"Execute failed: {format_snowflake_error(e)}")
 
                     with col_s4:
                         if st.button("🔁 Retry Last Failed", key="tg_retry", disabled=not task_confirmed):
@@ -1290,7 +1311,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                     "For DAG-level retry, use EXECUTE TASK on the root task."
                                 )
                             except Exception as e:
-                                st.error(f"Retry failed: {e}")
+                                st.error(f"Retry failed: {format_snowflake_error(e)}")
 
                 st.divider()
 
@@ -1341,7 +1362,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                     st.session_state.pop("dba_df_tg_tasks", None)
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"Suspend failed: {e}")
+                                    st.error(f"Suspend failed: {format_snowflake_error(e)}")
                         with b2:
                             if st.button("▶ Resume Entire Graph", type="primary", key="tg_bulk_resume", disabled=not graph_confirmed):
                                 errors_seen = []
@@ -1355,11 +1376,11 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                     try:
                                         session.sql(f"ALTER TASK {full_child} RESUME").collect()
                                     except Exception as e:
-                                        errors_seen.append(f"{full_child}: {e}")
+                                        errors_seen.append(f"{full_child}: {format_snowflake_error(e)}")
                                 try:
                                     session.sql(f"ALTER TASK {root_full} RESUME").collect()
                                 except Exception as e:
-                                    errors_seen.append(f"{root_full}: {e}")
+                                    errors_seen.append(f"{root_full}: {format_snowflake_error(e)}")
 
                                 if errors_seen:
                                     st.warning(f"Resumed with {len(errors_seen)} error(s):")
@@ -1435,7 +1456,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 pass
                         st.session_state["dba_df_dag_view"] = df_dag
                     except Exception as e:
-                        st.warning(f"DAG build unavailable in this role/context: {e}")
+                        st.warning(f"DAG build unavailable in this role/context: {format_snowflake_error(e)}")
 
                 if st.session_state.get("dba_df_dag_view") is not None and not st.session_state["dba_df_dag_view"].empty:
                     df_dag = st.session_state["dba_df_dag_view"]
@@ -1519,7 +1540,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 st.session_state["dba_df_usage_log"] = df_ul
                 st.session_state["dba_ul_group_label"] = lbl
             except Exception as e:
-                st.info(f"Usage log unavailable: {e}")
+                st.info(f"Usage log unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_usage_log") is not None and not st.session_state["dba_df_usage_log"].empty:
             df_ul = st.session_state["dba_df_usage_log"]
             lbl   = st.session_state.get("dba_ul_group_label","SECTION")

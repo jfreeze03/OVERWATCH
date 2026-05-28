@@ -11,7 +11,7 @@ from utils import (
     get_global_filter_clause, get_company_case_expr,
     render_drillable_bar_chart, render_entity_query_drilldown,
     build_action_queue_ddl, make_action_id, upsert_actions,
-    run_query, sql_literal,
+    run_query, sql_literal, format_snowflake_error,
 )
 
 
@@ -55,7 +55,7 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         saved = upsert_actions(session, actions)
         st.success(f"Saved {saved} cost outliers to the action queue.")
     except Exception as e:
-        st.error(f"Could not save to action queue: {e}")
+        st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
         st.download_button(
             "Download Action Queue DDL",
             build_action_queue_ddl(),
@@ -106,7 +106,7 @@ def render():
                 """, ttl_key=f"cc_lead_{company}_{days}", tier="standard")
                 st.session_state["df_lead"] = df_lead
             except Exception as e:
-                st.warning(f"Cost leaderboard unavailable in this role/context: {e}")
+                st.warning(f"Cost leaderboard unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("df_lead") is not None and not st.session_state["df_lead"].empty:
             df_l = st.session_state["df_lead"]
@@ -184,7 +184,7 @@ def render():
                 """, ttl_key=f"cc_burn_{company}_{br_days}", tier="standard")
                 st.session_state["df_br"] = df_br
             except Exception as e:
-                st.warning(f"Burn-rate data unavailable in this role/context: {e}")
+                st.warning(f"Burn-rate data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("df_br") is not None and not st.session_state["df_br"].empty:
             df_b = st.session_state["df_br"]
@@ -223,7 +223,7 @@ def render():
                 """, ttl_key=f"cc_forecast_30_{company}", tier="standard")
                 st.session_state["df_fc"] = df_fc
             except Exception as e:
-                st.warning(f"Forecast data unavailable in this role/context: {e}")
+                st.warning(f"Forecast data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("df_fc") is not None and not st.session_state["df_fc"].empty:
             df_f = st.session_state["df_fc"].copy()
@@ -264,7 +264,7 @@ def render():
                 """, ttl_key=f"cc_budget_6mo_{company}", tier="standard")
                 st.session_state["df_bva"] = df_bva
             except Exception as e:
-                st.warning(f"Budget comparison unavailable in this role/context: {e}")
+                st.warning(f"Budget comparison unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("df_bva") is not None and not st.session_state["df_bva"].empty:
             df_bv = st.session_state["df_bva"]
@@ -301,8 +301,8 @@ def render():
                 select_cols = "COALESCE(q.query_tag, 'UNTAGGED') AS dimension"
                 group_cols  = "COALESCE(q.query_tag, 'UNTAGGED')"
             else:
-                select_cols = "COALESCE(t.name, REGEXP_SUBSTR(q.query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), q.root_query_id, 'ADHOC') AS dimension"
-                group_cols  = "COALESCE(t.name, REGEXP_SUBSTR(q.query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), q.root_query_id, 'ADHOC')"
+                select_cols = "COALESCE(REGEXP_SUBSTR(q.query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), q.query_type, 'ADHOC') AS dimension"
+                group_cols  = "COALESCE(REGEXP_SUBSTR(q.query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), q.query_type, 'ADHOC')"
 
             try:
                 df_attr = run_query(f"""
@@ -315,7 +315,6 @@ def render():
                        ROUND(SUM(q.bytes_scanned)/POWER(1024,3),2)   AS gb_scanned
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                 LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
-                LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY t ON q.query_id = t.query_id
                 WHERE q.start_time >= DATEADD('day', -{attr_days}, CURRENT_TIMESTAMP())
                   AND q.warehouse_name IS NOT NULL
                   {gf}
@@ -325,7 +324,7 @@ def render():
                 """, ttl_key=f"cc_attr_{company}_{attr_mode}_{attr_days}", tier="standard")
                 st.session_state["df_cc_attr"] = df_attr
             except Exception as e:
-                st.warning(f"Attribution data unavailable in this role/context: {e}")
+                st.warning(f"Attribution data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("df_cc_attr") is not None and not st.session_state["df_cc_attr"].empty:
             df_attr = st.session_state["df_cc_attr"]
@@ -384,7 +383,7 @@ def render():
                 """, ttl_key=f"cc_chargeback_{company}_{cb_days}", tier="standard")
                 st.session_state["df_chargeback"] = df_cb
             except Exception as e:
-                st.warning(f"Chargeback data unavailable in this role/context: {e}")
+                st.warning(f"Chargeback data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("df_chargeback") is not None and not st.session_state["df_chargeback"].empty:
             df_cb = st.session_state["df_chargeback"]
@@ -465,7 +464,7 @@ def render():
                     "months": contract_months,
                 }
             except Exception as e:
-                st.warning(f"Utilization data unavailable in this role/context: {e}")
+                st.warning(f"Utilization data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("cc_contract_data") is not None:
             df_c  = st.session_state["cc_contract_data"]
@@ -557,7 +556,7 @@ def render():
                     """, ttl_key=f"cc_monthly_{company}_{start_str}_{credit_price}", tier="historical")
                     st.session_state["cc_monthly_data"] = df_monthly
                 except Exception as e:
-                    st.warning(f"Monthly breakdown unavailable in this role/context: {e}")
+                    st.warning(f"Monthly breakdown unavailable in this role/context: {format_snowflake_error(e)}")
 
             if st.session_state.get("cc_monthly_data") is not None and not st.session_state["cc_monthly_data"].empty:
                 df_m = st.session_state["cc_monthly_data"]
@@ -594,7 +593,7 @@ def render():
                         """, ttl_key=f"cc_service_{company}_{start_str}_{ytd_used}", tier="historical")
                         st.session_state["cc_svc_data"] = df_svc
                     except Exception as e:
-                        st.warning(f"Service breakdown unavailable in this role/context: {e}")
+                        st.warning(f"Service breakdown unavailable in this role/context: {format_snowflake_error(e)}")
 
                 if st.session_state.get("cc_svc_data") is not None and not st.session_state["cc_svc_data"].empty:
                     df_sv = st.session_state["cc_svc_data"]

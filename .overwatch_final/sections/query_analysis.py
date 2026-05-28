@@ -5,6 +5,7 @@ from utils import (
     get_session, run_query, sql_literal,
     format_credits, credits_to_dollars, download_csv,
     render_query_drilldown, build_metered_credit_cte, get_active_company, get_global_filter_clause,
+    format_snowflake_error,
 )
 from config import THRESHOLDS
 
@@ -62,7 +63,7 @@ def render():
                 """, ttl_key=f"query_analysis_bottlenecks_{company}_{days}", tier="standard")
                 st.session_state["qa_df_qa"] = df_qa
             except Exception as e:
-                st.warning(f"Bottleneck data unavailable in this role/context: {e}")
+                st.warning(f"Bottleneck data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("qa_df_qa") is not None and not st.session_state["qa_df_qa"].empty:
             df = st.session_state["qa_df_qa"]
@@ -137,7 +138,7 @@ def render():
                 """, ttl_key=f"query_analysis_degradation_{company}", tier="standard")
                 st.session_state["qa_df_deg"] = df_deg
             except Exception as e:
-                st.warning(f"Pattern degradation data unavailable in this role/context: {e}")
+                st.warning(f"Pattern degradation data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("qa_df_deg") is not None:
             df_d = st.session_state["qa_df_deg"]
@@ -164,7 +165,7 @@ def render():
                 st.dataframe(df_ops, use_container_width=True)
                 download_csv(df_ops, f"plan_steps_{qid_input}.csv")
             except Exception as e:
-                st.warning(f"Operator stats unavailable: {e}")
+                st.warning(f"Operator stats unavailable: {format_snowflake_error(e)}")
 
     # ── AI DIAGNOSIS ──────────────────────────────────────────────────────────
     with tab_ai:
@@ -191,4 +192,4 @@ Be concise, technical, Snowflake-specific."""
                     ).collect()
                     st.markdown(result[0]["ANSWER"])
                 except Exception as e:
-                    st.info(f"Cortex AI unavailable ({e}). Ensure Cortex functions are enabled in your account.")
+                    st.info(f"Cortex AI unavailable ({format_snowflake_error(e)}). Ensure Cortex functions are enabled in your account.")

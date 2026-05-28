@@ -7,6 +7,7 @@ import streamlit as st
 
 from utils import (
     download_csv,
+    format_snowflake_error,
     format_credits,
     get_active_company,
     get_session,
@@ -86,7 +87,7 @@ def render():
             try:
                 st.session_state["contract_daily"] = _load_daily_credits(session, contract_start, min(today, contract_end))
             except Exception as e:
-                st.warning(f"Credit contract data unavailable in this role/context: {e}")
+                st.warning(f"Credit contract data unavailable: {format_snowflake_error(e)}")
 
     df = st.session_state.get("contract_daily")
     if df is None:

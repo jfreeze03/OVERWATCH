@@ -7,6 +7,7 @@ from utils import (
     download_csv,
     get_db_filter_clause,
     get_session,
+    format_snowflake_error,
     make_action_id,
     render_drillable_bar_chart,
     run_query,
@@ -59,7 +60,7 @@ def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> No
         saved = upsert_actions(session, actions)
         st.success(f"Saved {saved} pipeline findings to the action queue.")
     except Exception as e:
-        st.error(f"Could not save to action queue: {e}")
+        st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
         st.download_button(
             "Download Action Queue DDL",
             build_action_queue_ddl(),
@@ -100,7 +101,7 @@ def render():
                 """, ttl_key=f"pipeline_fresh_{company}_{stale_hours}", tier="standard")
                 st.session_state["pipe_freshness"] = df_fresh
             except Exception as e:
-                st.warning(f"Freshness scan unavailable in this role/context: {e}")
+                st.warning(f"Freshness scan unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_fresh = st.session_state.get("pipe_freshness")
         if df_fresh is not None:
@@ -147,7 +148,7 @@ def render():
                 """, ttl_key=f"pipeline_loads_{company}_{load_days}", tier="standard")
                 st.session_state["pipe_load_failures"] = df_loads
             except Exception as e:
-                st.warning(f"Load failure scan unavailable in this role/context: {e}")
+                st.warning(f"Load failure scan unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_loads = st.session_state.get("pipe_load_failures")
         if df_loads is not None:
@@ -188,7 +189,7 @@ def render():
                 """, ttl_key=f"pipeline_volume_{company}_{min_gb}", tier="standard")
                 st.session_state["pipe_volume"] = df_volume
             except Exception as e:
-                st.warning(f"Volume watch unavailable in this role/context: {e}")
+                st.warning(f"Volume watch unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_volume = st.session_state.get("pipe_volume")
         if df_volume is not None:

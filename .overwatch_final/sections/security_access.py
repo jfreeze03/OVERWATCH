@@ -11,6 +11,7 @@ from utils import (
     get_user_filter_clause,
     get_wh_filter_clause,
     make_action_id,
+    format_snowflake_error,
     run_query,
     run_query_or_raise,
     upsert_actions,
@@ -65,7 +66,7 @@ def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, sever
         saved = upsert_actions(session, actions)
         st.success(f"Saved {saved} security findings to the action queue.")
     except Exception as e:
-        st.error(f"Could not save to action queue: {e}")
+        st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
         st.download_button(
             "Download Action Queue DDL",
             build_action_queue_ddl(),
@@ -215,14 +216,14 @@ def render():
                 """),
                 ("sec_login_errors", f"""
                     WITH base AS (
-                        SELECT TO_VARCHAR(error_code) AS error_code,
+                        SELECT TO_VARCHAR(error_code) AS error_code_txt,
                                user_name,
                                client_ip
                         FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
                         WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
                           {user_filter}
                     )
-                    SELECT COALESCE(error_code, 'NONE') AS error_code,
+                    SELECT COALESCE(error_code_txt, 'NONE') AS error_code,
                            COUNT(*) AS event_count,
                            COUNT(DISTINCT user_name) AS users,
                            COUNT(DISTINCT client_ip) AS ips
@@ -283,7 +284,7 @@ def render():
                 """, ttl_key=f"security_grants_to_users_{company}", tier="standard")
                 st.session_state["sec_df_grants"] = df_grants
             except Exception as e:
-                st.warning(f"Grants unavailable: {e}")
+                st.warning(f"Grants unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_grants") is not None and not st.session_state["sec_df_grants"].empty:
             df_g = st.session_state["sec_df_grants"]
@@ -329,7 +330,7 @@ def render():
                 """, ttl_key=f"security_dormant_{company}_{dormant_days}_{dormant_lookback}", tier="standard")
                 st.session_state["sec_df_dom"] = df_dom
             except Exception as e:
-                st.warning(f"Dormant-user scan unavailable: {e}")
+                st.warning(f"Dormant-user scan unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_dom") is not None and not st.session_state["sec_df_dom"].empty:
             df_d = st.session_state["sec_df_dom"]
@@ -357,7 +358,7 @@ def render():
                 """, ttl_key=f"security_mfa_{company}", tier="standard")
                 st.session_state["sec_df_mfa"] = df_mfa
             except Exception as e:
-                st.warning(f"MFA check unavailable: {e}")
+                st.warning(f"MFA check unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_mfa") is not None and not st.session_state["sec_df_mfa"].empty:
             df_m = st.session_state["sec_df_mfa"]
@@ -414,7 +415,7 @@ def render():
                 """, ttl_key=f"security_exfil_{company}", tier="standard")
                 st.session_state["sec_df_exfil"] = df_ex
             except Exception as e:
-                st.warning(f"Exfiltration check unavailable: {e}")
+                st.warning(f"Exfiltration check unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_exfil") is not None:
             df_ex = st.session_state["sec_df_exfil"]
@@ -459,7 +460,7 @@ def render():
                 """, ttl_key=f"security_lineage_{company}_{lin_days}", tier="standard")
                 st.session_state["sec_df_lin"] = df_lin
             except Exception as e:
-                st.warning(f"Access history unavailable: {e}")
+                st.warning(f"Access history unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_lin") is not None and not st.session_state["sec_df_lin"].empty:
             df_l = st.session_state["sec_df_lin"]

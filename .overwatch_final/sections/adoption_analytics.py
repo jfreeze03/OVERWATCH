@@ -7,6 +7,7 @@ from utils import (
     get_active_company,
     get_global_filter_clause,
     get_session,
+    format_snowflake_error,
     render_drillable_bar_chart,
     run_query,
 )
@@ -152,7 +153,7 @@ def render():
             try:
                 st.session_state["aa_data"] = _load_adoption(session, days)
             except Exception as e:
-                st.warning(f"Adoption analytics unavailable in this role/context: {e}")
+                st.warning(f"Adoption analytics unavailable in this role/context: {format_snowflake_error(e)}")
 
     data = st.session_state.get("aa_data")
     if not data:

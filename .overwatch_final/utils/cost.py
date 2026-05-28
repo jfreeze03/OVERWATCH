@@ -6,7 +6,8 @@ from config import CREDIT_RATES, COMPUTE_CREDIT_CASE, DEFAULTS
 # Re-export for convenience
 __all__ = [
     "format_credits", "credits_to_dollars", "estimate_live_credits",
-    "build_metered_credit_cte", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
+    "build_metered_credit_cte", "build_idle_warehouse_sql",
+    "metric_confidence_label", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
 ]
 
 
@@ -66,8 +67,7 @@ def build_metered_credit_cte(
     hours_back: int = None,
     include_recent: bool = False,
 ) -> str:
-    """Build CTE that allocates metered warehouse credits to individual queries
-    using hourly execution-time share.
+    """Build CTE that allocates exact warehouse metering to queries by hourly execution share.
 
     Args:
         days_back:       Time window in days (used if hours_back not set).
@@ -78,6 +78,7 @@ def build_metered_credit_cte(
 
     Returns:
         SQL CTE fragment (metered_hourly, query_exec_share, per_query_credits).
+        The warehouse-hour total is exact; per-query credits are allocated estimates.
         Caller wraps this in WITH ... SELECT ...
     """
     if hours_back:
@@ -90,6 +91,14 @@ def build_metered_credit_cte(
         if include_recent
         else "DATEADD('hour', -24, CURRENT_TIMESTAMP())"
     )
+    try:
+        from .company_filter import get_wh_filter_clause
+
+        metered_scope = get_wh_filter_clause("warehouse_name")
+        query_scope = get_wh_filter_clause("q.warehouse_name")
+    except Exception:
+        metered_scope = ""
+        query_scope = ""
 
     return f"""
     metered_hourly AS (
@@ -100,6 +109,7 @@ def build_metered_credit_cte(
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= {time_filter}
           AND start_time <  {upper_bound}
+          {metered_scope}
         GROUP BY warehouse_name, hour_bucket
     ),
     query_exec_share AS (
@@ -116,6 +126,7 @@ def build_metered_credit_cte(
           AND q.start_time <  {upper_bound}
           AND q.warehouse_name IS NOT NULL
           AND q.execution_time > 0
+          {query_scope}
     ),
     per_query_credits AS (
         SELECT
@@ -133,3 +144,65 @@ def build_metered_credit_cte(
           AND qs.hour_bucket    = m.hour_bucket
     )
     """
+
+
+def build_idle_warehouse_sql(
+    days_back: int = 7,
+    wh_filter: str = "",
+    min_idle_credits: float = 1.0,
+) -> str:
+    """Return the standard idle warehouse detector SQL.
+
+    Uses WAREHOUSE_METERING_HISTORY as the exact credit source and only counts
+    completed billing hours to avoid partial-hour noise.
+    """
+    return f"""
+    WITH metering AS (
+        SELECT
+            warehouse_name,
+            DATE_TRUNC('hour', start_time) AS hour_bucket,
+            SUM(credits_used_compute) AS hourly_credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+        WHERE start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
+          AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
+          {wh_filter}
+        GROUP BY warehouse_name, hour_bucket
+    ),
+    query_activity AS (
+        SELECT
+            warehouse_name,
+            DATE_TRUNC('hour', start_time) AS hour_bucket,
+            COUNT(*) AS query_count,
+            MAX(warehouse_size) AS warehouse_size
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+        WHERE start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
+          AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
+          AND warehouse_name IS NOT NULL
+          {wh_filter}
+        GROUP BY warehouse_name, hour_bucket
+    )
+    SELECT
+        m.warehouse_name,
+        MAX(query_activity.warehouse_size) AS warehouse_size,
+        ROUND(SUM(m.hourly_credits), 4) AS idle_credits,
+        COUNT(*) AS idle_hours
+    FROM metering m
+    LEFT JOIN query_activity
+      ON m.warehouse_name = query_activity.warehouse_name
+     AND m.hour_bucket = query_activity.hour_bucket
+    WHERE COALESCE(query_activity.query_count, 0) = 0
+    GROUP BY m.warehouse_name
+    HAVING idle_credits > {float(min_idle_credits)}
+    ORDER BY idle_credits DESC
+    """
+
+
+def metric_confidence_label(kind: str) -> str:
+    """Small UI label explaining whether a metric is exact or estimated."""
+    labels = {
+        "exact": "Confidence: Exact Snowflake metering",
+        "allocated": "Confidence: Allocated from exact warehouse metering",
+        "estimated": "Confidence: Estimated from observed runtime",
+        "account": "Confidence: Account-wide Snowflake metering",
+    }
+    return labels.get(str(kind or "").lower(), "Confidence: Calculation depends on available account metadata")

@@ -68,6 +68,7 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
+    company = st.session_state.get("active_company", "ALFA")
 
     tab_leader, tab_burn, tab_forecast, tab_budget, tab_attr, tab_chargeback, tab_contract = st.tabs([
         "User Leaderboard", "Burn Rate", "Forecast", "Budget vs Actual",
@@ -78,8 +79,6 @@ def render():
     with tab_leader:
         st.header("💸 Credit Cost by User / Warehouse")
         days = st.slider("Lookback (days)", 1, 90, 30, key="cc_lead_days")
-        wf = get_wh_filter_clause("q.warehouse_name")
-        uf = get_user_filter_clause("q.user_name")
         gf = get_global_filter_clause(
             "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
         )
@@ -100,14 +99,14 @@ def render():
                 LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
                 WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
                   AND q.warehouse_name IS NOT NULL
-                  {wf} {uf} {gf}
+                  {gf}
                 GROUP BY q.user_name, q.warehouse_name
                 ORDER BY total_credits DESC
                 LIMIT 200
-                """, ttl_key=f"cc_lead_{days}", tier="standard")
+                """, ttl_key=f"cc_lead_{company}_{days}", tier="standard")
                 st.session_state["df_lead"] = df_lead
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Cost leaderboard unavailable in this role/context: {e}")
 
         if st.session_state.get("df_lead") is not None and not st.session_state["df_lead"].empty:
             df_l = st.session_state["df_lead"]
@@ -157,8 +156,6 @@ def render():
     with tab_burn:
         st.header("🔥 Credit Burn Rate")
         br_days = st.slider("Lookback (days)", 1, 90, 30, key="br_days")
-        wf_br   = get_wh_filter_clause()
-
         if st.button("Load Burn Rate", key="br_load"):
             try:
                 df_br = run_query(f"""
@@ -166,10 +163,11 @@ def render():
                         SELECT warehouse_name, warehouse_size
                         FROM (
                             SELECT warehouse_name, warehouse_size,
-                                   ROW_NUMBER() OVER (PARTITION BY warehouse_name ORDER BY start_time DESC) AS rn
+                            ROW_NUMBER() OVER (PARTITION BY warehouse_name ORDER BY start_time DESC) AS rn
                             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                             WHERE start_time >= DATEADD('day', -{br_days}, CURRENT_TIMESTAMP())
                               AND warehouse_name IS NOT NULL
+                              {get_wh_filter_clause("warehouse_name")}
                         )
                         WHERE rn = 1
                     )
@@ -183,10 +181,10 @@ def render():
                     {get_wh_filter_clause("m.warehouse_name")}
                     GROUP BY day, m.warehouse_name, ls.warehouse_size
                     ORDER BY day
-                """, ttl_key=f"cc_burn_{br_days}", tier="standard")
+                """, ttl_key=f"cc_burn_{company}_{br_days}", tier="standard")
                 st.session_state["df_br"] = df_br
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Burn-rate data unavailable in this role/context: {e}")
 
         if st.session_state.get("df_br") is not None and not st.session_state["df_br"].empty:
             df_b = st.session_state["df_br"]
@@ -222,13 +220,23 @@ def render():
                     WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
                     {get_wh_filter_clause("warehouse_name")}
                     GROUP BY day ORDER BY day
-                """, ttl_key="cc_forecast_30", tier="standard")
+                """, ttl_key=f"cc_forecast_30_{company}", tier="standard")
                 st.session_state["df_fc"] = df_fc
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Forecast data unavailable in this role/context: {e}")
 
         if st.session_state.get("df_fc") is not None and not st.session_state["df_fc"].empty:
-            df_f = st.session_state["df_fc"]
+            df_f = st.session_state["df_fc"].copy()
+            df_f["DAY"] = pd.to_datetime(df_f["DAY"])
+            full_window = pd.DataFrame({
+                "DAY": pd.date_range(
+                    pd.Timestamp.today().normalize() - pd.Timedelta(days=29),
+                    pd.Timestamp.today().normalize(),
+                    freq="D",
+                )
+            })
+            df_f = full_window.merge(df_f, on="DAY", how="left")
+            df_f["DAILY_CREDITS"] = pd.to_numeric(df_f["DAILY_CREDITS"], errors="coerce").fillna(0)
             avg_daily = df_f["DAILY_CREDITS"].mean()
             proj_30   = avg_daily * 30
             proj_cost = credits_to_dollars(proj_30, credit_price)
@@ -253,10 +261,10 @@ def render():
                     WHERE start_time >= DATEADD('month', -6, CURRENT_TIMESTAMP())
                     {get_wh_filter_clause("warehouse_name")}
                     GROUP BY month ORDER BY month
-                """, ttl_key="cc_budget_6mo", tier="standard")
+                """, ttl_key=f"cc_budget_6mo_{company}", tier="standard")
                 st.session_state["df_bva"] = df_bva
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Budget comparison unavailable in this role/context: {e}")
 
         if st.session_state.get("df_bva") is not None and not st.session_state["df_bva"].empty:
             df_bv = st.session_state["df_bva"]
@@ -310,14 +318,14 @@ def render():
                 LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY t ON q.query_id = t.query_id
                 WHERE q.start_time >= DATEADD('day', -{attr_days}, CURRENT_TIMESTAMP())
                   AND q.warehouse_name IS NOT NULL
-                  {get_wh_filter_clause("q.warehouse_name")} {gf}
+                  {gf}
                 GROUP BY {group_cols}
                 ORDER BY total_credits DESC
                 LIMIT 200
-                """, ttl_key=f"cc_attr_{attr_mode}_{attr_days}", tier="standard")
+                """, ttl_key=f"cc_attr_{company}_{attr_mode}_{attr_days}", tier="standard")
                 st.session_state["df_cc_attr"] = df_attr
             except Exception as e:
-                st.error(f"Attribution load failed: {e}")
+                st.warning(f"Attribution data unavailable in this role/context: {e}")
 
         if st.session_state.get("df_cc_attr") is not None and not st.session_state["df_cc_attr"].empty:
             df_attr = st.session_state["df_cc_attr"]
@@ -373,10 +381,10 @@ def render():
                        ROUND(total_credits, 4) AS total_credits
                 FROM query_costs
                 ORDER BY total_credits DESC
-                """, ttl_key=f"cc_chargeback_{cb_days}", tier="standard")
+                """, ttl_key=f"cc_chargeback_{company}_{cb_days}", tier="standard")
                 st.session_state["df_chargeback"] = df_cb
             except Exception as e:
-                st.error(f"Chargeback failed: {e}")
+                st.warning(f"Chargeback data unavailable in this role/context: {e}")
 
         if st.session_state.get("df_chargeback") is not None and not st.session_state["df_chargeback"].empty:
             df_cb = st.session_state["df_chargeback"]
@@ -441,12 +449,15 @@ def render():
 
         if st.button("Calculate Utilization", key="cc_contract_calc"):
             try:
+                ytd_source = "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY" if company == "ALL" else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+                ytd_filter = "" if company == "ALL" else get_wh_filter_clause("warehouse_name", company)
                 df_ytd = run_query(f"""
                     SELECT SUM(credits_used) AS ytd_credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+                    FROM {ytd_source}
                     WHERE start_time >= TO_DATE({sql_literal(str(contract_start))})
                       AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                """, ttl_key=f"cc_contract_ytd_{contract_start}", tier="standard")
+                      {ytd_filter}
+                """, ttl_key=f"cc_contract_ytd_{company}_{contract_start}", tier="historical")
                 st.session_state["cc_contract_data"] = df_ytd
                 st.session_state["cc_contract_params"] = {
                     "committed": committed_credits,
@@ -454,7 +465,7 @@ def render():
                     "months": contract_months,
                 }
             except Exception as e:
-                st.error(f"Error loading utilization data: {e}")
+                st.warning(f"Utilization data unavailable in this role/context: {e}")
 
         if st.session_state.get("cc_contract_data") is not None:
             df_c  = st.session_state["cc_contract_data"]
@@ -531,19 +542,22 @@ def render():
             st.subheader("Monthly Consumption")
             if st.button("Load Monthly Breakdown", key="cc_monthly_breakdown"):
                 try:
+                    monthly_source = "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY" if company == "ALL" else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+                    monthly_filter = "" if company == "ALL" else get_wh_filter_clause("warehouse_name", company)
                     df_monthly = run_query(f"""
                         SELECT DATE_TRUNC('month', start_time) AS month,
                                SUM(credits_used) AS monthly_credits,
                                SUM(credits_used) * {credit_price} AS monthly_cost
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+                        FROM {monthly_source}
                         WHERE start_time >= TO_DATE({sql_literal(start_str)})
                           AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
+                          {monthly_filter}
                         GROUP BY month
                         ORDER BY month
-                    """, ttl_key=f"cc_monthly_{start_str}_{credit_price}", tier="standard")
+                    """, ttl_key=f"cc_monthly_{company}_{start_str}_{credit_price}", tier="historical")
                     st.session_state["cc_monthly_data"] = df_monthly
                 except Exception as e:
-                    st.error(f"Monthly breakdown error: {e}")
+                    st.warning(f"Monthly breakdown unavailable in this role/context: {e}")
 
             if st.session_state.get("cc_monthly_data") is not None and not st.session_state["cc_monthly_data"].empty:
                 df_m = st.session_state["cc_monthly_data"]
@@ -563,24 +577,27 @@ def render():
             # ── By service type ────────────────────────────────────────────────
             st.divider()
             st.subheader("Consumption by Service Type")
-            if st.button("Load Service Breakdown", key="cc_service_type"):
-                try:
-                    df_svc = run_query(f"""
-                        SELECT service_type,
-                               SUM(credits_used) AS total_credits,
-                               ROUND(SUM(credits_used) / NULLIF({ytd_used}, 0) * 100, 1) AS pct_of_total
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-                        WHERE start_time >= TO_DATE({sql_literal(start_str)})
-                          AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                        GROUP BY service_type
-                        ORDER BY total_credits DESC
-                    """, ttl_key=f"cc_service_{start_str}_{ytd_used}", tier="standard")
-                    st.session_state["cc_svc_data"] = df_svc
-                except Exception as e:
-                    st.error(f"Service breakdown error: {e}")
+            if company != "ALL":
+                st.info("Service-type metering is account-level in Snowflake. Switch Company View to ALL for a full service breakdown.")
+            else:
+                if st.button("Load Service Breakdown", key="cc_service_type"):
+                    try:
+                        df_svc = run_query(f"""
+                            SELECT service_type,
+                                   SUM(credits_used) AS total_credits,
+                                   ROUND(SUM(credits_used) / NULLIF({ytd_used}, 0) * 100, 1) AS pct_of_total
+                            FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+                            WHERE start_time >= TO_DATE({sql_literal(start_str)})
+                              AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
+                            GROUP BY service_type
+                            ORDER BY total_credits DESC
+                        """, ttl_key=f"cc_service_{company}_{start_str}_{ytd_used}", tier="historical")
+                        st.session_state["cc_svc_data"] = df_svc
+                    except Exception as e:
+                        st.warning(f"Service breakdown unavailable in this role/context: {e}")
 
-            if st.session_state.get("cc_svc_data") is not None and not st.session_state["cc_svc_data"].empty:
-                df_sv = st.session_state["cc_svc_data"]
-                st.dataframe(df_sv, use_container_width=True)
-                st.bar_chart(df_sv.set_index("SERVICE_TYPE")["TOTAL_CREDITS"])
-                download_csv(df_sv, "contract_by_service_type.csv")
+                if st.session_state.get("cc_svc_data") is not None and not st.session_state["cc_svc_data"].empty:
+                    df_sv = st.session_state["cc_svc_data"]
+                    st.dataframe(df_sv, use_container_width=True)
+                    st.bar_chart(df_sv.set_index("SERVICE_TYPE")["TOTAL_CREDITS"])
+                    download_csv(df_sv, "contract_by_service_type.csv")

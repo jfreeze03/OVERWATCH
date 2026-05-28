@@ -1,12 +1,21 @@
 # sections/spcs_tracker.py — Snowpark Container Services cost tracking
 import streamlit as st
 import pandas as pd
-from utils import get_session, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart, run_query
+from utils import (
+    get_active_company,
+    get_session,
+    format_credits,
+    credits_to_dollars,
+    download_csv,
+    render_drillable_bar_chart,
+    run_query,
+)
 
 
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
+    company = get_active_company()
 
     st.header("🐳 SPCS Cost Tracker")
     st.caption("Snowpark Container Services credit usage and cost breakdown.")
@@ -15,6 +24,11 @@ def render():
 
     if st.button("Load SPCS Data", key="spcs_load"):
         try:
+            pool_filter = ""
+            if company == "Trexis":
+                pool_filter = "AND compute_pool_name ILIKE '%TRXS%'"
+            elif company == "ALFA":
+                pool_filter = "AND compute_pool_name NOT ILIKE '%TRXS%'"
             df_spcs = run_query(f"""
                 SELECT compute_pool_name,
                        DATE_TRUNC('day', start_time) AS usage_date,
@@ -22,9 +36,10 @@ def render():
                        COUNT(*)                      AS service_count
                 FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWPARK_CONTAINER_SERVICES_HISTORY
                 WHERE start_time >= DATEADD('day', -{spcs_days}, CURRENT_TIMESTAMP())
+                  {pool_filter}
                 GROUP BY compute_pool_name, usage_date
                 ORDER BY usage_date DESC, daily_credits DESC
-            """, ttl_key=f"spcs_usage_{spcs_days}", tier="standard")
+            """, ttl_key=f"spcs_usage_{company}_{spcs_days}", tier="standard")
             st.session_state["spcs_df_spcs"] = df_spcs
         except Exception as e:
             st.warning(f"SPCS history unavailable: {e}. Requires SPCS configured in your account.")

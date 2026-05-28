@@ -4,27 +4,24 @@ import streamlit as st
 
 from utils import (
     download_csv,
-    get_db_filter_clause,
+    get_active_company,
     get_global_filter_clause,
     get_session,
-    get_wh_filter_clause,
+    get_user_filter_clause,
     render_drillable_bar_chart,
     run_query,
 )
 
 
 def _load_topology(session, days: int) -> dict:
-    filters = " ".join([
-        get_wh_filter_clause("q.warehouse_name"),
-        get_db_filter_clause("q.database_name"),
-        get_global_filter_clause(
-            date_col="q.start_time",
-            wh_col="q.warehouse_name",
-            user_col="q.user_name",
-            role_col="q.role_name",
-            db_col="q.database_name",
-        ),
-    ])
+    company = get_active_company()
+    filters = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
 
     warehouse_user = run_query(f"""
         SELECT
@@ -42,7 +39,7 @@ def _load_topology(session, days: int) -> dict:
         GROUP BY q.warehouse_name, q.user_name, COALESCE(q.role_name, 'UNKNOWN')
         ORDER BY query_count DESC
         LIMIT 500
-    """, ttl_key=f"topology_wh_user_{days}", tier="standard")
+    """, ttl_key=f"topology_wh_user_{company}_{days}", tier="standard")
 
     db_schema = run_query(f"""
         SELECT
@@ -59,9 +56,9 @@ def _load_topology(session, days: int) -> dict:
         GROUP BY database_name, schema_name
         ORDER BY query_count DESC
         LIMIT 500
-    """, ttl_key=f"topology_db_schema_{days}", tier="standard")
+    """, ttl_key=f"topology_db_schema_{company}_{days}", tier="standard")
 
-    role_users = run_query("""
+    role_users = run_query(f"""
         SELECT
             role,
             grantee_name AS user_name,
@@ -70,9 +67,10 @@ def _load_topology(session, days: int) -> dict:
             deleted_on
         FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
         WHERE deleted_on IS NULL
+          {get_user_filter_clause("grantee_name")}
         ORDER BY role, user_name
-        LIMIT 1000
-    """, ttl_key="topology_role_users", tier="standard")
+        LIMIT 500
+    """, ttl_key=f"topology_role_users_{company}", tier="standard")
 
     app_flow = run_query(f"""
         SELECT
@@ -90,7 +88,7 @@ def _load_topology(session, days: int) -> dict:
         GROUP BY client_application, q.warehouse_name, database_name
         ORDER BY query_count DESC
         LIMIT 500
-    """, ttl_key=f"topology_app_flow_{days}", tier="standard")
+    """, ttl_key=f"topology_app_flow_{company}_{days}", tier="standard")
 
     return {
         "warehouse_user": warehouse_user,
@@ -111,7 +109,7 @@ def render():
             try:
                 st.session_state["topology_data"] = _load_topology(session, days)
             except Exception as e:
-                st.error(f"Unable to load platform topology: {e}")
+                st.warning(f"Platform topology unavailable in this role/context: {e}")
 
     data = st.session_state.get("topology_data")
     if not data:

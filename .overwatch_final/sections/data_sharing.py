@@ -1,12 +1,21 @@
 # sections/data_sharing.py — Data transfer credits, shared databases
 import streamlit as st
 import pandas as pd
-from utils import get_session, format_credits, credits_to_dollars, download_csv, run_query
+from utils import (
+    get_active_company,
+    get_db_filter_clause,
+    get_session,
+    format_credits,
+    credits_to_dollars,
+    download_csv,
+    run_query,
+)
 
 
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
+    company = get_active_company()
 
     st.header("🌐 Data Sharing Monitor")
     st.caption("DATA_TRANSFER_HISTORY credit consumption and shared database visibility.")
@@ -15,7 +24,12 @@ def render():
 
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("Load Transfer History", key="ds_load"):
+        if company != "ALL":
+            st.info(
+                "Data transfer history is account-level in Snowflake and does not expose "
+                "a reliable ALFA/Trexis ownership column. Switch Company View to ALL for transfer costs."
+            )
+        elif st.button("Load Transfer History", key="ds_load"):
             try:
                 df_dt = run_query(f"""
                     SELECT source_cloud, source_region,
@@ -27,25 +41,26 @@ def render():
                     WHERE start_time >= DATEADD('day', -{ds_days}, CURRENT_TIMESTAMP())
                     GROUP BY source_cloud, source_region, target_cloud, target_region, day
                     ORDER BY credits DESC
-                """, ttl_key=f"data_sharing_transfer_{ds_days}", tier="standard")
+                """, ttl_key=f"data_sharing_transfer_{company}_{ds_days}", tier="standard")
                 st.session_state["ds_df_dt"] = df_dt
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Data-share usage unavailable in this role/context: {e}")
 
     with c2:
         if st.button("Load Shared Databases", key="ds_db_load"):
             try:
-                df_db = run_query("""
+                df_db = run_query(f"""
                     SELECT database_name, database_id, type,
                            created, last_altered,
                            comment
                     FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES
                     WHERE type IN ('IMPORTED DATABASE', 'SHARE')
+                      {get_db_filter_clause("database_name")}
                     ORDER BY created DESC
-                """, ttl_key="data_sharing_databases", tier="standard")
+                """, ttl_key=f"data_sharing_databases_{company}", tier="standard")
                 st.session_state["ds_df_shared_db"] = df_db
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Data-share metadata unavailable in this role/context: {e}")
 
     if st.session_state.get("ds_df_dt") is not None and not st.session_state["ds_df_dt"].empty:
         df_d = st.session_state["ds_df_dt"]

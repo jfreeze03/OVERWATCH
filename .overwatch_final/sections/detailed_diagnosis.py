@@ -4,10 +4,8 @@ import streamlit as st
 from utils import (
     download_csv,
     get_active_company,
-    get_db_filter_clause,
     get_global_filter_clause,
     get_session,
-    get_wh_filter_clause,
     render_query_drilldown,
     run_query,
     sql_literal,
@@ -26,18 +24,15 @@ DIAG_MODES = {
 
 
 def _load_diagnosis(session, days: int, mode: str, limit: int):
+    company = get_active_company()
     order_col, _, _ = DIAG_MODES[mode]
-    filters = " ".join([
-        get_wh_filter_clause("q.warehouse_name"),
-        get_db_filter_clause("q.database_name"),
-        get_global_filter_clause(
-            date_col="q.start_time",
-            wh_col="q.warehouse_name",
-            user_col="q.user_name",
-            role_col="q.role_name",
-            db_col="q.database_name",
-        ),
-    ])
+    filters = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
     return run_query(f"""
         SELECT
             q.query_id,
@@ -73,7 +68,7 @@ def _load_diagnosis(session, days: int, mode: str, limit: int):
           {filters}
         ORDER BY q.{order_col} DESC
         LIMIT {limit}
-    """, ttl_key=f"dd_{mode}_{days}_{limit}", tier="historical")
+    """, ttl_key=f"dd_{company}_{mode}_{days}_{limit}", tier="historical")
 
 
 def _queue_diagnosis(session, df, mode: str):
@@ -129,7 +124,7 @@ def render():
                 st.session_state["dd_df"] = _load_diagnosis(session, days, mode, limit)
                 st.session_state["dd_loaded_mode"] = mode
             except Exception as e:
-                st.error(f"Unable to load diagnosis: {e}")
+                st.warning(f"Diagnosis data unavailable in this role/context: {e}")
 
     df = st.session_state.get("dd_df")
     loaded_mode = st.session_state.get("dd_loaded_mode", mode)

@@ -3,8 +3,10 @@ import hashlib
 from datetime import datetime
 
 import pandas as pd
+import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
+from .company_filter import get_active_company
 from .query import run_query, safe_identifier, sql_literal
 
 
@@ -122,12 +124,15 @@ def upsert_actions(session, actions: list[dict]) -> int:
 
 
 def load_action_queue(session, limit: int = 500) -> pd.DataFrame:
+    company = get_active_company()
+    company_clause = "" if company == "ALL" else f"WHERE COALESCE(COMPANY, 'ALFA') = {sql_literal(company)}"
     return run_query(f"""
         SELECT ACTION_ID, CREATED_AT, UPDATED_AT, SOURCE, CATEGORY, SEVERITY,
                ENTITY_TYPE, ENTITY_NAME, OWNER, STATUS, FINDING, RECOMMENDED_ACTION,
                EST_MONTHLY_SAVINGS, GENERATED_SQL_FIX, PROOF_QUERY, COMPANY,
                LAST_SEEN_AT, SEEN_COUNT
         FROM {ACTION_QUEUE_FQN}
+        {company_clause}
         ORDER BY
             CASE STATUS
                 WHEN 'New' THEN 1
@@ -146,18 +151,23 @@ def load_action_queue(session, limit: int = 500) -> pd.DataFrame:
             END,
             UPDATED_AT DESC
         LIMIT {int(limit)}
-    """, ttl_key=f"action_queue_{int(limit)}", tier="recent")
+    """, ttl_key=f"action_queue_{company}_{int(limit)}", tier="recent")
+
+
+def _safe_actor(session) -> str:
+    return str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
 
 
 def update_action_status(session, action_id: str, status: str, reason: str = "") -> None:
     action_safe = sql_literal(action_id, max_len=64)
     status_safe = sql_literal(status, max_len=40)
     reason_safe = sql_literal(reason, max_len=2000)
+    actor_safe = sql_literal(_safe_actor(session), max_len=200)
     extra = ""
     if status == "Acknowledged":
-        extra = ", ACKNOWLEDGED_BY = CURRENT_USER(), ACKNOWLEDGED_AT = CURRENT_TIMESTAMP()"
+        extra = f", ACKNOWLEDGED_BY = {actor_safe}, ACKNOWLEDGED_AT = CURRENT_TIMESTAMP()"
     elif status == "Fixed":
-        extra = ", FIXED_BY = CURRENT_USER(), FIXED_AT = CURRENT_TIMESTAMP()"
+        extra = f", FIXED_BY = {actor_safe}, FIXED_AT = CURRENT_TIMESTAMP()"
     elif status == "Ignored":
         extra = f", IGNORED_REASON = {reason_safe}"
     session.sql(f"""

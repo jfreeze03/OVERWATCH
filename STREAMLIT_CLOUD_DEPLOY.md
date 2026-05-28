@@ -15,7 +15,7 @@ Do not commit Snowflake credentials to GitHub. In Streamlit Cloud, configure
 the Snowflake connection in **Advanced settings** or **App settings > Secrets**
 using your organization's approved authentication method. Keep all account,
 user, password, token, private-key, and SSO settings in Streamlit Cloud or your
-live host's secured secret store, not in this repository.
+Snowflake-managed secret store, not in this repository.
 
 ## Required Snowflake Grants
 

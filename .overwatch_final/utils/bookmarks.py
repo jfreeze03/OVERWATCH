@@ -42,7 +42,7 @@ def build_bookmark_ddl(
 
 CREATE TABLE IF NOT EXISTS {table} (
     BOOKMARK_ID   NUMBER AUTOINCREMENT PRIMARY KEY,
-    SF_USER       VARCHAR(200) DEFAULT CURRENT_USER(),
+    SF_USER       VARCHAR(200),
     IS_SHARED     BOOLEAN DEFAULT FALSE,  -- TRUE = visible to all users
     BOOKMARK_NAME VARCHAR(200) NOT NULL,
     SECTION       VARCHAR(200),
@@ -65,19 +65,26 @@ def _restore_state(state: dict) -> None:
         if v is not None:
             st.session_state[k] = v
 
+
+def _safe_actor(session) -> str:
+    return str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
+
+
 def save_bookmark(session, name: str, shared: bool = False) -> bool:
     """Write current navigation state to OVERWATCH_BOOKMARKS. Returns True on success."""
     try:
         state   = _capture_state()
         section = state.get("nav_section", "")
 
+        sf_user = sql_literal(_safe_actor(session), max_len=200)
         bookmark_name = sql_literal(name, max_len=200)
         section_name = sql_literal(section, max_len=200)
         state_json = sql_literal(json.dumps(state), max_len=8000)
         session.sql(f"""
             INSERT INTO {BOOKMARK_TABLE}
-                (BOOKMARK_NAME, SECTION, STATE_JSON, IS_SHARED)
+                (SF_USER, BOOKMARK_NAME, SECTION, STATE_JSON, IS_SHARED)
             VALUES (
+                {sf_user},
                 {bookmark_name},
                 {section_name},
                 PARSE_JSON({state_json}),
@@ -97,7 +104,7 @@ def load_bookmarks(session, include_shared: bool = True) -> list[dict]:
                    CREATED_AT, USE_COUNT, STATE_JSON (parsed).
     """
     try:
-        user = session.sql("SELECT CURRENT_USER()").collect()[0][0] or ""
+        user = _safe_actor(session)
         user_esc = sql_literal(user, max_len=200)
         shared_clause = "OR IS_SHARED = TRUE" if include_shared else ""
         rows = session.sql(f"""

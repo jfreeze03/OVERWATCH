@@ -18,6 +18,7 @@ from utils import (
 
 
 def _load_daily_credits(session, start_date: date, end_date: date):
+    company = get_active_company()
     wh_filter = get_wh_filter_clause("warehouse_name")
     return run_query(f"""
         SELECT
@@ -32,7 +33,7 @@ def _load_daily_credits(session, start_date: date, end_date: date):
           {wh_filter}
         GROUP BY TO_DATE(start_time)
         ORDER BY usage_date
-    """, ttl_key=f"credit_contract_daily_{start_date}_{end_date}", tier="standard")
+    """, ttl_key=f"credit_contract_daily_{company}_{start_date}_{end_date}", tier="standard")
 
 
 def _queue_contract_risk(session, projected_credits: float, purchased_credits: float, runout: str):
@@ -85,7 +86,7 @@ def render():
             try:
                 st.session_state["contract_daily"] = _load_daily_credits(session, contract_start, min(today, contract_end))
             except Exception as e:
-                st.error(f"Unable to load credit contract data: {e}")
+                st.warning(f"Credit contract data unavailable in this role/context: {e}")
 
     df = st.session_state.get("contract_daily")
     if df is None:
@@ -96,12 +97,27 @@ def render():
 
     df = df.copy()
     df["USAGE_DATE"] = pd.to_datetime(df["USAGE_DATE"])
+    as_of_date = min(today, contract_end)
+    observed_days = pd.DataFrame({
+        "USAGE_DATE": pd.date_range(contract_start, as_of_date, freq="D"),
+    })
+    df = observed_days.merge(df, on="USAGE_DATE", how="left")
+    for col in ["CREDITS_USED", "COMPUTE_CREDITS", "CLOUD_SERVICE_CREDITS", "ACTIVE_WAREHOUSES"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     df["CUMULATIVE_CREDITS"] = pd.to_numeric(df["CREDITS_USED"], errors="coerce").fillna(0).cumsum()
-    elapsed_days = max((min(today, contract_end) - contract_start).days + 1, 1)
+    elapsed_days = max((as_of_date - contract_start).days + 1, 1)
     contract_days = max((contract_end - contract_start).days + 1, 1)
     used_to_date = float(df["CREDITS_USED"].sum())
     avg_daily = used_to_date / elapsed_days
     projected = avg_daily * contract_days
+    last_7_avg = float(df.tail(7)["CREDITS_USED"].mean()) if len(df) else 0.0
+    last_30_avg = float(df.tail(30)["CREDITS_USED"].mean()) if len(df) else 0.0
+    business_days = df[df["USAGE_DATE"].dt.dayofweek < 5]
+    business_avg = float(business_days.tail(20)["CREDITS_USED"].mean()) if not business_days.empty else avg_daily
+    projected_7 = last_7_avg * contract_days
+    projected_30 = last_30_avg * contract_days
+    projected_business = business_avg * contract_days
     remaining = purchased - used_to_date
     runout_date = ""
     if avg_daily > 0 and remaining > 0:
@@ -113,6 +129,11 @@ def render():
     k3.metric("Remaining", format_credits(max(remaining, 0)))
     k4.metric("Projected Annual", format_credits(projected), f"{projected - purchased:+,.0f}")
     k5.metric("Runway", runout_date or "Full term")
+
+    p1, p2, p3 = st.columns(3)
+    p1.metric("7-Day Run Rate", format_credits(projected_7), f"{projected_7 - purchased:+,.0f}")
+    p2.metric("30-Day Run Rate", format_credits(projected_30), f"{projected_30 - purchased:+,.0f}")
+    p3.metric("Business-Day Run Rate", format_credits(projected_business), f"{projected_business - purchased:+,.0f}")
 
     planned = pd.DataFrame({
         "USAGE_DATE": pd.date_range(contract_start, contract_end, freq="D"),

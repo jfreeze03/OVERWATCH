@@ -7,9 +7,13 @@ from utils import (
     build_action_queue_ddl,
     build_alert_task_sql,
     build_annotation_ddl,
+    build_idle_warehouse_sql,
+    company_value_allowed,
     credits_to_dollars,
     download_csv,
     format_credits,
+    get_db_filter_clause,
+    get_global_filter_clause,
     get_session,
     get_wh_filter_clause,
     load_action_queue,
@@ -307,34 +311,24 @@ def render():
         if st.button("Generate Recommendations", key="recs_gen"):
             recs = []
             company = _active_company()
+            query_filters = get_global_filter_clause(
+                date_col="start_time",
+                wh_col="warehouse_name",
+                user_col="user_name",
+                role_col="role_name",
+                db_col="database_name",
+            )
 
             try:
-                df_idle = run_query(f"""
-                WITH metering AS (
-                    SELECT warehouse_name, DATE_TRUNC('hour', start_time) AS h, SUM(credits_used) AS cr
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                    WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                      AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                      {get_wh_filter_clause("warehouse_name")}
-                    GROUP BY warehouse_name, h
-                ),
-                qa AS (
-                    SELECT warehouse_name, DATE_TRUNC('hour', start_time) AS h, COUNT(*) AS qc
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                      AND warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("warehouse_name")}
-                    GROUP BY warehouse_name, h
+                df_idle = run_query(
+                    build_idle_warehouse_sql(
+                        days_back=7,
+                        wh_filter=get_wh_filter_clause("warehouse_name"),
+                        min_idle_credits=1.0,
+                    ) + "\nLIMIT 10",
+                    ttl_key=f"rec_idle_{company}",
+                    tier="historical",
                 )
-                SELECT m.warehouse_name, SUM(m.cr) AS idle_credits, COUNT(*) AS idle_hours
-                FROM metering m
-                LEFT JOIN qa ON m.warehouse_name = qa.warehouse_name AND m.h = qa.h
-                WHERE COALESCE(qa.qc, 0) = 0
-                GROUP BY m.warehouse_name
-                HAVING SUM(m.cr) > 1
-                ORDER BY idle_credits DESC
-                LIMIT 10
-                """, ttl_key="rec_idle", tier="historical")
                 for _, row in df_idle.iterrows():
                     wh_name = str(row["WAREHOUSE_NAME"])
                     wh_ident = safe_identifier(wh_name)
@@ -364,12 +358,12 @@ def render():
                     WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
                       AND bytes_spilled_to_remote_storage > 0
                       AND warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("warehouse_name")}
+                      {query_filters}
                     GROUP BY warehouse_name
                     HAVING remote_gb > 5
                     ORDER BY remote_gb DESC
                     LIMIT 10
-                """, ttl_key="rec_spill", tier="historical")
+                """, ttl_key=f"rec_spill_{company}", tier="historical")
                 for _, row in df_spill.iterrows():
                     wh_name = str(row["WAREHOUSE_NAME"])
                     recs.append({
@@ -390,16 +384,17 @@ def render():
                 pass
 
             try:
-                df_ftask = run_query("""
-                    SELECT name AS task_name, COUNT(*) AS failures
+                df_ftask = run_query(f"""
+                    SELECT COALESCE(task_name, query_id) AS task_name, COUNT(*) AS failures
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
                     WHERE scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
                       AND state = 'FAILED'
-                    GROUP BY name
+                      {get_db_filter_clause("database_name", company)}
+                    GROUP BY COALESCE(task_name, query_id)
                     HAVING failures > 3
                     ORDER BY failures DESC
                     LIMIT 5
-                """, ttl_key="rec_failed_tasks", tier="historical")
+                """, ttl_key=f"rec_failed_tasks_{company}", tier="historical")
                 for _, row in df_ftask.iterrows():
                     task_name = str(row["TASK_NAME"])
                     recs.append({
@@ -426,12 +421,12 @@ def render():
                     WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
                       AND execution_status = 'FAILED_WITH_ERROR'
                       AND warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("warehouse_name")}
+                      {query_filters}
                     GROUP BY warehouse_name
                     HAVING failures > {THRESHOLDS['error_rate_high']}
                     ORDER BY failures DESC
                     LIMIT 5
-                """, ttl_key="rec_query_errors", tier="historical")
+                """, ttl_key=f"rec_query_errors_{company}", tier="historical")
                 for _, row in df_err.iterrows():
                     recs.append({
                         "Source": "Query failure detector",
@@ -530,10 +525,10 @@ def render():
                 WHERE rolling_avg IS NOT NULL
                   AND (daily_credits - rolling_avg) / NULLIF(rolling_std, 0) > 1.5
                 ORDER BY day DESC, zscore DESC
-                """, ttl_key=f"rec_anomaly_{anom_days}", tier="historical")
+                """, ttl_key=f"rec_anomaly_{_active_company()}_{anom_days}", tier="historical")
                 st.session_state["rec_anomalies"] = df_anom
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Recommendation scan unavailable in this role/context: {e}")
 
         df_an = st.session_state.get("rec_anomalies")
         if df_an is not None:
@@ -577,8 +572,17 @@ def render():
                     SELECT * FROM {ALERT_DB}.{ALERT_SCHEMA}.{ALERT_TABLE}
                     ORDER BY ALERT_DATE DESC
                     LIMIT 100
-                """, ttl_key="rec_alert_history", tier="recent")
+                """, ttl_key=f"rec_alert_history_{_active_company()}", tier="recent")
                 if not df_ah.empty:
+                    company = _active_company()
+                    if company != "ALL":
+                        if "COMPANY" in df_ah.columns:
+                            df_ah = df_ah[df_ah["COMPANY"].fillna("ALFA") == company]
+                        elif "ENTITY" in df_ah.columns:
+                            df_ah = df_ah[
+                                df_ah["ENTITY"].apply(lambda value: company_value_allowed(value, "warehouse", company))
+                                | df_ah["ENTITY"].apply(lambda value: company_value_allowed(value, "database", company))
+                            ]
                     if "STATUS" in df_ah.columns:
                         status = st.selectbox(
                             "Filter status",

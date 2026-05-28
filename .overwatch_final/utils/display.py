@@ -12,6 +12,7 @@ import altair as alt
 from datetime import datetime
 from .cost import format_credits, credits_to_dollars
 from .query import run_query, run_query_or_raise, sql_literal
+from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause
 
 CHART_COLORS = [
     '#38bdf8','#818cf8','#c084fc','#f472b6',
@@ -150,6 +151,11 @@ def render_warehouse_drilldown(
     if not warehouse_name:
         return
     wh_safe = sql_literal(warehouse_name)
+    company_filter = " ".join(filter(None, [
+        get_wh_filter_clause("warehouse_name"),
+        get_db_filter_clause("database_name"),
+        get_user_filter_clause("user_name"),
+    ]))
     df_wh = run_query(f"""
         SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status, start_time,
                total_elapsed_time/1000          AS elapsed_sec,
@@ -163,6 +169,7 @@ def render_warehouse_drilldown(
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
         WHERE warehouse_name = {wh_safe}
           AND start_time >= DATEADD('hours', -{lookback_hours}, CURRENT_TIMESTAMP())
+          {company_filter}
         ORDER BY total_elapsed_time DESC LIMIT 200
     """, ttl_key=f"wh_detail_{key}_{warehouse_name}", tier="recent")
     if df_wh.empty:
@@ -208,6 +215,11 @@ def render_entity_query_drilldown(
         )
     else:
         where_clause = f"{col} = {value}"
+    company_filter = " ".join(filter(None, [
+        get_wh_filter_clause("warehouse_name"),
+        get_db_filter_clause("database_name"),
+        get_user_filter_clause("user_name"),
+    ]))
     df_detail   = run_query(f"""
         SELECT query_id, user_name, role_name, warehouse_name, warehouse_size, database_name, schema_name,
                query_type, execution_status, start_time,
@@ -223,6 +235,7 @@ def render_entity_query_drilldown(
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
         WHERE {where_clause}
           AND start_time >= DATEADD('hours', -{lookback_hours}, CURRENT_TIMESTAMP())
+          {company_filter}
         ORDER BY total_elapsed_time DESC LIMIT 300
     """, ttl_key=f"entity_{key}_{col}_{value}_{lookback_hours}", tier="recent")
     if df_detail.empty:

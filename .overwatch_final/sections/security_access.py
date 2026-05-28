@@ -4,10 +4,15 @@ import pandas as pd
 from utils import (
     build_action_queue_ddl,
     download_csv,
+    get_active_company,
+    get_db_filter_clause,
+    get_global_filter_clause,
     get_session,
+    get_user_filter_clause,
     get_wh_filter_clause,
     make_action_id,
     run_query,
+    run_query_or_raise,
     upsert_actions,
 )
 from config import THRESHOLDS
@@ -72,6 +77,17 @@ def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, sever
 
 def render():
     session = get_session()
+    company = get_active_company()
+    user_filter = get_user_filter_clause("user_name")
+    user_filter_u = get_user_filter_clause("u.name")
+    user_filter_g = get_user_filter_clause("grantee_name")
+    query_scope = get_global_filter_clause(
+        date_col="start_time",
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
 
     tab_login, tab_posture, tab_roles, tab_mfa, tab_exfil, tab_lineage = st.tabs([
         "Login Audit", "Login Posture", "Roles & Grants", "MFA Coverage", "Exfiltration Signals", "Data Lineage"
@@ -90,6 +106,7 @@ def render():
                            COUNT(DISTINCT client_ip) AS distinct_ips
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
                     WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
+                      {user_filter}
                     GROUP BY is_success
                 """),
                 ("sec_df_failed_logins", f"""
@@ -99,6 +116,7 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
                     WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
                       AND is_success = 'NO'
+                      {user_filter}
                     GROUP BY user_name, client_ip, reported_client_type, error_code
                     ORDER BY attempt_count DESC LIMIT 50
                 """),
@@ -107,11 +125,12 @@ def render():
                            is_success, COUNT(*) AS event_count
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
                     WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
+                      {user_filter}
                     GROUP BY day, is_success ORDER BY day
                 """),
             ]:
                 try:
-                    st.session_state[key] = run_query(sql, ttl_key=f"security_{key}_{sec_days}", tier="standard")
+                    st.session_state[key] = run_query(sql, ttl_key=f"security_{company}_{key}_{sec_days}", tier="standard")
                 except Exception:
                     st.session_state[key] = pd.DataFrame()
 
@@ -151,47 +170,70 @@ def render():
                            MAX(event_timestamp) AS last_seen
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
                     WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
+                      {user_filter}
                     GROUP BY client_ip
                     ORDER BY login_events DESC
                     LIMIT 50
                 """),
                 ("sec_login_clients", f"""
+                    WITH base AS (
+                        SELECT TO_VARCHAR(reported_client_type) AS reported_client_type,
+                               TO_VARCHAR(reported_client_version) AS reported_client_version,
+                               user_name,
+                               is_success
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                        WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
+                          {user_filter}
+                    )
                     SELECT COALESCE(reported_client_type, 'UNKNOWN') AS reported_client_type,
                            COALESCE(reported_client_version, 'UNKNOWN') AS reported_client_version,
                            COUNT(*) AS login_events,
                            COUNT(DISTINCT user_name) AS users,
                            SUM(IFF(is_success = 'NO', 1, 0)) AS failed_events
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
-                    GROUP BY reported_client_type, reported_client_version
+                    FROM base
+                    GROUP BY 1, 2
                     ORDER BY login_events DESC
                     LIMIT 50
                 """),
                 ("sec_login_factors", f"""
-                    SELECT COALESCE(first_authentication_factor, 'UNKNOWN') AS first_factor,
-                           COALESCE(second_authentication_factor, 'NONE') AS second_factor,
+                    WITH base AS (
+                        SELECT TO_VARCHAR(first_authentication_factor) AS first_factor,
+                               TO_VARCHAR(second_authentication_factor) AS second_factor,
+                               is_success
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                        WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
+                          {user_filter}
+                    )
+                    SELECT COALESCE(first_factor, 'UNKNOWN') AS first_factor,
+                           COALESCE(second_factor, 'NONE') AS second_factor,
                            COUNT(*) AS login_events,
                            SUM(IFF(is_success = 'NO', 1, 0)) AS failed_events
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
-                    GROUP BY first_factor, second_factor
+                    FROM base
+                    GROUP BY 1, 2
                     ORDER BY login_events DESC
                     LIMIT 50
                 """),
                 ("sec_login_errors", f"""
-                    SELECT COALESCE(TRY_TO_VARCHAR(error_code), 'NONE') AS error_code,
+                    WITH base AS (
+                        SELECT TO_VARCHAR(error_code) AS error_code,
+                               user_name,
+                               client_ip
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                        WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
+                          {user_filter}
+                    )
+                    SELECT COALESCE(error_code, 'NONE') AS error_code,
                            COUNT(*) AS event_count,
                            COUNT(DISTINCT user_name) AS users,
                            COUNT(DISTINCT client_ip) AS ips
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
-                    GROUP BY error_code
+                    FROM base
+                    GROUP BY 1
                     ORDER BY event_count DESC
                     LIMIT 50
                 """),
             ]:
                 try:
-                    st.session_state[key] = run_query(sql, ttl_key=f"security_{key}_{sec_days}", tier="standard")
+                    st.session_state[key] = run_query_or_raise(sql)
                 except Exception:
                     st.session_state[key] = pd.DataFrame()
 
@@ -231,16 +273,17 @@ def render():
         st.header("🛡️ Roles & Grants")
         if st.button("Load Grants", key="grants_load"):
             try:
-                df_grants = run_query("""
+                df_grants = run_query(f"""
                     SELECT grantee_name, role, granted_to, granted_by,
                            created_on, deleted_on
                     FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
                     WHERE deleted_on IS NULL
+                      {user_filter_g}
                     ORDER BY created_on DESC LIMIT 500
-                """, ttl_key="security_grants_to_users", tier="standard")
+                """, ttl_key=f"security_grants_to_users_{company}", tier="standard")
                 st.session_state["sec_df_grants"] = df_grants
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Grants unavailable: {e}")
 
         if st.session_state.get("sec_df_grants") is not None and not st.session_state["sec_df_grants"].empty:
             df_g = st.session_state["sec_df_grants"]
@@ -252,19 +295,23 @@ def render():
         st.divider()
         st.subheader("💤 Dormant User Detection")
         dormant_days = st.number_input("Inactive threshold (days)", 30, 365, THRESHOLDS["dormant_user_days"], key="dom_days")
+        dormant_lookback = min(365, int(dormant_days) + 30)
         if st.button("Find Dormant Users", key="dom_find"):
             try:
                 df_dom = run_query(f"""
                 WITH last_login AS (
                     SELECT user_name, MAX(event_timestamp) AS last_login_time
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('day', -365, CURRENT_TIMESTAMP())
+                    WHERE event_timestamp >= DATEADD('day', -{dormant_lookback}, CURRENT_TIMESTAMP())
+                      {user_filter}
                     GROUP BY user_name
                 ),
                 last_query AS (
                     SELECT user_name, MAX(start_time) AS last_query_time
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day', -365, CURRENT_TIMESTAMP())
+                    WHERE start_time >= DATEADD('day', -{dormant_lookback}, CURRENT_TIMESTAMP())
+                      {user_filter}
+                      {query_scope}
                     GROUP BY user_name
                 )
                 SELECT u.name AS user_name, u.created_on, u.disabled,
@@ -276,12 +323,13 @@ def render():
                 LEFT JOIN last_query  lq ON u.name = lq.user_name
                 WHERE u.deleted_on IS NULL
                   AND u.disabled = 'false'
+                  {user_filter_u}
                   AND DATEDIFF('day', COALESCE(ll.last_login_time, u.created_on), CURRENT_TIMESTAMP()) > {dormant_days}
                 ORDER BY days_since_login DESC
-                """, ttl_key=f"security_dormant_{dormant_days}", tier="standard")
+                """, ttl_key=f"security_dormant_{company}_{dormant_days}_{dormant_lookback}", tier="standard")
                 st.session_state["sec_df_dom"] = df_dom
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Dormant-user scan unavailable: {e}")
 
         if st.session_state.get("sec_df_dom") is not None and not st.session_state["sec_df_dom"].empty:
             df_d = st.session_state["sec_df_dom"]
@@ -296,16 +344,17 @@ def render():
         st.header("🔐 MFA Coverage Report")
         if st.button("Check MFA", key="mfa_check"):
             try:
-                df_mfa = run_query("""
+                df_mfa = run_query(f"""
                     SELECT u.name AS user_name, u.has_password,
                            u.ext_authn_duo AS has_mfa, u.disabled,
                            MAX(l.event_timestamp) AS last_login
                     FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
                     LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY l ON u.name = l.user_name
                     WHERE u.deleted_on IS NULL AND u.disabled = 'false'
+                      {user_filter_u}
                     GROUP BY u.name, u.has_password, u.ext_authn_duo, u.disabled
                     ORDER BY has_mfa, user_name
-                """, ttl_key="security_mfa", tier="standard")
+                """, ttl_key=f"security_mfa_{company}", tier="standard")
                 st.session_state["sec_df_mfa"] = df_mfa
             except Exception as e:
                 st.warning(f"MFA check unavailable: {e}")
@@ -340,6 +389,7 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
                       AND bytes_written_to_result > 0
+                      {query_scope}
                     GROUP BY user_name HAVING COUNT(*) >= 5
                 ),
                 recent AS (
@@ -349,7 +399,7 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -3, CURRENT_TIMESTAMP())
                       AND bytes_written_to_result > 0
-                      {get_wh_filter_clause("warehouse_name")}
+                      {query_scope}
                 )
                 SELECT r.user_name, r.query_id, r.warehouse_name, r.warehouse_size, r.start_time,
                        ROUND(r.gb_written, 3)                           AS gb_written,
@@ -361,7 +411,7 @@ def render():
                 JOIN user_baseline b ON r.user_name = b.user_name
                 WHERE r.gb_written > b.avg_bytes/POWER(1024,3) + 2*b.std_bytes/POWER(1024,3)
                 ORDER BY r.gb_written DESC LIMIT 20
-                """, ttl_key="security_exfil", tier="standard")
+                """, ttl_key=f"security_exfil_{company}", tier="standard")
                 st.session_state["sec_df_exfil"] = df_ex
             except Exception as e:
                 st.warning(f"Exfiltration check unavailable: {e}")
@@ -386,20 +436,30 @@ def render():
         if st.button("Load Access History", key="lin_load"):
             try:
                 df_lin = run_query(f"""
-                    SELECT user_name, query_id,
-                           query_start_time,
-                           objects_modified,
-                           objects_modified_by_ddl,
-                           base_objects_accessed,
-                           direct_objects_accessed
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY
-                    WHERE query_start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
-                    ORDER BY query_start_time DESC
+                    WITH scoped_queries AS (
+                        SELECT query_id
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                        WHERE q.start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
+                          {get_wh_filter_clause("q.warehouse_name")}
+                          {get_db_filter_clause("q.database_name")}
+                          {get_user_filter_clause("q.user_name")}
+                    )
+                    SELECT ah.user_name, ah.query_id,
+                           ah.query_start_time,
+                           ah.objects_modified,
+                           ah.objects_modified_by_ddl,
+                           ah.base_objects_accessed,
+                           ah.direct_objects_accessed
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY ah
+                    JOIN scoped_queries sq ON ah.query_id = sq.query_id
+                    WHERE ah.query_start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
+                      {get_user_filter_clause("ah.user_name")}
+                    ORDER BY ah.query_start_time DESC
                     LIMIT 500
-                """, ttl_key=f"security_lineage_{lin_days}", tier="standard")
+                """, ttl_key=f"security_lineage_{company}_{lin_days}", tier="standard")
                 st.session_state["sec_df_lin"] = df_lin
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Access history unavailable: {e}")
 
         if st.session_state.get("sec_df_lin") is not None and not st.session_state["sec_df_lin"].empty:
             df_l = st.session_state["sec_df_lin"]

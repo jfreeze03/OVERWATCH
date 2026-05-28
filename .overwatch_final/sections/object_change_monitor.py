@@ -3,6 +3,7 @@ import streamlit as st
 from utils import (
     build_action_queue_ddl,
     download_csv,
+    get_global_filter_clause,
     get_session,
     make_action_id,
     run_query,
@@ -63,12 +64,21 @@ def _queue_changes(session, df, source: str, category: str, entity_type: str, se
 
 def render():
     session = get_session()
+    company = _active_company()
     st.header("Who Changed What?")
     st.caption("DDL, grants, roles, policy changes, owner changes, and Terraform drift indicators.")
 
     days = st.slider("Lookback (days)", 1, 90, 14, key="ocm_days")
+    row_limit = st.slider("Max rows per scan", 100, 1000, 500, step=100, key="ocm_row_limit")
     text_filter = st.text_input("Filter query/object text", key="ocm_filter")
     filter_clause = f"AND query_text ILIKE {sql_literal('%' + text_filter + '%')}" if text_filter else ""
+    company_filter = get_global_filter_clause(
+        date_col=None,
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
 
     tab_ddl, tab_access, tab_policy, tab_drift = st.tabs([
         "Objects", "Grants & Roles", "Policies & Tags", "Terraform Drift"
@@ -104,12 +114,13 @@ def render():
                     OR query_text ILIKE 'CREATE%PROCEDURE%' OR query_text ILIKE 'ALTER%PROCEDURE%' OR query_text ILIKE 'DROP%PROCEDURE%'
                     OR query_text ILIKE 'CREATE%TASK%' OR query_text ILIKE 'ALTER%TASK%' OR query_text ILIKE 'DROP%TASK%'
                   )
+                  {company_filter}
                   {filter_clause}
                 ORDER BY start_time DESC
-                LIMIT 1000
-                """, ttl_key=f"ocm_objects_{days}_{text_filter}", tier="standard")
+                LIMIT {row_limit}
+                """, ttl_key=f"ocm_objects_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
             except Exception as e:
-                st.error(f"Object change scan failed: {e}")
+                st.warning(f"Object change scan unavailable in this role/context: {e}")
         if st.session_state.get("ocm_df_object_changes") is not None:
             df = st.session_state["ocm_df_object_changes"]
             if not df.empty:
@@ -138,12 +149,13 @@ def render():
                 WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
                   AND (query_text ILIKE 'GRANT%' OR query_text ILIKE 'REVOKE%' OR query_text ILIKE '%OWNERSHIP%'
                        OR query_text ILIKE 'CREATE%ROLE%' OR query_text ILIKE 'ALTER%ROLE%' OR query_text ILIKE 'DROP%ROLE%')
+                  {company_filter}
                   {filter_clause}
                 ORDER BY start_time DESC
-                LIMIT 1000
-                """, ttl_key=f"ocm_access_{days}_{text_filter}", tier="standard")
+                LIMIT {row_limit}
+                """, ttl_key=f"ocm_access_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
             except Exception as e:
-                st.error(f"Access change scan failed: {e}")
+                st.warning(f"Access change scan unavailable in this role/context: {e}")
         if st.session_state.get("ocm_df_access_changes") is not None:
             df = st.session_state["ocm_df_access_changes"]
             st.dataframe(df, use_container_width=True)
@@ -166,12 +178,13 @@ def render():
                 WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
                   AND (query_text ILIKE '%MASKING POLICY%' OR query_text ILIKE '%TAG%'
                        OR query_text ILIKE '%ROW ACCESS POLICY%')
+                  {company_filter}
                   {filter_clause}
                 ORDER BY start_time DESC
-                LIMIT 1000
-                """, ttl_key=f"ocm_policy_{days}_{text_filter}", tier="standard")
+                LIMIT {row_limit}
+                """, ttl_key=f"ocm_policy_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
             except Exception as e:
-                st.error(f"Policy change scan failed: {e}")
+                st.warning(f"Policy change scan unavailable in this role/context: {e}")
         if st.session_state.get("ocm_df_policy_changes") is not None:
             df = st.session_state["ocm_df_policy_changes"]
             st.dataframe(df, use_container_width=True)
@@ -192,12 +205,13 @@ def render():
                 WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
                   AND (query_text ILIKE 'CREATE%' OR query_text ILIKE 'ALTER%' OR query_text ILIKE 'DROP%' OR query_text ILIKE 'GRANT%' OR query_text ILIKE 'REVOKE%')
                   AND NOT (query_tag ILIKE '%terraform%')
+                  {company_filter}
                   {filter_clause}
                 ORDER BY start_time DESC
-                LIMIT 1000
-                """, ttl_key=f"ocm_drift_{days}_{text_filter}", tier="standard")
+                LIMIT {row_limit}
+                """, ttl_key=f"ocm_drift_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
             except Exception as e:
-                st.error(f"Drift scan failed: {e}")
+                st.warning(f"Drift scan unavailable in this role/context: {e}")
         if st.session_state.get("ocm_df_drift") is not None:
             df = st.session_state["ocm_df_drift"]
             st.dataframe(df, use_container_width=True)

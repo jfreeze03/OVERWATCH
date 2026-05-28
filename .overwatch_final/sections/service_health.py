@@ -7,6 +7,7 @@ from utils import (
     get_active_company,
     get_db_filter_clause,
     get_session,
+    get_user_filter_clause,
     get_wh_filter_clause,
     run_query,
     upsert_actions,
@@ -14,7 +15,11 @@ from utils import (
 
 
 def _load_service_health(session, hours: int) -> dict:
+    company = get_active_company()
     wh_q = get_wh_filter_clause("q.warehouse_name")
+    db_q = get_db_filter_clause("q.database_name")
+    user_q = get_user_filter_clause("q.user_name")
+    user_l = get_user_filter_clause("user_name")
     db_task = get_db_filter_clause("database_name")
     db_copy = get_db_filter_clause("table_catalog_name")
 
@@ -29,8 +34,8 @@ def _load_service_health(session, hours: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
-          {wh_q}
-    """, ttl_key=f"svc_query_{hours}", tier="recent")
+          {wh_q} {db_q} {user_q}
+    """, ttl_key=f"svc_query_{company}_{hours}", tier="recent")
 
     warehouse_health = run_query(f"""
         SELECT
@@ -44,11 +49,11 @@ def _load_service_health(session, hours: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
-          {wh_q}
+          {wh_q} {db_q} {user_q}
         GROUP BY q.warehouse_name
         ORDER BY queued_sec DESC, remote_spill_gb DESC, failed_queries DESC
         LIMIT 100
-    """, ttl_key=f"svc_warehouse_{hours}", tier="recent")
+    """, ttl_key=f"svc_warehouse_{company}_{hours}", tier="recent")
 
     login_health = run_query(f"""
         SELECT
@@ -58,7 +63,8 @@ def _load_service_health(session, hours: int) -> dict:
             COUNT(DISTINCT client_ip) AS distinct_ips
         FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
         WHERE event_timestamp >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
-    """, ttl_key=f"svc_login_{hours}", tier="recent")
+          {user_l}
+    """, ttl_key=f"svc_login_{company}_{hours}", tier="recent")
 
     task_health = run_query(f"""
         SELECT
@@ -69,7 +75,7 @@ def _load_service_health(session, hours: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
         WHERE scheduled_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           {db_task}
-    """, ttl_key=f"svc_task_{hours}", tier="recent")
+    """, ttl_key=f"svc_task_{company}_{hours}", tier="recent")
 
     pipe_health = run_query(f"""
         SELECT
@@ -80,7 +86,7 @@ def _load_service_health(session, hours: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY
         WHERE last_load_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           {db_copy}
-    """, ttl_key=f"svc_pipe_{hours}", tier="recent")
+    """, ttl_key=f"svc_pipe_{company}_{hours}", tier="recent")
 
     return {
         "query_health": query_health,
@@ -139,7 +145,7 @@ def render():
             try:
                 st.session_state["svc_data"] = _load_service_health(session, hours)
             except Exception as e:
-                st.error(f"Unable to load service health: {e}")
+                st.warning(f"Service health data unavailable in this role/context: {e}")
 
     data = st.session_state.get("svc_data")
     if not data:

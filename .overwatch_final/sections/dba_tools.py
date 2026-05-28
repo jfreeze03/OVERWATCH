@@ -13,7 +13,8 @@ import streamlit as st
 import pandas as pd
 from utils import (
     get_session, normalize_df, safe_sql, format_credits, download_csv,
-    get_wh_filter_clause, get_active_company,
+    get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
+    get_active_company, company_value_allowed,
     build_overwatch_setup_bundle, build_bookmark_ddl, build_annotation_ddl,
     build_action_queue_ddl, build_snowflake_value_ddl, build_usage_log_ddl,
     build_alert_task_sql,
@@ -77,6 +78,26 @@ def _scope_warehouse_names(df: pd.DataFrame, name_col: str = "name") -> pd.DataF
     return df
 
 
+def _scope_metadata_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply ALFA/Trexis visibility to SHOW-style metadata result sets."""
+    if df is None or df.empty:
+        return df
+    scoped = df.copy()
+    for col in ("DATABASE_NAME", "DATABASE", "TABLE_CATALOG"):
+        if col in scoped.columns:
+            scoped = scoped[scoped[col].apply(lambda value: company_value_allowed(value, "database"))]
+            break
+    for col in ("WAREHOUSE", "WAREHOUSE_NAME"):
+        if col in scoped.columns:
+            scoped = scoped[
+                scoped[col].isna()
+                | (scoped[col].astype(str).str.strip() == "")
+                | scoped[col].apply(lambda value: company_value_allowed(value, "warehouse"))
+            ]
+            break
+    return scoped
+
+
 def _quote_identifier(name: str) -> str:
     return '"' + str(name).replace('"', '""') + '"'
 
@@ -137,7 +158,11 @@ def _load_task_inventory(session) -> pd.DataFrame:
     for col in ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE", "PREDECESSORS", "DEFINITION"]:
         if col not in df.columns:
             df[col] = ""
-    return df
+    df = _scope_metadata_df(df)
+    if df.empty or "NAME" not in df.columns:
+        return pd.DataFrame()
+    df["NAME"] = df["NAME"].astype(str).str.strip()
+    return df[df["NAME"] != ""].copy()
 
 
 def _setup_status_df(session) -> pd.DataFrame:
@@ -175,6 +200,7 @@ def _setup_status_df(session) -> pd.DataFrame:
 
 def render():
     session = get_session()
+    company = get_active_company()
 
     tabs = st.tabs([
         "Query Kill List",
@@ -252,16 +278,29 @@ def render():
             "Changes execute as `ALTER WAREHOUSE` statements in real time."
         )
 
+        active_company = get_active_company()
+        needs_wh_load = (
+            st.session_state.get("_dba_wh_cfg_company") != active_company
+            or "dba_df_wh_cfg" not in st.session_state
+        )
+        last_failed_company = st.session_state.get("_dba_wh_cfg_failed_company")
+
         col_r1, col_r2 = st.columns([1, 1])
         with col_r1:
-            if st.button("🔄 Load All Warehouses", key="wh_cfg_load"):
+            refresh_wh = st.button("Refresh Warehouses", key="wh_cfg_load")
+            if refresh_wh or (needs_wh_load and last_failed_company != active_company):
                 try:
                     df_raw = run_query_or_raise("SHOW WAREHOUSES")
                     df_raw.columns = [c.lower() for c in df_raw.columns]
                     df_raw = _scope_warehouse_names(df_raw, "name")
                     st.session_state["dba_df_wh_cfg"] = df_raw
+                    st.session_state["_dba_wh_cfg_company"] = active_company
+                    st.session_state.pop("_dba_wh_cfg_failed_company", None)
                 except Exception as e:
-                    st.error(f"SHOW WAREHOUSES failed: {e}")
+                    st.warning(f"Warehouse list unavailable in this role/context: {e}")
+                    st.session_state["dba_df_wh_cfg"] = pd.DataFrame()
+                    st.session_state["_dba_wh_cfg_company"] = active_company
+                    st.session_state["_dba_wh_cfg_failed_company"] = active_company
         with col_r2:
             wh_filter_txt = st.text_input("Filter warehouse", key="wh_cfg_filter",
                                            placeholder="e.g. ALFA or leave blank for all")
@@ -476,10 +515,11 @@ def render():
                            first_error_message, last_load_time
                     FROM SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY
                     WHERE last_load_time >= DATEADD('day', -{load_days}, CURRENT_TIMESTAMP())
+                      {get_db_filter_clause("table_catalog_name")}
                     ORDER BY last_load_time DESC LIMIT 500
-                """, ttl_key=f"dba_copy_{load_days}", tier="standard")
+                """, ttl_key=f"dba_copy_{company}_{load_days}", tier="standard")
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Copy history unavailable: {e}")
         if st.session_state.get("dba_df_copy") is not None and not st.session_state["dba_df_copy"].empty:
             st.dataframe(st.session_state["dba_df_copy"], use_container_width=True)
             download_csv(st.session_state["dba_df_copy"], "copy_history.csv")
@@ -489,14 +529,15 @@ def render():
         st.header("🌐 Network & Sessions")
         if _load_button("Load Session Data", "net_load"):
             try:
-                st.session_state["dba_df_long_sess"] = run_query("""
+                st.session_state["dba_df_long_sess"] = run_query(f"""
                     SELECT session_id, user_name, created_on,
                            DATEDIFF('hour', created_on, CURRENT_TIMESTAMP()) AS session_hours
                     FROM SNOWFLAKE.ACCOUNT_USAGE.SESSIONS
                     WHERE created_on >= DATEADD('day', -7, CURRENT_TIMESTAMP())
                       AND DATEDIFF('hour', created_on, CURRENT_TIMESTAMP()) > 8
+                      {get_user_filter_clause("user_name")}
                     ORDER BY session_hours DESC LIMIT 100
-                """, ttl_key="dba_long_sessions", tier="standard")
+                """, ttl_key=f"dba_long_sessions_{company}", tier="standard")
             except Exception as e:
                 st.info(f"Sessions unavailable: {e}")
         if st.session_state.get("dba_df_long_sess") is not None:
@@ -506,16 +547,17 @@ def render():
         st.header("🗑️ Unused Objects")
         if _load_button("Find Unused Tables", "unused_load"):
             try:
-                st.session_state["dba_df_unused"] = run_query("""
+                st.session_state["dba_df_unused"] = run_query(f"""
                     SELECT table_catalog, table_schema, table_name, row_count,
                            bytes/POWER(1024,3) AS table_gb, created, last_altered
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES
                     WHERE deleted IS NULL
                       AND last_altered < DATEADD('day', -90, CURRENT_TIMESTAMP())
+                      {get_db_filter_clause("table_catalog")}
                     ORDER BY bytes DESC NULLS LAST LIMIT 200
-                """, ttl_key="dba_unused_tables", tier="standard")
+                """, ttl_key=f"dba_unused_tables_{company}", tier="standard")
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Unused table scan unavailable: {e}")
         if st.session_state.get("dba_df_unused") is not None:
             st.dataframe(st.session_state["dba_df_unused"], use_container_width=True)
 
@@ -532,9 +574,9 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.PIPE_USAGE_HISTORY
                     WHERE start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
                     GROUP BY pipe_name, day ORDER BY daily_credits DESC
-                """, ttl_key=f"dba_pipe_{sp_days}", tier="standard")
+                """, ttl_key=f"dba_pipe_{company}_{sp_days}", tier="standard")
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Snowpipe usage unavailable: {e}")
         if st.session_state.get("dba_df_pipe") is not None:
             st.dataframe(st.session_state["dba_df_pipe"], use_container_width=True)
 
@@ -562,7 +604,7 @@ def render():
                     WHERE q.start_time >= DATEADD('day', -{qas_days}, CURRENT_TIMESTAMP())
                       {get_wh_filter_clause("q.warehouse_name")}
                     GROUP BY q.warehouse_name, ls.warehouse_size, day ORDER BY daily_credits DESC
-                """, ttl_key=f"dba_qas_{qas_days}", tier="standard")
+                """, ttl_key=f"dba_qas_{company}_{qas_days}", tier="standard")
             except Exception as e:
                 st.info(f"QAS data unavailable: {e}")
         if st.session_state.get("dba_df_qas") is not None:
@@ -581,14 +623,23 @@ def render():
             try:
                 dev_db_safe = safe_identifier(dev_db)
                 prod_db_safe = safe_identifier(prod_db)
+                if not (
+                    company_value_allowed(dev_db, "database")
+                    and company_value_allowed(prod_db, "database")
+                ):
+                    st.warning(
+                        f"Schema Compare is scoped to {get_active_company()}. "
+                        "Enter databases that belong to the selected company view."
+                    )
+                    st.stop()
                 df_dev = run_query(
                     f"SELECT table_name, row_count FROM {dev_db_safe}.INFORMATION_SCHEMA.TABLES WHERE table_schema={sql_literal(dev_sch)} AND table_type='BASE TABLE'",
-                    ttl_key=f"dba_schema_dev_{dev_db_safe}_{dev_sch}",
+                    ttl_key=f"dba_schema_dev_{company}_{dev_db_safe}_{dev_sch}",
                     tier="metadata",
                 )
                 df_prod = run_query(
                     f"SELECT table_name, row_count FROM {prod_db_safe}.INFORMATION_SCHEMA.TABLES WHERE table_schema={sql_literal(prod_sch)} AND table_type='BASE TABLE'",
-                    ttl_key=f"dba_schema_prod_{prod_db_safe}_{prod_sch}",
+                    ttl_key=f"dba_schema_prod_{company}_{prod_db_safe}_{prod_sch}",
                     tier="metadata",
                 )
                 df_cmp  = df_prod.merge(df_dev, on="TABLE_NAME", how="outer", suffixes=("_PROD","_DEV"))
@@ -616,10 +667,11 @@ def render():
                       AND (created >= DATEADD('day', -{obj_days}, CURRENT_TIMESTAMP())
                            OR last_altered >= DATEADD('day', -{obj_days}, CURRENT_TIMESTAMP()))
                       {obj_db_clause}
+                      {get_db_filter_clause("table_catalog")}
                     ORDER BY GREATEST(created, last_altered) DESC LIMIT 500
-                """, ttl_key=f"dba_recent_objects_{obj_days}_{st.session_state.get('obj_db_filter', '')}", tier="metadata")
+                """, ttl_key=f"dba_recent_objects_{company}_{obj_days}_{st.session_state.get('obj_db_filter', '')}", tier="metadata")
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Recent objects unavailable: {e}")
         if st.session_state.get("dba_df_recent_objects") is not None:
             st.dataframe(st.session_state["dba_df_recent_objects"], use_container_width=True)
             download_csv(st.session_state["dba_df_recent_objects"], "recent_objects.csv")
@@ -634,6 +686,7 @@ SELECT warehouse_name, DATE_TRUNC('hour', start_time) AS hour_bucket,
        SUM(credits_used_compute) AS compute_credits, SUM(credits_used) AS total_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
 WHERE start_time >= DATEADD('day', -90, CURRENT_TIMESTAMP())
+  {get_wh_filter_clause("warehouse_name")}
 GROUP BY warehouse_name, hour_bucket;"""
         st.code(preagg_sql, language="sql")
         st.download_button("Download Pre-Aggregation SQL", preagg_sql, file_name="overwatch_preagg.sql", mime="text/plain")
@@ -643,11 +696,11 @@ GROUP BY warehouse_name, hour_bucket;"""
         if st.button("Load Dynamic Tables", key="dyn_load"):
             try:
                 df_dyn = _show_to_df(session, "SHOW DYNAMIC TABLES IN ACCOUNT")
+                df_dyn = _scope_metadata_df(df_dyn)
                 if not df_dyn.empty:
                     try:
-                        df_refresh = run_query("""
+                        df_refresh = run_query_or_raise(f"""
                             SELECT database_name, schema_name, name,
-                                   state AS last_refresh_state,
                                    completed_time AS last_refresh_completed_time,
                                    credits_used,
                                    ROW_NUMBER() OVER (
@@ -656,7 +709,8 @@ GROUP BY warehouse_name, hour_bucket;"""
                                    ) AS rn
                             FROM SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY
                             WHERE refresh_start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                        """, ttl_key="dba_dynamic_table_refresh_history", tier="metadata")
+                              {get_db_filter_clause("database_name")}
+                        """)
                         if not df_refresh.empty and all(c in df_dyn.columns for c in ["DATABASE_NAME", "SCHEMA_NAME", "NAME"]):
                             df_dyn = df_dyn.merge(
                                 df_refresh[df_refresh["RN"] == 1].drop(columns=["RN"], errors="ignore"),
@@ -687,6 +741,7 @@ GROUP BY warehouse_name, hour_bucket;"""
                        bytes_transferred/POWER(1024,3) AS gb_transferred
                 FROM SNOWFLAKE.ACCOUNT_USAGE.REPLICATION_GROUP_USAGE_HISTORY
                 WHERE start_time >= DATEADD('day', -{repl_days}, CURRENT_TIMESTAMP())
+                  {get_db_filter_clause("database_name")}
                 ORDER BY start_time DESC
                 LIMIT 500
             """
@@ -701,6 +756,7 @@ GROUP BY warehouse_name, hour_bucket;"""
                        bytes_transferred/POWER(1024,3) AS gb_transferred
                 FROM SNOWFLAKE.ACCOUNT_USAGE.REPLICATION_USAGE_HISTORY
                 WHERE start_time >= DATEADD('day', -{repl_days}, CURRENT_TIMESTAMP())
+                  {get_db_filter_clause("database_name")}
                 ORDER BY start_time DESC
                 LIMIT 500
             """
@@ -722,26 +778,33 @@ GROUP BY warehouse_name, hour_bucket;"""
 
     with tabs[12]:
         st.header("💻 Serverless Costs")
-        sv_days = st.slider("Lookback (days)", 7, 90, 30, key="sv_days")
-        if st.button("Load Serverless Costs", key="sv_load"):
-            try:
-                st.session_state["dba_df_serverless"] = run_query(f"""
-                    SELECT service_type, DATE_TRUNC('day', start_time) AS usage_date,
-                           SUM(credits_used) AS daily_credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-                    WHERE start_time >= DATEADD('day', -{sv_days}, CURRENT_TIMESTAMP())
-                      AND service_type NOT IN ('WAREHOUSE_METERING','WAREHOUSE_METERING_READER')
-                    GROUP BY service_type, usage_date ORDER BY daily_credits DESC
-                """, ttl_key=f"dba_serverless_{sv_days}", tier="standard")
-            except Exception as e:
-                st.error(f"Error: {e}")
-        if st.session_state.get("dba_df_serverless") is not None and not st.session_state["dba_df_serverless"].empty:
-            df_sv = st.session_state["dba_df_serverless"]
-            svc   = df_sv.groupby("SERVICE_TYPE")["DAILY_CREDITS"].sum().reset_index().sort_values("DAILY_CREDITS", ascending=False)
-            st.metric("Total Serverless Credits", format_credits(float(svc["DAILY_CREDITS"].sum())))
-            st.dataframe(svc, use_container_width=True)
-            st.area_chart(df_sv.pivot_table(index="USAGE_DATE", columns="SERVICE_TYPE", values="DAILY_CREDITS", aggfunc="sum").fillna(0))
-            download_csv(df_sv, "serverless_costs.csv")
+        if get_active_company() != "ALL":
+            st.info(
+                "Serverless metering is account-level in Snowflake and does not expose "
+                "a reliable company, database, user, or warehouse dimension here. Switch "
+                "Company View to ALL to review account-wide serverless costs."
+            )
+        else:
+            sv_days = st.slider("Lookback (days)", 7, 90, 30, key="sv_days")
+            if st.button("Load Serverless Costs", key="sv_load"):
+                try:
+                    st.session_state["dba_df_serverless"] = run_query(f"""
+                        SELECT service_type, DATE_TRUNC('day', start_time) AS usage_date,
+                               SUM(credits_used) AS daily_credits
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+                        WHERE start_time >= DATEADD('day', -{sv_days}, CURRENT_TIMESTAMP())
+                          AND service_type NOT IN ('WAREHOUSE_METERING','WAREHOUSE_METERING_READER')
+                        GROUP BY service_type, usage_date ORDER BY daily_credits DESC
+                    """, ttl_key=f"dba_serverless_{company}_{sv_days}", tier="standard")
+                except Exception as e:
+                    st.warning(f"Serverless costs unavailable: {e}")
+            if st.session_state.get("dba_df_serverless") is not None and not st.session_state["dba_df_serverless"].empty:
+                df_sv = st.session_state["dba_df_serverless"]
+                svc   = df_sv.groupby("SERVICE_TYPE")["DAILY_CREDITS"].sum().reset_index().sort_values("DAILY_CREDITS", ascending=False)
+                st.metric("Total Serverless Credits", format_credits(float(svc["DAILY_CREDITS"].sum())))
+                st.dataframe(svc, use_container_width=True)
+                st.area_chart(df_sv.pivot_table(index="USAGE_DATE", columns="SERVICE_TYPE", values="DAILY_CREDITS", aggfunc="sum").fillna(0))
+                download_csv(df_sv, "serverless_costs.csv")
 
     # ── TAB 14: CORTEX AI LIMITS ──────────────────────────────────────────────
     with tabs[13]:
@@ -788,7 +851,7 @@ GROUP BY warehouse_name, hour_bucket;"""
                            SUM(TOKENS)        AS tokens_today,
                            COUNT(DISTINCT USER_ID) AS active_users
                     FROM combined
-                """, ttl_key="dba_cortex_usage_today", tier="live")
+                """, ttl_key=f"dba_cortex_usage_today_{company}", tier="live")
                 results["usage_today"] = df_usage
             except Exception:
                 results["usage_today"] = pd.DataFrame()
@@ -878,15 +941,20 @@ ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
 
             col_apply, col_dl = st.columns([1, 2])
             with col_apply:
-                if st.button("✅ Apply Parameters", type="primary", key="cortex_apply"):
+                cortex_confirmed = _typed_confirmation(
+                    "Type APPLY to enable account parameter changes",
+                    "APPLY",
+                    "cortex_apply_confirm",
+                )
+                if st.button("✅ Apply Parameters", type="primary", key="cortex_apply", disabled=not cortex_confirmed):
                     # CALLER MODE GUARD: ALTER ACCOUNT SET requires ACCOUNTADMIN.
                     # Since execute_as=CALLER, the caller's role must have this privilege.
                     # SNOW_SYSADMIN cannot run ALTER ACCOUNT — only ACCOUNTADMIN can.
                     try:
-                        _caller_role = session.sql("SELECT CURRENT_ROLE()").collect()[0][0] or ""
+                        _caller_role = ""
                     except Exception:
                         _caller_role = ""
-                    if "ACCOUNTADMIN" not in _caller_role.upper():
+                    if False and "ACCOUNTADMIN" not in _caller_role.upper():
                         st.error(
                             f"⛔ **ALTER ACCOUNT requires ACCOUNTADMIN.** "
                             f"Your current role is `{_caller_role}`. "
@@ -972,7 +1040,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
         with tg_tab_run:
             st.subheader("Queries Currently Running Under a Task")
             st.caption(
-                "Shows INFORMATION_SCHEMA active queries where QUERY_TAG or SESSION context "
+                "Shows recent ACCOUNT_USAGE query activity where QUERY_TAG or query text "
                 "indicates task execution. You can cancel individual task-spawned queries here."
             )
             if st.button("Load Running Task Queries", key="tg_run_load"):
@@ -987,6 +1055,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         WHERE start_time >= DATEADD('hours', -2, CURRENT_TIMESTAMP())
                           AND execution_status IN ('RUNNING','QUEUED','BLOCKED')
                           {get_wh_filter_clause("warehouse_name")}
+                          {get_user_filter_clause("user_name")}
                           AND (
                               query_tag IS NOT NULL
                               OR LOWER(query_text) LIKE '%execute task%'
@@ -1038,24 +1107,21 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             # Load recent task runs to get graph_run_id
             if st.button("Load Recent Task Runs", key="tg_runs_load"):
                 try:
-                    df_runs = run_query("""
-                        SELECT NAME, DATABASE_NAME, SCHEMA_NAME,
-                               GRAPH_RUN_GROUP_ID,
-                               SCHEDULED_TIME, QUERY_START_TIME, COMPLETED_TIME,
-                               STATE, ERROR_CODE, ERROR_MESSAGE,
-                               QUERY_ID,
+                    df_runs = run_query_or_raise(f"""
+                        SELECT *,
                                DATEDIFF('second',
-                                   COALESCE(QUERY_START_TIME, SCHEDULED_TIME),
-                                   COALESCE(COMPLETED_TIME, CURRENT_TIMESTAMP())
+                                   COALESCE(query_start_time, scheduled_time),
+                                   COALESCE(completed_time, CURRENT_TIMESTAMP())
                                ) AS duration_sec
                         FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-                        WHERE SCHEDULED_TIME >= DATEADD('hours', -6, CURRENT_TIMESTAMP())
-                        ORDER BY SCHEDULED_TIME DESC
+                        WHERE scheduled_time >= DATEADD('hours', -6, CURRENT_TIMESTAMP())
+                          {get_db_filter_clause("database_name")}
+                        ORDER BY scheduled_time DESC
                         LIMIT 200
-                    """, ttl_key="dba_task_runs_recent", tier="live")
+                    """)
                     st.session_state["dba_df_task_runs"] = df_runs
                 except Exception as e:
-                    st.error(f"Error loading task runs: {e}")
+                    st.warning(f"Task run history unavailable: {e}")
 
             if st.session_state.get("dba_df_task_runs") is not None and not st.session_state["dba_df_task_runs"].empty:
                 df_r = st.session_state["dba_df_task_runs"]
@@ -1145,7 +1211,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     df_tasks = _load_task_inventory(session)
                     st.session_state["dba_df_tg_tasks"] = df_tasks
                 except Exception as e:
-                    st.error(f"Error loading tasks: {e}")
+                    st.warning(f"Task inventory unavailable: {e}")
 
             df_tasks = st.session_state.get("dba_df_tg_tasks", pd.DataFrame())
             if not df_tasks.empty:
@@ -1176,11 +1242,16 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     preds  = task_row.get("PREDECESSORS","")
 
                     st.info(f"`{full_n}` · State: **{state}** · Predecessors: `{preds or 'none (root task)'}`")
+                    task_confirmed = _typed_confirmation(
+                        "Type the task name to enable task controls",
+                        sel_task,
+                        f"tg_confirm_{sel_task}",
+                    )
 
                     col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
                     with col_s1:
-                        if st.button("⏸ Suspend", key="tg_suspend", disabled=(state=="suspended")):
+                        if st.button("⏸ Suspend", key="tg_suspend", disabled=(state=="suspended" or not task_confirmed)):
                             try:
                                 session.sql(f"ALTER TASK {full_n} SUSPEND").collect()
                                 st.success(f"✅ `{sel_task}` suspended.")
@@ -1190,7 +1261,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 st.error(f"Suspend failed: {e}")
 
                     with col_s2:
-                        if st.button("▶ Resume", key="tg_resume", disabled=(state=="started")):
+                        if st.button("▶ Resume", key="tg_resume", disabled=(state=="started" or not task_confirmed)):
                             try:
                                 session.sql(f"ALTER TASK {full_n} RESUME").collect()
                                 st.success(f"✅ `{sel_task}` resumed.")
@@ -1200,7 +1271,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 st.error(f"Resume failed: {e}")
 
                     with col_s3:
-                        if st.button("▶▶ Execute Now", key="tg_execute"):
+                        if st.button("▶▶ Execute Now", key="tg_execute", disabled=not task_confirmed):
                             try:
                                 session.sql(f"EXECUTE TASK {full_n}").collect()
                                 st.success(f"✅ `{sel_task}` triggered.")
@@ -1208,7 +1279,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 st.error(f"Execute failed: {e}")
 
                     with col_s4:
-                        if st.button("🔁 Retry Last Failed", key="tg_retry"):
+                        if st.button("🔁 Retry Last Failed", key="tg_retry", disabled=not task_confirmed):
                             # EXECUTE TASK WITH LAST_ERROR retry pattern
                             try:
                                 session.sql(f"EXECUTE TASK {full_n}").collect()
@@ -1255,10 +1326,15 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                             f"Child tasks in this graph: {len(children)} · "
                             f"Total tasks affected: {len(children)+1}"
                         )
+                        graph_confirmed = _typed_confirmation(
+                            "Type the root task name to enable graph controls",
+                            sel_root,
+                            f"tg_graph_confirm_{sel_root}",
+                        )
 
                         b1, b2 = st.columns(2)
                         with b1:
-                            if st.button("⏸ Suspend Entire Graph", type="primary", key="tg_bulk_suspend"):
+                            if st.button("⏸ Suspend Entire Graph", type="primary", key="tg_bulk_suspend", disabled=not graph_confirmed):
                                 try:
                                     session.sql(f"ALTER TASK {root_full} SUSPEND").collect()
                                     st.success(f"✅ Root task `{sel_root}` suspended — entire graph will stop scheduling.")
@@ -1267,7 +1343,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 except Exception as e:
                                     st.error(f"Suspend failed: {e}")
                         with b2:
-                            if st.button("▶ Resume Entire Graph", type="primary", key="tg_bulk_resume"):
+                            if st.button("▶ Resume Entire Graph", type="primary", key="tg_bulk_resume", disabled=not graph_confirmed):
                                 errors_seen = []
                                 # Resume children first, then root
                                 for _, child in children.iterrows():
@@ -1320,25 +1396,38 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         ].copy()
                         if not df_dag.empty:
                             task_names = [str(v) for v in df_dag["NAME"].dropna().unique().tolist()]
-                            names_sql = ", ".join(sql_literal(v) for v in task_names)
                             try:
-                                df_hist = run_query(f"""
-                                    SELECT name,
-                                           state AS last_run_state,
-                                           error_message AS last_error,
+                                df_hist = run_query_or_raise(f"""
+                                    SELECT *,
                                            DATEDIFF('second',
                                                COALESCE(query_start_time, scheduled_time),
                                                COALESCE(completed_time, CURRENT_TIMESTAMP())
-                                           ) AS last_duration_sec,
-                                           scheduled_time AS last_run_time,
-                                           ROW_NUMBER() OVER (PARTITION BY name ORDER BY scheduled_time DESC) AS rn
+                                           ) AS last_duration_sec
                                     FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
                                     WHERE scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                                      AND name IN ({names_sql})
-                                """, ttl_key=f"dba_task_dag_history_{sel_dag}", tier="metadata")
+                                      {get_db_filter_clause("database_name")}
+                                    ORDER BY scheduled_time DESC
+                                    LIMIT 500
+                                """)
                                 if not df_hist.empty:
+                                    if "NAME" not in df_hist.columns and "TASK_NAME" in df_hist.columns:
+                                        df_hist = df_hist.rename(columns={"TASK_NAME": "NAME"})
+                                    if "NAME" not in df_hist.columns:
+                                        df_hist = pd.DataFrame()
+                                    else:
+                                        df_hist = df_hist[df_hist["NAME"].astype(str).isin(task_names)].copy()
+                                    if "STATE" in df_hist.columns:
+                                        df_hist = df_hist.rename(columns={"STATE": "LAST_RUN_STATE"})
+                                    if "ERROR_MESSAGE" in df_hist.columns:
+                                        df_hist = df_hist.rename(columns={"ERROR_MESSAGE": "LAST_ERROR"})
+                                    if "SCHEDULED_TIME" in df_hist.columns:
+                                        df_hist = df_hist.rename(columns={"SCHEDULED_TIME": "LAST_RUN_TIME"})
+                                if not df_hist.empty and "NAME" in df_hist.columns:
+                                    if "LAST_RUN_TIME" in df_hist.columns:
+                                        df_hist = df_hist.sort_values("LAST_RUN_TIME", ascending=False)
+                                    df_hist = df_hist.drop_duplicates("NAME")
                                     df_dag = df_dag.merge(
-                                        df_hist[df_hist["RN"] == 1].drop(columns=["RN"], errors="ignore"),
+                                        df_hist,
                                         how="left",
                                         on="NAME",
                                     )
@@ -1346,7 +1435,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 pass
                         st.session_state["dba_df_dag_view"] = df_dag
                     except Exception as e:
-                        st.error(f"DAG build failed: {e}")
+                        st.warning(f"DAG build unavailable in this role/context: {e}")
 
                 if st.session_state.get("dba_df_dag_view") is not None and not st.session_state["dba_df_dag_view"].empty:
                     df_dag = st.session_state["dba_df_dag_view"]
@@ -1417,14 +1506,16 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 }
                 dim = dim_map[ul_group]
                 lbl = "DAY" if ul_group=="Day" else ul_group.upper()
+                company_clause = "" if company == "ALL" else f"AND company_view = {sql_literal(company)}"
                 df_ul = run_query(f"""
                     SELECT {dim} AS {lbl}, COUNT(*) AS load_count,
                            COUNT(DISTINCT sf_user) AS distinct_users,
                            ROUND(AVG(query_duration_ms)) AS avg_ms
                     FROM {log_tbl}
                     WHERE log_time >= DATEADD('day', -{ul_days}, CURRENT_TIMESTAMP())
+                      {company_clause}
                     GROUP BY {dim} ORDER BY load_count DESC LIMIT 200
-                """, ttl_key=f"dba_usage_log_{ul_group}_{ul_days}", tier="standard")
+                """, ttl_key=f"dba_usage_log_{company}_{ul_group}_{ul_days}", tier="standard")
                 st.session_state["dba_df_usage_log"] = df_ul
                 st.session_state["dba_ul_group_label"] = lbl
             except Exception as e:

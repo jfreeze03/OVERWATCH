@@ -23,7 +23,7 @@ from config import (
 )
 from utils.display import clear_all_cache
 from utils.session import get_session
-from utils.query import sql_literal
+from utils.query import sql_literal, get_query_telemetry, clear_query_telemetry
 from utils.company_filter import invalidate_company_cache
 from utils.bookmarks import (
     build_bookmark_ddl, save_bookmark, load_bookmarks,
@@ -40,10 +40,7 @@ if "active_company" not in st.session_state:
 
 # ── Role resolution (cached 5 min) ────────────────────────────────────────────
 def _get_current_role() -> str:
-    try:
-        return (get_session().sql("SELECT CURRENT_ROLE() AS r").collect()[0]["R"] or "").upper()
-    except Exception:
-        return ""
+    return str(st.session_state.get("_overwatch_current_role", "") or "").upper()
 
 
 def _resolve_visible_sections() -> list[str]:
@@ -312,6 +309,22 @@ with st.sidebar:
             key="rt_interval",
         )
 
+        telemetry = get_query_telemetry()
+        if not telemetry.empty:
+            st.divider()
+            st.caption("OVERWATCH query telemetry")
+            total_calls = len(telemetry)
+            total_elapsed = float(telemetry["elapsed_ms"].fillna(0).sum()) / 1000
+            avg_elapsed = float(telemetry["elapsed_ms"].fillna(0).mean())
+            t1, t2 = st.columns(2)
+            t1.metric("App Queries This Session", f"{total_calls:,}")
+            t2.metric("Observed Wait", f"{total_elapsed:,.1f}s", f"{avg_elapsed:,.0f} ms avg")
+            with st.expander("Recent query trace", expanded=False):
+                st.dataframe(telemetry.tail(50), use_container_width=True, height=220)
+                if st.button("Clear telemetry", key="clear_query_telemetry"):
+                    clear_query_telemetry()
+                    st.rerun()
+
     st.divider()
 
     company_color = COMPANY_CONFIG.get(active_company, {}).get("color", "#38bdf8")
@@ -390,6 +403,6 @@ except Exception as e:
     st.warning("Snowflake is not connected yet, so this section cannot load live data.")
     st.caption(str(e))
     st.info(
-        "Run inside Snowsight/Streamlit-in-Snowflake or configure the live host's Snowflake connection "
-        "outside this repository, then refresh the app."
+        "Run inside Snowsight/Streamlit-in-Snowflake or configure a Snowflake connection in Streamlit, "
+        "then refresh the app."
     )

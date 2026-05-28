@@ -59,7 +59,7 @@ def build_annotation_ddl(
 
 CREATE TABLE IF NOT EXISTS {safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(ANNOTATION_TABLE)} (
     ANNOTATION_ID   NUMBER AUTOINCREMENT PRIMARY KEY,
-    CREATED_BY      VARCHAR(200) DEFAULT CURRENT_USER(),
+    CREATED_BY      VARCHAR(200),
     CREATED_AT      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     ENTITY          VARCHAR(500),        -- warehouse name, task name, user name, or '*' for global
     ENTITY_TYPE     VARCHAR(50),         -- WAREHOUSE | TASK | USER | GLOBAL
@@ -206,21 +206,22 @@ UNION ALL
 SELECT
     'Task Failures'                                        AS ALERT_TYPE,
     'HIGH'                                                 AS SEVERITY,
-    name                                                   AS ENTITY,
+    query_id                                               AS ENTITY,
     'Failed ' || failures || ' times in last 7 days'      AS DETAIL,
     'Review task error logs in OVERWATCH Task Management'  AS SUGGESTED_ACTION
 FROM (
-    SELECT name, COUNT(*) AS failures
+    SELECT query_id, COUNT(*) AS failures
     FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
     WHERE scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
       AND state = 'FAILED'
-    GROUP BY name
+      AND query_id IS NOT NULL
+    GROUP BY query_id
     HAVING COUNT(*) > {THRESHOLDS['task_failure_threshold']}
 )
 WHERE NOT EXISTS (
     SELECT 1 FROM {db}.{schema}.{annotation_table} ann
     WHERE ann.active = TRUE AND ann.suppress_alerts = TRUE
-      AND (ann.entity = name OR ann.entity_type = 'GLOBAL')
+      AND (ann.entity = query_id OR ann.entity_type = 'GLOBAL')
       AND CURRENT_TIMESTAMP() BETWEEN ann.window_start AND ann.window_end
 );
 

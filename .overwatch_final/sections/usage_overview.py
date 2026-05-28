@@ -18,19 +18,16 @@ from utils import (
 
 
 def _load_overview(session, days: int) -> dict:
+    company = get_active_company()
     wh_filter = get_wh_filter_clause("warehouse_name")
     db_filter = get_db_filter_clause("database_name")
-    q_filters = " ".join([
-        get_wh_filter_clause("q.warehouse_name"),
-        get_db_filter_clause("q.database_name"),
-        get_global_filter_clause(
-            date_col="q.start_time",
-            wh_col="q.warehouse_name",
-            user_col="q.user_name",
-            role_col="q.role_name",
-            db_col="q.database_name",
-        ),
-    ])
+    q_filters = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
 
     overview = run_query(f"""
         SELECT
@@ -38,6 +35,8 @@ def _load_overview(session, days: int) -> dict:
             COUNT(DISTINCT q.user_name) AS total_users,
             COUNT(DISTINCT q.database_name) AS active_databases,
             ROUND(100 * SUM(IFF(q.error_code IS NULL, 1, 0)) / NULLIF(COUNT(*), 0), 1) AS query_success_rate,
+            SUM(IFF(q.error_code IS NOT NULL, 1, 0)) AS failed_queries,
+            SUM(IFF(q.queued_overload_time > 0 OR q.queued_provisioning_time > 0 OR q.queued_repair_time > 0, 1, 0)) AS queued_queries,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
             ROUND(AVG(q.execution_time) / 1000, 2) AS avg_execution_sec,
             ROUND(SUM(COALESCE(q.credits_used_cloud_services, 0)), 4) AS cloud_service_credits
@@ -45,7 +44,7 @@ def _load_overview(session, days: int) -> dict:
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {q_filters}
-    """, ttl_key=f"uo_overview_{days}", tier="historical")
+    """, ttl_key=f"uo_overview_{company}_{days}", tier="historical")
 
     metering = run_query(f"""
         SELECT
@@ -55,7 +54,7 @@ def _load_overview(session, days: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           {wh_filter}
-    """, ttl_key=f"uo_metering_{days}", tier="historical")
+    """, ttl_key=f"uo_metering_{company}_{days}", tier="historical")
 
     storage = run_query(f"""
         WITH latest AS (
@@ -70,7 +69,7 @@ def _load_overview(session, days: int) -> dict:
             ROUND(SUM(average_failsafe_bytes) / POWER(1024, 4), 3) AS failsafe_storage_tb
         FROM latest
         WHERE rn = 1
-    """, ttl_key=f"uo_storage_{days}", tier="historical")
+    """, ttl_key=f"uo_storage_{company}_{days}", tier="historical")
 
     top_wh = run_query(f"""
         SELECT
@@ -84,7 +83,7 @@ def _load_overview(session, days: int) -> dict:
         GROUP BY warehouse_name
         ORDER BY total_credits DESC
         LIMIT 20
-    """, ttl_key=f"uo_top_wh_{days}", tier="historical")
+    """, ttl_key=f"uo_top_wh_{company}_{days}", tier="historical")
 
     query_types = run_query(f"""
         SELECT
@@ -100,7 +99,7 @@ def _load_overview(session, days: int) -> dict:
         GROUP BY query_type
         ORDER BY query_count DESC
         LIMIT 25
-    """, ttl_key=f"uo_query_types_{days}", tier="historical")
+    """, ttl_key=f"uo_query_types_{company}_{days}", tier="historical")
 
     users_by_db = run_query(f"""
         SELECT
@@ -114,7 +113,7 @@ def _load_overview(session, days: int) -> dict:
         GROUP BY database_name
         ORDER BY users DESC, query_count DESC
         LIMIT 20
-    """, ttl_key=f"uo_users_by_db_{days}", tier="historical")
+    """, ttl_key=f"uo_users_by_db_{company}_{days}", tier="historical")
 
     return {
         "overview": overview,
@@ -178,7 +177,7 @@ def render():
             try:
                 st.session_state["uo_data"] = _load_overview(session, days)
             except Exception as e:
-                st.error(f"Unable to load usage overview: {e}")
+                st.warning(f"Usage overview unavailable in this role/context: {e}")
 
     data = st.session_state.get("uo_data")
     if not data:
@@ -188,7 +187,11 @@ def render():
     metering = data["metering"]
     storage = data["storage"]
     success_rate = _first_number(overview, "QUERY_SUCCESS_RATE")
-    health_score = round(max(0, min(100, success_rate - min(_first_number(overview, "AVG_ELAPSED_SEC") / 10, 10))), 1)
+    total_queries = _first_number(overview, "TOTAL_QUERIES")
+    failure_penalty = 100 * (_first_number(overview, "FAILED_QUERIES") / max(total_queries, 1))
+    queue_penalty = 35 * (_first_number(overview, "QUEUED_QUERIES") / max(total_queries, 1))
+    latency_penalty = min(_first_number(overview, "AVG_ELAPSED_SEC") / 6, 12)
+    health_score = round(max(0, min(100, 100 - failure_penalty - queue_penalty - latency_penalty)), 1)
 
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("Health Score", f"{health_score:.1f}")

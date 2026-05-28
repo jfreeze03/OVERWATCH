@@ -3,11 +3,14 @@ import streamlit as st
 import pandas as pd
 from utils import (
     build_action_queue_ddl,
+    company_value_allowed,
     download_csv,
+    get_db_filter_clause,
     get_session,
     make_action_id,
     normalize_df,
     run_query,
+    run_query_or_raise,
     safe_identifier,
     upsert_actions,
 )
@@ -68,6 +71,18 @@ def _show_tasks(session) -> pd.DataFrame:
     for col in ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE", "DEFINITION"]:
         if col not in df.columns:
             df[col] = ""
+    if "DATABASE_NAME" in df.columns:
+        df = df[df["DATABASE_NAME"].apply(lambda value: company_value_allowed(value, "database"))]
+    if "WAREHOUSE" in df.columns:
+        df = df[
+            df["WAREHOUSE"].isna()
+            | (df["WAREHOUSE"].astype(str).str.strip() == "")
+            | df["WAREHOUSE"].apply(lambda value: company_value_allowed(value, "warehouse"))
+        ]
+    if df.empty or "NAME" not in df.columns:
+        return pd.DataFrame()
+    df["NAME"] = df["NAME"].astype(str).str.strip()
+    df = df[df["NAME"] != ""].copy()
     return df
 
 
@@ -100,15 +115,18 @@ def render():
 
             # Task history
             try:
-                df_th = run_query(f"""
-                    SELECT name, state, scheduled_time, completed_time,
-                           query_start_time, error_code, error_message,
-                           DATEDIFF('second', query_start_time, completed_time) AS duration_sec
+                df_th = run_query_or_raise(f"""
+                    SELECT *,
+                           DATEDIFF('second',
+                               COALESCE(query_start_time, scheduled_time),
+                               COALESCE(completed_time, CURRENT_TIMESTAMP())
+                           ) AS duration_sec
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
                     WHERE scheduled_time >= DATEADD('day', -{th_days}, CURRENT_TIMESTAMP())
+                      {get_db_filter_clause("database_name")}
                     ORDER BY scheduled_time DESC
-                    LIMIT 1000
-                """, ttl_key=f"task_management_history_{th_days}", tier="standard")
+                    LIMIT 500
+                """)
                 st.session_state["tg_hist"] = df_th
             except Exception:
                 st.session_state["tg_hist"] = pd.DataFrame()

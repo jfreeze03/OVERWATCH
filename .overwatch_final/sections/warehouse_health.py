@@ -4,6 +4,7 @@ import pandas as pd
 from utils import (
     get_session, format_credits, credits_to_dollars,
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
+    get_active_company, get_global_filter_clause,
     build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
     run_query,
 )
@@ -59,6 +60,21 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
+    company = get_active_company()
+    wh_query_filters = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
+    wh_plain_filters = get_global_filter_clause(
+        date_col="start_time",
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
 
     tab_overview, tab_efficiency, tab_spill, tab_heatmap, tab_optimization = st.tabs([
         "Overview & Scaling", "Efficiency", "Spill & Memory", "Workload Heatmap", "Optimization Advisor"
@@ -85,13 +101,13 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                     WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("q.warehouse_name")}
+                      {wh_query_filters}
                     GROUP BY q.warehouse_name
                     ORDER BY total_queries DESC
-                """, ttl_key=f"wh_overview_{wh_days}", tier="historical")
+                """, ttl_key=f"wh_overview_{company}_{wh_days}", tier="historical")
                 st.session_state["wh_df_wh"] = df_w
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Warehouse overview unavailable in this role/context: {e}")
 
         if st.session_state.get("wh_df_wh") is not None and not st.session_state["wh_df_wh"].empty:
             df_w = st.session_state["wh_df_wh"]
@@ -135,11 +151,12 @@ def render():
                         WITH latest_size AS (
                             SELECT warehouse_name, warehouse_size
                             FROM (
-                                SELECT warehouse_name, warehouse_size,
-                                       ROW_NUMBER() OVER (PARTITION BY warehouse_name ORDER BY start_time DESC) AS rn
-                                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                                WHERE start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
-                                  AND warehouse_name IS NOT NULL
+                                SELECT q.warehouse_name, q.warehouse_size,
+                                       ROW_NUMBER() OVER (PARTITION BY q.warehouse_name ORDER BY q.start_time DESC) AS rn
+                                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                                WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
+                                  AND q.warehouse_name IS NOT NULL
+                                  {wh_query_filters}
                             )
                             WHERE rn = 1
                         )
@@ -151,11 +168,11 @@ def render():
                         WHERE m.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
                           {get_wh_filter_clause("m.warehouse_name")}
                         ORDER BY m.credits_used DESC LIMIT 200
-                    """, ttl_key=f"wh_scaling_{wh_days}", tier="historical")
+                    """, ttl_key=f"wh_scaling_{company}_{wh_days}", tier="historical")
                     st.dataframe(df_scale, use_container_width=True)
                     download_csv(df_scale, "scaling_events.csv")
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.warning(f"Scaling events unavailable in this role/context: {e}")
 
     with tab_efficiency:
         st.header("Warehouse Efficiency Scorecard")
@@ -181,14 +198,14 @@ def render():
                     LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
                     WHERE q.start_time >= DATEADD('day', -{eff_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("q.warehouse_name")}
+                      {wh_query_filters}
                     GROUP BY q.warehouse_name
                     ORDER BY efficiency_score ASC, metered_credits DESC
                     LIMIT 200
-                """, ttl_key=f"wh_efficiency_{eff_days}", tier="historical")
+                """, ttl_key=f"wh_efficiency_{company}_{eff_days}", tier="historical")
                 st.session_state["wh_efficiency"] = df_eff
             except Exception as e:
-                st.error(f"Efficiency metrics unavailable: {e}")
+                st.warning(f"Efficiency metrics unavailable in this role/context: {e}")
 
         df_eff = st.session_state.get("wh_efficiency")
         if df_eff is not None and not df_eff.empty:
@@ -227,13 +244,13 @@ def render():
                     WHERE start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
                       AND (bytes_spilled_to_local_storage > 0 OR bytes_spilled_to_remote_storage > 0)
                       AND warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("warehouse_name")}
+                      {wh_plain_filters}
                     GROUP BY warehouse_name
                     ORDER BY local_spill_gb + remote_spill_gb DESC
-                """, ttl_key=f"wh_spill_{sp_days}", tier="historical")
+                """, ttl_key=f"wh_spill_{company}_{sp_days}", tier="historical")
                 st.session_state["wh_df_sp"] = df_sp
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Spill data unavailable in this role/context: {e}")
 
         if st.session_state.get("wh_df_sp") is not None and not st.session_state["wh_df_sp"].empty:
             df_sp = st.session_state["wh_df_sp"]
@@ -272,13 +289,13 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -{hm_days}, CURRENT_TIMESTAMP())
                       AND warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("warehouse_name")}
+                      {wh_plain_filters}
                     GROUP BY warehouse_name, day_of_week, hour_of_day
                     ORDER BY warehouse_name, day_of_week, hour_of_day
-                """, ttl_key=f"wh_heatmap_{hm_days}", tier="historical")
+                """, ttl_key=f"wh_heatmap_{company}_{hm_days}", tier="historical")
                 st.session_state["wh_df_hm"] = df_hm
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Workload heatmap unavailable in this role/context: {e}")
 
         if st.session_state.get("wh_df_hm") is not None and not st.session_state["wh_df_hm"].empty:
             df_hm = st.session_state["wh_df_hm"]

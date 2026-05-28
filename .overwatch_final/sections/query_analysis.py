@@ -4,7 +4,7 @@ import pandas as pd
 from utils import (
     get_session, run_query, sql_literal,
     format_credits, credits_to_dollars, download_csv,
-    render_query_drilldown, build_metered_credit_cte, get_wh_filter_clause,
+    render_query_drilldown, build_metered_credit_cte, get_active_company, get_global_filter_clause,
 )
 from config import THRESHOLDS
 
@@ -12,6 +12,7 @@ from config import THRESHOLDS
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
+    company = get_active_company()
 
     tab_bottleneck, tab_patterns, tab_plansteps, tab_ai = st.tabs([
         "Bottlenecks", "Pattern Degradation", "Plan Steps", "AI Diagnosis"
@@ -21,11 +22,18 @@ def render():
     with tab_bottleneck:
         st.header("🔍 Query Bottleneck Analysis")
         days = st.slider("Lookback (days)", 1, 30, 7, key="qa_days")
+        qa_filters = get_global_filter_clause(
+            date_col="q.start_time",
+            wh_col="q.warehouse_name",
+            user_col="q.user_name",
+            role_col="q.role_name",
+            db_col="q.database_name",
+        )
 
         if st.button("Load Bottlenecks", key="qa_load"):
             try:
                 df_qa = run_query(f"""
-                WITH {build_metered_credit_cte(days_back=days)}
+                WITH {build_metered_credit_cte(days_back=days, include_recent=True)}
                 SELECT
                     q.query_id,
                     q.user_name,
@@ -47,14 +55,14 @@ def render():
                 LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
                 WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
                   AND q.warehouse_name IS NOT NULL
-                  {get_wh_filter_clause("q.warehouse_name")}
+                  {qa_filters}
                   AND q.total_elapsed_time > {THRESHOLDS['query_duration_alert_sec'] * 1000}
                 ORDER BY q.total_elapsed_time DESC
                 LIMIT 500
-                """, ttl_key=f"query_analysis_bottlenecks_{days}", tier="standard")
+                """, ttl_key=f"query_analysis_bottlenecks_{company}_{days}", tier="standard")
                 st.session_state["qa_df_qa"] = df_qa
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Bottleneck data unavailable in this role/context: {e}")
 
         if st.session_state.get("qa_df_qa") is not None and not st.session_state["qa_df_qa"].empty:
             df = st.session_state["qa_df_qa"]
@@ -83,6 +91,20 @@ def render():
 
         if st.button("Detect Degradation", key="deg_load"):
             try:
+                qa_recent_filters = get_global_filter_clause(
+                    date_col="start_time",
+                    wh_col="warehouse_name",
+                    user_col="user_name",
+                    role_col="role_name",
+                    db_col="database_name",
+                )
+                qa_prior_filters = get_global_filter_clause(
+                    date_col="",
+                    wh_col="warehouse_name",
+                    user_col="user_name",
+                    role_col="role_name",
+                    db_col="database_name",
+                )
                 df_deg = run_query(f"""
                 WITH sig_recent AS (
                     SELECT SUBSTR(query_text,1,200) AS sig,
@@ -91,7 +113,7 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
                       AND warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("warehouse_name")}
+                      {qa_recent_filters}
                     GROUP BY sig HAVING cnt >= 5
                 ),
                 sig_prior AS (
@@ -102,7 +124,7 @@ def render():
                     WHERE start_time >= DATEADD('day',-14,CURRENT_TIMESTAMP())
                       AND start_time <  DATEADD('day',-7,CURRENT_TIMESTAMP())
                       AND warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("warehouse_name")}
+                      {qa_prior_filters}
                     GROUP BY sig HAVING cnt >= 5
                 )
                 SELECT r.sig, r.avg_sec AS recent_sec, p.avg_sec AS prior_sec,
@@ -112,10 +134,10 @@ def render():
                 WHERE r.avg_sec > p.avg_sec * 1.25
                   AND r.avg_sec > 5
                 ORDER BY pct_change DESC LIMIT 50
-                """, ttl_key="query_analysis_degradation", tier="standard")
+                """, ttl_key=f"query_analysis_degradation_{company}", tier="standard")
                 st.session_state["qa_df_deg"] = df_deg
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Pattern degradation data unavailable in this role/context: {e}")
 
         if st.session_state.get("qa_df_deg") is not None:
             df_d = st.session_state["qa_df_deg"]
@@ -136,7 +158,7 @@ def render():
             try:
                 df_ops = run_query(
                     f"SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS({sql_literal(qid_input)}))",
-                    ttl_key=f"query_analysis_plan_{qid_input}",
+                    ttl_key=f"query_analysis_plan_{company}_{qid_input}",
                     tier="standard",
                 )
                 st.dataframe(df_ops, use_container_width=True)

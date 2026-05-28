@@ -15,7 +15,8 @@ from datetime import datetime
 from utils import (
     get_session, format_credits,
     credits_to_dollars, estimate_live_credits, download_csv,
-    render_query_drilldown, get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
+    render_query_drilldown, get_active_company, get_user_filter_clause,
+    get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
 )
 from config import THRESHOLDS
 
@@ -24,6 +25,7 @@ def render():
     session      = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     rt_interval  = st.session_state.get("rt_interval", 30)
+    company      = get_active_company()
 
     tab_active, tab_timeline, tab_sessions = st.tabs([
         "Active Queries", "Timeline", "Sessions"
@@ -151,7 +153,7 @@ def render():
                     WHERE start_time >= DATEADD('hours',-4,CURRENT_TIMESTAMP())
                       {wh_clause} {company_wh_clause} {st_clause}
                     ORDER BY start_time DESC LIMIT 500
-                """, ttl_key=f"live_recent_{wh_filter}_{status_filter}", tier="live")
+                """, ttl_key=f"live_recent_{company}_{wh_filter}_{status_filter}", tier="live")
                 if not df_recent.empty:
                     st.dataframe(df_recent, use_container_width=True, height=350)
                     download_csv(df_recent, "recent_queries.csv")
@@ -176,10 +178,10 @@ def render():
                       {get_wh_filter_clause("warehouse_name")}
                     GROUP BY time_bucket, execution_status
                     ORDER BY time_bucket
-                """, ttl_key=f"live_timeline_{tl_hours}", tier="standard")
+                """, ttl_key=f"live_timeline_{company}_{tl_hours}", tier="standard")
                 st.session_state["lm_df_tl"] = df_tl
             except Exception as e:
-                st.error(f"Timeline load failed: {e}")
+                st.warning(f"Timeline data unavailable in this role/context: {e}")
 
         if st.session_state.get("lm_df_tl") is not None and not st.session_state["lm_df_tl"].empty:
             df_t = st.session_state["lm_df_tl"]
@@ -207,8 +209,9 @@ def render():
                                authentication_method
                         FROM SNOWFLAKE.ACCOUNT_USAGE.SESSIONS
                         WHERE created_on >= DATEADD('day', -1, CURRENT_TIMESTAMP())
+                        {user_filter}
                         ORDER BY session_min DESC LIMIT 200
-                    """, ttl_key="live_sessions", tier="standard")
+                    """.format(user_filter=get_user_filter_clause("user_name")), ttl_key=f"live_sessions_{company}", tier="standard")
                     st.session_state["lm_df_sessions"] = df_sess
                 except Exception as e:
                     st.warning(f"Sessions view unavailable: {e}")
@@ -226,7 +229,7 @@ def render():
                           AND transaction_blocked_time > 5000
                           {get_wh_filter_clause("warehouse_name")}
                         ORDER BY transaction_blocked_time DESC LIMIT 100
-                    """, ttl_key="live_lock_waits", tier="standard")
+                    """, ttl_key=f"live_lock_waits_{company}", tier="standard")
                     st.session_state["lm_df_lock"] = df_lock
                 except Exception as e:
                     st.warning(f"Lock wait history unavailable: {e}")

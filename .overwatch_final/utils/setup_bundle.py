@@ -17,7 +17,7 @@ def build_snowflake_value_ddl() -> str:
 CREATE TABLE IF NOT EXISTS {value_table} (
     ROI_ID           NUMBER AUTOINCREMENT PRIMARY KEY,
     LOGGED_DATE      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    LOGGED_BY        VARCHAR(200) DEFAULT CURRENT_USER(),
+    LOGGED_BY        VARCHAR(200),
     CATEGORY         VARCHAR(100),
     DESCRIPTION      VARCHAR(1000),
     ENTITY           VARCHAR(500),
@@ -26,8 +26,11 @@ CREATE TABLE IF NOT EXISTS {value_table} (
     SAVINGS_CREDITS  FLOAT,
     SAVINGS_MONTHLY  FLOAT,
     VERIFIED         BOOLEAN DEFAULT FALSE,
+    COMPANY          VARCHAR(50),
     NOTES            VARCHAR(2000)
-);"""
+);
+
+ALTER TABLE {value_table} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
 
 
 def build_overwatch_setup_bundle() -> str:

@@ -11,6 +11,7 @@
 #   ALL   → no filter, but get_company_case_expr() labels every row
 # ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
+import fnmatch
 from config import COMPANY_CONFIG, DEFAULT_COMPANY
 from .query import sql_literal
 
@@ -108,10 +109,47 @@ def get_user_filter_clause(column: str = "user_name", company: str = None) -> st
     """Return SQL WHERE fragment to filter users by company."""
     cfg = get_company_cfg(company)
     patterns = cfg.get("user_patterns", [])
-    if not patterns:
-        return ""
-    like_parts = " OR ".join(f"{column} ILIKE '{p}'" for p in patterns)
-    return f"AND ({like_parts})"
+    exclude = cfg.get("user_exclude_patterns", [])
+    clauses = []
+    if patterns:
+        like_parts = " OR ".join(f"{column} ILIKE '{p}'" for p in patterns)
+        clauses.append(f"({like_parts})")
+    if exclude:
+        not_parts = " AND ".join(f"{column} NOT ILIKE '{p}'" for p in exclude)
+        clauses.append(f"({not_parts})")
+    return "AND " + " AND ".join(clauses) if clauses else ""
+
+
+def get_role_filter_clause(column: str = "role_name", company: str = None) -> str:
+    """Return SQL WHERE fragment to filter role-like names by company."""
+    return get_user_filter_clause(column, company)
+
+
+def company_value_allowed(value: str, kind: str = "database", company: str = None) -> bool:
+    """Return whether an entered DB/user/warehouse value belongs to the active company."""
+    company = company or get_active_company()
+    if company == "ALL":
+        return True
+    cfg = get_company_cfg(company)
+    text = str(value or "").upper()
+    if not text:
+        return False
+    if kind == "warehouse":
+        include = cfg.get("wh_patterns", [])
+        exclude = cfg.get("wh_exclude_patterns", [])
+    elif kind == "user":
+        include = cfg.get("user_patterns", [])
+        exclude = cfg.get("user_exclude_patterns", [])
+    else:
+        include = cfg.get("db_patterns", [])
+        exclude = [cfg.get("exclude_db_pattern", "")] if cfg.get("exclude_db_pattern") else []
+
+    def _match(pattern: str) -> bool:
+        return fnmatch.fnmatchcase(text, str(pattern or "").upper().replace("%", "*"))
+
+    if any(_match(pattern) for pattern in exclude):
+        return False
+    return any(_match(pattern) for pattern in include) if include else True
 
 
 def get_combined_filter_clause(
@@ -121,20 +159,19 @@ def get_combined_filter_clause(
     company: str = None,
 ) -> str:
     """
-    Return the strongest available filter for the active company.
-    Preference: warehouse > database > user.
-    Always applies both WH include AND WH exclude for ALFA.
+    Return every available company boundary filter.
+
+    Queries that expose more than one company-bearing dimension should be
+    constrained by all of them. This keeps ALFA/Trexis selection from leaking
+    through a user, warehouse, or database column that happened not to be the
+    single preferred filter.
     """
     company = company or get_active_company()
-    cfg = get_company_cfg(company)
-
-    if cfg.get("wh_patterns") and wh_col:
-        return get_wh_filter_clause(wh_col, company)
-    if (cfg.get("db_patterns") or cfg.get("exclude_db_pattern")) and db_col:
-        return get_db_filter_clause(db_col, company)
-    if cfg.get("user_patterns") and user_col:
-        return get_user_filter_clause(user_col, company)
-    return ""
+    return " ".join(filter(None, [
+        get_wh_filter_clause(wh_col, company) if wh_col else "",
+        get_db_filter_clause(db_col, company) if db_col else "",
+        get_user_filter_clause(user_col, company) if user_col else "",
+    ])).strip()
 
 
 # ── ALL-mode classification expression ───────────────────────────────────────
@@ -224,6 +261,7 @@ def get_global_filter_clause(
 ) -> str:
     """Combine all active global sidebar filters into one WHERE fragment."""
     return " ".join(filter(None, [
+        get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col),
         get_global_date_clause(date_col)      if date_col  else "",
         get_global_wh_filter_clause(wh_col)   if wh_col    else "",
         get_global_user_filter_clause(user_col) if user_col else "",

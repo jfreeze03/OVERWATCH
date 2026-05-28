@@ -822,6 +822,7 @@ def restore_theme_preference() -> None:
         from config import ALERT_DB, ALERT_SCHEMA
         from utils.query import safe_identifier, sql_literal
         session = get_session()
+        sf_user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
         bookmark_table = (
             f"{safe_identifier(ALERT_DB)}."
             f"{safe_identifier(ALERT_SCHEMA)}."
@@ -829,7 +830,7 @@ def restore_theme_preference() -> None:
         )
         rows = session.sql(f"""
             SELECT STATE_JSON FROM {bookmark_table}
-            WHERE SF_USER = CURRENT_USER()
+            WHERE SF_USER = {sql_literal(sf_user)}
               AND BOOKMARK_NAME = {sql_literal("_theme_pref")}
             ORDER BY CREATED_AT DESC LIMIT 1
         """).collect()
@@ -850,6 +851,7 @@ def _save_theme_preference(theme_key: str) -> None:
         from config import ALERT_DB, ALERT_SCHEMA
         from utils.query import safe_identifier, sql_literal
         session = get_session()
+        sf_user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
         bookmark_table = (
             f"{safe_identifier(ALERT_DB)}."
             f"{safe_identifier(ALERT_SCHEMA)}."
@@ -857,14 +859,15 @@ def _save_theme_preference(theme_key: str) -> None:
         )
         state_json = sql_literal(json.dumps({"active_theme": theme_key}))
         bookmark_name = sql_literal("_theme_pref")
+        sf_user_safe = sql_literal(sf_user)
         session.sql(f"""
             DELETE FROM {bookmark_table}
-            WHERE SF_USER = CURRENT_USER() AND BOOKMARK_NAME = {bookmark_name}
+            WHERE SF_USER = {sf_user_safe} AND BOOKMARK_NAME = {bookmark_name}
         """).collect()
         session.sql(f"""
             INSERT INTO {bookmark_table}
-                (BOOKMARK_NAME, SECTION, STATE_JSON, IS_SHARED)
-            VALUES ({bookmark_name}, '', PARSE_JSON({state_json}), FALSE)
+                (SF_USER, BOOKMARK_NAME, SECTION, STATE_JSON, IS_SHARED)
+            VALUES ({sf_user_safe}, {bookmark_name}, '', PARSE_JSON({state_json}), FALSE)
         """).collect()
     except Exception:
         pass

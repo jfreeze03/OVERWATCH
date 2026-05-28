@@ -1,30 +1,52 @@
-# sections/query_search.py — Query search & history browser
+# sections/query_search.py - Query search and history browser
 import streamlit as st
-import pandas as pd
-from utils import get_session, sql_literal, download_csv, render_query_drilldown, get_wh_filter_clause, run_query
+
+from utils import (
+    download_csv,
+    get_active_company,
+    get_global_filter_clause,
+    get_session,
+    render_query_drilldown,
+    run_query,
+    sql_literal,
+)
 
 
 def render():
-    session = get_session()
+    get_session()
+    company = get_active_company()
 
-    st.header("🕰️ Query Search & History")
-    st.caption("Full-text search over ACCOUNT_USAGE.QUERY_HISTORY (≤45 min latency)")
+    st.header("Query Search & History")
+    st.caption("Full-text search over company-scoped ACCOUNT_USAGE.QUERY_HISTORY.")
 
     c1, c2, c3 = st.columns([2, 1, 1])
-    with c1: search_text = st.text_input("Search query text (keyword)", key="qs_text")
-    with c2: days_back   = st.slider("Days back", 1, 30, 7, key="qs_days")
+    with c1:
+        search_text = st.text_input("Search query text (keyword)", key="qs_text")
+    with c2:
+        days_back = st.slider("Days back", 1, 30, 7, key="qs_days")
     with c3:
         user_filter = st.text_input("User (optional)", key="qs_user")
 
     status_filter = st.selectbox(
         "Status filter",
         ["ALL", "SUCCESS", "FAILED_WITH_ERROR", "QUEUED", "BLOCKED"],
-        key="qs_status"
+        key="qs_status",
     )
 
-    if st.button("🔍 Search", key="qs_run") and search_text:
-        user_cl   = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
+    if st.button("Search", key="qs_run") and search_text:
+        if len(search_text.strip()) < 3:
+            st.warning("Enter at least 3 characters to avoid an expensive full-account query-text scan.")
+            return
+
+        user_cl = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
         status_cl = f"AND execution_status = {sql_literal(status_filter)}" if status_filter != "ALL" else ""
+        scoped_filters = get_global_filter_clause(
+            date_col="start_time",
+            wh_col="warehouse_name",
+            user_col="user_name",
+            role_col="role_name",
+            db_col="database_name",
+        )
 
         try:
             df_qs = run_query(f"""
@@ -37,17 +59,17 @@ def render():
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                 WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
                   AND query_text ILIKE '%' || {sql_literal(search_text)} || '%'
-                  {get_wh_filter_clause("warehouse_name")}
+                  {scoped_filters}
                   {user_cl} {status_cl}
                 ORDER BY start_time DESC
                 LIMIT 500
-            """, ttl_key=f"query_search_{search_text}_{user_filter}_{status_filter}_{days_back}", tier="standard")
+            """, ttl_key=f"query_search_{company}_{search_text}_{user_filter}_{status_filter}_{days_back}", tier="historical")
             st.session_state["qs_df_qs"] = df_qs
         except Exception as e:
-            st.error(f"Search error: {e}")
+            st.warning(f"Query search unavailable in this role/context: {e}")
 
-    if st.session_state.get("qs_df_qs") is not None:
-        df_q = st.session_state["qs_df_qs"]
+    df_q = st.session_state.get("qs_df_qs")
+    if df_q is not None:
         if not df_q.empty:
             st.success(f"Found {len(df_q):,} matching queries.")
             render_query_drilldown(df_q, key="qs_result")

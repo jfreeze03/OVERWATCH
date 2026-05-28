@@ -4,27 +4,23 @@ import streamlit as st
 
 from utils import (
     download_csv,
-    get_db_filter_clause,
+    get_active_company,
     get_global_filter_clause,
     get_session,
-    get_wh_filter_clause,
     render_drillable_bar_chart,
     run_query,
 )
 
 
 def _load_adoption(session, days: int) -> dict:
-    filters = " ".join([
-        get_wh_filter_clause("q.warehouse_name"),
-        get_db_filter_clause("q.database_name"),
-        get_global_filter_clause(
-            date_col="q.start_time",
-            wh_col="q.warehouse_name",
-            user_col="q.user_name",
-            role_col="q.role_name",
-            db_col="q.database_name",
-        ),
-    ])
+    company = get_active_company()
+    filters = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
 
     summary = run_query(f"""
         SELECT
@@ -37,7 +33,7 @@ def _load_adoption(session, days: int) -> dict:
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
-    """, ttl_key=f"aa_summary_{days}", tier="historical")
+    """, ttl_key=f"aa_summary_{company}_{days}", tier="historical")
 
     warehouse_size = run_query(f"""
         SELECT
@@ -51,7 +47,7 @@ def _load_adoption(session, days: int) -> dict:
           {filters}
         GROUP BY warehouse_size
         ORDER BY query_count DESC
-    """, ttl_key=f"aa_warehouse_size_{days}", tier="historical")
+    """, ttl_key=f"aa_warehouse_size_{company}_{days}", tier="historical")
 
     trend = run_query(f"""
         SELECT
@@ -66,7 +62,7 @@ def _load_adoption(session, days: int) -> dict:
           {filters}
         GROUP BY activity_day
         ORDER BY activity_day
-    """, ttl_key=f"aa_trend_{days}", tier="historical")
+    """, ttl_key=f"aa_trend_{company}_{days}", tier="historical")
 
     users_wh = run_query(f"""
         SELECT
@@ -81,7 +77,7 @@ def _load_adoption(session, days: int) -> dict:
         GROUP BY q.warehouse_name
         ORDER BY users DESC, query_count DESC
         LIMIT 50
-    """, ttl_key=f"aa_users_wh_{days}", tier="historical")
+    """, ttl_key=f"aa_users_wh_{company}_{days}", tier="historical")
 
     users_db = run_query(f"""
         SELECT
@@ -96,7 +92,7 @@ def _load_adoption(session, days: int) -> dict:
         GROUP BY database_name
         ORDER BY users DESC, query_count DESC
         LIMIT 50
-    """, ttl_key=f"aa_users_db_{days}", tier="historical")
+    """, ttl_key=f"aa_users_db_{company}_{days}", tier="historical")
 
     by_role_type = run_query(f"""
         SELECT
@@ -111,7 +107,7 @@ def _load_adoption(session, days: int) -> dict:
         GROUP BY role_name, query_type
         ORDER BY query_count DESC
         LIMIT 100
-    """, ttl_key=f"aa_role_type_{days}", tier="historical")
+    """, ttl_key=f"aa_role_type_{company}_{days}", tier="historical")
 
     applications = run_query(f"""
         SELECT
@@ -126,7 +122,7 @@ def _load_adoption(session, days: int) -> dict:
         GROUP BY client_application
         ORDER BY query_count DESC
         LIMIT 30
-    """, ttl_key=f"aa_applications_{days}", tier="historical")
+    """, ttl_key=f"aa_applications_{company}_{days}", tier="historical")
 
     return {
         "summary": summary,
@@ -156,7 +152,7 @@ def render():
             try:
                 st.session_state["aa_data"] = _load_adoption(session, days)
             except Exception as e:
-                st.error(f"Unable to load adoption analytics: {e}")
+                st.warning(f"Adoption analytics unavailable in this role/context: {e}")
 
     data = st.session_state.get("aa_data")
     if not data:

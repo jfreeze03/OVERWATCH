@@ -1,7 +1,18 @@
 # sections/cortex_monitor.py — AI & Cortex Code usage: users, trends, anomalies, predictive alerts
 import streamlit as st
 import pandas as pd
-from utils import get_session, safe_strip_tz, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart, run_query
+from utils import (
+    get_active_company,
+    get_db_filter_clause,
+    get_session,
+    safe_strip_tz,
+    format_credits,
+    credits_to_dollars,
+    download_csv,
+    get_user_filter_clause,
+    render_drillable_bar_chart,
+    run_query,
+)
 from config import DEFAULTS, THRESHOLDS
 
 
@@ -11,6 +22,7 @@ AI_CREDIT_RATE = DEFAULTS["ai_credit_price"]  # $2.20/AI credit (Table 6(d))
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
+    company = get_active_company()
 
     tab_users, tab_trends, tab_anomaly, tab_alerts = st.tabs([
         "Cortex Code Users", "Daily Trends", "Anomaly Detection", "Predictive Alerts"
@@ -47,9 +59,10 @@ def render():
                                MAX(c.USAGE_TIME)                          AS LAST_USAGE
                         FROM combined c
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
+                        WHERE 1=1 {get_user_filter_clause("u.NAME")}
                         GROUP BY u.NAME, u.EMAIL, c.SOURCE
                         ORDER BY TOTAL_CREDITS DESC
-                    """, ttl_key=f"cortex_users_{cc_days}", tier="standard")
+                    """, ttl_key=f"cortex_users_{company}_{cc_days}", tier="standard")
                     st.session_state["cm_cc_users_data"] = df_cc
                 except Exception as e:
                     st.warning(f"Cortex Code data unavailable: {e}")
@@ -124,8 +137,9 @@ def render():
                                      / NULLIF(p.credits/NULLIF(p.requests,0),0)*100-100, 1) AS PCT_CHANGE
                         FROM recent r JOIN prior p ON r.USER_ID = p.USER_ID
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON r.USER_ID = u.USER_ID
+                        WHERE 1=1 {get_user_filter_clause("u.NAME")}
                         ORDER BY PCT_CHANGE DESC
-                    """, ttl_key=f"cortex_cpr_spikes_{cc_days}", tier="standard")
+                    """, ttl_key=f"cortex_cpr_spikes_{company}_{cc_days}", tier="standard")
                     if not df_spike.empty:
                         spikes = df_spike[df_spike["PCT_CHANGE"] > 25] if "PCT_CHANGE" in df_spike.columns else df_spike
                         if not spikes.empty:
@@ -156,15 +170,17 @@ def render():
                             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
                             WHERE USAGE_TIME >= DATEADD('day', -{cc_trend_days}, CURRENT_TIMESTAMP())
                         )
-                        SELECT USAGE_TIME::DATE AS USAGE_DATE,
+                        SELECT c.USAGE_TIME::DATE AS USAGE_DATE,
                                SOURCE,
-                               COUNT(DISTINCT USER_ID) AS ACTIVE_USERS,
+                               COUNT(DISTINCT c.USER_ID) AS ACTIVE_USERS,
                                COUNT(*)                AS TOTAL_REQUESTS,
                                SUM(TOKEN_CREDITS)      AS TOTAL_CREDITS
-                        FROM combined
+                        FROM combined c
+                        LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
+                        WHERE 1=1 {get_user_filter_clause("u.NAME")}
                         GROUP BY USAGE_DATE, SOURCE
                         ORDER BY USAGE_DATE
-                    """, ttl_key=f"cortex_trends_{cc_trend_days}", tier="standard")
+                    """, ttl_key=f"cortex_trends_{company}_{cc_trend_days}", tier="standard")
                     st.session_state["cm_cc_trends_data"] = df_trend
                 except Exception as e:
                     st.warning(f"Trends unavailable: {e}")
@@ -262,8 +278,9 @@ def render():
                         FROM with_stats s
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON s.USER_ID = u.USER_ID
                         WHERE s.AVG_7D IS NOT NULL
+                          {get_user_filter_clause("u.NAME")}
                         ORDER BY s.USAGE_DATE DESC, s.CREDITS DESC
-                    """, ttl_key=f"cortex_anomalies_{cc_anom_days}", tier="standard")
+                    """, ttl_key=f"cortex_anomalies_{company}_{cc_anom_days}", tier="standard")
                     st.session_state["cm_cc_anom_data"] = df_anom
                 except Exception as e:
                     st.warning(f"Anomaly detection unavailable: {e}")
@@ -303,27 +320,39 @@ def render():
 
         if st.button("Run Predictive Analysis", key="cc_pred_load"):
             try:
-                df_pred = run_query("""
+                df_pred = run_query(f"""
                     WITH combined AS (
-                        SELECT USAGE_TIME::DATE AS d, SUM(TOKEN_CREDITS) AS credits
+                        SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS
                         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
                         WHERE USAGE_TIME >= DATEADD('month',-1,CURRENT_TIMESTAMP())
-                        GROUP BY d
                         UNION ALL
-                        SELECT USAGE_TIME::DATE AS d, SUM(TOKEN_CREDITS) AS credits
+                        SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS
                         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
                         WHERE USAGE_TIME >= DATEADD('month',-1,CURRENT_TIMESTAMP())
-                        GROUP BY d
                     )
-                    SELECT d AS USAGE_DATE, SUM(credits) AS DAILY_CREDITS
-                    FROM combined GROUP BY d ORDER BY d
-                """, ttl_key="cortex_predictive", tier="standard")
+                    SELECT c.USAGE_TIME::DATE AS USAGE_DATE, SUM(c.TOKEN_CREDITS) AS DAILY_CREDITS
+                    FROM combined c
+                    LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
+                    WHERE 1=1 {get_user_filter_clause("u.NAME", company)}
+                    GROUP BY c.USAGE_TIME::DATE
+                    ORDER BY c.USAGE_TIME::DATE
+                """, ttl_key=f"cortex_predictive_{company}", tier="standard")
                 st.session_state["cm_cc_pred_data"] = df_pred
             except Exception as e:
                 st.warning(f"Projection data unavailable: {e}")
 
         if st.session_state.get("cm_cc_pred_data") is not None and not st.session_state["cm_cc_pred_data"].empty:
-            df_p = st.session_state["cm_cc_pred_data"]
+            df_p = st.session_state["cm_cc_pred_data"].copy()
+            df_p["USAGE_DATE"] = pd.to_datetime(df_p["USAGE_DATE"])
+            full_window = pd.DataFrame({
+                "USAGE_DATE": pd.date_range(
+                    pd.Timestamp.today().normalize() - pd.Timedelta(days=29),
+                    pd.Timestamp.today().normalize(),
+                    freq="D",
+                )
+            })
+            df_p = full_window.merge(df_p, on="USAGE_DATE", how="left")
+            df_p["DAILY_CREDITS"] = pd.to_numeric(df_p["DAILY_CREDITS"], errors="coerce").fillna(0)
             avg_daily = float(df_p["DAILY_CREDITS"].mean())
             days_in_month = 30
             projected_month = avg_daily * days_in_month
@@ -357,15 +386,16 @@ def render():
             st.subheader("🔄 Materialized View Refresh History")
             if st.button("Load MV Refresh History", key="mv_refresh_load"):
                 try:
-                    df_mv = run_query("""
+                    df_mv = run_query(f"""
                         SELECT database_name, schema_name, name AS mv_name,
                                credits_used, bytes_written, rows_inserted,
                                refresh_start_time, refresh_end_time,
                                DATEDIFF('second', refresh_start_time, refresh_end_time) AS duration_sec
                         FROM SNOWFLAKE.ACCOUNT_USAGE.MATERIALIZED_VIEW_REFRESH_HISTORY
                         WHERE refresh_start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
+                          {get_db_filter_clause("database_name", company)}
                         ORDER BY credits_used DESC LIMIT 100
-                    """, ttl_key="cortex_mv_refresh", tier="standard")
+                    """, ttl_key=f"cortex_mv_refresh_{company}", tier="standard")
                     if not df_mv.empty:
                         c1, c2 = st.columns(2)
                         c1.metric("MV Refreshes (7d)", len(df_mv))

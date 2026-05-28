@@ -1,6 +1,6 @@
 # OVERWATCH Documentation
 
-Last updated: May 26, 2026
+Last updated: May 28, 2026
 
 OVERWATCH is a Snowflake usage, cost, performance, security, and DBA operations
 dashboard built with Streamlit. The active application lives in
@@ -42,11 +42,9 @@ Do not commit Snowflake credentials. The preferred runtime is
 Streamlit-in-Snowflake, where Snowflake injects the active user session and no
 local credential file is required.
 
-For Streamlit Community Cloud or another live host, configure the Snowflake
-connection in that platform's secured secret store. Keep credentials outside
-the repository and outside `.overwatch_final/`. Local development can run the
-interface without credentials; live data panels will show an offline notice
-until the app is running on a host with a Snowflake connection.
+For Streamlit Community Cloud, configure the Snowflake connection in Streamlit
+secrets. Keep credentials outside the repository and outside `.overwatch_final/`.
+Local development can run the interface without committed credentials.
 
 ## Required Snowflake Access
 
@@ -142,6 +140,17 @@ network and sessions, unused objects, Snowpipe, QAS, schema compare, recent
 objects, pre-aggregation DDL, dynamic tables, replication, serverless costs,
 Cortex limits, task graph control, and OVERWATCH usage log.
 
+DBA metadata tabs prefer `SHOW` output or defensive `SELECT *` patterns where
+Snowflake account-usage column names vary by edition or release. Optional
+metadata failures are shown as warnings or empty-state messages, while
+destructive actions such as cancel, suspend, resume, and execute still surface
+explicit errors.
+
+Live task controls and account-wide Cortex parameter changes require typed
+confirmation before the action buttons are enabled. This reduces the chance of
+accidental task execution, DAG suspension, or account-level AI setting changes
+from the Streamlit UI.
+
 Object Change Monitoring answers "who changed what" across DDL, access grants,
 policy changes, ownership changes, and drift indicators.
 
@@ -159,6 +168,25 @@ Company filtering is centralized in `COMPANY_CONFIG` in `config.py`.
 When changing company view, cached datasets are invalidated so each section
 re-runs with the selected company scope.
 
+Company scope is also included in section cache keys for cost, adoption,
+diagnosis, search, security, service health, warehouse health, DBA, topology,
+stored procedure, and object-change screens. Persistent action-queue reads are
+filtered to the selected company unless Company View is set to `ALL`.
+
+Cost allocation uses warehouse metering as the credit source of truth. Company
+scope is applied at the warehouse boundary inside metered-credit CTEs, then
+user/database/role filters are applied to query history before reporting. This
+prevents a filtered user or database view from being charged for the full
+warehouse-hour spend of unrelated workloads.
+
+Idle warehouse recommendations use finalized compute credits, not total
+warehouse credits, so cloud-services overhead is not overstated as idle
+compute waste.
+
+Credit Contract, Cost Center forecast, and Cortex forecast fill missing calendar
+days with zero credits before calculating run rates. This avoids overstating
+usage when Snowflake metering returns only days with activity.
+
 ## Global Filters
 
 The sidebar supports shared filters for:
@@ -171,6 +199,21 @@ The sidebar supports shared filters for:
 
 Sections use these where supported. Some specialized DBA tools use their own
 section-local controls because they target administrative operations.
+
+Optimization, recommendation, stored procedure, diagnosis, query analysis, and
+warehouse-health scans honor the same global filters where the underlying
+Snowflake view exposes matching columns.
+
+Account-level Snowflake views that do not expose reliable company, database,
+warehouse, or user dimensions are explicitly labeled as account-level. In those
+cases OVERWATCH either requires `ALL` view or applies the strongest available
+post-load scoping to avoid implying false precision.
+
+Snowflake Value stores a `COMPANY` column for newly logged optimization wins.
+Legacy value rows without that column are treated as ALFA until the generated
+setup DDL is applied. SPCS cost tracking is scoped by compute pool naming where
+available, using Trexis-style names for Trexis and excluding those names from
+ALFA.
 
 ## Themes
 
@@ -213,7 +256,7 @@ queue with status values such as New, Acknowledged, Fixed, and Ignored.
   practical.
 - Some features are best-effort because Snowflake account history availability
   depends on edition, privileges, retention, and account settings.
-- Keep credentials in the live host's secured secret store, never in the repo.
+- Keep credentials in Streamlit or Snowflake-managed secrets, never in the repo.
 - Do not commit Streamlit log files or Python cache directories.
 
 ## Recent Design Updates

@@ -8,11 +8,13 @@
 #   3. Tiered cache TTLs: live=30s, recent=300s, historical=1800s, metadata=14400s
 #      (previous version had a single flat 300s TTL for all query types)
 # ─────────────────────────────────────────────────────────────────────────────
+import hashlib
 import re
+import time
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from .session import SnowflakeConnectionUnavailable, get_session
+from .session import get_session
 from .data import normalize_df
 
 CACHE_TIERS: dict[str, int] = {
@@ -21,6 +23,45 @@ CACHE_TIERS: dict[str, int] = {
     "historical": 1800,   # ACCOUNT_USAGE 7d+  — 30-min cache
     "metadata":   14400,  # SHOW WAREHOUSES, SHOW TASKS, USERS — 4-hour cache
 }
+
+
+def _record_query_telemetry(query_text: str, ttl_key: str, tier: str, elapsed_ms: float, row_count: int, used_cache: bool) -> None:
+    """Keep a lightweight in-session trace of OVERWATCH query volume."""
+    try:
+        entries = st.session_state.setdefault("_overwatch_query_telemetry", [])
+        entries.append({
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "ttl_key": ttl_key,
+            "tier": tier,
+            "cache_enabled": bool(used_cache),
+            "elapsed_ms": round(float(elapsed_ms), 2),
+            "rows": int(row_count or 0),
+            "query_hash": hashlib.sha1(str(query_text).encode("utf-8", errors="ignore")).hexdigest()[:12],
+        })
+        if len(entries) > 250:
+            del entries[:-250]
+    except Exception:
+        pass
+
+
+def _show_query_warning(prefix: str, error: Exception) -> None:
+    message = f"{prefix}: {error}"
+    seen = st.session_state.setdefault("_overwatch_query_warning_hashes", set())
+    warning_hash = hashlib.sha1(message.encode("utf-8", errors="ignore")).hexdigest()[:12]
+    if warning_hash in seen:
+        return
+    seen.add(warning_hash)
+    st.warning(message)
+
+
+def get_query_telemetry() -> pd.DataFrame:
+    """Return recent query-run telemetry for the current Streamlit session."""
+    return pd.DataFrame(st.session_state.get("_overwatch_query_telemetry", []))
+
+
+def clear_query_telemetry() -> None:
+    """Clear current session query telemetry."""
+    st.session_state["_overwatch_query_telemetry"] = []
 
 
 def safe_sql(value: str) -> str:
@@ -74,20 +115,10 @@ def safe_schedule(value: str) -> str:
 # is fixed at decoration time — it cannot be passed as a runtime argument.
 
 def _cache_context() -> str:
-    context_key = "_snowflake_context_user_role"
-    if context_key not in st.session_state:
-        try:
-            sess = get_session()
-            row = sess.sql("""
-                SELECT CURRENT_USER() AS user_name, CURRENT_ROLE() AS role_name
-            """).collect()[0]
-            st.session_state[context_key] = (row[0] or "unknown", row[1] or "unknown")
-        except Exception:
-            st.session_state[context_key] = ("unknown", "unknown")
-    user_name, role_name = st.session_state.get(context_key, ("unknown", "unknown"))
+    # Avoid CURRENT_USER/CURRENT_ROLE here. In Streamlit-in-Snowflake this helper
+    # can run inside a managed stored-procedure context where those calls may be
+    # blocked before the actual page query gets a chance to execute.
     return "|".join([
-        str(user_name),
-        str(role_name),
         str(st.session_state.get("active_company", "")),
         str(st.session_state.get("global_start_date", "")),
         str(st.session_state.get("global_end_date", "")),
@@ -102,11 +133,8 @@ def _cache_context() -> str:
 def _cached_live(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
-    except SnowflakeConnectionUnavailable:
-        st.info("Snowflake is not connected in this runtime. Live data will load on the deployed Snowflake host.")
-        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Live query error: {e}")
+        _show_query_warning("Live data unavailable", e)
         return pd.DataFrame()
 
 
@@ -114,11 +142,8 @@ def _cached_live(query_text: str, cache_context: str = "", cache_salt: str = "")
 def _cached_recent(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
-    except SnowflakeConnectionUnavailable:
-        st.info("Snowflake is not connected in this runtime. Data will load on the deployed Snowflake host.")
-        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Query error: {e}")
+        _show_query_warning("Data unavailable", e)
         return pd.DataFrame()
 
 
@@ -126,11 +151,8 @@ def _cached_recent(query_text: str, cache_context: str = "", cache_salt: str = "
 def _cached_historical(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
-    except SnowflakeConnectionUnavailable:
-        st.info("Snowflake is not connected in this runtime. Historical data will load on the deployed Snowflake host.")
-        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Query error: {e}")
+        _show_query_warning("Historical data unavailable", e)
         return pd.DataFrame()
 
 
@@ -138,11 +160,8 @@ def _cached_historical(query_text: str, cache_context: str = "", cache_salt: str
 def _cached_metadata(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
-    except SnowflakeConnectionUnavailable:
-        st.info("Snowflake is not connected in this runtime. Metadata will load on the deployed Snowflake host.")
-        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Metadata query error: {e}")
+        _show_query_warning("Metadata unavailable", e)
         return pd.DataFrame()
 
 
@@ -152,23 +171,21 @@ def run_query_cached(query_text: str, cache_context: str = "", cache_salt: str =
     """Backward-compatible runner. Prefer run_query(tier=...) for new code."""
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
-    except SnowflakeConnectionUnavailable:
-        st.info("Snowflake is not connected in this runtime. Data will load on the deployed Snowflake host.")
-        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Query error: {e}")
+        _show_query_warning("Data unavailable", e)
         return pd.DataFrame()
 
 
 _TIER_FN = {
     "live":       _cached_live,
+    "standard":   _cached_historical,
     "recent":     _cached_recent,
     "historical": _cached_historical,
     "metadata":   _cached_metadata,
 }
 
 
-def run_query(
+def _run_query_base(
     query_text: str,
     ttl_key: str = "default",
     use_cache: bool = True,
@@ -183,7 +200,7 @@ def run_query(
         ttl_key:     Cache salt namespace (per section, per parameter set).
         use_cache:   False to bypass cache entirely (explicit refresh).
         spinner_msg: Shown while executing.
-        tier:        'live' | 'recent' | 'historical' | 'metadata'
+        tier:        'live' | 'recent' | 'standard' | 'historical' | 'metadata'
                      Default 'recent' (300s) for backward compatibility.
 
     Returns:
@@ -199,15 +216,33 @@ def run_query(
             # Bypass cache — always wrapped in try/except
             try:
                 return normalize_df(get_session().sql(query_text).to_pandas())
-            except SnowflakeConnectionUnavailable:
-                st.info("Snowflake is not connected in this runtime. Data will load on the deployed Snowflake host.")
-                return pd.DataFrame()
             except Exception as e:
-                st.error(f"Query error: {e}")
+                _show_query_warning("Data unavailable", e)
                 return pd.DataFrame()
         except Exception as e:
-            st.error(f"Query runner error: {e}")
+            _show_query_warning("Query runner issue", e)
             return pd.DataFrame()
+
+
+def run_query(
+    query_text: str,
+    ttl_key: str = "default",
+    use_cache: bool = True,
+    spinner_msg: str = "Loading data...",
+    tier: str = "recent",
+) -> pd.DataFrame:
+    """Execute a query through the cached runner and log lightweight telemetry."""
+    started = time.perf_counter()
+    result = _run_query_base(
+        query_text=query_text,
+        ttl_key=ttl_key,
+        use_cache=use_cache,
+        spinner_msg=spinner_msg,
+        tier=tier,
+    )
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    _record_query_telemetry(query_text, ttl_key, tier, elapsed_ms, len(result), use_cache)
+    return result
 
 
 def run_query_or_raise(query_text: str) -> pd.DataFrame:

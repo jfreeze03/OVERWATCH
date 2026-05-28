@@ -51,10 +51,6 @@ _QUERY_TAG = "OVERWATCH:v3"
 _STMT_TIMEOUT_SECONDS = 840
 
 
-class SnowflakeConnectionUnavailable(RuntimeError):
-    """Raised when OVERWATCH is running without a Snowflake session."""
-
-
 def _make_session():
     """
     Create a new Snowflake session and apply OVERWATCH session parameters.
@@ -70,12 +66,12 @@ def _make_session():
         try:
             conn = st.connection("snowflake")
             sess = conn.session()
-        except Exception as connection_error:
-            raise SnowflakeConnectionUnavailable(
-                "No active Snowflake session is available. Run the app inside "
-                "Snowsight/Streamlit-in-Snowflake or configure the live host's "
-                "Snowflake connection outside the repository."
-            ) from connection_error
+        except Exception:
+            st.warning(
+                "Snowflake connection is not available in this environment. "
+                "Deploy OVERWATCH inside Snowflake Streamlit or configure a Streamlit Snowflake connection."
+            )
+            st.stop()
 
     # Apply session-level settings. Wrapped individually so a failure on one
     # doesn't block session creation.

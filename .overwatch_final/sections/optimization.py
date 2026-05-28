@@ -3,8 +3,9 @@ import streamlit as st
 import pandas as pd
 from utils import (
     get_session, format_credits, credits_to_dollars, download_csv,
-    render_drillable_bar_chart, get_wh_filter_clause,
-    run_query,
+    render_drillable_bar_chart, get_active_company, get_wh_filter_clause,
+    get_global_filter_clause, run_query, build_idle_warehouse_sql,
+    metric_confidence_label,
 )
 from config import THRESHOLDS
 
@@ -12,6 +13,14 @@ from config import THRESHOLDS
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
+    company = get_active_company()
+    query_filters = get_global_filter_clause(
+        date_col="start_time",
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
 
     tab_idle, tab_dups, tab_sizing = st.tabs([
         "Idle Warehouse Costs", "Duplicate Queries", "Right-Sizing Advisor"
@@ -25,44 +34,18 @@ def render():
 
         if st.button("Find Idle Credits", key="idle_load"):
             try:
-                df_idle = run_query(f"""
-                WITH metering AS (
-                    SELECT warehouse_name,
-                           DATE_TRUNC('hour', start_time) AS hour_bucket,
-                           SUM(credits_used) AS hourly_credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                    WHERE start_time >= DATEADD('day', -{idle_days}, CURRENT_TIMESTAMP())
-                      AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                      {get_wh_filter_clause("warehouse_name")}
-                    GROUP BY warehouse_name, hour_bucket
-                ),
-                query_activity AS (
-                    SELECT warehouse_name,
-                           MAX(warehouse_size) AS warehouse_size,
-                           DATE_TRUNC('hour', start_time) AS hour_bucket,
-                           COUNT(*) AS query_count
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day', -{idle_days}, CURRENT_TIMESTAMP())
-                      AND warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("warehouse_name")}
-                    GROUP BY warehouse_name, hour_bucket
+                df_idle = run_query(
+                    build_idle_warehouse_sql(
+                        days_back=idle_days,
+                        wh_filter=get_wh_filter_clause("warehouse_name"),
+                        min_idle_credits=THRESHOLDS["idle_credit_waste_min"],
+                    ),
+                    ttl_key=f"optimization_idle_{company}_{idle_days}",
+                    tier="historical",
                 )
-                SELECT m.warehouse_name,
-                       MAX(qa.warehouse_size) AS warehouse_size,
-                       SUM(m.hourly_credits) AS idle_credits,
-                       COUNT(*)              AS idle_hours
-                FROM metering m
-                LEFT JOIN query_activity qa
-                  ON m.warehouse_name = qa.warehouse_name
-                 AND m.hour_bucket    = qa.hour_bucket
-                WHERE COALESCE(qa.query_count, 0) = 0
-                GROUP BY m.warehouse_name
-                HAVING idle_credits > {THRESHOLDS['idle_credit_waste_min']}
-                ORDER BY idle_credits DESC
-                """, ttl_key=f"optimization_idle_{idle_days}", tier="standard")
                 st.session_state["opt_df_idle"] = df_idle
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Idle warehouse scan unavailable in this role/context: {e}")
 
         if st.session_state.get("opt_df_idle") is not None and not st.session_state["opt_df_idle"].empty:
             df_i = st.session_state["opt_df_idle"]
@@ -71,6 +54,7 @@ def render():
             c1.metric("Warehouses Wasting", len(df_i))
             c2.metric("Total Idle Credits", format_credits(total_idle))
             c3.metric("Idle Cost",          f"${credits_to_dollars(total_idle, credit_price):,.2f}")
+            st.caption(metric_confidence_label("exact"))
             st.dataframe(df_i, use_container_width=True)
             render_drillable_bar_chart(
                 df_i,
@@ -109,15 +93,15 @@ def render():
                     WHERE start_time >= DATEADD('day', -{dup_days}, CURRENT_TIMESTAMP())
                       AND execution_status = 'SUCCESS'
                       AND warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("warehouse_name")}
+                      {query_filters}
                     GROUP BY query_sig
                     HAVING COUNT(*) >= 5
                     ORDER BY execution_count DESC
                     LIMIT 100
-                """, ttl_key=f"optimization_duplicates_{dup_days}", tier="standard")
+                """, ttl_key=f"optimization_duplicates_{company}_{dup_days}", tier="standard")
                 st.session_state["opt_df_dup"] = df_dup
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Spill analysis unavailable in this role/context: {e}")
 
         if st.session_state.get("opt_df_dup") is not None and not st.session_state["opt_df_dup"].empty:
             df_d = st.session_state["opt_df_dup"]
@@ -135,29 +119,50 @@ def render():
         if st.button("Analyze Sizing", key="sz_load"):
             try:
                 df_sz = run_query(f"""
-                    SELECT q.warehouse_name,
-                           MAX(q.warehouse_size) AS warehouse_size,
-                           COUNT(*)                                AS total_queries,
-                           AVG(q.queued_overload_time)/1000        AS avg_queue_sec,
-                           SUM(q.bytes_spilled_to_remote_storage)/POWER(1024,3) AS remote_spill_gb,
-                           AVG(q.percentage_scanned_from_cache)    AS avg_cache_pct,
-                           SUM(m.credits_used)                     AS total_credits
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                    LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
+                    WITH query_stats AS (
+                        SELECT
+                            warehouse_name,
+                            MAX(warehouse_size) AS warehouse_size,
+                            COUNT(*) AS total_queries,
+                            AVG(queued_overload_time) / 1000 AS avg_queue_sec,
+                            SUM(bytes_spilled_to_remote_storage) / POWER(1024, 3) AS remote_spill_gb,
+                            AVG(percentage_scanned_from_cache) AS avg_cache_pct
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                        WHERE start_time >= DATEADD('day', -{sz_days}, CURRENT_TIMESTAMP())
+                          AND warehouse_name IS NOT NULL
+                          {query_filters}
+                        GROUP BY warehouse_name
+                    ),
+                    metering AS (
+                        SELECT
+                            warehouse_name,
+                            ROUND(SUM(credits_used), 4) AS total_credits
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+                        WHERE start_time >= DATEADD('day', -{sz_days}, CURRENT_TIMESTAMP())
+                          AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
+                          {get_wh_filter_clause("warehouse_name")}
+                        GROUP BY warehouse_name
+                    )
+                    SELECT
+                        q.warehouse_name,
+                        q.warehouse_size,
+                        q.total_queries,
+                        ROUND(q.avg_queue_sec, 2) AS avg_queue_sec,
+                        ROUND(q.remote_spill_gb, 2) AS remote_spill_gb,
+                        ROUND(q.avg_cache_pct, 2) AS avg_cache_pct,
+                        COALESCE(m.total_credits, 0) AS total_credits
+                    FROM query_stats q
+                    LEFT JOIN metering m
                       ON q.warehouse_name = m.warehouse_name
-                     AND DATE_TRUNC('hour', q.start_time) = DATE_TRUNC('hour', m.start_time)
-                    WHERE q.start_time >= DATEADD('day', -{sz_days}, CURRENT_TIMESTAMP())
-                      AND q.warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("q.warehouse_name")}
-                    GROUP BY q.warehouse_name
                     ORDER BY total_credits DESC
-                """, ttl_key=f"optimization_sizing_{sz_days}", tier="standard")
+                """, ttl_key=f"optimization_sizing_{company}_{sz_days}", tier="historical")
                 st.session_state["opt_df_sz"] = df_sz
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.warning(f"Warehouse recommendation scan unavailable in this role/context: {e}")
 
         if st.session_state.get("opt_df_sz") is not None and not st.session_state["opt_df_sz"].empty:
             df_s = st.session_state["opt_df_sz"]
+            st.caption(metric_confidence_label("exact"))
             st.dataframe(df_s, use_container_width=True)
 
             st.subheader("Recommendations")

@@ -11,6 +11,8 @@ from utils import (
     render_query_drilldown,
     sql_literal,
     get_wh_filter_clause,
+    get_global_filter_clause,
+    get_active_company,
 )
 
 
@@ -27,11 +29,26 @@ def _query_history_has_root_query_id(session) -> bool:
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
+    company = get_active_company()
 
     st.header("Stored Proc & UDF Cost Tracker")
     st.caption("CALL queries plus downstream child SQL where ROOT_QUERY_ID is populated.")
 
     sp_days = st.slider("Lookback (days)", 1, 30, 7, key="sp_tracker_days")
+    proc_filters_plain = get_global_filter_clause(
+        date_col="start_time",
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
+    proc_filters_q = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
 
     if st.button("Load Stored Proc Usage", key="sp_load"):
         try:
@@ -51,7 +68,7 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE query_type = 'CALL'
                       AND start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
-                      {get_wh_filter_clause("warehouse_name")}
+                      {proc_filters_plain}
                 ),
                 children AS (
                     SELECT {root_expr} AS root_query_id,
@@ -65,7 +82,7 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                     LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
                     WHERE q.start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
-                      {get_wh_filter_clause("q.warehouse_name")}
+                      {proc_filters_q}
                 )
                 SELECT c.procedure_name,
                        c.user_name,
@@ -87,11 +104,11 @@ def render():
                          c.call_text
                 ORDER BY metered_credits DESC, total_elapsed_sec DESC
                 LIMIT 200
-            """, ttl_key=f"stored_proc_usage_{sp_days}_{has_root_query_id}", tier="standard")
+            """, ttl_key=f"stored_proc_usage_{company}_{sp_days}_{has_root_query_id}", tier="standard")
             st.session_state["spt_df_sp_tracker"] = df_sp
             st.session_state["spt_has_root_query_id"] = has_root_query_id
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.warning(f"Stored procedure cost data unavailable in this role/context: {e}")
 
     if st.session_state.get("spt_df_sp_tracker") is not None and not st.session_state["spt_df_sp_tracker"].empty:
         df_sp = st.session_state["spt_df_sp_tracker"]
@@ -126,7 +143,7 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE query_type = 'CALL'
                       AND start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
-                      {get_wh_filter_clause("warehouse_name")}
+                      {proc_filters_plain}
                       AND (REGEXP_SUBSTR(query_text, 'CALL\\\\s+([^\\\\(]+)', 1, 1, 'i', 1) = {proc_exact}
                            OR query_text ILIKE {proc_like})
                 )
@@ -138,10 +155,10 @@ def render():
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                 JOIN roots r ON {root_expr} = r.root_query_id
                 WHERE 1=1
-                  {get_wh_filter_clause("q.warehouse_name")}
+                  {proc_filters_q}
                 ORDER BY q.start_time
                 LIMIT 500
-                """, ttl_key=f"stored_proc_child_{sp_days}_{selected_proc}", tier="standard")
+                """, ttl_key=f"stored_proc_child_{company}_{sp_days}_{selected_proc}", tier="standard")
                 render_query_drilldown(df_child, key="sp_child_queries", title="Stored procedure child-query drill-down")
             except Exception as e:
                 st.info(f"Downstream detail unavailable: {e}")

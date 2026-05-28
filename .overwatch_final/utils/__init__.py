@@ -3,11 +3,13 @@ from .session import get_session
 from .query import (
     run_query, run_query_cached, run_query_or_raise, force_refresh,
     safe_sql, safe_identifier, safe_schedule, sql_literal,
+    get_query_telemetry, clear_query_telemetry,
 )
 from .data import normalize_df, safe_strip_tz
 from .cost import (
     format_credits, credits_to_dollars, estimate_live_credits,
-    build_metered_credit_cte, CREDIT_RATES, COMPUTE_CREDIT_CASE
+    build_metered_credit_cte, build_idle_warehouse_sql,
+    metric_confidence_label, CREDIT_RATES, COMPUTE_CREDIT_CASE
 )
 from .display import (
     download_csv, show_loaded_time, mark_loaded, clear_all_cache,
@@ -16,11 +18,11 @@ from .display import (
 )
 from .company_filter import (
     get_active_company, get_db_filter_clause, get_wh_filter_clause,
-    get_user_filter_clause, get_combined_filter_clause,
+    get_user_filter_clause, get_role_filter_clause, get_combined_filter_clause,
     get_global_date_clause, get_global_wh_filter_clause,
     get_global_user_filter_clause, get_global_role_filter_clause,
     get_global_db_filter_clause, get_global_filter_clause,
-    get_company_case_expr,
+    get_company_case_expr, company_value_allowed,
     invalidate_company_cache,
 )
 from .helpers import paginate_df
@@ -43,18 +45,20 @@ __all__ = [
     "get_session",
     "run_query", "run_query_cached", "run_query_or_raise", "force_refresh",
     "safe_sql", "safe_identifier", "safe_schedule", "sql_literal",
+    "get_query_telemetry", "clear_query_telemetry",
     "normalize_df", "safe_strip_tz",
     "format_credits", "credits_to_dollars", "estimate_live_credits",
-    "build_metered_credit_cte", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
+    "build_metered_credit_cte", "build_idle_warehouse_sql",
+    "metric_confidence_label", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
     "download_csv", "show_loaded_time", "mark_loaded", "clear_all_cache",
     "render_query_drilldown", "render_warehouse_drilldown",
     "render_drillable_bar_chart", "render_entity_query_drilldown",
     "get_active_company", "get_db_filter_clause", "get_wh_filter_clause",
-    "get_user_filter_clause", "get_combined_filter_clause",
+    "get_user_filter_clause", "get_role_filter_clause", "get_combined_filter_clause",
     "get_global_date_clause", "get_global_wh_filter_clause",
     "get_global_user_filter_clause", "get_global_role_filter_clause",
     "get_global_db_filter_clause", "get_global_filter_clause",
-    "get_company_case_expr", "invalidate_company_cache",
+    "get_company_case_expr", "company_value_allowed", "invalidate_company_cache",
     "paginate_df",
     "build_alert_task_sql", "send_teams_alert", "build_annotation_ddl",
     "build_usage_log_ddl", "log_section_load", "set_logging_enabled",

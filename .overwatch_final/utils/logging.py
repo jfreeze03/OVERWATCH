@@ -93,8 +93,8 @@ def log_section_load(section: str, duration_ms: int = 0) -> None:
         from utils.session import get_session
         session = get_session()
 
-        user = session.sql("SELECT CURRENT_USER()").collect()[0][0]
-        role = session.sql("SELECT CURRENT_ROLE()").collect()[0][0]
+        user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
+        role = str(st.session_state.get("_overwatch_current_role", "") or "")
         company = st.session_state.get("active_company", "ALFA")
         sess_id = st.session_state.get("_session_id", "")
 

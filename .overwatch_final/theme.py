@@ -324,11 +324,26 @@ _STRUCTURAL_CSS = """
     color: var(--text-secondary) !important;
     font-family: var(--font-body) !important;
 }
-[data-testid="stIconMaterial"] {
-    display: none !important;
+[data-testid="stIconMaterial"],
+[data-testid="stIconMaterial"] *,
+.stApp span[class*="material"],
+.stApp i[class*="material"] {
+    display: inline-block !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    color: transparent !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    opacity: 0 !important;
 }
-[data-testid="stIconMaterial"]:has(span),
-[data-testid="stIconMaterial"] span {
+[data-testid="stIconMaterial"]::before,
+[data-testid="stIconMaterial"]::after,
+.stApp span[class*="material"]::before,
+.stApp span[class*="material"]::after {
+    content: "" !important;
     display: none !important;
 }
 [data-testid="stSidebar"] .stRadio > div > label:hover {
@@ -706,11 +721,27 @@ _STREAMLIT_ICON_FIX = """
 [data-testid="stSidebar"] [data-testid="stIconMaterial"],
 .stExpander [data-testid="stIconMaterial"],
 summary [data-testid="stIconMaterial"] {
-    display: none !important;
+    display: inline-block !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    color: transparent !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    opacity: 0 !important;
 }
 .stApp [data-testid="stIconMaterial"] *,
 [data-testid="stSidebar"] [data-testid="stIconMaterial"] * {
-    display: none !important;
+    display: inline-block !important;
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    color: transparent !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    opacity: 0 !important;
 }
 </style>
 """

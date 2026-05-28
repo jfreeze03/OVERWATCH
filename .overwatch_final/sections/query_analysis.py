@@ -186,10 +186,9 @@ Warehouse context: {wh_ctx or 'unknown'}
 Query:
 {query_text[:3000]}
 Be concise, technical, Snowflake-specific."""
-                    prompt_escaped = prompt.replace("'", "''")
                     result = session.sql(
-                        f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', '{prompt_escaped}') AS answer"
+                        f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', {sql_literal(prompt)}) AS answer"
                     ).collect()
                     st.markdown(result[0]["ANSWER"])
                 except Exception as e:
-                    st.info(f"Cortex AI unavailable ({format_snowflake_error(e)}). Ensure Cortex functions are enabled in your account.")
+                    st.info(f"Cortex AI unavailable. {format_snowflake_error(e)} Ensure Cortex functions are enabled in your account.")

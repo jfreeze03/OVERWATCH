@@ -23,7 +23,7 @@ from config import (
 )
 from utils.display import clear_all_cache
 from utils.session import get_session
-from utils.query import sql_literal, get_query_telemetry, clear_query_telemetry
+from utils.query import sql_literal, get_query_telemetry, clear_query_telemetry, format_snowflake_error
 from utils.company_filter import invalidate_company_cache
 from utils.bookmarks import (
     build_bookmark_ddl, save_bookmark, load_bookmarks,
@@ -195,7 +195,7 @@ with st.sidebar:
             _session = get_session()
         except Exception as e:
             _session = None
-            st.caption(f"Saved views unavailable until Snowflake is connected. ({e})")
+            st.caption(f"Saved views unavailable until Snowflake is connected. {format_snowflake_error(e)}")
         bookmarks = load_bookmarks(_session) if _session else []
 
         if bookmarks:
@@ -387,7 +387,7 @@ with st.expander("🤖 Ask OVERWATCH  (Cortex AI)", expanded=False):
                 ).collect()
                 st.markdown(result[0]["ANSWER"])
             except Exception as e:
-                st.info(f"Cortex AI unavailable ({e}).")
+                st.info(f"Cortex AI unavailable. {format_snowflake_error(e)}")
 
 st.markdown("---")
 
@@ -401,7 +401,7 @@ try:
     sections.dispatch(active_section)
 except Exception as e:
     st.warning("Snowflake is not connected yet, so this section cannot load live data.")
-    st.caption(str(e))
+    st.caption(format_snowflake_error(e))
     st.info(
         "Run inside Snowsight/Streamlit-in-Snowflake or configure a Snowflake connection in Streamlit, "
         "then refresh the app."

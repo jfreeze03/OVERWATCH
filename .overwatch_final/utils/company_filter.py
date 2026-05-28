@@ -12,7 +12,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
 from config import COMPANY_CONFIG, DEFAULT_COMPANY
-from .query import safe_sql
+from .query import sql_literal
 
 
 def get_active_company() -> str:
@@ -184,8 +184,8 @@ def get_company_case_expr(
 
 def _text_filter_clause(value: str, column: str) -> str:
     """Build a safe ILIKE filter for a free-text sidebar input."""
-    value = safe_sql((value or "").strip())
-    return f"AND {column} ILIKE '%{value}%'" if value else ""
+    value = (value or "").strip()
+    return f"AND {column} ILIKE {sql_literal('%' + value + '%')}" if value else ""
 
 
 def get_global_date_clause(column: str = "start_time") -> str:

@@ -23,7 +23,7 @@ from config import (
 )
 from utils.display import clear_all_cache
 from utils.session import get_session
-from utils.query import safe_sql
+from utils.query import sql_literal
 from utils.company_filter import invalidate_company_cache
 from utils.bookmarks import (
     build_bookmark_ddl, save_bookmark, load_bookmarks,
@@ -194,8 +194,12 @@ with st.sidebar:
 
     # ── Saved Views / Bookmarks ───────────────────────────────────────────────
     with st.expander("🔖 Saved Views", expanded=False):
-        _session = get_session()
-        bookmarks = load_bookmarks(_session)
+        try:
+            _session = get_session()
+        except Exception as e:
+            _session = None
+            st.caption(f"Saved views unavailable until Snowflake is connected. ({e})")
+        bookmarks = load_bookmarks(_session) if _session else []
 
         if bookmarks:
             st.caption("Click a bookmark to jump directly to that view.")
@@ -229,7 +233,9 @@ with st.sidebar:
         )
         bm_shared = st.checkbox("Share with all users", key="bm_shared_toggle")
         if st.button("💾 Save View", key="bm_save_btn", disabled=not new_bm_name):
-            if save_bookmark(_session, new_bm_name, bm_shared):
+            if not _session:
+                st.warning("Connect Snowflake before saving views.")
+            elif save_bookmark(_session, new_bm_name, bm_shared):
                 st.success(f"✅ Saved '{new_bm_name}'")
                 st.session_state.pop("bm_name_input", None)
                 st.rerun()
@@ -354,7 +360,7 @@ with st.expander("🤖 Ask OVERWATCH  (Cortex AI)", expanded=False):
     if ask_q and st.button("Ask", key="ask_overwatch_btn"):
         with st.spinner("Thinking with Cortex..."):
             try:
-                safe_q      = safe_sql(ask_q)
+                safe_q      = ask_q.strip()[:500]
                 prompt      = (
                     "You are OVERWATCH, a Snowflake monitoring assistant for ALFA Insurance. "
                     f"Current company filter: {active_company}. "
@@ -364,7 +370,7 @@ with st.expander("🤖 Ask OVERWATCH  (Cortex AI)", expanded=False):
                     "3) recommended filters. Be brief and technical."
                 )
                 result = get_session().sql(
-                    f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', '{prompt.replace(chr(39), chr(39)+chr(39))}') AS answer"
+                    f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', {sql_literal(prompt)}) AS answer"
                 ).collect()
                 st.markdown(result[0]["ANSWER"])
             except Exception as e:
@@ -378,4 +384,12 @@ if active_section not in visible_sections:
     active_section = visible_sections[0]
     st.session_state["nav_section"] = active_section
 
-sections.dispatch(active_section)
+try:
+    sections.dispatch(active_section)
+except Exception as e:
+    st.warning("Snowflake is not connected yet, so this section cannot load live data.")
+    st.caption(str(e))
+    st.info(
+        "Add Snowflake credentials in Streamlit secrets or run inside Snowsight with an active session, "
+        "then refresh the app."
+    )

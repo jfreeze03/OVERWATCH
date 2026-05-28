@@ -12,8 +12,13 @@
 import time
 import streamlit as st
 from config import ALERT_DB, ALERT_SCHEMA
+from .query import safe_identifier, sql_literal
 
-LOG_TABLE   = f"{ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_USAGE_LOG"
+LOG_TABLE = (
+    f"{safe_identifier(ALERT_DB)}."
+    f"{safe_identifier(ALERT_SCHEMA)}."
+    f"{safe_identifier('OVERWATCH_USAGE_LOG')}"
+)
 APP_VERSION = "3.0"
 _ENABLED_KEY = "_logging_enabled"
 
@@ -23,13 +28,17 @@ def build_usage_log_ddl(
     schema: str = ALERT_SCHEMA,
 ) -> str:
     """Return DDL to create the usage log table and summary view. Run once."""
+    db = safe_identifier(db)
+    schema = safe_identifier(schema)
+    log_table = f"{db}.{schema}.{safe_identifier('OVERWATCH_USAGE_LOG')}"
+    summary_view = f"{db}.{schema}.{safe_identifier('OVERWATCH_USAGE_SUMMARY')}"
     return f"""-- ─────────────────────────────────────────────────────────────────
 -- OVERWATCH Usage Log
 -- Tracks section loads, users, roles, and query durations.
 -- Run once as SYSADMIN or role with CREATE TABLE on {db}.{schema}.
 -- ─────────────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS {db}.{schema}.OVERWATCH_USAGE_LOG (
+CREATE TABLE IF NOT EXISTS {log_table} (
     RUN_ID           NUMBER AUTOINCREMENT PRIMARY KEY,
     LOG_TIME         TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     SF_USER          VARCHAR(200),
@@ -37,12 +46,12 @@ CREATE TABLE IF NOT EXISTS {db}.{schema}.OVERWATCH_USAGE_LOG (
     COMPANY_VIEW     VARCHAR(50),
     SECTION          VARCHAR(200),
     QUERY_DURATION_MS NUMBER,
-    APP_VERSION      VARCHAR(20) DEFAULT '{APP_VERSION}',
+    APP_VERSION      VARCHAR(20) DEFAULT {sql_literal(APP_VERSION, 20)},
     SESSION_ID       VARCHAR(200)
 );
 
 -- Adoption summary view (last 30 days)
-CREATE OR REPLACE VIEW {db}.{schema}.OVERWATCH_USAGE_SUMMARY AS
+CREATE OR REPLACE VIEW {summary_view} AS
 SELECT
     DATE_TRUNC('day', log_time) AS log_date,
     sf_user,
@@ -52,7 +61,7 @@ SELECT
     COUNT(*)                    AS load_count,
     ROUND(AVG(query_duration_ms))    AS avg_duration_ms,
     MAX(query_duration_ms)      AS max_duration_ms
-FROM {db}.{schema}.OVERWATCH_USAGE_LOG
+FROM {log_table}
 WHERE log_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
 GROUP BY log_date, sf_user, sf_role, company_view, section
 ORDER BY log_date DESC, load_count DESC;
@@ -84,17 +93,22 @@ def log_section_load(section: str, duration_ms: int = 0) -> None:
         from utils.session import get_session
         session = get_session()
 
-        def _q(v): return str(v or "").replace("'", "''")[:200]
-
-        user    = _q(session.sql("SELECT CURRENT_USER()").collect()[0][0])
-        role    = _q(session.sql("SELECT CURRENT_ROLE()").collect()[0][0])
-        company = _q(st.session_state.get("active_company", "ALFA"))
-        sess_id = _q(st.session_state.get("_session_id", ""))
+        user = session.sql("SELECT CURRENT_USER()").collect()[0][0]
+        role = session.sql("SELECT CURRENT_ROLE()").collect()[0][0]
+        company = st.session_state.get("active_company", "ALFA")
+        sess_id = st.session_state.get("_session_id", "")
 
         session.sql(f"""
             INSERT INTO {LOG_TABLE}
                 (SF_USER, SF_ROLE, COMPANY_VIEW, SECTION, QUERY_DURATION_MS, SESSION_ID)
-            VALUES ('{user}', '{role}', '{company}', '{_q(section)}', {int(duration_ms)}, '{sess_id}')
+            VALUES (
+                {sql_literal(user, 200)},
+                {sql_literal(role, 200)},
+                {sql_literal(company, 50)},
+                {sql_literal(section, 200)},
+                {int(duration_ms)},
+                {sql_literal(sess_id, 200)}
+            )
         """).collect()
     except Exception:
         pass

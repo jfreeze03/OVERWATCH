@@ -4,6 +4,7 @@ import json
 import urllib.request
 import streamlit as st
 from config import ALERT_DB, ALERT_SCHEMA, ALERT_TABLE, THRESHOLDS
+from .query import safe_identifier, safe_schedule, sql_literal
 
 
 ANNOTATION_TABLE = "OVERWATCH_ANNOTATIONS"
@@ -56,7 +57,7 @@ def build_annotation_ddl(
 -- Run once as SYSADMIN or DBA role.
 -- ─────────────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS {db}.{schema}.{ANNOTATION_TABLE} (
+CREATE TABLE IF NOT EXISTS {safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(ANNOTATION_TABLE)} (
     ANNOTATION_ID   NUMBER AUTOINCREMENT PRIMARY KEY,
     CREATED_BY      VARCHAR(200) DEFAULT CURRENT_USER(),
     CREATED_AT      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -71,7 +72,7 @@ CREATE TABLE IF NOT EXISTS {db}.{schema}.{ANNOTATION_TABLE} (
 );
 
 -- Example annotations for planned Snowflake load windows:
--- INSERT INTO {db}.{schema}.{ANNOTATION_TABLE}
+-- INSERT INTO {safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(ANNOTATION_TABLE)}
 --     (ENTITY, ENTITY_TYPE, WINDOW_START, WINDOW_END, ANNOTATION_TYPE, DESCRIPTION)
 -- VALUES
 --     ('WH_ALFA_LOAD', 'WAREHOUSE',
@@ -80,7 +81,7 @@ CREATE TABLE IF NOT EXISTS {db}.{schema}.{ANNOTATION_TABLE} (
 --      'LOAD_TEST', 'Large Snowflake backfill on WH_ALFA_LOAD - expect elevated credit usage');
 
 -- View active annotations:
--- SELECT * FROM {db}.{schema}.{ANNOTATION_TABLE}
+-- SELECT * FROM {safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(ANNOTATION_TABLE)}
 -- WHERE ACTIVE = TRUE AND WINDOW_END >= CURRENT_TIMESTAMP()
 -- ORDER BY WINDOW_START;
 """
@@ -96,6 +97,12 @@ def build_alert_task_sql(
     """Generate DDL + DML for the OVERWATCH anomaly alert Snowflake Task.
     Now annotation-aware: skips alerting on entities with an active annotation window.
     """
+    db = safe_identifier(db)
+    schema = safe_identifier(schema)
+    table = safe_identifier(table)
+    annotation_table = safe_identifier(ANNOTATION_TABLE)
+    warehouse = safe_identifier(warehouse)
+    schedule = safe_schedule(schedule)
     spike_pct = THRESHOLDS["credit_spike_pct"]
     return f"""-- ─────────────────────────────────────────────────────────────────
 -- OVERWATCH Automated Alert Task (annotation-aware)
@@ -122,8 +129,8 @@ CREATE TABLE IF NOT EXISTS {db}.{schema}.{table} (
 
 -- 2. Create monitoring task
 CREATE OR REPLACE TASK {db}.{schema}.OVERWATCH_ANOMALY_CHECK
-    WAREHOUSE = '{warehouse}'
-    SCHEDULE  = '{schedule}'
+    WAREHOUSE = {warehouse}
+    SCHEDULE  = {sql_literal(schedule)}
 AS
 INSERT INTO {db}.{schema}.{table}
     (ALERT_TYPE, SEVERITY, ENTITY, DETAIL, SUGGESTED_ACTION)
@@ -154,7 +161,7 @@ spikes AS (
       AND s.avg_credits > 0.1
       -- Skip annotated windows (load tests, deployments, planned maintenance)
       AND NOT EXISTS (
-          SELECT 1 FROM {db}.{schema}.{ANNOTATION_TABLE} ann
+          SELECT 1 FROM {db}.{schema}.{annotation_table} ann
           WHERE ann.active = TRUE
             AND ann.suppress_alerts = TRUE
             AND (ann.entity = d.warehouse_name OR ann.entity_type = 'GLOBAL')
@@ -188,7 +195,7 @@ FROM (
     HAVING COUNT(*) > {THRESHOLDS['error_rate_high']}
 )
 WHERE NOT EXISTS (
-    SELECT 1 FROM {db}.{schema}.{ANNOTATION_TABLE} ann
+    SELECT 1 FROM {db}.{schema}.{annotation_table} ann
     WHERE ann.active = TRUE AND ann.suppress_alerts = TRUE
       AND (ann.entity = warehouse_name OR ann.entity_type = 'GLOBAL')
       AND CURRENT_TIMESTAMP() BETWEEN ann.window_start AND ann.window_end
@@ -211,7 +218,7 @@ FROM (
     HAVING COUNT(*) > {THRESHOLDS['task_failure_threshold']}
 )
 WHERE NOT EXISTS (
-    SELECT 1 FROM {db}.{schema}.{ANNOTATION_TABLE} ann
+    SELECT 1 FROM {db}.{schema}.{annotation_table} ann
     WHERE ann.active = TRUE AND ann.suppress_alerts = TRUE
       AND (ann.entity = name OR ann.entity_type = 'GLOBAL')
       AND CURRENT_TIMESTAMP() BETWEEN ann.window_start AND ann.window_end

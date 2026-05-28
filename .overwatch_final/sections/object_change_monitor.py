@@ -5,8 +5,8 @@ from utils import (
     download_csv,
     get_session,
     make_action_id,
-    normalize_df,
-    safe_sql,
+    run_query,
+    sql_literal,
     upsert_actions,
 )
 
@@ -68,7 +68,7 @@ def render():
 
     days = st.slider("Lookback (days)", 1, 90, 14, key="ocm_days")
     text_filter = st.text_input("Filter query/object text", key="ocm_filter")
-    filter_clause = f"AND query_text ILIKE '%{safe_sql(text_filter)}%'" if text_filter else ""
+    filter_clause = f"AND query_text ILIKE {sql_literal('%' + text_filter + '%')}" if text_filter else ""
 
     tab_ddl, tab_access, tab_policy, tab_drift = st.tabs([
         "Objects", "Grants & Roles", "Policies & Tags", "Terraform Drift"
@@ -77,7 +77,7 @@ def render():
     with tab_ddl:
         if st.button("Load Object Changes", key="ocm_obj_load"):
             try:
-                st.session_state["ocm_df_object_changes"] = normalize_df(session.sql(f"""
+                st.session_state["ocm_df_object_changes"] = run_query(f"""
                 SELECT query_id, user_name, role_name, warehouse_name, database_name, schema_name,
                        start_time,
                        CASE
@@ -107,7 +107,7 @@ def render():
                   {filter_clause}
                 ORDER BY start_time DESC
                 LIMIT 1000
-                """).to_pandas())
+                """, ttl_key=f"ocm_objects_{days}_{text_filter}", tier="standard")
             except Exception as e:
                 st.error(f"Object change scan failed: {e}")
         if st.session_state.get("ocm_df_object_changes") is not None:
@@ -122,7 +122,7 @@ def render():
     with tab_access:
         if st.button("Load Grant / Role Changes", key="ocm_grant_load"):
             try:
-                st.session_state["ocm_df_access_changes"] = normalize_df(session.sql(f"""
+                st.session_state["ocm_df_access_changes"] = run_query(f"""
                 SELECT query_id, user_name, role_name, start_time,
                        CASE
                          WHEN query_text ILIKE '%OWNERSHIP%' THEN 'OWNER CHANGE'
@@ -141,7 +141,7 @@ def render():
                   {filter_clause}
                 ORDER BY start_time DESC
                 LIMIT 1000
-                """).to_pandas())
+                """, ttl_key=f"ocm_access_{days}_{text_filter}", tier="standard")
             except Exception as e:
                 st.error(f"Access change scan failed: {e}")
         if st.session_state.get("ocm_df_access_changes") is not None:
@@ -153,7 +153,7 @@ def render():
     with tab_policy:
         if st.button("Load Masking / Tag Policy Changes", key="ocm_policy_load"):
             try:
-                st.session_state["ocm_df_policy_changes"] = normalize_df(session.sql(f"""
+                st.session_state["ocm_df_policy_changes"] = run_query(f"""
                 SELECT query_id, user_name, role_name, start_time,
                        CASE
                          WHEN query_text ILIKE '%MASKING POLICY%' THEN 'MASKING POLICY'
@@ -169,7 +169,7 @@ def render():
                   {filter_clause}
                 ORDER BY start_time DESC
                 LIMIT 1000
-                """).to_pandas())
+                """, ttl_key=f"ocm_policy_{days}_{text_filter}", tier="standard")
             except Exception as e:
                 st.error(f"Policy change scan failed: {e}")
         if st.session_state.get("ocm_df_policy_changes") is not None:
@@ -181,7 +181,7 @@ def render():
     with tab_drift:
         if st.button("Load Drift Indicators", key="ocm_drift_load"):
             try:
-                st.session_state["ocm_df_drift"] = normalize_df(session.sql(f"""
+                st.session_state["ocm_df_drift"] = run_query(f"""
                 SELECT query_id, user_name, role_name, query_tag,
                        start_time, SUBSTR(query_text, 1, 1500) AS query_text,
                        CASE
@@ -195,7 +195,7 @@ def render():
                   {filter_clause}
                 ORDER BY start_time DESC
                 LIMIT 1000
-                """).to_pandas())
+                """, ttl_key=f"ocm_drift_{days}_{text_filter}", tier="standard")
             except Exception as e:
                 st.error(f"Drift scan failed: {e}")
         if st.session_state.get("ocm_df_drift") is not None:

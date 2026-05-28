@@ -5,12 +5,13 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from utils import (
-    get_session, normalize_df, format_credits, credits_to_dollars,
+    get_session, format_credits, credits_to_dollars,
     download_csv, build_metered_credit_cte,
     get_db_filter_clause, get_wh_filter_clause, get_user_filter_clause,
     get_global_filter_clause, get_company_case_expr,
     render_drillable_bar_chart, render_entity_query_drilldown,
     build_action_queue_ddl, make_action_id, upsert_actions,
+    run_query, sql_literal,
 )
 
 
@@ -85,7 +86,7 @@ def render():
 
         if st.button("Load Leaderboard", key="cc_lead_load"):
             try:
-                df_lead = normalize_df(session.sql(f"""
+                df_lead = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=days)}
                 SELECT
                     q.user_name,
@@ -103,7 +104,7 @@ def render():
                 GROUP BY q.user_name, q.warehouse_name
                 ORDER BY total_credits DESC
                 LIMIT 200
-                """).to_pandas())
+                """, ttl_key=f"cc_lead_{days}", tier="standard")
                 st.session_state["df_lead"] = df_lead
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -160,7 +161,7 @@ def render():
 
         if st.button("Load Burn Rate", key="br_load"):
             try:
-                df_br = normalize_df(session.sql(f"""
+                df_br = run_query(f"""
                     WITH latest_size AS (
                         SELECT warehouse_name, warehouse_size
                         FROM (
@@ -182,7 +183,7 @@ def render():
                     {get_wh_filter_clause("m.warehouse_name")}
                     GROUP BY day, m.warehouse_name, ls.warehouse_size
                     ORDER BY day
-                """).to_pandas())
+                """, ttl_key=f"cc_burn_{br_days}", tier="standard")
                 st.session_state["df_br"] = df_br
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -214,14 +215,14 @@ def render():
         st.header("📈 Credit Forecast (30-day Linear Projection)")
         if st.button("Generate Forecast", key="fc_load"):
             try:
-                df_fc = normalize_df(session.sql(f"""
+                df_fc = run_query(f"""
                     SELECT DATE_TRUNC('day', start_time) AS day,
                            SUM(credits_used) AS daily_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
                     WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
                     {get_wh_filter_clause("warehouse_name")}
                     GROUP BY day ORDER BY day
-                """).to_pandas())
+                """, ttl_key="cc_forecast_30", tier="standard")
                 st.session_state["df_fc"] = df_fc
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -245,14 +246,14 @@ def render():
         )
         if st.button("Load Budget Comparison", key="bva_load"):
             try:
-                df_bva = normalize_df(session.sql(f"""
+                df_bva = run_query(f"""
                     SELECT DATE_TRUNC('month', start_time) AS month,
                            SUM(credits_used) AS actual_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
                     WHERE start_time >= DATEADD('month', -6, CURRENT_TIMESTAMP())
                     {get_wh_filter_clause("warehouse_name")}
                     GROUP BY month ORDER BY month
-                """).to_pandas())
+                """, ttl_key="cc_budget_6mo", tier="standard")
                 st.session_state["df_bva"] = df_bva
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -296,7 +297,7 @@ def render():
                 group_cols  = "COALESCE(t.name, REGEXP_SUBSTR(q.query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), q.root_query_id, 'ADHOC')"
 
             try:
-                df_attr = normalize_df(session.sql(f"""
+                df_attr = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=attr_days)}
                 SELECT {select_cols},
                        COUNT(*) AS query_count,
@@ -313,7 +314,7 @@ def render():
                 GROUP BY {group_cols}
                 ORDER BY total_credits DESC
                 LIMIT 200
-                """).to_pandas())
+                """, ttl_key=f"cc_attr_{attr_mode}_{attr_days}", tier="standard")
                 st.session_state["df_cc_attr"] = df_attr
             except Exception as e:
                 st.error(f"Attribution load failed: {e}")
@@ -351,7 +352,7 @@ def render():
                 company_expr = get_company_case_expr(
                     "q.warehouse_name", "q.database_name", "q.user_name"
                 )
-                df_cb = normalize_df(session.sql(f"""
+                df_cb = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=cb_days)},
                 query_costs AS (
                     SELECT
@@ -372,7 +373,7 @@ def render():
                        ROUND(total_credits, 4) AS total_credits
                 FROM query_costs
                 ORDER BY total_credits DESC
-                """).to_pandas())
+                """, ttl_key=f"cc_chargeback_{cb_days}", tier="standard")
                 st.session_state["df_chargeback"] = df_cb
             except Exception as e:
                 st.error(f"Chargeback failed: {e}")
@@ -440,12 +441,12 @@ def render():
 
         if st.button("Calculate Utilization", key="cc_contract_calc"):
             try:
-                df_ytd = normalize_df(session.sql(f"""
+                df_ytd = run_query(f"""
                     SELECT SUM(credits_used) AS ytd_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-                    WHERE start_time >= TO_DATE('{contract_start}')
+                    WHERE start_time >= TO_DATE({sql_literal(str(contract_start))})
                       AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                """).to_pandas())
+                """, ttl_key=f"cc_contract_ytd_{contract_start}", tier="standard")
                 st.session_state["cc_contract_data"] = df_ytd
                 st.session_state["cc_contract_params"] = {
                     "committed": committed_credits,
@@ -530,16 +531,16 @@ def render():
             st.subheader("Monthly Consumption")
             if st.button("Load Monthly Breakdown", key="cc_monthly_breakdown"):
                 try:
-                    df_monthly = normalize_df(session.sql(f"""
+                    df_monthly = run_query(f"""
                         SELECT DATE_TRUNC('month', start_time) AS month,
                                SUM(credits_used) AS monthly_credits,
                                SUM(credits_used) * {credit_price} AS monthly_cost
                         FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-                        WHERE start_time >= TO_DATE('{start_str}')
+                        WHERE start_time >= TO_DATE({sql_literal(start_str)})
                           AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
                         GROUP BY month
                         ORDER BY month
-                    """).to_pandas())
+                    """, ttl_key=f"cc_monthly_{start_str}_{credit_price}", tier="standard")
                     st.session_state["cc_monthly_data"] = df_monthly
                 except Exception as e:
                     st.error(f"Monthly breakdown error: {e}")
@@ -564,16 +565,16 @@ def render():
             st.subheader("Consumption by Service Type")
             if st.button("Load Service Breakdown", key="cc_service_type"):
                 try:
-                    df_svc = normalize_df(session.sql(f"""
+                    df_svc = run_query(f"""
                         SELECT service_type,
                                SUM(credits_used) AS total_credits,
                                ROUND(SUM(credits_used) / NULLIF({ytd_used}, 0) * 100, 1) AS pct_of_total
                         FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-                        WHERE start_time >= TO_DATE('{start_str}')
+                        WHERE start_time >= TO_DATE({sql_literal(start_str)})
                           AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
                         GROUP BY service_type
                         ORDER BY total_credits DESC
-                    """).to_pandas())
+                    """, ttl_key=f"cc_service_{start_str}_{ytd_used}", tier="standard")
                     st.session_state["cc_svc_data"] = df_svc
                 except Exception as e:
                     st.error(f"Service breakdown error: {e}")

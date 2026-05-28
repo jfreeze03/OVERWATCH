@@ -1,7 +1,7 @@
 # sections/spcs_tracker.py — Snowpark Container Services cost tracking
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart
+from utils import get_session, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart, run_query
 
 
 def render():
@@ -15,7 +15,7 @@ def render():
 
     if st.button("Load SPCS Data", key="spcs_load"):
         try:
-            df_spcs = normalize_df(session.sql(f"""
+            df_spcs = run_query(f"""
                 SELECT compute_pool_name,
                        DATE_TRUNC('day', start_time) AS usage_date,
                        SUM(credits_used)             AS daily_credits,
@@ -24,7 +24,7 @@ def render():
                 WHERE start_time >= DATEADD('day', -{spcs_days}, CURRENT_TIMESTAMP())
                 GROUP BY compute_pool_name, usage_date
                 ORDER BY usage_date DESC, daily_credits DESC
-            """).to_pandas())
+            """, ttl_key=f"spcs_usage_{spcs_days}", tier="standard")
             st.session_state["spcs_df_spcs"] = df_spcs
         except Exception as e:
             st.warning(f"SPCS history unavailable: {e}. Requires SPCS configured in your account.")

@@ -2,22 +2,23 @@
 import streamlit as st
 from utils import (
     get_session,
-    normalize_df,
+    run_query,
+    run_query_or_raise,
     format_credits,
     credits_to_dollars,
     download_csv,
     build_metered_credit_cte,
     render_query_drilldown,
-    safe_sql,
+    sql_literal,
     get_wh_filter_clause,
 )
 
 
 def _query_history_has_root_query_id(session) -> bool:
     try:
-        df_cols = session.sql(
+        df_cols = run_query_or_raise(
             "SHOW COLUMNS LIKE 'ROOT_QUERY_ID' IN VIEW SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
-        ).to_pandas()
+        )
         return not df_cols.empty
     except Exception:
         return False
@@ -36,7 +37,7 @@ def render():
         try:
             has_root_query_id = _query_history_has_root_query_id(session)
             root_expr = "COALESCE(q.root_query_id, q.query_id)" if has_root_query_id else "q.query_id"
-            df_sp = normalize_df(session.sql(f"""
+            df_sp = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=sp_days, include_recent=True)},
                 calls AS (
                     SELECT query_id AS root_query_id,
@@ -86,7 +87,7 @@ def render():
                          c.call_text
                 ORDER BY metered_credits DESC, total_elapsed_sec DESC
                 LIMIT 200
-            """).to_pandas())
+            """, ttl_key=f"stored_proc_usage_{sp_days}_{has_root_query_id}", tier="standard")
             st.session_state["spt_df_sp_tracker"] = df_sp
             st.session_state["spt_has_root_query_id"] = has_root_query_id
         except Exception as e:
@@ -117,16 +118,17 @@ def render():
                 if has_root_query_id is None:
                     has_root_query_id = _query_history_has_root_query_id(session)
                 root_expr = "COALESCE(q.root_query_id, q.query_id)" if has_root_query_id else "q.query_id"
-                proc_safe = safe_sql(selected_proc)
-                df_child = normalize_df(session.sql(f"""
+                proc_exact = sql_literal(selected_proc)
+                proc_like = sql_literal('%' + selected_proc + '%')
+                df_child = run_query(f"""
                 WITH roots AS (
                     SELECT query_id AS root_query_id
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE query_type = 'CALL'
                       AND start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
                       {get_wh_filter_clause("warehouse_name")}
-                      AND (REGEXP_SUBSTR(query_text, 'CALL\\\\s+([^\\\\(]+)', 1, 1, 'i', 1) = '{proc_safe}'
-                           OR query_text ILIKE '%{proc_safe}%')
+                      AND (REGEXP_SUBSTR(query_text, 'CALL\\\\s+([^\\\\(]+)', 1, 1, 'i', 1) = {proc_exact}
+                           OR query_text ILIKE {proc_like})
                 )
                 SELECT q.query_id, q.user_name, q.warehouse_name, q.warehouse_size, q.execution_status,
                        q.query_type, q.start_time,
@@ -139,7 +141,7 @@ def render():
                   {get_wh_filter_clause("q.warehouse_name")}
                 ORDER BY q.start_time
                 LIMIT 500
-                """).to_pandas())
+                """, ttl_key=f"stored_proc_child_{sp_days}_{selected_proc}", tier="standard")
                 render_query_drilldown(df_child, key="sp_child_queries", title="Stored procedure child-query drill-down")
             except Exception as e:
                 st.info(f"Downstream detail unavailable: {e}")

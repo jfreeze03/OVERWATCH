@@ -10,9 +10,9 @@ from utils import (
     get_global_filter_clause,
     get_session,
     get_wh_filter_clause,
-    normalize_df,
     render_drillable_bar_chart,
-    safe_sql,
+    run_query,
+    sql_literal,
     upsert_actions,
 )
 
@@ -32,7 +32,7 @@ def _load_overview(session, days: int) -> dict:
         ),
     ])
 
-    overview = normalize_df(session.sql(f"""
+    overview = run_query(f"""
         SELECT
             COUNT(*) AS total_queries,
             COUNT(DISTINCT q.user_name) AS total_users,
@@ -45,9 +45,9 @@ def _load_overview(session, days: int) -> dict:
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {q_filters}
-    """).to_pandas())
+    """, ttl_key=f"uo_overview_{days}", tier="historical")
 
-    metering = normalize_df(session.sql(f"""
+    metering = run_query(f"""
         SELECT
             ROUND(SUM(credits_used), 4) AS total_credits,
             ROUND(SUM(credits_used_compute), 4) AS compute_credits,
@@ -55,9 +55,9 @@ def _load_overview(session, days: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           {wh_filter}
-    """).to_pandas())
+    """, ttl_key=f"uo_metering_{days}", tier="historical")
 
-    storage = normalize_df(session.sql(f"""
+    storage = run_query(f"""
         WITH latest AS (
             SELECT database_name, average_database_bytes, average_failsafe_bytes, usage_date,
                    ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
@@ -70,9 +70,9 @@ def _load_overview(session, days: int) -> dict:
             ROUND(SUM(average_failsafe_bytes) / POWER(1024, 4), 3) AS failsafe_storage_tb
         FROM latest
         WHERE rn = 1
-    """).to_pandas())
+    """, ttl_key=f"uo_storage_{days}", tier="historical")
 
-    top_wh = normalize_df(session.sql(f"""
+    top_wh = run_query(f"""
         SELECT
             warehouse_name,
             ROUND(SUM(credits_used), 4) AS total_credits,
@@ -84,9 +84,9 @@ def _load_overview(session, days: int) -> dict:
         GROUP BY warehouse_name
         ORDER BY total_credits DESC
         LIMIT 20
-    """).to_pandas())
+    """, ttl_key=f"uo_top_wh_{days}", tier="historical")
 
-    query_types = normalize_df(session.sql(f"""
+    query_types = run_query(f"""
         SELECT
             COALESCE(q.query_type, 'UNKNOWN') AS query_type,
             COUNT(*) AS query_count,
@@ -100,9 +100,9 @@ def _load_overview(session, days: int) -> dict:
         GROUP BY query_type
         ORDER BY query_count DESC
         LIMIT 25
-    """).to_pandas())
+    """, ttl_key=f"uo_query_types_{days}", tier="historical")
 
-    users_by_db = normalize_df(session.sql(f"""
+    users_by_db = run_query(f"""
         SELECT
             COALESCE(q.database_name, 'UNKNOWN') AS database_name,
             COUNT(DISTINCT q.user_name) AS users,
@@ -114,7 +114,7 @@ def _load_overview(session, days: int) -> dict:
         GROUP BY database_name
         ORDER BY users DESC, query_count DESC
         LIMIT 20
-    """).to_pandas())
+    """, ttl_key=f"uo_users_by_db_{days}", tier="historical")
 
     return {
         "overview": overview,
@@ -153,9 +153,9 @@ def _queue_top_warehouses(session, df):
             "Finding": f"{wh} is one of the top credit drivers in the selected usage window.",
             "Action": "Review workload mix, auto-suspend policy, and high-cost users before the next billing cycle.",
             "Estimated Monthly Savings": round(credits * st.session_state.get("credit_price", 3.0) * 0.15, 2),
-            "Generated SQL Fix": f"-- Inspect warehouse settings\nSHOW WAREHOUSES LIKE '{safe_sql(wh)}';",
+            "Generated SQL Fix": f"-- Inspect warehouse settings\nSHOW WAREHOUSES LIKE {sql_literal(wh)};",
             "Proof Query": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY "
-                           f"WHERE warehouse_name = '{safe_sql(wh)}' ORDER BY start_time DESC;",
+                           f"WHERE warehouse_name = {sql_literal(wh)} ORDER BY start_time DESC;",
             "Company": company,
         })
     created = upsert_actions(session, actions)

@@ -13,9 +13,9 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from utils import (
-    get_session, normalize_df, safe_sql, format_credits,
+    get_session, format_credits,
     credits_to_dollars, estimate_live_credits, download_csv,
-    render_query_drilldown, get_wh_filter_clause,
+    render_query_drilldown, get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
 )
 from config import THRESHOLDS
 
@@ -62,8 +62,8 @@ def render():
         @st.fragment(run_every=_run_every)
         def _live_panel():
             _session  = get_session()
-            wh_safe   = safe_sql(wh_filter)
-            wh_clause = f"AND warehouse_name ILIKE '%{wh_safe}%'" if wh_safe else ""
+            wh_filter_clean = (wh_filter or "").strip()
+            wh_clause = f"AND warehouse_name ILIKE {sql_literal('%' + wh_filter_clean + '%')}" if wh_filter_clean else ""
             company_wh_clause = get_wh_filter_clause("warehouse_name")
             st_clause = f"AND execution_status = '{status_filter}'" if status_filter != "ALL" else ""
 
@@ -87,12 +87,12 @@ def render():
             """
             df_live = pd.DataFrame()
             try:
-                df_live = normalize_df(_session.sql(live_sql).to_pandas())
+                df_live = run_query_or_raise(live_sql)
             except Exception:
                 # IS unavailable (e.g. serverless context) — fall back to AU
                 st.info("ℹ️ INFORMATION_SCHEMA unavailable — using ACCOUNT_USAGE fallback.")
                 try:
-                    df_live = normalize_df(_session.sql(f"""
+                    df_live = run_query_or_raise(f"""
                         SELECT query_id, SUBSTR(query_text,1,300) AS query_text,
                                user_name, warehouse_name, warehouse_size,
                                execution_status, start_time,
@@ -104,7 +104,7 @@ def render():
                           {wh_clause}
                           {company_wh_clause}
                         ORDER BY start_time DESC LIMIT 100
-                    """).to_pandas())
+                    """)
                 except Exception as fallback_err:
                     st.warning(f"Live query data unavailable: {fallback_err}")
 
@@ -123,9 +123,14 @@ def render():
                 st.divider()
                 st.subheader("⛔ Kill Query")
                 kill_qid = st.text_input("Query ID to cancel", key="lm_kill_id")
-                if kill_qid and st.button("Cancel Query", type="primary", key="lm_kill_btn"):
+                confirm_cancel = st.text_input(
+                    "Type CANCEL to confirm",
+                    key="lm_kill_confirm",
+                    placeholder="CANCEL",
+                )
+                if kill_qid and confirm_cancel == "CANCEL" and st.button("Cancel Query", type="primary", key="lm_kill_btn"):
                     try:
-                        _session.sql(f"SELECT SYSTEM$CANCEL_QUERY('{safe_sql(kill_qid)}')").collect()
+                        _session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_qid)})").collect()
                         st.success(f"✅ Cancel sent for `{kill_qid}`")
                     except Exception as e:
                         st.error(f"Cancel failed: {e}")
@@ -136,7 +141,7 @@ def render():
             st.divider()
             st.subheader("🟡 Recent (last 4h, ACCOUNT_USAGE)")
             try:
-                df_recent = normalize_df(_session.sql(f"""
+                df_recent = run_query(f"""
                     SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
                            start_time, total_elapsed_time/1000 AS elapsed_sec,
                            bytes_scanned/POWER(1024,3) AS gb_scanned,
@@ -146,7 +151,7 @@ def render():
                     WHERE start_time >= DATEADD('hours',-4,CURRENT_TIMESTAMP())
                       {wh_clause} {company_wh_clause} {st_clause}
                     ORDER BY start_time DESC LIMIT 500
-                """).to_pandas())
+                """, ttl_key=f"live_recent_{wh_filter}_{status_filter}", tier="live")
                 if not df_recent.empty:
                     st.dataframe(df_recent, use_container_width=True, height=350)
                     download_csv(df_recent, "recent_queries.csv")
@@ -161,7 +166,7 @@ def render():
         tl_hours = st.slider("Lookback (hours)", 1, 24, 6, key="lm_tl_hours")
         if st.button("Load Timeline", key="lm_tl_load"):
             try:
-                df_tl = normalize_df(session.sql(f"""
+                df_tl = run_query(f"""
                     SELECT DATE_TRUNC('hour', start_time) AS time_bucket,
                            execution_status,
                            COUNT(*)                       AS query_count,
@@ -171,7 +176,7 @@ def render():
                       {get_wh_filter_clause("warehouse_name")}
                     GROUP BY time_bucket, execution_status
                     ORDER BY time_bucket
-                """).to_pandas())
+                """, ttl_key=f"live_timeline_{tl_hours}", tier="standard")
                 st.session_state["lm_df_tl"] = df_tl
             except Exception as e:
                 st.error(f"Timeline load failed: {e}")
@@ -196,14 +201,14 @@ def render():
         with s1:
             if st.button("Load Sessions", key="lm_sess_load"):
                 try:
-                    df_sess = normalize_df(session.sql("""
+                    df_sess = run_query("""
                         SELECT session_id, user_name, created_on,
                                DATEDIFF('minute', created_on, CURRENT_TIMESTAMP()) AS session_min,
                                authentication_method
                         FROM SNOWFLAKE.ACCOUNT_USAGE.SESSIONS
                         WHERE created_on >= DATEADD('day', -1, CURRENT_TIMESTAMP())
                         ORDER BY session_min DESC LIMIT 200
-                    """).to_pandas())
+                    """, ttl_key="live_sessions", tier="standard")
                     st.session_state["lm_df_sessions"] = df_sess
                 except Exception as e:
                     st.warning(f"Sessions view unavailable: {e}")
@@ -211,7 +216,7 @@ def render():
         with s2:
             if st.button("Load Lock Waits", key="lm_lock_load"):
                 try:
-                    df_lock = normalize_df(session.sql(f"""
+                    df_lock = run_query(f"""
                         SELECT query_id, user_name, warehouse_name, warehouse_size,
                                start_time,
                                transaction_blocked_time / 1000  AS blocked_sec,
@@ -221,7 +226,7 @@ def render():
                           AND transaction_blocked_time > 5000
                           {get_wh_filter_clause("warehouse_name")}
                         ORDER BY transaction_blocked_time DESC LIMIT 100
-                    """).to_pandas())
+                    """, ttl_key="live_lock_waits", tier="standard")
                     st.session_state["lm_df_lock"] = df_lock
                 except Exception as e:
                     st.warning(f"Lock wait history unavailable: {e}")

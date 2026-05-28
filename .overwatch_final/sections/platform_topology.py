@@ -8,8 +8,8 @@ from utils import (
     get_global_filter_clause,
     get_session,
     get_wh_filter_clause,
-    normalize_df,
     render_drillable_bar_chart,
+    run_query,
 )
 
 
@@ -26,7 +26,7 @@ def _load_topology(session, days: int) -> dict:
         ),
     ])
 
-    warehouse_user = normalize_df(session.sql(f"""
+    warehouse_user = run_query(f"""
         SELECT
             q.warehouse_name,
             q.user_name,
@@ -42,9 +42,9 @@ def _load_topology(session, days: int) -> dict:
         GROUP BY q.warehouse_name, q.user_name, COALESCE(q.role_name, 'UNKNOWN')
         ORDER BY query_count DESC
         LIMIT 500
-    """).to_pandas())
+    """, ttl_key=f"topology_wh_user_{days}", tier="standard")
 
-    db_schema = normalize_df(session.sql(f"""
+    db_schema = run_query(f"""
         SELECT
             COALESCE(q.database_name, 'UNKNOWN') AS database_name,
             COALESCE(q.schema_name, 'UNKNOWN') AS schema_name,
@@ -59,9 +59,9 @@ def _load_topology(session, days: int) -> dict:
         GROUP BY database_name, schema_name
         ORDER BY query_count DESC
         LIMIT 500
-    """).to_pandas())
+    """, ttl_key=f"topology_db_schema_{days}", tier="standard")
 
-    role_users = normalize_df(session.sql("""
+    role_users = run_query("""
         SELECT
             role,
             grantee_name AS user_name,
@@ -72,9 +72,9 @@ def _load_topology(session, days: int) -> dict:
         WHERE deleted_on IS NULL
         ORDER BY role, user_name
         LIMIT 1000
-    """).to_pandas())
+    """, ttl_key="topology_role_users", tier="standard")
 
-    app_flow = normalize_df(session.sql(f"""
+    app_flow = run_query(f"""
         SELECT
             COALESCE(q.query_tag, 'UNTAGGED') AS client_application,
             q.warehouse_name,
@@ -90,7 +90,7 @@ def _load_topology(session, days: int) -> dict:
         GROUP BY client_application, q.warehouse_name, database_name
         ORDER BY query_count DESC
         LIMIT 500
-    """).to_pandas())
+    """, ttl_key=f"topology_app_flow_{days}", tier="standard")
 
     return {
         "warehouse_user": warehouse_user,

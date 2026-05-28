@@ -10,8 +10,13 @@
 import json
 import streamlit as st
 from config import ALERT_DB, ALERT_SCHEMA
+from .query import safe_identifier, sql_literal
 
-BOOKMARK_TABLE = f"{ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_BOOKMARKS"
+BOOKMARK_TABLE = (
+    f"{safe_identifier(ALERT_DB)}."
+    f"{safe_identifier(ALERT_SCHEMA)}."
+    f"{safe_identifier('OVERWATCH_BOOKMARKS')}"
+)
 
 # Session state keys we capture and restore
 _CAPTURED_KEYS = [
@@ -26,13 +31,16 @@ def build_bookmark_ddl(
     schema: str = ALERT_SCHEMA,
 ) -> str:
     """Return DDL for the bookmarks table. Run once as SYSADMIN."""
+    db = safe_identifier(db)
+    schema = safe_identifier(schema)
+    table = f"{db}.{schema}.{safe_identifier('OVERWATCH_BOOKMARKS')}"
     return f"""-- ─────────────────────────────────────────────────────────────────
 -- OVERWATCH Saved Views (Bookmarks)
 -- Stores named navigation states per user.
 -- Run once as SYSADMIN or role with CREATE TABLE on {db}.{schema}.
 -- ─────────────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS {db}.{schema}.OVERWATCH_BOOKMARKS (
+CREATE TABLE IF NOT EXISTS {table} (
     BOOKMARK_ID   NUMBER AUTOINCREMENT PRIMARY KEY,
     SF_USER       VARCHAR(200) DEFAULT CURRENT_USER(),
     IS_SHARED     BOOLEAN DEFAULT FALSE,  -- TRUE = visible to all users
@@ -63,16 +71,16 @@ def save_bookmark(session, name: str, shared: bool = False) -> bool:
         state   = _capture_state()
         section = state.get("nav_section", "")
 
-        def _q(v): return str(v or "").replace("'", "''")[:200]
-
-        state_json = json.dumps(state).replace("'", "''")
+        bookmark_name = sql_literal(name, max_len=200)
+        section_name = sql_literal(section, max_len=200)
+        state_json = sql_literal(json.dumps(state), max_len=8000)
         session.sql(f"""
             INSERT INTO {BOOKMARK_TABLE}
                 (BOOKMARK_NAME, SECTION, STATE_JSON, IS_SHARED)
             VALUES (
-                '{_q(name)}',
-                '{_q(section)}',
-                PARSE_JSON('{state_json}'),
+                {bookmark_name},
+                {section_name},
+                PARSE_JSON({state_json}),
                 {str(shared).upper()}
             )
         """).collect()
@@ -90,14 +98,14 @@ def load_bookmarks(session, include_shared: bool = True) -> list[dict]:
     """
     try:
         user = session.sql("SELECT CURRENT_USER()").collect()[0][0] or ""
-        user_esc = str(user).replace("'", "''")
+        user_esc = sql_literal(user, max_len=200)
         shared_clause = "OR IS_SHARED = TRUE" if include_shared else ""
         rows = session.sql(f"""
             SELECT BOOKMARK_ID, BOOKMARK_NAME, SECTION,
                    IS_SHARED, CREATED_AT, USE_COUNT,
                    STATE_JSON::VARCHAR AS state_str
             FROM {BOOKMARK_TABLE}
-            WHERE (SF_USER = '{user_esc}' {shared_clause})
+            WHERE (SF_USER = {user_esc} {shared_clause})
             ORDER BY LAST_USED_AT DESC NULLS LAST, CREATED_AT DESC
             LIMIT 50
         """).collect()

@@ -8,7 +8,7 @@ from utils import (
     get_db_filter_clause,
     get_session,
     get_wh_filter_clause,
-    normalize_df,
+    run_query,
     upsert_actions,
 )
 
@@ -18,7 +18,7 @@ def _load_service_health(session, hours: int) -> dict:
     db_task = get_db_filter_clause("database_name")
     db_copy = get_db_filter_clause("table_catalog_name")
 
-    query_health = normalize_df(session.sql(f"""
+    query_health = run_query(f"""
         SELECT
             COUNT(*) AS total_queries,
             SUM(IFF(q.error_code IS NOT NULL, 1, 0)) AS failed_queries,
@@ -30,9 +30,9 @@ def _load_service_health(session, hours: int) -> dict:
         WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {wh_q}
-    """).to_pandas())
+    """, ttl_key=f"svc_query_{hours}", tier="recent")
 
-    warehouse_health = normalize_df(session.sql(f"""
+    warehouse_health = run_query(f"""
         SELECT
             q.warehouse_name,
             MAX(q.warehouse_size) AS warehouse_size,
@@ -48,9 +48,9 @@ def _load_service_health(session, hours: int) -> dict:
         GROUP BY q.warehouse_name
         ORDER BY queued_sec DESC, remote_spill_gb DESC, failed_queries DESC
         LIMIT 100
-    """).to_pandas())
+    """, ttl_key=f"svc_warehouse_{hours}", tier="recent")
 
-    login_health = normalize_df(session.sql(f"""
+    login_health = run_query(f"""
         SELECT
             COUNT(*) AS login_events,
             SUM(IFF(is_success = 'NO', 1, 0)) AS failed_logins,
@@ -58,9 +58,9 @@ def _load_service_health(session, hours: int) -> dict:
             COUNT(DISTINCT client_ip) AS distinct_ips
         FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
         WHERE event_timestamp >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
-    """).to_pandas())
+    """, ttl_key=f"svc_login_{hours}", tier="recent")
 
-    task_health = normalize_df(session.sql(f"""
+    task_health = run_query(f"""
         SELECT
             COUNT(*) AS task_runs,
             SUM(IFF(state = 'FAILED', 1, 0)) AS failed_tasks,
@@ -69,9 +69,9 @@ def _load_service_health(session, hours: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
         WHERE scheduled_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           {db_task}
-    """).to_pandas())
+    """, ttl_key=f"svc_task_{hours}", tier="recent")
 
-    pipe_health = normalize_df(session.sql(f"""
+    pipe_health = run_query(f"""
         SELECT
             COUNT(*) AS load_events,
             SUM(IFF(status = 'LOAD_FAILED', 1, 0)) AS failed_loads,
@@ -80,7 +80,7 @@ def _load_service_health(session, hours: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY
         WHERE last_load_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           {db_copy}
-    """).to_pandas())
+    """, ttl_key=f"svc_pipe_{hours}", tier="recent")
 
     return {
         "query_health": query_health,

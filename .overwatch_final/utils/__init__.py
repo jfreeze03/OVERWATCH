@@ -1,6 +1,9 @@
 # utils/__init__.py — re-exports all shared utilities
 from .session import get_session
-from .query import run_query, run_query_cached, force_refresh, safe_sql
+from .query import (
+    run_query, run_query_cached, run_query_or_raise, force_refresh,
+    safe_sql, safe_identifier, safe_schedule, sql_literal,
+)
 from .data import normalize_df, safe_strip_tz
 from .cost import (
     format_credits, credits_to_dollars, estimate_live_credits,
@@ -38,7 +41,8 @@ from .setup_bundle import build_overwatch_setup_bundle, build_snowflake_value_dd
 
 __all__ = [
     "get_session",
-    "run_query", "run_query_cached", "force_refresh", "safe_sql",
+    "run_query", "run_query_cached", "run_query_or_raise", "force_refresh",
+    "safe_sql", "safe_identifier", "safe_schedule", "sql_literal",
     "normalize_df", "safe_strip_tz",
     "format_credits", "credits_to_dollars", "estimate_live_credits",
     "build_metered_credit_cte", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",

@@ -1,7 +1,7 @@
 # sections/storage_monitor.py — Storage overview, data freshness, iceberg, egress
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, format_credits, credits_to_dollars, download_csv
+from utils import get_session, format_credits, credits_to_dollars, download_csv, run_query
 
 
 def render():
@@ -16,7 +16,7 @@ def render():
 
     if st.button("Load Storage Data", key="stor_load"):
         try:
-            df_stor = normalize_df(session.sql(f"""
+            df_stor = run_query(f"""
             WITH database_storage AS (
                 SELECT usage_date,
                        SUM(average_database_bytes) AS storage_bytes,
@@ -40,7 +40,7 @@ def render():
             FROM database_storage d
             FULL OUTER JOIN stage_storage s ON d.usage_date = s.usage_date
             ORDER BY usage_date
-            """).to_pandas())
+            """, ttl_key=f"storage_trend_{stor_days}", tier="standard")
             st.session_state["stor_df_stor"] = df_stor
         except Exception as e:
             st.error(f"Error: {e}")
@@ -65,7 +65,7 @@ def render():
         st.subheader("Per-Database Storage")
         if st.button("Load DB Detail", key="stor_db_detail"):
             try:
-                df_db = normalize_df(session.sql(f"""
+                df_db = run_query(f"""
                     SELECT database_name,
                            usage_date,
                            average_database_bytes/POWER(1024,3) AS database_gb,
@@ -75,7 +75,7 @@ def render():
                                         FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY)
                     ORDER BY database_gb DESC
                     LIMIT 50
-                """).to_pandas())
+                """, ttl_key="storage_db_detail", tier="standard")
                 st.dataframe(df_db, use_container_width=True)
                 download_csv(df_db, "db_storage_detail.csv")
             except Exception as e:
@@ -88,7 +88,7 @@ def render():
     st.subheader("🗃️ Table Storage Metrics (Top 50 by size)")
     if st.button("Load Table Metrics", key="tbl_stor_load"):
         try:
-            df_tbl = normalize_df(session.sql("""
+            df_tbl = run_query("""
                 SELECT table_catalog, table_schema, table_name,
                        active_bytes/POWER(1024,3)          AS active_gb,
                        time_travel_bytes/POWER(1024,3)     AS time_travel_gb,
@@ -98,7 +98,7 @@ def render():
                 WHERE deleted IS NULL OR deleted = FALSE
                 ORDER BY active_gb DESC
                 LIMIT 50
-            """).to_pandas())
+            """, ttl_key="storage_table_metrics", tier="standard")
             st.dataframe(df_tbl, use_container_width=True)
             download_csv(df_tbl, "table_storage.csv")
         except Exception as e:

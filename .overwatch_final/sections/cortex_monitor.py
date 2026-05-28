@@ -1,7 +1,7 @@
 # sections/cortex_monitor.py — AI & Cortex Code usage: users, trends, anomalies, predictive alerts
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, safe_strip_tz, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart
+from utils import get_session, safe_strip_tz, format_credits, credits_to_dollars, download_csv, render_drillable_bar_chart, run_query
 from config import DEFAULTS, THRESHOLDS
 
 
@@ -28,7 +28,7 @@ def render():
         if st.button("Load User Data", key="cc_users_load"):
             with st.spinner("Loading Cortex Code user data..."):
                 try:
-                    df_cc = normalize_df(session.sql(f"""
+                    df_cc = run_query(f"""
                         WITH combined AS (
                             SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS, 'Snowsight' AS SOURCE
                             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
@@ -49,7 +49,7 @@ def render():
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
                         GROUP BY u.NAME, u.EMAIL, c.SOURCE
                         ORDER BY TOTAL_CREDITS DESC
-                    """).to_pandas())
+                    """, ttl_key=f"cortex_users_{cc_days}", tier="standard")
                     st.session_state["cm_cc_users_data"] = df_cc
                 except Exception as e:
                     st.warning(f"Cortex Code data unavailable: {e}")
@@ -95,7 +95,7 @@ def render():
             st.subheader("Cost-per-Request Spike Detection (Last 7d vs Prior)")
             if st.button("Detect CPR Spikes", key="cc_spike_load"):
                 try:
-                    df_spike = normalize_df(session.sql(f"""
+                    df_spike = run_query(f"""
                         WITH combined AS (
                             SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS
                             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
@@ -125,7 +125,7 @@ def render():
                         FROM recent r JOIN prior p ON r.USER_ID = p.USER_ID
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON r.USER_ID = u.USER_ID
                         ORDER BY PCT_CHANGE DESC
-                    """).to_pandas())
+                    """, ttl_key=f"cortex_cpr_spikes_{cc_days}", tier="standard")
                     if not df_spike.empty:
                         spikes = df_spike[df_spike["PCT_CHANGE"] > 25] if "PCT_CHANGE" in df_spike.columns else df_spike
                         if not spikes.empty:
@@ -146,7 +146,7 @@ def render():
         if st.button("Load Trends", key="cc_trends_load"):
             with st.spinner("Loading trends..."):
                 try:
-                    df_trend = normalize_df(session.sql(f"""
+                    df_trend = run_query(f"""
                         WITH combined AS (
                             SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS, 'Snowsight' AS SOURCE
                             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
@@ -164,7 +164,7 @@ def render():
                         FROM combined
                         GROUP BY USAGE_DATE, SOURCE
                         ORDER BY USAGE_DATE
-                    """).to_pandas())
+                    """, ttl_key=f"cortex_trends_{cc_trend_days}", tier="standard")
                     st.session_state["cm_cc_trends_data"] = df_trend
                 except Exception as e:
                     st.warning(f"Trends unavailable: {e}")
@@ -215,7 +215,7 @@ def render():
         if st.button("Detect Anomalies", key="cc_anom_load"):
             with st.spinner("Running anomaly detection..."):
                 try:
-                    df_anom = normalize_df(session.sql(f"""
+                    df_anom = run_query(f"""
                         WITH combined AS (
                             SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS
                             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
@@ -263,7 +263,7 @@ def render():
                         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON s.USER_ID = u.USER_ID
                         WHERE s.AVG_7D IS NOT NULL
                         ORDER BY s.USAGE_DATE DESC, s.CREDITS DESC
-                    """).to_pandas())
+                    """, ttl_key=f"cortex_anomalies_{cc_anom_days}", tier="standard")
                     st.session_state["cm_cc_anom_data"] = df_anom
                 except Exception as e:
                     st.warning(f"Anomaly detection unavailable: {e}")
@@ -303,7 +303,7 @@ def render():
 
         if st.button("Run Predictive Analysis", key="cc_pred_load"):
             try:
-                df_pred = normalize_df(session.sql("""
+                df_pred = run_query("""
                     WITH combined AS (
                         SELECT USAGE_TIME::DATE AS d, SUM(TOKEN_CREDITS) AS credits
                         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
@@ -317,7 +317,7 @@ def render():
                     )
                     SELECT d AS USAGE_DATE, SUM(credits) AS DAILY_CREDITS
                     FROM combined GROUP BY d ORDER BY d
-                """).to_pandas())
+                """, ttl_key="cortex_predictive", tier="standard")
                 st.session_state["cm_cc_pred_data"] = df_pred
             except Exception as e:
                 st.warning(f"Projection data unavailable: {e}")
@@ -357,7 +357,7 @@ def render():
             st.subheader("🔄 Materialized View Refresh History")
             if st.button("Load MV Refresh History", key="mv_refresh_load"):
                 try:
-                    df_mv = normalize_df(session.sql("""
+                    df_mv = run_query("""
                         SELECT database_name, schema_name, name AS mv_name,
                                credits_used, bytes_written, rows_inserted,
                                refresh_start_time, refresh_end_time,
@@ -365,7 +365,7 @@ def render():
                         FROM SNOWFLAKE.ACCOUNT_USAGE.MATERIALIZED_VIEW_REFRESH_HISTORY
                         WHERE refresh_start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
                         ORDER BY credits_used DESC LIMIT 100
-                    """).to_pandas())
+                    """, ttl_key="cortex_mv_refresh", tier="standard")
                     if not df_mv.empty:
                         c1, c2 = st.columns(2)
                         c1.metric("MV Refreshes (7d)", len(df_mv))

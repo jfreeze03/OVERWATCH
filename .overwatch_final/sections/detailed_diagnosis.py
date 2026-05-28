@@ -8,9 +8,9 @@ from utils import (
     get_global_filter_clause,
     get_session,
     get_wh_filter_clause,
-    normalize_df,
     render_query_drilldown,
-    safe_sql,
+    run_query,
+    sql_literal,
     upsert_actions,
 )
 
@@ -38,7 +38,7 @@ def _load_diagnosis(session, days: int, mode: str, limit: int):
             db_col="q.database_name",
         ),
     ])
-    return normalize_df(session.sql(f"""
+    return run_query(f"""
         SELECT
             q.query_id,
             q.user_name,
@@ -73,7 +73,7 @@ def _load_diagnosis(session, days: int, mode: str, limit: int):
           {filters}
         ORDER BY q.{order_col} DESC
         LIMIT {limit}
-    """).to_pandas())
+    """, ttl_key=f"dd_{mode}_{days}_{limit}", tier="historical")
 
 
 def _queue_diagnosis(session, df, mode: str):
@@ -103,7 +103,7 @@ def _queue_diagnosis(session, df, mode: str):
             "Estimated Monthly Savings": 0,
             "Generated SQL Fix": "-- Use Query Profile and GET_QUERY_OPERATOR_STATS for the selected query.",
             "Proof Query": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY "
-                           f"WHERE query_id = '{safe_sql(qid)}';",
+                           f"WHERE query_id = {sql_literal(qid)};",
             "Company": company,
         })
     created = upsert_actions(session, actions)

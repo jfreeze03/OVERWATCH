@@ -11,15 +11,15 @@ from utils import (
     get_active_company,
     get_session,
     get_wh_filter_clause,
-    normalize_df,
-    safe_sql,
+    run_query,
+    sql_literal,
     upsert_actions,
 )
 
 
 def _load_daily_credits(session, start_date: date, end_date: date):
     wh_filter = get_wh_filter_clause("warehouse_name")
-    return normalize_df(session.sql(f"""
+    return run_query(f"""
         SELECT
             TO_DATE(start_time) AS usage_date,
             ROUND(SUM(credits_used), 4) AS credits_used,
@@ -27,12 +27,12 @@ def _load_daily_credits(session, start_date: date, end_date: date):
             ROUND(SUM(credits_used_cloud_services), 4) AS cloud_service_credits,
             COUNT(DISTINCT warehouse_name) AS active_warehouses
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-        WHERE start_time >= TO_TIMESTAMP_NTZ('{safe_sql(start_date.isoformat())} 00:00:00')
-          AND start_time < DATEADD('day', 1, TO_TIMESTAMP_NTZ('{safe_sql(end_date.isoformat())} 00:00:00'))
+        WHERE start_time >= TO_TIMESTAMP_NTZ({sql_literal(start_date.isoformat() + " 00:00:00")})
+          AND start_time < DATEADD('day', 1, TO_TIMESTAMP_NTZ({sql_literal(end_date.isoformat() + " 00:00:00")}))
           {wh_filter}
         GROUP BY TO_DATE(start_time)
         ORDER BY usage_date
-    """).to_pandas())
+    """, ttl_key=f"credit_contract_daily_{start_date}_{end_date}", tier="standard")
 
 
 def _queue_contract_risk(session, projected_credits: float, purchased_credits: float, runout: str):

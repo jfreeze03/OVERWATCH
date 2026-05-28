@@ -1,7 +1,7 @@
 # sections/query_search.py — Query search & history browser
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, safe_sql, download_csv, render_query_drilldown, get_wh_filter_clause
+from utils import get_session, sql_literal, download_csv, render_query_drilldown, get_wh_filter_clause, run_query
 
 
 def render():
@@ -23,13 +23,11 @@ def render():
     )
 
     if st.button("🔍 Search", key="qs_run") and search_text:
-        kw_safe   = safe_sql(search_text)
-        usr_safe  = safe_sql(user_filter)
-        user_cl   = f"AND user_name ILIKE '%{usr_safe}%'" if usr_safe else ""
-        status_cl = f"AND execution_status = '{status_filter}'" if status_filter != "ALL" else ""
+        user_cl   = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
+        status_cl = f"AND execution_status = {sql_literal(status_filter)}" if status_filter != "ALL" else ""
 
         try:
-            df_qs = normalize_df(session.sql(f"""
+            df_qs = run_query(f"""
                 SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
                        start_time, total_elapsed_time/1000 AS elapsed_sec,
                        bytes_scanned/POWER(1024,3) AS gb_scanned,
@@ -38,12 +36,12 @@ def render():
                        SUBSTR(query_text,1,500) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                 WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
-                  AND query_text ILIKE '%{kw_safe}%'
+                  AND query_text ILIKE '%' || {sql_literal(search_text)} || '%'
                   {get_wh_filter_clause("warehouse_name")}
                   {user_cl} {status_cl}
                 ORDER BY start_time DESC
                 LIMIT 500
-            """).to_pandas())
+            """, ttl_key=f"query_search_{search_text}_{user_filter}_{status_filter}_{days_back}", tier="standard")
             st.session_state["qs_df_qs"] = df_qs
         except Exception as e:
             st.error(f"Search error: {e}")

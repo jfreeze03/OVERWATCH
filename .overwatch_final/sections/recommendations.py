@@ -6,6 +6,7 @@ from config import THRESHOLDS, ALERT_DB, ALERT_SCHEMA, ALERT_TABLE, ETL_AUDIT_DB
 from utils import (
     build_action_queue_ddl,
     build_alert_task_sql,
+    build_annotation_ddl,
     credits_to_dollars,
     download_csv,
     format_credits,
@@ -13,7 +14,9 @@ from utils import (
     get_wh_filter_clause,
     load_action_queue,
     make_action_id,
-    normalize_df,
+    run_query,
+    safe_identifier,
+    sql_literal,
     send_teams_alert,
     update_action_status,
     upsert_actions,
@@ -112,18 +115,22 @@ def _render_queue(session):
         savings_credits = monthly_savings / 30 / max(st.session_state.get("credit_price", 3.00), 0.01)
         if st.button("Create Snowflake Value entry", key="queue_log_value"):
             try:
-                value_table = f"{ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.OVERWATCH_ROI_LOG"
-                desc = str(row.get("RECOMMENDED_ACTION") or row.get("FINDING") or "").replace("'", "''")[:1000]
-                entity = str(row.get("ENTITY_NAME") or "").replace("'", "''")[:500]
-                notes = f"Created from action queue item {selected}".replace("'", "''")
+                value_table = (
+                    f"{safe_identifier(ETL_AUDIT_DB)}."
+                    f"{safe_identifier(ETL_AUDIT_SCHEMA)}."
+                    f"{safe_identifier('OVERWATCH_ROI_LOG')}"
+                )
+                desc = sql_literal(row.get("RECOMMENDED_ACTION") or row.get("FINDING") or "", 1000)
+                entity = sql_literal(row.get("ENTITY_NAME") or "", 500)
+                notes = sql_literal(f"Created from action queue item {selected}", 1000)
                 session.sql(f"""
                     INSERT INTO {value_table}
                         (CATEGORY, DESCRIPTION, ENTITY, BASELINE_CREDITS,
                          CURRENT_CREDITS, SAVINGS_CREDITS, SAVINGS_MONTHLY, VERIFIED, NOTES)
                     VALUES (
-                        'Action Queue', '{desc}', '{entity}',
+                        'Action Queue', {desc}, {entity},
                         {savings_credits}, 0, {savings_credits},
-                        {monthly_savings}, TRUE, '{notes}'
+                        {monthly_savings}, TRUE, {notes}
                     )
                 """).collect()
                 st.success(f"Logged ${monthly_savings:,.2f}/month to Snowflake Value.")
@@ -163,12 +170,134 @@ def _alert_actions(df_alerts: pd.DataFrame) -> list[dict]:
     return actions
 
 
+def _render_annotations(session):
+    table_name = (
+        f"{safe_identifier(ALERT_DB)}."
+        f"{safe_identifier(ALERT_SCHEMA)}."
+        f"{safe_identifier('OVERWATCH_ANNOTATIONS')}"
+    )
+
+    st.header("Annotation Windows")
+    st.caption(
+        "Mark deployments, load tests, maintenance windows, or known incidents so "
+        "automated alerts can suppress repeat noise during that window."
+    )
+
+    st.download_button(
+        "Download Annotation DDL",
+        build_annotation_ddl(),
+        file_name="overwatch_annotations_setup.sql",
+        mime="text/plain",
+        key="annotation_ddl_download",
+    )
+
+    with st.form("annotation_create_form"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            entity_type = st.selectbox(
+                "Entity type",
+                ["WAREHOUSE", "TASK", "USER", "GLOBAL"],
+                key="annotation_entity_type",
+            )
+            entity = st.text_input(
+                "Entity",
+                value="*" if entity_type == "GLOBAL" else "",
+                key="annotation_entity",
+                placeholder="Warehouse, task, user, or *",
+            )
+        with c2:
+            window_start = st.text_input(
+                "Window start",
+                key="annotation_start",
+                placeholder="2026-05-28 22:00:00",
+            )
+            window_end = st.text_input(
+                "Window end",
+                key="annotation_end",
+                placeholder="2026-05-29 02:00:00",
+            )
+        with c3:
+            annotation_type = st.selectbox(
+                "Reason",
+                ["DEPLOYMENT", "LOAD_TEST", "PLANNED_MAINTENANCE", "INCIDENT", "OTHER"],
+                key="annotation_type",
+            )
+            suppress_alerts = st.checkbox("Suppress alerts", value=True, key="annotation_suppress")
+
+        description = st.text_area("Description", key="annotation_description")
+        submitted = st.form_submit_button("Create Annotation")
+
+    if submitted:
+        if not entity.strip() or not window_start.strip() or not window_end.strip():
+            st.warning("Entity, window start, and window end are required.")
+        else:
+            try:
+                session.sql(f"""
+                    INSERT INTO {table_name}
+                        (ENTITY, ENTITY_TYPE, WINDOW_START, WINDOW_END,
+                         ANNOTATION_TYPE, DESCRIPTION, SUPPRESS_ALERTS, ACTIVE)
+                    SELECT
+                        {sql_literal(entity, 500)},
+                        {sql_literal(entity_type, 50)},
+                        TO_TIMESTAMP_NTZ({sql_literal(window_start, 50)}),
+                        TO_TIMESTAMP_NTZ({sql_literal(window_end, 50)}),
+                        {sql_literal(annotation_type, 100)},
+                        {sql_literal(description, 2000)},
+                        {str(bool(suppress_alerts)).upper()},
+                        TRUE
+                    WHERE TRY_TO_TIMESTAMP_NTZ({sql_literal(window_start, 50)}) IS NOT NULL
+                      AND TRY_TO_TIMESTAMP_NTZ({sql_literal(window_end, 50)}) IS NOT NULL
+                      AND TRY_TO_TIMESTAMP_NTZ({sql_literal(window_end, 50)})
+                            > TRY_TO_TIMESTAMP_NTZ({sql_literal(window_start, 50)})
+                """).collect()
+                st.success("Annotation created.")
+                st.session_state.pop("rec_annotations", None)
+            except Exception as e:
+                st.info(f"Annotation table unavailable or insert failed. Run the setup DDL first. ({e})")
+
+    if st.button("Load Annotations", key="annotation_load"):
+        try:
+            st.session_state["rec_annotations"] = run_query(f"""
+                SELECT ANNOTATION_ID, CREATED_BY, CREATED_AT, ENTITY, ENTITY_TYPE,
+                       WINDOW_START, WINDOW_END, ANNOTATION_TYPE, DESCRIPTION,
+                       SUPPRESS_ALERTS, ACTIVE
+                FROM {table_name}
+                ORDER BY ACTIVE DESC, WINDOW_START DESC
+                LIMIT 200
+            """, ttl_key="rec_annotations", tier="metadata")
+        except Exception as e:
+            st.info(f"Annotation table not found. Run the setup DDL first. ({e})")
+            st.session_state["rec_annotations"] = pd.DataFrame()
+
+    df_ann = st.session_state.get("rec_annotations")
+    if df_ann is not None and not df_ann.empty:
+        active_count = int(df_ann["ACTIVE"].fillna(False).astype(bool).sum()) if "ACTIVE" in df_ann.columns else 0
+        st.metric("Active Annotation Windows", active_count)
+        st.dataframe(df_ann, use_container_width=True)
+        download_csv(df_ann, "annotation_windows.csv")
+
+        ids = df_ann["ANNOTATION_ID"].dropna().astype(int).tolist() if "ANNOTATION_ID" in df_ann.columns else []
+        if ids:
+            selected_id = st.selectbox("Annotation to deactivate", ids, key="annotation_deactivate_id")
+            if st.button("Deactivate Annotation", key="annotation_deactivate"):
+                try:
+                    session.sql(f"""
+                        UPDATE {table_name}
+                        SET ACTIVE = FALSE
+                        WHERE ANNOTATION_ID = {int(selected_id)}
+                    """).collect()
+                    st.success(f"Annotation {int(selected_id)} deactivated.")
+                    st.session_state.pop("rec_annotations", None)
+                except Exception as e:
+                    st.error(f"Deactivate failed: {e}")
+
+
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
 
-    tab_recs, tab_queue, tab_anomaly, tab_alerts = st.tabs([
-        "Recommendations", "Action Queue", "Anomaly Log", "Alert Configuration"
+    tab_recs, tab_queue, tab_anomaly, tab_alerts, tab_annotations = st.tabs([
+        "Recommendations", "Action Queue", "Anomaly Log", "Alert Configuration", "Annotations"
     ])
 
     with tab_recs:
@@ -180,7 +309,7 @@ def render():
             company = _active_company()
 
             try:
-                df_idle = normalize_df(session.sql(f"""
+                df_idle = run_query(f"""
                 WITH metering AS (
                     SELECT warehouse_name, DATE_TRUNC('hour', start_time) AS h, SUM(credits_used) AS cr
                     FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
@@ -205,20 +334,22 @@ def render():
                 HAVING SUM(m.cr) > 1
                 ORDER BY idle_credits DESC
                 LIMIT 10
-                """).to_pandas())
+                """, ttl_key="rec_idle", tier="historical")
                 for _, row in df_idle.iterrows():
+                    wh_name = str(row["WAREHOUSE_NAME"])
+                    wh_ident = safe_identifier(wh_name)
                     monthly_savings = credits_to_dollars(float(row["IDLE_CREDITS"] or 0) / 7 * 30, credit_price)
                     recs.append({
                         "Source": "Idle warehouse detector",
                         "Severity": "High",
                         "Category": "Cost",
                         "Entity Type": "Warehouse",
-                        "Entity": row["WAREHOUSE_NAME"],
+                        "Entity": wh_name,
                         "Owner": "DBA",
-                        "Finding": f"{row['WAREHOUSE_NAME']} idle {int(row['IDLE_HOURS'])}h, wasting {format_credits(row['IDLE_CREDITS'])}",
+                        "Finding": f"{wh_name} idle {int(row['IDLE_HOURS'])}h, wasting {format_credits(row['IDLE_CREDITS'])}",
                         "Action": f"Reduce AUTO_SUSPEND to <= {THRESHOLDS['idle_warehouse_minutes']} minutes",
                         "Estimated Monthly Savings": round(monthly_savings, 2),
-                        "Generated SQL Fix": f"ALTER WAREHOUSE {row['WAREHOUSE_NAME']} SET AUTO_SUSPEND = {THRESHOLDS['idle_warehouse_minutes'] * 60};",
+                        "Generated SQL Fix": f"ALTER WAREHOUSE {wh_ident} SET AUTO_SUSPEND = {THRESHOLDS['idle_warehouse_minutes'] * 60};",
                         "Proof Query": "WAREHOUSE_METERING_HISTORY joined to QUERY_HISTORY by hour where query count = 0.",
                         "Company": company,
                     })
@@ -226,7 +357,7 @@ def render():
                 pass
 
             try:
-                df_spill = normalize_df(session.sql(f"""
+                df_spill = run_query(f"""
                     SELECT warehouse_name, MAX(warehouse_size) AS warehouse_size,
                            ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3), 2) AS remote_gb
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
@@ -238,19 +369,20 @@ def render():
                     HAVING remote_gb > 5
                     ORDER BY remote_gb DESC
                     LIMIT 10
-                """).to_pandas())
+                """, ttl_key="rec_spill", tier="historical")
                 for _, row in df_spill.iterrows():
+                    wh_name = str(row["WAREHOUSE_NAME"])
                     recs.append({
                         "Source": "Remote spill detector",
                         "Severity": "Medium",
                         "Category": "Performance",
                         "Entity Type": "Warehouse",
-                        "Entity": row["WAREHOUSE_NAME"],
+                        "Entity": wh_name,
                         "Owner": "DBA",
-                        "Finding": f"{row['WAREHOUSE_NAME']} ({row['WAREHOUSE_SIZE']}): {row['REMOTE_GB']:.1f} GB remote spill",
+                        "Finding": f"{wh_name} ({row['WAREHOUSE_SIZE']}): {row['REMOTE_GB']:.1f} GB remote spill",
                         "Action": "Review query profile; upsize or split workload if spill persists.",
                         "Estimated Monthly Savings": 0.0,
-                        "Generated SQL Fix": f"-- Review memory pressure on {row['WAREHOUSE_NAME']}; consider ALTER WAREHOUSE ... SET WAREHOUSE_SIZE = '<NEXT_SIZE>';",
+                        "Generated SQL Fix": f"-- Review memory pressure on {wh_name}; consider ALTER WAREHOUSE {safe_identifier(wh_name)} SET WAREHOUSE_SIZE = '<NEXT_SIZE>';",
                         "Proof Query": "QUERY_HISTORY bytes_spilled_to_remote_storage over the last 7 days.",
                         "Company": company,
                     })
@@ -258,7 +390,7 @@ def render():
                 pass
 
             try:
-                df_ftask = normalize_df(session.sql("""
+                df_ftask = run_query("""
                     SELECT name AS task_name, COUNT(*) AS failures
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
                     WHERE scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
@@ -267,19 +399,20 @@ def render():
                     HAVING failures > 3
                     ORDER BY failures DESC
                     LIMIT 5
-                """).to_pandas())
+                """, ttl_key="rec_failed_tasks", tier="historical")
                 for _, row in df_ftask.iterrows():
+                    task_name = str(row["TASK_NAME"])
                     recs.append({
                         "Source": "Task failure detector",
                         "Severity": "High",
                         "Category": "Reliability",
                         "Entity Type": "Task",
-                        "Entity": row["TASK_NAME"],
+                        "Entity": task_name,
                         "Owner": "Data Engineering",
-                        "Finding": f"Task {row['TASK_NAME']} failed {int(row['FAILURES'])} times in 7 days",
+                        "Finding": f"Task {task_name} failed {int(row['FAILURES'])} times in 7 days",
                         "Action": "Review task error logs in Task Management and fix root cause.",
                         "Estimated Monthly Savings": 0.0,
-                        "Generated SQL Fix": f"-- Inspect task: {row['TASK_NAME']}\n-- EXECUTE TASK <database>.<schema>.{row['TASK_NAME']};",
+                        "Generated SQL Fix": f"-- Inspect task: {task_name}\n-- EXECUTE TASK <database>.<schema>.{safe_identifier(task_name)};",
                         "Proof Query": "TASK_HISTORY state = FAILED over the last 7 days.",
                         "Company": company,
                     })
@@ -287,7 +420,7 @@ def render():
                 pass
 
             try:
-                df_err = normalize_df(session.sql(f"""
+                df_err = run_query(f"""
                     SELECT warehouse_name, COUNT(*) AS failures
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
@@ -298,7 +431,7 @@ def render():
                     HAVING failures > {THRESHOLDS['error_rate_high']}
                     ORDER BY failures DESC
                     LIMIT 5
-                """).to_pandas())
+                """, ttl_key="rec_query_errors", tier="historical")
                 for _, row in df_err.iterrows():
                     recs.append({
                         "Source": "Query failure detector",
@@ -365,7 +498,7 @@ def render():
 
         if st.button("Detect Anomalies", key="anom_detect"):
             try:
-                df_anom = normalize_df(session.sql(f"""
+                df_anom = run_query(f"""
                 WITH daily AS (
                     SELECT warehouse_name,
                            DATE_TRUNC('day', start_time) AS day,
@@ -397,7 +530,7 @@ def render():
                 WHERE rolling_avg IS NOT NULL
                   AND (daily_credits - rolling_avg) / NULLIF(rolling_std, 0) > 1.5
                 ORDER BY day DESC, zscore DESC
-                """).to_pandas())
+                """, ttl_key=f"rec_anomaly_{anom_days}", tier="historical")
                 st.session_state["rec_anomalies"] = df_anom
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -440,11 +573,11 @@ def render():
         st.subheader("View Alert History")
         if st.button("Load Alert History", key="alert_hist_load"):
             try:
-                df_ah = normalize_df(session.sql(f"""
+                df_ah = run_query(f"""
                     SELECT * FROM {ALERT_DB}.{ALERT_SCHEMA}.{ALERT_TABLE}
                     ORDER BY ALERT_DATE DESC
                     LIMIT 100
-                """).to_pandas())
+                """, ttl_key="rec_alert_history", tier="recent")
                 if not df_ah.empty:
                     if "STATUS" in df_ah.columns:
                         status = st.selectbox(
@@ -479,3 +612,6 @@ def render():
                         mime="text/plain",
                         key="alert_action_queue_ddl",
                     )
+
+    with tab_annotations:
+        _render_annotations(session)

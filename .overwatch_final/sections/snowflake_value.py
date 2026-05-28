@@ -2,14 +2,14 @@
 import streamlit as st
 
 from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
-from utils import get_session, normalize_df, credits_to_dollars, download_csv
+from utils import get_session, credits_to_dollars, download_csv, run_query, safe_identifier, sql_literal
 
 
-VALUE_TABLE = f"{ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.OVERWATCH_ROI_LOG"
-
-
-def _esc(value: object, limit: int = 1000) -> str:
-    return str(value or "").replace("'", "''")[:limit]
+VALUE_TABLE = (
+    f"{safe_identifier(ETL_AUDIT_DB)}."
+    f"{safe_identifier(ETL_AUDIT_SCHEMA)}."
+    f"{safe_identifier('OVERWATCH_ROI_LOG')}"
+)
 
 
 def render():
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS {VALUE_TABLE} (
 
     if st.button("Load Snowflake Value", key="sf_value_load"):
         try:
-            df_summary = normalize_df(session.sql(f"""
+            df_summary = run_query(f"""
                 SELECT CATEGORY,
                        COUNT(*) AS action_count,
                        ROUND(SUM(SAVINGS_CREDITS * 30), 2) AS monthly_credit_savings,
@@ -59,15 +59,15 @@ CREATE TABLE IF NOT EXISTS {VALUE_TABLE} (
                 FROM {VALUE_TABLE}
                 GROUP BY CATEGORY
                 ORDER BY monthly_dollar_savings DESC
-            """).to_pandas())
-            df_detail = normalize_df(session.sql(f"""
+            """, ttl_key="snowflake_value_summary", tier="standard")
+            df_detail = run_query(f"""
                 SELECT ROI_ID, LOGGED_DATE, CATEGORY, DESCRIPTION, ENTITY,
                        BASELINE_CREDITS, CURRENT_CREDITS, SAVINGS_CREDITS,
                        SAVINGS_MONTHLY, VERIFIED, NOTES
                 FROM {VALUE_TABLE}
                 ORDER BY LOGGED_DATE DESC
                 LIMIT 500
-            """).to_pandas())
+            """, ttl_key="snowflake_value_detail", tier="standard")
             st.session_state["sf_value_summary"] = df_summary
             st.session_state["sf_value_detail"] = df_detail
         except Exception as e:
@@ -146,9 +146,9 @@ CREATE TABLE IF NOT EXISTS {VALUE_TABLE} (
                     (CATEGORY, DESCRIPTION, ENTITY, BASELINE_CREDITS,
                      CURRENT_CREDITS, SAVINGS_CREDITS, SAVINGS_MONTHLY, VERIFIED, NOTES)
                 VALUES (
-                    '{_esc(category, 100)}', '{_esc(description)}', '{_esc(entity, 500)}',
+                    {sql_literal(category, 100)}, {sql_literal(description)}, {sql_literal(entity, 500)},
                     {float(baseline)}, {float(current)}, {savings_credits},
-                    {savings_monthly}, {str(bool(verified)).upper()}, '{_esc(notes, 2000)}'
+                    {savings_monthly}, {str(bool(verified)).upper()}, {sql_literal(notes, 2000)}
                 )
             """).collect()
             st.success(f"Saved ${savings_monthly:,.2f}/month in tracked Snowflake value.")

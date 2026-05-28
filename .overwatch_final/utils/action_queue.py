@@ -5,11 +5,14 @@ from datetime import datetime
 import pandas as pd
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
-from .data import normalize_df
-from .query import safe_sql
+from .query import run_query, safe_identifier, sql_literal
 
 
-ACTION_QUEUE_FQN = f"{ALERT_DB}.{ALERT_SCHEMA}.{ACTION_QUEUE_TABLE}"
+ACTION_QUEUE_FQN = (
+    f"{safe_identifier(ALERT_DB)}."
+    f"{safe_identifier(ALERT_SCHEMA)}."
+    f"{safe_identifier(ACTION_QUEUE_TABLE)}"
+)
 
 
 def make_action_id(category: str, entity: str, finding: str) -> str:
@@ -22,6 +25,9 @@ def build_action_queue_ddl(
     schema: str = ALERT_SCHEMA,
     table: str = ACTION_QUEUE_TABLE,
 ) -> str:
+    db = safe_identifier(db)
+    schema = safe_identifier(schema)
+    table = safe_identifier(table)
     fqn = f"{db}.{schema}.{table}"
     return f"""-- OVERWATCH persistent recommendation/action queue
 CREATE DATABASE IF NOT EXISTS {db};
@@ -66,49 +72,49 @@ def upsert_actions(session, actions: list[dict]) -> int:
         return 0
     count = 0
     for action in actions:
-        action_id = safe_sql(action.get("Action ID") or make_action_id(
+        action_id = sql_literal(action.get("Action ID") or make_action_id(
             action.get("Category", "General"),
             action.get("Entity", ""),
             action.get("Finding", ""),
-        ))
-        source = safe_sql(action.get("Source", "Recommendations"))
-        category = safe_sql(action.get("Category", "General"))
-        severity = safe_sql(action.get("Severity", "Medium"))
-        entity_type = safe_sql(action.get("Entity Type", "Snowflake Object"))
-        entity_name = safe_sql(action.get("Entity", ""))
-        owner = safe_sql(action.get("Owner", "DBA"))
-        finding = safe_sql(action.get("Finding", ""))
-        recommended = safe_sql(action.get("Action", ""))
-        sql_fix = safe_sql(action.get("Generated SQL Fix", ""))
-        proof = safe_sql(action.get("Proof Query", ""))
-        company = safe_sql(action.get("Company", ""))
+        ), max_len=64)
+        source = sql_literal(action.get("Source", "Recommendations"), max_len=100)
+        category = sql_literal(action.get("Category", "General"), max_len=100)
+        severity = sql_literal(action.get("Severity", "Medium"), max_len=20)
+        entity_type = sql_literal(action.get("Entity Type", "Snowflake Object"), max_len=100)
+        entity_name = sql_literal(action.get("Entity", ""), max_len=500)
+        owner = sql_literal(action.get("Owner", "DBA"), max_len=200)
+        finding = sql_literal(action.get("Finding", ""), max_len=4000)
+        recommended = sql_literal(action.get("Action", ""), max_len=4000)
+        sql_fix = sql_literal(action.get("Generated SQL Fix", ""), max_len=8000)
+        proof = sql_literal(action.get("Proof Query", ""), max_len=8000)
+        company = sql_literal(action.get("Company", ""), max_len=100)
         savings = _num(action.get("Estimated Monthly Savings", 0))
         session.sql(f"""
             MERGE INTO {ACTION_QUEUE_FQN} tgt
             USING (
-                SELECT '{action_id}' AS action_id
+                SELECT {action_id} AS action_id
             ) src
             ON tgt.action_id = src.action_id
             WHEN MATCHED THEN UPDATE SET
                 UPDATED_AT = CURRENT_TIMESTAMP(),
                 LAST_SEEN_AT = CURRENT_TIMESTAMP(),
                 SEEN_COUNT = COALESCE(tgt.SEEN_COUNT, 0) + 1,
-                SEVERITY = '{severity}',
-                OWNER = '{owner}',
-                FINDING = '{finding}',
-                RECOMMENDED_ACTION = '{recommended}',
+                SEVERITY = {severity},
+                OWNER = {owner},
+                FINDING = {finding},
+                RECOMMENDED_ACTION = {recommended},
                 EST_MONTHLY_SAVINGS = {savings},
-                GENERATED_SQL_FIX = '{sql_fix}',
-                PROOF_QUERY = '{proof}'
+                GENERATED_SQL_FIX = {sql_fix},
+                PROOF_QUERY = {proof}
             WHEN NOT MATCHED THEN INSERT (
                 ACTION_ID, SOURCE, CATEGORY, SEVERITY, ENTITY_TYPE, ENTITY_NAME,
                 OWNER, STATUS, FINDING, RECOMMENDED_ACTION, EST_MONTHLY_SAVINGS,
                 GENERATED_SQL_FIX, PROOF_QUERY, COMPANY
             )
             VALUES (
-                '{action_id}', '{source}', '{category}', '{severity}', '{entity_type}',
-                '{entity_name}', '{owner}', 'New', '{finding}', '{recommended}',
-                {savings}, '{sql_fix}', '{proof}', '{company}'
+                {action_id}, {source}, {category}, {severity}, {entity_type},
+                {entity_name}, {owner}, 'New', {finding}, {recommended},
+                {savings}, {sql_fix}, {proof}, {company}
             )
         """).collect()
         count += 1
@@ -116,7 +122,7 @@ def upsert_actions(session, actions: list[dict]) -> int:
 
 
 def load_action_queue(session, limit: int = 500) -> pd.DataFrame:
-    return normalize_df(session.sql(f"""
+    return run_query(f"""
         SELECT ACTION_ID, CREATED_AT, UPDATED_AT, SOURCE, CATEGORY, SEVERITY,
                ENTITY_TYPE, ENTITY_NAME, OWNER, STATUS, FINDING, RECOMMENDED_ACTION,
                EST_MONTHLY_SAVINGS, GENERATED_SQL_FIX, PROOF_QUERY, COMPANY,
@@ -140,24 +146,24 @@ def load_action_queue(session, limit: int = 500) -> pd.DataFrame:
             END,
             UPDATED_AT DESC
         LIMIT {int(limit)}
-    """).to_pandas())
+    """, ttl_key=f"action_queue_{int(limit)}", tier="recent")
 
 
 def update_action_status(session, action_id: str, status: str, reason: str = "") -> None:
-    action_safe = safe_sql(action_id)
-    status_safe = safe_sql(status)
-    reason_safe = safe_sql(reason)
+    action_safe = sql_literal(action_id, max_len=64)
+    status_safe = sql_literal(status, max_len=40)
+    reason_safe = sql_literal(reason, max_len=2000)
     extra = ""
     if status == "Acknowledged":
         extra = ", ACKNOWLEDGED_BY = CURRENT_USER(), ACKNOWLEDGED_AT = CURRENT_TIMESTAMP()"
     elif status == "Fixed":
         extra = ", FIXED_BY = CURRENT_USER(), FIXED_AT = CURRENT_TIMESTAMP()"
     elif status == "Ignored":
-        extra = f", IGNORED_REASON = '{reason_safe}'"
+        extra = f", IGNORED_REASON = {reason_safe}"
     session.sql(f"""
         UPDATE {ACTION_QUEUE_FQN}
-        SET STATUS = '{status_safe}',
+        SET STATUS = {status_safe},
             UPDATED_AT = CURRENT_TIMESTAMP()
             {extra}
-        WHERE ACTION_ID = '{action_safe}'
+        WHERE ACTION_ID = {action_safe}
     """).collect()

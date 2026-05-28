@@ -4,10 +4,15 @@ from .action_queue import build_action_queue_ddl
 from .alerts import build_alert_task_sql, build_annotation_ddl
 from .bookmarks import build_bookmark_ddl
 from .logging import build_usage_log_ddl
+from .query import safe_identifier
 
 
 def build_snowflake_value_ddl() -> str:
-    value_table = f"{ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.OVERWATCH_ROI_LOG"
+    value_table = (
+        f"{safe_identifier(ETL_AUDIT_DB)}."
+        f"{safe_identifier(ETL_AUDIT_SCHEMA)}."
+        f"{safe_identifier('OVERWATCH_ROI_LOG')}"
+    )
     return f"""-- OVERWATCH Snowflake Value Log
 CREATE TABLE IF NOT EXISTS {value_table} (
     ROI_ID           NUMBER AUTOINCREMENT PRIMARY KEY,

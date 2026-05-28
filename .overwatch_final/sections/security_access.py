@@ -7,7 +7,7 @@ from utils import (
     get_session,
     get_wh_filter_clause,
     make_action_id,
-    normalize_df,
+    run_query,
     upsert_actions,
 )
 from config import THRESHOLDS
@@ -111,7 +111,7 @@ def render():
                 """),
             ]:
                 try:
-                    st.session_state[key] = normalize_df(session.sql(sql).to_pandas())
+                    st.session_state[key] = run_query(sql, ttl_key=f"security_{key}_{posture_days}", tier="standard")
                 except Exception:
                     st.session_state[key] = pd.DataFrame()
 
@@ -191,7 +191,7 @@ def render():
                 """),
             ]:
                 try:
-                    st.session_state[key] = normalize_df(session.sql(sql).to_pandas())
+                    st.session_state[key] = run_query(sql, ttl_key=f"security_{key}_{sec_days}", tier="standard")
                 except Exception:
                     st.session_state[key] = pd.DataFrame()
 
@@ -231,13 +231,13 @@ def render():
         st.header("🛡️ Roles & Grants")
         if st.button("Load Grants", key="grants_load"):
             try:
-                df_grants = normalize_df(session.sql("""
+                df_grants = run_query("""
                     SELECT grantee_name, role, granted_to, granted_by,
                            created_on, deleted_on
                     FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
                     WHERE deleted_on IS NULL
                     ORDER BY created_on DESC LIMIT 500
-                """).to_pandas())
+                """, ttl_key="security_grants_to_users", tier="standard")
                 st.session_state["sec_df_grants"] = df_grants
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -254,7 +254,7 @@ def render():
         dormant_days = st.number_input("Inactive threshold (days)", 30, 365, THRESHOLDS["dormant_user_days"], key="dom_days")
         if st.button("Find Dormant Users", key="dom_find"):
             try:
-                df_dom = normalize_df(session.sql(f"""
+                df_dom = run_query(f"""
                 WITH last_login AS (
                     SELECT user_name, MAX(event_timestamp) AS last_login_time
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
@@ -278,7 +278,7 @@ def render():
                   AND u.disabled = 'false'
                   AND DATEDIFF('day', COALESCE(ll.last_login_time, u.created_on), CURRENT_TIMESTAMP()) > {dormant_days}
                 ORDER BY days_since_login DESC
-                """).to_pandas())
+                """, ttl_key=f"security_dormant_{dormant_days}", tier="standard")
                 st.session_state["sec_df_dom"] = df_dom
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -296,7 +296,7 @@ def render():
         st.header("🔐 MFA Coverage Report")
         if st.button("Check MFA", key="mfa_check"):
             try:
-                df_mfa = normalize_df(session.sql("""
+                df_mfa = run_query("""
                     SELECT u.name AS user_name, u.has_password,
                            u.ext_authn_duo AS has_mfa, u.disabled,
                            MAX(l.event_timestamp) AS last_login
@@ -305,7 +305,7 @@ def render():
                     WHERE u.deleted_on IS NULL AND u.disabled = 'false'
                     GROUP BY u.name, u.has_password, u.ext_authn_duo, u.disabled
                     ORDER BY has_mfa, user_name
-                """).to_pandas())
+                """, ttl_key="security_mfa", tier="standard")
                 st.session_state["sec_df_mfa"] = df_mfa
             except Exception as e:
                 st.warning(f"MFA check unavailable: {e}")
@@ -332,7 +332,7 @@ def render():
         st.caption("Users with >2σ BYTES_WRITTEN_TO_RESULT vs their 30-day baseline.")
         if st.button("Check Exfiltration", key="exfil_load"):
             try:
-                df_ex = normalize_df(session.sql(f"""
+                df_ex = run_query(f"""
                 WITH user_baseline AS (
                     SELECT user_name,
                            AVG(bytes_written_to_result) AS avg_bytes,
@@ -361,7 +361,7 @@ def render():
                 JOIN user_baseline b ON r.user_name = b.user_name
                 WHERE r.gb_written > b.avg_bytes/POWER(1024,3) + 2*b.std_bytes/POWER(1024,3)
                 ORDER BY r.gb_written DESC LIMIT 20
-                """).to_pandas())
+                """, ttl_key="security_exfil", tier="standard")
                 st.session_state["sec_df_exfil"] = df_ex
             except Exception as e:
                 st.warning(f"Exfiltration check unavailable: {e}")
@@ -385,7 +385,7 @@ def render():
 
         if st.button("Load Access History", key="lin_load"):
             try:
-                df_lin = normalize_df(session.sql(f"""
+                df_lin = run_query(f"""
                     SELECT user_name, query_id,
                            query_start_time,
                            objects_modified,
@@ -396,7 +396,7 @@ def render():
                     WHERE query_start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
                     ORDER BY query_start_time DESC
                     LIMIT 500
-                """).to_pandas())
+                """, ttl_key=f"security_lineage_{lin_days}", tier="standard")
                 st.session_state["sec_df_lin"] = df_lin
             except Exception as e:
                 st.error(f"Error: {e}")

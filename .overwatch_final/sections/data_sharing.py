@@ -1,7 +1,7 @@
 # sections/data_sharing.py — Data transfer credits, shared databases
 import streamlit as st
 import pandas as pd
-from utils import get_session, normalize_df, format_credits, credits_to_dollars, download_csv
+from utils import get_session, format_credits, credits_to_dollars, download_csv, run_query
 
 
 def render():
@@ -17,7 +17,7 @@ def render():
     with c1:
         if st.button("Load Transfer History", key="ds_load"):
             try:
-                df_dt = normalize_df(session.sql(f"""
+                df_dt = run_query(f"""
                     SELECT source_cloud, source_region,
                            target_cloud, target_region,
                            DATE_TRUNC('day', start_time) AS day,
@@ -27,7 +27,7 @@ def render():
                     WHERE start_time >= DATEADD('day', -{ds_days}, CURRENT_TIMESTAMP())
                     GROUP BY source_cloud, source_region, target_cloud, target_region, day
                     ORDER BY credits DESC
-                """).to_pandas())
+                """, ttl_key=f"data_sharing_transfer_{ds_days}", tier="standard")
                 st.session_state["ds_df_dt"] = df_dt
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -35,14 +35,14 @@ def render():
     with c2:
         if st.button("Load Shared Databases", key="ds_db_load"):
             try:
-                df_db = normalize_df(session.sql("""
+                df_db = run_query("""
                     SELECT database_name, database_id, type,
                            created, last_altered,
                            comment
                     FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES
                     WHERE type IN ('IMPORTED DATABASE', 'SHARE')
                     ORDER BY created DESC
-                """).to_pandas())
+                """, ttl_key="data_sharing_databases", tier="standard")
                 st.session_state["ds_df_shared_db"] = df_db
             except Exception as e:
                 st.error(f"Error: {e}")

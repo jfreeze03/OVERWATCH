@@ -37,21 +37,54 @@ def safe_sql(value: str) -> str:
     return sanitized[:2000]
 
 
+def sql_literal(value, max_len: int = 8000) -> str:
+    """Return a quoted SQL string literal for generated DML/DDL."""
+    if value is None:
+        return "NULL"
+    text = str(value).replace("\x00", "")[:max_len]
+    return "'" + text.replace("'", "''") + "'"
+
+
+def safe_identifier(value: str, allow_qualified: bool = False) -> str:
+    """Validate a Snowflake identifier before embedding it into generated SQL."""
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("Identifier cannot be blank")
+    parts = raw.split(".") if allow_qualified else [raw]
+    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,254}$")
+    if any(not ident_re.match(part) for part in parts):
+        raise ValueError(f"Unsafe Snowflake identifier: {raw}")
+    return ".".join(parts)
+
+
+def safe_schedule(value: str) -> str:
+    """Allow only Snowflake task schedule syntax characters used by generated SQL."""
+    schedule = str(value or "").strip()
+    if not schedule:
+        raise ValueError("Schedule cannot be blank")
+    if not re.match(r"^[A-Za-z0-9_*/?,#LW +:-]+$", schedule):
+        raise ValueError("Schedule contains unsafe characters")
+    if ";" in schedule or "'" in schedule or '"' in schedule:
+        raise ValueError("Schedule contains unsafe quote or statement separator")
+    return schedule
+
+
 # ── Per-tier cache functions ───────────────────────────────────────────────────
 # Each tier must be a separate decorated function because @st.cache_data TTL
 # is fixed at decoration time — it cannot be passed as a runtime argument.
 
 def _cache_context() -> str:
-    try:
-        sess = get_session()
-        row = sess.sql("""
-            SELECT CURRENT_USER() AS user_name, CURRENT_ROLE() AS role_name
-        """).collect()[0]
-        user_name = row[0]
-        role_name = row[1]
-    except Exception:
-        user_name = "unknown"
-        role_name = "unknown"
+    context_key = "_snowflake_context_user_role"
+    if context_key not in st.session_state:
+        try:
+            sess = get_session()
+            row = sess.sql("""
+                SELECT CURRENT_USER() AS user_name, CURRENT_ROLE() AS role_name
+            """).collect()[0]
+            st.session_state[context_key] = (row[0] or "unknown", row[1] or "unknown")
+        except Exception:
+            st.session_state[context_key] = ("unknown", "unknown")
+    user_name, role_name = st.session_state.get(context_key, ("unknown", "unknown"))
     return "|".join([
         str(user_name),
         str(role_name),
@@ -157,6 +190,16 @@ def run_query(
         except Exception as e:
             st.error(f"Query runner error: {e}")
             return pd.DataFrame()
+
+
+def run_query_or_raise(query_text: str) -> pd.DataFrame:
+    """
+    Execute SQL and return a normalized DataFrame, preserving exceptions.
+
+    Use this for live probes and primary/fallback query paths where callers need
+    the original Snowflake exception to decide whether to run a fallback query.
+    """
+    return normalize_df(get_session().sql(query_text).to_pandas())
 
 
 def force_refresh(key: str):

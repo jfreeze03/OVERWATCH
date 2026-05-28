@@ -8,8 +8,8 @@ from utils import (
     get_global_filter_clause,
     get_session,
     get_wh_filter_clause,
-    normalize_df,
     render_drillable_bar_chart,
+    run_query,
 )
 
 
@@ -26,7 +26,7 @@ def _load_adoption(session, days: int) -> dict:
         ),
     ])
 
-    summary = normalize_df(session.sql(f"""
+    summary = run_query(f"""
         SELECT
             COUNT(*) AS total_queries,
             COUNT(DISTINCT q.user_name) AS total_users,
@@ -37,9 +37,9 @@ def _load_adoption(session, days: int) -> dict:
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
-    """).to_pandas())
+    """, ttl_key=f"aa_summary_{days}", tier="historical")
 
-    warehouse_size = normalize_df(session.sql(f"""
+    warehouse_size = run_query(f"""
         SELECT
             COALESCE(q.warehouse_size, 'UNKNOWN') AS warehouse_size,
             COUNT(*) AS query_count,
@@ -51,9 +51,9 @@ def _load_adoption(session, days: int) -> dict:
           {filters}
         GROUP BY warehouse_size
         ORDER BY query_count DESC
-    """).to_pandas())
+    """, ttl_key=f"aa_warehouse_size_{days}", tier="historical")
 
-    trend = normalize_df(session.sql(f"""
+    trend = run_query(f"""
         SELECT
             DATE_TRUNC('day', q.start_time) AS activity_day,
             COUNT(*) AS total_queries,
@@ -66,9 +66,9 @@ def _load_adoption(session, days: int) -> dict:
           {filters}
         GROUP BY activity_day
         ORDER BY activity_day
-    """).to_pandas())
+    """, ttl_key=f"aa_trend_{days}", tier="historical")
 
-    users_wh = normalize_df(session.sql(f"""
+    users_wh = run_query(f"""
         SELECT
             q.warehouse_name,
             COUNT(DISTINCT q.user_name) AS users,
@@ -81,9 +81,9 @@ def _load_adoption(session, days: int) -> dict:
         GROUP BY q.warehouse_name
         ORDER BY users DESC, query_count DESC
         LIMIT 50
-    """).to_pandas())
+    """, ttl_key=f"aa_users_wh_{days}", tier="historical")
 
-    users_db = normalize_df(session.sql(f"""
+    users_db = run_query(f"""
         SELECT
             COALESCE(q.database_name, 'UNKNOWN') AS database_name,
             COUNT(DISTINCT q.user_name) AS users,
@@ -96,9 +96,9 @@ def _load_adoption(session, days: int) -> dict:
         GROUP BY database_name
         ORDER BY users DESC, query_count DESC
         LIMIT 50
-    """).to_pandas())
+    """, ttl_key=f"aa_users_db_{days}", tier="historical")
 
-    by_role_type = normalize_df(session.sql(f"""
+    by_role_type = run_query(f"""
         SELECT
             COALESCE(q.role_name, 'UNKNOWN') AS role_name,
             COALESCE(q.query_type, 'UNKNOWN') AS query_type,
@@ -111,9 +111,9 @@ def _load_adoption(session, days: int) -> dict:
         GROUP BY role_name, query_type
         ORDER BY query_count DESC
         LIMIT 100
-    """).to_pandas())
+    """, ttl_key=f"aa_role_type_{days}", tier="historical")
 
-    applications = normalize_df(session.sql(f"""
+    applications = run_query(f"""
         SELECT
             COALESCE(q.query_tag, 'UNTAGGED') AS client_application,
             COUNT(*) AS query_count,
@@ -126,7 +126,7 @@ def _load_adoption(session, days: int) -> dict:
         GROUP BY client_application
         ORDER BY query_count DESC
         LIMIT 30
-    """).to_pandas())
+    """, ttl_key=f"aa_applications_{days}", tier="historical")
 
     return {
         "summary": summary,

@@ -2,8 +2,9 @@
 import streamlit as st
 import pandas as pd
 from utils import (
-    get_session, normalize_df, format_credits, credits_to_dollars, download_csv,
+    get_session, format_credits, credits_to_dollars, download_csv,
     render_drillable_bar_chart, get_wh_filter_clause,
+    run_query,
 )
 from config import THRESHOLDS
 
@@ -24,7 +25,7 @@ def render():
 
         if st.button("Find Idle Credits", key="idle_load"):
             try:
-                df_idle = normalize_df(session.sql(f"""
+                df_idle = run_query(f"""
                 WITH metering AS (
                     SELECT warehouse_name,
                            DATE_TRUNC('hour', start_time) AS hour_bucket,
@@ -58,7 +59,7 @@ def render():
                 GROUP BY m.warehouse_name
                 HAVING idle_credits > {THRESHOLDS['idle_credit_waste_min']}
                 ORDER BY idle_credits DESC
-                """).to_pandas())
+                """, ttl_key=f"optimization_idle_{idle_days}", tier="standard")
                 st.session_state["opt_df_idle"] = df_idle
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -97,7 +98,7 @@ def render():
 
         if st.button("Find Duplicates", key="dup_load"):
             try:
-                df_dup = normalize_df(session.sql(f"""
+                df_dup = run_query(f"""
                     SELECT SUBSTR(query_text,1,200) AS query_sig,
                            COUNT(DISTINCT user_name) AS user_count,
                            COUNT(*)                  AS execution_count,
@@ -113,7 +114,7 @@ def render():
                     HAVING COUNT(*) >= 5
                     ORDER BY execution_count DESC
                     LIMIT 100
-                """).to_pandas())
+                """, ttl_key=f"optimization_duplicates_{dup_days}", tier="standard")
                 st.session_state["opt_df_dup"] = df_dup
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -133,7 +134,7 @@ def render():
 
         if st.button("Analyze Sizing", key="sz_load"):
             try:
-                df_sz = normalize_df(session.sql(f"""
+                df_sz = run_query(f"""
                     SELECT q.warehouse_name,
                            MAX(q.warehouse_size) AS warehouse_size,
                            COUNT(*)                                AS total_queries,
@@ -150,7 +151,7 @@ def render():
                       {get_wh_filter_clause("q.warehouse_name")}
                     GROUP BY q.warehouse_name
                     ORDER BY total_credits DESC
-                """).to_pandas())
+                """, ttl_key=f"optimization_sizing_{sz_days}", tier="standard")
                 st.session_state["opt_df_sz"] = df_sz
             except Exception as e:
                 st.error(f"Error: {e}")

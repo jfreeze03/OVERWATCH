@@ -2,9 +2,10 @@
 import streamlit as st
 import pandas as pd
 from utils import (
-    get_session, normalize_df, format_credits, credits_to_dollars,
+    get_session, format_credits, credits_to_dollars,
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
     build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
+    run_query,
 )
 from config import THRESHOLDS
 
@@ -70,7 +71,7 @@ def render():
 
         if st.button("Load Warehouse Data", key="wh_load"):
             try:
-                df_w = normalize_df(session.sql(f"""
+                df_w = run_query(f"""
                     SELECT q.warehouse_name,
                            MAX(q.warehouse_size) AS warehouse_size,
                            COUNT(*)                            AS total_queries,
@@ -87,7 +88,7 @@ def render():
                       {get_wh_filter_clause("q.warehouse_name")}
                     GROUP BY q.warehouse_name
                     ORDER BY total_queries DESC
-                """).to_pandas())
+                """, ttl_key=f"wh_overview_{wh_days}", tier="historical")
                 st.session_state["wh_df_wh"] = df_w
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -130,7 +131,7 @@ def render():
             st.subheader("Scaling Events (WAREHOUSE_METERING_HISTORY)")
             if st.button("Load Scaling Events", key="wh_scale_load"):
                 try:
-                    df_scale = normalize_df(session.sql(f"""
+                    df_scale = run_query(f"""
                         WITH latest_size AS (
                             SELECT warehouse_name, warehouse_size
                             FROM (
@@ -150,7 +151,7 @@ def render():
                         WHERE m.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
                           {get_wh_filter_clause("m.warehouse_name")}
                         ORDER BY m.credits_used DESC LIMIT 200
-                    """).to_pandas())
+                    """, ttl_key=f"wh_scaling_{wh_days}", tier="historical")
                     st.dataframe(df_scale, use_container_width=True)
                     download_csv(df_scale, "scaling_events.csv")
                 except Exception as e:
@@ -161,7 +162,7 @@ def render():
         eff_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_eff_days")
         if st.button("Load Efficiency Metrics", key="wh_eff_load"):
             try:
-                df_eff = normalize_df(session.sql(f"""
+                df_eff = run_query(f"""
                     WITH {build_metered_credit_cte(days_back=eff_days, include_recent=True)}
                     SELECT q.warehouse_name,
                            MAX(q.warehouse_size) AS warehouse_size,
@@ -184,7 +185,7 @@ def render():
                     GROUP BY q.warehouse_name
                     ORDER BY efficiency_score ASC, metered_credits DESC
                     LIMIT 200
-                """).to_pandas())
+                """, ttl_key=f"wh_efficiency_{eff_days}", tier="historical")
                 st.session_state["wh_efficiency"] = df_eff
             except Exception as e:
                 st.error(f"Efficiency metrics unavailable: {e}")
@@ -216,7 +217,7 @@ def render():
 
         if st.button("Load Spill Data", key="sp_load"):
             try:
-                df_sp = normalize_df(session.sql(f"""
+                df_sp = run_query(f"""
                     SELECT warehouse_name, MAX(warehouse_size) AS warehouse_size,
                            COUNT(*) AS spill_query_count,
                            ROUND(SUM(bytes_spilled_to_local_storage)/POWER(1024,3),2)  AS local_spill_gb,
@@ -229,7 +230,7 @@ def render():
                       {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name
                     ORDER BY local_spill_gb + remote_spill_gb DESC
-                """).to_pandas())
+                """, ttl_key=f"wh_spill_{sp_days}", tier="historical")
                 st.session_state["wh_df_sp"] = df_sp
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -262,7 +263,7 @@ def render():
 
         if st.button("Build Heatmap", key="hm_build"):
             try:
-                df_hm = normalize_df(session.sql(f"""
+                df_hm = run_query(f"""
                     SELECT warehouse_name,
                            DAYOFWEEK(start_time) AS day_of_week,
                            HOUR(start_time)      AS hour_of_day,
@@ -274,7 +275,7 @@ def render():
                       {get_wh_filter_clause("warehouse_name")}
                     GROUP BY warehouse_name, day_of_week, hour_of_day
                     ORDER BY warehouse_name, day_of_week, hour_of_day
-                """).to_pandas())
+                """, ttl_key=f"wh_heatmap_{hm_days}", tier="historical")
                 st.session_state["wh_df_hm"] = df_hm
             except Exception as e:
                 st.error(f"Error: {e}")

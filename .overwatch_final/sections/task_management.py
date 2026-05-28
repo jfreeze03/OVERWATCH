@@ -6,8 +6,8 @@ from utils import (
     download_csv,
     get_session,
     make_action_id,
-    normalize_df,
-    safe_sql,
+    run_query,
+    safe_identifier,
     upsert_actions,
 )
 from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ETL_AUDIT_TABLE
@@ -37,7 +37,7 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
             "Finding": finding,
             "Action": "Review error message, fix upstream dependency or SQL failure, then retry the task/pipeline.",
             "Estimated Monthly Savings": 0.0,
-            "Generated SQL Fix": f"-- Review task or pipeline: {name}\n-- EXECUTE TASK <database>.<schema>.{name};",
+            "Generated SQL Fix": f"-- Review task or pipeline: {name}\n-- EXECUTE TASK <database>.<schema>.{safe_identifier(name)};",
             "Proof Query": "TASK_HISTORY or ETL audit failure row.",
             "Company": company,
         })
@@ -55,6 +55,17 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
         )
 
 
+def _qualified_name(*parts: str) -> str:
+    return ".".join(f'"{str(part).replace(chr(34), chr(34) + chr(34))}"' for part in parts)
+
+
+ETL_AUDIT_FQN = (
+    f"{safe_identifier(ETL_AUDIT_DB)}."
+    f"{safe_identifier(ETL_AUDIT_SCHEMA)}."
+    f"{safe_identifier(ETL_AUDIT_TABLE)}"
+)
+
+
 def render():
     session = get_session()
 
@@ -70,19 +81,19 @@ def render():
         if st.button("Load Task Data", key="th_load"):
             # Task list
             try:
-                df_tl = normalize_df(session.sql("""
+                df_tl = run_query("""
                     SELECT name, database_name, schema_name, state,
                            schedule, warehouse, definition
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TASKS
                     ORDER BY name
-                """).to_pandas())
+                """, ttl_key="task_management_task_list", tier="standard")
                 st.session_state["tg_list"] = df_tl
             except Exception:
                 st.session_state["tg_list"] = pd.DataFrame()
 
             # Task history
             try:
-                df_th = normalize_df(session.sql(f"""
+                df_th = run_query(f"""
                     SELECT name, state, scheduled_time, completed_time,
                            query_start_time, error_code, error_message,
                            DATEDIFF('second', query_start_time, completed_time) AS duration_sec
@@ -90,7 +101,7 @@ def render():
                     WHERE scheduled_time >= DATEADD('day', -{th_days}, CURRENT_TIMESTAMP())
                     ORDER BY scheduled_time DESC
                     LIMIT 1000
-                """).to_pandas())
+                """, ttl_key=f"task_management_history_{th_days}", tier="standard")
                 st.session_state["tg_hist"] = df_th
             except Exception:
                 st.session_state["tg_hist"] = pd.DataFrame()
@@ -125,11 +136,11 @@ def render():
     # ── ETL AUDIT ─────────────────────────────────────────────────────────────
     with tab_etl:
         st.header("📋 ETL Audit Framework")
-        st.caption(f"Custom ETL run tracking table: `{ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.{ETL_AUDIT_TABLE}`")
+        st.caption(f"Custom ETL run tracking table: `{ETL_AUDIT_FQN}`")
 
         # DDL setup
         etl_ddl = f"""-- Run once to create the ETL audit table
-CREATE TABLE IF NOT EXISTS {ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.{ETL_AUDIT_TABLE} (
+CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
     RUN_ID          NUMBER AUTOINCREMENT PRIMARY KEY,
     RUN_START       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     RUN_END         TIMESTAMP_NTZ,
@@ -144,10 +155,10 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.{ETL_AUDIT_TABLE} (
 
         if st.button("Load ETL Audit Log", key="etl_load"):
             try:
-                df_etl = normalize_df(session.sql(f"""
-                    SELECT * FROM {ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.{ETL_AUDIT_TABLE}
+                df_etl = run_query(f"""
+                    SELECT * FROM {ETL_AUDIT_FQN}
                     ORDER BY RUN_START DESC LIMIT 500
-                """).to_pandas())
+                """, ttl_key="task_management_etl_audit", tier="standard")
                 st.session_state["tm_df_etl"] = df_etl
             except Exception as e:
                 st.info(f"Audit table not found — run the setup DDL above first. ({e})")
@@ -182,11 +193,21 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_DB}.{ETL_AUDIT_SCHEMA}.{ETL_AUDIT_TABLE} (
                 if row is not None:
                     db   = row.get("DATABASE_NAME", "")
                     sch  = row.get("SCHEMA_NAME", "")
-                    full = f"{db}.{sch}.{selected}"
+                    full = _qualified_name(db, sch, selected)
                     st.info(f"Task: `{full}` | State: {row.get('STATE','N/A')} | Schedule: {row.get('SCHEDULE','N/A')}")
                     st.warning("⚠️ This runs the task immediately regardless of schedule.")
 
-                    if st.button(f"▶️ Execute {selected}", type="primary", key="exec_task_btn"):
+                    exec_confirmed = st.text_input(
+                        "Type EXECUTE to enable task run",
+                        key=f"exec_task_confirm_{selected}",
+                    ) == "EXECUTE"
+
+                    if st.button(
+                        f"▶️ Execute {selected}",
+                        type="primary",
+                        key="exec_task_btn",
+                        disabled=not exec_confirmed,
+                    ):
                         try:
                             session.sql(f"EXECUTE TASK {full}").collect()
                             st.success(f"✅ Task `{full}` triggered.")

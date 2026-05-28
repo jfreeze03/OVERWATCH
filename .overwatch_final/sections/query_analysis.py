@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 from utils import (
-    get_session, run_query, normalize_df, safe_sql,
+    get_session, run_query, sql_literal,
     format_credits, credits_to_dollars, download_csv,
     render_query_drilldown, build_metered_credit_cte, get_wh_filter_clause,
 )
@@ -24,7 +24,7 @@ def render():
 
         if st.button("Load Bottlenecks", key="qa_load"):
             try:
-                df_qa = normalize_df(session.sql(f"""
+                df_qa = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=days)}
                 SELECT
                     q.query_id,
@@ -51,7 +51,7 @@ def render():
                   AND q.total_elapsed_time > {THRESHOLDS['query_duration_alert_sec'] * 1000}
                 ORDER BY q.total_elapsed_time DESC
                 LIMIT 500
-                """).to_pandas())
+                """, ttl_key=f"query_analysis_bottlenecks_{days}", tier="standard")
                 st.session_state["qa_df_qa"] = df_qa
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -83,7 +83,7 @@ def render():
 
         if st.button("Detect Degradation", key="deg_load"):
             try:
-                df_deg = normalize_df(session.sql(f"""
+                df_deg = run_query(f"""
                 WITH sig_recent AS (
                     SELECT SUBSTR(query_text,1,200) AS sig,
                            AVG(total_elapsed_time)/1000 AS avg_sec,
@@ -112,7 +112,7 @@ def render():
                 WHERE r.avg_sec > p.avg_sec * 1.25
                   AND r.avg_sec > 5
                 ORDER BY pct_change DESC LIMIT 50
-                """).to_pandas())
+                """, ttl_key="query_analysis_degradation", tier="standard")
                 st.session_state["qa_df_deg"] = df_deg
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -134,11 +134,13 @@ def render():
         qid_input = st.text_input("Query ID", key="planstep_qid")
         if qid_input and st.button("Load Plan Steps", key="planstep_load"):
             try:
-                df_ops = session.sql(
-                    f"SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS('{safe_sql(qid_input)}'))"
-                ).to_pandas()
-                st.dataframe(normalize_df(df_ops), use_container_width=True)
-                download_csv(normalize_df(df_ops), f"plan_steps_{qid_input}.csv")
+                df_ops = run_query(
+                    f"SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS({sql_literal(qid_input)}))",
+                    ttl_key=f"query_analysis_plan_{qid_input}",
+                    tier="standard",
+                )
+                st.dataframe(df_ops, use_container_width=True)
+                download_csv(df_ops, f"plan_steps_{qid_input}.csv")
             except Exception as e:
                 st.warning(f"Operator stats unavailable: {e}")
 

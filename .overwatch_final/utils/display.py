@@ -11,7 +11,7 @@ import pandas as pd
 import altair as alt
 from datetime import datetime
 from .cost import format_credits, credits_to_dollars
-from .query import run_query, safe_sql
+from .query import run_query, run_query_or_raise, sql_literal
 
 CHART_COLORS = [
     '#38bdf8','#818cf8','#c084fc','#f472b6',
@@ -132,11 +132,9 @@ def render_query_drilldown(
 
         if st.button("Load operator stats", key=f"{key}_opstats"):
             try:
-                # FIX: safe_sql() applied to qid before embedding in SQL
-                safe_qid = safe_sql(qid)
-                ops_df = _session.sql(
-                    f"SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS('{safe_qid}'))"
-                ).to_pandas()
+                ops_df = run_query_or_raise(
+                    f"SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS({sql_literal(qid)}))"
+                )
                 st.dataframe(ops_df, use_container_width=True, height=350)
             except Exception as e:
                 st.info(f"Operator stats unavailable: {e}")
@@ -151,7 +149,7 @@ def render_warehouse_drilldown(
 ):
     if not warehouse_name:
         return
-    wh_safe = safe_sql(warehouse_name)
+    wh_safe = sql_literal(warehouse_name)
     df_wh = run_query(f"""
         SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status, start_time,
                total_elapsed_time/1000          AS elapsed_sec,
@@ -163,7 +161,7 @@ def render_warehouse_drilldown(
                credits_used_cloud_services      AS cloud_credits,
                SUBSTR(query_text,1,2000)        AS query_text
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-        WHERE warehouse_name = '{wh_safe}'
+        WHERE warehouse_name = {wh_safe}
           AND start_time >= DATEADD('hours', -{lookback_hours}, CURRENT_TIMESTAMP())
         ORDER BY total_elapsed_time DESC LIMIT 200
     """, ttl_key=f"wh_detail_{key}_{warehouse_name}", tier="recent")
@@ -193,23 +191,23 @@ def render_entity_query_drilldown(
     if col not in allowed:
         st.info(f"Drill-down not configured for `{entity_column}`.")
         return
-    value       = safe_sql(str(entity_value))
+    value = sql_literal(str(entity_value))
     if col == "query_id":
-        where_clause = f"query_id = '{value}'"
+        where_clause = f"query_id = {value}"
     elif col == "database_schema":
         where_clause = (
             "COALESCE(database_name,'UNKNOWN')||'.'||COALESCE(schema_name,'UNKNOWN') "
-            f"= '{value}'"
+            f"= {value}"
         )
     elif col == "application_client":
-        where_clause = f"COALESCE(query_tag, 'UNTAGGED') = '{value}'"
+        where_clause = f"COALESCE(query_tag, 'UNTAGGED') = {value}"
     elif col == "lineage_dimension":
         where_clause = (
             "COALESCE(REGEXP_SUBSTR(query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), "
-            f"root_query_id, 'ADHOC') = '{value}'"
+            f"root_query_id, 'ADHOC') = {value}"
         )
     else:
-        where_clause = f"{col} = '{value}'"
+        where_clause = f"{col} = {value}"
     df_detail   = run_query(f"""
         SELECT query_id, user_name, role_name, warehouse_name, warehouse_size, database_name, schema_name,
                query_type, execution_status, start_time,

@@ -17,6 +17,7 @@ from utils import (
     build_overwatch_setup_bundle, build_bookmark_ddl, build_annotation_ddl,
     build_action_queue_ddl, build_snowflake_value_ddl, build_usage_log_ddl,
     build_alert_task_sql,
+    run_query, run_query_or_raise, sql_literal, safe_identifier,
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
@@ -59,6 +60,11 @@ def _load_button(label, key):
     return st.button(label, key=key)
 
 
+def _typed_confirmation(prompt: str, expected: str, key: str) -> bool:
+    entered = st.text_input(prompt, key=key, placeholder=expected)
+    return entered.strip() == expected
+
+
 def _scope_warehouse_names(df: pd.DataFrame, name_col: str = "name") -> pd.DataFrame:
     """Apply ALFA/Trexis warehouse visibility to SHOW-style result sets."""
     if df is None or df.empty or name_col not in df.columns:
@@ -73,6 +79,10 @@ def _scope_warehouse_names(df: pd.DataFrame, name_col: str = "name") -> pd.DataF
 
 def _quote_identifier(name: str) -> str:
     return '"' + str(name).replace('"', '""') + '"'
+
+
+def _qualified_name(*parts: str) -> str:
+    return ".".join(_quote_identifier(part) for part in parts if str(part or "").strip())
 
 
 def _as_bool(value, default: bool = False) -> bool:
@@ -90,11 +100,12 @@ def _as_int(value, default: int) -> int:
 
 def _table_exists(session, db: str, schema: str, table: str):
     try:
+        db_ident = safe_identifier(db)
         row = session.sql(f"""
             SELECT COUNT(*) AS CNT
-            FROM {db}.INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_SCHEMA = '{safe_sql(schema.upper())}'
-              AND TABLE_NAME = '{safe_sql(table.upper())}'
+            FROM {db_ident}.INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = {sql_literal(schema.upper())}
+              AND TABLE_NAME = {sql_literal(table.upper())}
         """).collect()[0]
         return int(row["CNT"]) > 0
     except Exception:
@@ -103,8 +114,9 @@ def _table_exists(session, db: str, schema: str, table: str):
 
 def _task_exists(session, db: str, schema: str, task_name: str):
     try:
+        schema_fqn = _qualified_name(db, schema)
         rows = session.sql(
-            f"SHOW TASKS LIKE '{safe_sql(task_name.upper())}' IN SCHEMA {db}.{schema}"
+            f"SHOW TASKS LIKE {sql_literal(task_name.upper())} IN SCHEMA {schema_fqn}"
         ).collect()
         return len(rows) > 0
     except Exception:
@@ -173,7 +185,7 @@ def render():
         kill_min = st.number_input("Flag queries running > (seconds)", 60, 3600, 300, key="kill_sec")
         if _load_button("Load Kill List", "kl_load"):
             try:
-                df = normalize_df(session.sql(f"""
+                df = run_query_or_raise(f"""
                     SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status, start_time,
                            DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) AS elapsed_sec,
                            SUBSTR(query_text,1,500) AS query_text
@@ -184,7 +196,7 @@ def render():
                       AND DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) > {kill_min}
                       {get_wh_filter_clause("warehouse_name")}
                     ORDER BY elapsed_sec DESC
-                """).to_pandas())
+                """)
                 st.session_state["dba_df_kl"] = df
             except Exception as e:
                 st.session_state["dba_df_kl"] = pd.DataFrame()
@@ -195,9 +207,19 @@ def render():
             st.warning(f"⚠️ {len(df)} queries running > {kill_min}s")
             st.dataframe(df, use_container_width=True)
             kill_id = st.selectbox("Kill query ID", df["QUERY_ID"].tolist(), key="kl_sel")
-            if kill_id and st.button("⛔ Cancel Query", type="primary", key="kl_kill"):
+            kill_confirmed = _typed_confirmation(
+                "Type CANCEL to enable query cancellation",
+                "CANCEL",
+                f"kl_confirm_{kill_id}",
+            ) if kill_id else False
+            if kill_id and st.button(
+                "⛔ Cancel Query",
+                type="primary",
+                key="kl_kill",
+                disabled=not kill_confirmed,
+            ):
                 try:
-                    session.sql(f"SELECT SYSTEM$CANCEL_QUERY('{safe_sql(kill_id)}')").collect()
+                    session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_id)})").collect()
                     st.success(f"✅ Cancel sent for `{kill_id}`")
                 except Exception as e:
                     st.error(f"Cancel failed: {e}")
@@ -217,7 +239,7 @@ def render():
         with col_r1:
             if st.button("🔄 Load All Warehouses", key="wh_cfg_load"):
                 try:
-                    df_raw = session.sql("SHOW WAREHOUSES").to_pandas()
+                    df_raw = run_query_or_raise("SHOW WAREHOUSES")
                     df_raw.columns = [c.lower() for c in df_raw.columns]
                     df_raw = _scope_warehouse_names(df_raw, "name")
                     st.session_state["dba_df_wh_cfg"] = df_raw
@@ -391,7 +413,17 @@ def render():
 
                     col_apply, col_cancel = st.columns([1, 3])
                     with col_apply:
-                        if st.button("✅ Apply Now", type="primary", key=f"wh_apply_{sel_wh}"):
+                        wh_confirmed = _typed_confirmation(
+                            f"Type {sel_wh} to enable ALTER WAREHOUSE",
+                            sel_wh,
+                            f"wh_confirm_{sel_wh}",
+                        )
+                        if st.button(
+                            "✅ Apply Now",
+                            type="primary",
+                            key=f"wh_apply_{sel_wh}",
+                            disabled=not wh_confirmed,
+                        ):
                             # CALLER MODE: ALTER WAREHOUSE needs MODIFY on the warehouse.
                             # SNOW_ACCOUNTADMIN and SNOW_SYSADMIN both have this.
                             # If a future role doesn't, this surfaces a clear error.
@@ -422,13 +454,13 @@ def render():
         load_days = st.slider("Lookback (days)", 1, 30, 7, key="dl_days")
         if _load_button("Load Copy History", "dl_load"):
             try:
-                st.session_state["dba_df_copy"] = normalize_df(session.sql(f"""
+                st.session_state["dba_df_copy"] = run_query(f"""
                     SELECT table_name, file_name, status, row_count,
                            first_error_message, last_load_time
                     FROM SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY
                     WHERE last_load_time >= DATEADD('day', -{load_days}, CURRENT_TIMESTAMP())
                     ORDER BY last_load_time DESC LIMIT 500
-                """).to_pandas())
+                """, ttl_key=f"dba_copy_{load_days}", tier="standard")
             except Exception as e:
                 st.error(f"Error: {e}")
         if st.session_state.get("dba_df_copy") is not None and not st.session_state["dba_df_copy"].empty:
@@ -440,14 +472,14 @@ def render():
         st.header("🌐 Network & Sessions")
         if _load_button("Load Session Data", "net_load"):
             try:
-                st.session_state["dba_df_long_sess"] = normalize_df(session.sql("""
+                st.session_state["dba_df_long_sess"] = run_query("""
                     SELECT session_id, user_name, created_on,
                            DATEDIFF('hour', created_on, CURRENT_TIMESTAMP()) AS session_hours
                     FROM SNOWFLAKE.ACCOUNT_USAGE.SESSIONS
                     WHERE created_on >= DATEADD('day', -7, CURRENT_TIMESTAMP())
                       AND DATEDIFF('hour', created_on, CURRENT_TIMESTAMP()) > 8
                     ORDER BY session_hours DESC LIMIT 100
-                """).to_pandas())
+                """, ttl_key="dba_long_sessions", tier="standard")
             except Exception as e:
                 st.info(f"Sessions unavailable: {e}")
         if st.session_state.get("dba_df_long_sess") is not None:
@@ -457,14 +489,14 @@ def render():
         st.header("🗑️ Unused Objects")
         if _load_button("Find Unused Tables", "unused_load"):
             try:
-                st.session_state["dba_df_unused"] = normalize_df(session.sql("""
+                st.session_state["dba_df_unused"] = run_query("""
                     SELECT table_catalog, table_schema, table_name, row_count,
                            bytes/POWER(1024,3) AS table_gb, created, last_altered
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES
                     WHERE deleted IS NULL
                       AND last_altered < DATEADD('day', -90, CURRENT_TIMESTAMP())
                     ORDER BY bytes DESC NULLS LAST LIMIT 200
-                """).to_pandas())
+                """, ttl_key="dba_unused_tables", tier="standard")
             except Exception as e:
                 st.error(f"Error: {e}")
         if st.session_state.get("dba_df_unused") is not None:
@@ -475,7 +507,7 @@ def render():
         sp_days = st.slider("Lookback (days)", 1, 14, 3, key="spipe_days")
         if _load_button("Load Pipe Usage", "spipe_load"):
             try:
-                st.session_state["dba_df_pipe"] = normalize_df(session.sql(f"""
+                st.session_state["dba_df_pipe"] = run_query(f"""
                     SELECT pipe_name, DATE_TRUNC('day', start_time) AS day,
                            SUM(credits_used) AS daily_credits,
                            SUM(bytes_inserted)/POWER(1024,3) AS gb_inserted,
@@ -483,7 +515,7 @@ def render():
                     FROM SNOWFLAKE.ACCOUNT_USAGE.PIPE_USAGE_HISTORY
                     WHERE start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
                     GROUP BY pipe_name, day ORDER BY daily_credits DESC
-                """).to_pandas())
+                """, ttl_key=f"dba_pipe_{sp_days}", tier="standard")
             except Exception as e:
                 st.error(f"Error: {e}")
         if st.session_state.get("dba_df_pipe") is not None:
@@ -494,7 +526,7 @@ def render():
         qas_days = st.slider("Lookback (days)", 1, 30, 7, key="qas_days")
         if _load_button("Load QAS Data", "qas_load"):
             try:
-                st.session_state["dba_df_qas"] = normalize_df(session.sql(f"""
+                st.session_state["dba_df_qas"] = run_query(f"""
                     WITH latest_size AS (
                         SELECT warehouse_name, warehouse_size
                         FROM (
@@ -513,7 +545,7 @@ def render():
                     WHERE q.start_time >= DATEADD('day', -{qas_days}, CURRENT_TIMESTAMP())
                       {get_wh_filter_clause("q.warehouse_name")}
                     GROUP BY q.warehouse_name, ls.warehouse_size, day ORDER BY daily_credits DESC
-                """).to_pandas())
+                """, ttl_key=f"dba_qas_{qas_days}", tier="standard")
             except Exception as e:
                 st.info(f"QAS data unavailable: {e}")
         if st.session_state.get("dba_df_qas") is not None:
@@ -530,8 +562,18 @@ def render():
             prod_sch = st.text_input("Prod Schema",   value="PUBLIC",  key="sc_prodsch")
         if st.button("Compare Schemas", key="sc_run"):
             try:
-                df_dev  = normalize_df(session.sql(f"SELECT table_name, row_count FROM {safe_sql(dev_db)}.INFORMATION_SCHEMA.TABLES WHERE table_schema='{safe_sql(dev_sch)}' AND table_type='BASE TABLE'").to_pandas())
-                df_prod = normalize_df(session.sql(f"SELECT table_name, row_count FROM {safe_sql(prod_db)}.INFORMATION_SCHEMA.TABLES WHERE table_schema='{safe_sql(prod_sch)}' AND table_type='BASE TABLE'").to_pandas())
+                dev_db_safe = safe_identifier(dev_db)
+                prod_db_safe = safe_identifier(prod_db)
+                df_dev = run_query(
+                    f"SELECT table_name, row_count FROM {dev_db_safe}.INFORMATION_SCHEMA.TABLES WHERE table_schema={sql_literal(dev_sch)} AND table_type='BASE TABLE'",
+                    ttl_key=f"dba_schema_dev_{dev_db_safe}_{dev_sch}",
+                    tier="metadata",
+                )
+                df_prod = run_query(
+                    f"SELECT table_name, row_count FROM {prod_db_safe}.INFORMATION_SCHEMA.TABLES WHERE table_schema={sql_literal(prod_sch)} AND table_type='BASE TABLE'",
+                    ttl_key=f"dba_schema_prod_{prod_db_safe}_{prod_sch}",
+                    tier="metadata",
+                )
                 df_cmp  = df_prod.merge(df_dev, on="TABLE_NAME", how="outer", suffixes=("_PROD","_DEV"))
                 df_cmp["ROW_DIFF"] = df_cmp["ROW_COUNT_PROD"].fillna(0) - df_cmp["ROW_COUNT_DEV"].fillna(0)
                 st.dataframe(df_cmp, use_container_width=True)
@@ -542,10 +584,14 @@ def render():
     with tabs[8]:
         st.header("🔎 Recent Objects")
         obj_days = st.slider("Created/altered within (days)", 1, 90, 30, key="obj_days")
-        obj_db_clause = f"AND table_catalog ILIKE '%{safe_sql(st.text_input('Database filter', key='obj_db_filter'))}%'" if st.session_state.get("obj_db_filter") else ""
+        obj_db_filter = st.text_input("Database filter", key="obj_db_filter")
+        obj_db_clause = (
+            f"AND table_catalog ILIKE {sql_literal('%' + obj_db_filter + '%')}"
+            if obj_db_filter else ""
+        )
         if st.button("Load Recent Objects", key="obj_load"):
             try:
-                st.session_state["dba_df_recent_objects"] = normalize_df(session.sql(f"""
+                st.session_state["dba_df_recent_objects"] = run_query(f"""
                     SELECT table_catalog AS database_name, table_schema AS schema_name,
                            table_name AS object_name, table_type, created, last_altered, table_owner AS owner
                     FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES
@@ -554,7 +600,7 @@ def render():
                            OR last_altered >= DATEADD('day', -{obj_days}, CURRENT_TIMESTAMP()))
                       {obj_db_clause}
                     ORDER BY GREATEST(created, last_altered) DESC LIMIT 500
-                """).to_pandas())
+                """, ttl_key=f"dba_recent_objects_{obj_days}_{st.session_state.get('obj_db_filter', '')}", tier="metadata")
             except Exception as e:
                 st.error(f"Error: {e}")
         if st.session_state.get("dba_df_recent_objects") is not None:
@@ -579,7 +625,7 @@ GROUP BY warehouse_name, hour_bucket;"""
         st.header("🔄 Dynamic Tables")
         if st.button("Load Dynamic Tables", key="dyn_load"):
             try:
-                st.session_state["dba_df_dyn"] = normalize_df(session.sql("""
+                st.session_state["dba_df_dyn"] = run_query("""
                     WITH live_dt AS (
                         SELECT database_name, schema_name, name, state, target_lag_sec,
                                refresh_mode, last_completed_refresh_state,
@@ -613,7 +659,7 @@ GROUP BY warehouse_name, hour_bucket;"""
                      AND r.rn = 1
                     ORDER BY l.maximum_lag_sec DESC NULLS LAST, l.name
                     LIMIT 500
-                """).to_pandas())
+                """, ttl_key="dba_dynamic_tables", tier="metadata")
             except Exception as e:
                 st.info(f"Dynamic table data unavailable: {e}")
         if st.session_state.get("dba_df_dyn") is not None:
@@ -653,11 +699,11 @@ GROUP BY warehouse_name, hour_bucket;"""
                 LIMIT 500
             """
             try:
-                st.session_state["dba_df_repl"] = normalize_df(session.sql(repl_sql_primary).to_pandas())
+                st.session_state["dba_df_repl"] = run_query_or_raise(repl_sql_primary)
                 st.session_state["dba_repl_source"] = "REPLICATION_GROUP_USAGE_HISTORY"
             except Exception as primary_error:
                 try:
-                    st.session_state["dba_df_repl"] = normalize_df(session.sql(repl_sql_fallback).to_pandas())
+                    st.session_state["dba_df_repl"] = run_query_or_raise(repl_sql_fallback)
                     st.session_state["dba_repl_source"] = "REPLICATION_USAGE_HISTORY"
                 except Exception as fallback_error:
                     st.info(f"Replication data unavailable: {fallback_error}")
@@ -673,14 +719,14 @@ GROUP BY warehouse_name, hour_bucket;"""
         sv_days = st.slider("Lookback (days)", 7, 90, 30, key="sv_days")
         if st.button("Load Serverless Costs", key="sv_load"):
             try:
-                st.session_state["dba_df_serverless"] = normalize_df(session.sql(f"""
+                st.session_state["dba_df_serverless"] = run_query(f"""
                     SELECT service_type, DATE_TRUNC('day', start_time) AS usage_date,
                            SUM(credits_used) AS daily_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
                     WHERE start_time >= DATEADD('day', -{sv_days}, CURRENT_TIMESTAMP())
                       AND service_type NOT IN ('WAREHOUSE_METERING','WAREHOUSE_METERING_READER')
                     GROUP BY service_type, usage_date ORDER BY daily_credits DESC
-                """).to_pandas())
+                """, ttl_key=f"dba_serverless_{sv_days}", tier="standard")
             except Exception as e:
                 st.error(f"Error: {e}")
         if st.session_state.get("dba_df_serverless") is not None and not st.session_state["dba_df_serverless"].empty:
@@ -706,7 +752,7 @@ GROUP BY warehouse_name, hour_bucket;"""
 
             # SHOW PARAMETERS — account-level Cortex controls
             try:
-                df_params = normalize_df(session.sql("SHOW PARAMETERS LIKE '%CORTEX%' IN ACCOUNT").to_pandas())
+                df_params = run_query_or_raise("SHOW PARAMETERS LIKE '%CORTEX%' IN ACCOUNT")
                 results["cortex_params"] = df_params
             except Exception as e:
                 results["cortex_params"] = pd.DataFrame()
@@ -714,14 +760,14 @@ GROUP BY warehouse_name, hour_bucket;"""
 
             # Also check AI_SERVICES parameters
             try:
-                df_ai = normalize_df(session.sql("SHOW PARAMETERS LIKE '%AI%' IN ACCOUNT").to_pandas())
+                df_ai = run_query_or_raise("SHOW PARAMETERS LIKE '%AI%' IN ACCOUNT")
                 results["ai_params"] = df_ai
             except Exception:
                 results["ai_params"] = pd.DataFrame()
 
             # Cortex usage today
             try:
-                df_usage = normalize_df(session.sql("""
+                df_usage = run_query("""
                     WITH combined AS (
                         SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS
                         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
@@ -736,7 +782,7 @@ GROUP BY warehouse_name, hour_bucket;"""
                            SUM(TOKENS)        AS tokens_today,
                            COUNT(DISTINCT USER_ID) AS active_users
                     FROM combined
-                """).to_pandas())
+                """, ttl_key="dba_cortex_usage_today", tier="live")
                 results["usage_today"] = df_usage
             except Exception:
                 results["usage_today"] = pd.DataFrame()
@@ -926,7 +972,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             if st.button("Load Running Task Queries", key="tg_run_load"):
                 try:
                     # IS gives live data; task queries have query_tag or client context
-                    df_tq = normalize_df(session.sql(f"""
+                    df_tq = run_query_or_raise(f"""
                         SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
                                start_time,
                                DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) AS elapsed_sec,
@@ -942,12 +988,12 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                               OR LOWER(query_text) LIKE '%execute task%'
                           )
                         ORDER BY elapsed_sec DESC
-                    """).to_pandas())
+                    """)
                     st.session_state["dba_df_tg_running"] = df_tq
                 except Exception as e:
                     # Fallback: all running queries
                     try:
-                        df_tq = normalize_df(session.sql(f"""
+                        df_tq = run_query_or_raise(f"""
                             SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
                                    start_time,
                                    DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) AS elapsed_sec,
@@ -959,7 +1005,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                             WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED')
                               {get_wh_filter_clause("warehouse_name")}
                             ORDER BY elapsed_sec DESC
-                        """).to_pandas())
+                        """)
                         st.session_state["dba_df_tg_running"] = df_tq
                         st.caption(f"Showing all running queries (task filter unavailable in this context: {e})")
                     except Exception as e2:
@@ -975,9 +1021,19 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         df_tq["QUERY_ID"].tolist(),
                         key="tg_cancel_qid_sel",
                     )
-                    if cancel_qid and st.button("⛔ Cancel This Query", type="primary", key="tg_cancel_q"):
+                    cancel_confirmed = _typed_confirmation(
+                        "Type CANCEL to enable task-query cancellation",
+                        "CANCEL",
+                        f"tg_cancel_confirm_{cancel_qid}",
+                    ) if cancel_qid else False
+                    if cancel_qid and st.button(
+                        "⛔ Cancel This Query",
+                        type="primary",
+                        key="tg_cancel_q",
+                        disabled=not cancel_confirmed,
+                    ):
                         try:
-                            session.sql(f"SELECT SYSTEM$CANCEL_QUERY('{safe_sql(cancel_qid)}')").collect()
+                            session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(cancel_qid)})").collect()
                             st.success(f"✅ Cancel sent for `{cancel_qid}`")
                         except Exception as e:
                             st.error(f"Cancel failed: {e}")
@@ -995,7 +1051,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             # Load recent task runs to get graph_run_id
             if st.button("Load Recent Task Runs", key="tg_runs_load"):
                 try:
-                    df_runs = normalize_df(session.sql("""
+                    df_runs = run_query("""
                         SELECT NAME, DATABASE_NAME, SCHEMA_NAME,
                                GRAPH_RUN_GROUP_ID,
                                SCHEDULED_TIME, QUERY_START_TIME, COMPLETED_TIME,
@@ -1009,7 +1065,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         WHERE SCHEDULED_TIME >= DATEADD('hours', -6, CURRENT_TIMESTAMP())
                         ORDER BY SCHEDULED_TIME DESC
                         LIMIT 200
-                    """).to_pandas())
+                    """, ttl_key="dba_task_runs_recent", tier="live")
                     st.session_state["dba_df_task_runs"] = df_runs
                 except Exception as e:
                     st.error(f"Error loading task runs: {e}")
@@ -1036,10 +1092,20 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                             )
                             col_cg1, col_cg2 = st.columns([1,3])
                             with col_cg1:
-                                if st.button("⛔ Cancel Graph Run", type="primary", key="tg_cancel_graph"):
+                                graph_confirmed = _typed_confirmation(
+                                    "Type CANCEL to enable graph cancellation",
+                                    "CANCEL",
+                                    f"tg_graph_confirm_{sel_graph}",
+                                )
+                                if st.button(
+                                    "⛔ Cancel Graph Run",
+                                    type="primary",
+                                    key="tg_cancel_graph",
+                                    disabled=not graph_confirmed,
+                                ):
                                     try:
                                         session.sql(
-                                            f"SELECT SYSTEM$CANCEL_TASK_GRAPH('{safe_sql(str(sel_graph))}')"
+                                            f"SELECT SYSTEM$CANCEL_TASK_GRAPH({sql_literal(str(sel_graph))})"
                                         ).collect()
                                         st.success(f"✅ Graph run `{sel_graph}` cancelled.")
                                         st.session_state.pop("dba_df_task_runs", None)
@@ -1057,9 +1123,18 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         query_ids = running_runs["QUERY_ID"].dropna().unique().tolist()
                         if query_ids:
                             sel_qid = st.selectbox("Select Query ID", query_ids, key="tg_cancel_run_qid")
-                            if sel_qid and st.button("⛔ Cancel Query", key="tg_cancel_run_q"):
+                            run_confirmed = _typed_confirmation(
+                                "Type CANCEL to enable run-query cancellation",
+                                "CANCEL",
+                                f"tg_run_confirm_{sel_qid}",
+                            ) if sel_qid else False
+                            if sel_qid and st.button(
+                                "⛔ Cancel Query",
+                                key="tg_cancel_run_q",
+                                disabled=not run_confirmed,
+                            ):
                                 try:
-                                    session.sql(f"SELECT SYSTEM$CANCEL_QUERY('{safe_sql(str(sel_qid))}')").collect()
+                                    session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(str(sel_qid))})").collect()
                                     st.success(f"✅ Cancel sent for `{sel_qid}`")
                                 except Exception as e:
                                     st.error(f"Cancel failed: {e}")
@@ -1080,14 +1155,14 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             # Load task list for selection
             if st.button("Load Task List", key="tg_mgmt_load"):
                 try:
-                    df_tasks = normalize_df(session.sql("""
+                    df_tasks = run_query("""
                         SELECT name, database_name, schema_name, state,
                                schedule, warehouse,
                                COALESCE(predecessors, '') AS predecessors,
                                definition
                         FROM SNOWFLAKE.ACCOUNT_USAGE.TASKS
                         ORDER BY database_name, schema_name, name
-                    """).to_pandas())
+                    """, ttl_key="dba_task_list", tier="metadata")
                     st.session_state["dba_df_tg_tasks"] = df_tasks
                 except Exception as e:
                     st.error(f"Error loading tasks: {e}")
@@ -1117,7 +1192,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     db_n   = task_row.get("DATABASE_NAME","")
                     sch_n  = task_row.get("SCHEMA_NAME","")
                     state  = task_row.get("STATE","")
-                    full_n = f"{db_n}.{sch_n}.{sel_task}"
+                    full_n = _qualified_name(db_n, sch_n, sel_task)
                     preds  = task_row.get("PREDECESSORS","")
 
                     st.info(f"`{full_n}` · State: **{state}** · Predecessors: `{preds or 'none (root task)'}`")
@@ -1184,7 +1259,11 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 
                     if sel_root:
                         root_row  = df_tasks[df_tasks["NAME"] == sel_root].iloc[0]
-                        root_full = f"{root_row.get('DATABASE_NAME','')}.{root_row.get('SCHEMA_NAME','')}.{sel_root}"
+                        root_full = _qualified_name(
+                            root_row.get("DATABASE_NAME", ""),
+                            root_row.get("SCHEMA_NAME", ""),
+                            sel_root,
+                        )
 
                         # Find all children
                         children = df_tasks[
@@ -1212,7 +1291,11 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 errors_seen = []
                                 # Resume children first, then root
                                 for _, child in children.iterrows():
-                                    full_child = f"{child.get('DATABASE_NAME','')}.{child.get('SCHEMA_NAME','')}.{child.get('NAME','')}"
+                                    full_child = _qualified_name(
+                                        child.get("DATABASE_NAME", ""),
+                                        child.get("SCHEMA_NAME", ""),
+                                        child.get("NAME", ""),
+                                    )
                                     try:
                                         session.sql(f"ALTER TASK {full_child} RESUME").collect()
                                     except Exception as e:
@@ -1252,7 +1335,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 if sel_dag and st.button("Build DAG View", key="tg_dag_build"):
                     # Get full task graph via TASK_GRAPH_HISTORY or reconstruct from predecessors
                     try:
-                        df_dag = normalize_df(session.sql(f"""
+                        df_dag = run_query(f"""
                             SELECT t.NAME, t.DATABASE_NAME, t.SCHEMA_NAME, t.STATE,
                                    t.PREDECESSORS,
                                    th.STATE      AS last_run_state,
@@ -1272,10 +1355,10 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 LIMIT 1
                             ) th ON TRUE
                             WHERE t.DELETED IS NULL
-                              AND (t.NAME = '{safe_sql(sel_dag)}'
-                                   OR t.PREDECESSORS LIKE '%{safe_sql(sel_dag)}%')
+                              AND (t.NAME = {sql_literal(sel_dag)}
+                                   OR t.PREDECESSORS LIKE {sql_literal('%' + sel_dag + '%')})
                             ORDER BY t.PREDECESSORS NULLS FIRST, t.NAME
-                        """).to_pandas())
+                        """, ttl_key=f"dba_task_dag_{sel_dag}", tier="metadata")
                         st.session_state["dba_df_dag_view"] = df_dag
                     except Exception as e:
                         st.error(f"DAG build failed: {e}")
@@ -1349,14 +1432,14 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 }
                 dim = dim_map[ul_group]
                 lbl = "DAY" if ul_group=="Day" else ul_group.upper()
-                df_ul = normalize_df(session.sql(f"""
+                df_ul = run_query(f"""
                     SELECT {dim} AS {lbl}, COUNT(*) AS load_count,
                            COUNT(DISTINCT sf_user) AS distinct_users,
                            ROUND(AVG(query_duration_ms)) AS avg_ms
                     FROM {log_tbl}
                     WHERE log_time >= DATEADD('day', -{ul_days}, CURRENT_TIMESTAMP())
                     GROUP BY {dim} ORDER BY load_count DESC LIMIT 200
-                """).to_pandas())
+                """, ttl_key=f"dba_usage_log_{ul_group}_{ul_days}", tier="standard")
                 st.session_state["dba_df_usage_log"] = df_ul
                 st.session_state["dba_ul_group_label"] = lbl
             except Exception as e:

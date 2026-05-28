@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from utils import (
-    get_session, run_query, normalize_df, format_credits,
+    get_session, run_query, format_credits,
     credits_to_dollars, download_csv, mark_loaded, show_loaded_time,
     build_metered_credit_cte, render_drillable_bar_chart, render_query_drilldown,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
@@ -197,7 +197,7 @@ def render():
                 """),
             ]:
                 try:
-                    hd[key] = normalize_df(session.sql(sql).to_pandas())
+                    hd[key] = run_query(sql, ttl_key=f"account_health_{key}_{filter_sig}", tier="live")
                 except Exception:
                     hd[key] = pd.DataFrame()
 
@@ -313,7 +313,7 @@ def render():
         st.divider()
         st.markdown("**🏭 Warehouse Pressure (last 1h)**")
         try:
-            df_wp = normalize_df(session.sql(f"""
+            df_wp = run_query(f"""
                 SELECT warehouse_name, MAX(warehouse_size) AS warehouse_size, COUNT(*) AS queries,
                        SUM(CASE WHEN execution_status IN ('QUEUED','BLOCKED') THEN 1 ELSE 0 END) AS queued
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
@@ -321,7 +321,7 @@ def render():
                   AND warehouse_name IS NOT NULL
                   {wh_filter_m}
                 GROUP BY warehouse_name ORDER BY queries DESC LIMIT 8
-            """).to_pandas())
+            """, ttl_key=f"account_health_wh_pressure_{filter_sig}", tier="live")
             if not df_wp.empty:
                 top_wh = df_wp.sort_values(["QUEUED","QUERIES"], ascending=False).iloc[0]
                 st.metric(
@@ -352,11 +352,11 @@ def render():
 
         if st.button("Load Resource Monitors", key="resmon_load"):
             try:
-                df_rm = normalize_df(session.sql("""
+                df_rm = run_query("""
                     SELECT name, created, credit_quota, used_credits, remaining_credits,
                            owner, notify, suspend, suspend_immediate, warehouses
                     FROM SNOWFLAKE.ACCOUNT_USAGE.RESOURCE_MONITORS
-                """).to_pandas())
+                """, ttl_key="account_health_resource_monitors", tier="standard")
                 st.session_state["ah_df_resmon"] = df_rm
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -425,7 +425,7 @@ def render():
                     """),
                 ]:
                     try:
-                        md[key] = normalize_df(session.sql(sql).to_pandas())
+                        md[key] = run_query(sql, ttl_key=f"account_health_morning_{key}", tier="standard")
                     except Exception:
                         md[key] = pd.DataFrame()
                 st.session_state["morning_data"] = md
@@ -534,18 +534,18 @@ def render():
 
                 for k, sql in metric_queries.items():
                     try:
-                        br_data[k] = normalize_df(session.sql(sql).to_pandas())
+                        br_data[k] = run_query(sql, ttl_key=f"account_health_brief_{k}_{br_hours}", tier="standard")
                     except Exception:
                         br_data[k] = pd.DataFrame()
 
                 # Contract utilization
                 try:
-                    df_ytd = normalize_df(session.sql("""
+                    df_ytd = run_query("""
                         SELECT SUM(credits_used) AS ytd_credits
                         FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
                         WHERE start_time >= DATE_TRUNC('year', CURRENT_DATE())
                           AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                    """).to_pandas())
+                    """, ttl_key="account_health_brief_contract_ytd", tier="standard")
                     committed = st.session_state.get("cc_committed_credits", 100000)
                     ytd       = float(df_ytd["YTD_CREDITS"].iloc[0]) if not df_ytd.empty else 0
                     br_data["contract_pct"] = (ytd / committed * 100) if committed > 0 else None

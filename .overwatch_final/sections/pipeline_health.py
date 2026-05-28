@@ -8,8 +8,8 @@ from utils import (
     get_db_filter_clause,
     get_session,
     make_action_id,
-    normalize_df,
     render_drillable_bar_chart,
+    run_query,
     upsert_actions,
 )
 
@@ -81,7 +81,7 @@ def render():
         stale_hours = st.slider("Stale threshold (hours)", 4, 168, 24, key="pipe_stale_hours")
         if st.button("Load Freshness Watchlist", key="pipe_fresh_load"):
             try:
-                df_fresh = normalize_df(session.sql(f"""
+                df_fresh = run_query(f"""
                     SELECT table_catalog AS database_name,
                            table_schema AS schema_name,
                            table_name,
@@ -97,7 +97,7 @@ def render():
                       {get_db_filter_clause("table_catalog", company)}
                     ORDER BY hours_since_change DESC, size_gb DESC
                     LIMIT 300
-                """).to_pandas())
+                """, ttl_key=f"pipeline_fresh_{company}_{stale_hours}", tier="standard")
                 st.session_state["pipe_freshness"] = df_fresh
             except Exception as e:
                 st.error(f"Freshness scan failed: {e}")
@@ -129,7 +129,7 @@ def render():
         load_days = st.slider("Lookback days", 1, 30, 7, key="pipe_load_days")
         if st.button("Load Copy History Failures", key="pipe_load_failures"):
             try:
-                df_loads = normalize_df(session.sql(f"""
+                df_loads = run_query(f"""
                     SELECT table_catalog AS database_name,
                            table_schema AS schema_name,
                            table_name,
@@ -144,7 +144,7 @@ def render():
                     GROUP BY database_name, schema_name, table_name, status
                     ORDER BY file_count DESC, last_seen DESC
                     LIMIT 300
-                """).to_pandas())
+                """, ttl_key=f"pipeline_loads_{company}_{load_days}", tier="standard")
                 st.session_state["pipe_load_failures"] = df_loads
             except Exception as e:
                 st.error(f"Load failure scan failed: {e}")
@@ -166,7 +166,7 @@ def render():
         min_gb = st.slider("Minimum table size (GB)", 1, 500, 25, key="pipe_min_gb")
         if st.button("Load Volume Watchlist", key="pipe_volume_load"):
             try:
-                df_volume = normalize_df(session.sql(f"""
+                df_volume = run_query(f"""
                     SELECT table_catalog AS database_name,
                            table_schema AS schema_name,
                            table_name,
@@ -185,7 +185,7 @@ def render():
                       {get_db_filter_clause("table_catalog", company)}
                     ORDER BY size_gb DESC
                     LIMIT 300
-                """).to_pandas())
+                """, ttl_key=f"pipeline_volume_{company}_{min_gb}", tier="standard")
                 st.session_state["pipe_volume"] = df_volume
             except Exception as e:
                 st.error(f"Volume watch failed: {e}")

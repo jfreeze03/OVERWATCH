@@ -32,11 +32,11 @@ THEMES = {
         "desc":     "Dark glassmorphism · cyan accent",
     },
     "corporate": {
-        "label":    "ALFA",
+        "label":    "ALFA Light",
         "emoji":    "🔴",
         "swatch":   "#b00020",
-        "bg":       "#f7f6f3",
-        "desc":     "Clean light - ALFA red & teal",
+        "bg":       "#ffffff",
+        "desc":     "Bright ALFA red, slate & teal",
     },
     "terminal": {
         "label":    "Terminal",
@@ -115,43 +115,43 @@ _VARS = {
 # ─── 2. CORPORATE — traditional light, navy sidebar, ALFA blue ───────────────
 "corporate": """
 :root {
-    --bg-app:          #f7f6f3;
+    --bg-app:          #ffffff;
     --bg-sidebar:      #ffffff;
     --bg-card:         #ffffff;
-    --bg-card-hover:   #fbfaf8;
+    --bg-card-hover:   #f8fafc;
     --bg-input:        #ffffff;
-    --bg-tab-list:     #f0efec;
+    --bg-tab-list:     #f1f5f9;
     --bg-expander:     #ffffff;
 
-    --border-subtle:   #e4e1dc;
-    --border-normal:   #cfcac3;
-    --border-strong:   #5aa0b6;
-    --border-sidebar:  #d8d4ce;
+    --border-subtle:   #e5e7eb;
+    --border-normal:   #cbd5e1;
+    --border-strong:   #0f7894;
+    --border-sidebar:  #e2e8f0;
 
-    --text-primary:    #2f3437;
-    --text-secondary:  #4d5559;
-    --text-muted:      #7b8387;
-    --text-input:      #2f3437;
+    --text-primary:    #1f2937;
+    --text-secondary:  #334155;
+    --text-muted:      #64748b;
+    --text-input:      #111827;
     --text-heading:    #b00020;
 
     --accent:          #b00020;
     --accent-rgb:      176, 0, 32;
-    --accent2:         #5aa0b6;
-    --accent3:         #2f7f95;
-    --h1-gradient:     linear-gradient(90deg, #b00020 0%, #b00020 46%, #3a3d40 46%, #3a3d40 100%);
+    --accent2:         #0f7894;
+    --accent3:         #475569;
+    --h1-gradient:     linear-gradient(90deg, #b00020 0%, #b00020 44%, #3f3f46 44%, #3f3f46 100%);
 
-    --metric-shadow:        0 1px 8px rgba(47,52,55,0.08), 0 1px 2px rgba(47,52,55,0.06);
-    --metric-hover-shadow:  0 8px 22px rgba(90,160,182,0.18), 0 3px 8px rgba(47,52,55,0.08);
-    --btn-bg:          linear-gradient(135deg, rgba(90,160,182,0.10), rgba(176,0,32,0.04));
-    --btn-bg-hover:    linear-gradient(135deg, rgba(90,160,182,0.20), rgba(176,0,32,0.08));
-    --btn-border:      rgba(90, 160, 182, 0.55);
-    --btn-hover-shadow: 0 2px 12px rgba(90,160,182,0.22);
-    --slider-track:    linear-gradient(90deg, #b00020, #5aa0b6);
-    --tab-active-bg:   rgba(176, 0, 32, 0.10);
+    --metric-shadow:        0 1px 10px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.05);
+    --metric-hover-shadow:  0 8px 24px rgba(15, 120, 148, 0.16), 0 2px 8px rgba(15, 23, 42, 0.08);
+    --btn-bg:          #ffffff;
+    --btn-bg-hover:    #f8fafc;
+    --btn-border:      rgba(15, 120, 148, 0.46);
+    --btn-hover-shadow: 0 2px 12px rgba(15, 120, 148, 0.18);
+    --slider-track:    linear-gradient(90deg, #b00020, #0f7894);
+    --tab-active-bg:   rgba(176, 0, 32, 0.08);
     --tab-active-col:  #b00020;
-    --hr-bg:           linear-gradient(90deg, transparent, #d8d4ce, transparent);
-    --scrollbar-track: #f2f0ec;
-    --scrollbar-thumb: rgba(90, 160, 182, 0.35);
+    --hr-bg:           linear-gradient(90deg, transparent, #e2e8f0, transparent);
+    --scrollbar-track: #f1f5f9;
+    --scrollbar-thumb: rgba(15, 120, 148, 0.34);
     --scrollbar-hover: rgba(176, 0, 32, 0.35);
     --font-body:       'Inter', 'DM Sans', 'Segoe UI', system-ui, sans-serif;
     --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
@@ -324,36 +324,12 @@ _STRUCTURAL_CSS = """
     color: var(--text-secondary) !important;
     font-family: var(--font-body) !important;
 }
-[data-testid="stIconMaterial"],
-[data-testid="stSidebar"] [data-testid="stIconMaterial"],
-[data-testid="stSidebar"] span[class*="material"],
-[data-testid="stSidebar"] span[class*="icon"] {
-    font-family: "Material Symbols Rounded", "Material Icons" !important;
-    color: inherit !important;
-    letter-spacing: normal !important;
-    text-transform: none !important;
-    font-feature-settings: "liga" !important;
-    -webkit-font-feature-settings: "liga" !important;
+[data-testid="stIconMaterial"] {
+    display: none !important;
 }
-[data-testid="stSidebar"] [data-testid="stIconMaterial"] {
-    font-size: 0 !important;
-    line-height: 0 !important;
-    overflow: hidden !important;
-    width: 0.8rem !important;
-    min-width: 0.8rem !important;
-    height: 0.8rem !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
-[data-testid="stSidebar"] [data-testid="stIconMaterial"]::before {
-    content: "";
-    width: 0.38rem;
-    height: 0.38rem;
-    border-right: 2px solid currentColor;
-    border-bottom: 2px solid currentColor;
-    transform: rotate(45deg);
-    opacity: 0.8;
+[data-testid="stIconMaterial"]:has(span),
+[data-testid="stIconMaterial"] span {
+    display: none !important;
 }
 [data-testid="stSidebar"] .stRadio > div > label:hover {
     color: var(--accent) !important;
@@ -588,7 +564,7 @@ code, pre, .stCodeBlock {
 .corporate-extra [data-testid="stSidebar"] label,
 .corporate-extra [data-testid="stSidebar"] .stRadio > label,
 .corporate-extra [data-testid="stSidebar"] p {
-    color: #2f3437 !important;
+    color: #334155 !important;
 }
 .corporate-extra [data-testid="stSidebar"] .stRadio > div > label:hover {
     color: #b00020 !important;
@@ -599,11 +575,26 @@ code, pre, .stCodeBlock {
     background: rgba(176,0,32,0.10);
     border-left: 3px solid #b00020;
 }
+.corporate-extra [data-testid="stSidebar"] .stButton > button[kind="secondary"] {
+    color: #1f2937 !important;
+    background: #ffffff !important;
+    border-color: #d7e2ea !important;
+    box-shadow: none !important;
+}
+.corporate-extra [data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover {
+    color: #b00020 !important;
+    background: #f8fafc !important;
+    border-color: rgba(176,0,32,0.28) !important;
+}
+.corporate-extra [data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #b00020, #0f7894) !important;
+}
 /* Corporate: body text stays dark on light backgrounds */
 .corporate-extra p,
 .corporate-extra li,
 .corporate-extra label:not([data-testid="stSidebar"] *) {
-    color: #2f3437 !important;
+    color: #1f2937 !important;
 }
 .corporate-extra h2, .corporate-extra h3 {
     color: #b00020 !important;
@@ -632,12 +623,12 @@ _THEME_EXTRAS = {
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] .stRadio > label,
 [data-testid="stSidebar"] p {
-    color: #2f3437 !important;
+    color: #334155 !important;
 }
 [data-testid="stSidebar"] .stButton > button {
-    color: #2f3437 !important;
+    color: #1f2937 !important;
     background: #ffffff !important;
-    border-color: #d8d4ce !important;
+    border-color: #d7e2ea !important;
     box-shadow: none !important;
 }
 [data-testid="stSidebar"] .stButton > button:hover {
@@ -709,6 +700,21 @@ _PICKER_CSS = """
 </style>
 """
 
+_STREAMLIT_ICON_FIX = """
+<style>
+.stApp [data-testid="stIconMaterial"],
+[data-testid="stSidebar"] [data-testid="stIconMaterial"],
+.stExpander [data-testid="stIconMaterial"],
+summary [data-testid="stIconMaterial"] {
+    display: none !important;
+}
+.stApp [data-testid="stIconMaterial"] *,
+[data-testid="stSidebar"] [data-testid="stIconMaterial"] * {
+    display: none !important;
+}
+</style>
+"""
+
 
 def _get_theme() -> str:
     return st.session_state.get("active_theme", _DEFAULT_THEME)
@@ -724,7 +730,11 @@ def inject_theme() -> None:
     vars_block = _VARS.get(theme_key, _VARS[_DEFAULT_THEME])
 
     # Inject the :root variables + structural CSS
-    combined = _STRUCTURAL_CSS.replace("{vars}", vars_block) + _THEME_EXTRAS.get(theme_key, "")
+    combined = (
+        _STRUCTURAL_CSS.replace("{vars}", vars_block)
+        + _THEME_EXTRAS.get(theme_key, "")
+        + _STREAMLIT_ICON_FIX
+    )
     st.markdown(combined, unsafe_allow_html=True)
 
 
@@ -810,11 +820,17 @@ def restore_theme_preference() -> None:
     try:
         from utils.session import get_session
         from config import ALERT_DB, ALERT_SCHEMA
+        from utils.query import safe_identifier, sql_literal
         session = get_session()
+        bookmark_table = (
+            f"{safe_identifier(ALERT_DB)}."
+            f"{safe_identifier(ALERT_SCHEMA)}."
+            f"{safe_identifier('OVERWATCH_BOOKMARKS')}"
+        )
         rows = session.sql(f"""
-            SELECT STATE_JSON FROM {ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_BOOKMARKS
+            SELECT STATE_JSON FROM {bookmark_table}
             WHERE SF_USER = CURRENT_USER()
-              AND BOOKMARK_NAME = '_theme_pref'
+              AND BOOKMARK_NAME = {sql_literal("_theme_pref")}
             ORDER BY CREATED_AT DESC LIMIT 1
         """).collect()
         if rows:
@@ -832,16 +848,23 @@ def _save_theme_preference(theme_key: str) -> None:
     try:
         from utils.session import get_session
         from config import ALERT_DB, ALERT_SCHEMA
+        from utils.query import safe_identifier, sql_literal
         session = get_session()
-        state_json = json.dumps({"active_theme": theme_key}).replace("'", "''")
+        bookmark_table = (
+            f"{safe_identifier(ALERT_DB)}."
+            f"{safe_identifier(ALERT_SCHEMA)}."
+            f"{safe_identifier('OVERWATCH_BOOKMARKS')}"
+        )
+        state_json = sql_literal(json.dumps({"active_theme": theme_key}))
+        bookmark_name = sql_literal("_theme_pref")
         session.sql(f"""
-            DELETE FROM {ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_BOOKMARKS
-            WHERE SF_USER = CURRENT_USER() AND BOOKMARK_NAME = '_theme_pref'
+            DELETE FROM {bookmark_table}
+            WHERE SF_USER = CURRENT_USER() AND BOOKMARK_NAME = {bookmark_name}
         """).collect()
         session.sql(f"""
-            INSERT INTO {ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_BOOKMARKS
+            INSERT INTO {bookmark_table}
                 (BOOKMARK_NAME, SECTION, STATE_JSON, IS_SHARED)
-            VALUES ('_theme_pref', '', PARSE_JSON('{state_json}'), FALSE)
+            VALUES ({bookmark_name}, '', PARSE_JSON({state_json}), FALSE)
         """).collect()
     except Exception:
         pass

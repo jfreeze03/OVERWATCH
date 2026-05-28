@@ -36,23 +36,17 @@ pip install -r requirements.txt
 streamlit run .overwatch_final/app.py
 ```
 
-## Required Secrets
+## Snowflake Connection
 
-Do not commit credentials. For Streamlit Community Cloud, add a Snowflake
-connection block in app secrets:
+Do not commit Snowflake credentials. The preferred runtime is
+Streamlit-in-Snowflake, where Snowflake injects the active user session and no
+local credential file is required.
 
-```toml
-[connections.snowflake]
-account = "your_account_identifier"
-user = "your_user"
-password = "your_password"
-role = "SNOW_ACCOUNTADMIN"
-warehouse = "COMPUTE_WH"
-database = "DBA_MAINT_DB"
-schema = "OVERWATCH"
-```
-
-For local development, use the same block in `.streamlit/secrets.toml`.
+For Streamlit Community Cloud or another live host, configure the Snowflake
+connection in that platform's secured secret store. Keep credentials outside
+the repository and outside `.overwatch_final/`. Local development can run the
+interface without credentials; live data panels will show an offline notice
+until the app is running on a host with a Snowflake connection.
 
 ## Required Snowflake Access
 
@@ -219,7 +213,7 @@ queue with status values such as New, Acknowledged, Fixed, and Ignored.
   practical.
 - Some features are best-effort because Snowflake account history availability
   depends on edition, privileges, retention, and account settings.
-- Keep credentials in Streamlit secrets or local `.streamlit/secrets.toml`.
+- Keep credentials in the live host's secured secret store, never in the repo.
 - Do not commit Streamlit log files or Python cache directories.
 
 ## Recent Design Updates

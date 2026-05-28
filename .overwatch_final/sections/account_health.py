@@ -113,13 +113,12 @@ def render():
             for key, sql in [
                 ("live", f"""
                     SELECT COUNT(*) AS active_count,
-                           SUM(CASE WHEN execution_status='QUEUED'  THEN 1 ELSE 0 END) AS queued_count,
-                           SUM(CASE WHEN execution_status='BLOCKED' THEN 1 ELSE 0 END) AS blocked_count
-                    FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
-                        END_TIME_RANGE_START=>DATEADD('hours',-1,CURRENT_TIMESTAMP()),
-                        RESULT_LIMIT=>500))
-                    WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
-                      {wh_filter_m}
+                           SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_count,
+                           SUM(CASE WHEN execution_status ILIKE '%BLOCKED%' THEN 1 ELSE 0 END) AS blocked_count
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                    WHERE q.start_time >= DATEADD('hours',-1,CURRENT_TIMESTAMP())
+                      AND q.execution_status IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
+                      {wh_filter_q} {db_filter_q} {user_filter_q}
                 """),
                 ("burn", f"""
                     SELECT SUM(CASE WHEN start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
@@ -129,7 +128,7 @@ def render():
                                THEN credits_used ELSE 0 END) AS prior_24h
                     FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
                     WHERE start_time >= DATEADD('hours',-48,CURRENT_TIMESTAMP())
-                      {wh_filter_m}
+                      {get_wh_filter_clause("name", company)}
                 """),
                 ("errors", f"""
                     SELECT COUNT(*) AS err_count
@@ -525,10 +524,9 @@ def render():
                     """,
                     "queued": """
                         SELECT SUM(CASE WHEN execution_status='QUEUED' THEN 1 ELSE 0 END) AS queued
-                        FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
-                            END_TIME_RANGE_START=>DATEADD('hours',-1,CURRENT_TIMESTAMP()),
-                            RESULT_LIMIT=>500))
-                        WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED')
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                        WHERE q.start_time >= DATEADD('hours', -1, CURRENT_TIMESTAMP())
+                          AND execution_status IN ('RUNNING','QUEUED','BLOCKED')
                     """,
                 }
 

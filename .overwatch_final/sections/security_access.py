@@ -84,7 +84,7 @@ def render():
 
         if st.button("Load Login Data", key="sec_load"):
             for key, sql in [
-                ("df_login_sum", f"""
+                ("sec_df_login_sum", f"""
                     SELECT is_success, COUNT(*) AS event_count,
                            COUNT(DISTINCT user_name) AS distinct_users,
                            COUNT(DISTINCT client_ip) AS distinct_ips
@@ -92,7 +92,7 @@ def render():
                     WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
                     GROUP BY is_success
                 """),
-                ("df_failed_logins", f"""
+                ("sec_df_failed_logins", f"""
                     SELECT user_name, client_ip, reported_client_type, error_code,
                            COUNT(*) AS attempt_count,
                            MAX(event_timestamp) AS last_attempt
@@ -102,7 +102,7 @@ def render():
                     GROUP BY user_name, client_ip, reported_client_type, error_code
                     ORDER BY attempt_count DESC LIMIT 50
                 """),
-                ("df_login_trend", f"""
+                ("sec_df_login_trend", f"""
                     SELECT DATE_TRUNC('day', event_timestamp) AS day,
                            is_success, COUNT(*) AS event_count
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
@@ -111,7 +111,7 @@ def render():
                 """),
             ]:
                 try:
-                    st.session_state[key] = run_query(sql, ttl_key=f"security_{key}_{posture_days}", tier="standard")
+                    st.session_state[key] = run_query(sql, ttl_key=f"security_{key}_{sec_days}", tier="standard")
                 except Exception:
                     st.session_state[key] = pd.DataFrame()
 
@@ -179,7 +179,7 @@ def render():
                     LIMIT 50
                 """),
                 ("sec_login_errors", f"""
-                    SELECT COALESCE(error_code, 'NONE') AS error_code,
+                    SELECT COALESCE(TRY_TO_VARCHAR(error_code), 'NONE') AS error_code,
                            COUNT(*) AS event_count,
                            COUNT(DISTINCT user_name) AS users,
                            COUNT(DISTINCT client_ip) AS ips

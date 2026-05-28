@@ -9,24 +9,13 @@ Use this repository with Streamlit Community Cloud:
 Community Cloud installs dependencies from the root `requirements.txt`.
 The Snowflake-in-Snowflake deployment still uses `.overwatch_final/environment.yml`.
 
-## Secrets
+## Snowflake Connection
 
-Do not commit secrets to GitHub. In Streamlit Cloud, open **Advanced settings**
-or **App settings > Secrets** and add a Snowflake connection block:
-
-```toml
-[connections.snowflake]
-account = "your_account_identifier"
-user = "your_user"
-password = "your_password"
-role = "SNOW_ACCOUNTADMIN"
-warehouse = "COMPUTE_WH"
-database = "DBA_MAINT_DB"
-schema = "OVERWATCH"
-```
-
-For key-pair or SSO authentication, replace the password fields with your
-organization's approved Snowflake connection settings.
+Do not commit Snowflake credentials to GitHub. In Streamlit Cloud, configure
+the Snowflake connection in **Advanced settings** or **App settings > Secrets**
+using your organization's approved authentication method. Keep all account,
+user, password, token, private-key, and SSO settings in Streamlit Cloud or your
+live host's secured secret store, not in this repository.
 
 ## Required Snowflake Grants
 
@@ -52,5 +41,6 @@ pip install -r requirements.txt
 streamlit run .overwatch_final/app.py
 ```
 
-For local Snowflake credentials, create `.streamlit/secrets.toml` with the
-same `[connections.snowflake]` block shown above. Keep that file local only.
+Local development can run without Snowflake credentials. In that mode, the app
+loads the interface and shows offline notices for live data panels until it is
+deployed to a host with a configured Snowflake connection.

@@ -390,6 +390,6 @@ except Exception as e:
     st.warning("Snowflake is not connected yet, so this section cannot load live data.")
     st.caption(str(e))
     st.info(
-        "Add Snowflake credentials in Streamlit secrets or run inside Snowsight with an active session, "
-        "then refresh the app."
+        "Run inside Snowsight/Streamlit-in-Snowflake or configure the live host's Snowflake connection "
+        "outside this repository, then refresh the app."
     )

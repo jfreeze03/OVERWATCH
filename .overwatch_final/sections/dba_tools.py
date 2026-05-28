@@ -123,6 +123,23 @@ def _task_exists(session, db: str, schema: str, task_name: str):
         return None
 
 
+def _show_to_df(session, stmt: str) -> pd.DataFrame:
+    try:
+        return normalize_df(session.sql(stmt).to_pandas())
+    except Exception:
+        return pd.DataFrame()
+
+
+def _load_task_inventory(session) -> pd.DataFrame:
+    df = _show_to_df(session, "SHOW TASKS IN ACCOUNT")
+    if df.empty:
+        return df
+    for col in ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE", "PREDECESSORS", "DEFINITION"]:
+        if col not in df.columns:
+            df[col] = ""
+    return df
+
+
 def _setup_status_df(session) -> pd.DataFrame:
     checks = [
         ("Saved Views", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_BOOKMARKS", build_bookmark_ddl),
@@ -187,20 +204,20 @@ def render():
             try:
                 df = run_query_or_raise(f"""
                     SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status, start_time,
-                           DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) AS elapsed_sec,
+                           DATEDIFF('second', start_time, COALESCE(end_time, CURRENT_TIMESTAMP())) AS elapsed_sec,
                            SUBSTR(query_text,1,500) AS query_text
-                    FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
-                        END_TIME_RANGE_START=>DATEADD('hours',-2,CURRENT_TIMESTAMP()),
-                        RESULT_LIMIT=>500))
-                    WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED')
-                      AND DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) > {kill_min}
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                    WHERE start_time >= DATEADD('hours', -2, CURRENT_TIMESTAMP())
+                      AND execution_status IN ('RUNNING','QUEUED','BLOCKED')
+                      AND DATEDIFF('second', start_time, COALESCE(end_time, CURRENT_TIMESTAMP())) > {kill_min}
                       {get_wh_filter_clause("warehouse_name")}
                     ORDER BY elapsed_sec DESC
+                    LIMIT 500
                 """)
                 st.session_state["dba_df_kl"] = df
             except Exception as e:
                 st.session_state["dba_df_kl"] = pd.DataFrame()
-                st.caption(f"INFORMATION_SCHEMA unavailable: {e}")
+                st.caption(f"Query activity unavailable: {e}")
 
         if st.session_state.get("dba_df_kl") is not None and not st.session_state["dba_df_kl"].empty:
             df = st.session_state["dba_df_kl"]
@@ -625,41 +642,30 @@ GROUP BY warehouse_name, hour_bucket;"""
         st.header("🔄 Dynamic Tables")
         if st.button("Load Dynamic Tables", key="dyn_load"):
             try:
-                st.session_state["dba_df_dyn"] = run_query("""
-                    WITH live_dt AS (
-                        SELECT database_name, schema_name, name, state, target_lag_sec,
-                               refresh_mode, last_completed_refresh_state,
-                               last_completed_refresh_state_message,
-                               maximum_lag_sec,
-                               time_within_target_lag_ratio,
-                               executing_refresh_query_id
-                        FROM TABLE(INFORMATION_SCHEMA.DYNAMIC_TABLES(RESULT_LIMIT => 10000))
-                    ),
-                    recent_refresh AS (
-                        SELECT database_name, schema_name, name,
-                               state AS last_refresh_state,
-                               completed_time AS last_refresh_completed_time,
-                               credits_used,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY database_name, schema_name, name
-                                   ORDER BY completed_time DESC
-                               ) AS rn
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY
-                        WHERE refresh_start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                    )
-                    SELECT l.*,
-                           r.last_refresh_state,
-                           r.last_refresh_completed_time,
-                           r.credits_used AS last_refresh_credits
-                    FROM live_dt l
-                    LEFT JOIN recent_refresh r
-                      ON l.database_name = r.database_name
-                     AND l.schema_name = r.schema_name
-                     AND l.name = r.name
-                     AND r.rn = 1
-                    ORDER BY l.maximum_lag_sec DESC NULLS LAST, l.name
-                    LIMIT 500
-                """, ttl_key="dba_dynamic_tables", tier="metadata")
+                df_dyn = _show_to_df(session, "SHOW DYNAMIC TABLES IN ACCOUNT")
+                if not df_dyn.empty:
+                    try:
+                        df_refresh = run_query("""
+                            SELECT database_name, schema_name, name,
+                                   state AS last_refresh_state,
+                                   completed_time AS last_refresh_completed_time,
+                                   credits_used,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY database_name, schema_name, name
+                                       ORDER BY completed_time DESC
+                                   ) AS rn
+                            FROM SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY
+                            WHERE refresh_start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+                        """, ttl_key="dba_dynamic_table_refresh_history", tier="metadata")
+                        if not df_refresh.empty and all(c in df_dyn.columns for c in ["DATABASE_NAME", "SCHEMA_NAME", "NAME"]):
+                            df_dyn = df_dyn.merge(
+                                df_refresh[df_refresh["RN"] == 1].drop(columns=["RN"], errors="ignore"),
+                                how="left",
+                                on=["DATABASE_NAME", "SCHEMA_NAME", "NAME"],
+                            )
+                    except Exception:
+                        pass
+                st.session_state["dba_df_dyn"] = df_dyn
             except Exception as e:
                 st.info(f"Dynamic table data unavailable: {e}")
         if st.session_state.get("dba_df_dyn") is not None:
@@ -971,46 +977,27 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             )
             if st.button("Load Running Task Queries", key="tg_run_load"):
                 try:
-                    # IS gives live data; task queries have query_tag or client context
                     df_tq = run_query_or_raise(f"""
                         SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
                                start_time,
-                               DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) AS elapsed_sec,
+                               DATEDIFF('second', start_time, COALESCE(end_time, CURRENT_TIMESTAMP())) AS elapsed_sec,
                                query_tag,
                                SUBSTR(query_text, 1, 400) AS query_text
-                        FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
-                            END_TIME_RANGE_START=>DATEADD('hours',-2,CURRENT_TIMESTAMP()),
-                            RESULT_LIMIT=>500))
-                        WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED')
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                        WHERE start_time >= DATEADD('hours', -2, CURRENT_TIMESTAMP())
+                          AND execution_status IN ('RUNNING','QUEUED','BLOCKED')
                           {get_wh_filter_clause("warehouse_name")}
                           AND (
                               query_tag IS NOT NULL
                               OR LOWER(query_text) LIKE '%execute task%'
                           )
-                        ORDER BY elapsed_sec DESC
+                        ORDER BY start_time DESC
+                        LIMIT 200
                     """)
                     st.session_state["dba_df_tg_running"] = df_tq
                 except Exception as e:
-                    # Fallback: all running queries
-                    try:
-                        df_tq = run_query_or_raise(f"""
-                            SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
-                                   start_time,
-                                   DATEDIFF('second', start_time, CURRENT_TIMESTAMP()) AS elapsed_sec,
-                                   query_tag,
-                                   SUBSTR(query_text, 1, 400) AS query_text
-                            FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
-                                END_TIME_RANGE_START=>DATEADD('hours',-1,CURRENT_TIMESTAMP()),
-                                RESULT_LIMIT=>200))
-                            WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED')
-                              {get_wh_filter_clause("warehouse_name")}
-                            ORDER BY elapsed_sec DESC
-                        """)
-                        st.session_state["dba_df_tg_running"] = df_tq
-                        st.caption(f"Showing all running queries (task filter unavailable in this context: {e})")
-                    except Exception as e2:
-                        st.warning(f"INFORMATION_SCHEMA unavailable: {e2}")
-                        st.session_state["dba_df_tg_running"] = pd.DataFrame()
+                    st.info(f"Task query activity is unavailable in this role/context: {e}")
+                    st.session_state["dba_df_tg_running"] = pd.DataFrame()
 
             if st.session_state.get("dba_df_tg_running") is not None:
                 df_tq = st.session_state["dba_df_tg_running"]
@@ -1155,14 +1142,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             # Load task list for selection
             if st.button("Load Task List", key="tg_mgmt_load"):
                 try:
-                    df_tasks = run_query("""
-                        SELECT name, database_name, schema_name, state,
-                               schedule, warehouse,
-                               COALESCE(predecessors, '') AS predecessors,
-                               definition
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.TASKS
-                        ORDER BY database_name, schema_name, name
-                    """, ttl_key="dba_task_list", tier="metadata")
+                    df_tasks = _load_task_inventory(session)
                     st.session_state["dba_df_tg_tasks"] = df_tasks
                 except Exception as e:
                     st.error(f"Error loading tasks: {e}")
@@ -1333,32 +1313,37 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 sel_dag = st.selectbox("Select root task to inspect", root_names, key="tg_dag_sel")
 
                 if sel_dag and st.button("Build DAG View", key="tg_dag_build"):
-                    # Get full task graph via TASK_GRAPH_HISTORY or reconstruct from predecessors
                     try:
-                        df_dag = run_query(f"""
-                            SELECT t.NAME, t.DATABASE_NAME, t.SCHEMA_NAME, t.STATE,
-                                   t.PREDECESSORS,
-                                   th.STATE      AS last_run_state,
-                                   th.ERROR_MESSAGE AS last_error,
-                                   DATEDIFF('second',
-                                       COALESCE(th.QUERY_START_TIME, th.SCHEDULED_TIME),
-                                       COALESCE(th.COMPLETED_TIME, CURRENT_TIMESTAMP())
-                                   ) AS last_duration_sec,
-                                   th.SCHEDULED_TIME AS last_run_time
-                            FROM SNOWFLAKE.ACCOUNT_USAGE.TASKS t
-                            LEFT JOIN LATERAL (
-                                SELECT STATE, ERROR_MESSAGE, QUERY_START_TIME,
-                                       COMPLETED_TIME, SCHEDULED_TIME
-                                FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY th2
-                                WHERE th2.NAME = t.NAME
-                                ORDER BY th2.SCHEDULED_TIME DESC
-                                LIMIT 1
-                            ) th ON TRUE
-                            WHERE t.DELETED IS NULL
-                              AND (t.NAME = {sql_literal(sel_dag)}
-                                   OR t.PREDECESSORS LIKE {sql_literal('%' + sel_dag + '%')})
-                            ORDER BY t.PREDECESSORS NULLS FIRST, t.NAME
-                        """, ttl_key=f"dba_task_dag_{sel_dag}", tier="metadata")
+                        df_dag = df_tasks[
+                            (df_tasks["NAME"].astype(str) == str(sel_dag))
+                            | df_tasks.get("PREDECESSORS", pd.Series(index=df_tasks.index, dtype=str)).astype(str).str.contains(str(sel_dag), na=False)
+                        ].copy()
+                        if not df_dag.empty:
+                            task_names = [str(v) for v in df_dag["NAME"].dropna().unique().tolist()]
+                            names_sql = ", ".join(sql_literal(v) for v in task_names)
+                            try:
+                                df_hist = run_query(f"""
+                                    SELECT name,
+                                           state AS last_run_state,
+                                           error_message AS last_error,
+                                           DATEDIFF('second',
+                                               COALESCE(query_start_time, scheduled_time),
+                                               COALESCE(completed_time, CURRENT_TIMESTAMP())
+                                           ) AS last_duration_sec,
+                                           scheduled_time AS last_run_time,
+                                           ROW_NUMBER() OVER (PARTITION BY name ORDER BY scheduled_time DESC) AS rn
+                                    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+                                    WHERE scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+                                      AND name IN ({names_sql})
+                                """, ttl_key=f"dba_task_dag_history_{sel_dag}", tier="metadata")
+                                if not df_hist.empty:
+                                    df_dag = df_dag.merge(
+                                        df_hist[df_hist["RN"] == 1].drop(columns=["RN"], errors="ignore"),
+                                        how="left",
+                                        on="NAME",
+                                    )
+                            except Exception:
+                                pass
                         st.session_state["dba_df_dag_view"] = df_dag
                     except Exception as e:
                         st.error(f"DAG build failed: {e}")

@@ -12,7 +12,7 @@ import re
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from .session import get_session
+from .session import SnowflakeConnectionUnavailable, get_session
 from .data import normalize_df
 
 CACHE_TIERS: dict[str, int] = {
@@ -102,6 +102,9 @@ def _cache_context() -> str:
 def _cached_live(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
+    except SnowflakeConnectionUnavailable:
+        st.info("Snowflake is not connected in this runtime. Live data will load on the deployed Snowflake host.")
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Live query error: {e}")
         return pd.DataFrame()
@@ -111,6 +114,9 @@ def _cached_live(query_text: str, cache_context: str = "", cache_salt: str = "")
 def _cached_recent(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
+    except SnowflakeConnectionUnavailable:
+        st.info("Snowflake is not connected in this runtime. Data will load on the deployed Snowflake host.")
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Query error: {e}")
         return pd.DataFrame()
@@ -120,6 +126,9 @@ def _cached_recent(query_text: str, cache_context: str = "", cache_salt: str = "
 def _cached_historical(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
+    except SnowflakeConnectionUnavailable:
+        st.info("Snowflake is not connected in this runtime. Historical data will load on the deployed Snowflake host.")
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Query error: {e}")
         return pd.DataFrame()
@@ -129,6 +138,9 @@ def _cached_historical(query_text: str, cache_context: str = "", cache_salt: str
 def _cached_metadata(query_text: str, cache_context: str = "", cache_salt: str = "") -> pd.DataFrame:
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
+    except SnowflakeConnectionUnavailable:
+        st.info("Snowflake is not connected in this runtime. Metadata will load on the deployed Snowflake host.")
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Metadata query error: {e}")
         return pd.DataFrame()
@@ -140,6 +152,9 @@ def run_query_cached(query_text: str, cache_context: str = "", cache_salt: str =
     """Backward-compatible runner. Prefer run_query(tier=...) for new code."""
     try:
         return normalize_df(get_session().sql(query_text).to_pandas())
+    except SnowflakeConnectionUnavailable:
+        st.info("Snowflake is not connected in this runtime. Data will load on the deployed Snowflake host.")
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Query error: {e}")
         return pd.DataFrame()
@@ -184,6 +199,9 @@ def run_query(
             # Bypass cache — always wrapped in try/except
             try:
                 return normalize_df(get_session().sql(query_text).to_pandas())
+            except SnowflakeConnectionUnavailable:
+                st.info("Snowflake is not connected in this runtime. Data will load on the deployed Snowflake host.")
+                return pd.DataFrame()
             except Exception as e:
                 st.error(f"Query error: {e}")
                 return pd.DataFrame()

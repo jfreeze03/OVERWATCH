@@ -6,6 +6,7 @@ from utils import (
     download_csv,
     get_session,
     make_action_id,
+    normalize_df,
     run_query,
     safe_identifier,
     upsert_actions,
@@ -59,6 +60,17 @@ def _qualified_name(*parts: str) -> str:
     return ".".join(f'"{str(part).replace(chr(34), chr(34) + chr(34))}"' for part in parts)
 
 
+def _show_tasks(session) -> pd.DataFrame:
+    try:
+        df = normalize_df(session.sql("SHOW TASKS IN ACCOUNT").to_pandas())
+    except Exception:
+        return pd.DataFrame()
+    for col in ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE", "DEFINITION"]:
+        if col not in df.columns:
+            df[col] = ""
+    return df
+
+
 ETL_AUDIT_FQN = (
     f"{safe_identifier(ETL_AUDIT_DB)}."
     f"{safe_identifier(ETL_AUDIT_SCHEMA)}."
@@ -81,12 +93,7 @@ def render():
         if st.button("Load Task Data", key="th_load"):
             # Task list
             try:
-                df_tl = run_query("""
-                    SELECT name, database_name, schema_name, state,
-                           schedule, warehouse, definition
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.TASKS
-                    ORDER BY name
-                """, ttl_key="task_management_task_list", tier="standard")
+                df_tl = _show_tasks(session)
                 st.session_state["tg_list"] = df_tl
             except Exception:
                 st.session_state["tg_list"] = pd.DataFrame()

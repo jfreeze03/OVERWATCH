@@ -13,6 +13,12 @@ sys.path.insert(0, str(APP_ROOT))
 
 from sections.account_health import _live_query_status_sql  # noqa: E402
 from sections.adoption_analytics import _metric as adoption_metric  # noqa: E402
+from sections.cost_center import (  # noqa: E402
+    _bill_driver_summary,
+    _build_bill_waterfall,
+    _build_finance_movement_summary,
+    _service_cost_category,
+)
 from sections.service_health import _value as service_value  # noqa: E402
 from sections.usage_overview import _first_number as usage_first_number  # noqa: E402
 from utils.cost import build_metered_credit_cte  # noqa: E402
@@ -85,6 +91,75 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SUM(COALESCE(c.average_failsafe_bytes, 0))", text)
         self.assertNotIn("SUM(c.average_database_bytes)", text)
         self.assertNotIn("SUM(c.average_failsafe_bytes)", text)
+
+    def test_bill_driver_summary_handles_missing_baseline_and_empty_drivers(self):
+        summary = _bill_driver_summary(
+            delta_credits=10.0,
+            current_credits=10.0,
+            prior_credits=0.0,
+            unallocated_pct=30.0,
+            warehouse_deltas=pd.DataFrame(),
+            user_drivers=pd.DataFrame(),
+            query_type_drivers=pd.DataFrame(),
+        )
+        self.assertEqual(summary["severity"], "Watch")
+        self.assertIn("new/no baseline", summary["headline"])
+        self.assertIn("unallocated gap", summary["caveat"])
+
+    def test_bill_waterfall_balances_to_current_total(self):
+        wh = pd.DataFrame(
+            {
+                "WAREHOUSE_NAME": ["WH_A", "WH_B", "WH_C"],
+                "CREDIT_DELTA": [20.0, -5.0, 2.0],
+            }
+        )
+        wf = _build_bill_waterfall(
+            wh,
+            prior_credits=100.0,
+            current_credits=117.0,
+            credit_price=3.0,
+            top_n=2,
+        )
+        self.assertEqual(wf.iloc[0]["Driver"], "Prior baseline")
+        self.assertEqual(wf.iloc[-1]["Driver"], "Current total")
+        self.assertAlmostEqual(float(wf.iloc[-1]["Credits"]), 117.0)
+        movement = wf[~wf["Type"].isin(["Baseline", "Current"])]["Credits"].sum()
+        self.assertAlmostEqual(float(movement), 17.0)
+
+    def test_service_cost_categories_are_business_readable(self):
+        self.assertEqual(_service_cost_category("SNOWPIPE"), "Data loading / ingestion")
+        self.assertEqual(_service_cost_category("CORTEX_SEARCH"), "AI / Cortex")
+        self.assertEqual(_service_cost_category("AUTO_CLUSTERING"), "Serverless features")
+        self.assertEqual(_service_cost_category("CLOUD_SERVICES"), "Cloud services / metadata")
+
+    def test_finance_movement_summary_separates_confidence_levels(self):
+        service_df = pd.DataFrame(
+            {
+                "PERIOD": ["CURRENT", "PRIOR", "CURRENT"],
+                "SERVICE_TYPE": ["SNOWPIPE", "SNOWPIPE", "CORTEX"],
+                "CREDITS": [8.0, 3.0, 2.0],
+            }
+        )
+        summary = _build_finance_movement_summary(
+            current_credits=100.0,
+            prior_credits=80.0,
+            allocated_credits=70.0,
+            unallocated_credits=30.0,
+            service_drivers=service_df,
+            credit_price=3.0,
+            budget=250.0,
+        )
+        categories = set(summary["Category"])
+        self.assertIn("Warehouse metering", categories)
+        self.assertIn("Query-attributed workload", categories)
+        self.assertIn("Unallocated / idle / overhead", categories)
+        self.assertIn("Data loading / ingestion", categories)
+        self.assertIn("AI / Cortex", categories)
+        self.assertIn("Budget variance", categories)
+        confidence = dict(zip(summary["Category"], summary["Confidence"]))
+        self.assertEqual(confidence["Warehouse metering"], "Exact")
+        self.assertEqual(confidence["Query-attributed workload"], "Allocated")
+        self.assertEqual(confidence["Data loading / ingestion"], "Account-wide")
 
 
 if __name__ == "__main__":

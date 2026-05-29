@@ -143,8 +143,10 @@ with st.sidebar:
             elif cmd_type == "User":
                 st.session_state["global_user"] = value
                 target = SECTION_BY_TITLE["Cost & Contract"]
+                st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
             elif cmd_type == "Query ID" or (cmd_type == "Auto" and len(value) >= 20 and "-" in value):
                 st.session_state["qs_qid"] = value
+                st.session_state["query_workbench_workflow"] = "History Search"
                 target = SECTION_BY_TITLE["Query Search & History"]
             elif cmd_type == "Task" or (cmd_type == "Auto" and "TASK" in upper):
                 st.session_state["tm_search"] = value
@@ -154,12 +156,25 @@ with st.sidebar:
                 target = SECTION_BY_TITLE["Storage Monitor"]
             elif "COST" in upper or "SPEND" in upper:
                 target = SECTION_BY_TITLE["Cost & Contract"]
+                st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
             elif "ALERT" in upper or "RECOMMEND" in upper or "ACTION" in upper:
                 target = SECTION_BY_TITLE["Cost & Contract"]
+                st.session_state["cost_contract_workflow"] = "Recommendations and action queue"
             elif "VALUE" in upper or "ROI" in upper or "SAVING" in upper:
                 target = SECTION_BY_TITLE["Cost & Contract"]
+                st.session_state["cost_contract_workflow"] = "Snowflake value log"
+            elif "CORTEX" in upper or "AI" in upper:
+                target = SECTION_BY_TITLE["Cost & Contract"]
+                st.session_state["cost_contract_workflow"] = "AI and Cortex spend"
+            elif "LOGIN" in upper or "GRANT" in upper or "MFA" in upper or "SECURITY" in upper:
+                target = SECTION_BY_TITLE["Security Posture"]
+                st.session_state["security_posture_workflow"] = "Access posture"
+            elif "SHARE" in upper or "SHARING" in upper:
+                target = SECTION_BY_TITLE["Security Posture"]
+                st.session_state["security_posture_workflow"] = "Data sharing exposure"
             elif "DBA" in upper or "WAREHOUSE SETTING" in upper or "DRIFT" in upper or "CHANGE" in upper:
                 target = SECTION_BY_TITLE["Change & Drift"]
+                st.session_state["change_drift_workflow"] = "Object and access changes"
             else:
                 for section in visible_sections:
                     if upper in section.upper():

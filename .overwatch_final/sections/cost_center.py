@@ -133,6 +133,252 @@ def _first_value(df: pd.DataFrame, column: str, default=0.0):
     return df.iloc[0].get(column, default)
 
 
+def _bill_driver_summary(
+    *,
+    delta_credits: float,
+    current_credits: float,
+    prior_credits: float,
+    unallocated_pct: float,
+    warehouse_deltas: pd.DataFrame,
+    user_drivers: pd.DataFrame,
+    query_type_drivers: pd.DataFrame,
+) -> dict:
+    """Build an executive-ready explanation from exact and allocated bill signals."""
+    top_wh = warehouse_deltas.iloc[0].to_dict() if warehouse_deltas is not None and not warehouse_deltas.empty else {}
+    top_user = user_drivers.iloc[0].to_dict() if user_drivers is not None and not user_drivers.empty else {}
+    top_type = query_type_drivers.iloc[0].to_dict() if query_type_drivers is not None and not query_type_drivers.empty else {}
+    delta_pct = _pct_delta(current_credits, prior_credits)
+
+    if abs(delta_credits) < 0.01:
+        headline = "Spend was essentially flat."
+        reason = "No material credit movement was detected compared with the prior comparable period."
+        severity = "Normal"
+    elif delta_credits > 0:
+        headline = f"Spend increased by {delta_credits:,.2f} credits ({_fmt_delta(delta_pct)})."
+        reason = (
+            f"The largest warehouse movement was {top_wh.get('WAREHOUSE_NAME', 'n/a')} "
+            f"at {safe_float(top_wh.get('CREDIT_DELTA', 0)):,.2f} incremental credits. "
+            f"The largest allocated workload was {top_user.get('USER_NAME', 'n/a')} on "
+            f"{top_user.get('WAREHOUSE_NAME', 'n/a')}."
+        )
+        severity = "High" if delta_pct is not None and delta_pct >= 50 else "Watch"
+    else:
+        headline = f"Spend decreased by {abs(delta_credits):,.2f} credits ({_fmt_delta(delta_pct)})."
+        reason = (
+            f"The largest downward warehouse movement was {top_wh.get('WAREHOUSE_NAME', 'n/a')} "
+            f"at {safe_float(top_wh.get('CREDIT_DELTA', 0)):,.2f} credits."
+        )
+        severity = "Improved"
+
+    if unallocated_pct >= 25:
+        caveat = "A large unallocated gap means idle time, non-query activity, or ACCOUNT_USAGE latency may be driving the bill."
+    elif unallocated_pct >= 10:
+        caveat = "Some spend is not cleanly attributable to user queries; review idle and service overhead before chargeback."
+    else:
+        caveat = "Most warehouse spend is attributable to query workload in this window."
+
+    next_action = (
+        f"Start with {top_wh.get('WAREHOUSE_NAME', 'the top warehouse')} and validate "
+        f"{top_type.get('QUERY_TYPE', 'the top query type')} activity in Query Workbench before changing warehouse settings."
+    )
+    return {
+        "severity": severity,
+        "headline": headline,
+        "reason": reason,
+        "caveat": caveat,
+        "next_action": next_action,
+    }
+
+
+def _build_bill_waterfall(
+    warehouse_deltas: pd.DataFrame,
+    *,
+    prior_credits: float,
+    current_credits: float,
+    credit_price: float,
+    top_n: int = 6,
+) -> pd.DataFrame:
+    """Build a compact bill-movement waterfall from warehouse credit deltas."""
+    rows = [{
+        "Driver": "Prior baseline",
+        "Credits": round(float(prior_credits or 0), 4),
+        "Estimated Cost": round(credits_to_dollars(prior_credits, credit_price), 2),
+        "Type": "Baseline",
+    }]
+    delta_total = float(current_credits or 0) - float(prior_credits or 0)
+    selected_delta = 0.0
+    if warehouse_deltas is not None and not warehouse_deltas.empty and "CREDIT_DELTA" in warehouse_deltas.columns:
+        movers = warehouse_deltas.copy()
+        movers["ABS_DELTA"] = movers["CREDIT_DELTA"].fillna(0).abs()
+        movers = movers.sort_values("ABS_DELTA", ascending=False).head(top_n)
+        for _, row in movers.iterrows():
+            delta = safe_float(row.get("CREDIT_DELTA", 0))
+            if abs(delta) < 0.0001:
+                continue
+            selected_delta += delta
+            label = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
+            rows.append({
+                "Driver": label[:60],
+                "Credits": round(delta, 4),
+                "Estimated Cost": round(credits_to_dollars(delta, credit_price), 2),
+                "Type": "Increase" if delta > 0 else "Decrease",
+            })
+    other_delta = delta_total - selected_delta
+    if abs(other_delta) >= 0.0001:
+        rows.append({
+            "Driver": "Other movement",
+            "Credits": round(other_delta, 4),
+            "Estimated Cost": round(credits_to_dollars(other_delta, credit_price), 2),
+            "Type": "Increase" if other_delta > 0 else "Decrease",
+        })
+    rows.append({
+        "Driver": "Current total",
+        "Credits": round(float(current_credits or 0), 4),
+        "Estimated Cost": round(credits_to_dollars(current_credits, credit_price), 2),
+        "Type": "Current",
+    })
+    return pd.DataFrame(rows)
+
+
+def _service_cost_category(service_type: str) -> str:
+    """Group Snowflake METERING_HISTORY service types into readable bill buckets."""
+    value = str(service_type or "UNKNOWN").upper()
+    if "CORTEX" in value or "AI" in value or "LLM" in value:
+        return "AI / Cortex"
+    if "SNOWPIPE" in value or "PIPE" in value or "INGEST" in value:
+        return "Data loading / ingestion"
+    if (
+        "AUTO_CLUSTER" in value
+        or "SEARCH_OPTIMIZATION" in value
+        or "MATERIALIZED_VIEW" in value
+        or "DYNAMIC_TABLE" in value
+        or "SERVERLESS" in value
+        or "TASK" in value
+        or "REPLICATION" in value
+    ):
+        return "Serverless features"
+    if "CLOUD_SERVICES" in value or "CLOUD SERVICE" in value:
+        return "Cloud services / metadata"
+    if "WAREHOUSE" in value or "COMPUTE" in value:
+        return "Warehouse compute"
+    return "Other service credits"
+
+
+def _service_period_totals(service_drivers: pd.DataFrame) -> pd.DataFrame:
+    if service_drivers is None or service_drivers.empty:
+        return pd.DataFrame(columns=["CATEGORY", "CURRENT_CREDITS", "PRIOR_CREDITS", "DELTA_CREDITS"])
+    required = {"PERIOD", "SERVICE_TYPE", "CREDITS"}
+    if not required.issubset(set(service_drivers.columns)):
+        return pd.DataFrame(columns=["CATEGORY", "CURRENT_CREDITS", "PRIOR_CREDITS", "DELTA_CREDITS"])
+    svc = service_drivers.copy()
+    svc["CATEGORY"] = svc["SERVICE_TYPE"].apply(_service_cost_category)
+    pivot = (
+        svc.pivot_table(
+            index="CATEGORY",
+            columns="PERIOD",
+            values="CREDITS",
+            aggfunc="sum",
+            fill_value=0.0,
+        )
+        .reset_index()
+        .rename_axis(None, axis=1)
+    )
+    for column in ("CURRENT", "PRIOR"):
+        if column not in pivot.columns:
+            pivot[column] = 0.0
+    pivot["CURRENT_CREDITS"] = pivot["CURRENT"].apply(safe_float)
+    pivot["PRIOR_CREDITS"] = pivot["PRIOR"].apply(safe_float)
+    pivot["DELTA_CREDITS"] = pivot["CURRENT_CREDITS"] - pivot["PRIOR_CREDITS"]
+    return pivot[["CATEGORY", "CURRENT_CREDITS", "PRIOR_CREDITS", "DELTA_CREDITS"]].sort_values(
+        "CURRENT_CREDITS", ascending=False
+    )
+
+
+def _build_finance_movement_summary(
+    *,
+    current_credits: float,
+    prior_credits: float,
+    allocated_credits: float,
+    unallocated_credits: float,
+    service_drivers: pd.DataFrame,
+    credit_price: float,
+    budget: float = 0.0,
+) -> pd.DataFrame:
+    """Build a concise finance-facing movement bridge with confidence labels."""
+    current_credits = safe_float(current_credits)
+    prior_credits = safe_float(prior_credits)
+    allocated_credits = safe_float(allocated_credits)
+    unallocated_credits = safe_float(unallocated_credits)
+    credit_price = safe_float(credit_price)
+    rows = [
+        {
+            "Category": "Warehouse metering",
+            "Basis": "Exact warehouse compute from WAREHOUSE_METERING_HISTORY",
+            "Current Credits": round(current_credits, 4),
+            "Prior Credits": round(prior_credits, 4),
+            "Delta Credits": round(current_credits - prior_credits, 4),
+            "Current Cost": round(credits_to_dollars(current_credits, credit_price), 2),
+            "Delta Cost": round(credits_to_dollars(current_credits - prior_credits, credit_price), 2),
+            "Confidence": "Exact",
+            "Action": "Use this as the official warehouse-compute bill movement.",
+        },
+        {
+            "Category": "Query-attributed workload",
+            "Basis": "Allocated by query execution share inside each warehouse-hour",
+            "Current Credits": round(allocated_credits, 4),
+            "Prior Credits": None,
+            "Delta Credits": None,
+            "Current Cost": round(credits_to_dollars(allocated_credits, credit_price), 2),
+            "Delta Cost": None,
+            "Confidence": "Allocated",
+            "Action": "Use for directional user, role, database, and query-type chargeback.",
+        },
+        {
+            "Category": "Unallocated / idle / overhead",
+            "Basis": "Exact warehouse credits minus allocated query credits",
+            "Current Credits": round(unallocated_credits, 4),
+            "Prior Credits": None,
+            "Delta Credits": None,
+            "Current Cost": round(credits_to_dollars(unallocated_credits, credit_price), 2),
+            "Delta Cost": None,
+            "Confidence": "Estimated",
+            "Action": "Review auto-suspend, idle periods, non-query activity, and ACCOUNT_USAGE latency.",
+        },
+    ]
+    service_totals = _service_period_totals(service_drivers)
+    for _, row in service_totals.iterrows():
+        current = safe_float(row.get("CURRENT_CREDITS", 0))
+        prior = safe_float(row.get("PRIOR_CREDITS", 0))
+        delta = safe_float(row.get("DELTA_CREDITS", 0))
+        if abs(current) < 0.0001 and abs(prior) < 0.0001:
+            continue
+        rows.append({
+            "Category": str(row.get("CATEGORY") or "Other service credits"),
+            "Basis": "Account-wide METERING_HISTORY service credits",
+            "Current Credits": round(current, 4),
+            "Prior Credits": round(prior, 4),
+            "Delta Credits": round(delta, 4),
+            "Current Cost": round(credits_to_dollars(current, credit_price), 2),
+            "Delta Cost": round(credits_to_dollars(delta, credit_price), 2),
+            "Confidence": "Account-wide",
+            "Action": "Do not charge back to ALFA/Trexis unless a service-specific owner tag or lineage exists.",
+        })
+    if budget and budget > 0:
+        current_cost = credits_to_dollars(current_credits, credit_price)
+        rows.append({
+            "Category": "Budget variance",
+            "Basis": "Configured budget minus current warehouse-compute cost",
+            "Current Credits": None,
+            "Prior Credits": None,
+            "Delta Credits": None,
+            "Current Cost": round(current_cost, 2),
+            "Delta Cost": round(current_cost - safe_float(budget), 2),
+            "Confidence": "Estimated",
+            "Action": "Escalate if variance is positive and supported by a repeating workload driver.",
+        })
+    return pd.DataFrame(rows)
+
+
 def _build_explain_bill_markdown(
     *,
     company: str,
@@ -146,6 +392,7 @@ def _build_explain_bill_markdown(
     warehouse_deltas: pd.DataFrame,
     user_drivers: pd.DataFrame,
     query_type_drivers: pd.DataFrame,
+    service_drivers: pd.DataFrame = None,
 ) -> str:
     delta_credits = current_credits - prior_credits
     delta_pct = _pct_delta(current_credits, prior_credits)
@@ -153,6 +400,14 @@ def _build_explain_bill_markdown(
     top_wh = warehouse_deltas.iloc[0] if warehouse_deltas is not None and not warehouse_deltas.empty else {}
     top_user = user_drivers.iloc[0] if user_drivers is not None and not user_drivers.empty else {}
     top_type = query_type_drivers.iloc[0] if query_type_drivers is not None and not query_type_drivers.empty else {}
+    service_totals = _service_period_totals(service_drivers)
+    service_lines = []
+    if service_totals is not None and not service_totals.empty:
+        for _, row in service_totals.head(5).iterrows():
+            service_lines.append(
+                f"- {row.get('CATEGORY')}: {safe_float(row.get('CURRENT_CREDITS', 0)):,.2f} current credits "
+                f"({safe_float(row.get('DELTA_CREDITS', 0)):+,.2f} vs baseline)."
+            )
 
     lines = [
         f"# Explain This Bill - {company}",
@@ -170,6 +425,10 @@ def _build_explain_bill_markdown(
         "## Allocation Caveat",
         f"Exact warehouse credits: {current_credits:,.2f}. Query-attributed credits: {allocated_credits:,.2f}. Unallocated / idle / service-overhead gap: {unallocated_credits:,.2f} credits.",
         "Warehouse totals are exact ACCOUNT_USAGE metering. User and query-type drivers are allocated from hourly metering by query execution share, so they are directional rather than invoice-grade.",
+        "",
+        "## Account-Wide Service Credits",
+        *(service_lines or ["- No service/serverless credit rows were available for this period."]),
+        "Service credits are account-wide unless Snowflake exposes a service-specific owner dimension or your account uses reliable owner tags.",
         "",
         "## Recommended Follow-Up",
         "- Review warehouses with the largest positive deltas first.",
@@ -436,6 +695,33 @@ def render():
                 ORDER BY allocated_credits DESC
                 LIMIT 25
                 """
+                service_sql = f"""
+                WITH bounds AS (
+                    SELECT
+                        {bounds['current_start']} AS current_start,
+                        {bounds['current_end']} AS current_end,
+                        {bounds['prior_start']} AS prior_start,
+                        {bounds['prior_end']} AS prior_end
+                ),
+                metering AS (
+                    SELECT 'CURRENT' AS period, service_type, start_time, credits_used
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY, bounds
+                    WHERE start_time >= current_start
+                      AND start_time < current_end
+                    UNION ALL
+                    SELECT 'PRIOR' AS period, service_type, start_time, credits_used
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY, bounds
+                    WHERE start_time >= prior_start
+                      AND start_time < prior_end
+                )
+                SELECT
+                    period,
+                    COALESCE(service_type, 'UNKNOWN') AS service_type,
+                    ROUND(SUM(COALESCE(credits_used, 0)), 4) AS credits
+                FROM metering
+                GROUP BY period, COALESCE(service_type, 'UNKNOWN')
+                ORDER BY period, credits DESC
+                """
                 st.session_state["cc_explain_summary"] = run_query(
                     summary_sql,
                     ttl_key=f"cc_explain_summary_{company}_{explain_period}",
@@ -456,6 +742,16 @@ def render():
                     ttl_key=f"cc_explain_types_{company}_{explain_period}",
                     tier="standard",
                 )
+                try:
+                    st.session_state["cc_explain_services"] = run_query(
+                        service_sql,
+                        ttl_key=f"cc_explain_services_{explain_period}",
+                        tier="standard",
+                    )
+                    st.session_state["cc_explain_service_error"] = ""
+                except Exception as service_error:
+                    st.session_state["cc_explain_services"] = pd.DataFrame()
+                    st.session_state["cc_explain_service_error"] = format_snowflake_error(service_error)
                 st.session_state["cc_explain_meta"] = {
                     "company": company,
                     "period": explain_period,
@@ -469,6 +765,8 @@ def render():
         wh_deltas = st.session_state.get("cc_explain_wh_delta")
         drivers = st.session_state.get("cc_explain_drivers")
         type_drivers = st.session_state.get("cc_explain_types")
+        service_drivers = st.session_state.get("cc_explain_services")
+        service_error = st.session_state.get("cc_explain_service_error", "")
         explain_meta = st.session_state.get("cc_explain_meta", {})
         has_current_explain = (
             explain_meta.get("company") == company
@@ -532,6 +830,75 @@ def render():
                 f"Unallocated / idle / service-overhead gap is {unallocated_credits:,.2f} credits "
                 f"({unallocated_pct:.1f}% of exact warehouse credits), which is {gap_level}."
             )
+            if service_error:
+                st.warning(f"Account-wide service credits were unavailable: {service_error}")
+
+            finance_summary = _build_finance_movement_summary(
+                current_credits=current_credits,
+                prior_credits=prior_credits,
+                allocated_credits=allocated_credits,
+                unallocated_credits=unallocated_credits,
+                service_drivers=service_drivers,
+                credit_price=credit_price,
+                budget=explain_budget,
+            )
+            st.subheader("Finance Movement Summary")
+            st.caption(
+                "This bridge separates exact warehouse compute, allocated workload, estimated overhead, "
+                "and account-wide service/serverless credits. It is designed for bill review and executive talking points."
+            )
+            st.dataframe(finance_summary, use_container_width=True, hide_index=True)
+
+            narrative = _bill_driver_summary(
+                delta_credits=delta_credits,
+                current_credits=current_credits,
+                prior_credits=prior_credits,
+                unallocated_pct=unallocated_pct,
+                warehouse_deltas=wh_deltas,
+                user_drivers=drivers,
+                query_type_drivers=type_drivers,
+            )
+            st.subheader("Bill Narrative")
+            n1, n2 = st.columns([1, 3])
+            with n1:
+                st.metric("Review Status", narrative["severity"])
+            with n2:
+                st.markdown(f"**{narrative['headline']}**")
+                st.write(narrative["reason"])
+                st.caption(narrative["caveat"])
+                st.info(narrative["next_action"])
+
+            waterfall = _build_bill_waterfall(
+                wh_deltas,
+                prior_credits=prior_credits,
+                current_credits=current_credits,
+                credit_price=credit_price,
+            )
+            st.subheader("Bill Movement Waterfall")
+            st.caption(
+                "Positive bars increased the bill; negative bars reduced it. "
+                "Baseline and current total are exact warehouse-metering totals."
+            )
+            st.bar_chart(waterfall, x="Driver", y="Credits", color="Type")
+            st.dataframe(waterfall, use_container_width=True, hide_index=True)
+
+            if st.session_state.get("exceptions_only_mode"):
+                st.subheader("Exceptions Only")
+                if wh_deltas is not None and not wh_deltas.empty:
+                    exception_rows = wh_deltas[
+                        (wh_deltas["CREDIT_DELTA"].fillna(0) > 0)
+                        | (wh_deltas["PCT_DELTA"].fillna(0).abs() >= 25)
+                    ].copy()
+                    if exception_rows.empty:
+                        st.success("No warehouse bill exceptions crossed the default thresholds.")
+                    else:
+                        exception_rows["EST_DELTA_COST"] = exception_rows["CREDIT_DELTA"].apply(
+                            lambda v: credits_to_dollars(v, credit_price)
+                        )
+                        st.dataframe(exception_rows, use_container_width=True)
+                else:
+                    st.info("No warehouse delta rows available.")
+                st.stop()
 
             st.subheader("Warehouse Deltas")
             st.dataframe(wh_deltas, use_container_width=True)
@@ -551,6 +918,19 @@ def render():
             st.subheader("Top Query-Type Drivers")
             st.dataframe(type_drivers, use_container_width=True)
 
+            st.subheader("Account-Wide Service / Serverless Contributors")
+            st.caption(
+                f"{metric_confidence_label('account-wide')} | "
+                "METERING_HISTORY service credits are not company-scoped by warehouse. "
+                "Use tags, ownership standards, or service-specific lineage before chargeback."
+            )
+            if service_drivers is not None and not service_drivers.empty:
+                service_display = service_drivers.copy()
+                service_display["CATEGORY"] = service_display["SERVICE_TYPE"].apply(_service_cost_category)
+                st.dataframe(service_display, use_container_width=True)
+            else:
+                st.info("No service/serverless contributor rows were available for this period.")
+
             report_md = _build_explain_bill_markdown(
                 company=company,
                 period_label=bounds["label"],
@@ -563,6 +943,7 @@ def render():
                 warehouse_deltas=wh_deltas,
                 user_drivers=drivers,
                 query_type_drivers=type_drivers,
+                service_drivers=service_drivers,
             )
             st.download_button(
                 "Download Bill Explanation",

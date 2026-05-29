@@ -55,8 +55,42 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertLessEqual(set(sections), set(ALL_SECTIONS))
 
         self.assertLessEqual(set(SECTION_ALIASES.values()), set(ALL_SECTIONS))
-        self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost Center"])
+        self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost & Contract"])
+        self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["Cost & Contract"])
+        self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Posture"])
+        self.assertEqual(SECTION_ALIASES["DBA Tools"], SECTION_BY_TITLE["Change & Drift"])
         self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Warehouse Health"])
+
+    def test_workflow_hubs_replace_scattered_operational_pages(self):
+        visible_titles = {section.title for section in SECTION_DEFINITIONS}
+        self.assertIn("Query Workbench", visible_titles)
+        self.assertIn("Cost & Contract", visible_titles)
+        self.assertIn("Security Posture", visible_titles)
+        self.assertIn("Change & Drift", visible_titles)
+        for retired_title in (
+            "Live Monitor",
+            "Detailed Diagnosis",
+            "Query Analysis",
+            "Query Search & History",
+            "Cost Center",
+            "Recommendations & Anomalies",
+            "Security & Access",
+            "Who Changed What?",
+            "DBA Tools",
+        ):
+            with self.subTest(retired_title=retired_title):
+                self.assertNotIn(retired_title, visible_titles)
+
+    def test_workflow_hubs_expose_expected_subworkflows(self):
+        from sections import change_drift, cost_contract, query_workbench, security_posture
+
+        self.assertIn("Diagnosis", query_workbench.WORKFLOWS)
+        self.assertIn("Recommendations and action queue", cost_contract.WORKFLOWS)
+        self.assertIn("Access posture", security_posture.WORKFLOWS)
+        self.assertIn("Schema and object drift", change_drift.WORKFLOWS)
+        self.assertIn("Data movement and replication", change_drift.WORKFLOWS)
+        self.assertIn("Controlled DBA actions", change_drift.WORKFLOWS)
+        self.assertEqual(change_drift.WORKFLOWS[-1], "Controlled DBA actions")
 
     def test_every_navigation_label_has_an_icon_prefix(self):
         for section in ALL_SECTIONS:

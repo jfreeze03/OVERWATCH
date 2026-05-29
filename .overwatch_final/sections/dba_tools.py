@@ -229,26 +229,34 @@ def render():
         "DBA Tools are grouped to keep the high-value controls easy to find. "
         "Open a group, then choose the specific operation."
     )
-    st.subheader("DBA Tools Operating Model")
-    risk_a, risk_b, risk_c = st.columns(3)
-    with risk_a:
-        st.info(
-            "Safe Observability\n\n"
-            "Read-only inventory, diagnostics, compatibility checks, schema compare, recent objects, "
-            "QAS visibility, replication, serverless costs, and usage logs."
-        )
-    with risk_b:
-        st.warning(
-            "Controlled Actions\n\n"
-            "Query cancellation, task suspend/resume, warehouse setting changes, and Cortex limit updates. "
-            "These stay locked unless Admin actions are enabled."
-        )
-    with risk_c:
-        st.success(
-            "Setup and Maintenance\n\n"
-            "DDL bundles, persistent OVERWATCH tables, alerts, action queue setup, usage logging, and "
-            "formula audit evidence."
-        )
+    focus = st.session_state.get("dba_tools_focus")
+    if focus:
+        focus_hint = {
+            "Governance": "Start with Governance for schema compare, recent objects, unused objects, and object drift.",
+            "Data Movement": "Start with Data Movement for loads, Snowpipe, dynamic tables, and replication.",
+            "Controlled Actions": "Start with Warehouse Ops for query/task/warehouse actions, then Cost & Setup for setup/audit evidence.",
+        }.get(str(focus), "Use the matching tab group below first; other tools remain available when needed.")
+        st.info(f"Change & Drift focus: {focus}. {focus_hint}")
+    with st.expander("DBA Tools Operating Model", expanded=not bool(focus)):
+        risk_a, risk_b, risk_c = st.columns(3)
+        with risk_a:
+            st.info(
+                "Safe Observability\n\n"
+                "Read-only inventory, diagnostics, compatibility checks, schema compare, recent objects, "
+                "QAS visibility, replication, serverless costs, and usage logs."
+            )
+        with risk_b:
+            st.warning(
+                "Controlled Actions\n\n"
+                "Query cancellation, task suspend/resume, warehouse setting changes, and Cortex limit updates. "
+                "These stay locked unless Admin actions are enabled."
+            )
+        with risk_c:
+            st.success(
+                "Setup and Maintenance\n\n"
+                "DDL bundles, persistent OVERWATCH tables, alerts, action queue setup, usage logging, and "
+                "formula audit evidence."
+            )
     if not admin_actions_enabled():
         st.info(
             "Read-only mode is active. Load, inspect, compare, and export still work; "

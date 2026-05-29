@@ -16,8 +16,16 @@ from utils import (
 )
 
 
-def _drill_to(section: str, wh_filter: str = "", user_filter: str = ""):
+def _drill_to(
+    section: str,
+    wh_filter: str = "",
+    user_filter: str = "",
+    workflow_key: str = "",
+    workflow: str = "",
+):
     st.session_state["nav_section"] = section
+    if workflow_key and workflow:
+        st.session_state[workflow_key] = workflow
     if wh_filter:
         st.session_state["lm_wh"]     = wh_filter
         st.session_state["wh_filter"] = wh_filter
@@ -468,7 +476,12 @@ def render():
                     )
                     if sel_user and sel_user != "(none)":
                         if st.button(f"Open Cost & Contract for {sel_user}", key="ah_drill_user_btn"):
-                            _drill_to("💸 Cost & Contract", user_filter=sel_user)
+                            _drill_to(
+                                "💸 Cost & Contract",
+                                user_filter=sel_user,
+                                workflow_key="cost_contract_workflow",
+                                workflow="Explain bill / attribution / contract",
+                            )
             else:
                 st.info("No cost driver data yet.")
 
@@ -497,7 +510,11 @@ def render():
             st.markdown("**Recommended next action**")
             st.info("Use Cost & Contract for optimization actions, action queue triage, and Teams-ready alerting.")
             if st.button("Open Cost & Contract", key="ah_open_recommendations"):
-                _drill_to("💸 Cost & Contract")
+                _drill_to(
+                    "💸 Cost & Contract",
+                    workflow_key="cost_contract_workflow",
+                    workflow="Recommendations and action queue",
+                )
 
         st.divider()
         st.markdown("**OVERWATCH Cost of Monitoring**")

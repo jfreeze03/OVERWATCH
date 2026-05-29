@@ -34,12 +34,21 @@ from utils import (
 )
 
 
-def _jump(title: str, *, warehouse: str = "", user: str = "") -> None:
+def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = "") -> None:
     """Navigate to a registered section and carry useful filter context."""
     target = SECTION_BY_TITLE.get(title)
     if not target:
         return
     st.session_state["nav_section"] = target
+    if workflow:
+        if title == "Query Workbench":
+            st.session_state["query_workbench_workflow"] = workflow
+        elif title == "Cost & Contract":
+            st.session_state["cost_contract_workflow"] = workflow
+        elif title == "Security Posture":
+            st.session_state["security_posture_workflow"] = workflow
+        elif title == "Change & Drift":
+            st.session_state["change_drift_workflow"] = workflow
     if warehouse:
         st.session_state["global_warehouse"] = warehouse
         st.session_state["wh_filter"] = warehouse
@@ -262,6 +271,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{failed_queries:,} failed queries in lookback",
             "Action": "Review failed SQL and recurring error patterns.",
             "Route": "Query Workbench",
+            "Workflow": "Diagnosis",
         })
     if queued_queries or not wh.empty:
         rows.append({
@@ -270,6 +280,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{queued_queries:,} queued queries; {len(wh):,} pressured warehouses",
             "Action": "Check warehouse sizing, clustering, and concurrency pressure.",
             "Route": "Warehouse Health",
+            "Workflow": "",
         })
     if spill_queries:
         rows.append({
@@ -278,6 +289,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{spill_queries:,} queries spilled to remote storage",
             "Action": "Inspect spilling queries before resizing.",
             "Route": "Warehouse Health",
+            "Workflow": "",
         })
     if p95 >= 120:
         rows.append({
@@ -286,6 +298,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"p95 elapsed {p95:,.0f}s",
             "Action": "Investigate slow-query plan and operator stats.",
             "Route": "Query Workbench",
+            "Workflow": "Diagnosis",
         })
     if credit_delta >= 25:
         rows.append({
@@ -294,6 +307,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{credit_delta:+.1f}% vs prior window; est. ${credits_to_dollars(period_credits, credit_price):,.0f}",
             "Action": "Identify top users, warehouses, tasks, and query patterns.",
             "Route": "Cost & Contract",
+            "Workflow": "Explain bill / attribution / contract",
         })
     if not tasks.empty:
         rows.append({
@@ -302,6 +316,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{len(tasks):,} failed task groups",
             "Action": "Review task history, retry logic, and downstream load impact.",
             "Route": "Task Management",
+            "Workflow": "",
         })
     if not logins.empty:
         rows.append({
@@ -310,6 +325,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{len(logins):,} recent failed login records",
             "Action": "Review source IPs, user posture, MFA, and client versions.",
             "Route": "Security Posture",
+            "Workflow": "Access posture",
         })
     if not changes.empty:
         rows.append({
@@ -318,6 +334,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Evidence": f"{len(changes):,} recent DDL/access changes",
             "Action": "Validate expected change windows and ownership.",
             "Route": "Change & Drift",
+            "Workflow": "Object and access changes",
         })
     if not queue.empty:
         open_queue = queue[~queue.get("STATUS", "").isin(["Fixed", "Ignored"])] if "STATUS" in queue.columns else queue
@@ -328,17 +345,29 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 "Evidence": f"{len(open_queue):,} open recommendations",
                 "Action": "Assign owners and move items toward fixed/ignored.",
                 "Route": "Cost & Contract",
+                "Workflow": "Recommendations and action queue",
             })
 
     return pd.DataFrame(rows)
 
 
-def _render_route_buttons(routes: list[str]) -> None:
-    cols = st.columns(min(max(len(routes), 1), 5))
-    for idx, route in enumerate(routes[:5]):
+def _render_route_buttons(exceptions: pd.DataFrame) -> None:
+    if exceptions.empty or "Route" not in exceptions.columns:
+        return
+    route_rows = (
+        exceptions[["Route", "Workflow"]]
+        .dropna(subset=["Route"])
+        .drop_duplicates()
+        .head(5)
+        .to_dict("records")
+    )
+    cols = st.columns(min(max(len(route_rows), 1), 5))
+    for idx, item in enumerate(route_rows):
+        route = str(item.get("Route", ""))
+        workflow = str(item.get("Workflow", "") or "")
         with cols[idx % len(cols)]:
             if st.button(route, key=f"dba_control_route_{route}", use_container_width=True):
-                _jump(route)
+                _jump(route, workflow=workflow)
 
 
 def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_price: float, lookback_hours: int) -> str:
@@ -460,8 +489,7 @@ def render() -> None:
         else:
             st.subheader("Priority Exceptions")
             st.dataframe(exceptions, use_container_width=True, height=260)
-            routes = exceptions["Route"].dropna().drop_duplicates().tolist()
-            _render_route_buttons(routes)
+            _render_route_buttons(exceptions)
 
         st.divider()
         left, right = st.columns(2)
@@ -497,21 +525,21 @@ def render() -> None:
         with r1:
             st.subheader("Reliability")
             st.write("Failed queries, task failures, queued workload, and slow p95 runtime.")
-            for title in ["Query Workbench", "Task Management", "Pipeline Health"]:
+            for title, workflow in [("Query Workbench", "Diagnosis"), ("Task Management", ""), ("Pipeline Health", "")]:
                 if st.button(title, key=f"dba_control_reliability_{title}", use_container_width=True):
-                    _jump(title)
+                    _jump(title, workflow=workflow)
         with r2:
             st.subheader("Cost and Capacity")
             st.write("Bill explanations, contract pacing, warehouse pressure, rightsizing, recommendations, and value evidence.")
-            for title in ["Cost & Contract", "Warehouse Health"]:
+            for title, workflow in [("Cost & Contract", "Explain bill / attribution / contract"), ("Warehouse Health", "")]:
                 if st.button(title, key=f"dba_control_cost_{title}", use_container_width=True):
-                    _jump(title)
+                    _jump(title, workflow=workflow)
         with r3:
             st.subheader("Security and Governance")
             st.write("Login posture, grants, data sharing, object changes, procedure lineage, drift checks, and admin controls.")
-            for title in ["Security Posture", "Change & Drift"]:
+            for title, workflow in [("Security Posture", "Access posture"), ("Change & Drift", "Object and access changes")]:
                 if st.button(title, key=f"dba_control_security_{title}", use_container_width=True):
-                    _jump(title)
+                    _jump(title, workflow=workflow)
 
         st.divider()
         st.subheader("Exception Detail Samples")

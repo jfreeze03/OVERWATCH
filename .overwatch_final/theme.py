@@ -809,50 +809,6 @@ def render_theme_picker(persist: bool = False) -> None:
         if persist:
             _save_theme_preference(selected)
         st.rerun()
-    return
-
-    st.markdown(
-        "<div style='font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;"
-        "letter-spacing:1px;margin-bottom:6px;'>Theme</div>",
-        unsafe_allow_html=True,
-    )
-
-    # Render one button per theme
-    for key, meta in THEMES.items():
-        is_active  = key == current
-        bg_color   = f"rgba({','.join(str(int(meta['swatch'].lstrip('#')[i:i+2], 16)) for i in (0,2,4))}, 0.12)"
-        border_col = meta["swatch"] if is_active else "transparent"
-        label_color = "#0f172a" if meta["bg"].startswith("#f") else "#e2e8f0"
-
-        btn_html = f"""
-        <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;
-                    border-radius:8px;cursor:pointer;margin-bottom:4px;
-                    background:{bg_color};
-                    border:1.5px solid {border_col};
-                    transition:all 0.18s ease;">
-            <div style="width:16px;height:16px;border-radius:50%;flex-shrink:0;
-                        background:{meta['swatch']};border:2px solid rgba(255,255,255,0.2);"></div>
-            <div>
-                <div style="font-size:0.75rem;font-weight:600;color:{label_color};">
-                    {meta['emoji']} {meta['label']}
-                    {"  ✓" if is_active else ""}
-                </div>
-                <div style="font-size:0.62rem;color:#94a3b8;margin-top:1px;">{meta['desc']}</div>
-            </div>
-        </div>
-        """
-        st.markdown(btn_html, unsafe_allow_html=True)
-
-        if st.button(
-            f"Select {meta['label']}",
-            key=f"theme_btn_{key}",
-            disabled=is_active,
-            use_container_width=True,
-        ):
-            st.session_state["active_theme"] = key
-            if persist:
-                _save_theme_preference(key)
-            st.rerun()
 
 
 def restore_theme_preference() -> None:

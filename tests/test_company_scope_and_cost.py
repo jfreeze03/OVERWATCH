@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 import unittest
 
+import pandas as pd
 import streamlit as st
 
 
@@ -13,7 +14,11 @@ from config import COMPANY_CONFIG  # noqa: E402
 from utils.company_filter import company_value_allowed, get_wh_filter_clause  # noqa: E402
 from utils.cost import build_cost_reconciliation_sql  # noqa: E402
 from utils.compatibility import filter_existing_columns  # noqa: E402
-from utils.metadata import build_unclassified_assets_sql  # noqa: E402
+from utils.metadata import (  # noqa: E402
+    build_unclassified_assets_sql,
+    scope_metadata_df,
+    scope_warehouse_names,
+)
 
 
 class CompanyScopeAndCostTests(unittest.TestCase):
@@ -52,7 +57,12 @@ class CompanyScopeAndCostTests(unittest.TestCase):
                 self.calls += 1
                 raise RuntimeError("not authorized")
 
-        st.session_state.pop("_overwatch_unavailable_column_views", None)
+        for key in (
+            "_overwatch_available_columns",
+            "_overwatch_unavailable_column_views",
+            "_overwatch_column_probe",
+        ):
+            st.session_state.pop(key, None)
         session = BrokenSession()
         self.assertEqual(
             filter_existing_columns(
@@ -71,6 +81,67 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             [],
         )
         self.assertEqual(session.calls, 1)
+
+    def test_optional_column_probe_batches_columns_after_metadata_lookup(self):
+        class Result:
+            def __init__(self, columns=None):
+                self.columns = columns or []
+
+            def to_pandas(self):
+                return pd.DataFrame(columns=self.columns)
+
+            def collect(self):
+                return []
+
+        class Session:
+            def __init__(self):
+                self.statements = []
+
+            def sql(self, statement):
+                self.statements.append(statement)
+                if statement.startswith("SELECT *"):
+                    return Result(["QUERY_ID", "WAREHOUSE_SIZE"])
+                return Result()
+
+        for key in (
+            "_overwatch_available_columns",
+            "_overwatch_unavailable_column_views",
+            "_overwatch_column_probe",
+        ):
+            st.session_state.pop(key, None)
+
+        session = Session()
+        existing = filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            ["QUERY_ID", "WAREHOUSE_SIZE"],
+        )
+
+        self.assertEqual(existing, ["QUERY_ID", "WAREHOUSE_SIZE"])
+        self.assertEqual(len(session.statements), 2)
+        self.assertIn("SELECT QUERY_ID, WAREHOUSE_SIZE", session.statements[1])
+
+    def test_metadata_scope_uses_active_company_when_no_company_passed(self):
+        previous_company = st.session_state.get("active_company")
+        st.session_state["active_company"] = "Trexis"
+        try:
+            warehouses = pd.DataFrame({"NAME": ["BI_COMPUTE_WH", "WH_TRXS_REPORTING"]})
+            scoped_warehouses = scope_warehouse_names(warehouses, "NAME")
+            self.assertEqual(scoped_warehouses["NAME"].tolist(), ["WH_TRXS_REPORTING"])
+
+            objects = pd.DataFrame(
+                {
+                    "DATABASE_NAME": ["ALFA_EDW_DEV_BI", "TRXS_ANALYTICS"],
+                    "WAREHOUSE_NAME": ["BI_COMPUTE_WH", "WH_TRXS_REPORTING"],
+                }
+            )
+            scoped_objects = scope_metadata_df(objects)
+            self.assertEqual(scoped_objects["DATABASE_NAME"].tolist(), ["TRXS_ANALYTICS"])
+        finally:
+            if previous_company is None:
+                st.session_state.pop("active_company", None)
+            else:
+                st.session_state["active_company"] = previous_company
 
 
 if __name__ == "__main__":

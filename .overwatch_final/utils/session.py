@@ -85,7 +85,21 @@ def _make_session():
         except Exception:
             pass  # Non-fatal — session is still usable
 
+    _capture_current_role(sess)
     return sess
+
+
+def _capture_current_role(sess) -> str:
+    """Cache CURRENT_ROLE for role-based navigation without blocking startup."""
+    try:
+        rows = sess.sql("SELECT CURRENT_ROLE() AS R").collect()
+        role = rows[0]["R"] if rows else ""
+        role = str(role or "").upper()
+        st.session_state["_overwatch_current_role"] = role
+        return role
+    except Exception:
+        st.session_state.setdefault("_overwatch_current_role", "")
+        return ""
 
 
 def _session_is_alive(sess) -> bool:
@@ -137,6 +151,8 @@ def get_session():
         sess = _make_session()
         st.session_state["sf_session"]            = sess
         st.session_state["_sf_session_created_at"] = now
+    elif "_overwatch_current_role" not in st.session_state:
+        _capture_current_role(st.session_state["sf_session"])
 
     return st.session_state["sf_session"]
 

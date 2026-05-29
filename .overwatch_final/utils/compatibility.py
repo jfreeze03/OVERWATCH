@@ -13,6 +13,7 @@ from .query import format_snowflake_error
 
 
 _OBJECT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){1,2}$")
+_COLUMN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 
 @dataclass(frozen=True)
@@ -145,13 +146,19 @@ def _validate_object_name(object_name: str) -> str:
     return object_name
 
 
+def _validate_column_name(column: str) -> str:
+    column = str(column or "").strip().upper()
+    if not _COLUMN_RE.match(column):
+        raise ValueError(f"Unsafe Snowflake column name: {column}")
+    return column
+
+
 def get_available_columns(session, object_name: str) -> set[str]:
     """Return upper-case columns exposed by an account/view without scanning data."""
     object_name = _validate_object_name(object_name)
     cache = st.session_state.setdefault("_overwatch_available_columns", {})
-    cached = cache.get(object_name)
-    if cached:
-        return {str(col).upper() for col in cached}
+    if object_name in cache:
+        return {str(col).upper() for col in cache.get(object_name, [])}
     df = normalize_df(session.sql(f"SELECT * FROM {object_name} LIMIT 0").to_pandas())
     columns = {str(col).upper() for col in df.columns}
     cache[object_name] = sorted(columns)
@@ -169,6 +176,15 @@ def view_supports_columns(session, object_name: str, columns: Iterable[str]) -> 
 def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -> list[str]:
     """Keep only columns that the active Snowflake account exposes."""
     object_name = _validate_object_name(object_name)
+    requested: list[str] = []
+    seen: set[str] = set()
+    for col in columns:
+        col_upper = _validate_column_name(col)
+        if col_upper not in seen:
+            requested.append(col_upper)
+            seen.add(col_upper)
+    if not requested:
+        return []
     unavailable = st.session_state.setdefault("_overwatch_unavailable_column_views", set())
     if object_name in unavailable:
         return []
@@ -178,20 +194,28 @@ def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -
         unavailable.add(object_name)
         return []
     probe_cache = st.session_state.setdefault("_overwatch_column_probe", {})
+    candidates = [col for col in requested if col in available]
+    unprobed = [col for col in candidates if f"{object_name}:{col}" not in probe_cache]
+    if unprobed:
+        try:
+            session.sql(f"SELECT {', '.join(unprobed)} FROM {object_name} LIMIT 0").collect()
+            for col in unprobed:
+                probe_cache[f"{object_name}:{col}"] = True
+        except Exception:
+            for col in unprobed:
+                cache_key = f"{object_name}:{col}"
+                if cache_key in probe_cache:
+                    continue
+                try:
+                    session.sql(f"SELECT {col} FROM {object_name} LIMIT 0").collect()
+                    probe_cache[cache_key] = True
+                except Exception:
+                    probe_cache[cache_key] = False
     existing: list[str] = []
-    for col in columns:
-        col_upper = str(col).upper()
-        if col_upper not in available:
-            continue
-        cache_key = f"{object_name}:{col_upper}"
-        if cache_key not in probe_cache:
-            try:
-                session.sql(f"SELECT {col_upper} FROM {object_name} LIMIT 0").collect()
-                probe_cache[cache_key] = True
-            except Exception:
-                probe_cache[cache_key] = False
+    for col in candidates:
+        cache_key = f"{object_name}:{col}"
         if probe_cache.get(cache_key):
-            existing.append(col_upper)
+            existing.append(col)
     return existing
 
 

@@ -84,6 +84,12 @@ with st.sidebar:
 
     st.divider()
 
+    if "_overwatch_current_role" not in st.session_state:
+        try:
+            get_session()
+        except Exception:
+            st.session_state.setdefault("_overwatch_current_role", "")
+
     # ── Company filter ────────────────────────────────────────────────────────
     _prev_company = st.session_state.get("_prev_active_company", DEFAULT_COMPANY)
     active_company = st.radio(

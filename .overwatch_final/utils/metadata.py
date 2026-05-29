@@ -2,7 +2,7 @@
 import pandas as pd
 
 from config import COMPANY_CONFIG
-from .company_filter import company_value_allowed
+from .company_filter import company_value_allowed, get_active_company
 from .data import normalize_df
 
 
@@ -51,7 +51,7 @@ def scope_warehouse_names(
     """Apply company warehouse visibility to SHOW-style result sets."""
     if df is None or df.empty or name_col not in df.columns:
         return df
-    active_company = company or "ALFA"
+    active_company = company or get_active_company()
     return df[df[name_col].apply(lambda value: company_value_allowed(value, "warehouse", active_company))].copy()
 
 
@@ -59,7 +59,7 @@ def scope_metadata_df(df: pd.DataFrame, company: str | None = None) -> pd.DataFr
     """Apply company visibility to generic metadata result sets."""
     if df is None or df.empty:
         return df
-    active_company = company or "ALFA"
+    active_company = company or get_active_company()
     scoped = df.copy()
     for col in ("DATABASE_NAME", "DATABASE", "TABLE_CATALOG", "TABLE_DATABASE"):
         if col in scoped.columns:

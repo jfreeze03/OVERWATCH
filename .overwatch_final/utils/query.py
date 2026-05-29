@@ -442,14 +442,38 @@ def run_query(
     return result
 
 
-def run_query_or_raise(query_text: str) -> pd.DataFrame:
+def run_query_or_raise(
+    query_text: str,
+    section: str = "",
+    ttl_key: str = "direct",
+    tier: str = "live",
+) -> pd.DataFrame:
     """
     Execute SQL and return a normalized DataFrame, preserving exceptions.
 
     Use this for live probes and primary/fallback query paths where callers need
     the original Snowflake exception to decide whether to run a fallback query.
     """
-    return normalize_df(get_session().sql(query_text).to_pandas())
+    started = time.perf_counter()
+    result = pd.DataFrame()
+    query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
+    try:
+        session = get_session()
+        _apply_overwatch_query_tag(session, query_tag)
+        result = normalize_df(session.sql(query_text).to_pandas())
+        return result
+    finally:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        _record_query_telemetry(
+            query_text,
+            ttl_key=ttl_key,
+            tier=tier,
+            elapsed_ms=elapsed_ms,
+            row_count=len(result),
+            used_cache=False,
+            result_mb=_estimate_result_mb(result),
+            section=section,
+        )
 
 
 def force_refresh(key: str):

@@ -169,7 +169,14 @@ def view_supports_columns(session, object_name: str, columns: Iterable[str]) -> 
 def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -> list[str]:
     """Keep only columns that the active Snowflake account exposes."""
     object_name = _validate_object_name(object_name)
-    available = get_available_columns(session, object_name)
+    unavailable = st.session_state.setdefault("_overwatch_unavailable_column_views", set())
+    if object_name in unavailable:
+        return []
+    try:
+        available = get_available_columns(session, object_name)
+    except Exception:
+        unavailable.add(object_name)
+        return []
     probe_cache = st.session_state.setdefault("_overwatch_column_probe", {})
     existing: list[str] = []
     for col in columns:

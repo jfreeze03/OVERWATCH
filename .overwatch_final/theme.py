@@ -3,9 +3,9 @@
 # THEMES:
 #   1. midnight   — Original dark glassmorphism (cyan/indigo/purple)
 #   2. corporate  — Traditional light: white cards, navy sidebar, ALFA blue
-#   3. terminal   — Hacker green-on-black: monospace font, CRT scanlines
+#   3. terminal   — Snowflake White: classic white with Snowflake blue
 #   4. aurora     — Dark with shifting teal-to-emerald gradient accents
-#   5. carbon     — Dark charcoal + hot orange: industrial/ops aesthetic
+#   5. carbon     — Snowflake Dark: classic dark with Snowflake blue
 #
 # Architecture: All structural styles reference CSS custom properties.
 # Switching theme = injecting a new :root { } block. Zero JS required.
@@ -39,11 +39,11 @@ THEMES = {
         "desc":     "Bright ALFA red, slate & teal",
     },
     "terminal": {
-        "label":    "Terminal",
-        "emoji":    "💻",
-        "swatch":   "#00ff41",
-        "bg":       "#0a0a0a",
-        "desc":     "Green-on-black · monospace · CRT glow",
+        "label":    "Snowflake White",
+        "emoji":    "❄️",
+        "swatch":   "#29B5E8",
+        "bg":       "#ffffff",
+        "desc":     "Classic white · Snowflake blue",
     },
     "aurora": {
         "label":    "Aurora",
@@ -53,11 +53,11 @@ THEMES = {
         "desc":     "Dark · teal-to-emerald gradients",
     },
     "carbon": {
-        "label":    "Carbon",
-        "emoji":    "🔥",
-        "swatch":   "#f97316",
-        "bg":       "#111111",
-        "desc":     "Charcoal · hot orange · industrial",
+        "label":    "Snowflake Dark",
+        "emoji":    "🌙",
+        "swatch":   "#29B5E8",
+        "bg":       "#0B1117",
+        "desc":     "Classic dark · Snowflake blue",
     },
 }
 
@@ -159,50 +159,50 @@ _VARS = {
 }
 """,
 
-# ─── 3. TERMINAL — green-on-black, monospace, CRT scanline overlay ───────────
+# ─── 3. SNOWFLAKE WHITE — classic white with Snowflake brand blues ───────────
 "terminal": """
 :root {
-    --bg-app:          #0a0a0a;
-    --bg-sidebar:      #0d0d0d;
-    --bg-card:         rgba(0, 255, 65, 0.04);
-    --bg-card-hover:   rgba(0, 255, 65, 0.08);
-    --bg-input:        rgba(0, 0, 0, 0.80);
-    --bg-tab-list:     rgba(0, 255, 65, 0.04);
-    --bg-expander:     rgba(0, 0, 0, 0.60);
+    --bg-app:          #ffffff;
+    --bg-sidebar:      #f7fbfd;
+    --bg-card:         #ffffff;
+    --bg-card-hover:   #f3f8fb;
+    --bg-input:        #ffffff;
+    --bg-tab-list:     #eef7fb;
+    --bg-expander:     #ffffff;
 
-    --border-subtle:   rgba(0, 255, 65, 0.15);
-    --border-normal:   rgba(0, 255, 65, 0.30);
-    --border-strong:   rgba(0, 255, 65, 0.60);
-    --border-sidebar:  rgba(0, 255, 65, 0.20);
+    --border-subtle:   #d9ebf3;
+    --border-normal:   #b8d8e5;
+    --border-strong:   #29B5E8;
+    --border-sidebar:  #d7e8f0;
 
-    --text-primary:    #00ff41;
-    --text-secondary:  #00cc33;
-    --text-muted:      #66b37a;
-    --text-input:      #00ff41;
-    --text-heading:    transparent;
+    --text-primary:    #24323D;
+    --text-secondary:  #11567F;
+    --text-muted:      #5f7180;
+    --text-input:      #24323D;
+    --text-heading:    #003545;
 
-    --accent:          #00ff41;
-    --accent-rgb:      0, 255, 65;
-    --accent2:         #00cc33;
-    --accent3:         #39ff14;
-    --h1-gradient:     linear-gradient(90deg, #00ff41, #39ff14, #00cc33);
+    --accent:          #29B5E8;
+    --accent-rgb:      41, 181, 232;
+    --accent2:         #11567F;
+    --accent3:         #71D3DC;
+    --h1-gradient:     linear-gradient(90deg, #003545, #11567F, #29B5E8);
 
-    --metric-shadow:        0 0 12px rgba(0,255,65,0.15), 0 0 4px rgba(0,255,65,0.08);
-    --metric-hover-shadow:  0 0 24px rgba(0,255,65,0.30), 0 0 8px rgba(0,255,65,0.15);
-    --btn-bg:          rgba(0, 255, 65, 0.08);
-    --btn-bg-hover:    rgba(0, 255, 65, 0.18);
-    --btn-border:      rgba(0, 255, 65, 0.40);
-    --btn-hover-shadow: 0 0 16px rgba(0,255,65,0.35);
-    --slider-track:    linear-gradient(90deg, #006614, #00ff41);
-    --tab-active-bg:   rgba(0, 255, 65, 0.12);
-    --tab-active-col:  #00ff41;
-    --hr-bg:           linear-gradient(90deg, transparent, rgba(0,255,65,0.40), transparent);
-    --scrollbar-track: #0d0d0d;
-    --scrollbar-thumb: rgba(0, 255, 65, 0.30);
-    --scrollbar-hover: rgba(0, 255, 65, 0.60);
-    --font-body:       'Courier New', 'Lucida Console', monospace;
-    --font-mono:       'Courier New', monospace;
-    --extra-css:       'scanlines';
+    --metric-shadow:        0 1px 10px rgba(0, 53, 69, 0.08), 0 1px 2px rgba(0, 53, 69, 0.06);
+    --metric-hover-shadow:  0 8px 24px rgba(41, 181, 232, 0.18), 0 2px 8px rgba(0, 53, 69, 0.08);
+    --btn-bg:          #ffffff;
+    --btn-bg-hover:    #eef7fb;
+    --btn-border:      rgba(41, 181, 232, 0.46);
+    --btn-hover-shadow: 0 2px 14px rgba(41, 181, 232, 0.22);
+    --slider-track:    linear-gradient(90deg, #11567F, #29B5E8);
+    --tab-active-bg:   rgba(41, 181, 232, 0.13);
+    --tab-active-col:  #11567F;
+    --hr-bg:           linear-gradient(90deg, transparent, #cfe6ef, transparent);
+    --scrollbar-track: #eef7fb;
+    --scrollbar-thumb: rgba(41, 181, 232, 0.35);
+    --scrollbar-hover: rgba(17, 86, 127, 0.45);
+    --font-body:       'Lato', 'Inter', 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+    --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
+    --extra-css:       '';
 }
 """,
 
@@ -253,49 +253,49 @@ _VARS = {
 }
 """,
 
-# ─── 5. CARBON — charcoal + hot orange, industrial ops aesthetic ─────────────
+# ─── 5. SNOWFLAKE DARK — classic dark with Snowflake brand blues ─────────────
 "carbon": """
 :root {
-    --bg-app:          linear-gradient(160deg, #111111 0%, #1a1a1a 50%, #111111 100%);
-    --bg-sidebar:      linear-gradient(180deg, #0f0f0f 0%, #1a1a1a 100%);
-    --bg-card:         rgba(30, 30, 30, 0.80);
-    --bg-card-hover:   rgba(40, 40, 40, 0.95);
-    --bg-input:        rgba(20, 20, 20, 0.90);
-    --bg-tab-list:     rgba(20, 20, 20, 0.60);
-    --bg-expander:     rgba(25, 25, 25, 0.70);
+    --bg-app:          linear-gradient(160deg, #0B1117 0%, #101A22 48%, #003545 100%);
+    --bg-sidebar:      linear-gradient(180deg, #071018 0%, #0D1B24 55%, #003545 100%);
+    --bg-card:         rgba(13, 27, 36, 0.82);
+    --bg-card-hover:   rgba(18, 42, 55, 0.96);
+    --bg-input:        rgba(6, 16, 23, 0.92);
+    --bg-tab-list:     rgba(11, 27, 38, 0.66);
+    --bg-expander:     rgba(10, 24, 32, 0.76);
 
-    --border-subtle:   rgba(249, 115, 22, 0.12);
-    --border-normal:   rgba(249, 115, 22, 0.25);
-    --border-strong:   rgba(249, 115, 22, 0.55);
-    --border-sidebar:  rgba(249, 115, 22, 0.15);
+    --border-subtle:   rgba(41, 181, 232, 0.12);
+    --border-normal:   rgba(41, 181, 232, 0.26);
+    --border-strong:   rgba(41, 181, 232, 0.62);
+    --border-sidebar:  rgba(113, 211, 220, 0.16);
 
-    --text-primary:    #f5f5f5;
-    --text-secondary:  #a3a3a3;
-    --text-muted:      #525252;
-    --text-input:      #f5f5f5;
+    --text-primary:    #eef8fb;
+    --text-secondary:  #9bddea;
+    --text-muted:      #7b9cab;
+    --text-input:      #eef8fb;
     --text-heading:    transparent;
 
-    --accent:          #f97316;
-    --accent-rgb:      249, 115, 22;
-    --accent2:         #fb923c;
-    --accent3:         #fdba74;
-    --h1-gradient:     linear-gradient(90deg, #f97316, #fb923c, #fbbf24);
+    --accent:          #29B5E8;
+    --accent-rgb:      41, 181, 232;
+    --accent2:         #71D3DC;
+    --accent3:         #11567F;
+    --h1-gradient:     linear-gradient(90deg, #eef8fb, #71D3DC, #29B5E8);
 
-    --metric-shadow:        0 4px 20px rgba(0,0,0,0.50), inset 0 1px 0 rgba(255,255,255,0.04);
-    --metric-hover-shadow:  0 8px 30px rgba(249,115,22,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
-    --btn-bg:          linear-gradient(135deg, rgba(249,115,22,0.12), rgba(251,146,60,0.12));
-    --btn-bg-hover:    linear-gradient(135deg, rgba(249,115,22,0.28), rgba(251,146,60,0.28));
-    --btn-border:      rgba(249, 115, 22, 0.35);
-    --btn-hover-shadow: 0 0 20px rgba(249,115,22,0.25);
-    --slider-track:    linear-gradient(90deg, #c2410c, #f97316);
-    --tab-active-bg:   rgba(249, 115, 22, 0.14);
-    --tab-active-col:  #f97316;
-    --hr-bg:           linear-gradient(90deg, transparent, rgba(249,115,22,0.35), transparent);
-    --scrollbar-track: rgba(15, 15, 15, 0.60);
-    --scrollbar-thumb: rgba(249, 115, 22, 0.30);
-    --scrollbar-hover: rgba(249, 115, 22, 0.55);
-    --font-body:       'Inter', 'Roboto', system-ui, sans-serif;
-    --font-mono:       'JetBrains Mono', 'Consolas', monospace;
+    --metric-shadow:        0 4px 24px rgba(0,0,0,0.48), inset 0 1px 0 rgba(113,211,220,0.08);
+    --metric-hover-shadow:  0 8px 32px rgba(41,181,232,0.16), inset 0 1px 0 rgba(113,211,220,0.12);
+    --btn-bg:          linear-gradient(135deg, rgba(41,181,232,0.12), rgba(113,211,220,0.10));
+    --btn-bg-hover:    linear-gradient(135deg, rgba(41,181,232,0.28), rgba(113,211,220,0.22));
+    --btn-border:      rgba(41, 181, 232, 0.34);
+    --btn-hover-shadow: 0 0 20px rgba(41,181,232,0.24);
+    --slider-track:    linear-gradient(90deg, #11567F, #29B5E8);
+    --tab-active-bg:   rgba(41, 181, 232, 0.15);
+    --tab-active-col:  #71D3DC;
+    --hr-bg:           linear-gradient(90deg, transparent, rgba(41,181,232,0.32), transparent);
+    --scrollbar-track: rgba(3, 12, 18, 0.70);
+    --scrollbar-thumb: rgba(41, 181, 232, 0.32);
+    --scrollbar-hover: rgba(113, 211, 220, 0.56);
+    --font-body:       'Lato', 'Inter', 'DM Sans', system-ui, sans-serif;
+    --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
     --extra-css:       '';
 }
 """,
@@ -563,17 +563,9 @@ code, pre, .stCodeBlock {
 .glow-text { text-shadow: 0 0 10px rgba(var(--accent-rgb), 0.5); }
 .stAlert { border-radius: 10px; backdrop-filter: blur(8px); }
 
-/* ═══════════════════ TERMINAL theme extras ═══════════════════ */
-.terminal-extra .stApp::before {
-    content: '';
-    position: fixed; inset: 0; pointer-events: none; z-index: 9999;
-    background: repeating-linear-gradient(
-        0deg,
-        rgba(0,0,0,0.03) 0px,
-        rgba(0,0,0,0.03) 1px,
-        transparent 1px,
-        transparent 2px
-    );
+/* ═══════════════════ SNOWFLAKE WHITE theme extras ═══════════════════ */
+.terminal-extra [data-testid="stMetric"] {
+    border-top: 3px solid rgba(41,181,232,0.75) !important;
 }
 
 /* ═══════════════════ CORPORATE theme extras ═══════════════════ */
@@ -667,6 +659,34 @@ _THEME_EXTRAS = {
 }
 [data-testid="stMetricValue"] { color: #2f3437 !important; }
 [data-testid="stMetricLabel"] { color: #6c7478 !important; }
+[data-testid="stExpander"] {
+    background: #ffffff !important;
+    border-color: #d7e2ea !important;
+}
+[data-testid="stExpander"] details,
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span,
+[data-testid="stExpander"] [data-testid="stMarkdownContainer"],
+[data-testid="stExpander"] [data-testid="stMarkdownContainer"] p {
+    color: #1f2937 !important;
+}
+[data-testid="stExpander"] summary:hover,
+[data-testid="stExpander"] summary:hover p,
+[data-testid="stExpander"] summary:hover span {
+    color: #b00020 !important;
+}
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] p,
+.stTextInput label,
+.stTextInput label p {
+    color: #1f2937 !important;
+}
+.stTextInput input::placeholder,
+.stTextArea textarea::placeholder {
+    color: #64748b !important;
+    opacity: 1 !important;
+}
 .stTabs [data-baseweb="tab-list"] {
     border-bottom: 2px solid rgba(176,0,32,0.65);
 }
@@ -681,16 +701,45 @@ _THEME_EXTRAS = {
 """,
     "terminal": """
 <style>
-.stApp::before {
-    content: '';
-    position: fixed; inset: 0; pointer-events: none; z-index: 9999;
-    background: repeating-linear-gradient(
-        0deg,
-        rgba(0,0,0,0.03) 0px,
-        rgba(0,0,0,0.03) 1px,
-        transparent 1px,
-        transparent 2px
-    );
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stRadio > label,
+[data-testid="stSidebar"] p {
+    color: #24323D !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    color: #24323D !important;
+    background: #ffffff !important;
+    border-color: #b8d8e5 !important;
+    box-shadow: none !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    color: #11567F !important;
+    background: #eef7fb !important;
+    border-color: rgba(41,181,232,0.48) !important;
+}
+[data-testid="stSidebar"] .stRadio > div > label:hover {
+    color: #11567F !important;
+    background: rgba(41,181,232,0.08);
+}
+[data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {
+    color: #11567F !important;
+    background: rgba(41,181,232,0.13);
+    border-left: 3px solid #29B5E8;
+}
+[data-testid="stMetric"] {
+    border-top: 3px solid rgba(41,181,232,0.75) !important;
+}
+[data-testid="stMetricValue"] { color: #24323D !important; }
+[data-testid="stMetricLabel"] { color: #5f7180 !important; }
+.stTabs [data-baseweb="tab-list"] {
+    border-bottom: 2px solid rgba(41,181,232,0.55);
+}
+.stTabs [data-baseweb="tab"] {
+    color: #24323D !important;
+    font-weight: 650;
+}
+.stTabs [aria-selected="true"] {
+    color: #11567F !important;
 }
 </style>
 """,

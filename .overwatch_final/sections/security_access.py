@@ -51,7 +51,7 @@ def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, sever
             proof = "QUERY_HISTORY bytes_written_to_result compared with user baseline."
         actions.append({
             "Action ID": make_action_id("Security", entity, finding),
-            "Source": f"Security & Access - {finding_type}",
+            "Source": f"Security Posture - {finding_type}",
             "Severity": severity,
             "Category": "Security",
             "Entity Type": "User" if finding_type != "Exfiltration" else "Query",

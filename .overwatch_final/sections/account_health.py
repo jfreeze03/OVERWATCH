@@ -444,8 +444,8 @@ def render():
             for lbl, tgt in [
                 ("🔴 Live",  "🔴 Live Monitor"),
                 ("🔍 Query", "🔍 Query Analysis"),
-                ("💸 Cost",  "💸 Cost Center"),
-                ("🛠️ DBA",  "🛠️ DBA Tools"),
+                ("💸 Cost",  "💸 Cost & Contract"),
+                ("🛠️ DBA",  "🔀 Change & Drift"),
             ]:
                 st.button(lbl, key=f"jump_{lbl}", on_click=_jump, args=(tgt,))
 
@@ -467,8 +467,8 @@ def render():
                         key="ah_drill_user", label_visibility="collapsed",
                     )
                     if sel_user and sel_user != "(none)":
-                        if st.button(f"Open Cost Center for {sel_user}", key="ah_drill_user_btn"):
-                            _drill_to("💸 Cost Center", user_filter=sel_user)
+                        if st.button(f"Open Cost & Contract for {sel_user}", key="ah_drill_user_btn"):
+                            _drill_to("💸 Cost & Contract", user_filter=sel_user)
             else:
                 st.info("No cost driver data yet.")
 
@@ -495,9 +495,9 @@ def render():
 
         with e4:
             st.markdown("**Recommended next action**")
-            st.info("Use Recommendations & Anomalies for optimization actions and Teams-ready alerting.")
-            if st.button("Open Recommendations", key="ah_open_recommendations"):
-                _drill_to("💡 Recommendations & Anomalies")
+            st.info("Use Cost & Contract for optimization actions, action queue triage, and Teams-ready alerting.")
+            if st.button("Open Cost & Contract", key="ah_open_recommendations"):
+                _drill_to("💸 Cost & Contract")
 
         st.divider()
         st.markdown("**OVERWATCH Cost of Monitoring**")
@@ -951,6 +951,6 @@ def render():
 
             # Regenerate note
             st.caption(
-                "💡 Tip: set your annual committed credits in Cost Center → Contract Utilization "
+                "💡 Tip: set your annual committed credits in Cost & Contract → Contract Utilization "
                 "before generating the briefing to include contract pacing in the narrative."
             )

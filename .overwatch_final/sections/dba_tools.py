@@ -229,6 +229,26 @@ def render():
         "DBA Tools are grouped to keep the high-value controls easy to find. "
         "Open a group, then choose the specific operation."
     )
+    st.subheader("DBA Tools Operating Model")
+    risk_a, risk_b, risk_c = st.columns(3)
+    with risk_a:
+        st.info(
+            "Safe Observability\n\n"
+            "Read-only inventory, diagnostics, compatibility checks, schema compare, recent objects, "
+            "QAS visibility, replication, serverless costs, and usage logs."
+        )
+    with risk_b:
+        st.warning(
+            "Controlled Actions\n\n"
+            "Query cancellation, task suspend/resume, warehouse setting changes, and Cortex limit updates. "
+            "These stay locked unless Admin actions are enabled."
+        )
+    with risk_c:
+        st.success(
+            "Setup and Maintenance\n\n"
+            "DDL bundles, persistent OVERWATCH tables, alerts, action queue setup, usage logging, and "
+            "formula audit evidence."
+        )
     if not admin_actions_enabled():
         st.info(
             "Read-only mode is active. Load, inspect, compare, and export still work; "
@@ -1117,7 +1137,7 @@ ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
             "Snowflake does not yet support per-user Cortex credit limits natively (as of 2025). "
             "The recommended pattern is to use OBJECT_TAGS or role-based feature flags in `config.py` "
             "to control Cortex exposure per team. "
-            "Track per-user spend in OVERWATCH → AI & Cortex Monitor → Cortex Code Users."
+            "Track per-user spend in OVERWATCH → Cost & Contract → AI and Cortex spend → Cortex Code Users."
         )
         st.info(
             "💡 **Tip:** To restrict Cortex to specific roles, use `GRANT SNOWFLAKE.CORTEX.USER` "

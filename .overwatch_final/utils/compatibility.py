@@ -41,7 +41,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
             "BYTES_SPILLED_TO_REMOTE_STORAGE", "BYTES_SCANNED", "QUERY_TAG",
             "ROOT_QUERY_ID", "PARENT_QUERY_ID", "ERROR_CODE", "ERROR_MESSAGE",
         ),
-        "Account Health, Live Monitor, Query Analysis, Cost Center, Security",
+        "Account Health, Query Workbench, Cost & Contract, Security Posture",
         "Missing optional columns lower drilldown detail, but should not break the app.",
     ),
     ViewSpec(
@@ -49,7 +49,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
         "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
         ("START_TIME", "WAREHOUSE_NAME", "CREDITS_USED"),
         ("CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"),
-        "Cost Center, Warehouse Health, Contract Utilization, Recommendations",
+        "Cost & Contract, Warehouse Health",
         "Exact warehouse cost comes from this view.",
     ),
     ViewSpec(
@@ -73,7 +73,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
         "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY",
         ("EVENT_TIMESTAMP", "USER_NAME", "IS_SUCCESS"),
         ("CLIENT_IP", "REPORTED_CLIENT_TYPE", "REPORTED_CLIENT_VERSION", "ERROR_CODE"),
-        "Security & Access, Service Health",
+        "Security Posture, Service Health",
         "Company scoping is user-pattern based for login-only records.",
     ),
     ViewSpec(
@@ -89,7 +89,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
         "SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY",
         ("LAST_LOAD_TIME", "TABLE_NAME", "STATUS"),
         ("TABLE_CATALOG_NAME", "FILE_NAME", "ROW_COUNT", "FIRST_ERROR_MESSAGE"),
-        "Pipeline Health, DBA Tools",
+        "Pipeline Health, Change & Drift",
         "Used for load failure and file-volume monitoring.",
     ),
     ViewSpec(
@@ -101,7 +101,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
             "STATE_MESSAGE", "REFRESH_ACTION", "REFRESH_TRIGGER", "QUERY_ID",
             "TARGET_LAG_SEC",
         ),
-        "DBA Tools",
+        "Change & Drift",
         "Snowflake exposes different refresh-history columns by edition and rollout state.",
     ),
     ViewSpec(
@@ -109,7 +109,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
         "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
         ("START_TIME", "SERVICE_TYPE", "CREDITS_USED"),
         (),
-        "DBA Tools Serverless Costs",
+        "Change & Drift serverless cost checks",
         "Serverless costs are account-level unless a service-specific view exposes ownership.",
     ),
     ViewSpec(
@@ -117,7 +117,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
         "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS",
         ("CREATED_ON", "ROLE", "GRANTEE_NAME"),
         ("DELETED_ON", "GRANTED_BY"),
-        "Security & Access, Platform Topology",
+        "Security Posture, Platform Topology",
         "Grant checks are company-scoped by grantee naming when no database/warehouse exists.",
     ),
     ViewSpec(
@@ -125,7 +125,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
         "SNOWFLAKE.ACCOUNT_USAGE.USERS",
         ("NAME", "DISABLED"),
         ("HAS_PASSWORD", "EXT_AUTHN_DUO", "LAST_SUCCESS_LOGIN"),
-        "Security & Access",
+        "Security Posture",
         "User metadata differs across auth configurations.",
     ),
 )
@@ -424,11 +424,11 @@ def build_smoke_test_checklist() -> pd.DataFrame:
         ("Account Health", "Refresh Health", "Metrics load without red Snowflake errors."),
         ("Usage Overview", "Load dashboard", "Credits, query counts, users, and storage reflect selected company."),
         ("Warehouse Health", "Load warehouse overview and optimization", "No Trexis warehouses appear in ALFA view; size is populated when Snowflake exposes it."),
-        ("Cost Center", "Load cost leaderboard and chargeback", "Credits reconcile to metering for completed billing windows."),
-        ("Security & Access", "Load Login Posture and Roles & Grants", "No numeric/string conversion errors; company-scoped users/grants only."),
-        ("DBA Tools", "Open Warehouse Settings", "Warehouse list auto-populates from selected company."),
-        ("DBA Tools", "Open Dynamic Tables", "Missing optional columns show as limited data, not hard errors."),
-        ("DBA Tools", "Open Task Graph Control", "Current-user stored procedure warning is informational, not blocking."),
+        ("Cost & Contract", "Load Explain This Bill, cost leaderboard, and chargeback", "Credits reconcile to metering for completed billing windows."),
+        ("Security Posture", "Load Login Posture and Roles & Grants", "No numeric/string conversion errors; company-scoped users/grants only."),
+        ("Change & Drift", "Open Warehouse Settings", "Warehouse list auto-populates from selected company."),
+        ("Change & Drift", "Open Dynamic Tables", "Missing optional columns show as limited data, not hard errors."),
+        ("Change & Drift", "Open Task Graph Control", "Current-user stored procedure warning is informational, not blocking."),
         ("Settings", "Open Settings and Saved Views", "No material-icon text leaks are visible."),
         ("Company Selector", "Switch ALFA/Trexis/ALL", "Cache clears and all section data refreshes to the selected company."),
     ]

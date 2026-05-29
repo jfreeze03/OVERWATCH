@@ -174,7 +174,7 @@ SELECT
     warehouse_name                                                    AS ENTITY,
     'Credits: ' || ROUND(daily_credits,2) || ' (' || spike_ratio
         || 'x rolling avg of ' || ROUND(avg_credits,2) || ')'       AS DETAIL,
-    'Review warehouse activity in OVERWATCH Cost Center → Burn Rate' AS SUGGESTED_ACTION
+    'Review warehouse activity in OVERWATCH Cost & Contract → Explain bill / attribution / contract → Burn Rate' AS SUGGESTED_ACTION
 FROM spikes
 
 UNION ALL

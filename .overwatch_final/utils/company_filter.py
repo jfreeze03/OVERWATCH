@@ -40,13 +40,14 @@ def invalidate_company_cache():
     _preserve_exact = {
         "active_company", "active_theme", "nav_section", "_prev_active_company",
         "_prev_nav_section", "credit_price", "_credit_price", "storage_cost",
-        "rt_interval", "theme_picker_radio",
+        "rt_interval", "theme_picker_radio", "exceptions_only_mode",
     }
     _preserve_prefixes = (
         "nav_", "_prev_nav_", "active_company", "_prev_active_company",
         "credit_price", "_credit_price", "storage_cost", "rt_interval",
         "global_start", "global_end", "global_warehouse", "global_user",
         "global_role", "global_database", "theme_", "company_",
+        "exceptions_only",
     )
     keys_to_drop = [
         k for k in list(st.session_state.keys())

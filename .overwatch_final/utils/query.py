@@ -82,21 +82,21 @@ def _infer_telemetry_section(section: str = "", ttl_key: str = "") -> str:
     prefix_map = [
         ("account_health", "Account Health"),
         ("ah_", "Account Health"),
-        ("cc_", "Cost Center"),
+        ("cc_", "Cost & Contract"),
         ("uo_", "Usage Overview"),
         ("wh_", "Warehouse Health"),
-        ("lm_", "Live Monitor"),
-        ("qa_", "Query Analysis"),
-        ("qs_", "Query Search & History"),
-        ("dba_", "DBA Tools"),
+        ("lm_", "Query Workbench"),
+        ("qa_", "Query Workbench"),
+        ("qs_", "Query Workbench"),
+        ("dba_", "Change & Drift"),
         ("tm_", "Task Management"),
-        ("sec_", "Security & Access"),
-        ("sp_", "Stored Proc Tracker"),
-        ("rec_", "Recommendations & Anomalies"),
-        ("cortex_", "AI & Cortex Monitor"),
+        ("sec_", "Security Posture"),
+        ("sp_", "Change & Drift"),
+        ("rec_", "Cost & Contract"),
+        ("cortex_", "Cost & Contract"),
         ("storage_", "Storage Monitor"),
         ("pipe_", "Pipeline Health"),
-        ("value_", "Snowflake Value"),
+        ("value_", "Cost & Contract"),
     ]
     for prefix, label in prefix_map:
         if key.startswith(prefix):
@@ -371,6 +371,7 @@ def _cache_context() -> str:
         str(st.session_state.get("global_user", "")),
         str(st.session_state.get("global_role", "")),
         str(st.session_state.get("global_database", "")),
+        str(st.session_state.get("exceptions_only_mode", "")),
     ])
 
 

@@ -101,6 +101,14 @@ with st.sidebar:
     if _prev_company != active_company:
         invalidate_company_cache()
     st.session_state["_prev_active_company"] = active_company
+    st.toggle(
+        "Exceptions-only mode",
+        key="exceptions_only_mode",
+        help=(
+            "Prioritize failures, cost spikes, queue pressure, suspicious access, "
+            "and contract risk. Use this for DBA morning triage and leadership briefs."
+        ),
+    )
 
     st.divider()
 
@@ -127,14 +135,14 @@ with st.sidebar:
         if st.button("Go", key="command_palette_go", disabled=not cmd):
             value = str(cmd).strip()
             upper = value.upper()
-            target = SECTION_BY_TITLE["Account Health"]
+            target = SECTION_BY_TITLE["DBA Control Room"]
             if cmd_type == "Warehouse" or (cmd_type == "Auto" and ("WH" in upper or "WAREHOUSE" in upper)):
                 st.session_state["global_warehouse"] = value
                 st.session_state["wh_filter"] = value
                 target = SECTION_BY_TITLE["Warehouse Health"]
             elif cmd_type == "User":
                 st.session_state["global_user"] = value
-                target = SECTION_BY_TITLE["Cost Center"]
+                target = SECTION_BY_TITLE["Cost & Contract"]
             elif cmd_type == "Query ID" or (cmd_type == "Auto" and len(value) >= 20 and "-" in value):
                 st.session_state["qs_qid"] = value
                 target = SECTION_BY_TITLE["Query Search & History"]
@@ -145,13 +153,13 @@ with st.sidebar:
                 st.session_state["global_database"] = value
                 target = SECTION_BY_TITLE["Storage Monitor"]
             elif "COST" in upper or "SPEND" in upper:
-                target = SECTION_BY_TITLE["Cost Center"]
+                target = SECTION_BY_TITLE["Cost & Contract"]
             elif "ALERT" in upper or "RECOMMEND" in upper or "ACTION" in upper:
-                target = SECTION_BY_TITLE["Recommendations & Anomalies"]
+                target = SECTION_BY_TITLE["Cost & Contract"]
             elif "VALUE" in upper or "ROI" in upper or "SAVING" in upper:
-                target = SECTION_BY_TITLE["Snowflake Value"]
-            elif "DBA" in upper or "WAREHOUSE SETTING" in upper:
-                target = SECTION_BY_TITLE["DBA Tools"]
+                target = SECTION_BY_TITLE["Cost & Contract"]
+            elif "DBA" in upper or "WAREHOUSE SETTING" in upper or "DRIFT" in upper or "CHANGE" in upper:
+                target = SECTION_BY_TITLE["Change & Drift"]
             else:
                 for section in visible_sections:
                     if upper in section.upper():

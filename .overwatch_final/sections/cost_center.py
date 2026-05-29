@@ -9,7 +9,7 @@ from utils import (
     download_csv, build_metered_credit_cte, build_cost_reconciliation_sql,
     burn_trend_label,
     metric_confidence_label, freshness_note,
-    get_wh_filter_clause,
+    get_wh_filter_clause, get_global_wh_filter_clause,
     get_global_filter_clause, get_company_case_expr,
     filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown,
@@ -48,8 +48,8 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             "Finding": finding,
             "Action": "Review query patterns, warehouse sizing, cache use, and whether the workload can be optimized or scheduled differently.",
             "Estimated Monthly Savings": round(monthly_savings, 2),
-            "Generated SQL Fix": "-- Use Cost Center drilldown to identify top query patterns before applying warehouse/query changes.",
-            "Proof Query": "Cost Center metered credit attribution query.",
+            "Generated SQL Fix": "-- Use Cost & Contract drilldown to identify top query patterns before applying warehouse/query changes.",
+            "Proof Query": "Cost & Contract metered credit attribution query.",
             "Company": company,
         })
     if not actions:
@@ -67,6 +67,161 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             mime="text/plain",
             key=f"cc_queue_ddl_{source}",
         )
+
+
+def _bill_period_bounds(period_key: str) -> dict:
+    periods = {
+        "Last complete day": {
+            "label": "last complete day",
+            "current_start": "TO_TIMESTAMP_NTZ(DATEADD('day', -1, CURRENT_DATE()))",
+            "current_end": "TO_TIMESTAMP_NTZ(CURRENT_DATE())",
+            "prior_start": "TO_TIMESTAMP_NTZ(DATEADD('day', -2, CURRENT_DATE()))",
+            "prior_end": "TO_TIMESTAMP_NTZ(DATEADD('day', -1, CURRENT_DATE()))",
+            "days_back": 4,
+        },
+        "Last 7 complete days": {
+            "label": "last 7 complete days",
+            "current_start": "TO_TIMESTAMP_NTZ(DATEADD('day', -7, CURRENT_DATE()))",
+            "current_end": "TO_TIMESTAMP_NTZ(CURRENT_DATE())",
+            "prior_start": "TO_TIMESTAMP_NTZ(DATEADD('day', -14, CURRENT_DATE()))",
+            "prior_end": "TO_TIMESTAMP_NTZ(DATEADD('day', -7, CURRENT_DATE()))",
+            "days_back": 17,
+        },
+        "Last 30 complete days": {
+            "label": "last 30 complete days",
+            "current_start": "TO_TIMESTAMP_NTZ(DATEADD('day', -30, CURRENT_DATE()))",
+            "current_end": "TO_TIMESTAMP_NTZ(CURRENT_DATE())",
+            "prior_start": "TO_TIMESTAMP_NTZ(DATEADD('day', -60, CURRENT_DATE()))",
+            "prior_end": "TO_TIMESTAMP_NTZ(DATEADD('day', -30, CURRENT_DATE()))",
+            "days_back": 65,
+        },
+        "Current month to date": {
+            "label": "current month to date",
+            "current_start": "TO_TIMESTAMP_NTZ(DATE_TRUNC('month', CURRENT_DATE()))",
+            "current_end": "TO_TIMESTAMP_NTZ(CURRENT_DATE())",
+            "prior_start": "TO_TIMESTAMP_NTZ(DATEADD('month', -1, DATE_TRUNC('month', CURRENT_DATE())))",
+            "prior_end": "TO_TIMESTAMP_NTZ(DATEADD('month', -1, CURRENT_DATE()))",
+            "days_back": 65,
+        },
+        "Previous month": {
+            "label": "previous month",
+            "current_start": "TO_TIMESTAMP_NTZ(DATEADD('month', -1, DATE_TRUNC('month', CURRENT_DATE())))",
+            "current_end": "TO_TIMESTAMP_NTZ(DATE_TRUNC('month', CURRENT_DATE()))",
+            "prior_start": "TO_TIMESTAMP_NTZ(DATEADD('month', -2, DATE_TRUNC('month', CURRENT_DATE())))",
+            "prior_end": "TO_TIMESTAMP_NTZ(DATEADD('month', -1, DATE_TRUNC('month', CURRENT_DATE())))",
+            "days_back": 95,
+        },
+    }
+    return periods.get(period_key, periods["Last 7 complete days"])
+
+
+def _pct_delta(current: float, prior: float):
+    if prior is None or abs(float(prior)) < 0.000001:
+        return None
+    return ((float(current or 0) - float(prior or 0)) / float(prior)) * 100
+
+
+def _fmt_delta(value) -> str:
+    if value is None:
+        return "new/no baseline"
+    return f"{value:+.1f}%"
+
+
+def _first_value(df: pd.DataFrame, column: str, default=0.0):
+    if df is None or df.empty or column not in df.columns:
+        return default
+    return df.iloc[0].get(column, default)
+
+
+def _build_explain_bill_markdown(
+    *,
+    company: str,
+    period_label: str,
+    current_credits: float,
+    prior_credits: float,
+    credit_price: float,
+    active_warehouses: int,
+    allocated_credits: float,
+    unallocated_credits: float,
+    warehouse_deltas: pd.DataFrame,
+    user_drivers: pd.DataFrame,
+    query_type_drivers: pd.DataFrame,
+) -> str:
+    delta_credits = current_credits - prior_credits
+    delta_pct = _pct_delta(current_credits, prior_credits)
+    direction = "increased" if delta_credits > 0 else "decreased" if delta_credits < 0 else "held flat"
+    top_wh = warehouse_deltas.iloc[0] if warehouse_deltas is not None and not warehouse_deltas.empty else {}
+    top_user = user_drivers.iloc[0] if user_drivers is not None and not user_drivers.empty else {}
+    top_type = query_type_drivers.iloc[0] if query_type_drivers is not None and not query_type_drivers.empty else {}
+
+    lines = [
+        f"# Explain This Bill - {company}",
+        "",
+        f"Period reviewed: {period_label}.",
+        f"Warehouse-metered credits {direction} by {delta_credits:+,.2f} credits ({_fmt_delta(delta_pct)}), from {prior_credits:,.2f} to {current_credits:,.2f}.",
+        f"Estimated current-period warehouse cost is ${credits_to_dollars(current_credits, credit_price):,.2f} at ${credit_price:,.2f}/credit.",
+        f"Active warehouses in the period: {active_warehouses}.",
+        "",
+        "## Primary Drivers",
+        f"- Largest warehouse delta: {top_wh.get('WAREHOUSE_NAME', 'n/a')} ({safe_float(top_wh.get('CREDIT_DELTA', 0)):,.2f} credit delta).",
+        f"- Largest allocated user/workload: {top_user.get('USER_NAME', 'n/a')} on {top_user.get('WAREHOUSE_NAME', 'n/a')} ({safe_float(top_user.get('ALLOCATED_CREDITS', 0)):,.2f} allocated credits).",
+        f"- Top query type by allocated credits: {top_type.get('QUERY_TYPE', 'n/a')} ({safe_float(top_type.get('ALLOCATED_CREDITS', 0)):,.2f} allocated credits).",
+        "",
+        "## Allocation Caveat",
+        f"Exact warehouse credits: {current_credits:,.2f}. Query-attributed credits: {allocated_credits:,.2f}. Unallocated / idle / service-overhead gap: {unallocated_credits:,.2f} credits.",
+        "Warehouse totals are exact ACCOUNT_USAGE metering. User and query-type drivers are allocated from hourly metering by query execution share, so they are directional rather than invoice-grade.",
+        "",
+        "## Recommended Follow-Up",
+        "- Review warehouses with the largest positive deltas first.",
+        "- Drill into the top user/workload and query type before resizing warehouses.",
+        "- If the unallocated gap is material, review auto-suspend settings, non-query warehouse activity, and ACCOUNT_USAGE latency.",
+    ]
+    return "\n".join(lines)
+
+
+def _queue_bill_exceptions(
+    session,
+    warehouse_deltas: pd.DataFrame,
+    credit_price: float,
+    period_label: str,
+) -> None:
+    if warehouse_deltas is None or warehouse_deltas.empty:
+        st.info("No bill exceptions to queue.")
+        return
+    company = st.session_state.get("active_company", "ALFA")
+    actions = []
+    for _, row in warehouse_deltas.sort_values("CREDIT_DELTA", ascending=False).head(10).iterrows():
+        wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
+        delta = safe_float(row.get("CREDIT_DELTA", 0))
+        if delta <= 0:
+            continue
+        est_delta_cost = credits_to_dollars(delta, credit_price)
+        if delta < 5 and est_delta_cost < 100:
+            continue
+        finding = f"{wh} increased by {delta:,.2f} credits (${est_delta_cost:,.2f}) during {period_label}"
+        actions.append({
+            "Action ID": make_action_id("Bill Increase", wh, finding),
+            "Source": "Cost & Contract - Explain This Bill",
+            "Severity": "Medium" if est_delta_cost < 1000 else "High",
+            "Category": "Cost",
+            "Entity Type": "Warehouse",
+            "Entity": wh,
+            "Owner": "DBA",
+            "Finding": finding,
+            "Action": "Use Cost & Contract and Query Workbench drilldowns to confirm whether the increase is workload growth, idle time, warehouse sizing, or a one-time event.",
+            "Estimated Monthly Savings": round(max(0.0, est_delta_cost * 0.25), 2),
+            "Generated SQL Fix": "-- Review warehouse auto-suspend, scaling policy, and top query drivers before making changes.",
+            "Proof Query": "Cost & Contract Explain This Bill warehouse-delta query.",
+            "Company": company,
+        })
+    if not actions:
+        st.success("No warehouse increases crossed the exception threshold.")
+        return
+    try:
+        saved = upsert_actions(session, actions)
+        st.success(f"Saved {saved} bill exceptions to the action queue.")
+    except Exception as e:
+        st.error(f"Could not save bill exceptions: {format_snowflake_error(e)}")
 
 
 def render():
@@ -95,8 +250,8 @@ def render():
         if "QUERY_TAG" in qh_cols else "'UNTAGGED'"
     )
 
-    tab_leader, tab_burn, tab_recon, tab_forecast, tab_budget, tab_attr, tab_chargeback, tab_contract = st.tabs([
-        "User Leaderboard", "Burn Rate", "Reconciliation", "Forecast", "Budget vs Actual",
+    tab_explain, tab_leader, tab_burn, tab_recon, tab_forecast, tab_budget, tab_attr, tab_chargeback, tab_contract = st.tabs([
+        "Explain This Bill", "User Leaderboard", "Burn Rate", "Reconciliation", "Forecast", "Budget vs Actual",
         "Attribution", "Chargeback", "📋 Contract Utilization"
     ])
     st.caption(
@@ -104,6 +259,321 @@ def render():
     )
 
     # ── USER LEADERBOARD ──────────────────────────────────────────────────────
+    with tab_explain:
+        st.header("Explain This Bill")
+        st.caption(
+            "Start here when someone asks why Snowflake spend moved. "
+            "Warehouse totals use exact ACCOUNT_USAGE metering; user and query drivers are allocated estimates."
+        )
+        explain_period = st.selectbox(
+            "Bill period",
+            [
+                "Last complete day",
+                "Last 7 complete days",
+                "Last 30 complete days",
+                "Current month to date",
+                "Previous month",
+            ],
+            index=1,
+            key="cc_explain_period",
+        )
+        explain_budget = st.number_input(
+            "Optional budget for this period ($)",
+            min_value=0.0,
+            value=0.0,
+            step=100.0,
+            key="cc_explain_budget",
+        )
+        bounds = _bill_period_bounds(explain_period)
+        wh_filter_meter = " ".join(filter(None, [
+            get_wh_filter_clause("warehouse_name"),
+            get_global_wh_filter_clause("warehouse_name"),
+        ]))
+        wh_filter_query = get_global_filter_clause(
+            "",
+            "q.warehouse_name",
+            "q.user_name",
+            "q.role_name",
+            "q.database_name",
+        )
+        attribution_only_filters = [
+            name for name, value in {
+                "user": st.session_state.get("global_user"),
+                "role": st.session_state.get("global_role"),
+                "database": st.session_state.get("global_database"),
+            }.items()
+            if value
+        ]
+        if attribution_only_filters:
+            st.warning(
+                "User, role, and database filters narrow attribution rows only. "
+                "Exact warehouse metering can be scoped only by company and warehouse."
+            )
+        explain_filter_signature = (
+            st.session_state.get("global_warehouse"),
+            st.session_state.get("global_user"),
+            st.session_state.get("global_role"),
+            st.session_state.get("global_database"),
+        )
+
+        if st.button("Explain Bill", key="cc_explain_load", type="primary"):
+            try:
+                summary_sql = f"""
+                WITH bounds AS (
+                    SELECT
+                        {bounds['current_start']} AS current_start,
+                        {bounds['current_end']} AS current_end,
+                        {bounds['prior_start']} AS prior_start,
+                        {bounds['prior_end']} AS prior_end
+                ),
+                metering AS (
+                    SELECT 'CURRENT' AS period, warehouse_name, start_time, credits_used
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
+                    WHERE start_time >= current_start
+                      AND start_time < current_end
+                      {wh_filter_meter}
+                    UNION ALL
+                    SELECT 'PRIOR' AS period, warehouse_name, start_time, credits_used
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
+                    WHERE start_time >= prior_start
+                      AND start_time < prior_end
+                      {wh_filter_meter}
+                )
+                SELECT
+                    period,
+                    ROUND(SUM(credits_used), 4) AS credits,
+                    COUNT(DISTINCT warehouse_name) AS active_warehouses,
+                    COUNT(DISTINCT TO_DATE(start_time)) AS active_days
+                FROM metering
+                GROUP BY period
+                """
+                wh_delta_sql = f"""
+                WITH bounds AS (
+                    SELECT
+                        {bounds['current_start']} AS current_start,
+                        {bounds['current_end']} AS current_end,
+                        {bounds['prior_start']} AS prior_start,
+                        {bounds['prior_end']} AS prior_end
+                ),
+                current_wh AS (
+                    SELECT warehouse_name, SUM(credits_used) AS credits
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
+                    WHERE start_time >= current_start
+                      AND start_time < current_end
+                      {wh_filter_meter}
+                    GROUP BY warehouse_name
+                ),
+                prior_wh AS (
+                    SELECT warehouse_name, SUM(credits_used) AS credits
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
+                    WHERE start_time >= prior_start
+                      AND start_time < prior_end
+                      {wh_filter_meter}
+                    GROUP BY warehouse_name
+                )
+                SELECT
+                    COALESCE(c.warehouse_name, p.warehouse_name) AS warehouse_name,
+                    ROUND(COALESCE(c.credits, 0), 4) AS current_credits,
+                    ROUND(COALESCE(p.credits, 0), 4) AS prior_credits,
+                    ROUND(COALESCE(c.credits, 0) - COALESCE(p.credits, 0), 4) AS credit_delta,
+                    CASE
+                        WHEN COALESCE(p.credits, 0) = 0 THEN NULL
+                        ELSE ROUND(((COALESCE(c.credits, 0) - p.credits) / NULLIF(p.credits, 0)) * 100, 2)
+                    END AS pct_delta
+                FROM current_wh c
+                FULL OUTER JOIN prior_wh p ON c.warehouse_name = p.warehouse_name
+                ORDER BY ABS(COALESCE(c.credits, 0) - COALESCE(p.credits, 0)) DESC
+                LIMIT 25
+                """
+                driver_sql = f"""
+                WITH bounds AS (
+                    SELECT
+                        {bounds['current_start']} AS current_start,
+                        {bounds['current_end']} AS current_end
+                ),
+                {build_metered_credit_cte(days_back=bounds['days_back'], include_recent=False)}
+                SELECT
+                    q.user_name,
+                    q.role_name,
+                    q.warehouse_name,
+                    {max_wh_size_expr} AS warehouse_size,
+                    COUNT(*) AS query_count,
+                    ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS allocated_credits,
+                    ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
+                    ROUND({bytes_scanned_sum_expr} / POWER(1024, 3), 2) AS gb_scanned
+                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+                CROSS JOIN bounds
+                WHERE q.start_time >= current_start
+                  AND q.start_time < current_end
+                  AND q.warehouse_name IS NOT NULL
+                  {wh_filter_query}
+                GROUP BY q.user_name, q.role_name, q.warehouse_name
+                ORDER BY allocated_credits DESC
+                LIMIT 50
+                """
+                type_sql = f"""
+                WITH bounds AS (
+                    SELECT
+                        {bounds['current_start']} AS current_start,
+                        {bounds['current_end']} AS current_end
+                ),
+                {build_metered_credit_cte(days_back=bounds['days_back'], include_recent=False)}
+                SELECT
+                    COALESCE(q.query_type, 'UNKNOWN') AS query_type,
+                    COUNT(*) AS query_count,
+                    ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS allocated_credits,
+                    ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
+                    ROUND({bytes_scanned_sum_expr} / POWER(1024, 3), 2) AS gb_scanned
+                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+                CROSS JOIN bounds
+                WHERE q.start_time >= current_start
+                  AND q.start_time < current_end
+                  AND q.warehouse_name IS NOT NULL
+                  {wh_filter_query}
+                GROUP BY COALESCE(q.query_type, 'UNKNOWN')
+                ORDER BY allocated_credits DESC
+                LIMIT 25
+                """
+                st.session_state["cc_explain_summary"] = run_query(
+                    summary_sql,
+                    ttl_key=f"cc_explain_summary_{company}_{explain_period}",
+                    tier="standard",
+                )
+                st.session_state["cc_explain_wh_delta"] = run_query(
+                    wh_delta_sql,
+                    ttl_key=f"cc_explain_wh_{company}_{explain_period}",
+                    tier="standard",
+                )
+                st.session_state["cc_explain_drivers"] = run_query(
+                    driver_sql,
+                    ttl_key=f"cc_explain_drivers_{company}_{explain_period}",
+                    tier="standard",
+                )
+                st.session_state["cc_explain_types"] = run_query(
+                    type_sql,
+                    ttl_key=f"cc_explain_types_{company}_{explain_period}",
+                    tier="standard",
+                )
+                st.session_state["cc_explain_meta"] = {
+                    "company": company,
+                    "period": explain_period,
+                    "credit_price": credit_price,
+                    "filters": explain_filter_signature,
+                }
+            except Exception as e:
+                st.error(f"Unable to explain bill: {format_snowflake_error(e)}")
+
+        summary = st.session_state.get("cc_explain_summary")
+        wh_deltas = st.session_state.get("cc_explain_wh_delta")
+        drivers = st.session_state.get("cc_explain_drivers")
+        type_drivers = st.session_state.get("cc_explain_types")
+        explain_meta = st.session_state.get("cc_explain_meta", {})
+        has_current_explain = (
+            explain_meta.get("company") == company
+            and explain_meta.get("period") == explain_period
+            and explain_meta.get("filters") == explain_filter_signature
+            and summary is not None
+            and not summary.empty
+        )
+        if has_current_explain:
+            current_row = summary[summary["PERIOD"] == "CURRENT"]
+            prior_row = summary[summary["PERIOD"] == "PRIOR"]
+            current_credits = safe_float(_first_value(current_row, "CREDITS", 0))
+            prior_credits = safe_float(_first_value(prior_row, "CREDITS", 0))
+            current_cost = credits_to_dollars(current_credits, credit_price)
+            prior_cost = credits_to_dollars(prior_credits, credit_price)
+            delta_credits = current_credits - prior_credits
+            delta_cost = current_cost - prior_cost
+            delta_pct = _pct_delta(current_credits, prior_credits)
+            active_warehouses = int(_first_value(current_row, "ACTIVE_WAREHOUSES", 0) or 0)
+            allocated_credits = (
+                safe_float(drivers["ALLOCATED_CREDITS"].sum())
+                if drivers is not None and not drivers.empty else 0.0
+            )
+            unallocated_credits = max(0.0, current_credits - allocated_credits)
+            unallocated_pct = (unallocated_credits / current_credits * 100) if current_credits else 0.0
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Current Spend", f"${current_cost:,.2f}", f"{delta_cost:+,.2f}")
+            c2.metric("Current Credits", format_credits(current_credits), f"{delta_credits:+,.2f}")
+            c3.metric("Change vs Baseline", _fmt_delta(delta_pct))
+            c4.metric("Active Warehouses", active_warehouses)
+            if explain_budget > 0:
+                budget_delta = current_cost - explain_budget
+                st.metric(
+                    "Budget Variance",
+                    f"${budget_delta:+,.2f}",
+                    "over budget" if budget_delta > 0 else "under budget",
+                )
+
+            st.caption(
+                f"{metric_confidence_label('exact')} for warehouse totals | "
+                f"{metric_confidence_label('allocated')} for user/query attribution | "
+                f"{freshness_note('ACCOUNT_USAGE')}"
+            )
+
+            if delta_credits > 0:
+                st.warning(
+                    f"Spend increased by {delta_credits:,.2f} credits "
+                    f"(${delta_cost:,.2f}) compared with the prior comparable period."
+                )
+            elif delta_credits < 0:
+                st.success(
+                    f"Spend decreased by {abs(delta_credits):,.2f} credits "
+                    f"(${abs(delta_cost):,.2f}) compared with the prior comparable period."
+                )
+            else:
+                st.info("Spend held flat versus the prior comparable period.")
+
+            gap_level = "material" if unallocated_pct >= 20 else "moderate" if unallocated_pct >= 10 else "low"
+            st.info(
+                f"Unallocated / idle / service-overhead gap is {unallocated_credits:,.2f} credits "
+                f"({unallocated_pct:.1f}% of exact warehouse credits), which is {gap_level}."
+            )
+
+            st.subheader("Warehouse Deltas")
+            st.dataframe(wh_deltas, use_container_width=True)
+            if wh_deltas is not None and not wh_deltas.empty:
+                render_drillable_bar_chart(
+                    wh_deltas.sort_values("CREDIT_DELTA", ascending=False).head(15),
+                    dimension="WAREHOUSE_NAME",
+                    measure="CREDIT_DELTA",
+                    key="cc_explain_wh_delta_chart",
+                    drilldown_column="warehouse_name",
+                    lookback_hours=bounds["days_back"] * 24,
+                )
+
+            st.subheader("Top User / Warehouse Drivers")
+            st.dataframe(drivers, use_container_width=True)
+
+            st.subheader("Top Query-Type Drivers")
+            st.dataframe(type_drivers, use_container_width=True)
+
+            report_md = _build_explain_bill_markdown(
+                company=company,
+                period_label=bounds["label"],
+                current_credits=current_credits,
+                prior_credits=prior_credits,
+                credit_price=credit_price,
+                active_warehouses=active_warehouses,
+                allocated_credits=allocated_credits,
+                unallocated_credits=unallocated_credits,
+                warehouse_deltas=wh_deltas,
+                user_drivers=drivers,
+                query_type_drivers=type_drivers,
+            )
+            st.download_button(
+                "Download Bill Explanation",
+                report_md,
+                file_name=f"overwatch_bill_explanation_{company.lower()}.md",
+                mime="text/markdown",
+                key="cc_explain_download",
+            )
+            if st.button("Save Bill Exceptions to Action Queue", key="cc_explain_queue"):
+                _queue_bill_exceptions(session, wh_deltas, credit_price, bounds["label"])
+
     with tab_leader:
         st.header("💸 Credit Cost by User / Warehouse")
         days = st.slider("Lookback (days)", 1, 90, 30, key="cc_lead_days")
@@ -179,7 +649,7 @@ def render():
 
             download_csv(df_l, "cost_leaderboard.csv")
             if st.button("Save top cost outliers to Action Queue", key="cc_lead_queue"):
-                _queue_cost_outliers(session, df_l, credit_price, "Cost Center - User Leaderboard")
+                _queue_cost_outliers(session, df_l, credit_price, "Cost & Contract - User Leaderboard")
 
     # ── BURN RATE ─────────────────────────────────────────────────────────────
     with tab_burn:
@@ -252,7 +722,7 @@ def render():
                     build_cost_reconciliation_sql(recon_days),
                     ttl_key=f"cc_recon_{company}_{recon_days}",
                     tier="standard",
-                    section="Cost Center",
+                    section="Cost & Contract",
                 )
             except Exception as e:
                 st.warning(f"Cost reconciliation unavailable in this role/context: {format_snowflake_error(e)}")
@@ -483,7 +953,7 @@ def render():
             st.dataframe(df_show, use_container_width=True)
             download_csv(df_show, "chargeback_detail.csv")
             if st.button("Save chargeback outliers to Action Queue", key="cc_chargeback_queue"):
-                _queue_cost_outliers(session, df_show, credit_price, "Cost Center - Chargeback")
+                _queue_cost_outliers(session, df_show, credit_price, "Cost & Contract - Chargeback")
 
     # ── CONTRACT / COMMITMENT UTILIZATION ─────────────────────────────────────
     with tab_contract:

@@ -474,5 +474,17 @@ def build_cost_formula_audit() -> pd.DataFrame:
             "Estimated forecast",
             "Avoids overstating spend when Snowflake returns only days with metered activity.",
         ),
+        (
+            "OVERWATCH query budget",
+            "Track query hash, section, elapsed time, row count, result size, and repeated expensive-call count",
+            "Operational telemetry",
+            "Identifies sections that repeatedly scan too much data; this is a tuning signal, not a Snowflake invoice metric.",
+        ),
+        (
+            "OVERWATCH monitoring cost",
+            "Attribute app, Streamlit warehouse, Cortex, alert tasks, and usage-log activity through metering/query tags when available",
+            "Mixed",
+            "Keeps the monitor honest; exactness depends on warehouse/query-tag coverage and Cortex metering availability.",
+        ),
     ]
     return pd.DataFrame(rows, columns=["METRIC", "FORMULA", "CONFIDENCE", "NOTES"])

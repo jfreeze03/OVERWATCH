@@ -1,10 +1,13 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# config.py — OVERWATCH V3 · ALFA Insurance
-# Central configuration: thresholds, company filter, defaults, credit rates
-# NEW: ROLE_SECTIONS — controls which nav items are visible per Snowflake role
-# ─────────────────────────────────────────────────────────────────────────────
+"""Central OVERWATCH configuration.
 
-# ── Credit / cost defaults ────────────────────────────────────────────────────
+This module is intentionally dependency-light. App startup imports it before
+Snowflake or Streamlit sections are loaded, so navigation, company scoping, and
+cost defaults should stay here instead of being repeated in section modules.
+"""
+
+from dataclasses import dataclass
+
+
 DEFAULTS = {
     "credit_price": 3.00,
     "ai_credit_price": 2.20,
@@ -12,7 +15,6 @@ DEFAULTS = {
     "rt_interval_sec": 30,
 }
 
-# ── Alert / anomaly thresholds ────────────────────────────────────────────────
 THRESHOLDS = {
     "idle_warehouse_minutes": 10,
     "spill_warning_gb": 1.0,
@@ -32,11 +34,17 @@ THRESHOLDS = {
     "dynamic_table_lag_warn_min": 60,
 }
 
-# ── Warehouse credit rates (credits/hour) ─────────────────────────────────────
 CREDIT_RATES = {
-    "X-Small": 1,    "Small": 2,    "Medium": 4,    "Large": 8,
-    "X-Large": 16,   "2X-Large": 32, "3X-Large": 64, "4X-Large": 128,
-    "5X-Large": 256, "6X-Large": 512,
+    "X-Small": 1,
+    "Small": 2,
+    "Medium": 4,
+    "Large": 8,
+    "X-Large": 16,
+    "2X-Large": 32,
+    "3X-Large": 64,
+    "4X-Large": 128,
+    "5X-Large": 256,
+    "6X-Large": 512,
 }
 
 COMPUTE_CREDIT_CASE = """
@@ -50,14 +58,10 @@ COMPUTE_CREDIT_CASE = """
     END
 """
 
-# ── Default company ───────────────────────────────────────────────────────────
 DEFAULT_COMPANY = "ALFA"
 
-# ── Multi-tenant company filter ───────────────────────────────────────────────
-# Warehouse inventory (confirmed from Snowflake UI 2025-05-20):
-#   ALFA:   WH_ALFA_*, BI_COMPUTE_WH, COMPUTE_WH, CROWDSTRIKE_WH,
-#           DOC_AI_WH, POSIT_WORKBENCH, SNOWFLAKE_LEARNING_WH, SYSTEM$STREAMLIT*
-#   Trexis: WH_TRXS_* only
+# Warehouse inventory confirmed from Snowflake UI:
+# ALFA uses non-TRXS warehouses; Trexis uses WH_TRXS_* only.
 COMPANY_CONFIG = {
     "ALFA": {
         "wh_patterns": [
@@ -71,104 +75,83 @@ COMPANY_CONFIG = {
             "SYSTEM$STREAMLIT%",
         ],
         "wh_exclude_patterns": ["WH_TRXS_%"],
-        "db_patterns":         ["ADMIN", "ALFA%"],
-        "exclude_db_pattern":  "TRXS_%",
-        "user_patterns":       [],
+        "db_patterns": ["ADMIN", "ALFA%"],
+        "exclude_db_pattern": "TRXS_%",
+        "user_patterns": [],
         "user_exclude_patterns": ["TRXS_%"],
         "label": "ALFA",
         "color": "#34d399",
     },
     "Trexis": {
-        "wh_patterns":         ["WH_TRXS_%"],
+        "wh_patterns": ["WH_TRXS_%"],
         "wh_exclude_patterns": [],
-        "db_patterns":         ["TRXS_%"],
-        "exclude_db_pattern":  "",
-        "user_patterns":       ["TRXS_%"],
+        "db_patterns": ["TRXS_%"],
+        "exclude_db_pattern": "",
+        "user_patterns": ["TRXS_%"],
         "user_exclude_patterns": [],
         "label": "Trexis",
         "color": "#c084fc",
     },
     "ALL": {
-        "wh_patterns":         [],
+        "wh_patterns": [],
         "wh_exclude_patterns": [],
-        "db_patterns":         [],
-        "exclude_db_pattern":  "",
-        "user_patterns":       [],
+        "db_patterns": [],
+        "exclude_db_pattern": "",
+        "user_patterns": [],
         "user_exclude_patterns": [],
         "label": "ALL",
         "color": "#38bdf8",
     },
 }
 
-# ── Navigation sections (ordered) ─────────────────────────────────────────────
-NAV_GROUPS = {
-    "MONITORING": [
-        "🏠 Account Health",
-        "📊 Usage Overview",
-        "📈 Adoption Analytics",
-        "🩺 Service Health",
-        "🔴 Live Monitor",
-        "🧪 Detailed Diagnosis",
-        "🔍 Query Analysis",
-        "🕰️ Query Search & History",
-        "🏭 Warehouse Health",
-    ],
-    "INFRASTRUCTURE": [
-        "🗄️ Storage Monitor",
-        "🚚 Pipeline Health",
-        "🕸️ Platform Topology",
-        "🐳 SPCS Tracker",
-        "⚙️ Task Management",
-    ],
-    "COST & PERFORMANCE": [
-        "💸 Cost Center",
-        "💡 Recommendations & Anomalies",
-        "🏆 Snowflake Value",
-        "🤖 AI & Cortex Monitor",
-    ],
-    "SECURITY & OPS": [
-        "🔒 Security & Access",
-        "🔀 Who Changed What?",
-        "📦 Stored Proc Tracker",
-        "🌐 Data Sharing",
-        "🛠️ DBA Tools",
-    ],
-}
 
-# Flat list for st.radio (app.py uses this)
-ALL_SECTIONS = [s for group in NAV_GROUPS.values() for s in group]
+@dataclass(frozen=True)
+class SectionDefinition:
+    group: str
+    icon: str
+    title: str
+    module: str
 
-SECTION_MODULE_PATHS = [
-    "sections.account_health",
-    "sections.usage_overview",
-    "sections.adoption_analytics",
-    "sections.service_health",
-    "sections.live_monitor",
-    "sections.detailed_diagnosis",
-    "sections.query_analysis",
-    "sections.query_search",
-    "sections.warehouse_health",
-    "sections.storage_monitor",
-    "sections.pipeline_health",
-    "sections.platform_topology",
-    "sections.spcs_tracker",
-    "sections.task_management",
-    "sections.cost_center",
-    "sections.recommendations",
-    "sections.snowflake_value",
-    "sections.cortex_monitor",
-    "sections.security_access",
-    "sections.object_change_monitor",
-    "sections.stored_proc_tracker",
-    "sections.data_sharing",
-    "sections.dba_tools",
-]
+    @property
+    def label(self) -> str:
+        return f"{self.icon} {self.title}"
 
-if len(SECTION_MODULE_PATHS) != len(ALL_SECTIONS):
-    raise RuntimeError("SECTION_MODULE_PATHS must stay aligned with NAV_GROUPS.")
 
-SECTION_MODULES = dict(zip(ALL_SECTIONS, SECTION_MODULE_PATHS))
-SECTION_BY_TITLE = {section.split(" ", 1)[1]: section for section in ALL_SECTIONS}
+SECTION_DEFINITIONS: tuple[SectionDefinition, ...] = (
+    SectionDefinition("MONITORING", "🏠", "Account Health", "sections.account_health"),
+    SectionDefinition("MONITORING", "📊", "Usage Overview", "sections.usage_overview"),
+    SectionDefinition("MONITORING", "📈", "Adoption Analytics", "sections.adoption_analytics"),
+    SectionDefinition("MONITORING", "🩺", "Service Health", "sections.service_health"),
+    SectionDefinition("MONITORING", "🔴", "Live Monitor", "sections.live_monitor"),
+    SectionDefinition("MONITORING", "🧪", "Detailed Diagnosis", "sections.detailed_diagnosis"),
+    SectionDefinition("MONITORING", "🔍", "Query Analysis", "sections.query_analysis"),
+    SectionDefinition("MONITORING", "🕰️", "Query Search & History", "sections.query_search"),
+    SectionDefinition("MONITORING", "🏭", "Warehouse Health", "sections.warehouse_health"),
+    SectionDefinition("INFRASTRUCTURE", "🗄️", "Storage Monitor", "sections.storage_monitor"),
+    SectionDefinition("INFRASTRUCTURE", "🚚", "Pipeline Health", "sections.pipeline_health"),
+    SectionDefinition("INFRASTRUCTURE", "🕸️", "Platform Topology", "sections.platform_topology"),
+    SectionDefinition("INFRASTRUCTURE", "🐳", "SPCS Tracker", "sections.spcs_tracker"),
+    SectionDefinition("INFRASTRUCTURE", "⚙️", "Task Management", "sections.task_management"),
+    SectionDefinition("COST & PERFORMANCE", "💸", "Cost Center", "sections.cost_center"),
+    SectionDefinition("COST & PERFORMANCE", "💡", "Recommendations & Anomalies", "sections.recommendations"),
+    SectionDefinition("COST & PERFORMANCE", "🏆", "Snowflake Value", "sections.snowflake_value"),
+    SectionDefinition("COST & PERFORMANCE", "🤖", "AI & Cortex Monitor", "sections.cortex_monitor"),
+    SectionDefinition("SECURITY & OPS", "🔒", "Security & Access", "sections.security_access"),
+    SectionDefinition("SECURITY & OPS", "🔀", "Who Changed What?", "sections.object_change_monitor"),
+    SectionDefinition("SECURITY & OPS", "📦", "Stored Proc Tracker", "sections.stored_proc_tracker"),
+    SectionDefinition("SECURITY & OPS", "🌐", "Data Sharing", "sections.data_sharing"),
+    SectionDefinition("SECURITY & OPS", "🛠️", "DBA Tools", "sections.dba_tools"),
+)
+
+NAV_GROUPS: dict[str, list[str]] = {}
+for _section in SECTION_DEFINITIONS:
+    NAV_GROUPS.setdefault(_section.group, []).append(_section.label)
+
+ALL_SECTIONS = [_section.label for _section in SECTION_DEFINITIONS]
+SECTION_MODULES = {_section.label: _section.module for _section in SECTION_DEFINITIONS}
+SECTION_BY_TITLE = {_section.title: _section.label for _section in SECTION_DEFINITIONS}
+SECTION_ICONS = {_section.title: _section.icon for _section in SECTION_DEFINITIONS}
+
 SECTION_ALIASES = {
     "Usage Overview": SECTION_BY_TITLE["Usage Overview"],
     "Adoption Analytics": SECTION_BY_TITLE["Adoption Analytics"],
@@ -183,75 +166,63 @@ SECTION_ALIASES = {
     "💡 Optimization": SECTION_BY_TITLE["Warehouse Health"],
 }
 
-# ── Role-based section visibility ─────────────────────────────────────────────
-# Keys are substrings matched case-insensitively against CURRENT_ROLE().
-# First match wins. Falls back to DBA (all sections) if no role matches.
-#
-# How to map your Snowflake roles:
-#   - ANALYST users: analysts, report, bi, self-service roles
-#   - MANAGER users: leadership, executive, director roles
-#   - DBA (default): sysadmin, accountadmin, dba roles → full access
-#
-# Add new roles here without touching app.py or any section file.
+
+def _sections_by_title(*titles: str) -> list[str]:
+    return [SECTION_BY_TITLE[title] for title in titles]
+
+
 ROLE_SECTIONS = {
-    # Business analysts — cost visibility + query search, no admin/DBA tools
-    "ANALYST": [
-        "🏠 Account Health",
-        "📊 Usage Overview",
-        "📈 Adoption Analytics",
-        "🩺 Service Health",
-        "🧪 Detailed Diagnosis",
-        "🔍 Query Analysis",
-        "🕰️ Query Search & History",
-        "💸 Cost Center",
-        "🗄️ Storage Monitor",
-        "🚚 Pipeline Health",
-        "🕸️ Platform Topology",
-        "🤖 AI & Cortex Monitor",
-    ],
-    # Managers / leadership — executive summary, cost, recommendations, Snowflake value
-    "MANAGER": [
-        "🏠 Account Health",
-        "📊 Usage Overview",
-        "📈 Adoption Analytics",
-        "🩺 Service Health",
-        "🧪 Detailed Diagnosis",
-        "💸 Cost Center",
-        "💡 Recommendations & Anomalies",
-        "🏆 Snowflake Value",
-        "🗄️ Storage Monitor",
-        "🤖 AI & Cortex Monitor",
-        "🕸️ Platform Topology",
-    ],
-    # Report / BI roles — same as analyst
-    "REPORT": [
-        "🏠 Account Health",
-        "📊 Usage Overview",
-        "📈 Adoption Analytics",
-        "🩺 Service Health",
-        "🧪 Detailed Diagnosis",
-        "🔍 Query Analysis",
-        "🕰️ Query Search & History",
-        "💸 Cost Center",
-        "🗄️ Storage Monitor",
-        "🚚 Pipeline Health",
-        "🕸️ Platform Topology",
-    ],
-    # DBA / admin / sysadmin — full access (default fallback also gives full access)
-    "DBA":         list(ALL_SECTIONS),
-    "SYSADMIN":    list(ALL_SECTIONS),
-    "ACCOUNTADMIN":list(ALL_SECTIONS),
+    "ANALYST": _sections_by_title(
+        "Account Health",
+        "Usage Overview",
+        "Adoption Analytics",
+        "Service Health",
+        "Detailed Diagnosis",
+        "Query Analysis",
+        "Query Search & History",
+        "Cost Center",
+        "Storage Monitor",
+        "Pipeline Health",
+        "Platform Topology",
+        "AI & Cortex Monitor",
+    ),
+    "MANAGER": _sections_by_title(
+        "Account Health",
+        "Usage Overview",
+        "Adoption Analytics",
+        "Service Health",
+        "Detailed Diagnosis",
+        "Cost Center",
+        "Recommendations & Anomalies",
+        "Snowflake Value",
+        "Storage Monitor",
+        "AI & Cortex Monitor",
+        "Platform Topology",
+    ),
+    "REPORT": _sections_by_title(
+        "Account Health",
+        "Usage Overview",
+        "Adoption Analytics",
+        "Service Health",
+        "Detailed Diagnosis",
+        "Query Analysis",
+        "Query Search & History",
+        "Cost Center",
+        "Storage Monitor",
+        "Pipeline Health",
+        "Platform Topology",
+    ),
+    "DBA": list(ALL_SECTIONS),
+    "SYSADMIN": list(ALL_SECTIONS),
+    "ACCOUNTADMIN": list(ALL_SECTIONS),
 }
 
-# ── ETL Audit table target ────────────────────────────────────────────────────
-ETL_AUDIT_DB     = "DBA_MAINT_DB"
+ETL_AUDIT_DB = "DBA_MAINT_DB"
 ETL_AUDIT_SCHEMA = "OVERWATCH"
-ETL_AUDIT_TABLE  = "ETL_RUN_AUDIT"
+ETL_AUDIT_TABLE = "ETL_RUN_AUDIT"
 
-# ── Alert task target ─────────────────────────────────────────────────────────
-ALERT_DB     = "DBA_MAINT_DB"
+ALERT_DB = "DBA_MAINT_DB"
 ALERT_SCHEMA = "OVERWATCH"
-ALERT_TABLE  = "OVERWATCH_ALERTS"
+ALERT_TABLE = "OVERWATCH_ALERTS"
 
-# Persistent action queue for recommendations, alerts, and operator follow-up.
 ACTION_QUEUE_TABLE = "OVERWATCH_ACTION_QUEUE"

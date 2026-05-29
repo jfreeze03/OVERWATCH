@@ -42,6 +42,37 @@ def _estimate_result_mb(result: pd.DataFrame) -> float:
         return 0.0
 
 
+def _is_expensive_query(elapsed_ms: float, row_count: int, result_mb: float) -> bool:
+    return (
+        float(elapsed_ms or 0) >= QUERY_BUDGET_THRESHOLDS["slow_elapsed_ms"]
+        or int(row_count or 0) >= QUERY_BUDGET_THRESHOLDS["large_rows"]
+        or float(result_mb or 0) >= QUERY_BUDGET_THRESHOLDS["large_result_mb"]
+    )
+
+
+def _budget_risk_label(
+    calls: int,
+    elapsed_sec: float,
+    max_rows: int,
+    max_result_mb: float,
+    expensive_calls: int,
+) -> str:
+    if (
+        int(expensive_calls or 0) >= QUERY_BUDGET_THRESHOLDS["repeat_warning_count"]
+        or float(elapsed_sec or 0) >= 60
+        or float(max_result_mb or 0) >= QUERY_BUDGET_THRESHOLDS["large_result_mb"] * 4
+    ):
+        return "High"
+    if (
+        int(expensive_calls or 0) > 0
+        or float(elapsed_sec or 0) >= 20
+        or int(max_rows or 0) >= QUERY_BUDGET_THRESHOLDS["large_rows"]
+        or int(calls or 0) >= 25
+    ):
+        return "Watch"
+    return "Normal"
+
+
 def _infer_telemetry_section(section: str = "", ttl_key: str = "") -> str:
     """Infer a useful section label for older run_query() call sites."""
     if section:
@@ -132,11 +163,7 @@ def _warn_on_budget_pressure(
     result_mb: float,
 ) -> None:
     """Warn once a section repeats expensive query patterns in a session."""
-    is_expensive = (
-        float(elapsed_ms or 0) >= QUERY_BUDGET_THRESHOLDS["slow_elapsed_ms"]
-        or int(row_count or 0) >= QUERY_BUDGET_THRESHOLDS["large_rows"]
-        or float(result_mb or 0) >= QUERY_BUDGET_THRESHOLDS["large_result_mb"]
-    )
+    is_expensive = _is_expensive_query(elapsed_ms, row_count, result_mb)
     if not is_expensive:
         return
 
@@ -207,11 +234,16 @@ def get_query_budget_summary() -> pd.DataFrame:
     for col in ["elapsed_ms", "rows", "result_mb"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    df["expensive_call"] = df.apply(
+        lambda row: _is_expensive_query(row["elapsed_ms"], row["rows"], row["result_mb"]),
+        axis=1,
+    )
     grouped = (
         df.groupby("section", dropna=False)
         .agg(
             calls=("query_hash", "count"),
             unique_queries=("query_hash", "nunique"),
+            expensive_calls=("expensive_call", "sum"),
             elapsed_sec=("elapsed_ms", lambda s: round(float(s.sum()) / 1000, 2)),
             max_rows=("rows", "max"),
             max_result_mb=("result_mb", "max"),
@@ -219,6 +251,27 @@ def get_query_budget_summary() -> pd.DataFrame:
         .reset_index()
         .sort_values(["elapsed_sec", "calls"], ascending=False)
     )
+    grouped["budget_risk"] = grouped.apply(
+        lambda row: _budget_risk_label(
+            row["calls"],
+            row["elapsed_sec"],
+            row["max_rows"],
+            row["max_result_mb"],
+            row["expensive_calls"],
+        ),
+        axis=1,
+    )
+    ordered_cols = [
+        "section",
+        "budget_risk",
+        "calls",
+        "unique_queries",
+        "expensive_calls",
+        "elapsed_sec",
+        "max_rows",
+        "max_result_mb",
+    ]
+    grouped = grouped[ordered_cols]
     return grouped
 
 

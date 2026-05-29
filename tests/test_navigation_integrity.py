@@ -14,6 +14,7 @@ from config import (  # noqa: E402
     ROLE_SECTIONS,
     SECTION_ALIASES,
     SECTION_BY_TITLE,
+    SECTION_DEFINITIONS,
     SECTION_MODULES,
 )
 
@@ -21,8 +22,23 @@ from config import (  # noqa: E402
 class NavigationIntegrityTests(unittest.TestCase):
     def test_section_registry_matches_navigation(self):
         flattened = [section for sections in NAV_GROUPS.values() for section in sections]
+        defined = [section.label for section in SECTION_DEFINITIONS]
         self.assertEqual(ALL_SECTIONS, flattened)
+        self.assertEqual(ALL_SECTIONS, defined)
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_MODULES))
+        self.assertEqual(
+            SECTION_MODULES,
+            {section.label: section.module for section in SECTION_DEFINITIONS},
+        )
+
+    def test_section_definitions_are_complete(self):
+        for section in SECTION_DEFINITIONS:
+            with self.subTest(section=section.title):
+                self.assertTrue(section.group)
+                self.assertTrue(section.icon)
+                self.assertTrue(section.title)
+                self.assertTrue(section.module)
+                self.assertEqual(section.label, f"{section.icon} {section.title}")
 
     def test_registered_modules_exist(self):
         missing = [

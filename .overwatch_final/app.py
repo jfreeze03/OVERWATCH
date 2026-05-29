@@ -20,6 +20,7 @@ from theme import inject_theme, render_theme_picker
 from config import (
     ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
     DEFAULT_COMPANY, ROLE_SECTIONS, SECTION_ALIASES,
+    SECTION_BY_TITLE,
 )
 from utils.display import clear_all_cache
 from utils.session import get_session
@@ -120,31 +121,31 @@ with st.sidebar:
         if st.button("Go", key="command_palette_go", disabled=not cmd):
             value = str(cmd).strip()
             upper = value.upper()
-            target = "🏠 Account Health"
+            target = SECTION_BY_TITLE["Account Health"]
             if cmd_type == "Warehouse" or (cmd_type == "Auto" and ("WH" in upper or "WAREHOUSE" in upper)):
                 st.session_state["global_warehouse"] = value
                 st.session_state["wh_filter"] = value
-                target = "🏭 Warehouse Health"
+                target = SECTION_BY_TITLE["Warehouse Health"]
             elif cmd_type == "User":
                 st.session_state["global_user"] = value
-                target = "💸 Cost Center"
+                target = SECTION_BY_TITLE["Cost Center"]
             elif cmd_type == "Query ID" or (cmd_type == "Auto" and len(value) >= 20 and "-" in value):
                 st.session_state["qs_qid"] = value
-                target = "🕰️ Query Search & History"
+                target = SECTION_BY_TITLE["Query Search & History"]
             elif cmd_type == "Task" or (cmd_type == "Auto" and "TASK" in upper):
                 st.session_state["tm_search"] = value
-                target = "⚙️ Task Management"
+                target = SECTION_BY_TITLE["Task Management"]
             elif cmd_type == "Database" or (cmd_type == "Auto" and upper.startswith(("DB_", "ALFA", "TRXS"))):
                 st.session_state["global_database"] = value
-                target = "🗄️ Storage Monitor"
+                target = SECTION_BY_TITLE["Storage Monitor"]
             elif "COST" in upper or "SPEND" in upper:
-                target = "💸 Cost Center"
+                target = SECTION_BY_TITLE["Cost Center"]
             elif "ALERT" in upper or "RECOMMEND" in upper or "ACTION" in upper:
-                target = "💡 Recommendations & Anomalies"
+                target = SECTION_BY_TITLE["Recommendations & Anomalies"]
             elif "VALUE" in upper or "ROI" in upper or "SAVING" in upper:
-                target = "🏆 Snowflake Value"
+                target = SECTION_BY_TITLE["Snowflake Value"]
             elif "DBA" in upper or "WAREHOUSE SETTING" in upper:
-                target = "🛠️ DBA Tools"
+                target = SECTION_BY_TITLE["DBA Tools"]
             else:
                 for section in visible_sections:
                     if upper in section.upper():
@@ -326,7 +327,25 @@ with st.sidebar:
             budget_summary = get_query_budget_summary()
             if not budget_summary.empty:
                 with st.expander("Budget guardrail by section", expanded=False):
-                    st.dataframe(budget_summary, use_container_width=True, height=220)
+                    st.caption(
+                        "Risk is session-based: High means repeated heavy calls, long total wait, "
+                        "or very large result sets."
+                    )
+                    st.dataframe(
+                        budget_summary,
+                        use_container_width=True,
+                        height=220,
+                        column_config={
+                            "section": "Section",
+                            "budget_risk": "Budget Risk",
+                            "calls": "Calls",
+                            "unique_queries": "Unique Queries",
+                            "expensive_calls": "Expensive Calls",
+                            "elapsed_sec": st.column_config.NumberColumn("Elapsed Sec", format="%.2f"),
+                            "max_rows": st.column_config.NumberColumn("Max Rows", format="%d"),
+                            "max_result_mb": st.column_config.NumberColumn("Max MB", format="%.1f"),
+                        },
+                    )
             with st.expander("Recent query trace", expanded=False):
                 st.dataframe(telemetry.tail(50), use_container_width=True, height=220)
                 if st.button("Clear telemetry", key="clear_query_telemetry"):

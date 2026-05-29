@@ -305,7 +305,7 @@ def render():
                            SUBSTR(query_text,1,500) AS query_text
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('hours', -2, CURRENT_TIMESTAMP())
-                      AND execution_status IN ('RUNNING','QUEUED','BLOCKED')
+                      AND UPPER(execution_status) IN ('RUNNING','QUEUED','BLOCKED')
                       AND DATEDIFF('second', start_time, COALESCE(end_time, CURRENT_TIMESTAMP())) > {kill_min}
                       {get_wh_filter_clause("warehouse_name")}
                     ORDER BY elapsed_sec DESC
@@ -753,7 +753,8 @@ def render():
         preagg_wh     = st.text_input("Warehouse",     value="COMPUTE_WH",  key="preagg_wh")
         preagg_sql = f"""CREATE OR REPLACE TABLE {preagg_db}.{preagg_schema}.HOURLY_WAREHOUSE_CREDITS AS
 SELECT warehouse_name, DATE_TRUNC('hour', start_time) AS hour_bucket,
-       SUM(credits_used) AS compute_credits, SUM(credits_used) AS total_credits
+       SUM(COALESCE(credits_used_compute, credits_used)) AS compute_credits,
+       SUM(credits_used) AS total_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
 WHERE start_time >= DATEADD('day', -90, CURRENT_TIMESTAMP())
   {get_wh_filter_clause("warehouse_name")}
@@ -1171,7 +1172,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                SUBSTR(query_text, 1, 400) AS query_text
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                         WHERE start_time >= DATEADD('hours', -2, CURRENT_TIMESTAMP())
-                          AND execution_status IN ('RUNNING','QUEUED','BLOCKED')
+                          AND UPPER(execution_status) IN ('RUNNING','QUEUED','BLOCKED')
                           {get_wh_filter_clause("warehouse_name")}
                           {get_user_filter_clause("user_name")}
                           AND ({qh_task_indicator})
@@ -1659,8 +1660,8 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
         recon_sql = f"""-- Warehouse credit source of truth for the selected company view
 SELECT warehouse_name,
        DATE_TRUNC('day', start_time) AS usage_day,
-       SUM(credits_used_compute) AS compute_credits,
-       SUM(credits_used_cloud_services) AS cloud_services_credits,
+       SUM(COALESCE(credits_used_compute, credits_used)) AS compute_credits,
+       SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits,
        SUM(credits_used) AS total_warehouse_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
 WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
@@ -1679,13 +1680,20 @@ GROUP BY service_type, usage_day
 ORDER BY usage_day DESC, credits_used DESC;
 
 -- Storage dollar conversion input
+WITH latest_storage AS (
+    SELECT database_name,
+           average_database_bytes,
+           average_failsafe_bytes,
+           ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
+    FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
+    WHERE usage_date >= DATEADD('day', -30, CURRENT_DATE())
+      {get_db_filter_clause("database_name")}
+)
 SELECT database_name,
-       AVG(average_database_bytes + average_failsafe_bytes) / POWER(1024, 4) AS avg_tb
-FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-WHERE usage_date >= DATEADD('day', -30, CURRENT_DATE())
-  {get_db_filter_clause("database_name")}
-GROUP BY database_name
-ORDER BY avg_tb DESC;"""
+       (average_database_bytes + average_failsafe_bytes) / POWER(1024, 4) AS current_tb
+FROM latest_storage
+WHERE rn = 1
+ORDER BY current_tb DESC;"""
         st.code(recon_sql, language="sql")
 
     # Setup bundle and install readiness

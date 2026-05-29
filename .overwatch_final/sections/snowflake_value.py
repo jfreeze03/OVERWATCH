@@ -81,17 +81,17 @@ ALTER TABLE {VALUE_TABLE} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
         try:
             has_company = _value_table_has_company(session)
             company_filter = ""
-            company_select = "'ALFA' AS COMPANY,"
+            company_select = "NULL::VARCHAR AS COMPANY,"
             if has_company:
-                company_select = "COALESCE(COMPANY, 'ALFA') AS COMPANY,"
+                company_select = "COMPANY,"
                 if company != "ALL":
-                    company_filter = f"WHERE COALESCE(COMPANY, 'ALFA') = {sql_literal(company)}"
+                    company_filter = f"WHERE COMPANY = {sql_literal(company)}"
             elif company == "Trexis":
                 company_filter = "WHERE 1=0"
             df_summary = run_query(f"""
                 SELECT CATEGORY,
                        COUNT(*) AS action_count,
-                       ROUND(SUM(SAVINGS_CREDITS * 30), 2) AS monthly_credit_savings,
+                       ROUND(SUM(SAVINGS_CREDITS * 30), 2) AS est_30_day_credit_savings,
                        ROUND(SUM(SAVINGS_MONTHLY), 2) AS monthly_dollar_savings,
                        ROUND(SUM(SAVINGS_MONTHLY * 12), 2) AS projected_annual_savings,
                        SUM(CASE WHEN VERIFIED THEN 1 ELSE 0 END) AS verified_count

@@ -189,7 +189,7 @@ FROM (
     SELECT warehouse_name, COUNT(*) AS failures
     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
     WHERE start_time >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
-      AND execution_status = 'FAILED_WITH_ERROR'
+      AND UPPER(execution_status) = 'FAILED_WITH_ERROR'
       AND warehouse_name IS NOT NULL
     GROUP BY warehouse_name
     HAVING COUNT(*) > {THRESHOLDS['error_rate_high']}

@@ -435,7 +435,7 @@ def render():
                     SELECT warehouse_name, COUNT(*) AS failures
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                      AND execution_status = 'FAILED_WITH_ERROR'
+                      AND UPPER(execution_status) = 'FAILED_WITH_ERROR'
                       AND warehouse_name IS NOT NULL
                       {query_filters}
                     GROUP BY warehouse_name
@@ -455,7 +455,7 @@ def render():
                         "Action": "Investigate error codes in Query Analysis.",
                         "Estimated Monthly Savings": 0.0,
                         "Generated SQL Fix": "-- No safe automatic SQL fix. Review failed query texts and owners.",
-                        "Proof Query": "QUERY_HISTORY execution_status = FAILED_WITH_ERROR over the last 7 days.",
+                        "Proof Query": "QUERY_HISTORY UPPER(execution_status) = 'FAILED_WITH_ERROR' over the last 7 days.",
                         "Company": company,
                     })
             except Exception:

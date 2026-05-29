@@ -25,7 +25,7 @@ def render_optimization_advisor():
         ],
     ))
     duplicate_cloud_expr = (
-        "SUM(credits_used_cloud_services)"
+        "SUM(COALESCE(credits_used_cloud_services, 0))"
         if "CREDITS_USED_CLOUD_SERVICES" in qh_cols
         else "0"
     )
@@ -126,7 +126,7 @@ def render_optimization_advisor():
                            {duplicate_cloud_expr}                AS cloud_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -{dup_days}, CURRENT_TIMESTAMP())
-                      AND execution_status = 'SUCCESS'
+                      AND UPPER(execution_status) = 'SUCCESS'
                       AND warehouse_name IS NOT NULL
                       {query_filters}
                     GROUP BY query_sig

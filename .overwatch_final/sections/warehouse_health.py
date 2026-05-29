@@ -148,7 +148,7 @@ def render():
                            {queue_avg_expr}                    AS avg_queued_sec,
                            {remote_spill_sum_expr}/POWER(1024,3)  AS total_remote_spill_gb,
                            {cache_expr} AS avg_cache_pct,
-                           SUM(CASE WHEN q.execution_status='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS error_count,
+                           SUM(CASE WHEN UPPER(q.execution_status)='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS error_count,
                            {bytes_scanned_expr}/POWER(1024,3)  AS total_gb_scanned
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                     WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())

@@ -49,12 +49,12 @@ def _load_overview(session, days: int) -> dict:
     success_expr = (
         "SUM(IFF(q.error_code IS NULL, 1, 0))"
         if "ERROR_CODE" in qh_cols
-        else "SUM(IFF(q.execution_status = 'SUCCESS', 1, 0))"
+        else "SUM(IFF(UPPER(q.execution_status) = 'SUCCESS', 1, 0))"
     )
     failed_expr = (
         "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
         if "ERROR_CODE" in qh_cols
-        else "SUM(IFF(q.execution_status = 'FAILED_WITH_ERROR', 1, 0))"
+        else "SUM(IFF(UPPER(q.execution_status) = 'FAILED_WITH_ERROR', 1, 0))"
     )
     queue_terms = [
         f"q.{col.lower()} > 0"
@@ -208,12 +208,12 @@ def _load_cost_drivers(session, days: int):
         ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
     ))
     wm_compute_expr = (
-        "ROUND(SUM(credits_used_compute), 4)"
+        "ROUND(SUM(COALESCE(credits_used_compute, credits_used)), 4)"
         if "CREDITS_USED_COMPUTE" in wm_cols
         else "ROUND(SUM(credits_used), 4)"
     )
     wm_cloud_expr = (
-        "ROUND(SUM(credits_used_cloud_services), 4)"
+        "ROUND(SUM(COALESCE(credits_used_cloud_services, 0)), 4)"
         if "CREDITS_USED_CLOUD_SERVICES" in wm_cols
         else "0"
     )
@@ -253,7 +253,7 @@ def _load_query_mix(session, days: int):
     failed_count_expr = (
         "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
         if "ERROR_CODE" in qh_cols
-        else "SUM(IFF(q.execution_status = 'FAILED_WITH_ERROR', 1, 0))"
+        else "SUM(IFF(UPPER(q.execution_status) = 'FAILED_WITH_ERROR', 1, 0))"
     )
     return company_scoped_query(
         f"""

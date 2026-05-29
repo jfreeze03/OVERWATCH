@@ -35,7 +35,7 @@ def _load_adoption(session, days: int) -> dict:
     error_count_expr = (
         "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
         if "ERROR_CODE" in qh_cols
-        else "SUM(IFF(q.execution_status = 'FAILED_WITH_ERROR', 1, 0))"
+        else "SUM(IFF(UPPER(q.execution_status) = 'FAILED_WITH_ERROR', 1, 0))"
     )
     client_application_expr = (
         "COALESCE(q.query_tag, 'UNTAGGED')"

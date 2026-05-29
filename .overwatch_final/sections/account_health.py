@@ -102,6 +102,48 @@ def _task_health_sql_or_empty(session, time_predicate: str, company: str) -> str
         """
 
 
+def _live_query_status_sql(wh_filter: str, db_filter: str, user_filter: str) -> str:
+    return f"""
+        SELECT COUNT(*) AS active_count,
+               SUM(IFF(
+                   COALESCE(queued_overload_time, 0)
+                   + COALESCE(queued_provisioning_time, 0)
+                   + COALESCE(queued_repair_time, 0) > 0
+                   OR execution_status ILIKE '%QUEUED%',
+                   1,
+                   0
+               )) AS queued_count,
+               SUM(IFF(execution_status ILIKE '%BLOCKED%', 1, 0)) AS blocked_count
+        FROM TABLE(
+            INFORMATION_SCHEMA.QUERY_HISTORY(
+                END_TIME_RANGE_START=>DATEADD('hours', -1, CURRENT_TIMESTAMP()),
+                RESULT_LIMIT=>10000
+            )
+        ) q
+        WHERE execution_status IN ('RUNNING', 'QUEUED', 'BLOCKED', 'RESUMING_WAREHOUSE')
+          {wh_filter} {db_filter} {user_filter}
+    """
+
+
+def _load_live_query_status(wh_filter: str, db_filter: str, user_filter: str) -> tuple[pd.DataFrame, str]:
+    try:
+        return run_query_or_raise(_live_query_status_sql(wh_filter, db_filter, user_filter)), "INFORMATION_SCHEMA"
+    except Exception:
+        fallback_sql = f"""
+            SELECT COUNT(*) AS active_count,
+                   SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_count,
+                   SUM(CASE WHEN execution_status ILIKE '%BLOCKED%' THEN 1 ELSE 0 END) AS blocked_count
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+            WHERE q.start_time >= DATEADD('hours', -1, CURRENT_TIMESTAMP())
+              AND UPPER(q.execution_status) IN ('RUNNING', 'QUEUED', 'BLOCKED', 'RESUMING_WAREHOUSE')
+              {wh_filter} {db_filter} {user_filter}
+        """
+        try:
+            return run_query_or_raise(fallback_sql), "ACCOUNT_USAGE"
+        except Exception:
+            return pd.DataFrame(), "ACCOUNT_USAGE"
+
+
 def render():
     session      = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
@@ -116,7 +158,14 @@ def render():
     qh_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        ["WAREHOUSE_SIZE", "BYTES_SCANNED"],
+        [
+            "WAREHOUSE_SIZE",
+            "BYTES_SCANNED",
+            "ERROR_CODE",
+            "QUEUED_OVERLOAD_TIME",
+            "QUEUED_PROVISIONING_TIME",
+            "QUEUED_REPAIR_TIME",
+        ],
     ))
     cost_wh_size_expr = (
         "MAX(q.warehouse_size)"
@@ -127,6 +176,33 @@ def render():
         "SUM(q.bytes_scanned)"
         if "BYTES_SCANNED" in qh_cols
         else "0"
+    )
+    failed_pred_q = (
+        "q.error_code IS NOT NULL"
+        if "ERROR_CODE" in qh_cols
+        else "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'"
+    )
+    failed_pred_plain = (
+        "error_code IS NOT NULL"
+        if "ERROR_CODE" in qh_cols
+        else "UPPER(execution_status) = 'FAILED_WITH_ERROR'"
+    )
+    queue_cols = [
+        col.lower()
+        for col in ["QUEUED_OVERLOAD_TIME", "QUEUED_PROVISIONING_TIME", "QUEUED_REPAIR_TIME"]
+        if col in qh_cols
+    ]
+    queue_time_q = " + ".join([f"COALESCE(q.{col}, 0)" for col in queue_cols])
+    queue_time_plain = " + ".join([f"COALESCE({col}, 0)" for col in queue_cols])
+    queued_count_expr_q = (
+        f"SUM(CASE WHEN {queue_time_q} > 0 OR q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+        if queue_cols
+        else "SUM(CASE WHEN q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+    )
+    queued_count_expr_plain = (
+        f"SUM(CASE WHEN {queue_time_plain} > 0 OR execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+        if queue_cols
+        else "SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
     )
     pressure_wh_size_expr = (
         "MAX(warehouse_size)"
@@ -167,16 +243,10 @@ def render():
             or st.session_state.get("_health_filter_sig") != filter_sig
         ):
             hd = {}
+            live_df, live_source = _load_live_query_status(wh_filter_q, db_filter_q, user_filter_q)
+            hd["live"] = live_df
+            hd["_live_source"] = live_source
             for key, sql in [
-                ("live", f"""
-                    SELECT COUNT(*) AS active_count,
-                           SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_count,
-                           SUM(CASE WHEN execution_status ILIKE '%BLOCKED%' THEN 1 ELSE 0 END) AS blocked_count
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                    WHERE q.start_time >= DATEADD('hours',-1,CURRENT_TIMESTAMP())
-                      AND q.execution_status IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
-                      {wh_filter_q} {db_filter_q} {user_filter_q}
-                """),
                 ("burn", f"""
                     SELECT SUM(CASE WHEN start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
                                THEN credits_used ELSE 0 END) AS last_24h,
@@ -191,13 +261,13 @@ def render():
                     SELECT COUNT(*) AS err_count
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                     WHERE q.start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
-                      AND execution_status = 'FAILED_WITH_ERROR'
+                      AND {failed_pred_q}
                       {wh_filter_q} {db_filter_q} {user_filter_q}
                 """),
                 ("query_stats", f"""
                     SELECT COUNT(*) AS total_queries,
-                           SUM(CASE WHEN execution_status = 'FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS failed_queries,
-                           SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_queries,
+                           SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS failed_queries,
+                           {queued_count_expr_q} AS queued_queries,
                            ROUND(AVG(total_elapsed_time) / 1000, 2) AS avg_elapsed_sec
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                     WHERE q.start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
@@ -208,8 +278,8 @@ def render():
                     WITH wh AS (
                         SELECT q.warehouse_name,
                                COUNT(*) AS total_queries,
-                               SUM(CASE WHEN execution_status = 'FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS failed_queries,
-                               SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_queries
+                               SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS failed_queries,
+                               {queued_count_expr_q} AS queued_queries
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                         WHERE q.start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
                           AND q.warehouse_name IS NOT NULL
@@ -256,14 +326,14 @@ def render():
                 ("what_changed", f"""
                     WITH today_q AS (
                         SELECT COUNT(*) AS q,
-                               SUM(CASE WHEN execution_status='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS fails
+                               SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS fails
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                         WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
                           {wh_filter_q} {db_filter_q} {user_filter_q}
                     ),
                     yday_q AS (
                         SELECT COUNT(*) AS q,
-                               SUM(CASE WHEN execution_status='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS fails
+                               SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS fails
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                         WHERE q.start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
                           AND q.start_time <  DATEADD('hours', -24, CURRENT_TIMESTAMP())
@@ -301,6 +371,7 @@ def render():
         hd = st.session_state.get("health_data", {})
 
         live_df    = hd.get("live",    pd.DataFrame())
+        live_source = hd.get("_live_source", "ACCOUNT_USAGE")
         burn_df    = hd.get("burn",    pd.DataFrame())
         err_df     = hd.get("errors",  pd.DataFrame())
         storage_df = hd.get("storage", pd.DataFrame())
@@ -343,7 +414,7 @@ def render():
             " | ".join([
                 metric_confidence_label("composite"),
                 metric_confidence_label("exact") + " for source counts",
-                freshness_note("ACCOUNT_USAGE"),
+                freshness_note(live_source),
             ])
         )
         with st.expander("Health score contributors", expanded=False):
@@ -459,7 +530,7 @@ def render():
         try:
             df_wp = run_query_or_raise(f"""
                 SELECT warehouse_name, {pressure_wh_size_expr} AS warehouse_size, COUNT(*) AS queries,
-                       SUM(CASE WHEN execution_status IN ('QUEUED','BLOCKED') THEN 1 ELSE 0 END) AS queued
+                       {queued_count_expr_plain} AS queued
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                 WHERE start_time >= DATEADD('hours',-1,CURRENT_TIMESTAMP())
                   AND warehouse_name IS NOT NULL
@@ -587,7 +658,7 @@ def render():
                                COUNT(DISTINCT warehouse_name) AS affected_wh
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                         WHERE start_time >= DATEADD('hours',-12,CURRENT_TIMESTAMP())
-                          AND execution_status = 'FAILED_WITH_ERROR'
+                          AND {failed_pred_plain}
                           {wh_filter_m} {get_db_filter_clause("database_name", company)} {get_user_filter_clause("user_name", company)}
                         GROUP BY query_type ORDER BY fail_count DESC
                     """),
@@ -683,7 +754,7 @@ def render():
                         SELECT COUNT(*) AS fail_count
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                         WHERE start_time >= DATEADD('hours',-{br_hours},CURRENT_TIMESTAMP())
-                          AND execution_status = 'FAILED_WITH_ERROR'
+                          AND {failed_pred_plain}
                           {wh_filter_m} {get_db_filter_clause("database_name", company)} {get_user_filter_clause("user_name", company)}
                     """,
                     "top_driver": f"""
@@ -712,10 +783,10 @@ def render():
                           {get_db_filter_clause("database_name", company)}
                     """,
                     "queued": f"""
-                        SELECT SUM(CASE WHEN execution_status='QUEUED' THEN 1 ELSE 0 END) AS queued
+                        SELECT {queued_count_expr_q} AS queued
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                         WHERE q.start_time >= DATEADD('hours', -1, CURRENT_TIMESTAMP())
-                          AND execution_status IN ('RUNNING','QUEUED','BLOCKED')
+                          AND UPPER(q.execution_status) IN ('RUNNING','QUEUED','BLOCKED')
                           {wh_filter_q} {db_filter_q} {user_filter_q}
                     """,
                 }

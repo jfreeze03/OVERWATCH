@@ -107,7 +107,8 @@ def build_metered_credit_cte(
         SELECT
             warehouse_name,
             DATE_TRUNC('hour', start_time)  AS hour_bucket,
-            SUM(credits_used)               AS hourly_compute_credits
+            SUM(COALESCE(credits_used_compute, credits_used))
+                                           AS hourly_compute_credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= {time_filter}
           AND start_time <  {upper_bound}

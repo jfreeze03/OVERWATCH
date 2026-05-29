@@ -90,7 +90,7 @@ def render():
             FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
                 END_TIME_RANGE_START=>DATEADD('hours',-1,CURRENT_TIMESTAMP()),
                 RESULT_LIMIT=>500))
-            WHERE execution_status IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
+            WHERE UPPER(execution_status) IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
               {wh_clause}
               {company_wh_clause}
             ORDER BY elapsed_sec DESC

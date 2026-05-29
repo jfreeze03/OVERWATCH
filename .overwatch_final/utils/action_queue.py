@@ -124,7 +124,7 @@ def upsert_actions(session, actions: list[dict]) -> int:
 
 def load_action_queue(session, limit: int = 500) -> pd.DataFrame:
     company = get_active_company()
-    company_clause = "" if company == "ALL" else f"WHERE COALESCE(COMPANY, 'ALFA') = {sql_literal(company)}"
+    company_clause = "" if company == "ALL" else f"WHERE COMPANY = {sql_literal(company)}"
     return run_query(f"""
         SELECT ACTION_ID, CREATED_AT, UPDATED_AT, SOURCE, CATEGORY, SEVERITY,
                ENTITY_TYPE, ENTITY_NAME, OWNER, STATUS, FINDING, RECOMMENDED_ACTION,

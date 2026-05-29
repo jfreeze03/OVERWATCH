@@ -112,7 +112,7 @@ def render():
                        AVG(ch.total_elapsed_time)/1000 AS avg_elapsed_sec,
                        SUM(ch.total_elapsed_time)/1000 AS total_elapsed_sec,
                        ROUND(SUM(COALESCE(ch.metered_credits,0)), 4) AS metered_credits,
-                       ROUND(SUM(ch.credits_used_cloud_services), 4) AS cloud_credits,
+                       ROUND(SUM(COALESCE(ch.credits_used_cloud_services, 0)), 4) AS cloud_credits,
                        ROUND(SUM(ch.bytes_scanned)/POWER(1024,3), 2) AS gb_scanned,
                        MAX(c.start_time) AS last_call
                 FROM calls c

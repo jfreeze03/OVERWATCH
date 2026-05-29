@@ -41,7 +41,7 @@ def _load_service_health(session, hours: int) -> dict:
     ))
     error_pred = (
         "q.error_code IS NOT NULL"
-        if "ERROR_CODE" in qh_cols else "q.execution_status = 'FAILED_WITH_ERROR'"
+        if "ERROR_CODE" in qh_cols else "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'"
     )
     queued_pred = (
         "q.queued_overload_time > 0"

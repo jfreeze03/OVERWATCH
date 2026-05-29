@@ -11,11 +11,11 @@ name: overwatch_v3
 channels:
   - snowflake
 dependencies:
+  - python=3.12
   - streamlit
   - pandas
   - altair
   - snowflake-snowpark-python
-  - snowflake-ml-python      # Required for Cortex AI functions (COMPLETE, etc.)
   - pyarrow                  # Required for Arrow-based DataFrame interchange
   - python-dateutil           # Date parsing helpers
   - requests                  # Teams webhook (send_teams_alert)

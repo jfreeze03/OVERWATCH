@@ -12,7 +12,7 @@ from utils import (
     executive_health_score,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
     get_global_filter_clause, company_value_allowed,
-    format_snowflake_error, filter_existing_columns,
+    format_snowflake_error, filter_existing_columns, safe_float, safe_int,
 )
 
 
@@ -291,7 +291,10 @@ def render():
                     FROM wh
                 """),
                 ("storage", f"""
-                    SELECT ROUND(SUM(average_database_bytes+average_failsafe_bytes)/POWER(1024,4),2) AS storage_tb
+                    SELECT COALESCE(
+                        ROUND(SUM(COALESCE(average_database_bytes,0)+COALESCE(average_failsafe_bytes,0))/POWER(1024,4),2),
+                        0
+                    ) AS storage_tb
                     FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
                     WHERE usage_date = (SELECT MAX(usage_date)
                                         FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY)
@@ -378,22 +381,22 @@ def render():
         query_stats_df = hd.get("query_stats", pd.DataFrame())
         task_health_df = hd.get("task_health", pd.DataFrame())
         warehouse_pressure_df = hd.get("warehouse_pressure", pd.DataFrame())
-        live_val  = int(live_df["ACTIVE_COUNT"].iloc[0])   if not live_df.empty    else 0
-        queued    = int(live_df["QUEUED_COUNT"].iloc[0])   if not live_df.empty    else 0
-        last24    = float(burn_df["LAST_24H"].iloc[0])     if not burn_df.empty    else 0
-        prior24   = float(burn_df["PRIOR_24H"].iloc[0])    if not burn_df.empty    else 0
-        err_count = int(err_df["ERR_COUNT"].iloc[0])       if not err_df.empty     else 0
-        stor_tb   = float(storage_df["STORAGE_TB"].iloc[0]) if not storage_df.empty else 0
+        live_val  = safe_int(live_df["ACTIVE_COUNT"].iloc[0]) if not live_df.empty else 0
+        queued    = safe_int(live_df["QUEUED_COUNT"].iloc[0]) if not live_df.empty else 0
+        last24    = safe_float(burn_df["LAST_24H"].iloc[0]) if not burn_df.empty else 0
+        prior24   = safe_float(burn_df["PRIOR_24H"].iloc[0]) if not burn_df.empty else 0
+        err_count = safe_int(err_df["ERR_COUNT"].iloc[0]) if not err_df.empty else 0
+        stor_tb   = safe_float(storage_df["STORAGE_TB"].iloc[0]) if not storage_df.empty else 0
         pct_delta = ((last24 - prior24) / prior24 * 100) if prior24 > 0 else 0
         health = executive_health_score({
-            "total_queries": float(query_stats_df["TOTAL_QUERIES"].iloc[0]) if not query_stats_df.empty else 0,
+            "total_queries": safe_float(query_stats_df["TOTAL_QUERIES"].iloc[0]) if not query_stats_df.empty else 0,
             "failed_queries": err_count,
-            "queued_queries": float(query_stats_df["QUEUED_QUERIES"].iloc[0]) if not query_stats_df.empty else queued,
-            "avg_elapsed_sec": float(query_stats_df["AVG_ELAPSED_SEC"].iloc[0]) if not query_stats_df.empty else 0,
-            "task_runs": float(task_health_df["TASK_RUNS"].iloc[0]) if not task_health_df.empty else 0,
-            "failed_tasks": float(task_health_df["FAILED_TASKS"].iloc[0]) if not task_health_df.empty else 0,
-            "active_warehouses": float(warehouse_pressure_df["ACTIVE_WAREHOUSES"].iloc[0]) if not warehouse_pressure_df.empty else 0,
-            "pressure_warehouses": float(warehouse_pressure_df["PRESSURE_WAREHOUSES"].iloc[0]) if not warehouse_pressure_df.empty else 0,
+            "queued_queries": safe_float(query_stats_df["QUEUED_QUERIES"].iloc[0]) if not query_stats_df.empty else queued,
+            "avg_elapsed_sec": safe_float(query_stats_df["AVG_ELAPSED_SEC"].iloc[0]) if not query_stats_df.empty else 0,
+            "task_runs": safe_float(task_health_df["TASK_RUNS"].iloc[0]) if not task_health_df.empty else 0,
+            "failed_tasks": safe_float(task_health_df["FAILED_TASKS"].iloc[0]) if not task_health_df.empty else 0,
+            "active_warehouses": safe_float(warehouse_pressure_df["ACTIVE_WAREHOUSES"].iloc[0]) if not warehouse_pressure_df.empty else 0,
+            "pressure_warehouses": safe_float(warehouse_pressure_df["PRESSURE_WAREHOUSES"].iloc[0]) if not warehouse_pressure_df.empty else 0,
             "current_credits": last24,
             "prior_credits": prior24,
             "current_storage_tb": stor_tb,
@@ -776,7 +779,10 @@ def render():
                         company,
                     ),
                     "storage": f"""
-                        SELECT ROUND(SUM(average_database_bytes+average_failsafe_bytes)/POWER(1024,4),2) AS storage_tb
+                        SELECT COALESCE(
+                            ROUND(SUM(COALESCE(average_database_bytes,0)+COALESCE(average_failsafe_bytes,0))/POWER(1024,4),2),
+                            0
+                        ) AS storage_tb
                         FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
                         WHERE usage_date = (SELECT MAX(usage_date)
                                             FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY)
@@ -809,17 +815,17 @@ def render():
                           {ytd_filter}
                     """, ttl_key=f"account_health_brief_contract_ytd_{company}", tier="historical")
                     committed = st.session_state.get("cc_committed_credits", 100000)
-                    ytd       = float(df_ytd["YTD_CREDITS"].iloc[0]) if not df_ytd.empty else 0
+                    ytd       = safe_float(df_ytd["YTD_CREDITS"].iloc[0]) if not df_ytd.empty else 0
                     br_data["contract_pct"] = (ytd / committed * 100) if committed > 0 else None
                 except Exception:
                     br_data["contract_pct"] = None
 
                 # ── Extract values ────────────────────────────────────────────
-                cr24     = float(br_data["credits"]["PERIOD_CREDITS"].iloc[0])  if not br_data["credits"].empty else 0
-                cr_prior = float(br_data["credits"]["PRIOR_PERIOD_CREDITS"].iloc[0]) if not br_data["credits"].empty else 0
-                failures = int(br_data["failures"]["FAIL_COUNT"].iloc[0])       if not br_data["failures"].empty else 0
-                stor_tb  = float(br_data["storage"]["STORAGE_TB"].iloc[0])      if not br_data["storage"].empty else 0
-                queued   = int(br_data["queued"]["QUEUED"].iloc[0])             if not br_data["queued"].empty else 0
+                cr24     = safe_float(br_data["credits"]["PERIOD_CREDITS"].iloc[0]) if not br_data["credits"].empty else 0
+                cr_prior = safe_float(br_data["credits"]["PRIOR_PERIOD_CREDITS"].iloc[0]) if not br_data["credits"].empty else 0
+                failures = safe_int(br_data["failures"]["FAIL_COUNT"].iloc[0]) if not br_data["failures"].empty else 0
+                stor_tb  = safe_float(br_data["storage"]["STORAGE_TB"].iloc[0]) if not br_data["storage"].empty else 0
+                queued   = safe_int(br_data["queued"]["QUEUED"].iloc[0]) if not br_data["queued"].empty else 0
 
                 top_driver      = ""
                 top_driver_cost = 0.0

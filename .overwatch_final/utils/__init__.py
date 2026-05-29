@@ -31,7 +31,7 @@ from .company_filter import (
     get_company_case_expr, get_company_scope_key, company_scoped_query, company_value_allowed,
     invalidate_company_cache,
 )
-from .helpers import paginate_df
+from .helpers import paginate_df, safe_float, safe_int
 from .alerts import build_alert_task_sql, send_teams_alert, build_annotation_ddl
 from .logging import (
     build_usage_log_ddl, log_section_load, set_logging_enabled,
@@ -87,7 +87,7 @@ __all__ = [
     "get_global_db_filter_clause", "get_global_filter_clause",
     "get_company_case_expr", "get_company_scope_key", "company_scoped_query",
     "company_value_allowed", "invalidate_company_cache",
-    "paginate_df",
+    "paginate_df", "safe_float", "safe_int",
     "build_alert_task_sql", "send_teams_alert", "build_annotation_ddl",
     "build_usage_log_ddl", "log_section_load", "set_logging_enabled",
     "is_logging_enabled", "log_query_event", "is_query_logging_enabled",

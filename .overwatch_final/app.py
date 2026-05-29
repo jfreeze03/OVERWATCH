@@ -433,9 +433,9 @@ if active_section not in visible_sections:
 try:
     sections.dispatch(active_section)
 except Exception as e:
-    st.warning("Snowflake is not connected yet, so this section cannot load live data.")
+    st.error(f"{active_section} could not finish rendering.")
     st.caption(format_snowflake_error(e))
     st.info(
-        "Run inside Snowsight/Streamlit-in-Snowflake or configure a Snowflake connection in Streamlit, "
-        "then refresh the app."
+        "The Snowflake connection may still be healthy. This usually means one panel hit a metadata, "
+        "permission, or empty-data edge case. Try another section or refresh after the source view is available."
     )

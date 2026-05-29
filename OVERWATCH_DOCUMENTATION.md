@@ -124,10 +124,15 @@ and an OVERWATCH cost-of-monitoring panel.
 
 Warehouse Health combines warehouse utilization, cache efficiency, scaling
 events, spill pressure, concurrency heatmaps, and optimization guidance.
+The former standalone Optimization page is retired; shared advisor logic now
+lives in `utils/optimization_advisor.py` and renders only inside Warehouse
+Health.
 
 Cost Center includes cost by user, warehouse, role, database, schema,
 application/client, chargeback by company view, budget tracking, burn rate, and
 the canonical contract utilization view.
+The former standalone Credit Contract page is retired; old navigation aliases
+route to Cost Center so contract math has one source of truth.
 
 Recommendations & Anomalies provides an action queue with severity, owner,
 status, proof SQL, generated fixes, and alert setup.
@@ -200,6 +205,15 @@ exact billed metrics from allocated query estimates and forecast projections.
 OVERWATCH query telemetry records query hash, section, elapsed time, row count,
 and estimated result size. The budget guardrail warns when the same section
 repeatedly runs a slow or large-result query pattern.
+OVERWATCH also applies section-level Snowflake `QUERY_TAG` values in the form
+`OVERWATCH:v3|<company>|<section>|<cache tier>`. This lets the cost-of-monitoring
+panel separate Account Health, Cost Center, DBA Tools, and other section spend
+instead of treating every app query as one generic workload.
+
+High fan-out screens such as Platform Topology, Query Search, and Object Change
+Monitoring use smaller default result limits and user-controlled row caps.
+Prefer the KPI and summary views first, then raise limits only for exports or
+deep investigations.
 
 Health scores use shared weighted scorecards rather than a single success-rate
 formula. Executive health combines query failures, queue pressure, latency,
@@ -258,6 +272,18 @@ The theme picker lives under sidebar Settings. Available themes:
 
 The former Corporate theme has been replaced by the ALFA theme. Shared tab
 styling now supports horizontal scrolling so long tab sets remain readable.
+
+## Test Harness
+
+Lightweight tests live under `tests/`. They are intentionally focused on shared
+formula behavior that can be validated without a Snowflake connection.
+
+```powershell
+python -m unittest discover -s tests
+```
+
+Current coverage includes executive and service scorecard formulas so future
+health-score changes do not accidentally flatten risk weighting.
 
 ## Persistence Tables
 

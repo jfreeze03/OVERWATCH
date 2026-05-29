@@ -50,6 +50,7 @@ from .compatibility import (
     filter_existing_columns, build_smoke_test_checklist, build_cost_formula_audit,
     build_task_history_sql, build_task_failure_summary_sql, build_task_health_sql,
 )
+from .optimization_advisor import render_optimization_advisor
 
 __all__ = [
     "get_session",
@@ -66,6 +67,7 @@ __all__ = [
     "download_csv", "show_loaded_time", "mark_loaded", "clear_all_cache",
     "render_query_drilldown", "render_warehouse_drilldown",
     "render_drillable_bar_chart", "render_entity_query_drilldown",
+    "render_optimization_advisor",
     "get_active_company", "get_db_filter_clause", "get_wh_filter_clause",
     "get_user_filter_clause", "get_role_filter_clause", "get_combined_filter_clause",
     "get_global_date_clause", "get_global_wh_filter_clause",

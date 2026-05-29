@@ -154,10 +154,35 @@ def _show_to_df(session, stmt: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _first_existing_column(df: pd.DataFrame, candidates: list[str]) -> str:
+    if df is None or df.empty:
+        return ""
+    cols = {str(col).upper(): col for col in df.columns}
+    for candidate in candidates:
+        found = cols.get(str(candidate).upper())
+        if found:
+            return str(found)
+    return ""
+
+
+def _ensure_column_alias(df: pd.DataFrame, target: str, candidates: list[str], default="") -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    target = str(target).upper()
+    if target in df.columns:
+        return df
+    source = _first_existing_column(df, candidates)
+    df[target] = df[source] if source else default
+    return df
+
+
 def _load_task_inventory(session) -> pd.DataFrame:
     df = _show_to_df(session, "SHOW TASKS IN ACCOUNT")
     if df.empty:
         return df
+    df = _ensure_column_alias(df, "NAME", ["NAME", "TASK_NAME"])
+    df = _ensure_column_alias(df, "DATABASE_NAME", ["DATABASE_NAME", "DATABASE"])
+    df = _ensure_column_alias(df, "SCHEMA_NAME", ["SCHEMA_NAME", "SCHEMA"])
     for col in ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE", "PREDECESSORS", "DEFINITION"]:
         if col not in df.columns:
             df[col] = ""
@@ -785,21 +810,40 @@ GROUP BY warehouse_name, hour_bucket;"""
         if st.button("Load Dynamic Tables", key="dyn_load"):
             try:
                 df_dyn = _show_to_df(session, "SHOW DYNAMIC TABLES IN ACCOUNT")
+                df_dyn = _ensure_column_alias(df_dyn, "NAME", ["NAME", "DYNAMIC_TABLE_NAME"])
+                df_dyn = _ensure_column_alias(df_dyn, "DATABASE_NAME", ["DATABASE_NAME", "DATABASE"])
+                df_dyn = _ensure_column_alias(df_dyn, "SCHEMA_NAME", ["SCHEMA_NAME", "SCHEMA"])
                 df_dyn = _scope_metadata_df(df_dyn)
                 if not df_dyn.empty:
                     try:
                         refresh_object = "SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY"
                         requested_cols = [
-                            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "STATE_CODE",
+                            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "DYNAMIC_TABLE_NAME", "STATE_CODE",
                             "STATE_MESSAGE", "REFRESH_ACTION", "REFRESH_TRIGGER",
                             "REFRESH_START_TIME", "REFRESH_END_TIME", "TARGET_LAG_SEC", "QUERY_ID",
                         ]
                         available_cols = filter_existing_columns(session, refresh_object, requested_cols)
                         if "REFRESH_START_TIME" not in available_cols:
                             raise ValueError("Dynamic table refresh history does not expose REFRESH_START_TIME.")
+                        name_expr = (
+                            "NAME AS NAME"
+                            if "NAME" in available_cols
+                            else "DYNAMIC_TABLE_NAME AS NAME"
+                            if "DYNAMIC_TABLE_NAME" in available_cols
+                            else "'UNKNOWN' AS NAME"
+                        )
+                        select_cols = [
+                            "DATABASE_NAME" if "DATABASE_NAME" in available_cols else "NULL::VARCHAR AS DATABASE_NAME",
+                            "SCHEMA_NAME" if "SCHEMA_NAME" in available_cols else "NULL::VARCHAR AS SCHEMA_NAME",
+                            name_expr,
+                        ]
+                        select_cols.extend([
+                            col for col in available_cols
+                            if col not in {"DATABASE_NAME", "SCHEMA_NAME", "NAME", "DYNAMIC_TABLE_NAME"}
+                        ])
                         db_filter = get_db_filter_clause("database_name") if "DATABASE_NAME" in available_cols else ""
                         df_refresh = run_query_or_raise(f"""
-                            SELECT {", ".join(available_cols)}
+                            SELECT {", ".join(select_cols)}
                             FROM {refresh_object}
                             WHERE refresh_start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
                               {db_filter}

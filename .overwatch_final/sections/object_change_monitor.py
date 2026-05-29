@@ -85,8 +85,10 @@ def render():
     st.caption("DDL, grants, roles, policy changes, owner changes, and Terraform drift indicators.")
 
     days = st.slider("Lookback (days)", 1, 90, 14, key="ocm_days")
-    row_limit = st.slider("Max rows per scan", 100, 1000, 500, step=100, key="ocm_row_limit")
+    row_limit = st.slider("Max rows per scan", 100, 1000, 250, step=50, key="ocm_row_limit")
     text_filter = st.text_input("Filter query/object text", key="ocm_filter")
+    if days > 30 and not text_filter:
+        st.caption("Tip: add a query/object text filter for long lookbacks so governance scans stay inexpensive.")
     filter_clause = f"AND query_text ILIKE {sql_literal('%' + text_filter + '%')}" if text_filter else ""
     company_filter = get_global_filter_clause(
         date_col=None,
@@ -134,7 +136,7 @@ def render():
                   {filter_clause}
                 ORDER BY start_time DESC
                 LIMIT {row_limit}
-                """, ttl_key=f"ocm_objects_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
+                """, ttl_key=f"ocm_objects_{company}_{days}_{text_filter}_{row_limit}", tier="standard", section="Object Change Monitor")
             except Exception as e:
                 st.warning(f"Object change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_object_changes") is not None:
@@ -169,7 +171,7 @@ def render():
                   {filter_clause}
                 ORDER BY start_time DESC
                 LIMIT {row_limit}
-                """, ttl_key=f"ocm_access_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
+                """, ttl_key=f"ocm_access_{company}_{days}_{text_filter}_{row_limit}", tier="standard", section="Object Change Monitor")
             except Exception as e:
                 st.warning(f"Access change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_access_changes") is not None:
@@ -198,7 +200,7 @@ def render():
                   {filter_clause}
                 ORDER BY start_time DESC
                 LIMIT {row_limit}
-                """, ttl_key=f"ocm_policy_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
+                """, ttl_key=f"ocm_policy_{company}_{days}_{text_filter}_{row_limit}", tier="standard", section="Object Change Monitor")
             except Exception as e:
                 st.warning(f"Policy change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_policy_changes") is not None:
@@ -225,7 +227,7 @@ def render():
                   {filter_clause}
                 ORDER BY start_time DESC
                 LIMIT {row_limit}
-                """, ttl_key=f"ocm_drift_{company}_{days}_{text_filter}_{row_limit}", tier="standard")
+                """, ttl_key=f"ocm_drift_{company}_{days}_{text_filter}_{row_limit}", tier="standard", section="Object Change Monitor")
             except Exception as e:
                 st.warning(f"Drift scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_drift") is not None:

@@ -47,13 +47,15 @@ def render():
     st.header("Query Search & History")
     st.caption("Full-text search over company-scoped ACCOUNT_USAGE.QUERY_HISTORY.")
 
-    c1, c2, c3 = st.columns([2, 1, 1])
+    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
     with c1:
         search_text = st.text_input("Search query text (keyword)", key="qs_text")
     with c2:
         days_back = st.slider("Days back", 1, 30, 7, key="qs_days")
     with c3:
         user_filter = st.text_input("User (optional)", key="qs_user")
+    with c4:
+        row_limit = st.slider("Max results", 50, 500, 200, step=50, key="qs_row_limit")
 
     status_filter = st.selectbox(
         "Status filter",
@@ -90,8 +92,8 @@ def render():
                   {scoped_filters}
                   {user_cl} {status_cl}
                 ORDER BY start_time DESC
-                LIMIT 500
-            """, ttl_key=f"query_search_{company}_{search_text}_{user_filter}_{status_filter}_{days_back}", tier="historical")
+                LIMIT {row_limit}
+            """, ttl_key=f"query_search_{company}_{search_text}_{user_filter}_{status_filter}_{days_back}_{row_limit}", tier="historical", section="Query Search & History")
             st.session_state["qs_df_qs"] = df_qs
         except Exception as e:
             st.warning(f"Query search unavailable: {format_snowflake_error(e)}")

@@ -1,13 +1,12 @@
-# sections/optimization.py — shared Warehouse Health optimization advisor helpers
+# utils/optimization_advisor.py - Warehouse Health optimization advisor UI helper
 import streamlit as st
 import pandas as pd
-from utils import (
-    get_session, format_credits, credits_to_dollars, download_csv,
-    format_snowflake_error,
-    render_drillable_bar_chart, get_active_company, get_wh_filter_clause,
-    get_global_filter_clause, run_query, build_idle_warehouse_sql,
-    metric_confidence_label, filter_existing_columns,
-)
+from .session import get_session
+from .cost import format_credits, credits_to_dollars, build_idle_warehouse_sql, metric_confidence_label
+from .display import download_csv, render_drillable_bar_chart
+from .company_filter import get_active_company, get_wh_filter_clause, get_global_filter_clause
+from .query import run_query, format_snowflake_error
+from .compatibility import filter_existing_columns
 from config import THRESHOLDS
 
 
@@ -220,9 +219,3 @@ def render_optimization_advisor():
                     st.info(f"**{wh}** ({sz}): very low credit usage ({cred:.2f}) — consider downsizing to X-Small")
 
             download_csv(df_s, "right_sizing.csv")
-
-
-def render():
-    """Backward-compatible entry point; navigation now routes users to Warehouse Health."""
-    st.info("Optimization Advisor now lives inside Warehouse Health.")
-    render_optimization_advisor()

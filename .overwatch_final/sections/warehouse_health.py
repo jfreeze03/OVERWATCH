@@ -7,7 +7,7 @@ from utils import (
     get_active_company, get_global_filter_clause,
     metric_confidence_label, freshness_note,
     build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
-    run_query, format_snowflake_error, filter_existing_columns,
+    run_query, format_snowflake_error, filter_existing_columns, render_optimization_advisor,
 )
 from config import THRESHOLDS
 
@@ -372,6 +372,4 @@ def render():
                 c3.metric("Avg Elapsed",   f"{wh_data['AVG_ELAPSED_SEC'].mean():.1f}s")
 
     with tab_optimization:
-        from sections.optimization import render_optimization_advisor
-
         render_optimization_advisor()

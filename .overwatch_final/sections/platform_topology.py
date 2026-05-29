@@ -10,12 +10,14 @@ from utils import (
     get_session,
     get_user_filter_clause,
     filter_existing_columns,
+    freshness_note,
+    metric_confidence_label,
     render_drillable_bar_chart,
     run_query,
 )
 
 
-def _load_topology(session, days: int) -> dict:
+def _load_topology(session, days: int, row_limit: int) -> dict:
     company = get_active_company()
     qh_cols = set(filter_existing_columns(
         session,
@@ -58,8 +60,8 @@ def _load_topology(session, days: int) -> dict:
           {filters}
         GROUP BY q.warehouse_name, q.user_name, COALESCE(q.role_name, 'UNKNOWN')
         ORDER BY query_count DESC
-        LIMIT 500
-    """, ttl_key=f"topology_wh_user_{company}_{days}", tier="standard")
+        LIMIT {row_limit}
+    """, ttl_key=f"topology_wh_user_{company}_{days}_{row_limit}", tier="standard", section="Platform Topology")
 
     db_schema = run_query(f"""
         SELECT
@@ -75,8 +77,8 @@ def _load_topology(session, days: int) -> dict:
           {filters}
         GROUP BY database_name, schema_name
         ORDER BY query_count DESC
-        LIMIT 500
-    """, ttl_key=f"topology_db_schema_{company}_{days}", tier="standard")
+        LIMIT {row_limit}
+    """, ttl_key=f"topology_db_schema_{company}_{days}_{row_limit}", tier="standard", section="Platform Topology")
 
     role_users = run_query(f"""
         SELECT
@@ -89,8 +91,8 @@ def _load_topology(session, days: int) -> dict:
         WHERE deleted_on IS NULL
           {get_user_filter_clause("grantee_name")}
         ORDER BY role, user_name
-        LIMIT 500
-    """, ttl_key=f"topology_role_users_{company}", tier="standard")
+        LIMIT {row_limit}
+    """, ttl_key=f"topology_role_users_{company}_{row_limit}", tier="standard", section="Platform Topology")
 
     app_flow = run_query(f"""
         SELECT
@@ -107,8 +109,8 @@ def _load_topology(session, days: int) -> dict:
           {filters}
         GROUP BY client_application, q.warehouse_name, database_name
         ORDER BY query_count DESC
-        LIMIT 500
-    """, ttl_key=f"topology_app_flow_{company}_{days}", tier="standard")
+        LIMIT {row_limit}
+    """, ttl_key=f"topology_app_flow_{company}_{days}_{row_limit}", tier="standard", section="Platform Topology")
 
     return {
         "warehouse_user": warehouse_user,
@@ -124,16 +126,20 @@ def render():
     st.caption("Relationship maps showing who uses which warehouses, databases, roles, and client applications.")
 
     days = st.slider("Lookback days", 1, 90, 30, key="topology_days")
+    row_limit = st.slider("Max rows per topology query", 100, 1000, 250, step=50, key="topology_row_limit")
+    if days > 30 and row_limit > 500:
+        st.caption("Large topology windows can scan more ACCOUNT_USAGE history; start with KPIs and raise limits only for exports.")
     if st.button("Load Platform Topology", key="topology_load"):
         with st.spinner("Building topology views..."):
             try:
-                st.session_state["topology_data"] = _load_topology(session, days)
+                st.session_state["topology_data"] = _load_topology(session, days, row_limit)
             except Exception as e:
                 st.warning(f"Platform topology unavailable in this role/context: {format_snowflake_error(e)}")
 
     data = st.session_state.get("topology_data")
     if not data:
         return
+    st.caption(f"{metric_confidence_label('estimated')} | {freshness_note('ACCOUNT_USAGE')} | Role grants are scoped by user patterns when no warehouse/database signal exists.")
 
     wh_user = data["warehouse_user"]
     db_schema = data["db_schema"]

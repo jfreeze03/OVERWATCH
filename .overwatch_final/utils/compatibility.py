@@ -96,7 +96,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
         "SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY",
         ("REFRESH_START_TIME",),
         (
-            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "STATE", "STATE_CODE",
+            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "DYNAMIC_TABLE_NAME", "STATE_CODE",
             "STATE_MESSAGE", "REFRESH_ACTION", "REFRESH_TRIGGER", "QUERY_ID",
             "TARGET_LAG_SEC",
         ),
@@ -191,8 +191,18 @@ def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -
 TASK_HISTORY_OBJECT = "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY"
 
 
+_TASK_HISTORY_CANDIDATES = (
+    "SCHEDULED_TIME", "QUERY_START_TIME", "COMPLETED_TIME",
+    "DATABASE_NAME", "SCHEMA_NAME", "TASK_NAME", "ROOT_TASK_ID", "STATE",
+    "ERROR_CODE", "ERROR_MESSAGE", "QUERY_ID", "GRAPH_RUN_GROUP_ID",
+)
+
+
 def _task_history_cols(session) -> set[str]:
-    return get_available_columns(session, TASK_HISTORY_OBJECT)
+    # ACCOUNT_USAGE metadata can advertise optional TASK_HISTORY columns that
+    # still fail at execution time for some roles/accounts. Probe candidates
+    # once and only build SQL with columns that compile in this context.
+    return set(filter_existing_columns(session, TASK_HISTORY_OBJECT, _TASK_HISTORY_CANDIDATES))
 
 
 def _task_name_expr(cols: set[str]) -> str:

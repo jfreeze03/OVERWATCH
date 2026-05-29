@@ -16,8 +16,8 @@ from utils import (
     get_session, format_credits,
     credits_to_dollars, estimate_live_credits, download_csv,
     render_query_drilldown, get_active_company, get_user_filter_clause,
-    get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
-    format_snowflake_error,
+    get_global_filter_clause, get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
+    format_snowflake_error, filter_existing_columns,
 )
 from config import THRESHOLDS
 
@@ -36,19 +36,26 @@ def render():
     with tab_active:
         st.header("🔴 Live & Recent Queries")
         st.caption(
-            "🟢 **LIVE** uses `INFORMATION_SCHEMA.QUERY_HISTORY` (0-latency). "
-            "🟡 **RECENT** uses `ACCOUNT_USAGE.QUERY_HISTORY` (≤45 min latency)."
+            "Uses `ACCOUNT_USAGE.QUERY_HISTORY` by default for Streamlit-in-Snowflake compatibility. "
+            "Zero-latency metadata can be tried when the active role/context allows it."
         )
 
-        c1, c2, c3, c4 = st.columns([1, 1, 2, 2])
+        c1, c2, c3, c4, c5 = st.columns([1, 1, 1.4, 2, 2])
         with c1: st.button("🔄 Refresh", key="lm_refresh")
         with c2:
             auto_refresh = st.checkbox(
                 "Auto-refresh", key="lm_auto",
                 help=f"Refreshes every {rt_interval}s via st.fragment — non-blocking."
             )
-        with c3: wh_filter = st.text_input("Warehouse filter", key="lm_wh")
+        with c3:
+            try_info_schema = st.checkbox(
+                "Try live metadata",
+                key="lm_try_info_schema",
+                help="Off by default because Snowflake can block INFORMATION_SCHEMA table functions in hosted Streamlit.",
+            )
         with c4:
+            wh_filter = st.text_input("Warehouse filter", key="lm_wh")
+        with c5:
             status_filter = st.selectbox(
                 "Status",
                 ["ALL", "RUNNING", "QUEUED", "BLOCKED", "SUCCESS", "FAILED_WITH_ERROR"],
@@ -88,22 +95,45 @@ def render():
               {company_wh_clause}
             ORDER BY elapsed_sec DESC
             """
+            fallback_optional = set(filter_existing_columns(
+                _session,
+                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                ["WAREHOUSE_SIZE", "BYTES_SCANNED", "ROWS_PRODUCED"],
+            ))
+            fallback_wh_size_expr = (
+                "warehouse_size"
+                if "WAREHOUSE_SIZE" in fallback_optional
+                else "NULL::VARCHAR AS warehouse_size"
+            )
+            fallback_mb_scanned_expr = (
+                "bytes_scanned/POWER(1024,2) AS mb_scanned"
+                if "BYTES_SCANNED" in fallback_optional
+                else "0::FLOAT AS mb_scanned"
+            )
+            fallback_rows_expr = (
+                "rows_produced"
+                if "ROWS_PRODUCED" in fallback_optional
+                else "0::NUMBER AS rows_produced"
+            )
             df_live = pd.DataFrame()
             try:
+                if not try_info_schema:
+                    raise RuntimeError("Using ACCOUNT_USAGE compatibility mode")
                 if st.session_state.get("_overwatch_disable_info_schema_qh"):
                     raise RuntimeError("INFORMATION_SCHEMA query history disabled after prior failure")
                 df_live = run_query_or_raise(live_sql)
             except Exception as live_err:
-                st.session_state["_overwatch_disable_info_schema_qh"] = True
-                # IS unavailable (e.g. serverless context) — fall back to AU
-                st.info("ℹ️ INFORMATION_SCHEMA unavailable — using ACCOUNT_USAGE fallback.")
+                if try_info_schema:
+                    st.session_state["_overwatch_disable_info_schema_qh"] = True
+                    # IS unavailable (e.g. serverless context) - fall back to AU.
+                    st.info("Live metadata unavailable - using ACCOUNT_USAGE fallback.")
                 try:
                     df_live = run_query_or_raise(f"""
                         SELECT query_id, SUBSTR(query_text,1,300) AS query_text,
-                               user_name, warehouse_name, warehouse_size,
+                               user_name, warehouse_name, {fallback_wh_size_expr},
                                execution_status, start_time,
                                total_elapsed_time/1000 AS elapsed_sec,
-                               bytes_scanned/POWER(1024,2) AS mb_scanned, rows_produced
+                               {fallback_mb_scanned_expr}, {fallback_rows_expr}
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                         WHERE start_time >= DATEADD('minutes',-10,CURRENT_TIMESTAMP())
                           AND UPPER(execution_status) IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
@@ -147,11 +177,41 @@ def render():
             st.divider()
             st.subheader("🟡 Recent (last 4h, ACCOUNT_USAGE)")
             try:
+                recent_optional = set(filter_existing_columns(
+                    _session,
+                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                    [
+                        "WAREHOUSE_SIZE",
+                        "BYTES_SCANNED",
+                        "ROWS_PRODUCED",
+                        "CREDITS_USED_CLOUD_SERVICES",
+                    ],
+                ))
+                warehouse_size_expr = (
+                    "warehouse_size"
+                    if "WAREHOUSE_SIZE" in recent_optional
+                    else "NULL::VARCHAR AS warehouse_size"
+                )
+                bytes_scanned_expr = (
+                    "bytes_scanned/POWER(1024,3) AS gb_scanned"
+                    if "BYTES_SCANNED" in recent_optional
+                    else "NULL::FLOAT AS gb_scanned"
+                )
+                rows_produced_expr = (
+                    "rows_produced"
+                    if "ROWS_PRODUCED" in recent_optional
+                    else "NULL::NUMBER AS rows_produced"
+                )
+                cloud_credits_expr = (
+                    "credits_used_cloud_services AS cloud_credits"
+                    if "CREDITS_USED_CLOUD_SERVICES" in recent_optional
+                    else "NULL::FLOAT AS cloud_credits"
+                )
                 df_recent = run_query(f"""
-                    SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
+                    SELECT query_id, user_name, warehouse_name, {warehouse_size_expr}, execution_status,
                            start_time, total_elapsed_time/1000 AS elapsed_sec,
-                           bytes_scanned/POWER(1024,3) AS gb_scanned,
-                           rows_produced, credits_used_cloud_services AS cloud_credits,
+                           {bytes_scanned_expr},
+                           {rows_produced_expr}, {cloud_credits_expr},
                            SUBSTR(query_text,1,300) AS query_text
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('hours',-4,CURRENT_TIMESTAMP())
@@ -223,18 +283,31 @@ def render():
         with s2:
             if st.button("Load Lock Waits", key="lm_lock_load"):
                 try:
-                    df_lock = run_query(f"""
-                        SELECT query_id, user_name, warehouse_name, warehouse_size,
-                               start_time,
-                               transaction_blocked_time / 1000  AS blocked_sec,
-                               SUBSTR(query_text, 1, 300)       AS query_text
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                        WHERE start_time >= DATEADD('day', -1, CURRENT_TIMESTAMP())
-                          AND transaction_blocked_time > 5000
-                          {get_wh_filter_clause("warehouse_name")}
-                        ORDER BY transaction_blocked_time DESC LIMIT 100
-                    """, ttl_key=f"live_lock_waits_{company}", tier="standard")
-                    st.session_state["lm_df_lock"] = df_lock
+                    lock_cols = set(filter_existing_columns(
+                        get_session(),
+                        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                        ["WAREHOUSE_SIZE", "TRANSACTION_BLOCKED_TIME"],
+                    ))
+                    if "TRANSACTION_BLOCKED_TIME" not in lock_cols:
+                        st.info("Lock-wait timing is not exposed in QUERY_HISTORY for this role/account.")
+                        st.session_state["lm_df_lock"] = pd.DataFrame()
+                    else:
+                        lock_wh_size_expr = (
+                            "warehouse_size AS warehouse_size"
+                            if "WAREHOUSE_SIZE" in lock_cols else "NULL::VARCHAR AS warehouse_size"
+                        )
+                        df_lock = run_query(f"""
+                            SELECT query_id, user_name, warehouse_name, {lock_wh_size_expr},
+                                   start_time,
+                                   transaction_blocked_time / 1000  AS blocked_sec,
+                                   SUBSTR(query_text, 1, 300)       AS query_text
+                            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                            WHERE start_time >= DATEADD('day', -1, CURRENT_TIMESTAMP())
+                              AND transaction_blocked_time > 5000
+                              {get_global_filter_clause("", "warehouse_name", "user_name", "role_name", "database_name")}
+                            ORDER BY transaction_blocked_time DESC LIMIT 100
+                        """, ttl_key=f"live_lock_waits_{company}", tier="standard")
+                        st.session_state["lm_df_lock"] = df_lock
                 except Exception as e:
                     st.warning(f"Lock wait history unavailable: {format_snowflake_error(e)}")
 

@@ -11,6 +11,7 @@ import pandas as pd
 import altair as alt
 from datetime import datetime
 from .cost import format_credits, credits_to_dollars
+from .compatibility import filter_existing_columns
 from .query import format_snowflake_error, run_query, run_query_or_raise, sql_literal
 from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause
 
@@ -18,6 +19,57 @@ CHART_COLORS = [
     '#38bdf8','#818cf8','#c084fc','#f472b6',
     '#fb923c','#4ade80','#fbbf24','#22d3ee',
 ]
+
+
+def _query_history_detail_exprs(prefix: str = "") -> dict:
+    """Return safe query-history projection snippets for optional columns."""
+    from .session import get_session
+
+    cols = set(filter_existing_columns(
+        get_session(),
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "WAREHOUSE_SIZE",
+            "QUEUED_OVERLOAD_TIME",
+            "BYTES_SCANNED",
+            "ROWS_PRODUCED",
+            "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            "CREDITS_USED_CLOUD_SERVICES",
+            "QUERY_TAG",
+        ],
+    ))
+    p = f"{prefix}." if prefix else ""
+    return {
+        "warehouse_size": (
+            f"{p}warehouse_size AS warehouse_size"
+            if "WAREHOUSE_SIZE" in cols else "NULL::VARCHAR AS warehouse_size"
+        ),
+        "queued_sec": (
+            f"{p}queued_overload_time/1000 AS queued_sec"
+            if "QUEUED_OVERLOAD_TIME" in cols else "0::FLOAT AS queued_sec"
+        ),
+        "gb_scanned": (
+            f"{p}bytes_scanned/POWER(1024,3) AS gb_scanned"
+            if "BYTES_SCANNED" in cols else "0::FLOAT AS gb_scanned"
+        ),
+        "rows_produced": (
+            f"{p}rows_produced AS rows_produced"
+            if "ROWS_PRODUCED" in cols else "0::NUMBER AS rows_produced"
+        ),
+        "remote_spill_gb": (
+            f"{p}bytes_spilled_to_remote_storage/POWER(1024,3) AS remote_spill_gb"
+            if "BYTES_SPILLED_TO_REMOTE_STORAGE" in cols else "0::FLOAT AS remote_spill_gb"
+        ),
+        "cloud_credits": (
+            f"{p}credits_used_cloud_services AS cloud_credits"
+            if "CREDITS_USED_CLOUD_SERVICES" in cols else "0::FLOAT AS cloud_credits"
+        ),
+        "query_tag": (
+            f"COALESCE({p}query_tag, 'UNTAGGED') AS query_tag"
+            if "QUERY_TAG" in cols else "'UNTAGGED' AS query_tag"
+        ),
+        "has_query_tag": "QUERY_TAG" in cols,
+    }
 
 
 # ── CSV Export ─────────────────────────────────────────────────────────────────
@@ -156,15 +208,16 @@ def render_warehouse_drilldown(
         get_db_filter_clause("database_name"),
         get_user_filter_clause("user_name"),
     ]))
+    qh_expr = _query_history_detail_exprs()
     df_wh = run_query(f"""
-        SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status, start_time,
+        SELECT query_id, user_name, warehouse_name, {qh_expr["warehouse_size"]}, execution_status, start_time,
                total_elapsed_time/1000          AS elapsed_sec,
                compilation_time/1000            AS compile_sec,
                execution_time/1000              AS exec_sec,
-               queued_overload_time/1000        AS queued_sec,
-               bytes_scanned/POWER(1024,3)      AS gb_scanned,
-               rows_produced,
-               credits_used_cloud_services      AS cloud_credits,
+               {qh_expr["queued_sec"]},
+               {qh_expr["gb_scanned"]},
+               {qh_expr["rows_produced"]},
+               {qh_expr["cloud_credits"]},
                SUBSTR(query_text,1,2000)        AS query_text
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
         WHERE warehouse_name = {wh_safe}
@@ -199,6 +252,8 @@ def render_entity_query_drilldown(
         st.info(f"Drill-down not configured for `{entity_column}`.")
         return
     value = sql_literal(str(entity_value))
+    qh_expr = _query_history_detail_exprs()
+    has_query_tag = bool(qh_expr.get("has_query_tag"))
     if col == "query_id":
         where_clause = f"query_id = {value}"
     elif col == "database_schema":
@@ -207,6 +262,14 @@ def render_entity_query_drilldown(
             f"= {value}"
         )
     elif col == "application_client":
+        if not has_query_tag:
+            st.info("Application/client drill-down needs QUERY_TAG access, which is not exposed in this Snowflake context.")
+            return
+        where_clause = f"COALESCE(query_tag, 'UNTAGGED') = {value}"
+    elif col == "query_tag":
+        if not has_query_tag:
+            st.info("Query-tag drill-down needs QUERY_TAG access, which is not exposed in this Snowflake context.")
+            return
         where_clause = f"COALESCE(query_tag, 'UNTAGGED') = {value}"
     elif col == "lineage_dimension":
         where_clause = (
@@ -221,16 +284,17 @@ def render_entity_query_drilldown(
         get_user_filter_clause("user_name"),
     ]))
     df_detail   = run_query(f"""
-        SELECT query_id, user_name, role_name, warehouse_name, warehouse_size, database_name, schema_name,
+        SELECT query_id, user_name, role_name, warehouse_name, {qh_expr["warehouse_size"]}, database_name, schema_name,
+               {qh_expr["query_tag"]},
                query_type, execution_status, start_time,
                total_elapsed_time/1000          AS elapsed_sec,
                compilation_time/1000            AS compile_sec,
                execution_time/1000              AS exec_sec,
-               queued_overload_time/1000        AS queued_sec,
-               bytes_scanned/POWER(1024,3)      AS gb_scanned,
-               bytes_spilled_to_remote_storage/POWER(1024,3) AS remote_spill_gb,
-               rows_produced,
-               credits_used_cloud_services      AS cloud_credits,
+               {qh_expr["queued_sec"]},
+               {qh_expr["gb_scanned"]},
+               {qh_expr["remote_spill_gb"]},
+               {qh_expr["rows_produced"]},
+               {qh_expr["cloud_credits"]},
                SUBSTR(query_text,1,4000)        AS query_text
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
         WHERE {where_clause}

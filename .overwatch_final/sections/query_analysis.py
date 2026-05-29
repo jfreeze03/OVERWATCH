@@ -5,7 +5,7 @@ from utils import (
     get_session, run_query, sql_literal,
     format_credits, credits_to_dollars, download_csv,
     render_query_drilldown, build_metered_credit_cte, get_active_company, get_global_filter_clause,
-    format_snowflake_error,
+    filter_existing_columns, format_snowflake_error,
 )
 from config import THRESHOLDS
 
@@ -14,6 +14,32 @@ def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     company = get_active_company()
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "WAREHOUSE_SIZE",
+            "QUEUED_OVERLOAD_TIME",
+            "BYTES_SCANNED",
+            "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            "PARTITIONS_SCANNED",
+            "PARTITIONS_TOTAL",
+            "ROWS_PRODUCED",
+        ],
+    ))
+    wh_size_expr = "q.warehouse_size AS warehouse_size" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+    queued_expr = "q.queued_overload_time/1000 AS queued_sec" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0::FLOAT AS queued_sec"
+    gb_expr = "q.bytes_scanned/POWER(1024,3) AS gb_scanned" if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
+    spill_expr = (
+        "q.bytes_spilled_to_remote_storage/POWER(1024,3) AS remote_spill_gb"
+        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols else "0::FLOAT AS remote_spill_gb"
+    )
+    partition_expr = (
+        "q.partitions_scanned * 100.0 / NULLIF(q.partitions_total,0) AS partition_pct"
+        if {"PARTITIONS_SCANNED", "PARTITIONS_TOTAL"}.issubset(qh_cols)
+        else "0::FLOAT AS partition_pct"
+    )
+    rows_expr = "q.rows_produced AS rows_produced" if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
 
     tab_bottleneck, tab_patterns, tab_plansteps, tab_ai = st.tabs([
         "Bottlenecks", "Pattern Degradation", "Plan Steps", "AI Diagnosis"
@@ -39,17 +65,17 @@ def render():
                     q.query_id,
                     q.user_name,
                     q.warehouse_name,
-                    q.warehouse_size,
+                    {wh_size_expr},
                     q.execution_status,
                     q.start_time,
                     q.total_elapsed_time/1000             AS elapsed_sec,
                     q.compilation_time/1000               AS compile_sec,
                     q.execution_time/1000                 AS exec_sec,
-                    q.queued_overload_time/1000            AS queued_sec,
-                    q.bytes_scanned/POWER(1024,3)          AS gb_scanned,
-                    q.bytes_spilled_to_remote_storage/POWER(1024,3) AS remote_spill_gb,
-                    q.partitions_scanned * 100.0 / NULLIF(q.partitions_total,0) AS partition_pct,
-                    q.rows_produced,
+                    {queued_expr},
+                    {gb_expr},
+                    {spill_expr},
+                    {partition_expr},
+                    {rows_expr},
                     COALESCE(pqc.metered_credits, 0)       AS metered_credits,
                     SUBSTR(q.query_text,1,500)             AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q

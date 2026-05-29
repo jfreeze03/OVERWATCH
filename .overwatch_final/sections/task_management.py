@@ -3,10 +3,10 @@ import streamlit as st
 import pandas as pd
 from utils import (
     build_action_queue_ddl,
+    build_task_history_sql,
     company_value_allowed,
     download_csv,
     format_snowflake_error,
-    get_db_filter_clause,
     get_session,
     make_action_id,
     normalize_df,
@@ -116,20 +116,15 @@ def render():
 
             # Task history
             try:
-                df_th = run_query_or_raise(f"""
-                    SELECT *,
-                           DATEDIFF('second',
-                               COALESCE(query_start_time, scheduled_time),
-                               COALESCE(completed_time, CURRENT_TIMESTAMP())
-                           ) AS duration_sec
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-                    WHERE scheduled_time >= DATEADD('day', -{th_days}, CURRENT_TIMESTAMP())
-                      {get_db_filter_clause("database_name")}
-                    ORDER BY scheduled_time DESC
-                    LIMIT 500
-                """)
+                df_th = run_query_or_raise(build_task_history_sql(
+                    session,
+                    f"scheduled_time >= DATEADD('day', -{int(th_days)}, CURRENT_TIMESTAMP())",
+                    limit=500,
+                    company=st.session_state.get("active_company", "ALFA"),
+                ))
                 st.session_state["tg_hist"] = df_th
-            except Exception:
+            except Exception as e:
+                st.info(f"Task history unavailable in this role/context: {format_snowflake_error(e)}")
                 st.session_state["tg_hist"] = pd.DataFrame()
 
         tl = st.session_state.get("tg_list", pd.DataFrame())

@@ -3,7 +3,9 @@ import pandas as pd
 import streamlit as st
 
 from utils import (
+    build_task_health_sql,
     download_csv,
+    filter_existing_columns,
     get_active_company,
     get_db_filter_clause,
     get_session,
@@ -21,15 +23,54 @@ def _load_service_health(session, hours: int) -> dict:
     db_q = get_db_filter_clause("q.database_name")
     user_q = get_user_filter_clause("q.user_name")
     user_l = get_user_filter_clause("user_name")
-    db_task = get_db_filter_clause("database_name")
     db_copy = get_db_filter_clause("table_catalog_name")
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "ERROR_CODE",
+            "WAREHOUSE_SIZE",
+            "QUEUED_OVERLOAD_TIME",
+            "TRANSACTION_BLOCKED_TIME",
+            "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            "PERCENTAGE_SCANNED_FROM_CACHE",
+        ],
+    ))
+    error_pred = (
+        "q.error_code IS NOT NULL"
+        if "ERROR_CODE" in qh_cols else "q.execution_status = 'FAILED_WITH_ERROR'"
+    )
+    queued_pred = (
+        "q.queued_overload_time > 0"
+        if "QUEUED_OVERLOAD_TIME" in qh_cols else "FALSE"
+    )
+    blocked_pred = (
+        "q.transaction_blocked_time > 0"
+        if "TRANSACTION_BLOCKED_TIME" in qh_cols else "FALSE"
+    )
+    wh_size_expr = (
+        "MAX(q.warehouse_size)"
+        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+    )
+    queued_sec_expr = (
+        "ROUND(SUM(q.queued_overload_time) / 1000, 2)"
+        if "QUEUED_OVERLOAD_TIME" in qh_cols else "0::FLOAT"
+    )
+    remote_spill_expr = (
+        "ROUND(SUM(q.bytes_spilled_to_remote_storage) / POWER(1024, 3), 2)"
+        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols else "0::FLOAT"
+    )
+    cache_expr = (
+        "ROUND(AVG(q.percentage_scanned_from_cache), 2)"
+        if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "0::FLOAT"
+    )
 
     query_health = run_query(f"""
         SELECT
             COUNT(*) AS total_queries,
-            SUM(IFF(q.error_code IS NOT NULL, 1, 0)) AS failed_queries,
-            SUM(IFF(q.queued_overload_time > 0, 1, 0)) AS queued_queries,
-            SUM(IFF(q.transaction_blocked_time > 0, 1, 0)) AS blocked_queries,
+            SUM(IFF({error_pred}, 1, 0)) AS failed_queries,
+            SUM(IFF({queued_pred}, 1, 0)) AS queued_queries,
+            SUM(IFF({blocked_pred}, 1, 0)) AS blocked_queries,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
             ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time) / 1000, 2) AS p95_elapsed_sec
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
@@ -41,12 +82,12 @@ def _load_service_health(session, hours: int) -> dict:
     warehouse_health = run_query(f"""
         SELECT
             q.warehouse_name,
-            MAX(q.warehouse_size) AS warehouse_size,
+            {wh_size_expr} AS warehouse_size,
             COUNT(*) AS total_queries,
-            SUM(IFF(q.error_code IS NOT NULL, 1, 0)) AS failed_queries,
-            ROUND(SUM(q.queued_overload_time) / 1000, 2) AS queued_sec,
-            ROUND(SUM(q.bytes_spilled_to_remote_storage) / POWER(1024, 3), 2) AS remote_spill_gb,
-            ROUND(AVG(q.percentage_scanned_from_cache), 2) AS avg_cache_pct
+            SUM(IFF({error_pred}, 1, 0)) AS failed_queries,
+            {queued_sec_expr} AS queued_sec,
+            {remote_spill_expr} AS remote_spill_gb,
+            {cache_expr} AS avg_cache_pct
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
@@ -67,16 +108,23 @@ def _load_service_health(session, hours: int) -> dict:
           {user_l}
     """, ttl_key=f"svc_login_{company}_{hours}", tier="recent")
 
-    task_health = run_query(f"""
-        SELECT
-            COUNT(*) AS task_runs,
-            SUM(IFF(state = 'FAILED', 1, 0)) AS failed_tasks,
-            SUM(IFF(state = 'SUCCEEDED', 1, 0)) AS succeeded_tasks,
-            COUNT(DISTINCT COALESCE(root_task_id, query_id)) AS distinct_tasks
-        FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-        WHERE scheduled_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
-          {db_task}
-    """, ttl_key=f"svc_task_{company}_{hours}", tier="recent")
+    try:
+        task_health = run_query(
+            build_task_health_sql(
+                session,
+                f"scheduled_time >= DATEADD('hour', -{int(hours)}, CURRENT_TIMESTAMP())",
+                company=company,
+            ),
+            ttl_key=f"svc_task_{company}_{hours}",
+            tier="recent",
+        )
+    except Exception:
+        task_health = pd.DataFrame([{
+            "TASK_RUNS": 0,
+            "FAILED_TASKS": 0,
+            "SUCCEEDED_TASKS": 0,
+            "DISTINCT_TASKS": 0,
+        }])
 
     pipe_health = run_query(f"""
         SELECT

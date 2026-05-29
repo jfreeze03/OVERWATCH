@@ -4,6 +4,7 @@ from utils import (
     build_action_queue_ddl,
     download_csv,
     format_snowflake_error,
+    filter_existing_columns,
     get_global_filter_clause,
     get_session,
     make_action_id,
@@ -66,6 +67,20 @@ def _queue_changes(session, df, source: str, category: str, entity_type: str, se
 def render():
     session = get_session()
     company = _active_company()
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["QUERY_TAG"],
+    ))
+    query_tag_select = "query_tag" if "QUERY_TAG" in qh_cols else "NULL::VARCHAR AS query_tag"
+    drift_case = (
+        "WHEN query_tag ILIKE '%terraform%' THEN 'IaC managed'"
+        if "QUERY_TAG" in qh_cols else ""
+    )
+    drift_exclusion = (
+        "AND NOT (query_tag ILIKE '%terraform%')"
+        if "QUERY_TAG" in qh_cols else ""
+    )
     st.header("Who Changed What?")
     st.caption("DDL, grants, roles, policy changes, owner changes, and Terraform drift indicators.")
 
@@ -196,16 +211,16 @@ def render():
         if st.button("Load Drift Indicators", key="ocm_drift_load"):
             try:
                 st.session_state["ocm_df_drift"] = run_query(f"""
-                SELECT query_id, user_name, role_name, query_tag,
+                SELECT query_id, user_name, role_name, {query_tag_select},
                        start_time, SUBSTR(query_text, 1, 1500) AS query_text,
                        CASE
-                         WHEN query_tag ILIKE '%terraform%' THEN 'IaC managed'
+                         {drift_case}
                          ELSE 'Manual / non-IaC'
                        END AS drift_indicator
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                 WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
                   AND (query_text ILIKE 'CREATE%' OR query_text ILIKE 'ALTER%' OR query_text ILIKE 'DROP%' OR query_text ILIKE 'GRANT%' OR query_text ILIKE 'REVOKE%')
-                  AND NOT (query_tag ILIKE '%terraform%')
+                  {drift_exclusion}
                   {company_filter}
                   {filter_clause}
                 ORDER BY start_time DESC

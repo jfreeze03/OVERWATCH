@@ -6,9 +6,10 @@ from utils import (
     get_session, run_query, run_query_or_raise, format_credits,
     credits_to_dollars, download_csv, mark_loaded, show_loaded_time,
     build_metered_credit_cte, render_drillable_bar_chart, render_query_drilldown,
+    build_task_failure_summary_sql,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
     get_global_filter_clause, company_value_allowed,
-    format_snowflake_error,
+    format_snowflake_error, filter_existing_columns,
 )
 
 
@@ -69,6 +70,22 @@ Write the briefing now. Start with yesterday's overall performance summary, then
 then one recommended action for leadership."""
 
 
+def _task_failure_sql_or_empty(session, time_predicate: str, limit: int, company: str) -> str:
+    """Return TASK_HISTORY failure SQL, or an empty compatible result if unavailable."""
+    try:
+        return build_task_failure_summary_sql(session, time_predicate, limit=limit, company=company)
+    except Exception:
+        return """
+            SELECT NULL::VARCHAR AS TASK_NAME,
+                   NULL::VARCHAR AS DATABASE_NAME,
+                   NULL::VARCHAR AS SCHEMA_NAME,
+                   0::NUMBER AS FAILURES,
+                   NULL::TIMESTAMP_NTZ AS LAST_FAILURE,
+                   NULL::VARCHAR AS LAST_ERROR
+            WHERE 1=0
+        """
+
+
 def render():
     session      = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
@@ -79,6 +96,26 @@ def render():
     user_filter_q = get_user_filter_clause("q.user_name", company)
     global_filter_q = get_global_filter_clause(
         "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+    )
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["WAREHOUSE_SIZE", "BYTES_SCANNED"],
+    ))
+    cost_wh_size_expr = (
+        "MAX(q.warehouse_size)"
+        if "WAREHOUSE_SIZE" in qh_cols
+        else "NULL::VARCHAR"
+    )
+    cost_bytes_scanned_expr = (
+        "SUM(q.bytes_scanned)"
+        if "BYTES_SCANNED" in qh_cols
+        else "0"
+    )
+    pressure_wh_size_expr = (
+        "MAX(warehouse_size)"
+        if "WAREHOUSE_SIZE" in qh_cols
+        else "NULL::VARCHAR"
     )
 
     tab_overview, tab_resmon, tab_morning, tab_briefing = st.tabs([
@@ -147,10 +184,10 @@ def render():
                 """),
                 ("cost_drivers", f"""
                     WITH {build_metered_credit_cte(hours_back=48, include_recent=True)}
-                    SELECT q.user_name, q.warehouse_name, MAX(q.warehouse_size) AS warehouse_size,
+                    SELECT q.user_name, q.warehouse_name, {cost_wh_size_expr} AS warehouse_size,
                            COUNT(*) AS query_count,
                            ROUND(SUM(COALESCE(pqc.metered_credits,0)), 4) AS total_credits,
-                           ROUND(SUM(q.bytes_scanned)/POWER(1024,3), 2) AS gb_scanned
+                           ROUND({cost_bytes_scanned_expr}/POWER(1024,3), 2) AS gb_scanned
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                     LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
                     WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
@@ -160,40 +197,45 @@ def render():
                     ORDER BY total_credits DESC
                     LIMIT 5
                 """),
-                ("failed_jobs", f"""
-                    SELECT COALESCE(root_task_id, query_id) AS job_name,
-                           database_name, schema_name,
-                           COUNT(*) AS failures,
-                           MAX(scheduled_time) AS last_failure,
-                           MAX(error_message) AS last_error
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-                    WHERE scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
-                      AND state = 'FAILED'
-                      {get_db_filter_clause("database_name", company)}
-                    GROUP BY COALESCE(root_task_id, query_id), database_name, schema_name
-                    ORDER BY failures DESC, last_failure DESC
-                    LIMIT 5
-                """),
+                ("failed_jobs", _task_failure_sql_or_empty(
+                    session,
+                    "scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())",
+                    5,
+                    company,
+                )),
                 ("what_changed", f"""
-                    WITH today AS (
-                        SELECT COUNT(*) AS q, SUM(credits_used_cloud_services) AS cloud_cr,
+                    WITH today_q AS (
+                        SELECT COUNT(*) AS q,
                                SUM(CASE WHEN execution_status='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS fails
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                         WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
                           {wh_filter_q} {db_filter_q} {user_filter_q}
                     ),
-                    yday AS (
-                        SELECT COUNT(*) AS q, SUM(credits_used_cloud_services) AS cloud_cr,
+                    yday_q AS (
+                        SELECT COUNT(*) AS q,
                                SUM(CASE WHEN execution_status='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS fails
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                         WHERE q.start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
                           AND q.start_time <  DATEADD('hours', -24, CURRENT_TIMESTAMP())
                           {wh_filter_q} {db_filter_q} {user_filter_q}
+                    ),
+                    today_c AS (
+                        SELECT SUM(credits_used) AS credits
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+                        WHERE start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                          {wh_filter_m}
+                    ),
+                    yday_c AS (
+                        SELECT SUM(credits_used) AS credits
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+                        WHERE start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
+                          AND start_time < DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                          {wh_filter_m}
                     )
-                    SELECT today.q - yday.q AS query_delta,
-                           ROUND(today.cloud_cr - yday.cloud_cr, 4) AS cloud_credit_delta,
-                           today.fails - yday.fails AS failure_delta
-                    FROM today, yday
+                    SELECT today_q.q - yday_q.q AS query_delta,
+                           ROUND(COALESCE(today_c.credits, 0) - COALESCE(yday_c.credits, 0), 4) AS credit_delta,
+                           today_q.fails - yday_q.fails AS failure_delta
+                    FROM today_q, yday_q, today_c, yday_c
                 """),
             ]:
                 try:
@@ -299,7 +341,7 @@ def render():
             if change_df is not None and not change_df.empty:
                 row = change_df.iloc[0]
                 st.metric("Queries",      f"{int(row.get('QUERY_DELTA',0) or 0):+,}")
-                st.metric("Cloud Credits",f"{float(row.get('CLOUD_CREDIT_DELTA',0) or 0):+,.2f}")
+                st.metric("Credits",      f"{float(row.get('CREDIT_DELTA',0) or 0):+,.2f}")
                 st.metric("Failures",     f"{int(row.get('FAILURE_DELTA',0) or 0):+,}", delta_color="inverse")
             else:
                 st.info("Change summary unavailable.")
@@ -314,7 +356,7 @@ def render():
         st.markdown("**🏭 Warehouse Pressure (last 1h)**")
         try:
             df_wp = run_query_or_raise(f"""
-                SELECT warehouse_name, MAX(warehouse_size) AS warehouse_size, COUNT(*) AS queries,
+                SELECT warehouse_name, {pressure_wh_size_expr} AS warehouse_size, COUNT(*) AS queries,
                        SUM(CASE WHEN execution_status IN ('QUEUED','BLOCKED') THEN 1 ELSE 0 END) AS queued
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                 WHERE start_time >= DATEADD('hours',-1,CURRENT_TIMESTAMP())
@@ -352,9 +394,38 @@ def render():
 
         if st.button("Load Resource Monitors", key="resmon_load"):
             try:
-                df_rm = run_query("""
-                    SELECT name, created, credit_quota, used_credits, remaining_credits,
-                           owner, notify, suspend, suspend_immediate, warehouses
+                rm_object = "SNOWFLAKE.ACCOUNT_USAGE.RESOURCE_MONITORS"
+                rm_cols = set(filter_existing_columns(
+                    session,
+                    rm_object,
+                    [
+                        "NAME", "CREATED", "CREDIT_QUOTA", "USED_CREDITS",
+                        "REMAINING_CREDITS", "OWNER", "NOTIFY", "SUSPEND",
+                        "SUSPEND_IMMEDIATE", "WAREHOUSES",
+                    ],
+                ))
+                if "NAME" not in rm_cols:
+                    raise ValueError("RESOURCE_MONITORS does not expose NAME for this role/account.")
+
+                def _rm_expr(col: str, fallback: str, alias: str | None = None) -> str:
+                    output = alias or col.lower()
+                    if col in rm_cols:
+                        if col == "WAREHOUSES":
+                            return f"TO_VARCHAR({col.lower()}) AS {output}"
+                        return f"{col.lower()} AS {output}"
+                    return f"{fallback} AS {output}"
+
+                df_rm = run_query(f"""
+                    SELECT {_rm_expr("NAME", "NULL::VARCHAR")},
+                           {_rm_expr("CREATED", "NULL::TIMESTAMP_NTZ")},
+                           {_rm_expr("CREDIT_QUOTA", "0::FLOAT")},
+                           {_rm_expr("USED_CREDITS", "0::FLOAT")},
+                           {_rm_expr("REMAINING_CREDITS", "0::FLOAT")},
+                           {_rm_expr("OWNER", "NULL::VARCHAR")},
+                           {_rm_expr("NOTIFY", "NULL::VARCHAR")},
+                           {_rm_expr("SUSPEND", "NULL::VARCHAR")},
+                           {_rm_expr("SUSPEND_IMMEDIATE", "NULL::VARCHAR")},
+                           {_rm_expr("WAREHOUSES", "NULL::VARCHAR")}
                     FROM SNOWFLAKE.ACCOUNT_USAGE.RESOURCE_MONITORS
                 """, ttl_key="account_health_resource_monitors", tier="standard")
                 if company != "ALL" and not df_rm.empty and "WAREHOUSES" in df_rm.columns:
@@ -525,14 +596,12 @@ def render():
                         GROUP BY q.user_name, q.warehouse_name
                         ORDER BY credits DESC LIMIT 1
                     """,
-                    "failed_tasks": f"""
-                        SELECT COALESCE(root_task_id, query_id) AS task_name, COUNT(*) AS failures
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-                        WHERE scheduled_time >= DATEADD('hours',-{br_hours},CURRENT_TIMESTAMP())
-                          AND state = 'FAILED'
-                          {get_db_filter_clause("database_name", company)}
-                        GROUP BY COALESCE(root_task_id, query_id) ORDER BY failures DESC LIMIT 1
-                    """,
+                    "failed_tasks": _task_failure_sql_or_empty(
+                        session,
+                        f"scheduled_time >= DATEADD('hours',-{int(br_hours)},CURRENT_TIMESTAMP())",
+                        1,
+                        company,
+                    ),
                     "storage": f"""
                         SELECT ROUND(SUM(average_database_bytes+average_failsafe_bytes)/POWER(1024,4),2) AS storage_tb
                         FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY

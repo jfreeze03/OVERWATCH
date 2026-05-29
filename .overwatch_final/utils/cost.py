@@ -105,7 +105,7 @@ def build_metered_credit_cte(
         SELECT
             warehouse_name,
             DATE_TRUNC('hour', start_time)  AS hour_bucket,
-            SUM(credits_used_compute)       AS hourly_compute_credits
+            SUM(credits_used)               AS hourly_compute_credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= {time_filter}
           AND start_time <  {upper_bound}
@@ -161,7 +161,7 @@ def build_idle_warehouse_sql(
         SELECT
             warehouse_name,
             DATE_TRUNC('hour', start_time) AS hour_bucket,
-            SUM(credits_used_compute) AS hourly_credits
+            SUM(credits_used) AS hourly_credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
@@ -173,7 +173,7 @@ def build_idle_warehouse_sql(
             warehouse_name,
             DATE_TRUNC('hour', start_time) AS hour_bucket,
             COUNT(*) AS query_count,
-            MAX(warehouse_size) AS warehouse_size
+            NULL::VARCHAR AS warehouse_size
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
         WHERE start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())

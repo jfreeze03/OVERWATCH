@@ -40,6 +40,11 @@ from .action_queue import (
     load_action_queue, update_action_status,
 )
 from .setup_bundle import build_overwatch_setup_bundle, build_snowflake_value_ddl
+from .compatibility import (
+    run_compatibility_checks, get_available_columns, view_supports_columns,
+    filter_existing_columns, build_smoke_test_checklist, build_cost_formula_audit,
+    build_task_history_sql, build_task_failure_summary_sql, build_task_health_sql,
+)
 
 __all__ = [
     "get_session",
@@ -68,4 +73,7 @@ __all__ = [
     "build_action_queue_ddl", "make_action_id", "upsert_actions",
     "load_action_queue", "update_action_status",
     "build_overwatch_setup_bundle", "build_snowflake_value_ddl",
+    "run_compatibility_checks", "get_available_columns", "view_supports_columns",
+    "filter_existing_columns", "build_smoke_test_checklist", "build_cost_formula_audit",
+    "build_task_history_sql", "build_task_failure_summary_sql", "build_task_health_sql",
 ]

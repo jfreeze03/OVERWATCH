@@ -6,7 +6,7 @@ from utils import (
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
     get_active_company, get_global_filter_clause,
     build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
-    run_query, format_snowflake_error,
+    run_query, format_snowflake_error, filter_existing_columns,
 )
 from config import THRESHOLDS
 
@@ -75,6 +75,57 @@ def render():
         role_col="role_name",
         db_col="database_name",
     )
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "WAREHOUSE_SIZE",
+            "QUEUED_OVERLOAD_TIME",
+            "BYTES_SPILLED_TO_LOCAL_STORAGE",
+            "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            "PERCENTAGE_SCANNED_FROM_CACHE",
+            "BYTES_SCANNED",
+        ],
+    ))
+    wm_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+        ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
+    ))
+    wh_size_expr = "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+    plain_wh_size_expr = "MAX(warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+    latest_size_expr = "q.warehouse_size" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+    queue_avg_expr = "AVG(q.queued_overload_time)/1000" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0"
+    queue_sum_expr = "SUM(q.queued_overload_time)" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0"
+    remote_spill_sum_expr = (
+        "SUM(q.bytes_spilled_to_remote_storage)"
+        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+        else "0"
+    )
+    local_spill_expr = (
+        "SUM(bytes_spilled_to_local_storage)"
+        if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols
+        else "0"
+    )
+    local_spill_row_expr = (
+        "bytes_spilled_to_local_storage"
+        if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols
+        else "0"
+    )
+    remote_spill_expr = (
+        "SUM(bytes_spilled_to_remote_storage)"
+        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+        else "0"
+    )
+    remote_spill_row_expr = (
+        "bytes_spilled_to_remote_storage"
+        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+        else "0"
+    )
+    cache_expr = "AVG(q.percentage_scanned_from_cache)" if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "0"
+    bytes_scanned_expr = "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0"
+    compute_meter_expr = "m.credits_used_compute" if "CREDITS_USED_COMPUTE" in wm_cols else "m.credits_used"
+    cloud_meter_expr = "m.credits_used_cloud_services" if "CREDITS_USED_CLOUD_SERVICES" in wm_cols else "0::FLOAT"
 
     tab_overview, tab_efficiency, tab_spill, tab_heatmap, tab_optimization = st.tabs([
         "Overview & Scaling", "Efficiency", "Spill & Memory", "Workload Heatmap", "Optimization Advisor"
@@ -89,15 +140,15 @@ def render():
             try:
                 df_w = run_query(f"""
                     SELECT q.warehouse_name,
-                           MAX(q.warehouse_size) AS warehouse_size,
+                           {wh_size_expr} AS warehouse_size,
                            COUNT(*)                            AS total_queries,
                            AVG(q.total_elapsed_time)/1000      AS avg_elapsed_sec,
                            PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time)/1000 AS p95_elapsed_sec,
-                           AVG(q.queued_overload_time)/1000    AS avg_queued_sec,
-                           SUM(q.bytes_spilled_to_remote_storage)/POWER(1024,3)  AS total_remote_spill_gb,
-                           AVG(q.percentage_scanned_from_cache) AS avg_cache_pct,
+                           {queue_avg_expr}                    AS avg_queued_sec,
+                           {remote_spill_sum_expr}/POWER(1024,3)  AS total_remote_spill_gb,
+                           {cache_expr} AS avg_cache_pct,
                            SUM(CASE WHEN q.execution_status='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS error_count,
-                           SUM(q.bytes_scanned)/POWER(1024,3)  AS total_gb_scanned
+                           {bytes_scanned_expr}/POWER(1024,3)  AS total_gb_scanned
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                     WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
@@ -151,7 +202,7 @@ def render():
                         WITH latest_size AS (
                             SELECT warehouse_name, warehouse_size
                             FROM (
-                                SELECT q.warehouse_name, q.warehouse_size,
+                                SELECT q.warehouse_name, {latest_size_expr} AS warehouse_size,
                                        ROW_NUMBER() OVER (PARTITION BY q.warehouse_name ORDER BY q.start_time DESC) AS rn
                                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                                 WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
@@ -161,8 +212,8 @@ def render():
                             WHERE rn = 1
                         )
                         SELECT m.warehouse_name, ls.warehouse_size, m.start_time, m.end_time,
-                               m.credits_used, m.credits_used_compute,
-                               m.credits_used_cloud_services
+                               m.credits_used, {compute_meter_expr} AS credits_used_compute,
+                               {cloud_meter_expr} AS credits_used_cloud_services
                         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
                         LEFT JOIN latest_size ls ON m.warehouse_name = ls.warehouse_name
                         WHERE m.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
@@ -182,16 +233,16 @@ def render():
                 df_eff = run_query(f"""
                     WITH {build_metered_credit_cte(days_back=eff_days, include_recent=True)}
                     SELECT q.warehouse_name,
-                           MAX(q.warehouse_size) AS warehouse_size,
+                           {wh_size_expr} AS warehouse_size,
                            COUNT(*) AS query_count,
                            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS metered_credits,
                            ROUND(SUM(COALESCE(pqc.metered_credits, 0)) / NULLIF(COUNT(*), 0), 6) AS credits_per_query,
-                           ROUND(SUM(q.queued_overload_time) / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS queue_sec_per_credit,
-                           ROUND(SUM(q.bytes_spilled_to_remote_storage) / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS remote_spill_gb_per_credit,
-                           ROUND(AVG(q.percentage_scanned_from_cache), 2) AS avg_cache_pct,
+                           ROUND({queue_sum_expr} / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS queue_sec_per_credit,
+                           ROUND({remote_spill_sum_expr} / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS remote_spill_gb_per_credit,
+                           ROUND({cache_expr}, 2) AS avg_cache_pct,
                            ROUND(100
-                                 - LEAST(COALESCE(SUM(q.queued_overload_time) / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
-                                 - LEAST(COALESCE(SUM(q.bytes_spilled_to_remote_storage) / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
+                                 - LEAST(COALESCE({queue_sum_expr} / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
+                                 - LEAST(COALESCE({remote_spill_sum_expr} / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
                                  - LEAST(COALESCE(SUM(COALESCE(pqc.metered_credits, 0)) / NULLIF(COUNT(*), 0), 0) * 10, 25),
                                  1) AS efficiency_score
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
@@ -235,14 +286,14 @@ def render():
         if st.button("Load Spill Data", key="sp_load"):
             try:
                 df_sp = run_query(f"""
-                    SELECT warehouse_name, MAX(warehouse_size) AS warehouse_size,
+                    SELECT warehouse_name, {plain_wh_size_expr} AS warehouse_size,
                            COUNT(*) AS spill_query_count,
-                           ROUND(SUM(bytes_spilled_to_local_storage)/POWER(1024,3),2)  AS local_spill_gb,
-                           ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3),2) AS remote_spill_gb,
+                           ROUND({local_spill_expr}/POWER(1024,3),2)  AS local_spill_gb,
+                           ROUND({remote_spill_expr}/POWER(1024,3),2) AS remote_spill_gb,
                            ROUND(AVG(total_elapsed_time)/1000,2)                       AS avg_elapsed_sec
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
-                      AND (bytes_spilled_to_local_storage > 0 OR bytes_spilled_to_remote_storage > 0)
+                      AND ({local_spill_row_expr} > 0 OR {remote_spill_row_expr} > 0)
                       AND warehouse_name IS NOT NULL
                       {wh_plain_filters}
                     GROUP BY warehouse_name

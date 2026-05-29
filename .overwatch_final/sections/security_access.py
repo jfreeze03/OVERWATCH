@@ -4,6 +4,7 @@ import pandas as pd
 from utils import (
     build_action_queue_ddl,
     download_csv,
+    filter_existing_columns,
     get_active_company,
     get_db_filter_clause,
     get_global_filter_clause,
@@ -88,6 +89,28 @@ def render():
         user_col="user_name",
         role_col="role_name",
         db_col="database_name",
+    )
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["WAREHOUSE_SIZE", "ROWS_PRODUCED", "BYTES_WRITTEN_TO_RESULT"],
+    ))
+    user_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.USERS",
+        ["LAST_SUCCESS_LOGIN", "HAS_PASSWORD", "EXT_AUTHN_DUO"],
+    ))
+    last_success_login_expr = (
+        "u.last_success_login"
+        if "LAST_SUCCESS_LOGIN" in user_cols else "NULL::TIMESTAMP_NTZ"
+    )
+    has_password_expr = (
+        "u.has_password AS has_password"
+        if "HAS_PASSWORD" in user_cols else "NULL::BOOLEAN AS has_password"
+    )
+    mfa_expr = (
+        "u.ext_authn_duo AS has_mfa"
+        if "EXT_AUTHN_DUO" in user_cols else "NULL::BOOLEAN AS has_mfa"
     )
 
     tab_login, tab_posture, tab_roles, tab_mfa, tab_exfil, tab_lineage = st.tabs([
@@ -316,7 +339,7 @@ def render():
                     GROUP BY user_name
                 )
                 SELECT u.name AS user_name, u.created_on, u.disabled,
-                       COALESCE(ll.last_login_time, u.last_success_login) AS last_login,
+                       COALESCE(ll.last_login_time, {last_success_login_expr}) AS last_login,
                        lq.last_query_time,
                        DATEDIFF('day', COALESCE(ll.last_login_time, u.created_on), CURRENT_TIMESTAMP()) AS days_since_login
                 FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
@@ -346,14 +369,14 @@ def render():
         if st.button("Check MFA", key="mfa_check"):
             try:
                 df_mfa = run_query(f"""
-                    SELECT u.name AS user_name, u.has_password,
-                           u.ext_authn_duo AS has_mfa, u.disabled,
+                    SELECT u.name AS user_name, {has_password_expr},
+                           {mfa_expr}, u.disabled,
                            MAX(l.event_timestamp) AS last_login
                     FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
                     LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY l ON u.name = l.user_name
                     WHERE u.deleted_on IS NULL AND u.disabled = 'false'
                       {user_filter_u}
-                    GROUP BY u.name, u.has_password, u.ext_authn_duo, u.disabled
+                    GROUP BY u.name, has_password, has_mfa, u.disabled
                     ORDER BY has_mfa, user_name
                 """, ttl_key=f"security_mfa_{company}", tier="standard")
                 st.session_state["sec_df_mfa"] = df_mfa
@@ -381,8 +404,20 @@ def render():
         st.header("🚨 Data Exfiltration Signals")
         st.caption("Users with >2σ BYTES_WRITTEN_TO_RESULT vs their 30-day baseline.")
         if st.button("Check Exfiltration", key="exfil_load"):
-            try:
-                df_ex = run_query(f"""
+            if "BYTES_WRITTEN_TO_RESULT" not in qh_cols:
+                st.info("Exfiltration byte metrics are not exposed in QUERY_HISTORY for this role/account.")
+                st.session_state["sec_df_exfil"] = pd.DataFrame()
+            else:
+                try:
+                    exfil_wh_size_expr = (
+                        "warehouse_size AS warehouse_size"
+                        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+                    )
+                    exfil_rows_expr = (
+                        "rows_produced AS rows_produced"
+                        if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
+                    )
+                    df_ex = run_query(f"""
                 WITH user_baseline AS (
                     SELECT user_name,
                            AVG(bytes_written_to_result) AS avg_bytes,
@@ -394,9 +429,9 @@ def render():
                     GROUP BY user_name HAVING COUNT(*) >= 5
                 ),
                 recent AS (
-                    SELECT user_name, query_id, warehouse_name, warehouse_size, start_time,
+                    SELECT user_name, query_id, warehouse_name, {exfil_wh_size_expr}, start_time,
                            bytes_written_to_result/POWER(1024,3) AS gb_written,
-                           rows_produced
+                           {exfil_rows_expr}
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -3, CURRENT_TIMESTAMP())
                       AND bytes_written_to_result > 0
@@ -413,9 +448,9 @@ def render():
                 WHERE r.gb_written > b.avg_bytes/POWER(1024,3) + 2*b.std_bytes/POWER(1024,3)
                 ORDER BY r.gb_written DESC LIMIT 20
                 """, ttl_key=f"security_exfil_{company}", tier="standard")
-                st.session_state["sec_df_exfil"] = df_ex
-            except Exception as e:
-                st.warning(f"Exfiltration check unavailable: {format_snowflake_error(e)}")
+                    st.session_state["sec_df_exfil"] = df_ex
+                except Exception as e:
+                    st.warning(f"Exfiltration check unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_exfil") is not None:
             df_ex = st.session_state["sec_df_exfil"]

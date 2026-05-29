@@ -199,30 +199,6 @@ WHERE NOT EXISTS (
     WHERE ann.active = TRUE AND ann.suppress_alerts = TRUE
       AND (ann.entity = warehouse_name OR ann.entity_type = 'GLOBAL')
       AND CURRENT_TIMESTAMP() BETWEEN ann.window_start AND ann.window_end
-)
-
-UNION ALL
-
-SELECT
-    'Task Failures'                                        AS ALERT_TYPE,
-    'HIGH'                                                 AS SEVERITY,
-    query_id                                               AS ENTITY,
-    'Failed ' || failures || ' times in last 7 days'      AS DETAIL,
-    'Review task error logs in OVERWATCH Task Management'  AS SUGGESTED_ACTION
-FROM (
-    SELECT query_id, COUNT(*) AS failures
-    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-    WHERE scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-      AND state = 'FAILED'
-      AND query_id IS NOT NULL
-    GROUP BY query_id
-    HAVING COUNT(*) > {THRESHOLDS['task_failure_threshold']}
-)
-WHERE NOT EXISTS (
-    SELECT 1 FROM {db}.{schema}.{annotation_table} ann
-    WHERE ann.active = TRUE AND ann.suppress_alerts = TRUE
-      AND (ann.entity = query_id OR ann.entity_type = 'GLOBAL')
-      AND CURRENT_TIMESTAMP() BETWEEN ann.window_start AND ann.window_end
 );
 
 -- 3. Resume the task

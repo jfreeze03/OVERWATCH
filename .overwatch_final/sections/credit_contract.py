@@ -7,6 +7,7 @@ import streamlit as st
 
 from utils import (
     download_csv,
+    filter_existing_columns,
     format_snowflake_error,
     format_credits,
     get_active_company,
@@ -21,12 +22,19 @@ from utils import (
 def _load_daily_credits(session, start_date: date, end_date: date):
     company = get_active_company()
     wh_filter = get_wh_filter_clause("warehouse_name")
+    wm_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+        ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
+    ))
+    compute_expr = "credits_used_compute" if "CREDITS_USED_COMPUTE" in wm_cols else "credits_used"
+    cloud_expr = "credits_used_cloud_services" if "CREDITS_USED_CLOUD_SERVICES" in wm_cols else "0"
     return run_query(f"""
         SELECT
             TO_DATE(start_time) AS usage_date,
             ROUND(SUM(credits_used), 4) AS credits_used,
-            ROUND(SUM(credits_used_compute), 4) AS compute_credits,
-            ROUND(SUM(credits_used_cloud_services), 4) AS cloud_service_credits,
+            ROUND(SUM({compute_expr}), 4) AS compute_credits,
+            ROUND(SUM({cloud_expr}), 4) AS cloud_service_credits,
             COUNT(DISTINCT warehouse_name) AS active_warehouses
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= TO_TIMESTAMP_NTZ({sql_literal(start_date.isoformat() + " 00:00:00")})

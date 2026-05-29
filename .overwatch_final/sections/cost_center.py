@@ -9,6 +9,7 @@ from utils import (
     download_csv, build_metered_credit_cte,
     get_db_filter_clause, get_wh_filter_clause, get_user_filter_clause,
     get_global_filter_clause, get_company_case_expr,
+    filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown,
     build_action_queue_ddl, make_action_id, upsert_actions,
     run_query, sql_literal, format_snowflake_error,
@@ -69,6 +70,27 @@ def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     company = st.session_state.get("active_company", "ALFA")
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["WAREHOUSE_SIZE", "BYTES_SCANNED", "QUERY_TAG"],
+    ))
+    max_wh_size_expr = (
+        "MAX(q.warehouse_size)"
+        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+    )
+    wh_size_plain_expr = (
+        "warehouse_size"
+        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+    )
+    bytes_scanned_sum_expr = (
+        "SUM(q.bytes_scanned)"
+        if "BYTES_SCANNED" in qh_cols else "0"
+    )
+    query_tag_dimension_expr = (
+        "COALESCE(q.query_tag, 'UNTAGGED')"
+        if "QUERY_TAG" in qh_cols else "'UNTAGGED'"
+    )
 
     tab_leader, tab_burn, tab_forecast, tab_budget, tab_attr, tab_chargeback, tab_contract = st.tabs([
         "User Leaderboard", "Burn Rate", "Forecast", "Budget vs Actual",
@@ -90,11 +112,11 @@ def render():
                 SELECT
                     q.user_name,
                     q.warehouse_name,
-                    MAX(q.warehouse_size) AS warehouse_size,
+                    {max_wh_size_expr} AS warehouse_size,
                     COUNT(*)                                     AS query_count,
                     ROUND(AVG(q.total_elapsed_time)/1000, 2)    AS avg_elapsed_sec,
                     ROUND(SUM(pqc.metered_credits), 4)          AS total_credits,
-                    ROUND(SUM(q.bytes_scanned)/POWER(1024,3),2) AS total_gb_scanned
+                    ROUND({bytes_scanned_sum_expr}/POWER(1024,3),2) AS total_gb_scanned
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                 LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
                 WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
@@ -162,7 +184,7 @@ def render():
                     WITH latest_size AS (
                         SELECT warehouse_name, warehouse_size
                         FROM (
-                            SELECT warehouse_name, warehouse_size,
+                            SELECT warehouse_name, {wh_size_plain_expr},
                             ROW_NUMBER() OVER (PARTITION BY warehouse_name ORDER BY start_time DESC) AS rn
                             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                             WHERE start_time >= DATEADD('day', -{br_days}, CURRENT_TIMESTAMP())
@@ -298,8 +320,8 @@ def render():
                 select_cols = "COALESCE(q.database_name,'UNKNOWN')||'.'||COALESCE(q.schema_name,'UNKNOWN') AS dimension"
                 group_cols  = "COALESCE(q.database_name,'UNKNOWN')||'.'||COALESCE(q.schema_name,'UNKNOWN')"
             elif attr_mode == "Application / Client":
-                select_cols = "COALESCE(q.query_tag, 'UNTAGGED') AS dimension"
-                group_cols  = "COALESCE(q.query_tag, 'UNTAGGED')"
+                select_cols = f"{query_tag_dimension_expr} AS dimension"
+                group_cols  = query_tag_dimension_expr
             else:
                 select_cols = "COALESCE(REGEXP_SUBSTR(q.query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), q.query_type, 'ADHOC') AS dimension"
                 group_cols  = "COALESCE(REGEXP_SUBSTR(q.query_text,'CALL\\\\s+([^\\\\(]+)',1,1,'i',1), q.query_type, 'ADHOC')"
@@ -312,7 +334,7 @@ def render():
                        COUNT(DISTINCT q.user_name)      AS users,
                        COUNT(DISTINCT q.warehouse_name) AS warehouses,
                        ROUND(SUM(COALESCE(pqc.metered_credits,0)),4) AS total_credits,
-                       ROUND(SUM(q.bytes_scanned)/POWER(1024,3),2)   AS gb_scanned
+                       ROUND({bytes_scanned_sum_expr}/POWER(1024,3),2)   AS gb_scanned
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                 LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
                 WHERE q.start_time >= DATEADD('day', -{attr_days}, CURRENT_TIMESTAMP())
@@ -366,7 +388,7 @@ def render():
                         {company_expr}         AS company,
                         q.user_name,
                         q.warehouse_name,
-                        MAX(q.warehouse_size) AS warehouse_size,
+                        {max_wh_size_expr} AS warehouse_size,
                         COUNT(*)               AS query_count,
                         SUM(COALESCE(pqc.metered_credits,0)) AS total_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q

@@ -106,17 +106,9 @@ ALTER TABLE {VALUE_TABLE} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
                 ORDER BY LOGGED_DATE DESC
                 LIMIT 500
             """, ttl_key=f"snowflake_value_detail_{company}", tier="historical")
-            df_app_cost = run_query(f"""
-                SELECT
-                    CURRENT_WAREHOUSE() AS app_warehouse,
-                    ROUND(SUM(credits_used), 4) AS app_credits_30d
-                FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
-                  AND warehouse_name = CURRENT_WAREHOUSE()
-            """, ttl_key=f"snowflake_value_app_cost_{company}", tier="historical")
             st.session_state["sf_value_summary"] = df_summary
             st.session_state["sf_value_detail"] = df_detail
-            st.session_state["sf_value_app_cost"] = df_app_cost
+            st.session_state["sf_value_app_cost"] = None
         except Exception as e:
             st.info(f"Snowflake value table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
             st.session_state["sf_value_summary"] = None

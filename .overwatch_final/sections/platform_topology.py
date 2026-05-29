@@ -9,6 +9,7 @@ from utils import (
     get_global_filter_clause,
     get_session,
     get_user_filter_clause,
+    filter_existing_columns,
     render_drillable_bar_chart,
     run_query,
 )
@@ -16,6 +17,24 @@ from utils import (
 
 def _load_topology(session, days: int) -> dict:
     company = get_active_company()
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["BYTES_SCANNED", "ERROR_CODE", "QUERY_TAG"],
+    ))
+    gb_scanned_expr = (
+        "ROUND(SUM(q.bytes_scanned) / POWER(1024, 3), 2)"
+        if "BYTES_SCANNED" in qh_cols else "0::FLOAT"
+    )
+    failed_expr = (
+        "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
+        if "ERROR_CODE" in qh_cols
+        else "SUM(IFF(q.execution_status = 'FAILED_WITH_ERROR', 1, 0))"
+    )
+    client_expr = (
+        "COALESCE(q.query_tag, 'UNTAGGED')"
+        if "QUERY_TAG" in qh_cols else "'UNTAGGED'"
+    )
     filters = get_global_filter_clause(
         date_col="q.start_time",
         wh_col="q.warehouse_name",
@@ -31,8 +50,8 @@ def _load_topology(session, days: int) -> dict:
             COALESCE(q.role_name, 'UNKNOWN') AS role_name,
             COUNT(*) AS query_count,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
-            ROUND(SUM(q.bytes_scanned) / POWER(1024, 3), 2) AS gb_scanned,
-            SUM(IFF(q.error_code IS NOT NULL, 1, 0)) AS failed_queries
+            {gb_scanned_expr} AS gb_scanned,
+            {failed_expr} AS failed_queries
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
@@ -49,7 +68,7 @@ def _load_topology(session, days: int) -> dict:
             COUNT(DISTINCT q.user_name) AS users,
             COUNT(DISTINCT q.role_name) AS roles,
             COUNT(*) AS query_count,
-            SUM(IFF(q.error_code IS NOT NULL, 1, 0)) AS failed_queries
+            {failed_expr} AS failed_queries
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
@@ -75,13 +94,13 @@ def _load_topology(session, days: int) -> dict:
 
     app_flow = run_query(f"""
         SELECT
-            COALESCE(q.query_tag, 'UNTAGGED') AS client_application,
+            {client_expr} AS client_application,
             q.warehouse_name,
             COALESCE(q.database_name, 'UNKNOWN') AS database_name,
             COUNT(DISTINCT q.user_name) AS users,
             COUNT(*) AS query_count,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
-            SUM(IFF(q.error_code IS NOT NULL, 1, 0)) AS failed_queries
+            {failed_expr} AS failed_queries
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL

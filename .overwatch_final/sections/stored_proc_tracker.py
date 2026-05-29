@@ -2,8 +2,8 @@
 import streamlit as st
 from utils import (
     get_session,
+    filter_existing_columns,
     run_query,
-    run_query_or_raise,
     format_snowflake_error,
     format_credits,
     credits_to_dollars,
@@ -18,13 +18,11 @@ from utils import (
 
 
 def _query_history_has_root_query_id(session) -> bool:
-    try:
-        df_cols = run_query_or_raise(
-            "SHOW COLUMNS LIKE 'ROOT_QUERY_ID' IN VIEW SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
-        )
-        return not df_cols.empty
-    except Exception:
-        return False
+    return bool(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["ROOT_QUERY_ID"],
+    ))
 
 
 def render():
@@ -54,7 +52,24 @@ def render():
     if st.button("Load Stored Proc Usage", key="sp_load"):
         try:
             has_root_query_id = _query_history_has_root_query_id(session)
+            qh_cols = set(filter_existing_columns(
+                session,
+                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                ["WAREHOUSE_SIZE", "BYTES_SCANNED", "CREDITS_USED_CLOUD_SERVICES"],
+            ))
             root_expr = "COALESCE(q.root_query_id, q.query_id)" if has_root_query_id else "q.query_id"
+            call_wh_size_expr = (
+                "warehouse_size"
+                if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+            )
+            child_bytes_expr = (
+                "q.bytes_scanned AS bytes_scanned"
+                if "BYTES_SCANNED" in qh_cols else "0::NUMBER AS bytes_scanned"
+            )
+            child_cloud_expr = (
+                "q.credits_used_cloud_services AS credits_used_cloud_services"
+                if "CREDITS_USED_CLOUD_SERVICES" in qh_cols else "0::FLOAT AS credits_used_cloud_services"
+            )
             df_sp = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=sp_days, include_recent=True)},
                 calls AS (
@@ -62,7 +77,7 @@ def render():
                            user_name,
                            role_name,
                            warehouse_name,
-                           warehouse_size,
+                           {call_wh_size_expr},
                            start_time,
                            REGEXP_SUBSTR(query_text, 'CALL\\\\s+([^\\\\(]+)', 1, 1, 'i', 1) AS procedure_name,
                            SUBSTR(query_text, 1, 500) AS call_text
@@ -76,8 +91,8 @@ def render():
                            q.query_id,
                            q.query_type,
                            q.total_elapsed_time,
-                           q.bytes_scanned,
-                           q.credits_used_cloud_services,
+                           {child_bytes_expr},
+                           {child_cloud_expr},
                            pqc.metered_credits,
                            SUBSTR(q.query_text, 1, 500) AS child_query_text
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
@@ -135,7 +150,20 @@ def render():
                 has_root_query_id = st.session_state.get("spt_has_root_query_id")
                 if has_root_query_id is None:
                     has_root_query_id = _query_history_has_root_query_id(session)
+                qh_cols = set(filter_existing_columns(
+                    session,
+                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                    ["WAREHOUSE_SIZE", "BYTES_SCANNED"],
+                ))
                 root_expr = "COALESCE(q.root_query_id, q.query_id)" if has_root_query_id else "q.query_id"
+                child_wh_size_expr = (
+                    "q.warehouse_size AS warehouse_size"
+                    if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+                )
+                child_gb_expr = (
+                    "q.bytes_scanned/POWER(1024,3) AS gb_scanned"
+                    if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
+                )
                 proc_exact = sql_literal(selected_proc)
                 proc_like = sql_literal('%' + selected_proc + '%')
                 df_child = run_query(f"""
@@ -148,10 +176,10 @@ def render():
                       AND (REGEXP_SUBSTR(query_text, 'CALL\\\\s+([^\\\\(]+)', 1, 1, 'i', 1) = {proc_exact}
                            OR query_text ILIKE {proc_like})
                 )
-                SELECT q.query_id, q.user_name, q.warehouse_name, q.warehouse_size, q.execution_status,
+                SELECT q.query_id, q.user_name, q.warehouse_name, {child_wh_size_expr}, q.execution_status,
                        q.query_type, q.start_time,
                        q.total_elapsed_time/1000 AS elapsed_sec,
-                       q.bytes_scanned/POWER(1024,3) AS gb_scanned,
+                       {child_gb_expr},
                        SUBSTR(q.query_text,1,4000) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                 JOIN roots r ON {root_expr} = r.root_query_id

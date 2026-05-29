@@ -3,6 +3,7 @@ import streamlit as st
 
 from utils import (
     download_csv,
+    filter_existing_columns,
     format_snowflake_error,
     get_active_company,
     get_global_filter_clause,
@@ -14,8 +15,34 @@ from utils import (
 
 
 def render():
-    get_session()
+    session = get_session()
     company = get_active_company()
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "WAREHOUSE_SIZE",
+            "BYTES_SCANNED",
+            "ROWS_PRODUCED",
+            "CREDITS_USED_CLOUD_SERVICES",
+        ],
+    ))
+    warehouse_size_expr = (
+        "warehouse_size AS warehouse_size"
+        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+    )
+    gb_scanned_expr = (
+        "bytes_scanned/POWER(1024,3) AS gb_scanned"
+        if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
+    )
+    rows_produced_expr = (
+        "rows_produced AS rows_produced"
+        if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
+    )
+    cloud_credits_expr = (
+        "credits_used_cloud_services AS cloud_credits"
+        if "CREDITS_USED_CLOUD_SERVICES" in qh_cols else "0::FLOAT AS cloud_credits"
+    )
 
     st.header("Query Search & History")
     st.caption("Full-text search over company-scoped ACCOUNT_USAGE.QUERY_HISTORY.")
@@ -51,11 +78,11 @@ def render():
 
         try:
             df_qs = run_query(f"""
-                SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
+                SELECT query_id, user_name, warehouse_name, {warehouse_size_expr}, execution_status,
                        start_time, total_elapsed_time/1000 AS elapsed_sec,
-                       bytes_scanned/POWER(1024,3) AS gb_scanned,
-                       rows_produced,
-                       credits_used_cloud_services AS cloud_credits,
+                       {gb_scanned_expr},
+                       {rows_produced_expr},
+                       {cloud_credits_expr},
                        SUBSTR(query_text,1,500) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                 WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())

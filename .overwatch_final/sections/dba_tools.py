@@ -20,6 +20,8 @@ from utils import (
     build_alert_task_sql,
     run_query, run_query_or_raise, sql_literal, safe_identifier,
     format_snowflake_error,
+    run_compatibility_checks, build_smoke_test_checklist,
+    build_cost_formula_audit, filter_existing_columns, build_task_history_sql,
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
@@ -166,6 +168,16 @@ def _load_task_inventory(session) -> pd.DataFrame:
     return df[df["NAME"] != ""].copy()
 
 
+def _task_history_sql(session, time_predicate: str, limit: int = 500) -> str:
+    """Build TASK_HISTORY SQL using only columns exposed by this account."""
+    return build_task_history_sql(
+        session,
+        time_predicate,
+        limit=limit,
+        company=get_active_company(),
+    )
+
+
 def _setup_status_df(session) -> pd.DataFrame:
     checks = [
         ("Saved Views", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_BOOKMARKS", build_bookmark_ddl),
@@ -202,6 +214,52 @@ def _setup_status_df(session) -> pd.DataFrame:
 def render():
     session = get_session()
     company = get_active_company()
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "WAREHOUSE_SIZE",
+            "BYTES_SCANNED",
+            "QUERY_TAG",
+            "QUEUED_OVERLOAD_TIME",
+            "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            "CREDITS_USED_CLOUD_SERVICES",
+        ],
+    ))
+    qh_warehouse_size_expr = (
+        "warehouse_size AS warehouse_size"
+        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+    )
+    qh_max_size_expr = (
+        "MAX(q.warehouse_size)"
+        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+    )
+    qh_plain_size_expr = (
+        "warehouse_size"
+        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+    )
+    qh_query_tag_expr = (
+        "query_tag AS query_tag"
+        if "QUERY_TAG" in qh_cols else "NULL::VARCHAR AS query_tag"
+    )
+    qh_task_indicator = (
+        "query_tag IS NOT NULL OR LOWER(query_text) LIKE '%execute task%'"
+        if "QUERY_TAG" in qh_cols else "LOWER(query_text) LIKE '%execute task%'"
+    )
+
+    tool_groups = {
+        "Warehouse Ops": "Query Kill List, Warehouse Settings, QAS Monitor, Task Graph Control",
+        "Data Movement": "Data Loading, Snowpipe Monitor, Dynamic Tables, Replication",
+        "Governance": "Network & Sessions, Unused Objects, Schema Compare, Recent Objects",
+        "Cost & Setup": "Pre-Aggregation, Serverless Costs, Cortex AI Limits, Usage Log, First-Time Setup",
+    }
+    selected_group = st.selectbox(
+        "DBA tool group",
+        list(tool_groups.keys()),
+        key="dba_tool_group",
+        help="Use this to orient the DBA toolkit. The tabs below wrap into multiple rows for readability.",
+    )
+    st.caption(tool_groups[selected_group])
 
     tabs = st.tabs([
         "Query Kill List",
@@ -230,7 +288,7 @@ def render():
         if _load_button("Load Kill List", "kl_load"):
             try:
                 df = run_query_or_raise(f"""
-                    SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status, start_time,
+                    SELECT query_id, user_name, warehouse_name, {qh_warehouse_size_expr}, execution_status, start_time,
                            DATEDIFF('second', start_time, COALESCE(end_time, CURRENT_TIMESTAMP())) AS elapsed_sec,
                            SUBSTR(query_text,1,500) AS query_text
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
@@ -590,7 +648,7 @@ def render():
                     WITH latest_size AS (
                         SELECT warehouse_name, warehouse_size
                         FROM (
-                            SELECT warehouse_name, warehouse_size,
+                            SELECT warehouse_name, {qh_plain_size_expr},
                                    ROW_NUMBER() OVER (PARTITION BY warehouse_name ORDER BY start_time DESC) AS rn
                             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                             WHERE start_time >= DATEADD('day', -{qas_days}, CURRENT_TIMESTAMP())
@@ -684,7 +742,7 @@ def render():
         preagg_wh     = st.text_input("Warehouse",     value="COMPUTE_WH",  key="preagg_wh")
         preagg_sql = f"""CREATE OR REPLACE TABLE {preagg_db}.{preagg_schema}.HOURLY_WAREHOUSE_CREDITS AS
 SELECT warehouse_name, DATE_TRUNC('hour', start_time) AS hour_bucket,
-       SUM(credits_used_compute) AS compute_credits, SUM(credits_used) AS total_credits
+       SUM(credits_used) AS compute_credits, SUM(credits_used) AS total_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
 WHERE start_time >= DATEADD('day', -90, CURRENT_TIMESTAMP())
   {get_wh_filter_clause("warehouse_name")}
@@ -700,17 +758,26 @@ GROUP BY warehouse_name, hour_bucket;"""
                 df_dyn = _scope_metadata_df(df_dyn)
                 if not df_dyn.empty:
                     try:
+                        refresh_object = "SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY"
+                        requested_cols = [
+                            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "STATE_CODE",
+                            "STATE_MESSAGE", "REFRESH_ACTION", "REFRESH_TRIGGER",
+                            "REFRESH_START_TIME", "REFRESH_END_TIME", "TARGET_LAG_SEC", "QUERY_ID",
+                        ]
+                        available_cols = filter_existing_columns(session, refresh_object, requested_cols)
+                        if "REFRESH_START_TIME" not in available_cols:
+                            raise ValueError("Dynamic table refresh history does not expose REFRESH_START_TIME.")
+                        db_filter = get_db_filter_clause("database_name") if "DATABASE_NAME" in available_cols else ""
                         df_refresh = run_query_or_raise(f"""
-                            SELECT *
-                            FROM SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY
+                            SELECT {", ".join(available_cols)}
+                            FROM {refresh_object}
                             WHERE refresh_start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                              {get_db_filter_clause("database_name")}
+                              {db_filter}
                             ORDER BY refresh_start_time DESC
                             LIMIT 5000
                         """)
                         if not df_refresh.empty and all(c in df_dyn.columns for c in ["DATABASE_NAME", "SCHEMA_NAME", "NAME"]):
                             refresh_cols = {
-                                "STATE": "LAST_REFRESH_STATE",
                                 "STATE_CODE": "LAST_REFRESH_STATE_CODE",
                                 "STATE_MESSAGE": "LAST_REFRESH_MESSAGE",
                                 "REFRESH_START_TIME": "LAST_REFRESH_START_TIME",
@@ -1067,20 +1134,17 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             if st.button("Load Running Task Queries", key="tg_run_load"):
                 try:
                     df_tq = run_query_or_raise(f"""
-                        SELECT query_id, user_name, warehouse_name, warehouse_size, execution_status,
+                        SELECT query_id, user_name, warehouse_name, {qh_warehouse_size_expr}, execution_status,
                                start_time,
                                DATEDIFF('second', start_time, COALESCE(end_time, CURRENT_TIMESTAMP())) AS elapsed_sec,
-                               query_tag,
+                               {qh_query_tag_expr},
                                SUBSTR(query_text, 1, 400) AS query_text
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                         WHERE start_time >= DATEADD('hours', -2, CURRENT_TIMESTAMP())
                           AND execution_status IN ('RUNNING','QUEUED','BLOCKED')
                           {get_wh_filter_clause("warehouse_name")}
                           {get_user_filter_clause("user_name")}
-                          AND (
-                              query_tag IS NOT NULL
-                              OR LOWER(query_text) LIKE '%execute task%'
-                          )
+                          AND ({qh_task_indicator})
                         ORDER BY start_time DESC
                         LIMIT 200
                     """)
@@ -1128,18 +1192,11 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             # Load recent task runs to get graph_run_id
             if st.button("Load Recent Task Runs", key="tg_runs_load"):
                 try:
-                    df_runs = run_query_or_raise(f"""
-                        SELECT *,
-                               DATEDIFF('second',
-                                   COALESCE(query_start_time, scheduled_time),
-                                   COALESCE(completed_time, CURRENT_TIMESTAMP())
-                               ) AS duration_sec
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-                        WHERE scheduled_time >= DATEADD('hours', -6, CURRENT_TIMESTAMP())
-                          {get_db_filter_clause("database_name")}
-                        ORDER BY scheduled_time DESC
-                        LIMIT 200
-                    """)
+                    df_runs = run_query_or_raise(_task_history_sql(
+                        session,
+                        "scheduled_time >= DATEADD('hours', -6, CURRENT_TIMESTAMP())",
+                        limit=200,
+                    ))
                     st.session_state["dba_df_task_runs"] = df_runs
                 except Exception as e:
                     st.warning(f"Task run history unavailable: {format_snowflake_error(e)}")
@@ -1418,18 +1475,13 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         if not df_dag.empty:
                             task_names = [str(v) for v in df_dag["NAME"].dropna().unique().tolist()]
                             try:
-                                df_hist = run_query_or_raise(f"""
-                                    SELECT *,
-                                           DATEDIFF('second',
-                                               COALESCE(query_start_time, scheduled_time),
-                                               COALESCE(completed_time, CURRENT_TIMESTAMP())
-                                           ) AS last_duration_sec
-                                    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-                                    WHERE scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                                      {get_db_filter_clause("database_name")}
-                                    ORDER BY scheduled_time DESC
-                                    LIMIT 500
-                                """)
+                                df_hist = run_query_or_raise(_task_history_sql(
+                                    session,
+                                    "scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
+                                    limit=500,
+                                ))
+                                if "DURATION_SEC" in df_hist.columns:
+                                    df_hist = df_hist.rename(columns={"DURATION_SEC": "LAST_DURATION_SEC"})
                                 if not df_hist.empty:
                                     if "NAME" not in df_hist.columns and "TASK_NAME" in df_hist.columns:
                                         df_hist = df_hist.rename(columns={"TASK_NAME": "NAME"})
@@ -1553,9 +1605,41 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
     with tabs[16]:
         st.header("🔧 First-Time Setup")
         st.caption(
-            "Check the persistent OVERWATCH objects used by saved views, annotations, "
-            "action queue, alert history, usage logging, and value tracking."
+            "Run this before demos or deployment. It checks Snowflake view access, "
+            "optional column availability, persistent OVERWATCH objects, calculation "
+            "confidence, and the live smoke-test checklist."
         )
+
+        st.subheader("Snowflake Compatibility Check")
+        st.caption(
+            "Validates required ACCOUNT_USAGE views, optional columns that vary by account, "
+            "and SHOW commands used by DBA operations."
+        )
+        if st.button("Run Compatibility Check", key="compatibility_check_load"):
+            st.session_state["dba_compatibility_status"] = run_compatibility_checks(session)
+
+        if st.session_state.get("dba_compatibility_status") is not None:
+            compat_df = st.session_state["dba_compatibility_status"]
+            if not compat_df.empty:
+                ready_count = int((compat_df["STATUS"] == "Ready").sum())
+                limited_count = int((compat_df["STATUS"] == "Limited").sum())
+                blocked_count = int((~compat_df["STATUS"].isin(["Ready", "Limited"])).sum())
+                c_ready, c_limited, c_blocked = st.columns(3)
+                c_ready.metric("Ready", f"{ready_count:,}")
+                c_limited.metric("Limited", f"{limited_count:,}")
+                c_blocked.metric("Blocked", f"{blocked_count:,}")
+                st.dataframe(compat_df, use_container_width=True, hide_index=True)
+                download_csv(compat_df, "overwatch_compatibility_check.csv")
+
+                blocked = compat_df[~compat_df["STATUS"].isin(["Ready", "Limited"])]
+                if not blocked.empty:
+                    st.warning(
+                        "Some checks are blocked. Affected sections should show graceful "
+                        "limited-data messages instead of crashing."
+                    )
+
+        st.divider()
+        st.subheader("Persistent Setup Objects")
 
         c1, c2 = st.columns([1, 2])
         with c1:
@@ -1579,6 +1663,18 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             m3.metric("Unknown", f"{unknown_count:,}")
             st.dataframe(status_df, use_container_width=True, hide_index=True)
 
+        st.divider()
+        st.subheader("Cost Formula Confidence")
+        cost_formula_df = build_cost_formula_audit()
+        st.dataframe(cost_formula_df, use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.subheader("Live Smoke-Test Checklist")
+        smoke_df = build_smoke_test_checklist()
+        st.dataframe(smoke_df, use_container_width=True, hide_index=True)
+        download_csv(smoke_df, "overwatch_smoke_test_checklist.csv")
+
+        st.divider()
         setup_sql = build_overwatch_setup_bundle()
         st.download_button(
             "Download Full Setup SQL",

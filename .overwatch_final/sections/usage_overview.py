@@ -11,6 +11,7 @@ from utils import (
     get_global_filter_clause,
     get_session,
     get_wh_filter_clause,
+    filter_existing_columns,
     render_drillable_bar_chart,
     run_query,
     sql_literal,
@@ -22,6 +23,62 @@ def _load_overview(session, days: int) -> dict:
     company = get_active_company()
     wh_filter = get_wh_filter_clause("warehouse_name")
     db_filter = get_db_filter_clause("database_name")
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "ERROR_CODE",
+            "QUEUED_OVERLOAD_TIME",
+            "QUEUED_PROVISIONING_TIME",
+            "QUEUED_REPAIR_TIME",
+            "CREDITS_USED_CLOUD_SERVICES",
+        ],
+    ))
+    wm_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+        ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
+    ))
+    success_expr = (
+        "SUM(IFF(q.error_code IS NULL, 1, 0))"
+        if "ERROR_CODE" in qh_cols
+        else "SUM(IFF(q.execution_status = 'SUCCESS', 1, 0))"
+    )
+    failed_expr = (
+        "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
+        if "ERROR_CODE" in qh_cols
+        else "SUM(IFF(q.execution_status = 'FAILED_WITH_ERROR', 1, 0))"
+    )
+    failed_count_expr = (
+        "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
+        if "ERROR_CODE" in qh_cols
+        else "SUM(IFF(q.execution_status = 'FAILED_WITH_ERROR', 1, 0))"
+    )
+    queue_terms = [
+        f"q.{col.lower()} > 0"
+        for col in ("QUEUED_OVERLOAD_TIME", "QUEUED_PROVISIONING_TIME", "QUEUED_REPAIR_TIME")
+        if col in qh_cols
+    ]
+    queued_expr = (
+        "SUM(IFF(" + " OR ".join(queue_terms) + ", 1, 0))"
+        if queue_terms
+        else "0"
+    )
+    qh_cloud_expr = (
+        "ROUND(SUM(COALESCE(q.credits_used_cloud_services, 0)), 4)"
+        if "CREDITS_USED_CLOUD_SERVICES" in qh_cols
+        else "0"
+    )
+    wm_compute_expr = (
+        "ROUND(SUM(credits_used_compute), 4)"
+        if "CREDITS_USED_COMPUTE" in wm_cols
+        else "ROUND(SUM(credits_used), 4)"
+    )
+    wm_cloud_expr = (
+        "ROUND(SUM(credits_used_cloud_services), 4)"
+        if "CREDITS_USED_CLOUD_SERVICES" in wm_cols
+        else "0"
+    )
     q_filters = get_global_filter_clause(
         date_col="q.start_time",
         wh_col="q.warehouse_name",
@@ -35,12 +92,12 @@ def _load_overview(session, days: int) -> dict:
             COUNT(*) AS total_queries,
             COUNT(DISTINCT q.user_name) AS total_users,
             COUNT(DISTINCT q.database_name) AS active_databases,
-            ROUND(100 * SUM(IFF(q.error_code IS NULL, 1, 0)) / NULLIF(COUNT(*), 0), 1) AS query_success_rate,
-            SUM(IFF(q.error_code IS NOT NULL, 1, 0)) AS failed_queries,
-            SUM(IFF(q.queued_overload_time > 0 OR q.queued_provisioning_time > 0 OR q.queued_repair_time > 0, 1, 0)) AS queued_queries,
+            ROUND(100 * {success_expr} / NULLIF(COUNT(*), 0), 1) AS query_success_rate,
+            {failed_expr} AS failed_queries,
+            {queued_expr} AS queued_queries,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
             ROUND(AVG(q.execution_time) / 1000, 2) AS avg_execution_sec,
-            ROUND(SUM(COALESCE(q.credits_used_cloud_services, 0)), 4) AS cloud_service_credits
+            {qh_cloud_expr} AS cloud_service_credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
@@ -50,8 +107,8 @@ def _load_overview(session, days: int) -> dict:
     metering = run_query(f"""
         SELECT
             ROUND(SUM(credits_used), 4) AS total_credits,
-            ROUND(SUM(credits_used_compute), 4) AS compute_credits,
-            ROUND(SUM(credits_used_cloud_services), 4) AS warehouse_cloud_credits
+            {wm_compute_expr} AS compute_credits,
+            {wm_cloud_expr} AS warehouse_cloud_credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           {wh_filter}
@@ -76,8 +133,8 @@ def _load_overview(session, days: int) -> dict:
         SELECT
             warehouse_name,
             ROUND(SUM(credits_used), 4) AS total_credits,
-            ROUND(SUM(credits_used_compute), 4) AS compute_credits,
-            ROUND(SUM(credits_used_cloud_services), 4) AS cloud_credits
+            {wm_compute_expr} AS compute_credits,
+            {wm_cloud_expr} AS cloud_credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           {wh_filter}
@@ -92,7 +149,7 @@ def _load_overview(session, days: int) -> dict:
             COUNT(*) AS query_count,
             COUNT(DISTINCT q.user_name) AS users,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
-            SUM(IFF(q.error_code IS NOT NULL, 1, 0)) AS failed_queries
+            {failed_count_expr} AS failed_queries
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL

@@ -497,6 +497,7 @@ hr {
     border-radius: 10px;
     padding: 4px;
     overflow-x: auto;
+    flex-wrap: wrap;
     scrollbar-width: thin;
 }
 .stTabs [data-baseweb="tab"] {
@@ -506,6 +507,7 @@ hr {
     font-family: var(--font-body) !important;
     min-height: 36px;
     white-space: nowrap;
+    padding: 6px 10px;
 }
 .stTabs [aria-selected="true"] {
     background: var(--tab-active-bg) !important;
@@ -720,7 +722,19 @@ _STREAMLIT_ICON_FIX = """
 .stApp [data-testid="stIconMaterial"],
 [data-testid="stSidebar"] [data-testid="stIconMaterial"],
 .stExpander [data-testid="stIconMaterial"],
-summary [data-testid="stIconMaterial"] {
+summary [data-testid="stIconMaterial"],
+[data-testid="stSidebar"] .material-symbols-rounded,
+[data-testid="stSidebar"] .material-symbols-outlined,
+[data-testid="stSidebar"] .material-icons,
+[data-testid="stSidebar"] span[translate="no"],
+.stExpander .material-symbols-rounded,
+.stExpander .material-symbols-outlined,
+.stExpander .material-icons,
+.stExpander span[translate="no"],
+details summary .material-symbols-rounded,
+details summary .material-symbols-outlined,
+details summary .material-icons,
+details summary span[translate="no"] {
     display: inline-block !important;
     width: 0 !important;
     min-width: 0 !important;

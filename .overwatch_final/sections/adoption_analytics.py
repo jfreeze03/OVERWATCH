@@ -4,6 +4,7 @@ import streamlit as st
 
 from utils import (
     download_csv,
+    filter_existing_columns,
     get_active_company,
     get_global_filter_clause,
     get_session,
@@ -22,6 +23,24 @@ def _load_adoption(session, days: int) -> dict:
         role_col="q.role_name",
         db_col="q.database_name",
     )
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["WAREHOUSE_SIZE", "ERROR_CODE", "QUERY_TAG"],
+    ))
+    warehouse_size_expr = (
+        "COALESCE(q.warehouse_size, 'UNKNOWN')"
+        if "WAREHOUSE_SIZE" in qh_cols else "'UNKNOWN'"
+    )
+    error_count_expr = (
+        "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
+        if "ERROR_CODE" in qh_cols
+        else "SUM(IFF(q.execution_status = 'FAILED_WITH_ERROR', 1, 0))"
+    )
+    client_application_expr = (
+        "COALESCE(q.query_tag, 'UNTAGGED')"
+        if "QUERY_TAG" in qh_cols else "'UNTAGGED'"
+    )
 
     summary = run_query(f"""
         SELECT
@@ -29,7 +48,7 @@ def _load_adoption(session, days: int) -> dict:
             COUNT(DISTINCT q.user_name) AS total_users,
             ROUND(COUNT(*) / NULLIF(COUNT(DISTINCT q.user_name), 0), 1) AS queries_per_user,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_time_per_query_sec,
-            ROUND(100 * SUM(IFF(q.error_code IS NOT NULL, 1, 0)) / NULLIF(COUNT(*), 0), 1) AS error_rate
+            ROUND(100 * {error_count_expr} / NULLIF(COUNT(*), 0), 1) AS error_rate
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
@@ -38,7 +57,7 @@ def _load_adoption(session, days: int) -> dict:
 
     warehouse_size = run_query(f"""
         SELECT
-            COALESCE(q.warehouse_size, 'UNKNOWN') AS warehouse_size,
+            {warehouse_size_expr} AS warehouse_size,
             COUNT(*) AS query_count,
             COUNT(DISTINCT q.user_name) AS users,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec
@@ -56,7 +75,7 @@ def _load_adoption(session, days: int) -> dict:
             COUNT(*) AS total_queries,
             COUNT(DISTINCT q.user_name) AS users,
             ROUND(COUNT(*) / NULLIF(COUNT(DISTINCT q.user_name), 0), 1) AS queries_per_user,
-            ROUND(100 * SUM(IFF(q.error_code IS NOT NULL, 1, 0)) / NULLIF(COUNT(*), 0), 1) AS error_rate
+            ROUND(100 * {error_count_expr} / NULLIF(COUNT(*), 0), 1) AS error_rate
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
@@ -112,10 +131,10 @@ def _load_adoption(session, days: int) -> dict:
 
     applications = run_query(f"""
         SELECT
-            COALESCE(q.query_tag, 'UNTAGGED') AS client_application,
+            {client_application_expr} AS client_application,
             COUNT(*) AS query_count,
             COUNT(DISTINCT q.user_name) AS users,
-            ROUND(100 * SUM(IFF(q.error_code IS NOT NULL, 1, 0)) / NULLIF(COUNT(*), 0), 1) AS error_rate
+            ROUND(100 * {error_count_expr} / NULLIF(COUNT(*), 0), 1) AS error_rate
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL

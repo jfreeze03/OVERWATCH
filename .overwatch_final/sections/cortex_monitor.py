@@ -11,6 +11,7 @@ from utils import (
     credits_to_dollars,
     download_csv,
     get_user_filter_clause,
+    filter_existing_columns,
     render_drillable_bar_chart,
     run_query,
 )
@@ -387,14 +388,40 @@ def render():
             st.subheader("🔄 Materialized View Refresh History")
             if st.button("Load MV Refresh History", key="mv_refresh_load"):
                 try:
+                    mv_object = "SNOWFLAKE.ACCOUNT_USAGE.MATERIALIZED_VIEW_REFRESH_HISTORY"
+                    mv_cols = set(filter_existing_columns(
+                        session,
+                        mv_object,
+                        [
+                            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "CREDITS_USED",
+                            "BYTES_WRITTEN", "ROWS_INSERTED", "REFRESH_START_TIME",
+                            "REFRESH_END_TIME",
+                        ],
+                    ))
+                    if "REFRESH_START_TIME" not in mv_cols:
+                        raise ValueError("MATERIALIZED_VIEW_REFRESH_HISTORY does not expose REFRESH_START_TIME.")
+
+                    def _mv_expr(col: str, fallback: str, alias: str) -> str:
+                        return f"{col.lower()} AS {alias}" if col in mv_cols else f"{fallback} AS {alias}"
+
+                    refresh_end_raw = "refresh_end_time" if "REFRESH_END_TIME" in mv_cols else "CURRENT_TIMESTAMP()"
+                    mv_db_filter = (
+                        get_db_filter_clause("database_name", company)
+                        if "DATABASE_NAME" in mv_cols else ""
+                    )
                     df_mv = run_query(f"""
-                        SELECT database_name, schema_name, name AS mv_name,
-                               credits_used, bytes_written, rows_inserted,
-                               refresh_start_time, refresh_end_time,
-                               DATEDIFF('second', refresh_start_time, refresh_end_time) AS duration_sec
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.MATERIALIZED_VIEW_REFRESH_HISTORY
+                        SELECT {_mv_expr("DATABASE_NAME", "NULL::VARCHAR", "database_name")},
+                               {_mv_expr("SCHEMA_NAME", "NULL::VARCHAR", "schema_name")},
+                               {_mv_expr("NAME", "NULL::VARCHAR", "mv_name")},
+                               {_mv_expr("CREDITS_USED", "0::FLOAT", "credits_used")},
+                               {_mv_expr("BYTES_WRITTEN", "0::NUMBER", "bytes_written")},
+                               {_mv_expr("ROWS_INSERTED", "0::NUMBER", "rows_inserted")},
+                               refresh_start_time,
+                               {_mv_expr("REFRESH_END_TIME", "NULL::TIMESTAMP_NTZ", "refresh_end_time")},
+                               DATEDIFF('second', refresh_start_time, {refresh_end_raw}) AS duration_sec
+                        FROM {mv_object}
                         WHERE refresh_start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
-                          {get_db_filter_clause("database_name", company)}
+                          {mv_db_filter}
                         ORDER BY credits_used DESC LIMIT 100
                     """, ttl_key=f"cortex_mv_refresh_{company}", tier="standard")
                     if not df_mv.empty:

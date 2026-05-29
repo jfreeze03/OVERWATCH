@@ -7,6 +7,7 @@ from utils import (
     get_active_company,
     get_global_filter_clause,
     get_session,
+    filter_existing_columns,
     render_query_drilldown,
     run_query,
     sql_literal,
@@ -27,6 +28,52 @@ DIAG_MODES = {
 def _load_diagnosis(session, days: int, mode: str, limit: int):
     company = get_active_company()
     order_col, _, _ = DIAG_MODES[mode]
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "WAREHOUSE_SIZE", "ERROR_CODE", "ERROR_MESSAGE", "COMPILATION_TIME",
+            "EXECUTION_TIME", "QUEUED_OVERLOAD_TIME", "QUEUED_PROVISIONING_TIME",
+            "TRANSACTION_BLOCKED_TIME", "BYTES_SCANNED",
+            "BYTES_SPILLED_TO_LOCAL_STORAGE", "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            "ROWS_PRODUCED", "PARTITIONS_SCANNED", "PARTITIONS_TOTAL",
+            "CREDITS_USED_CLOUD_SERVICES", "PERCENTAGE_SCANNED_FROM_CACHE",
+        ],
+    ))
+    if order_col.upper() not in qh_cols and order_col.upper() not in {
+        "TOTAL_ELAPSED_TIME",
+        "START_TIME",
+    }:
+        raise ValueError(f"{mode} diagnosis requires {order_col}, which this Snowflake account does not expose.")
+
+    def _num_expr(column: str, alias: str, divisor: str | None = None) -> str:
+        if column.upper() not in qh_cols:
+            return f"0::FLOAT AS {alias}"
+        expr = f"q.{column.lower()}"
+        if divisor:
+            expr = f"{expr} / {divisor}"
+        return f"{expr} AS {alias}"
+
+    warehouse_size_expr = (
+        "q.warehouse_size"
+        if "WAREHOUSE_SIZE" in qh_cols
+        else "NULL::VARCHAR AS warehouse_size"
+    )
+    error_code_expr = (
+        "q.error_code"
+        if "ERROR_CODE" in qh_cols
+        else "NULL::VARCHAR AS error_code"
+    )
+    error_message_expr = (
+        "q.error_message"
+        if "ERROR_MESSAGE" in qh_cols
+        else "NULL::VARCHAR AS error_message"
+    )
+    cloud_expr = (
+        "q.credits_used_cloud_services AS cloud_credits"
+        if "CREDITS_USED_CLOUD_SERVICES" in qh_cols
+        else "0::FLOAT AS cloud_credits"
+    )
     filters = get_global_filter_clause(
         date_col="q.start_time",
         wh_col="q.warehouse_name",
@@ -40,27 +87,27 @@ def _load_diagnosis(session, days: int, mode: str, limit: int):
             q.user_name,
             q.role_name,
             q.warehouse_name,
-            q.warehouse_size,
+            {warehouse_size_expr},
             q.database_name,
             q.schema_name,
             q.query_type,
             q.execution_status,
-            q.error_code,
-            q.error_message,
+            {error_code_expr},
+            {error_message_expr},
             q.start_time,
             q.total_elapsed_time / 1000 AS elapsed_sec,
-            q.compilation_time / 1000 AS compile_sec,
-            q.execution_time / 1000 AS exec_sec,
-            q.queued_overload_time / 1000 AS queued_sec,
-            q.queued_provisioning_time / 1000 AS queued_provisioning_sec,
-            q.transaction_blocked_time / 1000 AS blocked_sec,
-            q.bytes_scanned / POWER(1024, 3) AS gb_scanned,
-            q.bytes_spilled_to_local_storage / POWER(1024, 3) AS local_spill_gb,
-            q.bytes_spilled_to_remote_storage / POWER(1024, 3) AS remote_spill_gb,
-            q.rows_produced,
-            q.partitions_scanned,
-            q.partitions_total,
-            q.credits_used_cloud_services AS cloud_credits,
+            {_num_expr("COMPILATION_TIME", "compile_sec", "1000")},
+            {_num_expr("EXECUTION_TIME", "exec_sec", "1000")},
+            {_num_expr("QUEUED_OVERLOAD_TIME", "queued_sec", "1000")},
+            {_num_expr("QUEUED_PROVISIONING_TIME", "queued_provisioning_sec", "1000")},
+            {_num_expr("TRANSACTION_BLOCKED_TIME", "blocked_sec", "1000")},
+            {_num_expr("BYTES_SCANNED", "gb_scanned", "POWER(1024, 3)")},
+            {_num_expr("BYTES_SPILLED_TO_LOCAL_STORAGE", "local_spill_gb", "POWER(1024, 3)")},
+            {_num_expr("BYTES_SPILLED_TO_REMOTE_STORAGE", "remote_spill_gb", "POWER(1024, 3)")},
+            {_num_expr("ROWS_PRODUCED", "rows_produced")},
+            {_num_expr("PARTITIONS_SCANNED", "partitions_scanned")},
+            {_num_expr("PARTITIONS_TOTAL", "partitions_total")},
+            {cloud_expr},
             SUBSTR(q.query_text, 1, 4000) AS query_text
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())

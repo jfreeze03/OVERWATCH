@@ -8,9 +8,11 @@ from utils import (
     build_alert_task_sql,
     build_annotation_ddl,
     build_idle_warehouse_sql,
+    build_task_failure_summary_sql,
     company_value_allowed,
     credits_to_dollars,
     download_csv,
+    filter_existing_columns,
     format_snowflake_error,
     format_credits,
     get_db_filter_clause,
@@ -352,8 +354,19 @@ def render():
                 pass
 
             try:
+                qh_cols = set(filter_existing_columns(
+                    session,
+                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                    ["WAREHOUSE_SIZE", "BYTES_SPILLED_TO_REMOTE_STORAGE"],
+                ))
+                if "BYTES_SPILLED_TO_REMOTE_STORAGE" not in qh_cols:
+                    raise ValueError("Remote spill column is not exposed in QUERY_HISTORY.")
+                spill_wh_size_expr = (
+                    "MAX(warehouse_size)"
+                    if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+                )
                 df_spill = run_query(f"""
-                    SELECT warehouse_name, MAX(warehouse_size) AS warehouse_size,
+                    SELECT warehouse_name, {spill_wh_size_expr} AS warehouse_size,
                            ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3), 2) AS remote_gb
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
@@ -385,17 +398,18 @@ def render():
                 pass
 
             try:
-                df_ftask = run_query(f"""
-                    SELECT COALESCE(root_task_id, query_id) AS task_name, COUNT(*) AS failures
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
-                    WHERE scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                      AND state = 'FAILED'
-                      {get_db_filter_clause("database_name", company)}
-                    GROUP BY COALESCE(root_task_id, query_id)
-                    HAVING failures > 3
-                    ORDER BY failures DESC
-                    LIMIT 5
-                """, ttl_key=f"rec_failed_tasks_{company}", tier="historical")
+                failed_task_sql = build_task_failure_summary_sql(
+                    session,
+                    "scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
+                    limit=25,
+                    company=company,
+                )
+                df_ftask = run_query(
+                    f"WITH failed_tasks AS ({failed_task_sql}) "
+                    "SELECT * FROM failed_tasks WHERE failures > 3 ORDER BY failures DESC LIMIT 5",
+                    ttl_key=f"rec_failed_tasks_{company}",
+                    tier="historical",
+                )
                 for _, row in df_ftask.iterrows():
                     task_name = str(row["TASK_NAME"])
                     recs.append({

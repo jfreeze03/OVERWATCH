@@ -6,7 +6,7 @@ from utils import (
     format_snowflake_error,
     render_drillable_bar_chart, get_active_company, get_wh_filter_clause,
     get_global_filter_clause, run_query, build_idle_warehouse_sql,
-    metric_confidence_label,
+    metric_confidence_label, filter_existing_columns,
 )
 from config import THRESHOLDS
 
@@ -15,6 +15,42 @@ def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     company = get_active_company()
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "CREDITS_USED_CLOUD_SERVICES",
+            "QUEUED_OVERLOAD_TIME",
+            "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            "PERCENTAGE_SCANNED_FROM_CACHE",
+            "WAREHOUSE_SIZE",
+        ],
+    ))
+    duplicate_cloud_expr = (
+        "SUM(credits_used_cloud_services)"
+        if "CREDITS_USED_CLOUD_SERVICES" in qh_cols
+        else "0"
+    )
+    sizing_wh_size_expr = (
+        "MAX(warehouse_size)"
+        if "WAREHOUSE_SIZE" in qh_cols
+        else "NULL::VARCHAR"
+    )
+    sizing_queue_expr = (
+        "AVG(queued_overload_time) / 1000"
+        if "QUEUED_OVERLOAD_TIME" in qh_cols
+        else "0"
+    )
+    sizing_spill_expr = (
+        "SUM(bytes_spilled_to_remote_storage) / POWER(1024, 3)"
+        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+        else "0"
+    )
+    sizing_cache_expr = (
+        "AVG(percentage_scanned_from_cache)"
+        if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols
+        else "0"
+    )
     query_filters = get_global_filter_clause(
         date_col="start_time",
         wh_col="warehouse_name",
@@ -89,7 +125,7 @@ def render():
                            COUNT(*)                  AS execution_count,
                            SUM(total_elapsed_time)/1000/COUNT(*) AS avg_elapsed_sec,
                            SUM(total_elapsed_time)/1000          AS total_wasted_sec,
-                           SUM(credits_used_cloud_services)      AS cloud_credits
+                           {duplicate_cloud_expr}                AS cloud_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -{dup_days}, CURRENT_TIMESTAMP())
                       AND execution_status = 'SUCCESS'
@@ -123,11 +159,11 @@ def render():
                     WITH query_stats AS (
                         SELECT
                             warehouse_name,
-                            MAX(warehouse_size) AS warehouse_size,
+                            {sizing_wh_size_expr} AS warehouse_size,
                             COUNT(*) AS total_queries,
-                            AVG(queued_overload_time) / 1000 AS avg_queue_sec,
-                            SUM(bytes_spilled_to_remote_storage) / POWER(1024, 3) AS remote_spill_gb,
-                            AVG(percentage_scanned_from_cache) AS avg_cache_pct
+                            {sizing_queue_expr} AS avg_queue_sec,
+                            {sizing_spill_expr} AS remote_spill_gb,
+                            {sizing_cache_expr} AS avg_cache_pct
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                         WHERE start_time >= DATEADD('day', -{sz_days}, CURRENT_TIMESTAMP())
                           AND warehouse_name IS NOT NULL

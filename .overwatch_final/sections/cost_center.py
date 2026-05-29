@@ -6,7 +6,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from utils import (
     get_session, format_credits, credits_to_dollars,
-    download_csv, build_metered_credit_cte,
+    download_csv, build_metered_credit_cte, build_cost_reconciliation_sql,
     burn_trend_label,
     metric_confidence_label, freshness_note,
     get_db_filter_clause, get_wh_filter_clause, get_user_filter_clause,
@@ -94,8 +94,8 @@ def render():
         if "QUERY_TAG" in qh_cols else "'UNTAGGED'"
     )
 
-    tab_leader, tab_burn, tab_forecast, tab_budget, tab_attr, tab_chargeback, tab_contract = st.tabs([
-        "User Leaderboard", "Burn Rate", "Forecast", "Budget vs Actual",
+    tab_leader, tab_burn, tab_recon, tab_forecast, tab_budget, tab_attr, tab_chargeback, tab_contract = st.tabs([
+        "User Leaderboard", "Burn Rate", "Reconciliation", "Forecast", "Budget vs Actual",
         "Attribution", "Chargeback", "📋 Contract Utilization"
     ])
     st.caption(
@@ -236,6 +236,44 @@ def render():
                 lookback_hours=br_days * 24,
             )
             download_csv(df_b, "burn_rate.csv")
+
+    # -- COST RECONCILIATION -------------------------------------------------
+    with tab_recon:
+        st.header("Cost Reconciliation")
+        st.caption(
+            "Compares exact warehouse metering to query-level allocated credits. "
+            "Large variances usually mean idle warehouse time, non-query activity, latency, or chargeback assumptions need review."
+        )
+        recon_days = st.slider("Reconciliation window (days)", 7, 90, 30, key="cc_recon_days")
+        if st.button("Load Reconciliation", key="cc_recon_load"):
+            try:
+                st.session_state["df_cc_recon"] = run_query(
+                    build_cost_reconciliation_sql(recon_days),
+                    ttl_key=f"cc_recon_{company}_{recon_days}",
+                    tier="standard",
+                    section="Cost Center",
+                )
+            except Exception as e:
+                st.warning(f"Cost reconciliation unavailable in this role/context: {format_snowflake_error(e)}")
+
+        if st.session_state.get("df_cc_recon") is not None and not st.session_state["df_cc_recon"].empty:
+            df_r = st.session_state["df_cc_recon"]
+            total_exact = float(df_r["EXACT_METERED_CREDITS"].sum()) if "EXACT_METERED_CREDITS" in df_r.columns else 0.0
+            total_alloc = float(df_r["ALLOCATED_QUERY_CREDITS"].sum()) if "ALLOCATED_QUERY_CREDITS" in df_r.columns else 0.0
+            total_var = total_exact - total_alloc
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Exact Metered", format_credits(total_exact))
+            c2.metric("Allocated to Queries", format_credits(total_alloc))
+            c3.metric("Unallocated / Variance", format_credits(total_var))
+            st.caption(
+                f"{metric_confidence_label('exact')} for metering; "
+                f"{metric_confidence_label('allocated')} for query attribution | "
+                f"{freshness_note('WAREHOUSE_METERING_HISTORY')}"
+            )
+            if "RECONCILIATION_STATUS" in df_r.columns:
+                st.bar_chart(df_r["RECONCILIATION_STATUS"].value_counts())
+            st.dataframe(df_r, use_container_width=True, height=420)
+            download_csv(df_r, "cost_reconciliation.csv")
 
     # ── FORECAST ──────────────────────────────────────────────────────────────
     with tab_forecast:

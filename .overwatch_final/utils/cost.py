@@ -7,8 +7,9 @@ from config import CREDIT_RATES, COMPUTE_CREDIT_CASE, DEFAULTS
 __all__ = [
     "format_credits", "credits_to_dollars", "estimate_live_credits",
     "build_metered_credit_cte", "build_idle_warehouse_sql",
-    "build_monitoring_cost_sql", "build_app_runtime_cost_sql", "metric_confidence_label",
-    "freshness_note", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
+    "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
+    "build_cost_reconciliation_sql", "metric_confidence_label", "freshness_note",
+    "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
 ]
 
 
@@ -343,6 +344,82 @@ def build_app_runtime_cost_sql(days_back: int = 30) -> str:
             WITHIN GROUP (ORDER BY credits DESC) AS app_warehouse,
         COUNT_IF(COALESCE(credits, 0) > 0) AS measured_components
     FROM components
+    """
+
+
+def build_cost_reconciliation_sql(days_back: int = 30) -> str:
+    """Compare exact warehouse credits to allocated query credits by warehouse/day.
+
+    WAREHOUSE_METERING_HISTORY is the source of truth. Query-level costs are
+    allocated by execution-time share and will not always reconcile perfectly
+    when warehouses are idle, when cloud services are involved, or when
+    ACCOUNT_USAGE has latency.
+    """
+    days_back = max(1, int(days_back or 30))
+    try:
+        from .company_filter import get_wh_filter_clause
+
+        metered_scope = get_wh_filter_clause("warehouse_name")
+        query_scope = get_wh_filter_clause("q.warehouse_name")
+    except Exception:
+        metered_scope = ""
+        query_scope = ""
+
+    return f"""
+    WITH metered_daily AS (
+        SELECT
+            DATE_TRUNC('day', start_time) AS usage_day,
+            warehouse_name,
+            ROUND(SUM(credits_used), 6) AS exact_metered_credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+        WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+          AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+          {metered_scope}
+        GROUP BY usage_day, warehouse_name
+    ),
+    {build_metered_credit_cte(days_back=days_back, include_recent=False)},
+    allocated_daily AS (
+        SELECT
+            DATE_TRUNC('day', q.start_time) AS usage_day,
+            q.warehouse_name,
+            COUNT(*) AS query_count,
+            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 6) AS allocated_query_credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        LEFT JOIN per_query_credits pqc
+          ON q.query_id = pqc.query_id
+        WHERE q.start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+          AND q.start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+          AND q.warehouse_name IS NOT NULL
+          {query_scope}
+        GROUP BY usage_day, q.warehouse_name
+    )
+    SELECT
+        COALESCE(m.usage_day, a.usage_day) AS usage_day,
+        COALESCE(m.warehouse_name, a.warehouse_name) AS warehouse_name,
+        COALESCE(a.query_count, 0) AS query_count,
+        COALESCE(m.exact_metered_credits, 0) AS exact_metered_credits,
+        COALESCE(a.allocated_query_credits, 0) AS allocated_query_credits,
+        ROUND(COALESCE(m.exact_metered_credits, 0) - COALESCE(a.allocated_query_credits, 0), 6) AS variance_credits,
+        ROUND(
+            100 * ABS(COALESCE(m.exact_metered_credits, 0) - COALESCE(a.allocated_query_credits, 0))
+            / NULLIF(COALESCE(m.exact_metered_credits, 0), 0),
+            2
+        ) AS variance_pct,
+        CASE
+            WHEN COALESCE(m.exact_metered_credits, 0) = 0 THEN 'No metering'
+            WHEN ABS(COALESCE(m.exact_metered_credits, 0) - COALESCE(a.allocated_query_credits, 0))
+                 <= GREATEST(0.05, COALESCE(m.exact_metered_credits, 0) * 0.05) THEN 'Reconciled'
+            WHEN COALESCE(a.query_count, 0) = 0 THEN 'Idle or non-query warehouse usage'
+            ELSE 'Variance review'
+        END AS reconciliation_status
+    FROM metered_daily m
+    FULL OUTER JOIN allocated_daily a
+      ON m.usage_day = a.usage_day
+     AND m.warehouse_name = a.warehouse_name
+    ORDER BY
+        ABS(COALESCE(m.exact_metered_credits, 0) - COALESCE(a.allocated_query_credits, 0)) DESC,
+        usage_day DESC,
+        warehouse_name
     """
 
 

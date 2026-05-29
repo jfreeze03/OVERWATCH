@@ -7,6 +7,8 @@ from utils import (
     get_session,
     format_credits,
     credits_to_dollars,
+    metric_confidence_label,
+    freshness_note,
     download_csv,
     format_snowflake_error,
     run_query,
@@ -81,6 +83,8 @@ def render():
             c2.metric("Failsafe GB",  f"{float(latest.get('FAILSAFE_GB',0)):,.1f}")
             c3.metric("Stage GB",     f"{float(latest.get('STAGE_GB',0)):,.1f}")
             c4.metric("Est Monthly Cost", f"${total_tb * storage_cost_per_tb:,.2f}")
+            confidence = "account-wide" if company != "ALL" else "exact"
+            st.caption(f"{metric_confidence_label(confidence)} | {freshness_note('ACCOUNT_USAGE')}")
 
         st.subheader("Storage Trend")
         st.area_chart(df_st.set_index("USAGE_DATE")[["STORAGE_GB","FAILSAFE_GB","STAGE_GB"]])

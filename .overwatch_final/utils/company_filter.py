@@ -67,7 +67,7 @@ def get_wh_filter_clause(column: str = "warehouse_name", company: str = None) ->
     """
     Return SQL WHERE fragment to filter by warehouse.
 
-    ALFA:   AND (col ILIKE '%') AND (col NOT ILIKE 'WH_TRXS_%')
+    ALFA:   explicit ALFA/shared warehouse allowlist, excluding Trexis
     Trexis: AND (col ILIKE 'WH_TRXS_%')
     ALL:    '' — no filter; use get_company_case_expr() to label rows instead
     """

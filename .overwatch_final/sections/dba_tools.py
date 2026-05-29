@@ -12,7 +12,7 @@
 import streamlit as st
 import pandas as pd
 from utils import (
-    get_session, normalize_df, safe_sql, format_credits, download_csv,
+    get_session, safe_sql, format_credits, download_csv,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
     get_active_company, company_value_allowed,
     build_overwatch_setup_bundle, build_bookmark_ddl, build_annotation_ddl,
@@ -22,6 +22,10 @@ from utils import (
     format_snowflake_error,
     run_compatibility_checks, build_smoke_test_checklist,
     build_cost_formula_audit, filter_existing_columns, build_task_history_sql,
+    admin_actions_enabled, admin_button_disabled,
+    show_to_df, first_existing_column, ensure_column_alias,
+    scope_warehouse_names, scope_metadata_df, load_task_inventory,
+    load_warehouse_inventory, build_unclassified_assets_sql,
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
@@ -71,34 +75,12 @@ def _typed_confirmation(prompt: str, expected: str, key: str) -> bool:
 
 def _scope_warehouse_names(df: pd.DataFrame, name_col: str = "name") -> pd.DataFrame:
     """Apply ALFA/Trexis warehouse visibility to SHOW-style result sets."""
-    if df is None or df.empty or name_col not in df.columns:
-        return df
-    company = get_active_company()
-    if company == "Trexis":
-        return df[df[name_col].astype(str).str.upper().str.startswith("WH_TRXS_")]
-    if company == "ALFA":
-        return df[~df[name_col].astype(str).str.upper().str.startswith("WH_TRXS_")]
-    return df
+    return scope_warehouse_names(df, name_col=name_col, company=get_active_company())
 
 
 def _scope_metadata_df(df: pd.DataFrame) -> pd.DataFrame:
     """Apply ALFA/Trexis visibility to SHOW-style metadata result sets."""
-    if df is None or df.empty:
-        return df
-    scoped = df.copy()
-    for col in ("DATABASE_NAME", "DATABASE", "TABLE_CATALOG"):
-        if col in scoped.columns:
-            scoped = scoped[scoped[col].apply(lambda value: company_value_allowed(value, "database"))]
-            break
-    for col in ("WAREHOUSE", "WAREHOUSE_NAME"):
-        if col in scoped.columns:
-            scoped = scoped[
-                scoped[col].isna()
-                | (scoped[col].astype(str).str.strip() == "")
-                | scoped[col].apply(lambda value: company_value_allowed(value, "warehouse"))
-            ]
-            break
-    return scoped
+    return scope_metadata_df(df, company=get_active_company())
 
 
 def _quote_identifier(name: str) -> str:
@@ -148,49 +130,19 @@ def _task_exists(session, db: str, schema: str, task_name: str):
 
 
 def _show_to_df(session, stmt: str) -> pd.DataFrame:
-    try:
-        return normalize_df(session.sql(stmt).to_pandas())
-    except Exception:
-        return pd.DataFrame()
+    return show_to_df(session, stmt)
 
 
 def _first_existing_column(df: pd.DataFrame, candidates: list[str]) -> str:
-    if df is None or df.empty:
-        return ""
-    cols = {str(col).upper(): col for col in df.columns}
-    for candidate in candidates:
-        found = cols.get(str(candidate).upper())
-        if found:
-            return str(found)
-    return ""
+    return first_existing_column(df, candidates)
 
 
 def _ensure_column_alias(df: pd.DataFrame, target: str, candidates: list[str], default="") -> pd.DataFrame:
-    if df is None or df.empty:
-        return df
-    target = str(target).upper()
-    if target in df.columns:
-        return df
-    source = _first_existing_column(df, candidates)
-    df[target] = df[source] if source else default
-    return df
+    return ensure_column_alias(df, target, candidates, default)
 
 
 def _load_task_inventory(session) -> pd.DataFrame:
-    df = _show_to_df(session, "SHOW TASKS IN ACCOUNT")
-    if df.empty:
-        return df
-    df = _ensure_column_alias(df, "NAME", ["NAME", "TASK_NAME"])
-    df = _ensure_column_alias(df, "DATABASE_NAME", ["DATABASE_NAME", "DATABASE"])
-    df = _ensure_column_alias(df, "SCHEMA_NAME", ["SCHEMA_NAME", "SCHEMA"])
-    for col in ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE", "PREDECESSORS", "DEFINITION"]:
-        if col not in df.columns:
-            df[col] = ""
-    df = _scope_metadata_df(df)
-    if df.empty or "NAME" not in df.columns:
-        return pd.DataFrame()
-    df["NAME"] = df["NAME"].astype(str).str.strip()
-    return df[df["NAME"] != ""].copy()
+    return load_task_inventory(session, get_active_company())
 
 
 def _task_history_sql(session, time_predicate: str, limit: int = 500) -> str:
@@ -276,6 +228,11 @@ def render():
         "DBA Tools are grouped to keep the high-value controls easy to find. "
         "Open a group, then choose the specific operation."
     )
+    if not admin_actions_enabled():
+        st.info(
+            "Read-only mode is active. Load, inspect, compare, and export still work; "
+            "ALTER, CANCEL, EXECUTE, SUSPEND, and RESUME buttons stay locked until Admin actions are enabled in Settings."
+        )
 
     group_tabs = st.tabs([
         "🏭 Warehouse Ops",
@@ -373,7 +330,7 @@ def render():
                 "⛔ Cancel Query",
                 type="primary",
                 key="kl_kill",
-                disabled=not kill_confirmed,
+                disabled=admin_button_disabled(not kill_confirmed),
             ):
                 try:
                     session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_id)})").collect()
@@ -404,9 +361,8 @@ def render():
             refresh_wh = st.button("Refresh Warehouses", key="wh_cfg_load")
             if refresh_wh or (needs_wh_load and last_failed_company != active_company):
                 try:
-                    df_raw = run_query_or_raise("SHOW WAREHOUSES")
+                    df_raw = load_warehouse_inventory(session, active_company)
                     df_raw.columns = [c.lower() for c in df_raw.columns]
-                    df_raw = _scope_warehouse_names(df_raw, "name")
                     st.session_state["dba_df_wh_cfg"] = df_raw
                     st.session_state["_dba_wh_cfg_company"] = active_company
                     st.session_state.pop("_dba_wh_cfg_failed_company", None)
@@ -592,7 +548,7 @@ def render():
                             "✅ Apply Now",
                             type="primary",
                             key=f"wh_apply_{sel_wh}",
-                            disabled=not wh_confirmed,
+                            disabled=admin_button_disabled(not wh_confirmed),
                         ):
                             # CALLER MODE: ALTER WAREHOUSE needs MODIFY on the warehouse.
                             # SNOW_ACCOUNTADMIN and SNOW_SYSADMIN both have this.
@@ -1108,7 +1064,7 @@ ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
                     "APPLY",
                     "cortex_apply_confirm",
                 )
-                if st.button("✅ Apply Parameters", type="primary", key="cortex_apply", disabled=not cortex_confirmed):
+                if st.button("✅ Apply Parameters", type="primary", key="cortex_apply", disabled=admin_button_disabled(not cortex_confirmed)):
                     # CALLER MODE GUARD: ALTER ACCOUNT SET requires ACCOUNTADMIN.
                     # Since execute_as=CALLER, the caller's role must have this privilege.
                     # SNOW_SYSADMIN cannot run ALTER ACCOUNT — only ACCOUNTADMIN can.
@@ -1245,7 +1201,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         "⛔ Cancel This Query",
                         type="primary",
                         key="tg_cancel_q",
-                        disabled=not cancel_confirmed,
+                        disabled=admin_button_disabled(not cancel_confirmed),
                     ):
                         try:
                             session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(cancel_qid)})").collect()
@@ -1306,7 +1262,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                     "⛔ Cancel Graph Run",
                                     type="primary",
                                     key="tg_cancel_graph",
-                                    disabled=not graph_confirmed,
+                                    disabled=admin_button_disabled(not graph_confirmed),
                                 ):
                                     try:
                                         session.sql(
@@ -1336,7 +1292,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                             if sel_qid and st.button(
                                 "⛔ Cancel Query",
                                 key="tg_cancel_run_q",
-                                disabled=not run_confirmed,
+                                disabled=admin_button_disabled(not run_confirmed),
                             ):
                                 try:
                                     session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(str(sel_qid))})").collect()
@@ -1403,7 +1359,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
                     with col_s1:
-                        if st.button("⏸ Suspend", key="tg_suspend", disabled=(state=="suspended" or not task_confirmed)):
+                        if st.button("⏸ Suspend", key="tg_suspend", disabled=admin_button_disabled(state=="suspended" or not task_confirmed)):
                             try:
                                 session.sql(f"ALTER TASK {full_n} SUSPEND").collect()
                                 st.success(f"✅ `{sel_task}` suspended.")
@@ -1413,7 +1369,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 st.error(f"Suspend failed: {format_snowflake_error(e)}")
 
                     with col_s2:
-                        if st.button("▶ Resume", key="tg_resume", disabled=(state=="started" or not task_confirmed)):
+                        if st.button("▶ Resume", key="tg_resume", disabled=admin_button_disabled(state=="started" or not task_confirmed)):
                             try:
                                 session.sql(f"ALTER TASK {full_n} RESUME").collect()
                                 st.success(f"✅ `{sel_task}` resumed.")
@@ -1423,7 +1379,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 st.error(f"Resume failed: {format_snowflake_error(e)}")
 
                     with col_s3:
-                        if st.button("▶▶ Execute Now", key="tg_execute", disabled=not task_confirmed):
+                        if st.button("▶▶ Execute Now", key="tg_execute", disabled=admin_button_disabled(not task_confirmed)):
                             try:
                                 session.sql(f"EXECUTE TASK {full_n}").collect()
                                 st.success(f"✅ `{sel_task}` triggered.")
@@ -1431,7 +1387,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 st.error(f"Execute failed: {format_snowflake_error(e)}")
 
                     with col_s4:
-                        if st.button("🔁 Retry Last Failed", key="tg_retry", disabled=not task_confirmed):
+                        if st.button("🔁 Retry Last Failed", key="tg_retry", disabled=admin_button_disabled(not task_confirmed)):
                             # EXECUTE TASK WITH LAST_ERROR retry pattern
                             try:
                                 session.sql(f"EXECUTE TASK {full_n}").collect()
@@ -1486,7 +1442,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 
                         b1, b2 = st.columns(2)
                         with b1:
-                            if st.button("⏸ Suspend Entire Graph", type="primary", key="tg_bulk_suspend", disabled=not graph_confirmed):
+                            if st.button("⏸ Suspend Entire Graph", type="primary", key="tg_bulk_suspend", disabled=admin_button_disabled(not graph_confirmed)):
                                 try:
                                     session.sql(f"ALTER TASK {root_full} SUSPEND").collect()
                                     st.success(f"✅ Root task `{sel_root}` suspended — entire graph will stop scheduling.")
@@ -1495,7 +1451,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 except Exception as e:
                                     st.error(f"Suspend failed: {format_snowflake_error(e)}")
                         with b2:
-                            if st.button("▶ Resume Entire Graph", type="primary", key="tg_bulk_resume", disabled=not graph_confirmed):
+                            if st.button("▶ Resume Entire Graph", type="primary", key="tg_bulk_resume", disabled=admin_button_disabled(not graph_confirmed)):
                                 errors_seen = []
                                 # Resume children first, then root
                                 for _, child in children.iterrows():
@@ -1768,6 +1724,32 @@ ORDER BY avg_tb DESC;"""
                         "Some checks are blocked. Affected sections should show graceful "
                         "limited-data messages instead of crashing."
                     )
+
+        st.divider()
+        st.subheader("Company Scope Audit")
+        st.caption(
+            "Find warehouses and databases that are not matched to the ALFA or Trexis allowlists. "
+            "Review this before widening company filters."
+        )
+        if st.button("Load Unclassified Assets", key="scope_audit_load"):
+            st.session_state["dba_unclassified_assets"] = run_query(
+                build_unclassified_assets_sql(30),
+                ttl_key=f"dba_scope_audit_{company}",
+                tier="standard",
+                section="DBA Tools",
+            )
+        unclassified = st.session_state.get("dba_unclassified_assets")
+        if unclassified is not None:
+            if unclassified.empty:
+                st.success("No unclassified warehouses or databases found in the last 30 days.")
+            else:
+                wh_count = int((unclassified["OBJECT_TYPE"] == "WAREHOUSE").sum()) if "OBJECT_TYPE" in unclassified.columns else 0
+                db_count = int((unclassified["OBJECT_TYPE"] == "DATABASE").sum()) if "OBJECT_TYPE" in unclassified.columns else 0
+                c_wh, c_db = st.columns(2)
+                c_wh.metric("Unclassified Warehouses", f"{wh_count:,}")
+                c_db.metric("Unclassified Databases", f"{db_count:,}")
+                st.dataframe(unclassified, use_container_width=True, hide_index=True)
+                download_csv(unclassified, "overwatch_unclassified_assets.csv")
 
         st.divider()
         st.subheader("Persistent Setup Objects")

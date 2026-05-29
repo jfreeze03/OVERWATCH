@@ -4,12 +4,14 @@ import pandas as pd
 from utils import (
     build_action_queue_ddl,
     build_task_history_sql,
-    company_value_allowed,
     download_csv,
     format_snowflake_error,
+    get_active_company,
     get_session,
+    admin_actions_enabled,
+    admin_button_disabled,
+    load_task_inventory,
     make_action_id,
-    normalize_df,
     run_query,
     run_query_or_raise,
     safe_identifier,
@@ -65,26 +67,7 @@ def _qualified_name(*parts: str) -> str:
 
 
 def _show_tasks(session) -> pd.DataFrame:
-    try:
-        df = normalize_df(session.sql("SHOW TASKS IN ACCOUNT").to_pandas())
-    except Exception:
-        return pd.DataFrame()
-    for col in ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE", "DEFINITION"]:
-        if col not in df.columns:
-            df[col] = ""
-    if "DATABASE_NAME" in df.columns:
-        df = df[df["DATABASE_NAME"].apply(lambda value: company_value_allowed(value, "database"))]
-    if "WAREHOUSE" in df.columns:
-        df = df[
-            df["WAREHOUSE"].isna()
-            | (df["WAREHOUSE"].astype(str).str.strip() == "")
-            | df["WAREHOUSE"].apply(lambda value: company_value_allowed(value, "warehouse"))
-        ]
-    if df.empty or "NAME" not in df.columns:
-        return pd.DataFrame()
-    df["NAME"] = df["NAME"].astype(str).str.strip()
-    df = df[df["NAME"] != ""].copy()
-    return df
+    return load_task_inventory(session, get_active_company())
 
 
 ETL_AUDIT_FQN = (
@@ -201,6 +184,8 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
     with tab_execute:
         st.header("▶️ Execute Task On-Demand")
         st.caption("Select and manually trigger a task. Ensure dependencies are met before running.")
+        if not admin_actions_enabled():
+            st.info("Read-only mode is active. Enable Admin actions in Settings before executing tasks.")
 
         tl = st.session_state.get("tg_list", pd.DataFrame())
         if tl.empty:
@@ -227,7 +212,7 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                         f"▶️ Execute {selected}",
                         type="primary",
                         key="exec_task_btn",
-                        disabled=not exec_confirmed,
+                        disabled=admin_button_disabled(not exec_confirmed),
                     ):
                         try:
                             session.sql(f"EXECUTE TASK {full}").collect()

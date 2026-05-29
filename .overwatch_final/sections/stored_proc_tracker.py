@@ -7,6 +7,8 @@ from utils import (
     format_snowflake_error,
     format_credits,
     credits_to_dollars,
+    metric_confidence_label,
+    freshness_note,
     download_csv,
     build_metered_credit_cte,
     render_query_drilldown,
@@ -136,6 +138,11 @@ def render():
         c2.metric("Total Calls", f"{int(df_sp['CALL_COUNT'].sum()):,}")
         c3.metric("Downstream Queries", f"{int(df_sp['DOWNSTREAM_QUERY_COUNT'].sum()):,}")
         c4.metric("Total Credits", format_credits(total_credits))
+        lineage_confidence = "allocated" if st.session_state.get("spt_has_root_query_id", False) else "estimated"
+        st.caption(
+            f"{metric_confidence_label(lineage_confidence)} | "
+            f"{freshness_note('QUERY_HISTORY')} | child-query coverage depends on ROOT_QUERY_ID availability."
+        )
         df_sp["EST_COST"] = (df_sp["METERED_CREDITS"] + df_sp["CLOUD_CREDITS"]).apply(
             lambda x: credits_to_dollars(x, credit_price)
         )

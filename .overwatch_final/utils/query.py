@@ -104,6 +104,21 @@ def _record_query_telemetry(
         if len(entries) > 250:
             del entries[:-250]
         _warn_on_budget_pressure(active_section, query_hash, ttl_key, elapsed_ms, row_count, result_mb)
+        try:
+            from .logging import log_query_event
+
+            log_query_event(
+                section=active_section,
+                query_hash=query_hash,
+                cache_key=ttl_key,
+                cache_tier=tier,
+                elapsed_ms=elapsed_ms,
+                row_count=row_count,
+                result_mb=result_mb,
+                used_cache=used_cache,
+            )
+        except Exception:
+            pass
     except Exception:
         pass
 

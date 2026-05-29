@@ -21,6 +21,8 @@ from utils import (
     get_wh_filter_clause,
     load_action_queue,
     make_action_id,
+    metric_confidence_label,
+    freshness_note,
     run_query,
     safe_identifier,
     sql_literal,
@@ -471,6 +473,10 @@ def render():
             c1.metric("High/Critical", len(high))
             c2.metric("Open Findings", len(df_recs))
             c3.metric("Est. Monthly Savings", f"${monthly:,.0f}")
+            st.caption(
+                f"{metric_confidence_label('estimated')} | {freshness_note('ACCOUNT_USAGE')} | "
+                "Savings are directional until the action is fixed and logged to Snowflake Value."
+            )
             st.dataframe(df_recs, use_container_width=True)
             download_csv(df_recs, "recommendations.csv")
 

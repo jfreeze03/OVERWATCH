@@ -61,7 +61,6 @@ DEFAULT_COMPANY = "ALFA"
 COMPANY_CONFIG = {
     "ALFA": {
         "wh_patterns": [
-            "%",
             "WH_ALFA_%",
             "BI_COMPUTE_WH",
             "COMPUTE_WH",

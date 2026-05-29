@@ -28,6 +28,7 @@ from utils.query import (
     clear_query_telemetry, format_snowflake_error,
 )
 from utils.company_filter import invalidate_company_cache
+from utils.admin import render_admin_mode_control
 from utils.bookmarks import (
     build_bookmark_ddl, save_bookmark, load_bookmarks,
     apply_bookmark, delete_bookmark,
@@ -39,6 +40,8 @@ inject_theme()
 # ── Seed ALFA default before radio ────────────────────────────────────────────
 if "active_company" not in st.session_state:
     st.session_state["active_company"] = DEFAULT_COMPANY
+if "_query_logging_enabled" not in st.session_state:
+    st.session_state["_query_logging_enabled"] = False
 
 
 # ── Role resolution (cached 5 min) ────────────────────────────────────────────
@@ -317,6 +320,12 @@ with st.sidebar:
             key="exceptions_only_mode",
             help="Reduce page noise and defer expensive drilldowns unless an exception is present.",
         )
+        st.toggle(
+            "Persist query telemetry",
+            key="_query_logging_enabled",
+            help="Optional audit mode: write query hash, section, elapsed time, row count, and result size to the OVERWATCH usage log when that table exists.",
+        )
+        render_admin_mode_control()
 
         telemetry = get_query_telemetry()
         if not telemetry.empty:

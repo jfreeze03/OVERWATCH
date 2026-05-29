@@ -9,6 +9,8 @@ from utils import (
     safe_strip_tz,
     format_credits,
     credits_to_dollars,
+    metric_confidence_label,
+    freshness_note,
     download_csv,
     get_user_filter_clause,
     filter_existing_columns,
@@ -79,6 +81,7 @@ def render():
             c2.metric("Total Requests",         f"{int(df_cc['TOTAL_REQUESTS'].sum()):,}")
             c3.metric("Total AI Credits",       f"{total_credits:.4f}")
             c4.metric(f"Est. Cost (${AI_CREDIT_RATE}/AI cr)", f"${total_credits * AI_CREDIT_RATE:,.2f}")
+            st.caption(f"{metric_confidence_label('account-wide')} | {freshness_note('ACCOUNT_USAGE')}")
 
             # Cost column
             df_cc = df_cc.copy()
@@ -364,6 +367,7 @@ def render():
             c1.metric("Avg Daily AI Credits", f"{avg_daily:.4f}")
             c2.metric("Projected 30-day Credits", f"{projected_month:.4f}")
             c3.metric("Projected 30-day Cost",    f"${projected_cost:,.2f}")
+            st.caption(f"{metric_confidence_label('projection')} | {freshness_note('ACCOUNT_USAGE')}")
 
             if projected_month > monthly_ai_budget:
                 overage = projected_month - monthly_ai_budget

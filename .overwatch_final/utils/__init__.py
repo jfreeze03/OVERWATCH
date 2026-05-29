@@ -9,7 +9,8 @@ from .data import normalize_df, safe_strip_tz
 from .cost import (
     format_credits, credits_to_dollars, estimate_live_credits,
     build_metered_credit_cte, build_idle_warehouse_sql,
-    build_monitoring_cost_sql, build_app_runtime_cost_sql, metric_confidence_label,
+    build_monitoring_cost_sql, build_app_runtime_cost_sql, build_cost_reconciliation_sql,
+    metric_confidence_label,
     freshness_note, CREDIT_RATES, COMPUTE_CREDIT_CASE
 )
 from .scorecards import (
@@ -34,7 +35,17 @@ from .helpers import paginate_df
 from .alerts import build_alert_task_sql, send_teams_alert, build_annotation_ddl
 from .logging import (
     build_usage_log_ddl, log_section_load, set_logging_enabled,
-    is_logging_enabled, SectionTimer,
+    is_logging_enabled, log_query_event, is_query_logging_enabled,
+    set_query_logging_enabled, SectionTimer,
+)
+from .admin import (
+    admin_actions_enabled, admin_button_disabled, admin_disabled_reason,
+    render_admin_mode_control, require_admin_enabled,
+)
+from .metadata import (
+    show_to_df, first_existing_column, ensure_column_alias,
+    scope_warehouse_names, scope_metadata_df, load_task_inventory,
+    load_warehouse_inventory, build_unclassified_assets_sql,
 )
 from .bookmarks import (
     build_bookmark_ddl, save_bookmark, load_bookmarks,
@@ -60,7 +71,8 @@ __all__ = [
     "normalize_df", "safe_strip_tz",
     "format_credits", "credits_to_dollars", "estimate_live_credits",
     "build_metered_credit_cte", "build_idle_warehouse_sql",
-    "build_monitoring_cost_sql", "build_app_runtime_cost_sql", "metric_confidence_label",
+    "build_monitoring_cost_sql", "build_app_runtime_cost_sql", "build_cost_reconciliation_sql",
+    "metric_confidence_label",
     "freshness_note", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
     "clamp_score", "score_label", "bad_ratio_score", "trend_score", "weighted_score",
     "burn_trend_label", "executive_health_score", "service_health_scorecard",
@@ -78,7 +90,13 @@ __all__ = [
     "paginate_df",
     "build_alert_task_sql", "send_teams_alert", "build_annotation_ddl",
     "build_usage_log_ddl", "log_section_load", "set_logging_enabled",
-    "is_logging_enabled", "SectionTimer",
+    "is_logging_enabled", "log_query_event", "is_query_logging_enabled",
+    "set_query_logging_enabled", "SectionTimer",
+    "admin_actions_enabled", "admin_button_disabled", "admin_disabled_reason",
+    "render_admin_mode_control", "require_admin_enabled",
+    "show_to_df", "first_existing_column", "ensure_column_alias",
+    "scope_warehouse_names", "scope_metadata_df", "load_task_inventory",
+    "load_warehouse_inventory", "build_unclassified_assets_sql",
     "build_bookmark_ddl", "save_bookmark", "load_bookmarks",
     "apply_bookmark", "delete_bookmark",
     "build_action_queue_ddl", "make_action_id", "upsert_actions",

@@ -103,18 +103,29 @@ def clear_all_cache():
     Also forces a session liveness re-check on the next query by resetting
     the session TTL clock — coordinates cache and session state together.
     """
-    prefixes = (
-        '_data_','_ts_','df_','cortex_','cc_',
-        'ah_','cm_','ds_','dba_','lm_','mc_','ocm_',
-        'opt_','qa_','qs_','rec_','sec_','spcs_','stor_',
-        'spt_','tm_','wh_','uo_','aa_','dd_','svc_','contract_','topology_',
-        'recommendations','anomalies','health_data','morning_data',
-        'tg_list','tg_hist','cm_base_',
+    preserve_exact = {
+        "active_company", "active_theme", "nav_section", "_prev_active_company",
+        "_prev_nav_section", "credit_price", "_credit_price", "storage_cost",
+        "rt_interval", "global_start_date", "global_end_date",
+        "global_warehouse", "global_user", "global_role", "global_database",
+        "theme_picker_radio",
+    }
+    preserve_prefixes = (
+        "nav_", "_prev_nav_", "global_", "theme_", "company_",
+    )
+    transient_prefixes = (
+        "_data_", "_ts_", "df_", "_refresh_salt_", "_sec_",
+        "_overwatch_query_", "cortex_", "cc_", "ah_", "cm_", "ds_", "dba_",
+        "lm_", "mc_", "ocm_", "opt_", "qa_", "qs_", "rec_", "sec_", "spcs_",
+        "stor_", "spt_", "tm_", "wh_", "uo_", "aa_", "dd_", "svc_",
+        "contract_", "topology_", "recommendations", "anomalies",
+        "health_data", "morning_data", "tg_list", "tg_hist", "cm_base_",
     )
     keys_to_remove = [
         k for k in list(st.session_state.keys())
-        if any(k.startswith(p) for p in prefixes)
-        or k in ('health_data','morning_data')
+        if k not in preserve_exact
+        and not any(k.startswith(p) for p in preserve_prefixes)
+        and any(k.startswith(p) for p in transient_prefixes)
     ]
     for k in keys_to_remove:
         del st.session_state[k]

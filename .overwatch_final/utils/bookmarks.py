@@ -139,12 +139,13 @@ def load_bookmarks(session, include_shared: bool = True) -> list[dict]:
 def apply_bookmark(session, bookmark: dict) -> None:
     """Restore a bookmark's state and increment its use count."""
     try:
+        bookmark_id = int(bookmark["id"])
         _restore_state(bookmark["state"])
         session.sql(f"""
             UPDATE {BOOKMARK_TABLE}
             SET USE_COUNT = USE_COUNT + 1,
                 LAST_USED_AT = CURRENT_TIMESTAMP()
-            WHERE BOOKMARK_ID = {bookmark['id']}
+            WHERE BOOKMARK_ID = {bookmark_id}
         """).collect()
     except Exception:
         pass

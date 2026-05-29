@@ -6,12 +6,15 @@ from utils import (
     download_csv,
     format_credits,
     format_snowflake_error,
+    freshness_note,
     get_active_company,
     get_db_filter_clause,
     get_global_filter_clause,
     get_session,
     get_wh_filter_clause,
+    company_scoped_query,
     filter_existing_columns,
+    metric_confidence_label,
     render_drillable_bar_chart,
     run_query,
     sql_literal,
@@ -45,11 +48,6 @@ def _load_overview(session, days: int) -> dict:
         else "SUM(IFF(q.execution_status = 'SUCCESS', 1, 0))"
     )
     failed_expr = (
-        "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
-        if "ERROR_CODE" in qh_cols
-        else "SUM(IFF(q.execution_status = 'FAILED_WITH_ERROR', 1, 0))"
-    )
-    failed_count_expr = (
         "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
         if "ERROR_CODE" in qh_cols
         else "SUM(IFF(q.execution_status = 'FAILED_WITH_ERROR', 1, 0))"
@@ -129,7 +127,31 @@ def _load_overview(session, days: int) -> dict:
         WHERE rn = 1
     """, ttl_key=f"uo_storage_{company}_{days}", tier="historical")
 
-    top_wh = run_query(f"""
+    return {
+        "overview": overview,
+        "metering": metering,
+        "storage": storage,
+    }
+
+
+def _load_cost_drivers(session, days: int):
+    wm_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+        ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
+    ))
+    wm_compute_expr = (
+        "ROUND(SUM(credits_used_compute), 4)"
+        if "CREDITS_USED_COMPUTE" in wm_cols
+        else "ROUND(SUM(credits_used), 4)"
+    )
+    wm_cloud_expr = (
+        "ROUND(SUM(credits_used_cloud_services), 4)"
+        if "CREDITS_USED_CLOUD_SERVICES" in wm_cols
+        else "0"
+    )
+    return company_scoped_query(
+        f"""
         SELECT
             warehouse_name,
             ROUND(SUM(credits_used), 4) AS total_credits,
@@ -137,13 +159,37 @@ def _load_overview(session, days: int) -> dict:
             {wm_cloud_expr} AS cloud_credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
-          {wh_filter}
+          {{company_scope}}
         GROUP BY warehouse_name
         ORDER BY total_credits DESC
         LIMIT 20
-    """, ttl_key=f"uo_top_wh_{company}_{days}", tier="historical")
+        """,
+        "uo_top_wh",
+        tier="historical",
+        date_col="start_time",
+        wh_col="warehouse_name",
+        user_col=None,
+        role_col=None,
+        db_col=None,
+        include_global_filters=False,
+        section="Usage Overview",
+        extra_cache_parts=(days,),
+    )
 
-    query_types = run_query(f"""
+
+def _load_query_mix(session, days: int):
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["ERROR_CODE"],
+    ))
+    failed_count_expr = (
+        "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
+        if "ERROR_CODE" in qh_cols
+        else "SUM(IFF(q.execution_status = 'FAILED_WITH_ERROR', 1, 0))"
+    )
+    return company_scoped_query(
+        f"""
         SELECT
             COALESCE(q.query_type, 'UNKNOWN') AS query_type,
             COUNT(*) AS query_count,
@@ -153,13 +199,26 @@ def _load_overview(session, days: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
-          {q_filters}
+          {{global_scope}}
         GROUP BY query_type
         ORDER BY query_count DESC
         LIMIT 25
-    """, ttl_key=f"uo_query_types_{company}_{days}", tier="historical")
+        """,
+        "uo_query_types",
+        tier="historical",
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+        section="Usage Overview",
+        extra_cache_parts=(days,),
+    )
 
-    users_by_db = run_query(f"""
+
+def _load_database_adoption(days: int):
+    return company_scoped_query(
+        f"""
         SELECT
             COALESCE(q.database_name, 'UNKNOWN') AS database_name,
             COUNT(DISTINCT q.user_name) AS users,
@@ -167,20 +226,21 @@ def _load_overview(session, days: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
-          {q_filters}
+          {{global_scope}}
         GROUP BY database_name
         ORDER BY users DESC, query_count DESC
         LIMIT 20
-    """, ttl_key=f"uo_users_by_db_{company}_{days}", tier="historical")
-
-    return {
-        "overview": overview,
-        "metering": metering,
-        "storage": storage,
-        "top_wh": top_wh,
-        "query_types": query_types,
-        "users_by_db": users_by_db,
-    }
+        """,
+        "uo_users_by_db",
+        tier="historical",
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+        section="Usage Overview",
+        extra_cache_parts=(days,),
+    )
 
 
 def _first_number(df, column: str) -> float:
@@ -258,6 +318,13 @@ def render():
     k4.metric("Success Rate", f"{success_rate:.1f}%")
     k5.metric("Avg Elapsed", f"{_first_number(overview, 'AVG_ELAPSED_SEC'):,.2f}s")
     k6.metric("Total Credits", format_credits(_first_number(metering, "TOTAL_CREDITS")))
+    st.caption(
+        " | ".join([
+            metric_confidence_label("exact"),
+            freshness_note("ACCOUNT_USAGE"),
+            "Progressive load: KPI queries ran; charts below load only when requested.",
+        ])
+    )
 
     s1, s2, s3, s4 = st.columns(4)
     s1.metric("Compute Credits", format_credits(_first_number(metering, "COMPUTE_CREDITS")))
@@ -267,8 +334,13 @@ def render():
 
     tab_wh, tab_query, tab_db = st.tabs(["Cost Drivers", "Query Mix", "Adoption By Database"])
     with tab_wh:
-        top_wh = data["top_wh"]
-        if not top_wh.empty:
+        if st.button("Load Cost Driver Chart", key="uo_load_cost_drivers"):
+            with st.spinner("Loading warehouse cost drivers..."):
+                st.session_state["uo_top_wh"] = _load_cost_drivers(session, days)
+        top_wh = st.session_state.get("uo_top_wh")
+        if top_wh is None:
+            st.info("Cost driver chart is deferred. Load it when you need warehouse detail.")
+        elif not top_wh.empty:
             render_drillable_bar_chart(top_wh, "WAREHOUSE_NAME", "TOTAL_CREDITS", "uo_top_wh", "Top Warehouses By Credit Usage", "warehouse_name", 24 * min(days, 14), 15)
             if st.button("Send top warehouses to Action Queue", key="uo_queue_wh"):
                 _queue_top_warehouses(session, top_wh)
@@ -277,8 +349,13 @@ def render():
             st.info("No warehouse metering found for the selected filters.")
 
     with tab_query:
-        qt = data["query_types"]
-        if not qt.empty:
+        if st.button("Load Query Mix", key="uo_load_query_mix"):
+            with st.spinner("Loading query mix..."):
+                st.session_state["uo_query_types"] = _load_query_mix(session, days)
+        qt = st.session_state.get("uo_query_types")
+        if qt is None:
+            st.info("Query mix is deferred to keep Usage Overview lightweight.")
+        elif not qt.empty:
             chart = alt.Chart(qt.sort_values("QUERY_COUNT", ascending=False)).mark_bar().encode(
                 x=alt.X("QUERY_COUNT:Q", title="Queries"),
                 y=alt.Y("QUERY_TYPE:N", sort="-x", title=None),
@@ -292,8 +369,13 @@ def render():
             st.info("No query activity found for the selected filters.")
 
     with tab_db:
-        db = data["users_by_db"]
-        if not db.empty:
+        if st.button("Load Database Adoption", key="uo_load_database_adoption"):
+            with st.spinner("Loading database adoption..."):
+                st.session_state["uo_users_by_db"] = _load_database_adoption(days)
+        db = st.session_state.get("uo_users_by_db")
+        if db is None:
+            st.info("Database adoption detail is deferred until requested.")
+        elif not db.empty:
             render_drillable_bar_chart(db, "DATABASE_NAME", "USERS", "uo_users_db", "Users By Database", "database_name", 24 * min(days, 14), 15)
             download_csv(db, "usage_overview_users_by_database.csv")
         else:

@@ -7,6 +7,7 @@ from datetime import datetime
 from utils import (
     get_session, format_credits, credits_to_dollars,
     download_csv, build_metered_credit_cte,
+    metric_confidence_label, freshness_note,
     get_db_filter_clause, get_wh_filter_clause, get_user_filter_clause,
     get_global_filter_clause, get_company_case_expr,
     filter_existing_columns,
@@ -96,6 +97,9 @@ def render():
         "User Leaderboard", "Burn Rate", "Forecast", "Budget vs Actual",
         "Attribution", "Chargeback", "📋 Contract Utilization"
     ])
+    st.caption(
+        "Progressive load is enabled: each cost view runs only when its Load or Calculate button is selected."
+    )
 
     # ── USER LEADERBOARD ──────────────────────────────────────────────────────
     with tab_leader:
@@ -137,6 +141,7 @@ def render():
             c1.metric("Distinct Users",  df_l["USER_NAME"].nunique())
             c2.metric("Total Credits",   format_credits(df_l["TOTAL_CREDITS"].sum()))
             c3.metric("Total Est. Cost", f"${df_l['COST'].sum():,.2f}")
+            st.caption(f"{metric_confidence_label('allocated')} | {freshness_note('ACCOUNT_USAGE')}")
 
             st.subheader("Top Users by Cost")
             user_agg = (
@@ -215,6 +220,7 @@ def render():
             c1.metric("Total Credits",     format_credits(total_cr))
             c2.metric("Total Cost",        f"${credits_to_dollars(total_cr, credit_price):,.2f}")
             c3.metric("Avg Daily Credits", f"{total_cr / max(br_days,1):,.2f}")
+            st.caption(f"{metric_confidence_label('exact')} | {freshness_note('WAREHOUSE_METERING_HISTORY')}")
             daily = df_b.groupby("DAY")["DAILY_CREDITS"].sum().reset_index()
             st.line_chart(daily.set_index("DAY")["DAILY_CREDITS"])
             by_wh = (
@@ -444,7 +450,8 @@ def render():
         st.header("📋 Contract & Commitment Utilization")
         st.caption(
             "Track consumption against your annual Snowflake committed-use contract. "
-            "Projects burn rate to flag over- and under-utilization risk."
+            "Projects burn rate to flag over- and under-utilization risk. "
+            "This is the canonical contract view; the standalone Credit Contract page has been consolidated here."
         )
 
         col_ct1, col_ct2, col_ct3 = st.columns(3)
@@ -527,6 +534,7 @@ def render():
                       delta_color="inverse" if pct_consumed > pct_time_elapsed + 5 else "normal")
             k4.metric("Daily Burn Rate",      f"{daily_rate:,.1f} cr/day")
             k5.metric("Projected Year-End",   format_credits(projected_total))
+            st.caption(f"{metric_confidence_label('exact')} | {freshness_note('WAREHOUSE_METERING_HISTORY')}")
 
             # ── Progress bar ───────────────────────────────────────────────────
             bar_pct = min(pct_consumed / 100, 1.0)

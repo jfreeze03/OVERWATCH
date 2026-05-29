@@ -5,6 +5,7 @@ from utils import (
     get_session, format_credits, credits_to_dollars,
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
     get_active_company, get_global_filter_clause,
+    metric_confidence_label, freshness_note,
     build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
     run_query, format_snowflake_error, filter_existing_columns,
 )
@@ -167,6 +168,7 @@ def render():
             c1.metric("Warehouses Active", len(df_w))
             c2.metric("Total Queries",     f"{int(df_w['TOTAL_QUERIES'].sum()):,}")
             c3.metric("Total Remote Spill", f"{df_w['TOTAL_REMOTE_SPILL_GB'].sum():.1f} GB")
+            st.caption(f"{metric_confidence_label('exact')} | {freshness_note('ACCOUNT_USAGE')}")
 
             # Flag warehouses needing attention
             for _, row in df_w.iterrows():
@@ -265,6 +267,7 @@ def render():
             c1.metric("Warehouses scored", len(df_eff))
             c2.metric("Under 70 score", len(low), delta_color="inverse")
             c3.metric("Total metered credits", format_credits(float(df_eff["METERED_CREDITS"].sum())))
+            st.caption(f"{metric_confidence_label('allocated')} | {freshness_note('ACCOUNT_USAGE')}")
             st.dataframe(df_eff, use_container_width=True)
             render_drillable_bar_chart(
                 df_eff,
@@ -369,6 +372,6 @@ def render():
                 c3.metric("Avg Elapsed",   f"{wh_data['AVG_ELAPSED_SEC'].mean():.1f}s")
 
     with tab_optimization:
-        from sections.optimization import render as render_optimization
+        from sections.optimization import render_optimization_advisor
 
-        render_optimization()
+        render_optimization_advisor()

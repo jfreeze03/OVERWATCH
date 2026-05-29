@@ -7,7 +7,8 @@ from config import CREDIT_RATES, COMPUTE_CREDIT_CASE, DEFAULTS
 __all__ = [
     "format_credits", "credits_to_dollars", "estimate_live_credits",
     "build_metered_credit_cte", "build_idle_warehouse_sql",
-    "metric_confidence_label", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
+    "build_monitoring_cost_sql", "metric_confidence_label",
+    "freshness_note", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
 ]
 
 
@@ -197,12 +198,103 @@ def build_idle_warehouse_sql(
     """
 
 
+def build_monitoring_cost_sql(days_back: int = 7) -> str:
+    """Return SQL for the OVERWATCH cost-of-monitoring panel."""
+    try:
+        from .company_filter import get_wh_filter_clause
+
+        wh_filter = get_wh_filter_clause("warehouse_name")
+        q_wh_filter = get_wh_filter_clause("q.warehouse_name")
+    except Exception:
+        wh_filter = ""
+        q_wh_filter = ""
+
+    return f"""
+    WITH {build_metered_credit_cte(days_back=days_back, include_recent=True)},
+    overwatch_queries AS (
+        SELECT
+            'OVERWATCH tagged queries' AS component,
+            COUNT(*) AS events,
+            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS credits,
+            'Allocated' AS confidence,
+            'QUERY_HISTORY query_tag = OVERWATCH:v3, allocated from warehouse metering' AS source
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+        WHERE q.start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
+          AND q.warehouse_name IS NOT NULL
+          AND (q.query_tag ILIKE 'OVERWATCH:%' OR q.query_tag ILIKE 'OVERWATCH%')
+          {q_wh_filter}
+    ),
+    streamlit_warehouse AS (
+        SELECT
+            'Streamlit warehouse' AS component,
+            COUNT(*) AS events,
+            ROUND(SUM(credits_used), 4) AS credits,
+            'Exact' AS confidence,
+            'WAREHOUSE_METERING_HISTORY where warehouse_name indicates Streamlit' AS source
+        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+        WHERE start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
+          AND (warehouse_name ILIKE 'SYSTEM$STREAMLIT%' OR warehouse_name ILIKE '%STREAMLIT%')
+          {wh_filter}
+    ),
+    cortex_cost AS (
+        SELECT
+            'Cortex services' AS component,
+            COUNT(*) AS events,
+            ROUND(SUM(credits_used), 4) AS credits,
+            'Account-wide' AS confidence,
+            'METERING_HISTORY service_type contains Cortex; not warehouse/company attributable' AS source
+        FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+        WHERE start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
+          AND service_type ILIKE '%CORTEX%'
+    ),
+    alert_tasks AS (
+        SELECT
+            'OVERWATCH alert tasks' AS component,
+            COUNT(*) AS events,
+            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS credits,
+            'Allocated' AS confidence,
+            'QUERY_HISTORY task/alert SQL matched to warehouse metering' AS source
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+        WHERE q.start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
+          AND q.warehouse_name IS NOT NULL
+          AND (
+              q.query_tag ILIKE '%OVERWATCH_ALERT%'
+              OR q.query_text ILIKE '%OVERWATCH_ALERT%'
+              OR q.query_text ILIKE '%OVERWATCH_ACTION_QUEUE%'
+          )
+          {q_wh_filter}
+    )
+    SELECT * FROM overwatch_queries
+    UNION ALL SELECT * FROM streamlit_warehouse
+    UNION ALL SELECT * FROM cortex_cost
+    UNION ALL SELECT * FROM alert_tasks
+    ORDER BY credits DESC
+    """
+
+
 def metric_confidence_label(kind: str) -> str:
     """Small UI label explaining whether a metric is exact or estimated."""
     labels = {
-        "exact": "Confidence: Exact Snowflake metering",
+        "exact": "Confidence: Exact",
         "allocated": "Confidence: Allocated from exact warehouse metering",
-        "estimated": "Confidence: Estimated from observed runtime",
-        "account": "Confidence: Account-wide Snowflake metering",
+        "estimated": "Confidence: Estimated",
+        "account": "Confidence: Account-wide",
+        "account-wide": "Confidence: Account-wide",
     }
     return labels.get(str(kind or "").lower(), "Confidence: Calculation depends on available account metadata")
+
+
+def freshness_note(source: str) -> str:
+    """Return expected Snowflake source latency for metric captions."""
+    source_key = str(source or "").lower()
+    if "information_schema" in source_key or source_key in {"live", "is"}:
+        return "Freshness: live INFORMATION_SCHEMA view"
+    if "account_usage" in source_key or source_key in {"account", "query_history", "warehouse_metering_history"}:
+        return "Freshness: ACCOUNT_USAGE can lag up to about 45-90 minutes"
+    if "organization_usage" in source_key:
+        return "Freshness: ORGANIZATION_USAGE can lag several hours"
+    if "session" in source_key:
+        return "Freshness: current Streamlit session only"
+    return "Freshness: depends on source view availability"

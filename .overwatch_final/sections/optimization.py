@@ -1,4 +1,4 @@
-# sections/optimization.py — Idle costs, duplicate queries, right-sizing advisor
+# sections/optimization.py — shared Warehouse Health optimization advisor helpers
 import streamlit as st
 import pandas as pd
 from utils import (
@@ -11,7 +11,7 @@ from utils import (
 from config import THRESHOLDS
 
 
-def render():
+def render_optimization_advisor():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     company = get_active_company()
@@ -220,3 +220,9 @@ def render():
                     st.info(f"**{wh}** ({sz}): very low credit usage ({cred:.2f}) — consider downsizing to X-Small")
 
             download_csv(df_s, "right_sizing.csv")
+
+
+def render():
+    """Backward-compatible entry point; navigation now routes users to Warehouse Health."""
+    st.info("Optimization Advisor now lives inside Warehouse Health.")
+    render_optimization_advisor()

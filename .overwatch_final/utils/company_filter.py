@@ -10,6 +10,8 @@
 #   Trexis → WH_TRXS_* only
 #   ALL   → no filter, but get_company_case_expr() labels every row
 # ─────────────────────────────────────────────────────────────────────────────
+import hashlib
+
 import streamlit as st
 import fnmatch
 from config import COMPANY_CONFIG, DEFAULT_COMPANY
@@ -33,18 +35,23 @@ def invalidate_company_cache():
     """
     Clear all section data from session_state when the company filter changes.
     Without this, stale Trexis data lingers in ALFA view (and vice versa).
-    Preserves settings (credit_price, rt_interval, nav_section, etc.).
+    Preserves settings, theme, navigation, and global filters.
     """
+    _preserve_exact = {
+        "active_company", "active_theme", "nav_section", "_prev_active_company",
+        "_prev_nav_section", "credit_price", "_credit_price", "storage_cost",
+        "rt_interval", "theme_picker_radio",
+    }
     _preserve_prefixes = (
         "nav_", "_prev_nav_", "active_company", "_prev_active_company",
         "credit_price", "_credit_price", "storage_cost", "rt_interval",
         "global_start", "global_end", "global_warehouse", "global_user",
-        "global_role", "global_database",
+        "global_role", "global_database", "theme_", "company_",
     )
     keys_to_drop = [
         k for k in list(st.session_state.keys())
-        if not any(k.startswith(p) for p in _preserve_prefixes)
-        and k not in ("active_company", "nav_section")
+        if k not in _preserve_exact
+        and not any(k.startswith(p) for p in _preserve_prefixes)
     ]
     for k in keys_to_drop:
         del st.session_state[k]
@@ -270,3 +277,69 @@ def get_global_filter_clause(
         get_global_role_filter_clause(role_col) if role_col else "",
         get_global_db_filter_clause(db_col)   if db_col    else "",
     ])).strip()
+
+
+def get_company_scope_key(prefix: str, *parts: object) -> str:
+    """Build a cache key that includes company and global filter state."""
+    payload = "|".join([
+        str(prefix),
+        str(get_active_company()),
+        str(st.session_state.get("global_start_date", "")),
+        str(st.session_state.get("global_end_date", "")),
+        str(st.session_state.get("global_warehouse", "")),
+        str(st.session_state.get("global_user", "")),
+        str(st.session_state.get("global_role", "")),
+        str(st.session_state.get("global_database", "")),
+        *[str(part) for part in parts],
+    ])
+    return f"{prefix}_{hashlib.sha1(payload.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
+
+
+def company_scoped_query(
+    query_text: str,
+    ttl_prefix: str,
+    *,
+    tier: str = "recent",
+    use_cache: bool = True,
+    spinner_msg: str = "Loading data...",
+    date_col: str = "start_time",
+    wh_col: str = "warehouse_name",
+    user_col: str = "user_name",
+    role_col: str = "role_name",
+    db_col: str = "database_name",
+    include_global_filters: bool = True,
+    section: str = "",
+    extra_cache_parts: tuple = (),
+):
+    """
+    Execute SQL with a consistent company/global filter placeholder and cache key.
+
+    Put `{company_scope}` or `{global_scope}` in the SQL where a WHERE fragment
+    should be injected. If no placeholder is present, the query is left unchanged.
+    """
+    from .query import run_query
+
+    scope_clause = (
+        get_global_filter_clause(
+            date_col=date_col,
+            wh_col=wh_col,
+            user_col=user_col,
+            role_col=role_col,
+            db_col=db_col,
+        )
+        if include_global_filters
+        else get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col)
+    )
+    sql = (
+        str(query_text)
+        .replace("{company_scope}", scope_clause)
+        .replace("{global_scope}", scope_clause)
+    )
+    return run_query(
+        sql,
+        ttl_key=get_company_scope_key(ttl_prefix, *extra_cache_parts),
+        use_cache=use_cache,
+        spinner_msg=spinner_msg,
+        tier=tier,
+        section=section,
+    )

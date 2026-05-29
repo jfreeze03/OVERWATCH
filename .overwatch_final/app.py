@@ -23,7 +23,10 @@ from config import (
 )
 from utils.display import clear_all_cache
 from utils.session import get_session
-from utils.query import sql_literal, get_query_telemetry, clear_query_telemetry, format_snowflake_error
+from utils.query import (
+    sql_literal, get_query_telemetry, get_query_budget_summary,
+    clear_query_telemetry, format_snowflake_error,
+)
 from utils.company_filter import invalidate_company_cache
 from utils.bookmarks import (
     build_bookmark_ddl, save_bookmark, load_bookmarks,
@@ -58,7 +61,8 @@ NAV_ALIASES = {
     "Detailed Diagnosis": "🧪 Detailed Diagnosis",
     "Pipeline Health": "🚚 Pipeline Health",
     "Platform Topology": "🕸️ Platform Topology",
-    "Credit Contract": "📉 Credit Contract",
+    "Credit Contract": "💸 Cost Center",
+    "📉 Credit Contract": "💸 Cost Center",
     "Snowflake Value": "🏆 Snowflake Value",
     "💡 Optimization": "🏭 Warehouse Health",
 }
@@ -308,6 +312,11 @@ with st.sidebar:
             format_func=lambda x: f"{x}s",
             key="rt_interval",
         )
+        st.toggle(
+            "Leadership exceptions only",
+            key="exceptions_only_mode",
+            help="Reduce page noise and defer expensive drilldowns unless an exception is present.",
+        )
 
         telemetry = get_query_telemetry()
         if not telemetry.empty:
@@ -319,6 +328,10 @@ with st.sidebar:
             t1, t2 = st.columns(2)
             t1.metric("App Queries This Session", f"{total_calls:,}")
             t2.metric("Observed Wait", f"{total_elapsed:,.1f}s", f"{avg_elapsed:,.0f} ms avg")
+            budget_summary = get_query_budget_summary()
+            if not budget_summary.empty:
+                with st.expander("Budget guardrail by section", expanded=False):
+                    st.dataframe(budget_summary, use_container_width=True, height=220)
             with st.expander("Recent query trace", expanded=False):
                 st.dataframe(telemetry.tail(50), use_container_width=True, height=220)
                 if st.button("Clear telemetry", key="clear_query_telemetry"):

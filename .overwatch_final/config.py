@@ -123,7 +123,6 @@ NAV_GROUPS = {
     ],
     "COST & PERFORMANCE": [
         "💸 Cost Center",
-        "📉 Credit Contract",
         "💡 Recommendations & Anomalies",
         "🏆 Snowflake Value",
         "🤖 AI & Cortex Monitor",
@@ -174,7 +173,6 @@ ROLE_SECTIONS = {
         "🩺 Service Health",
         "🧪 Detailed Diagnosis",
         "💸 Cost Center",
-        "📉 Credit Contract",
         "💡 Recommendations & Anomalies",
         "🏆 Snowflake Value",
         "🗄️ Storage Monitor",
@@ -191,15 +189,14 @@ ROLE_SECTIONS = {
         "🔍 Query Analysis",
         "🕰️ Query Search & History",
         "💸 Cost Center",
-        "📉 Credit Contract",
         "🗄️ Storage Monitor",
         "🚚 Pipeline Health",
         "🕸️ Platform Topology",
     ],
     # DBA / admin / sysadmin — full access (default fallback also gives full access)
-    "DBA":         ALL_SECTIONS,
-    "SYSADMIN":    ALL_SECTIONS,
-    "ACCOUNTADMIN":ALL_SECTIONS,
+    "DBA":         list(ALL_SECTIONS),
+    "SYSADMIN":    list(ALL_SECTIONS),
+    "ACCOUNTADMIN":list(ALL_SECTIONS),
 }
 
 # ── ETL Audit table target ────────────────────────────────────────────────────

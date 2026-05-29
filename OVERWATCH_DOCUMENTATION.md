@@ -104,7 +104,6 @@ Infrastructure:
 Cost & Performance:
 
 - Cost Center
-- Credit Contract
 - Recommendations & Anomalies
 - Snowflake Value
 - AI & Cortex Monitor
@@ -120,14 +119,15 @@ Security & Ops:
 ## Major Capabilities
 
 Account Health is the executive landing page. It includes an overview, resource
-monitor view, morning report, and executive briefing export.
+monitor view, morning report, executive briefing export, exceptions-only mode,
+and an OVERWATCH cost-of-monitoring panel.
 
 Warehouse Health combines warehouse utilization, cache efficiency, scaling
 events, spill pressure, concurrency heatmaps, and optimization guidance.
 
 Cost Center includes cost by user, warehouse, role, database, schema,
 application/client, chargeback by company view, budget tracking, burn rate, and
-contract utilization.
+the canonical contract utilization view.
 
 Recommendations & Anomalies provides an action queue with severity, owner,
 status, proof SQL, generated fixes, and alert setup.
@@ -135,10 +135,12 @@ status, proof SQL, generated fixes, and alert setup.
 Security & Access includes login audit, login posture, roles and grants, dormant
 user detection, MFA coverage, exfiltration signals, and access-history lineage.
 
-DBA Tools includes query kill list, warehouse settings manager, data loading,
-network and sessions, unused objects, Snowpipe, QAS, schema compare, recent
-objects, pre-aggregation DDL, dynamic tables, replication, serverless costs,
-Cortex limits, task graph control, and OVERWATCH usage log.
+DBA Tools is consolidated into four grouped work areas: Warehouse Ops, Data
+Movement, Governance, and Cost & Setup. It includes query kill list, warehouse
+settings manager, data loading, network and sessions, unused objects, Snowpipe,
+QAS, schema compare, recent objects, pre-aggregation DDL, dynamic tables,
+replication, serverless costs, Cortex limits, task graph control, OVERWATCH
+usage log, first-time setup, and cost formula audit.
 
 DBA metadata tabs prefer `SHOW` output or defensive `SELECT *` patterns where
 Snowflake account-usage column names vary by edition or release. Optional
@@ -179,13 +181,25 @@ user/database/role filters are applied to query history before reporting. This
 prevents a filtered user or database view from being charged for the full
 warehouse-hour spend of unrelated workloads.
 
+`company_scoped_query()` centralizes company/global filter injection and cache
+key construction for new section SQL. Use `{company_scope}` or `{global_scope}`
+placeholders in SQL instead of hand-building company filters in every section.
+
 Idle warehouse recommendations use finalized compute credits, not total
 warehouse credits, so cloud-services overhead is not overstated as idle
 compute waste.
 
-Credit Contract, Cost Center forecast, and Cortex forecast fill missing calendar
-days with zero credits before calculating run rates. This avoids overstating
-usage when Snowflake metering returns only days with activity.
+Cost Center forecast, contract utilization, and Cortex forecast fill missing
+calendar days with zero credits before calculating run rates. This avoids
+overstating usage when Snowflake metering returns only days with activity.
+
+DBA Tools > Cost & Setup > Cost Formula Audit documents each cost calculation,
+its source table, confidence level, and reconciliation SQL. This separates
+exact billed metrics from allocated query estimates and forecast projections.
+
+OVERWATCH query telemetry records query hash, section, elapsed time, row count,
+and estimated result size. The budget guardrail warns when the same section
+repeatedly runs a slow or large-result query pattern.
 
 ## Global Filters
 
@@ -256,6 +270,11 @@ queue with status values such as New, Acknowledged, Fixed, and Ignored.
   practical.
 - Some features are best-effort because Snowflake account history availability
   depends on edition, privileges, retention, and account settings.
+- Metrics that mix service costs, allocated query cost, storage, Cortex, or
+  procedure attribution should show confidence labels such as Exact, Allocated,
+  Estimated, or Account-wide.
+- ACCOUNT_USAGE-backed metrics should show freshness context because source
+  latency can make "live" and "last 24h" numbers differ.
 - Keep credentials in Streamlit or Snowflake-managed secrets, never in the repo.
 - Do not commit Streamlit log files or Python cache directories.
 
@@ -266,7 +285,15 @@ queue with status values such as New, Acknowledged, Fixed, and Ignored.
   ligatures from broad font overrides.
 - Navigation labels were standardized with native Streamlit captions where
   possible.
+- DBA Tools tabs were consolidated into Warehouse Ops, Data Movement,
+  Governance, and Cost & Setup groups.
 - Optimization was consolidated under Warehouse Health.
+- Credit Contract was consolidated into Cost Center contract utilization.
+- Usage Overview now loads KPIs first and defers chart/drilldown panels until
+  requested.
+- OVERWATCH cost-of-monitoring, query budget guardrails, metric confidence
+  labels, source freshness notes, and leadership exceptions-only mode were
+  added.
 - Dormant Users was removed from DBA Tools and remains available in Security &
   Access.
 - Migration Confidence and Teradata-oriented executive language were removed.

@@ -5,7 +5,9 @@ from datetime import datetime
 from utils import (
     get_session, run_query, run_query_or_raise, format_credits,
     credits_to_dollars, download_csv, mark_loaded, show_loaded_time,
-    build_metered_credit_cte, render_drillable_bar_chart, render_query_drilldown,
+    build_metered_credit_cte, build_monitoring_cost_sql,
+    metric_confidence_label, freshness_note,
+    render_drillable_bar_chart, render_query_drilldown,
     build_task_failure_summary_sql,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
     get_global_filter_clause, company_value_allowed,
@@ -125,6 +127,9 @@ def render():
     # ── OVERVIEW ──────────────────────────────────────────────────────────────
     with tab_overview:
         st.header("🏠 Account Health — Command Center")
+        exceptions_only = bool(st.session_state.get("exceptions_only_mode", False))
+        if exceptions_only:
+            st.info("Leadership exceptions-only mode is on. Heavy drilldowns stay collapsed until you ask for detail.")
 
         cache_age = 999
         filter_sig = "|".join([
@@ -275,6 +280,12 @@ def render():
         k5.metric("Cost (24h)",     f"${credits_to_dollars(last24):,.0f}")
         k6.metric("Storage",        f"{stor_tb:.1f} TB")
         k7.metric("Failed (24h)",   err_count, delta_color="inverse")
+        st.caption(
+            " | ".join([
+                metric_confidence_label("exact"),
+                freshness_note("ACCOUNT_USAGE"),
+            ])
+        )
 
         st.divider()
         show_loaded_time("account_health")
@@ -351,6 +362,35 @@ def render():
             st.info("Use Recommendations & Anomalies for optimization actions and Teams-ready alerting.")
             if st.button("Open Recommendations", key="ah_open_recommendations"):
                 _drill_to("💡 Recommendations & Anomalies")
+
+        st.divider()
+        st.markdown("**OVERWATCH Cost of Monitoring**")
+        mon_days = st.slider("Monitoring cost lookback days", 1, 30, 7, key="ah_monitoring_cost_days")
+        if st.button("Load monitoring cost", key="ah_monitoring_cost_load"):
+            mon_df = run_query(
+                build_monitoring_cost_sql(mon_days),
+                ttl_key=f"ah_monitoring_cost_{company}_{mon_days}",
+                tier="historical",
+                section="Account Health",
+            )
+            st.session_state["ah_monitoring_cost"] = mon_df
+        mon_df = st.session_state.get("ah_monitoring_cost")
+        if mon_df is not None and not mon_df.empty:
+            mon_df = mon_df.copy()
+            mon_df["EST_COST"] = mon_df["CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Observed Components", len(mon_df))
+            m2.metric("Credits", format_credits(float(mon_df["CREDITS"].sum())))
+            m3.metric("Estimated Cost", f"${float(mon_df['EST_COST'].sum()):,.2f}")
+            st.caption("Keeps the monitor honest: app-tagged queries, Streamlit warehouse, Cortex, and alert task cost.")
+            st.dataframe(mon_df, use_container_width=True, height=220)
+            download_csv(mon_df, "overwatch_monitoring_cost.csv")
+        elif mon_df is not None:
+            st.info("No tagged OVERWATCH monitoring cost found in the selected window.")
+
+        if exceptions_only:
+            st.caption("Exceptions-only mode intentionally stops here to avoid loading lower-priority drilldowns.")
+            return
 
         st.divider()
         st.markdown("**🏭 Warehouse Pressure (last 1h)**")

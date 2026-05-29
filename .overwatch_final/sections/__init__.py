@@ -22,7 +22,6 @@ _MODULE_MAP: dict[str, str] = {
     "🕰️ Query Search & History":     "sections.query_search",
     "🏭 Warehouse Health":            "sections.warehouse_health",
     "💸 Cost Center":                 "sections.cost_center",
-    "📉 Credit Contract":             "sections.credit_contract",
     "🗄️ Storage Monitor":            "sections.storage_monitor",
     "🚚 Pipeline Health":             "sections.pipeline_health",
     "🕸️ Platform Topology":           "sections.platform_topology",

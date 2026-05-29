@@ -24,24 +24,123 @@ CACHE_TIERS: dict[str, int] = {
     "metadata":   14400,  # SHOW WAREHOUSES, SHOW TASKS, USERS — 4-hour cache
 }
 
+QUERY_BUDGET_THRESHOLDS = {
+    "slow_elapsed_ms": 10_000,
+    "large_rows": 25_000,
+    "large_result_mb": 25.0,
+    "repeat_warning_count": 3,
+}
 
-def _record_query_telemetry(query_text: str, ttl_key: str, tier: str, elapsed_ms: float, row_count: int, used_cache: bool) -> None:
+
+def _estimate_result_mb(result: pd.DataFrame) -> float:
+    """Estimate result-set memory size for budget telemetry."""
+    try:
+        if result is None or result.empty:
+            return 0.0
+        return float(result.memory_usage(deep=True).sum()) / (1024 * 1024)
+    except Exception:
+        return 0.0
+
+
+def _infer_telemetry_section(section: str = "", ttl_key: str = "") -> str:
+    """Infer a useful section label for older run_query() call sites."""
+    if section:
+        return str(section)
+
+    key = str(ttl_key or "").lower()
+    prefix_map = [
+        ("account_health", "Account Health"),
+        ("ah_", "Account Health"),
+        ("cc_", "Cost Center"),
+        ("uo_", "Usage Overview"),
+        ("wh_", "Warehouse Health"),
+        ("lm_", "Live Monitor"),
+        ("qa_", "Query Analysis"),
+        ("qs_", "Query Search & History"),
+        ("dba_", "DBA Tools"),
+        ("tm_", "Task Management"),
+        ("sec_", "Security & Access"),
+        ("sp_", "Stored Proc Tracker"),
+        ("rec_", "Recommendations & Anomalies"),
+        ("cortex_", "AI & Cortex Monitor"),
+        ("storage_", "Storage Monitor"),
+        ("pipe_", "Pipeline Health"),
+        ("value_", "Snowflake Value"),
+    ]
+    for prefix, label in prefix_map:
+        if key.startswith(prefix):
+            return label
+
+    nav_section = str(st.session_state.get("nav_section") or "").strip()
+    return nav_section or "Unknown"
+
+
+def _record_query_telemetry(
+    query_text: str,
+    ttl_key: str,
+    tier: str,
+    elapsed_ms: float,
+    row_count: int,
+    used_cache: bool,
+    result_mb: float = 0.0,
+    section: str = "",
+) -> None:
     """Keep a lightweight in-session trace of OVERWATCH query volume."""
     try:
+        query_hash = hashlib.sha1(str(query_text).encode("utf-8", errors="ignore")).hexdigest()[:12]
+        active_section = _infer_telemetry_section(section, ttl_key)
         entries = st.session_state.setdefault("_overwatch_query_telemetry", [])
         entries.append({
             "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "section": active_section,
             "ttl_key": ttl_key,
             "tier": tier,
             "cache_enabled": bool(used_cache),
             "elapsed_ms": round(float(elapsed_ms), 2),
             "rows": int(row_count or 0),
-            "query_hash": hashlib.sha1(str(query_text).encode("utf-8", errors="ignore")).hexdigest()[:12],
+            "result_mb": round(float(result_mb or 0), 3),
+            "query_hash": query_hash,
         })
         if len(entries) > 250:
             del entries[:-250]
+        _warn_on_budget_pressure(active_section, query_hash, ttl_key, elapsed_ms, row_count, result_mb)
     except Exception:
         pass
+
+
+def _warn_on_budget_pressure(
+    section: str,
+    query_hash: str,
+    ttl_key: str,
+    elapsed_ms: float,
+    row_count: int,
+    result_mb: float,
+) -> None:
+    """Warn once a section repeats expensive query patterns in a session."""
+    is_expensive = (
+        float(elapsed_ms or 0) >= QUERY_BUDGET_THRESHOLDS["slow_elapsed_ms"]
+        or int(row_count or 0) >= QUERY_BUDGET_THRESHOLDS["large_rows"]
+        or float(result_mb or 0) >= QUERY_BUDGET_THRESHOLDS["large_result_mb"]
+    )
+    if not is_expensive:
+        return
+
+    budget = st.session_state.setdefault("_overwatch_query_budget_hits", {})
+    key = f"{section}|{ttl_key}|{query_hash}"
+    budget[key] = int(budget.get(key, 0)) + 1
+    if budget[key] < QUERY_BUDGET_THRESHOLDS["repeat_warning_count"]:
+        return
+
+    seen = st.session_state.setdefault("_overwatch_query_budget_warning_hashes", set())
+    warning_key = f"{section}|{ttl_key}|{query_hash}"
+    if warning_key in seen:
+        return
+    seen.add(warning_key)
+    st.warning(
+        "OVERWATCH budget guardrail: this section repeatedly ran a heavy query. "
+        f"Section={section}; rows={int(row_count or 0):,}; "
+        f"result={float(result_mb or 0):.1f} MB; elapsed={float(elapsed_ms or 0)/1000:.1f}s."
+    )
 
 
 def _show_query_warning(prefix: str, error: Exception) -> None:
@@ -85,9 +184,34 @@ def get_query_telemetry() -> pd.DataFrame:
     return pd.DataFrame(st.session_state.get("_overwatch_query_telemetry", []))
 
 
+def get_query_budget_summary() -> pd.DataFrame:
+    """Return per-section query budget telemetry for this Streamlit session."""
+    df = get_query_telemetry()
+    if df.empty:
+        return df
+    for col in ["elapsed_ms", "rows", "result_mb"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    grouped = (
+        df.groupby("section", dropna=False)
+        .agg(
+            calls=("query_hash", "count"),
+            unique_queries=("query_hash", "nunique"),
+            elapsed_sec=("elapsed_ms", lambda s: round(float(s.sum()) / 1000, 2)),
+            max_rows=("rows", "max"),
+            max_result_mb=("result_mb", "max"),
+        )
+        .reset_index()
+        .sort_values(["elapsed_sec", "calls"], ascending=False)
+    )
+    return grouped
+
+
 def clear_query_telemetry() -> None:
     """Clear current session query telemetry."""
     st.session_state["_overwatch_query_telemetry"] = []
+    st.session_state["_overwatch_query_budget_hits"] = {}
+    st.session_state["_overwatch_query_budget_warning_hashes"] = set()
 
 
 def safe_sql(value: str) -> str:
@@ -256,6 +380,7 @@ def run_query(
     use_cache: bool = True,
     spinner_msg: str = "Loading data...",
     tier: str = "recent",
+    section: str = "",
 ) -> pd.DataFrame:
     """Execute a query through the cached runner and log lightweight telemetry."""
     started = time.perf_counter()
@@ -267,7 +392,8 @@ def run_query(
         tier=tier,
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
-    _record_query_telemetry(query_text, ttl_key, tier, elapsed_ms, len(result), use_cache)
+    result_mb = _estimate_result_mb(result)
+    _record_query_telemetry(query_text, ttl_key, tier, elapsed_ms, len(result), use_cache, result_mb, section)
     return result
 
 

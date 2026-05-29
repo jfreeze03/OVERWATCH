@@ -247,39 +247,69 @@ def render():
         if "QUERY_TAG" in qh_cols else "LOWER(query_text) LIKE '%execute task%'"
     )
 
-    tool_groups = {
-        "Warehouse Ops": "Query Kill List, Warehouse Settings, QAS Monitor, Task Graph Control",
-        "Data Movement": "Data Loading, Snowpipe Monitor, Dynamic Tables, Replication",
-        "Governance": "Network & Sessions, Unused Objects, Schema Compare, Recent Objects",
-        "Cost & Setup": "Pre-Aggregation, Serverless Costs, Cortex AI Limits, Usage Log, First-Time Setup",
-    }
-    selected_group = st.selectbox(
-        "DBA tool group",
-        list(tool_groups.keys()),
-        key="dba_tool_group",
-        help="Use this to orient the DBA toolkit. The tabs below wrap into multiple rows for readability.",
+    st.caption(
+        "DBA Tools are grouped to keep the high-value controls easy to find. "
+        "Open a group, then choose the specific operation."
     )
-    st.caption(tool_groups[selected_group])
 
-    tabs = st.tabs([
-        "Query Kill List",
-        "⚙️ Warehouse Settings",       # Tab 1 — REWRITTEN
-        "Data Loading",
-        "Network & Sessions",
-        "Unused Objects",
-        "Snowpipe Monitor",
-        "QAS Monitor",
-        "Schema Compare",
-        "Recent Objects",
-        "Pre-Aggregation",
-        "Dynamic Tables",
-        "Replication",
-        "Serverless Costs",
-        "🤖 Cortex AI Limits",         # Tab 14 — NEW
-        "🔀 Task Graph Control",        # Tab 15 — NEW
-        "📊 Usage Log",                 # Tab 16
-        "🔧 First-Time Setup",
+    group_tabs = st.tabs([
+        "🏭 Warehouse Ops",
+        "🚚 Data Movement",
+        "🛡️ Governance",
+        "💸 Cost & Setup",
     ])
+
+    with group_tabs[0]:
+        ops_tabs = st.tabs([
+            "Query Kill List",
+            "⚙️ Warehouse Settings",
+            "QAS Monitor",
+            "🔀 Task Graph Control",
+        ])
+    with group_tabs[1]:
+        movement_tabs = st.tabs([
+            "Data Loading",
+            "Snowpipe Monitor",
+            "Dynamic Tables",
+            "Replication",
+        ])
+    with group_tabs[2]:
+        governance_tabs = st.tabs([
+            "Network & Sessions",
+            "Unused Objects",
+            "Schema Compare",
+            "Recent Objects",
+        ])
+    with group_tabs[3]:
+        cost_tabs = st.tabs([
+            "Pre-Aggregation",
+            "Serverless Costs",
+            "🧮 Cost Formula Audit",
+            "🤖 Cortex AI Limits",
+            "📊 Usage Log",
+            "🔧 First-Time Setup",
+        ])
+
+    tabs = [
+        ops_tabs[0],          # Query Kill List
+        ops_tabs[1],          # Warehouse Settings
+        movement_tabs[0],     # Data Loading
+        governance_tabs[0],   # Network & Sessions
+        governance_tabs[1],   # Unused Objects
+        movement_tabs[1],     # Snowpipe Monitor
+        ops_tabs[2],          # QAS Monitor
+        governance_tabs[2],   # Schema Compare
+        governance_tabs[3],   # Recent Objects
+        cost_tabs[0],         # Pre-Aggregation
+        movement_tabs[2],     # Dynamic Tables
+        movement_tabs[3],     # Replication
+        cost_tabs[1],         # Serverless Costs
+        cost_tabs[3],         # Cortex AI Limits
+        ops_tabs[3],          # Task Graph Control
+        cost_tabs[4],         # Usage Log
+        cost_tabs[5],         # First-Time Setup
+        cost_tabs[2],         # Cost Formula Audit
+    ]
 
     # ── TAB 0: QUERY KILL LIST ────────────────────────────────────────────────
     with tabs[0]:
@@ -1600,6 +1630,63 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             st.bar_chart(df_ul.set_index(lbl)["LOAD_COUNT"])
             st.dataframe(df_ul, use_container_width=True)
             download_csv(df_ul, f"usage_log_{ul_group.lower()}.csv")
+
+    # Cost formula audit
+    with tabs[17]:
+        st.header("🧮 Cost Formula Audit")
+        st.caption(
+            "Documents which OVERWATCH cost numbers reconcile to Snowflake billing "
+            "sources and which are allocation or forecast estimates."
+        )
+
+        audit_df = build_cost_formula_audit()
+        exact_count = int(audit_df["CONFIDENCE"].str.contains("Exact", case=False, na=False).sum())
+        estimate_count = int(audit_df["CONFIDENCE"].str.contains("estimate|forecast|mixed|allocated", case=False, na=False).sum())
+        rows_count = len(audit_df)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Formula Checks", f"{rows_count:,}")
+        c2.metric("Exact / Source-of-Truth", f"{exact_count:,}")
+        c3.metric("Estimated / Allocated", f"{estimate_count:,}")
+
+        st.dataframe(audit_df, use_container_width=True, hide_index=True)
+        download_csv(audit_df, "overwatch_cost_formula_audit.csv")
+
+        st.subheader("Reconciliation SQL")
+        st.caption(
+            "Use these as spot checks when leadership asks why a number changed. "
+            "The company selector is reflected through the warehouse filter where possible."
+        )
+        recon_sql = f"""-- Warehouse credit source of truth for the selected company view
+SELECT warehouse_name,
+       DATE_TRUNC('day', start_time) AS usage_day,
+       SUM(credits_used_compute) AS compute_credits,
+       SUM(credits_used_cloud_services) AS cloud_services_credits,
+       SUM(credits_used) AS total_warehouse_credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+  {get_wh_filter_clause("warehouse_name")}
+GROUP BY warehouse_name, usage_day
+ORDER BY usage_day DESC, total_warehouse_credits DESC;
+
+-- Serverless account-level credit check
+SELECT service_type,
+       DATE_TRUNC('day', start_time) AS usage_day,
+       SUM(credits_used) AS credits_used
+FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+  AND service_type <> 'WAREHOUSE_METERING'
+GROUP BY service_type, usage_day
+ORDER BY usage_day DESC, credits_used DESC;
+
+-- Storage dollar conversion input
+SELECT database_name,
+       AVG(average_database_bytes + average_failsafe_bytes) / POWER(1024, 4) AS avg_tb
+FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
+WHERE usage_date >= DATEADD('day', -30, CURRENT_DATE())
+  {get_db_filter_clause("database_name")}
+GROUP BY database_name
+ORDER BY avg_tb DESC;"""
+        st.code(recon_sql, language="sql")
 
     # Setup bundle and install readiness
     with tabs[16]:

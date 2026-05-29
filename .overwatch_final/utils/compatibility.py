@@ -48,7 +48,7 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
         "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
         ("START_TIME", "WAREHOUSE_NAME", "CREDITS_USED"),
         ("CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"),
-        "Cost Center, Warehouse Health, Credit Contract, Recommendations",
+        "Cost Center, Warehouse Health, Contract Utilization, Recommendations",
         "Exact warehouse cost comes from this view.",
     ),
     ViewSpec(
@@ -416,6 +416,18 @@ def build_cost_formula_audit() -> pd.DataFrame:
             "Reconciles to warehouse-hour totals but is not Snowflake-billed at query granularity.",
         ),
         (
+            "Company chargeback scope",
+            "Apply ALFA/Trexis warehouse/database boundary before allocating metered warehouse credits",
+            "Exact boundary when naming patterns are current",
+            "Prevents ALFA views from inheriting Trexis warehouse spend and keeps shared views explicit in ALL mode.",
+        ),
+        (
+            "Idle warehouse waste",
+            "Use finalized WAREHOUSE_METERING_HISTORY compute credits minus observed query execution windows",
+            "Estimated",
+            "Idle time is inferred from metering windows and activity history; use as a savings signal, not an invoice number.",
+        ),
+        (
             "Live query estimate",
             "WAREHOUSE_SIZE credit rate * elapsed seconds / 3600",
             "Estimated",
@@ -438,6 +450,12 @@ def build_cost_formula_audit() -> pd.DataFrame:
             "METERING_HISTORY by SERVICE_TYPE",
             "Exact account-level",
             "Company chargeback only when service-specific metadata provides an owner dimension.",
+        ),
+        (
+            "Forecast run rate",
+            "Fill missing calendar days with zero usage before calculating daily average and month-end forecast",
+            "Estimated forecast",
+            "Avoids overstating spend when Snowflake returns only days with metered activity.",
         ),
     ]
     return pd.DataFrame(rows, columns=["METRIC", "FORMULA", "CONFIDENCE", "NOTES"])

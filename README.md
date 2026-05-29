@@ -10,7 +10,7 @@ Streamlit Community Cloud settings:
 
 - Repository: `jfreeze03/OVERWATCH`
 - Branch: `main`
-- Main file path: `.overwatch_final/app.py`
+- Main file path: `streamlit_app.py`
 
 Local run:
 

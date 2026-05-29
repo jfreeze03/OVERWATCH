@@ -4,10 +4,12 @@ Use this repository with Streamlit Community Cloud:
 
 - Repository: `jfreeze03/OVERWATCH`
 - Branch: `main`
-- Main file path: `.overwatch_final/app.py`
+- Main file path: `streamlit_app.py`
 
 Community Cloud installs dependencies from the root `requirements.txt`.
 The Snowflake-in-Snowflake deployment still uses `.overwatch_final/environment.yml`.
+Using the root `streamlit_app.py` wrapper keeps Community Cloud from selecting
+the Snowflake-specific conda manifest under `.overwatch_final/`.
 
 ## Snowflake Connection
 
@@ -38,7 +40,7 @@ From the repository root:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-streamlit run .overwatch_final/app.py
+streamlit run streamlit_app.py
 ```
 
 Local development can run without Snowflake credentials. In that mode, the app

@@ -18,8 +18,13 @@ Streamlit Community Cloud settings:
 ```text
 Repository: jfreeze03/OVERWATCH
 Branch: main
-Main file path: .overwatch_final/app.py
+Main file path: streamlit_app.py
 ```
+
+Community Cloud must use the root wrapper `streamlit_app.py`. That wrapper runs
+`.overwatch_final/app.py` while keeping dependency installation on the root
+`requirements.txt`; pointing Cloud directly at `.overwatch_final/app.py` can make
+it select the Snowflake-only `.overwatch_final/environment.yml`.
 
 Local Windows run:
 
@@ -33,7 +38,7 @@ Manual local run:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-streamlit run .overwatch_final/app.py
+streamlit run streamlit_app.py
 ```
 
 ## Snowflake Connection
@@ -74,6 +79,8 @@ control, and account parameter changes, require elevated Snowflake privileges.
   utils/                 Session, SQL, display, bookmarks, alerts, cost helpers
   util/                  Legacy compatibility helpers
   environment.yml        Snowflake Streamlit package list
+streamlit_app.py         Streamlit Community Cloud wrapper
+runtime.txt              Community Cloud Python runtime pin
 ```
 
 ## Navigation

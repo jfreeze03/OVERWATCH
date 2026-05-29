@@ -487,9 +487,9 @@ def render():
             change_df = hd.get("what_changed", pd.DataFrame())
             if change_df is not None and not change_df.empty:
                 row = change_df.iloc[0]
-                st.metric("Queries",      f"{int(row.get('QUERY_DELTA',0) or 0):+,}")
-                st.metric("Credits",      f"{float(row.get('CREDIT_DELTA',0) or 0):+,.2f}")
-                st.metric("Failures",     f"{int(row.get('FAILURE_DELTA',0) or 0):+,}", delta_color="inverse")
+                st.metric("Queries",      f"{safe_int(row.get('QUERY_DELTA',0)):+,}")
+                st.metric("Credits",      f"{safe_float(row.get('CREDIT_DELTA',0)):+,.2f}")
+                st.metric("Failures",     f"{safe_int(row.get('FAILURE_DELTA',0)):+,}", delta_color="inverse")
             else:
                 st.info("Change summary unavailable.")
 
@@ -516,8 +516,8 @@ def render():
             mon_df["EST_COST"] = mon_df["CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
             m1, m2, m3 = st.columns(3)
             m1.metric("Observed Components", len(mon_df))
-            m2.metric("Credits", format_credits(float(mon_df["CREDITS"].sum())))
-            m3.metric("Estimated Cost", f"${float(mon_df['EST_COST'].sum()):,.2f}")
+            m2.metric("Credits", format_credits(safe_float(mon_df["CREDITS"].sum())))
+            m3.metric("Estimated Cost", f"${safe_float(mon_df['EST_COST'].sum()):,.2f}")
             st.caption("Keeps the monitor honest: app-tagged queries, Streamlit warehouse, Cortex, and alert task cost.")
             st.dataframe(mon_df, use_container_width=True, height=220)
             download_csv(mon_df, "overwatch_monitoring_cost.csv")
@@ -627,8 +627,8 @@ def render():
             c3.metric("Overall Usage", f"{(total_used/total_quota*100) if total_quota else 0:.1f}%")
 
             for _, row in df_rm.iterrows():
-                quota   = float(row.get("CREDIT_QUOTA",0) or 0)
-                used    = float(row.get("USED_CREDITS",0) or 0)
+                quota   = safe_float(row.get("CREDIT_QUOTA",0))
+                used    = safe_float(row.get("USED_CREDITS",0))
                 name    = row.get("NAME","Unknown")
                 pct     = (used / quota * 100) if quota > 0 else 0
                 suspend = row.get("SUSPEND","")
@@ -636,7 +636,7 @@ def render():
                 cols = st.columns(5)
                 cols[0].metric(f"{name} Quota", format_credits(quota))
                 cols[1].metric("Used",          format_credits(used))
-                cols[2].metric("Remaining",     format_credits(float(row.get("REMAINING_CREDITS",0) or 0)))
+                cols[2].metric("Remaining",     format_credits(safe_float(row.get("REMAINING_CREDITS",0))))
                 cols[3].metric("Usage %",       f"{pct:.1f}%")
                 cols[4].metric("Est. $",        f"${credits_to_dollars(used):,.2f}")
                 if pct > 100:  st.error(f"**{name}** OVER BUDGET at {pct:.0f}%")
@@ -691,7 +691,7 @@ def render():
 
         if st.session_state.get("morning_data"):
             md = st.session_state["morning_data"]
-            overnight_cr = float(md["credits"]["OVERNIGHT_CREDITS"].iloc[0]) if not md["credits"].empty else 0
+            overnight_cr = safe_float(md["credits"]["OVERNIGHT_CREDITS"].iloc[0]) if not md["credits"].empty else 0
             st.metric("Overnight Credits (12h)", format_credits(overnight_cr))
             if not md["failures"].empty:
                 st.subheader("❌ Overnight Failures by Type")
@@ -832,7 +832,7 @@ def render():
                 if not br_data["top_driver"].empty:
                     td = br_data["top_driver"].iloc[0]
                     top_driver      = f"{td.get('USER_NAME','')} on {td.get('WAREHOUSE_NAME','')}"
-                    top_driver_cost = credits_to_dollars(float(td.get("CREDITS",0) or 0), credit_price)
+                    top_driver_cost = credits_to_dollars(safe_float(td.get("CREDITS",0)), credit_price)
 
                 failed_task = ""
                 if not br_data["failed_tasks"].empty:

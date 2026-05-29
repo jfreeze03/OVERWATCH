@@ -10,6 +10,7 @@ from utils import (
     filter_existing_columns,
     render_query_drilldown,
     run_query,
+    safe_float,
     sql_literal,
     upsert_actions,
 )
@@ -130,7 +131,7 @@ def _queue_diagnosis(session, df, mode: str):
         qid = str(row.get("QUERY_ID", ""))
         wh = str(row.get("WAREHOUSE_NAME", "UNKNOWN"))
         user = str(row.get("USER_NAME", "UNKNOWN"))
-        metric_value = float(row.get(metric_col, 0) or 0)
+        metric_value = safe_float(row.get(metric_col, 0))
         if not qid:
             continue
         severity = "Critical" if mode in ("Queued Overload", "Remote Spill") and metric_value >= 60 else "High"
@@ -185,7 +186,7 @@ def render():
     _, metric_col, _ = DIAG_MODES.get(loaded_mode, DIAG_MODES["Execution Time"])
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Findings", f"{len(df):,}")
-    c2.metric("Worst", f"{float(df[metric_col].max() or 0):,.2f}")
+    c2.metric("Worst", f"{safe_float(df[metric_col].max()):,.2f}")
     c3.metric("Affected Warehouses", f"{df['WAREHOUSE_NAME'].nunique():,}")
     c4.metric("Affected Users", f"{df['USER_NAME'].nunique():,}")
 

@@ -15,6 +15,7 @@ from utils import (
     format_snowflake_error,
     run_query,
     run_query_or_raise,
+    safe_int,
     upsert_actions,
 )
 from config import THRESHOLDS
@@ -30,12 +31,12 @@ def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, sever
         user = str(row.get("USER_NAME") or row.get("GRANTEE_NAME") or "Unknown user")
         if finding_type == "Failed Login":
             entity = user
-            finding = f"{user} had {int(row.get('ATTEMPT_COUNT', 0) or 0)} failed login attempts from {row.get('CLIENT_IP', 'unknown IP')}"
+            finding = f"{user} had {safe_int(row.get('ATTEMPT_COUNT', 0))} failed login attempts from {row.get('CLIENT_IP', 'unknown IP')}"
             action = "Validate whether attempts are expected; review identity provider logs and lock/disable user if suspicious."
             proof = "LOGIN_HISTORY failed login attempts."
         elif finding_type == "Dormant User":
             entity = user
-            finding = f"{user} is active but has been dormant for {int(row.get('DAYS_SINCE_LOGIN', 0) or 0)} days"
+            finding = f"{user} is active but has been dormant for {safe_int(row.get('DAYS_SINCE_LOGIN', 0))} days"
             action = "Confirm ownership and disable or remove roles if the account is no longer needed."
             proof = "USERS joined to LOGIN_HISTORY and QUERY_HISTORY."
         elif finding_type == "No MFA":

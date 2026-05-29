@@ -8,6 +8,7 @@ from utils import (
     metric_confidence_label, freshness_note,
     build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
     run_query, format_snowflake_error, filter_existing_columns, render_optimization_advisor,
+    safe_float,
 )
 from config import THRESHOLDS
 
@@ -20,10 +21,10 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
     actions = []
     for _, row in df_eff[df_eff["EFFICIENCY_SCORE"] < 70].head(100).iterrows():
         wh = str(row.get("WAREHOUSE_NAME", ""))
-        score = float(row.get("EFFICIENCY_SCORE", 0) or 0)
-        queue = float(row.get("QUEUE_SEC_PER_CREDIT", 0) or 0)
-        spill = float(row.get("REMOTE_SPILL_GB_PER_CREDIT", 0) or 0)
-        credits = float(row.get("METERED_CREDITS", 0) or 0)
+        score = safe_float(row.get("EFFICIENCY_SCORE", 0))
+        queue = safe_float(row.get("QUEUE_SEC_PER_CREDIT", 0))
+        spill = safe_float(row.get("REMOTE_SPILL_GB_PER_CREDIT", 0))
+        credits = safe_float(row.get("METERED_CREDITS", 0))
         severity = "High" if score < 50 or queue > 10 or spill > 5 else "Medium"
         finding = f"{wh} efficiency score is {score:.1f}; queue sec/credit={queue:.2f}, spill GB/credit={spill:.2f}"
         actions.append({

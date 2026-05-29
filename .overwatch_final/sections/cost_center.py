@@ -15,6 +15,7 @@ from utils import (
     render_drillable_bar_chart, render_entity_query_drilldown,
     build_action_queue_ddl, make_action_id, upsert_actions,
     run_query, sql_literal, format_snowflake_error,
+    safe_float,
 )
 
 
@@ -24,12 +25,12 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         return
     company = st.session_state.get("active_company", "ALFA")
     actions = []
-    baseline = float(df["TOTAL_CREDITS"].median() or 0) if "TOTAL_CREDITS" in df.columns else 0
+    baseline = safe_float(df["TOTAL_CREDITS"].median()) if "TOTAL_CREDITS" in df.columns else 0
     candidates = df.sort_values("TOTAL_CREDITS", ascending=False).head(20)
     for _, row in candidates.iterrows():
         user = str(row.get("USER_NAME") or "Unknown user")
         wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
-        credits = float(row.get("TOTAL_CREDITS", 0) or 0)
+        credits = safe_float(row.get("TOTAL_CREDITS", 0))
         est_cost = credits_to_dollars(credits, credit_price)
         if baseline > 0 and credits < baseline * 2 and est_cost < 500:
             continue

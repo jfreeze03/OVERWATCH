@@ -26,6 +26,7 @@ from utils import (
     show_to_df, first_existing_column, ensure_column_alias,
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
     load_warehouse_inventory, build_unclassified_assets_sql,
+    safe_float, safe_int,
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
@@ -984,10 +985,10 @@ GROUP BY warehouse_name, hour_bucket;"""
         if not df_u.empty:
             st.subheader("Today's Cortex Usage")
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Requests Today",    f"{int(df_u['REQUESTS_TODAY'].iloc[0]):,}")
-            c2.metric("AI Credits Today",  f"{float(df_u['CREDITS_TODAY'].iloc[0]):.4f}")
-            c3.metric("Tokens Today",      f"{int(df_u['TOKENS_TODAY'].iloc[0]):,}")
-            c4.metric("Active Users",      f"{int(df_u['ACTIVE_USERS'].iloc[0])}")
+            c1.metric("Requests Today",    f"{safe_int(df_u['REQUESTS_TODAY'].iloc[0]):,}")
+            c2.metric("AI Credits Today",  f"{safe_float(df_u['CREDITS_TODAY'].iloc[0]):.4f}")
+            c3.metric("Tokens Today",      f"{safe_int(df_u['TOKENS_TODAY'].iloc[0]):,}")
+            c4.metric("Active Users",      f"{safe_int(df_u['ACTIVE_USERS'].iloc[0])}")
 
         # Current parameters
         df_cp = res.get("cortex_params", pd.DataFrame())

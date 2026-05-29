@@ -23,6 +23,7 @@ from utils import (
     metric_confidence_label,
     freshness_note,
     run_query,
+    safe_float,
     safe_identifier,
     sql_literal,
     send_teams_alert,
@@ -116,10 +117,10 @@ def _render_queue(session):
         st.session_state["rec_action_queue"] = load_action_queue(session)
         st.rerun()
 
-    if row.get("STATUS") == "Fixed" and float(row.get("EST_MONTHLY_SAVINGS") or 0) > 0:
+    if row.get("STATUS") == "Fixed" and safe_float(row.get("EST_MONTHLY_SAVINGS")) > 0:
         st.divider()
         st.subheader("Log Fixed Action to Snowflake Value")
-        monthly_savings = float(row.get("EST_MONTHLY_SAVINGS") or 0)
+        monthly_savings = safe_float(row.get("EST_MONTHLY_SAVINGS"))
         savings_credits = monthly_savings / 30 / max(st.session_state.get("credit_price", 3.00), 0.01)
         if st.button("Create Snowflake Value entry", key="queue_log_value"):
             try:

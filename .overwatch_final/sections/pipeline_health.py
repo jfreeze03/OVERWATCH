@@ -11,6 +11,8 @@ from utils import (
     make_action_id,
     render_drillable_bar_chart,
     run_query,
+    safe_float,
+    safe_int,
     upsert_actions,
 )
 
@@ -27,18 +29,18 @@ def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> No
         table = row.get("TABLE_NAME", "")
         entity = ".".join([str(v) for v in [db, schema, table] if v])
         if finding_type == "Freshness":
-            severity = "High" if float(row.get("HOURS_SINCE_CHANGE", 0) or 0) >= 72 else "Medium"
-            finding = f"{entity} has not changed for {int(row.get('HOURS_SINCE_CHANGE', 0) or 0)} hours"
+            severity = "High" if safe_float(row.get("HOURS_SINCE_CHANGE", 0)) >= 72 else "Medium"
+            finding = f"{entity} has not changed for {safe_int(row.get('HOURS_SINCE_CHANGE', 0))} hours"
             action = "Confirm upstream pipeline SLA, source feed health, and whether the table is still business critical."
             proof = "ACCOUNT_USAGE.TABLES last_altered freshness scan"
         elif finding_type == "Load Failure":
             severity = "High"
-            finding = f"{entity} has {int(row.get('FILE_COUNT', 0) or 0)} failed load files with status {row.get('STATUS', '')}"
+            finding = f"{entity} has {safe_int(row.get('FILE_COUNT', 0))} failed load files with status {row.get('STATUS', '')}"
             action = "Review COPY_HISTORY error, repair source file/stage issue, and reload failed files."
             proof = "ACCOUNT_USAGE.COPY_HISTORY non-loaded status scan"
         else:
             severity = "Medium"
-            finding = f"{entity} is on volume watch: {row.get('WATCH_REASON', '')}; {float(row.get('SIZE_GB', 0) or 0):,.1f} GB"
+            finding = f"{entity} is on volume watch: {row.get('WATCH_REASON', '')}; {safe_float(row.get('SIZE_GB', 0)):,.1f} GB"
             action = "Review retention, clustering, time travel, and whether old data can be archived or dropped."
             proof = "ACCOUNT_USAGE.TABLES size and last_altered scan"
         actions.append({

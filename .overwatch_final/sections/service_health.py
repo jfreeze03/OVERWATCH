@@ -15,6 +15,7 @@ from utils import (
     freshness_note,
     format_snowflake_error,
     run_query,
+    safe_float,
     service_health_scorecard,
     upsert_actions,
 )
@@ -152,7 +153,7 @@ def _load_service_health(session, hours: int) -> dict:
 def _value(df, col: str) -> float:
     if df is None or df.empty or col not in df.columns:
         return 0.0
-    return float(df.iloc[0].get(col, 0) or 0)
+    return safe_float(df.iloc[0].get(col, 0))
 
 
 def _queue_service_findings(session, services: pd.DataFrame):

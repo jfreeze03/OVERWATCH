@@ -6,6 +6,7 @@ from .display import download_csv, render_drillable_bar_chart
 from .company_filter import get_active_company, get_wh_filter_clause, get_global_filter_clause
 from .query import run_query, format_snowflake_error
 from .compatibility import filter_existing_columns
+from .helpers import safe_float
 from config import THRESHOLDS
 
 
@@ -204,9 +205,9 @@ def render_optimization_advisor():
             for _, row in df_s.iterrows():
                 wh   = row.get("WAREHOUSE_NAME", "")
                 sz   = row.get("WAREHOUSE_SIZE", "")
-                spill= float(row.get("REMOTE_SPILL_GB", 0) or 0)
-                q    = float(row.get("AVG_QUEUE_SEC", 0) or 0)
-                cred = float(row.get("TOTAL_CREDITS", 0) or 0)
+                spill= safe_float(row.get("REMOTE_SPILL_GB", 0))
+                q    = safe_float(row.get("AVG_QUEUE_SEC", 0))
+                cred = safe_float(row.get("TOTAL_CREDITS", 0))
 
                 if spill > THRESHOLDS["spill_warning_gb"] and q > 5:
                     st.error(f"**{wh}** ({sz}): spilling + heavy queue — upsize and consider multi-cluster")

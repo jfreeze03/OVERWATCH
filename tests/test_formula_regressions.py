@@ -1,7 +1,10 @@
 from pathlib import Path
+import math
 import re
 import sys
 import unittest
+
+import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,6 +12,9 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from sections.account_health import _live_query_status_sql  # noqa: E402
+from sections.adoption_analytics import _metric as adoption_metric  # noqa: E402
+from sections.service_health import _value as service_value  # noqa: E402
+from sections.usage_overview import _first_number as usage_first_number  # noqa: E402
 from utils.cost import build_metered_credit_cte  # noqa: E402
 
 
@@ -66,6 +72,19 @@ class FormulaRegressionTests(unittest.TestCase):
             if pattern.search(text):
                 offenders.append(str(path.relative_to(ROOT)))
         self.assertEqual(offenders, [])
+
+    def test_dashboard_metric_helpers_do_not_emit_nan(self):
+        df = pd.DataFrame({"VALUE": [math.nan]})
+        self.assertEqual(adoption_metric(df, "VALUE"), 0.0)
+        self.assertEqual(service_value(df, "VALUE"), 0.0)
+        self.assertEqual(usage_first_number(df, "VALUE"), 0.0)
+
+    def test_usage_overview_storage_sums_are_null_safe(self):
+        text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
+        self.assertIn("SUM(COALESCE(c.average_database_bytes, 0))", text)
+        self.assertIn("SUM(COALESCE(c.average_failsafe_bytes, 0))", text)
+        self.assertNotIn("SUM(c.average_database_bytes)", text)
+        self.assertNotIn("SUM(c.average_failsafe_bytes)", text)
 
 
 if __name__ == "__main__":

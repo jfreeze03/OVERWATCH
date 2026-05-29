@@ -12,6 +12,7 @@ from utils import (
     download_csv,
     metric_confidence_label,
     run_query,
+    safe_float,
     safe_identifier,
     sql_literal,
 )
@@ -136,7 +137,7 @@ ALTER TABLE {VALUE_TABLE} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
             app_credits = 0.0
             app_warehouse = "current app warehouse"
             if df_app_cost is not None and not df_app_cost.empty:
-                app_credits = float(df_app_cost.iloc[0].get("APP_CREDITS_30D") or 0)
+                app_credits = safe_float(df_app_cost.iloc[0].get("APP_CREDITS_30D"))
                 app_warehouse = str(df_app_cost.iloc[0].get("APP_WAREHOUSE") or app_warehouse)
             monthly_app_cost = credits_to_dollars(app_credits, credit_price)
             value_ratio = total_monthly / monthly_app_cost if monthly_app_cost > 0 else None

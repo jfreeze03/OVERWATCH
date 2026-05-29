@@ -11,6 +11,7 @@ from utils import (
     format_snowflake_error,
     render_drillable_bar_chart,
     run_query,
+    safe_float,
 )
 
 
@@ -158,7 +159,7 @@ def _load_adoption(session, days: int) -> dict:
 def _metric(df, column: str) -> float:
     if df is None or df.empty or column not in df.columns:
         return 0.0
-    return float(df.iloc[0].get(column, 0) or 0)
+    return safe_float(df.iloc[0].get(column, 0))
 
 
 def render():

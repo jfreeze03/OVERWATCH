@@ -14,6 +14,7 @@ from .cost import format_credits
 from .compatibility import filter_existing_columns
 from .query import format_snowflake_error, run_query, run_query_or_raise, sql_literal
 from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause
+from .helpers import safe_float
 
 CHART_COLORS = [
     '#38bdf8','#818cf8','#c084fc','#f472b6',
@@ -186,8 +187,8 @@ def render_query_drilldown(
         wh_name = str(row.get("WAREHOUSE_NAME","N/A"))
         wh_size = str(row.get("WAREHOUSE_SIZE","") or "")
         m2.metric("Warehouse", f"{wh_name} ({wh_size})" if wh_size else wh_name)
-        m3.metric("Elapsed Sec",f"{float(row.get('ELAPSED_SEC',0) or 0):,.1f}")
-        est_cr = float(row.get("TOTAL_EST_CREDITS", row.get("EST_COMPUTE_CREDITS",0)) or 0)
+        m3.metric("Elapsed Sec",f"{safe_float(row.get('ELAPSED_SEC',0)):,.1f}")
+        est_cr = safe_float(row.get("TOTAL_EST_CREDITS", row.get("EST_COMPUTE_CREDITS",0)))
         m4.metric("Est. Credits", format_credits(est_cr))
 
         st.markdown("**SQL Text**")

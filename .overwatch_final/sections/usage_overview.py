@@ -20,6 +20,7 @@ from utils import (
     metric_confidence_label,
     render_drillable_bar_chart,
     run_query,
+    safe_float,
     sql_literal,
     upsert_actions,
 )
@@ -143,8 +144,8 @@ def _load_overview(session, days: int) -> dict:
             WHERE usage_date <= DATEADD('day', -{days}, CURRENT_DATE())
         )
         SELECT
-            ROUND(SUM(c.average_database_bytes) / POWER(1024, 4), 3) AS active_storage_tb,
-            ROUND(SUM(c.average_failsafe_bytes) / POWER(1024, 4), 3) AS failsafe_storage_tb,
+            ROUND(SUM(COALESCE(c.average_database_bytes, 0)) / POWER(1024, 4), 3) AS active_storage_tb,
+            ROUND(SUM(COALESCE(c.average_failsafe_bytes, 0)) / POWER(1024, 4), 3) AS failsafe_storage_tb,
             ROUND(SUM(COALESCE(p.average_database_bytes, 0)) / POWER(1024, 4), 3) AS prior_active_storage_tb
         FROM current_latest c
         LEFT JOIN prior_latest p
@@ -313,7 +314,7 @@ def _load_database_adoption(days: int):
 def _first_number(df, column: str) -> float:
     if df is None or df.empty or column not in df.columns:
         return 0.0
-    return float(df.iloc[0].get(column, 0) or 0)
+    return safe_float(df.iloc[0].get(column, 0))
 
 
 def _queue_top_warehouses(session, df):
@@ -324,7 +325,7 @@ def _queue_top_warehouses(session, df):
     actions = []
     for _, row in df.head(5).iterrows():
         wh = str(row.get("WAREHOUSE_NAME", "UNKNOWN"))
-        credits = float(row.get("TOTAL_CREDITS", 0) or 0)
+        credits = safe_float(row.get("TOTAL_CREDITS", 0))
         if credits <= 0:
             continue
         actions.append({

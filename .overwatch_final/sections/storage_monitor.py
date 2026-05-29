@@ -9,6 +9,7 @@ from utils import (
     download_csv,
     format_snowflake_error,
     run_query,
+    safe_float,
 )
 
 
@@ -74,11 +75,11 @@ def render():
         latest = df_st.iloc[-1] if not df_st.empty else None
 
         if latest is not None:
-            total_tb = float(latest.get("TOTAL_STORAGE_TB", 0))
+            total_tb = safe_float(latest.get("TOTAL_STORAGE_TB", 0))
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Database GB",  f"{float(latest.get('STORAGE_GB',0)):,.1f}")
-            c2.metric("Failsafe GB",  f"{float(latest.get('FAILSAFE_GB',0)):,.1f}")
-            c3.metric("Stage GB",     f"{float(latest.get('STAGE_GB',0)):,.1f}")
+            c1.metric("Database GB",  f"{safe_float(latest.get('STORAGE_GB',0)):,.1f}")
+            c2.metric("Failsafe GB",  f"{safe_float(latest.get('FAILSAFE_GB',0)):,.1f}")
+            c3.metric("Stage GB",     f"{safe_float(latest.get('STAGE_GB',0)):,.1f}")
             c4.metric("Est Monthly Cost", f"${total_tb * storage_cost_per_tb:,.2f}")
             confidence = "account-wide" if company != "ALL" else "exact"
             st.caption(f"{metric_confidence_label(confidence)} | {freshness_note('ACCOUNT_USAGE')}")

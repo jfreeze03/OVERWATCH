@@ -9,8 +9,12 @@ from .data import normalize_df, safe_strip_tz
 from .cost import (
     format_credits, credits_to_dollars, estimate_live_credits,
     build_metered_credit_cte, build_idle_warehouse_sql,
-    build_monitoring_cost_sql, metric_confidence_label,
+    build_monitoring_cost_sql, build_app_runtime_cost_sql, metric_confidence_label,
     freshness_note, CREDIT_RATES, COMPUTE_CREDIT_CASE
+)
+from .scorecards import (
+    clamp_score, score_label, bad_ratio_score, trend_score, weighted_score,
+    burn_trend_label, executive_health_score, service_health_scorecard,
 )
 from .display import (
     download_csv, show_loaded_time, mark_loaded, clear_all_cache,
@@ -55,8 +59,10 @@ __all__ = [
     "normalize_df", "safe_strip_tz",
     "format_credits", "credits_to_dollars", "estimate_live_credits",
     "build_metered_credit_cte", "build_idle_warehouse_sql",
-    "build_monitoring_cost_sql", "metric_confidence_label",
+    "build_monitoring_cost_sql", "build_app_runtime_cost_sql", "metric_confidence_label",
     "freshness_note", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
+    "clamp_score", "score_label", "bad_ratio_score", "trend_score", "weighted_score",
+    "burn_trend_label", "executive_health_score", "service_health_scorecard",
     "download_csv", "show_loaded_time", "mark_loaded", "clear_all_cache",
     "render_query_drilldown", "render_warehouse_drilldown",
     "render_drillable_bar_chart", "render_entity_query_drilldown",

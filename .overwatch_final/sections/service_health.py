@@ -11,8 +11,11 @@ from utils import (
     get_session,
     get_user_filter_clause,
     get_wh_filter_clause,
+    metric_confidence_label,
+    freshness_note,
     format_snowflake_error,
     run_query,
+    service_health_scorecard,
     upsert_actions,
 )
 
@@ -152,12 +155,6 @@ def _value(df, col: str) -> float:
     return float(df.iloc[0].get(col, 0) or 0)
 
 
-def _score(total: float, bad: float, penalty: float = 100.0) -> float:
-    if total <= 0:
-        return 100.0
-    return max(0.0, min(100.0, 100.0 - (bad / total * penalty)))
-
-
 def _queue_service_findings(session, services: pd.DataFrame):
     if services is None or services.empty:
         return
@@ -204,27 +201,40 @@ def render():
     lh = data["login_health"]
     th = data["task_health"]
     ph = data["pipe_health"]
-
-    query_score = _score(_value(qh, "TOTAL_QUERIES"), _value(qh, "FAILED_QUERIES") + _value(qh, "QUEUED_QUERIES") * 0.25)
-    login_score = _score(_value(lh, "LOGIN_EVENTS"), _value(lh, "FAILED_LOGINS"))
-    task_score = _score(_value(th, "TASK_RUNS"), _value(th, "FAILED_TASKS"))
-    load_score = _score(_value(ph, "LOAD_EVENTS"), _value(ph, "FAILED_LOADS"))
     wh_df = data["warehouse_health"]
     wh_bad = 0 if wh_df.empty else len(wh_df[(wh_df["QUEUED_SEC"] > 60) | (wh_df["REMOTE_SPILL_GB"] > 1) | (wh_df["FAILED_QUERIES"] > 0)])
-    wh_score = _score(max(len(wh_df), 1), wh_bad)
-
-    services = pd.DataFrame([
-        {"SERVICE": "Query Processor", "SCORE": query_score, "SIGNAL": f"{_value(qh, 'FAILED_QUERIES'):,.0f} failed, {_value(qh, 'QUEUED_QUERIES'):,.0f} queued.", "ACTION": "Review failed and queued queries in Detailed Diagnosis.", "PROOF": "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"},
-        {"SERVICE": "Warehouse Availability", "SCORE": wh_score, "SIGNAL": f"{wh_bad} warehouses have queue, spill, or failures.", "ACTION": "Review Warehouse Health efficiency and pressure metrics.", "PROOF": "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY grouped by warehouse"},
-        {"SERVICE": "Login/Auth", "SCORE": login_score, "SIGNAL": f"{_value(lh, 'FAILED_LOGINS'):,.0f} failed login events.", "ACTION": "Review Security & Access login audit and MFA coverage.", "PROOF": "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"},
-        {"SERVICE": "Task Service", "SCORE": task_score, "SIGNAL": f"{_value(th, 'FAILED_TASKS'):,.0f} failed task runs.", "ACTION": "Review Task Management failed jobs and DAG health.", "PROOF": "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY"},
-        {"SERVICE": "Data Load", "SCORE": load_score, "SIGNAL": f"{_value(ph, 'FAILED_LOADS'):,.0f} failed load events.", "ACTION": "Review Pipeline Health load failures and freshness.", "PROOF": "SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY"},
-    ])
+    scorecard = service_health_scorecard({
+        "total_queries": _value(qh, "TOTAL_QUERIES"),
+        "failed_queries": _value(qh, "FAILED_QUERIES"),
+        "queued_queries": _value(qh, "QUEUED_QUERIES"),
+        "blocked_queries": _value(qh, "BLOCKED_QUERIES"),
+        "p95_elapsed_sec": _value(qh, "P95_ELAPSED_SEC"),
+        "warehouse_count": len(wh_df),
+        "pressured_warehouses": wh_bad,
+        "task_runs": _value(th, "TASK_RUNS"),
+        "failed_tasks": _value(th, "FAILED_TASKS"),
+        "login_events": _value(lh, "LOGIN_EVENTS"),
+        "failed_logins": _value(lh, "FAILED_LOGINS"),
+        "load_events": _value(ph, "LOAD_EVENTS"),
+        "failed_loads": _value(ph, "FAILED_LOADS"),
+    })
+    services = pd.DataFrame(scorecard["components"])
+    action_map = {
+        "Query Processor": ("Review failed and queued queries in Detailed Diagnosis.", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"),
+        "Warehouse Availability": ("Review Warehouse Health efficiency and pressure metrics.", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY grouped by warehouse"),
+        "Login/Auth": ("Review Security & Access login audit and MFA coverage.", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"),
+        "Task Service": ("Review Task Management failed jobs and DAG health.", "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY"),
+        "Data Load": ("Review Pipeline Health load failures and freshness.", "SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY"),
+    }
+    services["ACTION"] = services["SERVICE"].map(lambda name: action_map.get(name, ("Review source detail.", "ACCOUNT_USAGE"))[0])
+    services["PROOF"] = services["SERVICE"].map(lambda name: action_map.get(name, ("Review source detail.", "ACCOUNT_USAGE"))[1])
 
     cols = st.columns(5)
     for idx, row in services.iterrows():
-        label = "Healthy" if row["SCORE"] >= 95 else ("Watch" if row["SCORE"] >= 80 else "At Risk")
+        label = "Healthy" if row["SCORE"] >= 90 else ("Watch" if row["SCORE"] >= 75 else ("At Risk" if row["SCORE"] >= 60 else "Critical"))
         cols[idx].metric(row["SERVICE"], f"{row['SCORE']:.1f}", label)
+    st.metric("Overall Service Score", f"{scorecard['score']:.1f}", scorecard["label"])
+    st.caption(f"{metric_confidence_label('composite')} | {freshness_note('ACCOUNT_USAGE')}")
 
     if (services["SCORE"] < 95).any() and st.button("Send service findings to Action Queue", key="svc_queue"):
         _queue_service_findings(session, services)

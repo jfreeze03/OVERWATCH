@@ -1,6 +1,6 @@
 # OVERWATCH Documentation
 
-Last updated: May 28, 2026
+Last updated: May 29, 2026
 
 OVERWATCH is a Snowflake usage, cost, performance, security, and DBA operations
 dashboard built with Streamlit. The active application lives in
@@ -200,6 +200,23 @@ exact billed metrics from allocated query estimates and forecast projections.
 OVERWATCH query telemetry records query hash, section, elapsed time, row count,
 and estimated result size. The budget guardrail warns when the same section
 repeatedly runs a slow or large-result query pattern.
+
+Health scores use shared weighted scorecards rather than a single success-rate
+formula. Executive health combines query failures, queue pressure, latency,
+task reliability, warehouse pressure, credit spikes, and storage growth. Service
+Health uses category-specific weights so warehouse, task, query, login, and load
+events do not carry the same severity by default. Composite score panels include
+confidence captions and contributor tables.
+
+Snowflake Value uses measured OVERWATCH runtime cost from Snowflake metering
+where available: tagged OVERWATCH queries, Streamlit warehouses, Cortex usage,
+and alert-task activity. It no longer assumes a fixed 24x7 X-Small warehouse
+cost when metering is unavailable.
+
+Cost Center contract utilization projects commitment burn four ways: average
+daily rate, 7-day trend, 30-day trend, and business-day adjusted run rate. Trend
+labels call out accelerating, stable, or cooling burn so leadership can see
+whether the contract forecast is changing.
 
 ## Global Filters
 

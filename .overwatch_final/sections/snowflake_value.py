@@ -3,11 +3,14 @@ import streamlit as st
 
 from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
 from utils import (
+    build_app_runtime_cost_sql,
     format_snowflake_error,
+    freshness_note,
     get_active_company,
     get_session,
     credits_to_dollars,
     download_csv,
+    metric_confidence_label,
     run_query,
     safe_identifier,
     sql_literal,
@@ -106,9 +109,15 @@ ALTER TABLE {VALUE_TABLE} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
                 ORDER BY LOGGED_DATE DESC
                 LIMIT 500
             """, ttl_key=f"snowflake_value_detail_{company}", tier="historical")
+            df_app_cost = run_query(
+                build_app_runtime_cost_sql(30),
+                ttl_key=f"snowflake_value_app_cost_{company}",
+                tier="historical",
+                section="Snowflake Value",
+            )
             st.session_state["sf_value_summary"] = df_summary
             st.session_state["sf_value_detail"] = df_detail
-            st.session_state["sf_value_app_cost"] = None
+            st.session_state["sf_value_app_cost"] = df_app_cost
         except Exception as e:
             st.info(f"Snowflake value table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
             st.session_state["sf_value_summary"] = None
@@ -130,10 +139,7 @@ ALTER TABLE {VALUE_TABLE} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
                 app_credits = float(df_app_cost.iloc[0].get("APP_CREDITS_30D") or 0)
                 app_warehouse = str(df_app_cost.iloc[0].get("APP_WAREHOUSE") or app_warehouse)
             monthly_app_cost = credits_to_dollars(app_credits, credit_price)
-            if monthly_app_cost <= 0:
-                monthly_app_cost = credits_to_dollars(30 * 24 * 1, credit_price)
-                app_warehouse = "estimated 24x7 X-Small fallback"
-            value_ratio = total_monthly / monthly_app_cost if monthly_app_cost > 0 else 0
+            value_ratio = total_monthly / monthly_app_cost if monthly_app_cost > 0 else None
 
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Monthly Value", f"${total_monthly:,.2f}")
@@ -141,10 +147,18 @@ ALTER TABLE {VALUE_TABLE} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
             c3.metric("Actions Logged", f"{total_actions:,}")
             c4.metric("Verified Actions", f"{total_verified:,}")
 
+            st.metric("Measured OVERWATCH Runtime Cost", f"${monthly_app_cost:,.2f}")
             st.metric(
                 "Snowflake Value Multiple",
-                f"{value_ratio:.1f}x",
-                help=f"Monthly logged value divided by measured 30-day OVERWATCH runtime cost for {app_warehouse}; uses a fallback estimate if unavailable.",
+                f"{value_ratio:.1f}x" if value_ratio is not None else "Not measured",
+                help=f"Monthly logged value divided by measured 30-day OVERWATCH runtime cost from {app_warehouse or 'available metering components'}.",
+            )
+            st.caption(
+                " | ".join([
+                    metric_confidence_label("allocated"),
+                    freshness_note("WAREHOUSE_METERING_HISTORY"),
+                    "Runtime cost uses metered OVERWATCH-tagged queries, Streamlit warehouses, Cortex, and alert-task activity. No fixed 24x7 warehouse fallback is applied.",
+                ])
             )
             st.bar_chart(df_summary.set_index("CATEGORY")["MONTHLY_DOLLAR_SAVINGS"])
             st.dataframe(df_summary, use_container_width=True)

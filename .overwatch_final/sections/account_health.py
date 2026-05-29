@@ -8,7 +8,8 @@ from utils import (
     build_metered_credit_cte, build_monitoring_cost_sql,
     metric_confidence_label, freshness_note,
     render_drillable_bar_chart, render_query_drilldown,
-    build_task_failure_summary_sql,
+    build_task_failure_summary_sql, build_task_health_sql,
+    executive_health_score,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
     get_global_filter_clause, company_value_allowed,
     format_snowflake_error, filter_existing_columns,
@@ -85,6 +86,19 @@ def _task_failure_sql_or_empty(session, time_predicate: str, limit: int, company
                    NULL::TIMESTAMP_NTZ AS LAST_FAILURE,
                    NULL::VARCHAR AS LAST_ERROR
             WHERE 1=0
+        """
+
+
+def _task_health_sql_or_empty(session, time_predicate: str, company: str) -> str:
+    """Return TASK_HISTORY aggregate SQL, or a single zero row if unavailable."""
+    try:
+        return build_task_health_sql(session, time_predicate, company=company)
+    except Exception:
+        return """
+            SELECT 0::NUMBER AS TASK_RUNS,
+                   0::NUMBER AS FAILED_TASKS,
+                   0::NUMBER AS SUCCEEDED_TASKS,
+                   0::NUMBER AS DISTINCT_TASKS
         """
 
 
@@ -180,6 +194,32 @@ def render():
                       AND execution_status = 'FAILED_WITH_ERROR'
                       {wh_filter_q} {db_filter_q} {user_filter_q}
                 """),
+                ("query_stats", f"""
+                    SELECT COUNT(*) AS total_queries,
+                           SUM(CASE WHEN execution_status = 'FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS failed_queries,
+                           SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_queries,
+                           ROUND(AVG(total_elapsed_time) / 1000, 2) AS avg_elapsed_sec
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                    WHERE q.start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
+                      AND q.warehouse_name IS NOT NULL
+                      {wh_filter_q} {db_filter_q} {user_filter_q}
+                """),
+                ("warehouse_pressure", f"""
+                    WITH wh AS (
+                        SELECT q.warehouse_name,
+                               COUNT(*) AS total_queries,
+                               SUM(CASE WHEN execution_status = 'FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS failed_queries,
+                               SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_queries
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                        WHERE q.start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
+                          AND q.warehouse_name IS NOT NULL
+                          {wh_filter_q} {db_filter_q} {user_filter_q}
+                        GROUP BY q.warehouse_name
+                    )
+                    SELECT COUNT(*) AS active_warehouses,
+                           SUM(IFF(failed_queries > 0 OR queued_queries > 0, 1, 0)) AS pressure_warehouses
+                    FROM wh
+                """),
                 ("storage", f"""
                     SELECT ROUND(SUM(average_database_bytes+average_failsafe_bytes)/POWER(1024,4),2) AS storage_tb
                     FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
@@ -206,6 +246,11 @@ def render():
                     session,
                     "scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())",
                     5,
+                    company,
+                )),
+                ("task_health", _task_health_sql_or_empty(
+                    session,
+                    "scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())",
                     company,
                 )),
                 ("what_changed", f"""
@@ -259,6 +304,9 @@ def render():
         burn_df    = hd.get("burn",    pd.DataFrame())
         err_df     = hd.get("errors",  pd.DataFrame())
         storage_df = hd.get("storage", pd.DataFrame())
+        query_stats_df = hd.get("query_stats", pd.DataFrame())
+        task_health_df = hd.get("task_health", pd.DataFrame())
+        warehouse_pressure_df = hd.get("warehouse_pressure", pd.DataFrame())
         live_val  = int(live_df["ACTIVE_COUNT"].iloc[0])   if not live_df.empty    else 0
         queued    = int(live_df["QUEUED_COUNT"].iloc[0])   if not live_df.empty    else 0
         last24    = float(burn_df["LAST_24H"].iloc[0])     if not burn_df.empty    else 0
@@ -266,11 +314,22 @@ def render():
         err_count = int(err_df["ERR_COUNT"].iloc[0])       if not err_df.empty     else 0
         stor_tb   = float(storage_df["STORAGE_TB"].iloc[0]) if not storage_df.empty else 0
         pct_delta = ((last24 - prior24) / prior24 * 100) if prior24 > 0 else 0
-        health_score = max(0, min(100,
-            100 - min(err_count,50) - min(queued*4,20)
-                - min(max(pct_delta,0)/2,20) - min(live_val,10)
-        ))
-        score_label = "Healthy" if health_score >= 85 else ("Watch" if health_score >= 70 else "At Risk")
+        health = executive_health_score({
+            "total_queries": float(query_stats_df["TOTAL_QUERIES"].iloc[0]) if not query_stats_df.empty else 0,
+            "failed_queries": err_count,
+            "queued_queries": float(query_stats_df["QUEUED_QUERIES"].iloc[0]) if not query_stats_df.empty else queued,
+            "avg_elapsed_sec": float(query_stats_df["AVG_ELAPSED_SEC"].iloc[0]) if not query_stats_df.empty else 0,
+            "task_runs": float(task_health_df["TASK_RUNS"].iloc[0]) if not task_health_df.empty else 0,
+            "failed_tasks": float(task_health_df["FAILED_TASKS"].iloc[0]) if not task_health_df.empty else 0,
+            "active_warehouses": float(warehouse_pressure_df["ACTIVE_WAREHOUSES"].iloc[0]) if not warehouse_pressure_df.empty else 0,
+            "pressure_warehouses": float(warehouse_pressure_df["PRESSURE_WAREHOUSES"].iloc[0]) if not warehouse_pressure_df.empty else 0,
+            "current_credits": last24,
+            "prior_credits": prior24,
+            "current_storage_tb": stor_tb,
+            "prior_storage_tb": stor_tb,
+        })
+        health_score = health["score"]
+        score_label = health["label"]
 
         k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
         k1.metric("Health Score",   f"{health_score:.0f}", score_label)
@@ -282,10 +341,13 @@ def render():
         k7.metric("Failed (24h)",   err_count, delta_color="inverse")
         st.caption(
             " | ".join([
-                metric_confidence_label("exact"),
+                metric_confidence_label("composite"),
+                metric_confidence_label("exact") + " for source counts",
                 freshness_note("ACCOUNT_USAGE"),
             ])
         )
+        with st.expander("Health score contributors", expanded=False):
+            st.dataframe(pd.DataFrame(health["components"]), use_container_width=True, height=260)
 
         st.divider()
         show_loaded_time("account_health")

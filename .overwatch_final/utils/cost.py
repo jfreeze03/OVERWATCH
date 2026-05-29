@@ -7,7 +7,7 @@ from config import CREDIT_RATES, COMPUTE_CREDIT_CASE, DEFAULTS
 __all__ = [
     "format_credits", "credits_to_dollars", "estimate_live_credits",
     "build_metered_credit_cte", "build_idle_warehouse_sql",
-    "build_monitoring_cost_sql", "metric_confidence_label",
+    "build_monitoring_cost_sql", "build_app_runtime_cost_sql", "metric_confidence_label",
     "freshness_note", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
 ]
 
@@ -274,12 +274,87 @@ def build_monitoring_cost_sql(days_back: int = 7) -> str:
     """
 
 
+def build_app_runtime_cost_sql(days_back: int = 30) -> str:
+    """Return a measured OVERWATCH runtime cost aggregate.
+
+    This intentionally uses Snowflake metering data only: tagged OVERWATCH
+    queries are allocated from warehouse-hour metering, Streamlit warehouses are
+    counted directly, and Cortex/alert-task usage is included where available.
+    No fixed 24x7 warehouse assumption is used.
+    """
+    days_back = int(days_back or 30)
+    try:
+        from .company_filter import get_wh_filter_clause
+
+        wh_filter = get_wh_filter_clause("warehouse_name")
+        q_wh_filter = get_wh_filter_clause("q.warehouse_name")
+    except Exception:
+        wh_filter = ""
+        q_wh_filter = ""
+
+    return f"""
+    WITH {build_metered_credit_cte(days_back=days_back, include_recent=True)},
+    components AS (
+        SELECT
+            'OVERWATCH tagged queries' AS component,
+            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+        WHERE q.start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+          AND q.warehouse_name IS NOT NULL
+          AND (q.query_tag ILIKE 'OVERWATCH:%' OR q.query_tag ILIKE 'OVERWATCH%')
+          {q_wh_filter}
+
+        UNION ALL
+        SELECT
+            'Streamlit warehouse' AS component,
+            ROUND(SUM(credits_used), 4) AS credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+        WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+          AND (warehouse_name ILIKE 'SYSTEM$STREAMLIT%' OR warehouse_name ILIKE '%STREAMLIT%')
+          {wh_filter}
+
+        UNION ALL
+        SELECT
+            'Cortex services' AS component,
+            ROUND(SUM(credits_used), 4) AS credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+        WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+          AND service_type ILIKE '%CORTEX%'
+
+        UNION ALL
+        SELECT
+            'OVERWATCH alert tasks' AS component,
+            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+        WHERE q.start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+          AND q.warehouse_name IS NOT NULL
+          AND (
+              q.query_tag ILIKE '%OVERWATCH_ALERT%'
+              OR q.query_text ILIKE '%OVERWATCH_ALERT%'
+              OR q.query_text ILIKE '%OVERWATCH_ACTION_QUEUE%'
+          )
+          {q_wh_filter}
+    )
+    SELECT
+        ROUND(COALESCE(SUM(credits), 0), 4) AS app_credits_30d,
+        LISTAGG(IFF(COALESCE(credits, 0) > 0, component, NULL), ', ')
+            WITHIN GROUP (ORDER BY credits DESC) AS app_warehouse,
+        COUNT_IF(COALESCE(credits, 0) > 0) AS measured_components
+    FROM components
+    """
+
+
 def metric_confidence_label(kind: str) -> str:
     """Small UI label explaining whether a metric is exact or estimated."""
     labels = {
         "exact": "Confidence: Exact",
         "allocated": "Confidence: Allocated from exact warehouse metering",
         "estimated": "Confidence: Estimated",
+        "forecast": "Confidence: Forecast based on recent observed burn",
+        "projection": "Confidence: Projection based on recent observed burn",
+        "composite": "Confidence: Composite score from weighted operational signals",
         "account": "Confidence: Account-wide",
         "account-wide": "Confidence: Account-wide",
     }

@@ -1,9 +1,12 @@
 # sections/usage_overview.py - executive Snowflake usage overview
 import altair as alt
+import pandas as pd
 import streamlit as st
 
 from utils import (
+    build_task_health_sql,
     download_csv,
+    executive_health_score,
     format_credits,
     format_snowflake_error,
     freshness_note,
@@ -35,6 +38,7 @@ def _load_overview(session, days: int) -> dict:
             "QUEUED_PROVISIONING_TIME",
             "QUEUED_REPAIR_TIME",
             "CREDITS_USED_CLOUD_SERVICES",
+            "BYTES_SPILLED_TO_REMOTE_STORAGE",
         ],
     ))
     wm_cols = set(filter_existing_columns(
@@ -67,13 +71,18 @@ def _load_overview(session, days: int) -> dict:
         if "CREDITS_USED_CLOUD_SERVICES" in qh_cols
         else "0"
     )
+    remote_spill_expr = (
+        "ROUND(SUM(COALESCE(q.bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3), 2)"
+        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+        else "0"
+    )
     wm_compute_expr = (
-        "ROUND(SUM(credits_used_compute), 4)"
+        f"ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used_compute, 0)), 4)"
         if "CREDITS_USED_COMPUTE" in wm_cols
-        else "ROUND(SUM(credits_used), 4)"
+        else f"ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0)), 4)"
     )
     wm_cloud_expr = (
-        "ROUND(SUM(credits_used_cloud_services), 4)"
+        f"ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used_cloud_services, 0)), 4)"
         if "CREDITS_USED_CLOUD_SERVICES" in wm_cols
         else "0"
     )
@@ -104,33 +113,91 @@ def _load_overview(session, days: int) -> dict:
 
     metering = run_query(f"""
         SELECT
-            ROUND(SUM(credits_used), 4) AS total_credits,
+            ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0)), 4) AS total_credits,
+            ROUND(SUM(IFF(start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
+                          AND start_time < DATEADD('day', -{days}, CURRENT_TIMESTAMP()),
+                          credits_used, 0)), 4) AS prior_credits,
             {wm_compute_expr} AS compute_credits,
             {wm_cloud_expr} AS warehouse_cloud_credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-        WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+        WHERE start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
           {wh_filter}
     """, ttl_key=f"uo_metering_{company}_{days}", tier="historical")
 
     storage = run_query(f"""
-        WITH latest AS (
-            SELECT database_name, average_database_bytes, average_failsafe_bytes, usage_date,
-                   ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
+        WITH scoped AS (
+            SELECT database_name, average_database_bytes, average_failsafe_bytes, usage_date
             FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-            WHERE usage_date >= DATEADD('day', -{max(days, 7)}, CURRENT_DATE())
+            WHERE usage_date >= DATEADD('day', -{max(days * 2, 14)}, CURRENT_DATE())
               {db_filter}
+        ),
+        current_latest AS (
+            SELECT database_name, average_database_bytes, average_failsafe_bytes,
+                   ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
+            FROM scoped
+        ),
+        prior_latest AS (
+            SELECT database_name, average_database_bytes,
+                   ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
+            FROM scoped
+            WHERE usage_date <= DATEADD('day', -{days}, CURRENT_DATE())
         )
         SELECT
-            ROUND(SUM(average_database_bytes) / POWER(1024, 4), 3) AS active_storage_tb,
-            ROUND(SUM(average_failsafe_bytes) / POWER(1024, 4), 3) AS failsafe_storage_tb
-        FROM latest
-        WHERE rn = 1
+            ROUND(SUM(c.average_database_bytes) / POWER(1024, 4), 3) AS active_storage_tb,
+            ROUND(SUM(c.average_failsafe_bytes) / POWER(1024, 4), 3) AS failsafe_storage_tb,
+            ROUND(SUM(COALESCE(p.average_database_bytes, 0)) / POWER(1024, 4), 3) AS prior_active_storage_tb
+        FROM current_latest c
+        LEFT JOIN prior_latest p
+          ON c.database_name = p.database_name
+         AND p.rn = 1
+        WHERE c.rn = 1
     """, ttl_key=f"uo_storage_{company}_{days}", tier="historical")
+
+    try:
+        task_health = run_query(
+            build_task_health_sql(
+                session,
+                f"scheduled_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())",
+                company=company,
+            ),
+            ttl_key=f"uo_task_health_{company}_{days}",
+            tier="historical",
+            section="Usage Overview",
+        )
+    except Exception:
+        task_health = pd.DataFrame([{
+            "TASK_RUNS": 0,
+            "FAILED_TASKS": 0,
+            "SUCCEEDED_TASKS": 0,
+            "DISTINCT_TASKS": 0,
+        }])
+
+    warehouse_pressure = run_query(f"""
+        WITH wh AS (
+            SELECT
+                q.warehouse_name,
+                COUNT(*) AS total_queries,
+                {failed_expr} AS failed_queries,
+                {queued_expr} AS queued_queries,
+                {remote_spill_expr} AS remote_spill_gb
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+            WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              {q_filters}
+            GROUP BY q.warehouse_name
+        )
+        SELECT
+            COUNT(*) AS active_warehouses,
+            SUM(IFF(queued_queries > 0 OR remote_spill_gb > 1 OR failed_queries > 0, 1, 0)) AS pressure_warehouses
+        FROM wh
+    """, ttl_key=f"uo_wh_pressure_{company}_{days}", tier="historical", section="Usage Overview")
 
     return {
         "overview": overview,
         "metering": metering,
         "storage": storage,
+        "task_health": task_health,
+        "warehouse_pressure": warehouse_pressure,
     }
 
 
@@ -304,15 +371,28 @@ def render():
     overview = data["overview"]
     metering = data["metering"]
     storage = data["storage"]
+    task_health = data.get("task_health", pd.DataFrame())
+    warehouse_pressure = data.get("warehouse_pressure", pd.DataFrame())
     success_rate = _first_number(overview, "QUERY_SUCCESS_RATE")
     total_queries = _first_number(overview, "TOTAL_QUERIES")
-    failure_penalty = 100 * (_first_number(overview, "FAILED_QUERIES") / max(total_queries, 1))
-    queue_penalty = 35 * (_first_number(overview, "QUEUED_QUERIES") / max(total_queries, 1))
-    latency_penalty = min(_first_number(overview, "AVG_ELAPSED_SEC") / 6, 12)
-    health_score = round(max(0, min(100, 100 - failure_penalty - queue_penalty - latency_penalty)), 1)
+    health = executive_health_score({
+        "total_queries": total_queries,
+        "failed_queries": _first_number(overview, "FAILED_QUERIES"),
+        "queued_queries": _first_number(overview, "QUEUED_QUERIES"),
+        "avg_elapsed_sec": _first_number(overview, "AVG_ELAPSED_SEC"),
+        "task_runs": _first_number(task_health, "TASK_RUNS"),
+        "failed_tasks": _first_number(task_health, "FAILED_TASKS"),
+        "active_warehouses": _first_number(warehouse_pressure, "ACTIVE_WAREHOUSES"),
+        "pressure_warehouses": _first_number(warehouse_pressure, "PRESSURE_WAREHOUSES"),
+        "current_credits": _first_number(metering, "TOTAL_CREDITS"),
+        "prior_credits": _first_number(metering, "PRIOR_CREDITS"),
+        "current_storage_tb": _first_number(storage, "ACTIVE_STORAGE_TB"),
+        "prior_storage_tb": _first_number(storage, "PRIOR_ACTIVE_STORAGE_TB"),
+    })
+    health_score = health["score"]
 
     k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("Health Score", f"{health_score:.1f}")
+    k1.metric("Health Score", f"{health_score:.1f}", health["label"])
     k2.metric("Users", f"{_first_number(overview, 'TOTAL_USERS'):,.0f}")
     k3.metric("Databases", f"{_first_number(overview, 'ACTIVE_DATABASES'):,.0f}")
     k4.metric("Success Rate", f"{success_rate:.1f}%")
@@ -321,10 +401,14 @@ def render():
     st.caption(
         " | ".join([
             metric_confidence_label("exact"),
+            metric_confidence_label("composite"),
             freshness_note("ACCOUNT_USAGE"),
             "Progressive load: KPI queries ran; charts below load only when requested.",
         ])
     )
+
+    with st.expander("Health score contributors"):
+        st.dataframe(pd.DataFrame(health["components"]), use_container_width=True, height=280)
 
     s1, s2, s3, s4 = st.columns(4)
     s1.metric("Compute Credits", format_credits(_first_number(metering, "COMPUTE_CREDITS")))

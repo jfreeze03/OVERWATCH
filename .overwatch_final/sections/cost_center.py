@@ -3,10 +3,11 @@
 #      instead of the old hardcoded CASE that missed WH_ALFA_* warehouses.
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from utils import (
     get_session, format_credits, credits_to_dollars,
     download_csv, build_metered_credit_cte,
+    burn_trend_label,
     metric_confidence_label, freshness_note,
     get_db_filter_clause, get_wh_filter_clause, get_user_filter_clause,
     get_global_filter_clause, get_company_case_expr,
@@ -480,11 +481,14 @@ def render():
                 ytd_source = "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY" if company == "ALL" else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
                 ytd_filter = "" if company == "ALL" else get_wh_filter_clause("warehouse_name", company)
                 df_ytd = run_query(f"""
-                    SELECT SUM(credits_used) AS ytd_credits
+                    SELECT TO_DATE(start_time) AS usage_date,
+                           SUM(credits_used) AS credits_used
                     FROM {ytd_source}
                     WHERE start_time >= TO_DATE({sql_literal(str(contract_start))})
                       AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
                       {ytd_filter}
+                    GROUP BY usage_date
+                    ORDER BY usage_date
                 """, ttl_key=f"cc_contract_ytd_{company}_{contract_start}", tier="historical")
                 st.session_state["cc_contract_data"] = df_ytd
                 st.session_state["cc_contract_params"] = {
@@ -502,28 +506,60 @@ def render():
             start_str = params.get("start", str(contract_start))
             months    = params.get("months", contract_months)
 
-            ytd_used = float(df_c["YTD_CREDITS"].iloc[0]) if not df_c.empty else 0
-
             start_date = datetime.strptime(start_str, "%Y-%m-%d").date()
-            days_elapsed   = max((datetime.now().date() - start_date).days, 1)
-            days_in_contract = months * 30.44  # avg days per month
-            days_remaining   = max(days_in_contract - days_elapsed, 0)
+            days_in_contract = max(int(round(float(months) * 30.44)), 1)
+            contract_end_date = start_date + timedelta(days=days_in_contract - 1)
+            as_of_date = min(max(datetime.now().date() - timedelta(days=1), start_date), contract_end_date)
 
-            daily_rate       = ytd_used / days_elapsed
-            projected_total  = daily_rate * days_in_contract
+            observed_days = pd.DataFrame({
+                "USAGE_DATE": pd.date_range(start_date, as_of_date, freq="D")
+            })
+            df_daily = df_c.copy()
+            if df_daily.empty:
+                df_daily = observed_days.copy()
+                df_daily["CREDITS_USED"] = 0.0
+            else:
+                df_daily["USAGE_DATE"] = pd.to_datetime(df_daily["USAGE_DATE"]).dt.normalize()
+                df_daily["CREDITS_USED"] = pd.to_numeric(df_daily["CREDITS_USED"], errors="coerce").fillna(0.0)
+                df_daily = observed_days.merge(df_daily, on="USAGE_DATE", how="left")
+                df_daily["CREDITS_USED"] = df_daily["CREDITS_USED"].fillna(0.0)
+
+            ytd_used = float(df_daily["CREDITS_USED"].sum())
+            days_elapsed = max(len(df_daily), 1)
+            days_remaining = max((contract_end_date - as_of_date).days, 0)
+
+            daily_rate = ytd_used / days_elapsed
+            last_7_avg = float(df_daily.tail(min(7, len(df_daily)))["CREDITS_USED"].mean() or 0)
+            last_30_avg = float(df_daily.tail(min(30, len(df_daily)))["CREDITS_USED"].mean() or 0)
+            trend_label = burn_trend_label(last_7_avg, last_30_avg)
+
+            future_days = pd.date_range(as_of_date + timedelta(days=1), contract_end_date, freq="D")
+            future_business_days = int((future_days.dayofweek < 5).sum()) if len(future_days) else 0
+            future_weekend_days = len(future_days) - future_business_days
+            business_hist = df_daily[df_daily["USAGE_DATE"].dt.dayofweek < 5]
+            weekend_hist = df_daily[df_daily["USAGE_DATE"].dt.dayofweek >= 5]
+            business_avg = float(business_hist.tail(20)["CREDITS_USED"].mean() or last_30_avg or daily_rate)
+            weekend_avg = float(weekend_hist.tail(8)["CREDITS_USED"].mean() or last_30_avg or daily_rate)
+
+            projected_total = ytd_used + (daily_rate * days_remaining)
+            projected_7 = ytd_used + (last_7_avg * days_remaining)
+            projected_30 = ytd_used + (last_30_avg * days_remaining)
+            projected_business = ytd_used + (business_avg * future_business_days) + (weekend_avg * future_weekend_days)
             remaining_budget = committed - ytd_used
             pct_consumed     = (ytd_used / committed * 100) if committed > 0 else 0
             pct_time_elapsed = (days_elapsed / days_in_contract * 100) if days_in_contract > 0 else 0
 
-            if daily_rate > 0 and remaining_budget > 0:
-                days_until_exhausted = remaining_budget / daily_rate
-                from datetime import timedelta as _td
-                exhaust_date = (datetime.now() + _td(days=days_until_exhausted)).strftime("%Y-%m-%d")
+            runway_rate = last_7_avg if trend_label == "Accelerating" and last_7_avg > 0 else daily_rate
+            if runway_rate > 0 and remaining_budget > 0:
+                days_until_exhausted = remaining_budget / runway_rate
+                exhaust_date = (datetime.now() + timedelta(days=days_until_exhausted)).strftime("%Y-%m-%d")
             else:
+                days_until_exhausted = None
                 exhaust_date = "N/A"
 
             # Pacing ratio: credits consumed % vs time elapsed %
             pacing_ratio = (pct_consumed / pct_time_elapsed) if pct_time_elapsed > 0 else 1.0
+            projected_pct_over = ((projected_total / committed) * 100 - 100) if committed > 0 else 0.0
 
             # ── KPI row ────────────────────────────────────────────────────────
             k1, k2, k3, k4, k5 = st.columns(5)
@@ -534,7 +570,16 @@ def render():
                       delta_color="inverse" if pct_consumed > pct_time_elapsed + 5 else "normal")
             k4.metric("Daily Burn Rate",      f"{daily_rate:,.1f} cr/day")
             k5.metric("Projected Year-End",   format_credits(projected_total))
-            st.caption(f"{metric_confidence_label('exact')} | {freshness_note('WAREHOUSE_METERING_HISTORY')}")
+            st.caption(
+                f"{metric_confidence_label('exact')} for consumed credits | "
+                f"{metric_confidence_label('projection')} | "
+                f"{freshness_note('WAREHOUSE_METERING_HISTORY')}"
+            )
+
+            p1, p2, p3 = st.columns(3)
+            p1.metric("7-Day Projection", format_credits(projected_7), trend_label)
+            p2.metric("30-Day Projection", format_credits(projected_30), burn_trend_label(last_30_avg, daily_rate))
+            p3.metric("Business-Day Adjusted", format_credits(projected_business), f"{business_avg:,.1f} cr/business day")
 
             # ── Progress bar ───────────────────────────────────────────────────
             bar_pct = min(pct_consumed / 100, 1.0)
@@ -543,16 +588,21 @@ def render():
             # ── Pacing diagnosis ───────────────────────────────────────────────
             st.divider()
             if pacing_ratio > 1.15:
-                st.error(
-                    f"🔴 **Burning too fast** — consuming credits {pacing_ratio:.1f}x faster than the "
-                    f"contract pace. At {daily_rate:,.1f} cr/day you will exhaust the commitment on "
+                exhaustion_line = (
+                    f"At {runway_rate:,.1f} cr/day you will exhaust the commitment on "
                     f"**{exhaust_date}** ({days_until_exhausted:.0f} days from now), "
                     f"**{days_remaining - days_until_exhausted:.0f} days early**. "
+                    if days_until_exhausted is not None
+                    else "Current burn cannot calculate a reliable exhaustion date. "
+                )
+                st.error(
+                    f"🔴 **Burning too fast** — consuming credits {pacing_ratio:.1f}x faster than the "
+                    f"contract pace. {exhaustion_line}"
                     f"Projected year-end: **{projected_total:,.0f}** vs committed **{committed:,}** "
-                    f"({(projected_total/committed*100)-100:.0f}% over)."
+                    f"({projected_pct_over:.0f}% over)."
                 )
             elif pacing_ratio < 0.75:
-                under_pct = 100 - (projected_total / committed * 100)
+                under_pct = 100 - (projected_total / committed * 100) if committed > 0 else 0.0
                 st.warning(
                     f"🟡 **Under-utilizing** — tracking at {pacing_ratio:.2f}x the contract pace. "
                     f"Projected year-end: **{projected_total:,.0f}** of {committed:,} credits "

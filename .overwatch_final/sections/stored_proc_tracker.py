@@ -13,7 +13,6 @@ from utils import (
     build_metered_credit_cte,
     render_query_drilldown,
     sql_literal,
-    get_wh_filter_clause,
     get_global_filter_clause,
     get_active_company,
 )

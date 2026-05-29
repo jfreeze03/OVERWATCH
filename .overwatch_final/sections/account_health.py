@@ -7,7 +7,7 @@ from utils import (
     credits_to_dollars, download_csv, mark_loaded, show_loaded_time,
     build_metered_credit_cte, build_monitoring_cost_sql,
     metric_confidence_label, freshness_note,
-    render_drillable_bar_chart, render_query_drilldown,
+    render_drillable_bar_chart,
     build_task_failure_summary_sql, build_task_health_sql,
     executive_health_score,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,

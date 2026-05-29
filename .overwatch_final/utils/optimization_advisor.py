@@ -1,6 +1,5 @@
 # utils/optimization_advisor.py - Warehouse Health optimization advisor UI helper
 import streamlit as st
-import pandas as pd
 from .session import get_session
 from .cost import format_credits, credits_to_dollars, build_idle_warehouse_sql, metric_confidence_label
 from .display import download_csv, render_drillable_bar_chart

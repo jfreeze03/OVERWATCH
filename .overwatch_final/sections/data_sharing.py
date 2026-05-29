@@ -1,6 +1,5 @@
 # sections/data_sharing.py — Data transfer credits, shared databases
 import streamlit as st
-import pandas as pd
 from utils import (
     get_active_company,
     get_db_filter_clause,

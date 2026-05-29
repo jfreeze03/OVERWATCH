@@ -1,9 +1,8 @@
 # sections/query_analysis.py — Bottlenecks, plan steps, pattern degradation, AI diagnosis
 import streamlit as st
-import pandas as pd
 from utils import (
     get_session, run_query, sql_literal,
-    format_credits, credits_to_dollars, download_csv,
+    format_credits, download_csv,
     render_query_drilldown, build_metered_credit_cte, get_active_company, get_global_filter_clause,
     filter_existing_columns, format_snowflake_error,
 )

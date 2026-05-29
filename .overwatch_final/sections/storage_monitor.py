@@ -1,12 +1,9 @@
 # sections/storage_monitor.py — Storage overview, data freshness, iceberg, egress
 import streamlit as st
-import pandas as pd
 from utils import (
     get_active_company,
     get_db_filter_clause,
     get_session,
-    format_credits,
-    credits_to_dollars,
     metric_confidence_label,
     freshness_note,
     download_csv,

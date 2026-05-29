@@ -13,7 +13,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from utils import (
-    get_session, format_credits,
+    get_session,
     credits_to_dollars, estimate_live_credits, download_csv,
     render_query_drilldown, get_active_company, get_user_filter_clause,
     get_global_filter_clause, get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,

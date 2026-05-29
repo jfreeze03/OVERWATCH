@@ -19,7 +19,7 @@ st.set_page_config(
 from theme import inject_theme, render_theme_picker
 from config import (
     ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
-    DEFAULT_COMPANY, ROLE_SECTIONS,
+    DEFAULT_COMPANY, ROLE_SECTIONS, SECTION_ALIASES,
 )
 from utils.display import clear_all_cache
 from utils.session import get_session
@@ -57,22 +57,8 @@ def _resolve_visible_sections() -> list[str]:
     return ALL_SECTIONS
 
 
-NAV_ALIASES = {
-    "Usage Overview": "📊 Usage Overview",
-    "Adoption Analytics": "📈 Adoption Analytics",
-    "Service Health": "🩺 Service Health",
-    "Detailed Diagnosis": "🧪 Detailed Diagnosis",
-    "Pipeline Health": "🚚 Pipeline Health",
-    "Platform Topology": "🕸️ Platform Topology",
-    "Credit Contract": "💸 Cost Center",
-    "📉 Credit Contract": "💸 Cost Center",
-    "Snowflake Value": "🏆 Snowflake Value",
-    "💡 Optimization": "🏭 Warehouse Health",
-}
-
-
 def _normalize_nav_section(section: str) -> str:
-    return NAV_ALIASES.get(section, section)
+    return SECTION_ALIASES.get(section, section)
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────

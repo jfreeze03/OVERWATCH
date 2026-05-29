@@ -8,7 +8,6 @@ from utils import (
     get_session,
     safe_strip_tz,
     format_credits,
-    credits_to_dollars,
     metric_confidence_label,
     freshness_note,
     download_csv,
@@ -17,7 +16,7 @@ from utils import (
     render_drillable_bar_chart,
     run_query,
 )
-from config import DEFAULTS, THRESHOLDS
+from config import DEFAULTS
 
 
 AI_CREDIT_RATE = DEFAULTS["ai_credit_price"]  # $2.20/AI credit (Table 6(d))

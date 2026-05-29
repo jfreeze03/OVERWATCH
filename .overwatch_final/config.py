@@ -138,6 +138,51 @@ NAV_GROUPS = {
 # Flat list for st.radio (app.py uses this)
 ALL_SECTIONS = [s for group in NAV_GROUPS.values() for s in group]
 
+SECTION_MODULE_PATHS = [
+    "sections.account_health",
+    "sections.usage_overview",
+    "sections.adoption_analytics",
+    "sections.service_health",
+    "sections.live_monitor",
+    "sections.detailed_diagnosis",
+    "sections.query_analysis",
+    "sections.query_search",
+    "sections.warehouse_health",
+    "sections.storage_monitor",
+    "sections.pipeline_health",
+    "sections.platform_topology",
+    "sections.spcs_tracker",
+    "sections.task_management",
+    "sections.cost_center",
+    "sections.recommendations",
+    "sections.snowflake_value",
+    "sections.cortex_monitor",
+    "sections.security_access",
+    "sections.object_change_monitor",
+    "sections.stored_proc_tracker",
+    "sections.data_sharing",
+    "sections.dba_tools",
+]
+
+if len(SECTION_MODULE_PATHS) != len(ALL_SECTIONS):
+    raise RuntimeError("SECTION_MODULE_PATHS must stay aligned with NAV_GROUPS.")
+
+SECTION_MODULES = dict(zip(ALL_SECTIONS, SECTION_MODULE_PATHS))
+SECTION_BY_TITLE = {section.split(" ", 1)[1]: section for section in ALL_SECTIONS}
+SECTION_ALIASES = {
+    "Usage Overview": SECTION_BY_TITLE["Usage Overview"],
+    "Adoption Analytics": SECTION_BY_TITLE["Adoption Analytics"],
+    "Service Health": SECTION_BY_TITLE["Service Health"],
+    "Detailed Diagnosis": SECTION_BY_TITLE["Detailed Diagnosis"],
+    "Pipeline Health": SECTION_BY_TITLE["Pipeline Health"],
+    "Platform Topology": SECTION_BY_TITLE["Platform Topology"],
+    "Credit Contract": SECTION_BY_TITLE["Cost Center"],
+    "📉 Credit Contract": SECTION_BY_TITLE["Cost Center"],
+    "Snowflake Value": SECTION_BY_TITLE["Snowflake Value"],
+    "Optimization": SECTION_BY_TITLE["Warehouse Health"],
+    "💡 Optimization": SECTION_BY_TITLE["Warehouse Health"],
+}
+
 # ── Role-based section visibility ─────────────────────────────────────────────
 # Keys are substrings matched case-insensitively against CURRENT_ROLE().
 # First match wins. Falls back to DBA (all sections) if no role matches.

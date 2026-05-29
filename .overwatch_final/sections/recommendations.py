@@ -15,7 +15,6 @@ from utils import (
     filter_existing_columns,
     format_snowflake_error,
     format_credits,
-    get_db_filter_clause,
     get_global_filter_clause,
     get_session,
     get_wh_filter_clause,

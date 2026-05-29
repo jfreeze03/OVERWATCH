@@ -1,59 +1,25 @@
-# sections/__init__.py — Lazy section loader + dispatch
-# ─────────────────────────────────────────────────────────────────────────────
-# FIX 1: Lazy loading via importlib (Kiro Immediate Win #1) — sections are
-#         imported on first access rather than all at startup, cutting cold
-#         start time significantly on SPCS.
-# FIX 2: "🔀 Who Changed What?" emoji now matches config.py NAV_GROUPS key.
-# ─────────────────────────────────────────────────────────────────────────────
+# sections/__init__.py - Lazy section loader and dispatch
+from __future__ import annotations
+
 import importlib
+
 import streamlit as st
-from utils import format_snowflake_error
 
-# Maps nav label → dotted module path.
-# Modules are NOT imported here — importlib loads them on first dispatch call.
-_MODULE_MAP: dict[str, str] = {
-    "🏠 Account Health":              "sections.account_health",
-    "📊 Usage Overview":              "sections.usage_overview",
-    "📈 Adoption Analytics":          "sections.adoption_analytics",
-    "🩺 Service Health":              "sections.service_health",
-    "🔴 Live Monitor":                "sections.live_monitor",
-    "🧪 Detailed Diagnosis":          "sections.detailed_diagnosis",
-    "🔍 Query Analysis":              "sections.query_analysis",
-    "🕰️ Query Search & History":     "sections.query_search",
-    "🏭 Warehouse Health":            "sections.warehouse_health",
-    "💸 Cost Center":                 "sections.cost_center",
-    "🗄️ Storage Monitor":            "sections.storage_monitor",
-    "🚚 Pipeline Health":             "sections.pipeline_health",
-    "🕸️ Platform Topology":           "sections.platform_topology",
-    "🐳 SPCS Tracker":                "sections.spcs_tracker",
-    "🔒 Security & Access":           "sections.security_access",
-    "🔀 Who Changed What?":           "sections.object_change_monitor",  # FIX: emoji added
-    "📦 Stored Proc Tracker":         "sections.stored_proc_tracker",
-    "🌐 Data Sharing":                "sections.data_sharing",
-    "⚙️ Task Management":             "sections.task_management",
-    "💡 Recommendations & Anomalies": "sections.recommendations",
-    "🏆 Snowflake Value":             "sections.snowflake_value",
-    "🛠️ DBA Tools":                   "sections.dba_tools",
-    "🤖 AI & Cortex Monitor":         "sections.cortex_monitor",
-}
+from config import SECTION_MODULES
+from utils.query import format_snowflake_error
 
-# Module cache — populated on first access, avoids repeated importlib calls
+
 _loaded: dict[str, object] = {}
 
 
 def dispatch(active_section: str) -> None:
-    """Lazy-load and render the section for the active nav selection.
-
-    On first call for a section: importlib.import_module() loads it.
-    On subsequent calls: the cached module object is reused — no re-import.
-    If the section key is not in _MODULE_MAP, a clear warning is shown.
-    """
-    module_path = _MODULE_MAP.get(active_section)
+    """Lazy-load and render the selected OVERWATCH section."""
+    module_path = SECTION_MODULES.get(active_section)
 
     if not module_path:
         st.warning(
-            f"⚠️ Section `{active_section}` not found in registry. "
-            "Check that the nav label in config.py NAV_GROUPS matches _MODULE_MAP exactly."
+            f"Section `{active_section}` is not registered. "
+            "Check config.py SECTION_MODULES and NAV_GROUPS."
         )
         return
 

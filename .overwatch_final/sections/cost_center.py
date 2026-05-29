@@ -9,7 +9,7 @@ from utils import (
     download_csv, build_metered_credit_cte, build_cost_reconciliation_sql,
     burn_trend_label,
     metric_confidence_label, freshness_note,
-    get_db_filter_clause, get_wh_filter_clause, get_user_filter_clause,
+    get_wh_filter_clause,
     get_global_filter_clause, get_company_case_expr,
     filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown,

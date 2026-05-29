@@ -10,7 +10,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from datetime import datetime
-from .cost import format_credits, credits_to_dollars
+from .cost import format_credits
 from .compatibility import filter_existing_columns
 from .query import format_snowflake_error, run_query, run_query_or_raise, sql_literal
 from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause

@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 from utils import (
-    get_session, format_credits, credits_to_dollars,
+    get_session, format_credits,
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
     get_active_company, get_global_filter_clause,
     metric_confidence_label, freshness_note,

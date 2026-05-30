@@ -6,7 +6,6 @@ import streamlit as st
 
 from sections import detailed_diagnosis, live_monitor, query_analysis, query_search
 from utils import (
-    build_action_queue_ddl,
     filter_existing_columns,
     format_snowflake_error,
     get_active_company,
@@ -20,7 +19,12 @@ from utils import (
     safe_int,
     upsert_actions,
 )
-from utils.workflows import render_signal_confidence, render_workflow_guide, render_workflow_selector
+from utils.workflows import (
+    render_priority_dataframe,
+    render_signal_confidence,
+    render_workflow_guide,
+    render_workflow_selector,
+)
 
 WORKFLOWS = (
     "Live Triage",
@@ -742,20 +746,26 @@ def _render_root_cause_brief(session) -> None:
 
         if exceptions is not None and not exceptions.empty:
             st.subheader("Top Query Exceptions")
-            st.dataframe(exceptions, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                exceptions,
+                title="Query exceptions to diagnose first",
+                priority_columns=[
+                    "SEVERITY", "ROOT_CAUSE", "QUERY_ID", "USER_NAME",
+                    "WAREHOUSE_NAME", "DATABASE_NAME", "ELAPSED_SEC",
+                    "QUEUED_SEC", "GB_SCANNED", "REMOTE_SPILL_GB",
+                    "NEXT_ACTION",
+                ],
+                sort_by=["ELAPSED_SEC", "QUEUED_SEC", "GB_SCANNED", "REMOTE_SPILL_GB"],
+                ascending=[False, False, False, False],
+                raw_label="All query root-cause exceptions",
+            )
             if st.button("Save Root-Cause Exceptions to Action Queue", key="qw_rc_queue"):
                 try:
                     saved = _queue_root_cause_actions(session, exceptions)
                     st.success(f"Saved {saved} root-cause findings to the action queue.")
                 except Exception as e:
                     st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-                    st.download_button(
-                        "Download Action Queue DDL",
-                        build_action_queue_ddl(),
-                        file_name="overwatch_action_queue_setup.sql",
-                        mime="text/plain",
-                        key="qw_rc_action_ddl",
-                    )
+                    st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
             render_query_drilldown(exceptions, key="qw_root_cause_drilldown", title="Root-Cause Query Drilldown")
         else:
             st.success("No query root-cause exceptions found for this scope.")

@@ -1230,28 +1230,29 @@ def build_mart_storage_db_detail_sql(company: str = "ALFA") -> str:
 def build_mart_pipeline_freshness_sql(stale_hours: int, company: str = "ALFA") -> str:
     """Build stale-table watchlist from the latest table snapshot mart."""
     table = mart_object_name("DIM_TABLE_SNAPSHOT")
-    company_filter = _mart_company_filter(company)
+    latest_company_filter = _mart_company_filter(company)
+    table_company_filter = _mart_company_filter(company).replace("COMPANY", "t.company")
     return f"""
         WITH latest AS (
-            SELECT MAX(snapshot_ts) AS snapshot_ts
+            SELECT MAX(snapshot_ts) AS latest_snapshot_ts
             FROM {table}
             WHERE 1 = 1
-              {company_filter}
+              {latest_company_filter}
         )
         SELECT
-            database_name,
-            schema_name,
-            table_name,
-            table_type,
-            row_count,
-            bytes / POWER(1024, 3) AS size_gb,
-            last_altered,
-            DATEDIFF('HOUR', last_altered, CURRENT_TIMESTAMP()) AS hours_since_change
+            t.database_name,
+            t.schema_name,
+            t.table_name,
+            t.table_type,
+            t.row_count,
+            t.bytes / POWER(1024, 3) AS size_gb,
+            t.last_altered,
+            DATEDIFF('HOUR', t.last_altered, CURRENT_TIMESTAMP()) AS hours_since_change
         FROM {table} t
-        JOIN latest l ON t.snapshot_ts = l.snapshot_ts
-        WHERE last_altered IS NOT NULL
-          AND DATEDIFF('HOUR', last_altered, CURRENT_TIMESTAMP()) >= {int(stale_hours)}
-          {company_filter}
+        JOIN latest l ON t.snapshot_ts = l.latest_snapshot_ts
+        WHERE t.last_altered IS NOT NULL
+          AND DATEDIFF('HOUR', t.last_altered, CURRENT_TIMESTAMP()) >= {int(stale_hours)}
+          {table_company_filter}
         ORDER BY hours_since_change DESC, size_gb DESC
         LIMIT 300
     """
@@ -1287,30 +1288,31 @@ def build_mart_pipeline_load_failures_sql(load_days: int, company: str = "ALFA")
 def build_mart_pipeline_volume_sql(min_gb: float, company: str = "ALFA") -> str:
     """Build table volume watchlist from the latest table snapshot mart."""
     table = mart_object_name("DIM_TABLE_SNAPSHOT")
-    company_filter = _mart_company_filter(company)
+    latest_company_filter = _mart_company_filter(company)
+    table_company_filter = _mart_company_filter(company).replace("COMPANY", "t.company")
     return f"""
         WITH latest AS (
-            SELECT MAX(snapshot_ts) AS snapshot_ts
+            SELECT MAX(snapshot_ts) AS latest_snapshot_ts
             FROM {table}
             WHERE 1 = 1
-              {company_filter}
+              {latest_company_filter}
         )
         SELECT
-            database_name,
-            schema_name,
-            table_name,
-            row_count,
-            ROUND(bytes / POWER(1024, 3), 2) AS size_gb,
-            last_altered,
+            t.database_name,
+            t.schema_name,
+            t.table_name,
+            t.row_count,
+            ROUND(t.bytes / POWER(1024, 3), 2) AS size_gb,
+            t.last_altered,
             CASE
-                WHEN COALESCE(row_count, 0) = 0 AND COALESCE(bytes, 0) > 0 THEN 'Storage without rows'
-                WHEN DATEDIFF('DAY', last_altered, CURRENT_TIMESTAMP()) > 90 THEN 'Large and quiet'
+                WHEN COALESCE(t.row_count, 0) = 0 AND COALESCE(t.bytes, 0) > 0 THEN 'Storage without rows'
+                WHEN DATEDIFF('DAY', t.last_altered, CURRENT_TIMESTAMP()) > 90 THEN 'Large and quiet'
                 ELSE 'Active large table'
             END AS watch_reason
         FROM {table} t
-        JOIN latest l ON t.snapshot_ts = l.snapshot_ts
-        WHERE bytes / POWER(1024, 3) >= {float(min_gb or 0)}
-          {company_filter}
+        JOIN latest l ON t.snapshot_ts = l.latest_snapshot_ts
+        WHERE t.bytes / POWER(1024, 3) >= {float(min_gb or 0)}
+          {table_company_filter}
         ORDER BY size_gb DESC
         LIMIT 300
     """
@@ -1518,15 +1520,17 @@ def build_mart_task_inventory_sql(
 ) -> str:
     """Build latest task inventory from the task snapshot mart."""
     table = mart_object_name("DIM_TASK_SNAPSHOT")
-    company_filter = _mart_company_filter(company)
-    db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    latest_company_filter = _mart_company_filter(company)
+    latest_db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    task_company_filter = _mart_company_filter(company).replace("COMPANY", "t.company")
+    task_db_filter = _mart_text_filter("t.database_name", database_contains)
     return f"""
         WITH latest AS (
-            SELECT MAX(snapshot_ts) AS snapshot_ts
+            SELECT MAX(snapshot_ts) AS latest_snapshot_ts
             FROM {table}
             WHERE 1 = 1
-              {company_filter}
-              {db_filter}
+              {latest_company_filter}
+              {latest_db_filter}
         )
         SELECT
             t.task_name AS name,
@@ -1541,10 +1545,10 @@ def build_mart_task_inventory_sql(
             t.procedure_name,
             t.snapshot_ts
         FROM {table} t
-        JOIN latest l ON t.snapshot_ts = l.snapshot_ts
+        JOIN latest l ON t.snapshot_ts = l.latest_snapshot_ts
         WHERE 1 = 1
-          {company_filter}
-          {db_filter}
+          {task_company_filter}
+          {task_db_filter}
         ORDER BY t.database_name, t.schema_name, t.root_task_name, t.task_name
     """
 
@@ -1622,33 +1626,35 @@ def build_mart_procedure_inventory_sql(
 ) -> str:
     """Build latest stored procedure inventory from DIM_PROCEDURE_SNAPSHOT."""
     table = mart_object_name("DIM_PROCEDURE_SNAPSHOT")
-    company_filter = _mart_company_filter(company)
-    db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    latest_company_filter = _mart_company_filter(company)
+    latest_db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    proc_company_filter = _mart_company_filter(company).replace("COMPANY", "p.company")
+    proc_db_filter = _mart_text_filter("p.database_name", database_contains)
     return f"""
         WITH latest AS (
-            SELECT MAX(snapshot_ts) AS snapshot_ts
+            SELECT MAX(snapshot_ts) AS latest_snapshot_ts
             FROM {table}
             WHERE 1 = 1
-              {company_filter}
-              {db_filter}
+              {latest_company_filter}
+              {latest_db_filter}
         )
         SELECT
-            database_name AS procedure_catalog,
-            schema_name AS procedure_schema,
-            procedure_name,
-            argument_signature,
-            owner_role AS procedure_owner,
-            procedure_language,
+            p.database_name AS procedure_catalog,
+            p.schema_name AS procedure_schema,
+            p.procedure_name,
+            p.argument_signature,
+            p.owner_role AS procedure_owner,
+            p.procedure_language,
             NULL::TIMESTAMP_NTZ AS created,
-            last_altered,
-            is_orphan_candidate,
-            snapshot_ts
+            p.last_altered,
+            p.is_orphan_candidate,
+            p.snapshot_ts AS snapshot_ts
         FROM {table} p
-        JOIN latest l ON p.snapshot_ts = l.snapshot_ts
+        JOIN latest l ON p.snapshot_ts = l.latest_snapshot_ts
         WHERE 1 = 1
-          {company_filter}
-          {db_filter}
-        ORDER BY last_altered DESC NULLS LAST, procedure_name
+          {proc_company_filter}
+          {proc_db_filter}
+        ORDER BY p.last_altered DESC NULLS LAST, p.procedure_name
         LIMIT 500
     """
 

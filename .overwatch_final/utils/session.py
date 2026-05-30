@@ -99,10 +99,12 @@ def get_session():
     """Return a live, validated Snowflake session."""
     now = datetime.now()
     last_created = st.session_state.get("_sf_session_created_at")
-    needs_check = True
+    needs_check = False
     if last_created:
         age_min = (now - last_created).total_seconds() / 60
         needs_check = age_min >= _SESSION_TTL_MINUTES
+    elif "sf_session" in st.session_state:
+        st.session_state["_sf_session_created_at"] = now
 
     if needs_check and "sf_session" in st.session_state:
         if not _session_is_alive(st.session_state["sf_session"]):

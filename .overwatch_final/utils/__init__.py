@@ -32,9 +32,9 @@ from .company_filter import (
     invalidate_company_cache,
 )
 from .helpers import paginate_df, safe_float, safe_int
-from .alerts import build_alert_task_sql, send_teams_alert, build_annotation_ddl
+from .alerts import send_teams_alert
 from .logging import (
-    build_usage_log_ddl, log_section_load, set_logging_enabled,
+    log_section_load, set_logging_enabled,
     is_logging_enabled, log_query_event, is_query_logging_enabled,
     set_query_logging_enabled, SectionTimer,
 )
@@ -83,17 +83,16 @@ from .mart import (
     build_mart_service_login_health_sql, build_mart_service_task_health_sql,
 )
 from .bookmarks import (
-    build_bookmark_ddl, save_bookmark, load_bookmarks,
+    save_bookmark, load_bookmarks,
     apply_bookmark, delete_bookmark,
 )
 from .action_queue import (
-    build_action_queue_ddl, make_action_id, upsert_actions,
+    make_action_id, upsert_actions,
     load_action_queue, update_action_status,
 )
-from .setup_bundle import build_overwatch_setup_bundle, build_snowflake_value_ddl
 from .workflows import (
     coerce_workflow_state, render_workflow_selector, render_workflow_guide,
-    render_signal_confidence,
+    render_signal_confidence, add_signal_routes, render_priority_dataframe,
 )
 from .compatibility import (
     run_compatibility_checks, get_available_columns, view_supports_columns,
@@ -127,8 +126,8 @@ __all__ = [
     "get_company_case_expr", "get_company_scope_key", "company_scoped_query",
     "company_value_allowed", "invalidate_company_cache",
     "paginate_df", "safe_float", "safe_int",
-    "build_alert_task_sql", "send_teams_alert", "build_annotation_ddl",
-    "build_usage_log_ddl", "log_section_load", "set_logging_enabled",
+    "send_teams_alert",
+    "log_section_load", "set_logging_enabled",
     "is_logging_enabled", "log_query_event", "is_query_logging_enabled",
     "set_query_logging_enabled", "SectionTimer",
     "admin_actions_enabled", "admin_button_disabled", "admin_disabled_reason",
@@ -169,13 +168,12 @@ __all__ = [
     "build_mart_procedure_sla_sql",
     "build_mart_service_query_health_sql", "build_mart_service_warehouse_health_sql",
     "build_mart_service_login_health_sql", "build_mart_service_task_health_sql",
-    "build_bookmark_ddl", "save_bookmark", "load_bookmarks",
+    "save_bookmark", "load_bookmarks",
     "apply_bookmark", "delete_bookmark",
-    "build_action_queue_ddl", "make_action_id", "upsert_actions",
+    "make_action_id", "upsert_actions",
     "load_action_queue", "update_action_status",
-    "build_overwatch_setup_bundle", "build_snowflake_value_ddl",
     "coerce_workflow_state", "render_workflow_selector", "render_workflow_guide",
-    "render_signal_confidence",
+    "render_signal_confidence", "add_signal_routes", "render_priority_dataframe",
     "run_compatibility_checks", "get_available_columns", "view_supports_columns",
     "filter_existing_columns", "build_smoke_test_checklist", "build_cost_formula_audit",
     "build_task_history_sql", "build_task_failure_summary_sql", "build_task_health_sql",

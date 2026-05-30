@@ -19,6 +19,7 @@ from utils import (
     get_global_filter_clause, get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
     format_snowflake_error, filter_existing_columns,
 )
+from utils.workflows import render_priority_dataframe
 from config import THRESHOLDS
 
 
@@ -219,7 +220,25 @@ def render():
                     ORDER BY start_time DESC LIMIT 500
                 """, ttl_key=f"live_recent_{company}_{wh_filter}_{status_filter}", tier="live")
                 if not df_recent.empty:
-                    st.dataframe(df_recent, use_container_width=True, height=350)
+                    render_priority_dataframe(
+                        df_recent,
+                        title="Recent queries to inspect first",
+                        priority_columns=[
+                            "QUERY_ID",
+                            "EXECUTION_STATUS",
+                            "USER_NAME",
+                            "WAREHOUSE_NAME",
+                            "WAREHOUSE_SIZE",
+                            "START_TIME",
+                            "ELAPSED_SEC",
+                            "GB_SCANNED",
+                            "QUERY_TEXT",
+                        ],
+                        sort_by=["ELAPSED_SEC", "GB_SCANNED", "START_TIME"],
+                        ascending=[False, False, False],
+                        raw_label="All recent query rows",
+                        height=350,
+                    )
                     download_csv(df_recent, "recent_queries.csv")
             except Exception as e:
                 st.caption(f"Recent query data unavailable: {format_snowflake_error(e)}")
@@ -256,7 +275,14 @@ def render():
                 ).fillna(0)
                 st.line_chart(pivot)
             except Exception:
-                st.dataframe(df_t, use_container_width=True)
+                render_priority_dataframe(
+                    df_t,
+                    title="Timeline fallback detail",
+                    priority_columns=["TIME_BUCKET", "EXECUTION_STATUS", "QUERY_COUNT", "AVG_ELAPSED_SEC"],
+                    sort_by=["TIME_BUCKET", "QUERY_COUNT"],
+                    ascending=[False, False],
+                    raw_label="All timeline rows",
+                )
             download_csv(df_t, "query_timeline.csv")
 
     # ── SESSIONS ───────────────────────────────────────────────────────────────
@@ -320,9 +346,36 @@ def render():
             c2.metric("Long Sessions (>8h)",  len(long_s), delta_color="inverse")
             if not long_s.empty:
                 st.warning(f"⚠️ {len(long_s)} session(s) active > 8 hours.")
-                st.dataframe(long_s, use_container_width=True)
+                render_priority_dataframe(
+                    long_s,
+                    title="Long sessions to review first",
+                    priority_columns=[
+                        "SESSION_ID",
+                        "USER_NAME",
+                        "CREATED_ON",
+                        "SESSION_MIN",
+                        "AUTHENTICATION_METHOD",
+                    ],
+                    sort_by=["SESSION_MIN"],
+                    ascending=False,
+                    raw_label="All long sessions",
+                )
             st.subheader("All Sessions")
-            st.dataframe(df_s, use_container_width=True, height=300)
+            render_priority_dataframe(
+                df_s,
+                title="Active sessions",
+                priority_columns=[
+                    "SESSION_ID",
+                    "USER_NAME",
+                    "CREATED_ON",
+                    "SESSION_MIN",
+                    "AUTHENTICATION_METHOD",
+                ],
+                sort_by=["SESSION_MIN"],
+                ascending=False,
+                raw_label="All session rows",
+                height=300,
+            )
             download_csv(df_s, "sessions.csv")
 
         if st.session_state.get("lm_df_lock") is not None:
@@ -331,7 +384,22 @@ def render():
             st.subheader("🔒 Lock Wait History (last 24h, >5s blocked)")
             if not df_lk.empty:
                 st.warning(f"⚠️ {len(df_lk)} queries were blocked by lock contention.")
-                st.dataframe(df_lk, use_container_width=True)
+                render_priority_dataframe(
+                    df_lk,
+                    title="Lock waits to investigate first",
+                    priority_columns=[
+                        "QUERY_ID",
+                        "USER_NAME",
+                        "WAREHOUSE_NAME",
+                        "WAREHOUSE_SIZE",
+                        "START_TIME",
+                        "BLOCKED_SEC",
+                        "QUERY_TEXT",
+                    ],
+                    sort_by=["BLOCKED_SEC", "START_TIME"],
+                    ascending=[False, False],
+                    raw_label="All lock-wait rows",
+                )
                 download_csv(df_lk, "lock_wait_history.csv")
             else:
                 st.success("✅ No significant lock waits in the last 24h.")

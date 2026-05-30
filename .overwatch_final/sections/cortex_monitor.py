@@ -1,9 +1,8 @@
 # sections/cortex_monitor.py — AI & Cortex Code usage: users, trends, anomalies, predictive alerts
 import streamlit as st
 import pandas as pd
-from utils.workflows import render_workflow_selector
+from utils.workflows import render_priority_dataframe, render_workflow_selector
 from utils import (
-    build_action_queue_ddl,
     format_snowflake_error,
     get_active_company,
     get_db_filter_clause,
@@ -48,9 +47,12 @@ CORTEX_VIEW_DETAILS = {
 def _cortex_cost_score(
     projected_cost: float,
     budget_usd: float,
-    spike_users: int,
-    active_users: int,
+    spike_users: int = 0,
+    active_users: int = 0,
+    heavy_users: int | None = None,
 ) -> int:
+    if heavy_users is not None:
+        spike_users = heavy_users
     budget = max(safe_float(budget_usd), 1.0)
     budget_pct = safe_float(projected_cost) / budget * 100
     spike_pct = safe_float(spike_users) / max(safe_int(active_users), 1) * 100
@@ -440,20 +442,25 @@ def _render_cortex_control_brief(session, company: str) -> None:
 
         if exceptions is not None and not exceptions.empty:
             st.subheader("Cortex Cost Exceptions")
-            st.dataframe(exceptions, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                exceptions,
+                title="Cortex cost exceptions to work first",
+                priority_columns=[
+                    "SEVERITY", "SIGNAL", "USER_NAME", "SOURCE",
+                    "PROJECTED_30D_COST", "TOTAL_CREDITS", "TOTAL_REQUESTS",
+                    "NEXT_ACTION", "PROOF_QUERY",
+                ],
+                sort_by=["PROJECTED_30D_COST", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
+                ascending=[False, False, False],
+                raw_label="All Cortex cost exceptions",
+            )
             if st.button("Save Cortex Findings to Action Queue", key="cortex_control_queue"):
                 try:
                     saved = _queue_cortex_findings(session, exceptions, budget_usd)
                     st.success(f"Saved {saved} Cortex cost findings to the action queue.")
                 except Exception as e:
                     st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-                    st.download_button(
-                        "Download Action Queue DDL",
-                        build_action_queue_ddl(),
-                        file_name="overwatch_action_queue_setup.sql",
-                        mime="text/plain",
-                        key="cortex_control_ddl",
-                    )
+                    st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
         else:
             st.success("No Cortex cost exceptions found for this scope.")
 
@@ -477,7 +484,14 @@ def _render_cortex_control_brief(session, company: str) -> None:
                 .sort_values("COST_USD", ascending=False)
             )
             st.subheader("Source Split")
-            st.dataframe(source_split, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                source_split,
+                title="Cortex cost by source",
+                priority_columns=["SOURCE", "COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
+                sort_by=["COST_USD", "TOTAL_CREDITS"],
+                ascending=[False, False],
+                raw_label="All Cortex source rows",
+            )
 
         st.download_button(
             "Download Cortex Cost Brief",
@@ -603,7 +617,23 @@ def render():
             )
 
             st.subheader("Full Breakdown")
-            st.dataframe(df_cc, use_container_width=True, height=350)
+            render_priority_dataframe(
+                df_cc,
+                title="Cortex users to review first",
+                priority_columns=[
+                    "USER_NAME",
+                    "SOURCE",
+                    "TOTAL_CREDITS",
+                    "COST_USD",
+                    "TOTAL_REQUESTS",
+                    "TOTAL_TOKENS",
+                    "COST_PER_REQUEST",
+                ],
+                sort_by=["COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
+                ascending=[False, False, False],
+                raw_label="All Cortex user attribution rows",
+                height=350,
+            )
             download_csv(df_cc, "cortex_code_users.csv")
 
             # Cost-per-request spike detection
@@ -647,7 +677,21 @@ def render():
                         spikes = df_spike[df_spike["PCT_CHANGE"] > 25] if "PCT_CHANGE" in df_spike.columns else df_spike
                         if not spikes.empty:
                             st.warning(f"{len(spikes)} user(s) with >25% cost-per-request increase vs prior period.")
-                        st.dataframe(df_spike, use_container_width=True)
+                        render_priority_dataframe(
+                            df_spike,
+                            title="Cost-per-request spikes",
+                            priority_columns=[
+                                "USER_NAME",
+                                "PCT_CHANGE",
+                                "RECENT_CPR",
+                                "PRIOR_CPR",
+                                "RECENT_REQUESTS",
+                                "PRIOR_REQUESTS",
+                            ],
+                            sort_by=["PCT_CHANGE", "RECENT_CPR"],
+                            ascending=[False, False],
+                            raw_label="All cost-per-request spike rows",
+                        )
                         download_csv(df_spike, "cortex_cpr_spikes.csv")
                     else:
                         st.success("No cost-per-request spikes detected.")
@@ -716,7 +760,14 @@ def render():
                 TOTAL_REQUESTS=("TOTAL_REQUESTS","sum")
             ).reset_index()
             st.caption("Snowsight vs CLI")
-            st.dataframe(source_agg, use_container_width=True)
+            render_priority_dataframe(
+                source_agg,
+                title="Snowsight vs CLI source split",
+                priority_columns=["SOURCE", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
+                sort_by=["TOTAL_CREDITS", "TOTAL_REQUESTS"],
+                ascending=[False, False],
+                raw_label="All Cortex trend source rows",
+            )
 
             # 7-day rolling average overlay
             daily["ROLLING_7D"] = daily["TOTAL_CREDITS"].rolling(7, min_periods=1).mean()
@@ -800,10 +851,43 @@ def render():
 
             if not flagged.empty:
                 st.warning(f"{len(flagged)} anomalous Cortex Code usage day(s) detected.")
-                st.dataframe(flagged, use_container_width=True)
+                render_priority_dataframe(
+                    flagged,
+                    title="Cortex anomalies to investigate first",
+                    priority_columns=[
+                        "USER_NAME",
+                        "ANOMALY_FLAG",
+                        "USAGE_DATE",
+                        "CREDITS",
+                        "ROLLING_AVG",
+                        "ZSCORE",
+                        "REQUESTS",
+                        "CREDITS_PER_REQ",
+                    ],
+                    sort_by=["ANOMALY_FLAG", "ZSCORE", "CREDITS"],
+                    ascending=[True, False, False],
+                    raw_label="All Cortex anomaly rows",
+                )
 
-            with st.expander("View Full Dataset"):
-                st.dataframe(df_an, use_container_width=True)
+            with st.expander("Full anomaly evidence", expanded=False):
+                render_priority_dataframe(
+                    df_an,
+                    title="Cortex anomaly evidence",
+                    priority_columns=[
+                        "USER_NAME",
+                        "USAGE_DATE",
+                        "CREDITS",
+                        "ROLLING_AVG",
+                        "ZSCORE",
+                        "REQUESTS",
+                        "CREDITS_PER_REQ",
+                        "ANOMALY_FLAG",
+                    ],
+                    sort_by=["ZSCORE", "CREDITS"],
+                    ascending=[False, False],
+                    raw_label="All anomaly evidence rows",
+                    max_rows=50,
+                )
 
             download_csv(df_an, "cortex_anomalies.csv")
         elif st.session_state.get("cm_cc_anom_data") is not None:
@@ -930,7 +1014,23 @@ def render():
                         c1, c2 = st.columns(2)
                         c1.metric("MV Refreshes (7d)", len(df_mv))
                         c2.metric("Total Credits",     format_credits(df_mv["CREDITS_USED"].sum()))
-                        st.dataframe(df_mv, use_container_width=True)
+                        render_priority_dataframe(
+                            df_mv,
+                            title="Materialized view refreshes by cost",
+                            priority_columns=[
+                                "DATABASE_NAME",
+                                "SCHEMA_NAME",
+                                "MV_NAME",
+                                "CREDITS_USED",
+                                "DURATION_SEC",
+                                "BYTES_WRITTEN",
+                                "ROWS_INSERTED",
+                                "REFRESH_START_TIME",
+                            ],
+                            sort_by=["CREDITS_USED", "DURATION_SEC", "BYTES_WRITTEN"],
+                            ascending=[False, False, False],
+                            raw_label="All materialized view refresh rows",
+                        )
                         download_csv(df_mv, "mv_refresh_history.csv")
                     else:
                         st.info("No materialized view refresh activity in the last 7 days.")

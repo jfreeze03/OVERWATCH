@@ -27,6 +27,47 @@ DIAG_MODES = {
 }
 
 
+DIAGNOSIS_ROUTES = {
+    "Execution Time": (
+        "Query workbench",
+        "Inspect query text, release timing, warehouse size, and operator stats; compare against historical baseline before tuning.",
+    ),
+    "Queued Overload": (
+        "Warehouse health",
+        "Check concurrent load, cluster limits, queued overload time, and auto-suspend/resume settings before resizing.",
+    ),
+    "Blocked Transactions": (
+        "Query workbench",
+        "Find blocker sessions and transaction scope; coordinate cancellation or release with the owning team.",
+    ),
+    "Compilation Time": (
+        "Query workbench",
+        "Review dynamic SQL, object count, view nesting, and query text complexity before rewriting.",
+    ),
+    "Remote Spill": (
+        "Warehouse health",
+        "Inspect operator stats, join strategy, warehouse memory pressure, and scan volume before rerun.",
+    ),
+    "Bytes Scanned": (
+        "Change & drift",
+        "Check pruning, clustering/search optimization fit, object growth, and recent schema/data changes.",
+    ),
+}
+
+
+def _annotate_diagnosis_routes(df, mode: str):
+    if df is None or df.empty:
+        return df
+    workflow, action = DIAGNOSIS_ROUTES.get(
+        mode,
+        ("Query workbench", "Open the query drilldown, validate the query profile, and route to the owning workflow."),
+    )
+    routed = df.copy()
+    routed["NEXT_WORKFLOW"] = workflow
+    routed["NEXT_ACTION"] = action
+    return routed
+
+
 def _load_diagnosis(session, days: int, mode: str, limit: int):
     company = get_active_company()
     order_col, _, _ = DIAG_MODES[mode]
@@ -171,6 +212,10 @@ def _queue_diagnosis(session, df, mode: str):
         st.info("No diagnosis rows are loaded yet.")
         return
     _, metric_col, finding_name = DIAG_MODES[mode]
+    next_workflow, next_action = DIAGNOSIS_ROUTES.get(
+        mode,
+        ("Query workbench", "Open the query drilldown, validate the query profile, and route to the owning workflow."),
+    )
     company = get_active_company()
     actions = []
     for _, row in df.head(20).iterrows():
@@ -189,7 +234,7 @@ def _queue_diagnosis(session, df, mode: str):
             "Entity": qid,
             "Owner": user,
             "Finding": f"{finding_name}: {metric_col}={metric_value:,.2f} on {wh}.",
-            "Action": "Review query text, warehouse pressure, scanned bytes, and operator stats before rerun.",
+            "Action": f"{next_workflow}: {next_action}",
             "Estimated Monthly Savings": 0,
             "Generated SQL Fix": "-- Use Query Profile and GET_QUERY_OPERATOR_STATS for the selected query.",
             "Proof Query": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY "
@@ -219,7 +264,7 @@ def render():
     if st.button("Load Diagnosis", key="dd_load"):
         with st.spinner("Loading detailed diagnosis..."):
             try:
-                st.session_state["dd_df"] = _load_diagnosis(session, days, mode, limit)
+                st.session_state["dd_df"] = _annotate_diagnosis_routes(_load_diagnosis(session, days, mode, limit), mode)
                 st.session_state["dd_loaded_mode"] = mode
             except Exception as e:
                 st.warning(f"Diagnosis data unavailable: {format_snowflake_error(e)}")

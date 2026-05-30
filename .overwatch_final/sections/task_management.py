@@ -3,9 +3,8 @@ import re
 
 import streamlit as st
 import pandas as pd
-from utils.workflows import render_workflow_selector
+from utils.workflows import render_priority_dataframe, render_workflow_selector
 from utils import (
-    build_action_queue_ddl,
     build_task_history_sql,
     download_csv,
     format_snowflake_error,
@@ -83,13 +82,7 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
         st.success(f"Saved {saved} task reliability findings to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.download_button(
-            "Download Action Queue DDL",
-            build_action_queue_ddl(),
-            file_name="overwatch_action_queue_setup.sql",
-            mime="text/plain",
-            key=f"tm_queue_ddl_{source}",
-        )
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
 def _qualified_name(*parts: str) -> str:
@@ -727,53 +720,20 @@ def _build_task_ops_markdown(
     return "\n".join(lines)
 
 
-def build_admin_audit_ddl() -> str:
-    return f"""-- OVERWATCH admin action audit
-CREATE DATABASE IF NOT EXISTS {safe_identifier(ALERT_DB)};
-CREATE SCHEMA IF NOT EXISTS {safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)};
-
-CREATE TABLE IF NOT EXISTS {ADMIN_AUDIT_FQN} (
-    ACTION_ID       VARCHAR(64),
-    ACTION_TS       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    APP_USER        VARCHAR(200),
-    COMPANY         VARCHAR(100),
-    ENVIRONMENT     VARCHAR(100),
-    SNOWFLAKE_USER  VARCHAR(200),
-    SNOWFLAKE_ROLE  VARCHAR(200),
-    SNOWFLAKE_WAREHOUSE VARCHAR(200),
-    ACTION_TYPE     VARCHAR(100),
-    OBJECT_NAME     VARCHAR(1000),
-    SQL_TEXT        VARCHAR(8000),
-    SQL_HASH        VARCHAR(80),
-    CONFIRMATION_TEXT VARCHAR(1000),
-    CONTROL_CONTEXT VARCHAR(4000),
-    RESULT_STATUS   VARCHAR(40),
-    RESULT_MESSAGE  VARCHAR(4000)
-);
-
-ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS SNOWFLAKE_USER VARCHAR(200);
-ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS SNOWFLAKE_ROLE VARCHAR(200);
-ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS SNOWFLAKE_WAREHOUSE VARCHAR(200);
-ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS SQL_HASH VARCHAR(80);
-ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS CONFIRMATION_TEXT VARCHAR(1000);
-ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS CONTROL_CONTEXT VARCHAR(4000);"""
-
-
 def _current_execution_context(session) -> dict:
+    app_user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
+    role = str(st.session_state.get("_overwatch_current_role", "") or "")
+    warehouse = ""
     try:
-        row = session.sql("""
-            SELECT
-                CURRENT_USER() AS current_user,
-                CURRENT_ROLE() AS current_role,
-                CURRENT_WAREHOUSE() AS current_warehouse
-        """).collect()[0]
-        return {
-            "snowflake_user": str(row["CURRENT_USER"] or ""),
-            "snowflake_role": str(row["CURRENT_ROLE"] or ""),
-            "snowflake_warehouse": str(row["CURRENT_WAREHOUSE"] or ""),
-        }
+        row = session.sql("SELECT CURRENT_WAREHOUSE() AS current_warehouse").collect()[0]
+        warehouse = str(row["CURRENT_WAREHOUSE"] or "")
     except Exception:
-        return {"snowflake_user": "", "snowflake_role": "", "snowflake_warehouse": ""}
+        warehouse = ""
+    return {
+        "snowflake_user": app_user,
+        "snowflake_role": role,
+        "snowflake_warehouse": warehouse,
+    }
 
 
 def build_admin_preflight_sql(row: pd.Series) -> str:
@@ -781,8 +741,8 @@ def build_admin_preflight_sql(row: pd.Series) -> str:
     database_name = safe_identifier(row.get("DATABASE_NAME", ""))
     task_name = str(row.get("NAME") or "<task_name>")
     return f"""-- Read-only pre-flight before live task action
-SELECT CURRENT_USER() AS current_user,
-       CURRENT_ROLE() AS current_role,
+-- CURRENT_USER() can be blocked inside Snowflake-hosted Streamlit.
+SELECT CURRENT_ROLE() AS current_role,
        CURRENT_WAREHOUSE() AS current_warehouse;
 
 SHOW GRANTS ON TASK {full_name};
@@ -1189,20 +1149,24 @@ def _render_task_ops_brief(session) -> None:
 
         if not exceptions.empty:
             st.subheader("Task Graph Exceptions")
-            st.dataframe(exceptions, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                exceptions,
+                title="Task graph exceptions to work first",
+                priority_columns=[
+                    "SEVERITY", "SIGNAL", "TASK_NAME", "ROOT_TASK_NAME",
+                    "PROCEDURE_NAME", "DETAIL", "NEXT_WORKFLOW", "NEXT_ACTION",
+                ],
+                sort_by=["SEVERITY", "SIGNAL", "TASK_NAME"],
+                ascending=[True, True, True],
+                raw_label="All task graph exceptions",
+            )
             if st.button("Save Task Graph Findings to Action Queue", key="task_ops_queue"):
                 try:
                     saved = _queue_task_ops_findings(session, exceptions)
                     st.success(f"Saved {saved} task graph findings to the action queue.")
                 except Exception as e:
                     st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-                    st.download_button(
-                        "Download Action Queue DDL",
-                        build_action_queue_ddl(),
-                        file_name="overwatch_action_queue_setup.sql",
-                        mime="text/plain",
-                        key="task_ops_action_ddl",
-                    )
+                    st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
         if not inventory.empty:
             st.subheader("Task Graph / Procedure Map")
@@ -1218,7 +1182,18 @@ def _render_task_ops_brief(session) -> None:
                     "SCHEDULE", "WAREHOUSE", "PREDECESSORS", "PROCEDURE_NAME", "IMPACT_OBJECTS"
                 ] if col in inventory.columns
             ]
-            st.dataframe(inventory[map_cols], use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                inventory[map_cols],
+                title="Task graph and procedure map",
+                priority_columns=[
+                    "DATABASE_NAME", "SCHEMA_NAME", "ROOT_TASK_NAME", "NAME",
+                    "STATE", "WAREHOUSE", "PROCEDURE_NAME", "IMPACT_OBJECTS",
+                ],
+                sort_by=["STATE", "ROOT_TASK_NAME", "NAME"],
+                ascending=[True, True, True],
+                raw_label="Full task graph/procedure map",
+                max_rows=50,
+            )
 
         if not latest.empty:
             st.subheader("Latest Run vs Historical Average")
@@ -1229,7 +1204,19 @@ def _render_task_ops_brief(session) -> None:
                     "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "IMPACT_OBJECTS"
                 ] if col in latest.columns
             ]
-            st.dataframe(latest[latest_cols], use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                latest[latest_cols],
+                title="Latest runs versus historical average",
+                priority_columns=[
+                    "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "STATE",
+                    "DURATION_SEC", "AVG_DURATION_SEC", "FAILURES",
+                    "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "IMPACT_OBJECTS",
+                ],
+                sort_by=["FAILURES", "DURATION_SEC", "EST_TOTAL_CREDITS"],
+                ascending=[False, False, False],
+                raw_label="All latest task runs",
+                max_rows=50,
+            )
 
         st.download_button(
             "Download Task Graph Operations Brief",
@@ -1364,7 +1351,19 @@ def _render_sla_cost_drift_console(session) -> None:
         st.success("No task runs breached the selected SLA or cost drift thresholds.")
     else:
         st.warning("Task regressions found. Review these before the next production handoff.")
-        st.dataframe(breaches[display_cols], use_container_width=True, hide_index=True)
+        render_priority_dataframe(
+            breaches[display_cols],
+            title="Task SLA and cost regressions",
+            priority_columns=[
+                "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "BREACH_REASON",
+                "DURATION_SEC", "AVG_DURATION_SEC", "DURATION_CHANGE_PCT",
+                "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "COST_CHANGE_PCT",
+                "WAREHOUSE_NAME", "IMPACT_OBJECTS",
+            ],
+            sort_by=["DURATION_CHANGE_PCT", "COST_CHANGE_PCT", "DURATION_SEC"],
+            ascending=[False, False, False],
+            raw_label="All task SLA/cost breach rows",
+        )
         top_duration = breaches.sort_values("DURATION_CHANGE_PCT", ascending=False).head(15)
         top_cost = breaches.sort_values("COST_CHANGE_PCT", ascending=False).head(15)
         left, right = st.columns(2)
@@ -1407,16 +1406,18 @@ def _render_sla_cost_drift_console(session) -> None:
                 st.success(f"Saved {saved} SLA/cost drift findings to the action queue.")
             except Exception as e:
                 st.error(f"Could not save SLA/cost drift findings: {format_snowflake_error(e)}")
-                st.download_button(
-                    "Download Action Queue DDL",
-                    build_action_queue_ddl(),
-                    file_name="overwatch_action_queue_setup.sql",
-                    mime="text/plain",
-                    key="task_sla_action_ddl",
-                )
+                st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
     with st.expander("All Latest Task Runs"):
-        st.dataframe(view[display_cols], use_container_width=True, hide_index=True)
+        render_priority_dataframe(
+            view[display_cols],
+            title="Latest task run detail",
+            priority_columns=display_cols,
+            sort_by=["DURATION_SEC", "EST_TOTAL_CREDITS"],
+            ascending=[False, False],
+            raw_label="Full latest task run detail",
+            max_rows=100,
+        )
     download_csv(view[display_cols], f"task_sla_cost_drift_{company.lower()}.csv")
 
 
@@ -1480,12 +1481,35 @@ def render():
 
             if not failed_tasks.empty:
                 st.subheader("❌ Failed Tasks")
-                st.dataframe(failed_tasks.head(20), use_container_width=True)
+                render_priority_dataframe(
+                    failed_tasks,
+                    title="Failed task runs to triage first",
+                    priority_columns=[
+                        "NAME", "TASK_NAME", "ROOT_TASK_NAME", "STATE", "QUERY_ID",
+                        "ERROR_MESSAGE", "SCHEDULED_TIME", "COMPLETED_TIME",
+                    ],
+                    sort_by=["SCHEDULED_TIME", "COMPLETED_TIME"],
+                    ascending=[False, False],
+                    raw_label="All failed task runs",
+                    max_rows=20,
+                )
                 if st.button("Save failed tasks to Action Queue", key="tm_failed_queue"):
                     _queue_task_findings(session, failed_tasks, "Task Management - Task History")
 
             st.subheader("Full History")
-            st.dataframe(th, use_container_width=True, height=400)
+            render_priority_dataframe(
+                th,
+                title="Recent task history",
+                priority_columns=[
+                    "NAME", "TASK_NAME", "ROOT_TASK_NAME", "STATE", "QUERY_ID",
+                    "SCHEDULED_TIME", "COMPLETED_TIME", "DURATION_SEC", "ERROR_MESSAGE",
+                ],
+                sort_by=["SCHEDULED_TIME", "COMPLETED_TIME"],
+                ascending=[False, False],
+                raw_label="Full task history",
+                max_rows=100,
+                height=400,
+            )
             download_csv(th, "task_history.csv")
 
     elif task_view == "Failure Console":
@@ -1551,7 +1575,17 @@ def render():
                 st.warning("Failed task runs found. Review probable cause before using retry controls.")
                 if not patterns.empty:
                     st.subheader("Common Failure Patterns")
-                    st.dataframe(patterns, use_container_width=True, hide_index=True)
+                    render_priority_dataframe(
+                        patterns,
+                        title="Most common failure patterns",
+                        priority_columns=[
+                            "FAILURE_CATEGORY", "ERROR_SIGNATURE", "FAILURE_COUNT",
+                            "TASK_COUNT", "LAST_SEEN", "RECOMMENDED_ACTION",
+                        ],
+                        sort_by=["FAILURE_COUNT", "TASK_COUNT"],
+                        ascending=[False, False],
+                        raw_label="All failure patterns",
+                    )
 
                 category_options = ["All"] + sorted(failures["FAILURE_CATEGORY"].dropna().astype(str).unique().tolist())
                 selected_category = st.selectbox("Filter by failure category", category_options, key="tm_failure_category")
@@ -1565,7 +1599,18 @@ def render():
                     ] if col in view.columns
                 ]
                 st.subheader("Failure Drilldown")
-                st.dataframe(view[display_cols], use_container_width=True, hide_index=True)
+                render_priority_dataframe(
+                    view[display_cols],
+                    title="Failure rows to resolve first",
+                    priority_columns=[
+                        "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "FAILURE_CATEGORY",
+                        "PROBABLE_CAUSE", "RECOMMENDED_ACTION", "QUERY_ID",
+                        "DURATION_SEC", "QUERY_ELAPSED_SEC", "WAREHOUSE_NAME",
+                    ],
+                    sort_by=["DURATION_SEC", "QUERY_ELAPSED_SEC"],
+                    ascending=[False, False],
+                    raw_label="All failure drilldown rows",
+                )
                 download_csv(view[display_cols], "task_failure_console.csv")
 
                 task_options = view["TASK_NAME"].dropna().astype(str).unique().tolist() if "TASK_NAME" in view.columns else []
@@ -1598,13 +1643,7 @@ def render():
                         st.success(f"Saved {saved} failure findings to the action queue.")
                     except Exception as e:
                         st.error(f"Could not save failure findings: {format_snowflake_error(e)}")
-                        st.download_button(
-                            "Download Action Queue DDL",
-                            build_action_queue_ddl(),
-                            file_name="overwatch_action_queue_setup.sql",
-                            mime="text/plain",
-                            key="tm_failure_action_ddl",
-                        )
+                        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
                 st.download_button(
                     "Download Failure Runbook",
                     _build_failure_runbook_markdown(get_active_company(), fc_days, summary, failures, patterns),
@@ -1620,21 +1659,7 @@ def render():
     elif task_view == "ETL Audit":
         st.header("ETL Audit Framework")
         st.caption(f"Custom ETL run tracking table: `{ETL_AUDIT_FQN}`")
-
-        # DDL setup
-        etl_ddl = f"""-- Run once to create the ETL audit table
-CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
-    RUN_ID          NUMBER AUTOINCREMENT PRIMARY KEY,
-    RUN_START       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    RUN_END         TIMESTAMP_NTZ,
-    PIPELINE_NAME   VARCHAR(500),
-    STATUS          VARCHAR(50),   -- RUNNING | SUCCESS | FAILED
-    ROWS_LOADED     NUMBER,
-    ERROR_MESSAGE   VARCHAR(4000),
-    RUN_BY          VARCHAR(200)
-);"""
-        with st.expander("Setup DDL - run once to create audit table"):
-            st.code(etl_ddl, language="sql")
+        st.info("ETL audit table deployment is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
 
         if st.button("Load ETL Audit Log", key="etl_load"):
             try:
@@ -1644,7 +1669,7 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                 """, ttl_key="task_management_etl_audit", tier="standard")
                 st.session_state["tm_df_etl"] = df_etl
             except Exception as e:
-                st.info(f"Audit table not found. Run the setup DDL above first. ({format_snowflake_error(e)})")
+                st.info(f"Audit table unavailable. Deploy `snowflake/OVERWATCH_MART_SETUP.sql`, then retry. ({format_snowflake_error(e)})")
 
         if st.session_state.get("tm_df_etl") is not None and not st.session_state["tm_df_etl"].empty:
             df_e = st.session_state["tm_df_etl"]
@@ -1654,7 +1679,18 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
             err = df_e[df_e["STATUS"] == "FAILED"]  if "STATUS" in df_e.columns else pd.DataFrame()
             c2.metric("Success", len(ok))
             c3.metric("Failed",  len(err), delta_color="inverse")
-            st.dataframe(df_e, use_container_width=True)
+            render_priority_dataframe(
+                df_e,
+                title="ETL audit runs to review first",
+                priority_columns=[
+                    "RUN_ID", "PIPELINE_NAME", "TASK_NAME", "STATUS",
+                    "RUN_START", "RUN_END", "ERROR_MESSAGE",
+                ],
+                sort_by=["STATUS", "RUN_START"],
+                ascending=[True, False],
+                raw_label="All ETL audit rows",
+                max_rows=100,
+            )
             download_csv(df_e, "etl_audit.csv")
             if not err.empty and st.button("Save failed ETL runs to Action Queue", key="tm_etl_queue"):
                 _queue_task_findings(session, err, "Task Management - ETL Audit")
@@ -1667,8 +1703,7 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
         )
         if not admin_actions_enabled():
             st.info("Read-only mode is active. Enable Admin actions in Settings before running operational controls.")
-        with st.expander("Admin Action Audit DDL"):
-            st.code(build_admin_audit_ddl(), language="sql")
+        st.caption("Admin action audit table deployment is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
         exec_context = _current_execution_context(session)
         st.caption(
             "Execution context: "
@@ -1716,7 +1751,14 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                         col for col in ["DATABASE_NAME", "SCHEMA_NAME", "NAME", "STATE", "SCHEDULE", "WAREHOUSE", "PROCEDURE_NAME"]
                         if col in graph_tasks.columns
                     ]
-                    st.dataframe(graph_tasks[preview_cols], use_container_width=True, hide_index=True)
+                    render_priority_dataframe(
+                        graph_tasks[preview_cols],
+                        title="Graph tasks affected",
+                        priority_columns=preview_cols,
+                        sort_by=["STATE", "DATABASE_NAME", "SCHEMA_NAME", "NAME"],
+                        ascending=[True, True, True, True],
+                        raw_label="All graph task rows",
+                    )
 
                 action = st.selectbox(
                     "Graph action",
@@ -1826,7 +1868,18 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                 if cancel_runs.empty:
                     st.success("No running task graph runs loaded for cancellation.")
                 else:
-                    st.dataframe(cancel_runs, use_container_width=True, hide_index=True)
+                    render_priority_dataframe(
+                        cancel_runs,
+                        title="Running task graph runs",
+                        priority_columns=[
+                            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "STATE",
+                            "SCHEDULED_TIME", "QUERY_ID", "GRAPH_RUN_GROUP_ID",
+                            "DURATION_SEC", "ERROR_MESSAGE",
+                        ],
+                        sort_by=["SCHEDULED_TIME", "DURATION_SEC"],
+                        ascending=[False, False],
+                        raw_label="All cancellable task run rows",
+                    )
                     cancel_type = st.radio("Cancel target", ["Graph Run Group", "Query ID"], horizontal=True, key="tm_cancel_type")
                     if cancel_type == "Graph Run Group" and "GRAPH_RUN_GROUP_ID" in cancel_runs.columns:
                         graph_ids = cancel_runs["GRAPH_RUN_GROUP_ID"].dropna().astype(str).unique().tolist()
@@ -1869,8 +1922,7 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
         st.caption("Select and manually trigger a task. Ensure dependencies are met before running.")
         if not admin_actions_enabled():
             st.info("Read-only mode is active. Enable Admin actions in Settings before executing tasks.")
-        with st.expander("Admin Action Audit DDL"):
-            st.code(build_admin_audit_ddl(), language="sql")
+        st.caption("Admin action audit table deployment is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
         exec_context = _current_execution_context(session)
         st.caption(
             "Execution context: "

@@ -30,6 +30,7 @@ from utils import (
     sql_literal,
     upsert_actions,
 )
+from utils.workflows import render_priority_dataframe
 
 
 def _load_overview(session, days: int) -> dict:
@@ -552,7 +553,15 @@ def render():
     )
 
     with st.expander("Health score contributors"):
-        st.dataframe(pd.DataFrame(health["components"]), use_container_width=True, height=280)
+        render_priority_dataframe(
+            pd.DataFrame(health["components"]),
+            title="Health score contributors",
+            priority_columns=["COMPONENT", "SCORE", "WEIGHT", "DETAIL"],
+            sort_by=["SCORE", "WEIGHT"],
+            ascending=[True, False],
+            raw_label="All health score components",
+            height=280,
+        )
 
     s1, s2, s3, s4 = st.columns(4)
     s1.metric("Compute Credits", format_credits(_first_number(metering, "COMPUTE_CREDITS")))
@@ -593,7 +602,15 @@ def render():
                 color=alt.value("#38bdf8"),
             ).properties(height=420)
             st.altair_chart(chart, use_container_width=True)
-            st.dataframe(qt, use_container_width=True, height=300)
+            render_priority_dataframe(
+                qt,
+                title="Query mix drivers",
+                priority_columns=["QUERY_TYPE", "QUERY_COUNT", "USERS", "AVG_ELAPSED_SEC", "FAILED_QUERIES"],
+                sort_by=["QUERY_COUNT", "FAILED_QUERIES", "AVG_ELAPSED_SEC"],
+                ascending=[False, False, False],
+                raw_label="All query mix rows",
+                height=300,
+            )
             download_csv(qt, "usage_overview_query_types.csv")
         else:
             st.info("No query activity found for the selected filters.")

@@ -15,6 +15,7 @@ from utils import (
     render_drillable_bar_chart,
     run_query,
 )
+from utils.workflows import render_priority_dataframe
 
 
 def _load_topology(session, days: int, row_limit: int) -> dict:
@@ -173,7 +174,18 @@ def render():
                 lookback_hours=24 * min(days, 14),
                 top_n=20,
             )
-            st.dataframe(wh_user, use_container_width=True, height=360)
+            render_priority_dataframe(
+                wh_user,
+                title="Warehouse/user relationships to inspect",
+                priority_columns=[
+                    "WAREHOUSE_NAME", "USER_NAME", "ROLE_NAME", "QUERY_COUNT",
+                    "FAILED_QUERIES", "GB_SCANNED", "LAST_QUERY_TIME",
+                ],
+                sort_by=["QUERY_COUNT", "FAILED_QUERIES", "GB_SCANNED"],
+                ascending=[False, False, False],
+                raw_label="All warehouse/user rows",
+                height=360,
+            )
             download_csv(wh_user, "platform_topology_warehouse_user.csv")
         else:
             st.info("No warehouse/user relationships found.")
@@ -187,7 +199,18 @@ def render():
                 tooltip=["DATABASE_NAME", "SCHEMA_NAME", "USERS", "ROLES", "QUERY_COUNT", "FAILED_QUERIES"],
             ).properties(height=420)
             st.altair_chart(chart, use_container_width=True)
-            st.dataframe(db_schema, use_container_width=True, height=360)
+            render_priority_dataframe(
+                db_schema,
+                title="Database/schema workload relationships",
+                priority_columns=[
+                    "DATABASE_NAME", "SCHEMA_NAME", "USERS", "ROLES",
+                    "QUERY_COUNT", "FAILED_QUERIES", "GB_SCANNED",
+                ],
+                sort_by=["QUERY_COUNT", "FAILED_QUERIES", "GB_SCANNED"],
+                ascending=[False, False, False],
+                raw_label="All database/schema rows",
+                height=360,
+            )
             download_csv(db_schema, "platform_topology_database_schema.csv")
         else:
             st.info("No database/schema relationships found.")
@@ -197,7 +220,15 @@ def render():
             role_summary = role_users.groupby("ROLE", as_index=False)["USER_NAME"].nunique().rename(columns={"USER_NAME": "USERS"})
             role_summary = role_summary.sort_values("USERS", ascending=False)
             st.bar_chart(role_summary.set_index("ROLE")["USERS"])
-            st.dataframe(role_users, use_container_width=True, height=360)
+            render_priority_dataframe(
+                role_users,
+                title="Role/user assignments",
+                priority_columns=["ROLE", "USER_NAME", "GRANTED_ON", "GRANTED_BY", "CREATED_ON"],
+                sort_by=["ROLE", "USER_NAME"],
+                ascending=[True, True],
+                raw_label="All role/user rows",
+                height=360,
+            )
             download_csv(role_users, "platform_topology_role_users.csv")
         else:
             st.info("No active role grants found.")
@@ -215,7 +246,18 @@ def render():
                 tooltip=["CLIENT_APPLICATION", "USERS", "QUERY_COUNT", "FAILED_QUERIES"],
             ).properties(height=420)
             st.altair_chart(chart, use_container_width=True)
-            st.dataframe(app_flow, use_container_width=True, height=360)
+            render_priority_dataframe(
+                app_flow,
+                title="Application flow drivers",
+                priority_columns=[
+                    "CLIENT_APPLICATION", "WAREHOUSE_NAME", "DATABASE_NAME",
+                    "USERS", "QUERY_COUNT", "FAILED_QUERIES", "LAST_QUERY_TIME",
+                ],
+                sort_by=["QUERY_COUNT", "FAILED_QUERIES"],
+                ascending=[False, False],
+                raw_label="All application flow rows",
+                height=360,
+            )
             download_csv(app_flow, "platform_topology_application_flows.csv")
         else:
             st.info("No application flows found.")

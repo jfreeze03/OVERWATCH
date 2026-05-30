@@ -67,6 +67,7 @@ from sections.stored_proc_tracker import (
     _procedure_run_estimated_credits,
     _query_history_has_root_query_id,
 )
+from utils.workflows import render_operator_briefing, render_priority_dataframe
 
 
 def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = "") -> None:
@@ -1081,9 +1082,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
         score = _cortex_cost_score(
             projected_cost=projected_cost,
             budget_usd=cortex_budget,
+            spike_users=safe_int(cortex_row.get("HEAVY_USERS", 0)),
             active_users=safe_int(cortex_row.get("ACTIVE_USERS", 0)),
-            heavy_users=safe_int(cortex_row.get("HEAVY_USERS", 0)),
-            credits_per_request=safe_float(cortex_row.get("CREDITS_PER_REQUEST", 0)),
         )
         if projected_cost > cortex_budget or score < 78 or not cortex_exceptions.empty:
             rows.append({
@@ -1330,6 +1330,15 @@ def render() -> None:
         "One place to triage Snowflake cost, reliability, security, task, warehouse, and change exceptions. "
         "Use this page first, then drill into specialist tools only when the signal deserves it."
     )
+    render_operator_briefing(
+        [
+            ("First move", "Use the fast snapshot for cheap triage."),
+            ("Evidence", "Load details only when a signal needs proof."),
+            ("Control", "Route to the specialist workflow before taking action."),
+            ("Output", "Export a DBA brief for leaders without giving them the app."),
+        ],
+        columns=4,
+    )
     if st.session_state.get("exceptions_only_mode"):
         st.info(
             "Exceptions-only mode is on. This page is prioritizing actionable issues and report-ready evidence "
@@ -1446,7 +1455,18 @@ def render() -> None:
             st.success("No major exceptions detected by the DBA Control Room rules.")
         else:
             st.subheader("Priority Exceptions")
-            st.dataframe(exceptions, use_container_width=True, height=260)
+            render_priority_dataframe(
+                exceptions,
+                title="Control-room exceptions to work first",
+                priority_columns=[
+                    "SEVERITY", "DOMAIN", "SIGNAL", "ENTITY", "DETAIL",
+                    "NEXT_WORKFLOW", "NEXT_ACTION",
+                ],
+                sort_by=["SEVERITY", "DOMAIN", "ENTITY"],
+                ascending=[True, True, True],
+                raw_label="All control-room exceptions",
+                height=260,
+            )
             _render_route_buttons(exceptions)
 
         st.divider()
@@ -1459,7 +1479,19 @@ def render() -> None:
                 cost_df["EST_COST"] = cost_df["ALLOCATED_CREDITS"].apply(
                     lambda v: credits_to_dollars(v, credit_price)
                 )
-                st.dataframe(cost_df, use_container_width=True, height=280)
+                render_priority_dataframe(
+                    cost_df,
+                    title="Largest cost drivers",
+                    priority_columns=[
+                        "WAREHOUSE_NAME", "USER_NAME", "ROLE_NAME",
+                        "DATABASE_NAME", "ALLOCATED_CREDITS", "EST_COST",
+                        "QUERY_COUNT", "AVG_ELAPSED_SEC",
+                    ],
+                    sort_by=["ALLOCATED_CREDITS", "EST_COST"],
+                    ascending=[False, False],
+                    raw_label="All cost-driver rows",
+                    height=280,
+                )
                 download_csv(cost_df, "dba_control_room_cost_drivers.csv")
             else:
                 st.info("No cost-driver rows found in the loaded lookback.")
@@ -1467,7 +1499,19 @@ def render() -> None:
             st.subheader("Warehouse Pressure")
             wh_df = data.get("warehouse_pressure", _empty_df())
             if not wh_df.empty:
-                st.dataframe(wh_df, use_container_width=True, height=280)
+                render_priority_dataframe(
+                    wh_df,
+                    title="Warehouses under pressure",
+                    priority_columns=[
+                        "WAREHOUSE_NAME", "WAREHOUSE_SIZE", "QUEUED_QUERIES",
+                        "FAILED_QUERIES", "P95_ELAPSED_SEC", "REMOTE_SPILL_GB",
+                        "QUERY_COUNT", "ALLOCATED_CREDITS",
+                    ],
+                    sort_by=["QUEUED_QUERIES", "FAILED_QUERIES", "P95_ELAPSED_SEC"],
+                    ascending=[False, False, False],
+                    raw_label="All warehouse-pressure rows",
+                    height=280,
+                )
                 sel_wh = st.selectbox(
                     "Open warehouse",
                     [""] + wh_df["WAREHOUSE_NAME"].dropna().astype(str).tolist(),
@@ -1536,7 +1580,23 @@ def render() -> None:
             with tab:
                 df = data.get(key, _empty_df())
                 if not df.empty:
-                    st.dataframe(df, use_container_width=True, height=320)
+                    render_priority_dataframe(
+                        df,
+                        title=f"{key.replace('_', ' ').title()} evidence",
+                        priority_columns=[
+                            "SEVERITY", "SIGNAL", "ENTITY", "TASK_NAME", "PROCEDURE_NAME",
+                            "QUERY_ID", "WAREHOUSE_NAME", "USER_NAME", "ERROR_MESSAGE",
+                            "ALLOCATED_CREDITS", "EST_TOTAL_CREDITS", "DURATION_SEC",
+                            "START_TIME", "SCHEDULED_TIME", "EVENT_TIMESTAMP",
+                        ],
+                        sort_by=[
+                            "ALLOCATED_CREDITS", "EST_TOTAL_CREDITS", "DURATION_SEC",
+                            "START_TIME", "SCHEDULED_TIME", "EVENT_TIMESTAMP",
+                        ],
+                        ascending=[False, False, False, False, False, False],
+                        raw_label=f"All {key.replace('_', ' ')} evidence rows",
+                        height=320,
+                    )
                 else:
                     err = data.get(f"{key}_error", _empty_df())
                     if not err.empty:
@@ -1677,7 +1737,18 @@ def render() -> None:
                         "PROCEDURE_NAME", "IMPACT_OBJECTS",
                     ] if col in task_display.columns
                 ]
-                st.dataframe(task_display[task_cols], use_container_width=True, height=320)
+                render_priority_dataframe(
+                    task_display[task_cols],
+                    title="Task graph release regressions",
+                    priority_columns=task_cols,
+                    sort_by=[
+                        "AVG_DURATION_CHANGE_PCT", "EST_CREDITS_CHANGE_PCT",
+                        "FAILURES_DELTA", "EST_CREDITS_DELTA",
+                    ],
+                    ascending=[False, False, False, False],
+                    raw_label="All task graph release comparison rows",
+                    height=320,
+                )
                 download_csv(task_display, "overwatch_release_task_compare.csv")
             else:
                 st.success("No material task graph regressions found for the selected windows.")
@@ -1692,7 +1763,18 @@ def render() -> None:
                         "IMPACT_OBJECTS",
                     ] if col in proc_display.columns
                 ]
-                st.dataframe(proc_display[proc_cols], use_container_width=True, height=320)
+                render_priority_dataframe(
+                    proc_display[proc_cols],
+                    title="Stored procedure release regressions",
+                    priority_columns=proc_cols,
+                    sort_by=[
+                        "AVG_DURATION_CHANGE_PCT", "EST_CREDITS_CHANGE_PCT",
+                        "FAILURES_DELTA", "EST_CREDITS_DELTA",
+                    ],
+                    ascending=[False, False, False, False],
+                    raw_label="All stored procedure release comparison rows",
+                    height=320,
+                )
                 download_csv(proc_display, "overwatch_release_procedure_compare.csv")
             else:
                 st.success("No material stored procedure regressions found for the selected windows.")
@@ -1754,11 +1836,31 @@ def render() -> None:
                 "Status": "Warning" if not err.empty else "OK",
                 "Message": message,
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, height=360)
+        source_status = pd.DataFrame(rows)
+        render_priority_dataframe(
+            source_status,
+            title="Source status by warning first",
+            priority_columns=["Source", "Mode", "Rows", "Status", "Message"],
+            sort_by=["Status", "Rows"],
+            ascending=[False, False],
+            raw_label="All source status rows",
+            height=360,
+        )
         snapshot_df = data.get("_mart_snapshot", _empty_df())
         if snapshot_df is not None and not snapshot_df.empty:
             st.subheader("Fast Snapshot Rows")
-            st.dataframe(snapshot_df, use_container_width=True, height=180)
+            render_priority_dataframe(
+                snapshot_df,
+                title="Latest fast snapshot",
+                priority_columns=[
+                    "SNAPSHOT_TS", "COMPANY", "HEALTH_SCORE", "FAILED_QUERIES_24H",
+                    "FAILED_TASKS_24H", "CREDITS_24H", "CORTEX_COST_7D",
+                ],
+                sort_by=["SNAPSHOT_TS"],
+                ascending=False,
+                raw_label="All fast snapshot rows",
+                height=180,
+            )
         budget_summary = get_query_budget_summary()
         st.subheader("Current Session Query Budget")
         if budget_summary is None or budget_summary.empty:
@@ -1768,5 +1870,15 @@ def render() -> None:
                 "Use this to spot OVERWATCH pages that are repeatedly scanning too much, returning too many rows, "
                 "or taking too long. High-risk rows should be candidates for caching, aggregation, or progressive load."
             )
-            st.dataframe(budget_summary, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                budget_summary,
+                title="Query budget risks",
+                priority_columns=[
+                    "section", "budget_risk", "calls", "unique_queries",
+                    "expensive_calls", "elapsed_sec", "max_rows", "max_result_mb",
+                ],
+                sort_by=["budget_risk", "expensive_calls", "elapsed_sec"],
+                ascending=[False, False, False],
+                raw_label="All query budget rows",
+            )
             download_csv(budget_summary, "overwatch_query_budget_summary.csv")

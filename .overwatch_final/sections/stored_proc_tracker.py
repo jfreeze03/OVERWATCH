@@ -15,6 +15,7 @@ from utils import (
     download_csv,
     build_metered_credit_cte,
     render_query_drilldown,
+    render_priority_dataframe,
     sql_literal,
     get_global_filter_clause,
     get_active_company,
@@ -26,7 +27,32 @@ from utils import (
     safe_float,
     safe_int,
     CREDIT_RATES,
+    add_signal_routes,
 )
+
+
+PROCEDURE_SIGNAL_ROUTES = {
+    "Orphan Procedure Candidate": (
+        "Stored procedures",
+        "Confirm owner and retirement status; if still production, link it to a task graph or document why it remains ad-hoc.",
+    ),
+    "Procedure Runs Outside Task Graph": (
+        "Stored procedures",
+        "Validate whether manual execution is expected; if it is a production workflow, move it into task orchestration or add an approved exception.",
+    ),
+    "Procedure Behind Suspended Task": (
+        "Task graphs",
+        "Open Task Graph Control, confirm the suspension reason, then resume only after dependency and downstream checks.",
+    ),
+    "Procedure Runtime SLA Breach": (
+        "Task graphs",
+        "Compare the latest run with the release window, inspect child queries and operator stats, then decide whether to tune SQL or resize/schedule the warehouse.",
+    ),
+    "Procedure Cost Regression": (
+        "Cost & Contract",
+        "Break down child-query credits, warehouse size, Cortex/serverless calls, and release changes before approving the next run.",
+    ),
+}
 
 
 def _procedure_key(value: object) -> str:
@@ -134,7 +160,8 @@ def _build_procedure_ops_frames(
         "RECENT_CALLS": int(joined["CALL_COUNT"].sum()) if not joined.empty else 0,
         "ORPHAN_CANDIDATES": sum(1 for row in exceptions if row["SIGNAL"] == "Orphan Procedure Candidate"),
     }
-    return summary, pd.DataFrame(exceptions), joined
+    exception_df = add_signal_routes(pd.DataFrame(exceptions), PROCEDURE_SIGNAL_ROUTES)
+    return summary, exception_df, joined
 
 
 def _build_procedure_inventory_sql(days: int) -> tuple[str, str]:
@@ -340,7 +367,7 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
                 "SIGNAL": "Procedure Cost Regression",
                 "RECOMMENDED_ACTION": "Review warehouse size, child-query scan volume, Cortex/serverless calls, and recent procedure changes.",
             })
-    exception_df = pd.DataFrame(exceptions)
+    exception_df = add_signal_routes(pd.DataFrame(exceptions), PROCEDURE_SIGNAL_ROUTES)
     summary = {
         "RUNS": len(df),
         "PROCEDURES": df["PROC_KEY"].nunique(),
@@ -459,7 +486,18 @@ def render():
                 st.caption(" | ".join(str(v) for v in sources.values()))
             if not exceptions.empty:
                 st.warning("Procedure operations has exceptions to review before relying on task graphs as production workflow control.")
-                st.dataframe(exceptions, use_container_width=True, hide_index=True)
+                render_priority_dataframe(
+                    exceptions,
+                    title="Procedure operations exceptions",
+                    priority_columns=[
+                        "SIGNAL", "SEVERITY", "PROCEDURE_NAME", "PROCEDURE_SCHEMA",
+                        "TASK_COUNT", "SUSPENDED_TASKS", "CALL_COUNT",
+                        "NEXT_WORKFLOW", "NEXT_ACTION",
+                    ],
+                    sort_by=["SEVERITY", "CALL_COUNT"],
+                    ascending=[True, False],
+                    raw_label="All procedure operation exceptions",
+                )
             else:
                 st.success("No procedure/task linkage exceptions found in the selected scope.")
             if not joined.empty:
@@ -471,7 +509,19 @@ def render():
                         "DOWNSTREAM_QUERY_COUNT", "CLOUD_CREDITS", "LAST_CALL"
                     ] if col in joined.columns
                 ]
-                st.dataframe(joined[display_cols], use_container_width=True, hide_index=True)
+                render_priority_dataframe(
+                    joined[display_cols],
+                    title="Procedure inventory and task linkage",
+                    priority_columns=[
+                        "PROCEDURE_CATALOG", "PROCEDURE_SCHEMA", "PROCEDURE_NAME",
+                        "TASK_COUNT", "SUSPENDED_TASKS", "CALL_COUNT",
+                        "DOWNSTREAM_QUERY_COUNT", "CLOUD_CREDITS", "LAST_CALL",
+                    ],
+                    sort_by=["CLOUD_CREDITS", "DOWNSTREAM_QUERY_COUNT", "CALL_COUNT"],
+                    ascending=[False, False, False],
+                    raw_label="All procedure inventory rows",
+                    max_rows=50,
+                )
                 download_csv(joined[display_cols], "procedure_operations.csv")
 
     with st.expander("Procedure SLA & Cost Regression Watch", expanded=bool(st.session_state.get("exceptions_only_mode"))):
@@ -529,7 +579,18 @@ def render():
                 st.success("No procedure runtime or cost regressions crossed the default thresholds.")
             else:
                 st.warning("Procedure SLA/cost regressions detected. Review these before the next scheduled task graph run.")
-                st.dataframe(exceptions, use_container_width=True, hide_index=True)
+                render_priority_dataframe(
+                    exceptions,
+                    title="Procedure SLA and cost regressions",
+                    priority_columns=[
+                        "SIGNAL", "SEVERITY", "PROCEDURE_NAME", "ROOT_QUERY_ID",
+                        "TOTAL_ELAPSED_SEC", "AVG_ELAPSED_SEC", "RUNTIME_CHANGE_PCT",
+                        "EST_TOTAL_CREDITS", "COST_CHANGE_PCT", "NEXT_WORKFLOW", "NEXT_ACTION",
+                    ],
+                    sort_by=["SEVERITY", "RUNTIME_CHANGE_PCT", "COST_CHANGE_PCT"],
+                    ascending=[True, False, False],
+                    raw_label="All procedure SLA/cost exceptions",
+                )
                 download_csv(exceptions, "procedure_sla_cost_exceptions.csv")
             if not latest.empty and not st.session_state.get("exceptions_only_mode"):
                 latest_cols = [
@@ -540,7 +601,19 @@ def render():
                         "DOWNSTREAM_QUERY_COUNT", "START_TIME"
                     ] if col in latest.columns
                 ]
-                st.dataframe(latest[latest_cols], use_container_width=True, hide_index=True)
+                render_priority_dataframe(
+                    latest[latest_cols],
+                    title="Latest procedure runs",
+                    priority_columns=[
+                        "PROCEDURE_NAME", "ROOT_QUERY_ID", "WAREHOUSE_NAME",
+                        "TOTAL_ELAPSED_SEC", "AVG_ELAPSED_SEC", "RUNTIME_CHANGE_PCT",
+                        "EST_TOTAL_CREDITS", "COST_CHANGE_PCT", "START_TIME",
+                    ],
+                    sort_by=["TOTAL_ELAPSED_SEC", "EST_TOTAL_CREDITS"],
+                    ascending=[False, False],
+                    raw_label="All latest procedure runs",
+                    max_rows=50,
+                )
 
     if st.button("Load Stored Proc Usage", key="sp_load"):
         try:
@@ -637,7 +710,19 @@ def render():
         df_sp["EST_COST"] = (df_sp["METERED_CREDITS"] + df_sp["CLOUD_CREDITS"]).apply(
             lambda x: credits_to_dollars(x, credit_price)
         )
-        st.dataframe(df_sp, use_container_width=True)
+        render_priority_dataframe(
+            df_sp,
+            title="Stored procedure cost drivers",
+            priority_columns=[
+                "PROCEDURE_NAME", "USER_NAME", "WAREHOUSE_NAME", "CALL_COUNT",
+                "DOWNSTREAM_QUERY_COUNT", "TOTAL_ELAPSED_SEC", "METERED_CREDITS",
+                "CLOUD_CREDITS", "EST_COST", "LAST_CALL",
+            ],
+            sort_by=["EST_COST", "METERED_CREDITS", "TOTAL_ELAPSED_SEC"],
+            ascending=[False, False, False],
+            raw_label="All stored procedure usage rows",
+            max_rows=50,
+        )
         download_csv(df_sp, "stored_proc_usage.csv")
 
         st.divider()

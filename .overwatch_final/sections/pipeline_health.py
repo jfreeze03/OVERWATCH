@@ -3,7 +3,6 @@ import pandas as pd
 import streamlit as st
 
 from utils import (
-    build_action_queue_ddl,
     build_mart_pipeline_freshness_sql,
     build_mart_pipeline_load_failures_sql,
     build_mart_pipeline_volume_sql,
@@ -13,11 +12,28 @@ from utils import (
     format_snowflake_error,
     make_action_id,
     render_drillable_bar_chart,
+    render_priority_dataframe,
     run_query,
     safe_float,
     safe_int,
     upsert_actions,
 )
+
+
+def _annotate_pipeline_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    routed = df.copy()
+    if finding_type == "Freshness":
+        routed["NEXT_WORKFLOW"] = "Pipeline health"
+        routed["NEXT_ACTION"] = "Confirm upstream source, task graph status, and table SLA before marking the object inactive."
+    elif finding_type == "Load Failure":
+        routed["NEXT_WORKFLOW"] = "Workload operations"
+        routed["NEXT_ACTION"] = "Open COPY/load history, inspect the latest error, repair the source file or stage, then reload failed files."
+    else:
+        routed["NEXT_WORKFLOW"] = "Change & drift"
+        routed["NEXT_ACTION"] = "Review owner, retention, table growth, and lifecycle policy before archive/drop or clustering changes."
+    return routed
 
 
 def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> None:
@@ -66,13 +82,7 @@ def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> No
         st.success(f"Saved {saved} pipeline findings to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.download_button(
-            "Download Action Queue DDL",
-            build_action_queue_ddl(),
-            file_name="overwatch_action_queue_setup.sql",
-            mime="text/plain",
-            key=f"pipe_queue_ddl_{finding_type}",
-        )
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
 def render():
@@ -118,7 +128,7 @@ def render():
                     st.warning(f"Freshness scan unavailable in this role/context: {format_snowflake_error(e)}")
                     df_fresh = None
             if df_fresh is not None:
-                st.session_state["pipe_freshness"] = df_fresh
+                st.session_state["pipe_freshness"] = _annotate_pipeline_routes(df_fresh, "Freshness")
 
         df_fresh = st.session_state.get("pipe_freshness")
         if df_fresh is not None:
@@ -130,7 +140,17 @@ def render():
                 c1.metric("Stale tables", len(df_fresh))
                 c2.metric("Databases", df_fresh["DATABASE_NAME"].nunique())
                 c3.metric("Largest stale table GB", f"{float(df_fresh['SIZE_GB'].max() or 0):,.1f}")
-                st.dataframe(df_fresh, use_container_width=True)
+                render_priority_dataframe(
+                    df_fresh,
+                    title="Freshness exceptions to work first",
+                    priority_columns=[
+                        "DATABASE_NAME", "SCHEMA_NAME", "TABLE_NAME", "HOURS_SINCE_CHANGE",
+                        "SIZE_GB", "NEXT_WORKFLOW", "NEXT_ACTION", "LAST_ALTERED",
+                    ],
+                    sort_by=["HOURS_SINCE_CHANGE", "SIZE_GB"],
+                    ascending=[False, False],
+                    raw_label="All freshness rows",
+                )
                 render_drillable_bar_chart(
                     df_fresh.groupby("DATABASE_NAME", as_index=False)["TABLE_NAME"].count().rename(columns={"TABLE_NAME": "STALE_TABLES"}),
                     dimension="DATABASE_NAME",
@@ -179,7 +199,7 @@ def render():
                     st.warning(f"Load failure scan unavailable in this role/context: {format_snowflake_error(e)}")
                     df_loads = None
             if df_loads is not None:
-                st.session_state["pipe_load_failures"] = df_loads
+                st.session_state["pipe_load_failures"] = _annotate_pipeline_routes(df_loads, "Load Failure")
 
         df_loads = st.session_state.get("pipe_load_failures")
         if df_loads is not None:
@@ -188,7 +208,18 @@ def render():
                 st.success("No copy/load failures found in the selected window.")
             else:
                 st.metric("Failed load groups", len(df_loads))
-                st.dataframe(df_loads, use_container_width=True)
+                render_priority_dataframe(
+                    df_loads,
+                    title="Load failures to work first",
+                    priority_columns=[
+                        "DATABASE_NAME", "SCHEMA_NAME", "TABLE_NAME", "STATUS",
+                        "FILE_COUNT", "ERROR_COUNT", "LAST_SEEN", "NEXT_WORKFLOW",
+                        "NEXT_ACTION", "LATEST_ERROR",
+                    ],
+                    sort_by=["ERROR_COUNT", "FILE_COUNT", "LAST_SEEN"],
+                    ascending=[False, False, False],
+                    raw_label="All load failure rows",
+                )
                 download_csv(df_loads, "pipeline_load_failures.csv")
                 if st.button("Save load failures to Action Queue", key="pipe_load_queue"):
                     _queue_pipeline_findings(session, df_loads, "Load Failure")
@@ -233,7 +264,7 @@ def render():
                     st.warning(f"Volume watch unavailable in this role/context: {format_snowflake_error(e)}")
                     df_volume = None
             if df_volume is not None:
-                st.session_state["pipe_volume"] = df_volume
+                st.session_state["pipe_volume"] = _annotate_pipeline_routes(df_volume, "Volume")
 
         df_volume = st.session_state.get("pipe_volume")
         if df_volume is not None:
@@ -244,7 +275,18 @@ def render():
                 c1, c2 = st.columns(2)
                 c1.metric("Watchlist tables", len(df_volume))
                 c2.metric("Total watchlist GB", f"{float(df_volume['SIZE_GB'].sum() or 0):,.1f}")
-                st.dataframe(df_volume, use_container_width=True)
+                render_priority_dataframe(
+                    df_volume,
+                    title="Volume exceptions to review first",
+                    priority_columns=[
+                        "DATABASE_NAME", "SCHEMA_NAME", "TABLE_NAME", "WATCH_REASON",
+                        "SIZE_GB", "ROW_COUNT", "NEXT_WORKFLOW", "NEXT_ACTION",
+                        "LAST_ALTERED",
+                    ],
+                    sort_by=["SIZE_GB", "ROW_COUNT"],
+                    ascending=[False, False],
+                    raw_label="All volume watch rows",
+                )
                 download_csv(df_volume, "pipeline_volume_watch.csv")
                 if st.button("Save volume watch to Action Queue", key="pipe_volume_queue"):
                     _queue_pipeline_findings(session, df_volume, "Volume")

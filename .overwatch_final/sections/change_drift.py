@@ -6,7 +6,6 @@ import streamlit as st
 
 from sections import dba_tools, object_change_monitor, stored_proc_tracker
 from utils import (
-    build_action_queue_ddl,
     filter_existing_columns,
     format_snowflake_error,
     get_active_company,
@@ -19,7 +18,13 @@ from utils import (
     safe_int,
     upsert_actions,
 )
-from utils.workflows import render_signal_confidence, render_workflow_guide, render_workflow_selector
+from utils.workflows import (
+    render_operator_briefing,
+    render_priority_dataframe,
+    render_signal_confidence,
+    render_workflow_guide,
+    render_workflow_selector,
+)
 
 WORKFLOWS = (
     "Object and access changes",
@@ -457,13 +462,7 @@ def _queue_change_exceptions(session, exceptions: pd.DataFrame) -> None:
         st.success(f"Saved {saved} change/drift exceptions to the action queue.")
     except Exception as e:
         st.error(f"Could not save change/drift exceptions: {format_snowflake_error(e)}")
-        st.download_button(
-            "Download Action Queue DDL",
-            build_action_queue_ddl(),
-            file_name="overwatch_action_queue_setup.sql",
-            mime="text/plain",
-            key="change_drift_action_queue_ddl",
-        )
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
 def render() -> None:
@@ -480,6 +479,15 @@ def render() -> None:
         source="ACCOUNT_USAGE",
         confidence="estimated",
         scope_note="DDL/change detection is query-history based; SHOW commands fill live metadata gaps.",
+    )
+    render_operator_briefing(
+        [
+            ("First move", "Identify who changed what and whether it was approved."),
+            ("Evidence", "Preserve query ID, actor, object, timestamp, and dependency context."),
+            ("Control", "Route drift to source control, owner review, or a guarded DBA action."),
+            ("Output", "Build an audit-ready change narrative with blast-radius notes."),
+        ],
+        columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Exceptions-only mode: prioritize recent DDL, grant, owner, policy, replication, and task-control issues.")
@@ -583,7 +591,17 @@ def render() -> None:
 
         if exceptions is not None and not exceptions.empty:
             st.subheader("Change & Drift Exceptions")
-            st.dataframe(exceptions, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                exceptions,
+                title="Change and drift exceptions to verify first",
+                priority_columns=[
+                    "SEVERITY", "FINDING_TYPE", "OBJECT_NAME", "USER_NAME",
+                    "QUERY_ID", "EVENT_TIMESTAMP", "RISK", "NEXT_ACTION",
+                ],
+                sort_by=["SEVERITY", "EVENT_TIMESTAMP", "OBJECT_NAME"],
+                ascending=[True, False, True],
+                raw_label="All change and drift exceptions",
+            )
             if st.button("Save Change Exceptions to Action Queue", key="change_drift_queue"):
                 _queue_change_exceptions(session, exceptions)
         elif exceptions is not None:

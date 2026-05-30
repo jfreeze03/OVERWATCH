@@ -14,8 +14,8 @@ from utils import (
     get_global_filter_clause, get_company_case_expr,
     build_mart_bill_summary_sql, build_mart_bill_warehouse_delta_sql,
     filter_existing_columns,
-    render_drillable_bar_chart, render_entity_query_drilldown,
-    build_action_queue_ddl, make_action_id, upsert_actions,
+    render_drillable_bar_chart, render_entity_query_drilldown, render_priority_dataframe,
+    make_action_id, upsert_actions,
     run_query, sql_literal, format_snowflake_error,
     safe_float,
 )
@@ -87,13 +87,38 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         st.success(f"Saved {saved} cost outliers to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.download_button(
-            "Download Action Queue DDL",
-            build_action_queue_ddl(),
-            file_name="overwatch_action_queue_setup.sql",
-            mime="text/plain",
-            key=f"cc_queue_ddl_{source}",
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
+def _annotate_cost_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    routed = df.copy()
+    if finding_type == "Warehouse Delta":
+        routed["NEXT_WORKFLOW"] = "Explain bill / attribution / contract"
+        routed["NEXT_ACTION"] = (
+            "Drill into the warehouse delta, separate workload growth from idle/service overhead, "
+            "then validate top users and query types before resizing."
         )
+    elif finding_type == "User Cost":
+        routed["NEXT_WORKFLOW"] = "Query workbench"
+        routed["NEXT_ACTION"] = (
+            "Open the user drilldown, identify repeat query signatures, and confirm whether the workload can be optimized or scheduled."
+        )
+    elif finding_type == "Chargeback":
+        routed["NEXT_WORKFLOW"] = "Cost & Contract"
+        routed["NEXT_ACTION"] = (
+            "Validate company scope, warehouse ownership, and allocation confidence before sending the chargeback report."
+        )
+    elif finding_type == "Service Cost":
+        routed["NEXT_WORKFLOW"] = "Cost & Contract"
+        routed["NEXT_ACTION"] = (
+            "Treat as account-wide unless owner tags or service lineage prove attribution; review service-specific usage before chargeback."
+        )
+    else:
+        routed["NEXT_WORKFLOW"] = "Cost & Contract"
+        routed["NEXT_ACTION"] = "Validate confidence level, owner, and proof query before taking a cost-control action."
+    return routed
 
 
 def _bill_period_bounds(period_key: str) -> dict:
@@ -920,7 +945,17 @@ def render():
                 "This bridge separates exact warehouse compute, allocated workload, estimated overhead, "
                 "and account-wide service/serverless credits. It is designed for bill review and executive talking points."
             )
-            st.dataframe(finance_summary, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                finance_summary,
+                title="Finance movement bridge",
+                priority_columns=[
+                    "Category", "Current Credits", "Prior Credits", "Delta Credits",
+                    "Current Cost", "Delta Cost", "Confidence", "Basis", "Action",
+                ],
+                sort_by=["Current Credits", "Delta Credits"],
+                ascending=False,
+                raw_label="All finance movement rows",
+            )
 
             narrative = _bill_driver_summary(
                 delta_credits=delta_credits,
@@ -953,7 +988,14 @@ def render():
                 "Baseline and current total are exact warehouse-metering totals."
             )
             st.bar_chart(waterfall, x="Driver", y="Credits", color="Type")
-            st.dataframe(waterfall, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                waterfall,
+                title="Bill movement drivers",
+                priority_columns=["Driver", "Credits", "Estimated Cost", "Type"],
+                sort_by=["Credits"],
+                ascending=False,
+                raw_label="All bill movement rows",
+            )
 
             if st.session_state.get("exceptions_only_mode"):
                 st.subheader("Exceptions Only")
@@ -965,16 +1007,38 @@ def render():
                     if exception_rows.empty:
                         st.success("No warehouse bill exceptions crossed the default thresholds.")
                     else:
+                        exception_rows = _annotate_cost_routes(exception_rows, "Warehouse Delta")
                         exception_rows["EST_DELTA_COST"] = exception_rows["CREDIT_DELTA"].apply(
                             lambda v: credits_to_dollars(v, credit_price)
                         )
-                        st.dataframe(exception_rows, use_container_width=True)
+                        render_priority_dataframe(
+                            exception_rows,
+                            title="Bill exceptions to explain first",
+                            priority_columns=[
+                                "WAREHOUSE_NAME", "CURRENT_CREDITS", "PRIOR_CREDITS",
+                                "CREDIT_DELTA", "PCT_DELTA", "EST_DELTA_COST",
+                                "NEXT_WORKFLOW", "NEXT_ACTION",
+                            ],
+                            sort_by=["CREDIT_DELTA", "PCT_DELTA"],
+                            ascending=[False, False],
+                            raw_label="All bill exception rows",
+                        )
                 else:
                     st.info("No warehouse delta rows available.")
                 st.stop()
 
             st.subheader("Warehouse Deltas")
-            st.dataframe(wh_deltas, use_container_width=True)
+            render_priority_dataframe(
+                _annotate_cost_routes(wh_deltas, "Warehouse Delta"),
+                title="Warehouse cost movement to explain first",
+                priority_columns=[
+                    "WAREHOUSE_NAME", "CURRENT_CREDITS", "PRIOR_CREDITS",
+                    "CREDIT_DELTA", "PCT_DELTA", "NEXT_WORKFLOW", "NEXT_ACTION",
+                ],
+                sort_by=["CREDIT_DELTA", "PCT_DELTA"],
+                ascending=[False, False],
+                raw_label="All warehouse delta rows",
+            )
             if wh_deltas is not None and not wh_deltas.empty:
                 render_drillable_bar_chart(
                     wh_deltas.sort_values("CREDIT_DELTA", ascending=False).head(15),
@@ -986,10 +1050,30 @@ def render():
                 )
 
             st.subheader("Top User / Warehouse Drivers")
-            st.dataframe(drivers, use_container_width=True)
+            render_priority_dataframe(
+                _annotate_cost_routes(drivers, "User Cost"),
+                title="User and warehouse spend drivers",
+                priority_columns=[
+                    "USER_NAME", "WAREHOUSE_NAME", "TOTAL_CREDITS", "QUERY_COUNT",
+                    "AVG_EXECUTION_SECONDS", "NEXT_WORKFLOW", "NEXT_ACTION",
+                ],
+                sort_by=["TOTAL_CREDITS", "QUERY_COUNT"],
+                ascending=[False, False],
+                raw_label="All user/warehouse driver rows",
+            )
 
             st.subheader("Top Query-Type Drivers")
-            st.dataframe(type_drivers, use_container_width=True)
+            render_priority_dataframe(
+                _annotate_cost_routes(type_drivers, "Query Type Cost"),
+                title="Query-type spend drivers",
+                priority_columns=[
+                    "QUERY_TYPE", "TOTAL_CREDITS", "QUERY_COUNT",
+                    "AVG_EXECUTION_SECONDS", "NEXT_WORKFLOW", "NEXT_ACTION",
+                ],
+                sort_by=["TOTAL_CREDITS", "QUERY_COUNT"],
+                ascending=[False, False],
+                raw_label="All query-type driver rows",
+            )
 
             st.subheader("Account-Wide Service / Serverless Contributors")
             st.caption(
@@ -1000,7 +1084,18 @@ def render():
             if service_drivers is not None and not service_drivers.empty:
                 service_display = service_drivers.copy()
                 service_display["CATEGORY"] = service_display["SERVICE_TYPE"].apply(_service_cost_category)
-                st.dataframe(service_display, use_container_width=True)
+                service_display = _annotate_cost_routes(service_display, "Service Cost")
+                render_priority_dataframe(
+                    service_display,
+                    title="Service and serverless contributors",
+                    priority_columns=[
+                        "SERVICE_TYPE", "CATEGORY", "CREDITS_USED", "EST_COST",
+                        "NEXT_WORKFLOW", "NEXT_ACTION",
+                    ],
+                    sort_by=["CREDITS_USED"],
+                    ascending=False,
+                    raw_label="All service contributor rows",
+                )
             else:
                 st.info("No service/serverless contributor rows were available for this period.")
 
@@ -1070,6 +1165,7 @@ def render():
             st.caption(f"{metric_confidence_label('allocated')} | {freshness_note('ACCOUNT_USAGE')}")
 
             st.subheader("Top Users by Cost")
+            df_l = _annotate_cost_routes(df_l, "User Cost")
             user_agg = (
                 df_l.groupby("USER_NAME")["COST"]
                 .sum().reset_index()
@@ -1084,7 +1180,25 @@ def render():
                 drilldown_column="user_name",
                 lookback_hours=days * 24,
             )
-            st.dataframe(df_l, use_container_width=True)
+            render_priority_dataframe(
+                df_l,
+                title="Cost leaderboard drivers",
+                priority_columns=[
+                    "USER_NAME",
+                    "WAREHOUSE_NAME",
+                    "WAREHOUSE_SIZE",
+                    "TOTAL_CREDITS",
+                    "COST",
+                    "QUERY_COUNT",
+                    "AVG_ELAPSED_SEC",
+                    "TOTAL_GB_SCANNED",
+                    "NEXT_WORKFLOW",
+                    "NEXT_ACTION",
+                ],
+                sort_by=["TOTAL_CREDITS", "COST", "QUERY_COUNT"],
+                ascending=[False, False, False],
+                raw_label="All user/warehouse cost rows",
+            )
 
             # User profile drill-through
             st.divider()
@@ -1197,7 +1311,22 @@ def render():
             )
             if "RECONCILIATION_STATUS" in df_r.columns:
                 st.bar_chart(df_r["RECONCILIATION_STATUS"].value_counts())
-            st.dataframe(df_r, use_container_width=True, height=420)
+            render_priority_dataframe(
+                df_r,
+                title="Reconciliation variances to review",
+                priority_columns=[
+                    "WAREHOUSE_NAME",
+                    "EXACT_METERED_CREDITS",
+                    "ALLOCATED_QUERY_CREDITS",
+                    "VARIANCE_CREDITS",
+                    "VARIANCE_PCT",
+                    "RECONCILIATION_STATUS",
+                ],
+                sort_by=["VARIANCE_CREDITS", "VARIANCE_PCT", "EXACT_METERED_CREDITS"],
+                ascending=[False, False, False],
+                raw_label="All reconciliation rows",
+                height=420,
+            )
             download_csv(df_r, "cost_reconciliation.csv")
 
     # ── FORECAST ──────────────────────────────────────────────────────────────
@@ -1265,7 +1394,14 @@ def render():
             df_bv["STATUS"]    = df_bv["OVER_UNDER"].apply(
                 lambda x: "Over" if x > 0 else "Under"
             )
-            st.dataframe(df_bv, use_container_width=True)
+            render_priority_dataframe(
+                df_bv,
+                title="Budget months to explain",
+                priority_columns=["MONTH", "ACTUAL_CREDITS", "BUDGET", "OVER_UNDER", "STATUS"],
+                sort_by=["OVER_UNDER", "ACTUAL_CREDITS"],
+                ascending=[False, False],
+                raw_label="All budget comparison rows",
+            )
             st.bar_chart(df_bv.set_index("MONTH")[["ACTUAL_CREDITS","BUDGET"]])
             download_csv(df_bv, "budget_vs_actual.csv")
 
@@ -1321,7 +1457,22 @@ def render():
         if st.session_state.get("df_cc_attr") is not None and not st.session_state["df_cc_attr"].empty:
             df_attr = st.session_state["df_cc_attr"]
             df_attr["EST_COST"] = df_attr["TOTAL_CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
-            st.dataframe(df_attr, use_container_width=True)
+            render_priority_dataframe(
+                df_attr,
+                title=f"{attr_mode} cost attribution drivers",
+                priority_columns=[
+                    "DIMENSION",
+                    "TOTAL_CREDITS",
+                    "EST_COST",
+                    "QUERY_COUNT",
+                    "USERS",
+                    "WAREHOUSES",
+                    "GB_SCANNED",
+                ],
+                sort_by=["TOTAL_CREDITS", "EST_COST", "QUERY_COUNT"],
+                ascending=[False, False, False],
+                raw_label="All attribution rows",
+            )
             dim_col = (
                 "role_name" if attr_mode == "Role" else
                 "database_schema" if attr_mode == "Database / Schema" else
@@ -1397,14 +1548,39 @@ def render():
                 )
 
             st.subheader("Summary by Company")
-            st.dataframe(summary, use_container_width=True)
+            render_priority_dataframe(
+                summary,
+                title="Chargeback summary",
+                priority_columns=["COMPANY", "TOTAL_CREDITS", "EST_COST", "QUERY_COUNT"],
+                sort_by=["EST_COST", "TOTAL_CREDITS"],
+                ascending=[False, False],
+                raw_label="All chargeback summary rows",
+            )
 
             st.subheader("Detail by User / Warehouse")
             company_filter = st.selectbox(
                 "Filter by company", ["All"] + summary["COMPANY"].tolist(), key="cb_co_filter"
             )
             df_show = df_cb if company_filter == "All" else df_cb[df_cb["COMPANY"] == company_filter]
-            st.dataframe(df_show, use_container_width=True)
+            df_show = _annotate_cost_routes(df_show, "Chargeback")
+            render_priority_dataframe(
+                df_show,
+                title="Chargeback detail drivers",
+                priority_columns=[
+                    "COMPANY",
+                    "USER_NAME",
+                    "WAREHOUSE_NAME",
+                    "WAREHOUSE_SIZE",
+                    "TOTAL_CREDITS",
+                    "EST_COST",
+                    "QUERY_COUNT",
+                    "NEXT_WORKFLOW",
+                    "NEXT_ACTION",
+                ],
+                sort_by=["EST_COST", "TOTAL_CREDITS", "QUERY_COUNT"],
+                ascending=[False, False, False],
+                raw_label="All chargeback detail rows",
+            )
             download_csv(df_show, "chargeback_detail.csv")
             if st.button("Save chargeback outliers to Action Queue", key="cc_chargeback_queue"):
                 _queue_cost_outliers(session, df_show, credit_price, "Cost & Contract - Chargeback")
@@ -1640,6 +1816,13 @@ def render():
 
                 if st.session_state.get("cc_svc_data") is not None and not st.session_state["cc_svc_data"].empty:
                     df_sv = st.session_state["cc_svc_data"]
-                    st.dataframe(df_sv, use_container_width=True)
+                    render_priority_dataframe(
+                        df_sv,
+                        title="Service-type contract consumption",
+                        priority_columns=["SERVICE_TYPE", "TOTAL_CREDITS", "PCT_OF_TOTAL"],
+                        sort_by=["TOTAL_CREDITS", "PCT_OF_TOTAL"],
+                        ascending=[False, False],
+                        raw_label="All service-type rows",
+                    )
                     st.bar_chart(df_sv.set_index("SERVICE_TYPE")["TOTAL_CREDITS"])
                     download_csv(df_sv, "contract_by_service_type.csv")

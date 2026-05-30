@@ -4,10 +4,61 @@ from utils import (
     get_session, run_query, sql_literal,
     format_credits, download_csv,
     render_query_drilldown, build_metered_credit_cte, get_active_company, get_global_filter_clause,
+    render_priority_dataframe,
     filter_existing_columns, format_snowflake_error,
     build_mart_query_bottleneck_sql, build_mart_query_degradation_sql,
+    safe_float,
 )
 from config import THRESHOLDS
+
+
+def _annotate_bottleneck_routes(df):
+    if df is None or getattr(df, "empty", True):
+        return df
+
+    def _signal(row):
+        if safe_float(row.get("QUEUED_SEC")) > 30:
+            return "Warehouse Queue Pressure"
+        if safe_float(row.get("REMOTE_SPILL_GB")) > THRESHOLDS["spill_warning_gb"]:
+            return "Remote Spill"
+        if safe_float(row.get("PARTITION_PCT")) > THRESHOLDS["partition_scan_warning_pct"]:
+            return "Full/High Partition Scan"
+        return "Slow Query"
+
+    def _workflow(signal):
+        if signal in ("Warehouse Queue Pressure", "Remote Spill"):
+            return "Warehouse health"
+        if signal == "Full/High Partition Scan":
+            return "Change & drift"
+        return "Query workbench"
+
+    def _action(signal):
+        if signal == "Warehouse Queue Pressure":
+            return "Check concurrent load, queue trend, warehouse size/clusters, and task schedule overlap before resizing."
+        if signal == "Remote Spill":
+            return "Open operator stats, identify spill-heavy joins/sorts, and validate warehouse memory pressure before rerun."
+        if signal == "Full/High Partition Scan":
+            return "Inspect pruning, clustering/search optimization fit, recent object growth, and query predicates."
+        return "Review query text, elapsed trend, warehouse context, and owner before tuning or escalation."
+
+    routed = df.copy()
+    routed["PRIMARY_SIGNAL"] = routed.apply(_signal, axis=1)
+    routed["NEXT_WORKFLOW"] = routed["PRIMARY_SIGNAL"].apply(_workflow)
+    routed["NEXT_ACTION"] = routed["PRIMARY_SIGNAL"].apply(_action)
+    return routed
+
+
+def _annotate_degradation_routes(df):
+    if df is None or getattr(df, "empty", True):
+        return df
+    routed = df.copy()
+    routed["PRIMARY_SIGNAL"] = "Query Pattern Regression"
+    routed["NEXT_WORKFLOW"] = "Query workbench"
+    routed["NEXT_ACTION"] = (
+        "Compare this signature to the release/change window, inspect plans for representative query IDs, "
+        "and confirm whether data volume or logic changed."
+    )
+    return routed
 
 
 def render():
@@ -103,7 +154,7 @@ def render():
                 LIMIT 500
                     """, ttl_key=f"query_analysis_bottlenecks_live_{company}_{days}", tier="standard")
                     st.session_state["qa_bottleneck_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
-                st.session_state["qa_df_qa"] = df_qa
+                st.session_state["qa_df_qa"] = _annotate_bottleneck_routes(df_qa)
             except Exception as e:
                 st.warning(f"Bottleneck data unavailable in this role/context: {format_snowflake_error(e)}")
 
@@ -181,7 +232,7 @@ def render():
                     ORDER BY pct_change DESC LIMIT 50
                     """, ttl_key=f"query_analysis_degradation_live_{company}", tier="standard")
                     st.session_state["qa_degradation_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
-                st.session_state["qa_df_deg"] = df_deg
+                st.session_state["qa_df_deg"] = _annotate_degradation_routes(df_deg)
             except Exception as e:
                 st.warning(f"Pattern degradation data unavailable in this role/context: {format_snowflake_error(e)}")
 
@@ -190,7 +241,17 @@ def render():
             if not df_d.empty:
                 st.warning(f"⚠️ {len(df_d)} query patterns degraded >25% vs prior week.")
                 st.caption(st.session_state.get("qa_degradation_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
-                st.dataframe(df_d, use_container_width=True)
+                render_priority_dataframe(
+                    df_d,
+                    title="Query regressions to investigate first",
+                    priority_columns=[
+                        "SIG", "RECENT_SEC", "PRIOR_SEC", "PCT_CHANGE",
+                        "PRIMARY_SIGNAL", "NEXT_WORKFLOW", "NEXT_ACTION",
+                    ],
+                    sort_by=["PCT_CHANGE", "RECENT_SEC"],
+                    ascending=[False, False],
+                    raw_label="All degraded query patterns",
+                )
                 download_csv(df_d, "pattern_degradation.csv")
             else:
                 st.success("✅ No significant query pattern degradation detected.")
@@ -208,7 +269,15 @@ def render():
                     ttl_key=f"query_analysis_plan_{company}_{qid_input}",
                     tier="standard",
                 )
-                st.dataframe(df_ops, use_container_width=True)
+                render_priority_dataframe(
+                    df_ops,
+                    title="Operator steps to inspect first",
+                    priority_columns=[
+                        "OPERATOR_ID", "OPERATOR_TYPE", "PARENT_OPERATORS",
+                        "OPERATOR_STATISTICS", "EXECUTION_TIME_BREAKDOWN",
+                    ],
+                    raw_label="All operator stats",
+                )
                 download_csv(df_ops, f"plan_steps_{qid_input}.csv")
             except Exception as e:
                 st.warning(f"Operator stats unavailable: {format_snowflake_error(e)}")

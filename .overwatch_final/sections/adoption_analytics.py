@@ -19,6 +19,7 @@ from utils import (
     run_query,
     safe_float,
 )
+from utils.workflows import render_priority_dataframe
 
 
 def _load_adoption_mart(days: int) -> dict:
@@ -260,7 +261,15 @@ def render():
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("Query Types By Role")
-            st.dataframe(role, use_container_width=True, height=360)
+            render_priority_dataframe(
+                role,
+                title="Role and query-type adoption hotspots",
+                priority_columns=["ROLE_NAME", "QUERY_TYPE", "QUERY_COUNT", "USERS", "ERROR_RATE"],
+                sort_by=["QUERY_COUNT", "ERROR_RATE"],
+                ascending=[False, False],
+                raw_label="All role/query-type adoption rows",
+                height=360,
+            )
             download_csv(role, "adoption_role_query_type.csv")
         with c2:
             st.subheader("Top Query Tags")

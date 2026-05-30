@@ -16,6 +16,7 @@ from utils import (
     safe_identifier,
     sql_literal,
 )
+from utils.workflows import render_priority_dataframe
 
 
 VALUE_TABLE = (
@@ -50,33 +51,7 @@ def render():
         "task tuning, and other OVERWATCH recommendations."
     )
 
-    ddl = f"""-- OVERWATCH Snowflake Value Log
-CREATE TABLE IF NOT EXISTS {VALUE_TABLE} (
-    ROI_ID           NUMBER AUTOINCREMENT PRIMARY KEY,
-    LOGGED_DATE      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    LOGGED_BY        VARCHAR(200),
-    CATEGORY         VARCHAR(100),
-    DESCRIPTION      VARCHAR(1000),
-    ENTITY           VARCHAR(500),
-    BASELINE_CREDITS FLOAT,
-    CURRENT_CREDITS  FLOAT,
-    SAVINGS_CREDITS  FLOAT,
-    SAVINGS_MONTHLY  FLOAT,
-    VERIFIED         BOOLEAN DEFAULT FALSE,
-    COMPANY          VARCHAR(50),
-    NOTES            VARCHAR(2000)
-);
-
-ALTER TABLE {VALUE_TABLE} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
-    with st.expander("Setup DDL"):
-        st.code(ddl, language="sql")
-        st.download_button(
-            "Download DDL",
-            ddl,
-            file_name="overwatch_snowflake_value_setup.sql",
-            mime="text/plain",
-            key="sf_value_ddl_download",
-        )
+    st.info("Snowflake Value table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
 
     if st.button("Load Snowflake Value", key="sf_value_load"):
         try:
@@ -162,13 +137,34 @@ ALTER TABLE {VALUE_TABLE} ADD COLUMN IF NOT EXISTS COMPANY VARCHAR(50);"""
                 ])
             )
             st.bar_chart(df_summary.set_index("CATEGORY")["MONTHLY_DOLLAR_SAVINGS"])
-            st.dataframe(df_summary, use_container_width=True)
+            render_priority_dataframe(
+                df_summary,
+                title="Value categories by monthly savings",
+                priority_columns=[
+                    "CATEGORY", "ACTION_COUNT", "EST_30_DAY_CREDIT_SAVINGS",
+                    "MONTHLY_DOLLAR_SAVINGS", "PROJECTED_ANNUAL_SAVINGS",
+                    "VERIFIED_COUNT",
+                ],
+                sort_by=["MONTHLY_DOLLAR_SAVINGS", "PROJECTED_ANNUAL_SAVINGS"],
+                ascending=[False, False],
+                raw_label="All Snowflake value category rows",
+            )
             download_csv(df_summary, "snowflake_value_summary.csv")
 
             df_detail = st.session_state.get("sf_value_detail")
             if df_detail is not None and not df_detail.empty:
                 st.subheader("Value Log")
-                st.dataframe(df_detail, use_container_width=True)
+                render_priority_dataframe(
+                    df_detail,
+                    title="Logged optimizations",
+                    priority_columns=[
+                        "ROI_ID", "LOGGED_DATE", "COMPANY", "CATEGORY", "ENTITY",
+                        "SAVINGS_CREDITS", "SAVINGS_MONTHLY", "VERIFIED", "DESCRIPTION",
+                    ],
+                    sort_by=["VERIFIED", "SAVINGS_MONTHLY", "LOGGED_DATE"],
+                    ascending=[True, False, False],
+                    raw_label="All Snowflake value log rows",
+                )
                 download_csv(df_detail, "snowflake_value_log.csv")
 
     st.divider()

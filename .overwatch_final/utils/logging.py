@@ -6,7 +6,7 @@
 # Schema: RUN_ID, LOG_TIME, SF_USER, SF_ROLE, COMPANY_VIEW,
 #         SECTION, QUERY_DURATION_MS, APP_VERSION, SESSION_ID
 #
-# Setup: call build_usage_log_ddl() — DDL is also surfaced in DBA Tools tab.
+# Setup: deploy snowflake/OVERWATCH_MART_SETUP.sql; this module only writes usage rows.
 # Usage: wrap each section render with SectionTimer, or call log_section_load().
 # ─────────────────────────────────────────────────────────────────────────────
 import time

@@ -6,7 +6,6 @@ import streamlit as st
 
 from sections import data_sharing, security_access
 from utils import (
-    build_action_queue_ddl,
     filter_existing_columns,
     format_snowflake_error,
     get_active_company,
@@ -20,7 +19,13 @@ from utils import (
     safe_int,
     upsert_actions,
 )
-from utils.workflows import render_signal_confidence, render_workflow_guide, render_workflow_selector
+from utils.workflows import (
+    render_operator_briefing,
+    render_priority_dataframe,
+    render_signal_confidence,
+    render_workflow_guide,
+    render_workflow_selector,
+)
 
 WORKFLOWS = ("Access posture", "Data sharing exposure")
 
@@ -551,13 +556,7 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
         st.success(f"Saved {saved} security exceptions to the action queue.")
     except Exception as e:
         st.error(f"Could not save security exceptions: {format_snowflake_error(e)}")
-        st.download_button(
-            "Download Action Queue DDL",
-            build_action_queue_ddl(),
-            file_name="overwatch_action_queue_setup.sql",
-            mime="text/plain",
-            key="security_posture_action_queue_ddl",
-        )
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
 def render() -> None:
@@ -574,6 +573,15 @@ def render() -> None:
         source="ACCOUNT_USAGE",
         confidence="exact",
         scope_note="Company scope uses user/database naming where Snowflake does not expose company ownership.",
+    )
+    render_operator_briefing(
+        [
+            ("First move", "Separate noisy login volume from real identity or access risk."),
+            ("Evidence", "Tie users, IPs, grants, MFA posture, and shared data to a proof trail."),
+            ("Control", "Escalate to IAM, revoke/narrow access, or validate business ownership."),
+            ("Output", "Produce an audit posture brief with owners and remediation status."),
+        ],
+        columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Exceptions-only mode: prioritize failed logins, MFA gaps, risky grants, and external exposure.")
@@ -678,7 +686,17 @@ def render() -> None:
         st.divider()
         if exceptions is not None and not exceptions.empty:
             st.subheader("Security Exceptions")
-            st.dataframe(exceptions, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                exceptions,
+                title="Security exceptions to validate first",
+                priority_columns=[
+                    "SEVERITY", "FINDING_TYPE", "USER_NAME", "ROLE_NAME",
+                    "CLIENT_IP", "EVENT_TIMESTAMP", "RISK", "NEXT_ACTION",
+                ],
+                sort_by=["SEVERITY", "EVENT_TIMESTAMP", "USER_NAME"],
+                ascending=[True, False, True],
+                raw_label="All security exceptions",
+            )
             if st.button("Save Security Exceptions to Action Queue", key="security_posture_queue"):
                 _queue_security_exceptions(session, exceptions)
         elif exceptions is not None:

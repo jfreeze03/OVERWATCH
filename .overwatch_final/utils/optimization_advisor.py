@@ -1,13 +1,21 @@
 # utils/optimization_advisor.py - Warehouse Health optimization advisor UI helper
 import streamlit as st
-from .session import get_session
-from .cost import format_credits, credits_to_dollars, build_idle_warehouse_sql, metric_confidence_label
-from .display import download_csv, render_drillable_bar_chart
-from .company_filter import get_active_company, get_wh_filter_clause, get_global_filter_clause
-from .query import run_query, format_snowflake_error
-from .compatibility import filter_existing_columns
-from .helpers import safe_float
+
 from config import THRESHOLDS
+
+from .compatibility import filter_existing_columns
+from .company_filter import get_active_company, get_global_filter_clause, get_wh_filter_clause
+from .cost import (
+    build_idle_warehouse_sql,
+    credits_to_dollars,
+    format_credits,
+    metric_confidence_label,
+)
+from .display import download_csv, render_drillable_bar_chart
+from .helpers import safe_float
+from .query import format_snowflake_error, run_query
+from .session import get_session
+from .workflows import render_priority_dataframe
 
 
 def render_optimization_advisor():
@@ -62,9 +70,8 @@ def render_optimization_advisor():
         "Idle Warehouse Costs", "Duplicate Queries", "Right-Sizing Advisor"
     ])
 
-    # ── IDLE WAREHOUSE COSTS ──────────────────────────────────────────────────
     with tab_idle:
-        st.header("💤 Idle Warehouse Cost Detection")
+        st.header("Idle Warehouse Cost Detection")
         st.caption("Identifies credit spend during hours with zero query activity.")
         idle_days = st.slider("Lookback (days)", 1, 30, 7, key="idle_days")
 
@@ -89,9 +96,23 @@ def render_optimization_advisor():
             c1, c2, c3 = st.columns(3)
             c1.metric("Warehouses Wasting", len(df_i))
             c2.metric("Total Idle Credits", format_credits(total_idle))
-            c3.metric("Idle Cost",          f"${credits_to_dollars(total_idle, credit_price):,.2f}")
+            c3.metric("Idle Cost", f"${credits_to_dollars(total_idle, credit_price):,.2f}")
             st.caption(metric_confidence_label("exact"))
-            st.dataframe(df_i, use_container_width=True)
+            render_priority_dataframe(
+                df_i,
+                title="Idle warehouse waste candidates",
+                priority_columns=[
+                    "WAREHOUSE_NAME",
+                    "IDLE_HOURS",
+                    "IDLE_CREDITS",
+                    "TOTAL_CREDITS",
+                    "QUERY_COUNT",
+                    "CONFIDENCE",
+                ],
+                sort_by=["IDLE_CREDITS", "IDLE_HOURS"],
+                ascending=[False, False],
+                raw_label="Idle warehouse detail",
+            )
             render_drillable_bar_chart(
                 df_i,
                 dimension="WAREHOUSE_NAME",
@@ -103,28 +124,30 @@ def render_optimization_advisor():
             for _, row in df_i.iterrows():
                 st.warning(
                     f"**{row['WAREHOUSE_NAME']}**: {int(row['IDLE_HOURS'])} idle hours, "
-                    f"{format_credits(row['IDLE_CREDITS'])} wasted — "
-                    f"reduce AUTO_SUSPEND to ≤{THRESHOLDS['idle_warehouse_minutes']} min"
+                    f"{format_credits(row['IDLE_CREDITS'])} wasted - "
+                    f"reduce AUTO_SUSPEND to <= {THRESHOLDS['idle_warehouse_minutes']} min"
                 )
             download_csv(df_i, "idle_warehouses.csv")
         elif st.session_state.get("opt_df_idle") is not None:
-            st.success("✅ No significant idle warehouse credits detected.")
+            st.success("No significant idle warehouse credits detected.")
 
-    # ── DUPLICATE QUERIES ─────────────────────────────────────────────────────
     with tab_dups:
-        st.header("♻️ Duplicate & Redundant Query Detection")
-        st.caption("Same query text executed multiple times within a time window — candidates for result caching or materialization.")
+        st.header("Duplicate & Redundant Query Detection")
+        st.caption(
+            "Same query text executed multiple times within a time window - "
+            "candidates for result caching or materialization."
+        )
         dup_days = st.slider("Lookback (days)", 1, 14, 7, key="dup_days")
 
         if st.button("Find Duplicates", key="dup_load"):
             try:
                 df_dup = run_query(f"""
-                    SELECT SUBSTR(query_text,1,200) AS query_sig,
+                    SELECT SUBSTR(query_text, 1, 200) AS query_sig,
                            COUNT(DISTINCT user_name) AS user_count,
                            COUNT(*)                  AS execution_count,
-                           SUM(total_elapsed_time)/1000/COUNT(*) AS avg_elapsed_sec,
-                           SUM(total_elapsed_time)/1000          AS total_wasted_sec,
-                           {duplicate_cloud_expr}                AS cloud_credits
+                           SUM(total_elapsed_time) / NULLIF(COUNT(*), 0) / 1000 AS avg_elapsed_sec,
+                           SUM(total_elapsed_time) / 1000                       AS total_wasted_sec,
+                           {duplicate_cloud_expr}                               AS cloud_credits
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -{dup_days}, CURRENT_TIMESTAMP())
                       AND UPPER(execution_status) = 'SUCCESS'
@@ -142,14 +165,30 @@ def render_optimization_advisor():
         if st.session_state.get("opt_df_dup") is not None and not st.session_state["opt_df_dup"].empty:
             df_d = st.session_state["opt_df_dup"]
             st.metric("Duplicate Query Patterns", len(df_d))
-            st.info("💡 Enable result caching (`USE_CACHED_RESULT = TRUE`) or create a materialized view for the top patterns.")
-            st.dataframe(df_d, use_container_width=True)
+            st.info(
+                "Enable result caching (`USE_CACHED_RESULT = TRUE`) or create a "
+                "materialized view for the top patterns."
+            )
+            render_priority_dataframe(
+                df_d,
+                title="Duplicate query candidates",
+                priority_columns=[
+                    "QUERY_SIG",
+                    "EXECUTION_COUNT",
+                    "USER_COUNT",
+                    "AVG_ELAPSED_SEC",
+                    "TOTAL_WASTED_SEC",
+                    "CLOUD_CREDITS",
+                ],
+                sort_by=["EXECUTION_COUNT", "TOTAL_WASTED_SEC"],
+                ascending=[False, False],
+                raw_label="Duplicate query detail",
+            )
             download_csv(df_d, "duplicate_queries.csv")
 
-    # ── RIGHT-SIZING ADVISOR ──────────────────────────────────────────────────
     with tab_sizing:
-        st.header("📐 Warehouse Right-Sizing Advisor")
-        st.caption("Warehouses with low utilization or persistent spill — downsize or upsize candidates.")
+        st.header("Warehouse Right-Sizing Advisor")
+        st.caption("Warehouses with low utilization or persistent spill - downsize or upsize candidates.")
         sz_days = st.slider("Lookback (days)", 7, 30, 14, key="sz_days")
 
         if st.button("Analyze Sizing", key="sz_load"):
@@ -199,23 +238,38 @@ def render_optimization_advisor():
         if st.session_state.get("opt_df_sz") is not None and not st.session_state["opt_df_sz"].empty:
             df_s = st.session_state["opt_df_sz"]
             st.caption(metric_confidence_label("exact"))
-            st.dataframe(df_s, use_container_width=True)
+            render_priority_dataframe(
+                df_s,
+                title="Right-sizing candidates",
+                priority_columns=[
+                    "WAREHOUSE_NAME",
+                    "WAREHOUSE_SIZE",
+                    "TOTAL_CREDITS",
+                    "TOTAL_QUERIES",
+                    "AVG_QUEUE_SEC",
+                    "REMOTE_SPILL_GB",
+                    "AVG_CACHE_PCT",
+                ],
+                sort_by=["REMOTE_SPILL_GB", "AVG_QUEUE_SEC", "TOTAL_CREDITS"],
+                ascending=[False, False, False],
+                raw_label="Warehouse sizing detail",
+            )
 
             st.subheader("Recommendations")
             for _, row in df_s.iterrows():
-                wh   = row.get("WAREHOUSE_NAME", "")
-                sz   = row.get("WAREHOUSE_SIZE", "")
-                spill= safe_float(row.get("REMOTE_SPILL_GB", 0))
-                q    = safe_float(row.get("AVG_QUEUE_SEC", 0))
+                wh = row.get("WAREHOUSE_NAME", "")
+                sz = row.get("WAREHOUSE_SIZE", "")
+                spill = safe_float(row.get("REMOTE_SPILL_GB", 0))
+                queue_sec = safe_float(row.get("AVG_QUEUE_SEC", 0))
                 cred = safe_float(row.get("TOTAL_CREDITS", 0))
 
-                if spill > THRESHOLDS["spill_warning_gb"] and q > 5:
-                    st.error(f"**{wh}** ({sz}): spilling + heavy queue — upsize and consider multi-cluster")
+                if spill > THRESHOLDS["spill_warning_gb"] and queue_sec > 5:
+                    st.error(f"**{wh}** ({sz}): spilling + heavy queue - upsize and consider multi-cluster")
                 elif spill > THRESHOLDS["spill_warning_gb"]:
-                    st.warning(f"**{wh}** ({sz}): {spill:.1f} GB remote spill — upsize to reduce memory pressure")
-                elif q > 5:
-                    st.warning(f"**{wh}** ({sz}): avg queue {q:.1f}s — enable multi-cluster or upsize")
+                    st.warning(f"**{wh}** ({sz}): {spill:.1f} GB remote spill - upsize to reduce memory pressure")
+                elif queue_sec > 5:
+                    st.warning(f"**{wh}** ({sz}): avg queue {queue_sec:.1f}s - enable multi-cluster or upsize")
                 elif cred < 1 and sz not in ("", "X-Small"):
-                    st.info(f"**{wh}** ({sz}): very low credit usage ({cred:.2f}) — consider downsizing to X-Small")
+                    st.info(f"**{wh}** ({sz}): very low credit usage ({cred:.2f}) - consider downsizing to X-Small")
 
             download_csv(df_s, "right_sizing.csv")

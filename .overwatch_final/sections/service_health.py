@@ -23,6 +23,7 @@ from utils import (
     service_health_scorecard,
     upsert_actions,
 )
+from utils.workflows import render_priority_dataframe
 
 
 def _load_service_health(session, hours: int) -> dict:
@@ -293,12 +294,31 @@ def render():
         _queue_service_findings(session, services)
 
     st.subheader("Service Scorecard")
-    st.dataframe(services, use_container_width=True, height=260)
+    render_priority_dataframe(
+        services,
+        title="Service risks to work first",
+        priority_columns=["SERVICE", "SCORE", "SIGNAL", "ACTION", "PROOF"],
+        sort_by=["SCORE"],
+        ascending=True,
+        raw_label="All service score rows",
+        height=260,
+    )
     download_csv(services, "service_health_scorecard.csv")
 
     st.subheader("Warehouse Pressure Detail")
     if wh_df.empty:
         st.info("No warehouse activity found for the selected window.")
     else:
-        st.dataframe(wh_df, use_container_width=True, height=360)
+        render_priority_dataframe(
+            wh_df,
+            title="Warehouse service pressure",
+            priority_columns=[
+                "WAREHOUSE_NAME", "WAREHOUSE_SIZE", "TOTAL_QUERIES",
+                "FAILED_QUERIES", "QUEUED_SEC", "REMOTE_SPILL_GB", "AVG_CACHE_PCT",
+            ],
+            sort_by=["FAILED_QUERIES", "QUEUED_SEC", "REMOTE_SPILL_GB"],
+            ascending=[False, False, False],
+            raw_label="All warehouse pressure rows",
+            height=360,
+        )
         download_csv(wh_df, "service_health_warehouse_pressure.csv")

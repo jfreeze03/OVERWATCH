@@ -23,6 +23,7 @@ from utils import (
     build_mart_account_health_ytd_credits_sql,
     format_snowflake_error, filter_existing_columns, safe_float, safe_int,
 )
+from utils.workflows import render_operator_briefing, render_priority_dataframe
 
 
 def _drill_to(
@@ -143,20 +144,23 @@ def _live_query_status_sql(wh_filter: str, db_filter: str, user_filter: str) -> 
 
 
 def _load_live_query_status(wh_filter: str, db_filter: str, user_filter: str) -> tuple[pd.DataFrame, str]:
+    # Snowflake-hosted Streamlit can reject INFORMATION_SCHEMA table functions
+    # that reveal current-user session details. ACCOUNT_USAGE is lagged, but it
+    # is the safer default for the landing page and avoids noisy startup errors.
+    fallback_sql = f"""
+        SELECT COUNT(*) AS active_count,
+               SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_count,
+               SUM(CASE WHEN execution_status ILIKE '%BLOCKED%' THEN 1 ELSE 0 END) AS blocked_count
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        WHERE q.start_time >= DATEADD('hours', -1, CURRENT_TIMESTAMP())
+          AND UPPER(q.execution_status) IN ('RUNNING', 'QUEUED', 'BLOCKED', 'RESUMING_WAREHOUSE')
+          {wh_filter} {db_filter} {user_filter}
+    """
     try:
-        return run_query_or_raise(_live_query_status_sql(wh_filter, db_filter, user_filter)), "INFORMATION_SCHEMA"
+        return run_query_or_raise(fallback_sql), "ACCOUNT_USAGE"
     except Exception:
-        fallback_sql = f"""
-            SELECT COUNT(*) AS active_count,
-                   SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_count,
-                   SUM(CASE WHEN execution_status ILIKE '%BLOCKED%' THEN 1 ELSE 0 END) AS blocked_count
-            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-            WHERE q.start_time >= DATEADD('hours', -1, CURRENT_TIMESTAMP())
-              AND UPPER(q.execution_status) IN ('RUNNING', 'QUEUED', 'BLOCKED', 'RESUMING_WAREHOUSE')
-              {wh_filter} {db_filter} {user_filter}
-        """
         try:
-            return run_query_or_raise(fallback_sql), "ACCOUNT_USAGE"
+            return run_query_or_raise(_live_query_status_sql(wh_filter, db_filter, user_filter)), "INFORMATION_SCHEMA"
         except Exception:
             return pd.DataFrame(), "ACCOUNT_USAGE"
 
@@ -260,6 +264,15 @@ def render():
     # ── OVERVIEW ──────────────────────────────────────────────────────────────
     with tab_overview:
         st.header("Account Health - Command Center")
+        render_operator_briefing(
+            [
+                ("First move", "Refresh the health snapshot and read the exception signals."),
+                ("Evidence", "Use cost drivers, failed work, warehouse pressure, and changes since yesterday."),
+                ("Control", "Drill into the owning workflow before recommending action."),
+                ("Output", "Generate the morning report or executive briefing from verified facts."),
+            ],
+            columns=4,
+        )
         exceptions_only = bool(st.session_state.get("exceptions_only_mode", False))
         if exceptions_only:
             st.info("Leadership exceptions-only mode is on. Heavy drilldowns stay collapsed until you ask for detail.")
@@ -520,20 +533,35 @@ def render():
             st.caption(f"Mart snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
         st.caption(f"Landing signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
         with st.expander("Health score contributors", expanded=False):
-            st.dataframe(health_components, use_container_width=True, height=260)
+            render_priority_dataframe(
+                health_components,
+                title="Health score components",
+                priority_columns=["COMPONENT", "SCORE", "WEIGHT", "SIGNAL"],
+                sort_by=["SCORE"],
+                ascending=True,
+                raw_label="All health score components",
+                height=260,
+            )
 
         st.divider()
         show_loaded_time("account_health")
 
         r1, r2 = st.columns([2, 1])
         with r1:
-            st.markdown("**Alert Center**")
+            st.markdown("**Exception Signals**")
             alerts = []
             if err_count > 10:  alerts.append({"Severity": "High", "Alert": "High error rate",  "Detail": f"{err_count} failures"})
             if pct_delta > 30:  alerts.append({"Severity": "Medium", "Alert": "Credit spike",      "Detail": f"+{pct_delta:.0f}%"})
             if queued > 5:      alerts.append({"Severity": "Medium", "Alert": "Queue pressure",    "Detail": f"{queued} queued"})
             if alerts:
-                st.dataframe(pd.DataFrame(alerts), use_container_width=True)
+                render_priority_dataframe(
+                    pd.DataFrame(alerts),
+                    title="Active exception signals",
+                    priority_columns=["Severity", "Alert", "Detail"],
+                    sort_by=["Severity", "Alert"],
+                    ascending=[True, True],
+                    raw_label="All active signals",
+                )
             else:
                 st.success("No active alerts")
 
@@ -562,7 +590,18 @@ def render():
                 cost_df["EST_COST"] = cost_df["TOTAL_CREDITS"].apply(
                     lambda x: credits_to_dollars(x, credit_price)
                 )
-                st.dataframe(cost_df, use_container_width=True, height=220)
+                render_priority_dataframe(
+                    cost_df,
+                    title="Top cost drivers today",
+                    priority_columns=[
+                        "WAREHOUSE_NAME", "USER_NAME", "TOTAL_CREDITS",
+                        "EST_COST", "QUERY_COUNT", "AVG_ELAPSED_SEC",
+                    ],
+                    sort_by=["TOTAL_CREDITS", "EST_COST"],
+                    ascending=[False, False],
+                    raw_label="All daily cost drivers",
+                    height=220,
+                )
                 if "USER_NAME" in cost_df.columns:
                     sel_user = st.selectbox(
                         "→ Drill into user", ["(none)"] + cost_df["USER_NAME"].dropna().tolist(),
@@ -583,7 +622,18 @@ def render():
             st.markdown("**Top 5 failed jobs/tasks**")
             failed_df = hd.get("failed_jobs", pd.DataFrame())
             if failed_df is not None and not failed_df.empty:
-                st.dataframe(failed_df, use_container_width=True, height=220)
+                render_priority_dataframe(
+                    failed_df,
+                    title="Failed jobs and tasks",
+                    priority_columns=[
+                        "NAME", "TASK_NAME", "ROOT_TASK_NAME", "STATE",
+                        "QUERY_ID", "ERROR_MESSAGE", "SCHEDULED_TIME",
+                    ],
+                    sort_by=["SCHEDULED_TIME", "COMPLETED_TIME"],
+                    ascending=[False, False],
+                    raw_label="All failed jobs/tasks",
+                    height=220,
+                )
                 if st.button("Task Management", key="ah_drill_tasks"):
                     st.session_state["workload_operations_workflow"] = "Task graphs"
                     _drill_to("Workload Operations")
@@ -631,7 +681,15 @@ def render():
             m2.metric("Credits", format_credits(safe_float(mon_df["CREDITS"].sum())))
             m3.metric("Estimated Cost", f"${safe_float(mon_df['EST_COST'].sum()):,.2f}")
             st.caption("Keeps the monitor honest: app-tagged queries, Streamlit warehouse, Cortex, and alert task cost.")
-            st.dataframe(mon_df, use_container_width=True, height=220)
+            render_priority_dataframe(
+                mon_df,
+                title="Monitoring cost components",
+                priority_columns=["COMPONENT", "CREDITS", "EST_COST", "SOURCE", "CONFIDENCE"],
+                sort_by=["EST_COST", "CREDITS"],
+                ascending=[False, False],
+                raw_label="All monitoring cost rows",
+                height=220,
+            )
             download_csv(mon_df, "overwatch_monitoring_cost.csv")
         elif mon_df is not None:
             st.info("No tagged OVERWATCH monitoring cost found in the selected window.")
@@ -846,13 +904,34 @@ def render():
                 st.caption(f"Source: {md['_source']}")
             if not md["failures"].empty:
                 st.subheader("❌ Overnight Failures by Type")
-                st.dataframe(md["failures"], use_container_width=True)
+                render_priority_dataframe(
+                    md["failures"],
+                    title="Overnight failure groups",
+                    priority_columns=["QUERY_TYPE", "FAIL_COUNT", "AFFECTED_USERS", "AFFECTED_WH"],
+                    sort_by=["FAIL_COUNT", "AFFECTED_USERS", "AFFECTED_WH"],
+                    ascending=[False, False, False],
+                    raw_label="All overnight failure groups",
+                )
                 download_csv(md["failures"], "morning_failures.csv")
             else:
                 st.success("No query failures overnight")
             if not md["long_queries"].empty:
                 st.subheader("🐌 Longest Running Queries")
-                st.dataframe(md["long_queries"], use_container_width=True)
+                render_priority_dataframe(
+                    md["long_queries"],
+                    title="Longest overnight queries",
+                    priority_columns=[
+                        "QUERY_ID",
+                        "USER_NAME",
+                        "WAREHOUSE_NAME",
+                        "ELAPSED_SEC",
+                        "EXECUTION_STATUS",
+                        "QUERY_PREVIEW",
+                    ],
+                    sort_by=["ELAPSED_SEC"],
+                    ascending=False,
+                    raw_label="All long overnight query rows",
+                )
                 download_csv(md["long_queries"], "morning_long_queries.csv")
             brief_lines = [
                 "# OVERWATCH Morning Brief",

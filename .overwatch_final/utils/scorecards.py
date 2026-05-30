@@ -62,7 +62,7 @@ def burn_trend_label(short_avg: float, long_avg: float, tolerance: float = 0.15)
     short_avg = float(short_avg or 0)
     long_avg = float(long_avg or 0)
     if long_avg <= 0 and short_avg <= 0:
-        return "Stable"
+        return "No data"
     if long_avg <= 0:
         return "Accelerating"
     delta = (short_avg - long_avg) / long_avg

@@ -12,7 +12,12 @@ from sections import (
     stored_proc_tracker,
     task_management,
 )
-from utils.workflows import render_signal_confidence, render_workflow_guide, render_workflow_selector
+from utils.workflows import (
+    render_operator_briefing,
+    render_signal_confidence,
+    render_workflow_guide,
+    render_workflow_selector,
+)
 
 
 WORKFLOWS = (
@@ -58,6 +63,15 @@ def render() -> None:
         source="ACCOUNT_USAGE",
         confidence="allocated",
         scope_note="Task and procedure cost estimates use runtime plus available warehouse size and cloud-services credits.",
+    )
+    render_operator_briefing(
+        [
+            ("First move", "Find running, queued, failed, or late work."),
+            ("Evidence", "Capture query IDs, task graph runs, procedure calls, and warehouse context."),
+            ("Control", "Cancel, retry, suspend, or resume only after proof and confirmation."),
+            ("Output", "Send the DBA narrative to leadership, release review, or the action queue."),
+        ],
+        columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Exceptions-only mode: start with running work, failures, SLA breaches, and release regressions.")

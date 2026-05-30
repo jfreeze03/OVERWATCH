@@ -4,9 +4,6 @@ import streamlit as st
 
 from config import THRESHOLDS, ALERT_DB, ALERT_SCHEMA, ALERT_TABLE, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
 from utils import (
-    build_action_queue_ddl,
-    build_alert_task_sql,
-    build_annotation_ddl,
     build_idle_warehouse_sql,
     build_mart_recommendation_failed_tasks_sql,
     build_mart_recommendation_idle_sql,
@@ -30,10 +27,10 @@ from utils import (
     safe_float,
     safe_identifier,
     sql_literal,
-    send_teams_alert,
     update_action_status,
     upsert_actions,
 )
+from utils.workflows import render_priority_dataframe
 
 
 def _active_company() -> str:
@@ -57,14 +54,7 @@ def _recommendation_frame(recs: list[dict]) -> pd.DataFrame:
 def _render_queue(session):
     st.header("Persistent Action Queue")
     st.caption("Owner, status, savings, generated SQL, and proof query for every actionable finding.")
-
-    st.download_button(
-        "Download Action Queue DDL",
-        build_action_queue_ddl(),
-        file_name="overwatch_action_queue_setup.sql",
-        mime="text/plain",
-        key="queue_ddl_download",
-    )
+    st.info("Action Queue setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
 
     if st.button("Load Action Queue", key="queue_load"):
         try:
@@ -94,7 +84,18 @@ def _render_queue(session):
         key="queue_status_filter",
     )
     show_df = df_queue if status_filter == "All" else df_queue[df_queue["STATUS"] == status_filter]
-    st.dataframe(show_df, use_container_width=True, height=360)
+    render_priority_dataframe(
+        show_df,
+        title="Action queue items to work first",
+        priority_columns=[
+            "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME", "FINDING",
+            "OWNER", "EST_MONTHLY_SAVINGS", "UPDATED_AT", "NEXT_ACTION",
+        ],
+        sort_by=["SEVERITY", "EST_MONTHLY_SAVINGS", "UPDATED_AT"],
+        ascending=[True, False, False],
+        raw_label="All action queue rows",
+        height=360,
+    )
     download_csv(show_df, "overwatch_action_queue.csv")
 
     if show_df.empty:
@@ -196,14 +197,6 @@ def _render_annotations(session):
         "automated alerts can suppress repeat noise during that window."
     )
 
-    st.download_button(
-        "Download Annotation DDL",
-        build_annotation_ddl(),
-        file_name="overwatch_annotations_setup.sql",
-        mime="text/plain",
-        key="annotation_ddl_download",
-    )
-
     with st.form("annotation_create_form"):
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -286,7 +279,17 @@ def _render_annotations(session):
     if df_ann is not None and not df_ann.empty:
         active_count = int(df_ann["ACTIVE"].fillna(False).astype(bool).sum()) if "ACTIVE" in df_ann.columns else 0
         st.metric("Active Annotation Windows", active_count)
-        st.dataframe(df_ann, use_container_width=True)
+        render_priority_dataframe(
+            df_ann,
+            title="Active annotation windows",
+            priority_columns=[
+                "ACTIVE", "ENTITY", "ENTITY_TYPE", "WINDOW_START", "WINDOW_END",
+                "ANNOTATION_TYPE", "SUPPRESS_ALERTS", "DESCRIPTION", "CREATED_BY",
+            ],
+            sort_by=["ACTIVE", "WINDOW_START"],
+            ascending=[False, False],
+            raw_label="All annotation rows",
+        )
         download_csv(df_ann, "annotation_windows.csv")
 
         ids = df_ann["ANNOTATION_ID"].dropna().astype(int).tolist() if "ANNOTATION_ID" in df_ann.columns else []
@@ -525,7 +528,17 @@ def render():
             source_notes = st.session_state.get("rec_recommendation_sources", [])
             if source_notes:
                 st.caption("Recommendation sources: " + "; ".join(source_notes))
-            st.dataframe(df_recs, use_container_width=True)
+            render_priority_dataframe(
+                df_recs,
+                title="Recommendations to work first",
+                priority_columns=[
+                    "Severity", "Category", "Entity Type", "Entity", "Finding",
+                    "Action", "Estimated Monthly Savings", "Owner", "Status",
+                ],
+                sort_by=["Estimated Monthly Savings"],
+                ascending=False,
+                raw_label="All recommendation rows",
+            )
             download_csv(df_recs, "recommendations.csv")
 
             with st.expander("Generated SQL fixes and proof queries"):
@@ -534,13 +547,6 @@ def render():
                     st.code(rec["Generated SQL Fix"], language="sql")
                     st.caption(rec["Proof Query"])
 
-            st.download_button(
-                "Setup Action Queue Table",
-                build_action_queue_ddl(),
-                file_name="overwatch_action_queue_setup.sql",
-                mime="text/plain",
-                key="rec_action_queue_ddl",
-            )
             if st.button("Save / refresh these findings in Action Queue", key="rec_save_queue", type="primary"):
                 try:
                     saved = upsert_actions(session, df_recs.to_dict("records"))
@@ -548,7 +554,7 @@ def render():
                     st.session_state.pop("rec_action_queue", None)
                 except Exception as e:
                     st.error(f"Action queue save failed: {format_snowflake_error(e)}")
-                    st.info("Run the Action Queue setup DDL first.")
+                    st.info("Deploy the Action Queue table through `snowflake/OVERWATCH_MART_SETUP.sql`, then retry.")
         elif st.session_state.get("rec_recommendations") == []:
             st.success("No actionable findings. Account looks healthy.")
 
@@ -604,42 +610,65 @@ def render():
             if not df_an.empty:
                 spikes = df_an[df_an.get("ANOMALY_FLAG", pd.Series(dtype=str)).astype(str) == "SPIKE"] if "ANOMALY_FLAG" in df_an.columns else df_an
                 st.warning(f"{len(spikes)} spike events detected.")
-                st.dataframe(df_an, use_container_width=True)
+                render_priority_dataframe(
+                    df_an,
+                    title="Credit anomalies to investigate first",
+                    priority_columns=[
+                        "WAREHOUSE_NAME", "DAY", "DAILY_CREDITS",
+                        "ROLLING_AVG", "ZSCORE", "ANOMALY_FLAG",
+                    ],
+                    sort_by=["ZSCORE", "DAILY_CREDITS"],
+                    ascending=[False, False],
+                    raw_label="All anomaly rows",
+                )
                 download_csv(df_an, "anomaly_log.csv")
             else:
                 st.success("No anomalies detected in the analysis window.")
 
     with tab_alerts:
-        st.header("Automated Alert Task Setup")
-        st.caption("Generate a Snowflake task that writes anomalies to alert history and supports Teams/email routing.")
-
-        col_a1, col_a2 = st.columns(2)
-        with col_a1:
-            alert_wh = st.text_input("Warehouse", value="COMPUTE_WH", key="alert_wh")
-            alert_schedule = st.text_input("CRON schedule", value="0 7 * * * UTC", key="alert_cron")
-        with col_a2:
-            teams_webhook = st.text_input("Teams webhook URL (optional)", type="password", key="alert_teams")
-            st.text_input("Email notification target (optional)", key="alert_email")
-
-        if st.button("Generate Alert SQL", key="alert_gen"):
-            sql = build_alert_task_sql(warehouse=alert_wh, schedule=f"USING CRON {alert_schedule}")
-            st.code(sql, language="sql")
-            st.download_button("Download SQL", sql, file_name="overwatch_alert_task.sql", mime="text/plain")
-            if teams_webhook:
-                ok = send_teams_alert(
-                    teams_webhook,
-                    "OVERWATCH alert SQL generated. Deploy the task SQL in Snowflake.",
-                    "OVERWATCH Alert Setup",
-                )
-                st.success("Teams test sent.") if ok else st.warning("Teams test did not complete.")
-
-        st.divider()
-        st.subheader("View Alert History")
+        st.header("Alert History")
+        st.caption(
+            "Reads the deployed OVERWATCH alert table. Alert task/table DDL is maintained outside the dashboard "
+            "in the Snowflake setup script."
+        )
         if st.button("Load Alert History", key="alert_hist_load"):
             try:
+                cols = set(filter_existing_columns(
+                    session,
+                    f"{ALERT_DB}.{ALERT_SCHEMA}.{ALERT_TABLE}",
+                    [
+                        "ALERT_ID", "ALERT_TS", "ALERT_DATE", "COMPANY", "CATEGORY", "ALERT_TYPE",
+                        "SEVERITY", "ENTITY_NAME", "ENTITY", "MESSAGE", "DETAIL", "PROOF_QUERY",
+                        "OWNER", "STATUS", "DELIVERY_STATUS",
+                    ],
+                ))
+                if not cols:
+                    raise ValueError("No recognized columns found in alert history table.")
+                ts_col = "ALERT_TS" if "ALERT_TS" in cols else "ALERT_DATE" if "ALERT_DATE" in cols else "CURRENT_TIMESTAMP()"
+                category_col = "CATEGORY" if "CATEGORY" in cols else "ALERT_TYPE" if "ALERT_TYPE" in cols else "'Alert'"
+                entity_col = "ENTITY_NAME" if "ENTITY_NAME" in cols else "ENTITY" if "ENTITY" in cols else "'Snowflake account'"
+                message_col = "MESSAGE" if "MESSAGE" in cols else "DETAIL" if "DETAIL" in cols else "''"
+                proof_col = "PROOF_QUERY" if "PROOF_QUERY" in cols else "''"
+                owner_col = "OWNER" if "OWNER" in cols else "'DBA'"
+                status_col = "STATUS" if "STATUS" in cols else "'New'"
+                company_expr = "COMPANY" if "COMPANY" in cols else f"{sql_literal(_active_company())} AS COMPANY"
+                company_filter = "" if _active_company() == "ALL" or "COMPANY" not in cols else f"AND COMPANY = {sql_literal(_active_company())}"
                 df_ah = run_query(f"""
-                    SELECT * FROM {ALERT_DB}.{ALERT_SCHEMA}.{ALERT_TABLE}
-                    ORDER BY ALERT_DATE DESC
+                    SELECT
+                        ALERT_ID,
+                        {ts_col} AS ALERT_TS,
+                        {company_expr},
+                        {category_col} AS CATEGORY,
+                        COALESCE(SEVERITY, 'Medium') AS SEVERITY,
+                        {entity_col} AS ENTITY_NAME,
+                        {message_col} AS MESSAGE,
+                        {proof_col} AS PROOF_QUERY,
+                        {owner_col} AS OWNER,
+                        {status_col} AS STATUS
+                    FROM {ALERT_DB}.{ALERT_SCHEMA}.{ALERT_TABLE}
+                    WHERE 1 = 1
+                      {company_filter}
+                    ORDER BY ALERT_TS DESC
                     LIMIT 100
                 """, ttl_key=f"rec_alert_history_{_active_company()}", tier="recent")
                 if not df_ah.empty:
@@ -660,7 +689,17 @@ def render():
                         )
                         if status != "ALL":
                             df_ah = df_ah[df_ah["STATUS"] == status]
-                    st.dataframe(df_ah, use_container_width=True)
+                    render_priority_dataframe(
+                        df_ah,
+                        title="Alert history to triage first",
+                        priority_columns=[
+                            "SEVERITY", "STATUS", "ALERT_TS", "CATEGORY",
+                            "ENTITY_NAME", "MESSAGE", "OWNER", "PROOF_QUERY",
+                        ],
+                        sort_by=["ALERT_TS"],
+                        ascending=False,
+                        raw_label="All alert history rows",
+                    )
                     download_csv(df_ah, "alert_history.csv")
                     st.session_state["rec_alert_history"] = df_ah
                 else:
@@ -678,13 +717,7 @@ def render():
                     st.session_state.pop("rec_action_queue", None)
                 except Exception as e:
                     st.error(f"Could not save alerts to action queue: {format_snowflake_error(e)}")
-                    st.download_button(
-                        "Download Action Queue DDL",
-                        build_action_queue_ddl(),
-                        file_name="overwatch_action_queue_setup.sql",
-                        mime="text/plain",
-                        key="alert_action_queue_ddl",
-                    )
+                    st.info("Deploy the Action Queue table through `snowflake/OVERWATCH_MART_SETUP.sql`, then retry.")
 
     with tab_annotations:
         _render_annotations(session)

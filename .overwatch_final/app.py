@@ -26,12 +26,12 @@ from utils.display import clear_all_cache
 from utils.session import get_session
 from utils.query import (
     sql_literal, get_query_telemetry, get_query_budget_summary,
-    clear_query_telemetry, format_snowflake_error,
+    clear_query_telemetry, format_snowflake_error, safe_sql,
 )
 from utils.company_filter import invalidate_company_cache
 from utils.admin import render_admin_mode_control
 from utils.bookmarks import (
-    build_bookmark_ddl, save_bookmark, load_bookmarks,
+    save_bookmark, load_bookmarks,
     apply_bookmark, delete_bookmark,
 )
 import sections
@@ -252,17 +252,7 @@ with st.sidebar:
                 st.session_state.pop("bm_name_input", None)
                 st.rerun()
 
-        # Setup DDL (hidden until needed)
-        with st.expander("Setup DDL", expanded=False):
-            ddl = build_bookmark_ddl()
-            st.code(ddl[:400] + "...", language="sql")
-            st.download_button(
-                "Full DDL",
-                ddl,
-                file_name="overwatch_bookmarks_setup.sql",
-                mime="text/plain",
-                key="bm_ddl_dl",
-            )
+        st.caption("Saved View table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
 
     st.divider()
 
@@ -414,7 +404,7 @@ with st.expander("Ask OVERWATCH (Cortex AI)", expanded=False):
     if ask_q and st.button("Ask", key="ask_overwatch_btn"):
         with st.spinner("Thinking with Cortex..."):
             try:
-                safe_q      = ask_q.strip()[:500]
+                safe_q      = safe_sql(ask_q.strip()[:500])
                 prompt      = (
                     "You are OVERWATCH, a Snowflake monitoring assistant for ALFA Insurance. "
                     f"Current company filter: {active_company}. "

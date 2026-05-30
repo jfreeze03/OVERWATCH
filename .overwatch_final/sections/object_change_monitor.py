@@ -1,7 +1,6 @@
 # sections/object_change_monitor.py - Who changed what?
 import streamlit as st
 from utils import (
-    build_action_queue_ddl,
     download_csv,
     format_snowflake_error,
     filter_existing_columns,
@@ -9,6 +8,7 @@ from utils import (
     get_session,
     make_action_id,
     mart_object_name,
+    render_priority_dataframe,
     run_query,
     sql_literal,
     upsert_actions,
@@ -92,6 +92,49 @@ def _load_object_change_mart(
     return df, "OVERWATCH mart: FACT_OBJECT_CHANGE"
 
 
+def _change_route(change_type: object, category: str = "") -> tuple[str, str]:
+    text = f"{change_type or ''} {category or ''}".upper()
+    if "DROP" in text:
+        return (
+            "Change & Drift",
+            "Confirm approval, downstream dependencies, recovery path, and whether the object needs restore.",
+        )
+    if "OWNERSHIP" in text or "OWNER" in text or "GRANT" in text or "REVOKE" in text or "ROLE" in text:
+        return (
+            "Security Posture",
+            "Validate requester, approver, role hierarchy, and ownership transfer before accepting the access change.",
+        )
+    if "MASKING" in text or "TAG" in text or "ROW ACCESS" in text or "POLICY" in text:
+        return (
+            "Security Posture",
+            "Validate data classification, policy owner, and governance approval before leaving the policy change active.",
+        )
+    if "DRIFT" in text or "IAC" in text:
+        return (
+            "Change & Drift",
+            "Compare with Terraform/source control; codify the change or revert through approved deployment.",
+        )
+    if "PROCEDURE" in text or "TASK" in text:
+        return (
+            "Workload Operations",
+            "Check task/procedure lineage and runtime impact before approving the object change.",
+        )
+    return (
+        "Change & Drift",
+        "Review approval, owner, dependency impact, and drift risk before accepting the change.",
+    )
+
+
+def _annotate_change_routes(df, category: str = ""):
+    if df is None or getattr(df, "empty", True):
+        return df
+    routed = df.copy()
+    route_source = routed.get("CHANGE_TYPE", routed.get("DRIFT_INDICATOR", ""))
+    routed["NEXT_WORKFLOW"] = route_source.apply(lambda value: _change_route(value, category)[0])
+    routed["NEXT_ACTION"] = route_source.apply(lambda value: _change_route(value, category)[1])
+    return routed
+
+
 def _queue_changes(session, df, source: str, category: str, entity_type: str, severity: str) -> None:
     if df is None or df.empty:
         st.info("Nothing to queue from this result set.")
@@ -129,13 +172,7 @@ def _queue_changes(session, df, source: str, category: str, entity_type: str, se
         st.success(f"Saved {saved} findings to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.download_button(
-            "Download Action Queue DDL",
-            build_action_queue_ddl(),
-            file_name="overwatch_action_queue_setup.sql",
-            mime="text/plain",
-            key=f"ocm_queue_ddl_{source}",
-        )
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
 def render():
@@ -261,11 +298,28 @@ def render():
                 except Exception as e:
                     st.warning(f"Object change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_object_changes") is not None:
-            df = st.session_state["ocm_df_object_changes"]
+            df = _annotate_change_routes(st.session_state["ocm_df_object_changes"], "Object")
             st.caption(st.session_state.get("ocm_source_object_changes", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
             if not df.empty:
-                st.dataframe(df.groupby(["CHANGE_TYPE", "USER_NAME"]).size().reset_index(name="COUNT"), use_container_width=True)
-            st.dataframe(df, use_container_width=True)
+                render_priority_dataframe(
+                    df.groupby(["CHANGE_TYPE", "USER_NAME"]).size().reset_index(name="COUNT"),
+                    title="Object change hot spots",
+                    priority_columns=["CHANGE_TYPE", "USER_NAME", "COUNT"],
+                    sort_by=["COUNT"],
+                    ascending=False,
+                    raw_label="All object change hot spots",
+                )
+            render_priority_dataframe(
+                df,
+                title="Object changes to review first",
+                priority_columns=[
+                    "CHANGE_TYPE", "USER_NAME", "DATABASE_NAME", "SCHEMA_NAME",
+                    "START_TIME", "NEXT_WORKFLOW", "NEXT_ACTION", "QUERY_ID",
+                ],
+                sort_by=["START_TIME"],
+                ascending=False,
+                raw_label="All object changes",
+            )
             download_csv(df, "object_changes.csv")
             if st.button("Save object changes to Action Queue", key="ocm_obj_queue"):
                 _queue_changes(session, df, "Object Change Monitor", "Governance", "Object", "Medium")
@@ -312,9 +366,19 @@ def render():
                 except Exception as e:
                     st.warning(f"Access change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_access_changes") is not None:
-            df = st.session_state["ocm_df_access_changes"]
+            df = _annotate_change_routes(st.session_state["ocm_df_access_changes"], "Access")
             st.caption(st.session_state.get("ocm_source_access_changes", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
-            st.dataframe(df, use_container_width=True)
+            render_priority_dataframe(
+                df,
+                title="Access changes to review first",
+                priority_columns=[
+                    "CHANGE_TYPE", "USER_NAME", "ROLE_NAME", "START_TIME",
+                    "NEXT_WORKFLOW", "NEXT_ACTION", "QUERY_ID",
+                ],
+                sort_by=["START_TIME"],
+                ascending=False,
+                raw_label="All access changes",
+            )
             if st.button("Save access changes to Action Queue", key="ocm_access_queue"):
                 _queue_changes(session, df, "Access Change Monitor", "Security", "Grant/Role", "High")
 
@@ -357,9 +421,19 @@ def render():
                 except Exception as e:
                     st.warning(f"Policy change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_policy_changes") is not None:
-            df = st.session_state["ocm_df_policy_changes"]
+            df = _annotate_change_routes(st.session_state["ocm_df_policy_changes"], "Policy")
             st.caption(st.session_state.get("ocm_source_policy_changes", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
-            st.dataframe(df, use_container_width=True)
+            render_priority_dataframe(
+                df,
+                title="Policy changes to review first",
+                priority_columns=[
+                    "CHANGE_TYPE", "USER_NAME", "ROLE_NAME", "START_TIME",
+                    "NEXT_WORKFLOW", "NEXT_ACTION", "QUERY_ID",
+                ],
+                sort_by=["START_TIME"],
+                ascending=False,
+                raw_label="All policy changes",
+            )
             if st.button("Save policy changes to Action Queue", key="ocm_policy_queue"):
                 _queue_changes(session, df, "Policy Change Monitor", "Security", "Policy/Tag", "High")
 
@@ -400,9 +474,19 @@ def render():
                 except Exception as e:
                     st.warning(f"Drift scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_drift") is not None:
-            df = st.session_state["ocm_df_drift"]
+            df = _annotate_change_routes(st.session_state["ocm_df_drift"], "Drift")
             st.caption(st.session_state.get("ocm_source_drift", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
-            st.dataframe(df, use_container_width=True)
+            render_priority_dataframe(
+                df,
+                title="Drift indicators to review first",
+                priority_columns=[
+                    "DRIFT_INDICATOR", "USER_NAME", "ROLE_NAME", "QUERY_TAG",
+                    "START_TIME", "NEXT_WORKFLOW", "NEXT_ACTION", "QUERY_ID",
+                ],
+                sort_by=["START_TIME"],
+                ascending=False,
+                raw_label="All drift indicators",
+            )
             download_csv(df, "terraform_drift_indicators.csv")
             if st.button("Save drift indicators to Action Queue", key="ocm_drift_queue"):
                 _queue_changes(session, df, "Terraform Drift Monitor", "Governance", "Drift", "High")

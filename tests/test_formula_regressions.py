@@ -98,6 +98,8 @@ from utils.mart import (  # noqa: E402
     build_mart_control_room_cost_drivers_sql,
     build_mart_control_room_summary_sql,
     build_mart_control_room_task_failures_sql,
+    build_mart_procedure_inventory_sql,
+    build_mart_procedure_sla_sql,
     build_mart_pipeline_load_failures_sql,
     build_mart_query_bottleneck_sql,
     build_mart_query_degradation_sql,
@@ -632,6 +634,21 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertLess(risky, 70)
         self.assertEqual(_cortex_cost_rating(risky), "Spiral Risk")
 
+    def test_cortex_cost_score_accepts_control_room_heavy_user_alias(self):
+        alias_score = _cortex_cost_score(
+            projected_cost=1800,
+            budget_usd=1000,
+            active_users=20,
+            heavy_users=8,
+        )
+        direct_score = _cortex_cost_score(
+            projected_cost=1800,
+            budget_usd=1000,
+            active_users=20,
+            spike_users=8,
+        )
+        self.assertEqual(alias_score, direct_score)
+
     def test_cortex_actions_are_signal_specific(self):
         self.assertIn("daily credit limit", _cortex_action_for("Budget Breach")[0])
         self.assertIn("approved project demand", _cortex_action_for("Cost Per Request Spike")[0])
@@ -1112,6 +1129,45 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Procedure Runtime SLA Breach", set(exceptions["SIGNAL"]))
         self.assertIn("Procedure Cost Regression", set(exceptions["SIGNAL"]))
         self.assertGreater(latest.iloc[0]["RUNTIME_CHANGE_PCT"], 0)
+
+    def test_procedure_mart_sql_qualifies_snapshot_timestamp(self):
+        inventory_sql = build_mart_procedure_inventory_sql("ALFA").upper()
+        self.assertIn("MAX(SNAPSHOT_TS) AS LATEST_SNAPSHOT_TS", inventory_sql)
+        self.assertIn("P.SNAPSHOT_TS AS SNAPSHOT_TS", inventory_sql)
+        self.assertIn("P.SNAPSHOT_TS = L.LATEST_SNAPSHOT_TS", inventory_sql)
+        self.assertNotIn("JOIN LATEST L ON SNAPSHOT_TS =", inventory_sql)
+
+        sla_sql = build_mart_procedure_sla_sql(7, "Trexis").upper()
+        self.assertIn("FACT_PROCEDURE_RUN", sla_sql)
+        self.assertIn("COMPANY = 'TREXIS'", sla_sql)
+
+    def test_live_bugfixes_avoid_known_snowflake_identifier_and_type_errors(self):
+        dynamic_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
+        dynamic_block = dynamic_text[
+            dynamic_text.index('refresh_object = "SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY"'):
+            dynamic_text.index('if selected_tool == "Replication"')
+        ].upper()
+        requested_block = dynamic_block[
+            dynamic_block.index("REQUESTED_COLS = ["):
+            dynamic_block.index("AVAILABLE_COLS =")
+        ]
+        self.assertNotIn('"STATE"', requested_block)
+        self.assertNotIn('"STATE": "LAST_REFRESH_STATE"', dynamic_block)
+
+        security_text = (APP_ROOT / "sections" / "security_access.py").read_text(encoding="utf-8").upper()
+        self.assertIn("COALESCE(TO_VARCHAR(SECOND_AUTHENTICATION_FACTOR), 'NONE')", security_text)
+        self.assertIn("COALESCE(TO_VARCHAR(ERROR_CODE), 'NONE')", security_text)
+        self.assertNotIn("COALESCE(ERROR_CODE, 'NONE')", security_text)
+
+        account_text = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8").upper()
+        loader_block = account_text[
+            account_text.index("DEF _LOAD_LIVE_QUERY_STATUS"):
+            account_text.index("DEF _CAN_USE_CONTROL_ROOM_MART")
+        ]
+        self.assertLess(
+            loader_block.index("RETURN RUN_QUERY_OR_RAISE(FALLBACK_SQL)"),
+            loader_block.index("RETURN RUN_QUERY_OR_RAISE(_LIVE_QUERY_STATUS_SQL"),
+        )
 
 
 if __name__ == "__main__":

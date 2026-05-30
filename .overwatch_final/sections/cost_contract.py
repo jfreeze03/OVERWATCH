@@ -23,7 +23,12 @@ from utils import (
     safe_float,
     safe_int,
 )
-from utils.workflows import render_signal_confidence, render_workflow_guide, render_workflow_selector
+from utils.workflows import (
+    render_operator_briefing,
+    render_signal_confidence,
+    render_workflow_guide,
+    render_workflow_selector,
+)
 
 WORKFLOWS = (
     "Explain bill / attribution / contract",
@@ -256,6 +261,15 @@ def render() -> None:
         source="ACCOUNT_USAGE",
         confidence="allocated",
         scope_note="Warehouse totals are exact; user/query chargeback is allocated unless noted.",
+    )
+    render_operator_briefing(
+        [
+            ("First move", "Explain why spend changed before tuning anything."),
+            ("Evidence", "Reconcile warehouse metering, chargeback allocation, Cortex, and contract pace."),
+            ("Control", "Convert findings into owned actions with savings and proof."),
+            ("Output", "Produce a bill narrative leadership can understand without opening the app."),
+        ],
+        columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Exceptions-only mode: prioritize bill deltas, open action queue items, and contract risk.")

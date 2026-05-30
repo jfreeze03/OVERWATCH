@@ -13,6 +13,7 @@ from utils import (
     run_query,
     safe_float,
 )
+from utils.workflows import render_priority_dataframe
 
 
 def render():
@@ -137,7 +138,17 @@ def render():
                     source = ""
             if df_db is not None:
                 st.caption(source)
-                st.dataframe(df_db, use_container_width=True)
+                render_priority_dataframe(
+                    df_db,
+                    title="Largest databases by storage",
+                    priority_columns=[
+                        "DATABASE_NAME", "USAGE_DATE", "DATABASE_GB",
+                        "STORAGE_GB", "FAILSAFE_GB", "TOTAL_STORAGE_TB",
+                    ],
+                    sort_by=["DATABASE_GB", "STORAGE_GB", "TOTAL_STORAGE_TB", "FAILSAFE_GB"],
+                    ascending=[False, False, False, False],
+                    raw_label="All database storage rows",
+                )
                 download_csv(df_db, "db_storage_detail.csv")
 
         download_csv(df_st, "storage_trend.csv")
@@ -159,7 +170,17 @@ def render():
                 ORDER BY active_gb DESC
                 LIMIT 50
             """, ttl_key=f"storage_table_metrics_{get_active_company()}", tier="standard")
-            st.dataframe(df_tbl, use_container_width=True)
+            render_priority_dataframe(
+                df_tbl,
+                title="Largest table storage consumers",
+                priority_columns=[
+                    "TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME", "ACTIVE_GB",
+                    "TIME_TRAVEL_GB", "FAILSAFE_GB", "CLONE_GB",
+                ],
+                sort_by=["ACTIVE_GB", "TIME_TRAVEL_GB", "FAILSAFE_GB"],
+                ascending=[False, False, False],
+                raw_label="All table storage rows",
+            )
             download_csv(df_tbl, "table_storage.csv")
         except Exception as e:
             st.warning(f"Time Travel/Failsafe data unavailable in this role/context: {format_snowflake_error(e)}")

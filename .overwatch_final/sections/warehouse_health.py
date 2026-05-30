@@ -1,13 +1,13 @@
 # sections/warehouse_health.py - Warehouse stats, scaling events, idle detection, spill, heatmap
 import streamlit as st
 import pandas as pd
-from utils.workflows import render_workflow_selector
+from utils.workflows import render_operator_briefing, render_priority_dataframe, render_workflow_selector
 from utils import (
     get_session, format_credits,
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
     get_active_company, get_global_filter_clause,
     metric_confidence_label, freshness_note,
-    build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
+    build_metered_credit_cte, make_action_id, upsert_actions,
     run_query, format_snowflake_error, filter_existing_columns, render_optimization_advisor,
     build_mart_warehouse_overview_sql, build_mart_warehouse_scaling_sql,
     safe_float, safe_int,
@@ -500,20 +500,25 @@ def _render_capacity_brief(session, company: str) -> None:
         st.divider()
 
         if exceptions is not None and not exceptions.empty:
-            st.dataframe(exceptions, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                exceptions,
+                title="Warehouse capacity exceptions to work first",
+                priority_columns=[
+                    "SEVERITY", "SIGNAL", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
+                    "QUEUED_QUERIES", "SPILL_QUERIES", "HIGH_LATENCY_QUERIES",
+                    "METERED_CREDITS", "NEXT_ACTION",
+                ],
+                sort_by=["QUEUED_QUERIES", "SPILL_QUERIES", "HIGH_LATENCY_QUERIES", "METERED_CREDITS"],
+                ascending=[False, False, False, False],
+                raw_label="All warehouse capacity exceptions",
+            )
             if st.button("Save Capacity Findings to Action Queue", key="wh_capacity_queue"):
                 try:
                     saved = _queue_capacity_findings(session, exceptions)
                     st.success(f"Saved {saved} warehouse capacity findings to the action queue.")
                 except Exception as e:
                     st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-                    st.download_button(
-                        "Download Action Queue DDL",
-                        build_action_queue_ddl(),
-                        file_name="overwatch_action_queue_setup.sql",
-                        mime="text/plain",
-                        key="wh_capacity_ddl",
-                    )
+                    st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
         else:
             st.success("No warehouse capacity exceptions found for this scope.")
 
@@ -567,13 +572,7 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
         st.success(f"Saved {saved} warehouse efficiency findings to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.download_button(
-            "Download Action Queue DDL",
-            build_action_queue_ddl(),
-            file_name="overwatch_action_queue_setup.sql",
-            mime="text/plain",
-            key="wh_eff_queue_ddl",
-        )
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
 def render():
@@ -652,6 +651,15 @@ def render():
     compute_meter_expr = "m.credits_used_compute" if "CREDITS_USED_COMPUTE" in wm_cols else "m.credits_used"
     cloud_meter_expr = "m.credits_used_cloud_services" if "CREDITS_USED_CLOUD_SERVICES" in wm_cols else "0::FLOAT"
 
+    render_operator_briefing(
+        [
+            ("First move", "Decide whether pressure is queue, spill, latency, or cost drift."),
+            ("Evidence", "Use metering plus query history before changing size or clusters."),
+            ("Control", "Tune routing, auto-suspend, QAS, size, or multi-cluster with proof."),
+            ("Output", "Create a warehouse capacity brief for release or cost review."),
+        ],
+        columns=4,
+    )
     _render_capacity_brief(session, company)
     if st.session_state.get("exceptions_only_mode"):
         st.stop()
@@ -736,7 +744,28 @@ def render():
                 if issues:
                     st.warning(f"**{row['WAREHOUSE_NAME']}** ({row.get('WAREHOUSE_SIZE','')}): {' | '.join(issues)}")
 
-            st.dataframe(df_w, use_container_width=True)
+            render_priority_dataframe(
+                df_w,
+                title="Warehouse overview ranked by pressure",
+                priority_columns=[
+                    "WAREHOUSE_NAME",
+                    "WAREHOUSE_SIZE",
+                    "TOTAL_QUERIES",
+                    "AVG_QUEUED_SEC",
+                    "TOTAL_REMOTE_SPILL_GB",
+                    "AVG_ELAPSED_SEC",
+                    "METERED_CREDITS",
+                    "AVG_CACHE_PCT",
+                ],
+                sort_by=[
+                    "AVG_QUEUED_SEC",
+                    "TOTAL_REMOTE_SPILL_GB",
+                    "AVG_ELAPSED_SEC",
+                    "METERED_CREDITS",
+                ],
+                ascending=[False, False, False, False],
+                raw_label="All warehouse overview rows",
+            )
 
             # Cache efficiency chart
             cache_available = "AVG_CACHE_PCT" in df_w.columns and df_w["AVG_CACHE_PCT"].notna().any()
@@ -797,7 +826,22 @@ def render():
                         """, ttl_key=f"wh_scaling_live_{company}_{wh_days}", tier="historical")
                         scale_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
                     st.caption(f"{metric_confidence_label('exact')} | {scale_source}")
-                    st.dataframe(df_scale, use_container_width=True)
+                    render_priority_dataframe(
+                        df_scale,
+                        title="Largest scaling/metering events",
+                        priority_columns=[
+                            "WAREHOUSE_NAME",
+                            "WAREHOUSE_SIZE",
+                            "START_TIME",
+                            "END_TIME",
+                            "CREDITS_USED",
+                            "CREDITS_USED_COMPUTE",
+                            "CREDITS_USED_CLOUD_SERVICES",
+                        ],
+                        sort_by=["CREDITS_USED", "CREDITS_USED_COMPUTE"],
+                        ascending=[False, False],
+                        raw_label="All scaling events",
+                    )
                     download_csv(df_scale, "scaling_events.csv")
                 except Exception as e:
                     st.warning(f"Scaling events unavailable in this role/context: {format_snowflake_error(e)}")
@@ -843,7 +887,23 @@ def render():
             c2.metric("Under 70 score", len(low), delta_color="inverse")
             c3.metric("Total metered credits", format_credits(float(df_eff["METERED_CREDITS"].sum())))
             st.caption(f"{metric_confidence_label('allocated')} | {freshness_note('ACCOUNT_USAGE')}")
-            st.dataframe(df_eff, use_container_width=True)
+            render_priority_dataframe(
+                df_eff,
+                title="Warehouse efficiency risks",
+                priority_columns=[
+                    "WAREHOUSE_NAME",
+                    "WAREHOUSE_SIZE",
+                    "EFFICIENCY_SCORE",
+                    "METERED_CREDITS",
+                    "CREDITS_PER_QUERY",
+                    "QUEUE_SEC_PER_CREDIT",
+                    "REMOTE_SPILL_GB_PER_CREDIT",
+                    "AVG_CACHE_PCT",
+                ],
+                sort_by=["EFFICIENCY_SCORE", "METERED_CREDITS"],
+                ascending=[True, False],
+                raw_label="All warehouse efficiency rows",
+            )
             render_drillable_bar_chart(
                 df_eff,
                 dimension="WAREHOUSE_NAME",
@@ -887,7 +947,21 @@ def render():
             c1.metric("Spilling Warehouses", len(df_sp))
             c2.metric("Total Local Spill",  f"{df_sp['LOCAL_SPILL_GB'].sum():.1f} GB")
             c3.metric("Total Remote Spill", f"{df_sp['REMOTE_SPILL_GB'].sum():.1f} GB")
-            st.dataframe(df_sp, use_container_width=True)
+            render_priority_dataframe(
+                df_sp,
+                title="Spill and memory pressure",
+                priority_columns=[
+                    "WAREHOUSE_NAME",
+                    "WAREHOUSE_SIZE",
+                    "SPILL_QUERY_COUNT",
+                    "LOCAL_SPILL_GB",
+                    "REMOTE_SPILL_GB",
+                    "AVG_ELAPSED_SEC",
+                ],
+                sort_by=["REMOTE_SPILL_GB", "LOCAL_SPILL_GB", "AVG_ELAPSED_SEC"],
+                ascending=[False, False, False],
+                raw_label="All spill rows",
+            )
             df_sp["TOTAL_SPILL_GB"] = df_sp["LOCAL_SPILL_GB"] + df_sp["REMOTE_SPILL_GB"]
             render_drillable_bar_chart(
                 df_sp,

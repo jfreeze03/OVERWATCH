@@ -10,6 +10,7 @@ from utils import (
     format_snowflake_error,
     run_query,
 )
+from utils.workflows import render_priority_dataframe
 
 
 def render():
@@ -73,10 +74,28 @@ def render():
         st.subheader("Daily Transfer Trend")
         daily = df_d.groupby("DAY")[["GB_TRANSFERRED","CREDITS"]].sum().reset_index()
         st.line_chart(daily.set_index("DAY"))
-        st.dataframe(df_d, use_container_width=True)
+        render_priority_dataframe(
+            df_d,
+            title="Data transfer cost drivers",
+            priority_columns=[
+                "SOURCE_CLOUD", "SOURCE_REGION", "TARGET_CLOUD", "TARGET_REGION",
+                "DAY", "GB_TRANSFERRED", "CREDITS",
+            ],
+            sort_by=["CREDITS", "GB_TRANSFERRED"],
+            ascending=[False, False],
+            raw_label="All data transfer rows",
+        )
         download_csv(df_d, "data_transfer_history.csv")
 
     if st.session_state.get("ds_df_shared_db") is not None and not st.session_state["ds_df_shared_db"].empty:
+        df_shared = st.session_state["ds_df_shared_db"]
         st.subheader("Shared / Imported Databases")
-        st.dataframe(st.session_state["ds_df_shared_db"], use_container_width=True)
-        download_csv(st.session_state["ds_df_shared_db"], "shared_databases.csv")
+        render_priority_dataframe(
+            df_shared,
+            title="Shared/imported databases",
+            priority_columns=["DATABASE_NAME", "TYPE", "CREATED", "LAST_ALTERED", "COMMENT"],
+            sort_by=["LAST_ALTERED", "CREATED"],
+            ascending=[False, False],
+            raw_label="All shared database rows",
+        )
+        download_csv(df_shared, "shared_databases.csv")

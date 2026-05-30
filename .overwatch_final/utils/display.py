@@ -1,8 +1,7 @@
 # utils/display.py — Charts, dataframe wrappers, CSV export, drill-downs
 # FIXES vs previous version:
-#   1. clear_all_cache() now calls invalidate_session() from session.py so
-#      that a manual cache clear also forces a session liveness re-check on
-#      the next query (coordination between cache and session state).
+#   1. clear_all_cache() clears cached data while preserving operator context
+#      and resetting the session TTL marker.
 #   2. safe_sql() applied to qid in render_query_drilldown operator stats call
 #      (was a bare string embed — low risk but now consistent).
 #   3. st.dataframe() in fallback path now includes use_container_width=True.
@@ -15,6 +14,7 @@ from .compatibility import filter_existing_columns
 from .query import format_snowflake_error, run_query, run_query_or_raise, sql_literal
 from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause
 from .helpers import safe_float
+from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
 
 CHART_COLORS = [
     '#38bdf8','#818cf8','#c084fc','#f472b6',
@@ -25,6 +25,11 @@ CHART_COLORS = [
 def _query_history_detail_exprs(prefix: str = "") -> dict:
     """Return safe query-history projection snippets for optional columns."""
     from .session import get_session
+
+    cache_key = f"_overwatch_qh_detail_exprs_{prefix or 'base'}"
+    cached = st.session_state.get(cache_key)
+    if cached:
+        return cached
 
     cols = set(filter_existing_columns(
         get_session(),
@@ -40,7 +45,7 @@ def _query_history_detail_exprs(prefix: str = "") -> dict:
         ],
     ))
     p = f"{prefix}." if prefix else ""
-    return {
+    result = {
         "warehouse_size": (
             f"{p}warehouse_size AS warehouse_size"
             if "WAREHOUSE_SIZE" in cols else "NULL::VARCHAR AS warehouse_size"
@@ -71,6 +76,8 @@ def _query_history_detail_exprs(prefix: str = "") -> dict:
         ),
         "has_query_tag": "QUERY_TAG" in cols,
     }
+    st.session_state[cache_key] = result
+    return result
 
 
 # ── CSV Export ─────────────────────────────────────────────────────────────────
@@ -101,24 +108,14 @@ def show_loaded_time(key: str):
 def clear_all_cache():
     """
     Clear all OVERWATCH cached data from session state.
-    Also forces a session liveness re-check on the next query by resetting
-    the session TTL clock — coordinates cache and session state together.
+    Preserves settings, navigation, company scope, and operator modes while
+    resetting the session TTL clock.
     """
-    preserve_exact = {
-        "active_company", "active_theme", "nav_section", "_prev_active_company",
-        "_prev_nav_section", "credit_price", "_credit_price", "storage_cost",
-        "rt_interval", "global_start_date", "global_end_date",
-        "global_warehouse", "global_user", "global_role", "global_database",
-        "theme_picker_radio",
-    }
-    preserve_prefixes = (
-        "nav_", "_prev_nav_", "global_", "theme_", "company_",
-    )
     transient_prefixes = (
         "_data_", "_ts_", "df_", "_refresh_salt_", "_sec_",
         "_overwatch_query_", "cortex_", "cc_", "ah_", "cm_", "ds_", "dba_",
         "_overwatch_available_columns", "_overwatch_unavailable_column_views",
-        "_overwatch_column_probe",
+        "_overwatch_column_probe", "_overwatch_qh_detail_exprs",
         "lm_", "mc_", "ocm_", "opt_", "qa_", "qs_", "rec_", "sec_", "spcs_",
         "stor_", "spt_", "tm_", "wh_", "uo_", "aa_", "dd_", "svc_",
         "contract_", "topology_", "recommendations", "anomalies",
@@ -126,15 +123,15 @@ def clear_all_cache():
     )
     keys_to_remove = [
         k for k in list(st.session_state.keys())
-        if k not in preserve_exact
-        and not any(k.startswith(p) for p in preserve_prefixes)
+        if k not in PRESERVE_STATE_EXACT
+        and not any(k.startswith(p) for p in PRESERVE_STATE_PREFIXES)
         and any(k.startswith(p) for p in transient_prefixes)
     ]
     for k in keys_to_remove:
         del st.session_state[k]
 
-    # Force session liveness re-check on next get_session() call
-    # by resetting the TTL timestamp to epoch.
+    # Reset the TTL timestamp; get_session() will stamp an existing session
+    # without paying for an immediate SELECT 1 check.
     st.session_state.pop("_sf_session_created_at", None)
 
     try:

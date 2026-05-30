@@ -15,9 +15,6 @@ from utils import (
     get_session, safe_sql, format_credits, download_csv,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
     get_active_company, company_value_allowed,
-    build_overwatch_setup_bundle, build_bookmark_ddl, build_annotation_ddl,
-    build_action_queue_ddl, build_snowflake_value_ddl, build_usage_log_ddl,
-    build_alert_task_sql,
     run_query, run_query_or_raise, sql_literal, safe_identifier,
     format_snowflake_error,
     run_compatibility_checks, build_smoke_test_checklist,
@@ -27,11 +24,13 @@ from utils import (
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
     load_warehouse_inventory, build_unclassified_assets_sql,
     safe_float, safe_int,
+    make_action_id, upsert_actions,
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
     ACTION_QUEUE_TABLE, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA,
 )
+from utils.workflows import render_priority_dataframe
 
 # ── Snowflake warehouse parameter documentation ──────────────────────────────
 _WH_PARAM_HELP = {
@@ -158,16 +157,16 @@ def _task_history_sql(session, time_predicate: str, limit: int = 500) -> str:
 
 def _setup_status_df(session) -> pd.DataFrame:
     checks = [
-        ("Saved Views", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_BOOKMARKS", build_bookmark_ddl),
-        ("Annotation Windows", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_ANNOTATIONS", build_annotation_ddl),
-        ("Alert History", "TABLE", ALERT_DB, ALERT_SCHEMA, ALERT_TABLE, None),
-        ("Action Queue", "TABLE", ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, build_action_queue_ddl),
-        ("Snowflake Value Log", "TABLE", ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, "OVERWATCH_ROI_LOG", build_snowflake_value_ddl),
-        ("Usage Log", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_USAGE_LOG", build_usage_log_ddl),
-        ("Anomaly Alert Task", "TASK", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_ANOMALY_CHECK", build_alert_task_sql),
+        ("Saved Views", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_BOOKMARKS"),
+        ("Annotation Windows", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_ANNOTATIONS"),
+        ("Alert History", "TABLE", ALERT_DB, ALERT_SCHEMA, ALERT_TABLE),
+        ("Action Queue", "TABLE", ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE),
+        ("Snowflake Value Log", "TABLE", ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, "OVERWATCH_ROI_LOG"),
+        ("Usage Log", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_USAGE_LOG"),
+        ("Anomaly Alert Task", "TASK", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_ANOMALY_CHECK"),
     ]
     rows = []
-    for feature, object_type, db, schema, object_name, ddl_builder in checks:
+    for feature, object_type, db, schema, object_name in checks:
         exists = (
             _task_exists(session, db, schema, object_name)
             if object_type == "TASK"
@@ -184,9 +183,217 @@ def _setup_status_df(session) -> pd.DataFrame:
             "OBJECT_TYPE": object_type,
             "OBJECT_NAME": f"{db}.{schema}.{object_name}",
             "STATUS": status,
-            "SETUP_SQL_INCLUDED": "Yes" if ddl_builder else "Via alert task setup",
         })
     return pd.DataFrame(rows)
+
+
+def _alert_table_fqn() -> str:
+    # Compatibility column probes expect an unquoted db.schema.object name.
+    return f"{ALERT_DB}.{ALERT_SCHEMA}.{ALERT_TABLE}"
+
+
+def _first_col(columns: set[str], *candidates: str) -> str | None:
+    for col in candidates:
+        col_upper = col.upper()
+        if col_upper in columns:
+            return col_upper
+    return None
+
+
+def _load_alert_history(session, company: str, days: int = 7, limit: int = 200) -> pd.DataFrame:
+    """Load alert history from either the mart setup schema or the legacy generated schema."""
+    table = _alert_table_fqn()
+    requested = [
+        "ALERT_ID", "ALERT_TS", "ALERT_DATE", "CREATED_AT", "COMPANY",
+        "CATEGORY", "ALERT_TYPE", "SEVERITY", "ENTITY_NAME", "ENTITY",
+        "MESSAGE", "DETAIL", "PROOF_QUERY", "SUGGESTED_ACTION", "OWNER",
+        "STATUS", "ACKNOWLEDGED_BY", "ACKNOWLEDGED_AT", "DELIVERY_STATUS",
+    ]
+    columns = set(filter_existing_columns(session, table, requested))
+    if not columns:
+        raise ValueError(f"{table} is unavailable or has no recognized alert columns.")
+
+    ts_col = _first_col(columns, "ALERT_TS", "ALERT_DATE", "CREATED_AT") or "CURRENT_TIMESTAMP()"
+    category_col = _first_col(columns, "CATEGORY", "ALERT_TYPE")
+    entity_col = _first_col(columns, "ENTITY_NAME", "ENTITY")
+    message_col = _first_col(columns, "MESSAGE", "DETAIL")
+    proof_col = _first_col(columns, "PROOF_QUERY")
+    owner_col = _first_col(columns, "OWNER")
+    delivery_col = _first_col(columns, "DELIVERY_STATUS")
+    alert_id_expr = "ALERT_ID" if "ALERT_ID" in columns else "UUID_STRING()"
+    severity_expr = "COALESCE(SEVERITY, 'Medium')" if "SEVERITY" in columns else "'Medium'"
+
+    status_expr = (
+        "STATUS"
+        if "STATUS" in columns
+        else "CASE WHEN ACKNOWLEDGED_AT IS NOT NULL THEN 'Acknowledged' ELSE 'New' END"
+        if "ACKNOWLEDGED_AT" in columns
+        else "'New'"
+    )
+    company_select = "COMPANY" if "COMPANY" in columns else f"{sql_literal(company)} AS COMPANY"
+    company_filter = "" if company == "ALL" or "COMPANY" not in columns else f"AND COMPANY = {sql_literal(company)}"
+    ts_filter = "" if ts_col == "CURRENT_TIMESTAMP()" else f"AND {ts_col} >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())"
+
+    df = run_query(f"""
+        SELECT
+            {alert_id_expr} AS ALERT_ID,
+            {ts_col} AS ALERT_TS,
+            {company_select},
+            {category_col or "'Alert'"} AS CATEGORY,
+            {severity_expr} AS SEVERITY,
+            {entity_col or "'Snowflake account'"} AS ENTITY_NAME,
+            {message_col or "''"} AS MESSAGE,
+            {proof_col or "''"} AS PROOF_QUERY,
+            {owner_col or "'DBA'"} AS OWNER,
+            {status_expr} AS STATUS,
+            {delivery_col or "''"} AS DELIVERY_STATUS
+        FROM {table}
+        WHERE 1 = 1
+          {ts_filter}
+          {company_filter}
+        ORDER BY ALERT_TS DESC
+        LIMIT {int(limit)}
+    """, ttl_key=f"dba_alert_history_{company}_{days}_{limit}", tier="recent", section="DBA Tools")
+
+    if df.empty or company == "ALL" or "COMPANY" in columns:
+        return df
+
+    # Legacy alert rows may not have COMPANY. Scope by entity name when possible.
+    if "ENTITY_NAME" in df.columns:
+        scoped = df[
+            df["ENTITY_NAME"].apply(lambda value: company_value_allowed(value, "warehouse", company))
+            | df["ENTITY_NAME"].apply(lambda value: company_value_allowed(value, "database", company))
+            | df["ENTITY_NAME"].isna()
+        ]
+        return scoped
+    return df
+
+
+def _alert_actions(df_alerts: pd.DataFrame, company: str) -> list[dict]:
+    actions = []
+    if df_alerts is None or df_alerts.empty:
+        return actions
+    for _, row in df_alerts.head(200).iterrows():
+        alert_id = str(row.get("ALERT_ID") or row.get("ALERT_TS") or "")
+        category = str(row.get("CATEGORY") or "Alert")
+        entity = str(row.get("ENTITY_NAME") or "Snowflake account")
+        severity = str(row.get("SEVERITY") or "Medium").title()
+        if severity not in {"Critical", "High", "Medium", "Low"}:
+            severity = "Medium"
+        message = str(row.get("MESSAGE") or "")
+        actions.append({
+            "Action ID": make_action_id("Alert", entity, f"{category}|{message}|{alert_id}"),
+            "Source": "DBA Alert Console",
+            "Severity": severity,
+            "Category": "Alert",
+            "Entity Type": "Alert Entity",
+            "Entity": entity,
+            "Owner": str(row.get("OWNER") or "DBA"),
+            "Finding": f"{category}: {message}",
+            "Action": "Review the proof query, determine owner, and route through the DBA action queue.",
+            "Estimated Monthly Savings": 0.0,
+            "Generated SQL Fix": "-- No automatic fix. Validate alert evidence before changing Snowflake objects.",
+            "Proof Query": str(row.get("PROOF_QUERY") or "Alert history row."),
+            "Company": company,
+        })
+    return actions
+
+
+def _render_alert_console(session, company: str):
+    st.subheader("Alert Console")
+    st.caption(
+        "Operational alerts from the deployed OVERWATCH mart/task layer. "
+        "Setup SQL now lives outside the dashboard; this view only reads, scopes, exports, and routes alerts."
+    )
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        alert_days = st.selectbox("Alert window", [1, 3, 7, 14, 30], index=2, format_func=lambda d: f"{d} days")
+    with c2:
+        alert_limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
+    with c3:
+        load_alerts = st.button("Load Alert Console", key="dba_alert_console_load", type="primary")
+
+    if load_alerts:
+        try:
+            st.session_state["dba_alert_console"] = _load_alert_history(session, company, alert_days, alert_limit)
+            st.session_state["dba_alert_console_company"] = company
+        except Exception as e:
+            st.session_state["dba_alert_console"] = pd.DataFrame()
+            st.info(
+                "Alert history is not available yet. Deploy the OVERWATCH mart setup outside the dashboard, "
+                f"then refresh this console. ({format_snowflake_error(e)})"
+            )
+
+    df_alerts = st.session_state.get("dba_alert_console")
+    if df_alerts is None:
+        return
+    if df_alerts.empty:
+        st.success("No alerts found for the selected company/window.")
+        return
+
+    sev_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    df_alerts = df_alerts.copy()
+    df_alerts["SEVERITY"] = df_alerts["SEVERITY"].fillna("Medium").astype(str).str.title()
+    df_alerts["_sort"] = df_alerts["SEVERITY"].map(sev_order).fillna(9)
+    open_statuses = {"New", "Open", "Acknowledged", "In Progress", "Active"}
+    open_mask = df_alerts["STATUS"].fillna("New").astype(str).str.title().isin(open_statuses)
+    high_mask = df_alerts["SEVERITY"].isin(["Critical", "High"]) & open_mask
+
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("Open Alerts", f"{int(open_mask.sum()):,}")
+    a2.metric("Critical / High", f"{int(high_mask.sum()):,}")
+    a3.metric("Entities", f"{df_alerts['ENTITY_NAME'].nunique():,}")
+    a4.metric("Latest", str(df_alerts["ALERT_TS"].max())[:19])
+
+    status_options = ["ALL"] + sorted(df_alerts["STATUS"].fillna("New").astype(str).unique().tolist())
+    severity_options = ["ALL", "Critical", "High", "Medium", "Low"]
+    f1, f2 = st.columns(2)
+    with f1:
+        selected_status = st.selectbox("Status", status_options, key="dba_alert_status_filter")
+    with f2:
+        selected_severity = st.selectbox("Severity", severity_options, key="dba_alert_severity_filter")
+    visible = df_alerts
+    if selected_status != "ALL":
+        visible = visible[visible["STATUS"].fillna("New").astype(str) == selected_status]
+    if selected_severity != "ALL":
+        visible = visible[visible["SEVERITY"] == selected_severity]
+    visible = visible.sort_values(["_sort", "ALERT_TS"], ascending=[True, False]).drop(columns=["_sort"], errors="ignore")
+
+    render_priority_dataframe(
+        visible,
+        title="Alert queue triage",
+        priority_columns=[
+            "ALERT_TS", "SEVERITY", "STATUS", "ALERT_TYPE", "ENTITY_NAME",
+            "MESSAGE", "RECOMMENDED_ACTION", "OWNER",
+        ],
+        sort_by=["ALERT_TS"],
+        ascending=False,
+        max_rows=25,
+        raw_label="All visible alerts",
+        height=320,
+    )
+    download_csv(visible, "overwatch_alert_console.csv")
+
+    b1, b2 = st.columns([1, 2])
+    with b1:
+        if st.button("Send visible alerts to Action Queue", key="dba_alerts_to_queue"):
+            try:
+                saved = upsert_actions(session, _alert_actions(visible, company))
+                st.success(f"Saved {saved} alert action(s) to the action queue.")
+            except Exception as e:
+                st.error(f"Could not save alerts to action queue: {format_snowflake_error(e)}")
+    with b2:
+        st.caption("Action Queue setup is handled by the Snowflake architecture script, not generated from this dashboard.")
+
+    with st.expander("Proof queries for visible alerts", expanded=False):
+        for _, row in visible.head(25).iterrows():
+            st.markdown(f"**{row.get('SEVERITY', 'Medium')} - {row.get('ENTITY_NAME', 'Snowflake account')}**")
+            proof = str(row.get("PROOF_QUERY") or "").strip()
+            if proof:
+                st.code(proof, language="sql")
+            else:
+                st.caption(str(row.get("MESSAGE") or "No proof query captured."))
 
 
 def render():
@@ -254,8 +461,8 @@ def render():
         with risk_c:
             st.success(
                 "Setup and Maintenance\n\n"
-                "DDL bundles, persistent OVERWATCH tables, alerts, action queue setup, usage logging, and "
-                "formula audit evidence."
+                "Compatibility checks, setup status, usage logging, action queue routing, and "
+                "formula audit evidence. SQL deployment lives in the Snowflake setup script, not this UI."
             )
     if not admin_actions_enabled():
         st.info(
@@ -263,67 +470,70 @@ def render():
             "ALTER, CANCEL, EXECUTE, SUSPEND, and RESUME buttons stay locked until Admin actions are enabled in Settings."
         )
 
-    group_tabs = st.tabs([
-        "🏭 Warehouse Ops",
-        "🚚 Data Movement",
-        "🛡️ Governance",
-        "💸 Cost & Setup",
-    ])
+    with st.expander("Alert Console - parked until signal inventory is finalized", expanded=False):
+        st.caption(
+            "Alerts stay available for inspection, but the main build priority is now stabilizing "
+            "the operational workflows that will generate alert rules later."
+        )
+        _render_alert_console(session, company)
+    st.divider()
 
-    with group_tabs[0]:
-        ops_tabs = st.tabs([
+    tool_groups = {
+        "Warehouse Ops": [
             "Query Kill List",
-            "⚙️ Warehouse Settings",
+            "Warehouse Settings",
             "QAS Monitor",
-            "🔀 Task Graph Control",
-        ])
-    with group_tabs[1]:
-        movement_tabs = st.tabs([
+            "Task Graph Control",
+        ],
+        "Data Movement": [
             "Data Loading",
             "Snowpipe Monitor",
             "Dynamic Tables",
             "Replication",
-        ])
-    with group_tabs[2]:
-        governance_tabs = st.tabs([
+        ],
+        "Governance": [
             "Network & Sessions",
             "Unused Objects",
             "Schema Compare",
             "Recent Objects",
-        ])
-    with group_tabs[3]:
-        cost_tabs = st.tabs([
-            "Pre-Aggregation",
+        ],
+        "Cost & Setup": [
+            "Mart Readiness",
             "Serverless Costs",
-            "🧮 Cost Formula Audit",
-            "🤖 Cortex AI Limits",
-            "📊 Usage Log",
-            "🔧 First-Time Setup",
-        ])
-
-    tabs = [
-        ops_tabs[0],          # Query Kill List
-        ops_tabs[1],          # Warehouse Settings
-        movement_tabs[0],     # Data Loading
-        governance_tabs[0],   # Network & Sessions
-        governance_tabs[1],   # Unused Objects
-        movement_tabs[1],     # Snowpipe Monitor
-        ops_tabs[2],          # QAS Monitor
-        governance_tabs[2],   # Schema Compare
-        governance_tabs[3],   # Recent Objects
-        cost_tabs[0],         # Pre-Aggregation
-        movement_tabs[2],     # Dynamic Tables
-        movement_tabs[3],     # Replication
-        cost_tabs[1],         # Serverless Costs
-        cost_tabs[3],         # Cortex AI Limits
-        ops_tabs[3],          # Task Graph Control
-        cost_tabs[4],         # Usage Log
-        cost_tabs[5],         # First-Time Setup
-        cost_tabs[2],         # Cost Formula Audit
-    ]
+            "Cost Formula Audit",
+            "Cortex AI Limits",
+            "Usage Log",
+            "Setup Status",
+        ],
+    }
+    focus_to_group = {
+        "Governance": "Governance",
+        "Data Movement": "Data Movement",
+        "Controlled Actions": "Warehouse Ops",
+        "Cost": "Cost & Setup",
+    }
+    default_group = focus_to_group.get(str(focus), "Warehouse Ops")
+    group_names = list(tool_groups)
+    group_index = group_names.index(default_group) if default_group in group_names else 0
+    selected_group = st.radio(
+        "DBA workflow",
+        group_names,
+        index=group_index,
+        horizontal=True,
+        key="dba_tools_group_selector",
+    )
+    selected_tool = st.selectbox(
+        "Open specialist tool",
+        tool_groups[selected_group],
+        key=f"dba_tools_tool_selector_{selected_group}",
+    )
+    st.caption(
+        "Focused mode renders one specialist tool at a time. Use the workflow hubs for daily operations; "
+        "use this page when you need a specific admin utility."
+    )
 
     # ── TAB 0: QUERY KILL LIST ────────────────────────────────────────────────
-    with tabs[0]:
+    if selected_tool == "Query Kill List":
         st.header("⛔ Long-Running Query Kill List")
         kill_min = st.number_input("Flag queries running > (seconds)", 60, 3600, 300, key="kill_sec")
         if _load_button("Load Kill List", "kl_load"):
@@ -348,7 +558,17 @@ def render():
         if st.session_state.get("dba_df_kl") is not None and not st.session_state["dba_df_kl"].empty:
             df = st.session_state["dba_df_kl"]
             st.warning(f"⚠️ {len(df)} queries running > {kill_min}s")
-            st.dataframe(df, use_container_width=True)
+            render_priority_dataframe(
+                df,
+                title="Queries eligible for cancellation",
+                priority_columns=[
+                    "QUERY_ID", "USER_NAME", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
+                    "EXECUTION_STATUS", "START_TIME", "ELAPSED_SEC", "QUERY_TEXT",
+                ],
+                sort_by=["ELAPSED_SEC", "START_TIME"],
+                ascending=[False, False],
+                raw_label="All kill-list query rows",
+            )
             kill_id = st.selectbox("Kill query ID", df["QUERY_ID"].tolist(), key="kl_sel")
             kill_confirmed = _typed_confirmation(
                 "Type CANCEL to enable query cancellation",
@@ -370,7 +590,7 @@ def render():
             st.success(f"✅ No queries running > {kill_min}s")
 
     # ── TAB 1: WAREHOUSE SETTINGS MANAGER ────────────────────────────────────
-    with tabs[1]:
+    if selected_tool == "Warehouse Settings":
         st.header("⚙️ Warehouse Settings Manager")
         st.caption(
             "View and interactively change all warehouse parameters — "
@@ -417,7 +637,15 @@ def render():
                                          "min_cluster_count","max_cluster_count","scaling_policy",
                                          "enable_query_acceleration","statement_timeout_in_seconds",
                                          "statement_queued_timeout_in_seconds"] if c in df_wh.columns]
-            st.dataframe(df_wh[display_cols], use_container_width=True, height=220)
+            render_priority_dataframe(
+                df_wh[display_cols],
+                title="Warehouse settings by risk",
+                priority_columns=display_cols,
+                sort_by=["auto_suspend", "state", "name"],
+                ascending=[False, True, True],
+                raw_label="All warehouse setting rows",
+                height=220,
+            )
 
             # Flag issues
             issues = []
@@ -604,7 +832,7 @@ def render():
                                     st.error(f"ALTER failed: {format_snowflake_error(e)}")
 
     # ── TAB 2: DATA LOADING ───────────────────────────────────────────────────
-    with tabs[2]:
+    if selected_tool == "Data Loading":
         st.header("📦 Data Loading Monitor")
         load_days = st.slider("Lookback (days)", 1, 30, 7, key="dl_days")
         if _load_button("Load Copy History", "dl_load"):
@@ -620,11 +848,22 @@ def render():
             except Exception as e:
                 st.warning(f"Copy history unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_copy") is not None and not st.session_state["dba_df_copy"].empty:
-            st.dataframe(st.session_state["dba_df_copy"], use_container_width=True)
-            download_csv(st.session_state["dba_df_copy"], "copy_history.csv")
+            df_copy = st.session_state["dba_df_copy"]
+            render_priority_dataframe(
+                df_copy,
+                title="Copy history rows to review",
+                priority_columns=[
+                    "TABLE_NAME", "FILE_NAME", "STATUS", "ROW_COUNT",
+                    "FIRST_ERROR_MESSAGE", "LAST_LOAD_TIME",
+                ],
+                sort_by=["STATUS", "LAST_LOAD_TIME", "ROW_COUNT"],
+                ascending=[True, False, False],
+                raw_label="All copy history rows",
+            )
+            download_csv(df_copy, "copy_history.csv")
 
     # ── TABS 3–13: CARRIED FORWARD (abbreviated for file size) ───────────────
-    with tabs[3]:
+    if selected_tool == "Network & Sessions":
         st.header("🌐 Network & Sessions")
         if _load_button("Load Session Data", "net_load"):
             try:
@@ -640,9 +879,16 @@ def render():
             except Exception as e:
                 st.info(f"Sessions unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_long_sess") is not None:
-            st.dataframe(st.session_state["dba_df_long_sess"], use_container_width=True)
+            render_priority_dataframe(
+                st.session_state["dba_df_long_sess"],
+                title="Long-running sessions",
+                priority_columns=["SESSION_ID", "USER_NAME", "CREATED_ON", "SESSION_HOURS"],
+                sort_by=["SESSION_HOURS"],
+                ascending=False,
+                raw_label="All long-session rows",
+            )
 
-    with tabs[4]:
+    if selected_tool == "Unused Objects":
         st.header("🗑️ Unused Objects")
         if _load_button("Find Unused Tables", "unused_load"):
             try:
@@ -658,9 +904,19 @@ def render():
             except Exception as e:
                 st.warning(f"Unused table scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_unused") is not None:
-            st.dataframe(st.session_state["dba_df_unused"], use_container_width=True)
+            render_priority_dataframe(
+                st.session_state["dba_df_unused"],
+                title="Unused objects by size",
+                priority_columns=[
+                    "TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME", "ROW_COUNT",
+                    "TABLE_GB", "CREATED", "LAST_ALTERED",
+                ],
+                sort_by=["TABLE_GB", "ROW_COUNT"],
+                ascending=[False, False],
+                raw_label="All unused object rows",
+            )
 
-    with tabs[5]:
+    if selected_tool == "Snowpipe Monitor":
         st.header("🔧 Snowpipe Monitor")
         sp_days = st.slider("Lookback (days)", 1, 14, 3, key="spipe_days")
         if _load_button("Load Pipe Usage", "spipe_load"):
@@ -677,9 +933,16 @@ def render():
             except Exception as e:
                 st.warning(f"Snowpipe usage unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_pipe") is not None:
-            st.dataframe(st.session_state["dba_df_pipe"], use_container_width=True)
+            render_priority_dataframe(
+                st.session_state["dba_df_pipe"],
+                title="Snowpipe cost and volume",
+                priority_columns=["PIPE_NAME", "DAY", "DAILY_CREDITS", "GB_INSERTED", "FILES_INSERTED"],
+                sort_by=["DAILY_CREDITS", "GB_INSERTED", "FILES_INSERTED"],
+                ascending=[False, False, False],
+                raw_label="All Snowpipe rows",
+            )
 
-    with tabs[6]:
+    if selected_tool == "QAS Monitor":
         st.header("⚡ QAS Monitor")
         qas_days = st.slider("Lookback (days)", 1, 30, 7, key="qas_days")
         if _load_button("Load QAS Data", "qas_load"):
@@ -707,9 +970,16 @@ def render():
             except Exception as e:
                 st.info(f"QAS data unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_qas") is not None:
-            st.dataframe(st.session_state["dba_df_qas"], use_container_width=True)
+            render_priority_dataframe(
+                st.session_state["dba_df_qas"],
+                title="Query Acceleration usage",
+                priority_columns=["WAREHOUSE_NAME", "WAREHOUSE_SIZE", "DAY", "DAILY_CREDITS", "QUERY_COUNT"],
+                sort_by=["DAILY_CREDITS", "QUERY_COUNT"],
+                ascending=[False, False],
+                raw_label="All QAS usage rows",
+            )
 
-    with tabs[7]:
+    if selected_tool == "Schema Compare":
         st.header("📐 Schema Compare")
         c1, c2 = st.columns(2)
         with c1:
@@ -743,12 +1013,19 @@ def render():
                 )
                 df_cmp  = df_prod.merge(df_dev, on="TABLE_NAME", how="outer", suffixes=("_PROD","_DEV"))
                 df_cmp["ROW_DIFF"] = df_cmp["ROW_COUNT_PROD"].fillna(0) - df_cmp["ROW_COUNT_DEV"].fillna(0)
-                st.dataframe(df_cmp, use_container_width=True)
+                render_priority_dataframe(
+                    df_cmp,
+                    title="Schema row-count differences",
+                    priority_columns=["TABLE_NAME", "ROW_COUNT_PROD", "ROW_COUNT_DEV", "ROW_DIFF"],
+                    sort_by=["ROW_DIFF"],
+                    ascending=False,
+                    raw_label="All schema compare rows",
+                )
                 download_csv(df_cmp, "schema_compare.csv")
             except Exception as e:
                 st.error(f"Compare failed: {format_snowflake_error(e)}")
 
-    with tabs[8]:
+    if selected_tool == "Recent Objects":
         st.header("🔎 Recent Objects")
         obj_days = st.slider("Created/altered within (days)", 1, 90, 30, key="obj_days")
         obj_db_filter = st.text_input("Database filter", key="obj_db_filter")
@@ -772,26 +1049,60 @@ def render():
             except Exception as e:
                 st.warning(f"Recent objects unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_recent_objects") is not None:
-            st.dataframe(st.session_state["dba_df_recent_objects"], use_container_width=True)
-            download_csv(st.session_state["dba_df_recent_objects"], "recent_objects.csv")
+            df_recent = st.session_state["dba_df_recent_objects"]
+            render_priority_dataframe(
+                df_recent,
+                title="Recent object changes",
+                priority_columns=[
+                    "DATABASE_NAME", "SCHEMA_NAME", "OBJECT_NAME",
+                    "TABLE_TYPE", "OWNER", "CREATED", "LAST_ALTERED",
+                ],
+                sort_by=["CREATED", "LAST_ALTERED"],
+                ascending=[False, False],
+                raw_label="All recent object rows",
+            )
+            download_csv(df_recent, "recent_objects.csv")
 
-    with tabs[9]:
-        st.header("Pre-Aggregation DDL")
-        preagg_db = st.text_input("Target database", value="DBA_MAINT_DB", key="preagg_db")
-        preagg_schema = st.text_input("Target schema", value="OVERWATCH",   key="preagg_schema")
-        preagg_wh     = st.text_input("Warehouse",     value="COMPUTE_WH",  key="preagg_wh")
-        preagg_sql = f"""CREATE OR REPLACE TABLE {preagg_db}.{preagg_schema}.HOURLY_WAREHOUSE_CREDITS AS
-SELECT warehouse_name, DATE_TRUNC('hour', start_time) AS hour_bucket,
-       SUM(COALESCE(credits_used_compute, credits_used)) AS compute_credits,
-       SUM(credits_used) AS total_credits
-FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-WHERE start_time >= DATEADD('day', -90, CURRENT_TIMESTAMP())
-  {get_wh_filter_clause("warehouse_name")}
-GROUP BY warehouse_name, hour_bucket;"""
-        st.code(preagg_sql, language="sql")
-        st.download_button("Download Pre-Aggregation SQL", preagg_sql, file_name="overwatch_preagg.sql", mime="text/plain")
+    if selected_tool == "Mart Readiness":
+        st.header("Mart Readiness")
+        st.caption(
+            "Checks whether the deployed OVERWATCH mart objects are present. "
+            "Pre-aggregation DDL is no longer generated from the dashboard."
+        )
+        mart_objects = [
+            ("Control Room Snapshot", "MART_DBA_CONTROL_ROOM"),
+            ("Query Detail", "FACT_QUERY_DETAIL"),
+            ("Warehouse Daily", "FACT_WAREHOUSE_DAILY"),
+            ("Task Runs", "FACT_TASK_RUN"),
+            ("Login Daily", "FACT_LOGIN_DAILY"),
+            ("Object Changes", "FACT_OBJECT_CHANGE"),
+        ]
+        rows = []
+        for label, table_name in mart_objects:
+            exists = _table_exists(session, ALERT_DB, ALERT_SCHEMA, table_name)
+            rows.append({
+                "FEATURE": label,
+                "OBJECT_NAME": f"{ALERT_DB}.{ALERT_SCHEMA}.{table_name}",
+                "STATUS": "Present" if exists is True else "Missing" if exists is False else "Unknown",
+            })
+        mart_df = pd.DataFrame(rows)
+        present_count = int((mart_df["STATUS"] == "Present").sum())
+        missing_count = int((mart_df["STATUS"] == "Missing").sum())
+        c_mart1, c_mart2 = st.columns(2)
+        c_mart1.metric("Present", f"{present_count:,}")
+        c_mart2.metric("Missing", f"{missing_count:,}")
+        render_priority_dataframe(
+            mart_df,
+            title="OVERWATCH mart readiness",
+            priority_columns=["FEATURE", "STATUS", "OBJECT_NAME"],
+            sort_by=["STATUS", "FEATURE"],
+            ascending=[True, True],
+            raw_label="All mart objects",
+        )
+        if missing_count:
+            st.info("Deploy or refresh `snowflake/OVERWATCH_MART_SETUP.sql` outside the dashboard, then recheck.")
 
-    with tabs[10]:
+    if selected_tool == "Dynamic Tables":
         st.header("🔄 Dynamic Tables")
         if st.button("Load Dynamic Tables", key="dyn_load"):
             try:
@@ -871,10 +1182,22 @@ GROUP BY warehouse_name, hour_bucket;"""
             except Exception as e:
                 st.info(f"Dynamic table data unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_dyn") is not None:
-            st.dataframe(st.session_state["dba_df_dyn"], use_container_width=True)
-            download_csv(st.session_state["dba_df_dyn"], "dynamic_tables.csv")
+            df_dyn = st.session_state["dba_df_dyn"]
+            render_priority_dataframe(
+                df_dyn,
+                title="Dynamic tables needing attention",
+                priority_columns=[
+                    "DATABASE_NAME", "SCHEMA_NAME", "NAME", "STATE",
+                    "LAST_REFRESH_STATE_CODE", "LAST_REFRESH_MESSAGE",
+                    "REFRESH_ACTION", "LAST_REFRESH_START_TIME", "TARGET_LAG_SEC",
+                ],
+                sort_by=["LAST_REFRESH_STATE_CODE", "LAST_REFRESH_START_TIME", "TARGET_LAG_SEC"],
+                ascending=[True, False, False],
+                raw_label="All dynamic table rows",
+            )
+            download_csv(df_dyn, "dynamic_tables.csv")
 
-    with tabs[11]:
+    if selected_tool == "Replication":
         st.header("🔁 Replication")
         repl_days = st.slider("Lookback (days)", 1, 90, 30, key="repl_days")
         if st.button("Load Replication History", key="repl_load"):
@@ -919,12 +1242,24 @@ GROUP BY warehouse_name, hour_bucket;"""
                     st.info(f"Replication data unavailable: {format_snowflake_error(fallback_error)}")
                     st.caption(f"Primary view also failed: {format_snowflake_error(primary_error)}")
         if st.session_state.get("dba_df_repl") is not None and not st.session_state["dba_df_repl"].empty:
+            df_repl = st.session_state["dba_df_repl"]
             st.caption(f"Source: {st.session_state.get('dba_repl_source', 'replication usage history')}")
-            st.metric("Replication Credits", format_credits(st.session_state["dba_df_repl"]["CREDITS_USED"].sum()))
-            st.dataframe(st.session_state["dba_df_repl"], use_container_width=True)
-            download_csv(st.session_state["dba_df_repl"], "replication_history.csv")
+            st.metric("Replication Credits", format_credits(df_repl["CREDITS_USED"].sum()))
+            render_priority_dataframe(
+                df_repl,
+                title="Replication cost and lag candidates",
+                priority_columns=[
+                    "DATABASE_NAME", "REPLICATION_GROUP_NAME", "PHASE_NAME",
+                    "START_TIME", "END_TIME", "DURATION_MIN", "CREDITS_USED",
+                    "GB_TRANSFERRED",
+                ],
+                sort_by=["CREDITS_USED", "DURATION_MIN", "START_TIME"],
+                ascending=[False, False, False],
+                raw_label="All replication history rows",
+            )
+            download_csv(df_repl, "replication_history.csv")
 
-    with tabs[12]:
+    if selected_tool == "Serverless Costs":
         st.header("💻 Serverless Costs")
         if get_active_company() != "ALL":
             st.info(
@@ -950,12 +1285,19 @@ GROUP BY warehouse_name, hour_bucket;"""
                 df_sv = st.session_state["dba_df_serverless"]
                 svc   = df_sv.groupby("SERVICE_TYPE")["DAILY_CREDITS"].sum().reset_index().sort_values("DAILY_CREDITS", ascending=False)
                 st.metric("Total Serverless Credits", format_credits(float(svc["DAILY_CREDITS"].sum())))
-                st.dataframe(svc, use_container_width=True)
+                render_priority_dataframe(
+                    svc,
+                    title="Serverless service cost drivers",
+                    priority_columns=["SERVICE_TYPE", "DAILY_CREDITS"],
+                    sort_by=["DAILY_CREDITS"],
+                    ascending=False,
+                    raw_label="All serverless service totals",
+                )
                 st.area_chart(df_sv.pivot_table(index="USAGE_DATE", columns="SERVICE_TYPE", values="DAILY_CREDITS", aggfunc="sum").fillna(0))
                 download_csv(df_sv, "serverless_costs.csv")
 
     # ── TAB 14: CORTEX AI LIMITS ──────────────────────────────────────────────
-    with tabs[13]:
+    if selected_tool == "Cortex AI Limits":
         st.header("🤖 Cortex AI Limits")
         st.caption(
             "View and modify Cortex AI service limits for your account. "
@@ -1025,7 +1367,17 @@ GROUP BY warehouse_name, hour_bucket;"""
         combined_params = pd.concat([df_cp, df_ai], ignore_index=True) if not df_cp.empty or not df_ai.empty else pd.DataFrame()
         if not combined_params.empty:
             st.subheader("Current Cortex / AI Account Parameters")
-            st.dataframe(combined_params, use_container_width=True)
+            render_priority_dataframe(
+                combined_params,
+                title="Cortex / AI account parameters",
+                priority_columns=[
+                    "key", "value", "default", "level", "description",
+                    "KEY", "VALUE", "DEFAULT", "LEVEL", "DESCRIPTION",
+                ],
+                sort_by=["KEY", "key"],
+                ascending=True,
+                raw_label="All Cortex account parameters",
+            )
             download_csv(combined_params, "cortex_account_params.csv")
         else:
             st.info(
@@ -1169,7 +1521,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 """, language="sql")
 
     # ── TAB 15: TASK GRAPH CONTROL ────────────────────────────────────────────
-    with tabs[14]:
+    if selected_tool == "Task Graph Control":
         st.header("🔀 Task Graph Control")
         st.caption(
             "Cancel running queries spawned by tasks, cancel task graphs mid-run, "
@@ -1216,7 +1568,18 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             if st.session_state.get("dba_df_tg_running") is not None:
                 df_tq = st.session_state["dba_df_tg_running"]
                 if not df_tq.empty:
-                    st.dataframe(df_tq, use_container_width=True)
+                    render_priority_dataframe(
+                        df_tq,
+                        title="Running task-spawned queries",
+                        priority_columns=[
+                            "QUERY_ID", "USER_NAME", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
+                            "EXECUTION_STATUS", "START_TIME", "ELAPSED_SEC",
+                            "QUERY_TAG", "QUERY_TEXT",
+                        ],
+                        sort_by=["ELAPSED_SEC", "START_TIME"],
+                        ascending=[False, False],
+                        raw_label="All running task query rows",
+                    )
                     cancel_qid = st.selectbox(
                         "Cancel query",
                         df_tq["QUERY_ID"].tolist(),
@@ -1269,7 +1632,18 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 
                 if not running_runs.empty:
                     st.warning(f"⚠️ {len(running_runs)} task run(s) currently executing or scheduled.")
-                    st.dataframe(running_runs, use_container_width=True)
+                    render_priority_dataframe(
+                        running_runs,
+                        title="Running or scheduled task runs",
+                        priority_columns=[
+                            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "STATE",
+                            "SCHEDULED_TIME", "QUERY_ID", "GRAPH_RUN_GROUP_ID",
+                            "DURATION_SEC", "ERROR_MESSAGE",
+                        ],
+                        sort_by=["SCHEDULED_TIME", "DURATION_SEC"],
+                        ascending=[False, False],
+                        raw_label="All active task run rows",
+                    )
 
                     # Cancel by graph run group
                     st.markdown("**Cancel by Graph Run Group ID** (cancels all tasks in that DAG run)")
@@ -1332,7 +1706,19 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 else:
                     st.success("No task runs currently executing.")
                     st.subheader("Recent History (last 6h)")
-                    st.dataframe(df_r.head(50), use_container_width=True)
+                    render_priority_dataframe(
+                        df_r,
+                        title="Recent task run history",
+                        priority_columns=[
+                            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "STATE",
+                            "SCHEDULED_TIME", "COMPLETED_TIME", "DURATION_SEC",
+                            "QUERY_ID", "ERROR_MESSAGE",
+                        ],
+                        sort_by=["SCHEDULED_TIME"],
+                        ascending=False,
+                        max_rows=50,
+                        raw_label="All recent task run rows",
+                    )
 
         # ── Suspend / Resume ──────────────────────────────────────────────────
         with tg_tab_manage:
@@ -1361,8 +1747,20 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 c2.metric("▶ Active",           len(started))
                 c3.metric("⏸ Suspended",        len(suspended))
 
-                st.dataframe(df_tasks[["NAME","DATABASE_NAME","SCHEMA_NAME","STATE","SCHEDULE","WAREHOUSE"] if all(c in df_tasks.columns for c in ["NAME","DATABASE_NAME","SCHEMA_NAME","STATE","SCHEDULE","WAREHOUSE"]) else df_tasks.columns.tolist()],
-                             use_container_width=True, height=250)
+                task_display_cols = (
+                    ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE"]
+                    if all(c in df_tasks.columns for c in ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE"])
+                    else df_tasks.columns.tolist()
+                )
+                render_priority_dataframe(
+                    df_tasks[task_display_cols],
+                    title="Task inventory by operational state",
+                    priority_columns=task_display_cols,
+                    sort_by=["STATE", "DATABASE_NAME", "SCHEMA_NAME", "NAME"],
+                    ascending=[True, True, True, True],
+                    raw_label="All task inventory rows",
+                    height=250,
+                )
 
                 st.divider()
 
@@ -1597,34 +1995,31 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                             unsafe_allow_html=True,
                         )
 
-                    st.dataframe(df_dag, use_container_width=True)
+                    render_priority_dataframe(
+                        df_dag,
+                        title="DAG detail rows",
+                        priority_columns=[
+                            "NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "PREDECESSORS",
+                            "LAST_RUN_STATE", "LAST_RUN_TIME", "LAST_DURATION_SEC", "LAST_ERROR",
+                        ],
+                        sort_by=["LAST_RUN_STATE", "LAST_DURATION_SEC", "LAST_RUN_TIME"],
+                        ascending=[True, False, False],
+                        raw_label="All DAG rows",
+                    )
                     download_csv(df_dag, f"dag_{sel_dag}.csv")
 
     # ── TAB 16: USAGE LOG (carried forward) ───────────────────────────────────
-    with tabs[15]:
+    if selected_tool == "Usage Log":
         st.header("📊 OVERWATCH Usage Log")
         st.caption("Tracks which sections are loaded, by whom, how often, and how fast.")
-        from utils.logging import build_usage_log_ddl, set_logging_enabled, is_logging_enabled
-        from utils import build_overwatch_setup_bundle
+        from utils.logging import set_logging_enabled, is_logging_enabled
         from config import ALERT_DB, ALERT_SCHEMA
         log_tbl = f"{ALERT_DB}.{ALERT_SCHEMA}.OVERWATCH_USAGE_LOG"
 
-        with st.expander("Full OVERWATCH persistent setup bundle"):
-            setup_sql = build_overwatch_setup_bundle()
-            preview = setup_sql[:5000]
-            if len(setup_sql) > 5000:
-                preview += "\n\n-- truncated in preview; download for full script"
-            st.code(preview, language="sql")
-            st.download_button(
-                "Download Full Setup Bundle",
-                setup_sql,
-                file_name="overwatch_full_setup.sql",
-                mime="text/plain",
-                key="overwatch_full_setup_download",
-            )
-
-        with st.expander("📋 Setup DDL"):
-            st.code(build_usage_log_ddl(), language="sql")
+        st.info(
+            "Usage-log table setup is managed by the Snowflake architecture script. "
+            "This tab only toggles client-side logging and reads existing usage evidence."
+        )
 
         logging_on = st.toggle("Enable logging", value=is_logging_enabled(), key="ul_toggle")
         set_logging_enabled(logging_on)
@@ -1658,11 +2053,18 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             lbl   = st.session_state.get("dba_ul_group_label","SECTION")
             st.metric("Total Loads", f"{int(df_ul['LOAD_COUNT'].sum()):,}")
             st.bar_chart(df_ul.set_index(lbl)["LOAD_COUNT"])
-            st.dataframe(df_ul, use_container_width=True)
+            render_priority_dataframe(
+                df_ul,
+                title="Usage log hotspots",
+                priority_columns=[lbl, "LOAD_COUNT", "DISTINCT_USERS", "AVG_MS"],
+                sort_by=["LOAD_COUNT", "AVG_MS"],
+                ascending=[False, False],
+                raw_label="Usage log detail",
+            )
             download_csv(df_ul, f"usage_log_{ul_group.lower()}.csv")
 
     # Cost formula audit
-    with tabs[17]:
+    if selected_tool == "Cost Formula Audit":
         st.header("🧮 Cost Formula Audit")
         st.caption(
             "Documents which OVERWATCH cost numbers reconcile to Snowflake billing "
@@ -1678,7 +2080,14 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
         c2.metric("Exact / Source-of-Truth", f"{exact_count:,}")
         c3.metric("Estimated / Allocated", f"{estimate_count:,}")
 
-        st.dataframe(audit_df, use_container_width=True, hide_index=True)
+        render_priority_dataframe(
+            audit_df,
+            title="Cost formula confidence",
+            priority_columns=["METRIC", "CONFIDENCE", "FORMULA", "NOTES"],
+            sort_by=["CONFIDENCE", "METRIC"],
+            ascending=[True, True],
+            raw_label="All formula checks",
+        )
         download_csv(audit_df, "overwatch_cost_formula_audit.csv")
 
         st.subheader("Reconciliation SQL")
@@ -1725,9 +2134,9 @@ WHERE rn = 1
 ORDER BY current_tb DESC;"""
         st.code(recon_sql, language="sql")
 
-    # Setup bundle and install readiness
-    with tabs[16]:
-        st.header("🔧 First-Time Setup")
+    # Setup status and install readiness
+    if selected_tool == "Setup Status":
+        st.header("🔧 Setup Status")
         st.caption(
             "Run this before demos or deployment. It checks Snowflake view access, "
             "optional column availability, persistent OVERWATCH objects, calculation "
@@ -1752,7 +2161,14 @@ ORDER BY current_tb DESC;"""
                 c_ready.metric("Ready", f"{ready_count:,}")
                 c_limited.metric("Limited", f"{limited_count:,}")
                 c_blocked.metric("Blocked", f"{blocked_count:,}")
-                st.dataframe(compat_df, use_container_width=True, hide_index=True)
+                render_priority_dataframe(
+                    compat_df,
+                    title="Compatibility checks needing attention",
+                    priority_columns=["CATEGORY", "CHECK", "STATUS", "USED_BY", "DETAIL", "IMPACT"],
+                    sort_by=["STATUS", "CATEGORY"],
+                    ascending=[True, True],
+                    raw_label="All compatibility checks",
+                )
                 download_csv(compat_df, "overwatch_compatibility_check.csv")
 
                 blocked = compat_df[~compat_df["STATUS"].isin(["Ready", "Limited"])]
@@ -1785,7 +2201,14 @@ ORDER BY current_tb DESC;"""
                 c_wh, c_db = st.columns(2)
                 c_wh.metric("Unclassified Warehouses", f"{wh_count:,}")
                 c_db.metric("Unclassified Databases", f"{db_count:,}")
-                st.dataframe(unclassified, use_container_width=True, hide_index=True)
+                render_priority_dataframe(
+                    unclassified,
+                    title="Unclassified scope assets",
+                    priority_columns=["OBJECT_TYPE", "OBJECT_NAME", "DATABASE_NAME", "WAREHOUSE_NAME", "LAST_SEEN"],
+                    sort_by=["OBJECT_TYPE", "OBJECT_NAME"],
+                    ascending=[True, True],
+                    raw_label="All unclassified assets",
+                )
                 download_csv(unclassified, "overwatch_unclassified_assets.csv")
 
         st.divider()
@@ -1811,47 +2234,41 @@ ORDER BY current_tb DESC;"""
             m1.metric("Objects Checked", f"{len(status_df):,}")
             m2.metric("Missing", f"{missing_count:,}")
             m3.metric("Unknown", f"{unknown_count:,}")
-            st.dataframe(status_df, use_container_width=True, hide_index=True)
+            render_priority_dataframe(
+                status_df,
+                title="Persistent setup readiness",
+                priority_columns=["FEATURE", "OBJECT_NAME", "STATUS"],
+                sort_by=["STATUS", "FEATURE"],
+                ascending=[True, True],
+                raw_label="All setup objects",
+            )
 
         st.divider()
         st.subheader("Cost Formula Confidence")
         cost_formula_df = build_cost_formula_audit()
-        st.dataframe(cost_formula_df, use_container_width=True, hide_index=True)
+        render_priority_dataframe(
+            cost_formula_df,
+            title="Cost formula confidence",
+            priority_columns=["METRIC", "CONFIDENCE", "FORMULA", "NOTES"],
+            sort_by=["CONFIDENCE", "METRIC"],
+            ascending=[True, True],
+            raw_label="All formula checks",
+        )
 
         st.divider()
         st.subheader("Live Smoke-Test Checklist")
         smoke_df = build_smoke_test_checklist()
-        st.dataframe(smoke_df, use_container_width=True, hide_index=True)
+        render_priority_dataframe(
+            smoke_df,
+            title="Live smoke-test checklist",
+            priority_columns=["SECTION", "ACTION", "PASS_CRITERIA"],
+            sort_by=["SECTION", "ACTION"],
+            ascending=[True, True],
+            raw_label="Full smoke-test checklist",
+        )
         download_csv(smoke_df, "overwatch_smoke_test_checklist.csv")
 
-        st.divider()
-        setup_sql = build_overwatch_setup_bundle()
-        st.download_button(
-            "Download Full Setup SQL",
-            setup_sql,
-            file_name="overwatch_first_time_setup.sql",
-            mime="text/plain",
-            key="first_time_setup_download",
+        st.info(
+            "Persistent object DDL and mart aggregation setup have been removed from this dashboard. "
+            "Use the version-controlled Snowflake setup script as the deployment source of truth."
         )
-
-        with st.expander("Preview full setup SQL"):
-            preview = setup_sql[:8000]
-            if len(setup_sql) > 8000:
-                preview += "\n\n-- Preview truncated. Download the full setup SQL above."
-            st.code(preview, language="sql")
-
-        st.subheader("Individual setup scripts")
-        setup_parts = {
-            "Saved Views": build_bookmark_ddl(),
-            "Annotation Windows": build_annotation_ddl(),
-            "Action Queue": build_action_queue_ddl(),
-            "Snowflake Value Log": build_snowflake_value_ddl(),
-            "Usage Log": build_usage_log_ddl(),
-            "Alert History + Optional Task": build_alert_task_sql(),
-        }
-        selected_part = st.selectbox(
-            "Script",
-            list(setup_parts.keys()),
-            key="first_time_setup_part",
-        )
-        st.code(setup_parts[selected_part], language="sql")

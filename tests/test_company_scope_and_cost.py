@@ -11,7 +11,11 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from config import COMPANY_CONFIG  # noqa: E402
-from utils.company_filter import company_value_allowed, get_wh_filter_clause  # noqa: E402
+from utils.company_filter import (  # noqa: E402
+    company_value_allowed,
+    get_combined_filter_clause,
+    get_wh_filter_clause,
+)
 from utils.cost import build_cost_reconciliation_sql  # noqa: E402
 from utils.compatibility import filter_existing_columns  # noqa: E402
 from utils.metadata import (  # noqa: E402
@@ -34,6 +38,15 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn("WH_TRXS_%", clause)
         self.assertIn("NOT", clause.upper())
         self.assertNotIn("LIKE '%'", clause.upper())
+
+    def test_combined_scope_uses_any_company_signal_with_exclusions(self):
+        clause = get_combined_filter_clause("q.database_name", "q.warehouse_name", "q.user_name", company="ALFA")
+        upper = clause.upper()
+        self.assertIn(" OR ", upper)
+        self.assertIn("Q.WAREHOUSE_NAME IS NOT NULL", upper)
+        self.assertIn("Q.DATABASE_NAME IS NOT NULL", upper)
+        self.assertIn("WH_TRXS_%", upper)
+        self.assertIn("TRXS_%", upper)
 
     def test_cost_reconciliation_sql_uses_metering_and_variance(self):
         sql = build_cost_reconciliation_sql(30).upper()

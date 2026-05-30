@@ -11,6 +11,7 @@ from utils import (
     render_drillable_bar_chart,
     run_query,
 )
+from utils.workflows import render_priority_dataframe
 
 
 def render():
@@ -66,7 +67,14 @@ def render():
             drilldown_column="query_tag",
             lookback_hours=spcs_days * 24,
         )
-        st.dataframe(pool_agg, use_container_width=True)
+        render_priority_dataframe(
+            pool_agg,
+            title="Compute pool cost drivers",
+            priority_columns=["COMPUTE_POOL_NAME", "DAILY_CREDITS", "COST"],
+            sort_by=["DAILY_CREDITS"],
+            ascending=False,
+            raw_label="All compute pool cost rows",
+        )
 
         # Daily trend
         st.subheader("Daily Trend")

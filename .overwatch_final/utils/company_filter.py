@@ -16,6 +16,7 @@ import streamlit as st
 import fnmatch
 from config import COMPANY_CONFIG, DEFAULT_COMPANY
 from .query import sql_literal
+from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
 
 
 def get_active_company() -> str:
@@ -37,22 +38,10 @@ def invalidate_company_cache():
     Without this, stale Trexis data lingers in ALFA view (and vice versa).
     Preserves settings, theme, navigation, and global filters.
     """
-    _preserve_exact = {
-        "active_company", "active_theme", "nav_section", "_prev_active_company",
-        "_prev_nav_section", "credit_price", "_credit_price", "storage_cost",
-        "rt_interval", "theme_picker_radio", "exceptions_only_mode",
-    }
-    _preserve_prefixes = (
-        "nav_", "_prev_nav_", "active_company", "_prev_active_company",
-        "credit_price", "_credit_price", "storage_cost", "rt_interval",
-        "global_start", "global_end", "global_warehouse", "global_user",
-        "global_role", "global_database", "theme_", "company_",
-        "exceptions_only",
-    )
     keys_to_drop = [
         k for k in list(st.session_state.keys())
-        if k not in _preserve_exact
-        and not any(k.startswith(p) for p in _preserve_prefixes)
+        if k not in PRESERVE_STATE_EXACT
+        and not any(k.startswith(p) for p in PRESERVE_STATE_PREFIXES)
     ]
     for k in keys_to_drop:
         del st.session_state[k]
@@ -172,15 +161,70 @@ def get_combined_filter_clause(
     Warehouse/database names are stronger company signals than user names
     because shared/admin users can operate across company-specific resources.
     User-name scoping is kept for user-only views such as login/grant reports.
+
+    When more than one signal is available, use an OR boundary with explicit
+    opposite-company exclusions. Requiring warehouse AND database to both match
+    drops valid operational rows such as warehouse/session statements that have
+    no database context.
     """
     company = company or get_active_company()
-    strong_clauses = [
-        get_wh_filter_clause(wh_col, company) if wh_col else "",
-        get_db_filter_clause(db_col, company) if db_col else "",
-    ]
-    strong_clauses = [clause for clause in strong_clauses if clause]
-    if strong_clauses:
-        return " ".join(strong_clauses).strip()
+    if company == "ALL":
+        return ""
+
+    cfg = get_company_cfg(company)
+
+    def _matches(column: str, patterns: list[str]) -> str:
+        parts = [
+            f"{column} = {sql_literal(pattern, 300)}"
+            if "%" not in str(pattern)
+            else f"{column} ILIKE {sql_literal(pattern, 300)}"
+            for pattern in patterns
+            if pattern
+        ]
+        return "(" + " OR ".join(parts) + ")" if parts else ""
+
+    def _excludes(column: str, patterns: list[str]) -> str:
+        parts = [
+            f"{column} <> {sql_literal(pattern, 300)}"
+            if "%" not in str(pattern)
+            else f"{column} NOT ILIKE {sql_literal(pattern, 300)}"
+            for pattern in patterns
+            if pattern
+        ]
+        if not parts:
+            return ""
+        return f"({column} IS NULL OR ({' AND '.join(parts)}))"
+
+    candidates = []
+    exclusions = []
+    if wh_col:
+        wh_match = _matches(wh_col, cfg.get("wh_patterns", []))
+        if wh_match:
+            candidates.append(f"({wh_col} IS NOT NULL AND {wh_match})")
+        wh_exclude = _excludes(wh_col, cfg.get("wh_exclude_patterns", []))
+        if wh_exclude:
+            exclusions.append(wh_exclude)
+    if db_col:
+        db_match = _matches(db_col, cfg.get("db_patterns", []))
+        if db_match:
+            candidates.append(f"({db_col} IS NOT NULL AND {db_match})")
+        db_exclude = _excludes(db_col, [cfg.get("exclude_db_pattern", "")] if cfg.get("exclude_db_pattern") else [])
+        if db_exclude:
+            exclusions.append(db_exclude)
+    if user_col:
+        user_match = _matches(user_col, cfg.get("user_patterns", []))
+        if user_match:
+            candidates.append(f"({user_col} IS NOT NULL AND {user_match})")
+        user_exclude = _excludes(user_col, cfg.get("user_exclude_patterns", []))
+        if user_exclude:
+            exclusions.append(user_exclude)
+
+    if candidates:
+        boundary = "(" + " OR ".join(candidates) + ")"
+        if exclusions:
+            boundary += " AND " + " AND ".join(exclusions)
+        return "AND " + boundary
+
     return get_user_filter_clause(user_col, company).strip() if user_col else ""
 
 

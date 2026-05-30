@@ -2,7 +2,6 @@
 import streamlit as st
 import pandas as pd
 from utils import (
-    build_action_queue_ddl,
     download_csv,
     filter_existing_columns,
     get_active_company,
@@ -14,6 +13,7 @@ from utils import (
     make_action_id,
     mart_object_name,
     format_snowflake_error,
+    render_priority_dataframe,
     run_query,
     run_query_or_raise,
     safe_int,
@@ -105,6 +105,7 @@ def _load_login_posture_mart(company: str, days: int) -> dict[str, pd.DataFrame]
                 l.client_ip,
                 COALESCE(SUM(COALESCE(l.success_count, 0) + COALESCE(l.failure_count, 0)), 0) AS login_events,
                 COUNT(DISTINCT l.user_name) AS users,
+                COALESCE(SUM(l.success_count), 0) AS success_events,
                 COALESCE(SUM(l.failure_count), 0) AS failed_events,
                 MAX(l.login_date)::TIMESTAMP_NTZ AS last_seen
             FROM {table} l
@@ -205,13 +206,32 @@ def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, sever
         st.success(f"Saved {saved} security findings to the action queue.")
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
-        st.download_button(
-            "Download Action Queue DDL",
-            build_action_queue_ddl(),
-            file_name="overwatch_action_queue_setup.sql",
-            mime="text/plain",
-            key=f"sec_queue_ddl_{finding_type}",
-        )
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
+def _annotate_security_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    routed = df.copy()
+    if finding_type == "Failed Login":
+        routed["NEXT_WORKFLOW"] = "Security Posture"
+        routed["NEXT_ACTION"] = "Compare source IP, client, error code, and IAM logs; disable or escalate only after confirming suspicious activity."
+    elif finding_type == "Grant Review":
+        routed["NEXT_WORKFLOW"] = "Security Posture"
+        routed["NEXT_ACTION"] = "Validate requester, approver, role hierarchy, and business justification before revoking or narrowing access."
+    elif finding_type == "Dormant User":
+        routed["NEXT_WORKFLOW"] = "Security Posture"
+        routed["NEXT_ACTION"] = "Confirm owner and service-account status, then disable or remove roles through approved access process."
+    elif finding_type == "No MFA":
+        routed["NEXT_WORKFLOW"] = "Security Posture"
+        routed["NEXT_ACTION"] = "Confirm authentication path and enforce MFA through Snowflake or the identity provider."
+    elif finding_type == "Exfiltration":
+        routed["NEXT_WORKFLOW"] = "Query workbench"
+        routed["NEXT_ACTION"] = "Open query text and result output context, confirm business purpose, and escalate to security if unexplained."
+    else:
+        routed["NEXT_WORKFLOW"] = "Security Posture"
+        routed["NEXT_ACTION"] = "Validate owner, evidence, and risk before changing grants, authentication, or user status."
+    return routed
 
 
 def render():
@@ -317,10 +337,21 @@ def render():
 
         if st.session_state.get("sec_df_failed_logins") is not None and not st.session_state["sec_df_failed_logins"].empty:
             st.subheader("Failed Login Attempts")
-            st.dataframe(st.session_state["sec_df_failed_logins"], use_container_width=True)
-            download_csv(st.session_state["sec_df_failed_logins"], "failed_logins.csv")
+            failed_logins = _annotate_security_routes(st.session_state["sec_df_failed_logins"], "Failed Login")
+            render_priority_dataframe(
+                failed_logins,
+                title="Failed-login exceptions to review first",
+                priority_columns=[
+                    "USER_NAME", "CLIENT_IP", "REPORTED_CLIENT_TYPE", "ERROR_CODE",
+                    "ATTEMPT_COUNT", "LAST_ATTEMPT", "NEXT_WORKFLOW", "NEXT_ACTION",
+                ],
+                sort_by=["ATTEMPT_COUNT", "LAST_ATTEMPT"],
+                ascending=[False, False],
+                raw_label="All failed-login rows",
+            )
+            download_csv(failed_logins, "failed_logins.csv")
             if st.button("Save failed-login findings to Action Queue", key="sec_failed_login_queue"):
-                _queue_security_findings(session, st.session_state["sec_df_failed_logins"], "Failed Login", "Medium")
+                _queue_security_findings(session, failed_logins, "Failed Login", "Medium")
 
         if st.session_state.get("sec_df_login_trend") is not None and not st.session_state["sec_df_login_trend"].empty:
             df_t = st.session_state["sec_df_login_trend"]
@@ -345,6 +376,7 @@ def render():
                 *([] if st.session_state.get("sec_login_posture_source") == "OVERWATCH mart: FACT_LOGIN_DAILY" else [("sec_login_ips", f"""
                     SELECT client_ip, COUNT(*) AS login_events,
                            COUNT(DISTINCT user_name) AS users,
+                           SUM(IFF(is_success = 'YES', 1, 0)) AS success_events,
                            SUM(IFF(is_success = 'NO', 1, 0)) AS failed_events,
                            MAX(event_timestamp) AS last_seen
                     FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
@@ -375,37 +407,26 @@ def render():
                     LIMIT 50
                 """)]),
                 ("sec_login_factors", f"""
-                    WITH base AS (
-                        SELECT TO_VARCHAR(first_authentication_factor) AS first_factor,
-                               TO_VARCHAR(second_authentication_factor) AS second_factor,
-                               is_success
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                        WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
-                          {user_filter}
-                    )
-                    SELECT COALESCE(first_factor, 'UNKNOWN') AS first_factor,
-                           COALESCE(second_factor, 'NONE') AS second_factor,
+                    SELECT COALESCE(TO_VARCHAR(first_authentication_factor), 'UNKNOWN') AS first_factor,
+                           COALESCE(TO_VARCHAR(second_authentication_factor), 'NONE') AS second_factor,
                            COUNT(*) AS login_events,
+                           COUNT(DISTINCT user_name) AS users,
                            SUM(IFF(is_success = 'NO', 1, 0)) AS failed_events
-                    FROM base
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                    WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
+                      {user_filter}
                     GROUP BY 1, 2
                     ORDER BY login_events DESC
                     LIMIT 50
                 """),
                 ("sec_login_errors", f"""
-                    WITH base AS (
-                        SELECT TO_VARCHAR(error_code) AS error_code_txt,
-                               user_name,
-                               client_ip
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                        WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
-                          {user_filter}
-                    )
-                    SELECT COALESCE(error_code_txt, 'NONE') AS error_code,
+                    SELECT COALESCE(TO_VARCHAR(error_code), 'NONE') AS error_code,
                            COUNT(*) AS event_count,
                            COUNT(DISTINCT user_name) AS users,
                            COUNT(DISTINCT client_ip) AS ips
-                    FROM base
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                    WHERE event_timestamp >= DATEADD('day', -{posture_days}, CURRENT_TIMESTAMP())
+                      {user_filter}
                     GROUP BY 1
                     ORDER BY event_count DESC
                     LIMIT 50
@@ -423,7 +444,15 @@ def render():
             if ips is not None and not ips.empty:
                 st.caption(st.session_state.get("sec_login_posture_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
                 st.bar_chart(ips.set_index("CLIENT_IP")["LOGIN_EVENTS"])
-                st.dataframe(ips, use_container_width=True, height=300)
+                render_priority_dataframe(
+                    ips,
+                    title="Login IPs to review first",
+                    priority_columns=["CLIENT_IP", "LOGIN_EVENTS", "USERS", "SUCCESS_EVENTS", "FAILED_EVENTS"],
+                    sort_by=["FAILED_EVENTS", "LOGIN_EVENTS", "USERS"],
+                    ascending=[False, False, False],
+                    raw_label="All login IP rows",
+                    height=300,
+                )
                 download_csv(ips, "login_posture_ips.csv")
         with c2:
             clients = st.session_state.get("sec_login_clients")
@@ -431,7 +460,20 @@ def render():
             if clients is not None and not clients.empty:
                 st.caption(st.session_state.get("sec_login_posture_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
                 st.bar_chart(clients.set_index("REPORTED_CLIENT_TYPE")["LOGIN_EVENTS"])
-                st.dataframe(clients, use_container_width=True, height=300)
+                render_priority_dataframe(
+                    clients,
+                    title="Client types and versions to review",
+                    priority_columns=[
+                        "REPORTED_CLIENT_TYPE",
+                        "REPORTED_CLIENT_VERSION",
+                        "LOGIN_EVENTS",
+                        "USERS",
+                    ],
+                    sort_by=["LOGIN_EVENTS", "USERS"],
+                    ascending=[False, False],
+                    raw_label="All client type/version rows",
+                    height=300,
+                )
                 download_csv(clients, "login_posture_clients.csv")
 
         c3, c4 = st.columns(2)
@@ -439,14 +481,36 @@ def render():
             factors = st.session_state.get("sec_login_factors")
             st.subheader("Authentication Factors")
             if factors is not None and not factors.empty:
-                st.dataframe(factors, use_container_width=True, height=300)
+                render_priority_dataframe(
+                    factors,
+                    title="Authentication factor combinations",
+                    priority_columns=[
+                        "FIRST_FACTOR",
+                        "SECOND_FACTOR",
+                        "LOGIN_EVENTS",
+                        "USERS",
+                        "FAILED_EVENTS",
+                    ],
+                    sort_by=["FAILED_EVENTS", "LOGIN_EVENTS", "USERS"],
+                    ascending=[False, False, False],
+                    raw_label="All authentication factor rows",
+                    height=300,
+                )
                 download_csv(factors, "login_posture_auth_factors.csv")
         with c4:
             errors = st.session_state.get("sec_login_errors")
             st.subheader("Login Error Codes")
             if errors is not None and not errors.empty:
                 st.bar_chart(errors.set_index("ERROR_CODE")["EVENT_COUNT"])
-                st.dataframe(errors, use_container_width=True, height=300)
+                render_priority_dataframe(
+                    errors,
+                    title="Login error codes to investigate",
+                    priority_columns=["ERROR_CODE", "EVENT_COUNT", "USERS", "IPS"],
+                    sort_by=["EVENT_COUNT", "USERS", "IPS"],
+                    ascending=[False, False, False],
+                    raw_label="All login error rows",
+                    height=300,
+                )
                 download_csv(errors, "login_posture_error_codes.csv")
 
     # ── ROLES & GRANTS ────────────────────────────────────────────────────────
@@ -476,7 +540,18 @@ def render():
             df_g = st.session_state["sec_df_grants"]
             st.caption(st.session_state.get("sec_grants_source", "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"))
             st.metric("Total Grants", len(df_g))
-            st.dataframe(df_g, use_container_width=True)
+            df_g = _annotate_security_routes(df_g, "Grant Review")
+            render_priority_dataframe(
+                df_g,
+                title="Grant rows to review first",
+                priority_columns=[
+                    "GRANTEE_NAME", "ROLE", "GRANTED_TO", "GRANTED_BY",
+                    "CREATED_ON", "NEXT_WORKFLOW", "NEXT_ACTION",
+                ],
+                sort_by=["CREATED_ON"],
+                ascending=False,
+                raw_label="All grant rows",
+            )
             download_csv(df_g, "grants_to_users.csv")
 
         # Dormant users
@@ -522,7 +597,18 @@ def render():
         if st.session_state.get("sec_df_dom") is not None and not st.session_state["sec_df_dom"].empty:
             df_d = st.session_state["sec_df_dom"]
             st.warning(f"⚠️ {len(df_d)} users inactive > {dormant_days} days — review for deactivation.")
-            st.dataframe(df_d, use_container_width=True)
+            df_d = _annotate_security_routes(df_d, "Dormant User")
+            render_priority_dataframe(
+                df_d,
+                title="Dormant users to review first",
+                priority_columns=[
+                    "USER_NAME", "DAYS_SINCE_LOGIN", "LAST_LOGIN", "LAST_QUERY_TIME",
+                    "NEXT_WORKFLOW", "NEXT_ACTION",
+                ],
+                sort_by=["DAYS_SINCE_LOGIN"],
+                ascending=False,
+                raw_label="All dormant users",
+            )
             download_csv(df_d, "dormant_users.csv")
             if st.button("Save dormant users to Action Queue", key="sec_dormant_queue"):
                 _queue_security_findings(session, df_d, "Dormant User", "Medium")
@@ -556,7 +642,18 @@ def render():
             c2.metric("MFA Coverage",       f"{(1-len(no_mfa)/max(len(df_m),1))*100:.0f}%")
             if not no_mfa.empty:
                 st.warning(f"⚠️ {len(no_mfa)} active user(s) without MFA enabled.")
-                st.dataframe(no_mfa, use_container_width=True)
+                no_mfa = _annotate_security_routes(no_mfa, "No MFA")
+                render_priority_dataframe(
+                    no_mfa,
+                    title="MFA gaps to close first",
+                    priority_columns=[
+                        "USER_NAME", "HAS_PASSWORD", "HAS_MFA", "LAST_LOGIN",
+                        "NEXT_WORKFLOW", "NEXT_ACTION",
+                    ],
+                    sort_by=["LAST_LOGIN"],
+                    ascending=True,
+                    raw_label="All MFA gap rows",
+                )
                 download_csv(no_mfa, "users_without_mfa.csv")
                 if st.button("Save MFA findings to Action Queue", key="sec_mfa_queue"):
                     _queue_security_findings(session, no_mfa, "No MFA", "High")
@@ -620,7 +717,18 @@ def render():
             df_ex = st.session_state["sec_df_exfil"]
             if not df_ex.empty:
                 st.error(f"⚠️ {len(df_ex)} queries with anomalously high data output (>2σ above user baseline).")
-                st.dataframe(df_ex, use_container_width=True)
+                df_ex = _annotate_security_routes(df_ex, "Exfiltration")
+                render_priority_dataframe(
+                    df_ex,
+                    title="Potential exfiltration rows to review first",
+                    priority_columns=[
+                        "USER_NAME", "QUERY_ID", "WAREHOUSE_NAME", "GB_WRITTEN",
+                        "AVG_GB_BASELINE", "ZSCORE", "NEXT_WORKFLOW", "NEXT_ACTION",
+                    ],
+                    sort_by=["ZSCORE", "GB_WRITTEN"],
+                    ascending=[False, False],
+                    raw_label="All exfiltration rows",
+                )
                 download_csv(df_ex, "exfiltration_signals.csv")
                 if st.button("Save exfiltration signals to Action Queue", key="sec_exfil_queue"):
                     _queue_security_findings(session, df_ex, "Exfiltration", "Critical")
@@ -664,5 +772,20 @@ def render():
         if st.session_state.get("sec_df_lin") is not None and not st.session_state["sec_df_lin"].empty:
             df_l = st.session_state["sec_df_lin"]
             st.metric("Access Events", len(df_l))
-            st.dataframe(df_l, use_container_width=True)
+            render_priority_dataframe(
+                df_l,
+                title="Recent access lineage events",
+                priority_columns=[
+                    "USER_NAME",
+                    "QUERY_ID",
+                    "QUERY_START_TIME",
+                    "OBJECTS_MODIFIED",
+                    "OBJECTS_MODIFIED_BY_DDL",
+                    "BASE_OBJECTS_ACCESSED",
+                    "DIRECT_OBJECTS_ACCESSED",
+                ],
+                sort_by=["QUERY_START_TIME"],
+                ascending=False,
+                raw_label="All access history rows",
+            )
             download_csv(df_l, "access_history.csv")

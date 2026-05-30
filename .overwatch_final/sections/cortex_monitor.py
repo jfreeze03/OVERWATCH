@@ -427,6 +427,11 @@ def render():
     if st.session_state.get("exceptions_only_mode") and "cortex_monitor_view" not in st.session_state:
         st.session_state["cortex_monitor_view"] = "Budget Control"
 
+    st.header("AI & Cortex Monitor")
+    st.caption(
+        "Track Cortex Code usage, projected spend, user attribution, anomalies, and budget-control exceptions."
+    )
+
     cortex_view = render_workflow_selector(
         "Cortex workflow",
         "cortex_monitor_view",

@@ -117,23 +117,6 @@ class SectionDefinition:
         return self.title
 
 
-SECTION_DEFINITIONS: tuple[SectionDefinition, ...] = (
-    SectionDefinition("COMMAND CENTER", "🎯", "DBA Control Room", "sections.dba_control_room"),
-    SectionDefinition("COMMAND CENTER", "🏠", "Account Health", "sections.account_health"),
-    SectionDefinition("DBA WORKFLOWS", "🧰", "Query Workbench", "sections.query_workbench"),
-    SectionDefinition("DBA WORKFLOWS", "🏭", "Warehouse Health", "sections.warehouse_health"),
-    SectionDefinition("DBA WORKFLOWS", "💸", "Cost & Contract", "sections.cost_contract"),
-    SectionDefinition("DBA WORKFLOWS", "🔒", "Security Posture", "sections.security_posture"),
-    SectionDefinition("DBA WORKFLOWS", "🔀", "Change & Drift", "sections.change_drift"),
-    SectionDefinition("PLATFORM SIGNALS", "📊", "Usage Overview", "sections.usage_overview"),
-    SectionDefinition("PLATFORM SIGNALS", "📈", "Adoption Analytics", "sections.adoption_analytics"),
-    SectionDefinition("PLATFORM SIGNALS", "🩺", "Service Health", "sections.service_health"),
-    SectionDefinition("PLATFORM SIGNALS", "🗄️", "Storage Monitor", "sections.storage_monitor"),
-    SectionDefinition("PLATFORM SIGNALS", "🚚", "Pipeline Health", "sections.pipeline_health"),
-    SectionDefinition("PLATFORM SIGNALS", "🕸️", "Platform Topology", "sections.platform_topology"),
-    SectionDefinition("PLATFORM SIGNALS", "⚙️", "Task Management", "sections.task_management"),
-)
-
 # Mission Control navigation: the original individual modules remain importable
 # through aliases/workflow hubs, but the app shell exposes only DBA workflows.
 SECTION_DEFINITIONS = (
@@ -183,44 +166,7 @@ SECTION_ICONS = {_section.title: _section.icon for _section in SECTION_DEFINITIO
 SECTION_ALIASES = {
     "DBA Control Room": SECTION_BY_TITLE["DBA Control Room"],
     "Command Center": SECTION_BY_TITLE["DBA Control Room"],
-    "Usage Overview": SECTION_BY_TITLE["Usage Overview"],
-    "Adoption Analytics": SECTION_BY_TITLE["Adoption Analytics"],
-    "Service Health": SECTION_BY_TITLE["Service Health"],
-    "Live Monitor": SECTION_BY_TITLE["Query Workbench"],
-    "🔴 Live Monitor": SECTION_BY_TITLE["Query Workbench"],
-    "Detailed Diagnosis": SECTION_BY_TITLE["Query Workbench"],
-    "🧪 Detailed Diagnosis": SECTION_BY_TITLE["Query Workbench"],
-    "Query Analysis": SECTION_BY_TITLE["Query Workbench"],
-    "🔍 Query Analysis": SECTION_BY_TITLE["Query Workbench"],
-    "Query Search & History": SECTION_BY_TITLE["Query Workbench"],
-    "🕰️ Query Search & History": SECTION_BY_TITLE["Query Workbench"],
-    "Cost Center": SECTION_BY_TITLE["Cost & Contract"],
-    "💸 Cost Center": SECTION_BY_TITLE["Cost & Contract"],
-    "Credit Contract": SECTION_BY_TITLE["Cost & Contract"],
-    "📉 Credit Contract": SECTION_BY_TITLE["Cost & Contract"],
-    "Recommendations & Anomalies": SECTION_BY_TITLE["Cost & Contract"],
-    "💡 Recommendations & Anomalies": SECTION_BY_TITLE["Cost & Contract"],
-    "Snowflake Value": SECTION_BY_TITLE["Cost & Contract"],
-    "🏆 Snowflake Value": SECTION_BY_TITLE["Cost & Contract"],
-    "AI & Cortex Monitor": SECTION_BY_TITLE["Cost & Contract"],
-    "🤖 AI & Cortex Monitor": SECTION_BY_TITLE["Cost & Contract"],
-    "SPCS Tracker": SECTION_BY_TITLE["Cost & Contract"],
-    "🐳 SPCS Tracker": SECTION_BY_TITLE["Cost & Contract"],
-    "Security & Access": SECTION_BY_TITLE["Security Posture"],
-    "🔒 Security & Access": SECTION_BY_TITLE["Security Posture"],
-    "Data Sharing": SECTION_BY_TITLE["Security Posture"],
-    "🌐 Data Sharing": SECTION_BY_TITLE["Security Posture"],
-    "Who Changed What?": SECTION_BY_TITLE["Change & Drift"],
-    "🔀 Who Changed What?": SECTION_BY_TITLE["Change & Drift"],
-    "Stored Proc Tracker": SECTION_BY_TITLE["Change & Drift"],
-    "📦 Stored Proc Tracker": SECTION_BY_TITLE["Change & Drift"],
-    "DBA Tools": SECTION_BY_TITLE["Change & Drift"],
-    "🛠️ DBA Tools": SECTION_BY_TITLE["Change & Drift"],
-    "Optimization": SECTION_BY_TITLE["Warehouse Health"],
-    "💡 Optimization": SECTION_BY_TITLE["Warehouse Health"],
-}
-
-SECTION_ALIASES.update({
+    "Account Health": SECTION_BY_TITLE["Account Health"],
     "Query Workbench": SECTION_BY_TITLE["Workload Operations"],
     "Live Monitor": SECTION_BY_TITLE["Workload Operations"],
     "Detailed Diagnosis": SECTION_BY_TITLE["Workload Operations"],
@@ -232,9 +178,20 @@ SECTION_ALIASES.update({
     "Usage Overview": SECTION_BY_TITLE["DBA Control Room"],
     "Service Health": SECTION_BY_TITLE["DBA Control Room"],
     "Adoption Analytics": SECTION_BY_TITLE["Security Posture"],
+    "Cost Center": SECTION_BY_TITLE["Cost & Contract"],
+    "Credit Contract": SECTION_BY_TITLE["Cost & Contract"],
+    "Recommendations & Anomalies": SECTION_BY_TITLE["Cost & Contract"],
+    "Snowflake Value": SECTION_BY_TITLE["Cost & Contract"],
+    "AI & Cortex Monitor": SECTION_BY_TITLE["Cost & Contract"],
+    "SPCS Tracker": SECTION_BY_TITLE["Cost & Contract"],
     "Storage Monitor": SECTION_BY_TITLE["Cost & Contract"],
     "Platform Topology": SECTION_BY_TITLE["Change & Drift"],
-})
+    "Security & Access": SECTION_BY_TITLE["Security Posture"],
+    "Data Sharing": SECTION_BY_TITLE["Security Posture"],
+    "Who Changed What?": SECTION_BY_TITLE["Change & Drift"],
+    "DBA Tools": SECTION_BY_TITLE["Change & Drift"],
+    "Optimization": SECTION_BY_TITLE["Warehouse Health"],
+}
 
 
 def _sections_by_title(*titles: str) -> list[str]:

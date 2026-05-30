@@ -1,6 +1,7 @@
-# sections/warehouse_health.py — Warehouse stats, scaling events, idle detection, spill, heatmap
+# sections/warehouse_health.py - Warehouse stats, scaling events, idle detection, spill, heatmap
 import streamlit as st
 import pandas as pd
+from utils.workflows import render_workflow_selector
 from utils import (
     get_session, format_credits,
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
@@ -11,6 +12,23 @@ from utils import (
     safe_float, safe_int,
 )
 from config import THRESHOLDS
+
+
+WAREHOUSE_HEALTH_VIEWS = (
+    "Overview & Scaling",
+    "Efficiency",
+    "Spill & Memory",
+    "Workload Heatmap",
+    "Optimization Advisor",
+)
+
+WAREHOUSE_HEALTH_DETAILS = {
+    "Overview & Scaling": "Warehouse volume, latency, spill, cache, and metering events.",
+    "Efficiency": "Credits per query, queue per credit, spill per credit, and scorecard.",
+    "Spill & Memory": "Local and remote spill drilldowns by warehouse.",
+    "Workload Heatmap": "Concurrency by warehouse, day, and hour.",
+    "Optimization Advisor": "Actionable sizing, suspend, spill, and reliability recommendations.",
+}
 
 
 def _warehouse_capacity_score(
@@ -547,13 +565,17 @@ def render():
     if st.session_state.get("exceptions_only_mode"):
         st.stop()
 
-    tab_overview, tab_efficiency, tab_spill, tab_heatmap, tab_optimization = st.tabs([
-        "Overview & Scaling", "Efficiency", "Spill & Memory", "Workload Heatmap", "Optimization Advisor"
-    ])
+    warehouse_view = render_workflow_selector(
+        "Warehouse Health workflow",
+        "warehouse_health_view",
+        WAREHOUSE_HEALTH_VIEWS,
+        WAREHOUSE_HEALTH_DETAILS,
+        columns=3,
+    )
 
     # ── OVERVIEW ──────────────────────────────────────────────────────────────
-    with tab_overview:
-        st.header("🏭 Warehouse Health Overview")
+    if warehouse_view == "Overview & Scaling":
+        st.header("Warehouse Health Overview")
         wh_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_days")
 
         if st.button("Load Warehouse Data", key="wh_load"):
@@ -593,9 +615,9 @@ def render():
             for _, row in df_w.iterrows():
                 issues = []
                 if row.get("AVG_QUEUED_SEC", 0) > 2:
-                    issues.append(f"Queue avg {row['AVG_QUEUED_SEC']:.1f}s — consider multi-cluster or upsize")
+                    issues.append(f"Queue avg {row['AVG_QUEUED_SEC']:.1f}s - consider multi-cluster or upsize")
                 if row.get("TOTAL_REMOTE_SPILL_GB", 0) > THRESHOLDS["spill_warning_gb"]:
-                    issues.append(f"Remote spill {row['TOTAL_REMOTE_SPILL_GB']:.1f} GB — upsize")
+                    issues.append(f"Remote spill {row['TOTAL_REMOTE_SPILL_GB']:.1f} GB - upsize")
                 if issues:
                     st.warning(f"**{row['WAREHOUSE_NAME']}** ({row.get('WAREHOUSE_SIZE','')}): {' | '.join(issues)}")
 
@@ -646,7 +668,7 @@ def render():
                 except Exception as e:
                     st.warning(f"Scaling events unavailable in this role/context: {format_snowflake_error(e)}")
 
-    with tab_efficiency:
+    elif warehouse_view == "Efficiency":
         st.header("Warehouse Efficiency Scorecard")
         eff_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_eff_days")
         if st.button("Load Efficiency Metrics", key="wh_eff_load"):
@@ -701,8 +723,8 @@ def render():
                 _queue_efficiency_findings(session, df_eff)
 
     # ── SPILL ─────────────────────────────────────────────────────────────────
-    with tab_spill:
-        st.header("⚡ Spill & Memory Pressure")
+    elif warehouse_view == "Spill & Memory":
+        st.header("Spill & Memory Pressure")
         sp_days = st.slider("Lookback (days)", 1, 30, 7, key="sp_days")
 
         if st.button("Load Spill Data", key="sp_load"):
@@ -743,12 +765,12 @@ def render():
             )
             for _, row in df_sp.iterrows():
                 if row["REMOTE_SPILL_GB"] > 10:
-                    st.error(f"**{row['WAREHOUSE_NAME']}**: {row['REMOTE_SPILL_GB']:.1f} GB remote spill — upsize immediately")
+                    st.error(f"**{row['WAREHOUSE_NAME']}**: {row['REMOTE_SPILL_GB']:.1f} GB remote spill - upsize immediately")
             download_csv(df_sp, "spill_report.csv")
 
     # ── HEATMAP ───────────────────────────────────────────────────────────────
-    with tab_heatmap:
-        st.header("🌡️ Workload Concurrency Heatmap")
+    elif warehouse_view == "Workload Heatmap":
+        st.header("Workload Concurrency Heatmap")
         hm_days = st.slider("Lookback (days)", 7, 90, 30, key="hm_days")
 
         if st.button("Build Heatmap", key="hm_build"):
@@ -783,12 +805,12 @@ def render():
                 ).fillna(0)
                 day_names = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
                 pivot.index = pivot.index.map(lambda x: day_names.get(int(x), str(x)))
-                st.subheader(f"Query Volume Heatmap — {sel_wh}")
+                st.subheader(f"Query Volume Heatmap - {sel_wh}")
                 st.dataframe(pivot.style.background_gradient(cmap="YlOrRd"), use_container_width=True)
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Total Queries", f"{int(wh_data['QUERY_COUNT'].sum()):,}")
                 c2.metric("Peak Hour",     f"{int(pivot.max().max()):,}")
                 c3.metric("Avg Elapsed",   f"{wh_data['AVG_ELAPSED_SEC'].mean():.1f}s")
 
-    with tab_optimization:
+    elif warehouse_view == "Optimization Advisor":
         render_optimization_advisor()

@@ -493,6 +493,7 @@ hr {
 /* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"] {
     gap: 4px;
+    row-gap: 6px;
     background: var(--bg-tab-list);
     border-radius: 10px;
     padding: 4px;
@@ -503,15 +504,17 @@ hr {
 .stTabs [data-baseweb="tab"] {
     border-radius: 8px;
     color: var(--text-secondary) !important;
-    font-weight: 500;
+    font-weight: 700;
     font-family: var(--font-body) !important;
-    min-height: 36px;
+    min-height: 32px;
     white-space: nowrap;
-    padding: 6px 10px;
+    padding: 5px 9px;
+    border: 1px solid transparent;
 }
 .stTabs [aria-selected="true"] {
     background: var(--tab-active-bg) !important;
     color: var(--tab-active-col) !important;
+    border-color: rgba(var(--accent-rgb), 0.28);
 }
 
 /* ── Captions ── */
@@ -543,6 +546,99 @@ code, pre, .stCodeBlock {
     100% { background-position: 0% 50%; }
 }
 .live-indicator { animation: pulse 2s ease-in-out infinite; }
+
+/* Mission Control shell */
+.ow-sidebar-brand {
+    padding: 14px 6px 10px;
+    text-align: center;
+}
+.ow-brand-row,
+.ow-main-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-primary);
+    font-weight: 900;
+    letter-spacing: 0;
+}
+.ow-brand-row {
+    justify-content: center;
+    font-size: 1.24rem;
+}
+.ow-main-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 42px;
+    margin-bottom: 10px;
+}
+.ow-main-title {
+    font-size: 2rem;
+    line-height: 1;
+}
+.ow-brand-dot {
+    width: 30px;
+    height: 18px;
+    display: inline-block;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 22px rgba(var(--accent-rgb), 0.42);
+    flex: 0 0 auto;
+}
+.ow-sidebar-subtitle {
+    margin-top: 5px;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+}
+.ow-live-pill,
+.ow-company-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 1px solid var(--border-normal);
+    padding: 3px 9px;
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.08);
+    font-size: 0.68rem;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.ow-live-pill {
+    margin: 10px auto 0;
+}
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+    gap: 0.45rem;
+}
+[data-testid="stSidebar"] .stCaption {
+    color: var(--text-muted) !important;
+    font-size: 0.68rem !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.09em !important;
+    text-transform: uppercase !important;
+    margin-top: 0.6rem !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    justify-content: flex-start !important;
+    min-height: 36px;
+    border-radius: 7px !important;
+    font-size: 0.84rem !important;
+    font-weight: 760 !important;
+    box-shadow: none !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    background: rgba(var(--accent-rgb), 0.17) !important;
+    border: 1px solid rgba(var(--accent-rgb), 0.45) !important;
+    color: var(--accent) !important;
+    box-shadow: inset 3px 0 0 var(--accent) !important;
+}
+[data-testid="stSidebar"] .stExpander {
+    border-radius: 8px !important;
+}
 
 /* ── Status badges ── */
 .status-badge {

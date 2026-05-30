@@ -1,17 +1,17 @@
-# app.py — OVERWATCH V3 · Main Entry Point
-# ─────────────────────────────────────────────────────────────────────────────
+# app.py Ã¢â‚¬â€ OVERWATCH V3 Ã‚Â· Main Entry Point
+# Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 # Includes:
 #   - Role-based section visibility (ROLE_SECTIONS in config.py)
 #   - ALFA default company seeded before radio renders
 #   - Cache invalidation on company switch
 #   - Saved Views / Bookmarks sidebar panel
-# ─────────────────────────────────────────────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 import streamlit as st
 from datetime import datetime, timedelta
 
 st.set_page_config(
-    page_title="OVERWATCH — Snowflake DBA Monitor",
-    page_icon="👁️",
+    page_title="OVERWATCH - Snowflake DBA Monitor",
+    page_icon="O",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -38,14 +38,14 @@ import sections
 
 inject_theme()
 
-# ── Seed ALFA default before radio ────────────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Seed ALFA default before radio Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 if "active_company" not in st.session_state:
     st.session_state["active_company"] = DEFAULT_COMPANY
 if "_query_logging_enabled" not in st.session_state:
     st.session_state["_query_logging_enabled"] = False
 
 
-# ── Role resolution (cached 5 min) ────────────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Role resolution (cached 5 min) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 def _get_current_role() -> str:
     return str(st.session_state.get("_overwatch_current_role", "") or "").upper()
 
@@ -62,23 +62,13 @@ def _normalize_nav_section(section: str) -> str:
     return SECTION_ALIASES.get(section, section)
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Sidebar Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 with st.sidebar:
-    # Header
     st.markdown("""
-    <div style="text-align:center; padding:16px 0;">
-        <div style="font-size:2.5rem; margin-bottom:4px;">👁️</div>
-        <div style="font-size:1.2rem; font-weight:800;
-                    background:linear-gradient(90deg,#38bdf8,#818cf8);
-                    -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
-            OVERWATCH
-        </div>
-        <div style="font-size:0.7rem; color:#64748b; letter-spacing:2px; text-transform:uppercase;">
-            Snowflake DBA Command Center
-        </div>
-        <div style="margin-top:8px;">
-            <span class="status-badge badge-healthy live-indicator">● LIVE</span>
-        </div>
+    <div class="ow-sidebar-brand">
+        <div class="ow-brand-row"><span class="ow-brand-dot"></span><span>OVERWATCH</span></div>
+        <div class="ow-sidebar-subtitle">Snowflake DBA Command Center</div>
+        <div class="ow-live-pill">LIVE</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -90,7 +80,7 @@ with st.sidebar:
         except Exception:
             st.session_state.setdefault("_overwatch_current_role", "")
 
-    # ── Company filter ────────────────────────────────────────────────────────
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Company filter Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     _prev_company = st.session_state.get("_prev_active_company", DEFAULT_COMPANY)
     active_company = st.radio(
         "Company view",
@@ -112,7 +102,7 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Navigation ────────────────────────────────────────────────────────────
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Navigation Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     visible_sections = _resolve_visible_sections()
     current_role     = _get_current_role()
     matched_profile  = next((k for k in ROLE_SECTIONS if k in current_role), "DBA")
@@ -146,14 +136,16 @@ with st.sidebar:
                 st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
             elif cmd_type == "Query ID" or (cmd_type == "Auto" and len(value) >= 20 and "-" in value):
                 st.session_state["qs_qid"] = value
-                st.session_state["query_workbench_workflow"] = "History Search"
-                target = SECTION_BY_TITLE["Query Search & History"]
+                st.session_state["workload_operations_workflow"] = "History search"
+                target = SECTION_BY_TITLE["Workload Operations"]
             elif cmd_type == "Task" or (cmd_type == "Auto" and "TASK" in upper):
                 st.session_state["tm_search"] = value
-                target = SECTION_BY_TITLE["Task Management"]
+                st.session_state["workload_operations_workflow"] = "Task graphs"
+                target = SECTION_BY_TITLE["Workload Operations"]
             elif cmd_type == "Database" or (cmd_type == "Auto" and upper.startswith(("DB_", "ALFA", "TRXS"))):
                 st.session_state["global_database"] = value
-                target = SECTION_BY_TITLE["Storage Monitor"]
+                target = SECTION_BY_TITLE["Cost & Contract"]
+                st.session_state["cost_contract_workflow"] = "Storage and service cost"
             elif "COST" in upper or "SPEND" in upper:
                 target = SECTION_BY_TITLE["Cost & Contract"]
                 st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
@@ -183,7 +175,7 @@ with st.sidebar:
             st.session_state["nav_section"] = target if target in visible_sections else visible_sections[0]
             st.rerun()
 
-    st.caption(f"{role_label} · {matched_profile} VIEW")
+    st.caption(f"{role_label} - {matched_profile} VIEW")
     st.caption("NAVIGATE")
 
     active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))
@@ -202,7 +194,7 @@ with st.sidebar:
         for section_name in group_visible:
             is_active = section_name == active_section
             st.button(
-                f"● {section_name}" if is_active else section_name,
+                section_name,
                 key=f"nav_btn_{group_name}_{section_name}",
                 type="primary" if is_active else "secondary",
                 use_container_width=True,
@@ -212,8 +204,8 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Saved Views / Bookmarks ───────────────────────────────────────────────
-    with st.expander("🔖 Saved Views", expanded=False):
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Saved Views / Bookmarks Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    with st.expander("Saved Views", expanded=False):
         try:
             _session = get_session()
         except Exception as e:
@@ -224,19 +216,19 @@ with st.sidebar:
         if bookmarks:
             st.caption("Click a bookmark to jump directly to that view.")
             for bm in bookmarks:
-                shared_badge = " 🌐" if bm["shared"] else ""
-                uses_badge   = f" · {bm['uses']}×" if bm["uses"] else ""
+                shared_badge = " Shared" if bm["shared"] else ""
+                uses_badge   = f" - {bm['uses']}x" if bm["uses"] else ""
                 col_bm, col_del = st.columns([5, 1])
                 with col_bm:
                     if st.button(
-                        f"{'📌' if bm['shared'] else '🔖'} {bm['name']}{shared_badge}{uses_badge}",
+                        f"{bm['name']}{shared_badge}{uses_badge}",
                         key=f"bm_apply_{bm['id']}",
                         help=f"Section: {bm['section']}\nCreated: {bm['created']}",
                         use_container_width=True,
                     ):
                         apply_bookmark(_session, bm)  # calls st.rerun()
                 with col_del:
-                    if st.button("✕", key=f"bm_del_{bm['id']}", help="Delete bookmark"):
+                    if st.button("Delete", key=f"bm_del_{bm['id']}", help="Delete bookmark"):
                         if delete_bookmark(_session, bm["id"]):
                             st.rerun()
         else:
@@ -252,20 +244,20 @@ with st.sidebar:
             max_chars=100,
         )
         bm_shared = st.checkbox("Share with all users", key="bm_shared_toggle")
-        if st.button("💾 Save View", key="bm_save_btn", disabled=not new_bm_name):
+        if st.button("Save View", key="bm_save_btn", disabled=not new_bm_name):
             if not _session:
                 st.warning("Connect Snowflake before saving views.")
             elif save_bookmark(_session, new_bm_name, bm_shared):
-                st.success(f"✅ Saved '{new_bm_name}'")
+                st.success(f"Saved '{new_bm_name}'")
                 st.session_state.pop("bm_name_input", None)
                 st.rerun()
 
         # Setup DDL (hidden until needed)
-        with st.expander("📋 Setup DDL", expanded=False):
+        with st.expander("Setup DDL", expanded=False):
             ddl = build_bookmark_ddl()
             st.code(ddl[:400] + "...", language="sql")
             st.download_button(
-                "📥 Full DDL",
+                "Full DDL",
                 ddl,
                 file_name="overwatch_bookmarks_setup.sql",
                 mime="text/plain",
@@ -274,7 +266,7 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Settings ──────────────────────────────────────────────────────────────
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Settings Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     with st.expander("Global Filters", expanded=False):
         default_end = datetime.now().date()
         default_start = default_end - timedelta(days=7)
@@ -306,7 +298,7 @@ with st.sidebar:
 
     st.divider()
 
-    with st.expander("⚙️ Settings", expanded=False):
+    with st.expander("Settings", expanded=False):
         render_theme_picker()
         st.divider()
         credit_price = st.number_input(
@@ -330,11 +322,6 @@ with st.sidebar:
             [15, 30, 60, 120], index=1,
             format_func=lambda x: f"{x}s",
             key="rt_interval",
-        )
-        st.toggle(
-            "Leadership exceptions only",
-            key="exceptions_only_mode",
-            help="Reduce page noise and defer expensive drilldowns unless an exception is present.",
         )
         st.toggle(
             "Persist query telemetry",
@@ -387,39 +374,37 @@ with st.sidebar:
     st.markdown(f"""
     <div style="font-size:0.65rem; color:#475569; text-align:center;">
         <div style="color:{company_color}; font-weight:700; margin-bottom:4px;">{active_company} view</div>
-        <div>💰 ${credit_price:.2f}/credit</div>
-        <div style="margin-top:4px;">ACCOUNT_USAGE ≤45min lag · IS: live</div>
+        <div>${credit_price:.2f}/credit</div>
+        <div style="margin-top:4px;">ACCOUNT_USAGE <=45min lag - IS: live</div>
     </div>
     """, unsafe_allow_html=True)
 
 
-# ── Main header ───────────────────────────────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Main header Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 h1, h2, h3 = st.columns([3, 2, 1])
 with h1:
     company_color = COMPANY_CONFIG.get(active_company, {}).get("color", "#38bdf8")
     st.markdown(f"""
-    <h1 style="margin:0;padding:0;font-size:2rem;">
-        👁️ OVERWATCH
-        <span style="font-size:0.75rem;font-weight:400;color:{company_color};
-                     background:rgba(255,255,255,0.05);border:1px solid {company_color}33;
-                     border-radius:4px;padding:2px 8px;margin-left:8px;">{active_company}</span>
-    </h1>
+    <div class="ow-main-brand">
+        <div class="ow-main-title"><span class="ow-brand-dot"></span><span>OVERWATCH</span></div>
+        <span class="ow-company-pill" style="border-color:{company_color}66;color:{company_color};">{active_company}</span>
+    </div>
     """, unsafe_allow_html=True)
 with h2:
     st.markdown(f"""
     <div style="text-align:right;padding-top:12px;">
         <span style="color:#64748b;font-size:0.75rem;">
-            {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · ${credit_price:.2f}/cr
+            {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - ${credit_price:.2f}/cr
         </span>
     </div>
     """, unsafe_allow_html=True)
 with h3:
-    if st.button("🔄 Refresh All", key="global_refresh"):
+    if st.button("Refresh All", key="global_refresh"):
         clear_all_cache()
         st.rerun()
 
-# ── Ask OVERWATCH ─────────────────────────────────────────────────────────────
-with st.expander("🤖 Ask OVERWATCH  (Cortex AI)", expanded=False):
+# Ask OVERWATCH
+with st.expander("Ask OVERWATCH (Cortex AI)", expanded=False):
     ask_q = st.text_input(
         "Ask a question about your Snowflake usage...",
         placeholder="e.g. Who spent the most credits last week?",
@@ -447,7 +432,7 @@ with st.expander("🤖 Ask OVERWATCH  (Cortex AI)", expanded=False):
 
 st.markdown("---")
 
-# ── Section dispatch ──────────────────────────────────────────────────────────
+# Ã¢â€â‚¬Ã¢â€â‚¬ Section dispatch Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))
 if active_section not in visible_sections:
     active_section = visible_sections[0]

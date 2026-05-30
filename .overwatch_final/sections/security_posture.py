@@ -23,6 +23,11 @@ from utils.workflows import render_signal_confidence, render_workflow_guide, ren
 
 WORKFLOWS = ("Access posture", "Data sharing exposure")
 
+WORKFLOW_DETAILS = {
+    "Access posture": "Failed logins, MFA gaps, grants, role risk, and security exceptions.",
+    "Data sharing exposure": "Shares, imported databases, exposed datasets, and owner follow-up.",
+}
+
 
 def _security_score(
     *,
@@ -445,6 +450,8 @@ def render() -> None:
         "Security workflow",
         "security_posture_workflow",
         WORKFLOWS,
+        WORKFLOW_DETAILS,
+        columns=2,
     )
 
     if workflow == "Access posture":

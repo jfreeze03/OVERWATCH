@@ -58,8 +58,13 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
         return
     st.session_state["nav_section"] = target
     if workflow:
-        if title == "Query Workbench":
-            st.session_state["query_workbench_workflow"] = workflow
+        if title in {"Query Workbench", "Workload Operations"}:
+            if workflow == "Diagnosis":
+                st.session_state["workload_operations_workflow"] = "Query diagnosis"
+            elif workflow == "History Search":
+                st.session_state["workload_operations_workflow"] = "History search"
+            else:
+                st.session_state["workload_operations_workflow"] = workflow
         elif title == "Cost & Contract":
             st.session_state["cost_contract_workflow"] = workflow
         elif title == "Security Posture":
@@ -722,8 +727,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Signal": "Query failures",
             "Evidence": f"{failed_queries:,} failed queries in lookback",
             "Action": "Review failed SQL and recurring error patterns.",
-            "Route": "Query Workbench",
-            "Workflow": "Diagnosis",
+            "Route": "Workload Operations",
+            "Workflow": "Query diagnosis",
         })
     if queued_queries or not wh.empty:
         rows.append({
@@ -749,8 +754,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Signal": "High p95 duration",
             "Evidence": f"p95 elapsed {p95:,.0f}s",
             "Action": "Investigate slow-query plan and operator stats.",
-            "Route": "Query Workbench",
-            "Workflow": "Diagnosis",
+            "Route": "Workload Operations",
+            "Workflow": "Query diagnosis",
         })
     if credit_delta >= 25:
         rows.append({
@@ -767,8 +772,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Signal": "Task failures",
             "Evidence": f"{len(tasks):,} failed task groups",
             "Action": "Review task history, retry logic, and downstream load impact.",
-            "Route": "Task Management",
-            "Workflow": "",
+            "Route": "Workload Operations",
+            "Workflow": "Task graphs",
         })
     if not task_sla_cost.empty:
         signals = task_sla_cost.get("SIGNAL", pd.Series(dtype=str)).astype(str)
@@ -779,8 +784,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Signal": "Task SLA or cost regression",
             "Evidence": f"{sla_count:,} runtime breach(es); {cost_count:,} cost regression candidate(s)",
             "Action": "Compare current task graph runs to recent baseline and inspect release-related procedure/query changes.",
-            "Route": "Task Management",
-            "Workflow": "",
+            "Route": "Workload Operations",
+            "Workflow": "Task graphs",
         })
     if not procedure_sla_cost.empty:
         signals = procedure_sla_cost.get("SIGNAL", pd.Series(dtype=str)).astype(str)
@@ -791,8 +796,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Signal": "Stored procedure release regression",
             "Evidence": f"{runtime_count:,} runtime breach(es); {cost_count:,} cost regression candidate(s)",
             "Action": "Review procedures whose latest CALL duration or estimated credits jumped after the release.",
-            "Route": "Change & Drift",
-            "Workflow": "Stored procedure operations",
+            "Route": "Workload Operations",
+            "Workflow": "Stored procedures",
         })
     if not logins.empty:
         rows.append({
@@ -1027,9 +1032,14 @@ def render() -> None:
         with r1:
             st.subheader("Reliability")
             st.write("Failed queries, task failures, queued workload, and slow p95 runtime.")
-            for title, workflow in [("Query Workbench", "Diagnosis"), ("Task Management", ""), ("Pipeline Health", "")]:
-                if st.button(title, key=f"dba_control_reliability_{title}", use_container_width=True):
-                    _jump(title, workflow=workflow)
+            reliability_routes = [
+                ("Query Diagnosis", "Query diagnosis"),
+                ("Task Graphs", "Task graphs"),
+                ("Pipeline Health", "Pipeline health"),
+            ]
+            for label, workflow in reliability_routes:
+                if st.button(label, key=f"dba_control_reliability_{label}", use_container_width=True):
+                    _jump("Workload Operations", workflow=workflow)
         with r2:
             st.subheader("Cost and Capacity")
             st.write("Bill explanations, contract pacing, warehouse pressure, rightsizing, recommendations, and value evidence.")

@@ -219,12 +219,12 @@ def render():
     )
 
     tab_overview, tab_resmon, tab_morning, tab_briefing = st.tabs([
-        "Overview", "Resource Monitors", "Morning Report", "📋 Executive Briefing"
+        "Overview", "Resource Monitors", "Morning Report", "Executive Briefing"
     ])
 
     # ── OVERVIEW ──────────────────────────────────────────────────────────────
     with tab_overview:
-        st.header("🏠 Account Health — Command Center")
+        st.header("Account Health - Command Center")
         exceptions_only = bool(st.session_state.get("exceptions_only_mode", False))
         if exceptions_only:
             st.info("Leadership exceptions-only mode is on. Heavy drilldowns stay collapsed until you ask for detail.")
@@ -243,7 +243,7 @@ def render():
         if last_ts:
             cache_age = (datetime.now() - datetime.fromisoformat(last_ts)).total_seconds()
 
-        refresh_health = st.button("🔄 Refresh Health", key="health_refresh")
+        refresh_health = st.button("Refresh Health", key="health_refresh")
         if (
             refresh_health
             or cache_age > 300
@@ -436,26 +436,29 @@ def render():
 
         r1, r2 = st.columns([2, 1])
         with r1:
-            st.markdown("**🚨 Alert Center**")
+            st.markdown("**Alert Center**")
             alerts = []
-            if err_count > 10:  alerts.append({"Severity": "🔴", "Alert": "High error rate",  "Detail": f"{err_count} failures"})
-            if pct_delta > 30:  alerts.append({"Severity": "🟡", "Alert": "Credit spike",      "Detail": f"+{pct_delta:.0f}%"})
-            if queued > 5:      alerts.append({"Severity": "🟡", "Alert": "Queue pressure",    "Detail": f"{queued} queued"})
+            if err_count > 10:  alerts.append({"Severity": "High", "Alert": "High error rate",  "Detail": f"{err_count} failures"})
+            if pct_delta > 30:  alerts.append({"Severity": "Medium", "Alert": "Credit spike",      "Detail": f"+{pct_delta:.0f}%"})
+            if queued > 5:      alerts.append({"Severity": "Medium", "Alert": "Queue pressure",    "Detail": f"{queued} queued"})
             if alerts:
                 st.dataframe(pd.DataFrame(alerts), use_container_width=True)
             else:
-                st.success("✅ No active alerts")
+                st.success("No active alerts")
 
         with r2:
-            st.markdown("**⚡ Quick Nav**")
-            def _jump(tgt): st.session_state["nav_section"] = tgt
-            for lbl, tgt in [
-                ("🔴 Live",  "🔴 Live Monitor"),
-                ("🔍 Query", "🔍 Query Analysis"),
-                ("💸 Cost",  "💸 Cost & Contract"),
-                ("🛠️ DBA",  "🔀 Change & Drift"),
+            st.markdown("**Quick Nav**")
+            def _jump(tgt, workflow=None):
+                st.session_state["nav_section"] = tgt
+                if workflow:
+                    st.session_state["workload_operations_workflow"] = workflow
+            for lbl, tgt, workflow in [
+                ("Live",  "Workload Operations", "Live triage"),
+                ("Query", "Workload Operations", "Query diagnosis"),
+                ("Cost",  "Cost & Contract", None),
+                ("DBA",  "Change & Drift", None),
             ]:
-                st.button(lbl, key=f"jump_{lbl}", on_click=_jump, args=(tgt,))
+                st.button(lbl, key=f"jump_{lbl}", on_click=_jump, args=(tgt, workflow))
 
         st.divider()
         st.markdown("**Executive Landing Signals**")
@@ -490,8 +493,9 @@ def render():
             failed_df = hd.get("failed_jobs", pd.DataFrame())
             if failed_df is not None and not failed_df.empty:
                 st.dataframe(failed_df, use_container_width=True, height=220)
-                if st.button("→ Task Management", key="ah_drill_tasks"):
-                    _drill_to("⚙️ Task Management")
+                if st.button("Task Management", key="ah_drill_tasks"):
+                    st.session_state["workload_operations_workflow"] = "Task graphs"
+                    _drill_to("Workload Operations")
             else:
                 st.success("No failed tasks in the last 24h.")
 
@@ -582,7 +586,7 @@ def render():
 
     # ── RESOURCE MONITORS ─────────────────────────────────────────────────────
     with tab_resmon:
-        st.header("📋 Resource Monitor Dashboard")
+        st.header("Resource Monitor Dashboard")
         st.caption("Credit quota vs. consumed — with suspend threshold validation.")
 
         if st.button("Load Resource Monitors", key="resmon_load"):
@@ -657,15 +661,15 @@ def render():
                 cols[3].metric("Usage %",       f"{pct:.1f}%")
                 cols[4].metric("Est. $",        f"${credits_to_dollars(used):,.2f}")
                 if pct > 100:  st.error(f"**{name}** OVER BUDGET at {pct:.0f}%")
-                elif pct > 80: st.warning(f"**{name}** at {pct:.0f}% — approaching limit")
-                else:          st.success(f"**{name}** at {pct:.0f}% — on track")
+                elif pct > 80: st.warning(f"**{name}** at {pct:.0f}% - approaching limit")
+                else:          st.success(f"**{name}** at {pct:.0f}% - on track")
                 if not suspend and not s_imm:
-                    st.warning(f"⚠️ **{name}** has no suspend threshold.")
+                    st.warning(f"**{name}** has no suspend threshold.")
             download_csv(df_rm, "resource_monitors.csv")
 
     # ── MORNING REPORT ────────────────────────────────────────────────────────
     with tab_morning:
-        st.header("☀️ Morning Health Report")
+        st.header("Morning Health Report")
         st.caption("Overnight summary: failures, cost spikes, longest queries (last 12h).")
 
         if st.button("Generate Morning Report", key="morning_gen"):
@@ -715,7 +719,7 @@ def render():
                 st.dataframe(md["failures"], use_container_width=True)
                 download_csv(md["failures"], "morning_failures.csv")
             else:
-                st.success("✅ No query failures overnight")
+                st.success("No query failures overnight")
             if not md["long_queries"].empty:
                 st.subheader("🐌 Longest Running Queries")
                 st.dataframe(md["long_queries"], use_container_width=True)
@@ -737,7 +741,7 @@ def render():
 
     # ── EXECUTIVE BRIEFING (NEW) ───────────────────────────────────────────────
     with tab_briefing:
-        st.header("📋 Executive Briefing")
+        st.header("Executive Briefing")
         st.caption(
             "Plain-English summary generated by Cortex AI from live OVERWATCH data. "
             "Designed to be copied into an email or Teams message to leadership — no dashboard login required."
@@ -752,7 +756,7 @@ def render():
         hours_map = {"Last 24 hours": 24, "Last 7 days": 168, "Last 30 days": 720}
         br_hours  = hours_map[briefing_window]
 
-        if st.button("✨ Generate Executive Briefing", key="br_generate", type="primary"):
+        if st.button("Generate Executive Briefing", key="br_generate", type="primary"):
             with st.spinner("Collecting metrics and generating briefing via Cortex AI..."):
                 br_data = {}
 
@@ -962,7 +966,7 @@ def render():
 
             # Copy-ready Teams/email text
             with col_e3:
-                if st.button("📋 Copy to clipboard", key="br_copy", use_container_width=True):
+                if st.button("Copy to clipboard", key="br_copy", use_container_width=True):
                     st.code(briefing_text, language=None)
                     st.caption("Select all text above and copy.")
 

@@ -3,6 +3,7 @@ import re
 
 import streamlit as st
 import pandas as pd
+from utils.workflows import render_workflow_selector
 from utils import (
     build_action_queue_ddl,
     build_task_history_sql,
@@ -25,6 +26,23 @@ from utils import (
     upsert_actions,
 )
 from config import ALERT_DB, ALERT_SCHEMA, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ETL_AUDIT_TABLE
+
+
+TASK_CONTROL_VIEWS = (
+    "Task History",
+    "Failure Console",
+    "ETL Audit",
+    "Control Center",
+    "Execute Task",
+)
+
+TASK_CONTROL_DETAILS = {
+    "Task History": "Run history, active task count, and raw task inventory.",
+    "Failure Console": "Failure patterns, query links, runbooks, and action queue handoff.",
+    "ETL Audit": "Custom ETL audit table setup and recent pipeline runs.",
+    "Control Center": "Guarded suspend, resume, retry, execute, and cancel workflows.",
+    "Execute Task": "Focused manual task execution with pre-flight checks.",
+}
 
 
 def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
@@ -1043,13 +1061,17 @@ def render():
     if st.session_state.get("exceptions_only_mode"):
         st.stop()
 
-    tab_history, tab_failure, tab_etl, tab_control, tab_execute = st.tabs([
-        "Task History", "Failure Console", "ETL Audit", "Control Center", "Execute Task"
-    ])
+    task_view = render_workflow_selector(
+        "Task management workflow",
+        "task_management_view",
+        TASK_CONTROL_VIEWS,
+        TASK_CONTROL_DETAILS,
+        columns=3,
+    )
 
     # ── TASK HISTORY ──────────────────────────────────────────────────────────
-    with tab_history:
-        st.header("⚙️ Task Execution History")
+    if task_view == "Task History":
+        st.header("Task Execution History")
         th_days = st.slider("Lookback (days)", 1, 30, 7, key="th_days")
 
         if st.button("Load Task Data", key="th_load"):
@@ -1100,7 +1122,7 @@ def render():
             st.dataframe(th, use_container_width=True, height=400)
             download_csv(th, "task_history.csv")
 
-    with tab_failure:
+    elif task_view == "Failure Console":
         st.header("Failure Console & Runbook")
         st.caption(
             "Diagnose failed task graph runs, link failures to query history and stored procedures, "
@@ -1226,8 +1248,8 @@ def render():
                 )
 
     # ── ETL AUDIT ─────────────────────────────────────────────────────────────
-    with tab_etl:
-        st.header("📋 ETL Audit Framework")
+    elif task_view == "ETL Audit":
+        st.header("ETL Audit Framework")
         st.caption(f"Custom ETL run tracking table: `{ETL_AUDIT_FQN}`")
 
         # DDL setup
@@ -1242,7 +1264,7 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
     ERROR_MESSAGE   VARCHAR(4000),
     RUN_BY          VARCHAR(200)
 );"""
-        with st.expander("📋 Setup DDL — run once to create audit table"):
+        with st.expander("Setup DDL - run once to create audit table"):
             st.code(etl_ddl, language="sql")
 
         if st.button("Load ETL Audit Log", key="etl_load"):
@@ -1268,7 +1290,7 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
             if not err.empty and st.button("Save failed ETL runs to Action Queue", key="tm_etl_queue"):
                 _queue_task_findings(session, err, "Task Management - ETL Audit")
 
-    with tab_control:
+    elif task_view == "Control Center":
         st.header("Task Graph Control Center")
         st.caption(
             "Generate and run guarded task actions from the same place you diagnose graph health. "
@@ -1435,8 +1457,8 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                         st.info("The selected cancellation target is not available from this role/account metadata.")
 
     # ── EXECUTE TASK ──────────────────────────────────────────────────────────
-    with tab_execute:
-        st.header("▶️ Execute Task On-Demand")
+    elif task_view == "Execute Task":
+        st.header("Execute Task On-Demand")
         st.caption("Select and manually trigger a task. Ensure dependencies are met before running.")
         if not admin_actions_enabled():
             st.info("Read-only mode is active. Enable Admin actions in Settings before executing tasks.")
@@ -1445,7 +1467,7 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
 
         tl = st.session_state.get("tg_list", pd.DataFrame())
         if tl.empty:
-            st.warning("⬆️ Click **Load Task Data** in the Task History tab first.")
+            st.warning("Load task data from the Task History workflow first.")
         else:
             task_names = tl["NAME"].unique().tolist() if "NAME" in tl.columns else []
             selected   = st.selectbox("Select task", task_names, key="exec_task_sel")
@@ -1459,7 +1481,7 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                     st.info(f"Task: `{full}` | State: {row.get('STATE','N/A')} | Schedule: {row.get('SCHEDULE','N/A')}")
                     with st.expander("Read-only pre-flight checks before executing this task"):
                         st.code(build_admin_preflight_sql(row), language="sql")
-                    st.warning("⚠️ This runs the task immediately regardless of schedule.")
+                    st.warning("This runs the task immediately regardless of schedule.")
 
                     exec_confirmed = st.text_input(
                         "Type EXECUTE to enable task run",
@@ -1467,7 +1489,7 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                     ) == "EXECUTE"
 
                     if st.button(
-                        f"▶️ Execute {selected}",
+                        f"Execute {selected}",
                         type="primary",
                         key="exec_task_btn",
                         disabled=admin_button_disabled(not exec_confirmed),

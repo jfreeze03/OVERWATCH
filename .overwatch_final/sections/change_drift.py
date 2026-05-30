@@ -28,6 +28,14 @@ WORKFLOWS = (
     "Controlled DBA actions",
 )
 
+WORKFLOW_DETAILS = {
+    "Object and access changes": "Who changed what, access movement, destructive DDL, and policy changes.",
+    "Stored procedure lineage": "Procedure ownership, child SQL, downstream objects, and runtime/cost drift.",
+    "Schema and object drift": "Schema compare, object inventory, unused objects, and Terraform drift signals.",
+    "Data movement and replication": "Replication, dynamic tables, Snowpipe, data loading, and freshness risk.",
+    "Controlled DBA actions": "Guarded admin actions, generated SQL, and operational controls.",
+}
+
 
 def _change_drift_score(
     *,
@@ -421,6 +429,7 @@ def render() -> None:
         "Change workflow",
         "change_drift_workflow",
         WORKFLOWS,
+        WORKFLOW_DETAILS,
     )
 
     if workflow == "Object and access changes":

@@ -114,7 +114,7 @@ class SectionDefinition:
 
     @property
     def label(self) -> str:
-        return f"{self.icon} {self.title}"
+        return self.title
 
 
 SECTION_DEFINITIONS: tuple[SectionDefinition, ...] = (
@@ -134,6 +134,18 @@ SECTION_DEFINITIONS: tuple[SectionDefinition, ...] = (
     SectionDefinition("PLATFORM SIGNALS", "⚙️", "Task Management", "sections.task_management"),
 )
 
+# Mission Control navigation: the original individual modules remain importable
+# through aliases/workflow hubs, but the app shell exposes only DBA workflows.
+SECTION_DEFINITIONS = (
+    SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room"),
+    SectionDefinition("COMMAND CENTER", "home", "Account Health", "sections.account_health"),
+    SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations"),
+    SectionDefinition("OPERATIONS", "warehouse", "Warehouse Health", "sections.warehouse_health"),
+    SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract"),
+    SectionDefinition("GOVERNANCE", "security", "Security Posture", "sections.security_posture"),
+    SectionDefinition("GOVERNANCE", "change", "Change & Drift", "sections.change_drift"),
+)
+
 NAV_GROUPS: dict[str, list[str]] = {}
 for _section in SECTION_DEFINITIONS:
     NAV_GROUPS.setdefault(_section.group, []).append(_section.label)
@@ -142,20 +154,28 @@ ALL_SECTIONS = [_section.label for _section in SECTION_DEFINITIONS]
 SECTION_MODULES = {_section.label: _section.module for _section in SECTION_DEFINITIONS}
 SECTION_BY_TITLE = {_section.title: _section.label for _section in SECTION_DEFINITIONS}
 SECTION_BY_TITLE.update({
-    "Live Monitor": SECTION_BY_TITLE["Query Workbench"],
-    "Detailed Diagnosis": SECTION_BY_TITLE["Query Workbench"],
-    "Query Analysis": SECTION_BY_TITLE["Query Workbench"],
-    "Query Search & History": SECTION_BY_TITLE["Query Workbench"],
+    "Query Workbench": SECTION_BY_TITLE["Workload Operations"],
+    "Live Monitor": SECTION_BY_TITLE["Workload Operations"],
+    "Detailed Diagnosis": SECTION_BY_TITLE["Workload Operations"],
+    "Query Analysis": SECTION_BY_TITLE["Workload Operations"],
+    "Query Search & History": SECTION_BY_TITLE["Workload Operations"],
+    "Task Management": SECTION_BY_TITLE["Workload Operations"],
+    "Pipeline Health": SECTION_BY_TITLE["Workload Operations"],
+    "Stored Proc Tracker": SECTION_BY_TITLE["Workload Operations"],
     "Cost Center": SECTION_BY_TITLE["Cost & Contract"],
     "Credit Contract": SECTION_BY_TITLE["Cost & Contract"],
     "Recommendations & Anomalies": SECTION_BY_TITLE["Cost & Contract"],
     "Snowflake Value": SECTION_BY_TITLE["Cost & Contract"],
     "AI & Cortex Monitor": SECTION_BY_TITLE["Cost & Contract"],
     "SPCS Tracker": SECTION_BY_TITLE["Cost & Contract"],
+    "Usage Overview": SECTION_BY_TITLE["DBA Control Room"],
+    "Adoption Analytics": SECTION_BY_TITLE["Security Posture"],
+    "Service Health": SECTION_BY_TITLE["DBA Control Room"],
+    "Storage Monitor": SECTION_BY_TITLE["Cost & Contract"],
+    "Platform Topology": SECTION_BY_TITLE["Change & Drift"],
     "Security & Access": SECTION_BY_TITLE["Security Posture"],
     "Data Sharing": SECTION_BY_TITLE["Security Posture"],
     "Who Changed What?": SECTION_BY_TITLE["Change & Drift"],
-    "Stored Proc Tracker": SECTION_BY_TITLE["Change & Drift"],
     "DBA Tools": SECTION_BY_TITLE["Change & Drift"],
 })
 SECTION_ICONS = {_section.title: _section.icon for _section in SECTION_DEFINITIONS}
@@ -199,6 +219,22 @@ SECTION_ALIASES = {
     "Optimization": SECTION_BY_TITLE["Warehouse Health"],
     "💡 Optimization": SECTION_BY_TITLE["Warehouse Health"],
 }
+
+SECTION_ALIASES.update({
+    "Query Workbench": SECTION_BY_TITLE["Workload Operations"],
+    "Live Monitor": SECTION_BY_TITLE["Workload Operations"],
+    "Detailed Diagnosis": SECTION_BY_TITLE["Workload Operations"],
+    "Query Analysis": SECTION_BY_TITLE["Workload Operations"],
+    "Query Search & History": SECTION_BY_TITLE["Workload Operations"],
+    "Task Management": SECTION_BY_TITLE["Workload Operations"],
+    "Pipeline Health": SECTION_BY_TITLE["Workload Operations"],
+    "Stored Proc Tracker": SECTION_BY_TITLE["Workload Operations"],
+    "Usage Overview": SECTION_BY_TITLE["DBA Control Room"],
+    "Service Health": SECTION_BY_TITLE["DBA Control Room"],
+    "Adoption Analytics": SECTION_BY_TITLE["Security Posture"],
+    "Storage Monitor": SECTION_BY_TITLE["Cost & Contract"],
+    "Platform Topology": SECTION_BY_TITLE["Change & Drift"],
+})
 
 
 def _sections_by_title(*titles: str) -> list[str]:
@@ -245,6 +281,29 @@ ROLE_SECTIONS = {
         "Storage Monitor",
         "Pipeline Health",
         "Platform Topology",
+    ),
+    "DBA": list(ALL_SECTIONS),
+    "SYSADMIN": list(ALL_SECTIONS),
+    "ACCOUNTADMIN": list(ALL_SECTIONS),
+}
+
+# Mission Control keeps all roles on the same simplified shell. Role-based
+# limits still apply by reducing access to governance workflows where needed.
+ROLE_SECTIONS = {
+    "ANALYST": _sections_by_title(
+        "DBA Control Room",
+        "Account Health",
+        "Workload Operations",
+        "Warehouse Health",
+        "Cost & Contract",
+    ),
+    "MANAGER": list(ALL_SECTIONS),
+    "REPORT": _sections_by_title(
+        "DBA Control Room",
+        "Account Health",
+        "Workload Operations",
+        "Warehouse Health",
+        "Cost & Contract",
     ),
     "DBA": list(ALL_SECTIONS),
     "SYSADMIN": list(ALL_SECTIONS),

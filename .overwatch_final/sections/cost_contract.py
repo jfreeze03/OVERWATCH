@@ -20,6 +20,14 @@ WORKFLOWS = (
     "SPCS spend",
 )
 
+WORKFLOW_DETAILS = {
+    "Explain bill / attribution / contract": "Start here: bill movement, chargeback, contract pacing, and cost drivers.",
+    "Recommendations and action queue": "Owned fixes with severity, proof, savings, and status.",
+    "Snowflake value log": "Evidence that DBA changes avoided spend or improved service.",
+    "AI and Cortex spend": "Cortex usage, model spend, users, and runaway AI cost signals.",
+    "SPCS spend": "Snowpark Container Services usage and service cost exposure.",
+}
+
 
 def render() -> None:
     if st.session_state.get("exceptions_only_mode") and "cost_contract_workflow" not in st.session_state:
@@ -52,6 +60,7 @@ def render() -> None:
         "Cost workflow",
         "cost_contract_workflow",
         WORKFLOWS,
+        WORKFLOW_DETAILS,
     )
 
     if workflow == "Explain bill / attribution / contract":

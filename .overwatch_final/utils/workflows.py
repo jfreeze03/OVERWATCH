@@ -1,7 +1,7 @@
 # utils/workflows.py - helpers for DBA workflow hub navigation
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import streamlit as st
 
@@ -19,17 +19,37 @@ def coerce_workflow_state(key: str, workflows: Sequence[str]) -> str:
     return str(selected)
 
 
-def render_workflow_selector(label: str, key: str, workflows: Sequence[str]) -> str:
-    """Render a horizontal workflow selector that honors deep-link state."""
+def render_workflow_selector(
+    label: str,
+    key: str,
+    workflows: Sequence[str],
+    details: Mapping[str, str] | None = None,
+    *,
+    columns: int = 3,
+) -> str:
+    """Render a compact workflow launcher that honors deep-link state."""
     selected = coerce_workflow_state(key, workflows)
-    return st.radio(
-        label,
-        list(workflows),
-        horizontal=True,
-        label_visibility="collapsed",
-        key=key,
-        index=list(workflows).index(selected),
-    )
+    details = details or {}
+    st.caption(label)
+    items = list(workflows)
+    columns = max(1, min(int(columns or 3), 4))
+    for start in range(0, len(items), columns):
+        row = items[start:start + columns]
+        cols = st.columns(len(row))
+        for col, workflow in zip(cols, row):
+            with col:
+                is_selected = workflow == selected
+                if st.button(
+                    workflow,
+                    key=f"{key}_{start}_{workflow}",
+                    type="primary" if is_selected else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state[key] = workflow
+                    st.rerun()
+                if details.get(workflow):
+                    st.caption(details[workflow])
+    return str(st.session_state.get(key, selected))
 
 
 def render_workflow_guide(summary: str, rows: Sequence[tuple[str, str]]) -> None:

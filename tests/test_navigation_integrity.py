@@ -38,7 +38,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertTrue(section.icon)
                 self.assertTrue(section.title)
                 self.assertTrue(section.module)
-                self.assertEqual(section.label, f"{section.icon} {section.title}")
+                self.assertEqual(section.label, section.title)
 
     def test_registered_modules_exist(self):
         missing = [
@@ -63,15 +63,18 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_workflow_hubs_replace_scattered_operational_pages(self):
         visible_titles = {section.title for section in SECTION_DEFINITIONS}
-        self.assertIn("Query Workbench", visible_titles)
+        self.assertIn("Workload Operations", visible_titles)
         self.assertIn("Cost & Contract", visible_titles)
         self.assertIn("Security Posture", visible_titles)
         self.assertIn("Change & Drift", visible_titles)
         for retired_title in (
+            "Query Workbench",
             "Live Monitor",
             "Detailed Diagnosis",
             "Query Analysis",
             "Query Search & History",
+            "Task Management",
+            "Pipeline Health",
             "Cost Center",
             "Recommendations & Anomalies",
             "Security & Access",
@@ -82,9 +85,11 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertNotIn(retired_title, visible_titles)
 
     def test_workflow_hubs_expose_expected_subworkflows(self):
-        from sections import change_drift, cost_contract, query_workbench, security_posture
+        from sections import change_drift, cost_contract, security_posture, workload_operations
 
-        self.assertIn("Diagnosis", query_workbench.WORKFLOWS)
+        self.assertIn("Query diagnosis", workload_operations.WORKFLOWS)
+        self.assertIn("Task graphs", workload_operations.WORKFLOWS)
+        self.assertIn("Stored procedures", workload_operations.WORKFLOWS)
         self.assertIn("Recommendations and action queue", cost_contract.WORKFLOWS)
         self.assertIn("Access posture", security_posture.WORKFLOWS)
         self.assertIn("Schema and object drift", change_drift.WORKFLOWS)
@@ -92,13 +97,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Controlled DBA actions", change_drift.WORKFLOWS)
         self.assertEqual(change_drift.WORKFLOWS[-1], "Controlled DBA actions")
 
-    def test_every_navigation_label_has_an_icon_prefix(self):
+    def test_navigation_labels_are_plain_titles(self):
         for section in ALL_SECTIONS:
             with self.subTest(section=section):
-                icon, _, title = section.partition(" ")
-                self.assertTrue(icon)
-                self.assertTrue(title)
-                self.assertFalse(icon[0].isalnum())
+                self.assertEqual(section, section.strip())
+                self.assertTrue(all(ord(ch) < 128 for ch in section))
 
 
 if __name__ == "__main__":

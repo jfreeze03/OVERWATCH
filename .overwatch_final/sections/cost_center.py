@@ -4,6 +4,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+from utils.workflows import render_workflow_selector
 from utils import (
     get_session, format_credits, credits_to_dollars,
     download_csv, build_metered_credit_cte, build_cost_reconciliation_sql,
@@ -17,6 +18,31 @@ from utils import (
     run_query, sql_literal, format_snowflake_error,
     safe_float,
 )
+
+
+COST_CENTER_VIEWS = (
+    "Explain This Bill",
+    "User Leaderboard",
+    "Burn Rate",
+    "Reconciliation",
+    "Forecast",
+    "Budget vs Actual",
+    "Attribution",
+    "Chargeback",
+    "Contract Utilization",
+)
+
+COST_CENTER_VIEW_DETAILS = {
+    "Explain This Bill": "Narrative answer for why spend changed.",
+    "User Leaderboard": "Top users and warehouses by allocated credits.",
+    "Burn Rate": "Daily metered credit trend by warehouse.",
+    "Reconciliation": "Metered credits vs query allocation.",
+    "Forecast": "Near-term projected burn from recent usage.",
+    "Budget vs Actual": "Monthly consumption against budget.",
+    "Attribution": "Role, schema, client, and lineage cost views.",
+    "Chargeback": "ALFA/Trexis company allocation output.",
+    "Contract Utilization": "Committed-use utilization and risk.",
+}
 
 
 def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source: str) -> None:
@@ -509,16 +535,19 @@ def render():
         if "QUERY_TAG" in qh_cols else "'UNTAGGED'"
     )
 
-    tab_explain, tab_leader, tab_burn, tab_recon, tab_forecast, tab_budget, tab_attr, tab_chargeback, tab_contract = st.tabs([
-        "Explain This Bill", "User Leaderboard", "Burn Rate", "Reconciliation", "Forecast", "Budget vs Actual",
-        "Attribution", "Chargeback", "📋 Contract Utilization"
-    ])
+    cost_view = render_workflow_selector(
+        "Cost Center workflow",
+        "cost_center_view",
+        COST_CENTER_VIEWS,
+        COST_CENTER_VIEW_DETAILS,
+        columns=3,
+    )
     st.caption(
         "Progressive load is enabled: each cost view runs only when its Load or Calculate button is selected."
     )
 
     # ── USER LEADERBOARD ──────────────────────────────────────────────────────
-    with tab_explain:
+    if cost_view == "Explain This Bill":
         st.header("Explain This Bill")
         st.caption(
             "Start here when someone asks why Snowflake spend moved. "
@@ -955,8 +984,8 @@ def render():
             if st.button("Save Bill Exceptions to Action Queue", key="cc_explain_queue"):
                 _queue_bill_exceptions(session, wh_deltas, credit_price, bounds["label"])
 
-    with tab_leader:
-        st.header("💸 Credit Cost by User / Warehouse")
+    elif cost_view == "User Leaderboard":
+        st.header("Credit Cost by User / Warehouse")
         days = st.slider("Lookback (days)", 1, 90, 30, key="cc_lead_days")
         gf = get_global_filter_clause(
             "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
@@ -1033,8 +1062,8 @@ def render():
                 _queue_cost_outliers(session, df_l, credit_price, "Cost & Contract - User Leaderboard")
 
     # ── BURN RATE ─────────────────────────────────────────────────────────────
-    with tab_burn:
-        st.header("🔥 Credit Burn Rate")
+    elif cost_view == "Burn Rate":
+        st.header("Credit Burn Rate")
         br_days = st.slider("Lookback (days)", 1, 90, 30, key="br_days")
         if st.button("Load Burn Rate", key="br_load"):
             try:
@@ -1090,7 +1119,7 @@ def render():
             download_csv(df_b, "burn_rate.csv")
 
     # -- COST RECONCILIATION -------------------------------------------------
-    with tab_recon:
+    elif cost_view == "Reconciliation":
         st.header("Cost Reconciliation")
         st.caption(
             "Compares exact warehouse metering to query-level allocated credits. "
@@ -1128,8 +1157,8 @@ def render():
             download_csv(df_r, "cost_reconciliation.csv")
 
     # ── FORECAST ──────────────────────────────────────────────────────────────
-    with tab_forecast:
-        st.header("📈 Credit Forecast (30-day Linear Projection)")
+    elif cost_view == "Forecast":
+        st.header("Credit Forecast (30-day Linear Projection)")
         if st.button("Generate Forecast", key="fc_load"):
             try:
                 df_fc = run_query(f"""
@@ -1166,8 +1195,8 @@ def render():
             st.area_chart(df_f.set_index("DAY")["DAILY_CREDITS"])
 
     # ── BUDGET VS ACTUAL ──────────────────────────────────────────────────────
-    with tab_budget:
-        st.header("💰 Budget vs Actual")
+    elif cost_view == "Budget vs Actual":
+        st.header("Budget vs Actual")
         monthly_budget = st.number_input(
             "Monthly credit budget", min_value=0, value=10000, step=500, key="bva_budget"
         )
@@ -1190,14 +1219,14 @@ def render():
             df_bv["BUDGET"]    = monthly_budget
             df_bv["OVER_UNDER"] = df_bv["ACTUAL_CREDITS"] - monthly_budget
             df_bv["STATUS"]    = df_bv["OVER_UNDER"].apply(
-                lambda x: "🔴 Over" if x > 0 else "🟢 Under"
+                lambda x: "Over" if x > 0 else "Under"
             )
             st.dataframe(df_bv, use_container_width=True)
             st.bar_chart(df_bv.set_index("MONTH")[["ACTUAL_CREDITS","BUDGET"]])
             download_csv(df_bv, "budget_vs_actual.csv")
 
     # ── ATTRIBUTION ───────────────────────────────────────────────────────────
-    with tab_attr:
+    elif cost_view == "Attribution":
         st.header("Cost Attribution")
         attr_days = st.slider("Lookback (days)", 1, 90, 30, key="cc_attr_days")
         attr_mode = st.selectbox(
@@ -1263,8 +1292,8 @@ def render():
             download_csv(df_attr, "cost_attribution.csv")
 
     # ── CHARGEBACK — ALFA / Trexis split ─────────────────────────────────────
-    with tab_chargeback:
-        st.header("🏷️ ALFA / Trexis Chargeback")
+    elif cost_view == "Chargeback":
+        st.header("ALFA / Trexis Chargeback")
         st.caption(
             "Credits split by company using the canonical warehouse/DB/user classification. "
             "Uses `get_company_case_expr()` — stays in sync with config.py warehouse inventory."
@@ -1337,8 +1366,8 @@ def render():
                 _queue_cost_outliers(session, df_show, credit_price, "Cost & Contract - Chargeback")
 
     # ── CONTRACT / COMMITMENT UTILIZATION ─────────────────────────────────────
-    with tab_contract:
-        st.header("📋 Contract & Commitment Utilization")
+    elif cost_view == "Contract Utilization":
+        st.header("Contract & Commitment Utilization")
         st.caption(
             "Track consumption against your annual Snowflake committed-use contract. "
             "Projects burn rate to flag over- and under-utilization risk. "

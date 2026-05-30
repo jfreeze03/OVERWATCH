@@ -96,6 +96,90 @@ def _root_cause_action_for(cause: str) -> tuple[str, str, str]:
     )
 
 
+def _root_cause_workflow_for(cause: str) -> str:
+    cause = str(cause or "").upper()
+    if "FAILED" in cause:
+        return "History Search"
+    if "QUEUE" in cause:
+        return "Live Triage"
+    if "SPILL" in cause or "SCAN" in cause or "SLOW" in cause:
+        return "Diagnosis"
+    return "Patterns"
+
+
+def _root_cause_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
+    if exceptions is None or exceptions.empty:
+        return pd.DataFrame()
+    rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    view = exceptions.copy()
+    view["_RANK"] = view.get("SEVERITY", pd.Series(dtype=str)).map(rank).fillna(4)
+    view["ENTITY_TYPE"] = view.get("ROOT_CAUSE", pd.Series(dtype=str)).apply(lambda value: _root_cause_action_for(value)[0])
+    view["NEXT_ACTION"] = view.get("ROOT_CAUSE", pd.Series(dtype=str)).apply(lambda value: _root_cause_action_for(value)[1])
+    view["NEXT_WORKFLOW"] = view.get("ROOT_CAUSE", pd.Series(dtype=str)).apply(_root_cause_workflow_for)
+    return view.sort_values(["_RANK", "IMPACT_VALUE"], ascending=[True, False]).drop(columns=["_RANK"], errors="ignore")
+
+
+def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row: dict) -> None:
+    priority = _root_cause_priority_view(exceptions).head(3)
+    high_risk = 0
+    if exceptions is not None and not exceptions.empty and "SEVERITY" in exceptions.columns:
+        high_risk = int(exceptions["SEVERITY"].isin(["Critical", "High"]).sum())
+    affected_warehouses = safe_int(summary_row.get("AFFECTED_WAREHOUSES"))
+    affected_users = safe_int(summary_row.get("AFFECTED_USERS"))
+
+    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.4])
+    c1.metric("Workbench Readiness", f"{score}/100", _root_cause_rating(score))
+    c2.metric("High-Risk Queries", f"{high_risk:,}", delta_color="inverse")
+    c3.metric("Affected Scope", f"{affected_warehouses:,} WH / {affected_users:,} users")
+    with c4:
+        if priority.empty:
+            st.success("No urgent query root-cause exceptions crossed the selected thresholds.")
+        else:
+            first = priority.iloc[0]
+            st.warning(
+                f"First move: {first.get('ROOT_CAUSE', 'Query exception')} on "
+                f"{first.get('WAREHOUSE_NAME', 'unknown warehouse')} -> {first.get('NEXT_ACTION', 'Review query detail.')}"
+            )
+
+    st.markdown("**Query Watch Floor**")
+    if priority.empty:
+        st.caption("Use Live Triage for current activity, or History Search when a user brings a specific query ID.")
+        return
+
+    cols = st.columns(len(priority))
+    for idx, (_, item) in enumerate(priority.iterrows()):
+        workflow = str(item.get("NEXT_WORKFLOW") or "Diagnosis")
+        query_id = str(item.get("QUERY_ID") or "")
+        warehouse = str(item.get("WAREHOUSE_NAME") or "")
+        root_cause = str(item.get("ROOT_CAUSE") or "")
+        with cols[idx]:
+            st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('ROOT_CAUSE', '')}**")
+            st.caption(f"{item.get('QUERY_ID', '')} | {item.get('WAREHOUSE_NAME', 'unknown warehouse')}")
+            st.caption(f"Impact: {safe_float(item.get('IMPACT_VALUE')):,.2f} {item.get('IMPACT_UNIT', '')}")
+            st.write(str(item.get("NEXT_ACTION", "")))
+            if st.button(f"Open {workflow}", key=f"qw_watch_floor_{idx}_{workflow}", use_container_width=True):
+                if warehouse:
+                    st.session_state["global_warehouse"] = warehouse
+                    st.session_state["lm_wh"] = warehouse
+                    st.session_state["wh_filter"] = warehouse
+                if workflow == "History Search" and query_id:
+                    st.session_state["qs_text"] = query_id
+                    st.session_state["qs_status"] = "ALL"
+                    st.session_state["qs_autorun"] = True
+                elif workflow == "Diagnosis":
+                    mode = "Execution Time"
+                    if "QUEUE" in root_cause.upper():
+                        mode = "Queued Overload"
+                    elif "SPILL" in root_cause.upper():
+                        mode = "Remote Spill"
+                    elif "SCAN" in root_cause.upper():
+                        mode = "Bytes Scanned"
+                    st.session_state["dd_mode"] = mode
+                    st.session_state["dd_focus_query_id"] = query_id
+                st.session_state["query_workbench_workflow"] = workflow
+                st.rerun()
+
+
 def _build_root_cause_markdown(
     company: str,
     days: int,
@@ -393,12 +477,24 @@ def _render_root_cause_brief(session) -> None:
                         "summary": summary_sql,
                         "exceptions": exceptions_sql,
                     }
+                    st.session_state["qw_root_meta"] = {
+                        "company": company,
+                        "days": int(days),
+                        "limit": int(limit),
+                    }
                 except Exception as e:
                     st.warning(f"Root-cause brief unavailable: {format_snowflake_error(e)}")
 
         summary_df = st.session_state.get("qw_root_summary")
         exceptions = st.session_state.get("qw_root_exceptions")
-        if summary_df is None or summary_df.empty:
+        meta = st.session_state.get("qw_root_meta", {})
+        if (
+            summary_df is None
+            or summary_df.empty
+            or meta.get("company") != company
+            or meta.get("days") != int(days)
+            or meta.get("limit") != int(limit)
+        ):
             return
 
         summary_row = summary_df.iloc[0].to_dict()
@@ -426,6 +522,9 @@ def _render_root_cause_brief(session) -> None:
             st.info("Watch: a few exceptions exist, but the query estate is broadly controlled.")
         else:
             st.success("Stable: no dominant query root-cause pressure in the selected scope.")
+
+        _render_query_watch_floor(score, exceptions, summary_row)
+        st.divider()
 
         if exceptions is not None and not exceptions.empty:
             st.subheader("Top Query Exceptions")

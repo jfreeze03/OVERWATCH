@@ -158,6 +158,9 @@ def render():
     session = get_session()
     st.header("Detailed Diagnosis")
     st.caption("High-signal drilldowns for slow, queued, blocked, spilling, and scan-heavy queries.")
+    focus_query_id = str(st.session_state.get("dd_focus_query_id") or "")
+    if focus_query_id:
+        st.info(f"Routed from Query Watch Floor for query `{focus_query_id}`. Load diagnosis to compare it against the highest-signal rows in this mode.")
 
     c1, c2, c3 = st.columns(3)
     with c1:

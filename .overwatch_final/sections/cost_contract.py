@@ -129,13 +129,18 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
                     tier="standard",
                     section="Cost & Contract",
                 )
-                st.session_state["cost_contract_queue"] = load_action_queue(session)
                 st.session_state["cost_contract_cockpit_meta"] = {"company": company, "days": int(days)}
                 st.session_state["cost_contract_cockpit_error"] = ""
             except Exception as exc:
                 st.session_state["cost_contract_cockpit_error"] = format_snowflake_error(exc)
                 st.session_state["cost_contract_cockpit"] = pd.DataFrame()
                 st.session_state["cost_contract_queue"] = pd.DataFrame()
+            try:
+                st.session_state["cost_contract_queue"] = load_action_queue(session)
+                st.session_state["cost_contract_queue_error"] = ""
+            except Exception as exc:
+                st.session_state["cost_contract_queue"] = pd.DataFrame()
+                st.session_state["cost_contract_queue_error"] = format_snowflake_error(exc)
     with c3:
         st.info("Use this cockpit to decide whether to explain the bill, work the action queue, inspect Cortex spend, or log verified savings.")
 
@@ -150,6 +155,9 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
 
     row = data.iloc[0]
     queue = st.session_state.get("cost_contract_queue", pd.DataFrame())
+    queue_err = st.session_state.get("cost_contract_queue_error", "")
+    if queue_err:
+        st.caption(f"Action queue unavailable for this role/context: {queue_err}")
     open_actions = high_actions = 0
     total_savings = 0.0
     if isinstance(queue, pd.DataFrame) and not queue.empty and "STATUS" in queue.columns:

@@ -45,11 +45,11 @@ def render():
     )
 
     st.header("Query Search & History")
-    st.caption("Full-text search over company-scoped ACCOUNT_USAGE.QUERY_HISTORY.")
+    st.caption("Search company-scoped ACCOUNT_USAGE.QUERY_HISTORY by exact query ID or query-text keyword.")
 
     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
     with c1:
-        search_text = st.text_input("Search query text (keyword)", key="qs_text")
+        search_text = st.text_input("Search query text or query ID", key="qs_text")
     with c2:
         days_back = st.slider("Days back", 1, 30, 7, key="qs_days")
     with c3:
@@ -63,13 +63,21 @@ def render():
         key="qs_status",
     )
 
-    if st.button("Search", key="qs_run") and search_text:
-        if len(search_text.strip()) < 3:
+    autorun = bool(st.session_state.pop("qs_autorun", False))
+    if (st.button("Search", key="qs_run") or autorun) and search_text:
+        search_value = search_text.strip()
+        looks_like_query_id = len(search_value) >= 20 and "-" in search_value
+        if len(search_value) < 3:
             st.warning("Enter at least 3 characters to avoid an expensive full-account query-text scan.")
             return
 
         user_cl = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
         status_cl = f"AND execution_status = {sql_literal(status_filter)}" if status_filter != "ALL" else ""
+        search_cl = (
+            f"AND query_id = {sql_literal(search_value)}"
+            if looks_like_query_id
+            else f"AND query_text ILIKE '%' || {sql_literal(search_value)} || '%'"
+        )
         scoped_filters = get_global_filter_clause(
             date_col="start_time",
             wh_col="warehouse_name",
@@ -88,12 +96,12 @@ def render():
                        SUBSTR(query_text,1,500) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                 WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
-                  AND query_text ILIKE '%' || {sql_literal(search_text)} || '%'
+                  {search_cl}
                   {scoped_filters}
                   {user_cl} {status_cl}
                 ORDER BY start_time DESC
                 LIMIT {row_limit}
-            """, ttl_key=f"query_search_{company}_{search_text}_{user_filter}_{status_filter}_{days_back}_{row_limit}", tier="historical", section="Query Search & History")
+            """, ttl_key=f"query_search_{company}_{search_value}_{user_filter}_{status_filter}_{days_back}_{row_limit}", tier="historical", section="Query Search & History")
             st.session_state["qs_df_qs"] = df_qs
         except Exception as e:
             st.warning(f"Query search unavailable: {format_snowflake_error(e)}")

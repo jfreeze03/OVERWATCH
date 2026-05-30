@@ -85,6 +85,77 @@ def _warehouse_capacity_action_for(signal: str) -> tuple[str, str]:
     )
 
 
+def _warehouse_capacity_workflow_for(signal: str) -> str:
+    signal = str(signal or "").upper()
+    if "SPILL" in signal:
+        return "Spill & Memory"
+    if "CREDIT" in signal:
+        return "Efficiency"
+    if "QUEUE" in signal:
+        return "Workload Heatmap"
+    return "Overview & Scaling"
+
+
+def _warehouse_capacity_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
+    if exceptions is None or exceptions.empty:
+        return pd.DataFrame()
+    rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    view = exceptions.copy()
+    view["_RANK"] = view.get("SEVERITY", pd.Series(dtype=str)).map(rank).fillna(4)
+    view["NEXT_ACTION"] = view.get("SIGNAL", pd.Series(dtype=str)).apply(lambda value: _warehouse_capacity_action_for(value)[0])
+    view["NEXT_WORKFLOW"] = view.get("SIGNAL", pd.Series(dtype=str)).apply(_warehouse_capacity_workflow_for)
+    return view.sort_values(["_RANK", "CAPACITY_SCORE", "METERED_CREDITS"], ascending=[True, True, False]).drop(columns=["_RANK"], errors="ignore")
+
+
+def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_row: dict) -> None:
+    priority = _warehouse_capacity_priority_view(exceptions).head(3)
+    high_risk = 0
+    if exceptions is not None and not exceptions.empty and "SEVERITY" in exceptions.columns:
+        high_risk = int(exceptions["SEVERITY"].isin(["Critical", "High"]).sum())
+
+    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.4])
+    c1.metric("Warehouse Readiness", f"{score}/100", _warehouse_capacity_rating(score))
+    c2.metric("High-Risk Warehouses", f"{high_risk:,}", delta_color="inverse")
+    c3.metric("Remote Spill", f"{safe_float(summary_row.get('REMOTE_SPILL_GB')):,.1f} GB", delta_color="inverse")
+    with c4:
+        if priority.empty:
+            st.success("No urgent warehouse capacity exceptions crossed the selected thresholds.")
+        else:
+            first = priority.iloc[0]
+            st.warning(
+                f"First move: {first.get('SIGNAL', 'Warehouse pressure')} on "
+                f"{first.get('WAREHOUSE_NAME', 'unknown warehouse')} -> {first.get('NEXT_ACTION', 'Review warehouse pressure.')}"
+            )
+
+    st.markdown("**Warehouse Watch Floor**")
+    if priority.empty:
+        st.caption("Use Overview & Scaling for periodic checks, or Efficiency after a cost spike.")
+        return
+
+    cols = st.columns(len(priority))
+    for idx, (_, item) in enumerate(priority.iterrows()):
+        workflow = str(item.get("NEXT_WORKFLOW") or "Overview & Scaling")
+        with cols[idx]:
+            st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('SIGNAL', '')}**")
+            st.caption(f"{item.get('WAREHOUSE_NAME', 'unknown warehouse')} | Score {safe_float(item.get('CAPACITY_SCORE')):,.1f}")
+            st.caption(
+                f"Queued {safe_int(item.get('QUEUED_QUERIES')):,} | "
+                f"Spill {safe_int(item.get('SPILL_QUERIES')):,} | "
+                f"{format_credits(safe_float(item.get('METERED_CREDITS')))}"
+            )
+            st.write(str(item.get("NEXT_ACTION", "")))
+            if st.button(f"Open {workflow}", key=f"wh_watch_floor_{idx}_{workflow}", use_container_width=True):
+                warehouse = str(item.get("WAREHOUSE_NAME") or "")
+                if warehouse:
+                    st.session_state["global_warehouse"] = warehouse
+                    st.session_state["wh_filter"] = warehouse
+                    st.session_state["lm_wh"] = warehouse
+                    for stale_key in ["wh_df_wh", "wh_efficiency", "wh_df_sp", "wh_df_hm"]:
+                        st.session_state.pop(stale_key, None)
+                st.session_state["warehouse_health_view"] = workflow
+                st.rerun()
+
+
 def _build_warehouse_capacity_markdown(
     company: str,
     days: int,
@@ -384,12 +455,22 @@ def _render_capacity_brief(session, company: str) -> None:
                         "summary": summary_sql,
                         "exceptions": exceptions_sql,
                     }
+                    st.session_state["wh_capacity_meta"] = {
+                        "company": company,
+                        "days": int(days),
+                    }
                 except Exception as e:
                     st.warning(f"Capacity brief unavailable in this role/context: {format_snowflake_error(e)}")
 
         summary = st.session_state.get("wh_capacity_summary")
         exceptions = st.session_state.get("wh_capacity_exceptions")
-        if summary is None or summary.empty:
+        meta = st.session_state.get("wh_capacity_meta", {})
+        if (
+            summary is None
+            or summary.empty
+            or meta.get("company") != company
+            or meta.get("days") != int(days)
+        ):
             return
         row = summary.iloc[0].to_dict()
         score = _warehouse_capacity_score(
@@ -413,6 +494,9 @@ def _render_capacity_brief(session, company: str) -> None:
             st.info("Watch: warehouse pressure exists, but it is not currently dominant.")
         else:
             st.success("Healthy: no major warehouse pressure signal in this scope.")
+
+        _render_warehouse_watch_floor(score, exceptions, row)
+        st.divider()
 
         if exceptions is not None and not exceptions.empty:
             st.dataframe(exceptions, use_container_width=True, hide_index=True)

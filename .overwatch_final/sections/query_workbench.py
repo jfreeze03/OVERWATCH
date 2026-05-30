@@ -119,7 +119,7 @@ def _root_cause_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
     return view.sort_values(["_RANK", "IMPACT_VALUE"], ascending=[True, False]).drop(columns=["_RANK"], errors="ignore")
 
 
-def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row: dict) -> None:
+def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row: dict, days: int) -> None:
     priority = _root_cause_priority_view(exceptions).head(3)
     high_risk = 0
     if exceptions is not None and not exceptions.empty and "SEVERITY" in exceptions.columns:
@@ -165,6 +165,7 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
                 if workflow == "History Search" and query_id:
                     st.session_state["qs_text"] = query_id
                     st.session_state["qs_status"] = "ALL"
+                    st.session_state["qs_days"] = min(max(int(days), 1), 30)
                     st.session_state["qs_autorun"] = True
                 elif workflow == "Diagnosis":
                     mode = "Execution Time"
@@ -175,7 +176,11 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
                     elif "SCAN" in root_cause.upper():
                         mode = "Bytes Scanned"
                     st.session_state["dd_mode"] = mode
+                    st.session_state["dd_days"] = min(max(int(days), 1), 30)
                     st.session_state["dd_focus_query_id"] = query_id
+                    st.session_state["workload_query_diagnosis_mode"] = "Detailed diagnosis"
+                elif workflow == "Patterns":
+                    st.session_state["workload_query_diagnosis_mode"] = "Root cause patterns"
                 st.session_state["query_workbench_workflow"] = workflow
                 st.rerun()
 
@@ -523,7 +528,7 @@ def _render_root_cause_brief(session) -> None:
         else:
             st.success("Stable: no dominant query root-cause pressure in the selected scope.")
 
-        _render_query_watch_floor(score, exceptions, summary_row)
+        _render_query_watch_floor(score, exceptions, summary_row, days)
         st.divider()
 
         if exceptions is not None and not exceptions.empty:

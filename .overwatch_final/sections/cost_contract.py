@@ -149,7 +149,12 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
     err = st.session_state.get("cost_contract_cockpit_error", "")
     if err:
         st.warning(f"Cost cockpit unavailable: {err}")
-    if not isinstance(data, pd.DataFrame) or data.empty or meta.get("company") != company:
+    if (
+        not isinstance(data, pd.DataFrame)
+        or data.empty
+        or meta.get("company") != company
+        or meta.get("days") != int(days)
+    ):
         st.caption("Load the cost cockpit for a fast first move. Specialist pages still load their own detailed data.")
         return
 

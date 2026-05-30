@@ -145,6 +145,26 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
             st.write(str(item.get("NEXT_ACTION", "")))
             st.caption(str(item.get("PROOF_QUERY", "")))
             if st.button(f"Open {workflow}", key=f"security_watch_floor_{idx}_{workflow}", use_container_width=True):
+                entity = str(item.get("ENTITY") or "").strip()
+                if workflow == "Data sharing exposure":
+                    if entity and entity.lower() != "unknown":
+                        st.session_state["global_database"] = entity.split(".")[0]
+                    for stale_key in ("ds_df_dt", "ds_df_shared_db"):
+                        st.session_state.pop(stale_key, None)
+                else:
+                    if entity and entity.lower() != "unknown":
+                        st.session_state["global_user"] = entity
+                    for stale_key in (
+                        "sec_df_login_sum",
+                        "sec_df_failed_logins",
+                        "sec_df_login_trend",
+                        "sec_df_grants",
+                        "sec_df_dom",
+                        "sec_df_mfa",
+                        "sec_df_exfil",
+                        "sec_df_lin",
+                    ):
+                        st.session_state.pop(stale_key, None)
                 st.session_state["security_posture_workflow"] = workflow
                 st.rerun()
 

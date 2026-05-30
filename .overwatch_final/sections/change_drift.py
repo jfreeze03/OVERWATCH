@@ -174,6 +174,24 @@ def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> Non
             st.caption(f"Actor: {item.get('USER_NAME', 'unknown')} | Query: {item.get('QUERY_ID', '')}")
             st.write(str(item.get("NEXT_ACTION", "")))
             if st.button(f"Open {workflow}", key=f"change_watch_floor_{idx}_{workflow}", use_container_width=True):
+                entity = str(item.get("ENTITY") or "").strip()
+                actor = str(item.get("USER_NAME") or "").strip()
+                query_id = str(item.get("QUERY_ID") or "").strip()
+                if actor and actor.lower() != "unknown":
+                    st.session_state["global_user"] = actor
+                if entity and entity.lower() != "unknown" and not entity.startswith("01"):
+                    st.session_state["global_database"] = entity.split(".")[0]
+                if query_id:
+                    st.session_state["qs_text"] = query_id
+                    st.session_state["qs_status"] = "ALL"
+                    st.session_state["qs_autorun"] = True
+                for stale_key in (
+                    "ocm_df_object_changes",
+                    "ocm_df_access_changes",
+                    "ocm_df_policy_changes",
+                    "ocm_df_drift",
+                ):
+                    st.session_state.pop(stale_key, None)
                 st.session_state["change_drift_workflow"] = workflow
                 st.rerun()
 

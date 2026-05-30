@@ -68,6 +68,66 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON FUTURE TABLES IN SCHEMA DBA_MAINT_DB.OVE
 Some DBA actions, such as warehouse setting changes, query cancellation, task
 control, and account parameter changes, require elevated Snowflake privileges.
 
+## Production Mart Architecture
+
+The recommended production architecture is to keep the Streamlit app thin and
+move expensive account-wide scans into a small Snowflake mart. The setup script
+is `snowflake/OVERWATCH_MART_SETUP.sql`.
+
+The detailed table inventory, refresh flow, cost controls, and migration
+strategy are documented in `SNOWFLAKE_ARCHITECTURE.md`.
+
+Run the script in Snowflake with a platform-admin role that can create the
+database/schema, warehouse, procedures, and tasks:
+
+```sql
+USE ROLE ACCOUNTADMIN;
+-- Run the contents of snowflake/OVERWATCH_MART_SETUP.sql in Snowsight.
+```
+
+The script creates:
+
+- `DBA_MAINT_DB.OVERWATCH` for app-owned state and marts
+- `OVERWATCH_WH`, an X-Small warehouse with 60-second auto-suspend
+- configuration tables for company scope, settings, alerts, action queue,
+  usage logging, admin action audit, and ROI tracking
+- compact fact/dimension tables for warehouse credits, query history, recent
+  query details, task runs, procedure runs, logins, grants, object changes,
+  storage, Cortex usage, and monitoring cost
+- `MART_DBA_CONTROL_ROOM`, a compact command-center table for Account Health
+  and exceptions-only views
+- hourly and daily tasks that refresh only recent windows, then prune old rows
+
+Refresh cadence:
+
+- `OVERWATCH_LOAD_HOURLY`: hourly at minute 25, after most `ACCOUNT_USAGE`
+  latency has settled
+- `OVERWATCH_LOAD_CORTEX`: chained after the hourly load and skipped gracefully
+  when Cortex Code usage views are unavailable
+- `OVERWATCH_REFRESH_CONTROL_ROOM`: chained after Cortex to update DBA summary
+  exceptions
+- `OVERWATCH_LOAD_DAILY`: daily at 6:15 AM Central for login, grants, storage,
+  object-change, and monitoring-cost snapshots
+
+Cost model:
+
+- Hourly/daily tasks use a dedicated X-Small warehouse with aggressive
+  auto-suspend.
+- The app should prefer mart reads for KPIs, charts, and summary pages, then use
+  direct Snowflake history only for live drilldowns or admin-control screens.
+- `FACT_MONITORING_COST_DAILY` tracks OVERWATCH task/app/tagged query spend so
+  the monitor can report its own operating cost.
+
+After running setup, resume the root task:
+
+```sql
+ALTER TASK DBA_MAINT_DB.OVERWATCH.OVERWATCH_LOAD_HOURLY RESUME;
+ALTER TASK DBA_MAINT_DB.OVERWATCH.OVERWATCH_LOAD_DAILY RESUME;
+```
+
+Child tasks are created and resumed by the script, but validating task state in
+Snowsight after deployment is still recommended.
+
 ## Application Structure
 
 ```text

@@ -45,8 +45,20 @@ Local run:
 .\run_overwatch_local.ps1
 ```
 
+Production Snowflake mart setup:
+
+- Run `snowflake/OVERWATCH_MART_SETUP.sql` in Snowflake to create the low-cost
+  OVERWATCH mart schema, persistence tables, refresh procedures, and scheduled
+  tasks.
+- The mart uses an X-Small `OVERWATCH_WH` with 60-second auto-suspend and
+  incremental hourly/daily loads so the Streamlit app can read compact tables
+  instead of repeatedly scanning `SNOWFLAKE.ACCOUNT_USAGE`.
+
 For full setup, feature notes, Snowflake grants, and operating guidance, see
 [OVERWATCH_DOCUMENTATION.md](OVERWATCH_DOCUMENTATION.md).
+
+For the low-cost Snowflake mart design, table inventory, and task load flow, see
+[SNOWFLAKE_ARCHITECTURE.md](SNOWFLAKE_ARCHITECTURE.md).
 
 For the workflow roadmap and 95+ red-team target, see
 [DBA_CONTROL_ROOM_ROADMAP.md](DBA_CONTROL_ROOM_ROADMAP.md).

@@ -90,6 +90,65 @@ def _security_action_for(finding_type: str) -> tuple[str, str, str]:
     )
 
 
+def _security_workflow_for(finding_type: str) -> str:
+    value = str(finding_type or "").lower()
+    if "shared" in value or "exposure" in value:
+        return "Data sharing exposure"
+    return "Access posture"
+
+
+def _security_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
+    if exceptions is None or exceptions.empty:
+        return pd.DataFrame()
+    rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    view = exceptions.copy()
+    view["_RANK"] = view.get("SEVERITY", pd.Series(dtype=str)).map(rank).fillna(4)
+    view["NEXT_WORKFLOW"] = view.get("FINDING_TYPE", pd.Series(dtype=str)).apply(_security_workflow_for)
+    view["ENTITY_TYPE"] = view.get("FINDING_TYPE", pd.Series(dtype=str)).apply(lambda value: _security_action_for(value)[0])
+    view["NEXT_ACTION"] = view.get("FINDING_TYPE", pd.Series(dtype=str)).apply(lambda value: _security_action_for(value)[1])
+    return view.sort_values(["_RANK", "EVENT_COUNT", "LAST_SEEN"], ascending=[True, False, False]).drop(columns=["_RANK"], errors="ignore")
+
+
+def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> None:
+    priority = _security_priority_view(exceptions).head(3)
+    failed_logins = safe_int(row.get("FAILED_LOGINS", 0))
+    users_without_mfa = safe_int(row.get("USERS_WITHOUT_MFA", 0))
+    shared_databases = safe_int(row.get("SHARED_DATABASES", 0))
+    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.2])
+    c1.metric("Posture Readiness", f"{score}/100", _security_rating(score))
+    c2.metric("Priority Findings", f"{len(priority):,}", delta_color="inverse")
+    c3.metric("Identity Signals", f"{failed_logins + users_without_mfa:,}", delta_color="inverse")
+    with c4:
+        if priority.empty:
+            st.success("No urgent security findings crossed the brief thresholds.")
+        else:
+            first = priority.iloc[0]
+            st.warning(
+                f"First move: {first.get('FINDING_TYPE', 'Security finding')} for "
+                f"{first.get('ENTITY', 'unknown')} -> {first.get('NEXT_ACTION', 'Review access evidence.')}"
+            )
+
+    st.markdown("**Security Watch Floor**")
+    if priority.empty:
+        if shared_databases:
+            st.caption("No urgent findings, but shared/imported database exposure exists. Validate owners and consumers periodically.")
+        else:
+            st.caption("No immediate security cards. Use Access posture for audit evidence or Data sharing exposure for external-consumer review.")
+        return
+
+    cols = st.columns(len(priority))
+    for idx, (_, item) in enumerate(priority.iterrows()):
+        workflow = str(item.get("NEXT_WORKFLOW") or "Access posture")
+        with cols[idx]:
+            st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('FINDING_TYPE', '')}**")
+            st.caption(f"{item.get('ENTITY_TYPE', 'Access')}: {item.get('ENTITY', 'unknown')}")
+            st.write(str(item.get("NEXT_ACTION", "")))
+            st.caption(str(item.get("PROOF_QUERY", "")))
+            if st.button(f"Open {workflow}", key=f"security_watch_floor_{idx}_{workflow}", use_container_width=True):
+                st.session_state["security_posture_workflow"] = workflow
+                st.rerun()
+
+
 def _build_security_brief_markdown(
     *,
     company: str,
@@ -414,6 +473,8 @@ def render() -> None:
             st.info("Security posture is usable, but there are findings worth reviewing.")
         else:
             st.success("Security posture is strong for the selected window.")
+        _render_security_watch_floor(score, exceptions, row)
+        st.divider()
         if exceptions is not None and not exceptions.empty:
             st.subheader("Security Exceptions")
             st.dataframe(exceptions, use_container_width=True, hide_index=True)

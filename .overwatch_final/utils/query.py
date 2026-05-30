@@ -88,6 +88,7 @@ def _infer_telemetry_section(section: str = "", ttl_key: str = "") -> str:
         ("lm_", "Query Workbench"),
         ("qa_", "Query Workbench"),
         ("qs_", "Query Workbench"),
+        ("dba_control_room_", "DBA Control Room"),
         ("dba_", "Change & Drift"),
         ("tm_", "Task Management"),
         ("sec_", "Security Posture"),

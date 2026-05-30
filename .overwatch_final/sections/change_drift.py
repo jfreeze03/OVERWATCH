@@ -106,6 +106,78 @@ def _change_action_for(finding_type: str) -> tuple[str, str, str]:
     )
 
 
+def _change_workflow_for(row: pd.Series) -> str:
+    finding_type = str(row.get("FINDING_TYPE") or "").lower()
+    query_text = str(row.get("QUERY_TEXT") or "").lower()
+    if "drift" in finding_type:
+        return "Schema and object drift"
+    if "procedure" in query_text:
+        return "Stored procedure lineage"
+    if "dynamic table" in query_text or "replication" in query_text or "pipe" in query_text:
+        return "Data movement and replication"
+    if "grant" in finding_type or "role" in finding_type or "owner" in finding_type or "policy" in finding_type or "tag" in finding_type:
+        return "Object and access changes"
+    return "Object and access changes"
+
+
+def _change_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
+    if exceptions is None or exceptions.empty:
+        return pd.DataFrame()
+    rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    view = exceptions.copy()
+    view["_RANK"] = view.get("SEVERITY", pd.Series(dtype=str)).map(rank).fillna(4)
+    view["ENTITY_TYPE"] = view.get("FINDING_TYPE", pd.Series(dtype=str)).apply(lambda value: _change_action_for(value)[0])
+    view["NEXT_ACTION"] = view.get("FINDING_TYPE", pd.Series(dtype=str)).apply(lambda value: _change_action_for(value)[1])
+    view["NEXT_WORKFLOW"] = view.apply(_change_workflow_for, axis=1)
+    sort_cols = ["_RANK"]
+    ascending = [True]
+    if "LAST_SEEN" in view.columns:
+        sort_cols.append("LAST_SEEN")
+        ascending.append(False)
+    return view.sort_values(sort_cols, ascending=ascending).drop(columns=["_RANK"], errors="ignore")
+
+
+def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> None:
+    priority = _change_priority_view(exceptions).head(3)
+    high_risk = 0
+    if exceptions is not None and not exceptions.empty and "SEVERITY" in exceptions.columns:
+        high_risk = int(exceptions["SEVERITY"].isin(["Critical", "High"]).sum())
+    actors = safe_int(row.get("ACTORS", 0))
+    affected_dbs = safe_int(row.get("AFFECTED_DATABASES", 0))
+
+    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.2])
+    c1.metric("Change Readiness", f"{score}/100", _change_drift_rating(score))
+    c2.metric("High-Risk Changes", f"{high_risk:,}", delta_color="inverse")
+    c3.metric("Manual Drift", f"{safe_int(row.get('MANUAL_DRIFT', 0)):,}", delta_color="inverse")
+    with c4:
+        if priority.empty:
+            st.success("No urgent change/drift exceptions crossed the brief thresholds.")
+        else:
+            first = priority.iloc[0]
+            st.warning(
+                f"First move: {first.get('FINDING_TYPE', 'Change')} by "
+                f"{first.get('USER_NAME', 'unknown')} -> {first.get('NEXT_ACTION', 'Validate the change.')}"
+            )
+
+    st.markdown("**Change Watch Floor**")
+    st.caption(f"Actors: {actors:,} | Affected databases: {affected_dbs:,}")
+    if priority.empty:
+        st.caption("No immediate change cards. Use Object and access changes for investigation or Schema and object drift for periodic control review.")
+        return
+
+    cols = st.columns(len(priority))
+    for idx, (_, item) in enumerate(priority.iterrows()):
+        workflow = str(item.get("NEXT_WORKFLOW") or "Object and access changes")
+        with cols[idx]:
+            st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('FINDING_TYPE', '')}**")
+            st.caption(f"{item.get('ENTITY_TYPE', 'Object')}: {item.get('ENTITY', 'unknown')}")
+            st.caption(f"Actor: {item.get('USER_NAME', 'unknown')} | Query: {item.get('QUERY_ID', '')}")
+            st.write(str(item.get("NEXT_ACTION", "")))
+            if st.button(f"Open {workflow}", key=f"change_watch_floor_{idx}_{workflow}", use_container_width=True):
+                st.session_state["change_drift_workflow"] = workflow
+                st.rerun()
+
+
 def _build_change_drift_markdown(
     *,
     company: str,
@@ -393,6 +465,10 @@ def render() -> None:
             st.info("Change control is usable, but there are changes worth validating.")
         else:
             st.success("Change control looks clean for the selected window.")
+
+        _render_change_watch_floor(score, exceptions, row)
+        st.divider()
+
         if exceptions is not None and not exceptions.empty:
             st.subheader("Change & Drift Exceptions")
             st.dataframe(exceptions, use_container_width=True, hide_index=True)

@@ -268,17 +268,42 @@ def _admin_sql_for_graph(graph_tasks: pd.DataFrame, root_name: str, action: str)
     raise ValueError(f"Unsupported graph action: {action}")
 
 
-def _run_admin_sql_list(session, sql_statements: list[str], action_type: str, object_name: str) -> tuple[int, list[str]]:
+def _run_admin_sql_list(
+    session,
+    sql_statements: list[str],
+    action_type: str,
+    object_name: str,
+    confirmation_text: str = "",
+    control_context: str = "",
+) -> tuple[int, list[str]]:
     errors: list[str] = []
     completed = 0
     for sql_text in sql_statements:
         try:
             session.sql(sql_text).collect()
-            _log_admin_action(session, action_type, object_name, sql_text, "SUCCESS", "Statement completed.")
+            _log_admin_action(
+                session,
+                action_type,
+                object_name,
+                sql_text,
+                "SUCCESS",
+                "Statement completed.",
+                confirmation_text=confirmation_text,
+                control_context=control_context,
+            )
             completed += 1
         except Exception as e:
             message = format_snowflake_error(e)
-            _log_admin_action(session, action_type, object_name, sql_text, "FAILED", message)
+            _log_admin_action(
+                session,
+                action_type,
+                object_name,
+                sql_text,
+                "FAILED",
+                message,
+                confirmation_text=confirmation_text,
+                control_context=control_context,
+            )
             errors.append(f"{sql_text}: {message}")
     return completed, errors
 
@@ -307,6 +332,28 @@ def _task_ops_rating(score: int) -> str:
     if score >= 65:
         return "Degraded"
     return "Incident Risk"
+
+
+def _task_ops_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
+    if exceptions is None or exceptions.empty:
+        return pd.DataFrame()
+    rank = {"High": 0, "Medium": 1, "Low": 2}
+    view = exceptions.copy()
+    view["_RANK"] = view.get("SEVERITY", pd.Series(dtype=str)).map(rank).fillna(3)
+    view["NEXT_WORKFLOW"] = view.get("SIGNAL", pd.Series(dtype=str)).apply(_task_ops_workflow_for)
+    view["NEXT_ACTION"] = view.get("SIGNAL", pd.Series(dtype=str)).apply(lambda signal: _task_action_for(signal)[0])
+    return view.sort_values(["_RANK", "SIGNAL", "TASK_NAME"]).drop(columns=["_RANK"], errors="ignore")
+
+
+def _task_ops_workflow_for(signal: str) -> str:
+    signal = str(signal or "").upper()
+    if "FAILED" in signal:
+        return "Failure Console"
+    if "LONG" in signal or "SLA" in signal or "COST" in signal or "REGRESSION" in signal:
+        return "SLA & Cost Drift"
+    if "SUSPENDED" in signal:
+        return "Control Center"
+    return "Task History"
 
 
 def _task_action_for(signal: str) -> tuple[str, str]:
@@ -688,12 +735,42 @@ CREATE TABLE IF NOT EXISTS {ADMIN_AUDIT_FQN} (
     APP_USER        VARCHAR(200),
     COMPANY         VARCHAR(100),
     ENVIRONMENT     VARCHAR(100),
+    SNOWFLAKE_USER  VARCHAR(200),
+    SNOWFLAKE_ROLE  VARCHAR(200),
+    SNOWFLAKE_WAREHOUSE VARCHAR(200),
     ACTION_TYPE     VARCHAR(100),
     OBJECT_NAME     VARCHAR(1000),
     SQL_TEXT        VARCHAR(8000),
+    SQL_HASH        VARCHAR(80),
+    CONFIRMATION_TEXT VARCHAR(1000),
+    CONTROL_CONTEXT VARCHAR(4000),
     RESULT_STATUS   VARCHAR(40),
     RESULT_MESSAGE  VARCHAR(4000)
-);"""
+);
+
+ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS SNOWFLAKE_USER VARCHAR(200);
+ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS SNOWFLAKE_ROLE VARCHAR(200);
+ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS SNOWFLAKE_WAREHOUSE VARCHAR(200);
+ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS SQL_HASH VARCHAR(80);
+ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS CONFIRMATION_TEXT VARCHAR(1000);
+ALTER TABLE {ADMIN_AUDIT_FQN} ADD COLUMN IF NOT EXISTS CONTROL_CONTEXT VARCHAR(4000);"""
+
+
+def _current_execution_context(session) -> dict:
+    try:
+        row = session.sql("""
+            SELECT
+                CURRENT_USER() AS current_user,
+                CURRENT_ROLE() AS current_role,
+                CURRENT_WAREHOUSE() AS current_warehouse
+        """).collect()[0]
+        return {
+            "snowflake_user": str(row["CURRENT_USER"] or ""),
+            "snowflake_role": str(row["CURRENT_ROLE"] or ""),
+            "snowflake_warehouse": str(row["CURRENT_WAREHOUSE"] or ""),
+        }
+    except Exception:
+        return {"snowflake_user": "", "snowflake_role": "", "snowflake_warehouse": ""}
 
 
 def build_admin_preflight_sql(row: pd.Series) -> str:
@@ -726,16 +803,22 @@ def _log_admin_action(
     sql_text: str,
     status: str,
     message: str,
+    confirmation_text: str = "",
+    control_context: str = "",
 ) -> None:
     try:
         company = get_active_company()
         env = str(st.session_state.get("active_environment", "") or "")
         app_user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
+        exec_context = _current_execution_context(session)
+        sql_hash = make_action_id("SQL", sql_text, "")[:64]
         action_id = make_action_id(action_type, object_name, sql_text + status + message)
         session.sql(f"""
             INSERT INTO {ADMIN_AUDIT_FQN} (
                 ACTION_ID, APP_USER, COMPANY, ENVIRONMENT, ACTION_TYPE,
-                OBJECT_NAME, SQL_TEXT, RESULT_STATUS, RESULT_MESSAGE
+                SNOWFLAKE_USER, SNOWFLAKE_ROLE, SNOWFLAKE_WAREHOUSE,
+                OBJECT_NAME, SQL_TEXT, SQL_HASH, CONFIRMATION_TEXT,
+                CONTROL_CONTEXT, RESULT_STATUS, RESULT_MESSAGE
             )
             VALUES (
                 {sql_literal(action_id, 64)},
@@ -743,8 +826,14 @@ def _log_admin_action(
                 {sql_literal(company, 100)},
                 {sql_literal(env, 100)},
                 {sql_literal(action_type, 100)},
+                {sql_literal(exec_context.get("snowflake_user", ""), 200)},
+                {sql_literal(exec_context.get("snowflake_role", ""), 200)},
+                {sql_literal(exec_context.get("snowflake_warehouse", ""), 200)},
                 {sql_literal(object_name, 1000)},
                 {sql_literal(sql_text, 8000)},
+                {sql_literal(sql_hash, 80)},
+                {sql_literal(confirmation_text, 1000)},
+                {sql_literal(control_context, 4000)},
                 {sql_literal(status, 40)},
                 {sql_literal(message, 4000)}
             )
@@ -973,7 +1062,12 @@ def _load_task_ops_scope(
 
 def _render_task_ops_brief(session) -> None:
     company = get_active_company()
-    with st.expander("Task Graph Operations Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
+    st.subheader("Task Graph Operations Cockpit")
+    st.caption(
+        "First-stop DBA view for Snowflake task graphs: health, failures, suspended tasks, SLA drift, "
+        "procedure links, impact hints, and the next operational workflow."
+    )
+    with st.container():
         days = st.slider("Task graph lookback (days)", 1, 30, 7, key="task_ops_days")
         if st.button("Load Task Graph Operations", key="task_ops_load"):
             summary, exceptions, latest, inventory, details_loaded = _load_task_ops_scope(
@@ -1015,6 +1109,26 @@ def _render_task_ops_brief(session) -> None:
             st.info("Watch: task graph operations are mostly stable with exceptions to review.")
         else:
             st.success("Operational: no dominant task graph risk signal in this scope.")
+
+        priority = _task_ops_priority_view(exceptions).head(3)
+        st.markdown("**Next DBA Moves**")
+        if priority.empty:
+            st.caption("No immediate task graph exceptions. Use Failure Console after an alert, or SLA & Cost Drift after a release.")
+        else:
+            move_cols = st.columns(len(priority))
+            for idx, (_, item) in enumerate(priority.iterrows()):
+                workflow = str(item.get("NEXT_WORKFLOW") or "Task History")
+                task_name = str(item.get("TASK_NAME") or item.get("ROOT_TASK_NAME") or "Task graph")
+                with move_cols[idx]:
+                    st.markdown(f"**{item.get('SEVERITY', 'Signal')}: {task_name}**")
+                    st.caption(str(item.get("SIGNAL", "")))
+                    detail = str(item.get("DETAIL", "") or "")
+                    if detail:
+                        st.caption(detail[:220])
+                    st.write(str(item.get("NEXT_ACTION", "")))
+                    if st.button(f"Open {workflow}", key=f"task_ops_next_{idx}_{workflow}", use_container_width=True):
+                        st.session_state["task_management_view"] = workflow
+                        st.rerun()
 
         if not exceptions.empty:
             st.subheader("Task Graph Exceptions")
@@ -1093,6 +1207,18 @@ def _render_sla_cost_drift_console(session) -> None:
         format="%.4f",
         key="task_sla_min_credits",
     )
+    threshold_context = {
+        "Lookback Days": int(days),
+        "Duration Drift Threshold %": float(duration_pct),
+        "Cost Drift Threshold %": float(cost_pct),
+        "Minimum Runtime Sec": float(min_duration_sec),
+        "Minimum Estimated Credits": float(min_credits),
+    }
+    st.caption(
+        "Thresholds: "
+        f"runtime >= {safe_float(min_duration_sec):,.0f}s and +{safe_float(duration_pct):,.0f}% over baseline; "
+        f"estimated credits >= {safe_float(min_credits):,.4f} and +{safe_float(cost_pct):,.0f}% over baseline."
+    )
 
     if st.button("Load SLA & Cost Drift", key="task_sla_load"):
         summary, exceptions, latest, inventory, details_loaded = _load_task_ops_scope(
@@ -1102,6 +1228,7 @@ def _render_sla_cost_drift_console(session) -> None:
         st.session_state["task_sla_latest"] = latest
         st.session_state["task_sla_inventory"] = inventory
         st.session_state["task_sla_details_loaded"] = details_loaded
+        st.session_state["task_sla_threshold_context"] = threshold_context
 
     latest = st.session_state.get("task_sla_latest", pd.DataFrame())
     if latest is None or latest.empty:
@@ -1140,6 +1267,8 @@ def _render_sla_cost_drift_console(session) -> None:
         else "Within threshold",
         axis=1,
     )
+    for label, value in threshold_context.items():
+        view[label.upper().replace(" ", "_").replace("%", "PCT")] = value
     breaches = (
         view[view["SLA_BREACH"] | view["COST_DRIFT"]]
         .sort_values(["SLA_BREACH", "COST_DRIFT", "DURATION_CHANGE_PCT", "COST_CHANGE_PCT"], ascending=[False, False, False, False])
@@ -1198,7 +1327,9 @@ def _render_sla_cost_drift_console(session) -> None:
                     f"Latest runtime {safe_float(row.get('DURATION_SEC')):,.0f}s vs avg {safe_float(row.get('AVG_DURATION_SEC')):,.0f}s "
                     f"({safe_float(row.get('DURATION_CHANGE_PCT')):,.1f}%). "
                     f"Latest credits {safe_float(row.get('EST_TOTAL_CREDITS')):,.4f} vs avg {safe_float(row.get('AVG_EST_CREDITS')):,.4f} "
-                    f"({safe_float(row.get('COST_CHANGE_PCT')):,.1f}%)."
+                    f"({safe_float(row.get('COST_CHANGE_PCT')):,.1f}%). "
+                    f"Thresholds: runtime +{safe_float(duration_pct):,.0f}% over baseline and >= {safe_float(min_duration_sec):,.0f}s; "
+                    f"cost +{safe_float(cost_pct):,.0f}% over baseline and >= {safe_float(min_credits):,.4f} credits."
                 ),
                 "IMPACT_OBJECTS": row.get("IMPACT_OBJECTS", ""),
                 "TASK_FQN": row.get("TASK_FQN", ""),
@@ -1472,6 +1603,13 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
             st.info("Read-only mode is active. Enable Admin actions in Settings before running operational controls.")
         with st.expander("Admin Action Audit DDL"):
             st.code(build_admin_audit_ddl(), language="sql")
+        exec_context = _current_execution_context(session)
+        st.caption(
+            "Execution context: "
+            f"user `{exec_context.get('snowflake_user') or 'unknown'}` | "
+            f"role `{exec_context.get('snowflake_role') or 'unknown'}` | "
+            f"warehouse `{exec_context.get('snowflake_warehouse') or 'none'}`"
+        )
 
         if st.button("Refresh Task Inventory", key="tm_control_refresh"):
             try:
@@ -1536,7 +1674,17 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                     key="tm_graph_run",
                     disabled=admin_button_disabled(not confirmed or not sql_list),
                 ):
-                    completed, errors = _run_admin_sql_list(session, sql_list, f"TASK GRAPH {action}", root_name)
+                    completed, errors = _run_admin_sql_list(
+                        session,
+                        sql_list,
+                        f"TASK GRAPH {action}",
+                        root_name,
+                        confirmation_text=phrase,
+                        control_context=(
+                            f"mode=Graph/root task; tasks_affected={len(graph_tasks)}; "
+                            f"prod_guard={_is_prod_task(root_row)}"
+                        ),
+                    )
                     if errors:
                         st.warning(f"Completed {completed} statement(s) with {len(errors)} error(s).")
                         for err in errors[:10]:
@@ -1571,7 +1719,14 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                     key="tm_task_run",
                     disabled=admin_button_disabled(not confirmed),
                 ):
-                    completed, errors = _run_admin_sql_list(session, sql_list, f"TASK {action}", task_name)
+                    completed, errors = _run_admin_sql_list(
+                        session,
+                        sql_list,
+                        f"TASK {action}",
+                        task_name,
+                        confirmation_text=phrase,
+                        control_context=f"mode=Individual task; prod_guard={_is_prod_task(row)}",
+                    )
                     if errors:
                         st.warning(f"Completed {completed} statement(s) with {len(errors)} error(s).")
                         for err in errors[:10]:
@@ -1614,7 +1769,14 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                         st.code(sql_text + ";", language="sql")
                         confirmed = _typed_confirmation("Type CANCEL GRAPH to enable cancellation", "CANCEL GRAPH", "tm_cancel_graph_confirm")
                         if st.button("Cancel graph run", type="primary", key="tm_cancel_graph_btn", disabled=admin_button_disabled(not confirmed)):
-                            completed, errors = _run_admin_sql_list(session, [sql_text], "CANCEL TASK GRAPH", selected_graph)
+                            completed, errors = _run_admin_sql_list(
+                                session,
+                                [sql_text],
+                                "CANCEL TASK GRAPH",
+                                selected_graph,
+                                confirmation_text="CANCEL GRAPH",
+                                control_context="mode=Cancel running graph/query",
+                            )
                             st.success("Cancel request sent.") if not errors else st.error(errors[0])
                     elif cancel_type == "Query ID" and "QUERY_ID" in cancel_runs.columns:
                         query_ids = cancel_runs["QUERY_ID"].dropna().astype(str).unique().tolist()
@@ -1623,7 +1785,14 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                         st.code(sql_text + ";", language="sql")
                         confirmed = _typed_confirmation("Type CANCEL QUERY to enable cancellation", "CANCEL QUERY", "tm_cancel_query_confirm")
                         if st.button("Cancel query", type="primary", key="tm_cancel_query_btn", disabled=admin_button_disabled(not confirmed)):
-                            completed, errors = _run_admin_sql_list(session, [sql_text], "CANCEL QUERY", selected_query)
+                            completed, errors = _run_admin_sql_list(
+                                session,
+                                [sql_text],
+                                "CANCEL QUERY",
+                                selected_query,
+                                confirmation_text="CANCEL QUERY",
+                                control_context="mode=Cancel running graph/query",
+                            )
                             st.success("Cancel request sent.") if not errors else st.error(errors[0])
                     else:
                         st.info("The selected cancellation target is not available from this role/account metadata.")
@@ -1636,6 +1805,13 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
             st.info("Read-only mode is active. Enable Admin actions in Settings before executing tasks.")
         with st.expander("Admin Action Audit DDL"):
             st.code(build_admin_audit_ddl(), language="sql")
+        exec_context = _current_execution_context(session)
+        st.caption(
+            "Execution context: "
+            f"user `{exec_context.get('snowflake_user') or 'unknown'}` | "
+            f"role `{exec_context.get('snowflake_role') or 'unknown'}` | "
+            f"warehouse `{exec_context.get('snowflake_warehouse') or 'none'}`"
+        )
 
         tl = st.session_state.get("tg_list", pd.DataFrame())
         if tl.empty:
@@ -1669,9 +1845,27 @@ CREATE TABLE IF NOT EXISTS {ETL_AUDIT_FQN} (
                         sql_text = f"EXECUTE TASK {full}"
                         try:
                             session.sql(sql_text).collect()
-                            _log_admin_action(session, "EXECUTE TASK", full, sql_text, "SUCCESS", "Task triggered.")
+                            _log_admin_action(
+                                session,
+                                "EXECUTE TASK",
+                                full,
+                                sql_text,
+                                "SUCCESS",
+                                "Task triggered.",
+                                confirmation_text="EXECUTE",
+                                control_context="mode=Execute Task On-Demand",
+                            )
                             st.success(f"Task `{full}` triggered.")
                         except Exception as e:
                             message = format_snowflake_error(e)
-                            _log_admin_action(session, "EXECUTE TASK", full, sql_text, "FAILED", message)
+                            _log_admin_action(
+                                session,
+                                "EXECUTE TASK",
+                                full,
+                                sql_text,
+                                "FAILED",
+                                message,
+                                confirmation_text="EXECUTE",
+                                control_context="mode=Execute Task On-Demand",
+                            )
                             st.error(f"Execution failed: {message}")

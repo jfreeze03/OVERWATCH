@@ -25,6 +25,7 @@ from utils import (
     filter_existing_columns,
     get_db_filter_clause,
     get_global_filter_clause,
+    get_query_budget_summary,
     get_session,
     get_user_filter_clause,
     get_wh_filter_clause,
@@ -42,6 +43,11 @@ from sections.task_management import (
     _normalize_query_details,
     _procedure_from_definition,
     _query_detail_sql,
+)
+from sections.cortex_monitor import (
+    _build_cortex_control_sql,
+    _cortex_cost_rating,
+    _cortex_cost_score,
 )
 from sections.stored_proc_tracker import (
     _build_procedure_sla_frames,
@@ -81,6 +87,13 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
 
 def _empty_df() -> pd.DataFrame:
     return pd.DataFrame()
+
+
+def _scalar_frame_value(data: dict, key: str, column: str, default=0):
+    df = data.get(key, _empty_df())
+    if df is None or df.empty or column not in df.columns:
+        return default
+    return df.iloc[0].get(column, default)
 
 
 def _release_window_predicate(column: str, start: date, end: date) -> str:
@@ -166,7 +179,13 @@ def _pct_change(before: float, after: float) -> float:
     return round((after - before) / before * 100, 1)
 
 
-def _release_signal(row: pd.Series) -> tuple[str, str]:
+def _release_signal(
+    row: pd.Series,
+    runtime_pct_threshold: float = 25,
+    runtime_delta_sec_threshold: float = 30,
+    credit_pct_threshold: float = 25,
+    credit_delta_threshold: float = 0,
+) -> tuple[str, str]:
     failure_delta = safe_int(row.get("FAILURES_DELTA"))
     runtime_pct = safe_float(row.get("AVG_DURATION_CHANGE_PCT"))
     credit_pct = safe_float(row.get("EST_CREDITS_CHANGE_PCT"))
@@ -176,18 +195,32 @@ def _release_signal(row: pd.Series) -> tuple[str, str]:
     signals = []
     if failure_delta > 0:
         signals.append(f"{failure_delta} more failures")
-    if runtime_pct >= 25 and runtime_delta >= 30:
+    if runtime_pct >= safe_float(runtime_pct_threshold) and runtime_delta >= safe_float(runtime_delta_sec_threshold):
         signals.append(f"runtime +{runtime_pct:.1f}%")
-    if credit_pct >= 25 and credit_delta > 0:
+    if credit_pct >= safe_float(credit_pct_threshold) and credit_delta > safe_float(credit_delta_threshold):
         signals.append(f"credits +{credit_pct:.1f}%")
     if not signals:
         return "Stable", "No material release-window regression detected."
 
-    severity = "High" if failure_delta > 0 or runtime_pct >= 100 or credit_pct >= 100 else "Medium"
+    severity = (
+        "High"
+        if failure_delta > 0
+        or runtime_pct >= safe_float(runtime_pct_threshold) * 2
+        or credit_pct >= safe_float(credit_pct_threshold) * 2
+        else "Medium"
+    )
     return severity, "; ".join(signals)
 
 
-def _compare_release_windows(before: pd.DataFrame, after: pd.DataFrame, key_col: str) -> pd.DataFrame:
+def _compare_release_windows(
+    before: pd.DataFrame,
+    after: pd.DataFrame,
+    key_col: str,
+    runtime_pct_threshold: float = 25,
+    runtime_delta_sec_threshold: float = 30,
+    credit_pct_threshold: float = 25,
+    credit_delta_threshold: float = 0,
+) -> pd.DataFrame:
     before_agg = _aggregate_release_window(before, key_col)
     after_agg = _aggregate_release_window(after, key_col)
     if before_agg.empty and after_agg.empty:
@@ -225,9 +258,20 @@ def _compare_release_windows(before: pd.DataFrame, after: pd.DataFrame, key_col:
         _pct_change(before, after)
         for before, after in zip(merged["EST_CREDITS_BEFORE"], merged["EST_CREDITS_AFTER"])
     ]
-    signal_data = merged.apply(_release_signal, axis=1)
+    signal_data = merged.apply(
+        _release_signal,
+        axis=1,
+        runtime_pct_threshold=runtime_pct_threshold,
+        runtime_delta_sec_threshold=runtime_delta_sec_threshold,
+        credit_pct_threshold=credit_pct_threshold,
+        credit_delta_threshold=credit_delta_threshold,
+    )
     merged["SEVERITY"] = [item[0] for item in signal_data]
     merged["SIGNAL"] = [item[1] for item in signal_data]
+    merged["RUNTIME_THRESHOLD_PCT"] = safe_float(runtime_pct_threshold)
+    merged["RUNTIME_DELTA_THRESHOLD_SEC"] = safe_float(runtime_delta_sec_threshold)
+    merged["CREDIT_THRESHOLD_PCT"] = safe_float(credit_pct_threshold)
+    merged["CREDIT_DELTA_THRESHOLD"] = safe_float(credit_delta_threshold)
     return merged.sort_values(
         by=["SEVERITY", "FAILURES_DELTA", "AVG_DURATION_CHANGE_PCT", "EST_CREDITS_CHANGE_PCT"],
         ascending=[True, False, False, False],
@@ -362,7 +406,18 @@ def _prepare_procedure_release_runs(runs: pd.DataFrame) -> pd.DataFrame:
     return prepared
 
 
-def _load_release_compare(session, company: str, before_start: date, before_end: date, after_start: date, after_end: date) -> dict:
+def _load_release_compare(
+    session,
+    company: str,
+    before_start: date,
+    before_end: date,
+    after_start: date,
+    after_end: date,
+    runtime_pct_threshold: float,
+    runtime_delta_sec_threshold: float,
+    credit_pct_threshold: float,
+    credit_delta_threshold: float,
+) -> dict:
     task_inventory = load_task_inventory(session, company)
 
     def load_task_window(label: str, start: date, end: date) -> pd.DataFrame:
@@ -407,14 +462,36 @@ def _load_release_compare(session, company: str, before_start: date, before_end:
     proc_after = load_proc_window("after", after_start, after_end)
 
     return {
-        "task_compare": _compare_release_windows(task_before, task_after, "TASK_NAME"),
-        "procedure_compare": _compare_release_windows(proc_before, proc_after, "PROCEDURE_NAME"),
+        "task_compare": _compare_release_windows(
+            task_before,
+            task_after,
+            "TASK_NAME",
+            runtime_pct_threshold=runtime_pct_threshold,
+            runtime_delta_sec_threshold=runtime_delta_sec_threshold,
+            credit_pct_threshold=credit_pct_threshold,
+            credit_delta_threshold=credit_delta_threshold,
+        ),
+        "procedure_compare": _compare_release_windows(
+            proc_before,
+            proc_after,
+            "PROCEDURE_NAME",
+            runtime_pct_threshold=runtime_pct_threshold,
+            runtime_delta_sec_threshold=runtime_delta_sec_threshold,
+            credit_pct_threshold=credit_pct_threshold,
+            credit_delta_threshold=credit_delta_threshold,
+        ),
         "task_before": task_before,
         "task_after": task_after,
         "procedure_before": proc_before,
         "procedure_after": proc_after,
         "before_label": f"{before_start.isoformat()} to {before_end.isoformat()}",
         "after_label": f"{after_start.isoformat()} to {after_end.isoformat()}",
+        "thresholds": {
+            "runtime_pct_threshold": safe_float(runtime_pct_threshold),
+            "runtime_delta_sec_threshold": safe_float(runtime_delta_sec_threshold),
+            "credit_pct_threshold": safe_float(credit_pct_threshold),
+            "credit_delta_threshold": safe_float(credit_delta_threshold),
+        },
     }
 
 
@@ -423,6 +500,7 @@ def _build_release_compare_report(company: str, release_data: dict, credit_price
     proc_compare = release_data.get("procedure_compare", _empty_df())
     before_label = release_data.get("before_label", "before")
     after_label = release_data.get("after_label", "after")
+    thresholds = release_data.get("thresholds", {})
 
     task_regressions = task_compare[task_compare.get("SEVERITY", pd.Series(dtype=str)).isin(["High", "Medium"])] if not task_compare.empty else pd.DataFrame()
     proc_regressions = proc_compare[proc_compare.get("SEVERITY", pd.Series(dtype=str)).isin(["High", "Medium"])] if not proc_compare.empty else pd.DataFrame()
@@ -435,6 +513,13 @@ def _build_release_compare_report(company: str, release_data: dict, credit_price
         "",
         f"- Before window: {before_label}",
         f"- After window: {after_label}",
+        (
+            "- Thresholds: "
+            f"runtime +{safe_float(thresholds.get('runtime_pct_threshold', 25)):,.0f}% "
+            f"and +{safe_float(thresholds.get('runtime_delta_sec_threshold', 30)):,.0f}s; "
+            f"credits +{safe_float(thresholds.get('credit_pct_threshold', 25)):,.0f}% "
+            f"and +{safe_float(thresholds.get('credit_delta_threshold', 0)):,.4f} credits"
+        ),
         f"- Task regressions: {len(task_regressions):,}",
         f"- Procedure regressions: {len(proc_regressions):,}",
         f"- Estimated credit delta: {format_credits(total_credit_delta)} (${credits_to_dollars(total_credit_delta, credit_price):,.2f})",
@@ -463,7 +548,7 @@ def _build_release_compare_report(company: str, release_data: dict, credit_price
     return "\n".join(lines)
 
 
-def _load_control_room(session, company: str, credit_price: float, lookback_hours: int) -> dict:
+def _load_control_room(session, company: str, credit_price: float, lookback_hours: int, cortex_budget_usd: float) -> dict:
     wh_q = get_wh_filter_clause("q.warehouse_name", company)
     wh_m = get_wh_filter_clause("warehouse_name", company)
     db_q = get_db_filter_clause("q.database_name", company)
@@ -692,8 +777,30 @@ def _load_control_room(session, company: str, credit_price: float, lookback_hour
         data["action_queue"] = _empty_df()
         data["action_queue_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
 
+    try:
+        cortex_summary_sql, cortex_exceptions_sql = _build_cortex_control_sql(30, cortex_budget_usd)
+        data["cortex_summary"] = run_query(
+            cortex_summary_sql,
+            ttl_key=f"dba_control_room_{company}_cortex_summary_{cortex_budget_usd}",
+            tier="historical",
+            section="DBA Control Room",
+        )
+        data["cortex_exceptions"] = run_query(
+            cortex_exceptions_sql,
+            ttl_key=f"dba_control_room_{company}_cortex_exceptions_{cortex_budget_usd}",
+            tier="historical",
+            section="DBA Control Room",
+        )
+    except Exception as exc:
+        data["cortex_summary"] = _empty_df()
+        data["cortex_exceptions"] = _empty_df()
+        cortex_error = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
+        data["cortex_summary_error"] = cortex_error
+        data["cortex_exceptions_error"] = cortex_error
+
     data["_loaded_at"] = pd.DataFrame({"LOADED_AT": [datetime.now().isoformat()]})
     data["_credit_price"] = pd.DataFrame({"CREDIT_PRICE": [credit_price]})
+    data["_cortex_budget_usd"] = pd.DataFrame({"BUDGET_USD": [safe_float(cortex_budget_usd)]})
     return data
 
 
@@ -705,6 +812,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
     tasks = data.get("task_failures", _empty_df())
     task_sla_cost = data.get("task_sla_cost", _empty_df())
     procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
+    cortex_summary = data.get("cortex_summary", _empty_df())
+    cortex_exceptions = data.get("cortex_exceptions", _empty_df())
     logins = data.get("failed_logins", _empty_df())
     changes = data.get("object_changes", _empty_df())
     queue = data.get("action_queue", _empty_df())
@@ -799,6 +908,29 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Route": "Workload Operations",
             "Workflow": "Stored procedures",
         })
+    if not cortex_summary.empty:
+        cortex_budget = safe_float(_scalar_frame_value(data, "_cortex_budget_usd", "BUDGET_USD", 0))
+        cortex_row = cortex_summary.iloc[0]
+        projected_cost = safe_float(cortex_row.get("PROJECTED_30D_COST", 0))
+        score = _cortex_cost_score(
+            projected_cost=projected_cost,
+            budget_usd=cortex_budget,
+            active_users=safe_int(cortex_row.get("ACTIVE_USERS", 0)),
+            heavy_users=safe_int(cortex_row.get("HEAVY_USERS", 0)),
+            credits_per_request=safe_float(cortex_row.get("CREDITS_PER_REQUEST", 0)),
+        )
+        if projected_cost > cortex_budget or score < 78 or not cortex_exceptions.empty:
+            rows.append({
+                "Severity": "High" if projected_cost > cortex_budget or score < 65 else "Medium",
+                "Signal": "Cortex / AI cost risk",
+                "Evidence": (
+                    f"Projected 30-day Cortex cost ${projected_cost:,.0f} vs ${cortex_budget:,.0f} budget; "
+                    f"{len(cortex_exceptions):,} user/source exception(s); score {score} ({_cortex_cost_rating(score)})"
+                ),
+                "Action": "Review Cortex users, source split, cost-per-request spikes, and daily credit guardrails.",
+                "Route": "Cost & Contract",
+                "Workflow": "AI and Cortex spend",
+            })
     if not logins.empty:
         rows.append({
             "Severity": "Medium",
@@ -832,6 +964,97 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _priority_exceptions(exceptions: pd.DataFrame) -> pd.DataFrame:
+    if exceptions is None or exceptions.empty:
+        return _empty_df()
+    severity_rank = {"High": 0, "Medium": 1, "Low": 2}
+    view = exceptions.copy()
+    view["_RANK"] = view.get("Severity", pd.Series(dtype=str)).map(severity_rank).fillna(3)
+    return view.sort_values(["_RANK", "Signal"]).drop(columns=["_RANK"], errors="ignore")
+
+
+def _control_room_score(
+    exceptions: pd.DataFrame,
+    row: pd.Series | dict,
+    credit_delta: float,
+    regression_count: int,
+    cortex_exception_count: int,
+) -> int:
+    if exceptions is None or exceptions.empty:
+        high_count = medium_count = 0
+    else:
+        severities = exceptions.get("Severity", pd.Series(dtype=str)).astype(str)
+        high_count = int((severities == "High").sum())
+        medium_count = int((severities == "Medium").sum())
+    failed_queries = safe_int(row.get("FAILED_QUERIES", 0))
+    queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
+    remote_spill = safe_int(row.get("REMOTE_SPILL_QUERIES", 0))
+    penalty = (
+        high_count * 12
+        + medium_count * 6
+        + min(failed_queries / 10, 10)
+        + min(queued_queries / 10, 8)
+        + min(remote_spill / 20, 8)
+        + min(max(credit_delta, 0) / 5, 10)
+        + min(safe_int(regression_count) * 3, 12)
+        + min(safe_int(cortex_exception_count) * 2, 10)
+    )
+    return max(0, min(100, int(round(100 - penalty))))
+
+
+def _control_room_rating(score: int) -> str:
+    if score >= 92:
+        return "Clear"
+    if score >= 82:
+        return "Watch"
+    if score >= 70:
+        return "Degraded"
+    return "War Room"
+
+
+def _render_watch_floor(
+    data: dict,
+    exceptions: pd.DataFrame,
+    row: pd.Series | dict,
+    period_credits: float,
+    credit_delta: float,
+    credit_price: float,
+    regression_count: int,
+    cortex_exception_count: int,
+) -> None:
+    score = _control_room_score(exceptions, row, credit_delta, regression_count, cortex_exception_count)
+    rating = _control_room_rating(score)
+    priority = _priority_exceptions(exceptions).head(3)
+    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.2])
+    c1.metric("Readiness", f"{score}/100", rating)
+    c2.metric("Critical Moves", f"{len(priority):,}", delta_color="inverse")
+    c3.metric("Cost Window", f"${credits_to_dollars(period_credits, credit_price):,.0f}", f"{credit_delta:+.1f}%", delta_color="inverse")
+    with c4:
+        if priority.empty:
+            st.success("Watch floor is clear. Use Release Compare or Source Health if you are validating a recent deployment.")
+        else:
+            first = priority.iloc[0]
+            st.warning(
+                f"First move: {first.get('Signal', 'Exception')} -> {first.get('Action', 'Review the routed workflow.')}"
+            )
+
+    st.markdown("**DBA Watch Floor**")
+    if priority.empty:
+        st.caption("No immediate exception cards. Keep this page as the morning triage and evidence export point.")
+        return
+
+    cols = st.columns(len(priority))
+    for idx, (_, item) in enumerate(priority.iterrows()):
+        route = str(item.get("Route", "") or "")
+        workflow = str(item.get("Workflow", "") or "")
+        with cols[idx]:
+            st.markdown(f"**{item.get('Severity', 'Signal')}: {item.get('Signal', '')}**")
+            st.caption(str(item.get("Evidence", "")))
+            st.write(str(item.get("Action", "")))
+            if route and st.button(f"Open {route}", key=f"dba_watch_floor_{idx}_{route}", use_container_width=True):
+                _jump(route, workflow=workflow)
+
+
 def _render_route_buttons(exceptions: pd.DataFrame) -> None:
     if exceptions.empty or "Route" not in exceptions.columns:
         return
@@ -856,11 +1079,15 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
     credits = data.get("credits", _empty_df())
     task_sla_cost = data.get("task_sla_cost", _empty_df())
     procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
+    cortex_summary = data.get("cortex_summary", _empty_df())
+    cortex_exceptions = data.get("cortex_exceptions", _empty_df())
     row = summary.iloc[0] if not summary.empty else {}
     cr = credits.iloc[0] if not credits.empty else {}
     period_credits = safe_float(cr.get("PERIOD_CREDITS", 0))
     prior_credits = safe_float(cr.get("PRIOR_CREDITS", 0))
     credit_delta = ((period_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0
+    cortex_budget = safe_float(_scalar_frame_value(data, "_cortex_budget_usd", "BUDGET_USD", 0))
+    cortex_projected = safe_float(cortex_summary.iloc[0].get("PROJECTED_30D_COST", 0)) if not cortex_summary.empty else 0
 
     lines = [
         "# OVERWATCH DBA Control Room Brief",
@@ -876,6 +1103,8 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
         f"- p95 elapsed seconds: {safe_float(row.get('P95_ELAPSED_SEC', 0)):,.2f}",
         f"- Task SLA/cost regression candidates: {0 if task_sla_cost.empty else len(task_sla_cost):,}",
         f"- Stored procedure release-regression candidates: {0 if procedure_sla_cost.empty else len(procedure_sla_cost):,}",
+        f"- Cortex projected 30-day cost: ${cortex_projected:,.2f} vs ${cortex_budget:,.2f} budget",
+        f"- Cortex user/source exceptions: {0 if cortex_exceptions.empty else len(cortex_exceptions):,}",
         f"- Credits: {format_credits(period_credits)} (${credits_to_dollars(period_credits, credit_price):,.2f})",
         f"- Credit change vs prior window: {credit_delta:+.1f}%",
         "",
@@ -906,6 +1135,15 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
                 f"vs avg {safe_float(item.get('AVG_ELAPSED_SEC')):,.0f}s; "
                 f"estimated credits {safe_float(item.get('EST_TOTAL_CREDITS')):,.4f}."
             )
+    if not cortex_exceptions.empty:
+        lines.extend(["", "## Cortex Cost Control Candidates"])
+        for _, item in cortex_exceptions.head(10).iterrows():
+            lines.append(
+                f"- {item.get('SEVERITY', 'Medium')}: {item.get('USER_NAME', '')} "
+                f"{item.get('SOURCE', '')} {item.get('SIGNAL', '')}; "
+                f"projected ${safe_float(item.get('PROJECTED_30D_COST')):,.2f}; "
+                f"credits/request {safe_float(item.get('CREDITS_PER_REQUEST')):,.6f}."
+            )
     lines.extend([
         "",
         "## Metric Notes",
@@ -932,12 +1170,20 @@ def render() -> None:
             "over broad exploratory charts."
         )
 
-    c1, c2, c3 = st.columns([1, 1, 2])
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
     with c1:
         lookback_hours = st.selectbox("Lookback", [12, 24, 48, 168], index=1, format_func=lambda h: f"{h} hours")
     with c2:
-        st.metric("Company Scope", company)
+        cortex_budget_usd = st.number_input(
+            "Cortex monthly budget ($)",
+            min_value=1.0,
+            value=float(st.session_state.get("cortex_control_budget_usd", 5000.0)),
+            step=250.0,
+            key="dba_control_room_cortex_budget_usd",
+        )
     with c3:
+        st.metric("Company Scope", company)
+    with c4:
         st.info(
             f"{freshness_note('ACCOUNT_USAGE')} "
             f"Cost confidence: {metric_confidence_label('allocated')}. "
@@ -947,7 +1193,7 @@ def render() -> None:
     if st.button("Load DBA Control Room", key="dba_control_room_load", type="primary"):
         with st.spinner("Loading exception signals..."):
             st.session_state["dba_control_room_data"] = _load_control_room(
-                session, company, credit_price, int(lookback_hours)
+                session, company, credit_price, int(lookback_hours), safe_float(cortex_budget_usd)
             )
             st.session_state["dba_control_room_company"] = company
             st.session_state["dba_control_room_lookback"] = int(lookback_hours)
@@ -976,8 +1222,11 @@ def render() -> None:
     task_sla_cost = data.get("task_sla_cost", _empty_df())
     procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
     regression_count = (0 if task_sla_cost.empty else len(task_sla_cost)) + (0 if procedure_sla_cost.empty else len(procedure_sla_cost))
+    cortex_summary = data.get("cortex_summary", _empty_df())
+    cortex_exceptions = data.get("cortex_exceptions", _empty_df())
+    cortex_projected = safe_float(cortex_summary.iloc[0].get("PROJECTED_30D_COST", 0)) if not cortex_summary.empty else 0
 
-    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
+    m1, m2, m3, m4, m5, m6, m7, m8 = st.columns(8)
     m1.metric("Open Exceptions", len(exceptions))
     m2.metric("Failed Queries", f"{safe_int(row.get('FAILED_QUERIES', 0)):,}", delta_color="inverse")
     m3.metric("Queued Queries", f"{safe_int(row.get('QUEUED_QUERIES', 0)):,}", delta_color="inverse")
@@ -985,6 +1234,19 @@ def render() -> None:
     m5.metric("Credits", format_credits(period_credits), f"{credit_delta:+.1f}%", delta_color="inverse")
     m6.metric("Est. Cost", f"${credits_to_dollars(period_credits, credit_price):,.0f}")
     m7.metric("SLA/Cost Drift", f"{regression_count:,}", delta_color="inverse")
+    m8.metric("Cortex Risk", f"{0 if cortex_exceptions.empty else len(cortex_exceptions):,}", f"${cortex_projected:,.0f}/30d", delta_color="inverse")
+
+    _render_watch_floor(
+        data,
+        exceptions,
+        row,
+        period_credits,
+        credit_delta,
+        credit_price,
+        regression_count,
+        0 if cortex_exceptions.empty else len(cortex_exceptions),
+    )
+    st.divider()
 
     tab_triage, tab_routes, tab_release, tab_evidence, tab_sources = st.tabs([
         "Triage", "Drill Routes", "Release Compare", "Executive Evidence", "Source Health"
@@ -1043,8 +1305,12 @@ def render() -> None:
         with r2:
             st.subheader("Cost and Capacity")
             st.write("Bill explanations, contract pacing, warehouse pressure, rightsizing, recommendations, and value evidence.")
-            for title, workflow in [("Cost & Contract", "Explain bill / attribution / contract"), ("Warehouse Health", "")]:
-                if st.button(title, key=f"dba_control_cost_{title}", use_container_width=True):
+            for label, title, workflow in [
+                ("Cost & Contract", "Cost & Contract", "Explain bill / attribution / contract"),
+                ("AI / Cortex Spend", "Cost & Contract", "AI and Cortex spend"),
+                ("Warehouse Health", "Warehouse Health", ""),
+            ]:
+                if st.button(label, key=f"dba_control_cost_{label}", use_container_width=True):
                     _jump(title, workflow=workflow)
         with r3:
             st.subheader("Security and Governance")
@@ -1060,6 +1326,7 @@ def render() -> None:
             "Task Failures",
             "Task SLA/Cost",
             "Procedure SLA/Cost",
+            "Cortex Cost",
             "Failed Logins",
             "Object Changes",
             "Action Queue",
@@ -1071,6 +1338,7 @@ def render() -> None:
                 "task_failures",
                 "task_sla_cost",
                 "procedure_sla_cost",
+                "cortex_exceptions",
                 "failed_logins",
                 "object_changes",
                 "action_queue",
@@ -1113,10 +1381,48 @@ def render() -> None:
                 value=(default_after_start, default_after_end),
                 key="dba_release_after_window",
             )
+        t1, t2, t3, t4 = st.columns(4)
+        with t1:
+            runtime_pct_threshold = st.number_input(
+                "Runtime drift threshold (%)",
+                min_value=1.0,
+                value=25.0,
+                step=5.0,
+                key="dba_release_runtime_pct_threshold",
+            )
+        with t2:
+            runtime_delta_sec_threshold = st.number_input(
+                "Runtime delta threshold (sec)",
+                min_value=0.0,
+                value=30.0,
+                step=30.0,
+                key="dba_release_runtime_delta_sec_threshold",
+            )
+        with t3:
+            credit_pct_threshold = st.number_input(
+                "Credit drift threshold (%)",
+                min_value=1.0,
+                value=25.0,
+                step=5.0,
+                key="dba_release_credit_pct_threshold",
+            )
+        with t4:
+            credit_delta_threshold = st.number_input(
+                "Credit delta threshold",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                format="%.4f",
+                key="dba_release_credit_delta_threshold",
+            )
+        st.caption(
+            "Release compare flags failures, runtime drift above both runtime thresholds, "
+            "or estimated-credit drift above both credit thresholds."
+        )
 
         valid_ranges = (
-            isinstance(before_range, tuple) and len(before_range) == 2
-            and isinstance(after_range, tuple) and len(after_range) == 2
+            isinstance(before_range, (tuple, list)) and len(before_range) == 2
+            and isinstance(after_range, (tuple, list)) and len(after_range) == 2
             and before_range[0] <= before_range[1]
             and after_range[0] <= after_range[1]
         )
@@ -1132,6 +1438,10 @@ def render() -> None:
                         before_range[1],
                         after_range[0],
                         after_range[1],
+                        runtime_pct_threshold,
+                        runtime_delta_sec_threshold,
+                        credit_pct_threshold,
+                        credit_delta_threshold,
                     )
                     st.session_state["dba_release_compare_company"] = company
                     st.session_state["dba_release_compare_credit_price"] = credit_price
@@ -1243,3 +1553,14 @@ def render() -> None:
                 "Message": "" if err.empty else str(err["ERROR"].iloc[0]),
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, height=360)
+        budget_summary = get_query_budget_summary()
+        st.subheader("Current Session Query Budget")
+        if budget_summary is None or budget_summary.empty:
+            st.info("No query telemetry has been recorded in this Streamlit session yet.")
+        else:
+            st.caption(
+                "Use this to spot OVERWATCH pages that are repeatedly scanning too much, returning too many rows, "
+                "or taking too long. High-risk rows should be candidates for caching, aggregation, or progressive load."
+            )
+            st.dataframe(budget_summary, use_container_width=True, hide_index=True)
+            download_csv(budget_summary, "overwatch_query_budget_summary.csv")

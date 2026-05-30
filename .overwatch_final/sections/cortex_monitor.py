@@ -1,6 +1,7 @@
 # sections/cortex_monitor.py — AI & Cortex Code usage: users, trends, anomalies, predictive alerts
 import streamlit as st
 import pandas as pd
+from utils.workflows import render_workflow_selector
 from utils import (
     build_action_queue_ddl,
     format_snowflake_error,
@@ -25,6 +26,23 @@ from config import DEFAULTS
 
 
 AI_CREDIT_RATE = DEFAULTS["ai_credit_price"]  # $2.20/AI credit (Table 6(d))
+
+
+CORTEX_VIEWS = (
+    "Budget Control",
+    "User Attribution",
+    "Daily Trends",
+    "Anomaly Detection",
+    "Predictive Alerts",
+)
+
+CORTEX_VIEW_DETAILS = {
+    "Budget Control": "Control score, projected spend, source split, exceptions, and proof SQL.",
+    "User Attribution": "User/source chargeback, requests, AI credits, and cost-per-request spikes.",
+    "Daily Trends": "Daily requests, active users, credits, rolling burn, and source split.",
+    "Anomaly Detection": "Z-score detection for unusual user-level Cortex spend.",
+    "Predictive Alerts": "Forward-looking budget warnings and alert SQL.",
+}
 
 
 def _cortex_cost_score(
@@ -211,6 +229,34 @@ def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
     return summary_sql, exceptions_sql
 
 
+def _build_cortex_daily_sql(days: int) -> str:
+    user_filter = get_user_filter_clause("u.NAME")
+    return f"""
+        WITH combined AS (
+            SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS, 'Snowsight' AS SOURCE
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
+            WHERE USAGE_TIME >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+            UNION ALL
+            SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS, 'CLI' AS SOURCE
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+            WHERE USAGE_TIME >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+        )
+        SELECT
+            c.USAGE_TIME::DATE AS usage_date,
+            c.SOURCE,
+            COUNT(DISTINCT c.USER_ID) AS active_users,
+            COUNT(*) AS total_requests,
+            SUM(c.TOKEN_CREDITS) AS total_credits,
+            SUM(c.TOKENS) AS total_tokens,
+            ROUND(SUM(c.TOKEN_CREDITS) * {AI_CREDIT_RATE}, 2) AS cost_usd
+        FROM combined c
+        LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
+        WHERE 1=1 {user_filter}
+        GROUP BY c.USAGE_TIME::DATE, c.SOURCE
+        ORDER BY usage_date, c.SOURCE
+    """
+
+
 def _queue_cortex_findings(session, exceptions: pd.DataFrame, budget_usd: float) -> int:
     if exceptions is None or exceptions.empty:
         return 0
@@ -260,6 +306,7 @@ def _render_cortex_control_brief(session, company: str) -> None:
             with st.spinner("Building Cortex cost control brief..."):
                 try:
                     summary_sql, exceptions_sql = _build_cortex_control_sql(days, budget_usd)
+                    daily_sql = _build_cortex_daily_sql(days)
                     summary = run_query(
                         summary_sql,
                         ttl_key=f"cortex_control_summary_{company}_{days}_{budget_usd}",
@@ -272,11 +319,19 @@ def _render_cortex_control_brief(session, company: str) -> None:
                         tier="historical",
                         section="Cost & Contract",
                     )
+                    daily = run_query(
+                        daily_sql,
+                        ttl_key=f"cortex_control_daily_{company}_{days}_{budget_usd}",
+                        tier="historical",
+                        section="Cost & Contract",
+                    )
                     st.session_state["cortex_control_summary"] = summary
                     st.session_state["cortex_control_exceptions"] = exceptions
+                    st.session_state["cortex_control_daily"] = daily
                     st.session_state["cortex_control_sql"] = {
                         "summary": summary_sql,
                         "exceptions": exceptions_sql,
+                        "daily": daily_sql,
                     }
                 except Exception as e:
                     st.warning(f"Cortex cost control unavailable: {format_snowflake_error(e)}")
@@ -286,7 +341,10 @@ def _render_cortex_control_brief(session, company: str) -> None:
         if summary is None or summary.empty:
             return
         row = summary.iloc[0].to_dict()
+        daily = st.session_state.get("cortex_control_daily", pd.DataFrame())
         projected_cost = safe_float(row.get("PROJECTED_30D_COST"))
+        daily_budget = safe_float(budget_usd) / 30 if safe_float(budget_usd) > 0 else 0.0
+        avg_daily_cost = projected_cost / 30 if projected_cost > 0 else 0.0
         score = _cortex_cost_score(
             projected_cost=projected_cost,
             budget_usd=budget_usd,
@@ -299,6 +357,10 @@ def _render_cortex_control_brief(session, company: str) -> None:
         c2.metric("Projected 30d Cost", f"${projected_cost:,.2f}")
         c3.metric("Active Users", f"{safe_int(row.get('ACTIVE_USERS')):,}")
         c4.metric("Requests", f"{safe_int(row.get('TOTAL_REQUESTS')):,}")
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Daily Budget", f"${daily_budget:,.2f}")
+        k2.metric("Avg Daily Burn", f"${avg_daily_cost:,.2f}", delta=f"{(avg_daily_cost - daily_budget):+,.2f} vs budget" if daily_budget else None)
+        k3.metric("AI Credits", format_credits(safe_float(row.get("TOTAL_CREDITS")), AI_CREDIT_RATE))
         if projected_cost > budget_usd:
             st.error("Cortex spend is projected over budget. Treat this as a cost-control incident.")
         elif score < 78:
@@ -325,6 +387,25 @@ def _render_cortex_control_brief(session, company: str) -> None:
         else:
             st.success("No Cortex cost exceptions found for this scope.")
 
+        if daily is not None and not daily.empty:
+            daily = daily.copy()
+            daily["USAGE_DATE"] = safe_strip_tz(daily["USAGE_DATE"])
+            daily_rollup = (
+                daily.groupby("USAGE_DATE", as_index=False)
+                .agg(COST_USD=("COST_USD", "sum"), TOTAL_CREDITS=("TOTAL_CREDITS", "sum"), TOTAL_REQUESTS=("TOTAL_REQUESTS", "sum"))
+                .sort_values("USAGE_DATE")
+            )
+            daily_rollup["ROLLING_7D_COST"] = daily_rollup["COST_USD"].rolling(7, min_periods=1).mean()
+            st.subheader("Daily Cortex Burn")
+            st.line_chart(daily_rollup.set_index("USAGE_DATE")[["COST_USD", "ROLLING_7D_COST"]])
+            source_split = (
+                daily.groupby("SOURCE", as_index=False)
+                .agg(COST_USD=("COST_USD", "sum"), TOTAL_CREDITS=("TOTAL_CREDITS", "sum"), TOTAL_REQUESTS=("TOTAL_REQUESTS", "sum"))
+                .sort_values("COST_USD", ascending=False)
+            )
+            st.subheader("Source Split")
+            st.dataframe(source_split, use_container_width=True, hide_index=True)
+
         st.download_button(
             "Download Cortex Cost Brief",
             _build_cortex_control_markdown(company, days, score, budget_usd, row, exceptions),
@@ -336,24 +417,32 @@ def _render_cortex_control_brief(session, company: str) -> None:
             sql_map = st.session_state.get("cortex_control_sql", {})
             st.code(sql_map.get("summary", ""), language="sql")
             st.code(sql_map.get("exceptions", ""), language="sql")
+            st.code(sql_map.get("daily", ""), language="sql")
 
 
 def render():
     session = get_session()
-    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
-    _render_cortex_control_brief(session, company)
-    if st.session_state.get("exceptions_only_mode"):
-        st.stop()
+    if st.session_state.get("exceptions_only_mode") and "cortex_monitor_view" not in st.session_state:
+        st.session_state["cortex_monitor_view"] = "Budget Control"
 
-    tab_users, tab_trends, tab_anomaly, tab_alerts = st.tabs([
-        "Cortex Code Users", "Daily Trends", "Anomaly Detection", "Predictive Alerts"
-    ])
+    cortex_view = render_workflow_selector(
+        "Cortex workflow",
+        "cortex_monitor_view",
+        CORTEX_VIEWS,
+        CORTEX_VIEW_DETAILS,
+        columns=3,
+    )
 
     # ── CORTEX CODE USERS ─────────────────────────────────────────────────────
-    with tab_users:
-        st.header("👤 Cortex Code User Breakdown")
+    if cortex_view == "Budget Control":
+        _render_cortex_control_brief(session, company)
+        if st.session_state.get("exceptions_only_mode"):
+            st.stop()
+
+    elif cortex_view == "User Attribution":
+        st.header("Cortex Code User Breakdown")
         st.caption(
             "Cortex Code usage (Snowsight + CLI) by user. "
             f"AI Credits billed at **${AI_CREDIT_RATE}/credit** (Table 6(d) regional inference)."
@@ -467,18 +556,18 @@ def render():
                     if not df_spike.empty:
                         spikes = df_spike[df_spike["PCT_CHANGE"] > 25] if "PCT_CHANGE" in df_spike.columns else df_spike
                         if not spikes.empty:
-                            st.warning(f"⚠️ {len(spikes)} user(s) with >25% cost-per-request increase vs prior period.")
+                            st.warning(f"{len(spikes)} user(s) with >25% cost-per-request increase vs prior period.")
                         st.dataframe(df_spike, use_container_width=True)
                         download_csv(df_spike, "cortex_cpr_spikes.csv")
                     else:
-                        st.success("✅ No cost-per-request spikes detected.")
+                        st.success("No cost-per-request spikes detected.")
                 except Exception as e:
                     st.warning(f"Spike detection unavailable: {format_snowflake_error(e)}")
 
     # ── DAILY TRENDS ──────────────────────────────────────────────────────────
-    with tab_trends:
-        st.header("📈 Cortex Code Daily Trends")
-        st.caption("Daily credits, request volume, and active users — Snowsight vs CLI split.")
+    elif cortex_view == "Daily Trends":
+        st.header("Cortex Code Daily Trends")
+        st.caption("Daily credits, request volume, and active users - Snowsight vs CLI split.")
 
         cc_trend_days = st.slider("Lookback (days)", 7, 90, 30, key="cc_trend_days")
         if st.button("Load Trends", key="cc_trends_load"):
@@ -547,8 +636,8 @@ def render():
             download_csv(df_tr, "cortex_trends.csv")
 
     # ── ANOMALY DETECTION ─────────────────────────────────────────────────────
-    with tab_anomaly:
-        st.header("🔍 Cortex Code Anomaly Detection")
+    elif cortex_view == "Anomaly Detection":
+        st.header("Cortex Code Anomaly Detection")
         st.caption("Z-score based anomaly detection on daily per-user Cortex spend.")
 
         cc_anom_days = st.slider("Detection window (days)", 14, 90, 30, key="cc_anom_days")
@@ -594,9 +683,9 @@ def render():
                                           THEN (s.CREDITS - s.AVG_7D) / s.STD_7D END, 2) AS ZSCORE,
                                CASE
                                    WHEN COALESCE((s.CREDITS-s.AVG_7D)/NULLIF(s.STD_7D,0), 0) > 2
-                                       THEN '🔴 SPEND SPIKE'
+                                      THEN 'SPEND SPIKE'
                                    WHEN COALESCE((s.CREDITS-s.AVG_7D)/NULLIF(s.STD_7D,0), 0) > 1.5
-                                       THEN '🟡 ELEVATED'
+                                      THEN 'ELEVATED'
                                    ELSE NULL
                                END AS ANOMALY_FLAG
                         FROM with_stats s
@@ -612,15 +701,15 @@ def render():
         if st.session_state.get("cm_cc_anom_data") is not None and not st.session_state["cm_cc_anom_data"].empty:
             df_an = st.session_state["cm_cc_anom_data"]
             flagged = df_an[df_an.get("ANOMALY_FLAG", pd.Series()).notna()] if "ANOMALY_FLAG" in df_an.columns else pd.DataFrame()
-            spikes  = df_an[df_an.get("ANOMALY_FLAG", pd.Series()).str.startswith("🔴", na=False)] if "ANOMALY_FLAG" in df_an.columns else pd.DataFrame()
+            spikes  = df_an[df_an.get("ANOMALY_FLAG", pd.Series()).eq("SPEND SPIKE")] if "ANOMALY_FLAG" in df_an.columns else pd.DataFrame()
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Days Analyzed",    len(df_an["USAGE_DATE"].unique()) if "USAGE_DATE" in df_an.columns else 0)
             c2.metric("Anomalous Days",   len(flagged), delta_color="inverse")
-            c3.metric("🔴 Spend Spikes",  len(spikes),  delta_color="inverse")
+            c3.metric("Spend Spikes",  len(spikes),  delta_color="inverse")
 
             if not flagged.empty:
-                st.warning(f"⚠️ {len(flagged)} anomalous Cortex Code usage day(s) detected.")
+                st.warning(f"{len(flagged)} anomalous Cortex Code usage day(s) detected.")
                 st.dataframe(flagged, use_container_width=True)
 
             with st.expander("View Full Dataset"):
@@ -628,11 +717,11 @@ def render():
 
             download_csv(df_an, "cortex_anomalies.csv")
         elif st.session_state.get("cm_cc_anom_data") is not None:
-            st.success("✅ No anomalies detected in the analysis window.")
+            st.success("No anomalies detected in the analysis window.")
 
     # ── PREDICTIVE ALERTS ─────────────────────────────────────────────────────
-    with tab_alerts:
-        st.header("🔮 Predictive Cortex AI Cost Alerts")
+    elif cortex_view == "Predictive Alerts":
+        st.header("Predictive Cortex AI Cost Alerts")
         st.caption(
             "Projects Cortex Code spend at current trajectory. "
             "Flags accounts on course to exceed configurable monthly budget."
@@ -691,14 +780,14 @@ def render():
             if projected_month > monthly_ai_budget:
                 overage = projected_month - monthly_ai_budget
                 st.error(
-                    f"🔴 **On track to exceed budget by {overage:.2f} AI credits "
+                    f"On track to exceed budget by {overage:.2f} AI credits "
                     f"(${overage * AI_CREDIT_RATE:,.2f})**. "
                     f"Consider setting user-level quotas or reviewing heavy users."
                 )
             else:
                 headroom = monthly_ai_budget - projected_month
                 st.success(
-                    f"✅ Projected spend ({projected_month:.2f} credits) is within budget. "
+                    f"Projected spend ({projected_month:.2f} credits) is within budget. "
                     f"Headroom: {headroom:.2f} credits."
                 )
 

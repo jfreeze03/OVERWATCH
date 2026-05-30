@@ -31,6 +31,7 @@ from config import ALERT_DB, ALERT_SCHEMA, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ETL_A
 TASK_CONTROL_VIEWS = (
     "Task History",
     "Failure Console",
+    "SLA & Cost Drift",
     "ETL Audit",
     "Control Center",
     "Execute Task",
@@ -39,6 +40,7 @@ TASK_CONTROL_VIEWS = (
 TASK_CONTROL_DETAILS = {
     "Task History": "Run history, active task count, and raw task inventory.",
     "Failure Console": "Failure patterns, query links, runbooks, and action queue handoff.",
+    "SLA & Cost Drift": "Release-sensitive task duration and estimated credit regression review.",
     "ETL Audit": "Custom ETL audit table setup and recent pipeline runs.",
     "Control Center": "Guarded suspend, resume, retry, execute, and cancel workflows.",
     "Execute Task": "Focused manual task execution with pre-flight checks.",
@@ -931,44 +933,57 @@ def _queue_task_ops_findings(session, exceptions: pd.DataFrame) -> int:
     return upsert_actions(session, actions)
 
 
+def _load_task_ops_scope(
+    session,
+    days: int,
+    ttl_prefix: str,
+) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
+    company = get_active_company()
+    try:
+        inventory = _show_tasks(session)
+    except Exception as e:
+        st.info(f"Task inventory unavailable in this role/context: {format_snowflake_error(e)}")
+        inventory = pd.DataFrame()
+    try:
+        history = run_query_or_raise(build_task_history_sql(
+            session,
+            f"scheduled_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())",
+            limit=1000,
+            company=company,
+        ))
+    except Exception as e:
+        st.info(f"Task history unavailable in this role/context: {format_snowflake_error(e)}")
+        history = pd.DataFrame()
+    query_details = pd.DataFrame()
+    if not history.empty and "QUERY_ID" in history.columns:
+        qids = history["QUERY_ID"].dropna().astype(str).tolist()
+        try:
+            query_sql = _query_detail_sql(session, qids)
+            if query_sql:
+                query_details = run_query(
+                    query_sql,
+                    ttl_key=f"{ttl_prefix}_query_detail_{company}_{days}_{len(qids)}",
+                    tier="standard",
+                )
+        except Exception as e:
+            st.info(f"Linked query cost/detail unavailable: {format_snowflake_error(e)}")
+    summary, exceptions, latest = _build_task_ops_frames(inventory, history, query_details)
+    return summary, exceptions, latest, inventory, not query_details.empty
+
+
 def _render_task_ops_brief(session) -> None:
     company = get_active_company()
     with st.expander("Task Graph Operations Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
         days = st.slider("Task graph lookback (days)", 1, 30, 7, key="task_ops_days")
         if st.button("Load Task Graph Operations", key="task_ops_load"):
-            try:
-                inventory = _show_tasks(session)
-            except Exception:
-                inventory = pd.DataFrame()
-            try:
-                history = run_query_or_raise(build_task_history_sql(
-                    session,
-                    f"scheduled_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())",
-                    limit=1000,
-                    company=company,
-                ))
-            except Exception as e:
-                st.info(f"Task history unavailable in this role/context: {format_snowflake_error(e)}")
-                history = pd.DataFrame()
-            query_details = pd.DataFrame()
-            if not history.empty and "QUERY_ID" in history.columns:
-                qids = history["QUERY_ID"].dropna().astype(str).tolist()
-                try:
-                    query_sql = _query_detail_sql(session, qids)
-                    if query_sql:
-                        query_details = run_query(
-                            query_sql,
-                            ttl_key=f"task_ops_query_detail_{company}_{days}_{len(qids)}",
-                            tier="standard",
-                        )
-                except Exception as e:
-                    st.info(f"Linked query cost/detail unavailable: {format_snowflake_error(e)}")
-            summary, exceptions, latest = _build_task_ops_frames(inventory, history, query_details)
+            summary, exceptions, latest, inventory, details_loaded = _load_task_ops_scope(
+                session, days, "task_ops"
+            )
             st.session_state["task_ops_summary"] = summary
             st.session_state["task_ops_exceptions"] = exceptions
             st.session_state["task_ops_latest"] = latest
             st.session_state["task_ops_inventory"] = inventory
-            st.session_state["task_ops_query_details_loaded"] = not query_details.empty
+            st.session_state["task_ops_query_details_loaded"] = details_loaded
 
         summary = st.session_state.get("task_ops_summary")
         if not summary:
@@ -1052,6 +1067,160 @@ def _render_task_ops_brief(session) -> None:
             mime="text/markdown",
             key="task_ops_download",
         )
+
+
+def _render_sla_cost_drift_console(session) -> None:
+    company = get_active_company()
+    st.header("Task SLA & Cost Drift")
+    st.caption(
+        "Use this after product releases or stored procedure changes. It compares each task's latest run "
+        "to its own historical baseline and highlights duration or estimated-credit regressions."
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        days = st.slider("Lookback (days)", 3, 45, 14, key="task_sla_days")
+    with c2:
+        duration_pct = st.slider("Duration drift threshold (%)", 10, 300, 50, key="task_sla_duration_pct")
+    with c3:
+        cost_pct = st.slider("Cost drift threshold (%)", 10, 300, 50, key="task_sla_cost_pct")
+    with c4:
+        min_duration_sec = st.number_input("Minimum latest runtime (sec)", min_value=0, value=300, step=60, key="task_sla_min_runtime")
+    min_credits = st.number_input(
+        "Minimum estimated credits before cost drift matters",
+        min_value=0.0,
+        value=0.01,
+        step=0.01,
+        format="%.4f",
+        key="task_sla_min_credits",
+    )
+
+    if st.button("Load SLA & Cost Drift", key="task_sla_load"):
+        summary, exceptions, latest, inventory, details_loaded = _load_task_ops_scope(
+            session, days, "task_sla"
+        )
+        st.session_state["task_sla_summary"] = summary
+        st.session_state["task_sla_latest"] = latest
+        st.session_state["task_sla_inventory"] = inventory
+        st.session_state["task_sla_details_loaded"] = details_loaded
+
+    latest = st.session_state.get("task_sla_latest", pd.DataFrame())
+    if latest is None or latest.empty:
+        st.info("Load SLA & Cost Drift to compare latest task runs to historical baselines.")
+        return
+
+    view = latest.copy()
+    for col in ["DURATION_SEC", "AVG_DURATION_SEC", "EST_TOTAL_CREDITS", "AVG_EST_CREDITS"]:
+        if col not in view.columns:
+            view[col] = 0.0
+        view[col] = pd.to_numeric(view[col], errors="coerce").fillna(0.0)
+    view["DURATION_CHANGE_PCT"] = view.apply(
+        lambda row: ((row["DURATION_SEC"] - row["AVG_DURATION_SEC"]) / row["AVG_DURATION_SEC"] * 100)
+        if row["AVG_DURATION_SEC"] > 0 else 0.0,
+        axis=1,
+    )
+    view["COST_CHANGE_PCT"] = view.apply(
+        lambda row: ((row["EST_TOTAL_CREDITS"] - row["AVG_EST_CREDITS"]) / row["AVG_EST_CREDITS"] * 100)
+        if row["AVG_EST_CREDITS"] > 0 else 0.0,
+        axis=1,
+    )
+    view["SLA_BREACH"] = (
+        (view["AVG_DURATION_SEC"] > 0)
+        & (view["DURATION_SEC"] >= float(min_duration_sec))
+        & (view["DURATION_CHANGE_PCT"] >= float(duration_pct))
+    )
+    view["COST_DRIFT"] = (
+        (view["AVG_EST_CREDITS"] > 0)
+        & (view["EST_TOTAL_CREDITS"] >= float(min_credits))
+        & (view["COST_CHANGE_PCT"] >= float(cost_pct))
+    )
+    view["BREACH_REASON"] = view.apply(
+        lambda row: "SLA and cost drift" if row["SLA_BREACH"] and row["COST_DRIFT"]
+        else "SLA breach" if row["SLA_BREACH"]
+        else "Cost drift" if row["COST_DRIFT"]
+        else "Within threshold",
+        axis=1,
+    )
+    breaches = (
+        view[view["SLA_BREACH"] | view["COST_DRIFT"]]
+        .sort_values(["SLA_BREACH", "COST_DRIFT", "DURATION_CHANGE_PCT", "COST_CHANGE_PCT"], ascending=[False, False, False, False])
+    )
+
+    summary = st.session_state.get("task_sla_summary", {})
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Tasks Compared", f"{len(view):,}")
+    k2.metric("SLA Breaches", f"{int(view['SLA_BREACH'].sum()):,}", delta_color="inverse")
+    k3.metric("Cost Drift", f"{int(view['COST_DRIFT'].sum()):,}", delta_color="inverse")
+    k4.metric("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}", delta_color="inverse")
+    k5.metric("Query Detail", "Loaded" if st.session_state.get("task_sla_details_loaded") else "Estimated")
+    if st.session_state.get("task_sla_details_loaded"):
+        st.caption("Cost drift uses linked QUERY_HISTORY query detail and estimated task query credits.")
+    else:
+        st.caption("Cost drift needs linked QUERY_HISTORY detail; duration/SLA review is still available.")
+
+    display_cols = [
+        col for col in [
+            "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "STATE", "QUERY_ID",
+            "DURATION_SEC", "AVG_DURATION_SEC", "DURATION_CHANGE_PCT",
+            "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "COST_CHANGE_PCT",
+            "BREACH_REASON", "WAREHOUSE_NAME", "IMPACT_OBJECTS", "TASK_FQN",
+        ] if col in view.columns
+    ]
+    if breaches.empty:
+        st.success("No task runs breached the selected SLA or cost drift thresholds.")
+    else:
+        st.warning("Task regressions found. Review these before the next production handoff.")
+        st.dataframe(breaches[display_cols], use_container_width=True, hide_index=True)
+        top_duration = breaches.sort_values("DURATION_CHANGE_PCT", ascending=False).head(15)
+        top_cost = breaches.sort_values("COST_CHANGE_PCT", ascending=False).head(15)
+        left, right = st.columns(2)
+        with left:
+            st.caption("Top Duration Regressions")
+            if "TASK_NAME" in top_duration.columns:
+                st.bar_chart(top_duration.set_index("TASK_NAME")["DURATION_CHANGE_PCT"])
+        with right:
+            st.caption("Top Cost Regressions")
+            if "TASK_NAME" in top_cost.columns:
+                st.bar_chart(top_cost.set_index("TASK_NAME")["COST_CHANGE_PCT"])
+        queue_rows = []
+        for _, row in breaches.head(100).iterrows():
+            signal = "Long Running / SLA Risk" if row.get("SLA_BREACH") else "Cost Drift / Release Regression"
+            if row.get("SLA_BREACH") and row.get("COST_DRIFT"):
+                signal = "SLA and Cost Drift"
+            queue_rows.append({
+                "SEVERITY": "High" if row.get("SLA_BREACH") and safe_float(row.get("DURATION_CHANGE_PCT")) >= duration_pct * 2 else "Medium",
+                "SIGNAL": signal,
+                "TASK_NAME": row.get("TASK_NAME", ""),
+                "ROOT_TASK_NAME": row.get("ROOT_TASK_NAME", ""),
+                "PROCEDURE_NAME": row.get("PROCEDURE_NAME", ""),
+                "QUERY_ID": row.get("QUERY_ID", ""),
+                "STATE": row.get("STATE", ""),
+                "DETAIL": (
+                    f"Latest runtime {safe_float(row.get('DURATION_SEC')):,.0f}s vs avg {safe_float(row.get('AVG_DURATION_SEC')):,.0f}s "
+                    f"({safe_float(row.get('DURATION_CHANGE_PCT')):,.1f}%). "
+                    f"Latest credits {safe_float(row.get('EST_TOTAL_CREDITS')):,.4f} vs avg {safe_float(row.get('AVG_EST_CREDITS')):,.4f} "
+                    f"({safe_float(row.get('COST_CHANGE_PCT')):,.1f}%)."
+                ),
+                "IMPACT_OBJECTS": row.get("IMPACT_OBJECTS", ""),
+                "TASK_FQN": row.get("TASK_FQN", ""),
+            })
+        queue_df = pd.DataFrame(queue_rows)
+        if st.button("Save SLA/Cost Drift Findings to Action Queue", key="task_sla_queue"):
+            try:
+                saved = _queue_task_ops_findings(session, queue_df)
+                st.success(f"Saved {saved} SLA/cost drift findings to the action queue.")
+            except Exception as e:
+                st.error(f"Could not save SLA/cost drift findings: {format_snowflake_error(e)}")
+                st.download_button(
+                    "Download Action Queue DDL",
+                    build_action_queue_ddl(),
+                    file_name="overwatch_action_queue_setup.sql",
+                    mime="text/plain",
+                    key="task_sla_action_ddl",
+                )
+
+    with st.expander("All Latest Task Runs"):
+        st.dataframe(view[display_cols], use_container_width=True, hide_index=True)
+    download_csv(view[display_cols], f"task_sla_cost_drift_{company.lower()}.csv")
 
 
 def render():
@@ -1248,6 +1417,9 @@ def render():
                 )
 
     # ── ETL AUDIT ─────────────────────────────────────────────────────────────
+    elif task_view == "SLA & Cost Drift":
+        _render_sla_cost_drift_console(session)
+
     elif task_view == "ETL Audit":
         st.header("ETL Audit Framework")
         st.caption(f"Custom ETL run tracking table: `{ETL_AUDIT_FQN}`")

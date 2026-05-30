@@ -12,6 +12,7 @@ from utils import (
     metric_confidence_label, freshness_note,
     get_wh_filter_clause, get_global_wh_filter_clause,
     get_global_filter_clause, get_company_case_expr,
+    build_mart_bill_summary_sql, build_mart_bill_warehouse_delta_sql,
     filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown,
     build_action_queue_ddl, make_action_id, upsert_actions,
@@ -573,6 +574,12 @@ def render():
             key="cc_explain_budget",
         )
         bounds = _bill_period_bounds(explain_period)
+        use_mart_summary = not any([
+            st.session_state.get("global_user"),
+            st.session_state.get("global_role"),
+            st.session_state.get("global_database"),
+        ])
+        warehouse_contains = str(st.session_state.get("global_warehouse") or "").strip()
         wh_filter_meter = " ".join(filter(None, [
             get_wh_filter_clause("warehouse_name"),
             get_global_wh_filter_clause("warehouse_name"),
@@ -606,7 +613,7 @@ def render():
 
         if st.button("Explain Bill", key="cc_explain_load", type="primary"):
             try:
-                summary_sql = f"""
+                live_summary_sql = f"""
                 WITH bounds AS (
                     SELECT
                         {bounds['current_start']} AS current_start,
@@ -635,7 +642,7 @@ def render():
                 FROM metering
                 GROUP BY period
                 """
-                wh_delta_sql = f"""
+                live_wh_delta_sql = f"""
                 WITH bounds AS (
                     SELECT
                         {bounds['current_start']} AS current_start,
@@ -673,6 +680,28 @@ def render():
                 ORDER BY ABS(COALESCE(c.credits, 0) - COALESCE(p.credits, 0)) DESC
                 LIMIT 25
                 """
+                if use_mart_summary:
+                    summary_sql = build_mart_bill_summary_sql(
+                        bounds["current_start"],
+                        bounds["current_end"],
+                        bounds["prior_start"],
+                        bounds["prior_end"],
+                        company=company,
+                        warehouse_contains=warehouse_contains,
+                    )
+                    wh_delta_sql = build_mart_bill_warehouse_delta_sql(
+                        bounds["current_start"],
+                        bounds["current_end"],
+                        bounds["prior_start"],
+                        bounds["prior_end"],
+                        company=company,
+                        warehouse_contains=warehouse_contains,
+                    )
+                    bill_summary_source = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+                else:
+                    summary_sql = live_summary_sql
+                    wh_delta_sql = live_wh_delta_sql
+                    bill_summary_source = "Live fallback: WAREHOUSE_METERING_HISTORY"
                 driver_sql = f"""
                 WITH bounds AS (
                     SELECT
@@ -753,14 +782,27 @@ def render():
                 """
                 st.session_state["cc_explain_summary"] = run_query(
                     summary_sql,
-                    ttl_key=f"cc_explain_summary_{company}_{explain_period}",
+                    ttl_key=f"cc_explain_summary_{company}_{explain_period}_{'mart' if use_mart_summary else 'live'}",
                     tier="standard",
                 )
+                if use_mart_summary and st.session_state["cc_explain_summary"].empty:
+                    bill_summary_source = "Live fallback: mart unavailable or stale"
+                    st.session_state["cc_explain_summary"] = run_query(
+                        live_summary_sql,
+                        ttl_key=f"cc_explain_summary_{company}_{explain_period}_fallback",
+                        tier="standard",
+                    )
                 st.session_state["cc_explain_wh_delta"] = run_query(
                     wh_delta_sql,
-                    ttl_key=f"cc_explain_wh_{company}_{explain_period}",
+                    ttl_key=f"cc_explain_wh_{company}_{explain_period}_{'mart' if use_mart_summary else 'live'}",
                     tier="standard",
                 )
+                if use_mart_summary and st.session_state["cc_explain_wh_delta"].empty:
+                    st.session_state["cc_explain_wh_delta"] = run_query(
+                        live_wh_delta_sql,
+                        ttl_key=f"cc_explain_wh_{company}_{explain_period}_fallback",
+                        tier="standard",
+                    )
                 st.session_state["cc_explain_drivers"] = run_query(
                     driver_sql,
                     ttl_key=f"cc_explain_drivers_{company}_{explain_period}",
@@ -786,6 +828,7 @@ def render():
                     "period": explain_period,
                     "credit_price": credit_price,
                     "filters": explain_filter_signature,
+                    "summary_source": bill_summary_source,
                 }
             except Exception as e:
                 st.error(f"Unable to explain bill: {format_snowflake_error(e)}")
@@ -838,6 +881,7 @@ def render():
             st.caption(
                 f"{metric_confidence_label('exact')} for warehouse totals | "
                 f"{metric_confidence_label('allocated')} for user/query attribution | "
+                f"{explain_meta.get('summary_source', 'Live fallback: WAREHOUSE_METERING_HISTORY')} | "
                 f"{freshness_note('ACCOUNT_USAGE')}"
             )
 

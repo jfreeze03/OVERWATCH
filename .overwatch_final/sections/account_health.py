@@ -13,6 +13,14 @@ from utils import (
     executive_health_score,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
     get_global_filter_clause, company_value_allowed,
+    load_latest_control_room_mart, mart_source_caption,
+    build_mart_account_health_storage_sql, build_mart_account_health_cost_drivers_sql,
+    build_mart_account_health_change_sql, build_mart_control_room_task_failures_sql,
+    build_mart_control_room_warehouse_pressure_sql,
+    build_mart_account_health_failure_types_sql, build_mart_account_health_long_queries_sql,
+    build_mart_account_health_credits_sql, build_mart_account_health_failure_count_sql,
+    build_mart_account_health_top_driver_sql, build_mart_account_health_queued_sql,
+    build_mart_account_health_ytd_credits_sql,
     format_snowflake_error, filter_existing_columns, safe_float, safe_int,
 )
 
@@ -153,6 +161,32 @@ def _load_live_query_status(wh_filter: str, db_filter: str, user_filter: str) ->
             return pd.DataFrame(), "ACCOUNT_USAGE"
 
 
+def _can_use_control_room_mart(company: str) -> tuple[bool, str]:
+    """Use the mart only when section filters match its company-level grain."""
+    if str(company or "").upper() == "ALL":
+        return False, "ALL view needs live/account-level aggregation."
+    blocking_filters = {
+        "warehouse": st.session_state.get("global_warehouse"),
+        "user": st.session_state.get("global_user"),
+        "role": st.session_state.get("global_role"),
+        "database": st.session_state.get("global_database"),
+    }
+    active = [name for name, value in blocking_filters.items() if str(value or "").strip()]
+    if active:
+        return False, f"Global {', '.join(active)} filters are active."
+    return True, ""
+
+
+def _mart_health_label(score: float) -> str:
+    if score >= 90:
+        return "Healthy"
+    if score >= 75:
+        return "Watch"
+    if score >= 60:
+        return "Degraded"
+    return "Critical"
+
+
 def render():
     session      = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
@@ -252,10 +286,103 @@ def render():
             or st.session_state.get("_health_filter_sig") != filter_sig
         ):
             hd = {}
+            mart_ok, mart_reason = _can_use_control_room_mart(company)
+            control_mart = load_latest_control_room_mart(company) if mart_ok else None
+            use_control_mart = bool(
+                control_mart is not None
+                and control_mart.available
+                and control_mart.data is not None
+                and not control_mart.data.empty
+            )
+            hd["_control_mart"] = control_mart.data if control_mart is not None else pd.DataFrame()
+            hd["_control_mart_source"] = (
+                mart_source_caption(control_mart)
+                if control_mart is not None
+                else f"Live fallback: {mart_reason}"
+            )
+            hd["_control_mart_used"] = use_control_mart
             live_df, live_source = _load_live_query_status(wh_filter_q, db_filter_q, user_filter_q)
             hd["live"] = live_df
             hd["_live_source"] = live_source
-            for key, sql in [
+            if use_control_mart:
+                query_plan = [
+                    ("storage", build_mart_account_health_storage_sql(company)),
+                    ("cost_drivers", build_mart_account_health_cost_drivers_sql(24, company)),
+                    ("failed_jobs", build_mart_control_room_task_failures_sql(24, company)),
+                    ("what_changed", build_mart_account_health_change_sql(24, company)),
+                ]
+                hd["_account_health_detail_source"] = "OVERWATCH mart facts"
+            else:
+                query_plan = [
+                    ("storage", f"""
+                    SELECT COALESCE(
+                        ROUND(SUM(COALESCE(average_database_bytes,0)+COALESCE(average_failsafe_bytes,0))/POWER(1024,4),2),
+                        0
+                    ) AS storage_tb
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
+                    WHERE usage_date = (SELECT MAX(usage_date)
+                                        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY)
+                      {get_db_filter_clause("database_name", company)}
+                """),
+                ("cost_drivers", f"""
+                    WITH {build_metered_credit_cte(hours_back=48, include_recent=True)}
+                    SELECT q.user_name, q.warehouse_name, {cost_wh_size_expr} AS warehouse_size,
+                           COUNT(*) AS query_count,
+                           ROUND(SUM(COALESCE(pqc.metered_credits,0)), 4) AS total_credits,
+                           ROUND({cost_bytes_scanned_expr}/POWER(1024,3), 2) AS gb_scanned
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                    LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+                    WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                      AND q.warehouse_name IS NOT NULL
+                      {global_filter_q}
+                    GROUP BY q.user_name, q.warehouse_name
+                    ORDER BY total_credits DESC
+                    LIMIT 5
+                """),
+                ("failed_jobs", _task_failure_sql_or_empty(
+                    session,
+                    "scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())",
+                        5,
+                        company,
+                    )),
+                    ("what_changed", f"""
+                    WITH today_q AS (
+                        SELECT COUNT(*) AS q,
+                               SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS fails
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                        WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                          {wh_filter_q} {db_filter_q} {user_filter_q}
+                    ),
+                    yday_q AS (
+                        SELECT COUNT(*) AS q,
+                               SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS fails
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                        WHERE q.start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
+                          AND q.start_time <  DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                          {wh_filter_q} {db_filter_q} {user_filter_q}
+                    ),
+                    today_c AS (
+                        SELECT SUM(credits_used) AS credits
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+                        WHERE start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                          {wh_filter_m}
+                    ),
+                    yday_c AS (
+                        SELECT SUM(credits_used) AS credits
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+                        WHERE start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
+                          AND start_time < DATEADD('hours', -24, CURRENT_TIMESTAMP())
+                          {wh_filter_m}
+                    )
+                    SELECT today_q.q - yday_q.q AS query_delta,
+                           ROUND(COALESCE(today_c.credits, 0) - COALESCE(yday_c.credits, 0), 4) AS credit_delta,
+                           today_q.fails - yday_q.fails AS failure_delta
+                    FROM today_q, yday_q, today_c, yday_c
+                    """),
+                ]
+                hd["_account_health_detail_source"] = "Live fallback: ACCOUNT_USAGE"
+            if not use_control_mart:
+                query_plan = [
                 ("burn", f"""
                     SELECT SUM(CASE WHEN start_time >= DATEADD('hours',-24,CURRENT_TIMESTAMP())
                                THEN credits_used ELSE 0 END) AS last_24h,
@@ -299,77 +426,13 @@ def render():
                            SUM(IFF(failed_queries > 0 OR queued_queries > 0, 1, 0)) AS pressure_warehouses
                     FROM wh
                 """),
-                ("storage", f"""
-                    SELECT COALESCE(
-                        ROUND(SUM(COALESCE(average_database_bytes,0)+COALESCE(average_failsafe_bytes,0))/POWER(1024,4),2),
-                        0
-                    ) AS storage_tb
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-                    WHERE usage_date = (SELECT MAX(usage_date)
-                                        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY)
-                      {get_db_filter_clause("database_name", company)}
-                """),
-                ("cost_drivers", f"""
-                    WITH {build_metered_credit_cte(hours_back=48, include_recent=True)}
-                    SELECT q.user_name, q.warehouse_name, {cost_wh_size_expr} AS warehouse_size,
-                           COUNT(*) AS query_count,
-                           ROUND(SUM(COALESCE(pqc.metered_credits,0)), 4) AS total_credits,
-                           ROUND({cost_bytes_scanned_expr}/POWER(1024,3), 2) AS gb_scanned
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                    LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
-                    WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
-                      AND q.warehouse_name IS NOT NULL
-                      {global_filter_q}
-                    GROUP BY q.user_name, q.warehouse_name
-                    ORDER BY total_credits DESC
-                    LIMIT 5
-                """),
-                ("failed_jobs", _task_failure_sql_or_empty(
-                    session,
-                    "scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())",
-                    5,
-                    company,
-                )),
                 ("task_health", _task_health_sql_or_empty(
                     session,
                     "scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())",
                     company,
                 )),
-                ("what_changed", f"""
-                    WITH today_q AS (
-                        SELECT COUNT(*) AS q,
-                               SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS fails
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                        WHERE q.start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
-                          {wh_filter_q} {db_filter_q} {user_filter_q}
-                    ),
-                    yday_q AS (
-                        SELECT COUNT(*) AS q,
-                               SUM(CASE WHEN {failed_pred_q} THEN 1 ELSE 0 END) AS fails
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                        WHERE q.start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
-                          AND q.start_time <  DATEADD('hours', -24, CURRENT_TIMESTAMP())
-                          {wh_filter_q} {db_filter_q} {user_filter_q}
-                    ),
-                    today_c AS (
-                        SELECT SUM(credits_used) AS credits
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                        WHERE start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
-                          {wh_filter_m}
-                    ),
-                    yday_c AS (
-                        SELECT SUM(credits_used) AS credits
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                        WHERE start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
-                          AND start_time < DATEADD('hours', -24, CURRENT_TIMESTAMP())
-                          {wh_filter_m}
-                    )
-                    SELECT today_q.q - yday_q.q AS query_delta,
-                           ROUND(COALESCE(today_c.credits, 0) - COALESCE(yday_c.credits, 0), 4) AS credit_delta,
-                           today_q.fails - yday_q.fails AS failure_delta
-                    FROM today_q, yday_q, today_c, yday_c
-                """),
-            ]:
+                ] + query_plan
+            for key, sql in query_plan:
                 try:
                     hd[key] = run_query_or_raise(sql)
                 except Exception:
@@ -390,47 +453,74 @@ def render():
         query_stats_df = hd.get("query_stats", pd.DataFrame())
         task_health_df = hd.get("task_health", pd.DataFrame())
         warehouse_pressure_df = hd.get("warehouse_pressure", pd.DataFrame())
+        control_mart_df = hd.get("_control_mart", pd.DataFrame())
+        control_mart_used = bool(hd.get("_control_mart_used", False)) and not control_mart_df.empty
+        control_mart_row = control_mart_df.iloc[0] if control_mart_used else {}
         live_val  = safe_int(live_df["ACTIVE_COUNT"].iloc[0]) if not live_df.empty else 0
         queued    = safe_int(live_df["QUEUED_COUNT"].iloc[0]) if not live_df.empty else 0
-        last24    = safe_float(burn_df["LAST_24H"].iloc[0]) if not burn_df.empty else 0
-        prior24   = safe_float(burn_df["PRIOR_24H"].iloc[0]) if not burn_df.empty else 0
-        err_count = safe_int(err_df["ERR_COUNT"].iloc[0]) if not err_df.empty else 0
         stor_tb   = safe_float(storage_df["STORAGE_TB"].iloc[0]) if not storage_df.empty else 0
-        pct_delta = ((last24 - prior24) / prior24 * 100) if prior24 > 0 else 0
-        health = executive_health_score({
-            "total_queries": safe_float(query_stats_df["TOTAL_QUERIES"].iloc[0]) if not query_stats_df.empty else 0,
-            "failed_queries": err_count,
-            "queued_queries": safe_float(query_stats_df["QUEUED_QUERIES"].iloc[0]) if not query_stats_df.empty else queued,
-            "avg_elapsed_sec": safe_float(query_stats_df["AVG_ELAPSED_SEC"].iloc[0]) if not query_stats_df.empty else 0,
-            "task_runs": safe_float(task_health_df["TASK_RUNS"].iloc[0]) if not task_health_df.empty else 0,
-            "failed_tasks": safe_float(task_health_df["FAILED_TASKS"].iloc[0]) if not task_health_df.empty else 0,
-            "active_warehouses": safe_float(warehouse_pressure_df["ACTIVE_WAREHOUSES"].iloc[0]) if not warehouse_pressure_df.empty else 0,
-            "pressure_warehouses": safe_float(warehouse_pressure_df["PRESSURE_WAREHOUSES"].iloc[0]) if not warehouse_pressure_df.empty else 0,
-            "current_credits": last24,
-            "prior_credits": prior24,
-            "current_storage_tb": stor_tb,
-            "prior_storage_tb": stor_tb,
-        })
-        health_score = health["score"]
-        score_label = health["label"]
+        if control_mart_used:
+            last24 = safe_float(control_mart_row.get("CREDITS_24H", 0))
+            cost24 = safe_float(control_mart_row.get("COST_24H_USD", credits_to_dollars(last24, credit_price)))
+            err_count = safe_int(control_mart_row.get("FAILED_QUERIES_24H", 0))
+            failed_tasks = safe_int(control_mart_row.get("FAILED_TASKS_24H", 0))
+            queued_ms = safe_float(control_mart_row.get("QUEUED_MS_24H", 0))
+            pct_delta = 0
+            health_score = safe_float(control_mart_row.get("HEALTH_SCORE", 0))
+            score_label = _mart_health_label(health_score)
+            health_components = pd.DataFrame([
+                {"Component": "Failed queries", "Observed": err_count, "Source": "MART_DBA_CONTROL_ROOM"},
+                {"Component": "Failed tasks", "Observed": failed_tasks, "Source": "MART_DBA_CONTROL_ROOM"},
+                {"Component": "Queued minutes", "Observed": round(queued_ms / 60000, 2), "Source": "MART_DBA_CONTROL_ROOM"},
+                {"Component": "Security events", "Observed": safe_int(control_mart_row.get("SECURITY_EVENTS_24H", 0)), "Source": "MART_DBA_CONTROL_ROOM"},
+                {"Component": "Object changes", "Observed": safe_int(control_mart_row.get("OBJECT_CHANGES_24H", 0)), "Source": "MART_DBA_CONTROL_ROOM"},
+                {"Component": "Top risk", "Observed": control_mart_row.get("TOP_RISK", ""), "Source": "MART_DBA_CONTROL_ROOM"},
+            ])
+        else:
+            last24 = safe_float(burn_df["LAST_24H"].iloc[0]) if not burn_df.empty else 0
+            prior24 = safe_float(burn_df["PRIOR_24H"].iloc[0]) if not burn_df.empty else 0
+            cost24 = credits_to_dollars(last24, credit_price)
+            err_count = safe_int(err_df["ERR_COUNT"].iloc[0]) if not err_df.empty else 0
+            pct_delta = ((last24 - prior24) / prior24 * 100) if prior24 > 0 else 0
+            health = executive_health_score({
+                "total_queries": safe_float(query_stats_df["TOTAL_QUERIES"].iloc[0]) if not query_stats_df.empty else 0,
+                "failed_queries": err_count,
+                "queued_queries": safe_float(query_stats_df["QUEUED_QUERIES"].iloc[0]) if not query_stats_df.empty else queued,
+                "avg_elapsed_sec": safe_float(query_stats_df["AVG_ELAPSED_SEC"].iloc[0]) if not query_stats_df.empty else 0,
+                "task_runs": safe_float(task_health_df["TASK_RUNS"].iloc[0]) if not task_health_df.empty else 0,
+                "failed_tasks": safe_float(task_health_df["FAILED_TASKS"].iloc[0]) if not task_health_df.empty else 0,
+                "active_warehouses": safe_float(warehouse_pressure_df["ACTIVE_WAREHOUSES"].iloc[0]) if not warehouse_pressure_df.empty else 0,
+                "pressure_warehouses": safe_float(warehouse_pressure_df["PRESSURE_WAREHOUSES"].iloc[0]) if not warehouse_pressure_df.empty else 0,
+                "current_credits": last24,
+                "prior_credits": prior24,
+                "current_storage_tb": stor_tb,
+                "prior_storage_tb": stor_tb,
+            })
+            health_score = health["score"]
+            score_label = health["label"]
+            health_components = pd.DataFrame(health["components"])
 
         k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
         k1.metric("Health Score",   f"{health_score:.0f}", score_label)
         k2.metric("Active Queries", live_val)
         k3.metric("Queued",         queued)
         k4.metric("Credits (24h)",  f"{last24:,.0f}", delta=f"{pct_delta:+.1f}%")
-        k5.metric("Cost (24h)",     f"${credits_to_dollars(last24):,.0f}")
+        k5.metric("Cost (24h)",     f"${cost24:,.0f}")
         k6.metric("Storage",        f"{stor_tb:.1f} TB")
         k7.metric("Failed (24h)",   err_count, delta_color="inverse")
         st.caption(
             " | ".join([
                 metric_confidence_label("composite"),
                 metric_confidence_label("exact") + " for source counts",
+                hd.get("_control_mart_source", "Live fallback"),
                 freshness_note(live_source),
             ])
         )
+        if control_mart_used:
+            st.caption(f"Mart snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
+        st.caption(f"Landing signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
         with st.expander("Health score contributors", expanded=False):
-            st.dataframe(pd.DataFrame(health["components"]), use_container_width=True, height=260)
+            st.dataframe(health_components, use_container_width=True, height=260)
 
         st.divider()
         show_loaded_time("account_health")
@@ -553,15 +643,23 @@ def render():
         st.divider()
         st.markdown("**🏭 Warehouse Pressure (last 1h)**")
         try:
-            df_wp = run_query_or_raise(f"""
-                SELECT warehouse_name, {pressure_wh_size_expr} AS warehouse_size, COUNT(*) AS queries,
-                       {queued_count_expr_plain} AS queued
-                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                WHERE start_time >= DATEADD('hours',-1,CURRENT_TIMESTAMP())
-                  AND warehouse_name IS NOT NULL
-                  {wh_filter_m}
-                GROUP BY warehouse_name ORDER BY queries DESC LIMIT 8
-            """)
+            if control_mart_used:
+                df_wp = run_query_or_raise(build_mart_control_room_warehouse_pressure_sql(1, company))
+                if df_wp is not None and not df_wp.empty:
+                    df_wp = df_wp.rename(columns={
+                        "TOTAL_QUERIES": "QUERIES",
+                        "QUEUED_QUERIES": "QUEUED",
+                    })
+            else:
+                df_wp = run_query_or_raise(f"""
+                    SELECT warehouse_name, {pressure_wh_size_expr} AS warehouse_size, COUNT(*) AS queries,
+                           {queued_count_expr_plain} AS queued
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                    WHERE start_time >= DATEADD('hours',-1,CURRENT_TIMESTAMP())
+                      AND warehouse_name IS NOT NULL
+                      {wh_filter_m}
+                    GROUP BY warehouse_name ORDER BY queries DESC LIMIT 8
+                """)
             if not df_wp.empty:
                 top_wh = df_wp.sort_values(["QUEUED","QUERIES"], ascending=False).iloc[0]
                 st.metric(
@@ -676,8 +774,9 @@ def render():
         if st.button("Generate Morning Report", key="morning_gen"):
             with st.spinner("Generating overnight report..."):
                 md = {}
-                for key, sql in [
-                    ("failures", f"""
+                morning_mart_ok, morning_mart_reason = _can_use_control_room_mart(company)
+                morning_live_queries = {
+                    "failures": f"""
                         SELECT query_type, COUNT(*) AS fail_count,
                                COUNT(DISTINCT user_name) AS affected_users,
                                COUNT(DISTINCT warehouse_name) AS affected_wh
@@ -686,8 +785,8 @@ def render():
                           AND {failed_pred_plain}
                           {wh_filter_m} {get_db_filter_clause("database_name", company)} {get_user_filter_clause("user_name", company)}
                         GROUP BY query_type ORDER BY fail_count DESC
-                    """),
-                    ("long_queries", f"""
+                    """,
+                    "long_queries": f"""
                         SELECT query_id, user_name, warehouse_name,
                                SUBSTR(query_text,1,100) AS query_preview,
                                total_elapsed_time/1000  AS elapsed_sec,
@@ -697,24 +796,54 @@ def render():
                           AND warehouse_name IS NOT NULL
                           {wh_filter_m} {get_db_filter_clause("database_name", company)} {get_user_filter_clause("user_name", company)}
                         ORDER BY total_elapsed_time DESC LIMIT 10
-                    """),
-                    ("credits", f"""
+                    """,
+                    "credits": f"""
                         SELECT SUM(credits_used) AS overnight_credits
                         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
                         WHERE start_time >= DATEADD('hours',-12,CURRENT_TIMESTAMP())
                           {wh_filter_m}
-                    """),
-                ]:
+                    """,
+                }
+                morning_mart_queries = {
+                    "failures": build_mart_account_health_failure_types_sql(12, company),
+                    "long_queries": build_mart_account_health_long_queries_sql(12, company, limit=10),
+                    "credits": build_mart_account_health_credits_sql(12, company),
+                }
+                morning_source = "OVERWATCH mart facts" if morning_mart_ok else f"Live fallback: {morning_mart_reason}"
+                for key, live_sql in morning_live_queries.items():
                     try:
-                        md[key] = run_query(sql, ttl_key=f"account_health_morning_{company}_{key}", tier="recent")
-                    except Exception:
-                        md[key] = pd.DataFrame()
+                        if morning_mart_ok:
+                            md[key] = run_query(
+                                morning_mart_queries[key],
+                                ttl_key=f"account_health_morning_mart_{company}_{key}",
+                                tier="historical",
+                                section="Account Health",
+                            )
+                        else:
+                            raise RuntimeError(morning_mart_reason)
+                    except Exception as mart_exc:
+                        try:
+                            md[key] = run_query(
+                                live_sql,
+                                ttl_key=f"account_health_morning_live_{company}_{key}",
+                                tier="recent",
+                                section="Account Health",
+                            )
+                            if morning_mart_ok:
+                                morning_source = f"Live fallback: {format_snowflake_error(mart_exc)}"
+                        except Exception:
+                            md[key] = pd.DataFrame()
+                md["_source"] = morning_source
                 st.session_state["morning_data"] = md
 
         if st.session_state.get("morning_data"):
             md = st.session_state["morning_data"]
-            overnight_cr = safe_float(md["credits"]["OVERNIGHT_CREDITS"].iloc[0]) if not md["credits"].empty else 0
+            overnight_cr = safe_float(
+                md["credits"].iloc[0].get("OVERNIGHT_CREDITS", md["credits"].iloc[0].get("PERIOD_CREDITS", 0))
+            ) if not md["credits"].empty else 0
             st.metric("Overnight Credits (12h)", format_credits(overnight_cr))
+            if md.get("_source"):
+                st.caption(f"Source: {md['_source']}")
             if not md["failures"].empty:
                 st.subheader("❌ Overnight Failures by Type")
                 st.dataframe(md["failures"], use_container_width=True)
@@ -762,6 +891,7 @@ def render():
                 br_data = {}
 
                 # ── Collect metrics ────────────────────────────────────────────
+                briefing_mart_ok, briefing_mart_reason = _can_use_control_room_mart(company)
                 metric_queries = {
                     "credits": f"""
                         SELECT SUM(CASE WHEN start_time >= DATEADD('hours',-{br_hours},CURRENT_TIMESTAMP())
@@ -818,24 +948,70 @@ def render():
                           {wh_filter_q} {db_filter_q} {user_filter_q}
                     """,
                 }
+                mart_metric_queries = {
+                    "credits": build_mart_account_health_credits_sql(br_hours, company),
+                    "failures": build_mart_account_health_failure_count_sql(br_hours, company),
+                    "top_driver": build_mart_account_health_top_driver_sql(br_hours, company),
+                    "failed_tasks": build_mart_control_room_task_failures_sql(br_hours, company),
+                    "storage": build_mart_account_health_storage_sql(company),
+                    "queued": build_mart_account_health_queued_sql(1, company),
+                }
+                briefing_source = "OVERWATCH mart facts" if briefing_mart_ok else f"Live fallback: {briefing_mart_reason}"
 
                 for k, sql in metric_queries.items():
                     try:
-                        br_data[k] = run_query(sql, ttl_key=f"account_health_brief_{company}_{k}_{br_hours}", tier="recent")
-                    except Exception:
-                        br_data[k] = pd.DataFrame()
+                        if briefing_mart_ok:
+                            br_data[k] = run_query(
+                                mart_metric_queries[k],
+                                ttl_key=f"account_health_brief_mart_{company}_{k}_{br_hours}",
+                                tier="historical",
+                                section="Account Health",
+                            )
+                        else:
+                            raise RuntimeError(briefing_mart_reason)
+                    except Exception as mart_exc:
+                        try:
+                            br_data[k] = run_query(
+                                sql,
+                                ttl_key=f"account_health_brief_live_{company}_{k}_{br_hours}",
+                                tier="recent",
+                                section="Account Health",
+                            )
+                            if briefing_mart_ok:
+                                briefing_source = f"Live fallback: {format_snowflake_error(mart_exc)}"
+                        except Exception:
+                            br_data[k] = pd.DataFrame()
 
                 # Contract utilization
                 try:
-                    ytd_source = "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY" if company == "ALL" else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-                    ytd_filter = "" if company == "ALL" else wh_filter_m
-                    df_ytd = run_query(f"""
-                        SELECT SUM(credits_used) AS ytd_credits
-                        FROM {ytd_source}
-                        WHERE start_time >= DATE_TRUNC('year', CURRENT_DATE())
-                          AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                          {ytd_filter}
-                    """, ttl_key=f"account_health_brief_contract_ytd_{company}", tier="historical")
+                    if briefing_mart_ok:
+                        try:
+                            df_ytd = run_query(
+                                build_mart_account_health_ytd_credits_sql(company),
+                                ttl_key=f"account_health_brief_contract_ytd_mart_{company}",
+                                tier="historical",
+                                section="Account Health",
+                            )
+                        except Exception:
+                            ytd_source = "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY" if company == "ALL" else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+                            ytd_filter = "" if company == "ALL" else wh_filter_m
+                            df_ytd = run_query(f"""
+                                SELECT SUM(credits_used) AS ytd_credits
+                                FROM {ytd_source}
+                                WHERE start_time >= DATE_TRUNC('year', CURRENT_DATE())
+                                  AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+                                  {ytd_filter}
+                            """, ttl_key=f"account_health_brief_contract_ytd_live_{company}", tier="historical", section="Account Health")
+                    else:
+                        ytd_source = "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY" if company == "ALL" else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+                        ytd_filter = "" if company == "ALL" else wh_filter_m
+                        df_ytd = run_query(f"""
+                            SELECT SUM(credits_used) AS ytd_credits
+                            FROM {ytd_source}
+                            WHERE start_time >= DATE_TRUNC('year', CURRENT_DATE())
+                              AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+                              {ytd_filter}
+                        """, ttl_key=f"account_health_brief_contract_ytd_live_{company}", tier="historical", section="Account Health")
                     committed = st.session_state.get("cc_committed_credits", 100000)
                     ytd       = safe_float(df_ytd["YTD_CREDITS"].iloc[0]) if not df_ytd.empty else 0
                     br_data["contract_pct"] = (ytd / committed * 100) if committed > 0 else None
@@ -897,16 +1073,19 @@ def render():
                 st.session_state["ah_briefing_text"] = briefing_text
                 st.session_state["ah_briefing_ts"]   = datetime.now().strftime("%Y-%m-%d %H:%M")
                 st.session_state["ah_briefing_window"] = briefing_window
+                st.session_state["ah_briefing_source"] = briefing_source
 
         # ── Render briefing ────────────────────────────────────────────────────
         if st.session_state.get("ah_briefing_text"):
             briefing_text   = st.session_state["ah_briefing_text"]
             briefing_ts     = st.session_state.get("ah_briefing_ts", "")
             briefing_window = st.session_state.get("ah_briefing_window", "")
+            briefing_source = st.session_state.get("ah_briefing_source", "Live fallback")
             safe_briefing_text = html.escape(str(briefing_text))
             safe_company = html.escape(str(company))
             safe_window = html.escape(str(briefing_window))
             safe_ts = html.escape(str(briefing_ts))
+            safe_source = html.escape(str(briefing_source))
 
             st.divider()
 
@@ -915,7 +1094,7 @@ def render():
             <div style="background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.2);
                         border-radius:12px;padding:24px;margin:8px 0;">
                 <div style="font-size:0.7rem;color:#64748b;margin-bottom:12px;letter-spacing:1px;text-transform:uppercase;">
-                    OVERWATCH Executive Briefing - {safe_company} - {safe_window} - Generated {safe_ts}
+                    OVERWATCH Executive Briefing - {safe_company} - {safe_window} - Generated {safe_ts} - Source {safe_source}
                 </div>
                 <div style="color:#e2e8f0;font-size:0.95rem;line-height:1.7;white-space:pre-wrap;">{safe_briefing_text}</div>
             </div>

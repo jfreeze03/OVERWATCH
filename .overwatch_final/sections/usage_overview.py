@@ -19,6 +19,12 @@ from utils import (
     filter_existing_columns,
     metric_confidence_label,
     render_drillable_bar_chart,
+    build_mart_usage_overview_sql,
+    build_mart_usage_metering_sql,
+    build_mart_usage_pressure_sql,
+    build_mart_usage_cost_drivers_sql,
+    build_mart_usage_query_mix_sql,
+    build_mart_usage_database_adoption_sql,
     run_query,
     safe_float,
     sql_literal,
@@ -28,6 +34,12 @@ from utils import (
 
 def _load_overview(session, days: int) -> dict:
     company = get_active_company()
+    global_warehouse = str(st.session_state.get("global_warehouse", "") or "").strip()
+    global_user = str(st.session_state.get("global_user", "") or "").strip()
+    global_role = str(st.session_state.get("global_role", "") or "").strip()
+    global_database = str(st.session_state.get("global_database", "") or "").strip()
+    global_start_date = st.session_state.get("global_start_date")
+    global_end_date = st.session_state.get("global_end_date")
     wh_filter = get_wh_filter_clause("warehouse_name")
     db_filter = get_db_filter_clause("database_name")
     qh_cols = set(filter_existing_columns(
@@ -95,7 +107,7 @@ def _load_overview(session, days: int) -> dict:
         db_col="q.database_name",
     )
 
-    overview = run_query(f"""
+    live_overview_sql = f"""
         SELECT
             COUNT(*) AS total_queries,
             COUNT(DISTINCT q.user_name) AS total_users,
@@ -110,9 +122,27 @@ def _load_overview(session, days: int) -> dict:
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {q_filters}
-    """, ttl_key=f"uo_overview_{company}_{days}", tier="historical")
+    """
+    overview = run_query(
+        build_mart_usage_overview_sql(
+            days,
+            company=company,
+            warehouse_contains=global_warehouse,
+            user_contains=global_user,
+            role_contains=global_role,
+            database_contains=global_database,
+            start_date=global_start_date,
+            end_date=global_end_date,
+        ),
+        ttl_key=f"uo_overview_mart_{company}_{days}",
+        tier="historical",
+    )
+    overview_source = "OVERWATCH mart: FACT_QUERY_HOURLY"
+    if overview.empty or _first_number(overview, "TOTAL_QUERIES") <= 0:
+        overview = run_query(live_overview_sql, ttl_key=f"uo_overview_live_{company}_{days}", tier="historical")
+        overview_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
 
-    metering = run_query(f"""
+    live_metering_sql = f"""
         SELECT
             ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0)), 4) AS total_credits,
             ROUND(SUM(IFF(start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
@@ -123,7 +153,22 @@ def _load_overview(session, days: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
           {wh_filter}
-    """, ttl_key=f"uo_metering_{company}_{days}", tier="historical")
+    """
+    metering = run_query(
+        build_mart_usage_metering_sql(
+            days,
+            company=company,
+            warehouse_contains=global_warehouse,
+            start_date=global_start_date,
+            end_date=global_end_date,
+        ),
+        ttl_key=f"uo_metering_mart_{company}_{days}",
+        tier="historical",
+    )
+    metering_source = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+    if metering.empty:
+        metering = run_query(live_metering_sql, ttl_key=f"uo_metering_live_{company}_{days}", tier="historical")
+        metering_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
 
     storage = run_query(f"""
         WITH scoped AS (
@@ -173,7 +218,7 @@ def _load_overview(session, days: int) -> dict:
             "DISTINCT_TASKS": 0,
         }])
 
-    warehouse_pressure = run_query(f"""
+    live_pressure_sql = f"""
         WITH wh AS (
             SELECT
                 q.warehouse_name,
@@ -191,7 +236,31 @@ def _load_overview(session, days: int) -> dict:
             COUNT(*) AS active_warehouses,
             SUM(IFF(queued_queries > 0 OR remote_spill_gb > 1 OR failed_queries > 0, 1, 0)) AS pressure_warehouses
         FROM wh
-    """, ttl_key=f"uo_wh_pressure_{company}_{days}", tier="historical", section="Usage Overview")
+    """
+    warehouse_pressure = run_query(
+        build_mart_usage_pressure_sql(
+            days,
+            company=company,
+            warehouse_contains=global_warehouse,
+            user_contains=global_user,
+            role_contains=global_role,
+            database_contains=global_database,
+            start_date=global_start_date,
+            end_date=global_end_date,
+        ),
+        ttl_key=f"uo_wh_pressure_mart_{company}_{days}",
+        tier="historical",
+        section="Usage Overview",
+    )
+    pressure_source = "OVERWATCH mart: FACT_QUERY_HOURLY"
+    if warehouse_pressure.empty:
+        warehouse_pressure = run_query(
+            live_pressure_sql,
+            ttl_key=f"uo_wh_pressure_live_{company}_{days}",
+            tier="historical",
+            section="Usage Overview",
+        )
+        pressure_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
 
     return {
         "overview": overview,
@@ -199,10 +268,35 @@ def _load_overview(session, days: int) -> dict:
         "storage": storage,
         "task_health": task_health,
         "warehouse_pressure": warehouse_pressure,
+        "sources": {
+            "overview": overview_source,
+            "metering": metering_source,
+            "warehouse_pressure": pressure_source,
+            "storage": "Live: SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY",
+            "task_health": "Live: task history metadata",
+        },
     }
 
 
 def _load_cost_drivers(session, days: int):
+    company = get_active_company()
+    warehouse_contains = str(st.session_state.get("global_warehouse", "") or "").strip()
+    mart_df = run_query(
+        build_mart_usage_cost_drivers_sql(
+            days,
+            company=company,
+            warehouse_contains=warehouse_contains,
+            start_date=st.session_state.get("global_start_date"),
+            end_date=st.session_state.get("global_end_date"),
+        ),
+        ttl_key=f"uo_top_wh_mart_{company}_{days}",
+        tier="historical",
+        section="Usage Overview",
+    )
+    if not mart_df.empty:
+        st.session_state["uo_top_wh_source"] = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+        return mart_df
+
     wm_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
@@ -218,7 +312,7 @@ def _load_cost_drivers(session, days: int):
         if "CREDITS_USED_CLOUD_SERVICES" in wm_cols
         else "0"
     )
-    return company_scoped_query(
+    live_df = company_scoped_query(
         f"""
         SELECT
             warehouse_name,
@@ -243,9 +337,31 @@ def _load_cost_drivers(session, days: int):
         section="Usage Overview",
         extra_cache_parts=(days,),
     )
+    st.session_state["uo_top_wh_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+    return live_df
 
 
 def _load_query_mix(session, days: int):
+    company = get_active_company()
+    mart_df = run_query(
+        build_mart_usage_query_mix_sql(
+            days,
+            company=company,
+            warehouse_contains=str(st.session_state.get("global_warehouse", "") or "").strip(),
+            user_contains=str(st.session_state.get("global_user", "") or "").strip(),
+            role_contains=str(st.session_state.get("global_role", "") or "").strip(),
+            database_contains=str(st.session_state.get("global_database", "") or "").strip(),
+            start_date=st.session_state.get("global_start_date"),
+            end_date=st.session_state.get("global_end_date"),
+        ),
+        ttl_key=f"uo_query_types_mart_{company}_{days}",
+        tier="historical",
+        section="Usage Overview",
+    )
+    if not mart_df.empty:
+        st.session_state["uo_query_types_source"] = "OVERWATCH mart: FACT_QUERY_HOURLY"
+        return mart_df
+
     qh_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
@@ -256,7 +372,7 @@ def _load_query_mix(session, days: int):
         if "ERROR_CODE" in qh_cols
         else "SUM(IFF(UPPER(q.execution_status) = 'FAILED_WITH_ERROR', 1, 0))"
     )
-    return company_scoped_query(
+    live_df = company_scoped_query(
         f"""
         SELECT
             COALESCE(q.query_type, 'UNKNOWN') AS query_type,
@@ -282,10 +398,32 @@ def _load_query_mix(session, days: int):
         section="Usage Overview",
         extra_cache_parts=(days,),
     )
+    st.session_state["uo_query_types_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+    return live_df
 
 
 def _load_database_adoption(days: int):
-    return company_scoped_query(
+    company = get_active_company()
+    mart_df = run_query(
+        build_mart_usage_database_adoption_sql(
+            days,
+            company=company,
+            warehouse_contains=str(st.session_state.get("global_warehouse", "") or "").strip(),
+            user_contains=str(st.session_state.get("global_user", "") or "").strip(),
+            role_contains=str(st.session_state.get("global_role", "") or "").strip(),
+            database_contains=str(st.session_state.get("global_database", "") or "").strip(),
+            start_date=st.session_state.get("global_start_date"),
+            end_date=st.session_state.get("global_end_date"),
+        ),
+        ttl_key=f"uo_users_by_db_mart_{company}_{days}",
+        tier="historical",
+        section="Usage Overview",
+    )
+    if not mart_df.empty:
+        st.session_state["uo_users_by_db_source"] = "OVERWATCH mart: FACT_QUERY_HOURLY"
+        return mart_df
+
+    live_df = company_scoped_query(
         f"""
         SELECT
             COALESCE(q.database_name, 'UNKNOWN') AS database_name,
@@ -309,6 +447,8 @@ def _load_database_adoption(days: int):
         section="Usage Overview",
         extra_cache_parts=(days,),
     )
+    st.session_state["uo_users_by_db_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+    return live_df
 
 
 def _first_number(df, column: str) -> float:
@@ -374,6 +514,7 @@ def render():
     storage = data["storage"]
     task_health = data.get("task_health", pd.DataFrame())
     warehouse_pressure = data.get("warehouse_pressure", pd.DataFrame())
+    sources = data.get("sources", {})
     success_rate = _first_number(overview, "QUERY_SUCCESS_RATE")
     total_queries = _first_number(overview, "TOTAL_QUERIES")
     health = executive_health_score({
@@ -403,6 +544,8 @@ def render():
         " | ".join([
             metric_confidence_label("exact"),
             metric_confidence_label("composite"),
+            sources.get("overview", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"),
+            sources.get("metering", "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"),
             freshness_note("ACCOUNT_USAGE"),
             "Progressive load: KPI queries ran; charts below load only when requested.",
         ])
@@ -426,6 +569,7 @@ def render():
         if top_wh is None:
             st.info("Cost driver chart is deferred. Load it when you need warehouse detail.")
         elif not top_wh.empty:
+            st.caption(st.session_state.get("uo_top_wh_source", "Source unavailable"))
             render_drillable_bar_chart(top_wh, "WAREHOUSE_NAME", "TOTAL_CREDITS", "uo_top_wh", "Top Warehouses By Credit Usage", "warehouse_name", 24 * min(days, 14), 15)
             if st.button("Send top warehouses to Action Queue", key="uo_queue_wh"):
                 _queue_top_warehouses(session, top_wh)
@@ -441,6 +585,7 @@ def render():
         if qt is None:
             st.info("Query mix is deferred to keep Usage Overview lightweight.")
         elif not qt.empty:
+            st.caption(st.session_state.get("uo_query_types_source", "Source unavailable"))
             chart = alt.Chart(qt.sort_values("QUERY_COUNT", ascending=False)).mark_bar().encode(
                 x=alt.X("QUERY_COUNT:Q", title="Queries"),
                 y=alt.Y("QUERY_TYPE:N", sort="-x", title=None),
@@ -461,6 +606,7 @@ def render():
         if db is None:
             st.info("Database adoption detail is deferred until requested.")
         elif not db.empty:
+            st.caption(st.session_state.get("uo_users_by_db_source", "Source unavailable"))
             render_drillable_bar_chart(db, "DATABASE_NAME", "USERS", "uo_users_db", "Users By Database", "database_name", 24 * min(days, 14), 15)
             download_csv(db, "usage_overview_users_by_database.csv")
         else:

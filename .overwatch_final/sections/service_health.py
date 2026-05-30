@@ -4,6 +4,10 @@ import streamlit as st
 
 from utils import (
     build_task_health_sql,
+    build_mart_service_query_health_sql,
+    build_mart_service_warehouse_health_sql,
+    build_mart_service_login_health_sql,
+    build_mart_service_task_health_sql,
     download_csv,
     filter_existing_columns,
     get_active_company,
@@ -69,7 +73,7 @@ def _load_service_health(session, hours: int) -> dict:
         if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "0::FLOAT"
     )
 
-    query_health = run_query(f"""
+    live_query_sql = f"""
         SELECT
             COUNT(*) AS total_queries,
             SUM(IFF({error_pred}, 1, 0)) AS failed_queries,
@@ -81,9 +85,18 @@ def _load_service_health(session, hours: int) -> dict:
         WHERE q.start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {wh_q} {db_q} {user_q}
-    """, ttl_key=f"svc_query_{company}_{hours}", tier="recent")
+    """
+    query_health = run_query(
+        build_mart_service_query_health_sql(hours, company=company),
+        ttl_key=f"svc_query_mart_{company}_{hours}",
+        tier="recent",
+    )
+    query_source = "OVERWATCH mart: FACT_QUERY_HOURLY"
+    if query_health.empty or _value(query_health, "TOTAL_QUERIES") <= 0:
+        query_health = run_query(live_query_sql, ttl_key=f"svc_query_live_{company}_{hours}", tier="recent")
+        query_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
 
-    warehouse_health = run_query(f"""
+    live_warehouse_sql = f"""
         SELECT
             q.warehouse_name,
             {wh_size_expr} AS warehouse_size,
@@ -99,9 +112,18 @@ def _load_service_health(session, hours: int) -> dict:
         GROUP BY q.warehouse_name
         ORDER BY queued_sec DESC, remote_spill_gb DESC, failed_queries DESC
         LIMIT 100
-    """, ttl_key=f"svc_warehouse_{company}_{hours}", tier="recent")
+    """
+    warehouse_health = run_query(
+        build_mart_service_warehouse_health_sql(hours, company=company),
+        ttl_key=f"svc_warehouse_mart_{company}_{hours}",
+        tier="recent",
+    )
+    warehouse_source = "OVERWATCH mart: FACT_QUERY_HOURLY"
+    if warehouse_health.empty:
+        warehouse_health = run_query(live_warehouse_sql, ttl_key=f"svc_warehouse_live_{company}_{hours}", tier="recent")
+        warehouse_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
 
-    login_health = run_query(f"""
+    live_login_sql = f"""
         SELECT
             COUNT(*) AS login_events,
             SUM(IFF(is_success = 'NO', 1, 0)) AS failed_logins,
@@ -110,18 +132,39 @@ def _load_service_health(session, hours: int) -> dict:
         FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
         WHERE event_timestamp >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
           {user_l}
-    """, ttl_key=f"svc_login_{company}_{hours}", tier="recent")
+    """
+    if int(hours) >= 24:
+        login_health = run_query(
+            build_mart_service_login_health_sql(hours, company=company),
+            ttl_key=f"svc_login_mart_{company}_{hours}",
+            tier="recent",
+        )
+        login_source = "OVERWATCH mart: FACT_LOGIN_DAILY"
+    else:
+        login_health = pd.DataFrame()
+        login_source = "Live fallback: daily mart grain is too coarse for sub-day windows"
+    if login_health.empty:
+        login_health = run_query(live_login_sql, ttl_key=f"svc_login_live_{company}_{hours}", tier="recent")
+        login_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"
 
     try:
         task_health = run_query(
-            build_task_health_sql(
-                session,
-                f"scheduled_time >= DATEADD('hour', -{int(hours)}, CURRENT_TIMESTAMP())",
-                company=company,
-            ),
-            ttl_key=f"svc_task_{company}_{hours}",
+            build_mart_service_task_health_sql(hours, company=company),
+            ttl_key=f"svc_task_mart_{company}_{hours}",
             tier="recent",
         )
+        task_source = "OVERWATCH mart: FACT_TASK_RUN"
+        if task_health.empty:
+            task_health = run_query(
+                build_task_health_sql(
+                    session,
+                    f"scheduled_time >= DATEADD('hour', -{int(hours)}, CURRENT_TIMESTAMP())",
+                    company=company,
+                ),
+                ttl_key=f"svc_task_live_{company}_{hours}",
+                tier="recent",
+            )
+            task_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY"
     except Exception:
         task_health = pd.DataFrame([{
             "TASK_RUNS": 0,
@@ -129,6 +172,7 @@ def _load_service_health(session, hours: int) -> dict:
             "SUCCEEDED_TASKS": 0,
             "DISTINCT_TASKS": 0,
         }])
+        task_source = "Unavailable"
 
     pipe_health = run_query(f"""
         SELECT
@@ -147,6 +191,13 @@ def _load_service_health(session, hours: int) -> dict:
         "login_health": login_health,
         "task_health": task_health,
         "pipe_health": pipe_health,
+        "sources": {
+            "query": query_source,
+            "warehouse": warehouse_source,
+            "login": login_source,
+            "task": task_source,
+            "pipe": "Live: SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY",
+        },
     }
 
 
@@ -235,7 +286,8 @@ def render():
         label = "Healthy" if row["SCORE"] >= 90 else ("Watch" if row["SCORE"] >= 75 else ("At Risk" if row["SCORE"] >= 60 else "Critical"))
         cols[idx].metric(row["SERVICE"], f"{row['SCORE']:.1f}", label)
     st.metric("Overall Service Score", f"{scorecard['score']:.1f}", scorecard["label"])
-    st.caption(f"{metric_confidence_label('composite')} | {freshness_note('ACCOUNT_USAGE')}")
+    source_text = " | ".join(v for v in data.get("sources", {}).values() if v)
+    st.caption(f"{metric_confidence_label('composite')} | {source_text} | {freshness_note('ACCOUNT_USAGE')}")
 
     if (services["SCORE"] < 95).any() and st.button("Send service findings to Action Queue", key="svc_queue"):
         _queue_service_findings(session, services)

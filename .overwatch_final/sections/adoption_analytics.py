@@ -3,6 +3,12 @@ import altair as alt
 import streamlit as st
 
 from utils import (
+    build_mart_adoption_role_type_sql,
+    build_mart_adoption_summary_sql,
+    build_mart_adoption_trend_sql,
+    build_mart_adoption_users_db_sql,
+    build_mart_adoption_users_wh_sql,
+    build_mart_adoption_warehouse_size_sql,
     download_csv,
     filter_existing_columns,
     get_active_company,
@@ -15,7 +21,21 @@ from utils import (
 )
 
 
-def _load_adoption(session, days: int) -> dict:
+def _load_adoption_mart(days: int) -> dict:
+    company = get_active_company()
+    return {
+        "summary": run_query(build_mart_adoption_summary_sql(days, company), ttl_key=f"aa_summary_mart_{company}_{days}", tier="historical"),
+        "warehouse_size": run_query(build_mart_adoption_warehouse_size_sql(days, company), ttl_key=f"aa_warehouse_size_mart_{company}_{days}", tier="historical"),
+        "trend": run_query(build_mart_adoption_trend_sql(days, company), ttl_key=f"aa_trend_mart_{company}_{days}", tier="historical"),
+        "users_wh": run_query(build_mart_adoption_users_wh_sql(days, company), ttl_key=f"aa_users_wh_mart_{company}_{days}", tier="historical"),
+        "users_db": run_query(build_mart_adoption_users_db_sql(days, company), ttl_key=f"aa_users_db_mart_{company}_{days}", tier="historical"),
+        "by_role_type": run_query(build_mart_adoption_role_type_sql(days, company), ttl_key=f"aa_role_type_mart_{company}_{days}", tier="historical"),
+        "applications": None,
+        "source": "OVERWATCH mart: FACT_QUERY_HOURLY",
+    }
+
+
+def _load_adoption_live(session, days: int) -> dict:
     company = get_active_company()
     filters = get_global_filter_clause(
         date_col="q.start_time",
@@ -153,7 +173,19 @@ def _load_adoption(session, days: int) -> dict:
         "users_db": users_db,
         "by_role_type": by_role_type,
         "applications": applications,
+        "source": "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
     }
+
+
+def _load_adoption(session, days: int) -> dict:
+    try:
+        data = _load_adoption_mart(days)
+        summary = data.get("summary")
+        if summary is not None and not summary.empty:
+            return data
+    except Exception:
+        pass
+    return _load_adoption_live(session, days)
 
 
 def _metric(df, column: str) -> float:
@@ -186,6 +218,7 @@ def render():
     m3.metric("Queries/User", f"{_metric(summary, 'QUERIES_PER_USER'):,.1f}")
     m4.metric("Time/Query", f"{_metric(summary, 'AVG_TIME_PER_QUERY_SEC'):,.2f}s")
     m5.metric("Error Rate", f"{_metric(summary, 'ERROR_RATE'):,.1f}%")
+    st.caption(data.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
     tab_trend, tab_wh, tab_db, tab_role = st.tabs(["Trend", "Warehouse Adoption", "Database Adoption", "Role & Workload Mix"])
 
@@ -231,7 +264,9 @@ def render():
             download_csv(role, "adoption_role_query_type.csv")
         with c2:
             st.subheader("Top Query Tags")
-            if not apps.empty:
+            if apps is None:
+                st.info("Query-tag adoption is intentionally deferred in mart mode. Use History Search when you need exact query-tag evidence.")
+            elif not apps.empty:
                 chart = alt.Chart(apps).mark_bar().encode(
                     x=alt.X("QUERY_COUNT:Q", title="Queries"),
                     y=alt.Y("CLIENT_APPLICATION:N", sort="-x", title=None),
@@ -239,4 +274,5 @@ def render():
                     color=alt.value("#c084fc"),
                 ).properties(height=360)
                 st.altair_chart(chart, use_container_width=True)
-            download_csv(apps, "adoption_query_tags.csv")
+            if apps is not None:
+                download_csv(apps, "adoption_query_tags.csv")

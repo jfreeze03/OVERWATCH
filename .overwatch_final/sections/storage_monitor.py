@@ -1,6 +1,8 @@
 # sections/storage_monitor.py — Storage overview, data freshness, iceberg, egress
 import streamlit as st
 from utils import (
+    build_mart_storage_db_detail_sql,
+    build_mart_storage_trend_sql,
     get_active_company,
     get_db_filter_clause,
     get_session,
@@ -26,10 +28,23 @@ def render():
 
     if st.button("Load Storage Data", key="stor_load"):
         try:
+            df_stor = run_query(
+                build_mart_storage_trend_sql(stor_days, company),
+                ttl_key=f"storage_trend_mart_{company}_{stor_days}",
+                tier="historical",
+            )
+            if df_stor.empty:
+                raise RuntimeError("Storage mart returned no rows.")
+            st.session_state["stor_df_stor"] = df_stor
+            st.session_state["stor_source"] = "OVERWATCH mart: FACT_STORAGE_DAILY"
             if company != "ALL":
                 st.info("Stage storage is account-level in Snowflake, so this company view shows database and failsafe storage only.")
-            stage_storage_cte = (
-                f"""
+        except Exception:
+            try:
+                if company != "ALL":
+                    st.info("Stage storage is account-level in Snowflake, so this company view shows database and failsafe storage only.")
+                stage_storage_cte = (
+                    f"""
             stage_storage AS (
                 SELECT usage_date, SUM(average_stage_bytes) AS stage_bytes
                 FROM SNOWFLAKE.ACCOUNT_USAGE.STAGE_STORAGE_USAGE_HISTORY
@@ -37,15 +52,15 @@ def render():
                 GROUP BY usage_date
             )
                 """
-                if company == "ALL"
-                else """
+                    if company == "ALL"
+                    else """
             stage_storage AS (
                 SELECT usage_date, 0 AS stage_bytes
                 FROM database_storage
             )
                 """
-            )
-            df_stor = run_query(f"""
+                )
+                df_stor = run_query(f"""
             WITH database_storage AS (
                 SELECT usage_date,
                        SUM(average_database_bytes) AS storage_bytes,
@@ -66,9 +81,10 @@ def render():
             FULL OUTER JOIN stage_storage s ON d.usage_date = s.usage_date
             ORDER BY usage_date
             """, ttl_key=f"storage_trend_{company}_{stor_days}", tier="historical")
-            st.session_state["stor_df_stor"] = df_stor
-        except Exception as e:
-            st.warning(f"Storage data unavailable in this role/context: {format_snowflake_error(e)}")
+                st.session_state["stor_df_stor"] = df_stor
+                st.session_state["stor_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE storage views"
+            except Exception as e:
+                st.warning(f"Storage data unavailable in this role/context: {format_snowflake_error(e)}")
 
     if st.session_state.get("stor_df_stor") is not None and not st.session_state["stor_df_stor"].empty:
         df_st = st.session_state["stor_df_stor"]
@@ -82,7 +98,7 @@ def render():
             c3.metric("Stage GB",     f"{safe_float(latest.get('STAGE_GB',0)):,.1f}")
             c4.metric("Est Monthly Cost", f"${total_tb * storage_cost_per_tb:,.2f}")
             confidence = "account-wide" if company != "ALL" else "exact"
-            st.caption(f"{metric_confidence_label(confidence)} | {freshness_note('ACCOUNT_USAGE')}")
+            st.caption(f"{metric_confidence_label(confidence)} | {st.session_state.get('stor_source', 'SNOWFLAKE.ACCOUNT_USAGE')} | {freshness_note('ACCOUNT_USAGE')}")
 
         st.subheader("Storage Trend")
         st.area_chart(df_st.set_index("USAGE_DATE")[["STORAGE_GB","FAILSAFE_GB","STAGE_GB"]])
@@ -92,7 +108,17 @@ def render():
         st.subheader("Per-Database Storage")
         if st.button("Load DB Detail", key="stor_db_detail"):
             try:
-                df_db = run_query(f"""
+                df_db = run_query(
+                    build_mart_storage_db_detail_sql(company),
+                    ttl_key=f"storage_db_detail_mart_{get_active_company()}",
+                    tier="standard",
+                )
+                source = "OVERWATCH mart: FACT_STORAGE_DAILY"
+                if df_db.empty:
+                    raise RuntimeError("Storage mart returned no database detail.")
+            except Exception:
+                try:
+                    df_db = run_query(f"""
                     SELECT database_name,
                            usage_date,
                            average_database_bytes/POWER(1024,3) AS database_gb,
@@ -104,10 +130,15 @@ def render():
                     ORDER BY database_gb DESC
                     LIMIT 50
                 """, ttl_key=f"storage_db_detail_{get_active_company()}", tier="standard")
+                    source = "Live fallback: DATABASE_STORAGE_USAGE_HISTORY"
+                except Exception as e:
+                    st.warning(f"Large table data unavailable in this role/context: {format_snowflake_error(e)}")
+                    df_db = None
+                    source = ""
+            if df_db is not None:
+                st.caption(source)
                 st.dataframe(df_db, use_container_width=True)
                 download_csv(df_db, "db_storage_detail.csv")
-            except Exception as e:
-                st.warning(f"Large table data unavailable in this role/context: {format_snowflake_error(e)}")
 
         download_csv(df_st, "storage_trend.csv")
 

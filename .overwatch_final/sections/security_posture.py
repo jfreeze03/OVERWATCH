@@ -13,6 +13,7 @@ from utils import (
     get_db_filter_clause,
     get_session,
     get_user_filter_clause,
+    mart_object_name,
     make_action_id,
     run_query,
     safe_float,
@@ -365,6 +366,158 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
     return summary_sql, exceptions_sql
 
 
+def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[str, str]:
+    """Build the security brief with mart-backed login aggregates and live governance metadata."""
+    user_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.USERS",
+        ["EXT_AUTHN_DUO", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
+    ))
+    mfa_count_expr = (
+        "COUNT_IF(COALESCE(TO_VARCHAR(ext_authn_duo), 'false') <> 'true')"
+        if "EXT_AUTHN_DUO" in user_cols else "NULL::NUMBER"
+    )
+    password_count_expr = (
+        "COUNT_IF(COALESCE(TO_VARCHAR(has_password), 'false') = 'true')"
+        if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
+    )
+    last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
+    user_filter_lh = get_user_filter_clause("lh.user_name")
+    user_filter_u = get_user_filter_clause("u.name")
+    user_filter_g = get_user_filter_clause("g.grantee_name")
+    db_filter = get_db_filter_clause("d.database_name")
+    login_table = mart_object_name("FACT_LOGIN_DAILY")
+    grant_table = mart_object_name("FACT_GRANT_DAILY")
+    summary_sql = f"""
+    WITH login_events AS (
+        SELECT
+            COALESCE(SUM(success_count), 0) + COALESCE(SUM(failure_count), 0) AS login_events,
+            COALESCE(SUM(failure_count), 0) AS failed_logins,
+            COUNT(DISTINCT IFF(COALESCE(failure_count, 0) > 0, lh.user_name, NULL)) AS failed_users,
+            COUNT(DISTINCT IFF(COALESCE(failure_count, 0) > 0, lh.client_ip, NULL)) AS failed_ips
+        FROM {login_table} lh
+        WHERE lh.login_date >= DATEADD('day', -{int(days)}, CURRENT_DATE())
+          AND lh.company = '{company}'
+          {user_filter_lh}
+    ),
+    users AS (
+        SELECT
+            COUNT(*) AS active_users,
+            {mfa_count_expr} AS users_without_mfa,
+            {password_count_expr} AS password_users
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
+        WHERE u.deleted_on IS NULL
+          AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
+          {user_filter_u}
+    ),
+    recent_grants AS (
+        SELECT COALESCE(SUM(grant_count), 0) AS recent_grants
+        FROM {grant_table} g
+        WHERE g.company = '{company}'
+          AND g.deleted_on IS NULL
+          AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+          {user_filter_g}
+    ),
+    shared_dbs AS (
+        SELECT COUNT(*) AS shared_databases
+        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
+        WHERE d.deleted IS NULL
+          AND d.type IN ('IMPORTED DATABASE', 'SHARE')
+          {db_filter}
+    )
+    SELECT
+        '{company}' AS company,
+        login_events.login_events,
+        login_events.failed_logins,
+        login_events.failed_users,
+        login_events.failed_ips,
+        users.active_users,
+        users.users_without_mfa,
+        users.password_users,
+        recent_grants.recent_grants,
+        shared_dbs.shared_databases
+    FROM login_events, users, recent_grants, shared_dbs
+    """
+    exceptions_sql = f"""
+    WITH failed_logins AS (
+        SELECT
+            'Failed Login' AS finding_type,
+            IFF(SUM(failure_count) >= 25 OR COUNT(DISTINCT client_ip) >= 5, 'High', 'Medium') AS severity,
+            user_name AS entity,
+            COALESCE(SUM(failure_count), 0) AS event_count,
+            COUNT(DISTINCT client_ip) AS distinct_sources,
+            MAX(login_date)::TIMESTAMP_NTZ AS last_seen,
+            'FACT_LOGIN_DAILY failed login attempts by user/IP' AS proof_query
+        FROM {login_table} lh
+        WHERE lh.login_date >= DATEADD('day', -{int(days)}, CURRENT_DATE())
+          AND lh.company = '{company}'
+          AND COALESCE(failure_count, 0) > 0
+          {user_filter_lh}
+        GROUP BY user_name
+        HAVING COALESCE(SUM(failure_count), 0) >= 3
+    ),
+    mfa_gaps AS (
+        SELECT
+            'MFA Gap' AS finding_type,
+            'High' AS severity,
+            u.name AS entity,
+            1 AS event_count,
+            0 AS distinct_sources,
+            COALESCE({last_seen_expr}, u.created_on) AS last_seen,
+            'ACCOUNT_USAGE.USERS ext_authn_duo signal' AS proof_query
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
+        WHERE u.deleted_on IS NULL
+          AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
+          {user_filter_u}
+          {"AND COALESCE(TO_VARCHAR(u.ext_authn_duo), 'false') <> 'true'" if "EXT_AUTHN_DUO" in user_cols else "AND 1 = 0"}
+    ),
+    recent_grants AS (
+        SELECT
+            'Recent Grant' AS finding_type,
+            IFF(SUM(grant_count) >= 10, 'Medium', 'Low') AS severity,
+            g.grantee_name AS entity,
+            COALESCE(SUM(grant_count), 0) AS event_count,
+            COUNT(DISTINCT g.role_name) AS distinct_sources,
+            MAX(g.created_on) AS last_seen,
+            'FACT_GRANT_DAILY active grants created recently' AS proof_query
+        FROM {grant_table} g
+        WHERE g.company = '{company}'
+          AND g.deleted_on IS NULL
+          AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+          {user_filter_g}
+        GROUP BY g.grantee_name
+        HAVING COALESCE(SUM(grant_count), 0) >= 3
+    ),
+    shared_exposure AS (
+        SELECT
+            'Shared Database Exposure' AS finding_type,
+            'Medium' AS severity,
+            d.database_name AS entity,
+            1 AS event_count,
+            0 AS distinct_sources,
+            d.created AS last_seen,
+            'ACCOUNT_USAGE.DATABASES imported database/share metadata' AS proof_query
+        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
+        WHERE d.deleted IS NULL
+          AND d.type IN ('IMPORTED DATABASE', 'SHARE')
+          {db_filter}
+    )
+    SELECT * FROM failed_logins
+    UNION ALL
+    SELECT * FROM mfa_gaps
+    UNION ALL
+    SELECT * FROM recent_grants
+    UNION ALL
+    SELECT * FROM shared_exposure
+    ORDER BY
+        CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
+        event_count DESC,
+        last_seen DESC
+    LIMIT 100
+    """
+    return summary_sql, exceptions_sql
+
+
 def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
     if exceptions is None or exceptions.empty:
         st.info("No security exceptions to queue.")
@@ -435,27 +588,54 @@ def render() -> None:
 
     days = st.slider("Security brief lookback (days)", 1, 90, 30, key="security_posture_brief_days")
     if st.button("Load Security Brief", key="security_posture_brief_load", type="primary"):
-        summary_sql, exceptions_sql = _build_security_summary_sql(session, days, company)
         try:
+            summary_sql, exceptions_sql = _build_security_mart_brief_sql(session, days, company)
             st.session_state["security_posture_summary"] = run_query(
                 summary_sql,
-                ttl_key=f"security_posture_summary_{company}_{days}",
+                ttl_key=f"security_posture_summary_mart_{company}_{days}",
                 tier="standard",
             )
             st.session_state["security_posture_exceptions"] = run_query(
                 exceptions_sql,
-                ttl_key=f"security_posture_exceptions_{company}_{days}",
+                ttl_key=f"security_posture_exceptions_mart_{company}_{days}",
                 tier="standard",
             )
-            st.session_state["security_posture_meta"] = {"company": company, "days": days}
+            st.session_state["security_posture_meta"] = {
+                "company": company,
+                "days": days,
+                "source": "OVERWATCH mart: FACT_LOGIN_DAILY + FACT_GRANT_DAILY; MFA/sharing: ACCOUNT_USAGE",
+            }
             st.session_state["security_posture_proof_sql"] = {
                 "summary": summary_sql,
                 "exceptions": exceptions_sql,
             }
         except Exception as exc:
-            st.session_state["security_posture_summary"] = pd.DataFrame()
-            st.session_state["security_posture_exceptions"] = pd.DataFrame()
-            st.error(f"Unable to load security brief: {format_snowflake_error(exc)}")
+            try:
+                summary_sql, exceptions_sql = _build_security_summary_sql(session, days, company)
+                st.session_state["security_posture_summary"] = run_query(
+                    summary_sql,
+                    ttl_key=f"security_posture_summary_live_{company}_{days}",
+                    tier="standard",
+                )
+                st.session_state["security_posture_exceptions"] = run_query(
+                    exceptions_sql,
+                    ttl_key=f"security_posture_exceptions_live_{company}_{days}",
+                    tier="standard",
+                )
+                st.session_state["security_posture_meta"] = {
+                    "company": company,
+                    "days": days,
+                    "source": "Live fallback: SNOWFLAKE.ACCOUNT_USAGE",
+                }
+                st.session_state["security_posture_proof_sql"] = {
+                    "summary": summary_sql,
+                    "exceptions": exceptions_sql,
+                }
+                st.info(f"Security mart unavailable; used live ACCOUNT_USAGE fallback. {format_snowflake_error(exc)}")
+            except Exception as live_exc:
+                st.session_state["security_posture_summary"] = pd.DataFrame()
+                st.session_state["security_posture_exceptions"] = pd.DataFrame()
+                st.error(f"Unable to load security brief: {format_snowflake_error(live_exc)}")
 
     summary = st.session_state.get("security_posture_summary")
     exceptions = st.session_state.get("security_posture_exceptions")
@@ -493,6 +673,7 @@ def render() -> None:
             st.info("Security posture is usable, but there are findings worth reviewing.")
         else:
             st.success("Security posture is strong for the selected window.")
+        st.caption(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE"))
         _render_security_watch_floor(score, exceptions, row)
         st.divider()
         if exceptions is not None and not exceptions.empty:

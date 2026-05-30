@@ -20,6 +20,9 @@ from utils import (
     get_active_company,
     get_db_filter_clause,
     load_task_inventory,
+    build_mart_procedure_inventory_sql,
+    build_mart_procedure_calls_sql,
+    build_mart_procedure_sla_sql,
     safe_float,
     safe_int,
     CREDIT_RATES,
@@ -272,7 +275,12 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
     df["TOTAL_ELAPSED_SEC"] = pd.to_numeric(df.get("TOTAL_ELAPSED_SEC", 0), errors="coerce").fillna(0)
     df["CLOUD_CREDITS"] = pd.to_numeric(df.get("CLOUD_CREDITS", 0), errors="coerce").fillna(0)
     df["START_TIME"] = pd.to_datetime(df.get("START_TIME"), errors="coerce")
-    df["EST_TOTAL_CREDITS"] = df.apply(_procedure_run_estimated_credits, axis=1)
+    if "EST_TOTAL_CREDITS" in df.columns:
+        df["EST_TOTAL_CREDITS"] = pd.to_numeric(df["EST_TOTAL_CREDITS"], errors="coerce").fillna(0)
+        if df["EST_TOTAL_CREDITS"].sum() <= 0:
+            df["EST_TOTAL_CREDITS"] = df.apply(_procedure_run_estimated_credits, axis=1)
+    else:
+        df["EST_TOTAL_CREDITS"] = df.apply(_procedure_run_estimated_credits, axis=1)
     df["PROC_KEY"] = df.get("PROCEDURE_NAME", pd.Series([""] * len(df), index=df.index)).apply(_procedure_key)
 
     latest_idx = df.groupby("PROC_KEY")["START_TIME"].idxmax()
@@ -380,16 +388,29 @@ def render():
             "and orphan/suspended-task risk."
         )
         if st.button("Load Procedure Operations", key="sp_ops_load"):
+            proc_inventory_source = "OVERWATCH mart: DIM_PROCEDURE_SNAPSHOT"
+            proc_call_source = "OVERWATCH mart: FACT_PROCEDURE_RUN"
             try:
-                procedure_sql, call_sql = _build_procedure_inventory_sql(sp_days)
                 df_procs = run_query(
-                    procedure_sql,
-                    ttl_key=f"procedure_inventory_{company}_{sp_days}",
+                    build_mart_procedure_inventory_sql(
+                        company=company,
+                        database_contains=str(st.session_state.get("global_database", "") or "").strip(),
+                    ),
+                    ttl_key=f"procedure_inventory_mart_{company}_{sp_days}",
                     tier="metadata",
                 )
+                if df_procs.empty:
+                    procedure_sql, _ = _build_procedure_inventory_sql(sp_days)
+                    df_procs = run_query(
+                        procedure_sql,
+                        ttl_key=f"procedure_inventory_live_{company}_{sp_days}",
+                        tier="metadata",
+                    )
+                    proc_inventory_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.PROCEDURES"
             except Exception as e:
                 st.info(f"Procedure inventory unavailable: {format_snowflake_error(e)}")
                 df_procs = pd.DataFrame()
+                proc_inventory_source = "Unavailable"
             try:
                 df_tasks = load_task_inventory(session, company)
             except Exception as e:
@@ -397,18 +418,32 @@ def render():
                 df_tasks = pd.DataFrame()
             try:
                 df_calls = run_query(
-                    call_sql,
-                    ttl_key=f"procedure_recent_calls_{company}_{sp_days}",
+                    build_mart_procedure_calls_sql(sp_days, company=company),
+                    ttl_key=f"procedure_recent_calls_mart_{company}_{sp_days}",
                     tier="standard",
                 )
+                if df_calls.empty:
+                    _, call_sql = _build_procedure_inventory_sql(sp_days)
+                    df_calls = run_query(
+                        call_sql,
+                        ttl_key=f"procedure_recent_calls_live_{company}_{sp_days}",
+                        tier="standard",
+                    )
+                    proc_call_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
             except Exception as e:
                 st.info(f"Recent CALL history unavailable: {format_snowflake_error(e)}")
                 df_calls = pd.DataFrame()
+                proc_call_source = "Unavailable"
 
             summary, exceptions, joined = _build_procedure_ops_frames(df_procs, df_tasks, df_calls)
             st.session_state["sp_ops_summary"] = summary
             st.session_state["sp_ops_exceptions"] = exceptions
             st.session_state["sp_ops_joined"] = joined
+            st.session_state["sp_ops_sources"] = {
+                "inventory": proc_inventory_source,
+                "calls": proc_call_source,
+                "tasks": "Live: SHOW TASKS IN ACCOUNT",
+            }
 
         summary = st.session_state.get("sp_ops_summary")
         if summary:
@@ -419,6 +454,9 @@ def render():
             c2.metric("Linked to Tasks", f"{safe_int(summary.get('LINKED_TO_TASKS')):,}")
             c3.metric("Recent Calls", f"{safe_int(summary.get('RECENT_CALLS')):,}")
             c4.metric("Orphan Candidates", f"{safe_int(summary.get('ORPHAN_CANDIDATES')):,}", delta_color="inverse")
+            sources = st.session_state.get("sp_ops_sources", {})
+            if sources:
+                st.caption(" | ".join(str(v) for v in sources.values()))
             if not exceptions.empty:
                 st.warning("Procedure operations has exceptions to review before relying on task graphs as production workflow control.")
                 st.dataframe(exceptions, use_container_width=True, hide_index=True)
@@ -443,17 +481,27 @@ def render():
         )
         if st.button("Load Procedure SLA/Cost Watch", key="sp_sla_load"):
             try:
-                has_root_query_id = _query_history_has_root_query_id(session)
                 df_proc_runs = run_query(
-                    _build_procedure_sla_sql(session, sp_days, has_root_query_id),
-                    ttl_key=f"procedure_sla_watch_{company}_{sp_days}_{has_root_query_id}",
+                    build_mart_procedure_sla_sql(sp_days, company=company),
+                    ttl_key=f"procedure_sla_watch_mart_{company}_{sp_days}",
                     tier="standard",
                 )
+                proc_sla_source = "OVERWATCH mart: FACT_PROCEDURE_RUN"
+                has_root_query_id = True
+                if df_proc_runs.empty:
+                    has_root_query_id = _query_history_has_root_query_id(session)
+                    df_proc_runs = run_query(
+                        _build_procedure_sla_sql(session, sp_days, has_root_query_id),
+                        ttl_key=f"procedure_sla_watch_live_{company}_{sp_days}_{has_root_query_id}",
+                        tier="standard",
+                    )
+                    proc_sla_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                 summary, exceptions, latest = _build_procedure_sla_frames(df_proc_runs)
                 st.session_state["sp_sla_summary"] = summary
                 st.session_state["sp_sla_exceptions"] = exceptions
                 st.session_state["sp_sla_latest"] = latest
                 st.session_state["sp_sla_root_available"] = has_root_query_id
+                st.session_state["sp_sla_source"] = proc_sla_source
             except Exception as e:
                 st.info(f"Procedure SLA/cost watch unavailable: {format_snowflake_error(e)}")
 
@@ -466,10 +514,16 @@ def render():
             c2.metric("Procedures", f"{safe_int(summary.get('PROCEDURES')):,}")
             c3.metric("Runtime SLA Breaches", f"{safe_int(summary.get('SLA_BREACHES')):,}", delta_color="inverse")
             c4.metric("Cost Regressions", f"{safe_int(summary.get('COST_BREACHES')):,}", delta_color="inverse")
-            confidence = "allocated" if st.session_state.get("sp_sla_root_available") else "estimated"
+            sla_source = str(st.session_state.get("sp_sla_source", "Source unavailable"))
+            using_mart_sla = "mart:" in sla_source.lower()
+            confidence = "allocated" if using_mart_sla or st.session_state.get("sp_sla_root_available") else "estimated"
+            credit_note = (
+                "credits come from FACT_PROCEDURE_RUN procedure attribution"
+                if using_mart_sla
+                else "credits are estimated from warehouse size, elapsed seconds, and cloud services credits"
+            )
             st.caption(
-                f"{metric_confidence_label(confidence)} | {freshness_note('QUERY_HISTORY')} | "
-                "credits are estimated from warehouse size, elapsed seconds, and cloud services credits."
+                f"{metric_confidence_label(confidence)} | {sla_source} | {credit_note}."
             )
             if exceptions.empty:
                 st.success("No procedure runtime or cost regressions crossed the default thresholds.")

@@ -9,6 +9,7 @@ from utils import (
     metric_confidence_label, freshness_note,
     build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
     run_query, format_snowflake_error, filter_existing_columns, render_optimization_advisor,
+    build_mart_warehouse_overview_sql, build_mart_warehouse_scaling_sql,
     safe_float, safe_int,
 )
 from config import THRESHOLDS
@@ -579,6 +580,12 @@ def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     company = get_active_company()
+    global_warehouse = str(st.session_state.get("global_warehouse", "") or "").strip()
+    global_user = str(st.session_state.get("global_user", "") or "").strip()
+    global_role = str(st.session_state.get("global_role", "") or "").strip()
+    global_database = str(st.session_state.get("global_database", "") or "").strip()
+    global_start_date = st.session_state.get("global_start_date")
+    global_end_date = st.session_state.get("global_end_date")
     wh_query_filters = get_global_filter_clause(
         date_col="q.start_time",
         wh_col="q.warehouse_name",
@@ -664,25 +671,47 @@ def render():
 
         if st.button("Load Warehouse Data", key="wh_load"):
             try:
-                df_w = run_query(f"""
-                    SELECT q.warehouse_name,
-                           {wh_size_expr} AS warehouse_size,
-                           COUNT(*)                            AS total_queries,
-                           AVG(q.total_elapsed_time)/1000      AS avg_elapsed_sec,
-                           PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time)/1000 AS p95_elapsed_sec,
-                           {queue_avg_expr}                    AS avg_queued_sec,
-                           {remote_spill_sum_expr}/POWER(1024,3)  AS total_remote_spill_gb,
-                           {cache_expr} AS avg_cache_pct,
-                           SUM(CASE WHEN UPPER(q.execution_status)='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS error_count,
-                           {bytes_scanned_expr}/POWER(1024,3)  AS total_gb_scanned
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                    WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
-                      AND q.warehouse_name IS NOT NULL
-                      {wh_query_filters}
-                    GROUP BY q.warehouse_name
-                    ORDER BY total_queries DESC
-                """, ttl_key=f"wh_overview_{company}_{wh_days}", tier="historical")
+                mart_sql = build_mart_warehouse_overview_sql(
+                    wh_days,
+                    company=company,
+                    warehouse_contains=global_warehouse,
+                    user_contains=global_user,
+                    role_contains=global_role,
+                    database_contains=global_database,
+                    start_date=global_start_date,
+                    end_date=global_end_date,
+                )
+                df_w = run_query(
+                    mart_sql,
+                    ttl_key=f"wh_overview_mart_{company}_{wh_days}",
+                    tier="historical",
+                )
+                source = (
+                    "OVERWATCH mart: FACT_QUERY_HOURLY + FACT_WAREHOUSE_HOURLY "
+                    "(cache and warehouse size require live ACCOUNT_USAGE)"
+                )
+                if df_w.empty:
+                    df_w = run_query(f"""
+                        SELECT q.warehouse_name,
+                               {wh_size_expr} AS warehouse_size,
+                               COUNT(*)                            AS total_queries,
+                               AVG(q.total_elapsed_time)/1000      AS avg_elapsed_sec,
+                               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time)/1000 AS p95_elapsed_sec,
+                               {queue_avg_expr}                    AS avg_queued_sec,
+                               {remote_spill_sum_expr}/POWER(1024,3)  AS total_remote_spill_gb,
+                               {cache_expr} AS avg_cache_pct,
+                               SUM(CASE WHEN UPPER(q.execution_status)='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS error_count,
+                               {bytes_scanned_expr}/POWER(1024,3)  AS total_gb_scanned
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                        WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
+                          AND q.warehouse_name IS NOT NULL
+                          {wh_query_filters}
+                        GROUP BY q.warehouse_name
+                        ORDER BY total_queries DESC
+                    """, ttl_key=f"wh_overview_live_{company}_{wh_days}", tier="historical")
+                    source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                 st.session_state["wh_df_wh"] = df_w
+                st.session_state["wh_df_wh_source"] = source
             except Exception as e:
                 st.warning(f"Warehouse overview unavailable in this role/context: {format_snowflake_error(e)}")
 
@@ -693,7 +722,9 @@ def render():
             c1.metric("Warehouses Active", len(df_w))
             c2.metric("Total Queries",     f"{int(df_w['TOTAL_QUERIES'].sum()):,}")
             c3.metric("Total Remote Spill", f"{df_w['TOTAL_REMOTE_SPILL_GB'].sum():.1f} GB")
-            st.caption(f"{metric_confidence_label('exact')} | {freshness_note('ACCOUNT_USAGE')}")
+            wh_source = st.session_state.get("wh_df_wh_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
+            confidence = "estimated" if "mart:" in str(wh_source).lower() else "exact"
+            st.caption(f"{metric_confidence_label(confidence)} | {wh_source}")
 
             # Flag warehouses needing attention
             for _, row in df_w.iterrows():
@@ -708,15 +739,19 @@ def render():
             st.dataframe(df_w, use_container_width=True)
 
             # Cache efficiency chart
-            st.subheader("Cache Hit % by Warehouse")
-            render_drillable_bar_chart(
-                df_w,
-                dimension="WAREHOUSE_NAME",
-                measure="AVG_CACHE_PCT",
-                key="wh_cache_pct",
-                drilldown_column="warehouse_name",
-                lookback_hours=wh_days * 24,
-            )
+            cache_available = "AVG_CACHE_PCT" in df_w.columns and df_w["AVG_CACHE_PCT"].notna().any()
+            if cache_available:
+                st.subheader("Cache Hit % by Warehouse")
+                render_drillable_bar_chart(
+                    df_w,
+                    dimension="WAREHOUSE_NAME",
+                    measure="AVG_CACHE_PCT",
+                    key="wh_cache_pct",
+                    drilldown_column="warehouse_name",
+                    lookback_hours=wh_days * 24,
+                )
+            else:
+                st.info("Cache hit percentage is a live ACCOUNT_USAGE-only metric and is not stored in the hourly mart.")
 
             download_csv(df_w, "warehouse_health.csv")
 
@@ -725,28 +760,43 @@ def render():
             st.subheader("Scaling Events (WAREHOUSE_METERING_HISTORY)")
             if st.button("Load Scaling Events", key="wh_scale_load"):
                 try:
-                    df_scale = run_query(f"""
-                        WITH latest_size AS (
-                            SELECT warehouse_name, warehouse_size
-                            FROM (
-                                SELECT q.warehouse_name, {latest_size_expr} AS warehouse_size,
-                                       ROW_NUMBER() OVER (PARTITION BY q.warehouse_name ORDER BY q.start_time DESC) AS rn
-                                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                                WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
-                                  AND q.warehouse_name IS NOT NULL
-                                  {wh_query_filters}
+                    df_scale = run_query(
+                        build_mart_warehouse_scaling_sql(
+                            wh_days,
+                            company=company,
+                            warehouse_contains=global_warehouse,
+                            start_date=global_start_date,
+                            end_date=global_end_date,
+                        ),
+                        ttl_key=f"wh_scaling_mart_{company}_{wh_days}",
+                        tier="historical",
+                    )
+                    scale_source = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+                    if df_scale.empty:
+                        df_scale = run_query(f"""
+                            WITH latest_size AS (
+                                SELECT warehouse_name, warehouse_size
+                                FROM (
+                                    SELECT q.warehouse_name, {latest_size_expr} AS warehouse_size,
+                                           ROW_NUMBER() OVER (PARTITION BY q.warehouse_name ORDER BY q.start_time DESC) AS rn
+                                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                                    WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
+                                      AND q.warehouse_name IS NOT NULL
+                                      {wh_query_filters}
+                                )
+                                WHERE rn = 1
                             )
-                            WHERE rn = 1
-                        )
-                        SELECT m.warehouse_name, ls.warehouse_size, m.start_time, m.end_time,
-                               m.credits_used, {compute_meter_expr} AS credits_used_compute,
-                               {cloud_meter_expr} AS credits_used_cloud_services
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
-                        LEFT JOIN latest_size ls ON m.warehouse_name = ls.warehouse_name
-                        WHERE m.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
-                          {get_wh_filter_clause("m.warehouse_name")}
-                        ORDER BY m.credits_used DESC LIMIT 200
-                    """, ttl_key=f"wh_scaling_{company}_{wh_days}", tier="historical")
+                            SELECT m.warehouse_name, ls.warehouse_size, m.start_time, m.end_time,
+                                   m.credits_used, {compute_meter_expr} AS credits_used_compute,
+                                   {cloud_meter_expr} AS credits_used_cloud_services
+                            FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
+                            LEFT JOIN latest_size ls ON m.warehouse_name = ls.warehouse_name
+                            WHERE m.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
+                              {get_wh_filter_clause("m.warehouse_name")}
+                            ORDER BY m.credits_used DESC LIMIT 200
+                        """, ttl_key=f"wh_scaling_live_{company}_{wh_days}", tier="historical")
+                        scale_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+                    st.caption(f"{metric_confidence_label('exact')} | {scale_source}")
                     st.dataframe(df_scale, use_container_width=True)
                     download_csv(df_scale, "scaling_events.csv")
                 except Exception as e:

@@ -12,6 +12,7 @@ from sections import (
     spcs_tracker,
 )
 from utils import (
+    build_mart_cost_cockpit_sql,
     credits_to_dollars,
     format_snowflake_error,
     get_active_company,
@@ -124,17 +125,34 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
         if st.button("Load Cost Cockpit", key="cost_contract_cockpit_load", type="primary"):
             try:
                 st.session_state["cost_contract_cockpit"] = run_query(
-                    _build_cost_cockpit_sql(company, int(days)),
-                    ttl_key=f"cost_contract_cockpit_{company}_{days}",
-                    tier="standard",
+                    build_mart_cost_cockpit_sql(company, int(days)),
+                    ttl_key=f"cost_contract_cockpit_mart_{company}_{days}",
+                    tier="historical",
                     section="Cost & Contract",
                 )
+                st.session_state["cost_contract_cockpit_source"] = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
                 st.session_state["cost_contract_cockpit_meta"] = {"company": company, "days": int(days)}
                 st.session_state["cost_contract_cockpit_error"] = ""
-            except Exception as exc:
-                st.session_state["cost_contract_cockpit_error"] = format_snowflake_error(exc)
-                st.session_state["cost_contract_cockpit"] = pd.DataFrame()
-                st.session_state["cost_contract_queue"] = pd.DataFrame()
+            except Exception as mart_exc:
+                try:
+                    st.session_state["cost_contract_cockpit"] = run_query(
+                        _build_cost_cockpit_sql(company, int(days)),
+                        ttl_key=f"cost_contract_cockpit_{company}_{days}",
+                        tier="standard",
+                        section="Cost & Contract",
+                    )
+                    st.session_state["cost_contract_cockpit_source"] = (
+                        "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+                    )
+                    st.session_state["cost_contract_cockpit_meta"] = {"company": company, "days": int(days)}
+                    st.session_state["cost_contract_cockpit_error"] = ""
+                except Exception as exc:
+                    st.session_state["cost_contract_cockpit_error"] = (
+                        f"Mart unavailable: {format_snowflake_error(mart_exc)}; "
+                        f"live fallback failed: {format_snowflake_error(exc)}"
+                    )
+                    st.session_state["cost_contract_cockpit"] = pd.DataFrame()
+                    st.session_state["cost_contract_queue"] = pd.DataFrame()
             try:
                 st.session_state["cost_contract_queue"] = load_action_queue(session)
                 st.session_state["cost_contract_queue_error"] = ""
@@ -158,6 +176,7 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
         st.caption("Load the cost cockpit for a fast first move. Specialist pages still load their own detailed data.")
         return
 
+    st.caption(st.session_state.get("cost_contract_cockpit_source", "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"))
     row = data.iloc[0]
     queue = st.session_state.get("cost_contract_queue", pd.DataFrame())
     queue_err = st.session_state.get("cost_contract_queue_error", "")

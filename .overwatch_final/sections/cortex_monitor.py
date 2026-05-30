@@ -257,6 +257,38 @@ def _build_cortex_daily_sql(days: int) -> str:
     """
 
 
+def _build_cortex_ai_functions_daily_sql(
+    days: int,
+    include_user_filter: bool = True,
+    include_query_id: bool = True,
+) -> str:
+    """Build optional live Cortex AI Functions usage SQL.
+
+    Snowflake exposes this separately from Cortex Code usage. Some accounts or
+    roles may not have the view or the USER_ID column, so callers decide which
+    joins are safe before executing the query.
+    """
+    user_join = "LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON f.USER_ID = u.USER_ID" if include_user_filter else ""
+    user_filter = get_user_filter_clause("u.NAME") if include_user_filter else ""
+    request_expr = "COUNT(DISTINCT f.QUERY_ID)" if include_query_id else "COUNT(*)"
+    return f"""
+        SELECT
+            f.START_TIME::DATE AS usage_date,
+            'AI Functions' AS source,
+            0 AS active_users,
+            {request_expr} AS total_requests,
+            SUM(COALESCE(f.CREDITS, 0)) AS total_credits,
+            0 AS total_tokens,
+            ROUND(SUM(COALESCE(f.CREDITS, 0)) * {AI_CREDIT_RATE}, 2) AS cost_usd
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY f
+        {user_join}
+        WHERE f.START_TIME >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+          {user_filter}
+        GROUP BY f.START_TIME::DATE
+        ORDER BY usage_date
+    """
+
+
 def _queue_cortex_findings(session, exceptions: pd.DataFrame, budget_usd: float) -> int:
     if exceptions is None or exceptions.empty:
         return 0
@@ -325,13 +357,42 @@ def _render_cortex_control_brief(session, company: str) -> None:
                         tier="historical",
                         section="Cost & Contract",
                     )
+                    ai_functions = pd.DataFrame()
+                    ai_functions_sql = ""
+                    ai_note = ""
+                    try:
+                        ai_object = "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY"
+                        ai_cols = set(filter_existing_columns(
+                            session,
+                            ai_object,
+                            ["START_TIME", "CREDITS", "QUERY_ID", "USER_ID"],
+                        ))
+                        if {"START_TIME", "CREDITS"}.issubset(ai_cols):
+                            ai_functions_sql = _build_cortex_ai_functions_daily_sql(
+                                days,
+                                include_user_filter="USER_ID" in ai_cols,
+                                include_query_id="QUERY_ID" in ai_cols,
+                            )
+                            ai_functions = run_query(
+                                ai_functions_sql,
+                                ttl_key=f"cortex_control_ai_functions_{company}_{days}_{budget_usd}",
+                                tier="historical",
+                                section="Cost & Contract",
+                            )
+                        else:
+                            ai_note = "Cortex AI Functions usage view is unavailable or missing required columns for this role/account."
+                    except Exception as ai_exc:
+                        ai_note = f"Cortex AI Functions usage unavailable: {format_snowflake_error(ai_exc)}"
                     st.session_state["cortex_control_summary"] = summary
                     st.session_state["cortex_control_exceptions"] = exceptions
                     st.session_state["cortex_control_daily"] = daily
+                    st.session_state["cortex_control_ai_functions"] = ai_functions
+                    st.session_state["cortex_control_ai_note"] = ai_note
                     st.session_state["cortex_control_sql"] = {
                         "summary": summary_sql,
                         "exceptions": exceptions_sql,
                         "daily": daily_sql,
+                        "ai_functions": ai_functions_sql,
                     }
                 except Exception as e:
                     st.warning(f"Cortex cost control unavailable: {format_snowflake_error(e)}")
@@ -342,7 +403,12 @@ def _render_cortex_control_brief(session, company: str) -> None:
             return
         row = summary.iloc[0].to_dict()
         daily = st.session_state.get("cortex_control_daily", pd.DataFrame())
-        projected_cost = safe_float(row.get("PROJECTED_30D_COST"))
+        ai_functions = st.session_state.get("cortex_control_ai_functions", pd.DataFrame())
+        ai_projected_cost = 0.0
+        if ai_functions is not None and not ai_functions.empty:
+            ai_days = max(safe_int(ai_functions["USAGE_DATE"].nunique() if "USAGE_DATE" in ai_functions.columns else 0), 1)
+            ai_projected_cost = safe_float(ai_functions.get("COST_USD", pd.Series(dtype=float)).sum()) / ai_days * 30
+        projected_cost = safe_float(row.get("PROJECTED_30D_COST")) + ai_projected_cost
         daily_budget = safe_float(budget_usd) / 30 if safe_float(budget_usd) > 0 else 0.0
         avg_daily_cost = projected_cost / 30 if projected_cost > 0 else 0.0
         score = _cortex_cost_score(
@@ -357,10 +423,14 @@ def _render_cortex_control_brief(session, company: str) -> None:
         c2.metric("Projected 30d Cost", f"${projected_cost:,.2f}")
         c3.metric("Active Users", f"{safe_int(row.get('ACTIVE_USERS')):,}")
         c4.metric("Requests", f"{safe_int(row.get('TOTAL_REQUESTS')):,}")
-        k1, k2, k3 = st.columns(3)
+        k1, k2, k3, k4 = st.columns(4)
         k1.metric("Daily Budget", f"${daily_budget:,.2f}")
         k2.metric("Avg Daily Burn", f"${avg_daily_cost:,.2f}", delta=f"{(avg_daily_cost - daily_budget):+,.2f} vs budget" if daily_budget else None)
-        k3.metric("AI Credits", format_credits(safe_float(row.get("TOTAL_CREDITS")), AI_CREDIT_RATE))
+        k3.metric("Code AI Credits", format_credits(safe_float(row.get("TOTAL_CREDITS")), AI_CREDIT_RATE))
+        k4.metric("AI Function Projection", f"${ai_projected_cost:,.2f}")
+        ai_note = st.session_state.get("cortex_control_ai_note", "")
+        if ai_note:
+            st.info(ai_note)
         if projected_cost > budget_usd:
             st.error("Cortex spend is projected over budget. Treat this as a cost-control incident.")
         elif score < 78:
@@ -388,7 +458,10 @@ def _render_cortex_control_brief(session, company: str) -> None:
             st.success("No Cortex cost exceptions found for this scope.")
 
         if daily is not None and not daily.empty:
-            daily = daily.copy()
+            daily_frames = [daily.copy()]
+            if ai_functions is not None and not ai_functions.empty:
+                daily_frames.append(ai_functions.copy())
+            daily = pd.concat(daily_frames, ignore_index=True)
             daily["USAGE_DATE"] = safe_strip_tz(daily["USAGE_DATE"])
             daily_rollup = (
                 daily.groupby("USAGE_DATE", as_index=False)
@@ -408,7 +481,14 @@ def _render_cortex_control_brief(session, company: str) -> None:
 
         st.download_button(
             "Download Cortex Cost Brief",
-            _build_cortex_control_markdown(company, days, score, budget_usd, row, exceptions),
+            _build_cortex_control_markdown(
+                company,
+                days,
+                score,
+                budget_usd,
+                {**row, "PROJECTED_30D_COST": projected_cost},
+                exceptions,
+            ),
             file_name=f"overwatch_cortex_cost_{company.lower()}.md",
             mime="text/markdown",
             key="cortex_control_download",
@@ -418,6 +498,8 @@ def _render_cortex_control_brief(session, company: str) -> None:
             st.code(sql_map.get("summary", ""), language="sql")
             st.code(sql_map.get("exceptions", ""), language="sql")
             st.code(sql_map.get("daily", ""), language="sql")
+            if sql_map.get("ai_functions"):
+                st.code(sql_map.get("ai_functions", ""), language="sql")
 
 
 def render():
@@ -430,6 +512,9 @@ def render():
     st.header("AI & Cortex Monitor")
     st.caption(
         "Track Cortex Code usage, projected spend, user attribution, anomalies, and budget-control exceptions."
+    )
+    st.caption(
+        "Live sources: Cortex Code Snowsight/CLI usage views; Budget Control also includes Cortex AI Functions when Snowflake exposes that view."
     )
 
     cortex_view = render_workflow_selector(

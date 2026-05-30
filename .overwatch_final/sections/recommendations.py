@@ -8,6 +8,10 @@ from utils import (
     build_alert_task_sql,
     build_annotation_ddl,
     build_idle_warehouse_sql,
+    build_mart_recommendation_failed_tasks_sql,
+    build_mart_recommendation_idle_sql,
+    build_mart_recommendation_query_errors_sql,
+    build_mart_recommendation_spill_sql,
     build_task_failure_summary_sql,
     company_value_allowed,
     credits_to_dollars,
@@ -315,6 +319,7 @@ def render():
 
         if st.button("Generate Recommendations", key="recs_gen"):
             recs = []
+            source_notes = []
             company = _active_company()
             query_filters = get_global_filter_clause(
                 date_col="start_time",
@@ -325,15 +330,24 @@ def render():
             )
 
             try:
-                df_idle = run_query(
-                    build_idle_warehouse_sql(
-                        days_back=7,
-                        wh_filter=get_wh_filter_clause("warehouse_name"),
-                        min_idle_credits=1.0,
-                    ) + "\nLIMIT 10",
-                    ttl_key=f"rec_idle_{company}",
-                    tier="historical",
-                )
+                try:
+                    df_idle = run_query(
+                        build_mart_recommendation_idle_sql(company),
+                        ttl_key=f"rec_idle_mart_{company}",
+                        tier="historical",
+                    )
+                    source_notes.append("Idle warehouses: OVERWATCH mart")
+                except Exception:
+                    df_idle = run_query(
+                        build_idle_warehouse_sql(
+                            days_back=7,
+                            wh_filter=get_wh_filter_clause("warehouse_name"),
+                            min_idle_credits=1.0,
+                        ) + "\nLIMIT 10",
+                        ttl_key=f"rec_idle_live_{company}",
+                        tier="historical",
+                    )
+                    source_notes.append("Idle warehouses: live ACCOUNT_USAGE fallback")
                 for _, row in df_idle.iterrows():
                     wh_name = str(row["WAREHOUSE_NAME"])
                     wh_ident = safe_identifier(wh_name)
@@ -356,30 +370,39 @@ def render():
                 pass
 
             try:
-                qh_cols = set(filter_existing_columns(
-                    session,
-                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-                    ["WAREHOUSE_SIZE", "BYTES_SPILLED_TO_REMOTE_STORAGE"],
-                ))
-                if "BYTES_SPILLED_TO_REMOTE_STORAGE" not in qh_cols:
-                    raise ValueError("Remote spill column is not exposed in QUERY_HISTORY.")
-                spill_wh_size_expr = (
-                    "MAX(warehouse_size)"
-                    if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
-                )
-                df_spill = run_query(f"""
-                    SELECT warehouse_name, {spill_wh_size_expr} AS warehouse_size,
-                           ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3), 2) AS remote_gb
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                      AND bytes_spilled_to_remote_storage > 0
-                      AND warehouse_name IS NOT NULL
-                      {query_filters}
-                    GROUP BY warehouse_name
-                    HAVING remote_gb > 5
-                    ORDER BY remote_gb DESC
-                    LIMIT 10
-                """, ttl_key=f"rec_spill_{company}", tier="historical")
+                try:
+                    df_spill = run_query(
+                        build_mart_recommendation_spill_sql(company),
+                        ttl_key=f"rec_spill_mart_{company}",
+                        tier="historical",
+                    )
+                    source_notes.append("Remote spill: OVERWATCH mart")
+                except Exception:
+                    qh_cols = set(filter_existing_columns(
+                        session,
+                        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                        ["WAREHOUSE_SIZE", "BYTES_SPILLED_TO_REMOTE_STORAGE"],
+                    ))
+                    if "BYTES_SPILLED_TO_REMOTE_STORAGE" not in qh_cols:
+                        raise ValueError("Remote spill column is not exposed in QUERY_HISTORY.")
+                    spill_wh_size_expr = (
+                        "MAX(warehouse_size)"
+                        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+                    )
+                    df_spill = run_query(f"""
+                        SELECT warehouse_name, {spill_wh_size_expr} AS warehouse_size,
+                               ROUND(SUM(bytes_spilled_to_remote_storage)/POWER(1024,3), 2) AS remote_gb
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                        WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+                          AND bytes_spilled_to_remote_storage > 0
+                          AND warehouse_name IS NOT NULL
+                          {query_filters}
+                        GROUP BY warehouse_name
+                        HAVING remote_gb > 5
+                        ORDER BY remote_gb DESC
+                        LIMIT 10
+                    """, ttl_key=f"rec_spill_live_{company}", tier="historical")
+                    source_notes.append("Remote spill: live ACCOUNT_USAGE fallback")
                 for _, row in df_spill.iterrows():
                     wh_name = str(row["WAREHOUSE_NAME"])
                     recs.append({
@@ -400,18 +423,27 @@ def render():
                 pass
 
             try:
-                failed_task_sql = build_task_failure_summary_sql(
-                    session,
-                    "scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
-                    limit=25,
-                    company=company,
-                )
-                df_ftask = run_query(
-                    f"WITH failed_tasks AS ({failed_task_sql}) "
-                    "SELECT * FROM failed_tasks WHERE failures > 3 ORDER BY failures DESC LIMIT 5",
-                    ttl_key=f"rec_failed_tasks_{company}",
-                    tier="historical",
-                )
+                try:
+                    df_ftask = run_query(
+                        build_mart_recommendation_failed_tasks_sql(company),
+                        ttl_key=f"rec_failed_tasks_mart_{company}",
+                        tier="historical",
+                    )
+                    source_notes.append("Failed tasks: OVERWATCH mart")
+                except Exception:
+                    failed_task_sql = build_task_failure_summary_sql(
+                        session,
+                        "scheduled_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())",
+                        limit=25,
+                        company=company,
+                    )
+                    df_ftask = run_query(
+                        f"WITH failed_tasks AS ({failed_task_sql}) "
+                        "SELECT * FROM failed_tasks WHERE failures > 3 ORDER BY failures DESC LIMIT 5",
+                        ttl_key=f"rec_failed_tasks_live_{company}",
+                        tier="historical",
+                    )
+                    source_notes.append("Failed tasks: live ACCOUNT_USAGE fallback")
                 for _, row in df_ftask.iterrows():
                     task_name = str(row["TASK_NAME"])
                     recs.append({
@@ -432,18 +464,30 @@ def render():
                 pass
 
             try:
-                df_err = run_query(f"""
-                    SELECT warehouse_name, COUNT(*) AS failures
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
-                      AND UPPER(execution_status) = 'FAILED_WITH_ERROR'
-                      AND warehouse_name IS NOT NULL
-                      {query_filters}
-                    GROUP BY warehouse_name
-                    HAVING failures > {THRESHOLDS['error_rate_high']}
-                    ORDER BY failures DESC
-                    LIMIT 5
-                """, ttl_key=f"rec_query_errors_{company}", tier="historical")
+                try:
+                    df_err = run_query(
+                        build_mart_recommendation_query_errors_sql(
+                            company,
+                            min_failures=THRESHOLDS["error_rate_high"],
+                        ),
+                        ttl_key=f"rec_query_errors_mart_{company}",
+                        tier="historical",
+                    )
+                    source_notes.append("Query failures: OVERWATCH mart")
+                except Exception:
+                    df_err = run_query(f"""
+                        SELECT warehouse_name, COUNT(*) AS failures
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                        WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+                          AND UPPER(execution_status) = 'FAILED_WITH_ERROR'
+                          AND warehouse_name IS NOT NULL
+                          {query_filters}
+                        GROUP BY warehouse_name
+                        HAVING failures > {THRESHOLDS['error_rate_high']}
+                        ORDER BY failures DESC
+                        LIMIT 5
+                    """, ttl_key=f"rec_query_errors_live_{company}", tier="historical")
+                    source_notes.append("Query failures: live ACCOUNT_USAGE fallback")
                 for _, row in df_err.iterrows():
                     recs.append({
                         "Source": "Query failure detector",
@@ -463,6 +507,7 @@ def render():
                 pass
 
             st.session_state["rec_recommendations"] = recs
+            st.session_state["rec_recommendation_sources"] = source_notes
 
         recs = st.session_state.get("rec_recommendations", [])
         if recs:
@@ -477,6 +522,9 @@ def render():
                 f"{metric_confidence_label('estimated')} | {freshness_note('ACCOUNT_USAGE')} | "
                 "Savings are directional until the action is fixed and logged to Snowflake Value."
             )
+            source_notes = st.session_state.get("rec_recommendation_sources", [])
+            if source_notes:
+                st.caption("Recommendation sources: " + "; ".join(source_notes))
             st.dataframe(df_recs, use_container_width=True)
             download_csv(df_recs, "recommendations.csv")
 

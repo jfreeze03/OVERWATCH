@@ -12,6 +12,7 @@ from utils import (
     get_active_company,
     get_global_filter_clause,
     get_session,
+    mart_object_name,
     make_action_id,
     render_query_drilldown,
     run_query,
@@ -415,6 +416,184 @@ def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
     return summary_sql, exceptions_sql
 
 
+def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str, str]:
+    """Build root-cause brief SQL from OVERWATCH mart facts."""
+    hourly = mart_object_name("FACT_QUERY_HOURLY")
+    detail = mart_object_name("FACT_QUERY_DETAIL_RECENT")
+    hourly_filters = get_global_filter_clause(
+        date_col="hour_start",
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
+    detail_filters = get_global_filter_clause(
+        date_col="start_time",
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
+    summary_sql = f"""
+        WITH hourly_summary AS (
+            SELECT
+                COALESCE(SUM(query_count), 0) AS total_queries,
+                COALESCE(SUM(failed_count), 0) AS failed_queries,
+                COALESCE(SUM(IFF(p95_execution_ms >= 30000, query_count, 0)), 0) AS slow_queries,
+                COALESCE(SUM(IFF(total_queued_ms > 0, query_count, 0)), 0) AS queued_queries,
+                COALESCE(SUM(IFF(total_spill_bytes > 0, query_count, 0)), 0) AS spill_queries,
+                COUNT(DISTINCT warehouse_name) AS affected_warehouses,
+                COUNT(DISTINCT user_name) AS affected_users,
+                MAX(p95_execution_ms) / 1000.0 AS p95_elapsed_sec,
+                MAX(total_queued_ms) / 1000.0 AS max_queued_sec,
+                SUM(total_spill_bytes) / POWER(1024, 3) AS total_remote_spill_gb,
+                SUM(total_bytes_scanned) / POWER(1024, 3) AS total_gb_scanned
+            FROM {hourly}
+            WHERE hour_start >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+              AND company = '{company}'
+              AND warehouse_name IS NOT NULL
+              {hourly_filters}
+        ),
+        detail_summary AS (
+            SELECT
+                COUNT_IF(
+                    COALESCE(partitions_total, 0) > 0
+                    AND partitions_scanned * 100.0 / NULLIF(partitions_total, 0) >= 90
+                    AND COALESCE(bytes_scanned, 0) / POWER(1024, 3) >= 10
+                ) AS full_scan_queries
+            FROM {detail}
+            WHERE start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+              AND company = '{company}'
+              AND warehouse_name IS NOT NULL
+              {detail_filters}
+        )
+        SELECT
+            h.total_queries,
+            h.failed_queries,
+            h.slow_queries,
+            h.queued_queries,
+            h.spill_queries,
+            COALESCE(d.full_scan_queries, 0) AS full_scan_queries,
+            h.affected_warehouses,
+            h.affected_users,
+            h.p95_elapsed_sec,
+            h.max_queued_sec,
+            h.total_remote_spill_gb,
+            h.total_gb_scanned
+        FROM hourly_summary h, detail_summary d
+    """
+    exceptions_sql = f"""
+        WITH base AS (
+            SELECT
+                query_id,
+                query_hash,
+                user_name,
+                role_name,
+                warehouse_name,
+                warehouse_size,
+                database_name,
+                schema_name,
+                query_type,
+                execution_status,
+                error_code,
+                error_message,
+                start_time,
+                total_elapsed_time / 1000.0 AS elapsed_sec,
+                compilation_time / 1000.0 AS compile_sec,
+                execution_time / 1000.0 AS exec_sec,
+                (
+                    COALESCE(queued_overload_time, 0)
+                    + COALESCE(queued_provisioning_time, 0)
+                    + COALESCE(queued_repair_time, 0)
+                ) / 1000.0 AS queued_sec,
+                transaction_blocked_time / 1000.0 AS blocked_sec,
+                COALESCE(bytes_scanned, 0) / POWER(1024, 3) AS gb_scanned,
+                COALESCE(bytes_spilled_to_local_storage, 0) / POWER(1024, 3) AS local_spill_gb,
+                COALESCE(bytes_spilled_to_remote_storage, 0) / POWER(1024, 3) AS remote_spill_gb,
+                rows_produced,
+                partitions_scanned * 100.0 / NULLIF(partitions_total, 0) AS partition_pct,
+                SUBSTR(query_text, 1, 4000) AS query_text
+            FROM {detail}
+            WHERE start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+              AND company = '{company}'
+              AND warehouse_name IS NOT NULL
+              {detail_filters}
+        ),
+        scored AS (
+            SELECT *,
+                CASE
+                    WHEN UPPER(COALESCE(execution_status, '')) IN ('FAILED_WITH_ERROR', 'FAILED') THEN 'Failed Query'
+                    WHEN queued_sec >= 30 THEN 'Warehouse Queue'
+                    WHEN remote_spill_gb >= 1 THEN 'Remote Spill'
+                    WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN 'Full Scan'
+                    WHEN elapsed_sec >= 30 THEN 'Slow Query'
+                    ELSE 'Watch'
+                END AS root_cause,
+                CASE
+                    WHEN UPPER(COALESCE(execution_status, '')) IN ('FAILED_WITH_ERROR', 'FAILED') THEN 1000000 + elapsed_sec
+                    WHEN queued_sec >= 30 THEN queued_sec
+                    WHEN remote_spill_gb >= 1 THEN remote_spill_gb
+                    WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN gb_scanned
+                    ELSE elapsed_sec
+                END AS impact_value,
+                CASE
+                    WHEN UPPER(COALESCE(execution_status, '')) IN ('FAILED_WITH_ERROR', 'FAILED') THEN 'error'
+                    WHEN queued_sec >= 30 THEN 'seconds queued'
+                    WHEN remote_spill_gb >= 1 THEN 'GB remote spill'
+                    WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN 'GB scanned'
+                    ELSE 'seconds elapsed'
+                END AS impact_unit
+            FROM base
+            WHERE UPPER(COALESCE(execution_status, '')) IN ('FAILED_WITH_ERROR', 'FAILED')
+               OR queued_sec >= 30
+               OR remote_spill_gb >= 1
+               OR (partition_pct >= 90 AND gb_scanned >= 10)
+               OR elapsed_sec >= 30
+        )
+        SELECT
+            CASE
+                WHEN root_cause = 'Failed Query' THEN 'High'
+                WHEN root_cause IN ('Warehouse Queue', 'Remote Spill') AND impact_value >= 60 THEN 'Critical'
+                WHEN root_cause IN ('Warehouse Queue', 'Remote Spill') THEN 'High'
+                WHEN root_cause = 'Full Scan' AND impact_value >= 250 THEN 'High'
+                ELSE 'Medium'
+            END AS severity,
+            root_cause,
+            query_id,
+            query_hash,
+            user_name,
+            role_name,
+            warehouse_name,
+            warehouse_size,
+            database_name,
+            schema_name,
+            query_type,
+            execution_status,
+            error_code,
+            error_message,
+            start_time,
+            elapsed_sec,
+            exec_sec,
+            compile_sec,
+            queued_sec,
+            blocked_sec,
+            gb_scanned,
+            local_spill_gb,
+            remote_spill_gb,
+            rows_produced,
+            partition_pct,
+            impact_value,
+            impact_unit,
+            query_text
+        FROM scored
+        ORDER BY
+            CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 ELSE 3 END,
+            impact_value DESC
+        LIMIT {int(limit)}
+    """
+    return summary_sql, exceptions_sql
+
+
 def _queue_root_cause_actions(session, exceptions: pd.DataFrame) -> int:
     if exceptions is None or exceptions.empty:
         return 0
@@ -463,16 +642,16 @@ def _render_root_cause_brief(session) -> None:
         if st.button("Load Root-Cause Brief", key="qw_rc_load"):
             with st.spinner("Building root-cause brief..."):
                 try:
-                    summary_sql, exceptions_sql = _build_root_cause_sql(session, days, limit)
+                    summary_sql, exceptions_sql = _build_mart_root_cause_sql(days, limit, company)
                     summary_df = run_query(
                         summary_sql,
-                        ttl_key=f"qw_root_summary_{company}_{days}",
+                        ttl_key=f"qw_root_summary_mart_{company}_{days}",
                         tier="historical",
                         section="Query Workbench",
                     )
                     exceptions = run_query(
                         exceptions_sql,
-                        ttl_key=f"qw_root_exceptions_{company}_{days}_{limit}",
+                        ttl_key=f"qw_root_exceptions_mart_{company}_{days}_{limit}",
                         tier="historical",
                         section="Query Workbench",
                     )
@@ -486,9 +665,38 @@ def _render_root_cause_brief(session) -> None:
                         "company": company,
                         "days": int(days),
                         "limit": int(limit),
+                        "source": "OVERWATCH mart: FACT_QUERY_HOURLY + FACT_QUERY_DETAIL_RECENT",
                     }
                 except Exception as e:
-                    st.warning(f"Root-cause brief unavailable: {format_snowflake_error(e)}")
+                    try:
+                        summary_sql, exceptions_sql = _build_root_cause_sql(session, days, limit)
+                        summary_df = run_query(
+                            summary_sql,
+                            ttl_key=f"qw_root_summary_live_{company}_{days}",
+                            tier="historical",
+                            section="Query Workbench",
+                        )
+                        exceptions = run_query(
+                            exceptions_sql,
+                            ttl_key=f"qw_root_exceptions_live_{company}_{days}_{limit}",
+                            tier="historical",
+                            section="Query Workbench",
+                        )
+                        st.session_state["qw_root_summary"] = summary_df
+                        st.session_state["qw_root_exceptions"] = exceptions
+                        st.session_state["qw_root_sql"] = {
+                            "summary": summary_sql,
+                            "exceptions": exceptions_sql,
+                        }
+                        st.session_state["qw_root_meta"] = {
+                            "company": company,
+                            "days": int(days),
+                            "limit": int(limit),
+                            "source": "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                        }
+                        st.info(f"Query mart unavailable; used live QUERY_HISTORY fallback. {format_snowflake_error(e)}")
+                    except Exception as live_exc:
+                        st.warning(f"Root-cause brief unavailable: {format_snowflake_error(live_exc)}")
 
         summary_df = st.session_state.get("qw_root_summary")
         exceptions = st.session_state.get("qw_root_exceptions")
@@ -527,6 +735,7 @@ def _render_root_cause_brief(session) -> None:
             st.info("Watch: a few exceptions exist, but the query estate is broadly controlled.")
         else:
             st.success("Stable: no dominant query root-cause pressure in the selected scope.")
+        st.caption(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
         _render_query_watch_floor(score, exceptions, summary_row, days)
         st.divider()

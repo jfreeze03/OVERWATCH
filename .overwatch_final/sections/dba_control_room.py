@@ -29,6 +29,18 @@ from utils import (
     get_session,
     get_user_filter_clause,
     get_wh_filter_clause,
+    build_mart_control_room_summary_sql,
+    build_mart_control_room_credits_sql,
+    build_mart_control_room_cost_drivers_sql,
+    build_mart_control_room_warehouse_pressure_sql,
+    build_mart_control_room_failed_queries_sql,
+    build_mart_control_room_object_changes_sql,
+    build_mart_control_room_failed_logins_sql,
+    build_mart_control_room_task_failures_sql,
+    build_mart_query_detail_recent_sql,
+    build_mart_task_history_sql,
+    build_mart_procedure_sla_sql,
+    load_latest_control_room_mart,
     load_task_inventory,
     load_action_queue,
     metric_confidence_label,
@@ -87,6 +99,74 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
 
 def _empty_df() -> pd.DataFrame:
     return pd.DataFrame()
+
+
+def _snapshot_metric(df: pd.DataFrame, column: str) -> float:
+    if df is None or df.empty or column not in df.columns:
+        return 0.0
+    return safe_float(pd.to_numeric(df[column], errors="coerce").fillna(0).sum())
+
+
+def _control_room_snapshot_to_data(snapshot: pd.DataFrame) -> dict:
+    """Convert the lightweight mart snapshot into the data shape used by the page.
+
+    The mart snapshot is intentionally small: it supports the watch floor and
+    morning triage metrics, while deep evidence tables still load on demand.
+    """
+    if snapshot is None or snapshot.empty:
+        return {}
+    latest = snapshot.copy()
+    latest.columns = [str(col).upper() for col in latest.columns]
+    worst_score = safe_float(pd.to_numeric(latest.get("HEALTH_SCORE", pd.Series([100])), errors="coerce").min())
+    failed_queries = _snapshot_metric(latest, "FAILED_QUERIES_24H")
+    failed_tasks = _snapshot_metric(latest, "FAILED_TASKS_24H")
+    queued_ms = _snapshot_metric(latest, "QUEUED_MS_24H")
+    credits = _snapshot_metric(latest, "CREDITS_24H")
+    cortex_cost = _snapshot_metric(latest, "CORTEX_COST_7D_USD")
+    security_events = _snapshot_metric(latest, "SECURITY_EVENTS_24H")
+    object_changes = _snapshot_metric(latest, "OBJECT_CHANGES_24H")
+
+    top_risks = [
+        str(value)
+        for value in latest.get("TOP_RISK", pd.Series(dtype=str)).dropna().astype(str).tolist()
+        if str(value).strip() and str(value).strip().lower() != "no immediate exception"
+    ]
+    summary = pd.DataFrame([{
+        "TOTAL_QUERIES": 0,
+        "FAILED_QUERIES": failed_queries,
+        "QUEUED_QUERIES": 1 if queued_ms > 0 else 0,
+        "REMOTE_SPILL_QUERIES": 0,
+        "AVG_ELAPSED_SEC": 0,
+        "P95_ELAPSED_SEC": 0,
+        "ACTIVE_WAREHOUSES": 0,
+        "ACTIVE_USERS": 0,
+        "MART_HEALTH_SCORE": worst_score,
+        "MART_TOP_RISK": ", ".join(dict.fromkeys(top_risks)) or "No immediate exception",
+    }])
+    credits_df = pd.DataFrame([{"PERIOD_CREDITS": credits, "PRIOR_CREDITS": 0}])
+    task_failures = pd.DataFrame(
+        [{"TASK_NAME": "Mart summary", "FAILURES": failed_tasks}]
+    ) if failed_tasks > 0 else _empty_df()
+    failed_logins = pd.DataFrame(
+        [{"SIGNAL": "Failed login/security events", "EVENTS": security_events}]
+    ) if security_events > 0 else _empty_df()
+    object_df = pd.DataFrame(
+        [{"SIGNAL": "Object or grant changes", "CHANGES": object_changes}]
+    ) if object_changes > 0 else _empty_df()
+    cortex_summary = pd.DataFrame([{
+        "PROJECTED_30D_COST": cortex_cost / 7 * 30 if cortex_cost > 0 else 0,
+        "TOTAL_COST": cortex_cost,
+    }])
+    return {
+        "summary": summary,
+        "credits": credits_df,
+        "task_failures": task_failures,
+        "failed_logins": failed_logins,
+        "object_changes": object_df,
+        "cortex_summary": cortex_summary,
+        "_mart_snapshot": latest,
+        "_source_mode": pd.DataFrame([{"MODE": "OVERWATCH mart snapshot"}]),
+    }
 
 
 def _scalar_frame_value(data: dict, key: str, column: str, default=0):
@@ -690,58 +770,129 @@ def _load_control_room(session, company: str, credit_price: float, lookback_hour
         """,
     }
 
+    mart_queries = {
+        "summary": build_mart_control_room_summary_sql(lookback_hours, company),
+        "credits": build_mart_control_room_credits_sql(lookback_hours, company),
+        "cost_drivers": build_mart_control_room_cost_drivers_sql(lookback_hours, company),
+        "warehouse_pressure": build_mart_control_room_warehouse_pressure_sql(lookback_hours, company),
+        "failed_queries": build_mart_control_room_failed_queries_sql(lookback_hours, company),
+        "object_changes": build_mart_control_room_object_changes_sql(lookback_hours, company),
+        "failed_logins": build_mart_control_room_failed_logins_sql(lookback_hours, company),
+    }
+    source_rows: list[dict] = []
     for key, sql in queries.items():
         try:
-            data[key] = run_query(
-                sql,
-                ttl_key=f"dba_control_room_{company}_{lookback_hours}_{key}",
-                tier="recent" if lookback_hours <= 24 else "historical",
-                section="DBA Control Room",
-            )
+            try:
+                data[key] = run_query(
+                    mart_queries[key],
+                    ttl_key=f"dba_control_room_mart_{company}_{lookback_hours}_{key}",
+                    tier="historical",
+                    section="DBA Control Room",
+                )
+                source_rows.append({"Source": key, "Mode": "OVERWATCH mart"})
+            except Exception as mart_exc:
+                data[key] = run_query(
+                    sql,
+                    ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_{key}",
+                    tier="recent" if lookback_hours <= 24 else "historical",
+                    section="DBA Control Room",
+                )
+                source_rows.append({
+                    "Source": key,
+                    "Mode": "Live fallback",
+                    "Message": format_snowflake_error(mart_exc),
+                })
         except Exception as exc:
             data[key] = _empty_df()
             data[f"{key}_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
 
     try:
-        data["task_failures"] = run_query(
-            build_task_failure_summary_sql(
-                session,
-                f"scheduled_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())",
-                limit=10,
-                company=company,
-            ),
-            ttl_key=f"dba_control_room_{company}_{lookback_hours}_task_failures",
-            tier="recent",
-            section="DBA Control Room",
-        )
+        try:
+            data["task_failures"] = run_query(
+                build_mart_control_room_task_failures_sql(lookback_hours, company),
+                ttl_key=f"dba_control_room_mart_{company}_{lookback_hours}_task_failures",
+                tier="historical",
+                section="DBA Control Room",
+            )
+            source_rows.append({"Source": "task_failures", "Mode": "OVERWATCH mart"})
+        except Exception as mart_exc:
+            data["task_failures"] = run_query(
+                build_task_failure_summary_sql(
+                    session,
+                    f"scheduled_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())",
+                    limit=10,
+                    company=company,
+                ),
+                ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_task_failures",
+                tier="recent",
+                section="DBA Control Room",
+            )
+            source_rows.append({
+                "Source": "task_failures",
+                "Mode": "Live fallback",
+                "Message": format_snowflake_error(mart_exc),
+            })
     except Exception as exc:
         data["task_failures"] = _empty_df()
         data["task_failures_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
 
     try:
         task_inventory = load_task_inventory(session, company)
-        task_history = run_query(
-            build_task_history_sql(
-                session,
-                f"scheduled_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())",
-                limit=1000,
-                company=company,
-            ),
-            ttl_key=f"dba_control_room_{company}_{lookback_hours}_task_sla_history",
-            tier="recent",
-            section="DBA Control Room",
-        )
+        task_history_source = "OVERWATCH mart"
+        try:
+            task_history = run_query(
+                build_mart_task_history_sql(max(1, int((lookback_hours + 23) / 24)), company=company, limit=1000),
+                ttl_key=f"dba_control_room_mart_{company}_{lookback_hours}_task_sla_history",
+                tier="historical",
+                section="DBA Control Room",
+            )
+        except Exception as mart_exc:
+            task_history_source = "Live fallback"
+            task_history = run_query(
+                build_task_history_sql(
+                    session,
+                    f"scheduled_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())",
+                    limit=1000,
+                    company=company,
+                ),
+                ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_task_sla_history",
+                tier="recent",
+                section="DBA Control Room",
+            )
+            source_rows.append({
+                "Source": "task_sla_history",
+                "Mode": task_history_source,
+                "Message": format_snowflake_error(mart_exc),
+            })
+        if task_history_source == "OVERWATCH mart":
+            source_rows.append({"Source": "task_sla_history", "Mode": task_history_source})
         task_query_details = _empty_df()
         if not task_history.empty and "QUERY_ID" in task_history.columns:
             qids = task_history["QUERY_ID"].dropna().astype(str).tolist()
-            query_sql = _query_detail_sql(session, qids)
-            if query_sql:
-                task_query_details = run_query(
-                    query_sql,
-                    ttl_key=f"dba_control_room_{company}_{lookback_hours}_task_query_detail_{len(qids)}",
-                    tier="standard",
-                    section="DBA Control Room",
-                )
+            try:
+                query_sql = build_mart_query_detail_recent_sql(qids)
+                if query_sql:
+                    task_query_details = run_query(
+                        query_sql,
+                        ttl_key=f"dba_control_room_mart_{company}_{lookback_hours}_task_query_detail_{len(qids)}",
+                        tier="historical",
+                        section="DBA Control Room",
+                    )
+                    source_rows.append({"Source": "task_query_detail", "Mode": "OVERWATCH mart"})
+            except Exception as mart_exc:
+                query_sql = _query_detail_sql(session, qids)
+                if query_sql:
+                    task_query_details = run_query(
+                        query_sql,
+                        ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_task_query_detail_{len(qids)}",
+                        tier="standard",
+                        section="DBA Control Room",
+                    )
+                source_rows.append({
+                    "Source": "task_query_detail",
+                    "Mode": "Live fallback",
+                    "Message": format_snowflake_error(mart_exc),
+                })
         _, task_ops_exceptions, task_latest = _build_task_ops_frames(task_inventory, task_history, task_query_details)
         data["task_sla_cost"] = task_ops_exceptions[
             task_ops_exceptions.get("SIGNAL", pd.Series(dtype=str)).isin([
@@ -756,13 +907,27 @@ def _load_control_room(session, company: str, credit_price: float, lookback_hour
         data["task_sla_cost_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
 
     try:
-        has_root_query_id = _query_history_has_root_query_id(session)
-        proc_runs = run_query(
-            _build_procedure_sla_sql(session, max(1, int(lookback_hours / 24)), has_root_query_id),
-            ttl_key=f"dba_control_room_{company}_{lookback_hours}_procedure_sla_{has_root_query_id}",
-            tier="standard",
-            section="DBA Control Room",
-        )
+        try:
+            proc_runs = run_query(
+                build_mart_procedure_sla_sql(max(1, int((lookback_hours + 23) / 24)), company=company),
+                ttl_key=f"dba_control_room_mart_{company}_{lookback_hours}_procedure_sla",
+                tier="historical",
+                section="DBA Control Room",
+            )
+            source_rows.append({"Source": "procedure_sla", "Mode": "OVERWATCH mart"})
+        except Exception as mart_exc:
+            has_root_query_id = _query_history_has_root_query_id(session)
+            proc_runs = run_query(
+                _build_procedure_sla_sql(session, max(1, int(lookback_hours / 24)), has_root_query_id),
+                ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_procedure_sla_{has_root_query_id}",
+                tier="standard",
+                section="DBA Control Room",
+            )
+            source_rows.append({
+                "Source": "procedure_sla",
+                "Mode": "Live fallback",
+                "Message": format_snowflake_error(mart_exc),
+            })
         _, proc_exceptions, proc_latest = _build_procedure_sla_frames(proc_runs)
         data["procedure_sla_cost"] = proc_exceptions
         data["procedure_latest_runs"] = proc_latest
@@ -801,6 +966,7 @@ def _load_control_room(session, company: str, credit_price: float, lookback_hour
     data["_loaded_at"] = pd.DataFrame({"LOADED_AT": [datetime.now().isoformat()]})
     data["_credit_price"] = pd.DataFrame({"CREDIT_PRICE": [credit_price]})
     data["_cortex_budget_usd"] = pd.DataFrame({"BUDGET_USD": [safe_float(cortex_budget_usd)]})
+    data["_source_modes"] = pd.DataFrame(source_rows)
     return data
 
 
@@ -1190,25 +1356,48 @@ def render() -> None:
             "Use this as triage, then validate high-impact actions in the drilldown page."
         )
 
-    if st.button("Load DBA Control Room", key="dba_control_room_load", type="primary"):
+    snapshot_result = load_latest_control_room_mart(company, max_age_hours=6)
+    if snapshot_result.available and not snapshot_result.data.empty:
+        snapshot = snapshot_result.data.copy()
+        st.caption(f"Fast snapshot available from {snapshot_result.source}. Use it for cheap triage; load detail only for investigation.")
+        s1, s2, s3, s4, s5 = st.columns(5)
+        s1.metric("Snapshot Health", f"{safe_float(snapshot['HEALTH_SCORE'].min()):.0f}/100")
+        s2.metric("Failed Queries 24h", f"{safe_int(snapshot['FAILED_QUERIES_24H'].sum()):,}", delta_color="inverse")
+        s3.metric("Failed Tasks 24h", f"{safe_int(snapshot['FAILED_TASKS_24H'].sum()):,}", delta_color="inverse")
+        s4.metric("Credits 24h", format_credits(snapshot["CREDITS_24H"].sum()))
+        s5.metric("Cortex 7d", f"${safe_float(snapshot['CORTEX_COST_7D_USD'].sum()):,.0f}", delta_color="inverse")
+        if st.button("Use Fast Snapshot", key="dba_control_room_use_snapshot"):
+            st.session_state["dba_control_room_data"] = _control_room_snapshot_to_data(snapshot)
+            st.session_state["dba_control_room_company"] = company
+            st.session_state["dba_control_room_lookback"] = 24
+            st.session_state["dba_control_room_source_mode"] = "OVERWATCH mart snapshot"
+            st.rerun()
+    elif not snapshot_result.available:
+        st.caption("Fast mart snapshot unavailable. Install/run OVERWATCH_MART_SETUP.sql to enable cheap control-room triage.")
+
+    if st.button("Load DBA Control Room Details", key="dba_control_room_load", type="primary"):
         with st.spinner("Loading exception signals..."):
             st.session_state["dba_control_room_data"] = _load_control_room(
                 session, company, credit_price, int(lookback_hours), safe_float(cortex_budget_usd)
             )
             st.session_state["dba_control_room_company"] = company
             st.session_state["dba_control_room_lookback"] = int(lookback_hours)
+            st.session_state["dba_control_room_source_mode"] = "Detailed live + fallback queries"
 
     data = st.session_state.get("dba_control_room_data", {})
     if not data:
-        st.warning("Load the control room to see today's DBA exceptions and report-ready evidence.")
+        st.warning("Use the fast mart snapshot or load detail to see today's DBA exceptions and report-ready evidence.")
         st.markdown("**Designed workflow**")
-        st.write("Morning triage -> investigate exception -> assign action -> export leadership evidence.")
+        st.write("Fast snapshot -> investigate exception -> assign action -> export leadership evidence.")
         return
 
     loaded_company = st.session_state.get("dba_control_room_company", company)
     loaded_lookback = st.session_state.get("dba_control_room_lookback", lookback_hours)
     if loaded_company != company:
         st.warning("Company selection changed after this control-room load. Reload before taking action.")
+    source_mode = st.session_state.get("dba_control_room_source_mode", "Detailed live + fallback queries")
+    if source_mode == "OVERWATCH mart snapshot":
+        st.info("Showing fast mart snapshot. Deep evidence tabs may be sparse until you load detail.")
 
     exceptions = _severity_rows(data, credit_price)
     summary = data.get("summary", _empty_df())
@@ -1540,19 +1729,36 @@ def render() -> None:
     with tab_sources:
         st.subheader("Control Room Source Status")
         rows = []
+        source_modes = data.get("_source_modes", _empty_df())
+        mode_map = {}
+        if source_modes is not None and not source_modes.empty and "Source" in source_modes.columns:
+            for _, source_row in source_modes.iterrows():
+                mode_map[str(source_row.get("Source"))] = {
+                    "Mode": str(source_row.get("Mode", "")),
+                    "Mode Message": str(source_row.get("Message", "")),
+                }
         for key, value in data.items():
             if key.startswith("_"):
                 continue
             if key.endswith("_error"):
                 continue
             err = data.get(f"{key}_error", _empty_df())
+            mode_info = mode_map.get(str(key), {})
+            message = "" if err.empty else str(err["ERROR"].iloc[0])
+            if not message and mode_info.get("Mode Message", "").lower() not in ("", "nan", "none"):
+                message = mode_info["Mode Message"]
             rows.append({
                 "Source": key,
+                "Mode": mode_info.get("Mode", "Live or local"),
                 "Rows": 0 if value is None or value.empty else len(value),
                 "Status": "Warning" if not err.empty else "OK",
-                "Message": "" if err.empty else str(err["ERROR"].iloc[0]),
+                "Message": message,
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, height=360)
+        snapshot_df = data.get("_mart_snapshot", _empty_df())
+        if snapshot_df is not None and not snapshot_df.empty:
+            st.subheader("Fast Snapshot Rows")
+            st.dataframe(snapshot_df, use_container_width=True, height=180)
         budget_summary = get_query_budget_summary()
         st.subheader("Current Session Query Budget")
         if budget_summary is None or budget_summary.empty:

@@ -23,10 +23,12 @@ from sections.dba_control_room import (  # noqa: E402
     _build_report as _build_dba_control_report,
     _build_release_compare_report,
     _compare_release_windows,
+    _control_room_snapshot_to_data,
     _severity_rows as _dba_control_severity_rows,
 )
 from sections.cortex_monitor import (  # noqa: E402
     _build_cortex_control_markdown,
+    _build_cortex_ai_functions_daily_sql,
     _cortex_action_for,
     _cortex_cost_rating,
     _cortex_cost_score,
@@ -82,6 +84,28 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_capacity_score,
 )
 from utils.cost import build_metered_credit_cte  # noqa: E402
+from utils.mart import (  # noqa: E402
+    build_mart_account_health_change_sql,
+    build_mart_account_health_cost_drivers_sql,
+    build_mart_account_health_credits_sql,
+    build_mart_account_health_failure_count_sql,
+    build_mart_account_health_failure_types_sql,
+    build_mart_account_health_long_queries_sql,
+    build_mart_account_health_queued_sql,
+    build_mart_account_health_storage_sql,
+    build_mart_account_health_top_driver_sql,
+    build_mart_account_health_ytd_credits_sql,
+    build_mart_control_room_cost_drivers_sql,
+    build_mart_control_room_summary_sql,
+    build_mart_control_room_task_failures_sql,
+    build_mart_pipeline_load_failures_sql,
+    build_mart_query_bottleneck_sql,
+    build_mart_query_degradation_sql,
+    build_mart_recommendation_failed_tasks_sql,
+    build_mart_recommendation_idle_sql,
+    build_mart_recommendation_query_errors_sql,
+    build_mart_recommendation_spill_sql,
+)
 
 
 def _python_sources():
@@ -107,6 +131,151 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("QUEUED_PROVISIONING_TIME", sql)
         self.assertIn("QUEUED_REPAIR_TIME", sql)
         self.assertIn("RESUMING_WAREHOUSE", sql)
+
+    def test_cortex_ai_functions_sql_is_optional_and_live(self):
+        sql = _build_cortex_ai_functions_daily_sql(
+            30,
+            include_user_filter=True,
+            include_query_id=True,
+        ).upper()
+        self.assertIn("CORTEX_AI_FUNCTIONS_USAGE_HISTORY", sql)
+        self.assertIn("SUM(COALESCE(F.CREDITS, 0))", sql)
+        self.assertIn("COUNT(DISTINCT F.QUERY_ID)", sql)
+        self.assertIn("LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS", sql)
+
+    def test_recommendation_mart_sql_uses_preaggregated_facts(self):
+        idle_sql = build_mart_recommendation_idle_sql("ALFA").upper()
+        self.assertIn("FACT_WAREHOUSE_HOURLY", idle_sql)
+        self.assertIn("FACT_QUERY_HOURLY", idle_sql)
+        self.assertIn("COALESCE(Q.QUERY_COUNT, 0) = 0", idle_sql)
+        self.assertNotIn("ACCOUNT_USAGE.QUERY_HISTORY", idle_sql)
+
+        spill_sql = build_mart_recommendation_spill_sql("Trexis").upper()
+        self.assertIn("FACT_QUERY_HOURLY", spill_sql)
+        self.assertIn("TOTAL_SPILL_BYTES", spill_sql)
+        self.assertIn("COMPANY = 'TREXIS'", spill_sql)
+
+        task_sql = build_mart_recommendation_failed_tasks_sql("ALFA").upper()
+        self.assertIn("FACT_TASK_RUN", task_sql)
+        self.assertIn("'FAILED_WITH_ERROR'", task_sql)
+
+        error_sql = build_mart_recommendation_query_errors_sql("ALFA", min_failures=7).upper()
+        self.assertIn("FAILED_COUNT", error_sql)
+        self.assertIn("HAVING FAILURES > 7", error_sql)
+
+    def test_pipeline_load_failure_mart_sql_uses_copy_history_mart(self):
+        sql = build_mart_pipeline_load_failures_sql(7, "ALFA").upper()
+        self.assertIn("FACT_COPY_LOAD_DAILY", sql)
+        self.assertIn("UPPER(COALESCE(STATUS, '')) <> 'LOADED'", sql)
+        self.assertNotIn("ACCOUNT_USAGE.COPY_HISTORY", sql)
+
+    def test_query_analysis_mart_sql_uses_recent_query_detail(self):
+        bottleneck_sql = build_mart_query_bottleneck_sql(7, 300000, "ALFA").upper()
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", bottleneck_sql)
+        self.assertIn("COALESCE(Q.TOTAL_ELAPSED_TIME, 0) > 300000", bottleneck_sql)
+        self.assertIn("NULLIF(COALESCE(Q.PARTITIONS_TOTAL, 0), 0)", bottleneck_sql)
+        self.assertNotIn("ACCOUNT_USAGE.QUERY_HISTORY", bottleneck_sql)
+
+        degradation_sql = build_mart_query_degradation_sql("Trexis").upper()
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", degradation_sql)
+        self.assertIn("COALESCE(Q.QUERY_HASH, SUBSTR(Q.QUERY_TEXT, 1, 200))", degradation_sql)
+        self.assertIn("NULLIF(P.AVG_SEC, 0)", degradation_sql)
+        self.assertIn("Q.COMPANY = 'TREXIS'", degradation_sql)
+
+    def test_dba_control_room_mart_sql_uses_operational_facts(self):
+        summary_sql = build_mart_control_room_summary_sql(24, "ALFA").upper()
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", summary_sql)
+        self.assertIn("APPROX_PERCENTILE", summary_sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", summary_sql)
+
+        driver_sql = build_mart_control_room_cost_drivers_sql(24, "Trexis").upper()
+        self.assertIn("FACT_WAREHOUSE_HOURLY", driver_sql)
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", driver_sql)
+        self.assertIn("WH_ELAPSED AS", driver_sql)
+        self.assertIn("NULLIF(WE.WH_ELAPSED_MS, 0)", driver_sql)
+        self.assertIn("Q.COMPANY = 'TREXIS'", driver_sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", driver_sql)
+
+        task_sql = build_mart_control_room_task_failures_sql(24, "ALFA").upper()
+        self.assertIn("FACT_TASK_RUN", task_sql)
+        self.assertIn("'FAILED_WITH_ERROR'", task_sql)
+
+    def test_account_health_mart_sql_uses_dashboard_facts(self):
+        storage_sql = build_mart_account_health_storage_sql("ALFA").upper()
+        self.assertIn("FACT_STORAGE_DAILY", storage_sql)
+        self.assertIn("STORAGE_TB", storage_sql)
+        self.assertNotIn("DATABASE_STORAGE_USAGE_HISTORY", storage_sql)
+
+        cost_sql = build_mart_account_health_cost_drivers_sql(24, "Trexis").upper()
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", cost_sql)
+        self.assertIn("FACT_WAREHOUSE_HOURLY", cost_sql)
+        self.assertIn("AS TOTAL_CREDITS", cost_sql)
+        self.assertIn("Q.COMPANY = 'TREXIS'", cost_sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", cost_sql)
+
+        change_sql = build_mart_account_health_change_sql(24, "ALFA").upper()
+        self.assertIn("FACT_QUERY_HOURLY", change_sql)
+        self.assertIn("FACT_WAREHOUSE_HOURLY", change_sql)
+        self.assertIn("QUERY_DELTA", change_sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", change_sql)
+
+    def test_account_health_report_and_briefing_mart_sql_uses_facts(self):
+        failures_sql = build_mart_account_health_failure_types_sql(12, "ALFA").upper()
+        self.assertIn("FACT_QUERY_HOURLY", failures_sql)
+        self.assertIn("FAIL_COUNT", failures_sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", failures_sql)
+
+        long_sql = build_mart_account_health_long_queries_sql(12, "Trexis").upper()
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", long_sql)
+        self.assertIn("ELAPSED_SEC", long_sql)
+        self.assertIn("Q.COMPANY = 'TREXIS'", long_sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", long_sql)
+
+        credits_sql = build_mart_account_health_credits_sql(24, "ALFA").upper()
+        self.assertIn("FACT_WAREHOUSE_HOURLY", credits_sql)
+        self.assertIn("PRIOR_PERIOD_CREDITS", credits_sql)
+        self.assertIn("OVERNIGHT_CREDITS", credits_sql)
+
+        count_sql = build_mart_account_health_failure_count_sql(24, "ALFA").upper()
+        self.assertIn("FAIL_COUNT", count_sql)
+        self.assertIn("FACT_QUERY_HOURLY", count_sql)
+
+        top_sql = build_mart_account_health_top_driver_sql(24, "ALFA").upper()
+        self.assertIn("AS CREDITS", top_sql)
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", top_sql)
+
+        queued_sql = build_mart_account_health_queued_sql(1, "ALFA").upper()
+        self.assertIn("AS QUEUED", queued_sql)
+        self.assertIn("TOTAL_QUEUED_MS", queued_sql)
+
+        ytd_sql = build_mart_account_health_ytd_credits_sql("ALFA").upper()
+        self.assertIn("YTD_CREDITS", ytd_sql)
+        self.assertIn("DATE_TRUNC('YEAR'", ytd_sql)
+
+    def test_control_room_snapshot_maps_to_watch_floor_shape(self):
+        snapshot = pd.DataFrame([
+            {
+                "COMPANY": "ALFA",
+                "HEALTH_SCORE": 91,
+                "FAILED_QUERIES_24H": 2,
+                "FAILED_TASKS_24H": 1,
+                "QUEUED_MS_24H": 120000,
+                "CREDITS_24H": 4.5,
+                "CORTEX_COST_7D_USD": 70,
+                "SECURITY_EVENTS_24H": 3,
+                "OBJECT_CHANGES_24H": 4,
+                "TOP_RISK": "Failed tasks",
+            }
+        ])
+        data = _control_room_snapshot_to_data(snapshot)
+        self.assertIn("summary", data)
+        self.assertIn("credits", data)
+        self.assertEqual(float(data["summary"].iloc[0]["FAILED_QUERIES"]), 2.0)
+        self.assertEqual(float(data["credits"].iloc[0]["PERIOD_CREDITS"]), 4.5)
+        self.assertFalse(data["task_failures"].empty)
+        self.assertFalse(data["failed_logins"].empty)
+        self.assertFalse(data["object_changes"].empty)
+        self.assertIn("_mart_snapshot", data)
 
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []

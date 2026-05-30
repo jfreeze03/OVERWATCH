@@ -8,6 +8,7 @@ from utils import (
     get_global_filter_clause,
     get_session,
     filter_existing_columns,
+    mart_object_name,
     render_query_drilldown,
     run_query,
     safe_float,
@@ -29,6 +30,58 @@ DIAG_MODES = {
 def _load_diagnosis(session, days: int, mode: str, limit: int):
     company = get_active_company()
     order_col, _, _ = DIAG_MODES[mode]
+    filters = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
+    company_filter = "" if str(company or "").upper() == "ALL" else f"AND q.company = {sql_literal(company, 100)}"
+    try:
+        mart_table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
+        df = run_query(f"""
+            SELECT
+                q.query_id,
+                q.user_name,
+                q.role_name,
+                q.warehouse_name,
+                q.warehouse_size,
+                q.database_name,
+                q.schema_name,
+                q.query_type,
+                q.execution_status,
+                q.error_code,
+                q.error_message,
+                q.start_time,
+                q.total_elapsed_time / 1000 AS elapsed_sec,
+                COALESCE(q.compilation_time, 0) / 1000 AS compile_sec,
+                COALESCE(q.execution_time, 0) / 1000 AS exec_sec,
+                COALESCE(q.queued_overload_time, 0) / 1000 AS queued_sec,
+                COALESCE(q.queued_provisioning_time, 0) / 1000 AS queued_provisioning_sec,
+                COALESCE(q.transaction_blocked_time, 0) / 1000 AS blocked_sec,
+                COALESCE(q.bytes_scanned, 0) / POWER(1024, 3) AS gb_scanned,
+                COALESCE(q.bytes_spilled_to_local_storage, 0) / POWER(1024, 3) AS local_spill_gb,
+                COALESCE(q.bytes_spilled_to_remote_storage, 0) / POWER(1024, 3) AS remote_spill_gb,
+                COALESCE(q.rows_produced, 0) AS rows_produced,
+                COALESCE(q.partitions_scanned, 0) AS partitions_scanned,
+                COALESCE(q.partitions_total, 0) AS partitions_total,
+                0::FLOAT AS cloud_credits,
+                SUBSTR(COALESCE(q.query_text, ''), 1, 4000) AS query_text
+            FROM {mart_table} q
+            WHERE q.start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              AND COALESCE(q.{order_col}, 0) > 0
+              {company_filter}
+              {filters}
+            ORDER BY q.{order_col} DESC
+            LIMIT {int(limit)}
+        """, ttl_key=f"dd_mart_{company}_{mode}_{days}_{limit}", tier="historical")
+        st.session_state["dd_source"] = "OVERWATCH mart: FACT_QUERY_DETAIL_RECENT"
+        return df
+    except Exception:
+        st.session_state["dd_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+
     qh_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
@@ -75,13 +128,6 @@ def _load_diagnosis(session, days: int, mode: str, limit: int):
         if "CREDITS_USED_CLOUD_SERVICES" in qh_cols
         else "0::FLOAT AS cloud_credits"
     )
-    filters = get_global_filter_clause(
-        date_col="q.start_time",
-        wh_col="q.warehouse_name",
-        user_col="q.user_name",
-        role_col="q.role_name",
-        db_col="q.database_name",
-    )
     return run_query(f"""
         SELECT
             q.query_id,
@@ -117,7 +163,7 @@ def _load_diagnosis(session, days: int, mode: str, limit: int):
           {filters}
         ORDER BY q.{order_col} DESC
         LIMIT {limit}
-    """, ttl_key=f"dd_{company}_{mode}_{days}_{limit}", tier="historical")
+    """, ttl_key=f"dd_live_{company}_{mode}_{days}_{limit}", tier="historical")
 
 
 def _queue_diagnosis(session, df, mode: str):
@@ -192,6 +238,7 @@ def render():
     c2.metric("Worst", f"{safe_float(df[metric_col].max()):,.2f}")
     c3.metric("Affected Warehouses", f"{df['WAREHOUSE_NAME'].nunique():,}")
     c4.metric("Affected Users", f"{df['USER_NAME'].nunique():,}")
+    st.caption(st.session_state.get("dd_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
     if st.button("Send diagnosis findings to Action Queue", key="dd_queue"):
         _queue_diagnosis(session, df, loaded_mode)

@@ -5,27 +5,30 @@ from utils import (
     format_credits, download_csv,
     render_query_drilldown, build_metered_credit_cte, get_active_company, get_global_filter_clause,
     filter_existing_columns, format_snowflake_error,
+    build_mart_query_bottleneck_sql, build_mart_query_degradation_sql,
 )
 from config import THRESHOLDS
 
 
 def render():
     session = get_session()
-    credit_price = st.session_state.get("credit_price", 3.00)
     company = get_active_company()
-    qh_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        [
-            "WAREHOUSE_SIZE",
-            "QUEUED_OVERLOAD_TIME",
-            "BYTES_SCANNED",
-            "BYTES_SPILLED_TO_REMOTE_STORAGE",
-            "PARTITIONS_SCANNED",
-            "PARTITIONS_TOTAL",
-            "ROWS_PRODUCED",
-        ],
-    ))
+    try:
+        qh_cols = set(filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            [
+                "WAREHOUSE_SIZE",
+                "QUEUED_OVERLOAD_TIME",
+                "BYTES_SCANNED",
+                "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                "PARTITIONS_SCANNED",
+                "PARTITIONS_TOTAL",
+                "ROWS_PRODUCED",
+            ],
+        ))
+    except Exception:
+        qh_cols = set()
     wh_size_expr = "q.warehouse_size AS warehouse_size" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
     queued_expr = "q.queued_overload_time/1000 AS queued_sec" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0::FLOAT AS queued_sec"
     gb_expr = "q.bytes_scanned/POWER(1024,3) AS gb_scanned" if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
@@ -58,7 +61,20 @@ def render():
 
         if st.button("Load Bottlenecks", key="qa_load"):
             try:
-                df_qa = run_query(f"""
+                try:
+                    df_qa = run_query(
+                        build_mart_query_bottleneck_sql(
+                            days_back=days,
+                            min_elapsed_ms=THRESHOLDS["query_duration_alert_sec"] * 1000,
+                            company=company,
+                            extra_filter=qa_filters,
+                        ),
+                        ttl_key=f"query_analysis_bottlenecks_mart_{company}_{days}",
+                        tier="historical",
+                    )
+                    st.session_state["qa_bottleneck_source"] = "OVERWATCH mart: FACT_QUERY_DETAIL_RECENT"
+                except Exception:
+                    df_qa = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=days, include_recent=True)}
                 SELECT
                     q.query_id,
@@ -85,7 +101,8 @@ def render():
                   AND q.total_elapsed_time > {THRESHOLDS['query_duration_alert_sec'] * 1000}
                 ORDER BY q.total_elapsed_time DESC
                 LIMIT 500
-                """, ttl_key=f"query_analysis_bottlenecks_{company}_{days}", tier="standard")
+                    """, ttl_key=f"query_analysis_bottlenecks_live_{company}_{days}", tier="standard")
+                    st.session_state["qa_bottleneck_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                 st.session_state["qa_df_qa"] = df_qa
             except Exception as e:
                 st.warning(f"Bottleneck data unavailable in this role/context: {format_snowflake_error(e)}")
@@ -97,6 +114,7 @@ def render():
             c2.metric("Avg Elapsed (s)", f"{df['ELAPSED_SEC'].mean():.1f}")
             c3.metric("Total Remote Spill", f"{df['REMOTE_SPILL_GB'].sum():.1f} GB")
             c4.metric("Total Credits", format_credits(df["METERED_CREDITS"].sum()))
+            st.caption(st.session_state.get("qa_bottleneck_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
             # Flag high-impact queries
             flagged = df[
@@ -117,50 +135,52 @@ def render():
 
         if st.button("Detect Degradation", key="deg_load"):
             try:
-                qa_recent_filters = get_global_filter_clause(
-                    date_col="start_time",
-                    wh_col="warehouse_name",
-                    user_col="user_name",
-                    role_col="role_name",
-                    db_col="database_name",
+                qa_filters = get_global_filter_clause(
+                    date_col="q.start_time",
+                    wh_col="q.warehouse_name",
+                    user_col="q.user_name",
+                    role_col="q.role_name",
+                    db_col="q.database_name",
                 )
-                qa_prior_filters = get_global_filter_clause(
-                    date_col="",
-                    wh_col="warehouse_name",
-                    user_col="user_name",
-                    role_col="role_name",
-                    db_col="database_name",
-                )
-                df_deg = run_query(f"""
-                WITH sig_recent AS (
-                    SELECT SUBSTR(query_text,1,200) AS sig,
-                           AVG(total_elapsed_time)/1000 AS avg_sec,
-                           COUNT(*) AS cnt
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
-                      AND warehouse_name IS NOT NULL
-                      {qa_recent_filters}
-                    GROUP BY sig HAVING cnt >= 5
-                ),
-                sig_prior AS (
-                    SELECT SUBSTR(query_text,1,200) AS sig,
-                           AVG(total_elapsed_time)/1000 AS avg_sec,
-                           COUNT(*) AS cnt
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day',-14,CURRENT_TIMESTAMP())
-                      AND start_time <  DATEADD('day',-7,CURRENT_TIMESTAMP())
-                      AND warehouse_name IS NOT NULL
-                      {qa_prior_filters}
-                    GROUP BY sig HAVING cnt >= 5
-                )
-                SELECT r.sig, r.avg_sec AS recent_sec, p.avg_sec AS prior_sec,
-                       ROUND((r.avg_sec - p.avg_sec)/NULLIF(p.avg_sec,0)*100, 1) AS pct_change
-                FROM sig_recent r
-                JOIN sig_prior p ON r.sig = p.sig
-                WHERE r.avg_sec > p.avg_sec * 1.25
-                  AND r.avg_sec > 5
-                ORDER BY pct_change DESC LIMIT 50
-                """, ttl_key=f"query_analysis_degradation_{company}", tier="standard")
+                try:
+                    df_deg = run_query(
+                        build_mart_query_degradation_sql(company=company, extra_filter=qa_filters),
+                        ttl_key=f"query_analysis_degradation_mart_{company}",
+                        tier="historical",
+                    )
+                    st.session_state["qa_degradation_source"] = "OVERWATCH mart: FACT_QUERY_DETAIL_RECENT"
+                except Exception:
+                    df_deg = run_query(f"""
+                    WITH sig_recent AS (
+                        SELECT SUBSTR(q.query_text,1,200) AS sig,
+                               AVG(q.total_elapsed_time)/1000 AS avg_sec,
+                               COUNT(*) AS cnt
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                        WHERE q.start_time >= DATEADD('day',-7,CURRENT_TIMESTAMP())
+                          AND q.warehouse_name IS NOT NULL
+                          {qa_filters}
+                        GROUP BY sig HAVING cnt >= 5
+                    ),
+                    sig_prior AS (
+                        SELECT SUBSTR(q.query_text,1,200) AS sig,
+                               AVG(q.total_elapsed_time)/1000 AS avg_sec,
+                               COUNT(*) AS cnt
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                        WHERE q.start_time >= DATEADD('day',-14,CURRENT_TIMESTAMP())
+                          AND q.start_time <  DATEADD('day',-7,CURRENT_TIMESTAMP())
+                          AND q.warehouse_name IS NOT NULL
+                          {qa_filters}
+                        GROUP BY sig HAVING cnt >= 5
+                    )
+                    SELECT r.sig, r.avg_sec AS recent_sec, p.avg_sec AS prior_sec,
+                           ROUND((r.avg_sec - p.avg_sec)/NULLIF(p.avg_sec,0)*100, 1) AS pct_change
+                    FROM sig_recent r
+                    JOIN sig_prior p ON r.sig = p.sig
+                    WHERE r.avg_sec > p.avg_sec * 1.25
+                      AND r.avg_sec > 5
+                    ORDER BY pct_change DESC LIMIT 50
+                    """, ttl_key=f"query_analysis_degradation_live_{company}", tier="standard")
+                    st.session_state["qa_degradation_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                 st.session_state["qa_df_deg"] = df_deg
             except Exception as e:
                 st.warning(f"Pattern degradation data unavailable in this role/context: {format_snowflake_error(e)}")
@@ -169,6 +189,7 @@ def render():
             df_d = st.session_state["qa_df_deg"]
             if not df_d.empty:
                 st.warning(f"⚠️ {len(df_d)} query patterns degraded >25% vs prior week.")
+                st.caption(st.session_state.get("qa_degradation_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
                 st.dataframe(df_d, use_container_width=True)
                 download_csv(df_d, "pattern_degradation.csv")
             else:

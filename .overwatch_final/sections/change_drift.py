@@ -12,6 +12,7 @@ from utils import (
     get_active_company,
     get_global_filter_clause,
     get_session,
+    mart_object_name,
     make_action_id,
     run_query,
     safe_float,
@@ -358,6 +359,71 @@ def _build_change_drift_sql(session, days: int, company: str) -> tuple[str, str]
     return summary_sql, exceptions_sql
 
 
+def _build_mart_change_drift_sql(days: int, company: str) -> tuple[str, str]:
+    """Build change/drift brief SQL from the OVERWATCH object-change fact."""
+    table = mart_object_name("FACT_OBJECT_CHANGE")
+    scope = get_global_filter_clause(
+        date_col="start_time",
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
+    base_where = f"""
+        start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+        AND company = '{company}'
+        {scope}
+    """
+    summary_sql = f"""
+    SELECT
+        '{company}' AS company,
+        COUNT_IF(change_category IN ('CREATE', 'ALTER', 'DROP')) AS object_changes,
+        COUNT_IF(change_category IN ('GRANT', 'OWNER')) AS access_changes,
+        COUNT_IF(change_category = 'OWNER') AS owner_changes,
+        COUNT_IF(change_category = 'POLICY') AS policy_changes,
+        COUNT_IF(change_category = 'DROP') AS destructive_changes,
+        COUNT_IF(COALESCE(query_tag, '') NOT ILIKE '%terraform%') AS manual_drift,
+        COUNT(DISTINCT user_name) AS actors,
+        COUNT(DISTINCT database_name) AS affected_databases
+    FROM {table}
+    WHERE {base_where}
+    """
+    exceptions_sql = f"""
+    SELECT
+        CASE
+            WHEN change_category = 'DROP' THEN 'Destructive DDL'
+            WHEN change_category = 'POLICY' THEN 'Policy or Tag Change'
+            WHEN change_category = 'OWNER' THEN 'Owner Change'
+            WHEN change_category = 'GRANT' THEN 'Grant or Role Change'
+            WHEN change_category IN ('CREATE', 'ALTER') THEN 'Object Change'
+            ELSE 'Other Change'
+        END AS finding_type,
+        CASE
+            WHEN change_category IN ('DROP', 'POLICY', 'OWNER') THEN 'High'
+            WHEN change_category = 'GRANT' THEN 'Medium'
+            ELSE 'Low'
+        END AS severity,
+        COALESCE(database_name || '.' || schema_name, database_name, query_id) AS entity,
+        user_name,
+        role_name,
+        query_id,
+        start_time AS last_seen,
+        1 AS event_count,
+        'FACT_OBJECT_CHANGE query_id = ' || query_id AS proof_query,
+        query_tag,
+        SUBSTR(query_text, 1, 1500) AS query_text
+    FROM {table}
+    WHERE {base_where}
+      AND change_category <> 'OTHER'
+      AND COALESCE(query_tag, '') NOT ILIKE '%terraform%'
+    ORDER BY
+        CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
+        start_time DESC
+    LIMIT 100
+    """
+    return summary_sql, exceptions_sql
+
+
 def _queue_change_exceptions(session, exceptions: pd.DataFrame) -> None:
     if exceptions is None or exceptions.empty:
         st.info("No change/drift exceptions to queue.")
@@ -431,27 +497,54 @@ def render() -> None:
 
     days = st.slider("Change brief lookback (days)", 1, 90, 14, key="change_drift_brief_days")
     if st.button("Load Change & Drift Brief", key="change_drift_brief_load", type="primary"):
-        summary_sql, exceptions_sql = _build_change_drift_sql(session, days, company)
         try:
+            summary_sql, exceptions_sql = _build_mart_change_drift_sql(days, company)
             st.session_state["change_drift_summary"] = run_query(
                 summary_sql,
-                ttl_key=f"change_drift_summary_{company}_{days}",
+                ttl_key=f"change_drift_summary_mart_{company}_{days}",
                 tier="standard",
             )
             st.session_state["change_drift_exceptions"] = run_query(
                 exceptions_sql,
-                ttl_key=f"change_drift_exceptions_{company}_{days}",
+                ttl_key=f"change_drift_exceptions_mart_{company}_{days}",
                 tier="standard",
             )
             st.session_state["change_drift_proof_sql"] = {
                 "summary": summary_sql,
                 "exceptions": exceptions_sql,
             }
-            st.session_state["change_drift_meta"] = {"company": company, "days": days}
+            st.session_state["change_drift_meta"] = {
+                "company": company,
+                "days": days,
+                "source": "OVERWATCH mart: FACT_OBJECT_CHANGE",
+            }
         except Exception as exc:
-            st.session_state["change_drift_summary"] = pd.DataFrame()
-            st.session_state["change_drift_exceptions"] = pd.DataFrame()
-            st.error(f"Unable to load change brief: {format_snowflake_error(exc)}")
+            try:
+                summary_sql, exceptions_sql = _build_change_drift_sql(session, days, company)
+                st.session_state["change_drift_summary"] = run_query(
+                    summary_sql,
+                    ttl_key=f"change_drift_summary_live_{company}_{days}",
+                    tier="standard",
+                )
+                st.session_state["change_drift_exceptions"] = run_query(
+                    exceptions_sql,
+                    ttl_key=f"change_drift_exceptions_live_{company}_{days}",
+                    tier="standard",
+                )
+                st.session_state["change_drift_proof_sql"] = {
+                    "summary": summary_sql,
+                    "exceptions": exceptions_sql,
+                }
+                st.session_state["change_drift_meta"] = {
+                    "company": company,
+                    "days": days,
+                    "source": "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                }
+                st.info(f"Change mart unavailable; used live QUERY_HISTORY fallback. {format_snowflake_error(exc)}")
+            except Exception as live_exc:
+                st.session_state["change_drift_summary"] = pd.DataFrame()
+                st.session_state["change_drift_exceptions"] = pd.DataFrame()
+                st.error(f"Unable to load change brief: {format_snowflake_error(live_exc)}")
 
     summary = st.session_state.get("change_drift_summary")
     exceptions = st.session_state.get("change_drift_exceptions")
@@ -483,6 +576,7 @@ def render() -> None:
             st.info("Change control is usable, but there are changes worth validating.")
         else:
             st.success("Change control looks clean for the selected window.")
+        st.caption(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
         _render_change_watch_floor(score, exceptions, row)
         st.divider()

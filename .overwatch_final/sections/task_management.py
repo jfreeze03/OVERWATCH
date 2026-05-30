@@ -17,6 +17,9 @@ from utils import (
     filter_existing_columns,
     load_task_inventory,
     make_action_id,
+    build_mart_task_inventory_sql,
+    build_mart_task_history_sql,
+    build_mart_query_detail_recent_sql,
     run_query,
     run_query_or_raise,
     safe_identifier,
@@ -1028,18 +1031,48 @@ def _load_task_ops_scope(
     ttl_prefix: str,
 ) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
     company = get_active_company()
+    database_contains = str(st.session_state.get("global_database", "") or "").strip()
+    inventory_source = "Live: SHOW TASKS IN ACCOUNT"
+    history_source = "Live: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY"
+    query_detail_source = "Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
     try:
-        inventory = _show_tasks(session)
+        inventory = run_query(
+            build_mart_task_inventory_sql(company=company, database_contains=database_contains),
+            ttl_key=f"{ttl_prefix}_inventory_mart_{company}",
+            tier="metadata",
+            section="Task Management",
+        )
+        if inventory.empty:
+            inventory = _show_tasks(session)
+        else:
+            inventory_source = "OVERWATCH mart: DIM_TASK_SNAPSHOT"
     except Exception as e:
-        st.info(f"Task inventory unavailable in this role/context: {format_snowflake_error(e)}")
-        inventory = pd.DataFrame()
+        try:
+            inventory = _show_tasks(session)
+        except Exception:
+            st.info(f"Task inventory unavailable in this role/context: {format_snowflake_error(e)}")
+            inventory = pd.DataFrame()
     try:
-        history = run_query_or_raise(build_task_history_sql(
-            session,
-            f"scheduled_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())",
-            limit=1000,
-            company=company,
-        ))
+        history = run_query(
+            build_mart_task_history_sql(
+                days,
+                company=company,
+                database_contains=database_contains,
+                limit=1000,
+            ),
+            ttl_key=f"{ttl_prefix}_history_mart_{company}_{days}",
+            tier="historical",
+            section="Task Management",
+        )
+        if history.empty:
+            history = run_query_or_raise(build_task_history_sql(
+                session,
+                f"scheduled_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())",
+                limit=1000,
+                company=company,
+            ))
+        else:
+            history_source = "OVERWATCH mart: FACT_TASK_RUN"
     except Exception as e:
         st.info(f"Task history unavailable in this role/context: {format_snowflake_error(e)}")
         history = pd.DataFrame()
@@ -1047,16 +1080,31 @@ def _load_task_ops_scope(
     if not history.empty and "QUERY_ID" in history.columns:
         qids = history["QUERY_ID"].dropna().astype(str).tolist()
         try:
-            query_sql = _query_detail_sql(session, qids)
+            query_sql = build_mart_query_detail_recent_sql(qids)
             if query_sql:
                 query_details = run_query(
                     query_sql,
-                    ttl_key=f"{ttl_prefix}_query_detail_{company}_{days}_{len(qids)}",
+                    ttl_key=f"{ttl_prefix}_query_detail_mart_{company}_{days}_{len(qids)}",
                     tier="standard",
                 )
+            if query_details.empty:
+                query_sql = _query_detail_sql(session, qids)
+                if query_sql:
+                    query_details = run_query(
+                        query_sql,
+                        ttl_key=f"{ttl_prefix}_query_detail_live_{company}_{days}_{len(qids)}",
+                        tier="standard",
+                    )
+            else:
+                query_detail_source = "OVERWATCH mart: FACT_QUERY_DETAIL_RECENT"
         except Exception as e:
             st.info(f"Linked query cost/detail unavailable: {format_snowflake_error(e)}")
     summary, exceptions, latest = _build_task_ops_frames(inventory, history, query_details)
+    st.session_state[f"{ttl_prefix}_sources"] = {
+        "inventory": inventory_source,
+        "history": history_source,
+        "query_detail": query_detail_source if not query_details.empty else "Not loaded",
+    }
     return summary, exceptions, latest, inventory, not query_details.empty
 
 
@@ -1099,6 +1147,15 @@ def _render_task_ops_brief(session) -> None:
         c4.metric("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}", delta_color="inverse")
         c5.metric("Suspended", f"{safe_int(summary.get('SUSPENDED_TASKS')):,}", delta_color="inverse")
         c6.metric("SLA/Cost Drift", f"{safe_int(summary.get('LONG_RUNNING_TASKS')) + safe_int(summary.get('COST_DRIFT_TASKS')):,}", delta_color="inverse")
+        task_ops_sources = st.session_state.get("task_ops_sources", {})
+        if task_ops_sources:
+            st.caption(
+                " | ".join([
+                    str(task_ops_sources.get("inventory", "")),
+                    str(task_ops_sources.get("history", "")),
+                    str(task_ops_sources.get("query_detail", "")),
+                ])
+            )
         if not st.session_state.get("task_ops_query_details_loaded"):
             st.caption("Cost drift uses estimated query credits when linked QUERY_HISTORY detail is available.")
         if score < 65:
@@ -1281,6 +1338,15 @@ def _render_sla_cost_drift_console(session) -> None:
     k3.metric("Cost Drift", f"{int(view['COST_DRIFT'].sum()):,}", delta_color="inverse")
     k4.metric("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}", delta_color="inverse")
     k5.metric("Query Detail", "Loaded" if st.session_state.get("task_sla_details_loaded") else "Estimated")
+    task_sla_sources = st.session_state.get("task_sla_sources", {})
+    if task_sla_sources:
+        st.caption(
+            " | ".join([
+                str(task_sla_sources.get("inventory", "")),
+                str(task_sla_sources.get("history", "")),
+                str(task_sla_sources.get("query_detail", "")),
+            ])
+        )
     if st.session_state.get("task_sla_details_loaded"):
         st.caption("Cost drift uses linked QUERY_HISTORY query detail and estimated task query credits.")
     else:

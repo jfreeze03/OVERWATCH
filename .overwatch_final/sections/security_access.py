@@ -12,13 +12,149 @@ from utils import (
     get_user_filter_clause,
     get_wh_filter_clause,
     make_action_id,
+    mart_object_name,
     format_snowflake_error,
     run_query,
     run_query_or_raise,
     safe_int,
+    sql_literal,
     upsert_actions,
 )
 from config import THRESHOLDS
+
+
+def _mart_company_filter(alias: str, company: str) -> str:
+    if str(company or "ALL").upper() == "ALL":
+        return ""
+    return f"AND {alias}.company = {sql_literal(company, 100)}"
+
+
+def _load_login_audit_mart(company: str, days: int) -> dict[str, pd.DataFrame]:
+    """Load login audit data from the daily mart when the requested window fits retention."""
+    if days > 35:
+        raise ValueError("Login mart keeps the most recent 35 days; using live login history for this wider lookback.")
+    table = mart_object_name("FACT_LOGIN_DAILY")
+    company_filter = _mart_company_filter("l", company)
+    user_filter = get_user_filter_clause("l.user_name")
+    base_where = f"""
+        WHERE l.login_date >= DATEADD('DAY', -{int(days)}, CURRENT_DATE())
+          {company_filter}
+          {user_filter}
+    """
+    return {
+        "sec_df_login_sum": run_query(f"""
+            SELECT 'YES' AS is_success,
+                   COALESCE(SUM(l.success_count), 0) AS event_count,
+                   COUNT(DISTINCT IFF(COALESCE(l.success_count, 0) > 0, l.user_name, NULL)) AS distinct_users,
+                   COUNT(DISTINCT IFF(COALESCE(l.success_count, 0) > 0, l.client_ip, NULL)) AS distinct_ips
+            FROM {table} l
+            {base_where}
+            UNION ALL
+            SELECT 'NO' AS is_success,
+                   COALESCE(SUM(l.failure_count), 0) AS event_count,
+                   COUNT(DISTINCT IFF(COALESCE(l.failure_count, 0) > 0, l.user_name, NULL)) AS distinct_users,
+                   COUNT(DISTINCT IFF(COALESCE(l.failure_count, 0) > 0, l.client_ip, NULL)) AS distinct_ips
+            FROM {table} l
+            {base_where}
+        """, ttl_key=f"security_mart_login_sum_{company}_{days}", tier="standard", section="Security Access"),
+        "sec_df_failed_logins": run_query(f"""
+            SELECT
+                l.user_name,
+                l.client_ip,
+                l.reported_client_type,
+                NULL::VARCHAR AS error_code,
+                COALESCE(SUM(l.failure_count), 0) AS attempt_count,
+                MAX(l.login_date)::TIMESTAMP_NTZ AS last_attempt
+            FROM {table} l
+            {base_where}
+              AND COALESCE(l.failure_count, 0) > 0
+            GROUP BY l.user_name, l.client_ip, l.reported_client_type
+            ORDER BY attempt_count DESC, last_attempt DESC
+            LIMIT 50
+        """, ttl_key=f"security_mart_failed_logins_{company}_{days}", tier="standard", section="Security Access"),
+        "sec_df_login_trend": run_query(f"""
+            SELECT l.login_date AS day, 'YES' AS is_success, COALESCE(SUM(l.success_count), 0) AS event_count
+            FROM {table} l
+            {base_where}
+            GROUP BY l.login_date
+            UNION ALL
+            SELECT l.login_date AS day, 'NO' AS is_success, COALESCE(SUM(l.failure_count), 0) AS event_count
+            FROM {table} l
+            {base_where}
+            GROUP BY l.login_date
+            ORDER BY day, is_success
+        """, ttl_key=f"security_mart_login_trend_{company}_{days}", tier="standard", section="Security Access"),
+    }
+
+
+def _load_login_posture_mart(company: str, days: int) -> dict[str, pd.DataFrame]:
+    """Load login posture summaries from FACT_LOGIN_DAILY."""
+    if days > 35:
+        raise ValueError("Login mart keeps the most recent 35 days; using live login history for this wider lookback.")
+    table = mart_object_name("FACT_LOGIN_DAILY")
+    company_filter = _mart_company_filter("l", company)
+    user_filter = get_user_filter_clause("l.user_name")
+    where = f"""
+        WHERE l.login_date >= DATEADD('DAY', -{int(days)}, CURRENT_DATE())
+          {company_filter}
+          {user_filter}
+    """
+    return {
+        "sec_login_ips": run_query(f"""
+            SELECT
+                l.client_ip,
+                COALESCE(SUM(COALESCE(l.success_count, 0) + COALESCE(l.failure_count, 0)), 0) AS login_events,
+                COUNT(DISTINCT l.user_name) AS users,
+                COALESCE(SUM(l.failure_count), 0) AS failed_events,
+                MAX(l.login_date)::TIMESTAMP_NTZ AS last_seen
+            FROM {table} l
+            {where}
+            GROUP BY l.client_ip
+            ORDER BY login_events DESC
+            LIMIT 50
+        """, ttl_key=f"security_mart_login_ips_{company}_{days}", tier="standard", section="Security Access"),
+        "sec_login_clients": run_query(f"""
+            SELECT
+                COALESCE(l.reported_client_type, 'UNKNOWN') AS reported_client_type,
+                COALESCE(l.reported_client_version, 'UNKNOWN') AS reported_client_version,
+                COALESCE(SUM(COALESCE(l.success_count, 0) + COALESCE(l.failure_count, 0)), 0) AS login_events,
+                COUNT(DISTINCT l.user_name) AS users,
+                COALESCE(SUM(l.failure_count), 0) AS failed_events
+            FROM {table} l
+            {where}
+            GROUP BY 1, 2
+            ORDER BY login_events DESC
+            LIMIT 50
+        """, ttl_key=f"security_mart_login_clients_{company}_{days}", tier="standard", section="Security Access"),
+    }
+
+
+def _load_grants_mart(company: str) -> pd.DataFrame:
+    """Load active role grants from the grant snapshot mart."""
+    table = mart_object_name("FACT_GRANT_DAILY")
+    company_filter = _mart_company_filter("g", company)
+    user_filter = get_user_filter_clause("g.grantee_name")
+    return run_query(f"""
+        WITH latest AS (
+            SELECT MAX(snapshot_date) AS snapshot_date
+            FROM {table}
+        )
+        SELECT
+            g.grantee_name,
+            g.role_name AS role,
+            g.granted_to,
+            NULL::VARCHAR AS granted_by,
+            MIN(g.created_on) AS created_on,
+            NULL::TIMESTAMP_NTZ AS deleted_on
+        FROM {table} g
+        JOIN latest l ON g.snapshot_date = l.snapshot_date
+        WHERE g.deleted_on IS NULL
+          {company_filter}
+          {user_filter}
+        GROUP BY g.grantee_name, g.role_name, g.granted_to
+        ORDER BY created_on DESC
+        LIMIT 500
+    """, ttl_key=f"security_mart_grants_to_users_{company}", tier="standard", section="Security Access")
 
 
 def _queue_security_findings(session, df: pd.DataFrame, finding_type: str, severity: str = "High") -> None:
@@ -124,43 +260,52 @@ def render():
         sec_days = st.slider("Lookback (days)", 1, 90, 30, key="sec_days")
 
         if st.button("Load Login Data", key="sec_load"):
-            for key, sql in [
-                ("sec_df_login_sum", f"""
-                    SELECT is_success, COUNT(*) AS event_count,
-                           COUNT(DISTINCT user_name) AS distinct_users,
-                           COUNT(DISTINCT client_ip) AS distinct_ips
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
-                      {user_filter}
-                    GROUP BY is_success
-                """),
-                ("sec_df_failed_logins", f"""
-                    SELECT user_name, client_ip, reported_client_type, error_code,
-                           COUNT(*) AS attempt_count,
-                           MAX(event_timestamp) AS last_attempt
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
-                      AND is_success = 'NO'
-                      {user_filter}
-                    GROUP BY user_name, client_ip, reported_client_type, error_code
-                    ORDER BY attempt_count DESC LIMIT 50
-                """),
-                ("sec_df_login_trend", f"""
-                    SELECT DATE_TRUNC('day', event_timestamp) AS day,
-                           is_success, COUNT(*) AS event_count
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
-                      {user_filter}
-                    GROUP BY day, is_success ORDER BY day
-                """),
-            ]:
-                try:
-                    st.session_state[key] = run_query(sql, ttl_key=f"security_{company}_{key}_{sec_days}", tier="standard")
-                except Exception:
-                    st.session_state[key] = pd.DataFrame()
+            try:
+                for key, df in _load_login_audit_mart(company, sec_days).items():
+                    st.session_state[key] = df
+                st.session_state["sec_login_source"] = "OVERWATCH mart: FACT_LOGIN_DAILY"
+            except Exception as mart_exc:
+                st.session_state["sec_login_source"] = "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"
+                st.caption(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+            if st.session_state.get("sec_login_source") != "OVERWATCH mart: FACT_LOGIN_DAILY":
+                for key, sql in [
+                    ("sec_df_login_sum", f"""
+                        SELECT is_success, COUNT(*) AS event_count,
+                               COUNT(DISTINCT user_name) AS distinct_users,
+                               COUNT(DISTINCT client_ip) AS distinct_ips
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                        WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
+                          {user_filter}
+                        GROUP BY is_success
+                    """),
+                    ("sec_df_failed_logins", f"""
+                        SELECT user_name, client_ip, reported_client_type, error_code,
+                               COUNT(*) AS attempt_count,
+                               MAX(event_timestamp) AS last_attempt
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                        WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
+                          AND is_success = 'NO'
+                          {user_filter}
+                        GROUP BY user_name, client_ip, reported_client_type, error_code
+                        ORDER BY attempt_count DESC LIMIT 50
+                    """),
+                    ("sec_df_login_trend", f"""
+                        SELECT DATE_TRUNC('day', event_timestamp) AS day,
+                               is_success, COUNT(*) AS event_count
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                        WHERE event_timestamp >= DATEADD('day', -{sec_days}, CURRENT_TIMESTAMP())
+                          {user_filter}
+                        GROUP BY day, is_success ORDER BY day
+                    """),
+                ]:
+                    try:
+                        st.session_state[key] = run_query(sql, ttl_key=f"security_{company}_{key}_{sec_days}", tier="standard")
+                    except Exception:
+                        st.session_state[key] = pd.DataFrame()
 
         if st.session_state.get("sec_df_login_sum") is not None and not st.session_state["sec_df_login_sum"].empty:
             df_ls = st.session_state["sec_df_login_sum"]
+            st.caption(st.session_state.get("sec_login_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
             ok  = df_ls.loc[df_ls["IS_SUCCESS"] == "YES", "EVENT_COUNT"].sum() if "YES" in df_ls["IS_SUCCESS"].values else 0
             fail= df_ls.loc[df_ls["IS_SUCCESS"] == "NO",  "EVENT_COUNT"].sum() if "NO"  in df_ls["IS_SUCCESS"].values else 0
             tot = ok + fail
@@ -187,8 +332,17 @@ def render():
         st.header("Login Posture")
         posture_days = st.slider("Posture lookback (days)", 1, 90, 30, key="sec_posture_days")
         if st.button("Load Login Posture", key="sec_posture_load"):
+            try:
+                for key, df in _load_login_posture_mart(company, posture_days).items():
+                    st.session_state[key] = df
+                st.session_state["sec_login_posture_source"] = "OVERWATCH mart: FACT_LOGIN_DAILY"
+            except Exception as mart_exc:
+                st.session_state["sec_login_posture_source"] = "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"
+                st.caption(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                for key in ("sec_login_ips", "sec_login_clients"):
+                    st.session_state[key] = pd.DataFrame()
             for key, sql in [
-                ("sec_login_ips", f"""
+                *([] if st.session_state.get("sec_login_posture_source") == "OVERWATCH mart: FACT_LOGIN_DAILY" else [("sec_login_ips", f"""
                     SELECT client_ip, COUNT(*) AS login_events,
                            COUNT(DISTINCT user_name) AS users,
                            SUM(IFF(is_success = 'NO', 1, 0)) AS failed_events,
@@ -219,7 +373,7 @@ def render():
                     GROUP BY 1, 2
                     ORDER BY login_events DESC
                     LIMIT 50
-                """),
+                """)]),
                 ("sec_login_factors", f"""
                     WITH base AS (
                         SELECT TO_VARCHAR(first_authentication_factor) AS first_factor,
@@ -267,6 +421,7 @@ def render():
             ips = st.session_state.get("sec_login_ips")
             st.subheader("Top IPs")
             if ips is not None and not ips.empty:
+                st.caption(st.session_state.get("sec_login_posture_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
                 st.bar_chart(ips.set_index("CLIENT_IP")["LOGIN_EVENTS"])
                 st.dataframe(ips, use_container_width=True, height=300)
                 download_csv(ips, "login_posture_ips.csv")
@@ -274,6 +429,7 @@ def render():
             clients = st.session_state.get("sec_login_clients")
             st.subheader("Client Types / Versions")
             if clients is not None and not clients.empty:
+                st.caption(st.session_state.get("sec_login_posture_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
                 st.bar_chart(clients.set_index("REPORTED_CLIENT_TYPE")["LOGIN_EVENTS"])
                 st.dataframe(clients, use_container_width=True, height=300)
                 download_csv(clients, "login_posture_clients.csv")
@@ -298,20 +454,27 @@ def render():
         st.header("🛡️ Roles & Grants")
         if st.button("Load Grants", key="grants_load"):
             try:
-                df_grants = run_query(f"""
-                    SELECT grantee_name, role, granted_to, granted_by,
-                           created_on, deleted_on
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
-                    WHERE deleted_on IS NULL
-                      {user_filter_g}
-                    ORDER BY created_on DESC LIMIT 500
-                """, ttl_key=f"security_grants_to_users_{company}", tier="standard")
-                st.session_state["sec_df_grants"] = df_grants
-            except Exception as e:
-                st.warning(f"Grants unavailable: {format_snowflake_error(e)}")
+                st.session_state["sec_df_grants"] = _load_grants_mart(company)
+                st.session_state["sec_grants_source"] = "OVERWATCH mart: FACT_GRANT_DAILY"
+            except Exception as mart_exc:
+                st.session_state["sec_grants_source"] = "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"
+                st.caption(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                try:
+                    df_grants = run_query(f"""
+                        SELECT grantee_name, role, granted_to, granted_by,
+                               created_on, deleted_on
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+                        WHERE deleted_on IS NULL
+                          {user_filter_g}
+                        ORDER BY created_on DESC LIMIT 500
+                    """, ttl_key=f"security_grants_to_users_{company}", tier="standard")
+                    st.session_state["sec_df_grants"] = df_grants
+                except Exception as e:
+                    st.warning(f"Grants unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_grants") is not None and not st.session_state["sec_df_grants"].empty:
             df_g = st.session_state["sec_df_grants"]
+            st.caption(st.session_state.get("sec_grants_source", "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"))
             st.metric("Total Grants", len(df_g))
             st.dataframe(df_g, use_container_width=True)
             download_csv(df_g, "grants_to_users.csv")

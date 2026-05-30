@@ -4,6 +4,9 @@ import streamlit as st
 
 from utils import (
     build_action_queue_ddl,
+    build_mart_pipeline_freshness_sql,
+    build_mart_pipeline_load_failures_sql,
+    build_mart_pipeline_volume_sql,
     download_csv,
     get_db_filter_clause,
     get_session,
@@ -84,29 +87,42 @@ def render():
         stale_hours = st.slider("Stale threshold (hours)", 4, 168, 24, key="pipe_stale_hours")
         if st.button("Load Freshness Watchlist", key="pipe_fresh_load"):
             try:
-                df_fresh = run_query(f"""
-                    SELECT table_catalog AS database_name,
-                           table_schema AS schema_name,
-                           table_name,
-                           table_type,
-                           row_count,
-                           bytes / POWER(1024,3) AS size_gb,
-                           last_altered,
-                           DATEDIFF('hour', last_altered, CURRENT_TIMESTAMP()) AS hours_since_change
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES
-                    WHERE deleted IS NULL
-                      AND table_schema NOT IN ('INFORMATION_SCHEMA')
-                      AND DATEDIFF('hour', last_altered, CURRENT_TIMESTAMP()) >= {stale_hours}
-                      {get_db_filter_clause("table_catalog", company)}
-                    ORDER BY hours_since_change DESC, size_gb DESC
-                    LIMIT 300
-                """, ttl_key=f"pipeline_fresh_{company}_{stale_hours}", tier="standard")
+                df_fresh = run_query(
+                    build_mart_pipeline_freshness_sql(stale_hours, company),
+                    ttl_key=f"pipeline_fresh_mart_{company}_{stale_hours}",
+                    tier="historical",
+                    section="Pipeline Health",
+                )
+                st.session_state["pipe_freshness_source"] = "OVERWATCH mart: DIM_TABLE_SNAPSHOT"
+            except Exception:
+                try:
+                    df_fresh = run_query(f"""
+                        SELECT table_catalog AS database_name,
+                               table_schema AS schema_name,
+                               table_name,
+                               table_type,
+                               row_count,
+                               bytes / POWER(1024,3) AS size_gb,
+                               last_altered,
+                               DATEDIFF('hour', last_altered, CURRENT_TIMESTAMP()) AS hours_since_change
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES
+                        WHERE deleted IS NULL
+                          AND table_schema NOT IN ('INFORMATION_SCHEMA')
+                          AND DATEDIFF('hour', last_altered, CURRENT_TIMESTAMP()) >= {stale_hours}
+                          {get_db_filter_clause("table_catalog", company)}
+                        ORDER BY hours_since_change DESC, size_gb DESC
+                        LIMIT 300
+                    """, ttl_key=f"pipeline_fresh_{company}_{stale_hours}", tier="standard")
+                    st.session_state["pipe_freshness_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TABLES"
+                except Exception as e:
+                    st.warning(f"Freshness scan unavailable in this role/context: {format_snowflake_error(e)}")
+                    df_fresh = None
+            if df_fresh is not None:
                 st.session_state["pipe_freshness"] = df_fresh
-            except Exception as e:
-                st.warning(f"Freshness scan unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_fresh = st.session_state.get("pipe_freshness")
         if df_fresh is not None:
+            st.caption(st.session_state.get("pipe_freshness_source", "SNOWFLAKE.ACCOUNT_USAGE.TABLES"))
             if df_fresh.empty:
                 st.success("No stale tables found for the selected threshold.")
             else:
@@ -132,28 +148,42 @@ def render():
         load_days = st.slider("Lookback days", 1, 30, 7, key="pipe_load_days")
         if st.button("Load Copy History Failures", key="pipe_load_failures"):
             try:
-                df_loads = run_query(f"""
-                    SELECT table_catalog AS database_name,
-                           table_schema AS schema_name,
-                           table_name,
-                           status,
-                           COUNT(*) AS file_count,
-                           MAX(last_load_time) AS last_seen,
-                           MAX(first_error_message) AS latest_error
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY
-                    WHERE last_load_time >= DATEADD('day', -{load_days}, CURRENT_TIMESTAMP())
-                      AND status <> 'LOADED'
-                      {get_db_filter_clause("table_catalog", company)}
-                    GROUP BY database_name, schema_name, table_name, status
-                    ORDER BY file_count DESC, last_seen DESC
-                    LIMIT 300
-                """, ttl_key=f"pipeline_loads_{company}_{load_days}", tier="standard")
+                df_loads = run_query(
+                    build_mart_pipeline_load_failures_sql(load_days, company),
+                    ttl_key=f"pipeline_loads_mart_{company}_{load_days}",
+                    tier="historical",
+                    section="Pipeline Health",
+                )
+                st.session_state["pipe_load_failures_source"] = "OVERWATCH mart: FACT_COPY_LOAD_DAILY"
+            except Exception:
+                try:
+                    df_loads = run_query(f"""
+                        SELECT table_catalog_name AS database_name,
+                               table_schema_name AS schema_name,
+                               table_name,
+                               status,
+                               COUNT(*) AS file_count,
+                               SUM(COALESCE(error_count, 0)) AS error_count,
+                               MAX(last_load_time) AS last_seen,
+                               MAX(first_error_message) AS latest_error
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY
+                        WHERE last_load_time >= DATEADD('day', -{load_days}, CURRENT_TIMESTAMP())
+                          AND UPPER(COALESCE(status, '')) <> 'LOADED'
+                          {get_db_filter_clause("table_catalog_name", company)}
+                        GROUP BY database_name, schema_name, table_name, status
+                        ORDER BY file_count DESC, last_seen DESC
+                        LIMIT 300
+                    """, ttl_key=f"pipeline_loads_{company}_{load_days}", tier="standard")
+                    st.session_state["pipe_load_failures_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY"
+                except Exception as e:
+                    st.warning(f"Load failure scan unavailable in this role/context: {format_snowflake_error(e)}")
+                    df_loads = None
+            if df_loads is not None:
                 st.session_state["pipe_load_failures"] = df_loads
-            except Exception as e:
-                st.warning(f"Load failure scan unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_loads = st.session_state.get("pipe_load_failures")
         if df_loads is not None:
+            st.caption(st.session_state.get("pipe_load_failures_source", "SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY"))
             if df_loads.empty:
                 st.success("No copy/load failures found in the selected window.")
             else:
@@ -169,32 +199,45 @@ def render():
         min_gb = st.slider("Minimum table size (GB)", 1, 500, 25, key="pipe_min_gb")
         if st.button("Load Volume Watchlist", key="pipe_volume_load"):
             try:
-                df_volume = run_query(f"""
-                    SELECT table_catalog AS database_name,
-                           table_schema AS schema_name,
-                           table_name,
-                           row_count,
-                           ROUND(bytes / POWER(1024,3), 2) AS size_gb,
-                           last_altered,
-                           CASE
-                               WHEN row_count = 0 AND bytes > 0 THEN 'Storage without rows'
-                               WHEN DATEDIFF('day', last_altered, CURRENT_TIMESTAMP()) > 90 THEN 'Large and quiet'
-                               ELSE 'Active large table'
-                           END AS watch_reason
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES
-                    WHERE deleted IS NULL
-                      AND bytes / POWER(1024,3) >= {min_gb}
-                      AND table_schema NOT IN ('INFORMATION_SCHEMA')
-                      {get_db_filter_clause("table_catalog", company)}
-                    ORDER BY size_gb DESC
-                    LIMIT 300
-                """, ttl_key=f"pipeline_volume_{company}_{min_gb}", tier="standard")
+                df_volume = run_query(
+                    build_mart_pipeline_volume_sql(min_gb, company),
+                    ttl_key=f"pipeline_volume_mart_{company}_{min_gb}",
+                    tier="historical",
+                    section="Pipeline Health",
+                )
+                st.session_state["pipe_volume_source"] = "OVERWATCH mart: DIM_TABLE_SNAPSHOT"
+            except Exception:
+                try:
+                    df_volume = run_query(f"""
+                        SELECT table_catalog AS database_name,
+                               table_schema AS schema_name,
+                               table_name,
+                               row_count,
+                               ROUND(bytes / POWER(1024,3), 2) AS size_gb,
+                               last_altered,
+                               CASE
+                                   WHEN row_count = 0 AND bytes > 0 THEN 'Storage without rows'
+                                   WHEN DATEDIFF('day', last_altered, CURRENT_TIMESTAMP()) > 90 THEN 'Large and quiet'
+                                   ELSE 'Active large table'
+                               END AS watch_reason
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES
+                        WHERE deleted IS NULL
+                          AND bytes / POWER(1024,3) >= {min_gb}
+                          AND table_schema NOT IN ('INFORMATION_SCHEMA')
+                          {get_db_filter_clause("table_catalog", company)}
+                        ORDER BY size_gb DESC
+                        LIMIT 300
+                    """, ttl_key=f"pipeline_volume_{company}_{min_gb}", tier="standard")
+                    st.session_state["pipe_volume_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.TABLES"
+                except Exception as e:
+                    st.warning(f"Volume watch unavailable in this role/context: {format_snowflake_error(e)}")
+                    df_volume = None
+            if df_volume is not None:
                 st.session_state["pipe_volume"] = df_volume
-            except Exception as e:
-                st.warning(f"Volume watch unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_volume = st.session_state.get("pipe_volume")
         if df_volume is not None:
+            st.caption(st.session_state.get("pipe_volume_source", "SNOWFLAKE.ACCOUNT_USAGE.TABLES"))
             if df_volume.empty:
                 st.success("No tables matched the volume threshold.")
             else:

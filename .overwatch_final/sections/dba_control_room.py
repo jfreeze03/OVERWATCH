@@ -7,7 +7,7 @@ report-ready notes for leadership without making executives use the app.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -16,21 +16,38 @@ from config import SECTION_BY_TITLE
 from utils import (
     build_metered_credit_cte,
     build_task_failure_summary_sql,
+    build_task_history_sql,
     credits_to_dollars,
     download_csv,
     format_credits,
     format_snowflake_error,
     freshness_note,
+    filter_existing_columns,
     get_db_filter_clause,
     get_global_filter_clause,
     get_session,
     get_user_filter_clause,
     get_wh_filter_clause,
+    load_task_inventory,
     load_action_queue,
     metric_confidence_label,
     run_query,
     safe_float,
     safe_int,
+    sql_literal,
+)
+from sections.task_management import (
+    _build_task_ops_frames,
+    _extract_object_candidates,
+    _normalize_query_details,
+    _procedure_from_definition,
+    _query_detail_sql,
+)
+from sections.stored_proc_tracker import (
+    _build_procedure_sla_frames,
+    _build_procedure_sla_sql,
+    _procedure_run_estimated_credits,
+    _query_history_has_root_query_id,
 )
 
 
@@ -59,6 +76,386 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
 
 def _empty_df() -> pd.DataFrame:
     return pd.DataFrame()
+
+
+def _release_window_predicate(column: str, start: date, end: date) -> str:
+    """Build an inclusive date-window predicate with an exclusive next-day bound."""
+    start_ts = sql_literal(f"{start.isoformat()} 00:00:00")
+    end_ts = sql_literal(f"{end.isoformat()} 00:00:00")
+    return (
+        f"{column} >= TO_TIMESTAMP_NTZ({start_ts}) "
+        f"AND {column} < DATEADD('day', 1, TO_TIMESTAMP_NTZ({end_ts}))"
+    )
+
+
+def _clean_release_text(values: pd.Series, limit: int = 5) -> str:
+    if values is None or values.empty:
+        return ""
+    seen: list[str] = []
+    for raw in values.dropna().astype(str):
+        for piece in raw.split(","):
+            item = piece.strip()
+            if item and item not in seen:
+                seen.append(item)
+            if len(seen) >= limit:
+                return ", ".join(seen)
+    return ", ".join(seen)
+
+
+def _aggregate_release_window(df: pd.DataFrame, key_col: str) -> pd.DataFrame:
+    """Normalize task/procedure run rows into comparable release-window metrics."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    prepared = df.copy()
+    prepared.columns = [str(col).upper() for col in prepared.columns]
+    key_col = key_col.upper()
+    if key_col not in prepared.columns:
+        return pd.DataFrame()
+
+    duration_col = "TOTAL_ELAPSED_SEC" if "TOTAL_ELAPSED_SEC" in prepared.columns else "DURATION_SEC"
+    if duration_col not in prepared.columns:
+        prepared[duration_col] = 0
+    prepared[duration_col] = pd.to_numeric(prepared[duration_col], errors="coerce").fillna(0)
+    if "EST_TOTAL_CREDITS" not in prepared.columns:
+        prepared["EST_TOTAL_CREDITS"] = 0
+    prepared["EST_TOTAL_CREDITS"] = pd.to_numeric(prepared["EST_TOTAL_CREDITS"], errors="coerce").fillna(0)
+    if "STATE" not in prepared.columns:
+        prepared["STATE"] = ""
+    if "ERROR_CODE" not in prepared.columns:
+        prepared["ERROR_CODE"] = ""
+    if "PROCEDURE_NAME" not in prepared.columns:
+        prepared["PROCEDURE_NAME"] = ""
+    if "IMPACT_OBJECTS" not in prepared.columns:
+        prepared["IMPACT_OBJECTS"] = ""
+
+    prepared[key_col] = prepared[key_col].fillna("").astype(str).str.strip()
+    prepared = prepared[prepared[key_col] != ""]
+    if prepared.empty:
+        return pd.DataFrame()
+
+    failure_mask = (
+        prepared["STATE"].fillna("").astype(str).str.upper().isin(["FAILED", "FAILED_WITH_ERROR"])
+        | (prepared["ERROR_CODE"].fillna("").astype(str).str.strip() != "")
+    )
+    prepared["FAILED_RUN"] = failure_mask.astype(int)
+
+    grouped = prepared.groupby(key_col, dropna=False).agg(
+        RUNS=(key_col, "count"),
+        FAILURES=("FAILED_RUN", "sum"),
+        AVG_DURATION_SEC=(duration_col, "mean"),
+        P95_DURATION_SEC=(duration_col, lambda s: float(s.quantile(0.95)) if len(s) else 0.0),
+        MAX_DURATION_SEC=(duration_col, "max"),
+        EST_CREDITS=("EST_TOTAL_CREDITS", "sum"),
+    ).reset_index()
+    grouped["PROCEDURE_NAME"] = prepared.groupby(key_col)["PROCEDURE_NAME"].apply(_clean_release_text).values
+    grouped["IMPACT_OBJECTS"] = prepared.groupby(key_col)["IMPACT_OBJECTS"].apply(_clean_release_text).values
+    grouped = grouped.rename(columns={key_col: "ENTITY"})
+    return grouped
+
+
+def _pct_change(before: float, after: float) -> float:
+    before = safe_float(before)
+    after = safe_float(after)
+    if before == 0:
+        return 100.0 if after > 0 else 0.0
+    return round((after - before) / before * 100, 1)
+
+
+def _release_signal(row: pd.Series) -> tuple[str, str]:
+    failure_delta = safe_int(row.get("FAILURES_DELTA"))
+    runtime_pct = safe_float(row.get("AVG_DURATION_CHANGE_PCT"))
+    credit_pct = safe_float(row.get("EST_CREDITS_CHANGE_PCT"))
+    runtime_delta = safe_float(row.get("AVG_DURATION_DELTA_SEC"))
+    credit_delta = safe_float(row.get("EST_CREDITS_DELTA"))
+
+    signals = []
+    if failure_delta > 0:
+        signals.append(f"{failure_delta} more failures")
+    if runtime_pct >= 25 and runtime_delta >= 30:
+        signals.append(f"runtime +{runtime_pct:.1f}%")
+    if credit_pct >= 25 and credit_delta > 0:
+        signals.append(f"credits +{credit_pct:.1f}%")
+    if not signals:
+        return "Stable", "No material release-window regression detected."
+
+    severity = "High" if failure_delta > 0 or runtime_pct >= 100 or credit_pct >= 100 else "Medium"
+    return severity, "; ".join(signals)
+
+
+def _compare_release_windows(before: pd.DataFrame, after: pd.DataFrame, key_col: str) -> pd.DataFrame:
+    before_agg = _aggregate_release_window(before, key_col)
+    after_agg = _aggregate_release_window(after, key_col)
+    if before_agg.empty and after_agg.empty:
+        return pd.DataFrame()
+
+    merged = before_agg.merge(after_agg, on="ENTITY", how="outer", suffixes=("_BEFORE", "_AFTER")).fillna(0)
+    for col in ["PROCEDURE_NAME", "IMPACT_OBJECTS"]:
+        before_col = f"{col}_BEFORE"
+        after_col = f"{col}_AFTER"
+        if before_col not in merged.columns:
+            merged[before_col] = ""
+        if after_col not in merged.columns:
+            merged[after_col] = ""
+        merged[col] = [
+            _clean_release_text(pd.Series([left, right]))
+            for left, right in zip(merged[before_col], merged[after_col])
+        ]
+
+    for col in ["RUNS", "FAILURES", "AVG_DURATION_SEC", "P95_DURATION_SEC", "MAX_DURATION_SEC", "EST_CREDITS"]:
+        before_col = f"{col}_BEFORE"
+        after_col = f"{col}_AFTER"
+        if before_col not in merged.columns:
+            merged[before_col] = 0
+        if after_col not in merged.columns:
+            merged[after_col] = 0
+        merged[f"{col}_DELTA"] = pd.to_numeric(merged[after_col], errors="coerce").fillna(0) - pd.to_numeric(
+            merged[before_col], errors="coerce"
+        ).fillna(0)
+
+    merged["AVG_DURATION_CHANGE_PCT"] = [
+        _pct_change(before, after)
+        for before, after in zip(merged["AVG_DURATION_SEC_BEFORE"], merged["AVG_DURATION_SEC_AFTER"])
+    ]
+    merged["EST_CREDITS_CHANGE_PCT"] = [
+        _pct_change(before, after)
+        for before, after in zip(merged["EST_CREDITS_BEFORE"], merged["EST_CREDITS_AFTER"])
+    ]
+    signal_data = merged.apply(_release_signal, axis=1)
+    merged["SEVERITY"] = [item[0] for item in signal_data]
+    merged["SIGNAL"] = [item[1] for item in signal_data]
+    return merged.sort_values(
+        by=["SEVERITY", "FAILURES_DELTA", "AVG_DURATION_CHANGE_PCT", "EST_CREDITS_CHANGE_PCT"],
+        ascending=[True, False, False, False],
+    )
+
+
+def _prepare_task_release_runs(inventory: pd.DataFrame, history: pd.DataFrame, query_details: pd.DataFrame) -> pd.DataFrame:
+    runs = history.copy() if history is not None else pd.DataFrame()
+    if runs.empty:
+        return runs
+    runs.columns = [str(col).upper() for col in runs.columns]
+    details = _normalize_query_details(query_details)
+    if not details.empty and "QUERY_ID" in runs.columns and "QUERY_ID" in details.columns:
+        keep = [
+            col for col in [
+                "QUERY_ID", "WAREHOUSE_NAME", "WAREHOUSE_SIZE", "DATABASE_NAME", "SCHEMA_NAME",
+                "QUERY_ELAPSED_SEC", "CLOUD_CREDITS", "EST_TOTAL_CREDITS", "QUERY_TEXT"
+            ] if col in details.columns
+        ]
+        runs = runs.merge(details[keep], on="QUERY_ID", how="left", suffixes=("", "_QUERY"))
+    if "EST_TOTAL_CREDITS" not in runs.columns:
+        runs["EST_TOTAL_CREDITS"] = 0.0
+    if "QUERY_TEXT" in runs.columns:
+        runs["IMPACT_OBJECTS"] = runs["QUERY_TEXT"].apply(_extract_object_candidates)
+    else:
+        runs["IMPACT_OBJECTS"] = ""
+
+    inv = inventory.copy() if inventory is not None else pd.DataFrame()
+    if not inv.empty:
+        inv.columns = [str(col).upper() for col in inv.columns]
+        name_col = "NAME" if "NAME" in inv.columns else "TASK_NAME" if "TASK_NAME" in inv.columns else ""
+        if name_col:
+            inv["PROCEDURE_NAME"] = inv.get("DEFINITION", pd.Series([""] * len(inv), index=inv.index)).apply(_procedure_from_definition)
+            inv["TASK_IMPACT_OBJECTS"] = inv.get("DEFINITION", pd.Series([""] * len(inv), index=inv.index)).apply(_extract_object_candidates)
+            runs = runs.merge(
+                inv[[name_col, "PROCEDURE_NAME", "TASK_IMPACT_OBJECTS"]].rename(columns={name_col: "TASK_NAME"}),
+                on="TASK_NAME",
+                how="left",
+            )
+            runs["IMPACT_OBJECTS"] = [
+                _clean_release_text(pd.Series([query_objects, task_objects]))
+                for query_objects, task_objects in zip(runs.get("IMPACT_OBJECTS", ""), runs.get("TASK_IMPACT_OBJECTS", ""))
+            ]
+    return runs
+
+
+def _build_procedure_release_sql(session, company: str, start: date, end: date, has_root_query_id: bool) -> str:
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["WAREHOUSE_SIZE", "CREDITS_USED_CLOUD_SERVICES"],
+    ))
+    root_expr = "COALESCE(q.root_query_id, q.query_id)" if has_root_query_id else "q.query_id"
+    call_wh_size_expr = "warehouse_size" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+    child_wh_size_expr = "q.warehouse_size AS warehouse_size" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+    child_cloud_expr = (
+        "q.credits_used_cloud_services AS credits_used_cloud_services"
+        if "CREDITS_USED_CLOUD_SERVICES" in qh_cols else "0::FLOAT AS credits_used_cloud_services"
+    )
+    call_filters = get_global_filter_clause(
+        date_col="",
+        wh_col="warehouse_name",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
+    child_filters = get_global_filter_clause(
+        date_col="",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
+    call_window = _release_window_predicate("start_time", start, end)
+    child_window = _release_window_predicate("q.start_time", start, end)
+    return f"""
+        WITH calls AS (
+            SELECT query_id AS root_query_id,
+                   REGEXP_SUBSTR(query_text, 'CALL\\\\s+([^\\\\(]+)', 1, 1, 'i', 1) AS procedure_name,
+                   user_name,
+                   role_name,
+                   warehouse_name,
+                   {call_wh_size_expr},
+                   start_time,
+                   SUBSTR(query_text, 1, 1000) AS call_text
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+            WHERE query_type = 'CALL'
+              AND {call_window}
+              {call_filters}
+        ),
+        children AS (
+            SELECT {root_expr} AS root_query_id,
+                   q.query_id,
+                   q.total_elapsed_time,
+                   {child_cloud_expr},
+                   {child_wh_size_expr}
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+            WHERE {child_window}
+              {child_filters}
+        )
+        SELECT c.procedure_name,
+               c.root_query_id,
+               c.user_name,
+               c.role_name,
+               c.warehouse_name,
+               COALESCE(MAX(ch.warehouse_size), MAX(c.warehouse_size)) AS warehouse_size,
+               c.start_time,
+               c.call_text,
+               COUNT(DISTINCT ch.query_id) AS downstream_query_count,
+               SUM(COALESCE(ch.total_elapsed_time, 0)) / 1000 AS total_elapsed_sec,
+               SUM(COALESCE(ch.credits_used_cloud_services, 0)) AS cloud_credits
+        FROM calls c
+        LEFT JOIN children ch ON c.root_query_id = ch.root_query_id
+        GROUP BY c.procedure_name, c.root_query_id, c.user_name, c.role_name,
+                 c.warehouse_name, c.start_time, c.call_text
+        ORDER BY c.start_time DESC
+        LIMIT 2000
+    """
+
+
+def _prepare_procedure_release_runs(runs: pd.DataFrame) -> pd.DataFrame:
+    prepared = runs.copy() if runs is not None else pd.DataFrame()
+    if prepared.empty:
+        return prepared
+    prepared.columns = [str(col).upper() for col in prepared.columns]
+    prepared["TOTAL_ELAPSED_SEC"] = pd.to_numeric(prepared.get("TOTAL_ELAPSED_SEC", 0), errors="coerce").fillna(0)
+    prepared["CLOUD_CREDITS"] = pd.to_numeric(prepared.get("CLOUD_CREDITS", 0), errors="coerce").fillna(0)
+    prepared["EST_TOTAL_CREDITS"] = prepared.apply(_procedure_run_estimated_credits, axis=1)
+    prepared["IMPACT_OBJECTS"] = prepared.get("CALL_TEXT", pd.Series([""] * len(prepared), index=prepared.index)).apply(
+        _extract_object_candidates
+    )
+    return prepared
+
+
+def _load_release_compare(session, company: str, before_start: date, before_end: date, after_start: date, after_end: date) -> dict:
+    task_inventory = load_task_inventory(session, company)
+
+    def load_task_window(label: str, start: date, end: date) -> pd.DataFrame:
+        history = run_query(
+            build_task_history_sql(
+                session,
+                _release_window_predicate("scheduled_time", start, end),
+                limit=2000,
+                company=company,
+            ),
+            ttl_key=f"dba_release_{company}_{label}_{start}_{end}_task_history",
+            tier="historical",
+            section="DBA Control Room",
+        )
+        query_details = _empty_df()
+        if not history.empty and "QUERY_ID" in history.columns:
+            qids = history["QUERY_ID"].dropna().astype(str).tolist()
+            query_sql = _query_detail_sql(session, qids)
+            if query_sql:
+                query_details = run_query(
+                    query_sql,
+                    ttl_key=f"dba_release_{company}_{label}_{start}_{end}_task_query_detail_{len(qids)}",
+                    tier="historical",
+                    section="DBA Control Room",
+                )
+        return _prepare_task_release_runs(task_inventory, history, query_details)
+
+    has_root_query_id = _query_history_has_root_query_id(session)
+
+    def load_proc_window(label: str, start: date, end: date) -> pd.DataFrame:
+        runs = run_query(
+            _build_procedure_release_sql(session, company, start, end, has_root_query_id),
+            ttl_key=f"dba_release_{company}_{label}_{start}_{end}_procedure_runs_{has_root_query_id}",
+            tier="historical",
+            section="DBA Control Room",
+        )
+        return _prepare_procedure_release_runs(runs)
+
+    task_before = load_task_window("before", before_start, before_end)
+    task_after = load_task_window("after", after_start, after_end)
+    proc_before = load_proc_window("before", before_start, before_end)
+    proc_after = load_proc_window("after", after_start, after_end)
+
+    return {
+        "task_compare": _compare_release_windows(task_before, task_after, "TASK_NAME"),
+        "procedure_compare": _compare_release_windows(proc_before, proc_after, "PROCEDURE_NAME"),
+        "task_before": task_before,
+        "task_after": task_after,
+        "procedure_before": proc_before,
+        "procedure_after": proc_after,
+        "before_label": f"{before_start.isoformat()} to {before_end.isoformat()}",
+        "after_label": f"{after_start.isoformat()} to {after_end.isoformat()}",
+    }
+
+
+def _build_release_compare_report(company: str, release_data: dict, credit_price: float) -> str:
+    task_compare = release_data.get("task_compare", _empty_df())
+    proc_compare = release_data.get("procedure_compare", _empty_df())
+    before_label = release_data.get("before_label", "before")
+    after_label = release_data.get("after_label", "after")
+
+    task_regressions = task_compare[task_compare.get("SEVERITY", pd.Series(dtype=str)).isin(["High", "Medium"])] if not task_compare.empty else pd.DataFrame()
+    proc_regressions = proc_compare[proc_compare.get("SEVERITY", pd.Series(dtype=str)).isin(["High", "Medium"])] if not proc_compare.empty else pd.DataFrame()
+    total_credit_delta = (
+        safe_float(task_compare.get("EST_CREDITS_DELTA", pd.Series(dtype=float)).sum() if not task_compare.empty else 0)
+        + safe_float(proc_compare.get("EST_CREDITS_DELTA", pd.Series(dtype=float)).sum() if not proc_compare.empty else 0)
+    )
+    lines = [
+        f"# OVERWATCH Release Compare - {company}",
+        "",
+        f"- Before window: {before_label}",
+        f"- After window: {after_label}",
+        f"- Task regressions: {len(task_regressions):,}",
+        f"- Procedure regressions: {len(proc_regressions):,}",
+        f"- Estimated credit delta: {format_credits(total_credit_delta)} (${credits_to_dollars(total_credit_delta, credit_price):,.2f})",
+        "",
+        "## Highest-Risk Task Changes",
+    ]
+    if task_regressions.empty:
+        lines.append("- No material task runtime/cost/failure regressions detected.")
+    else:
+        for _, row in task_regressions.head(10).iterrows():
+            lines.append(
+                f"- {row.get('ENTITY', '')}: {row.get('SIGNAL', '')}; "
+                f"after avg {safe_float(row.get('AVG_DURATION_SEC_AFTER')):,.1f}s; "
+                f"procedure {row.get('PROCEDURE_NAME', '')}; impact {row.get('IMPACT_OBJECTS', '')}"
+            )
+    lines.extend(["", "## Highest-Risk Procedure Changes"])
+    if proc_regressions.empty:
+        lines.append("- No material stored procedure runtime/cost/failure regressions detected.")
+    else:
+        for _, row in proc_regressions.head(10).iterrows():
+            lines.append(
+                f"- {row.get('ENTITY', '')}: {row.get('SIGNAL', '')}; "
+                f"after avg {safe_float(row.get('AVG_DURATION_SEC_AFTER')):,.1f}s; "
+                f"credit delta {format_credits(row.get('EST_CREDITS_DELTA', 0))}"
+            )
+    return "\n".join(lines)
 
 
 def _load_control_room(session, company: str, credit_price: float, lookback_hours: int) -> dict:
@@ -232,6 +629,59 @@ def _load_control_room(session, company: str, credit_price: float, lookback_hour
         data["task_failures_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
 
     try:
+        task_inventory = load_task_inventory(session, company)
+        task_history = run_query(
+            build_task_history_sql(
+                session,
+                f"scheduled_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())",
+                limit=1000,
+                company=company,
+            ),
+            ttl_key=f"dba_control_room_{company}_{lookback_hours}_task_sla_history",
+            tier="recent",
+            section="DBA Control Room",
+        )
+        task_query_details = _empty_df()
+        if not task_history.empty and "QUERY_ID" in task_history.columns:
+            qids = task_history["QUERY_ID"].dropna().astype(str).tolist()
+            query_sql = _query_detail_sql(session, qids)
+            if query_sql:
+                task_query_details = run_query(
+                    query_sql,
+                    ttl_key=f"dba_control_room_{company}_{lookback_hours}_task_query_detail_{len(qids)}",
+                    tier="standard",
+                    section="DBA Control Room",
+                )
+        _, task_ops_exceptions, task_latest = _build_task_ops_frames(task_inventory, task_history, task_query_details)
+        data["task_sla_cost"] = task_ops_exceptions[
+            task_ops_exceptions.get("SIGNAL", pd.Series(dtype=str)).isin([
+                "Long Running / SLA Risk",
+                "Cost Drift / Release Regression",
+            ])
+        ].copy() if not task_ops_exceptions.empty else _empty_df()
+        data["task_latest_runs"] = task_latest
+    except Exception as exc:
+        data["task_sla_cost"] = _empty_df()
+        data["task_latest_runs"] = _empty_df()
+        data["task_sla_cost_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
+
+    try:
+        has_root_query_id = _query_history_has_root_query_id(session)
+        proc_runs = run_query(
+            _build_procedure_sla_sql(session, max(1, int(lookback_hours / 24)), has_root_query_id),
+            ttl_key=f"dba_control_room_{company}_{lookback_hours}_procedure_sla_{has_root_query_id}",
+            tier="standard",
+            section="DBA Control Room",
+        )
+        _, proc_exceptions, proc_latest = _build_procedure_sla_frames(proc_runs)
+        data["procedure_sla_cost"] = proc_exceptions
+        data["procedure_latest_runs"] = proc_latest
+    except Exception as exc:
+        data["procedure_sla_cost"] = _empty_df()
+        data["procedure_latest_runs"] = _empty_df()
+        data["procedure_sla_cost_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
+
+    try:
         data["action_queue"] = load_action_queue(session, limit=100)
     except Exception as exc:
         data["action_queue"] = _empty_df()
@@ -248,6 +698,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
     wh = data.get("warehouse_pressure", _empty_df())
     failed = data.get("failed_queries", _empty_df())
     tasks = data.get("task_failures", _empty_df())
+    task_sla_cost = data.get("task_sla_cost", _empty_df())
+    procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
     logins = data.get("failed_logins", _empty_df())
     changes = data.get("object_changes", _empty_df())
     queue = data.get("action_queue", _empty_df())
@@ -318,6 +770,30 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Route": "Task Management",
             "Workflow": "",
         })
+    if not task_sla_cost.empty:
+        signals = task_sla_cost.get("SIGNAL", pd.Series(dtype=str)).astype(str)
+        sla_count = int((signals == "Long Running / SLA Risk").sum())
+        cost_count = int((signals == "Cost Drift / Release Regression").sum())
+        rows.append({
+            "Severity": "High" if cost_count or sla_count >= 3 else "Medium",
+            "Signal": "Task SLA or cost regression",
+            "Evidence": f"{sla_count:,} runtime breach(es); {cost_count:,} cost regression candidate(s)",
+            "Action": "Compare current task graph runs to recent baseline and inspect release-related procedure/query changes.",
+            "Route": "Task Management",
+            "Workflow": "",
+        })
+    if not procedure_sla_cost.empty:
+        signals = procedure_sla_cost.get("SIGNAL", pd.Series(dtype=str)).astype(str)
+        runtime_count = int((signals == "Procedure Runtime SLA Breach").sum())
+        cost_count = int((signals == "Procedure Cost Regression").sum())
+        rows.append({
+            "Severity": "High" if cost_count or runtime_count >= 3 else "Medium",
+            "Signal": "Stored procedure release regression",
+            "Evidence": f"{runtime_count:,} runtime breach(es); {cost_count:,} cost regression candidate(s)",
+            "Action": "Review procedures whose latest CALL duration or estimated credits jumped after the release.",
+            "Route": "Change & Drift",
+            "Workflow": "Stored procedure operations",
+        })
     if not logins.empty:
         rows.append({
             "Severity": "Medium",
@@ -373,6 +849,8 @@ def _render_route_buttons(exceptions: pd.DataFrame) -> None:
 def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_price: float, lookback_hours: int) -> str:
     summary = data.get("summary", _empty_df())
     credits = data.get("credits", _empty_df())
+    task_sla_cost = data.get("task_sla_cost", _empty_df())
+    procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
     row = summary.iloc[0] if not summary.empty else {}
     cr = credits.iloc[0] if not credits.empty else {}
     period_credits = safe_float(cr.get("PERIOD_CREDITS", 0))
@@ -391,6 +869,8 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
         f"- Queued queries: {safe_int(row.get('QUEUED_QUERIES', 0)):,}",
         f"- Remote spill queries: {safe_int(row.get('REMOTE_SPILL_QUERIES', 0)):,}",
         f"- p95 elapsed seconds: {safe_float(row.get('P95_ELAPSED_SEC', 0)):,.2f}",
+        f"- Task SLA/cost regression candidates: {0 if task_sla_cost.empty else len(task_sla_cost):,}",
+        f"- Stored procedure release-regression candidates: {0 if procedure_sla_cost.empty else len(procedure_sla_cost):,}",
         f"- Credits: {format_credits(period_credits)} (${credits_to_dollars(period_credits, credit_price):,.2f})",
         f"- Credit change vs prior window: {credit_delta:+.1f}%",
         "",
@@ -403,6 +883,23 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
             lines.append(
                 f"- {item['Severity']}: {item['Signal']} - {item['Evidence']} "
                 f"Action: {item['Action']} Route: {item['Route']}."
+            )
+    if not task_sla_cost.empty:
+        lines.extend(["", "## Task SLA / Cost Regression Candidates"])
+        for _, item in task_sla_cost.head(10).iterrows():
+            lines.append(
+                f"- {item.get('SEVERITY', 'Medium')}: {item.get('TASK_NAME', '')} "
+                f"{item.get('SIGNAL', '')} - {item.get('DETAIL', '')} "
+                f"Procedure: {item.get('PROCEDURE_NAME', '')}. Impact hints: {item.get('IMPACT_OBJECTS', '')}."
+            )
+    if not procedure_sla_cost.empty:
+        lines.extend(["", "## Stored Procedure Release Regression Candidates"])
+        for _, item in procedure_sla_cost.head(10).iterrows():
+            lines.append(
+                f"- {item.get('SEVERITY', 'Medium')}: {item.get('PROCEDURE_NAME', '')} "
+                f"{item.get('SIGNAL', '')} - latest {safe_float(item.get('LATEST_ELAPSED_SEC')):,.0f}s "
+                f"vs avg {safe_float(item.get('AVG_ELAPSED_SEC')):,.0f}s; "
+                f"estimated credits {safe_float(item.get('EST_TOTAL_CREDITS')):,.4f}."
             )
     lines.extend([
         "",
@@ -471,16 +968,21 @@ def render() -> None:
     prior_credits = safe_float(cr.get("PRIOR_CREDITS", 0))
     credit_delta = ((period_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0
 
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    task_sla_cost = data.get("task_sla_cost", _empty_df())
+    procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
+    regression_count = (0 if task_sla_cost.empty else len(task_sla_cost)) + (0 if procedure_sla_cost.empty else len(procedure_sla_cost))
+
+    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
     m1.metric("Open Exceptions", len(exceptions))
     m2.metric("Failed Queries", f"{safe_int(row.get('FAILED_QUERIES', 0)):,}", delta_color="inverse")
     m3.metric("Queued Queries", f"{safe_int(row.get('QUEUED_QUERIES', 0)):,}", delta_color="inverse")
     m4.metric("p95 Runtime", f"{safe_float(row.get('P95_ELAPSED_SEC', 0)):,.0f}s")
     m5.metric("Credits", format_credits(period_credits), f"{credit_delta:+.1f}%", delta_color="inverse")
     m6.metric("Est. Cost", f"${credits_to_dollars(period_credits, credit_price):,.0f}")
+    m7.metric("SLA/Cost Drift", f"{regression_count:,}", delta_color="inverse")
 
-    tab_triage, tab_routes, tab_evidence, tab_sources = st.tabs([
-        "Triage", "Drill Routes", "Executive Evidence", "Source Health"
+    tab_triage, tab_routes, tab_release, tab_evidence, tab_sources = st.tabs([
+        "Triage", "Drill Routes", "Release Compare", "Executive Evidence", "Source Health"
     ])
 
     with tab_triage:
@@ -543,10 +1045,26 @@ def render() -> None:
 
         st.divider()
         st.subheader("Exception Detail Samples")
-        detail_tabs = st.tabs(["Failed Queries", "Task Failures", "Failed Logins", "Object Changes", "Action Queue"])
+        detail_tabs = st.tabs([
+            "Failed Queries",
+            "Task Failures",
+            "Task SLA/Cost",
+            "Procedure SLA/Cost",
+            "Failed Logins",
+            "Object Changes",
+            "Action Queue",
+        ])
         for tab, key in zip(
             detail_tabs,
-            ["failed_queries", "task_failures", "failed_logins", "object_changes", "action_queue"],
+            [
+                "failed_queries",
+                "task_failures",
+                "task_sla_cost",
+                "procedure_sla_cost",
+                "failed_logins",
+                "object_changes",
+                "action_queue",
+            ],
         ):
             with tab:
                 df = data.get(key, _empty_df())
@@ -558,6 +1076,134 @@ def render() -> None:
                         st.warning(str(err["ERROR"].iloc[0]))
                     else:
                         st.info("No rows found.")
+
+    with tab_release:
+        st.subheader("Release Compare")
+        st.caption(
+            "Compare before/after release windows for task graph duration, stored procedure runtime, "
+            "estimated credits, failures, and impacted objects. Use this when a product release changes "
+            "stored procedure or task-graph behavior."
+        )
+        today = date.today()
+        default_after_end = today
+        default_after_start = today - timedelta(days=7)
+        default_before_end = default_after_start - timedelta(days=1)
+        default_before_start = default_before_end - timedelta(days=7)
+
+        w1, w2 = st.columns(2)
+        with w1:
+            before_range = st.date_input(
+                "Before release window",
+                value=(default_before_start, default_before_end),
+                key="dba_release_before_window",
+            )
+        with w2:
+            after_range = st.date_input(
+                "After release window",
+                value=(default_after_start, default_after_end),
+                key="dba_release_after_window",
+            )
+
+        valid_ranges = (
+            isinstance(before_range, tuple) and len(before_range) == 2
+            and isinstance(after_range, tuple) and len(after_range) == 2
+            and before_range[0] <= before_range[1]
+            and after_range[0] <= after_range[1]
+        )
+        if not valid_ranges:
+            st.warning("Choose valid before and after date ranges.")
+        elif st.button("Compare Release Windows", key="dba_release_compare_load", type="primary"):
+            with st.spinner("Comparing task graphs and stored procedure runs..."):
+                try:
+                    st.session_state["dba_release_compare_data"] = _load_release_compare(
+                        session,
+                        company,
+                        before_range[0],
+                        before_range[1],
+                        after_range[0],
+                        after_range[1],
+                    )
+                    st.session_state["dba_release_compare_company"] = company
+                    st.session_state["dba_release_compare_credit_price"] = credit_price
+                except Exception as exc:
+                    st.session_state["dba_release_compare_data"] = {
+                        "error": format_snowflake_error(exc),
+                        "before_label": f"{before_range[0]} to {before_range[1]}",
+                        "after_label": f"{after_range[0]} to {after_range[1]}",
+                    }
+
+        release_data = st.session_state.get("dba_release_compare_data", {})
+        if release_data.get("error"):
+            st.error(release_data["error"])
+        elif release_data:
+            task_compare = release_data.get("task_compare", _empty_df())
+            proc_compare = release_data.get("procedure_compare", _empty_df())
+            task_regressions = task_compare[
+                task_compare.get("SEVERITY", pd.Series(dtype=str)).isin(["High", "Medium"])
+            ] if not task_compare.empty else pd.DataFrame()
+            proc_regressions = proc_compare[
+                proc_compare.get("SEVERITY", pd.Series(dtype=str)).isin(["High", "Medium"])
+            ] if not proc_compare.empty else pd.DataFrame()
+            total_credit_delta = (
+                safe_float(task_compare.get("EST_CREDITS_DELTA", pd.Series(dtype=float)).sum() if not task_compare.empty else 0)
+                + safe_float(proc_compare.get("EST_CREDITS_DELTA", pd.Series(dtype=float)).sum() if not proc_compare.empty else 0)
+            )
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Task Regressions", f"{len(task_regressions):,}", delta_color="inverse")
+            k2.metric("Procedure Regressions", f"{len(proc_regressions):,}", delta_color="inverse")
+            k3.metric("Est. Credit Delta", format_credits(total_credit_delta), delta_color="inverse")
+            k4.metric("Est. Cost Delta", f"${credits_to_dollars(total_credit_delta, credit_price):,.2f}", delta_color="inverse")
+
+            show_all = st.checkbox("Show stable rows too", value=False, key="dba_release_show_all")
+            task_display = task_compare if show_all else task_regressions
+            proc_display = proc_compare if show_all else proc_regressions
+
+            st.markdown("**Task Graph / Task Changes**")
+            if not task_display.empty:
+                task_cols = [
+                    col for col in [
+                        "SEVERITY", "ENTITY", "SIGNAL", "RUNS_BEFORE", "RUNS_AFTER", "FAILURES_DELTA",
+                        "AVG_DURATION_SEC_BEFORE", "AVG_DURATION_SEC_AFTER", "AVG_DURATION_CHANGE_PCT",
+                        "EST_CREDITS_BEFORE", "EST_CREDITS_AFTER", "EST_CREDITS_CHANGE_PCT",
+                        "PROCEDURE_NAME", "IMPACT_OBJECTS",
+                    ] if col in task_display.columns
+                ]
+                st.dataframe(task_display[task_cols], use_container_width=True, height=320)
+                download_csv(task_display, "overwatch_release_task_compare.csv")
+            else:
+                st.success("No material task graph regressions found for the selected windows.")
+
+            st.markdown("**Stored Procedure Changes**")
+            if not proc_display.empty:
+                proc_cols = [
+                    col for col in [
+                        "SEVERITY", "ENTITY", "SIGNAL", "RUNS_BEFORE", "RUNS_AFTER", "FAILURES_DELTA",
+                        "AVG_DURATION_SEC_BEFORE", "AVG_DURATION_SEC_AFTER", "AVG_DURATION_CHANGE_PCT",
+                        "EST_CREDITS_BEFORE", "EST_CREDITS_AFTER", "EST_CREDITS_CHANGE_PCT",
+                        "IMPACT_OBJECTS",
+                    ] if col in proc_display.columns
+                ]
+                st.dataframe(proc_display[proc_cols], use_container_width=True, height=320)
+                download_csv(proc_display, "overwatch_release_procedure_compare.csv")
+            else:
+                st.success("No material stored procedure regressions found for the selected windows.")
+
+            report = _build_release_compare_report(
+                company,
+                release_data,
+                safe_float(st.session_state.get("dba_release_compare_credit_price", credit_price)) or credit_price,
+            )
+            with st.expander("Release comparison brief", expanded=False):
+                st.text_area("Brief", report, height=320, key="dba_release_compare_report_text")
+                st.download_button(
+                    "Download Release Brief",
+                    report,
+                    file_name=f"overwatch_release_compare_{company}_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+                    mime="text/markdown",
+                    key="dba_release_compare_report_download",
+                )
+        else:
+            st.info("Choose release windows and run the comparison when you need post-release evidence.")
 
     with tab_evidence:
         st.subheader("Report-Ready Brief")

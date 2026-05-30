@@ -1,9 +1,24 @@
 # sections/query_workbench.py - Consolidated query investigation workflow
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from sections import detailed_diagnosis, live_monitor, query_analysis, query_search
+from utils import (
+    build_action_queue_ddl,
+    filter_existing_columns,
+    format_snowflake_error,
+    get_active_company,
+    get_global_filter_clause,
+    get_session,
+    make_action_id,
+    render_query_drilldown,
+    run_query,
+    safe_float,
+    safe_int,
+    upsert_actions,
+)
 from utils.workflows import render_signal_confidence, render_workflow_guide, render_workflow_selector
 
 WORKFLOWS = (
@@ -14,7 +29,439 @@ WORKFLOWS = (
 )
 
 
+def _root_cause_score(
+    failed_queries: int,
+    queued_queries: int,
+    spill_queries: int,
+    full_scan_queries: int,
+    slow_queries: int,
+    total_queries: int,
+) -> int:
+    total = max(int(total_queries or 0), 1)
+    failed_pct = safe_float(failed_queries) / total * 100
+    queue_pct = safe_float(queued_queries) / total * 100
+    spill_pct = safe_float(spill_queries) / total * 100
+    full_scan_pct = safe_float(full_scan_queries) / total * 100
+    slow_pct = safe_float(slow_queries) / total * 100
+    penalty = (
+        min(failed_pct * 2.2, 30)
+        + min(queue_pct * 1.8, 24)
+        + min(spill_pct * 1.6, 20)
+        + min(full_scan_pct * 0.8, 14)
+        + min(slow_pct * 0.9, 18)
+    )
+    return max(0, min(100, int(round(100 - penalty))))
+
+
+def _root_cause_rating(score: int) -> str:
+    if score >= 90:
+        return "Stable"
+    if score >= 78:
+        return "Watch"
+    if score >= 65:
+        return "Degraded"
+    return "Incident Risk"
+
+
+def _root_cause_action_for(cause: str) -> tuple[str, str, str]:
+    cause = str(cause or "").upper()
+    if "FAILED" in cause:
+        return (
+            "Query",
+            "Review error code/message, recent deploys, role/database context, and retry pattern before rerun.",
+            "-- Pull the failing query text and error details from QUERY_HISTORY, then validate object and role access.",
+        )
+    if "QUEUE" in cause:
+        return (
+            "Warehouse",
+            "Check warehouse load, multi-cluster settings, concurrency, and whether workload should be routed or resized.",
+            "-- Review queued queries, warehouse load history, and auto-scaling settings for this warehouse.",
+        )
+    if "SPILL" in cause:
+        return (
+            "Query/Warehouse",
+            "Inspect join/order/group operators and warehouse size; remote spill usually means memory pressure or large reshuffle.",
+            "-- Use GET_QUERY_OPERATOR_STATS for the query and inspect spilled bytes by operator.",
+        )
+    if "SCAN" in cause:
+        return (
+            "Object/Query",
+            "Check pruning, clustering, filters, search optimization, and whether the query is scanning avoidable partitions.",
+            "-- Review PARTITIONS_SCANNED vs PARTITIONS_TOTAL and clustering depth for affected tables.",
+        )
+    return (
+        "Query",
+        "Open the detailed diagnosis row, compare recurring signatures, and inspect query profile.",
+        "-- Review elapsed, execution, compilation, queue, scan, and spill components for this query.",
+    )
+
+
+def _build_root_cause_markdown(
+    company: str,
+    days: int,
+    score: int,
+    summary_row: dict,
+    exceptions: pd.DataFrame,
+) -> str:
+    lines = [
+        f"# OVERWATCH Query Root-Cause Brief - {company}",
+        "",
+        f"- Lookback: {days} days",
+        f"- Root-cause score: {score} ({_root_cause_rating(score)})",
+        f"- Total queries: {safe_int(summary_row.get('TOTAL_QUERIES')):,}",
+        f"- Failed queries: {safe_int(summary_row.get('FAILED_QUERIES')):,}",
+        f"- Queued queries: {safe_int(summary_row.get('QUEUED_QUERIES')):,}",
+        f"- Spill queries: {safe_int(summary_row.get('SPILL_QUERIES')):,}",
+        f"- Full-scan candidates: {safe_int(summary_row.get('FULL_SCAN_QUERIES')):,}",
+        "",
+        "## DBA Narrative",
+        (
+            "Use this brief as the first-pass triage view before opening Query Workbench drilldowns. "
+            "It separates failure, queue, memory spill, full-scan, and slow-query pressure so the DBA can "
+            "route the issue to warehouse capacity, SQL tuning, access fixes, or deployment rollback."
+        ),
+        "",
+        "## Top Exceptions",
+    ]
+    if exceptions is None or exceptions.empty:
+        lines.append("- No root-cause exceptions found for the selected scope.")
+    else:
+        for _, row in exceptions.head(10).iterrows():
+            lines.append(
+                "- "
+                f"{row.get('SEVERITY', 'Watch')} | {row.get('ROOT_CAUSE', 'Unknown')} | "
+                f"{row.get('QUERY_ID', '')} | {row.get('WAREHOUSE_NAME', '')} | "
+                f"{safe_float(row.get('IMPACT_VALUE')):,.2f} {row.get('IMPACT_UNIT', '')}"
+            )
+    lines.extend([
+        "",
+        "## Evidence Limits",
+        "- QUERY_HISTORY can lag in ACCOUNT_USAGE; use Live Triage for currently running statements.",
+        "- Per-query root cause is inferred from available query-history counters, not from full query profile operators.",
+        "- Company scope follows configured warehouse/database/user naming rules.",
+    ])
+    return "\n".join(lines)
+
+
+def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "WAREHOUSE_SIZE",
+            "ERROR_CODE",
+            "ERROR_MESSAGE",
+            "COMPILATION_TIME",
+            "EXECUTION_TIME",
+            "QUEUED_OVERLOAD_TIME",
+            "QUEUED_PROVISIONING_TIME",
+            "QUEUED_REPAIR_TIME",
+            "TRANSACTION_BLOCKED_TIME",
+            "BYTES_SCANNED",
+            "BYTES_SPILLED_TO_LOCAL_STORAGE",
+            "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            "PARTITIONS_SCANNED",
+            "PARTITIONS_TOTAL",
+            "ROWS_PRODUCED",
+            "QUERY_HASH",
+        ],
+    ))
+    filters = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
+
+    def col_expr(name: str, default: str = "0") -> str:
+        return f"q.{name.lower()}" if name.upper() in qh_cols else default
+
+    warehouse_size_expr = col_expr("WAREHOUSE_SIZE", "NULL::VARCHAR")
+    error_code_expr = col_expr("ERROR_CODE", "NULL::VARCHAR")
+    error_message_expr = col_expr("ERROR_MESSAGE", "NULL::VARCHAR")
+    compile_expr = col_expr("COMPILATION_TIME", "0")
+    exec_expr = col_expr("EXECUTION_TIME", "0")
+    queue_expr = " + ".join([
+        col_expr("QUEUED_OVERLOAD_TIME", "0"),
+        col_expr("QUEUED_PROVISIONING_TIME", "0"),
+        col_expr("QUEUED_REPAIR_TIME", "0"),
+    ])
+    blocked_expr = col_expr("TRANSACTION_BLOCKED_TIME", "0")
+    bytes_scanned_expr = col_expr("BYTES_SCANNED", "0")
+    local_spill_expr = col_expr("BYTES_SPILLED_TO_LOCAL_STORAGE", "0")
+    remote_spill_expr = col_expr("BYTES_SPILLED_TO_REMOTE_STORAGE", "0")
+    rows_expr = col_expr("ROWS_PRODUCED", "0")
+    partition_pct_expr = (
+        "q.partitions_scanned * 100.0 / NULLIF(q.partitions_total, 0)"
+        if {"PARTITIONS_SCANNED", "PARTITIONS_TOTAL"}.issubset(qh_cols)
+        else "0::FLOAT"
+    )
+    query_hash_expr = col_expr("QUERY_HASH", "NULL::VARCHAR")
+
+    base = f"""
+        WITH base AS (
+            SELECT
+                q.query_id,
+                {query_hash_expr} AS query_hash,
+                q.user_name,
+                q.role_name,
+                q.warehouse_name,
+                {warehouse_size_expr} AS warehouse_size,
+                q.database_name,
+                q.schema_name,
+                q.query_type,
+                q.execution_status,
+                {error_code_expr} AS error_code,
+                {error_message_expr} AS error_message,
+                q.start_time,
+                q.total_elapsed_time / 1000.0 AS elapsed_sec,
+                {compile_expr} / 1000.0 AS compile_sec,
+                {exec_expr} / 1000.0 AS exec_sec,
+                ({queue_expr}) / 1000.0 AS queued_sec,
+                {blocked_expr} / 1000.0 AS blocked_sec,
+                {bytes_scanned_expr} / POWER(1024, 3) AS gb_scanned,
+                {local_spill_expr} / POWER(1024, 3) AS local_spill_gb,
+                {remote_spill_expr} / POWER(1024, 3) AS remote_spill_gb,
+                {rows_expr} AS rows_produced,
+                {partition_pct_expr} AS partition_pct,
+                SUBSTR(q.query_text, 1, 4000) AS query_text
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+            WHERE q.start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              {filters}
+        )
+    """
+    summary_sql = f"""
+        {base}
+        SELECT
+            COUNT(*) AS total_queries,
+            SUM(IFF(UPPER(execution_status) = 'FAILED_WITH_ERROR', 1, 0)) AS failed_queries,
+            SUM(IFF(elapsed_sec >= 30, 1, 0)) AS slow_queries,
+            SUM(IFF(queued_sec > 0, 1, 0)) AS queued_queries,
+            SUM(IFF(local_spill_gb > 0 OR remote_spill_gb > 0, 1, 0)) AS spill_queries,
+            SUM(IFF(partition_pct >= 90, 1, 0)) AS full_scan_queries,
+            COUNT(DISTINCT warehouse_name) AS affected_warehouses,
+            COUNT(DISTINCT user_name) AS affected_users,
+            PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY elapsed_sec) AS p95_elapsed_sec,
+            MAX(queued_sec) AS max_queued_sec,
+            SUM(remote_spill_gb) AS total_remote_spill_gb,
+            SUM(gb_scanned) AS total_gb_scanned
+        FROM base
+    """
+    exceptions_sql = f"""
+        {base},
+        scored AS (
+            SELECT *,
+                CASE
+                    WHEN UPPER(execution_status) = 'FAILED_WITH_ERROR' THEN 'Failed Query'
+                    WHEN queued_sec >= 30 THEN 'Warehouse Queue'
+                    WHEN remote_spill_gb >= 1 THEN 'Remote Spill'
+                    WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN 'Full Scan'
+                    WHEN elapsed_sec >= 30 THEN 'Slow Query'
+                    ELSE 'Watch'
+                END AS root_cause,
+                CASE
+                    WHEN UPPER(execution_status) = 'FAILED_WITH_ERROR' THEN 1000000 + elapsed_sec
+                    WHEN queued_sec >= 30 THEN queued_sec
+                    WHEN remote_spill_gb >= 1 THEN remote_spill_gb
+                    WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN gb_scanned
+                    ELSE elapsed_sec
+                END AS impact_value,
+                CASE
+                    WHEN UPPER(execution_status) = 'FAILED_WITH_ERROR' THEN 'error'
+                    WHEN queued_sec >= 30 THEN 'seconds queued'
+                    WHEN remote_spill_gb >= 1 THEN 'GB remote spill'
+                    WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN 'GB scanned'
+                    ELSE 'seconds elapsed'
+                END AS impact_unit
+            FROM base
+            WHERE UPPER(execution_status) = 'FAILED_WITH_ERROR'
+               OR queued_sec >= 30
+               OR remote_spill_gb >= 1
+               OR (partition_pct >= 90 AND gb_scanned >= 10)
+               OR elapsed_sec >= 30
+        )
+        SELECT
+            CASE
+                WHEN root_cause = 'Failed Query' THEN 'High'
+                WHEN root_cause IN ('Warehouse Queue', 'Remote Spill') AND impact_value >= 60 THEN 'Critical'
+                WHEN root_cause IN ('Warehouse Queue', 'Remote Spill') THEN 'High'
+                WHEN root_cause = 'Full Scan' AND impact_value >= 100 THEN 'High'
+                ELSE 'Medium'
+            END AS severity,
+            root_cause,
+            query_id,
+            query_hash,
+            user_name,
+            role_name,
+            warehouse_name,
+            warehouse_size,
+            database_name,
+            schema_name,
+            query_type,
+            execution_status,
+            error_code,
+            error_message,
+            start_time,
+            elapsed_sec,
+            exec_sec,
+            compile_sec,
+            queued_sec,
+            blocked_sec,
+            gb_scanned,
+            local_spill_gb,
+            remote_spill_gb,
+            rows_produced,
+            partition_pct,
+            impact_value,
+            impact_unit,
+            query_text
+        FROM scored
+        ORDER BY
+            CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 ELSE 3 END,
+            impact_value DESC
+        LIMIT {int(limit)}
+    """
+    return summary_sql, exceptions_sql
+
+
+def _queue_root_cause_actions(session, exceptions: pd.DataFrame) -> int:
+    if exceptions is None or exceptions.empty:
+        return 0
+    company = get_active_company()
+    actions = []
+    for _, row in exceptions.head(50).iterrows():
+        qid = str(row.get("QUERY_ID", ""))
+        cause = str(row.get("ROOT_CAUSE", "Query Exception"))
+        entity_type, action_text, generated_sql = _root_cause_action_for(cause)
+        warehouse = str(row.get("WAREHOUSE_NAME", "UNKNOWN"))
+        user = str(row.get("USER_NAME", "UNKNOWN"))
+        finding = (
+            f"{cause} on {warehouse}: {safe_float(row.get('IMPACT_VALUE')):,.2f} "
+            f"{row.get('IMPACT_UNIT', '')}; query_id={qid}."
+        )
+        actions.append({
+            "Action ID": make_action_id("Query Root Cause", qid or warehouse, finding),
+            "Source": "Query Workbench - Root Cause",
+            "Category": "Query Performance",
+            "Severity": row.get("SEVERITY", "High"),
+            "Entity Type": entity_type,
+            "Entity": qid or warehouse,
+            "Owner": user or "DBA",
+            "Finding": finding,
+            "Action": action_text,
+            "Estimated Monthly Savings": 0,
+            "Generated SQL Fix": generated_sql,
+            "Proof Query": (
+                "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY "
+                f"WHERE query_id = '{qid}';"
+            ),
+            "Company": company,
+        })
+    return upsert_actions(session, actions)
+
+
+def _render_root_cause_brief(session) -> None:
+    company = get_active_company()
+    with st.expander("Root-Cause Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            days = st.slider("Root-cause lookback (days)", 1, 30, 7, key="qw_rc_days")
+        with c2:
+            limit = st.slider("Exception rows", 25, 250, 100, step=25, key="qw_rc_limit")
+
+        if st.button("Load Root-Cause Brief", key="qw_rc_load"):
+            with st.spinner("Building root-cause brief..."):
+                try:
+                    summary_sql, exceptions_sql = _build_root_cause_sql(session, days, limit)
+                    summary_df = run_query(
+                        summary_sql,
+                        ttl_key=f"qw_root_summary_{company}_{days}",
+                        tier="historical",
+                        section="Query Workbench",
+                    )
+                    exceptions = run_query(
+                        exceptions_sql,
+                        ttl_key=f"qw_root_exceptions_{company}_{days}_{limit}",
+                        tier="historical",
+                        section="Query Workbench",
+                    )
+                    st.session_state["qw_root_summary"] = summary_df
+                    st.session_state["qw_root_exceptions"] = exceptions
+                    st.session_state["qw_root_sql"] = {
+                        "summary": summary_sql,
+                        "exceptions": exceptions_sql,
+                    }
+                except Exception as e:
+                    st.warning(f"Root-cause brief unavailable: {format_snowflake_error(e)}")
+
+        summary_df = st.session_state.get("qw_root_summary")
+        exceptions = st.session_state.get("qw_root_exceptions")
+        if summary_df is None or summary_df.empty:
+            return
+
+        summary_row = summary_df.iloc[0].to_dict()
+        score = _root_cause_score(
+            failed_queries=safe_int(summary_row.get("FAILED_QUERIES")),
+            queued_queries=safe_int(summary_row.get("QUEUED_QUERIES")),
+            spill_queries=safe_int(summary_row.get("SPILL_QUERIES")),
+            full_scan_queries=safe_int(summary_row.get("FULL_SCAN_QUERIES")),
+            slow_queries=safe_int(summary_row.get("SLOW_QUERIES")),
+            total_queries=safe_int(summary_row.get("TOTAL_QUERIES")),
+        )
+        rating = _root_cause_rating(score)
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Root-Cause Score", score, rating)
+        c2.metric("Failed", f"{safe_int(summary_row.get('FAILED_QUERIES')):,}", delta_color="inverse")
+        c3.metric("Queued", f"{safe_int(summary_row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
+        c4.metric("Spill", f"{safe_int(summary_row.get('SPILL_QUERIES')):,}", delta_color="inverse")
+        c5.metric("Full Scan", f"{safe_int(summary_row.get('FULL_SCAN_QUERIES')):,}", delta_color="inverse")
+
+        if score < 65:
+            st.error("Incident risk: query failures, queue pressure, spill, or scan-heavy workload needs DBA action.")
+        elif score < 78:
+            st.warning("Degraded: review the top exceptions before handing this off as normal workload.")
+        elif score < 90:
+            st.info("Watch: a few exceptions exist, but the query estate is broadly controlled.")
+        else:
+            st.success("Stable: no dominant query root-cause pressure in the selected scope.")
+
+        if exceptions is not None and not exceptions.empty:
+            st.subheader("Top Query Exceptions")
+            st.dataframe(exceptions, use_container_width=True, hide_index=True)
+            if st.button("Save Root-Cause Exceptions to Action Queue", key="qw_rc_queue"):
+                try:
+                    saved = _queue_root_cause_actions(session, exceptions)
+                    st.success(f"Saved {saved} root-cause findings to the action queue.")
+                except Exception as e:
+                    st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
+                    st.download_button(
+                        "Download Action Queue DDL",
+                        build_action_queue_ddl(),
+                        file_name="overwatch_action_queue_setup.sql",
+                        mime="text/plain",
+                        key="qw_rc_action_ddl",
+                    )
+            render_query_drilldown(exceptions, key="qw_root_cause_drilldown", title="Root-Cause Query Drilldown")
+        else:
+            st.success("No query root-cause exceptions found for this scope.")
+
+        st.download_button(
+            "Download Query Root-Cause Brief",
+            _build_root_cause_markdown(company, days, score, summary_row, exceptions),
+            file_name=f"overwatch_query_root_cause_{company.lower()}.md",
+            mime="text/markdown",
+            key="qw_rc_download",
+        )
+        with st.expander("Proof SQL"):
+            sql_map = st.session_state.get("qw_root_sql", {})
+            st.code(sql_map.get("summary", ""), language="sql")
+            st.code(sql_map.get("exceptions", ""), language="sql")
+
+
 def render() -> None:
+    session = get_session()
     if st.session_state.get("exceptions_only_mode") and "query_workbench_workflow" not in st.session_state:
         st.session_state["query_workbench_workflow"] = "Diagnosis"
     st.header("Query Workbench")
@@ -41,6 +488,10 @@ def render() -> None:
             ("You have a query ID or need exact SQL text", "Use History Search."),
         ],
     )
+
+    _render_root_cause_brief(session)
+    if st.session_state.get("exceptions_only_mode"):
+        st.stop()
 
     workflow = render_workflow_selector(
         "Query workflow",

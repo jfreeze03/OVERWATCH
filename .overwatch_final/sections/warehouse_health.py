@@ -8,9 +8,423 @@ from utils import (
     metric_confidence_label, freshness_note,
     build_metered_credit_cte, build_action_queue_ddl, make_action_id, upsert_actions,
     run_query, format_snowflake_error, filter_existing_columns, render_optimization_advisor,
-    safe_float,
+    safe_float, safe_int,
 )
 from config import THRESHOLDS
+
+
+def _warehouse_capacity_score(
+    queued_queries: int,
+    spill_queries: int,
+    high_latency_queries: int,
+    total_queries: int,
+    credit_spike_pct: float,
+) -> int:
+    total = max(int(total_queries or 0), 1)
+    queue_pct = safe_float(queued_queries) / total * 100
+    spill_pct = safe_float(spill_queries) / total * 100
+    latency_pct = safe_float(high_latency_queries) / total * 100
+    spike_pct = max(safe_float(credit_spike_pct), 0)
+    penalty = (
+        min(queue_pct * 2.0, 28)
+        + min(spill_pct * 1.8, 24)
+        + min(latency_pct * 1.1, 18)
+        + min(spike_pct / 4, 20)
+    )
+    return max(0, min(100, int(round(100 - penalty))))
+
+
+def _warehouse_capacity_rating(score: int) -> str:
+    if score >= 90:
+        return "Healthy"
+    if score >= 78:
+        return "Watch"
+    if score >= 65:
+        return "Pressure"
+    return "Capacity Risk"
+
+
+def _warehouse_capacity_action_for(signal: str) -> tuple[str, str]:
+    signal = str(signal or "").upper()
+    if "QUEUE" in signal:
+        return (
+            "Review multi-cluster policy, warehouse size, auto-resume latency, and workload routing.",
+            "-- Queue pressure: inspect WAREHOUSE_LOAD_HISTORY and top queued QUERY_HISTORY rows.",
+        )
+    if "SPILL" in signal:
+        return (
+            "Inspect top spilling queries and consider query rewrites, clustering, or a larger warehouse for this workload.",
+            "-- Spill pressure: use GET_QUERY_OPERATOR_STATS for top remote-spill query IDs.",
+        )
+    if "CREDIT" in signal:
+        return (
+            "Compare current burn to prior period and confirm whether the spike is business demand, idle time, or runaway workload.",
+            "-- Credit spike: reconcile WAREHOUSE_METERING_HISTORY with query-attributed drivers.",
+        )
+    return (
+        "Review p95 latency, query volume, and top query patterns before changing warehouse configuration.",
+        "-- Latency pressure: inspect high elapsed query signatures and warehouse load.",
+    )
+
+
+def _build_warehouse_capacity_markdown(
+    company: str,
+    days: int,
+    score: int,
+    summary_row: dict,
+    exceptions: pd.DataFrame,
+) -> str:
+    lines = [
+        f"# OVERWATCH Warehouse Capacity Brief - {company}",
+        "",
+        f"- Lookback: {days} days",
+        f"- Capacity score: {score} ({_warehouse_capacity_rating(score)})",
+        f"- Warehouses active: {safe_int(summary_row.get('WAREHOUSES_ACTIVE')):,}",
+        f"- Queries: {safe_int(summary_row.get('TOTAL_QUERIES')):,}",
+        f"- Queued queries: {safe_int(summary_row.get('QUEUED_QUERIES')):,}",
+        f"- Spill queries: {safe_int(summary_row.get('SPILL_QUERIES')):,}",
+        f"- Credit movement: {safe_float(summary_row.get('CREDIT_SPIKE_PCT')):,.1f}%",
+        "",
+        "## DBA Narrative",
+        (
+            "Use this brief to decide whether warehouse pressure is capacity, memory, workload shape, "
+            "or cost drift. It is intended to support DBA action and executive reporting without forcing "
+            "leadership through raw warehouse telemetry."
+        ),
+        "",
+        "## Top Warehouse Exceptions",
+    ]
+    if exceptions is None or exceptions.empty:
+        lines.append("- No warehouse capacity exceptions found for the selected scope.")
+    else:
+        for _, row in exceptions.head(10).iterrows():
+            lines.append(
+                "- "
+                f"{row.get('SEVERITY', 'Watch')} | {row.get('SIGNAL', 'Unknown')} | "
+                f"{row.get('WAREHOUSE_NAME', '')} | score {safe_float(row.get('CAPACITY_SCORE')):,.1f} | "
+                f"{safe_float(row.get('METERED_CREDITS')):,.2f} credits"
+            )
+    lines.extend([
+        "",
+        "## Evidence Limits",
+        "- ACCOUNT_USAGE can lag; Live Monitor should be used for current in-flight warehouse pressure.",
+        "- Per-warehouse pressure is inferred from query history plus metering history, not Snowsight internals.",
+        "- Company scope follows configured warehouse/database/user naming rules.",
+    ])
+    return "\n".join(lines)
+
+
+def _build_warehouse_capacity_sql(session, days: int) -> tuple[str, str]:
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "WAREHOUSE_SIZE",
+            "QUEUED_OVERLOAD_TIME",
+            "QUEUED_PROVISIONING_TIME",
+            "QUEUED_REPAIR_TIME",
+            "BYTES_SPILLED_TO_LOCAL_STORAGE",
+            "BYTES_SPILLED_TO_REMOTE_STORAGE",
+        ],
+    ))
+    wm_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+        ["CREDITS_USED_COMPUTE", "CREDITS_USED"],
+    ))
+    warehouse_size_expr = "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
+    queue_ms_expr = " + ".join([
+        "COALESCE(q.queued_overload_time, 0)" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0",
+        "COALESCE(q.queued_provisioning_time, 0)" if "QUEUED_PROVISIONING_TIME" in qh_cols else "0",
+        "COALESCE(q.queued_repair_time, 0)" if "QUEUED_REPAIR_TIME" in qh_cols else "0",
+    ])
+    local_spill_expr = (
+        "COALESCE(q.bytes_spilled_to_local_storage, 0)"
+        if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols
+        else "0"
+    )
+    remote_spill_expr = (
+        "COALESCE(q.bytes_spilled_to_remote_storage, 0)"
+        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+        else "0"
+    )
+    spill_bytes_expr = f"{local_spill_expr} + {remote_spill_expr}"
+    meter_expr = (
+        "COALESCE(m.credits_used_compute, m.credits_used)"
+        if {"CREDITS_USED_COMPUTE", "CREDITS_USED"}.issubset(wm_cols)
+        else "m.credits_used"
+    )
+    filters_q = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
+    filters_m = get_wh_filter_clause("m.warehouse_name")
+    summary_sql = f"""
+        WITH query_rollup AS (
+            SELECT
+                q.warehouse_name,
+                COUNT(*) AS total_queries,
+                SUM(IFF(({queue_ms_expr}) > 0, 1, 0)) AS queued_queries,
+                SUM(IFF(({spill_bytes_expr}) > 0, 1, 0)) AS spill_queries,
+                SUM(IFF(q.total_elapsed_time >= 30000, 1, 0)) AS high_latency_queries,
+                PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time / 1000.0) AS p95_elapsed_sec,
+                SUM({remote_spill_expr}) / POWER(1024, 3) AS remote_spill_gb
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+            WHERE q.start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              {filters_q}
+            GROUP BY q.warehouse_name
+        ),
+        metering AS (
+            SELECT
+                m.warehouse_name,
+                SUM(IFF(m.start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP()),
+                        {meter_expr}, 0)) AS current_credits,
+                SUM(IFF(m.start_time >= DATEADD('day', -{int(days) * 2}, CURRENT_TIMESTAMP())
+                         AND m.start_time < DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP()),
+                        {meter_expr}, 0)) AS prior_credits
+            FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
+            WHERE m.start_time >= DATEADD('day', -{int(days) * 2}, CURRENT_TIMESTAMP())
+              {filters_m}
+            GROUP BY m.warehouse_name
+        ),
+        combined AS (
+            SELECT
+                COALESCE(q.warehouse_name, m.warehouse_name) AS warehouse_name,
+                COALESCE(q.total_queries, 0) AS total_queries,
+                COALESCE(q.queued_queries, 0) AS queued_queries,
+                COALESCE(q.spill_queries, 0) AS spill_queries,
+                COALESCE(q.high_latency_queries, 0) AS high_latency_queries,
+                COALESCE(q.p95_elapsed_sec, 0) AS p95_elapsed_sec,
+                COALESCE(q.remote_spill_gb, 0) AS remote_spill_gb,
+                COALESCE(m.current_credits, 0) AS current_credits,
+                COALESCE(m.prior_credits, 0) AS prior_credits,
+                (COALESCE(m.current_credits, 0) - COALESCE(m.prior_credits, 0))
+                    / NULLIF(COALESCE(m.prior_credits, 0), 0) * 100 AS credit_spike_pct
+            FROM query_rollup q
+            FULL OUTER JOIN metering m ON q.warehouse_name = m.warehouse_name
+        )
+        SELECT
+            COUNT(DISTINCT warehouse_name) AS warehouses_active,
+            SUM(total_queries) AS total_queries,
+            SUM(queued_queries) AS queued_queries,
+            SUM(spill_queries) AS spill_queries,
+            SUM(high_latency_queries) AS high_latency_queries,
+            SUM(current_credits) AS metered_credits,
+            SUM(prior_credits) AS prior_credits,
+            (SUM(current_credits) - SUM(prior_credits)) / NULLIF(SUM(prior_credits), 0) * 100 AS credit_spike_pct,
+            MAX(p95_elapsed_sec) AS worst_p95_elapsed_sec,
+            SUM(remote_spill_gb) AS remote_spill_gb
+        FROM combined
+    """
+    exceptions_sql = f"""
+        WITH query_rollup AS (
+            SELECT
+                q.warehouse_name,
+                {warehouse_size_expr} AS warehouse_size,
+                COUNT(*) AS total_queries,
+                SUM(IFF(({queue_ms_expr}) > 0, 1, 0)) AS queued_queries,
+                SUM(IFF(({spill_bytes_expr}) > 0, 1, 0)) AS spill_queries,
+                SUM(IFF(q.total_elapsed_time >= 30000, 1, 0)) AS high_latency_queries,
+                PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time / 1000.0) AS p95_elapsed_sec,
+                SUM({remote_spill_expr}) / POWER(1024, 3) AS remote_spill_gb
+            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+            WHERE q.start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              {filters_q}
+            GROUP BY q.warehouse_name
+        ),
+        metering AS (
+            SELECT
+                m.warehouse_name,
+                SUM(IFF(m.start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP()),
+                        {meter_expr}, 0)) AS current_credits,
+                SUM(IFF(m.start_time >= DATEADD('day', -{int(days) * 2}, CURRENT_TIMESTAMP())
+                         AND m.start_time < DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP()),
+                        {meter_expr}, 0)) AS prior_credits
+            FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
+            WHERE m.start_time >= DATEADD('day', -{int(days) * 2}, CURRENT_TIMESTAMP())
+              {filters_m}
+            GROUP BY m.warehouse_name
+        ),
+        combined AS (
+            SELECT
+                COALESCE(q.warehouse_name, m.warehouse_name) AS warehouse_name,
+                q.warehouse_size,
+                COALESCE(q.total_queries, 0) AS total_queries,
+                COALESCE(q.queued_queries, 0) AS queued_queries,
+                COALESCE(q.spill_queries, 0) AS spill_queries,
+                COALESCE(q.high_latency_queries, 0) AS high_latency_queries,
+                COALESCE(q.p95_elapsed_sec, 0) AS p95_elapsed_sec,
+                COALESCE(q.remote_spill_gb, 0) AS remote_spill_gb,
+                COALESCE(m.current_credits, 0) AS current_credits,
+                COALESCE(m.prior_credits, 0) AS prior_credits,
+                (COALESCE(m.current_credits, 0) - COALESCE(m.prior_credits, 0))
+                    / NULLIF(COALESCE(m.prior_credits, 0), 0) * 100 AS credit_spike_pct
+            FROM query_rollup q
+            FULL OUTER JOIN metering m ON q.warehouse_name = m.warehouse_name
+        )
+        SELECT
+            CASE
+                WHEN queued_queries >= 20 OR remote_spill_gb >= 20 THEN 'Critical'
+                WHEN credit_spike_pct >= 50 OR spill_queries >= 10 OR high_latency_queries >= 25 THEN 'High'
+                ELSE 'Medium'
+            END AS severity,
+            CASE
+                WHEN queued_queries >= 20 THEN 'Queue Pressure'
+                WHEN remote_spill_gb >= 1 THEN 'Memory Spill'
+                WHEN credit_spike_pct >= 25 THEN 'Credit Spike'
+                ELSE 'Latency Pressure'
+            END AS signal,
+            warehouse_name,
+            warehouse_size,
+            total_queries,
+            queued_queries,
+            spill_queries,
+            high_latency_queries,
+            ROUND(p95_elapsed_sec, 2) AS p95_elapsed_sec,
+            ROUND(remote_spill_gb, 2) AS remote_spill_gb,
+            ROUND(current_credits, 4) AS metered_credits,
+            ROUND(prior_credits, 4) AS prior_credits,
+            ROUND(COALESCE(credit_spike_pct, 0), 1) AS credit_spike_pct,
+            ROUND(100
+                - LEAST(queued_queries * 100.0 / NULLIF(total_queries, 0) * 2.0, 28)
+                - LEAST(spill_queries * 100.0 / NULLIF(total_queries, 0) * 1.8, 24)
+                - LEAST(high_latency_queries * 100.0 / NULLIF(total_queries, 0) * 1.1, 18)
+                - LEAST(GREATEST(COALESCE(credit_spike_pct, 0), 0) / 4, 20), 1) AS capacity_score
+        FROM combined
+        WHERE queued_queries > 0
+           OR spill_queries > 0
+           OR high_latency_queries > 0
+           OR credit_spike_pct >= 25
+        ORDER BY
+            CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 ELSE 3 END,
+            capacity_score ASC,
+            metered_credits DESC
+        LIMIT 100
+    """
+    return summary_sql, exceptions_sql
+
+
+def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
+    if exceptions is None or exceptions.empty:
+        return 0
+    company = get_active_company()
+    actions = []
+    for _, row in exceptions.head(50).iterrows():
+        wh = str(row.get("WAREHOUSE_NAME", ""))
+        signal = str(row.get("SIGNAL", "Warehouse Pressure"))
+        action_text, generated_sql = _warehouse_capacity_action_for(signal)
+        finding = (
+            f"{signal} on {wh}: capacity score={safe_float(row.get('CAPACITY_SCORE')):,.1f}, "
+            f"queued={safe_int(row.get('QUEUED_QUERIES')):,}, spill={safe_int(row.get('SPILL_QUERIES')):,}, "
+            f"credits={safe_float(row.get('METERED_CREDITS')):,.2f}."
+        )
+        actions.append({
+            "Action ID": make_action_id("Warehouse Capacity", wh, finding),
+            "Source": "Warehouse Health - Capacity Brief",
+            "Category": "Warehouse Capacity",
+            "Severity": row.get("SEVERITY", "High"),
+            "Entity Type": "Warehouse",
+            "Entity": wh,
+            "Owner": "DBA",
+            "Finding": finding,
+            "Action": action_text,
+            "Estimated Monthly Savings": 0,
+            "Generated SQL Fix": generated_sql,
+            "Proof Query": "Review QUERY_HISTORY and WAREHOUSE_METERING_HISTORY for this warehouse and period.",
+            "Company": company,
+        })
+    return upsert_actions(session, actions)
+
+
+def _render_capacity_brief(session, company: str) -> None:
+    with st.expander("Capacity Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
+        days = st.slider("Capacity lookback (days)", 1, 30, 7, key="wh_capacity_days")
+        if st.button("Load Capacity Brief", key="wh_capacity_load"):
+            with st.spinner("Building warehouse capacity brief..."):
+                try:
+                    summary_sql, exceptions_sql = _build_warehouse_capacity_sql(session, days)
+                    summary = run_query(
+                        summary_sql,
+                        ttl_key=f"wh_capacity_summary_{company}_{days}",
+                        tier="historical",
+                        section="Warehouse Health",
+                    )
+                    exceptions = run_query(
+                        exceptions_sql,
+                        ttl_key=f"wh_capacity_exceptions_{company}_{days}",
+                        tier="historical",
+                        section="Warehouse Health",
+                    )
+                    st.session_state["wh_capacity_summary"] = summary
+                    st.session_state["wh_capacity_exceptions"] = exceptions
+                    st.session_state["wh_capacity_sql"] = {
+                        "summary": summary_sql,
+                        "exceptions": exceptions_sql,
+                    }
+                except Exception as e:
+                    st.warning(f"Capacity brief unavailable in this role/context: {format_snowflake_error(e)}")
+
+        summary = st.session_state.get("wh_capacity_summary")
+        exceptions = st.session_state.get("wh_capacity_exceptions")
+        if summary is None or summary.empty:
+            return
+        row = summary.iloc[0].to_dict()
+        score = _warehouse_capacity_score(
+            queued_queries=safe_int(row.get("QUEUED_QUERIES")),
+            spill_queries=safe_int(row.get("SPILL_QUERIES")),
+            high_latency_queries=safe_int(row.get("HIGH_LATENCY_QUERIES")),
+            total_queries=safe_int(row.get("TOTAL_QUERIES")),
+            credit_spike_pct=safe_float(row.get("CREDIT_SPIKE_PCT")),
+        )
+        rating = _warehouse_capacity_rating(score)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Capacity Score", score, rating)
+        c2.metric("Queued", f"{safe_int(row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
+        c3.metric("Spill", f"{safe_int(row.get('SPILL_QUERIES')):,}", delta_color="inverse")
+        c4.metric("Metered Credits", format_credits(safe_float(row.get("METERED_CREDITS"))))
+        if score < 65:
+            st.error("Capacity risk: warehouse pressure is high enough to affect service levels or cost control.")
+        elif score < 78:
+            st.warning("Pressure: review exception warehouses before approving workload growth.")
+        elif score < 90:
+            st.info("Watch: warehouse pressure exists, but it is not currently dominant.")
+        else:
+            st.success("Healthy: no major warehouse pressure signal in this scope.")
+
+        if exceptions is not None and not exceptions.empty:
+            st.dataframe(exceptions, use_container_width=True, hide_index=True)
+            if st.button("Save Capacity Findings to Action Queue", key="wh_capacity_queue"):
+                try:
+                    saved = _queue_capacity_findings(session, exceptions)
+                    st.success(f"Saved {saved} warehouse capacity findings to the action queue.")
+                except Exception as e:
+                    st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
+                    st.download_button(
+                        "Download Action Queue DDL",
+                        build_action_queue_ddl(),
+                        file_name="overwatch_action_queue_setup.sql",
+                        mime="text/plain",
+                        key="wh_capacity_ddl",
+                    )
+        else:
+            st.success("No warehouse capacity exceptions found for this scope.")
+
+        st.download_button(
+            "Download Capacity Brief",
+            _build_warehouse_capacity_markdown(company, days, score, row, exceptions),
+            file_name=f"overwatch_warehouse_capacity_{company.lower()}.md",
+            mime="text/markdown",
+            key="wh_capacity_download",
+        )
+        with st.expander("Proof SQL"):
+            sql_map = st.session_state.get("wh_capacity_sql", {})
+            st.code(sql_map.get("summary", ""), language="sql")
+            st.code(sql_map.get("exceptions", ""), language="sql")
 
 
 def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
@@ -128,6 +542,10 @@ def render():
     bytes_scanned_expr = "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0"
     compute_meter_expr = "m.credits_used_compute" if "CREDITS_USED_COMPUTE" in wm_cols else "m.credits_used"
     cloud_meter_expr = "m.credits_used_cloud_services" if "CREDITS_USED_CLOUD_SERVICES" in wm_cols else "0::FLOAT"
+
+    _render_capacity_brief(session, company)
+    if st.session_state.get("exceptions_only_mode"):
+        st.stop()
 
     tab_overview, tab_efficiency, tab_spill, tab_heatmap, tab_optimization = st.tabs([
         "Overview & Scaling", "Efficiency", "Spill & Memory", "Workload Heatmap", "Optimization Advisor"

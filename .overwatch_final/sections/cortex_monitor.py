@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from utils import (
+    build_action_queue_ddl,
     format_snowflake_error,
     get_active_company,
     get_db_filter_clause,
@@ -13,8 +14,12 @@ from utils import (
     download_csv,
     get_user_filter_clause,
     filter_existing_columns,
+    make_action_id,
     render_drillable_bar_chart,
     run_query,
+    safe_float,
+    safe_int,
+    upsert_actions,
 )
 from config import DEFAULTS
 
@@ -22,10 +27,325 @@ from config import DEFAULTS
 AI_CREDIT_RATE = DEFAULTS["ai_credit_price"]  # $2.20/AI credit (Table 6(d))
 
 
+def _cortex_cost_score(
+    projected_cost: float,
+    budget_usd: float,
+    spike_users: int,
+    active_users: int,
+) -> int:
+    budget = max(safe_float(budget_usd), 1.0)
+    budget_pct = safe_float(projected_cost) / budget * 100
+    spike_pct = safe_float(spike_users) / max(safe_int(active_users), 1) * 100
+    penalty = min(max(budget_pct - 75, 0) * 0.9, 45) + min(spike_pct * 1.4, 35)
+    return max(0, min(100, int(round(100 - penalty))))
+
+
+def _cortex_cost_rating(score: int) -> str:
+    if score >= 90:
+        return "Controlled"
+    if score >= 78:
+        return "Watch"
+    if score >= 65:
+        return "Cost Risk"
+    return "Spiral Risk"
+
+
+def _cortex_action_for(signal: str) -> tuple[str, str]:
+    signal = str(signal or "").upper()
+    if "BUDGET" in signal:
+        return (
+            "Review Cortex Code budget, daily credit limit, and role/user access before usage scales further.",
+            "-- Consider ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT = <daily_credit_limit>;",
+        )
+    if "SPIKE" in signal:
+        return (
+            "Review the user/request pattern, model/tool usage, and whether this is approved project demand.",
+            "-- Review CORTEX_CODE usage history by user/source/date and confirm business owner.",
+        )
+    return (
+        "Review Cortex Code users, request volume, and cost-per-request before expanding access.",
+        "-- Audit Cortex usage views and SNOWFLAKE.CORTEX_USER grants.",
+    )
+
+
+def _build_cortex_control_markdown(
+    company: str,
+    days: int,
+    score: int,
+    budget_usd: float,
+    summary_row: dict,
+    exceptions: pd.DataFrame,
+) -> str:
+    projected_cost = safe_float(summary_row.get("PROJECTED_30D_COST"))
+    lines = [
+        f"# OVERWATCH Cortex Cost Control Brief - {company}",
+        "",
+        f"- Lookback: {days} days",
+        f"- Control score: {score} ({_cortex_cost_rating(score)})",
+        f"- Monthly budget: ${safe_float(budget_usd):,.2f}",
+        f"- Projected 30-day cost: ${projected_cost:,.2f}",
+        f"- Active users: {safe_int(summary_row.get('ACTIVE_USERS')):,}",
+        f"- Total requests: {safe_int(summary_row.get('TOTAL_REQUESTS')):,}",
+        f"- AI credits: {safe_float(summary_row.get('TOTAL_CREDITS')):,.4f}",
+        "",
+        "## DBA Narrative",
+        (
+            "Cortex Code usage can scale quietly because spend is driven by individual users and tools, "
+            "not warehouses. Use this brief to find budget breach risk, unexpected users, and source-level "
+            "growth before it becomes a month-end surprise."
+        ),
+        "",
+        "## Top Cortex Exceptions",
+    ]
+    if exceptions is None or exceptions.empty:
+        lines.append("- No Cortex cost exceptions found for the selected scope.")
+    else:
+        for _, row in exceptions.head(10).iterrows():
+            lines.append(
+                "- "
+                f"{row.get('SEVERITY', 'Watch')} | {row.get('SIGNAL', 'Unknown')} | "
+                f"{row.get('USER_NAME', '')} | {row.get('SOURCE', '')} | "
+                f"${safe_float(row.get('PROJECTED_30D_COST')):,.2f} projected"
+            )
+    lines.extend([
+        "",
+        "## Evidence Limits",
+        "- Cortex Code views are ACCOUNT_USAGE-backed and can lag.",
+        "- User-level chargeback is exact for Cortex Code views when Snowflake exposes USER_ID usage records.",
+        "- Budget breach projections assume recent daily average continues for 30 days.",
+    ])
+    return "\n".join(lines)
+
+
+def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
+    user_filter = get_user_filter_clause("u.NAME")
+    budget_credits = safe_float(budget_usd) / max(AI_CREDIT_RATE, 0.01)
+    base = f"""
+        WITH combined AS (
+            SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS, 'Snowsight' AS SOURCE
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
+            WHERE USAGE_TIME >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+            UNION ALL
+            SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS, 'CLI' AS SOURCE
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+            WHERE USAGE_TIME >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+        ),
+        user_daily AS (
+            SELECT
+                u.NAME AS user_name,
+                u.EMAIL AS email,
+                c.SOURCE,
+                c.USAGE_TIME::DATE AS usage_date,
+                COUNT(*) AS requests,
+                SUM(c.TOKEN_CREDITS) AS credits,
+                SUM(c.TOKENS) AS tokens
+            FROM combined c
+            LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
+            WHERE 1=1 {user_filter}
+            GROUP BY u.NAME, u.EMAIL, c.SOURCE, c.USAGE_TIME::DATE
+        ),
+        user_rollup AS (
+            SELECT
+                user_name,
+                email,
+                SOURCE,
+                COUNT(DISTINCT usage_date) AS active_days,
+                SUM(requests) AS total_requests,
+                SUM(credits) AS total_credits,
+                SUM(tokens) AS total_tokens,
+                SUM(credits) / NULLIF(SUM(requests), 0) AS credits_per_request,
+                SUM(credits) / NULLIF(COUNT(DISTINCT usage_date), 0) AS avg_daily_credits,
+                SUM(credits) / NULLIF(COUNT(DISTINCT usage_date), 0) * 30 AS projected_30d_credits,
+                SUM(credits) / NULLIF(COUNT(DISTINCT usage_date), 0) * 30 * {AI_CREDIT_RATE} AS projected_30d_cost
+            FROM user_daily
+            GROUP BY user_name, email, SOURCE
+        )
+    """
+    summary_sql = f"""
+        {base}
+        SELECT
+            COUNT(DISTINCT user_name) AS active_users,
+            SUM(total_requests) AS total_requests,
+            SUM(total_credits) AS total_credits,
+            SUM(total_tokens) AS total_tokens,
+            SUM(total_credits) / NULLIF(SUM(total_requests), 0) AS credits_per_request,
+            SUM(total_credits) / NULLIF({int(days)}, 0) * 30 AS projected_30d_credits,
+            SUM(total_credits) / NULLIF({int(days)}, 0) * 30 * {AI_CREDIT_RATE} AS projected_30d_cost,
+            SUM(IFF(projected_30d_credits > {budget_credits} * 0.25, 1, 0)) AS heavy_users
+        FROM user_rollup
+    """
+    exceptions_sql = f"""
+        {base}
+        SELECT
+            CASE
+                WHEN projected_30d_credits > {budget_credits} THEN 'Critical'
+                WHEN projected_30d_credits > {budget_credits} * 0.50 THEN 'High'
+                WHEN credits_per_request > 0.10 THEN 'High'
+                ELSE 'Medium'
+            END AS severity,
+            CASE
+                WHEN projected_30d_credits > {budget_credits} THEN 'Budget Breach'
+                WHEN projected_30d_credits > {budget_credits} * 0.50 THEN 'Budget Concentration'
+                WHEN credits_per_request > 0.10 THEN 'Cost Per Request Spike'
+                ELSE 'High Usage'
+            END AS signal,
+            user_name,
+            email,
+            SOURCE,
+            active_days,
+            total_requests,
+            ROUND(total_credits, 6) AS total_credits,
+            total_tokens,
+            ROUND(credits_per_request, 6) AS credits_per_request,
+            ROUND(avg_daily_credits, 6) AS avg_daily_credits,
+            ROUND(projected_30d_credits, 6) AS projected_30d_credits,
+            ROUND(projected_30d_cost, 2) AS projected_30d_cost
+        FROM user_rollup
+        WHERE projected_30d_credits > {budget_credits} * 0.25
+           OR credits_per_request > 0.10
+        ORDER BY
+            CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 ELSE 3 END,
+            projected_30d_cost DESC
+        LIMIT 100
+    """
+    return summary_sql, exceptions_sql
+
+
+def _queue_cortex_findings(session, exceptions: pd.DataFrame, budget_usd: float) -> int:
+    if exceptions is None or exceptions.empty:
+        return 0
+    company = get_active_company()
+    actions = []
+    for _, row in exceptions.head(50).iterrows():
+        signal = str(row.get("SIGNAL", "Cortex Usage"))
+        user = str(row.get("USER_NAME") or "Unknown user")
+        action_text, generated_sql = _cortex_action_for(signal)
+        finding = (
+            f"{signal}: {user} projected Cortex Code cost is "
+            f"${safe_float(row.get('PROJECTED_30D_COST')):,.2f} against "
+            f"${safe_float(budget_usd):,.2f} monthly budget."
+        )
+        actions.append({
+            "Action ID": make_action_id("Cortex Cost", user, finding),
+            "Source": "Cortex Monitor - Cost Control",
+            "Category": "AI / Cortex Cost",
+            "Severity": row.get("SEVERITY", "High"),
+            "Entity Type": "User",
+            "Entity": user,
+            "Owner": "DBA / Platform Owner",
+            "Finding": finding,
+            "Action": action_text,
+            "Estimated Monthly Savings": max(safe_float(row.get("PROJECTED_30D_COST")) - safe_float(budget_usd), 0),
+            "Generated SQL Fix": generated_sql,
+            "Proof Query": "Review CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY and CORTEX_CODE_CLI_USAGE_HISTORY by USER_ID.",
+            "Company": company,
+        })
+    return upsert_actions(session, actions)
+
+
+def _render_cortex_control_brief(session, company: str) -> None:
+    with st.expander("Cortex Cost Control Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
+        c1, c2 = st.columns(2)
+        with c1:
+            days = st.slider("Cortex control lookback (days)", 7, 90, 30, key="cortex_control_days")
+        with c2:
+            budget_usd = st.number_input(
+                "Monthly Cortex Code budget ($)",
+                min_value=0.0,
+                value=1000.0,
+                step=100.0,
+                key="cortex_control_budget_usd",
+            )
+        if st.button("Load Cortex Cost Control", key="cortex_control_load"):
+            with st.spinner("Building Cortex cost control brief..."):
+                try:
+                    summary_sql, exceptions_sql = _build_cortex_control_sql(days, budget_usd)
+                    summary = run_query(
+                        summary_sql,
+                        ttl_key=f"cortex_control_summary_{company}_{days}_{budget_usd}",
+                        tier="historical",
+                        section="Cost & Contract",
+                    )
+                    exceptions = run_query(
+                        exceptions_sql,
+                        ttl_key=f"cortex_control_exceptions_{company}_{days}_{budget_usd}",
+                        tier="historical",
+                        section="Cost & Contract",
+                    )
+                    st.session_state["cortex_control_summary"] = summary
+                    st.session_state["cortex_control_exceptions"] = exceptions
+                    st.session_state["cortex_control_sql"] = {
+                        "summary": summary_sql,
+                        "exceptions": exceptions_sql,
+                    }
+                except Exception as e:
+                    st.warning(f"Cortex cost control unavailable: {format_snowflake_error(e)}")
+
+        summary = st.session_state.get("cortex_control_summary")
+        exceptions = st.session_state.get("cortex_control_exceptions")
+        if summary is None or summary.empty:
+            return
+        row = summary.iloc[0].to_dict()
+        projected_cost = safe_float(row.get("PROJECTED_30D_COST"))
+        score = _cortex_cost_score(
+            projected_cost=projected_cost,
+            budget_usd=budget_usd,
+            spike_users=safe_int(row.get("HEAVY_USERS")),
+            active_users=safe_int(row.get("ACTIVE_USERS")),
+        )
+        rating = _cortex_cost_rating(score)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Cortex Control Score", score, rating)
+        c2.metric("Projected 30d Cost", f"${projected_cost:,.2f}")
+        c3.metric("Active Users", f"{safe_int(row.get('ACTIVE_USERS')):,}")
+        c4.metric("Requests", f"{safe_int(row.get('TOTAL_REQUESTS')):,}")
+        if projected_cost > budget_usd:
+            st.error("Cortex spend is projected over budget. Treat this as a cost-control incident.")
+        elif score < 78:
+            st.warning("Cortex usage is concentrating or trending hot. Review heavy users before expanding access.")
+        else:
+            st.success("Cortex Code spend is controlled for the selected budget and lookback.")
+
+        if exceptions is not None and not exceptions.empty:
+            st.subheader("Cortex Cost Exceptions")
+            st.dataframe(exceptions, use_container_width=True, hide_index=True)
+            if st.button("Save Cortex Findings to Action Queue", key="cortex_control_queue"):
+                try:
+                    saved = _queue_cortex_findings(session, exceptions, budget_usd)
+                    st.success(f"Saved {saved} Cortex cost findings to the action queue.")
+                except Exception as e:
+                    st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
+                    st.download_button(
+                        "Download Action Queue DDL",
+                        build_action_queue_ddl(),
+                        file_name="overwatch_action_queue_setup.sql",
+                        mime="text/plain",
+                        key="cortex_control_ddl",
+                    )
+        else:
+            st.success("No Cortex cost exceptions found for this scope.")
+
+        st.download_button(
+            "Download Cortex Cost Brief",
+            _build_cortex_control_markdown(company, days, score, budget_usd, row, exceptions),
+            file_name=f"overwatch_cortex_cost_{company.lower()}.md",
+            mime="text/markdown",
+            key="cortex_control_download",
+        )
+        with st.expander("Proof SQL"):
+            sql_map = st.session_state.get("cortex_control_sql", {})
+            st.code(sql_map.get("summary", ""), language="sql")
+            st.code(sql_map.get("exceptions", ""), language="sql")
+
+
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
+
+    _render_cortex_control_brief(session, company)
+    if st.session_state.get("exceptions_only_mode"):
+        st.stop()
 
     tab_users, tab_trends, tab_anomaly, tab_alerts = st.tabs([
         "Cortex Code Users", "Daily Trends", "Anomaly Detection", "Predictive Alerts"

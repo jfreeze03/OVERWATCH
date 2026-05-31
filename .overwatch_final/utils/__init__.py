@@ -19,6 +19,16 @@ from .scorecards import (
     dba_control_plane_readiness_score, dba_control_plane_section_scorecards,
     dba_control_plane_component_rows,
 )
+from .owner_directory import (
+    OWNER_CONTEXT_COLUMNS, OWNER_DIRECTORY_TABLE, OWNER_DIRECTORY_VIEW,
+    build_owner_directory_ddl, default_owner_directory, enrich_owner_dataframe,
+    load_owner_directory, owner_directory_fqn, owner_directory_view_fqn,
+    resolve_owner_context,
+)
+from .workload_audit import (
+    WORKLOAD_RECOVERY_AUDIT_TABLE, build_workload_recovery_audit_ddl,
+    workload_recovery_audit_fqn,
+)
 from .display import (
     download_csv, show_loaded_time, mark_loaded, clear_all_cache,
     render_query_drilldown, render_warehouse_drilldown,
@@ -51,6 +61,7 @@ from .alerts import (
     build_alert_digest_body,
     build_alert_digest_subject,
     build_alert_digest_summary,
+    build_alert_email_delivery_procedure_sql,
     build_alert_email_body,
     build_alert_email_subject,
     build_alert_rule_audit_ddl,
@@ -169,6 +180,12 @@ __all__ = [
     "burn_trend_label", "executive_health_score", "service_health_scorecard",
     "dba_control_plane_readiness_score", "dba_control_plane_section_scorecards",
     "dba_control_plane_component_rows",
+    "OWNER_CONTEXT_COLUMNS", "OWNER_DIRECTORY_TABLE", "OWNER_DIRECTORY_VIEW",
+    "build_owner_directory_ddl", "default_owner_directory", "enrich_owner_dataframe",
+    "load_owner_directory", "owner_directory_fqn", "owner_directory_view_fqn",
+    "resolve_owner_context",
+    "WORKLOAD_RECOVERY_AUDIT_TABLE", "build_workload_recovery_audit_ddl",
+    "workload_recovery_audit_fqn",
     "download_csv", "show_loaded_time", "mark_loaded", "clear_all_cache",
     "render_query_drilldown", "render_warehouse_drilldown",
     "render_drillable_bar_chart", "render_entity_query_drilldown",
@@ -187,6 +204,7 @@ __all__ = [
     "alert_rule_catalog", "alert_delivery_log_fqn", "alert_escalation_candidates", "alert_history_to_actions", "alert_severity_rank", "alert_table_fqn", "alert_triage_view_fqn",
     "annotate_alert_triage_frame",
     "build_alert_digest_body", "build_alert_digest_subject", "build_alert_digest_summary",
+    "build_alert_email_delivery_procedure_sql",
     "build_alert_delivery_log_ddl", "build_alert_delivery_log_insert_sql", "build_alert_delivery_mark_sql",
     "build_alert_email_body", "build_alert_email_subject",
     "build_alert_rule_audit_ddl", "build_alert_rule_audit_insert_sql",

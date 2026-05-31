@@ -38,6 +38,14 @@ ACTION_QUEUE_OPTIONAL_COLUMN_TYPES = {
     "RECOVERY_SLA_HOURS": "FLOAT",
     "RECOVERY_SLA_TARGET_HOURS": "FLOAT",
     "RECOVERY_EVIDENCE": "VARCHAR",
+    "OWNER_EMAIL": "VARCHAR",
+    "ONCALL_PRIMARY": "VARCHAR",
+    "ONCALL_SECONDARY": "VARCHAR",
+    "APPROVAL_GROUP": "VARCHAR",
+    "ESCALATION_TARGET": "VARCHAR",
+    "OWNER_SOURCE": "VARCHAR",
+    "OWNER_EVIDENCE": "VARCHAR",
+    "RECOVERY_AUDIT_STATE": "VARCHAR",
 }
 
 ACTION_QUEUE_SEVERITY_SLA_DAYS = {
@@ -67,6 +75,10 @@ def build_action_queue_ddl(
     schema = safe_identifier(schema)
     table = safe_identifier(table)
     fqn = f"{db}.{schema}.{table}"
+    optional_alters = "\n".join(
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS {safe_identifier(column)} {column_type};"
+        for column, column_type in ACTION_QUEUE_OPTIONAL_COLUMN_TYPES.items()
+    )
     return f"""-- OVERWATCH persistent recommendation/action queue
 CREATE DATABASE IF NOT EXISTS {db};
 CREATE SCHEMA IF NOT EXISTS {db}.{schema};
@@ -109,6 +121,14 @@ CREATE TABLE IF NOT EXISTS {fqn} (
     RECOVERY_SLA_HOURS         FLOAT,
     RECOVERY_SLA_TARGET_HOURS  FLOAT,
     RECOVERY_EVIDENCE          VARCHAR(8000),
+    OWNER_EMAIL                VARCHAR(500),
+    ONCALL_PRIMARY             VARCHAR(200),
+    ONCALL_SECONDARY           VARCHAR(200),
+    APPROVAL_GROUP             VARCHAR(200),
+    ESCALATION_TARGET          VARCHAR(200),
+    OWNER_SOURCE               VARCHAR(200),
+    OWNER_EVIDENCE             VARCHAR(2000),
+    RECOVERY_AUDIT_STATE       VARCHAR(100),
     ACKNOWLEDGED_BY           VARCHAR(200),
     ACKNOWLEDGED_AT           TIMESTAMP_NTZ,
     FIXED_BY                  VARCHAR(200),
@@ -116,7 +136,9 @@ CREATE TABLE IF NOT EXISTS {fqn} (
     IGNORED_REASON            VARCHAR(2000),
     LAST_SEEN_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     SEEN_COUNT                NUMBER DEFAULT 1
-);"""
+);
+
+{optional_alters}"""
 
 
 def build_cost_savings_verification_sql(
@@ -513,7 +535,10 @@ def _row_evidence_gap(row: pd.Series) -> str:
         return "Ignored with reason" if _text_present(row.get("IGNORED_REASON")) else "Ignored without reason"
 
     gaps = []
-    if _generic_owner(row.get("OWNER")):
+    has_owner_route = _text_present(row.get("OWNER_SOURCE")) and (
+        _text_present(row.get("ONCALL_PRIMARY")) or _text_present(row.get("APPROVAL_GROUP"))
+    )
+    if _generic_owner(row.get("OWNER")) and not has_owner_route:
         gaps.append("needs named owner")
     if not _text_present(row.get("TICKET_ID")):
         gaps.append("missing ticket/change ID")
@@ -818,6 +843,14 @@ def upsert_actions(session, actions: list[dict]) -> int:
             _action_value(action, "Recovery Evidence", "RECOVERY_EVIDENCE", "Verify After Fix", "VERIFY_AFTER_FIX"),
             max_len=8000,
         )
+        owner_email = sql_literal(_action_value(action, "Owner Email", "OWNER_EMAIL"), max_len=500)
+        oncall_primary = sql_literal(_action_value(action, "Oncall Primary", "On-Call Primary", "ONCALL_PRIMARY"), max_len=200)
+        oncall_secondary = sql_literal(_action_value(action, "Oncall Secondary", "On-Call Secondary", "ONCALL_SECONDARY"), max_len=200)
+        approval_group = sql_literal(_action_value(action, "Approval Group", "APPROVAL_GROUP"), max_len=200)
+        escalation_target = sql_literal(_action_value(action, "Escalation Target", "ESCALATION_TARGET"), max_len=200)
+        owner_source = sql_literal(_action_value(action, "Owner Source", "OWNER_SOURCE"), max_len=200)
+        owner_evidence = sql_literal(_action_value(action, "Owner Evidence", "OWNER_EVIDENCE"), max_len=2000)
+        recovery_audit_state = sql_literal(_action_value(action, "Recovery Audit State", "RECOVERY_AUDIT_STATE"), max_len=100)
         baseline_value = _float_or_none(_action_value(action, "Baseline Value", "BASELINE_VALUE", default=None))
         current_value = _float_or_none(_action_value(action, "Current Value", "CURRENT_VALUE", default=None))
         measured_delta = _float_or_none(_action_value(action, "Measured Delta", "MEASURED_DELTA", default=None))
@@ -906,6 +939,38 @@ def upsert_actions(session, actions: list[dict]) -> int:
             optional_update += f", RECOVERY_EVIDENCE = COALESCE(NULLIF({recovery_evidence}, ''), tgt.RECOVERY_EVIDENCE)"
             optional_insert_cols += ", RECOVERY_EVIDENCE"
             optional_insert_vals += f", {recovery_evidence}"
+        if optional_has.get("OWNER_EMAIL"):
+            optional_update += f", OWNER_EMAIL = COALESCE(NULLIF({owner_email}, ''), tgt.OWNER_EMAIL)"
+            optional_insert_cols += ", OWNER_EMAIL"
+            optional_insert_vals += f", {owner_email}"
+        if optional_has.get("ONCALL_PRIMARY"):
+            optional_update += f", ONCALL_PRIMARY = COALESCE(NULLIF({oncall_primary}, ''), tgt.ONCALL_PRIMARY)"
+            optional_insert_cols += ", ONCALL_PRIMARY"
+            optional_insert_vals += f", {oncall_primary}"
+        if optional_has.get("ONCALL_SECONDARY"):
+            optional_update += f", ONCALL_SECONDARY = COALESCE(NULLIF({oncall_secondary}, ''), tgt.ONCALL_SECONDARY)"
+            optional_insert_cols += ", ONCALL_SECONDARY"
+            optional_insert_vals += f", {oncall_secondary}"
+        if optional_has.get("APPROVAL_GROUP"):
+            optional_update += f", APPROVAL_GROUP = COALESCE(NULLIF({approval_group}, ''), tgt.APPROVAL_GROUP)"
+            optional_insert_cols += ", APPROVAL_GROUP"
+            optional_insert_vals += f", {approval_group}"
+        if optional_has.get("ESCALATION_TARGET"):
+            optional_update += f", ESCALATION_TARGET = COALESCE(NULLIF({escalation_target}, ''), tgt.ESCALATION_TARGET)"
+            optional_insert_cols += ", ESCALATION_TARGET"
+            optional_insert_vals += f", {escalation_target}"
+        if optional_has.get("OWNER_SOURCE"):
+            optional_update += f", OWNER_SOURCE = COALESCE(NULLIF({owner_source}, ''), tgt.OWNER_SOURCE)"
+            optional_insert_cols += ", OWNER_SOURCE"
+            optional_insert_vals += f", {owner_source}"
+        if optional_has.get("OWNER_EVIDENCE"):
+            optional_update += f", OWNER_EVIDENCE = COALESCE(NULLIF({owner_evidence}, ''), tgt.OWNER_EVIDENCE)"
+            optional_insert_cols += ", OWNER_EVIDENCE"
+            optional_insert_vals += f", {owner_evidence}"
+        if optional_has.get("RECOVERY_AUDIT_STATE"):
+            optional_update += f", RECOVERY_AUDIT_STATE = COALESCE(NULLIF({recovery_audit_state}, ''), tgt.RECOVERY_AUDIT_STATE)"
+            optional_insert_cols += ", RECOVERY_AUDIT_STATE"
+            optional_insert_vals += f", {recovery_audit_state}"
         session.sql(f"""
             MERGE INTO {ACTION_QUEUE_FQN} tgt
             USING (

@@ -23,6 +23,12 @@ from .company_filter import (
     environment_value_allowed,
     get_active_environment,
 )
+from .owner_directory import (
+    OWNER_DIRECTORY_VIEW,
+    build_owner_directory_ddl,
+    default_owner_directory,
+    resolve_owner_context,
+)
 from .query import (
     format_snowflake_error,
     run_query,
@@ -1409,6 +1415,7 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
 
     actions = []
     alerts = normalize_alert_frame(df_alerts, company=company)
+    owner_directory = default_owner_directory()
     for _, row in alerts.head(500).iterrows():
         alert_id = _row_value(row, "ALERT_ID", "ALERT_TS")
         category = _row_value(row, "CATEGORY", "ALERT_TYPE", default="Alert")
@@ -1432,7 +1439,18 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
         else:
             verification_query = proof_query
         owner = _row_value(row, "OWNER", default="DBA")
-        escalation_target = _row_value(row, "ESCALATION_TARGET", default="")
+        owner_context = resolve_owner_context(
+            row,
+            directory=owner_directory,
+            entity=entity,
+            entity_type=entity_type,
+            owner=owner,
+            category=action_category,
+            alert_type=alert_type,
+        )
+        owner = owner_context.get("OWNER") or owner
+        escalation_target = _row_value(row, "ESCALATION_TARGET", default="") or owner_context.get("ESCALATION_TARGET", "")
+        approval_group = owner_context.get("APPROVAL_GROUP") or escalation_target or owner
         sla_target_hours = _alert_numeric_value(row, "SLA_TARGET_HOURS")
         if sla_target_hours is None:
             sla_target_hours = float(ALERT_SLA_HOURS.get(normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium")), 24))
@@ -1478,10 +1496,17 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             "Verification Query": verification_query,
             "Company": _row_value(row, "COMPANY", default=company),
             "Environment": _row_value(row, "ENVIRONMENT", default="No Database Context"),
+            "Owner Email": owner_context.get("OWNER_EMAIL", ""),
+            "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
+            "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
+            "Approval Group": approval_group,
+            "Escalation Target": escalation_target,
+            "Owner Source": owner_context.get("OWNER_SOURCE", ""),
+            "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
         }
         if governed_recovery:
             action.update({
-                "Approver": escalation_target or owner,
+                "Approver": approval_group,
                 "Owner Approval Status": "Requested",
                 "Owner Approval Note": (
                     "Alert routed from Alert Center; retry, recovery, or claimed savings closure requires root-cause "
@@ -1490,6 +1515,7 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
                 "Recovery SLA State": _alert_recovery_sla_state(row),
                 "Recovery SLA Target Hours": float(sla_target_hours),
                 "Recovery Evidence": recovery_evidence,
+                "Recovery Audit State": "Audit Required",
             })
             if alert_age_hours is not None:
                 action["Recovery SLA Hours"] = float(alert_age_hours)
@@ -1870,6 +1896,129 @@ def log_alert_digest_delivery(
     return len(clean_ids)
 
 
+def build_alert_email_delivery_procedure_sql(
+    *,
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = ALERT_TABLE,
+    notification_integration: str = "OVERWATCH_EMAIL_INT",
+    email_target: str = DEFAULT_ALERT_RECIPIENT,
+) -> str:
+    """Return optional Snowflake email delivery procedure with replay audit."""
+    db_safe = safe_identifier(db)
+    schema_safe = safe_identifier(schema)
+    table_safe = safe_identifier(table)
+    proc_fqn = f"{db_safe}.{schema_safe}.SP_OVERWATCH_SEND_ALERT_DIGEST"
+    integration = str(notification_integration or "OVERWATCH_EMAIL_INT").replace("'", "''")
+    default_recipient = sql_literal(email_target, 500)
+    return f"""-- Optional governed email sender for Alert Center.
+-- Prerequisite: create and approve notification integration {integration} outside OVERWATCH.
+-- Keep P_DRY_RUN => TRUE until the integration and recipient allow-list are verified.
+CREATE OR REPLACE PROCEDURE {proc_fqn}(
+    P_COMPANY VARCHAR DEFAULT 'ALFA',
+    P_ENVIRONMENT VARCHAR DEFAULT 'ALL',
+    P_RECIPIENT VARCHAR DEFAULT {default_recipient},
+    P_DRY_RUN BOOLEAN DEFAULT TRUE
+)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+$$
+DECLARE
+    alert_count NUMBER DEFAULT 0;
+    alert_ids VARIANT DEFAULT PARSE_JSON('[]');
+    subject VARCHAR DEFAULT '';
+    body VARCHAR DEFAULT '';
+    delivery_status VARCHAR DEFAULT 'EMAIL_DRY_RUN';
+BEGIN
+    CREATE OR REPLACE TEMPORARY TABLE TMP_OVERWATCH_ALERT_DIGEST AS
+    SELECT
+        ALERT_ID,
+        COMPANY,
+        ENVIRONMENT,
+        SEVERITY,
+        CATEGORY,
+        ALERT_TYPE,
+        ENTITY_NAME,
+        OWNER,
+        COALESCE(EMAIL_SUBJECT, 'OVERWATCH ' || COALESCE(SEVERITY, 'Medium') || ' alert digest') AS EMAIL_SUBJECT,
+        COALESCE(
+            EMAIL_BODY,
+            COALESCE(SEVERITY, 'Medium') || ' | ' || COALESCE(CATEGORY, 'Alert') || ' | ' ||
+            COALESCE(ALERT_TYPE, CATEGORY, 'Alert') || ' | ' || COALESCE(ENTITY_NAME, ENTITY, 'Snowflake account') ||
+            '\\nAction: ' || COALESCE(SUGGESTED_ACTION, 'Review in Alert Center.')
+        ) AS EMAIL_BODY
+    FROM {db_safe}.{schema_safe}.{table_safe}
+    WHERE UPPER(REPLACE(COALESCE(STATUS, 'New'), ' ', '_')) IN ('NEW', 'OPEN', 'ACTIVE', 'EMAIL_READY', 'EMAIL_QUEUED', 'PENDING', 'ACKNOWLEDGED', 'IN_PROGRESS')
+      AND (P_COMPANY = 'ALL' OR COMPANY = P_COMPANY)
+      AND (
+          P_ENVIRONMENT = 'ALL'
+          OR COALESCE(ENVIRONMENT, 'No Database Context') = P_ENVIRONMENT
+          OR (P_ENVIRONMENT = 'DEV_ALL' AND COALESCE(ENVIRONMENT, '') IN ('DEV_ALL', 'ALFA_EDW_DEV', 'ALFA_EDW_SAN', 'ALFA_EDW_PHX', 'ALFA_EDW_SEA', 'ALFA_EDW_SIT', 'OTHER ALFA NON-PROD'))
+      )
+    ORDER BY
+        CASE UPPER(COALESCE(SEVERITY, 'Medium'))
+            WHEN 'CRITICAL' THEN 0
+            WHEN 'HIGH' THEN 1
+            WHEN 'MEDIUM' THEN 2
+            WHEN 'LOW' THEN 3
+            ELSE 4
+        END,
+        ALERT_TS DESC
+    LIMIT 25;
+
+    SELECT
+        COUNT(*),
+        TO_VARIANT(ARRAY_AGG(ALERT_ID)),
+        'OVERWATCH alert digest - ' || P_COMPANY || ' / ' || P_ENVIRONMENT || ' - ' || COUNT(*) || ' open issue(s)',
+        LISTAGG(
+            '[' || COALESCE(SEVERITY, 'Medium') || '] ' || COALESCE(ALERT_TYPE, CATEGORY, 'Alert') ||
+            ' | ' || COALESCE(ENTITY_NAME, 'Snowflake account') ||
+            ' | Owner: ' || COALESCE(OWNER, 'DBA') ||
+            '\\n' || EMAIL_BODY,
+            '\\n\\n---\\n\\n'
+        ) WITHIN GROUP (ORDER BY ALERT_ID)
+    INTO :alert_count, :alert_ids, :subject, :body
+    FROM TMP_OVERWATCH_ALERT_DIGEST;
+
+    IF (alert_count = 0) THEN
+        RETURN 'No open OVERWATCH alerts matched the requested scope.';
+    END IF;
+
+    IF (P_DRY_RUN) THEN
+        delivery_status := 'EMAIL_DRY_RUN';
+    ELSE
+        CALL SYSTEM$SEND_EMAIL('{integration}', :P_RECIPIENT, :subject, :body);
+        delivery_status := 'EMAIL_SENT';
+    END IF;
+
+    INSERT INTO {alert_delivery_log_fqn(db=db, schema=schema, quoted=True)}
+        (COMPANY, ENVIRONMENT, ALERT_IDS, ALERT_COUNT, DELIVERY_METHOD, DELIVERY_TARGET,
+         EMAIL_SUBJECT, EMAIL_BODY, DELIVERY_STATUS, DELIVERY_BY, DELIVERY_NOTES)
+    VALUES
+        (P_COMPANY, P_ENVIRONMENT, alert_ids, alert_count, 'EMAIL', P_RECIPIENT,
+         subject, body, delivery_status, CURRENT_USER(),
+         IFF(P_DRY_RUN, 'Dry-run replay package prepared; SYSTEM$SEND_EMAIL was not called.',
+                       'Delivered through approved Snowflake email notification integration {integration}.'));
+
+    UPDATE {db_safe}.{schema_safe}.{table_safe}
+    SET
+        DELIVERY_STATUS = delivery_status,
+        DELIVERY_TARGET = P_RECIPIENT,
+        EMAIL_TARGET = COALESCE(NULLIF(EMAIL_TARGET, ''), P_RECIPIENT),
+        LAST_DELIVERY_AT = CURRENT_TIMESTAMP(),
+        LAST_DELIVERY_BY = CURRENT_USER(),
+        DELIVERY_LOG_COUNT = COALESCE(DELIVERY_LOG_COUNT, 0) + 1,
+        LAST_STATUS_BY = CURRENT_USER(),
+        LAST_STATUS_AT = CURRENT_TIMESTAMP()
+    WHERE ARRAY_CONTAINS(ALERT_ID::VARIANT, alert_ids);
+
+    RETURN 'OVERWATCH alert digest ' || delivery_status || ': ' || alert_count || ' alert(s) for ' || P_RECIPIENT;
+END;
+$$;"""
+
+
 def load_alert_delivery_log(
     *,
     days: int = 14,
@@ -1934,6 +2083,14 @@ def build_alert_triage_view_sql(
 WITH base AS (
     SELECT
         a.*,
+        COALESCE(od.OWNER_NAME, r.OWNER, a.OWNER, 'DBA') AS ROUTED_OWNER,
+        od.OWNER_EMAIL,
+        od.ONCALL_PRIMARY,
+        od.ONCALL_SECONDARY,
+        COALESCE(od.APPROVAL_GROUP, r.OWNER, a.OWNER, 'DBA Lead') AS APPROVAL_GROUP,
+        COALESCE(od.ESCALATION_TARGET, od.APPROVAL_GROUP, r.OWNER, a.OWNER, 'DBA Lead') AS OWNER_ESCALATION_TARGET,
+        CASE WHEN od.OWNER_KEY IS NOT NULL THEN 'OWNER_DIRECTORY:' || od.OWNER_KEY ELSE 'ALERT_RULE' END AS OWNER_SOURCE,
+        CASE WHEN od.OWNER_KEY IS NOT NULL THEN 'Matched ' || od.ENTITY_TYPE || ' pattern ' || od.ENTITY_PATTERN ELSE 'Matched alert rule owner' END AS OWNER_EVIDENCE,
         COALESCE(
             r.SLA_HOURS,
             CASE UPPER(COALESCE(a.SEVERITY, 'Medium'))
@@ -1950,6 +2107,25 @@ WITH base AS (
     LEFT JOIN {db}.{schema}.OVERWATCH_ALERT_RULES r
       ON UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, '')) = UPPER(COALESCE(r.ALERT_TYPE, r.CATEGORY, ''))
      AND COALESCE(r.IS_ACTIVE, TRUE)
+    LEFT JOIN {db}.{schema}.{OWNER_DIRECTORY_VIEW} od
+      ON (
+          od.ENTITY_TYPE IN ('GLOBAL', 'ALERT')
+          OR od.ENTITY_TYPE = UPPER(COALESCE(a.CATEGORY, r.CATEGORY, ''))
+          OR (od.ENTITY_TYPE = 'COST_CONTROL' AND UPPER(COALESCE(a.CATEGORY, a.ALERT_TYPE, '')) LIKE '%COST%')
+          OR (od.ENTITY_TYPE = 'TASK' AND UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, a.ENTITY_NAME, '')) LIKE '%TASK%')
+          OR (od.ENTITY_TYPE = 'PROCEDURE' AND UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, a.ENTITY_NAME, '')) LIKE '%PROCEDURE%')
+          OR (od.ENTITY_TYPE = 'WAREHOUSE' AND UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, a.ENTITY_NAME, '')) LIKE '%WAREHOUSE%')
+          OR (od.ENTITY_TYPE = 'SECURITY' AND UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, '')) REGEXP 'GRANT|REVOKE|ROLE|SECURITY')
+      )
+     AND (
+          UPPER(COALESCE(a.ENTITY_NAME, a.ENTITY, '')) LIKE REPLACE(UPPER(od.ENTITY_PATTERN), '*', '%')
+          OR UPPER(COALESCE(a.ALERT_TYPE, a.CATEGORY, '')) LIKE REPLACE(UPPER(od.ENTITY_PATTERN), '*', '%')
+          OR od.ENTITY_PATTERN IN ('*', '%')
+     )
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY COALESCE(TO_VARCHAR(a.ALERT_ID), TO_VARCHAR(a.ALERT_TS), COALESCE(a.ENTITY_NAME, a.ENTITY, 'UNKNOWN'))
+        ORDER BY COALESCE(od.MATCH_PRIORITY, 0) DESC, od.OWNER_KEY
+    ) = 1
 ),
 sla AS (
     SELECT
@@ -1965,8 +2141,8 @@ sla AS (
 SELECT
     sla.*,
     CASE
-        WHEN SLA_STATE = 'Overdue' AND UPPER(COALESCE(SEVERITY, 'Medium')) IN ('CRITICAL', 'HIGH') THEN 'DBA Lead'
-        ELSE COALESCE(OWNER, 'DBA')
+        WHEN SLA_STATE = 'Overdue' AND UPPER(COALESCE(SEVERITY, 'Medium')) IN ('CRITICAL', 'HIGH') THEN COALESCE(OWNER_ESCALATION_TARGET, ESCALATED_TO, 'DBA Lead')
+        ELSE COALESCE(OWNER_ESCALATION_TARGET, ROUTED_OWNER, OWNER, 'DBA')
     END AS ESCALATION_TARGET,
     (
         CASE UPPER(COALESCE(SEVERITY, 'Medium'))
@@ -2011,8 +2187,8 @@ def build_alert_task_sql(
 ) -> str:
     """Generate DDL + DML for the OVERWATCH anomaly alert Snowflake task.
 
-    This queues email-ready rows. Actual SYSTEM$SEND_EMAIL delivery can be added
-    after a Snowflake notification integration is approved.
+    This queues email-ready rows and installs an optional dry-run guarded
+    SYSTEM$SEND_EMAIL procedure for approved Snowflake notification integrations.
     """
     db = safe_identifier(db)
     schema = safe_identifier(schema)
@@ -2028,7 +2204,7 @@ def build_alert_task_sql(
     return f"""-- OVERWATCH Automated Alert Framework
 -- Email-first delivery target: {email_target}
 -- Teams/webhook delivery is intentionally not used until a webhook exists.
--- SYSTEM$SEND_EMAIL can be attached later with an approved notification integration.
+-- SP_OVERWATCH_SEND_ALERT_DIGEST stays dry-run safe until an approved notification integration is available.
 
 CREATE TABLE IF NOT EXISTS {db}.{schema}.{table} (
     ALERT_ID         NUMBER AUTOINCREMENT PRIMARY KEY,
@@ -2103,6 +2279,10 @@ ALTER TABLE {db}.{schema}.{table} ADD COLUMN IF NOT EXISTS ROUTED_TO_ACTION_QUEU
 ALTER TABLE {db}.{schema}.{table} ADD COLUMN IF NOT EXISTS ROUTED_ACTION_COUNT NUMBER DEFAULT 0;
 
 {build_alert_delivery_log_ddl(db=db, schema=schema)}
+
+{build_alert_email_delivery_procedure_sql(db=db, schema=schema, table=table, email_target=email_target)}
+
+{build_owner_directory_ddl(db=db, schema=schema)}
 
 {build_alert_rule_audit_ddl(db=db, schema=schema)}
 

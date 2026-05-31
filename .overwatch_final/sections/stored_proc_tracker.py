@@ -17,6 +17,7 @@ from utils import (
     render_query_drilldown,
     render_priority_dataframe,
     sql_literal,
+    resolve_owner_context,
     get_global_filter_clause,
     get_active_company,
     get_active_environment,
@@ -508,6 +509,17 @@ def _build_procedure_reliability_action(row: pd.Series, company: str, source: st
         if current_value is not None and baseline_value is not None
         else None
     )
+    owner_context = resolve_owner_context(
+        row,
+        entity=proc,
+        entity_type="Procedure",
+        owner=_procedure_owner(row),
+        category="Task & Procedure Reliability",
+        alert_type=signal,
+    )
+    recovery_state = "Procedure Cost Review Required" if "COST" in signal.upper() else "Procedure Recovery Review Required"
+    recovery_target_hours = 8.0 if severity.upper() in {"CRITICAL", "HIGH"} else 24.0
+    approval_group = owner_context.get("APPROVAL_GROUP") or owner_context.get("ESCALATION_TARGET") or _procedure_owner(row)
     return {
         "Action ID": make_action_id("Procedure Reliability", proc, finding),
         "Source": source,
@@ -515,7 +527,15 @@ def _build_procedure_reliability_action(row: pd.Series, company: str, source: st
         "Category": "Task & Procedure Reliability",
         "Entity Type": "Stored Procedure",
         "Entity": proc,
-        "Owner": _procedure_owner(row),
+        "Owner": owner_context.get("OWNER") or _procedure_owner(row),
+        "Owner Email": owner_context.get("OWNER_EMAIL", ""),
+        "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
+        "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
+        "Approval Group": approval_group,
+        "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
+        "Owner Source": owner_context.get("OWNER_SOURCE", ""),
+        "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
+        "Approver": approval_group,
         "Finding": finding,
         "Action": action,
         "Estimated Monthly Savings": 0.0,
@@ -528,6 +548,18 @@ def _build_procedure_reliability_action(row: pd.Series, company: str, source: st
         "Baseline Value": baseline_value,
         "Current Value": current_value,
         "Measured Delta": measured_delta,
+        "Owner Approval Status": "Requested",
+        "Owner Approval Note": (
+            "Procedure reliability action requires owner approval, release/change context, and post-fix QUERY_HISTORY "
+            "evidence before closure."
+        ),
+        "Recovery SLA State": recovery_state,
+        "Recovery SLA Target Hours": recovery_target_hours,
+        "Recovery Evidence": (
+            "Required closure evidence: owner approval, release/change ticket, successful next CALL or task run, "
+            "and runtime/cost values back within baseline tolerance."
+        ),
+        "Recovery Audit State": "Audit Required",
     }
 
 

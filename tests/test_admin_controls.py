@@ -29,6 +29,8 @@ from utils.action_queue import (  # noqa: E402
     update_action_status_with_evidence,
     verification_query_safety_issues,
 )
+from utils.owner_directory import build_owner_directory_ddl  # noqa: E402
+from utils.workload_audit import build_workload_recovery_audit_ddl  # noqa: E402
 
 
 class AdminControlTests(unittest.TestCase):
@@ -226,12 +228,24 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("OWNER_APPROVAL_STATUS", ddl)
         self.assertIn("RECOVERY_SLA_STATE", ddl)
         self.assertIn("RECOVERY_EVIDENCE", ddl)
+        self.assertIn("OWNER_EMAIL", ddl)
+        self.assertIn("ONCALL_PRIMARY", ddl)
+        self.assertIn("APPROVAL_GROUP", ddl)
+        self.assertIn("OWNER_SOURCE", ddl)
+        self.assertIn("RECOVERY_AUDIT_STATE", ddl)
         self.assertIn("COMPANY", ddl)
         self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS VERIFICATION_STATUS", setup_sql)
         self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS VERIFIED_AT", setup_sql)
         self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS OWNER_APPROVAL_STATUS", setup_sql)
         self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS RECOVERY_EVIDENCE", setup_sql)
+        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS OWNER_EMAIL", setup_sql)
+        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS ONCALL_PRIMARY", setup_sql)
+        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS APPROVAL_GROUP", setup_sql)
+        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS OWNER_SOURCE", setup_sql)
+        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS RECOVERY_AUDIT_STATE", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_DBA_CHECKLIST_HISTORY", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_WORKLOAD_RECOVERY_AUDIT", setup_sql)
+        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_WORKLOAD_RECOVERY_AUDIT_LATEST_V", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", setup_sql)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_VERIFY_COST_SAVINGS", setup_sql)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", setup_sql)
@@ -256,6 +270,10 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("ALLOCATED_CREDITS", setup_sql)
         self.assertIn("OWNER_EVIDENCE", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_TAG_NAMES", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_DIRECTORY", setup_sql)
+        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", setup_sql)
+        self.assertIn("ONCALL_PRIMARY", setup_sql)
+        self.assertIn("APPROVAL_GROUP", setup_sql)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS DIM_COST_OWNER_TAG", setup_sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES", setup_sql)
         self.assertIn("WAREHOUSE_TAG:", setup_sql)
@@ -275,6 +293,9 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("DELIVERY_LOG_COUNT", setup_sql)
         self.assertIn("ESCALATION_ACK_BY", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ALERT_DELIVERY_LOG", setup_sql)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_SEND_ALERT_DIGEST", setup_sql)
+        self.assertIn("SYSTEM$SEND_EMAIL", setup_sql)
+        self.assertIn("EMAIL_DRY_RUN", setup_sql)
         self.assertIn("ROUTED_TO_ACTION_QUEUE_AT", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ALERT_RULES", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ALERT_RULE_AUDIT", setup_sql)
@@ -311,6 +332,14 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", savings_health_sql)
         self.assertIn("EVIDENCE_REQUIRED_LAST_RUN", savings_health_sql)
         self.assertIn("NEXT_ACTION", savings_health_sql)
+
+        owner_sql = build_owner_directory_ddl().upper()
+        self.assertIn("OVERWATCH_OWNER_DIRECTORY", owner_sql)
+        self.assertIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", owner_sql)
+
+        recovery_audit_sql = build_workload_recovery_audit_ddl().upper()
+        self.assertIn("OVERWATCH_WORKLOAD_RECOVERY_AUDIT", recovery_audit_sql)
+        self.assertIn("VERIFICATION_RESULT", recovery_audit_sql)
 
         dev_values = action_queue_environment_values("DEV_ALL")
         self.assertIn("DEV_ALL", dev_values)

@@ -1,0 +1,475 @@
+# utils/owner_directory.py - shared owner/on-call routing for DBA control workflows
+from __future__ import annotations
+
+import re
+from typing import Any
+
+import pandas as pd
+
+from config import ALERT_DB, ALERT_SCHEMA, DEFAULT_ALERT_EMAIL
+from .query import run_query, safe_identifier, sql_literal
+
+
+OWNER_DIRECTORY_TABLE = "OVERWATCH_OWNER_DIRECTORY"
+OWNER_DIRECTORY_VIEW = "OVERWATCH_OWNER_DIRECTORY_ACTIVE_V"
+
+OWNER_CONTEXT_COLUMNS = [
+    "OWNER",
+    "OWNER_EMAIL",
+    "ONCALL_PRIMARY",
+    "ONCALL_SECONDARY",
+    "APPROVAL_GROUP",
+    "ESCALATION_TARGET",
+    "OWNER_SOURCE",
+    "OWNER_EVIDENCE",
+]
+
+GENERIC_OWNERS = {
+    "",
+    "DBA",
+    "DBA / FINOPS",
+    "DBA / PLATFORM",
+    "DBA / SECURITY",
+    "DBA / WORKLOAD OWNER",
+    "DBA / PIPELINE OWNER",
+    "DBA / PROCEDURE OWNER",
+    "DBA / DATA ENGINEERING",
+    "DATA ENGINEERING",
+    "UNKNOWN",
+    "UNASSIGNED",
+    "N/A",
+    "NONE",
+    "NULL",
+}
+
+DEFAULT_OWNER_DIRECTORY = [
+    {
+        "OWNER_KEY": "COST_CONTROL_DEFAULT",
+        "ENTITY_TYPE": "COST_CONTROL",
+        "ENTITY_PATTERN": "*",
+        "OWNER_NAME": "DBA / FinOps",
+        "OWNER_EMAIL": DEFAULT_ALERT_EMAIL,
+        "ONCALL_PRIMARY": "DBA On-Call",
+        "ONCALL_SECONDARY": "FinOps Backup",
+        "APPROVAL_GROUP": "FinOps Lead / Cost Owner",
+        "ESCALATION_TARGET": "FinOps Lead",
+        "DEFAULT_ROUTE": "Cost & Contract",
+        "SERVICE_TIER": "Tier 1",
+        "MATCH_PRIORITY": 80,
+        "NOTES": "Default route for bill movement, chargeback, savings verification, and cost-control actions.",
+    },
+    {
+        "OWNER_KEY": "COST_VERIFIER_TASK",
+        "ENTITY_TYPE": "TASK",
+        "ENTITY_PATTERN": "*OVERWATCH_COST_SAVINGS_VERIFY*",
+        "OWNER_NAME": "DBA / FinOps",
+        "OWNER_EMAIL": DEFAULT_ALERT_EMAIL,
+        "ONCALL_PRIMARY": "DBA On-Call",
+        "ONCALL_SECONDARY": "FinOps Backup",
+        "APPROVAL_GROUP": "FinOps Lead",
+        "ESCALATION_TARGET": "FinOps Lead",
+        "DEFAULT_ROUTE": "Cost & Contract",
+        "SERVICE_TIER": "Tier 0",
+        "MATCH_PRIORITY": 200,
+        "NOTES": "Owner route for the scheduled savings-verification task.",
+    },
+    {
+        "OWNER_KEY": "TASK_DEFAULT",
+        "ENTITY_TYPE": "TASK",
+        "ENTITY_PATTERN": "*",
+        "OWNER_NAME": "DBA / Pipeline Owner",
+        "OWNER_EMAIL": DEFAULT_ALERT_EMAIL,
+        "ONCALL_PRIMARY": "DBA On-Call",
+        "ONCALL_SECONDARY": "Pipeline Owner Backup",
+        "APPROVAL_GROUP": "Pipeline Owner",
+        "ESCALATION_TARGET": "DBA Lead",
+        "DEFAULT_ROUTE": "Workload Operations",
+        "SERVICE_TIER": "Tier 0",
+        "MATCH_PRIORITY": 70,
+        "NOTES": "Default route for failed or late task graph recovery.",
+    },
+    {
+        "OWNER_KEY": "PROCEDURE_DEFAULT",
+        "ENTITY_TYPE": "PROCEDURE",
+        "ENTITY_PATTERN": "*",
+        "OWNER_NAME": "DBA / Procedure Owner",
+        "OWNER_EMAIL": DEFAULT_ALERT_EMAIL,
+        "ONCALL_PRIMARY": "DBA On-Call",
+        "ONCALL_SECONDARY": "Procedure Owner Backup",
+        "APPROVAL_GROUP": "Procedure Owner",
+        "ESCALATION_TARGET": "DBA Lead",
+        "DEFAULT_ROUTE": "Workload Operations",
+        "SERVICE_TIER": "Tier 1",
+        "MATCH_PRIORITY": 70,
+        "NOTES": "Default route for stored procedure runtime, orchestration, and cost regressions.",
+    },
+    {
+        "OWNER_KEY": "WAREHOUSE_DEFAULT",
+        "ENTITY_TYPE": "WAREHOUSE",
+        "ENTITY_PATTERN": "*",
+        "OWNER_NAME": "DBA / Platform",
+        "OWNER_EMAIL": DEFAULT_ALERT_EMAIL,
+        "ONCALL_PRIMARY": "DBA On-Call",
+        "ONCALL_SECONDARY": "Platform DBA Backup",
+        "APPROVAL_GROUP": "Platform DBA Lead",
+        "ESCALATION_TARGET": "DBA Lead",
+        "DEFAULT_ROUTE": "Warehouse Health",
+        "SERVICE_TIER": "Tier 1",
+        "MATCH_PRIORITY": 60,
+        "NOTES": "Default route for warehouse pressure, capacity, and setting-change controls.",
+    },
+    {
+        "OWNER_KEY": "SECURITY_DEFAULT",
+        "ENTITY_TYPE": "SECURITY",
+        "ENTITY_PATTERN": "*",
+        "OWNER_NAME": "DBA / Security",
+        "OWNER_EMAIL": DEFAULT_ALERT_EMAIL,
+        "ONCALL_PRIMARY": "DBA On-Call",
+        "ONCALL_SECONDARY": "Security Backup",
+        "APPROVAL_GROUP": "Security Approver",
+        "ESCALATION_TARGET": "Security Lead",
+        "DEFAULT_ROUTE": "Security Posture",
+        "SERVICE_TIER": "Tier 0",
+        "MATCH_PRIORITY": 60,
+        "NOTES": "Default route for grant, revoke, role, and rights controls.",
+    },
+    {
+        "OWNER_KEY": "ALERT_DEFAULT",
+        "ENTITY_TYPE": "ALERT",
+        "ENTITY_PATTERN": "*",
+        "OWNER_NAME": "DBA",
+        "OWNER_EMAIL": DEFAULT_ALERT_EMAIL,
+        "ONCALL_PRIMARY": "DBA On-Call",
+        "ONCALL_SECONDARY": "DBA Backup",
+        "APPROVAL_GROUP": "DBA Lead",
+        "ESCALATION_TARGET": "DBA Lead",
+        "DEFAULT_ROUTE": "Alert Center",
+        "SERVICE_TIER": "Tier 1",
+        "MATCH_PRIORITY": 10,
+        "NOTES": "Fallback route for alerts without a more specific owner.",
+    },
+]
+
+
+def owner_directory_fqn(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = OWNER_DIRECTORY_TABLE,
+    *,
+    quoted: bool = False,
+) -> str:
+    if quoted:
+        return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
+    return f"{db}.{schema}.{table}"
+
+
+def owner_directory_view_fqn(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    view: str = OWNER_DIRECTORY_VIEW,
+    *,
+    quoted: bool = False,
+) -> str:
+    if quoted:
+        return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(view)}"
+    return f"{db}.{schema}.{view}"
+
+
+def default_owner_directory() -> pd.DataFrame:
+    """Return the built-in owner/on-call defaults as a dataframe."""
+    return pd.DataFrame(DEFAULT_OWNER_DIRECTORY)
+
+
+def _seed_values_sql() -> str:
+    rows = []
+    for row in DEFAULT_OWNER_DIRECTORY:
+        rows.append(
+            "("
+            + ", ".join([
+                sql_literal(row.get("OWNER_KEY"), 200),
+                sql_literal(row.get("ENTITY_TYPE"), 100),
+                sql_literal(row.get("ENTITY_PATTERN"), 500),
+                sql_literal(row.get("OWNER_NAME"), 200),
+                sql_literal(row.get("OWNER_EMAIL"), 500),
+                sql_literal(row.get("ONCALL_PRIMARY"), 200),
+                sql_literal(row.get("ONCALL_SECONDARY"), 200),
+                sql_literal(row.get("APPROVAL_GROUP"), 200),
+                sql_literal(row.get("ESCALATION_TARGET"), 200),
+                sql_literal(row.get("DEFAULT_ROUTE"), 200),
+                sql_literal(row.get("SERVICE_TIER"), 50),
+                str(int(row.get("MATCH_PRIORITY", 0))),
+                sql_literal(row.get("NOTES"), 2000),
+            ])
+            + ")"
+        )
+    return ",\n        ".join(rows)
+
+
+def build_owner_directory_ddl(db: str = ALERT_DB, schema: str = ALERT_SCHEMA) -> str:
+    db_safe = safe_identifier(db)
+    schema_safe = safe_identifier(schema)
+    table = safe_identifier(OWNER_DIRECTORY_TABLE)
+    view = safe_identifier(OWNER_DIRECTORY_VIEW)
+    return f"""-- OVERWATCH owner/on-call routing directory
+-- Replace seed rows with named ALFA service owners as teams are onboarded.
+CREATE TABLE IF NOT EXISTS {db_safe}.{schema_safe}.{table} (
+    OWNER_KEY         VARCHAR(200) PRIMARY KEY,
+    ENTITY_TYPE       VARCHAR(100),
+    ENTITY_PATTERN    VARCHAR(500),
+    OWNER_NAME        VARCHAR(200),
+    OWNER_EMAIL       VARCHAR(500),
+    ONCALL_PRIMARY    VARCHAR(200),
+    ONCALL_SECONDARY  VARCHAR(200),
+    APPROVAL_GROUP    VARCHAR(200),
+    ESCALATION_TARGET VARCHAR(200),
+    DEFAULT_ROUTE     VARCHAR(200),
+    SERVICE_TIER      VARCHAR(50),
+    MATCH_PRIORITY    NUMBER DEFAULT 0,
+    IS_ACTIVE         BOOLEAN DEFAULT TRUE,
+    UPDATED_AT        TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_BY        VARCHAR(200) DEFAULT CURRENT_USER(),
+    NOTES             VARCHAR(2000)
+);
+
+MERGE INTO {db_safe}.{schema_safe}.{table} tgt
+USING (
+    SELECT * FROM VALUES
+        {_seed_values_sql()}
+) src(OWNER_KEY, ENTITY_TYPE, ENTITY_PATTERN, OWNER_NAME, OWNER_EMAIL, ONCALL_PRIMARY,
+      ONCALL_SECONDARY, APPROVAL_GROUP, ESCALATION_TARGET, DEFAULT_ROUTE, SERVICE_TIER,
+      MATCH_PRIORITY, NOTES)
+ON UPPER(tgt.OWNER_KEY) = UPPER(src.OWNER_KEY)
+WHEN MATCHED THEN UPDATE SET
+    ENTITY_TYPE = src.ENTITY_TYPE,
+    ENTITY_PATTERN = src.ENTITY_PATTERN,
+    OWNER_NAME = src.OWNER_NAME,
+    OWNER_EMAIL = src.OWNER_EMAIL,
+    ONCALL_PRIMARY = src.ONCALL_PRIMARY,
+    ONCALL_SECONDARY = src.ONCALL_SECONDARY,
+    APPROVAL_GROUP = src.APPROVAL_GROUP,
+    ESCALATION_TARGET = src.ESCALATION_TARGET,
+    DEFAULT_ROUTE = src.DEFAULT_ROUTE,
+    SERVICE_TIER = src.SERVICE_TIER,
+    MATCH_PRIORITY = src.MATCH_PRIORITY,
+    IS_ACTIVE = TRUE,
+    NOTES = src.NOTES
+WHEN NOT MATCHED THEN INSERT
+    (OWNER_KEY, ENTITY_TYPE, ENTITY_PATTERN, OWNER_NAME, OWNER_EMAIL, ONCALL_PRIMARY,
+     ONCALL_SECONDARY, APPROVAL_GROUP, ESCALATION_TARGET, DEFAULT_ROUTE, SERVICE_TIER,
+     MATCH_PRIORITY, NOTES)
+VALUES
+    (src.OWNER_KEY, src.ENTITY_TYPE, src.ENTITY_PATTERN, src.OWNER_NAME, src.OWNER_EMAIL,
+     src.ONCALL_PRIMARY, src.ONCALL_SECONDARY, src.APPROVAL_GROUP, src.ESCALATION_TARGET,
+     src.DEFAULT_ROUTE, src.SERVICE_TIER, src.MATCH_PRIORITY, src.NOTES);
+
+CREATE OR REPLACE VIEW {db_safe}.{schema_safe}.{view} AS
+SELECT
+    OWNER_KEY,
+    UPPER(COALESCE(ENTITY_TYPE, 'GLOBAL')) AS ENTITY_TYPE,
+    COALESCE(ENTITY_PATTERN, '*') AS ENTITY_PATTERN,
+    OWNER_NAME,
+    OWNER_EMAIL,
+    ONCALL_PRIMARY,
+    ONCALL_SECONDARY,
+    APPROVAL_GROUP,
+    ESCALATION_TARGET,
+    DEFAULT_ROUTE,
+    SERVICE_TIER,
+    COALESCE(MATCH_PRIORITY, 0) AS MATCH_PRIORITY,
+    NOTES,
+    UPDATED_AT,
+    UPDATED_BY
+FROM {db_safe}.{schema_safe}.{table}
+WHERE COALESCE(IS_ACTIVE, TRUE);"""
+
+
+def load_owner_directory(section: str = "Owner Directory") -> pd.DataFrame:
+    """Load the configured owner directory, falling back to seed defaults."""
+    try:
+        df = run_query(
+            f"""
+            SELECT OWNER_KEY, ENTITY_TYPE, ENTITY_PATTERN, OWNER_NAME, OWNER_EMAIL,
+                   ONCALL_PRIMARY, ONCALL_SECONDARY, APPROVAL_GROUP, ESCALATION_TARGET,
+                   DEFAULT_ROUTE, SERVICE_TIER, MATCH_PRIORITY, NOTES
+            FROM {owner_directory_view_fqn(quoted=True)}
+            ORDER BY MATCH_PRIORITY DESC, OWNER_KEY
+            """,
+            ttl_key="owner_directory_active",
+            tier="historical",
+            section=section,
+        )
+        if df is not None and not df.empty:
+            return df
+    except Exception:
+        pass
+    return default_owner_directory()
+
+
+def _text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _upper(value: Any) -> str:
+    return _text(value).upper()
+
+
+def _is_generic_owner(value: Any) -> bool:
+    return _upper(value).replace("\\", "/") in GENERIC_OWNERS
+
+
+def _wildcard_match(pattern: Any, value: Any) -> tuple[bool, int]:
+    pat = _upper(pattern) or "*"
+    val = _upper(value)
+    if not val:
+        return False, 0
+    if pat in {"*", "%"}:
+        return True, 1
+    if pat == val:
+        return True, 100
+    regex = "^" + re.escape(pat).replace("\\*", ".*").replace("%", ".*") + "$"
+    if re.match(regex, val):
+        return True, 40
+    if pat.replace("*", "").replace("%", "") and pat.replace("*", "").replace("%", "") in val:
+        return True, 20
+    return False, 0
+
+
+def _entity_type_candidates(entity_type: Any, category: Any = "", alert_type: Any = "") -> set[str]:
+    raw_values = {_upper(entity_type), _upper(category), _upper(alert_type)}
+    candidates = {value for value in raw_values if value}
+    joined = " ".join(candidates)
+    if "COST" in joined or "FINOPS" in joined or "CHARGEBACK" in joined:
+        candidates.add("COST_CONTROL")
+    if "TASK" in joined:
+        candidates.add("TASK")
+    if "PROCEDURE" in joined or "PROC" in joined or "CALL" in joined:
+        candidates.add("PROCEDURE")
+    if "WAREHOUSE" in joined:
+        candidates.add("WAREHOUSE")
+    if "GRANT" in joined or "ROLE" in joined or "SECURITY" in joined:
+        candidates.add("SECURITY")
+    candidates.add("ALERT")
+    candidates.add("GLOBAL")
+    return candidates
+
+
+def _canonical_entity_type(entity_type: Any) -> str:
+    value = _upper(entity_type)
+    if "COST" in value or "FINOPS" in value or "CHARGEBACK" in value:
+        return "COST_CONTROL"
+    if "PROCEDURE" in value or "PROC" in value or "CALL" in value:
+        return "PROCEDURE"
+    if "TASK" in value:
+        return "TASK"
+    if "WAREHOUSE" in value:
+        return "WAREHOUSE"
+    if "GRANT" in value or "ROLE" in value or "SECURITY" in value:
+        return "SECURITY"
+    if "ALERT" in value:
+        return "ALERT"
+    return value
+
+
+def resolve_owner_context(
+    row: pd.Series | dict | None = None,
+    *,
+    directory: pd.DataFrame | None = None,
+    entity: Any = "",
+    entity_type: Any = "",
+    owner: Any = "",
+    category: Any = "",
+    alert_type: Any = "",
+) -> dict[str, str]:
+    """Resolve owner/on-call metadata for a workflow row.
+
+    Existing non-generic owners are preserved, while on-call, approval, and
+    source metadata are still filled from the best matching directory row.
+    """
+    source_row = row if row is not None else {}
+    get = source_row.get if hasattr(source_row, "get") else lambda key, default=None: default
+    entity = entity or get("ENTITY_NAME") or get("ENTITY") or get("TASK_FQN") or get("TASK_NAME") or get("PROCEDURE_NAME")
+    entity_type = entity_type or get("ENTITY_TYPE") or get("OBJECT_TYPE") or get("CATEGORY")
+    owner = owner or get("OWNER") or get("OWNER_NAME")
+    category = category or get("CATEGORY") or get("SIGNAL")
+    alert_type = alert_type or get("ALERT_TYPE") or get("SIGNAL")
+    directory = directory if directory is not None and not directory.empty else default_owner_directory()
+
+    values_to_match = [
+        entity,
+        get("DATABASE_NAME"),
+        get("WAREHOUSE_NAME"),
+        get("TASK_NAME"),
+        get("PROCEDURE_NAME"),
+        category,
+        alert_type,
+        get("SOURCE"),
+    ]
+    canonical_type = _canonical_entity_type(entity_type)
+    type_candidates = _entity_type_candidates(entity_type, category, alert_type)
+    if canonical_type:
+        type_candidates.add(canonical_type)
+
+    best_row: dict[str, Any] | None = None
+    best_score = -1
+    for _, candidate in directory.fillna("").iterrows():
+        cand_type = _upper(candidate.get("ENTITY_TYPE")) or "GLOBAL"
+        if cand_type not in type_candidates and cand_type not in {"GLOBAL", "ALERT"}:
+            continue
+        pattern = candidate.get("ENTITY_PATTERN") or "*"
+        match_scores = [_wildcard_match(pattern, value)[1] for value in values_to_match]
+        pattern_score = max(match_scores or [0])
+        if pattern_score <= 0:
+            continue
+        priority = int(float(candidate.get("MATCH_PRIORITY") or 0))
+        type_score = 85 if cand_type == canonical_type else 55 if cand_type in type_candidates else 5
+        score = priority + type_score + pattern_score
+        if score > best_score:
+            best_score = score
+            best_row = candidate.to_dict()
+
+    if best_row is None:
+        best_row = DEFAULT_OWNER_DIRECTORY[-1].copy()
+
+    current_owner = _text(owner)
+    directory_owner = _text(best_row.get("OWNER_NAME"))
+    resolved_owner = directory_owner if _is_generic_owner(current_owner) else current_owner or directory_owner
+    owner_key = _text(best_row.get("OWNER_KEY")) or "OWNER_DIRECTORY"
+    pattern = _text(best_row.get("ENTITY_PATTERN")) or "*"
+    resolved = {
+        "OWNER": resolved_owner or "DBA",
+        "OWNER_EMAIL": _text(best_row.get("OWNER_EMAIL")) or DEFAULT_ALERT_EMAIL,
+        "ONCALL_PRIMARY": _text(best_row.get("ONCALL_PRIMARY")),
+        "ONCALL_SECONDARY": _text(best_row.get("ONCALL_SECONDARY")),
+        "APPROVAL_GROUP": _text(best_row.get("APPROVAL_GROUP")) or _text(best_row.get("ESCALATION_TARGET")),
+        "ESCALATION_TARGET": _text(best_row.get("ESCALATION_TARGET")) or _text(best_row.get("APPROVAL_GROUP")),
+        "OWNER_SOURCE": f"OWNER_DIRECTORY:{owner_key}",
+        "OWNER_EVIDENCE": f"Matched {best_row.get('ENTITY_TYPE', 'GLOBAL')} pattern {pattern}",
+    }
+    return resolved
+
+
+def enrich_owner_dataframe(
+    df: pd.DataFrame,
+    *,
+    directory: pd.DataFrame | None = None,
+    entity_column: str = "ENTITY_NAME",
+    entity_type_column: str = "ENTITY_TYPE",
+) -> pd.DataFrame:
+    """Add owner context columns to a dataframe using the shared directory."""
+    if df is None or df.empty:
+        return df
+    view = df.copy()
+    directory = directory if directory is not None and not directory.empty else default_owner_directory()
+    contexts = view.apply(
+        lambda row: resolve_owner_context(
+            row,
+            directory=directory,
+            entity=row.get(entity_column, ""),
+            entity_type=row.get(entity_type_column, ""),
+            owner=row.get("OWNER", ""),
+        ),
+        axis=1,
+    )
+    for column in OWNER_CONTEXT_COLUMNS:
+        view[column] = contexts.apply(lambda context: context.get(column, ""))
+    return view

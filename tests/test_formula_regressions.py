@@ -159,6 +159,7 @@ from utils.alerts import (  # noqa: E402
     build_alert_delivery_log_ddl,
     build_alert_delivery_log_insert_sql,
     build_alert_delivery_mark_sql,
+    build_alert_email_delivery_procedure_sql,
     build_alert_email_body,
     build_alert_email_subject,
     build_alert_escalation_ack_sql,
@@ -171,6 +172,13 @@ from utils.alerts import (  # noqa: E402
     build_dashboard_issue_rows,
     normalize_alert_rule_frame,
 )
+from utils.owner_directory import (  # noqa: E402
+    build_owner_directory_ddl,
+    default_owner_directory,
+    enrich_owner_dataframe,
+    resolve_owner_context,
+)
+from utils.workload_audit import build_workload_recovery_audit_ddl  # noqa: E402
 from utils.mart import (  # noqa: E402
     build_mart_account_health_change_sql,
     build_mart_account_health_cost_drivers_sql,
@@ -1795,6 +1803,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(float(by_task["ROOT_TASK"]["RECOVERY_HOURS"]), 7.0)
         self.assertEqual(by_task["CHILD_TASK"]["RECOVERY_STATE"], "Open Failure")
         self.assertEqual(by_task["CHILD_TASK"]["OWNER_APPROVAL_STATE"], "Root-cause owner approval required")
+        self.assertEqual(by_task["CHILD_TASK"]["ONCALL_PRIMARY"], "DBA On-Call")
+        self.assertEqual(by_task["CHILD_TASK"]["APPROVAL_GROUP"], "Pipeline Owner")
+        self.assertIn("OWNER_DIRECTORY", by_task["CHILD_TASK"]["OWNER_SOURCE"])
         self.assertIn("P", by_task["CHILD_TASK"]["INCIDENT_PRIORITY"])
 
     def test_task_critical_path_snapshot_ranks_graph_blast_radius(self):
@@ -2393,6 +2404,10 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(action["Owner"], "TASK_OWNER_ROLE")
         self.assertEqual(action["Category"], "Task & Procedure Reliability")
+        self.assertEqual(action["Approver"], "Pipeline Owner")
+        self.assertEqual(action["Oncall Primary"], "DBA On-Call")
+        self.assertIn("OWNER_DIRECTORY", action["Owner Source"])
+        self.assertEqual(action["Recovery Audit State"], "Audit Required")
         self.assertIn("Environment", action)
         self.assertIn("P2 - Production Risk", action["Finding"])
         self.assertIn("Recovery readiness", action["Action"])
@@ -2430,6 +2445,13 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(action["Owner"], "PROC_OWNER_ROLE")
         self.assertEqual(action["Entity Type"], "Stored Procedure")
+        self.assertEqual(action["Approver"], "Procedure Owner")
+        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertEqual(action["Recovery SLA State"], "Procedure Cost Review Required")
+        self.assertEqual(action["Recovery SLA Target Hours"], 24.0)
+        self.assertEqual(action["Recovery Audit State"], "Audit Required")
+        self.assertIn("OWNER_DIRECTORY", action["Owner Source"])
+        self.assertEqual(action["Oncall Primary"], "DBA On-Call")
         self.assertIn("Environment", action)
         self.assertEqual(action["Verification Status"], "Pending")
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
@@ -2464,6 +2486,41 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("COST_OWNER", chargeback_block)
         self.assertIn("OWNER_EVIDENCE", chargeback_block)
 
+    def test_owner_directory_matches_wildcards_and_preserves_named_owner(self):
+        directory = default_owner_directory()
+        task_context = resolve_owner_context(
+            {
+                "ENTITY_NAME": "DBA_MAINT_DB.OVERWATCH.OVERWATCH_COST_SAVINGS_VERIFY",
+                "OWNER": "DBA / FinOps",
+                "CATEGORY": "Cost Control",
+            },
+            directory=directory,
+            entity_type="Task",
+            alert_type="Cost Savings Verification Failure",
+        )
+        proc_context = resolve_owner_context(
+            {"PROCEDURE_NAME": "ALFA_EDW_PROD.PUBLIC.SP_LOAD_POLICY", "OWNER": "PROC_OWNER_ROLE"},
+            directory=directory,
+            entity_type="Procedure",
+            category="Task & Procedure Reliability",
+        )
+        enriched = enrich_owner_dataframe(pd.DataFrame([{
+            "ENTITY_NAME": "WH_ALFA_LOAD",
+            "ENTITY_TYPE": "Warehouse",
+            "OWNER": "DBA",
+        }]), directory=directory)
+        ddl = build_owner_directory_ddl().upper()
+
+        self.assertEqual(task_context["APPROVAL_GROUP"], "FinOps Lead")
+        self.assertEqual(task_context["ONCALL_PRIMARY"], "DBA On-Call")
+        self.assertIn("COST_VERIFIER_TASK", task_context["OWNER_SOURCE"])
+        self.assertEqual(proc_context["OWNER"], "PROC_OWNER_ROLE")
+        self.assertEqual(proc_context["APPROVAL_GROUP"], "Procedure Owner")
+        self.assertEqual(enriched.iloc[0]["APPROVAL_GROUP"], "Platform DBA Lead")
+        self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
+        self.assertIn("OVERWATCH_OWNER_DIRECTORY", ddl)
+        self.assertIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", ddl)
+
     def test_alert_task_is_email_first_and_dba_focused(self):
         sql = build_alert_task_sql(email_target="jdees@alfains.com").upper()
 
@@ -2484,11 +2541,45 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_ALERT_RULE_AUDIT", sql)
         self.assertIn("OVERWATCH_ALERT_TRIAGE_V", sql)
         self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", sql)
+        self.assertIn("OVERWATCH_OWNER_DIRECTORY", sql)
+        self.assertIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", sql)
+        self.assertIn("SP_OVERWATCH_SEND_ALERT_DIGEST", sql)
+        self.assertIn("SYSTEM$SEND_EMAIL", sql)
+        self.assertIn("EMAIL_DRY_RUN", sql)
+        self.assertIn("OWNER_EMAIL", sql)
+        self.assertIn("ONCALL_PRIMARY", sql)
+        self.assertIn("APPROVAL_GROUP", sql)
+        self.assertIn("OWNER_SOURCE", sql)
         self.assertIn("STATUS_REASON", sql)
         self.assertIn("LAST_DELIVERY_AT", sql)
         self.assertIn("ESCALATION_ACK_BY", sql)
         self.assertIn("ROUTED_TO_ACTION_QUEUE_AT", sql)
         self.assertNotIn("TEAMS_TARGET", sql)
+
+    def test_alert_email_delivery_procedure_is_dry_run_guarded_and_audited(self):
+        sql = build_alert_email_delivery_procedure_sql(email_target="jdees@alfains.com").upper()
+
+        self.assertIn("SP_OVERWATCH_SEND_ALERT_DIGEST", sql)
+        self.assertIn("P_DRY_RUN BOOLEAN DEFAULT TRUE", sql)
+        self.assertIn("SYSTEM$SEND_EMAIL", sql)
+        self.assertIn("OVERWATCH_EMAIL_INT", sql)
+        self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", sql)
+        self.assertIn("EMAIL_DRY_RUN", sql)
+        self.assertIn("LAST_DELIVERY_AT", sql)
+        self.assertIn("JDEES@ALFAINS.COM", sql)
+
+    def test_workload_recovery_audit_ddl_captures_owner_and_verification_evidence(self):
+        sql = build_workload_recovery_audit_ddl().upper()
+
+        self.assertIn("OVERWATCH_WORKLOAD_RECOVERY_AUDIT", sql)
+        self.assertIn("OWNER_EMAIL", sql)
+        self.assertIn("ONCALL_PRIMARY", sql)
+        self.assertIn("APPROVAL_GROUP", sql)
+        self.assertIn("OWNER_APPROVAL_STATUS", sql)
+        self.assertIn("RECOVERY_SLA_STATE", sql)
+        self.assertIn("VERIFICATION_QUERY", sql)
+        self.assertIn("VERIFICATION_RESULT", sql)
+        self.assertIn("OVERWATCH_WORKLOAD_RECOVERY_AUDIT_LATEST_V", sql)
 
     def test_alert_email_builders_and_unified_issue_rows(self):
         alert = pd.DataFrame([{
@@ -2692,6 +2783,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(task["Entity Type"], "Task")
         self.assertEqual(task["Owner Approval Status"], "Requested")
         self.assertEqual(task["Approver"], "Pipeline Owner")
+        self.assertEqual(task["Oncall Primary"], "DBA On-Call")
+        self.assertIn("OWNER_DIRECTORY", task["Owner Source"])
+        self.assertEqual(task["Recovery Audit State"], "Audit Required")
         self.assertEqual(task["Recovery SLA State"], "Recovery SLA Breach")
         self.assertEqual(task["Recovery SLA Target Hours"], 4.0)
         self.assertEqual(task["Recovery SLA Hours"], 6.5)
@@ -2704,6 +2798,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(proc["Category"], "Task & Procedure Reliability")
         self.assertEqual(proc["Entity Type"], "Stored Procedure")
         self.assertEqual(proc["Owner Approval Status"], "Requested")
+        self.assertEqual(proc["Approver"], "Procedure Owner")
+        self.assertEqual(proc["Oncall Primary"], "DBA On-Call")
         self.assertEqual(proc["Recovery SLA State"], "Open Failure")
         self.assertEqual(proc["Baseline Value"], 30.0)
         self.assertEqual(proc["Current Value"], 90.0)
@@ -2719,6 +2815,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(verifier["Entity Type"], "Cost Verification Task")
         self.assertEqual(verifier["Owner Approval Status"], "Requested")
         self.assertEqual(verifier["Approver"], "FinOps Lead")
+        self.assertEqual(verifier["Oncall Primary"], "DBA On-Call")
+        self.assertIn("COST_VERIFIER_TASK", verifier["Owner Source"])
+        self.assertEqual(verifier["Recovery Audit State"], "Audit Required")
         self.assertEqual(verifier["Recovery SLA State"], "Recovery SLA Breach")
         self.assertEqual(verifier["Recovery SLA Target Hours"], 8.0)
         self.assertEqual(verifier["Recovery SLA Hours"], 9.0)

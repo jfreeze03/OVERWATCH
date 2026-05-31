@@ -412,6 +412,7 @@ def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) ->
         title="Cost actions that still need approval, measurement, or closure evidence",
         priority_columns=[
             "SEVERITY", "CLOSURE_STATE", "CATEGORY", "ENTITY_NAME", "OWNER",
+            "OWNER_EMAIL", "ONCALL_PRIMARY", "APPROVAL_GROUP", "OWNER_SOURCE",
             "STATUS", "OWNER_APPROVAL_STATUS", "VERIFICATION_STATUS",
             "BASELINE_VALUE", "CURRENT_VALUE", "MEASURED_DELTA",
             "VERIFIED_PERIOD_DELTA_DOLLARS", "RECOVERY_SLA_STATE",

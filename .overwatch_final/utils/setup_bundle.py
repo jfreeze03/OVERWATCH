@@ -4,7 +4,9 @@ from .action_queue import build_action_queue_ddl
 from .alerts import build_alert_task_sql, build_annotation_ddl
 from .bookmarks import build_bookmark_ddl
 from .logging import build_usage_log_ddl
+from .owner_directory import build_owner_directory_ddl
 from .query import safe_identifier
+from .workload_audit import build_workload_recovery_audit_ddl
 
 
 def build_snowflake_value_ddl() -> str:
@@ -38,7 +40,9 @@ def build_overwatch_setup_bundle() -> str:
         "-- OVERWATCH Persistent Feature Setup Bundle",
         build_bookmark_ddl(),
         build_annotation_ddl(),
+        build_owner_directory_ddl(),
         build_action_queue_ddl(),
+        build_workload_recovery_audit_ddl(),
         build_snowflake_value_ddl(),
         build_usage_log_ddl(),
         "-- Optional: scheduled alert task",

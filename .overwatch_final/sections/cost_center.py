@@ -19,6 +19,7 @@ from utils import (
     render_drillable_bar_chart, render_entity_query_drilldown, render_priority_dataframe,
     make_action_id, upsert_actions,
     run_query, sql_literal, format_snowflake_error,
+    resolve_owner_context,
     safe_float,
 )
 
@@ -472,10 +473,18 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
         if owner_evidence:
             action_text = f"{action_text} Owner evidence: {owner_evidence[:300]}"
         action_owner = _chargeback_action_owner(row) if is_chargeback else (user if user != "Unknown user" else "DBA")
+        owner_context = resolve_owner_context(
+            row,
+            entity=entity,
+            entity_type="Cost Control" if is_chargeback else "Warehouse",
+            owner=action_owner,
+            category="Cost Control",
+            alert_type="Chargeback Review" if is_chargeback else "Cost Outlier",
+        )
+        action_owner = owner_context.get("OWNER") or action_owner
         approver = (
-            "FinOps Lead / Cost Owner"
-            if is_chargeback
-            else "FinOps Lead / Workload Owner"
+            owner_context.get("APPROVAL_GROUP")
+            or ("FinOps Lead / Cost Owner" if is_chargeback else "FinOps Lead / Workload Owner")
         )
         owner_approval_note = (
             "Allocated/estimated chargeback requires owner/tag evidence approval before billing. "
@@ -493,6 +502,13 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             "Entity": entity,
             "Owner": action_owner,
             "Approver": approver,
+            "Owner Email": owner_context.get("OWNER_EMAIL", ""),
+            "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
+            "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
+            "Approval Group": approver,
+            "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
+            "Owner Source": owner_context.get("OWNER_SOURCE", owner_source),
+            "Owner Evidence": owner_context.get("OWNER_EVIDENCE", owner_evidence),
             "Finding": finding,
             "Action": action_text,
             "Estimated Monthly Savings": round(monthly_savings, 2),
@@ -656,6 +672,16 @@ def _warehouse_cost_control_action(
         or row.get("OWNER_ROLE")
         or "DBA / FinOps"
     )
+    base_owner = owner
+    owner_context = resolve_owner_context(
+        row,
+        entity=wh,
+        entity_type="Warehouse",
+        owner=owner,
+        category="Cost Control",
+        alert_type="Bill Increase",
+    )
+    owner = owner_context.get("OWNER") or owner
     confidence = "Exact warehouse metering"
     if delta < 0:
         severity = "Low"
@@ -676,8 +702,8 @@ def _warehouse_cost_control_action(
     )
     approver = (
         f"{owner} / FinOps Lead"
-        if owner and owner.upper() not in {"DBA", "DBA / FINOPS", "UNKNOWN"}
-        else "FinOps Lead / Warehouse Owner"
+        if base_owner and base_owner.upper() not in {"DBA", "DBA / FINOPS", "UNKNOWN"}
+        else owner_context.get("APPROVAL_GROUP") or "FinOps Lead / Warehouse Owner"
     )
     owner_approval_note = (
         f"Exact warehouse metering for {period_label}. Approval is required before any warehouse "
@@ -702,6 +728,13 @@ def _warehouse_cost_control_action(
         "Entity": wh,
         "Owner": owner,
         "Approver": approver,
+        "Owner Email": owner_context.get("OWNER_EMAIL", ""),
+        "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
+        "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
+        "Approval Group": approver,
+        "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
+        "Owner Source": owner_context.get("OWNER_SOURCE", ""),
+        "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
         "Finding": finding,
         "Action": f"{confidence}. {action}",
         "Estimated Monthly Savings": round(max(0.0, est_delta_cost * 0.25), 2),

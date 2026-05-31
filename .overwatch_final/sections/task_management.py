@@ -24,6 +24,7 @@ from utils import (
     build_mart_query_detail_recent_sql,
     run_query,
     run_query_or_raise,
+    resolve_owner_context,
     safe_identifier,
     safe_float,
     safe_int,
@@ -71,6 +72,14 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
         finding = f"{name} finished with {state}"
         if err:
             finding += f": {err[:250]}"
+        owner_context = resolve_owner_context(
+            row,
+            entity=name,
+            entity_type="Task",
+            owner="Data Engineering",
+            category="Task & Procedure Reliability",
+            alert_type="Task Failure",
+        )
         actions.append({
             "Action ID": make_action_id("Task Reliability", name, finding),
             "Source": source,
@@ -78,7 +87,15 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
             "Category": "Reliability",
             "Entity Type": "Task/Pipeline",
             "Entity": name,
-            "Owner": "Data Engineering",
+            "Owner": owner_context.get("OWNER", "Data Engineering"),
+            "Owner Email": owner_context.get("OWNER_EMAIL", ""),
+            "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
+            "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
+            "Approval Group": owner_context.get("APPROVAL_GROUP", ""),
+            "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
+            "Owner Source": owner_context.get("OWNER_SOURCE", ""),
+            "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
+            "Approver": owner_context.get("APPROVAL_GROUP", ""),
             "Finding": finding,
             "Action": "Review error message, fix upstream dependency or SQL failure, then retry the task/pipeline.",
             "Estimated Monthly Savings": 0.0,
@@ -538,12 +555,35 @@ def _build_task_recovery_sla_frame(
             if str(db_name or "").strip() and str(schema_name or "").strip():
                 task_fqn = f"{db_name}.{schema_name}.{task_name}"
 
+        base_owner = _task_owner(meta if not meta.empty else latest_failure)
+        owner_context = resolve_owner_context(
+            {
+                "TASK_NAME": str(task_name),
+                "TASK_FQN": task_fqn,
+                "OWNER": base_owner,
+                "CATEGORY": "Task & Procedure Reliability",
+                "ALERT_TYPE": "Task Recovery",
+            },
+            entity=task_fqn or str(task_name),
+            entity_type="Task",
+            owner=base_owner,
+            category="Task & Procedure Reliability",
+            alert_type="Task Recovery",
+        )
+
         row = {
             "TASK_NAME": str(task_name),
             "ROOT_TASK_NAME": meta.get("ROOT_TASK_NAME", str(task_name)) if not meta.empty else str(task_name),
             "PROCEDURE_NAME": meta.get("PROCEDURE_NAME", "") if not meta.empty else "",
             "TASK_FQN": task_fqn,
-            "OWNER": _task_owner(meta if not meta.empty else latest_failure),
+            "OWNER": owner_context.get("OWNER", base_owner),
+            "OWNER_EMAIL": owner_context.get("OWNER_EMAIL", ""),
+            "ONCALL_PRIMARY": owner_context.get("ONCALL_PRIMARY", ""),
+            "ONCALL_SECONDARY": owner_context.get("ONCALL_SECONDARY", ""),
+            "APPROVAL_GROUP": owner_context.get("APPROVAL_GROUP", ""),
+            "ESCALATION_TARGET": owner_context.get("ESCALATION_TARGET", ""),
+            "OWNER_SOURCE": owner_context.get("OWNER_SOURCE", ""),
+            "OWNER_EVIDENCE": owner_context.get("OWNER_EVIDENCE", ""),
             "GRAPH_ROLE": meta.get("GRAPH_ROLE", "Unknown") if not meta.empty else "Unknown",
             "DOWNSTREAM_TASK_COUNT": downstream,
             "BLAST_RADIUS": meta.get("BLAST_RADIUS", "Unknown") if not meta.empty else "Unknown",
@@ -1294,6 +1334,14 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
     owner_approval_state = str(row.get("OWNER_APPROVAL_STATE") or "").strip()
     recovery_state = str(row.get("RECOVERY_STATE") or "").strip()
     recovery_evidence = str(row.get("VERIFY_AFTER_FIX") or "").strip()
+    owner_context = resolve_owner_context(
+        row,
+        entity=task,
+        entity_type="Task",
+        owner=_task_owner(row),
+        category="Task & Procedure Reliability",
+        alert_type=signal,
+    )
     if recovery_readiness and recovery_readiness.lower() not in action_text.lower():
         action_text += f" Recovery readiness: {recovery_readiness}."
     if owner_approval_state and owner_approval_state.lower() not in action_text.lower():
@@ -1318,7 +1366,15 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
         "Category": "Task & Procedure Reliability",
         "Entity Type": "Task/Procedure",
         "Entity": task,
-        "Owner": _task_owner(row),
+        "Owner": owner_context.get("OWNER") or _task_owner(row),
+        "Owner Email": owner_context.get("OWNER_EMAIL", ""),
+        "Oncall Primary": owner_context.get("ONCALL_PRIMARY", ""),
+        "Oncall Secondary": owner_context.get("ONCALL_SECONDARY", ""),
+        "Approval Group": owner_context.get("APPROVAL_GROUP", ""),
+        "Escalation Target": owner_context.get("ESCALATION_TARGET", ""),
+        "Owner Source": owner_context.get("OWNER_SOURCE", ""),
+        "Owner Evidence": owner_context.get("OWNER_EVIDENCE", ""),
+        "Approver": owner_context.get("APPROVAL_GROUP") or row.get("APPROVER") or owner_context.get("ESCALATION_TARGET", ""),
         "Finding": finding,
         "Action": action_text,
         "Estimated Monthly Savings": 0.0,
@@ -1337,6 +1393,7 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
         "Recovery SLA Hours": _task_metric(row, "RECOVERY_HOURS", "RECOVERY_SLA_HOURS"),
         "Recovery SLA Target Hours": _task_metric(row, "RECOVERY_SLA_TARGET_HOURS"),
         "Recovery Evidence": recovery_evidence,
+        "Recovery Audit State": "Audit Required" if recovery_state else "",
     }
 
 
@@ -1953,6 +2010,7 @@ def _render_task_ops_brief(session) -> None:
                     "INCIDENT_PRIORITY", "RECOVERY_STATE", "TASK_NAME", "ROOT_TASK_NAME",
                     "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT", "LAST_FAILURE_AT", "RECOVERY_AT",
                     "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS", "OWNER", "OWNER_APPROVAL_STATE",
+                    "ONCALL_PRIMARY", "APPROVAL_GROUP", "OWNER_SOURCE",
                     "ERROR_SIGNATURE", "VERIFY_AFTER_FIX",
                 ],
                 sort_by=["INCIDENT_PRIORITY", "DOWNSTREAM_TASK_COUNT", "LAST_FAILURE_AT"],
@@ -2438,7 +2496,8 @@ def render():
                         "PROCEDURE_NAME", "QUERY_ID",
                         "FAILURE_CATEGORY", "PROBABLE_CAUSE", "RECOMMENDED_ACTION",
                         "RECOVERY_STATE", "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS",
-                        "OWNER_APPROVAL_STATE", "RECOVERY_READINESS", "VERIFY_AFTER_FIX",
+                        "OWNER_APPROVAL_STATE", "ONCALL_PRIMARY", "APPROVAL_GROUP",
+                        "OWNER_SOURCE", "RECOVERY_READINESS", "VERIFY_AFTER_FIX",
                         "STATE", "DURATION_SEC", "QUERY_ELAPSED_SEC", "WAREHOUSE_NAME",
                         "IMPACT_OBJECTS", "ERROR_SIGNATURE", "RETRY_SQL"
                     ] if col in view.columns
@@ -2450,7 +2509,8 @@ def render():
                     priority_columns=[
                         "INCIDENT_PRIORITY", "TASK_NAME", "ROOT_TASK_NAME", "GRAPH_ROLE",
                         "DOWNSTREAM_TASK_COUNT", "PROCEDURE_NAME", "FAILURE_CATEGORY",
-                        "RECOVERY_STATE", "OWNER_APPROVAL_STATE", "RECOVERY_READINESS",
+                        "RECOVERY_STATE", "OWNER_APPROVAL_STATE", "ONCALL_PRIMARY",
+                        "APPROVAL_GROUP", "RECOVERY_READINESS",
                         "PROBABLE_CAUSE", "RECOMMENDED_ACTION", "QUERY_ID",
                         "DURATION_SEC", "QUERY_ELAPSED_SEC", "WAREHOUSE_NAME",
                     ],

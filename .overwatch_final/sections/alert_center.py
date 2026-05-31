@@ -523,7 +523,7 @@ def render() -> None:
 
     with tab_email:
         st.subheader("Email Delivery Queue")
-        st.caption("Rows are email-ready placeholders until a Snowflake email notification integration is approved. No Teams webhook is assumed.")
+        st.caption("Rows are email-ready by default; the setup SQL also includes a dry-run governed SYSTEM$SEND_EMAIL procedure for an approved Snowflake email integration.")
         if alerts.empty:
             st.info("No email-ready alert rows found.")
         else:
@@ -578,6 +578,7 @@ def render() -> None:
                     title="Action queue routing preview",
                     priority_columns=[
                         "Severity", "Category", "Entity Type", "Entity", "Owner",
+                        "Oncall Primary", "Approval Group", "Owner Source",
                         "Owner Approval Status", "Recovery SLA State", "Recovery SLA Target Hours",
                         "Verification Status", "Action",
                     ],
@@ -601,6 +602,7 @@ def render() -> None:
                 title="Current action queue",
                 priority_columns=[
                     "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME", "OWNER",
+                    "ONCALL_PRIMARY", "APPROVAL_GROUP", "OWNER_SOURCE",
                     "FINDING", "RECOMMENDED_ACTION", "TICKET_ID", "DUE_STATE",
                     "EVIDENCE_GAP",
                 ],
@@ -730,5 +732,5 @@ def render() -> None:
 
     with tab_setup:
         st.subheader("Alert Framework Setup SQL")
-        st.caption("Deploy this through controlled Snowflake change management. It creates/updates the alert table and hourly email-ready alert task.")
+        st.caption("Deploy this through controlled Snowflake change management. It creates/updates alerts, owner routing, delivery audit, optional email replay, and the hourly email-ready alert task.")
         st.code(build_alert_task_sql(email_target=DEFAULT_ALERT_EMAIL), language="sql")

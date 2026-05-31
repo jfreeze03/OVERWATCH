@@ -13,17 +13,27 @@ snowflake/OVERWATCH_MART_SETUP.sql
 
 ## Runtime Shape
 
-- `OVERWATCH_WH`: dedicated X-Small warehouse for mart refresh tasks
+- `COMPUTE_WH`: current execution warehouse for the main OVERWATCH load and
+  anomaly tasks
+- `OVERWATCH_WH`: X-Small support warehouse created by setup, currently used by
+  the cost-savings verification task and available if the task graph is moved
+  to a dedicated warehouse later
 - `DBA_MAINT_DB.OVERWATCH`: app persistence schema and mart schema
 - Streamlit app: reads compact marts first, direct Snowflake metadata only for
   live drilldowns and guarded admin actions
 - Refresh tasks: hourly for operational telemetry, daily for slower governance
   snapshots
+- Monitored warehouses: ALFA and Trexis warehouse scope from `COMPANY_CONFIG`,
+  `OVERWATCH_COMPANY_SCOPE`, and Snowflake account-usage views. This is separate
+  from the warehouse used to execute the app/task SQL.
 
 ## Cost Controls
 
-- X-Small refresh warehouse
-- `AUTO_SUSPEND = 60`
+- Task warehouse is an explicit setup input; current main load/anomaly tasks run
+  on `COMPUTE_WH`, while `OVERWATCH_COST_SAVINGS_VERIFY` runs on `OVERWATCH_WH`
+- `OVERWATCH_WH` is created with `AUTO_SUSPEND = 60`
+- Cost and health monitoring still covers ALFA/Trexis warehouses through
+  `WAREHOUSE_METERING_HISTORY`, `QUERY_HISTORY`, task history, and mart facts
 - hourly refresh after likely `ACCOUNT_USAGE` latency
 - transient mart tables for history that can be rebuilt
 - short retention for query/task/procedure detail
@@ -118,10 +128,12 @@ deployment.
 1. Run `snowflake/OVERWATCH_MART_SETUP.sql` in Snowsight as a platform-admin
    role.
 2. Confirm `OVERWATCH_WH` exists and is suspended after setup.
-3. Confirm `OVERWATCH_LOAD_HOURLY` and `OVERWATCH_LOAD_DAILY` are resumed.
-4. Run the smoke queries at the end of the setup script.
-5. Point the app role at `DBA_MAINT_DB.OVERWATCH`.
-6. Gradually migrate heavy app sections from direct `ACCOUNT_USAGE` scans to
+3. Confirm the task warehouse choices in `OVERWATCH_MART_SETUP.sql` match the
+   approved production warehouse plan.
+4. Confirm `OVERWATCH_LOAD_HOURLY` and `OVERWATCH_LOAD_DAILY` are resumed.
+5. Run the smoke queries at the end of the setup script.
+6. Point the app role at `DBA_MAINT_DB.OVERWATCH`.
+7. Gradually migrate heavy app sections from direct `ACCOUNT_USAGE` scans to
    mart reads.
 
 ## Production Principle

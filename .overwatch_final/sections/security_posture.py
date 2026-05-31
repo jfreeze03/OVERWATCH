@@ -47,6 +47,13 @@ WORKFLOW_DETAILS = {
 
 SECURITY_ACCESS_REVIEW_TABLE = "OVERWATCH_SECURITY_ACCESS_REVIEW"
 SECURITY_OPERABILITY_FACT_TABLE = "FACT_SECURITY_OPERABILITY_DAILY"
+SECURITY_SCOPE_FILTER_KEYS = (
+    "global_user",
+    "global_database",
+    "global_role",
+    "global_start_date",
+    "global_end_date",
+)
 
 
 def security_access_review_fqn(
@@ -127,6 +134,181 @@ def build_security_access_review_migration_sql(
 
 def security_operability_fact_fqn(table: str = SECURITY_OPERABILITY_FACT_TABLE) -> str:
     return mart_object_name(table)
+
+
+def _security_scope_value(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def _security_scope_meta(
+    company: str,
+    environment: str,
+    days: int | None = None,
+    state: dict | None = None,
+) -> dict:
+    """Return the filter scope that loaded Security Posture evidence must match."""
+    state = state if state is not None else st.session_state
+    meta = {
+        "company": _security_scope_value(company),
+        "environment": _security_scope_value(environment),
+    }
+    if days is not None:
+        meta["days"] = int(days)
+    for key in SECURITY_SCOPE_FILTER_KEYS:
+        meta[key] = _security_scope_value(state.get(key))
+    return meta
+
+
+def _security_meta_matches(meta: dict | None, expected: dict | None) -> bool:
+    if not isinstance(meta, dict) or not isinstance(expected, dict):
+        return False
+    for key, expected_value in expected.items():
+        actual = meta.get(key)
+        if key == "days":
+            try:
+                if int(actual) != int(expected_value):
+                    return False
+            except Exception:
+                return False
+        elif _security_scope_value(actual) != _security_scope_value(expected_value):
+            return False
+    return True
+
+
+def _security_frame_rows(frame) -> int:
+    return len(frame) if isinstance(frame, pd.DataFrame) else 0
+
+
+def _security_source_confidence(source: str, default: str) -> str:
+    source_lower = str(source or "").lower()
+    if "mart" in source_lower or "fact_" in source_lower:
+        return "Pre-aggregated"
+    if "fallback" in source_lower:
+        return "Live fallback"
+    if "account_usage" in source_lower:
+        return "Live ACCOUNT_USAGE"
+    return default
+
+
+def _security_source_next_action(state: str, source: str) -> str:
+    source_lower = str(source or "").lower()
+    if state == "Stale":
+        return "Reload after changing company, environment, lookback, or global filters."
+    if state == "Unavailable":
+        return "Deploy or refresh the mart/grants before relying on this surface."
+    if state == "Not Loaded":
+        return "Load only when this workflow is part of the current security investigation."
+    if state == "No Rows":
+        return "Confirm the selected scope has recent security events, review rows, or mart facts."
+    if "fallback" in source_lower:
+        return "Use for investigation; prefer mart refresh for repeated daily access control."
+    return "Current for the active security scope."
+
+
+def _security_source_health_rows(
+    state: dict,
+    company: str,
+    environment: str,
+) -> pd.DataFrame:
+    """Summarize Security Posture evidence freshness and source strategy."""
+    definitions = [
+        {
+            "surface": "Security brief",
+            "frame_key": "security_posture_summary",
+            "source_key": "security_posture_source",
+            "meta_key": "security_posture_meta",
+            "days_key": "security_posture_brief_days",
+            "default_days": 30,
+            "source": "OVERWATCH mart or live ACCOUNT_USAGE security brief",
+            "confidence": "Mixed",
+        },
+        {
+            "surface": "Security exceptions",
+            "frame_key": "security_posture_exceptions",
+            "source_key": "security_posture_source",
+            "meta_key": "security_posture_meta",
+            "days_key": "security_posture_brief_days",
+            "default_days": 30,
+            "source": "OVERWATCH mart or live ACCOUNT_USAGE exception set",
+            "confidence": "Mixed",
+        },
+        {
+            "surface": "Operability fact",
+            "frame_key": "security_operability_fact",
+            "meta_key": "security_operability_fact_meta",
+            "days_key": "security_posture_brief_days",
+            "default_days": 30,
+            "source": f"OVERWATCH mart: {SECURITY_OPERABILITY_FACT_TABLE}",
+            "confidence": "Pre-aggregated",
+            "error_key": "security_operability_fact_error",
+        },
+        {
+            "surface": "Privileged grants",
+            "frame_key": "security_privileged_grants",
+            "meta_key": "security_privileged_grants_meta",
+            "days_key": "security_priv_grant_days",
+            "default_days": 30,
+            "source": "Live ACCOUNT_USAGE grants with owner readiness annotation",
+            "confidence": "Live ACCOUNT_USAGE",
+        },
+        {
+            "surface": "Access review trend",
+            "frame_key": "security_access_review_trend",
+            "meta_key": "security_access_review_trend_meta",
+            "days_key": "security_access_review_trend_days",
+            "default_days": 30,
+            "source": f"Workflow mart: {SECURITY_ACCESS_REVIEW_TABLE}",
+            "confidence": "Workflow evidence",
+        },
+        {
+            "surface": "Closure analytics",
+            "frame_key": "security_action_closure",
+            "meta_key": "security_action_closure_meta",
+            "days_key": "security_action_closure_days",
+            "default_days": 30,
+            "source": "Action queue closure evidence",
+            "confidence": "Workflow evidence",
+        },
+    ]
+    rows = []
+    for item in definitions:
+        source = str(state.get(item.get("source_key", ""), item["source"]) or item["source"])
+        frame = state.get(item["frame_key"])
+        error = state.get(item.get("error_key", ""))
+        days = state.get(item.get("days_key"), item.get("default_days"))
+        expected_meta = _security_scope_meta(company, environment, days=days, state=state)
+        loaded = isinstance(frame, pd.DataFrame)
+        if error:
+            status = "Unavailable"
+        elif not loaded:
+            status = "Not Loaded"
+        elif not _security_meta_matches(state.get(item["meta_key"]), expected_meta):
+            status = "Stale"
+        elif frame.empty:
+            status = "No Rows"
+        else:
+            status = "Loaded"
+        rows.append({
+            "SURFACE": item["surface"],
+            "STATE": status,
+            "STATE_RANK": {
+                "Unavailable": 0,
+                "Stale": 1,
+                "Loaded": 2,
+                "No Rows": 3,
+                "Not Loaded": 4,
+            }.get(status, 9),
+            "SOURCE": source,
+            "CONFIDENCE": _security_source_confidence(source, item["confidence"]),
+            "ROWS": _security_frame_rows(frame),
+            "SCOPE": f"{company} / {environment} / {int(days)}d",
+            "NEXT_ACTION": _security_source_next_action(status, source),
+        })
+    return pd.DataFrame(rows)
 
 
 def build_security_operability_fact_ddl(table: str = SECURITY_OPERABILITY_FACT_TABLE) -> str:
@@ -1817,6 +1999,9 @@ def _render_privileged_grant_readiness(session, company: str, environment: str, 
                 )
                 st.session_state["security_privileged_grants"] = _annotate_security_privileged_grant_readiness(grant_rows)
                 st.session_state["security_privileged_grants_sql"] = grant_sql
+                st.session_state["security_privileged_grants_meta"] = _security_scope_meta(
+                    company, environment, grant_days
+                )
             except Exception as exc:
                 st.session_state["security_privileged_grants"] = pd.DataFrame()
                 st.warning(f"Privileged grant readiness unavailable: {format_snowflake_error(exc)}")
@@ -1824,6 +2009,14 @@ def _render_privileged_grant_readiness(session, company: str, environment: str, 
         grants = st.session_state.get("security_privileged_grants")
         if grants is None:
             st.info("Load this before granting, revoking, or narrowing high-risk roles and object privileges.")
+            with st.expander("Privileged grant readiness query", expanded=False):
+                st.code(_security_privileged_grant_review_sql(grant_days, company, environment), language="sql")
+            return
+        if not _security_meta_matches(
+            st.session_state.get("security_privileged_grants_meta"),
+            _security_scope_meta(company, environment, grant_days),
+        ):
+            st.info("Loaded privileged grant readiness is stale for the active scope. Reload before granting, revoking, or narrowing access.")
             with st.expander("Privileged grant readiness query", expanded=False):
                 st.code(_security_privileged_grant_review_sql(grant_days, company, environment), language="sql")
             return
@@ -1857,6 +2050,42 @@ def _render_privileged_grant_readiness(session, company: str, environment: str, 
         )
         with st.expander("Privileged grant readiness query", expanded=False):
             st.code(st.session_state.get("security_privileged_grants_sql", ""), language="sql")
+
+
+def _render_security_source_health(company: str, environment: str) -> None:
+    source_health = _security_source_health_rows(dict(st.session_state), company, environment)
+    if source_health.empty:
+        return
+    with st.expander("Security Source Health", expanded=False):
+        current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
+        stale = int(source_health["STATE"].eq("Stale").sum())
+        unavailable = int(source_health["STATE"].eq("Unavailable").sum())
+        mart_backed = int(
+            source_health[
+                source_health["STATE"].isin(["Loaded", "No Rows"])
+                & source_health["SOURCE"].astype(str).str.contains("mart|FACT_", case=False, regex=True)
+            ].shape[0]
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
+        c2.metric("Mart-Backed", f"{mart_backed:,}")
+        c3.metric("Stale", f"{stale:,}", delta_color="inverse")
+        c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
+        st.caption(
+            "Use this before acting on access findings. Login-only evidence keeps account scope, while database-scoped "
+            "evidence follows the selected company and environment."
+        )
+        render_priority_dataframe(
+            source_health,
+            title="Security evidence source and freshness",
+            priority_columns=[
+                "SURFACE", "STATE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION",
+            ],
+            sort_by=["STATE_RANK", "SURFACE"],
+            ascending=[True, True],
+            raw_label="All security source-health rows",
+            height=300,
+        )
 
 
 def render() -> None:
@@ -1897,6 +2126,7 @@ def render() -> None:
 
     days = st.slider("Security brief lookback (days)", 1, 90, 30, key="security_posture_brief_days")
     _render_privileged_grant_readiness(session, company, environment, days)
+    _render_security_source_health(company, environment)
     if st.button("Load Security Brief", key="security_posture_brief_load", type="primary"):
         try:
             summary_sql, exceptions_sql = _build_security_mart_brief_sql(session, days, company)
@@ -1910,12 +2140,12 @@ def render() -> None:
                 ttl_key=f"security_posture_exceptions_mart_{company}_{environment}_{days}",
                 tier="standard",
             )
+            source = "OVERWATCH mart: FACT_LOGIN_DAILY + FACT_GRANT_DAILY; MFA/sharing: ACCOUNT_USAGE"
             st.session_state["security_posture_meta"] = {
-                "company": company,
-                "environment": environment,
-                "days": days,
-                "source": "OVERWATCH mart: FACT_LOGIN_DAILY + FACT_GRANT_DAILY; MFA/sharing: ACCOUNT_USAGE",
+                **_security_scope_meta(company, environment, days),
+                "source": source,
             }
+            st.session_state["security_posture_source"] = source
             st.session_state["security_posture_proof_sql"] = {
                 "summary": summary_sql,
                 "exceptions": exceptions_sql,
@@ -1933,12 +2163,12 @@ def render() -> None:
                     ttl_key=f"security_posture_exceptions_live_{company}_{environment}_{days}",
                     tier="standard",
                 )
+                source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE"
                 st.session_state["security_posture_meta"] = {
-                    "company": company,
-                    "environment": environment,
-                    "days": days,
-                    "source": "Live fallback: SNOWFLAKE.ACCOUNT_USAGE",
+                    **_security_scope_meta(company, environment, days),
+                    "source": source,
                 }
+                st.session_state["security_posture_source"] = source
                 st.session_state["security_posture_proof_sql"] = {
                     "summary": summary_sql,
                     "exceptions": exceptions_sql,
@@ -1963,6 +2193,9 @@ def render() -> None:
                     tier="standard",
                     section="Security Posture",
                 )
+                st.session_state["security_operability_fact_meta"] = _security_scope_meta(
+                    company, environment, days
+                )
                 st.session_state.pop("security_operability_fact_error", None)
             except Exception as fact_exc:
                 st.session_state["security_operability_fact"] = pd.DataFrame()
@@ -1974,9 +2207,7 @@ def render() -> None:
     if (
         summary is not None
         and not summary.empty
-        and meta.get("company") == company
-        and meta.get("environment") == environment
-        and meta.get("days") == days
+        and _security_meta_matches(meta, _security_scope_meta(company, environment, days))
     ):
         row = summary.iloc[0]
         failed_logins = safe_int(row.get("FAILED_LOGINS", 0))
@@ -2138,12 +2369,23 @@ def render() -> None:
                             tier="standard",
                             section="Security Posture",
                         )
+                        st.session_state["security_access_review_trend_meta"] = _security_scope_meta(
+                            company, environment, trend_days
+                        )
                     except Exception as exc:
                         st.session_state["security_access_review_trend"] = pd.DataFrame()
                         st.error(f"Could not load security access-review history: {format_snowflake_error(exc)}")
                         st.info("Deploy the access-review table from `snowflake/OVERWATCH_MART_SETUP.sql`, then reload.")
                 trend = st.session_state.get("security_access_review_trend")
-                if trend is not None and not trend.empty:
+                if (
+                    trend is not None
+                    and not _security_meta_matches(
+                        st.session_state.get("security_access_review_trend_meta"),
+                        _security_scope_meta(company, environment, trend_days),
+                    )
+                ):
+                    st.info("Loaded security access-review trend is stale for the active scope. Reload before acting.")
+                elif trend is not None and not trend.empty:
                     render_priority_dataframe(
                         trend,
                         title="Security review findings still needing DBA evidence",
@@ -2188,11 +2430,22 @@ def render() -> None:
                             tier="standard",
                             section="Security Posture",
                         )
+                        st.session_state["security_action_closure_meta"] = _security_scope_meta(
+                            company, environment, closure_days
+                        )
                     except Exception as exc:
                         st.session_state["security_action_closure"] = pd.DataFrame()
                         st.warning(f"Security closure analytics unavailable: {format_snowflake_error(exc)}")
                 closure = st.session_state.get("security_action_closure")
-                if closure is not None and not closure.empty:
+                if (
+                    closure is not None
+                    and not _security_meta_matches(
+                        st.session_state.get("security_action_closure_meta"),
+                        _security_scope_meta(company, environment, closure_days),
+                    )
+                ):
+                    st.info("Loaded security closure analytics are stale for the active scope. Reload before acting.")
+                elif closure is not None and not closure.empty:
                     render_priority_dataframe(
                         closure,
                         title="Security closure evidence gaps",
@@ -2239,6 +2492,8 @@ def render() -> None:
                 st.code(proof_sql.get("exceptions", "-- Load the security brief first."), language="sql")
         if st.session_state.get("exceptions_only_mode"):
             st.stop()
+    elif summary is not None and not summary.empty:
+        st.info("Loaded security brief is stale for the active scope. Reload Security Brief before acting.")
 
     workflow = render_workflow_selector(
         "Security workflow",

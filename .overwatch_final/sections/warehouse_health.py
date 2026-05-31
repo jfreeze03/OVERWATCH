@@ -37,6 +37,14 @@ WAREHOUSE_HEALTH_DETAILS = {
 
 WAREHOUSE_SETTING_REVIEW_TABLE = "OVERWATCH_WAREHOUSE_SETTING_REVIEW"
 WAREHOUSE_OPERABILITY_FACT_TABLE = "FACT_WAREHOUSE_OPERABILITY_DAILY"
+WAREHOUSE_SCOPE_FILTER_KEYS = (
+    "global_warehouse",
+    "global_user",
+    "global_role",
+    "global_database",
+    "global_start_date",
+    "global_end_date",
+)
 
 
 def warehouse_setting_review_fqn(
@@ -128,6 +136,221 @@ def build_warehouse_setting_review_migration_sql(
 
 def warehouse_operability_fact_fqn(table: str = WAREHOUSE_OPERABILITY_FACT_TABLE) -> str:
     return mart_object_name(table)
+
+
+def _scope_value(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def _warehouse_scope_meta(
+    company: str,
+    environment: str,
+    days: int | None = None,
+    state: dict | None = None,
+) -> dict:
+    """Return the filter scope that loaded Warehouse Health evidence must match."""
+    state = state if state is not None else st.session_state
+    meta = {
+        "company": _scope_value(company),
+        "environment": _scope_value(environment),
+    }
+    if days is not None:
+        meta["days"] = int(days)
+    for key in WAREHOUSE_SCOPE_FILTER_KEYS:
+        meta[key] = _scope_value(state.get(key))
+    return meta
+
+
+def _warehouse_meta_matches(meta: dict | None, expected: dict | None) -> bool:
+    if not isinstance(meta, dict) or not isinstance(expected, dict):
+        return False
+    for key, expected_value in expected.items():
+        actual = meta.get(key)
+        if key == "days":
+            try:
+                if int(actual) != int(expected_value):
+                    return False
+            except Exception:
+                return False
+        elif _scope_value(actual) != _scope_value(expected_value):
+            return False
+    return True
+
+
+def _frame_row_count(frame) -> int:
+    return len(frame) if isinstance(frame, pd.DataFrame) else 0
+
+
+def _source_confidence(source: str, default: str) -> str:
+    source_lower = str(source or "").lower()
+    if "mart" in source_lower or "fact_" in source_lower:
+        return "Pre-aggregated"
+    if "fallback" in source_lower:
+        return "Live fallback"
+    if "account_usage" in source_lower:
+        return "Live ACCOUNT_USAGE"
+    return default
+
+
+def _source_next_action(state: str, source: str) -> str:
+    source_lower = str(source or "").lower()
+    if state == "Stale":
+        return "Reload after changing company, environment, lookback, or global filters."
+    if state == "Unavailable":
+        return "Deploy or refresh the mart/grants before relying on this surface."
+    if state == "Not Loaded":
+        return "Load only when this workflow is part of the current DBA investigation."
+    if state == "No Rows":
+        return "Confirm the selected scope has recent warehouse activity or mart rows."
+    if "fallback" in source_lower:
+        return "Use for investigation; prefer mart refresh for repeated daily control."
+    return "Current for the active DBA scope."
+
+
+def _warehouse_source_health_rows(
+    state: dict,
+    company: str,
+    environment: str,
+) -> pd.DataFrame:
+    """Summarize Warehouse Health evidence freshness and source strategy."""
+    definitions = [
+        {
+            "surface": "Capacity brief",
+            "frame_key": "wh_capacity_summary",
+            "meta_key": "wh_capacity_meta",
+            "days_key": "wh_capacity_days",
+            "default_days": 7,
+            "source": "Live ACCOUNT_USAGE: QUERY_HISTORY + WAREHOUSE_METERING_HISTORY",
+            "confidence": "Live aggregate",
+        },
+        {
+            "surface": "Operability fact",
+            "frame_key": "wh_operability_fact",
+            "meta_key": "wh_capacity_meta",
+            "days_key": "wh_capacity_days",
+            "default_days": 7,
+            "source": f"OVERWATCH mart: {WAREHOUSE_OPERABILITY_FACT_TABLE}",
+            "confidence": "Pre-aggregated",
+            "error_key": "wh_operability_fact_error",
+        },
+        {
+            "surface": "Overview",
+            "frame_key": "wh_df_wh",
+            "source_key": "wh_df_wh_source",
+            "meta_key": "wh_df_wh_meta",
+            "days_key": "wh_days",
+            "default_days": 7,
+            "source": "OVERWATCH mart or live warehouse overview",
+            "confidence": "Mixed",
+        },
+        {
+            "surface": "Scaling events",
+            "frame_key": "wh_scaling",
+            "source_key": "wh_scaling_source",
+            "meta_key": "wh_scaling_meta",
+            "days_key": "wh_days",
+            "default_days": 7,
+            "source": "OVERWATCH mart or live WAREHOUSE_METERING_HISTORY",
+            "confidence": "Mixed",
+        },
+        {
+            "surface": "Efficiency",
+            "frame_key": "wh_efficiency",
+            "meta_key": "wh_efficiency_meta",
+            "days_key": "wh_eff_days",
+            "default_days": 7,
+            "source": "Live ACCOUNT_USAGE + allocated per-query credits",
+            "confidence": "Allocated",
+        },
+        {
+            "surface": "Spill & memory",
+            "frame_key": "wh_df_sp",
+            "meta_key": "wh_df_sp_meta",
+            "days_key": "sp_days",
+            "default_days": 7,
+            "source": "Live ACCOUNT_USAGE.QUERY_HISTORY",
+            "confidence": "Live ACCOUNT_USAGE",
+        },
+        {
+            "surface": "Workload heatmap",
+            "frame_key": "wh_df_hm",
+            "meta_key": "wh_df_hm_meta",
+            "days_key": "hm_days",
+            "default_days": 30,
+            "source": "Live ACCOUNT_USAGE.QUERY_HISTORY",
+            "confidence": "Live ACCOUNT_USAGE",
+        },
+        {
+            "surface": "Ownership readiness",
+            "frame_key": "wh_owner_inventory",
+            "meta_key": "wh_owner_inventory_meta",
+            "days_key": "wh_owner_inventory_days",
+            "default_days": 30,
+            "source": "Warehouse owner directory + tag evidence",
+            "confidence": "Governed metadata",
+        },
+        {
+            "surface": "Closure analytics",
+            "frame_key": "wh_action_closure",
+            "meta_key": "wh_action_closure_meta",
+            "days_key": "wh_action_closure_days",
+            "default_days": 30,
+            "source": "Action queue closure evidence",
+            "confidence": "Workflow evidence",
+        },
+        {
+            "surface": "Execution audit",
+            "frame_key": "wh_setting_execution_audit",
+            "meta_key": "wh_setting_execution_audit_meta",
+            "days": 30,
+            "source": "Warehouse setting review + DBA admin audit",
+            "confidence": "Audit evidence",
+        },
+    ]
+    rows = []
+    for item in definitions:
+        source = str(state.get(item.get("source_key", ""), item["source"]) or item["source"])
+        frame = state.get(item["frame_key"])
+        error = state.get(item.get("error_key", ""))
+        days = item.get("days", state.get(item.get("days_key"), item.get("default_days")))
+        expected_meta = _warehouse_scope_meta(company, environment, days=days, state=state)
+        loaded = isinstance(frame, pd.DataFrame)
+        if error:
+            status = "Unavailable"
+        elif not loaded:
+            status = "Not Loaded"
+        elif not _warehouse_meta_matches(state.get(item["meta_key"]), expected_meta):
+            status = "Stale"
+        elif frame.empty:
+            status = "No Rows"
+        else:
+            status = "Loaded"
+        state_rank = {
+            "Unavailable": 0,
+            "Stale": 1,
+            "Loaded": 2,
+            "No Rows": 3,
+            "Not Loaded": 4,
+        }.get(status, 9)
+        rows.append({
+            "SURFACE": item["surface"],
+            "STATE": status,
+            "STATE_RANK": state_rank,
+            "SOURCE": source,
+            "CONFIDENCE": _source_confidence(source, item["confidence"]),
+            "ROWS": _frame_row_count(frame),
+            "SCOPE": (
+                f"{company} / {environment} / {int(days)}d"
+                if days is not None
+                else f"{company} / {environment}"
+            ),
+            "NEXT_ACTION": _source_next_action(status, source),
+        })
+    return pd.DataFrame(rows)
 
 
 def build_warehouse_operability_fact_ddl(table: str = WAREHOUSE_OPERABILITY_FACT_TABLE) -> str:
@@ -1694,11 +1917,7 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                         "summary": summary_sql,
                         "exceptions": exceptions_sql,
                     }
-                    st.session_state["wh_capacity_meta"] = {
-                        "company": company,
-                        "environment": environment,
-                        "days": int(days),
-                    }
+                    st.session_state["wh_capacity_meta"] = _warehouse_scope_meta(company, environment, days)
                     try:
                         operability_sql = _warehouse_operability_fact_sql(days, company, environment)
                         st.session_state["wh_operability_fact_sql"] = operability_sql
@@ -1802,6 +2021,9 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                         )
                         st.session_state["wh_setting_execution_audit"] = audit
                         st.session_state["wh_setting_execution_audit_sql"] = audit_sql
+                        st.session_state["wh_setting_execution_audit_meta"] = _warehouse_scope_meta(
+                            company, environment, 30
+                        )
                     except Exception as exc:
                         st.session_state["wh_setting_execution_audit"] = pd.DataFrame()
                         st.warning(f"Warehouse execution audit unavailable: {format_snowflake_error(exc)}")
@@ -1920,6 +2142,9 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                         )
                         st.session_state["wh_action_closure"] = closure
                         st.session_state["wh_action_closure_sql"] = closure_sql
+                        st.session_state["wh_action_closure_meta"] = _warehouse_scope_meta(
+                            company, environment, closure_days
+                        )
                     except Exception as exc:
                         st.session_state["wh_action_closure"] = pd.DataFrame()
                         st.warning(f"Warehouse closure analytics unavailable: {format_snowflake_error(exc)}")
@@ -2107,6 +2332,9 @@ def _render_warehouse_ownership_panel(session, company: str, environment: str) -
                 )
                 st.session_state["wh_owner_inventory"] = _annotate_warehouse_owner_inventory(owner_inventory)
                 st.session_state["wh_owner_inventory_sql"] = owner_sql
+                st.session_state["wh_owner_inventory_meta"] = _warehouse_scope_meta(
+                    company, environment, owner_days
+                )
             except Exception as exc:
                 st.session_state["wh_owner_inventory"] = pd.DataFrame()
                 st.warning(f"Warehouse ownership readiness unavailable: {format_snowflake_error(exc)}")
@@ -2147,6 +2375,42 @@ def _render_warehouse_ownership_panel(session, company: str, environment: str) -
         download_csv(owner_inventory, "warehouse_ownership_readiness.csv")
         with st.expander("Ownership readiness query", expanded=False):
             st.code(st.session_state.get("wh_owner_inventory_sql", ""), language="sql")
+
+
+def _render_warehouse_source_health(company: str, environment: str) -> None:
+    source_health = _warehouse_source_health_rows(dict(st.session_state), company, environment)
+    if source_health.empty:
+        return
+    with st.expander("Warehouse Source Health", expanded=False):
+        loaded = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
+        stale = int(source_health["STATE"].eq("Stale").sum())
+        unavailable = int(source_health["STATE"].eq("Unavailable").sum())
+        mart_backed = int(
+            source_health[
+                source_health["STATE"].isin(["Loaded", "No Rows"])
+                & source_health["SOURCE"].astype(str).str.contains("mart|FACT_", case=False, regex=True)
+            ].shape[0]
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Current Surfaces", f"{loaded}/{len(source_health)}")
+        c2.metric("Mart-Backed", f"{mart_backed:,}")
+        c3.metric("Stale", f"{stale:,}", delta_color="inverse")
+        c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
+        st.caption(
+            "Use this before acting on warehouse findings. Stale rows mean the data was loaded under a different "
+            "company, environment, lookback, or global filter."
+        )
+        render_priority_dataframe(
+            source_health,
+            title="Warehouse evidence source and freshness",
+            priority_columns=[
+                "SURFACE", "STATE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION",
+            ],
+            sort_by=["STATE_RANK", "SURFACE"],
+            ascending=[True, True],
+            raw_label="All warehouse source-health rows",
+            height=320,
+        )
 
 
 def render():
@@ -2237,6 +2501,7 @@ def render():
     )
     _render_capacity_brief(session, company, environment)
     _render_warehouse_ownership_panel(session, company, environment)
+    _render_warehouse_source_health(company, environment)
     if st.session_state.get("exceptions_only_mode"):
         st.stop()
 
@@ -2296,10 +2561,19 @@ def render():
                     source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                 st.session_state["wh_df_wh"] = df_w
                 st.session_state["wh_df_wh_source"] = source
+                st.session_state["wh_df_wh_meta"] = _warehouse_scope_meta(company, environment, wh_days)
             except Exception as e:
                 st.warning(f"Warehouse overview unavailable in this role/context: {format_snowflake_error(e)}")
 
-        if st.session_state.get("wh_df_wh") is not None and not st.session_state["wh_df_wh"].empty:
+        if (
+            st.session_state.get("wh_df_wh") is not None
+            and not _warehouse_meta_matches(
+                st.session_state.get("wh_df_wh_meta"),
+                _warehouse_scope_meta(company, environment, wh_days),
+            )
+        ):
+            st.info("Loaded warehouse overview is stale for the active scope. Reload Warehouse Data before acting.")
+        elif st.session_state.get("wh_df_wh") is not None and not st.session_state["wh_df_wh"].empty:
             df_w = st.session_state["wh_df_wh"]
 
             c1, c2, c3 = st.columns(3)
@@ -2401,26 +2675,42 @@ def render():
                             ORDER BY m.credits_used DESC LIMIT 200
                         """, ttl_key=f"wh_scaling_live_{company}_{wh_days}", tier="historical")
                         scale_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-                    st.caption(f"{metric_confidence_label('exact')} | {scale_source}")
-                    render_priority_dataframe(
-                        df_scale,
-                        title="Largest scaling/metering events",
-                        priority_columns=[
-                            "WAREHOUSE_NAME",
-                            "WAREHOUSE_SIZE",
-                            "START_TIME",
-                            "END_TIME",
-                            "CREDITS_USED",
-                            "CREDITS_USED_COMPUTE",
-                            "CREDITS_USED_CLOUD_SERVICES",
-                        ],
-                        sort_by=["CREDITS_USED", "CREDITS_USED_COMPUTE"],
-                        ascending=[False, False],
-                        raw_label="All scaling events",
-                    )
-                    download_csv(df_scale, "scaling_events.csv")
+                    st.session_state["wh_scaling"] = df_scale
+                    st.session_state["wh_scaling_source"] = scale_source
+                    st.session_state["wh_scaling_meta"] = _warehouse_scope_meta(company, environment, wh_days)
                 except Exception as e:
                     st.warning(f"Scaling events unavailable in this role/context: {format_snowflake_error(e)}")
+            df_scale = st.session_state.get("wh_scaling")
+            if (
+                df_scale is not None
+                and not _warehouse_meta_matches(
+                    st.session_state.get("wh_scaling_meta"),
+                    _warehouse_scope_meta(company, environment, wh_days),
+                )
+            ):
+                st.info("Loaded scaling events are stale for the active scope. Reload Scaling Events before acting.")
+            elif df_scale is not None and not df_scale.empty:
+                scale_source = st.session_state.get("wh_scaling_source", "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY")
+                st.caption(f"{metric_confidence_label('exact')} | {scale_source}")
+                render_priority_dataframe(
+                    df_scale,
+                    title="Largest scaling/metering events",
+                    priority_columns=[
+                        "WAREHOUSE_NAME",
+                        "WAREHOUSE_SIZE",
+                        "START_TIME",
+                        "END_TIME",
+                        "CREDITS_USED",
+                        "CREDITS_USED_COMPUTE",
+                        "CREDITS_USED_CLOUD_SERVICES",
+                    ],
+                    sort_by=["CREDITS_USED", "CREDITS_USED_COMPUTE"],
+                    ascending=[False, False],
+                    raw_label="All scaling events",
+                )
+                download_csv(df_scale, "scaling_events.csv")
+            elif df_scale is not None:
+                st.info("No scaling or metering events found for the selected warehouse scope.")
 
     elif warehouse_view == "Efficiency":
         st.header("Warehouse Efficiency Scorecard")
@@ -2452,11 +2742,20 @@ def render():
                     LIMIT 200
                 """, ttl_key=f"wh_efficiency_{company}_{eff_days}", tier="historical")
                 st.session_state["wh_efficiency"] = df_eff
+                st.session_state["wh_efficiency_meta"] = _warehouse_scope_meta(company, environment, eff_days)
             except Exception as e:
                 st.warning(f"Efficiency metrics unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_eff = st.session_state.get("wh_efficiency")
-        if df_eff is not None and not df_eff.empty:
+        if (
+            df_eff is not None
+            and not _warehouse_meta_matches(
+                st.session_state.get("wh_efficiency_meta"),
+                _warehouse_scope_meta(company, environment, eff_days),
+            )
+        ):
+            st.info("Loaded efficiency metrics are stale for the active scope. Reload Efficiency Metrics before acting.")
+        elif df_eff is not None and not df_eff.empty:
             low = df_eff[df_eff["EFFICIENCY_SCORE"] < 70]
             c1, c2, c3 = st.columns(3)
             c1.metric("Warehouses scored", len(df_eff))
@@ -2514,10 +2813,19 @@ def render():
                     ORDER BY local_spill_gb + remote_spill_gb DESC
                 """, ttl_key=f"wh_spill_{company}_{sp_days}", tier="historical")
                 st.session_state["wh_df_sp"] = df_sp
+                st.session_state["wh_df_sp_meta"] = _warehouse_scope_meta(company, environment, sp_days)
             except Exception as e:
                 st.warning(f"Spill data unavailable in this role/context: {format_snowflake_error(e)}")
 
-        if st.session_state.get("wh_df_sp") is not None and not st.session_state["wh_df_sp"].empty:
+        if (
+            st.session_state.get("wh_df_sp") is not None
+            and not _warehouse_meta_matches(
+                st.session_state.get("wh_df_sp_meta"),
+                _warehouse_scope_meta(company, environment, sp_days),
+            )
+        ):
+            st.info("Loaded spill data is stale for the active scope. Reload Spill Data before acting.")
+        elif st.session_state.get("wh_df_sp") is not None and not st.session_state["wh_df_sp"].empty:
             df_sp = st.session_state["wh_df_sp"]
             c1, c2, c3 = st.columns(3)
             c1.metric("Spilling Warehouses", len(df_sp))
@@ -2573,10 +2881,19 @@ def render():
                     ORDER BY warehouse_name, day_of_week, hour_of_day
                 """, ttl_key=f"wh_heatmap_{company}_{hm_days}", tier="historical")
                 st.session_state["wh_df_hm"] = df_hm
+                st.session_state["wh_df_hm_meta"] = _warehouse_scope_meta(company, environment, hm_days)
             except Exception as e:
                 st.warning(f"Workload heatmap unavailable in this role/context: {format_snowflake_error(e)}")
 
-        if st.session_state.get("wh_df_hm") is not None and not st.session_state["wh_df_hm"].empty:
+        if (
+            st.session_state.get("wh_df_hm") is not None
+            and not _warehouse_meta_matches(
+                st.session_state.get("wh_df_hm_meta"),
+                _warehouse_scope_meta(company, environment, hm_days),
+            )
+        ):
+            st.info("Loaded workload heatmap is stale for the active scope. Rebuild Heatmap before acting.")
+        elif st.session_state.get("wh_df_hm") is not None and not st.session_state["wh_df_hm"].empty:
             df_hm = st.session_state["wh_df_hm"]
             whs = df_hm["WAREHOUSE_NAME"].unique()
             sel_wh = st.selectbox("Warehouse", whs, key="hm_wh_sel")

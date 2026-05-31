@@ -10,7 +10,7 @@
 --   - MONITOR ACCOUNT for operational metadata
 --
 -- Cost posture:
---   - XSMALL warehouse, 60-second auto-suspend
+--   - support XSMALL warehouse, 60-second auto-suspend
 --   - transient mart tables for rebuildable data
 --   - permanent audit/action tables for evidence
 --   - hourly refresh, offset from the top of the hour for ACCOUNT_USAGE latency
@@ -28,7 +28,7 @@ CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH
   AUTO_RESUME = TRUE
   INITIALLY_SUSPENDED = TRUE
   STATEMENT_TIMEOUT_IN_SECONDS = 300
-  COMMENT = 'Low-cost warehouse for OVERWATCH metadata mart refreshes.';
+  COMMENT = 'Low-cost support warehouse for OVERWATCH verification tasks and optional metadata mart refreshes.';
 
 USE DATABASE DBA_MAINT_DB;
 USE SCHEMA OVERWATCH;

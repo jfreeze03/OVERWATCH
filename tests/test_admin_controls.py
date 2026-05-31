@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -378,6 +379,46 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("PROD", prod_clause)
         self.assertIn("NO DATABASE CONTEXT", prod_clause)
         self.assertEqual(action_queue_environment_clause("ENVIRONMENT", "ALL"), "")
+
+    def test_overwatch_task_warehouses_match_intended_runtime(self):
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+        task_blocks = re.findall(
+            r"CREATE OR REPLACE TASK\s+(OVERWATCH_[A-Z0-9_]+)\s+(.*?);",
+            setup_sql,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        warehouses = {}
+        for task_name, body in task_blocks:
+            match = re.search(r"\bWAREHOUSE\s*=\s*([A-Z0-9_]+)", body, flags=re.IGNORECASE)
+            self.assertIsNotNone(match, f"{task_name} is missing an explicit WAREHOUSE clause")
+            warehouses[task_name.upper()] = match.group(1).upper()
+
+        self.assertEqual(
+            set(warehouses),
+            {
+                "OVERWATCH_COST_SAVINGS_VERIFY",
+                "OVERWATCH_ANOMALY_CHECK",
+                "OVERWATCH_LOAD_HOURLY",
+                "OVERWATCH_LOAD_CORTEX",
+                "OVERWATCH_REFRESH_CONTROL_ROOM",
+                "OVERWATCH_LOAD_DAILY",
+            },
+        )
+        self.assertEqual(
+            warehouses,
+            {
+                "OVERWATCH_COST_SAVINGS_VERIFY": "OVERWATCH_WH",
+                "OVERWATCH_ANOMALY_CHECK": "COMPUTE_WH",
+                "OVERWATCH_LOAD_HOURLY": "COMPUTE_WH",
+                "OVERWATCH_LOAD_CORTEX": "COMPUTE_WH",
+                "OVERWATCH_REFRESH_CONTROL_ROOM": "COMPUTE_WH",
+                "OVERWATCH_LOAD_DAILY": "COMPUTE_WH",
+            },
+        )
+        self.assertEqual(
+            {task: warehouse for task, warehouse in warehouses.items() if not warehouse.endswith("_WH")},
+            {},
+        )
 
     def test_fixed_action_status_requires_verification_evidence(self):
         missing = action_queue_fixed_missing_fields(

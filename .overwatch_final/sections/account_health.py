@@ -31,6 +31,226 @@ from utils.workflows import render_operator_briefing, render_priority_dataframe
 CHECKLIST_HISTORY_TABLE = "OVERWATCH_DBA_CHECKLIST_HISTORY"
 ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE = "FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY"
 ACCOUNT_HEALTH_ACTION_SOURCE = "Account Health - Daily DBA Checklist"
+ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (
+    "global_start_date",
+    "global_end_date",
+    "global_warehouse",
+    "global_user",
+    "global_role",
+    "global_database",
+)
+
+
+def _account_health_scope_value(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def _account_health_scope_meta(
+    company: str,
+    environment: str,
+    window: str = "",
+    state: dict | None = None,
+) -> dict:
+    """Return the filter scope that loaded Account Health evidence must match."""
+    state = state if state is not None else st.session_state
+    meta = {
+        "company": _account_health_scope_value(company),
+        "environment": _account_health_scope_value(environment),
+    }
+    if window:
+        meta["window"] = _account_health_scope_value(window)
+    for key in ACCOUNT_HEALTH_SCOPE_FILTER_KEYS:
+        meta[key] = _account_health_scope_value(state.get(key))
+    return meta
+
+
+def _account_health_meta_matches(meta: dict | None, expected: dict | None) -> bool:
+    if not isinstance(meta, dict) or not isinstance(expected, dict):
+        return False
+    for key, expected_value in expected.items():
+        if _account_health_scope_value(meta.get(key)) != _account_health_scope_value(expected_value):
+            return False
+    return True
+
+
+def _account_health_row_count(value) -> int:
+    if isinstance(value, pd.DataFrame):
+        return len(value)
+    if isinstance(value, dict):
+        return sum(len(frame) for frame in value.values() if isinstance(frame, pd.DataFrame))
+    if isinstance(value, str):
+        return 1 if value.strip() else 0
+    return 0
+
+
+def _account_health_loaded(value) -> bool:
+    return isinstance(value, (pd.DataFrame, dict, str))
+
+
+def _account_health_is_empty(value) -> bool:
+    if isinstance(value, pd.DataFrame):
+        return value.empty
+    if isinstance(value, dict):
+        frames = [frame for frame in value.values() if isinstance(frame, pd.DataFrame)]
+        return not frames or all(frame.empty for frame in frames)
+    if isinstance(value, str):
+        return not value.strip()
+    return True
+
+
+def _account_health_source_confidence(source: str, default: str) -> str:
+    source_lower = str(source or "").lower()
+    if "mart" in source_lower or "fact_" in source_lower:
+        return "Pre-aggregated"
+    if "fallback" in source_lower:
+        return "Live fallback"
+    if "account_usage" in source_lower or "information_schema" in source_lower:
+        return "Live Snowflake metadata"
+    return default
+
+
+def _account_health_source_next_action(state: str, source: str) -> str:
+    source_lower = str(source or "").lower()
+    if state == "Stale":
+        return "Reload after changing company, environment, lookback, or global filters."
+    if state == "Unavailable":
+        return "Deploy or refresh the mart/grants before relying on this surface."
+    if state == "Not Loaded":
+        return "Load only when this workflow is part of the current DBA investigation."
+    if state == "No Rows":
+        return "Confirm the selected scope has recent account activity or persisted evidence."
+    if "fallback" in source_lower:
+        return "Use for investigation; prefer mart refresh for repeated morning control."
+    return "Current for the active Account Health scope."
+
+
+def _account_health_source_health_rows(
+    state: dict,
+    company: str,
+    environment: str,
+) -> pd.DataFrame:
+    """Summarize Account Health evidence freshness and source strategy."""
+    health_data = state.get("health_data", {})
+    if not isinstance(health_data, dict):
+        health_data = {}
+    definitions = [
+        {
+            "surface": "Overview snapshot",
+            "value": health_data,
+            "source": health_data.get("_account_health_detail_source", "OVERWATCH mart or live ACCOUNT_USAGE"),
+            "meta_key": "account_health_overview_meta",
+            "window": "24h",
+            "confidence": "Mixed",
+        },
+        {
+            "surface": "Control-room mart",
+            "value": health_data.get("_control_mart"),
+            "source": health_data.get("_control_mart_source", "OVERWATCH control-room mart"),
+            "meta_key": "account_health_overview_meta",
+            "window": "24h",
+            "confidence": "Pre-aggregated",
+        },
+        {
+            "surface": "Live status probe",
+            "value": health_data.get("live"),
+            "source": health_data.get("_live_source", "ACCOUNT_USAGE"),
+            "meta_key": "account_health_live_status_meta",
+            "window": "1h",
+            "confidence": "Live Snowflake metadata",
+        },
+        {
+            "surface": "Operability fact",
+            "value": state.get("account_health_operability_fact"),
+            "source": f"OVERWATCH mart: {ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE}",
+            "meta_key": "account_health_operability_fact_meta",
+            "window": "30d",
+            "confidence": "Pre-aggregated",
+            "error_key": "account_health_operability_fact_error",
+        },
+        {
+            "surface": "Access hygiene",
+            "value": state.get("account_health_access_hygiene"),
+            "source": "Live ACCOUNT_USAGE users, logins, and grants",
+            "meta_key": "account_health_access_hygiene_meta",
+            "window_key": "account_health_access_hygiene_days",
+            "default_window": "30d",
+            "confidence": "Account-level control",
+        },
+        {
+            "surface": "Checklist trend",
+            "value": state.get("account_health_checklist_trend"),
+            "source": f"Workflow mart: {CHECKLIST_HISTORY_TABLE}",
+            "meta_key": "account_health_checklist_trend_meta",
+            "window_key": "account_health_checklist_trend_days",
+            "default_window": "30d",
+            "confidence": "Workflow evidence",
+        },
+        {
+            "surface": "Closure analytics",
+            "value": state.get("account_health_closure_analytics"),
+            "source": "Action queue closure evidence",
+            "meta_key": "account_health_closure_analytics_meta",
+            "window_key": "account_health_closure_days",
+            "default_window": "30d",
+            "confidence": "Workflow evidence",
+        },
+        {
+            "surface": "Morning report",
+            "value": state.get("morning_data"),
+            "source": state.get("morning_data_source", "OVERWATCH mart or live ACCOUNT_USAGE"),
+            "meta_key": "morning_data_meta",
+            "window": "12h",
+            "confidence": "Mixed",
+        },
+        {
+            "surface": "Executive briefing",
+            "value": state.get("ah_briefing_text"),
+            "source": state.get("ah_briefing_source", "OVERWATCH mart or live ACCOUNT_USAGE"),
+            "meta_key": "ah_briefing_meta",
+            "window_key": "ah_briefing_window",
+            "default_window": "24h",
+            "confidence": "Mixed",
+        },
+    ]
+    rows = []
+    for item in definitions:
+        window = _account_health_scope_value(
+            item.get("window", state.get(item.get("window_key"), item.get("default_window", "")))
+        )
+        expected_meta = _account_health_scope_meta(company, environment, window=window, state=state)
+        value = item.get("value")
+        error = state.get(item.get("error_key", ""))
+        if error:
+            status = "Unavailable"
+        elif not _account_health_loaded(value):
+            status = "Not Loaded"
+        elif not _account_health_meta_matches(state.get(item["meta_key"]), expected_meta):
+            status = "Stale"
+        elif _account_health_is_empty(value):
+            status = "No Rows"
+        else:
+            status = "Loaded"
+        rows.append({
+            "SURFACE": item["surface"],
+            "STATE": status,
+            "STATE_RANK": {
+                "Unavailable": 0,
+                "Stale": 1,
+                "Loaded": 2,
+                "No Rows": 3,
+                "Not Loaded": 4,
+            }.get(status, 9),
+            "SOURCE": item["source"],
+            "CONFIDENCE": _account_health_source_confidence(item["source"], item["confidence"]),
+            "ROWS": _account_health_row_count(value),
+            "SCOPE": f"{company} / {environment} / {window}",
+            "NEXT_ACTION": _account_health_source_next_action(status, item["source"]),
+        })
+    return pd.DataFrame(rows)
 
 
 def _drill_to(
@@ -1564,12 +1784,28 @@ def _render_account_health_access_hygiene(session, company: str, environment: st
                 )
                 st.session_state["account_health_access_hygiene_sql"] = sql
                 st.session_state["account_health_access_hygiene"] = _annotate_account_health_access_hygiene(raw)
+                st.session_state["account_health_access_hygiene_meta"] = _account_health_scope_meta(
+                    company, environment, window=f"{int(days)}d"
+                )
             except Exception as exc:
                 st.session_state["account_health_access_hygiene"] = pd.DataFrame()
                 st.warning(f"Account access hygiene unavailable: {format_snowflake_error(exc)}")
 
         hygiene = st.session_state.get("account_health_access_hygiene")
-        if hygiene is not None and not hygiene.empty:
+        if (
+            hygiene is not None
+            and not _account_health_meta_matches(
+                st.session_state.get("account_health_access_hygiene_meta"),
+                _account_health_scope_meta(company, environment, window=f"{int(days)}d"),
+            )
+        ):
+            st.info("Loaded access hygiene is stale for the active scope. Reload before queuing access work.")
+            with st.expander("Access Hygiene Query", expanded=False):
+                st.code(
+                    st.session_state.get("account_health_access_hygiene_sql", "-- Reload access hygiene to regenerate SQL."),
+                    language="sql",
+                )
+        elif hygiene is not None and not hygiene.empty:
             h1, h2, h3, h4 = st.columns(4)
             h1.metric("Users to Review", f"{len(hygiene):,}")
             high = int((hygiene.get("SEVERITY", pd.Series(dtype=str)).astype(str).str.upper() == "HIGH").sum())
@@ -1599,10 +1835,47 @@ def _render_account_health_access_hygiene(session, company: str, environment: st
             st.success("No account-level access hygiene candidates found for the selected lookback.")
 
 
+def _render_account_health_source_health(company: str, environment: str) -> None:
+    source_health = _account_health_source_health_rows(dict(st.session_state), company, environment)
+    if source_health.empty:
+        return
+    with st.expander("Account Health Source Health", expanded=False):
+        current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
+        stale = int(source_health["STATE"].eq("Stale").sum())
+        unavailable = int(source_health["STATE"].eq("Unavailable").sum())
+        mart_backed = int(
+            source_health[
+                source_health["STATE"].isin(["Loaded", "No Rows"])
+                & source_health["SOURCE"].astype(str).str.contains("mart|FACT_", case=False, regex=True)
+            ].shape[0]
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
+        c2.metric("Mart-Backed", f"{mart_backed:,}")
+        c3.metric("Stale", f"{stale:,}", delta_color="inverse")
+        c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
+        st.caption(
+            "Use this before publishing the morning report or queueing checklist work. "
+            "Account-level controls stay visible under environment filters when Snowflake has no database context."
+        )
+        render_priority_dataframe(
+            source_health,
+            title="Account Health evidence source and freshness",
+            priority_columns=[
+                "SURFACE", "STATE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION",
+            ],
+            sort_by=["STATE_RANK", "SURFACE"],
+            ascending=[True, True],
+            raw_label="All Account Health source-health rows",
+            height=320,
+        )
+
+
 def render():
     session      = get_session()
     credit_price = get_credit_price()
     company      = st.session_state.get("active_company", "ALFA")
+    environment  = get_active_environment()
     wh_filter_q = get_wh_filter_clause("q.warehouse_name", company)
     wh_filter_m = get_wh_filter_clause("warehouse_name", company)
     db_filter_q = get_db_filter_clause("q.database_name", company)
@@ -1684,6 +1957,7 @@ def render():
         exceptions_only = bool(st.session_state.get("exceptions_only_mode", False))
         if exceptions_only:
             st.info("Leadership exceptions-only mode is on. Heavy drilldowns stay collapsed until you ask for detail.")
+        _render_account_health_source_health(company, environment)
 
         cache_age = 999
         filter_sig = "|".join([
@@ -1862,6 +2136,12 @@ def render():
             st.session_state["health_data"] = hd
             st.session_state["_health_ts"]  = datetime.now().isoformat()
             st.session_state["_health_filter_sig"] = filter_sig
+            st.session_state["account_health_overview_meta"] = _account_health_scope_meta(
+                company, environment, window="24h"
+            )
+            st.session_state["account_health_live_status_meta"] = _account_health_scope_meta(
+                company, environment, window="1h"
+            )
             mark_loaded("account_health")
 
         hd = st.session_state.get("health_data", {})
@@ -1968,6 +2248,9 @@ def render():
                 ttl_key=f"account_health_operability_fact_{company}_{get_active_environment()}_30",
                 tier="standard",
                 section="Account Health",
+            )
+            st.session_state["account_health_operability_fact_meta"] = _account_health_scope_meta(
+                company, environment, window="30d"
             )
             st.session_state.pop("account_health_operability_fact_error", None)
         except Exception as fact_exc:
@@ -2107,10 +2390,21 @@ def render():
                         section="Account Health",
                     )
                     st.session_state["account_health_checklist_trend_sql"] = trend_sql
+                    st.session_state["account_health_checklist_trend_meta"] = _account_health_scope_meta(
+                        company, environment, window=f"{int(trend_days)}d"
+                    )
                 except Exception as exc:
                     st.warning(f"Checklist trend unavailable: {format_snowflake_error(exc)}")
             trend = st.session_state.get("account_health_checklist_trend")
-            if trend is not None and not trend.empty:
+            if (
+                trend is not None
+                and not _account_health_meta_matches(
+                    st.session_state.get("account_health_checklist_trend_meta"),
+                    _account_health_scope_meta(company, environment, window=f"{int(trend_days)}d"),
+                )
+            ):
+                st.info("Loaded checklist trend is stale for the active scope. Reload before acting.")
+            elif trend is not None and not trend.empty:
                 render_priority_dataframe(
                     trend,
                     title="Checklist issues by recurring snapshot",
@@ -2149,12 +2443,23 @@ def render():
                         tier="standard",
                         section="Account Health",
                     )
+                    st.session_state["account_health_closure_analytics_meta"] = _account_health_scope_meta(
+                        company, environment, window=f"{int(closure_days)}d"
+                    )
                 except Exception as exc:
                     st.session_state["account_health_closure_analytics"] = pd.DataFrame()
                     st.warning(f"Closure analytics unavailable: {format_snowflake_error(exc)}")
                     st.info("Deploy the latest Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry.")
             closure = st.session_state.get("account_health_closure_analytics")
-            if closure is not None and not closure.empty:
+            if (
+                closure is not None
+                and not _account_health_meta_matches(
+                    st.session_state.get("account_health_closure_analytics_meta"),
+                    _account_health_scope_meta(company, environment, window=f"{int(closure_days)}d"),
+                )
+            ):
+                st.info("Loaded closure analytics are stale for the active scope. Reload before acting.")
+            elif closure is not None and not closure.empty:
                 render_priority_dataframe(
                     closure,
                     title="Checklist closure evidence gaps",
@@ -2536,6 +2841,10 @@ def render():
                             md[key] = pd.DataFrame()
                 md["_source"] = morning_source
                 st.session_state["morning_data"] = md
+                st.session_state["morning_data_source"] = morning_source
+                st.session_state["morning_data_meta"] = _account_health_scope_meta(
+                    company, environment, window="12h"
+                )
 
         if st.session_state.get("morning_data"):
             md = st.session_state["morning_data"]
@@ -2796,6 +3105,9 @@ def render():
                 st.session_state["ah_briefing_ts"]   = datetime.now().strftime("%Y-%m-%d %H:%M")
                 st.session_state["ah_briefing_window"] = briefing_window
                 st.session_state["ah_briefing_source"] = briefing_source
+                st.session_state["ah_briefing_meta"] = _account_health_scope_meta(
+                    company, environment, window=briefing_window
+                )
 
         # ── Render briefing ────────────────────────────────────────────────────
         if st.session_state.get("ah_briefing_text"):

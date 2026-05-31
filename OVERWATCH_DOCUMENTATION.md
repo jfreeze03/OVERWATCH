@@ -77,6 +77,11 @@ is `snowflake/OVERWATCH_MART_SETUP.sql`.
 The detailed table inventory, refresh flow, cost controls, and migration
 strategy are documented in `SNOWFLAKE_ARCHITECTURE.md`.
 
+Manual inputs that must stay synchronized between the app and Snowflake DDL are
+tracked in `OVERWATCH_MANUAL_INPUTS_AND_DDL_RUNBOOK.md`. Use that runbook before
+adding warehouses, databases, environment selectors, app roles, cost defaults,
+alert emails, owner routes, alert rules, or task/warehouse DDL.
+
 Run the script in Snowflake with a platform-admin role that can create the
 database/schema, warehouse, procedures, and tasks:
 
@@ -88,7 +93,7 @@ USE ROLE ACCOUNTADMIN;
 The script creates:
 
 - `DBA_MAINT_DB.OVERWATCH` for app-owned state and marts
-- `OVERWATCH_WH`, an X-Small warehouse with 60-second auto-suspend
+- `OVERWATCH_WH`, an X-Small support warehouse with 60-second auto-suspend
 - configuration tables for company scope, settings, alerts, action queue,
   usage logging, admin action audit, and ROI tracking
 - compact fact/dimension tables for warehouse credits, query history, recent
@@ -97,6 +102,14 @@ The script creates:
 - `MART_DBA_CONTROL_ROOM`, a compact command-center table for Account Health
   and exceptions-only views
 - hourly and daily tasks that refresh only recent windows, then prune old rows
+
+Current setup SQL uses `COMPUTE_WH` to run the main load/anomaly task graph and
+`OVERWATCH_WH` to run `OVERWATCH_COST_SAVINGS_VERIFY`. These are app execution
+warehouses, not the set of warehouses being monitored. OVERWATCH monitors ALFA
+and Trexis warehouses from company scope plus Snowflake account-usage history.
+Treat task warehouse names as manual inputs; update the setup SQL,
+monitoring-cost logic, docs, and tests together if ALFA moves the task graph to
+another execution warehouse later.
 
 Refresh cadence:
 
@@ -111,8 +124,12 @@ Refresh cadence:
 
 Cost model:
 
-- Hourly/daily tasks use a dedicated X-Small warehouse with aggressive
-  auto-suspend.
+- Task warehouse choice is explicit in `OVERWATCH_MART_SETUP.sql`; the current
+  main load/anomaly tasks execute on `COMPUTE_WH`, while the cost-savings
+  verifier executes on `OVERWATCH_WH`.
+- Monitored warehouses are not limited to the execution warehouse. ALFA and
+  Trexis monitoring comes from company scope and Snowflake account-usage
+  history.
 - The app should prefer mart reads for KPIs, charts, and summary pages, then use
   direct Snowflake history only for live drilldowns or admin-control screens.
 - `FACT_MONITORING_COST_DAILY` tracks OVERWATCH task/app/tagged query spend so

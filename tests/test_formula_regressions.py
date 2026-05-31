@@ -25,6 +25,7 @@ from sections.account_health import (  # noqa: E402
     _account_health_closure_analytics_sql,
     _account_health_control_board,
     _account_health_operability_fact_sql,
+    _account_health_source_health_rows,
     _build_account_health_dba_checklist,
     _enrich_account_health_checklist_owners,
     build_account_health_checklist_history_ddl,
@@ -118,6 +119,7 @@ from sections.security_posture import (  # noqa: E402
     _security_control_board,
     _security_privileged_grant_review_sql,
     _security_operability_fact_sql,
+    _security_source_health_rows,
     _security_access_review_history_sql,
     _security_access_review_insert_sql,
     _security_action_for,
@@ -175,6 +177,7 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_capacity_verification_sql,
     _warehouse_owner_inventory_sql,
     _warehouse_operability_fact_sql,
+    _warehouse_source_health_rows,
     _warehouse_setting_review_history_sql,
     _warehouse_setting_review_insert_sql,
     build_warehouse_operability_fact_ddl,
@@ -614,6 +617,60 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertIn(db_name, fact_sql)
         self.assertNotIn("ACCOUNT_USAGE", fact_sql)
         self.assertNotIn("OVERWATCH_ACTION_QUEUE", fact_sql)
+
+    def test_account_health_source_health_flags_loaded_stale_and_unavailable_evidence(self):
+        state = {
+            "global_start_date": "",
+            "global_end_date": "",
+            "global_warehouse": "",
+            "global_user": "",
+            "global_role": "",
+            "global_database": "",
+            "health_data": {
+                "_account_health_detail_source": "OVERWATCH mart facts",
+                "_control_mart_source": "OVERWATCH mart: MART_DBA_CONTROL_ROOM",
+                "_control_mart": pd.DataFrame({"SNAPSHOT_TS": ["2026-05-31"]}),
+                "_live_source": "ACCOUNT_USAGE",
+                "live": pd.DataFrame({"ACTIVE_COUNT": [1]}),
+            },
+            "account_health_overview_meta": {
+                "company": "ALFA",
+                "environment": "PROD",
+                "window": "24h",
+                "global_start_date": "",
+                "global_end_date": "",
+                "global_warehouse": "",
+                "global_user": "",
+                "global_role": "",
+                "global_database": "",
+            },
+            "account_health_operability_fact": pd.DataFrame(),
+            "account_health_operability_fact_error": "FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY missing",
+            "account_health_access_hygiene_days": 30,
+            "account_health_access_hygiene": pd.DataFrame({"USER_NAME": ["ALFA_ADMIN"]}),
+            "account_health_access_hygiene_meta": {
+                "company": "ALFA",
+                "environment": "DEV_ALL",
+                "window": "30d",
+                "global_start_date": "",
+                "global_end_date": "",
+                "global_warehouse": "",
+                "global_user": "",
+                "global_role": "",
+                "global_database": "",
+            },
+        }
+
+        rows = _account_health_source_health_rows(state, company="ALFA", environment="PROD")
+        by_surface = {row["SURFACE"]: row for _, row in rows.iterrows()}
+
+        self.assertEqual(by_surface["Overview snapshot"]["STATE"], "Loaded")
+        self.assertEqual(by_surface["Overview snapshot"]["CONFIDENCE"], "Pre-aggregated")
+        self.assertEqual(by_surface["Live status probe"]["STATE"], "Stale")
+        self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
+        self.assertEqual(by_surface["Access hygiene"]["STATE"], "Stale")
+        self.assertEqual(by_surface["Checklist trend"]["STATE"], "Not Loaded")
+        self.assertIn("Reload", by_surface["Access hygiene"]["NEXT_ACTION"])
 
     def test_account_health_access_hygiene_keeps_user_auth_scope_account_level(self):
         with patch(
@@ -1729,6 +1786,54 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("ACCOUNT_USAGE", fact_sql)
         self.assertNotIn("OVERWATCH_ACTION_QUEUE", fact_sql)
 
+    def test_security_source_health_flags_stale_fallback_and_unavailable_evidence(self):
+        state = {
+            "global_user": "ALFA_USER",
+            "global_database": "",
+            "global_role": "",
+            "global_start_date": "",
+            "global_end_date": "",
+            "security_posture_brief_days": 30,
+            "security_posture_summary": pd.DataFrame({"FAILED_LOGINS": [3]}),
+            "security_posture_exceptions": pd.DataFrame({"FINDING_TYPE": ["Failed Login"]}),
+            "security_posture_source": "Live fallback: SNOWFLAKE.ACCOUNT_USAGE",
+            "security_posture_meta": {
+                "company": "ALFA",
+                "environment": "PROD",
+                "days": 30,
+                "global_user": "ALFA_USER",
+                "global_database": "",
+                "global_role": "",
+                "global_start_date": "",
+                "global_end_date": "",
+            },
+            "security_operability_fact": pd.DataFrame(),
+            "security_operability_fact_error": "FACT_SECURITY_OPERABILITY_DAILY missing",
+            "security_priv_grant_days": 30,
+            "security_privileged_grants": pd.DataFrame({"ENTITY": ["JDOE"]}),
+            "security_privileged_grants_meta": {
+                "company": "ALFA",
+                "environment": "DEV_ALL",
+                "days": 30,
+                "global_user": "ALFA_USER",
+                "global_database": "",
+                "global_role": "",
+                "global_start_date": "",
+                "global_end_date": "",
+            },
+        }
+
+        rows = _security_source_health_rows(state, company="ALFA", environment="PROD")
+        by_surface = {row["SURFACE"]: row for _, row in rows.iterrows()}
+
+        self.assertEqual(by_surface["Security brief"]["STATE"], "Loaded")
+        self.assertEqual(by_surface["Security brief"]["CONFIDENCE"], "Live fallback")
+        self.assertEqual(by_surface["Security exceptions"]["ROWS"], 1)
+        self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
+        self.assertEqual(by_surface["Privileged grants"]["STATE"], "Stale")
+        self.assertEqual(by_surface["Access review trend"]["STATE"], "Not Loaded")
+        self.assertIn("Reload", by_surface["Privileged grants"]["NEXT_ACTION"])
+
     def test_change_drift_score_weights_destructive_and_policy_changes(self):
         clean = _change_drift_score(
             object_changes=0,
@@ -2350,6 +2455,56 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertIn(db_name, fact_sql)
         self.assertNotIn("ACCOUNT_USAGE", fact_sql)
         self.assertNotIn("OVERWATCH_ACTION_QUEUE", fact_sql)
+
+    def test_warehouse_source_health_flags_loaded_stale_and_unavailable_evidence(self):
+        state = {
+            "global_warehouse": "ALFA",
+            "global_user": "",
+            "global_role": "",
+            "global_database": "",
+            "global_start_date": "",
+            "global_end_date": "",
+            "wh_capacity_days": 7,
+            "wh_capacity_summary": pd.DataFrame({"WAREHOUSES_ACTIVE": [2]}),
+            "wh_capacity_meta": {
+                "company": "ALFA",
+                "environment": "PROD",
+                "days": 7,
+                "global_warehouse": "ALFA",
+                "global_user": "",
+                "global_role": "",
+                "global_database": "",
+                "global_start_date": "",
+                "global_end_date": "",
+            },
+            "wh_operability_fact": pd.DataFrame(),
+            "wh_operability_fact_error": "FACT_WAREHOUSE_OPERABILITY_DAILY does not exist",
+            "wh_days": 7,
+            "wh_df_wh": pd.DataFrame({"WAREHOUSE_NAME": ["ALFA_WH"]}),
+            "wh_df_wh_source": "OVERWATCH mart: FACT_QUERY_HOURLY + FACT_WAREHOUSE_HOURLY",
+            "wh_df_wh_meta": {
+                "company": "ALFA",
+                "environment": "DEV_ALL",
+                "days": 7,
+                "global_warehouse": "ALFA",
+                "global_user": "",
+                "global_role": "",
+                "global_database": "",
+                "global_start_date": "",
+                "global_end_date": "",
+            },
+        }
+
+        rows = _warehouse_source_health_rows(state, company="ALFA", environment="PROD")
+        by_surface = {row["SURFACE"]: row for _, row in rows.iterrows()}
+
+        self.assertEqual(by_surface["Capacity brief"]["STATE"], "Loaded")
+        self.assertEqual(by_surface["Capacity brief"]["ROWS"], 1)
+        self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
+        self.assertEqual(by_surface["Overview"]["STATE"], "Stale")
+        self.assertEqual(by_surface["Overview"]["CONFIDENCE"], "Pre-aggregated")
+        self.assertEqual(by_surface["Scaling events"]["STATE"], "Not Loaded")
+        self.assertIn("Reload", by_surface["Overview"]["NEXT_ACTION"])
 
     def test_warehouse_setting_control_board_prioritizes_closure_owner_and_audit_blocks(self):
         exceptions = pd.DataFrame(

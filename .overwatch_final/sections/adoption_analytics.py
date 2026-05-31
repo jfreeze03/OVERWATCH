@@ -141,7 +141,8 @@ def _load_adoption_live(session, days: int) -> dict:
             COALESCE(q.role_name, 'UNKNOWN') AS role_name,
             COALESCE(q.query_type, 'UNKNOWN') AS query_type,
             COUNT(*) AS query_count,
-            COUNT(DISTINCT q.user_name) AS users
+            COUNT(DISTINCT q.user_name) AS users,
+            ROUND(100 * {error_count_expr} / NULLIF(COUNT(*), 0), 1) AS error_rate
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL

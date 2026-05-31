@@ -103,6 +103,32 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertEqual(section, section.strip())
                 self.assertTrue(all(ord(ch) < 128 for ch in section))
 
+    def test_global_filter_and_metric_changes_clear_loaded_state(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
+        state_keys_text = (APP_ROOT / "utils" / "state_keys.py").read_text(encoding="utf-8")
+        self.assertIn("def _global_filter_signature", app_text)
+        self.assertIn("def _metric_settings_signature", app_text)
+        self.assertIn("previous_filter_signature != current_filter_signature", app_text)
+        self.assertIn("previous_metric_signature != current_metric_signature", app_text)
+        self.assertIn("clear_all_cache()", app_text)
+        for prefix in (
+            '"task_ops_"',
+            '"task_sla_"',
+            '"sp_ops_"',
+            '"sp_sla_"',
+            '"cost_contract_"',
+            '"pipe_"',
+            '"qw_"',
+            '"sf_value_"',
+            '"change_drift_summary"',
+            '"security_posture_summary"',
+        ):
+            with self.subTest(prefix=prefix):
+                self.assertIn(prefix, display_text)
+        self.assertIn('"_prev_global_filter_signature"', state_keys_text)
+        self.assertIn('"_prev_metric_settings_signature"', state_keys_text)
+
 
 if __name__ == "__main__":
     unittest.main()

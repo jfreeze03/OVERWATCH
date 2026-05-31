@@ -1169,7 +1169,8 @@ def build_mart_adoption_role_type_sql(days_back: int, company: str = "ALFA") -> 
             COALESCE(role_name, 'UNKNOWN') AS role_name,
             COALESCE(query_type, 'UNKNOWN') AS query_type,
             COALESCE(SUM(query_count), 0) AS query_count,
-            COUNT(DISTINCT user_name) AS users
+            COUNT(DISTINCT user_name) AS users,
+            ROUND(100 * COALESCE(SUM(failed_count), 0) / NULLIF(COALESCE(SUM(query_count), 0), 0), 1) AS error_rate
         FROM {table}
         WHERE hour_start >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL

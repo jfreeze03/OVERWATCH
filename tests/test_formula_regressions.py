@@ -1,4 +1,5 @@
 from pathlib import Path
+import inspect
 import math
 import re
 import sys
@@ -12,7 +13,10 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from sections.account_health import _live_query_status_sql  # noqa: E402
-from sections.adoption_analytics import _metric as adoption_metric  # noqa: E402
+from sections.adoption_analytics import (  # noqa: E402
+    _load_adoption_live,
+    _metric as adoption_metric,
+)
 from sections.cost_center import (  # noqa: E402
     _bill_driver_summary,
     _build_bill_waterfall,
@@ -95,6 +99,7 @@ from utils.mart import (  # noqa: E402
     build_mart_account_health_storage_sql,
     build_mart_account_health_top_driver_sql,
     build_mart_account_health_ytd_credits_sql,
+    build_mart_adoption_role_type_sql,
     build_mart_control_room_cost_drivers_sql,
     build_mart_control_room_summary_sql,
     build_mart_control_room_task_failures_sql,
@@ -315,6 +320,15 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(adoption_metric(df, "VALUE"), 0.0)
         self.assertEqual(service_value(df, "VALUE"), 0.0)
         self.assertEqual(usage_first_number(df, "VALUE"), 0.0)
+
+    def test_adoption_role_mix_exposes_visible_error_rate(self):
+        live_source = inspect.getsource(_load_adoption_live).upper()
+        self.assertIn("AS ERROR_RATE", live_source)
+        self.assertIn("AA_ROLE_TYPE", live_source)
+
+        mart_sql = build_mart_adoption_role_type_sql(30, "ALFA").upper()
+        self.assertIn("AS ERROR_RATE", mart_sql)
+        self.assertIn("SUM(FAILED_COUNT)", mart_sql)
 
     def test_usage_overview_storage_sums_are_null_safe(self):
         text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
@@ -1168,6 +1182,19 @@ class FormulaRegressionTests(unittest.TestCase):
             loader_block.index("RETURN RUN_QUERY_OR_RAISE(FALLBACK_SQL)"),
             loader_block.index("RETURN RUN_QUERY_OR_RAISE(_LIVE_QUERY_STATUS_SQL"),
         )
+
+    def test_explain_bill_driver_aliases_match_visible_columns(self):
+        cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
+        explain_block = cost_text[
+            cost_text.index('IF COST_VIEW == "EXPLAIN THIS BILL"'):
+            cost_text.index('ELIF COST_VIEW == "USER LEADERBOARD"')
+        ]
+        self.assertIn("AS TOTAL_CREDITS", explain_block)
+        self.assertIn("AS ALLOCATED_CREDITS", explain_block)
+        self.assertIn("AS AVG_EXECUTION_SECONDS", explain_block)
+        self.assertIn("AS AVG_ELAPSED_SEC", explain_block)
+        self.assertIn('"TOTAL_CREDITS"', explain_block)
+        self.assertIn('"AVG_EXECUTION_SECONDS"', explain_block)
 
 
 if __name__ == "__main__":

@@ -62,6 +62,30 @@ def _normalize_nav_section(section: str) -> str:
     return SECTION_ALIASES.get(section, section)
 
 
+def _global_filter_signature() -> tuple:
+    """Return the operator filter state that makes loaded evidence stale."""
+    date_input = st.session_state.get("_global_date_range_input", ())
+    if isinstance(date_input, list):
+        date_input = tuple(date_input)
+    return (
+        str(st.session_state.get("global_start_date", "")),
+        str(st.session_state.get("global_end_date", "")),
+        str(st.session_state.get("global_warehouse", "")),
+        str(st.session_state.get("global_user", "")),
+        str(st.session_state.get("global_role", "")),
+        str(st.session_state.get("global_database", "")),
+        str(date_input),
+    )
+
+
+def _metric_settings_signature() -> tuple:
+    """Return settings that change dollarized metrics and derived evidence."""
+    return (
+        float(st.session_state.get("credit_price", DEFAULTS["credit_price"])),
+        float(st.session_state.get("storage_cost_per_tb", DEFAULTS["storage_cost_per_tb"])),
+    )
+
+
 # Sidebar.
 with st.sidebar:
     st.markdown("""
@@ -276,6 +300,14 @@ with st.sidebar:
         st.text_input("Role contains", key="global_role")
         st.text_input("Database contains", key="global_database")
 
+        current_filter_signature = _global_filter_signature()
+        previous_filter_signature = st.session_state.get("_prev_global_filter_signature")
+        if previous_filter_signature is None:
+            st.session_state["_prev_global_filter_signature"] = current_filter_signature
+        elif previous_filter_signature != current_filter_signature:
+            clear_all_cache()
+            st.session_state["_prev_global_filter_signature"] = current_filter_signature
+
         if st.button("Clear Global Filters", key="global_filters_clear"):
             for _k in [
                 "global_start_date", "global_end_date", "global_warehouse",
@@ -306,6 +338,14 @@ with st.sidebar:
             step=1.0, key="_storage_cost_input",
         )
         st.session_state["storage_cost_per_tb"] = storage_cost
+
+        current_metric_signature = _metric_settings_signature()
+        previous_metric_signature = st.session_state.get("_prev_metric_settings_signature")
+        if previous_metric_signature is None:
+            st.session_state["_prev_metric_settings_signature"] = current_metric_signature
+        elif previous_metric_signature != current_metric_signature:
+            clear_all_cache()
+            st.session_state["_prev_metric_settings_signature"] = current_metric_signature
 
         st.selectbox(
             "Live refresh interval",

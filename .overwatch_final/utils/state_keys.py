@@ -11,6 +11,8 @@ PRESERVE_STATE_EXACT = {
     "active_theme",
     "nav_section",
     "_prev_active_company",
+    "_prev_global_filter_signature",
+    "_prev_metric_settings_signature",
     "_prev_nav_section",
     "credit_price",
     "_credit_price",

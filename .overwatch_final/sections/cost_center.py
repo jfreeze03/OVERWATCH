@@ -50,6 +50,13 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
     if df is None or df.empty:
         st.info("No cost outliers to queue.")
         return
+    if "TOTAL_CREDITS" not in df.columns:
+        if "ALLOCATED_CREDITS" in df.columns:
+            df = df.copy()
+            df["TOTAL_CREDITS"] = df["ALLOCATED_CREDITS"]
+        else:
+            st.info("No total-credit measure was available for cost outlier queueing.")
+            return
     company = st.session_state.get("active_company", "ALFA")
     actions = []
     baseline = safe_float(df["TOTAL_CREDITS"].median()) if "TOTAL_CREDITS" in df.columns else 0
@@ -446,6 +453,11 @@ def _build_explain_bill_markdown(
     query_type_drivers: pd.DataFrame,
     service_drivers: pd.DataFrame = None,
 ) -> str:
+    def _driver_credits(row, default=0.0) -> float:
+        if hasattr(row, "get"):
+            return safe_float(row.get("ALLOCATED_CREDITS", row.get("TOTAL_CREDITS", default)))
+        return safe_float(default)
+
     delta_credits = current_credits - prior_credits
     delta_pct = _pct_delta(current_credits, prior_credits)
     direction = "increased" if delta_credits > 0 else "decreased" if delta_credits < 0 else "held flat"
@@ -471,8 +483,8 @@ def _build_explain_bill_markdown(
         "",
         "## Primary Drivers",
         f"- Largest warehouse delta: {top_wh.get('WAREHOUSE_NAME', 'n/a')} ({safe_float(top_wh.get('CREDIT_DELTA', 0)):,.2f} credit delta).",
-        f"- Largest allocated user/workload: {top_user.get('USER_NAME', 'n/a')} on {top_user.get('WAREHOUSE_NAME', 'n/a')} ({safe_float(top_user.get('ALLOCATED_CREDITS', 0)):,.2f} allocated credits).",
-        f"- Top query type by allocated credits: {top_type.get('QUERY_TYPE', 'n/a')} ({safe_float(top_type.get('ALLOCATED_CREDITS', 0)):,.2f} allocated credits).",
+        f"- Largest allocated user/workload: {top_user.get('USER_NAME', 'n/a')} on {top_user.get('WAREHOUSE_NAME', 'n/a')} ({_driver_credits(top_user):,.2f} allocated credits).",
+        f"- Top query type by allocated credits: {top_type.get('QUERY_TYPE', 'n/a')} ({_driver_credits(top_type):,.2f} allocated credits).",
         "",
         "## Allocation Caveat",
         f"Exact warehouse credits: {current_credits:,.2f}. Query-attributed credits: {allocated_credits:,.2f}. Unallocated / idle / service-overhead gap: {unallocated_credits:,.2f} credits.",
@@ -740,7 +752,9 @@ def render():
                     q.warehouse_name,
                     {max_wh_size_expr} AS warehouse_size,
                     COUNT(*) AS query_count,
+                    ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS total_credits,
                     ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS allocated_credits,
+                    ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_execution_seconds,
                     ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
                     ROUND({bytes_scanned_sum_expr} / POWER(1024, 3), 2) AS gb_scanned
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
@@ -764,7 +778,9 @@ def render():
                 SELECT
                     COALESCE(q.query_type, 'UNKNOWN') AS query_type,
                     COUNT(*) AS query_count,
+                    ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS total_credits,
                     ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS allocated_credits,
+                    ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_execution_seconds,
                     ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
                     ROUND({bytes_scanned_sum_expr} / POWER(1024, 3), 2) AS gb_scanned
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q

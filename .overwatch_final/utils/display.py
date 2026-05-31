@@ -113,13 +113,19 @@ def clear_all_cache():
     """
     transient_prefixes = (
         "_data_", "_ts_", "df_", "_refresh_salt_", "_sec_",
-        "_overwatch_query_", "cortex_", "cc_", "ah_", "cm_", "ds_", "dba_",
+        "_overwatch_query_", "cortex_", "cost_contract_", "cc_", "ah_", "cm_", "ds_", "dba_",
         "_overwatch_available_columns", "_overwatch_unavailable_column_views",
         "_overwatch_column_probe", "_overwatch_qh_detail_exprs",
         "lm_", "mc_", "ocm_", "opt_", "qa_", "qs_", "rec_", "sec_", "spcs_",
-        "stor_", "spt_", "tm_", "wh_", "uo_", "aa_", "dd_", "svc_",
+        "stor_", "spt_", "sp_ops_", "sp_sla_", "tm_", "task_ops_", "task_sla_",
+        "pipe_", "qw_", "sf_value_",
+        "wh_", "uo_", "aa_", "dd_", "svc_",
         "contract_", "topology_", "recommendations", "anomalies",
         "health_data", "morning_data", "tg_list", "tg_hist", "cm_base_",
+        "change_drift_summary", "change_drift_exceptions", "change_drift_meta",
+        "change_drift_proof_sql", "security_posture_summary",
+        "security_posture_exceptions", "security_posture_meta",
+        "security_posture_proof_sql",
     )
     keys_to_remove = [
         k for k in list(st.session_state.keys())

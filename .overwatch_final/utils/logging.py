@@ -88,7 +88,7 @@ ORDER BY log_date DESC, load_count DESC;
 
 
 def is_logging_enabled() -> bool:
-    return st.session_state.get(_ENABLED_KEY, True)
+    return st.session_state.get(_ENABLED_KEY, False)
 
 
 def set_logging_enabled(enabled: bool) -> None:
@@ -153,7 +153,7 @@ def log_query_event(
     message: str = "",
 ) -> None:
     """Persist one query telemetry event when the usage log table is upgraded."""
-    if not is_logging_enabled() or not is_query_logging_enabled():
+    if not is_query_logging_enabled():
         return
     try:
         from utils.session import get_session

@@ -9,7 +9,7 @@ import streamlit as st
 _SESSION_TTL_MINUTES = 55
 
 # Query tag applied to all OVERWATCH SQL for attribution and filtering.
-_QUERY_TAG = "OVERWATCH:v3"
+_QUERY_TAG = "OVERWATCH"
 
 # Session statement timeout in seconds. This stays under a common 1000s
 # warehouse timeout so OVERWATCH gets cleaner failures for long scans.
@@ -66,6 +66,8 @@ def _make_session():
     ]:
         try:
             sess.sql(stmt).collect()
+            if stmt.startswith("ALTER SESSION SET QUERY_TAG"):
+                st.session_state["_overwatch_active_query_tag"] = _QUERY_TAG
         except Exception:
             pass
 

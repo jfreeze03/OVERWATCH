@@ -44,8 +44,12 @@ inject_theme()
 # Seed ALFA default before radio.
 if "active_company" not in st.session_state:
     st.session_state["active_company"] = DEFAULT_COMPANY
+if "_logging_enabled" not in st.session_state:
+    st.session_state["_logging_enabled"] = False
 if "_query_logging_enabled" not in st.session_state:
     st.session_state["_query_logging_enabled"] = False
+if "_detailed_query_tags_enabled" not in st.session_state:
+    st.session_state["_detailed_query_tags_enabled"] = False
 
 
 # Role resolution, cached for five minutes.
@@ -566,42 +570,51 @@ with st.sidebar:
             key="_query_logging_enabled",
             help="Optional audit mode: write query hash, section, elapsed time, row count, and result size to the OVERWATCH usage log when that table exists.",
         )
+        st.toggle(
+            "Detailed Snowflake query tags",
+            key="_detailed_query_tags_enabled",
+            help=(
+                "Optional cost-forensics mode: updates QUERY_TAG with section-level context. "
+                "Leave off during normal use to avoid extra ALTER SESSION statements."
+            ),
+        )
         render_admin_mode_control()
 
-        telemetry = get_query_telemetry()
-        if not telemetry.empty:
+        telemetry_count = len(st.session_state.get("_overwatch_query_telemetry", []))
+        if telemetry_count:
             st.divider()
-            st.caption("OVERWATCH query telemetry")
-            total_calls = len(telemetry)
-            total_elapsed = float(telemetry["elapsed_ms"].fillna(0).sum()) / 1000
-            avg_elapsed = float(telemetry["elapsed_ms"].fillna(0).mean())
-            t1, t2 = st.columns(2)
-            t1.metric("App Queries This Session", f"{total_calls:,}")
-            t2.metric("Observed Wait", f"{total_elapsed:,.1f}s", f"{avg_elapsed:,.0f} ms avg")
-            budget_summary = get_query_budget_summary()
-            if not budget_summary.empty:
-                with st.expander("Budget guardrail by section", expanded=False):
-                    st.caption(
-                        "Risk is session-based: High means repeated heavy calls, long total wait, "
-                        "or very large result sets."
-                    )
-                    st.dataframe(
-                        budget_summary,
-                        use_container_width=True,
-                        height=220,
-                        column_config={
-                            "section": "Section",
-                            "budget_risk": "Budget Risk",
-                            "calls": "Calls",
-                            "unique_queries": "Unique Queries",
-                            "expensive_calls": "Expensive Calls",
-                            "elapsed_sec": st.column_config.NumberColumn("Elapsed Sec", format="%.2f"),
-                            "max_rows": st.column_config.NumberColumn("Max Rows", format="%d"),
-                            "max_result_mb": st.column_config.NumberColumn("Max MB", format="%.1f"),
-                        },
-                    )
-            with st.expander("Recent query trace", expanded=False):
-                st.dataframe(telemetry.tail(50), use_container_width=True, height=220)
+            with st.expander(f"OVERWATCH query telemetry ({telemetry_count:,})", expanded=False):
+                st.caption("Telemetry summaries are rendered on demand to keep normal sidebar reruns light.")
+                if st.button("Render telemetry summary", key="render_query_telemetry"):
+                    telemetry = get_query_telemetry()
+                    total_calls = len(telemetry)
+                    total_elapsed = float(telemetry["elapsed_ms"].fillna(0).sum()) / 1000
+                    avg_elapsed = float(telemetry["elapsed_ms"].fillna(0).mean())
+                    t1, t2 = st.columns(2)
+                    t1.metric("App Queries This Session", f"{total_calls:,}")
+                    t2.metric("Observed Wait", f"{total_elapsed:,.1f}s", f"{avg_elapsed:,.0f} ms avg")
+                    budget_summary = get_query_budget_summary()
+                    if not budget_summary.empty:
+                        st.caption(
+                            "Risk is session-based: High means repeated heavy calls, long total wait, "
+                            "or very large result sets."
+                        )
+                        st.dataframe(
+                            budget_summary,
+                            use_container_width=True,
+                            height=220,
+                            column_config={
+                                "section": "Section",
+                                "budget_risk": "Budget Risk",
+                                "calls": "Calls",
+                                "unique_queries": "Unique Queries",
+                                "expensive_calls": "Expensive Calls",
+                                "elapsed_sec": st.column_config.NumberColumn("Elapsed Sec", format="%.2f"),
+                                "max_rows": st.column_config.NumberColumn("Max Rows", format="%d"),
+                                "max_result_mb": st.column_config.NumberColumn("Max MB", format="%.1f"),
+                            },
+                        )
+                    st.dataframe(telemetry.tail(50), use_container_width=True, height=220)
                 if st.button("Clear telemetry", key="clear_query_telemetry"):
                     clear_query_telemetry()
                     st.rerun()

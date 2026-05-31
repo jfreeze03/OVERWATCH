@@ -306,8 +306,8 @@ def _task_exists(session, db: str, schema: str, task_name: str):
         return None
 
 
-def _show_to_df(session, stmt: str) -> pd.DataFrame:
-    return show_to_df(session, stmt)
+def _show_to_df(session, stmt: str, force_refresh: bool = False) -> pd.DataFrame:
+    return show_to_df(session, stmt, force_refresh=force_refresh)
 
 
 def _first_existing_column(df: pd.DataFrame, candidates: list[str]) -> str:
@@ -318,8 +318,8 @@ def _ensure_column_alias(df: pd.DataFrame, target: str, candidates: list[str], d
     return ensure_column_alias(df, target, candidates, default)
 
 
-def _load_task_inventory(session) -> pd.DataFrame:
-    return load_task_inventory(session, get_active_company())
+def _load_task_inventory(session, force_refresh: bool = False) -> pd.DataFrame:
+    return load_task_inventory(session, get_active_company(), force_refresh=force_refresh)
 
 
 def _task_history_sql(session, time_predicate: str, limit: int = 500) -> str:
@@ -576,7 +576,7 @@ def render():
             refresh_wh = st.button("Refresh Warehouses", key="wh_cfg_load")
             if refresh_wh or (needs_wh_load and last_failed_company != active_company):
                 try:
-                    df_raw = load_warehouse_inventory(session, active_company)
+                    df_raw = load_warehouse_inventory(session, active_company, force_refresh=bool(refresh_wh))
                     df_raw.columns = [c.lower() for c in df_raw.columns]
                     st.session_state["dba_df_wh_cfg"] = df_raw
                     st.session_state["_dba_wh_cfg_company"] = active_company
@@ -1835,7 +1835,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             # Load task list for selection
             if st.button("Load Task List", key="tg_mgmt_load"):
                 try:
-                    df_tasks = _load_task_inventory(session)
+                    df_tasks = _load_task_inventory(session, force_refresh=True)
                     st.session_state["dba_df_tg_tasks"] = df_tasks
                 except Exception as e:
                     st.warning(f"Task inventory unavailable: {format_snowflake_error(e)}")

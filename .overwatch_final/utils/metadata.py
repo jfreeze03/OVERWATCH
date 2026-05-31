@@ -1,17 +1,63 @@
 # utils/metadata.py - shared Snowflake metadata helpers
+import time
+
 import pandas as pd
+import streamlit as st
 
 from config import COMPANY_CONFIG
 from .company_filter import company_value_allowed, get_active_company
 from .data import normalize_df
 
 
-def show_to_df(session, stmt: str) -> pd.DataFrame:
+_SHOW_CACHE_TTL_SECONDS = 300
+_SHOW_CACHE_MAX_ENTRIES = 12
+
+
+def _show_cache_key(stmt: str) -> str:
+    role = str(st.session_state.get("_overwatch_current_role", "") or "").upper()
+    normalized_stmt = " ".join(str(stmt or "").strip().split()).upper()
+    return f"{role}|{normalized_stmt}"
+
+
+def _prune_show_cache(cache: dict) -> None:
+    overflow = max(0, len(cache) - _SHOW_CACHE_MAX_ENTRIES)
+    if not overflow:
+        return
+    for key, _entry in sorted(
+        cache.items(),
+        key=lambda item: float(item[1].get("loaded_at", 0) or 0),
+    )[:overflow]:
+        cache.pop(key, None)
+
+
+def clear_show_statement_cache(stmt: str | None = None) -> None:
+    """Clear cached SHOW/DESC metadata after explicit DBA refresh or changes."""
+    if stmt is None:
+        st.session_state.pop("_overwatch_show_statement_cache", None)
+        return
+    cache = st.session_state.get("_overwatch_show_statement_cache", {})
+    cache.pop(_show_cache_key(stmt), None)
+
+
+def show_to_df(session, stmt: str, force_refresh: bool = False) -> pd.DataFrame:
     """Run a SHOW/DESC statement and return a normalized DataFrame."""
+    now = time.time()
+    cache_key = _show_cache_key(stmt)
+    cache = st.session_state.setdefault("_overwatch_show_statement_cache", {})
+    cached = cache.get(cache_key)
+    if not force_refresh and cached:
+        age_sec = now - float(cached.get("loaded_at", 0) or 0)
+        frame = cached.get("frame")
+        if age_sec <= _SHOW_CACHE_TTL_SECONDS and isinstance(frame, pd.DataFrame):
+            return frame.copy()
+
     try:
-        return normalize_df(session.sql(stmt).to_pandas())
+        df = normalize_df(session.sql(stmt).to_pandas())
     except Exception:
         return pd.DataFrame()
+    cache[cache_key] = {"loaded_at": now, "frame": df.copy()}
+    _prune_show_cache(cache)
+    return df.copy()
 
 
 def first_existing_column(df: pd.DataFrame, candidates: list[str]) -> str:
@@ -84,9 +130,13 @@ def scope_metadata_df(df: pd.DataFrame, company: str | None = None) -> pd.DataFr
     return scoped.copy()
 
 
-def load_warehouse_inventory(session, company: str | None = None) -> pd.DataFrame:
+def load_warehouse_inventory(
+    session,
+    company: str | None = None,
+    force_refresh: bool = False,
+) -> pd.DataFrame:
     """Load warehouse metadata with consistent column aliases and company scope."""
-    df = show_to_df(session, "SHOW WAREHOUSES")
+    df = show_to_df(session, "SHOW WAREHOUSES", force_refresh=force_refresh)
     if df.empty:
         return df
     df.columns = [str(col).upper() for col in df.columns]
@@ -100,9 +150,13 @@ def load_warehouse_inventory(session, company: str | None = None) -> pd.DataFram
     return scope_warehouse_names(df, "NAME", company)
 
 
-def load_task_inventory(session, company: str | None = None) -> pd.DataFrame:
+def load_task_inventory(
+    session,
+    company: str | None = None,
+    force_refresh: bool = False,
+) -> pd.DataFrame:
     """Load task metadata with consistent aliases and company scope."""
-    df = show_to_df(session, "SHOW TASKS IN ACCOUNT")
+    df = show_to_df(session, "SHOW TASKS IN ACCOUNT", force_refresh=force_refresh)
     if df.empty:
         return df
     df = ensure_column_alias(df, "NAME", ["NAME", "TASK_NAME"])

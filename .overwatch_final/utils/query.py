@@ -24,6 +24,9 @@ CACHE_TIERS: dict[str, int] = {
     "metadata":   14400,  # SHOW WAREHOUSES, SHOW TASKS, USERS — 4-hour cache
 }
 
+_RESULT_SIZE_DEEP_ROW_LIMIT = 5_000
+_RESULT_SIZE_SAMPLE_ROWS = 1_000
+
 QUERY_BUDGET_THRESHOLDS = {
     "slow_elapsed_ms": 10_000,
     "large_rows": 25_000,
@@ -37,7 +40,24 @@ def _estimate_result_mb(result: pd.DataFrame) -> float:
     try:
         if result is None or result.empty:
             return 0.0
-        return float(result.memory_usage(deep=True).sum()) / (1024 * 1024)
+        row_count = len(result)
+        if row_count <= _RESULT_SIZE_DEEP_ROW_LIMIT:
+            return float(result.memory_usage(deep=True).sum()) / (1024 * 1024)
+
+        object_cols = list(result.select_dtypes(include=["object", "string"]).columns)
+        if not object_cols:
+            return float(result.memory_usage(deep=False).sum()) / (1024 * 1024)
+
+        non_object_cols = [col for col in result.columns if col not in object_cols]
+        non_object_bytes = (
+            result[non_object_cols].memory_usage(index=False, deep=False).sum()
+            if non_object_cols else 0
+        )
+        sample_rows = min(_RESULT_SIZE_SAMPLE_ROWS, row_count)
+        object_sample_bytes = result[object_cols].head(sample_rows).memory_usage(index=False, deep=True).sum()
+        estimated_object_bytes = (float(object_sample_bytes) / max(sample_rows, 1)) * row_count
+        index_bytes = result.index.memory_usage(deep=False)
+        return float(non_object_bytes + estimated_object_bytes + index_bytes) / (1024 * 1024)
     except Exception:
         return 0.0
 
@@ -136,21 +156,22 @@ def _record_query_telemetry(
         if len(entries) > 250:
             del entries[:-250]
         _warn_on_budget_pressure(active_section, query_hash, ttl_key, elapsed_ms, row_count, result_mb)
-        try:
-            from .logging import log_query_event
+        if st.session_state.get("_query_logging_enabled", False):
+            try:
+                from .logging import log_query_event
 
-            log_query_event(
-                section=active_section,
-                query_hash=query_hash,
-                cache_key=ttl_key,
-                cache_tier=tier,
-                elapsed_ms=elapsed_ms,
-                row_count=row_count,
-                result_mb=result_mb,
-                used_cache=used_cache,
-            )
-        except Exception:
-            pass
+                log_query_event(
+                    section=active_section,
+                    query_hash=query_hash,
+                    cache_key=ttl_key,
+                    cache_tier=tier,
+                    elapsed_ms=elapsed_ms,
+                    row_count=row_count,
+                    result_mb=result_mb,
+                    used_cache=used_cache,
+                )
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -336,15 +357,17 @@ def safe_schedule(value: str) -> str:
 
 def _build_overwatch_query_tag(section: str, ttl_key: str, tier: str) -> str:
     """Build a compact query tag for section-level OVERWATCH cost attribution."""
+    if not st.session_state.get("_detailed_query_tags_enabled", False):
+        return "OVERWATCH"
     section_label = _infer_telemetry_section(section, ttl_key)
     section_label = re.sub(r"[^A-Za-z0-9 _&:/.-]+", "", str(section_label)).strip() or "Unknown"
     company = str(st.session_state.get("active_company", "ALFA") or "ALFA")
-    return f"OVERWATCH:v3|{company[:24]}|{section_label[:80]}|{str(tier or 'recent')[:20]}"
+    return f"OVERWATCH|{company[:24]}|{section_label[:80]}|{str(tier or 'recent')[:20]}"
 
 
 def _apply_overwatch_query_tag(session, query_tag: str) -> None:
     """Set QUERY_TAG only when it changes; failures are non-fatal."""
-    query_tag = str(query_tag or "OVERWATCH:v3")[:250]
+    query_tag = str(query_tag or "OVERWATCH")[:250]
     if st.session_state.get("_overwatch_active_query_tag") == query_tag:
         return
     try:

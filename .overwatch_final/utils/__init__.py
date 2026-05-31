@@ -102,7 +102,7 @@ from .admin import (
     build_admin_audit_insert_sql, log_admin_action,
 )
 from .metadata import (
-    show_to_df, first_existing_column, ensure_column_alias,
+    show_to_df, clear_show_statement_cache, first_existing_column, ensure_column_alias,
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
     load_warehouse_inventory, build_unclassified_assets_sql,
 )
@@ -225,7 +225,7 @@ __all__ = [
     "admin_actions_enabled", "admin_button_disabled", "admin_disabled_reason",
     "render_admin_mode_control", "require_admin_enabled",
     "build_admin_audit_insert_sql", "log_admin_action",
-    "show_to_df", "first_existing_column", "ensure_column_alias",
+    "show_to_df", "clear_show_statement_cache", "first_existing_column", "ensure_column_alias",
     "scope_warehouse_names", "scope_metadata_df", "load_task_inventory",
     "load_warehouse_inventory", "build_unclassified_assets_sql",
     "MartResult", "mart_object_name", "load_mart_table",

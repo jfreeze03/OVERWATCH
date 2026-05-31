@@ -1,5 +1,6 @@
 # sections/task_management.py — Task history, ETL audit framework, execute task
 import re
+import time
 
 import streamlit as st
 import pandas as pd
@@ -123,8 +124,8 @@ def _typed_confirmation(prompt: str, expected: str, key: str) -> bool:
     return entered.strip() == expected
 
 
-def _show_tasks(session) -> pd.DataFrame:
-    return load_task_inventory(session, get_active_company())
+def _show_tasks(session, force_refresh: bool = False) -> pd.DataFrame:
+    return load_task_inventory(session, get_active_company(), force_refresh=force_refresh)
 
 
 ETL_AUDIT_FQN = (
@@ -138,6 +139,7 @@ ADMIN_AUDIT_FQN = (
     f"{safe_identifier(ALERT_SCHEMA)}."
     f"{safe_identifier('OVERWATCH_ADMIN_ACTION_AUDIT')}"
 )
+_EXECUTION_CONTEXT_CACHE_TTL_SECONDS = 300
 
 
 def _procedure_from_definition(definition: object) -> str:
@@ -1457,17 +1459,30 @@ def _build_task_ops_markdown(
 def _current_execution_context(session) -> dict:
     app_user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
     role = str(st.session_state.get("_overwatch_current_role", "") or "")
+    cache_key = "_task_management_execution_context_cache"
+    cached = st.session_state.get(cache_key, {})
+    if cached:
+        age_sec = time.time() - float(cached.get("loaded_at", 0) or 0)
+        data = cached.get("data")
+        if age_sec <= _EXECUTION_CONTEXT_CACHE_TTL_SECONDS and isinstance(data, dict):
+            return {
+                "snowflake_user": app_user,
+                "snowflake_role": role,
+                "snowflake_warehouse": str(data.get("snowflake_warehouse", "") or ""),
+            }
     warehouse = ""
     try:
         row = session.sql("SELECT CURRENT_WAREHOUSE() AS current_warehouse").collect()[0]
         warehouse = str(row["CURRENT_WAREHOUSE"] or "")
     except Exception:
         warehouse = ""
-    return {
+    data = {
         "snowflake_user": app_user,
         "snowflake_role": role,
         "snowflake_warehouse": warehouse,
     }
+    st.session_state[cache_key] = {"loaded_at": time.time(), "data": data}
+    return data
 
 
 def build_admin_preflight_sql(row: pd.Series) -> str:
@@ -1790,6 +1805,7 @@ def _load_task_ops_scope(
     session,
     days: int,
     ttl_prefix: str,
+    force_inventory_refresh: bool = False,
 ) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
     company = get_active_company()
     database_contains = str(st.session_state.get("global_database", "") or "").strip()
@@ -1805,12 +1821,12 @@ def _load_task_ops_scope(
             section="Task Management",
         )
         if inventory.empty:
-            inventory = _show_tasks(session)
+            inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
         else:
             inventory_source = "OVERWATCH mart: DIM_TASK_SNAPSHOT"
     except Exception as e:
         try:
-            inventory = _show_tasks(session)
+            inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
         except Exception:
             st.info(f"Task inventory unavailable in this role/context: {format_snowflake_error(e)}")
             inventory = pd.DataFrame()
@@ -1902,7 +1918,7 @@ def _render_task_ops_brief(session) -> None:
         days = st.slider("Task graph lookback (days)", 1, 30, 7, key="task_ops_days")
         if st.button("Load Task Graph Operations", key="task_ops_load"):
             summary, exceptions, latest, inventory, critical_paths, recovery_sla, details_loaded = _load_task_ops_scope(
-                session, days, "task_ops"
+                session, days, "task_ops", force_inventory_refresh=True
             )
             st.session_state["task_ops_summary"] = summary
             st.session_state["task_ops_exceptions"] = exceptions
@@ -2144,7 +2160,7 @@ def _render_sla_cost_drift_console(session) -> None:
 
     if st.button("Load SLA & Cost Drift", key="task_sla_load"):
         summary, exceptions, latest, inventory, details_loaded = _load_task_ops_scope(
-            session, days, "task_sla"
+            session, days, "task_sla", force_inventory_refresh=True
         )
         st.session_state["task_sla_summary"] = summary
         st.session_state["task_sla_latest"] = latest
@@ -2335,7 +2351,7 @@ def render():
         if st.button("Load Task Data", key="th_load"):
             # Task list
             try:
-                df_tl = _show_tasks(session)
+                df_tl = _show_tasks(session, force_refresh=True)
                 st.session_state["tg_list"] = df_tl
             except Exception:
                 st.session_state["tg_list"] = pd.DataFrame()
@@ -2412,7 +2428,7 @@ def render():
         fc_days = st.slider("Failure lookback (days)", 1, 30, 7, key="tm_failure_days")
         if st.button("Load Failure Console", key="tm_failure_load"):
             try:
-                inventory = _show_tasks(session)
+                inventory = _show_tasks(session, force_refresh=True)
             except Exception as e:
                 st.info(f"Task inventory unavailable: {format_snowflake_error(e)}")
                 inventory = pd.DataFrame()
@@ -2630,7 +2646,7 @@ def render():
 
         if st.button("Refresh Task Inventory", key="tm_control_refresh"):
             try:
-                st.session_state["tg_list"] = _show_tasks(session)
+                st.session_state["tg_list"] = _show_tasks(session, force_refresh=True)
                 st.success("Task inventory refreshed.")
             except Exception as e:
                 st.warning(f"Task inventory unavailable: {format_snowflake_error(e)}")

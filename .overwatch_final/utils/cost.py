@@ -298,7 +298,7 @@ def build_monitoring_cost_sql(days_back: int = 7) -> str:
             COUNT(*) AS events,
             ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS credits,
             'Allocated' AS confidence,
-            'QUERY_HISTORY query_tag = OVERWATCH:v3, allocated from warehouse metering' AS source
+            'QUERY_HISTORY query_tag = OVERWATCH, allocated from warehouse metering' AS source
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
         WHERE q.start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())

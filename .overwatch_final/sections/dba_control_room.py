@@ -688,7 +688,7 @@ def _load_release_compare(
     credit_pct_threshold: float,
     credit_delta_threshold: float,
 ) -> dict:
-    task_inventory = load_task_inventory(session, company)
+    task_inventory = load_task_inventory(session, company, force_refresh=True)
 
     def load_task_window(label: str, start: date, end: date) -> pd.DataFrame:
         history = run_query(

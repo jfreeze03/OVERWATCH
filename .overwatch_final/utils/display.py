@@ -82,10 +82,16 @@ def _query_history_detail_exprs(prefix: str = "") -> dict:
 
 # ── CSV Export ─────────────────────────────────────────────────────────────────
 
+@st.cache_data(ttl=600, max_entries=32, show_spinner=False)
+def _csv_download_payload(df: pd.DataFrame) -> str:
+    """Cache CSV serialization so download buttons do not tax every rerun."""
+    return df.to_csv(index=False)
+
+
 def download_csv(df: pd.DataFrame, filename: str, label: str = "📥 Export CSV"):
     if df is not None and not df.empty:
         st.download_button(
-            label, df.to_csv(index=False),
+            label, _csv_download_payload(df),
             file_name=filename, mime="text/csv",
             key=f"dl_{filename}_{id(df)}",
         )
@@ -110,6 +116,8 @@ _METADATA_CACHE_PREFIXES = (
     "_overwatch_unavailable_column_views",
     "_overwatch_column_probe",
     "_overwatch_qh_detail_exprs",
+    "_overwatch_show_statement_cache",
+    "_task_management_execution_context_cache",
 )
 
 

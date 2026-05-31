@@ -153,6 +153,16 @@ def _apply_company_scope(df: pd.DataFrame) -> pd.DataFrame:
     return df[any_company_signal & allowed].copy()
 
 
+def _has_company_scope_columns(columns: set[str]) -> bool:
+    if st.session_state.get("active_company", DEFAULT_COMPANY) == "ALL":
+        return False
+    return bool(columns & {
+        "WAREHOUSE_NAME", "WAREHOUSE",
+        "DATABASE_NAME", "DATABASE", "TABLE_CATALOG",
+        "USER_NAME", "GRANTEE_NAME",
+    })
+
+
 def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize Snowflake Decimal/Timestamp types for Pandas compatibility.
     - Upper-cases all column names (Snowflake returns uppercase by default)
@@ -162,18 +172,29 @@ def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df if df is not None else pd.DataFrame()
 
-    df = df.copy()
-    df.columns = [c.upper() for c in df.columns]
+    upper_columns = [str(c).upper() for c in df.columns]
+    upper_set = set(upper_columns)
+    numeric_cols = upper_set & _NUMERIC_COLS
+    date_cols = upper_set & _DATE_COLS
+    needs_uppercase = list(df.columns) != upper_columns
+    needs_scope = _has_company_scope_columns(upper_set)
 
-    for col in set(df.columns) & _NUMERIC_COLS:
+    if not (needs_uppercase or numeric_cols or date_cols or needs_scope):
+        return df
+
+    df = df.copy()
+    if needs_uppercase:
+        df.columns = upper_columns
+
+    for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(float)
 
-    for col in set(df.columns) & _DATE_COLS:
+    for col in date_cols:
         df[col] = pd.to_datetime(df[col], errors='coerce')
         if hasattr(df[col], 'dt') and df[col].dt.tz is not None:
             df[col] = df[col].dt.tz_convert(None)
 
-    return _apply_company_scope(df)
+    return _apply_company_scope(df) if needs_scope else df
 
 
 def safe_strip_tz(series: pd.Series) -> pd.Series:

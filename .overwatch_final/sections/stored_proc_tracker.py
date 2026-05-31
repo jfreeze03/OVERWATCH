@@ -641,7 +641,7 @@ def render():
                 df_procs = pd.DataFrame()
                 proc_inventory_source = "Unavailable"
             try:
-                df_tasks = load_task_inventory(session, company)
+                df_tasks = load_task_inventory(session, company, force_refresh=True)
             except Exception as e:
                 st.info(f"Task inventory unavailable: {format_snowflake_error(e)}")
                 df_tasks = pd.DataFrame()

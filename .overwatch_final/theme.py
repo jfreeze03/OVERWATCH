@@ -1131,6 +1131,23 @@ def _get_theme() -> str:
     return theme_key
 
 
+_COMBINED_CSS_CACHE: dict[str, str] = {}
+
+
+def _combined_theme_css(theme_key: str) -> str:
+    cached = _COMBINED_CSS_CACHE.get(theme_key)
+    if cached:
+        return cached
+    vars_block = _VARS.get(theme_key, _VARS[_DEFAULT_THEME])
+    combined = (
+        _STRUCTURAL_CSS.replace("{vars}", vars_block)
+        + _THEME_EXTRAS.get(theme_key, "")
+        + _STREAMLIT_ICON_FIX
+    )
+    _COMBINED_CSS_CACHE[theme_key] = combined
+    return combined
+
+
 def inject_theme() -> None:
     """
     Inject CSS variables + structural styles for the current theme.
@@ -1138,15 +1155,7 @@ def inject_theme() -> None:
     Also applies theme-specific body class for extra overrides.
     """
     theme_key = _get_theme()
-    vars_block = _VARS.get(theme_key, _VARS[_DEFAULT_THEME])
-
-    # Inject the :root variables + structural CSS
-    combined = (
-        _STRUCTURAL_CSS.replace("{vars}", vars_block)
-        + _THEME_EXTRAS.get(theme_key, "")
-        + _STREAMLIT_ICON_FIX
-    )
-    st.markdown(combined, unsafe_allow_html=True)
+    st.markdown(_combined_theme_css(theme_key), unsafe_allow_html=True)
 
 
 def render_theme_picker(persist: bool = False) -> None:

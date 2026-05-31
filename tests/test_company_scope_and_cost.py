@@ -21,6 +21,7 @@ from utils.company_filter import (  # noqa: E402
 )
 from utils.cost import build_cost_reconciliation_sql  # noqa: E402
 from utils.compatibility import filter_existing_columns  # noqa: E402
+from utils.data import normalize_df  # noqa: E402
 from utils.metadata import (  # noqa: E402
     build_unclassified_assets_sql,
     scope_metadata_df,
@@ -30,6 +31,20 @@ from sections.cost_center import _annotate_allocation_quality  # noqa: E402
 
 
 class CompanyScopeAndCostTests(unittest.TestCase):
+    def test_normalize_df_uses_fast_path_when_no_conversion_or_scope_needed(self):
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_company"] = "ALFA"
+            df = pd.DataFrame({"LABEL": ["ok"], "DETAIL": ["ready"]})
+
+            normalized = normalize_df(df)
+
+            self.assertIs(normalized, df)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
     def test_alfa_warehouse_scope_is_not_broad_match_all(self):
         self.assertNotIn("%", COMPANY_CONFIG["ALFA"]["wh_patterns"])
         self.assertTrue(company_value_allowed("WH_ALFA_ADHOC", "warehouse", "ALFA"))

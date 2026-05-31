@@ -66,10 +66,12 @@ from sections.dba_control_room import (  # noqa: E402
     _command_queue_route_readiness,
     _dba_section_operability_board,
     _dba_section_proof_required,
+    _dba_incident_board,
     _dba_handoff_rows,
     _dba_control_scope_meta,
     _dba_control_source_health_rows,
     _dba_snapshot_scope_compatible,
+    _build_dba_incident_markdown,
     _build_dba_shift_handoff_markdown,
     _build_release_compare_report,
     _compare_release_windows,
@@ -1275,6 +1277,98 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("source-control/IaC", _dba_section_proof_required("Change & Drift"))
         self.assertIn("savings verification", _dba_section_proof_required("Cost & Contract"))
         self.assertIn("email evidence", _dba_section_proof_required("Alert Center"))
+
+    def test_dba_incident_board_groups_signals_into_containment_lanes(self):
+        exceptions = pd.DataFrame([
+            {
+                "Severity": "High",
+                "Signal": "Queue or warehouse pressure",
+                "Evidence": "80 queued queries; 1 pressured warehouse",
+                "Action": "Check warehouse sizing and concurrency pressure.",
+                "Route": "Warehouse Health",
+                "Workflow": "",
+            },
+            {
+                "Severity": "Medium",
+                "Signal": "Object or grant changes",
+                "Evidence": "6 recent DDL/access changes",
+                "Action": "Validate change windows.",
+                "Route": "Change & Drift",
+                "Workflow": "Object and access changes",
+            },
+        ])
+        raw_queue = pd.DataFrame([
+            {
+                "ACTION_ID": "W1",
+                "CATEGORY": "Warehouse Health",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "BI_COMPUTE_WH",
+                "OWNER": "DBA",
+                "STATUS": "New",
+                "DUE_DATE": "2026-05-29",
+                "TICKET_ID": "",
+                "APPROVER": "",
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "VERIFICATION_QUERY": "",
+                "RECOVERY_SLA_STATE": "Open Failure",
+                "RECOVERY_EVIDENCE": "",
+            }
+        ])
+        command_queue = _build_command_queue(raw_queue, today="2026-05-31")
+        closure = _command_queue_closure_readiness(raw_queue, today="2026-05-31")
+        source_health = pd.DataFrame([
+            {
+                "SURFACE": "Task SLA / Cost",
+                "STATE": "Unavailable",
+                "ROWS": 0,
+                "SCOPE": "ALFA/PROD",
+                "NEXT_ACTION": "Refresh mart grants before relying on this surface.",
+            }
+        ])
+
+        board = _dba_incident_board(exceptions, command_queue, closure, source_health)
+        by_type = {row["INCIDENT_TYPE"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_type["Warehouse Capacity"]["STATUS"], "Containment Required")
+        self.assertIn("Warehouse Health", by_type["Warehouse Capacity"]["AFFECTED_ROUTES"])
+        self.assertIn("Stabilize queue", by_type["Warehouse Capacity"]["CONTAINMENT_ACTION"])
+        self.assertIn("Contain", by_type["Warehouse Capacity"]["SLA_TARGET"])
+        self.assertIn("Evidence Quality", by_type)
+        self.assertEqual(by_type["Evidence Quality"]["STATUS"], "Evidence Refresh Required")
+
+    def test_dba_incident_markdown_is_containment_ready(self):
+        board = pd.DataFrame([
+            {
+                "INCIDENT_ID": "DBA-01",
+                "INCIDENT_TYPE": "Warehouse Capacity",
+                "SEVERITY": "High",
+                "STATUS": "Containment Required",
+                "AFFECTED_ROUTES": "Warehouse Health",
+                "SIGNALS": "Queue or warehouse pressure",
+                "EVIDENCE": "80 queued queries",
+                "OPEN_ACTIONS": 1,
+                "OVERDUE": 1,
+                "PROOF_BLOCKS": 3,
+                "SOURCE_ISSUES": 0,
+                "CONTAINMENT_ACTION": "Stabilize queue/spill pressure first.",
+                "INVESTIGATION_PATH": "Warehouse Health",
+                "SLA_TARGET": "Contain within 30 minutes.",
+                "PROOF_REQUIRED": "capacity evidence, owner approval, rollback SQL",
+            }
+        ])
+
+        markdown = _build_dba_incident_markdown(
+            board,
+            company="ALFA",
+            environment="PROD",
+            lookback_hours=24,
+            source_mode="Fast triage mart queries",
+        )
+
+        self.assertIn("# OVERWATCH DBA Incident Board", markdown)
+        self.assertIn("Containment Required", markdown)
+        self.assertIn("Operating Rules", markdown)
+        self.assertIn("Refresh stale or unavailable evidence", markdown)
 
     def test_dba_shift_handoff_combines_watch_queue_closure_and_source_health(self):
         exceptions = pd.DataFrame([

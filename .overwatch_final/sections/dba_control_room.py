@@ -1904,6 +1904,267 @@ def _dba_section_proof_required(section: object, lowest_component: object = "") 
     return "owner, ticket, approver, verification query, closure evidence"
 
 
+def _dba_incident_type(route: object, signal: object) -> str:
+    route_text = str(route or "").upper()
+    signal_text = str(signal or "").upper()
+    text = f"{route_text} {signal_text}"
+    if any(token in text for token in ("CREDIT", "COST", "CORTEX", "AI")):
+        return "Cost Runaway"
+    if any(token in text for token in ("WAREHOUSE", "QUEUE", "SPILL", "CAPACITY", "LATENCY")):
+        return "Warehouse Capacity"
+    if any(token in text for token in ("TASK", "PROCEDURE", "PIPELINE", "SLA", "REGRESSION")):
+        return "Workload Reliability"
+    if any(token in text for token in ("QUERY FAIL", "FAILED QUERY", "P95", "DURATION")):
+        return "Query Reliability"
+    if any(token in text for token in ("SECURITY", "LOGIN", "ACCESS", "GRANT", "ROLE")):
+        return "Security / Access"
+    if any(token in text for token in ("CHANGE", "DRIFT", "DDL", "OBJECT")):
+        return "Change Control"
+    if any(token in text for token in ("CLOSURE", "EVIDENCE", "PROOF")):
+        return "Control Closure"
+    if any(token in text for token in ("SOURCE", "STALE", "UNAVAILABLE", "MART")):
+        return "Evidence Quality"
+    return "DBA Operations"
+
+
+def _dba_incident_rank(severity: object) -> int:
+    return {
+        "CRITICAL": 0,
+        "HIGH": 1,
+        "MEDIUM": 2,
+        "LOW": 3,
+        "INFO": 4,
+    }.get(str(severity or "").upper(), 3)
+
+
+def _dba_incident_sla_target(incident_type: object, severity: object) -> str:
+    incident = str(incident_type or "").upper()
+    rank = _dba_incident_rank(severity)
+    if rank <= 0:
+        return "Contain within 15 minutes; executive DBA update within 30 minutes."
+    if rank == 1 and any(token in incident for token in ("SECURITY", "RELIABILITY", "CAPACITY")):
+        return "Contain within 30 minutes; recovery or owner-approved mitigation within 4 hours."
+    if rank == 1:
+        return "Contain same shift; owner-approved mitigation plan before handoff."
+    if rank == 2:
+        return "Triage same business day; queue action with owner, due date, and proof."
+    return "Monitor during next DBA review cycle."
+
+
+def _dba_incident_containment_action(incident_type: object) -> str:
+    incident = str(incident_type or "").upper()
+    if "COST" in incident:
+        return "Freeze broad scaling changes, identify top cost driver, and require owner approval before mitigation."
+    if "WAREHOUSE" in incident:
+        return "Stabilize queue/spill pressure first; route setting changes through Warehouse Settings Manager."
+    if "WORKLOAD" in incident or "QUERY" in incident:
+        return "Separate failing workload from platform issue, capture query/task evidence, and protect downstream SLAs."
+    if "SECURITY" in incident:
+        return "Preserve evidence, validate requester/approver, and avoid grant changes until owner route is clear."
+    if "CHANGE" in incident:
+        return "Hold closure until ticket, query_id, source-control, and blast-radius proof are attached."
+    if "CLOSURE" in incident:
+        return "Reopen or block closure until verification, recovery, and approval evidence are present."
+    if "EVIDENCE" in incident:
+        return "Refresh mart/source evidence before taking irreversible DBA action."
+    return "Assign DBA owner, capture evidence, and route to the specialist workflow."
+
+
+def _dba_incident_investigation_path(route: object, workflow: object = "") -> str:
+    route_text = str(route or "DBA Control Room")
+    workflow_text = str(workflow or "").strip()
+    if workflow_text:
+        return f"{route_text} -> {workflow_text}"
+    return route_text
+
+
+def _dba_incident_board(
+    exceptions: pd.DataFrame | None,
+    command_queue: pd.DataFrame | None,
+    closure_rollup: pd.DataFrame | None,
+    source_health: pd.DataFrame | None,
+    *,
+    max_rows: int = 10,
+) -> pd.DataFrame:
+    """Group loaded Control Room signals into incident-style operating lanes."""
+    events: list[dict] = []
+
+    source_exceptions = exceptions if exceptions is not None else _empty_df()
+    if not source_exceptions.empty:
+        for _, item in _priority_exceptions(source_exceptions).head(12).iterrows():
+            route = str(item.get("Route") or item.get("ROUTE") or item.get("Domain") or "DBA Control Room")
+            signal = str(item.get("Signal") or item.get("SIGNAL") or "Control-room signal")
+            severity = str(item.get("Severity") or item.get("SEVERITY") or "Medium")
+            incident_type = _dba_incident_type(route, signal)
+            events.append({
+                "INCIDENT_TYPE": incident_type,
+                "ROUTE": route,
+                "SEVERITY": severity,
+                "SIGNAL": signal,
+                "EVIDENCE": str(item.get("Evidence") or item.get("DETAIL") or signal),
+                "WORKFLOW": str(item.get("Workflow") or ""),
+                "OPEN_ACTIONS": 0,
+                "OVERDUE": 0,
+                "PROOF_BLOCKS": 0,
+                "SOURCE_ISSUES": 0,
+            })
+
+    queue = command_queue if command_queue is not None else _empty_df()
+    if not queue.empty:
+        route_readiness = _command_queue_route_readiness(queue)
+        for _, item in route_readiness.iterrows():
+            route = str(item.get("ROUTE") or "DBA Control Room")
+            open_actions = safe_int(item.get("OPEN_ACTIONS"))
+            overdue = safe_int(item.get("OVERDUE"))
+            proof_blocks = (
+                safe_int(item.get("OWNER_GAPS"))
+                + safe_int(item.get("APPROVAL_BLOCKS"))
+                + safe_int(item.get("METADATA_BLOCKS"))
+            )
+            if not open_actions and not proof_blocks:
+                continue
+            severity = "High" if overdue or proof_blocks else "Medium"
+            signal = "Action queue blockers" if proof_blocks else "Open action queue"
+            events.append({
+                "INCIDENT_TYPE": _dba_incident_type(route, signal),
+                "ROUTE": route,
+                "SEVERITY": severity,
+                "SIGNAL": signal,
+                "EVIDENCE": (
+                    f"{open_actions:,} open; {overdue:,} overdue; "
+                    f"{safe_int(item.get('EXECUTION_READY')):,} execution-ready; "
+                    f"{proof_blocks:,} owner/approval/metadata blocks"
+                ),
+                "WORKFLOW": "",
+                "OPEN_ACTIONS": open_actions,
+                "OVERDUE": overdue,
+                "PROOF_BLOCKS": proof_blocks,
+                "SOURCE_ISSUES": 0,
+            })
+
+    closure = closure_rollup if closure_rollup is not None else _empty_df()
+    if not closure.empty:
+        closure_view = closure.copy()
+        closure_view.columns = [str(col).upper() for col in closure_view.columns]
+        blocked = closure_view[
+            (pd.to_numeric(closure_view.get("CLOSURE_RANK", pd.Series([9] * len(closure_view))), errors="coerce").fillna(9) <= 3)
+            | (pd.to_numeric(closure_view.get("CLOSURE_BLOCKER_ROWS", pd.Series([0] * len(closure_view))), errors="coerce").fillna(0) > 0)
+        ]
+        for _, item in blocked.iterrows():
+            route = str(item.get("ROUTE") or "DBA Control Room")
+            signal = str(item.get("CLOSURE_READINESS") or "Closure evidence blockers")
+            overdue = safe_int(item.get("OVERDUE_OPEN"))
+            proof_blocks = safe_int(item.get("CLOSURE_BLOCKER_ROWS"))
+            events.append({
+                "INCIDENT_TYPE": _dba_incident_type(route, signal),
+                "ROUTE": route,
+                "SEVERITY": "High" if overdue or safe_int(item.get("FIXED_WITHOUT_VERIFICATION")) else "Medium",
+                "SIGNAL": signal,
+                "EVIDENCE": (
+                    f"{safe_int(item.get('OPEN_ACTIONS')):,} open; {overdue:,} overdue; "
+                    f"{safe_int(item.get('FIXED_WITHOUT_VERIFICATION')):,} fixed without verification; "
+                    f"{safe_int(item.get('RECOVERY_RISK_ROWS')):,} recovery-risk"
+                ),
+                "WORKFLOW": "Action Queue",
+                "OPEN_ACTIONS": safe_int(item.get("OPEN_ACTIONS")),
+                "OVERDUE": overdue,
+                "PROOF_BLOCKS": proof_blocks,
+                "SOURCE_ISSUES": 0,
+            })
+
+    sources = source_health if source_health is not None else _empty_df()
+    if not sources.empty:
+        source_view = sources.copy()
+        source_view.columns = [str(col).upper() for col in source_view.columns]
+        source_blocks = source_view[
+            source_view.get("STATE", pd.Series([""] * len(source_view), index=source_view.index)).fillna("").astype(str).isin(["Unavailable", "Stale"])
+        ]
+        for _, item in source_blocks.iterrows():
+            surface = str(item.get("SURFACE") or "Evidence surface")
+            state = str(item.get("STATE") or "Source issue")
+            events.append({
+                "INCIDENT_TYPE": "Evidence Quality",
+                "ROUTE": "Source Health",
+                "SEVERITY": "High" if state == "Unavailable" else "Medium",
+                "SIGNAL": f"{surface} {state}",
+                "EVIDENCE": f"{surface}; {state}; rows={safe_int(item.get('ROWS')):,}; scope={item.get('SCOPE', '')}",
+                "WORKFLOW": "Source Health",
+                "OPEN_ACTIONS": 0,
+                "OVERDUE": 0,
+                "PROOF_BLOCKS": 0,
+                "SOURCE_ISSUES": 1,
+            })
+
+    if not events:
+        return pd.DataFrame([{
+            "INCIDENT_ID": "DBA-01",
+            "INCIDENT_TYPE": "Routine Watch",
+            "SEVERITY": "Low",
+            "STATUS": "Monitor",
+            "AFFECTED_ROUTES": "DBA Control Room",
+            "SIGNALS": "No active incident signals",
+            "EVIDENCE": "Loaded evidence produced no exception, queue blocker, closure blocker, or stale source surface.",
+            "OPEN_ACTIONS": 0,
+            "OVERDUE": 0,
+            "PROOF_BLOCKS": 0,
+            "SOURCE_ISSUES": 0,
+            "CONTAINMENT_ACTION": "Keep fast snapshot current and monitor Alert Center.",
+            "INVESTIGATION_PATH": "DBA Control Room",
+            "SLA_TARGET": "Monitor during next DBA review cycle.",
+            "PROOF_REQUIRED": "fresh Control Room load and Alert Center review",
+        }])
+
+    event_frame = pd.DataFrame(events)
+    rows: list[dict] = []
+    for (incident_type, route), group in event_frame.groupby(["INCIDENT_TYPE", "ROUTE"], dropna=False):
+        severity_ranks = group["SEVERITY"].apply(_dba_incident_rank)
+        worst_idx = severity_ranks.idxmin()
+        severity = str(group.loc[worst_idx, "SEVERITY"])
+        signals = "; ".join(dict.fromkeys(group["SIGNAL"].fillna("").astype(str).head(5)))
+        evidence = " | ".join(dict.fromkeys(group["EVIDENCE"].fillna("").astype(str).head(4)))
+        open_actions = int(pd.to_numeric(group["OPEN_ACTIONS"], errors="coerce").fillna(0).sum())
+        overdue = int(pd.to_numeric(group["OVERDUE"], errors="coerce").fillna(0).sum())
+        proof_blocks = int(pd.to_numeric(group["PROOF_BLOCKS"], errors="coerce").fillna(0).sum())
+        source_issues = int(pd.to_numeric(group["SOURCE_ISSUES"], errors="coerce").fillna(0).sum())
+        if overdue or proof_blocks:
+            status = "Containment Required"
+            rank = 0
+        elif source_issues:
+            status = "Evidence Refresh Required"
+            rank = 1
+        elif _dba_incident_rank(severity) <= 1:
+            status = "Investigate Now"
+            rank = 2
+        else:
+            status = "Triage"
+            rank = 4
+        rows.append({
+            "INCIDENT_TYPE": incident_type,
+            "SEVERITY": severity,
+            "STATUS": status,
+            "STATUS_RANK": rank,
+            "SEVERITY_RANK": _dba_incident_rank(severity),
+            "AFFECTED_ROUTES": route,
+            "SIGNALS": signals,
+            "EVIDENCE": evidence,
+            "OPEN_ACTIONS": open_actions,
+            "OVERDUE": overdue,
+            "PROOF_BLOCKS": proof_blocks,
+            "SOURCE_ISSUES": source_issues,
+            "CONTAINMENT_ACTION": _dba_incident_containment_action(incident_type),
+            "INVESTIGATION_PATH": _dba_incident_investigation_path(route, group["WORKFLOW"].iloc[0]),
+            "SLA_TARGET": _dba_incident_sla_target(incident_type, severity),
+            "PROOF_REQUIRED": _dba_section_proof_required(route),
+        })
+
+    result = pd.DataFrame(rows).sort_values(
+        ["STATUS_RANK", "SEVERITY_RANK", "OVERDUE", "PROOF_BLOCKS", "OPEN_ACTIONS", "INCIDENT_TYPE"],
+        ascending=[True, True, False, False, False, True],
+    ).head(max_rows).reset_index(drop=True)
+    result.insert(0, "INCIDENT_ID", [f"DBA-{idx + 1:02d}" for idx in range(len(result))])
+    return result.drop(columns=["STATUS_RANK", "SEVERITY_RANK"], errors="ignore")
+
+
 def _dba_section_operability_board(
     section_rows: pd.DataFrame | None = None,
     command_queue: pd.DataFrame | None = None,
@@ -2393,6 +2654,93 @@ def _render_shift_handoff_panel(
     )
 
 
+def _build_dba_incident_markdown(
+    incident_board: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    lookback_hours: int,
+    source_mode: str,
+) -> str:
+    rows = incident_board if incident_board is not None and not incident_board.empty else _empty_df()
+    lines = [
+        "# OVERWATCH DBA Incident Board",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Scope: {company} / {environment}",
+        f"Lookback: {int(lookback_hours)} hours",
+        f"Source mode: {source_mode}",
+        "",
+        "## Active Incidents",
+    ]
+    if rows.empty:
+        lines.append("- No incident rows were available.")
+    else:
+        for _, row in rows.iterrows():
+            lines.append(
+                f"- {row.get('INCIDENT_ID', '')} [{row.get('SEVERITY', '')} / {row.get('STATUS', '')}] "
+                f"{row.get('INCIDENT_TYPE', '')} on {row.get('AFFECTED_ROUTES', '')}: {row.get('SIGNALS', '')}. "
+                f"Evidence: {row.get('EVIDENCE', '')}. "
+                f"Containment: {row.get('CONTAINMENT_ACTION', '')}. "
+                f"SLA: {row.get('SLA_TARGET', '')}. "
+                f"Proof: {row.get('PROOF_REQUIRED', '')}."
+            )
+    lines.extend([
+        "",
+        "## Operating Rules",
+        "- Containment comes before optimization or permanent configuration changes.",
+        "- Do not close an incident until the proof requirements are attached to the action queue or change record.",
+        "- Refresh stale or unavailable evidence before taking irreversible DBA action.",
+    ])
+    return "\n".join(lines)
+
+
+def _render_incident_board_panel(
+    incident_board: pd.DataFrame,
+    incident_md: str,
+    *,
+    company: str,
+    environment: str,
+) -> None:
+    if incident_board is None or incident_board.empty:
+        return
+    st.markdown("**DBA Incident Board**")
+    i1, i2, i3, i4 = st.columns(4)
+    i1.metric("Incidents", f"{len(incident_board):,}", delta_color="inverse")
+    i2.metric(
+        "Containment",
+        f"{int(incident_board['STATUS'].astype(str).eq('Containment Required').sum()):,}",
+        delta_color="inverse",
+    )
+    i3.metric("Overdue", f"{int(pd.to_numeric(incident_board['OVERDUE'], errors='coerce').fillna(0).sum()):,}", delta_color="inverse")
+    i4.metric(
+        "Evidence Issues",
+        f"{int(pd.to_numeric(incident_board['SOURCE_ISSUES'], errors='coerce').fillna(0).sum()):,}",
+        delta_color="inverse",
+    )
+    render_priority_dataframe(
+        incident_board,
+        title="Grouped operational incidents",
+        priority_columns=[
+            "INCIDENT_ID", "INCIDENT_TYPE", "SEVERITY", "STATUS",
+            "AFFECTED_ROUTES", "SIGNALS", "OPEN_ACTIONS", "OVERDUE",
+            "PROOF_BLOCKS", "SOURCE_ISSUES", "CONTAINMENT_ACTION",
+            "INVESTIGATION_PATH", "SLA_TARGET", "PROOF_REQUIRED",
+        ],
+        sort_by=["STATUS", "SEVERITY", "OVERDUE", "PROOF_BLOCKS", "OPEN_ACTIONS"],
+        ascending=[True, True, False, False, False],
+        raw_label="All DBA incident rows",
+        height=320,
+        max_rows=10,
+    )
+    st.download_button(
+        "Download DBA Incident Board",
+        incident_md,
+        file_name=f"overwatch_dba_incident_board_{company.lower()}_{environment.lower()}.md",
+        mime="text/markdown",
+        key="dba_incident_board_download",
+    )
+
+
 def _render_control_room_source_health(
     data: dict,
     company: str,
@@ -2839,6 +3187,25 @@ def render() -> None:
         bool(allow_live_fallback),
     )
     closure_rollup_for_handoff = _command_queue_closure_readiness(action_queue)
+    incident_board = _dba_incident_board(
+        exceptions,
+        command_queue,
+        closure_rollup_for_handoff,
+        source_health_for_handoff,
+    )
+    incident_md = _build_dba_incident_markdown(
+        incident_board,
+        company=company,
+        environment=environment,
+        lookback_hours=int(lookback_hours),
+        source_mode=source_mode,
+    )
+    _render_incident_board_panel(
+        incident_board,
+        incident_md,
+        company=company,
+        environment=environment,
+    )
     handoff_rows = _dba_handoff_rows(
         exceptions,
         command_queue,

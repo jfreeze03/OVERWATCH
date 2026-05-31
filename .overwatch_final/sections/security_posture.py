@@ -6,7 +6,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from config import ALERT_DB, ALERT_SCHEMA
+from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
 from sections import data_sharing, security_access
 from utils import (
     filter_existing_columns,
@@ -14,15 +14,20 @@ from utils import (
     get_active_company,
     get_active_environment,
     get_db_filter_clause,
+    get_environment_case_expr,
+    get_environment_filter_clause,
+    environment_label_for_database,
     get_session,
     get_user_filter_clause,
     mart_object_name,
     make_action_id,
+    resolve_owner_context,
     run_query,
     safe_float,
     safe_identifier,
     safe_int,
     sql_literal,
+    action_queue_environment_clause,
     upsert_actions,
 )
 from utils.workflows import (
@@ -149,13 +154,34 @@ def _security_action_for(finding_type: str) -> tuple[str, str, str]:
 
 
 def _security_exception_has_database_context(row: pd.Series | dict) -> bool:
+    if _security_exception_database(row):
+        return True
     finding_type = str(row.get("FINDING_TYPE") or "").lower()
-    return "shared" in finding_type or "database exposure" in finding_type
+    return "shared" in finding_type or "database exposure" in finding_type or "object grant" in finding_type
+
+
+def _security_exception_database(row: pd.Series | dict) -> str:
+    finding_type = str(row.get("FINDING_TYPE") or "").lower()
+    if "failed login" in finding_type or "mfa" in finding_type or finding_type == "recent grant":
+        return ""
+    for key in ("DATABASE_NAME", "OBJECT_DATABASE", "TABLE_CATALOG"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    entity = str(row.get("ENTITY") or "").strip()
+    if "." in entity:
+        return entity.split(".", 1)[0].strip('"')
+    if entity.upper().startswith(("ALFA_", "TRXS_")):
+        return entity.strip('"')
+    return ""
 
 
 def _security_exception_environment(row: pd.Series | dict, environment: str = "ALL") -> str:
     if not _security_exception_has_database_context(row):
         return "No Database Context"
+    database_name = _security_exception_database(row)
+    if database_name:
+        return environment_label_for_database(database_name)
     return str(environment or "").strip() or "ALL"
 
 
@@ -163,33 +189,52 @@ def _security_owner_context(row: pd.Series | dict) -> dict:
     finding_type = str(row.get("FINDING_TYPE") or "").lower()
     entity = str(row.get("ENTITY") or "").upper()
     if "failed login" in finding_type or "mfa" in finding_type:
-        return {
+        base = {
             "owner": "IAM / Security Owner",
             "escalation": "Security Owner / DBA Lead",
             "source": "Security owner map",
         }
-    if "grant" in finding_type:
+    elif "grant" in finding_type:
         if any(token in entity for token in ("ADMIN", "SECURITY", "SYSADMIN", "ACCOUNTADMIN")):
-            return {
+            base = {
                 "owner": "Security Owner",
                 "escalation": "DBA Lead / Security Owner",
                 "source": "Admin-role owner hint",
             }
-        return {
-            "owner": "Access Owner / DBA Security",
-            "escalation": "Data Owner / Security Owner",
-            "source": "Security owner map",
-        }
-    if "shared" in finding_type or "exposure" in finding_type:
-        return {
+        else:
+            base = {
+                "owner": "Access Owner / DBA Security",
+                "escalation": "Data Owner / Security Owner",
+                "source": "Security owner map",
+            }
+    elif "shared" in finding_type or "exposure" in finding_type:
+        base = {
             "owner": "Data Owner / Security Owner",
             "escalation": "Data Governance / Legal",
             "source": "Shared-data owner map",
         }
+    else:
+        base = {
+            "owner": "Security/DBA",
+            "escalation": "DBA Lead",
+            "source": "Default security owner",
+        }
+    directory_context = resolve_owner_context(
+        row,
+        entity=entity,
+        entity_type="SECURITY",
+        owner=base["owner"],
+        category=finding_type or "Security",
+    )
     return {
-        "owner": "Security/DBA",
-        "escalation": "DBA Lead",
-        "source": "Default security owner",
+        "owner": directory_context.get("OWNER") or base["owner"],
+        "escalation": base["escalation"] or directory_context.get("ESCALATION_TARGET", ""),
+        "source": f"{base['source']}; {directory_context.get('OWNER_SOURCE', '')}".strip("; "),
+        "owner_email": directory_context.get("OWNER_EMAIL", ""),
+        "oncall_primary": directory_context.get("ONCALL_PRIMARY", ""),
+        "oncall_secondary": directory_context.get("ONCALL_SECONDARY", ""),
+        "approval_group": base["escalation"] or directory_context.get("APPROVAL_GROUP", ""),
+        "owner_evidence": directory_context.get("OWNER_EVIDENCE", ""),
     }
 
 
@@ -265,6 +310,27 @@ FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
 WHERE UPPER(name) = UPPER({entity_lit})
 LIMIT 50""".strip()
     if "grant" in finding_type:
+        database_name = _security_exception_database(row)
+        if database_name:
+            db_lit = sql_literal(database_name, 300)
+            return f"""
+SELECT
+    created_on,
+    privilege,
+    granted_on,
+    name,
+    table_catalog AS database_name,
+    table_schema AS schema_name,
+    granted_to,
+    grantee_name,
+    grant_option,
+    granted_by,
+    deleted_on
+FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES
+WHERE deleted_on IS NULL
+  AND UPPER(table_catalog) = UPPER({db_lit})
+ORDER BY created_on DESC
+LIMIT 100""".strip()
         return f"""
 SELECT
     grantee_name,
@@ -309,6 +375,11 @@ def _build_security_access_review(exceptions: pd.DataFrame, environment: str = "
     view["OWNER"] = owner_contexts.apply(lambda item: item["owner"])
     view["ESCALATION_TARGET"] = owner_contexts.apply(lambda item: item["escalation"])
     view["OWNER_SOURCE"] = owner_contexts.apply(lambda item: item["source"])
+    view["OWNER_EMAIL"] = owner_contexts.apply(lambda item: item.get("owner_email", ""))
+    view["ONCALL_PRIMARY"] = owner_contexts.apply(lambda item: item.get("oncall_primary", ""))
+    view["ONCALL_SECONDARY"] = owner_contexts.apply(lambda item: item.get("oncall_secondary", ""))
+    view["APPROVAL_GROUP"] = owner_contexts.apply(lambda item: item.get("approval_group", ""))
+    view["OWNER_EVIDENCE"] = owner_contexts.apply(lambda item: item.get("owner_evidence", ""))
     view["APPROVER"] = approval_contexts.apply(lambda item: item["approver"])
     view["OWNER_APPROVAL_STATUS"] = "Requested"
     view["ACCESS_REVIEW_STATE"] = approval_contexts.apply(lambda item: item["review_state"])
@@ -318,8 +389,192 @@ def _build_security_access_review(exceptions: pd.DataFrame, environment: str = "
     view["PROOF_REQUIRED"] = approval_contexts.apply(lambda item: item["proof_required"])
     view["VERIFICATION_QUERY"] = view.apply(_security_exception_verification_sql, axis=1)
     view["DATABASE_CONTEXT"] = view.apply(_security_exception_has_database_context, axis=1)
+    view["DATABASE_NAME"] = view.apply(_security_exception_database, axis=1)
     view["ENVIRONMENT"] = view.apply(lambda row: _security_exception_environment(row, environment), axis=1)
+    view["SCOPE_CONFIDENCE"] = view["DATABASE_CONTEXT"].map({True: "Database Context", False: "Account/User Context"})
+    view["SCOPE_EVIDENCE"] = view.apply(
+        lambda row: (
+            f"Database={row.get('DATABASE_NAME')}; environment={row.get('ENVIRONMENT')}"
+            if bool(row.get("DATABASE_CONTEXT"))
+            else "No database context; company/user scope only"
+        ),
+        axis=1,
+    )
     return view
+
+
+def _security_privileged_grant_review_sql(days: int, company: str, environment: str = "ALL") -> str:
+    """Return high-risk account-role and object grants with environment-aware object scope."""
+    days = max(1, min(int(days or 30), 90))
+    user_filter = get_user_filter_clause("gtu.grantee_name")
+    object_env_filter = get_environment_filter_clause(
+        "gor.table_catalog",
+        environment=environment,
+        company=company,
+    )
+    object_env_expr = get_environment_case_expr("gor.table_catalog")
+    return f"""WITH privileged_role_grants AS (
+    SELECT
+        'Privileged Role Grant' AS finding_type,
+        IFF(UPPER(gtu.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN'), 'Critical', 'High') AS severity,
+        gtu.grantee_name AS entity,
+        gtu.role AS role_name,
+        NULL::VARCHAR AS object_name,
+        NULL::VARCHAR AS database_name,
+        FALSE AS database_context,
+        'No Database Context' AS environment,
+        'ACCOUNT_USAGE.GRANTS_TO_USERS privileged role grants' AS proof_query,
+        gtu.granted_by,
+        gtu.created_on,
+        'Role owner approval, business justification, ticket, review-by date, and rollback plan required.' AS proof_required,
+        'Review account-level privileged role grant; do not hide this row behind a database environment filter.' AS next_action
+    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS gtu
+    WHERE gtu.deleted_on IS NULL
+      AND gtu.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+      AND (
+          UPPER(gtu.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN', 'SYSADMIN', 'USERADMIN')
+          OR UPPER(gtu.role) ILIKE '%ADMIN%'
+          OR UPPER(gtu.role) ILIKE '%SECURITY%'
+      )
+      {user_filter}
+),
+object_privilege_grants AS (
+    SELECT
+        'Privileged Object Grant' AS finding_type,
+        IFF(
+            UPPER(gor.privilege) IN ('OWNERSHIP', 'APPLY MASKING POLICY', 'APPLY ROW ACCESS POLICY')
+            OR COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true',
+            'High',
+            'Medium'
+        ) AS severity,
+        gor.grantee_name AS entity,
+        NULL::VARCHAR AS role_name,
+        gor.name AS object_name,
+        gor.table_catalog AS database_name,
+        TRUE AS database_context,
+        {object_env_expr} AS environment,
+        'ACCOUNT_USAGE.GRANTS_TO_ROLES privileged object grants' AS proof_query,
+        gor.granted_by,
+        gor.created_on,
+        'Object owner approval, privilege justification, ticket, review-by date, and rollback verification required.' AS proof_required,
+        'Review database-scoped object privilege before revoke/narrowing action.' AS next_action
+    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
+    WHERE gor.deleted_on IS NULL
+      AND gor.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+      AND gor.table_catalog IS NOT NULL
+      AND (
+          UPPER(gor.privilege) IN (
+              'OWNERSHIP',
+              'MANAGE GRANTS',
+              'APPLY MASKING POLICY',
+              'APPLY ROW ACCESS POLICY',
+              'CREATE DATABASE ROLE',
+              'CREATE SCHEMA',
+              'CREATE TABLE',
+              'CREATE VIEW'
+          )
+          OR COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true'
+      )
+      {object_env_filter}
+)
+SELECT
+    finding_type,
+    severity,
+    entity,
+    role_name,
+    object_name,
+    database_name,
+    database_context,
+    environment,
+    proof_query,
+    granted_by,
+    created_on,
+    proof_required,
+    next_action
+FROM privileged_role_grants
+UNION ALL
+SELECT
+    finding_type,
+    severity,
+    entity,
+    role_name,
+    object_name,
+    database_name,
+    database_context,
+    environment,
+    proof_query,
+    granted_by,
+    created_on,
+    proof_required,
+    next_action
+FROM object_privilege_grants
+ORDER BY
+    CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END,
+    created_on DESC
+LIMIT 200""".strip()
+
+
+def _annotate_security_privileged_grant_readiness(grants: pd.DataFrame) -> pd.DataFrame:
+    """Add owner, route, and review readiness fields to privileged grant rows."""
+    if grants is None or grants.empty:
+        return pd.DataFrame() if grants is None else grants
+    view = grants.copy()
+    view.columns = [str(col).upper() for col in view.columns]
+    rows = []
+    for _, row in view.iterrows():
+        context = _security_owner_context({
+            "FINDING_TYPE": row.get("FINDING_TYPE", "Privileged Grant"),
+            "ENTITY": row.get("ENTITY", ""),
+            "DATABASE_NAME": row.get("DATABASE_NAME", ""),
+        })
+        route_ready = bool(context.get("owner_email")) and bool(
+            context.get("oncall_primary") or context.get("approval_group")
+        )
+        database_context = bool(row.get("DATABASE_CONTEXT"))
+        role_name = str(row.get("ROLE_NAME") or "").strip().upper()
+        object_name = str(row.get("OBJECT_NAME") or "").strip()
+        severity = str(row.get("SEVERITY") or "").strip().upper()
+        if role_name in {"ACCOUNTADMIN", "ORGADMIN", "SECURITYADMIN"}:
+            review_state = "Tier 0 role grant"
+        elif role_name:
+            review_state = "Privileged role grant"
+        elif object_name:
+            review_state = "Privileged object grant"
+        else:
+            review_state = "Grant review"
+        if not route_ready:
+            readiness = "Owner Route Blocked"
+            rank = 0
+            next_action = "Assign owner/on-call route before changing privileged access."
+        elif severity in {"CRITICAL", "HIGH"}:
+            readiness = "Owner Approval Required"
+            rank = 1
+            next_action = "Confirm owner approval, ticket, and rollback evidence before revoke or narrowing action."
+        else:
+            readiness = "Review Ready"
+            rank = 2
+            next_action = "Validate business justification and attach verification result before closure."
+        rows.append({
+            "OWNER": context.get("owner", ""),
+            "OWNER_EMAIL": context.get("owner_email", ""),
+            "ONCALL_PRIMARY": context.get("oncall_primary", ""),
+            "APPROVAL_GROUP": context.get("approval_group", ""),
+            "ESCALATION_TARGET": context.get("escalation", ""),
+            "OWNER_SOURCE": context.get("source", ""),
+            "OWNER_EVIDENCE": context.get("owner_evidence", ""),
+            "OWNER_ROUTE_READY": "Yes" if route_ready else "No",
+            "GRANT_REVIEW_STATE": review_state,
+            "GRANT_REVIEW_READINESS": readiness,
+            "GRANT_REVIEW_RANK": rank,
+            "DATABASE_CONTEXT": database_context,
+            "SCOPE_CONFIDENCE": "Database Context" if database_context else "Account/User Context",
+            "NEXT_GRANT_ACTION": next_action,
+        })
+    annotated = pd.concat([view.reset_index(drop=True), pd.DataFrame(rows)], axis=1)
+    return annotated.sort_values(
+        ["GRANT_REVIEW_RANK", "SEVERITY", "CREATED_ON"],
+        ascending=[True, True, False],
+    )
 
 
 def _security_workflow_for(finding_type: str) -> str:
@@ -471,6 +726,7 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
     user_filter_u = get_user_filter_clause("u.name")
     user_filter_g = get_user_filter_clause("g.grantee_name")
     db_filter = get_db_filter_clause("d.database_name")
+    object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
     summary_sql = f"""
     WITH login_events AS (
         SELECT
@@ -499,6 +755,14 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
           AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
           {user_filter_g}
     ),
+    object_grants AS (
+        SELECT COUNT(*) AS object_grants
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
+        WHERE gor.deleted_on IS NULL
+          AND gor.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+          AND gor.table_catalog IS NOT NULL
+          {object_grant_db_filter}
+    ),
     shared_dbs AS (
         SELECT COUNT(*) AS shared_databases
         FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
@@ -515,9 +779,9 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
         users.active_users,
         users.users_without_mfa,
         users.password_users,
-        recent_grants.recent_grants,
+        recent_grants.recent_grants + object_grants.object_grants AS recent_grants,
         shared_dbs.shared_databases
-    FROM login_events, users, recent_grants, shared_dbs
+    FROM login_events, users, recent_grants, object_grants, shared_dbs
     """
     exceptions_sql = f"""
     WITH failed_logins AS (
@@ -528,7 +792,8 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
             COUNT(*) AS event_count,
             COUNT(DISTINCT client_ip) AS distinct_sources,
             MAX(event_timestamp) AS last_seen,
-            'LOGIN_HISTORY failed login attempts by user/IP' AS proof_query
+            'LOGIN_HISTORY failed login attempts by user/IP' AS proof_query,
+            NULL::VARCHAR AS database_name
         FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY lh
         WHERE lh.event_timestamp >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
           AND lh.is_success = 'NO'
@@ -544,7 +809,8 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
             1 AS event_count,
             0 AS distinct_sources,
             COALESCE({last_seen_expr}, u.created_on) AS last_seen,
-            'ACCOUNT_USAGE.USERS ext_authn_duo signal' AS proof_query
+            'ACCOUNT_USAGE.USERS ext_authn_duo signal' AS proof_query,
+            NULL::VARCHAR AS database_name
         FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
         WHERE u.deleted_on IS NULL
           AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
@@ -559,13 +825,32 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
             COUNT(*) AS event_count,
             COUNT(DISTINCT g.role) AS distinct_sources,
             MAX(g.created_on) AS last_seen,
-            'ACCOUNT_USAGE.GRANTS_TO_USERS active grants created recently' AS proof_query
+            'ACCOUNT_USAGE.GRANTS_TO_USERS active grants created recently' AS proof_query,
+            NULL::VARCHAR AS database_name
         FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
         WHERE g.deleted_on IS NULL
           AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
           {user_filter_g}
         GROUP BY g.grantee_name
         HAVING COUNT(*) >= 3
+    ),
+    object_grants AS (
+        SELECT
+            'Object Grant' AS finding_type,
+            IFF(COUNT(*) >= 10 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0, 'High', 'Medium') AS severity,
+            COALESCE(gor.table_catalog || '.' || gor.table_schema || '.' || gor.name, gor.table_catalog, gor.name) AS entity,
+            COUNT(*) AS event_count,
+            COUNT(DISTINCT gor.grantee_name) AS distinct_sources,
+            MAX(gor.created_on) AS last_seen,
+            'ACCOUNT_USAGE.GRANTS_TO_ROLES object grants by database/schema/object' AS proof_query,
+            gor.table_catalog AS database_name
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
+        WHERE gor.deleted_on IS NULL
+          AND gor.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+          AND gor.table_catalog IS NOT NULL
+          {object_grant_db_filter}
+        GROUP BY gor.table_catalog, gor.table_schema, gor.name
+        HAVING COUNT(*) >= 3 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0
     ),
     shared_exposure AS (
         SELECT
@@ -575,7 +860,8 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
             1 AS event_count,
             0 AS distinct_sources,
             d.created AS last_seen,
-            'ACCOUNT_USAGE.DATABASES imported database/share metadata' AS proof_query
+            'ACCOUNT_USAGE.DATABASES imported database/share metadata' AS proof_query,
+            d.database_name AS database_name
         FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
         WHERE d.deleted IS NULL
           AND d.type IN ('IMPORTED DATABASE', 'SHARE')
@@ -586,6 +872,8 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
     SELECT * FROM mfa_gaps
     UNION ALL
     SELECT * FROM recent_grants
+    UNION ALL
+    SELECT * FROM object_grants
     UNION ALL
     SELECT * FROM shared_exposure
     ORDER BY
@@ -617,6 +905,7 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
     user_filter_u = get_user_filter_clause("u.name")
     user_filter_g = get_user_filter_clause("g.grantee_name")
     db_filter = get_db_filter_clause("d.database_name")
+    object_grant_db_filter = get_db_filter_clause("gor.table_catalog")
     login_table = mart_object_name("FACT_LOGIN_DAILY")
     grant_table = mart_object_name("FACT_GRANT_DAILY")
     login_company_filter = "" if str(company or "").upper() == "ALL" else f"AND lh.company = {sql_literal(company, 100)}"
@@ -653,6 +942,14 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
           AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
           {user_filter_g}
     ),
+    object_grants AS (
+        SELECT COUNT(*) AS object_grants
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
+        WHERE gor.deleted_on IS NULL
+          AND gor.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+          AND gor.table_catalog IS NOT NULL
+          {object_grant_db_filter}
+    ),
     shared_dbs AS (
         SELECT COUNT(*) AS shared_databases
         FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
@@ -669,9 +966,9 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
         users.active_users,
         users.users_without_mfa,
         users.password_users,
-        recent_grants.recent_grants,
+        recent_grants.recent_grants + object_grants.object_grants AS recent_grants,
         shared_dbs.shared_databases
-    FROM login_events, users, recent_grants, shared_dbs
+    FROM login_events, users, recent_grants, object_grants, shared_dbs
     """
     exceptions_sql = f"""
     WITH failed_logins AS (
@@ -682,7 +979,8 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
             COALESCE(SUM(failure_count), 0) AS event_count,
             COUNT(DISTINCT client_ip) AS distinct_sources,
             MAX(login_date)::TIMESTAMP_NTZ AS last_seen,
-            'FACT_LOGIN_DAILY failed login attempts by user/IP' AS proof_query
+            'FACT_LOGIN_DAILY failed login attempts by user/IP' AS proof_query,
+            NULL::VARCHAR AS database_name
         FROM {login_table} lh
         WHERE lh.login_date >= DATEADD('day', -{int(days)}, CURRENT_DATE())
           {login_company_filter}
@@ -699,7 +997,8 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
             1 AS event_count,
             0 AS distinct_sources,
             COALESCE({last_seen_expr}, u.created_on) AS last_seen,
-            'ACCOUNT_USAGE.USERS ext_authn_duo signal' AS proof_query
+            'ACCOUNT_USAGE.USERS ext_authn_duo signal' AS proof_query,
+            NULL::VARCHAR AS database_name
         FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
         WHERE u.deleted_on IS NULL
           AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
@@ -714,7 +1013,8 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
             COALESCE(SUM(grant_count), 0) AS event_count,
             COUNT(DISTINCT g.role_name) AS distinct_sources,
             MAX(g.created_on) AS last_seen,
-            'FACT_GRANT_DAILY active grants created recently' AS proof_query
+            'FACT_GRANT_DAILY active grants created recently' AS proof_query,
+            NULL::VARCHAR AS database_name
         FROM {grant_table} g
         WHERE 1 = 1
           {grant_company_filter}
@@ -724,6 +1024,24 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
         GROUP BY g.grantee_name
         HAVING COALESCE(SUM(grant_count), 0) >= 3
     ),
+    object_grants AS (
+        SELECT
+            'Object Grant' AS finding_type,
+            IFF(COUNT(*) >= 10 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0, 'High', 'Medium') AS severity,
+            COALESCE(gor.table_catalog || '.' || gor.table_schema || '.' || gor.name, gor.table_catalog, gor.name) AS entity,
+            COUNT(*) AS event_count,
+            COUNT(DISTINCT gor.grantee_name) AS distinct_sources,
+            MAX(gor.created_on) AS last_seen,
+            'ACCOUNT_USAGE.GRANTS_TO_ROLES object grants by database/schema/object' AS proof_query,
+            gor.table_catalog AS database_name
+        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
+        WHERE gor.deleted_on IS NULL
+          AND gor.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+          AND gor.table_catalog IS NOT NULL
+          {object_grant_db_filter}
+        GROUP BY gor.table_catalog, gor.table_schema, gor.name
+        HAVING COUNT(*) >= 3 OR COUNT_IF(COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true') > 0
+    ),
     shared_exposure AS (
         SELECT
             'Shared Database Exposure' AS finding_type,
@@ -732,7 +1050,8 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
             1 AS event_count,
             0 AS distinct_sources,
             d.created AS last_seen,
-            'ACCOUNT_USAGE.DATABASES imported database/share metadata' AS proof_query
+            'ACCOUNT_USAGE.DATABASES imported database/share metadata' AS proof_query,
+            d.database_name AS database_name
         FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES d
         WHERE d.deleted IS NULL
           AND d.type IN ('IMPORTED DATABASE', 'SHARE')
@@ -743,6 +1062,8 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
     SELECT * FROM mfa_gaps
     UNION ALL
     SELECT * FROM recent_grants
+    UNION ALL
+    SELECT * FROM object_grants
     UNION ALL
     SELECT * FROM shared_exposure
     ORDER BY
@@ -851,6 +1172,133 @@ ORDER BY
 LIMIT 100""".strip()
 
 
+def _security_action_queue_closure_sql(days: int, company: str, environment: str = "ALL") -> str:
+    fqn = f"{safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.{safe_identifier(ACTION_QUEUE_TABLE)}"
+    where = [
+        "SOURCE = 'Security Posture - Security Brief'",
+        f"COALESCE(UPDATED_AT, CREATED_AT) >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_TIMESTAMP())",
+    ]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
+    if env_clause:
+        where.append(env_clause)
+    where_clause = " AND ".join(where)
+    return f"""
+WITH scoped_actions AS (
+    SELECT
+        COALESCE(CATEGORY, 'Security') AS CATEGORY,
+        COALESCE(ENTITY_TYPE, 'Security Finding') AS ENTITY_TYPE,
+        COALESCE(ENTITY_NAME, 'Unknown') AS ENTITY,
+        COALESCE(OWNER, '') AS OWNER,
+        COALESCE(APPROVER, '') AS APPROVER,
+        COALESCE(STATUS, 'New') AS STATUS,
+        COALESCE(SEVERITY, 'Medium') AS SEVERITY,
+        COALESCE(TICKET_ID, '') AS TICKET_ID,
+        DUE_DATE,
+        COALESCE(VERIFICATION_STATUS, '') AS VERIFICATION_STATUS,
+        COALESCE(VERIFICATION_QUERY, PROOF_QUERY, '') AS VERIFICATION_QUERY,
+        COALESCE(VERIFICATION_RESULT, '') AS VERIFICATION_RESULT,
+        COALESCE(OWNER_APPROVAL_STATUS, '') AS OWNER_APPROVAL_STATUS,
+        COALESCE(RECOVERY_SLA_STATE, '') AS RECOVERY_SLA_STATE,
+        COALESCE(RECOVERY_EVIDENCE, '') AS RECOVERY_EVIDENCE,
+        COALESCE(UPDATED_AT, CREATED_AT) AS LAST_ACTIVITY_TS
+    FROM {fqn}
+    WHERE {where_clause}
+),
+rollup AS (
+    SELECT
+        CATEGORY,
+        ENTITY_TYPE,
+        ENTITY,
+        MAX_BY(OWNER, LAST_ACTIVITY_TS) AS OWNER,
+        MAX_BY(APPROVER, LAST_ACTIVITY_TS) AS APPROVER,
+        COUNT(*) AS TOTAL_ACTIONS,
+        COUNT_IF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED')) AS OPEN_ACTIONS,
+        COUNT_IF(UPPER(STATUS) = 'FIXED') AS FIXED_ACTIONS,
+        COUNT_IF(
+            UPPER(STATUS) = 'FIXED'
+            AND UPPER(VERIFICATION_STATUS) = 'VERIFIED'
+            AND LENGTH(TRIM(VERIFICATION_RESULT)) >= 15
+        ) AS VERIFIED_CLOSURES,
+        COUNT_IF(
+            UPPER(STATUS) = 'FIXED'
+            AND (
+                UPPER(VERIFICATION_STATUS) <> 'VERIFIED'
+                OR LENGTH(TRIM(VERIFICATION_RESULT)) < 15
+            )
+        ) AS FIXED_WITHOUT_VERIFICATION,
+        COUNT_IF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED') AND DUE_DATE < CURRENT_DATE()) AS OVERDUE_OPEN,
+        COUNT_IF(UPPER(OWNER) IN ('', 'SECURITY/DBA', 'DBA', 'UNKNOWN', 'N/A')) AS OWNER_GAP_ROWS,
+        COUNT_IF(LENGTH(TRIM(TICKET_ID)) = 0) AS TICKET_GAP_ROWS,
+        COUNT_IF(LENGTH(TRIM(APPROVER)) = 0) AS APPROVER_GAP_ROWS,
+        COUNT_IF(LENGTH(TRIM(VERIFICATION_QUERY)) = 0) AS VERIFICATION_QUERY_GAP_ROWS,
+        COUNT_IF(UPPER(OWNER_APPROVAL_STATUS) IN ('', 'PENDING', 'REQUESTED', 'REQUIRED')) AS OWNER_APPROVAL_GAP_ROWS,
+        COUNT_IF(
+            UPPER(RECOVERY_SLA_STATE) ILIKE '%BREACH%'
+            OR UPPER(RECOVERY_SLA_STATE) ILIKE '%LATE%'
+            OR (
+                UPPER(STATUS) = 'FIXED'
+                AND LENGTH(TRIM(RECOVERY_EVIDENCE)) < 15
+            )
+        ) AS RECOVERY_RISK_ROWS,
+        MIN(IFF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED'), DUE_DATE, NULL)) AS NEXT_DUE_DATE,
+        MAX(LAST_ACTIVITY_TS) AS LAST_ACTIVITY_TS,
+        MAX_BY(STATUS, LAST_ACTIVITY_TS) AS LAST_STATUS,
+        MAX_BY(SEVERITY, LAST_ACTIVITY_TS) AS LAST_SEVERITY
+    FROM scoped_actions
+    GROUP BY CATEGORY, ENTITY_TYPE, ENTITY
+)
+SELECT
+    CATEGORY,
+    ENTITY_TYPE,
+    ENTITY,
+    CASE
+        WHEN OVERDUE_OPEN > 0 THEN 'Overdue closure'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Fixed without verification'
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Control metadata gap'
+        WHEN OPEN_ACTIONS > 0 THEN 'Open'
+        WHEN VERIFIED_CLOSURES > 0 THEN 'Verified closure'
+        ELSE 'No recent action'
+    END AS CLOSURE_READINESS,
+    CASE
+        WHEN OVERDUE_OPEN > 0 THEN 0
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 1
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 2
+        WHEN OPEN_ACTIONS > 0 THEN 3
+        WHEN VERIFIED_CLOSURES > 0 THEN 8
+        ELSE 9
+    END AS CLOSURE_RANK,
+    OWNER,
+    APPROVER,
+    TOTAL_ACTIONS,
+    OPEN_ACTIONS,
+    FIXED_ACTIONS,
+    VERIFIED_CLOSURES,
+    FIXED_WITHOUT_VERIFICATION,
+    OVERDUE_OPEN,
+    OWNER_GAP_ROWS,
+    TICKET_GAP_ROWS,
+    APPROVER_GAP_ROWS,
+    VERIFICATION_QUERY_GAP_ROWS,
+    OWNER_APPROVAL_GAP_ROWS,
+    RECOVERY_RISK_ROWS,
+    NEXT_DUE_DATE,
+    LAST_STATUS,
+    LAST_SEVERITY,
+    LAST_ACTIVITY_TS,
+    CASE
+        WHEN OVERDUE_OPEN > 0 THEN 'Escalate the security owner and ticket before lower-risk access cleanup.'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Attach verification result or reopen the security action.'
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete owner, ticket, approver, and verification metadata.'
+        WHEN OPEN_ACTIONS > 0 THEN 'Work the open security action and retain IAM/Snowflake evidence.'
+        ELSE 'Retain verified closure evidence for audit review.'
+    END AS NEXT_ACTION
+FROM rollup
+ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_ACTIONS DESC, LAST_ACTIVITY_TS DESC
+LIMIT 100""".strip()
+
+
 def _save_security_access_review_snapshot(
     session,
     review: pd.DataFrame,
@@ -897,6 +1345,13 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
             "Entity Type": entity_type,
             "Entity": entity,
             "Owner": row.get("OWNER", "Security/DBA"),
+            "Owner Email": row.get("OWNER_EMAIL", ""),
+            "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
+            "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
+            "Approval Group": row.get("APPROVAL_GROUP", row.get("APPROVER", "Security Owner")),
+            "Escalation Target": row.get("ESCALATION_TARGET", "DBA Lead"),
+            "Owner Source": row.get("OWNER_SOURCE", ""),
+            "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
             "Finding": finding,
             "Action": (
                 f"{action} Owner approval from {row.get('APPROVER', 'Security Owner')} is required; "
@@ -923,6 +1378,8 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
                 f"Proof required: {row.get('PROOF_REQUIRED', '')}. "
                 f"Role capability: {row.get('ROLE_CAPABILITY_STATE', '')}."
             ),
+            "Recovery Audit State": "Security Review Verification Pending",
+            "Recovery SLA Target Hours": 24 if severity.upper() in {"CRITICAL", "HIGH"} else 72,
             "Company": company,
             "Environment": row.get("ENVIRONMENT", _security_exception_environment(row, environment)),
         })
@@ -932,6 +1389,72 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
     except Exception as e:
         st.error(f"Could not save security exceptions: {format_snowflake_error(e)}")
         st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
+def _render_privileged_grant_readiness(session, company: str, environment: str, days: int) -> None:
+    with st.expander("Privileged Grant Readiness", expanded=False):
+        st.caption(
+            "Reviews account-level admin role grants and database-scoped object privileges before DBA grant/revoke work. "
+            "Account-role grants stay visible under PROD/DEV filters because they have no database context."
+        )
+        grant_days = st.slider(
+            "Privileged grant lookback (days)",
+            7,
+            90,
+            max(7, int(days or 30)),
+            key="security_priv_grant_days",
+        )
+        if st.button("Load Privileged Grant Readiness", key="security_priv_grant_load"):
+            try:
+                grant_sql = _security_privileged_grant_review_sql(grant_days, company, environment)
+                grant_rows = run_query(
+                    grant_sql,
+                    ttl_key=f"security_privileged_grants_{company}_{environment}_{grant_days}",
+                    tier="standard",
+                    section="Security Posture",
+                )
+                st.session_state["security_privileged_grants"] = _annotate_security_privileged_grant_readiness(grant_rows)
+                st.session_state["security_privileged_grants_sql"] = grant_sql
+            except Exception as exc:
+                st.session_state["security_privileged_grants"] = pd.DataFrame()
+                st.warning(f"Privileged grant readiness unavailable: {format_snowflake_error(exc)}")
+
+        grants = st.session_state.get("security_privileged_grants")
+        if grants is None:
+            st.info("Load this before granting, revoking, or narrowing high-risk roles and object privileges.")
+            with st.expander("Privileged grant readiness query", expanded=False):
+                st.code(_security_privileged_grant_review_sql(grant_days, company, environment), language="sql")
+            return
+        if grants.empty:
+            st.success("No privileged grant rows found for the selected scope and lookback.")
+            return
+
+        blocked = grants[grants["GRANT_REVIEW_READINESS"] == "Owner Route Blocked"]
+        approval = grants[grants["GRANT_REVIEW_READINESS"] == "Owner Approval Required"]
+        account_scope = grants[~grants["DATABASE_CONTEXT"]]
+        g1, g2, g3, g4 = st.columns(4)
+        g1.metric("Privileged Grants", f"{len(grants):,}")
+        g2.metric("Owner Approval", f"{len(approval):,}", delta_color="inverse")
+        g3.metric("Route Blocked", f"{len(blocked):,}", delta_color="inverse")
+        g4.metric("Account Scope", f"{len(account_scope):,}")
+
+        render_priority_dataframe(
+            grants,
+            title="Privileged grant review before access changes",
+            priority_columns=[
+                "SEVERITY", "GRANT_REVIEW_READINESS", "GRANT_REVIEW_STATE",
+                "FINDING_TYPE", "ENTITY", "ROLE_NAME", "OBJECT_NAME", "DATABASE_NAME",
+                "ENVIRONMENT", "SCOPE_CONFIDENCE", "OWNER", "OWNER_ROUTE_READY",
+                "ONCALL_PRIMARY", "APPROVAL_GROUP", "GRANTED_BY", "CREATED_ON",
+                "PROOF_REQUIRED", "NEXT_GRANT_ACTION",
+            ],
+            sort_by=["GRANT_REVIEW_RANK", "SEVERITY", "CREATED_ON"],
+            ascending=[True, True, False],
+            raw_label="All privileged grant readiness rows",
+            height=320,
+        )
+        with st.expander("Privileged grant readiness query", expanded=False):
+            st.code(st.session_state.get("security_privileged_grants_sql", ""), language="sql")
 
 
 def render() -> None:
@@ -971,6 +1494,7 @@ def render() -> None:
     )
 
     days = st.slider("Security brief lookback (days)", 1, 90, 30, key="security_posture_brief_days")
+    _render_privileged_grant_readiness(session, company, environment, days)
     if st.button("Load Security Brief", key="security_posture_brief_load", type="primary"):
         try:
             summary_sql, exceptions_sql = _build_security_mart_brief_sql(session, days, company)
@@ -1071,7 +1595,7 @@ def render() -> None:
                 title="Security exceptions to validate first",
                 priority_columns=[
                     "SEVERITY", "FINDING_TYPE", "ENTITY", "EVENT_COUNT",
-                    "DISTINCT_SOURCES", "LAST_SEEN", "ENTITY_TYPE",
+                    "DISTINCT_SOURCES", "DATABASE_NAME", "LAST_SEEN", "ENTITY_TYPE",
                     "NEXT_WORKFLOW", "NEXT_ACTION",
                 ],
                 sort_by=["SEVERITY", "EVENT_COUNT", "LAST_SEEN"],
@@ -1087,7 +1611,8 @@ def render() -> None:
                     "SEVERITY", "ACCESS_REVIEW_STATE", "FINDING_TYPE", "ENTITY",
                     "OWNER", "ESCALATION_TARGET", "APPROVER", "ROLE_CAPABILITY_STATE",
                     "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "DATABASE_CONTEXT",
-                    "ENVIRONMENT", "PROOF_REQUIRED",
+                    "DATABASE_NAME", "ENVIRONMENT", "SCOPE_CONFIDENCE", "SCOPE_EVIDENCE",
+                    "PROOF_REQUIRED",
                 ],
                 sort_by=["SEVERITY", "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "ENTITY"],
                 ascending=[True, False, False, True],
@@ -1152,6 +1677,53 @@ def render() -> None:
                     st.info("No saved security access-review snapshots found for the selected scope.")
                 with st.expander("Access Review Setup SQL", expanded=False):
                     st.code(build_security_access_review_ddl(), language="sql")
+            with st.expander("Security Action Closure Analytics", expanded=False):
+                st.caption(
+                    "Uses Security Posture action-queue rows to show open, overdue, unapproved, "
+                    "or closed-without-verification security work."
+                )
+                closure_days = st.slider(
+                    "Security closure days",
+                    7,
+                    180,
+                    30,
+                    key="security_action_closure_days",
+                )
+                if st.button("Load Security Closure Analytics", key="security_action_closure_load"):
+                    try:
+                        closure_sql = _security_action_queue_closure_sql(closure_days, company, environment)
+                        st.session_state["security_action_closure_sql"] = closure_sql
+                        st.session_state["security_action_closure"] = run_query(
+                            closure_sql,
+                            ttl_key=f"security_action_closure_{company}_{environment}_{closure_days}",
+                            tier="standard",
+                            section="Security Posture",
+                        )
+                    except Exception as exc:
+                        st.session_state["security_action_closure"] = pd.DataFrame()
+                        st.warning(f"Security closure analytics unavailable: {format_snowflake_error(exc)}")
+                closure = st.session_state.get("security_action_closure")
+                if closure is not None and not closure.empty:
+                    render_priority_dataframe(
+                        closure,
+                        title="Security closure evidence gaps",
+                        priority_columns=[
+                            "CATEGORY", "ENTITY_TYPE", "ENTITY", "CLOSURE_READINESS",
+                            "OWNER", "APPROVER", "TOTAL_ACTIONS", "OPEN_ACTIONS",
+                            "OVERDUE_OPEN", "VERIFIED_CLOSURES", "FIXED_WITHOUT_VERIFICATION",
+                            "OWNER_GAP_ROWS", "TICKET_GAP_ROWS", "APPROVER_GAP_ROWS",
+                            "OWNER_APPROVAL_GAP_ROWS", "VERIFICATION_QUERY_GAP_ROWS",
+                            "RECOVERY_RISK_ROWS", "NEXT_DUE_DATE", "LAST_STATUS", "NEXT_ACTION",
+                        ],
+                        sort_by=["CLOSURE_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS"],
+                        ascending=[True, False, False, False],
+                        raw_label="All security closure rows",
+                        height=300,
+                    )
+                    with st.expander("Security Closure Query", expanded=False):
+                        st.code(st.session_state.get("security_action_closure_sql", ""), language="sql")
+                elif closure is not None:
+                    st.info("No Security Posture action-queue rows found for the selected scope.")
         elif exceptions is not None:
             st.success("No security exceptions crossed the default thresholds.")
         brief_md = _build_security_brief_markdown(

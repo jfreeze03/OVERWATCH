@@ -15,6 +15,9 @@ sys.path.insert(0, str(APP_ROOT))
 
 from sections.account_health import (  # noqa: E402
     _account_health_actionable_checklist,
+    _account_health_access_hygiene_sql,
+    _annotate_account_health_access_hygiene,
+    _annotate_account_health_checklist_readiness,
     _account_health_checklist_action_payload,
     _account_health_checklist_history_insert_sql,
     _account_health_checklist_history_sql,
@@ -45,7 +48,9 @@ from sections.cost_contract import (  # noqa: E402
 from sections.dba_control_room import (  # noqa: E402
     _build_report as _build_dba_control_report,
     _build_command_queue,
+    _command_queue_closure_readiness,
     _command_queue_summary,
+    _command_queue_route_readiness,
     _build_release_compare_report,
     _compare_release_windows,
     _control_room_snapshot_to_data,
@@ -61,8 +66,10 @@ from sections.cortex_monitor import (  # noqa: E402
 )
 from sections.change_drift import (  # noqa: E402
     _change_blast_radius_sql,
+    _change_action_queue_closure_sql,
     _build_change_control_readiness,
     _build_change_drift_markdown,
+    _build_change_drift_sql,
     _build_mart_change_drift_sql,
     _change_action_for,
     _change_action_payload,
@@ -89,8 +96,13 @@ from sections.recommendations import (  # noqa: E402
 )
 from sections.service_health import _value as service_value  # noqa: E402
 from sections.security_posture import (  # noqa: E402
+    _security_action_queue_closure_sql,
+    _annotate_security_privileged_grant_readiness,
     _build_security_access_review,
     _build_security_brief_markdown,
+    _build_security_mart_brief_sql,
+    _build_security_summary_sql,
+    _security_privileged_grant_review_sql,
     _security_access_review_history_sql,
     _security_access_review_insert_sql,
     _security_action_for,
@@ -131,20 +143,26 @@ from sections.task_management import (  # noqa: E402
 from sections.usage_overview import _first_number as usage_first_number  # noqa: E402
 from sections.warehouse_health import (  # noqa: E402
     _annotate_warehouse_admin_readiness,
+    _annotate_warehouse_owner_inventory,
+    _warehouse_action_queue_closure_sql,
     _build_warehouse_capacity_markdown,
+    _queue_efficiency_findings,
     _queue_capacity_findings,
     _warehouse_capacity_action_for,
     _warehouse_capacity_rating,
     _warehouse_capacity_score,
     _warehouse_capacity_verification_sql,
+    _warehouse_owner_inventory_sql,
     _warehouse_setting_review_history_sql,
     _warehouse_setting_review_insert_sql,
     build_warehouse_setting_review_ddl,
 )
 from utils.cost import build_metered_credit_cte  # noqa: E402
 from utils.company_filter import (  # noqa: E402
+    environment_label_for_database,
     get_environment_case_expr,
     get_environment_filter_clause,
+    get_environment_filter_or_no_database_clause,
     get_global_filter_clause,
 )
 from utils.action_queue import verification_query_safety_issues  # noqa: E402
@@ -257,6 +275,16 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("query_id", by_check["Change and drift review"]["PROOF_REQUIRED"])
         self.assertIn("Snapshot timestamp", by_check["Refresh source confidence"]["PROOF_REQUIRED"])
 
+        routed = _annotate_account_health_checklist_readiness(checklist, environment="PROD")
+        by_check = {row["CHECK"]: row for _, row in routed.iterrows()}
+        self.assertEqual(by_check["Query failure review"]["ENVIRONMENT_SCOPE"], "PROD")
+        self.assertEqual(by_check["Query failure review"]["DATABASE_CONTEXT"], "Yes")
+        self.assertEqual(by_check["Query failure review"]["SCOPE_CONFIDENCE"], "Database Context")
+        self.assertEqual(by_check["Query failure review"]["QUEUE_READINESS"], "Ready to Queue")
+        self.assertEqual(by_check["Cost spike review"]["DATABASE_CONTEXT"], "Allocated / Estimated")
+        self.assertEqual(by_check["Cost spike review"]["SCOPE_CONFIDENCE"], "Allocated Estimate")
+        self.assertIn("allocated/estimated", by_check["Cost spike review"]["SCOPE_EVIDENCE"])
+
     def test_account_health_checklist_actions_are_queue_ready(self):
         checklist = _build_account_health_dba_checklist(
             health_score=68,
@@ -283,8 +311,15 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(action["Entity"], "Query failure review")
         self.assertEqual(action["Owner Approval Status"], "Requested")
         self.assertEqual(action["Approver"], "Application Owner / DBA On-Call")
+        self.assertEqual(action["Oncall Primary"], "DBA On-Call")
+        self.assertIn("OWNER_DIRECTORY", action["Owner Source"])
+        self.assertEqual(action["Recovery Audit State"], "Checklist Verification Pending")
+        self.assertEqual(action["Recovery SLA Target Hours"], 24)
         self.assertEqual(action["Environment"], "DEV_ALL")
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
+        self.assertIn("Queue readiness: Ready to Queue", action["Owner Approval Note"])
+        self.assertIn("Scope: Database Context", action["Owner Approval Note"])
+        self.assertIn("Scope evidence", action["Recovery Evidence"])
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
         self.assertNotIn("ALTER", action["Generated SQL Fix"].upper())
 
@@ -303,7 +338,10 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(row["OWNER"], "Platform DBA")
         self.assertEqual(row["ESCALATION_TARGET"], "Warehouse Owner / DBA On-Call")
-        self.assertEqual(row["OWNER_SOURCE"], "Checklist owner map")
+        self.assertIn("Checklist owner map", row["OWNER_SOURCE"])
+        self.assertIn("OWNER_DIRECTORY", row["OWNER_SOURCE"])
+        self.assertEqual(row["ONCALL_PRIMARY"], "DBA On-Call")
+        self.assertIn("WAREHOUSE", row["OWNER_EVIDENCE"])
 
     def test_account_health_checklist_history_sql_is_persistable_and_scoped(self):
         checklist = _build_account_health_dba_checklist(
@@ -354,6 +392,58 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OWNER_APPROVAL_GAP_ROWS", sql)
         self.assertIn("CLOSURE_READINESS", sql)
         self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_account_health_access_hygiene_keeps_user_auth_scope_account_level(self):
+        with patch(
+            "sections.account_health.filter_existing_columns",
+            return_value=["HAS_PASSWORD", "EXT_AUTHN_DUO", "LAST_SUCCESS_LOGIN"],
+        ):
+            sql = _account_health_access_hygiene_sql(None, 30, "ALFA", "DEV_ALL").upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.USERS", sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY", sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS", sql)
+        self.assertIn("'NO DATABASE CONTEXT' AS DATABASE_CONTEXT", sql)
+        self.assertIn("'NO DATABASE CONTEXT' AS ENVIRONMENT_SCOPE", sql)
+        self.assertIn("'DEV_ALL' AS SELECTED_ENVIRONMENT", sql)
+        self.assertIn("U.NAME NOT ILIKE 'TRXS_%'", sql)
+        self.assertIn("LH.USER_NAME NOT ILIKE 'TRXS_%'", sql)
+        self.assertNotIn("ALFA_EDW_DEV", sql)
+        self.assertNotIn("TABLE_CATALOG", sql)
+        self.assertNotIn("DATABASE_NAME", sql)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_account_health_access_hygiene_annotation_adds_queue_scope_and_owner(self):
+        hygiene = pd.DataFrame([
+            {
+                "USER_NAME": "ALFA_ADMIN",
+                "SEVERITY": "High",
+                "POSTURE_FINDINGS": "privileged role grant; MFA signal missing",
+                "FAILED_LOGINS": 2,
+                "FAILED_IPS": 1,
+                "ADMIN_ROLE_COUNT": 1,
+                "ADMIN_ROLES": "ACCOUNTADMIN",
+                "MFA_SIGNAL": "false",
+                "DAYS_SINCE_SEEN": 4,
+                "DATABASE_CONTEXT": "No Database Context",
+                "ENVIRONMENT_SCOPE": "No Database Context",
+                "SCOPE_CONFIDENCE": "Account-Level Control",
+                "SCOPE_EVIDENCE": "USERS and LOGIN_HISTORY do not expose database context.",
+                "NEXT_ACTION": "Confirm IAM owner and admin-role business need.",
+                "PROOF_REQUIRED": "user, IAM ticket, admin-role evidence, owner approval",
+            }
+        ])
+        annotated = _annotate_account_health_access_hygiene(hygiene)
+        row = annotated.iloc[0]
+
+        self.assertEqual(row["DATABASE_CONTEXT"], "No Database Context")
+        self.assertEqual(row["ENVIRONMENT_SCOPE"], "No Database Context")
+        self.assertEqual(row["SCOPE_CONFIDENCE"], "Account-Level Control")
+        self.assertEqual(row["QUEUE_READINESS"], "Ready to Queue")
+        self.assertEqual(row["APPROVAL_REQUIRED"], "Yes")
+        self.assertEqual(row["RECOVERY_SLA_TARGET_HOURS"], 24)
+        self.assertIn("OWNER_DIRECTORY", row["OWNER_SOURCE"])
+        self.assertIn("Security", row["APPROVAL_GROUP"])
 
     def test_cortex_ai_functions_sql_is_optional_and_live(self):
         sql = _build_cortex_ai_functions_daily_sql(
@@ -570,10 +660,13 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(command_queue.iloc[0]["ROUTE"], "Workload Operations")
         self.assertEqual(command_queue.iloc[0]["COMMAND_STATE"], "Escalate Overdue")
         self.assertEqual(command_queue.iloc[0]["COMMAND_EXECUTION_GATE"], "Escalate - Overdue")
+        self.assertEqual(command_queue.iloc[0]["COMMAND_ROUTE_READINESS"], "Route Ready")
+        self.assertEqual(command_queue.iloc[0]["ONCALL_PRIMARY"], "DBA On-Call")
         self.assertEqual(command_queue.iloc[0]["COMMAND_AUDIT_READINESS"], "Audit Gaps")
         self.assertEqual(summary["open"], 1)
         self.assertEqual(summary["overdue"], 1)
         self.assertEqual(summary["owner_gaps"], 1)
+        self.assertEqual(summary["route_ready"], 1)
         self.assertGreater(summary["control_gaps"], 0)
         self.assertEqual(summary["audit_ready"], 0)
 
@@ -615,15 +708,89 @@ class FormulaRegressionTests(unittest.TestCase):
 
         command_queue = _build_command_queue(queue, today="2026-05-31")
         summary = _command_queue_summary(command_queue)
+        by_route = {row["ROUTE"]: row for _, row in _command_queue_route_readiness(command_queue).iterrows()}
         by_id = {row["ACTION_ID"]: row for _, row in command_queue.iterrows()}
 
         self.assertEqual(by_id["C1"]["COMMAND_EXECUTION_GATE"], "Blocked - Owner Approval")
         self.assertEqual(by_id["C1"]["COMMAND_EVIDENCE_REQUIRED"], "Owner approval")
+        self.assertEqual(by_id["C1"]["COMMAND_ROUTE_READINESS"], "Route Ready")
         self.assertEqual(by_id["C2"]["COMMAND_EXECUTION_GATE"], "Ready - High Risk")
         self.assertEqual(by_id["C2"]["COMMAND_AUDIT_READINESS"], "Audit Ready")
         self.assertEqual(summary["approval_blocks"], 1)
         self.assertEqual(summary["execution_ready"], 1)
         self.assertEqual(summary["audit_ready"], 1)
+        self.assertEqual(by_route["Cost & Contract"]["APPROVAL_BLOCKS"], 1)
+        self.assertEqual(by_route["Cost & Contract"]["EXECUTION_READY"], 1)
+
+    def test_dba_control_room_closure_rollup_keeps_fixed_items_auditable(self):
+        queue = pd.DataFrame([
+            {
+                "ACTION_ID": "S1",
+                "SOURCE": "Security Posture - Access Review",
+                "CATEGORY": "Security Access Review",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "ROLE_PAYROLL_ADMIN",
+                "OWNER": "DBA",
+                "STATUS": "New",
+                "DUE_DATE": "2026-05-29",
+                "TICKET_ID": "",
+                "APPROVER": "",
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "VERIFICATION_QUERY": "",
+                "RECOVERY_SLA_STATE": "Open Failure",
+                "RECOVERY_EVIDENCE": "",
+            },
+            {
+                "ACTION_ID": "A1",
+                "SOURCE": "Account Health",
+                "CATEGORY": "Account Health Checklist",
+                "SEVERITY": "Medium",
+                "ENTITY_NAME": "MFA Coverage",
+                "OWNER": "Account Health Owner",
+                "STATUS": "Fixed",
+                "DUE_DATE": "2026-05-30",
+                "TICKET_ID": "CHG-200",
+                "APPROVER": "DBA Lead",
+                "OWNER_APPROVAL_STATUS": "Approved",
+                "VERIFICATION_QUERY": "SELECT 1",
+                "VERIFICATION_STATUS": "Pending",
+                "VERIFICATION_RESULT": "",
+                "RECOVERY_SLA_STATE": "Recovered",
+                "RECOVERY_EVIDENCE": "",
+            },
+            {
+                "ACTION_ID": "W1",
+                "SOURCE": "Warehouse Health - Efficiency",
+                "CATEGORY": "Warehouse Health",
+                "SEVERITY": "Low",
+                "ENTITY_NAME": "WH_REPORTING",
+                "OWNER": "Warehouse Owner",
+                "STATUS": "Fixed",
+                "DUE_DATE": "2026-05-28",
+                "TICKET_ID": "CHG-201",
+                "APPROVER": "Capacity Lead",
+                "OWNER_APPROVAL_STATUS": "Approved",
+                "VERIFICATION_QUERY": "SELECT 1",
+                "VERIFICATION_STATUS": "Verified",
+                "VERIFICATION_RESULT": "Post-change credits and queue pressure improved.",
+                "RECOVERY_SLA_STATE": "Recovered",
+                "RECOVERY_EVIDENCE": "Rollback not needed; post-change evidence retained.",
+            },
+        ])
+
+        rollup = _command_queue_closure_readiness(queue, today="2026-05-31")
+        by_route = {row["ROUTE"]: row for _, row in rollup.iterrows()}
+
+        self.assertEqual(by_route["Security Posture"]["CLOSURE_READINESS"], "Overdue closure")
+        self.assertEqual(by_route["Security Posture"]["OVERDUE_OPEN"], 1)
+        self.assertEqual(by_route["Security Posture"]["OWNER_GAP_ROWS"], 1)
+        self.assertEqual(by_route["Security Posture"]["TICKET_GAP_ROWS"], 1)
+        self.assertEqual(by_route["Account Health"]["CLOSURE_READINESS"], "Fixed without verification")
+        self.assertEqual(by_route["Account Health"]["FIXED_WITHOUT_VERIFICATION"], 1)
+        self.assertEqual(by_route["Account Health"]["RECOVERY_RISK_ROWS"], 1)
+        self.assertEqual(by_route["Warehouse Health"]["CLOSURE_READINESS"], "Verified closure")
+        self.assertEqual(by_route["Warehouse Health"]["VERIFIED_CLOSURES"], 1)
+        self.assertIn("Attach verification", by_route["Account Health"]["NEXT_CONTROL_ACTION"])
 
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []
@@ -697,6 +864,10 @@ class FormulaRegressionTests(unittest.TestCase):
                 self.assertIn(db_name, dev_clause)
             self.assertNotIn("ALFA_EDW_PROD", dev_clause)
 
+            optional_clause = get_environment_filter_or_no_database_clause("q.database_name", "PROD").upper()
+            self.assertIn("Q.DATABASE_NAME IS NULL", optional_clause)
+            self.assertIn("UPPER(Q.DATABASE_NAME) = 'ALFA_EDW_PROD'", optional_clause)
+
             st.session_state["active_company"] = "Trexis"
             self.assertEqual(get_environment_filter_clause("q.database_name", "PROD"), "")
         finally:
@@ -707,6 +878,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("THEN 'PROD'", case_expr)
         self.assertIn("THEN 'ALFA_EDW_DEV'", case_expr)
         self.assertIn("NO DATABASE CONTEXT", case_expr)
+        self.assertEqual(environment_label_for_database("ALFA_EDW_PROD"), "PROD")
+        self.assertEqual(environment_label_for_database("ALFA_EDW_SAN"), "ALFA_EDW_SAN")
+        self.assertEqual(environment_label_for_database(""), "No Database Context")
 
     def test_global_filter_clause_includes_environment_when_database_column_exists(self):
         import streamlit as st
@@ -967,21 +1141,24 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_security_access_review_marks_login_only_rows_no_database_context(self):
         exceptions = pd.DataFrame(
             {
-                "SEVERITY": ["High", "High", "Low", "Medium"],
+                "SEVERITY": ["High", "High", "Low", "High", "Medium"],
                 "FINDING_TYPE": [
                     "Failed Login",
                     "MFA Gap",
                     "Recent Grant",
+                    "Object Grant",
                     "Shared Database Exposure",
                 ],
-                "ENTITY": ["ALFA_USER", "ALFA_MFA_GAP", "ETL_RUNNER", "ALFA_EDW_PROD"],
-                "EVENT_COUNT": [12, 1, 4, 1],
-                "DISTINCT_SOURCES": [3, 0, 2, 0],
-                "LAST_SEEN": ["2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04"],
+                "ENTITY": ["ALFA_USER", "ALFA_MFA_GAP", "ETL_RUNNER", "ALFA_EDW_DEV.PUBLIC.POLICY", "ALFA_EDW_PROD"],
+                "DATABASE_NAME": ["", "", "", "ALFA_EDW_DEV", "ALFA_EDW_PROD"],
+                "EVENT_COUNT": [12, 1, 4, 5, 1],
+                "DISTINCT_SOURCES": [3, 0, 2, 2, 0],
+                "LAST_SEEN": ["2026-05-01", "2026-05-02", "2026-05-03", "2026-05-03", "2026-05-04"],
                 "PROOF_QUERY": [
                     "LOGIN_HISTORY",
                     "ACCOUNT_USAGE.USERS",
                     "FACT_GRANT_DAILY",
+                    "ACCOUNT_USAGE.GRANTS_TO_ROLES",
                     "ACCOUNT_USAGE.DATABASES",
                 ],
             }
@@ -995,13 +1172,95 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertEqual(by_type[finding]["ENVIRONMENT"], "No Database Context")
         self.assertTrue(by_type["Shared Database Exposure"]["DATABASE_CONTEXT"])
         self.assertEqual(by_type["Shared Database Exposure"]["ENVIRONMENT"], "PROD")
+        self.assertTrue(by_type["Object Grant"]["DATABASE_CONTEXT"])
+        self.assertEqual(by_type["Object Grant"]["DATABASE_NAME"], "ALFA_EDW_DEV")
+        self.assertEqual(by_type["Object Grant"]["ENVIRONMENT"], "ALFA_EDW_DEV")
+        self.assertEqual(by_type["Object Grant"]["SCOPE_CONFIDENCE"], "Database Context")
         self.assertEqual(by_type["Failed Login"]["OWNER"], "IAM / Security Owner")
         self.assertEqual(by_type["MFA Gap"]["APPROVER"], "IAM / Security Owner")
+        self.assertEqual(by_type["Failed Login"]["ONCALL_PRIMARY"], "DBA On-Call")
+        self.assertIn("OWNER_DIRECTORY", by_type["Recent Grant"]["OWNER_SOURCE"])
         self.assertIn("MANAGE GRANTS", by_type["Recent Grant"]["ROLE_CAPABILITY_STATE"])
 
         for _, row in review.iterrows():
             self.assertEqual(verification_query_safety_issues(row["VERIFICATION_QUERY"]), [])
             self.assertEqual(verification_query_safety_issues(_security_exception_verification_sql(row)), [])
+
+    def test_security_sql_adds_database_scoped_object_grants(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_company"] = "ALFA"
+            st.session_state["global_environment"] = "DEV_ALL"
+
+            _, live_exceptions = _build_security_summary_sql(None, 14, "ALFA")
+            _, mart_exceptions = _build_security_mart_brief_sql(None, 14, "ALFA")
+            combined = "\n".join([live_exceptions, mart_exceptions]).upper()
+
+            self.assertIn("GRANTS_TO_ROLES", combined)
+            self.assertIn("'OBJECT GRANT'", combined)
+            self.assertIn("GOR.TABLE_CATALOG AS DATABASE_NAME", combined)
+            self.assertIn("ALFA_EDW_DEV", combined)
+            self.assertNotIn("UPPER(LH.DATABASE_NAME)", combined)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_security_privileged_grant_review_keeps_account_grants_under_environment_scope(self):
+        sql = _security_privileged_grant_review_sql(30, "ALFA", "PROD")
+        sql_upper = sql.upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS", sql_upper)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES", sql_upper)
+        self.assertIn("'NO DATABASE CONTEXT' AS ENVIRONMENT", sql_upper)
+        self.assertIn("PRIVILEGED_ROLE_GRANTS", sql_upper)
+        self.assertIn("OBJECT_PRIVILEGE_GRANTS", sql_upper)
+        self.assertIn("UPPER(GOR.TABLE_CATALOG) = 'ALFA_EDW_PROD'", sql_upper)
+        self.assertNotIn("GTU.TABLE_CATALOG", sql_upper)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_security_privileged_grant_readiness_adds_owner_route_and_scope(self):
+        grants = pd.DataFrame([
+            {
+                "FINDING_TYPE": "Privileged Role Grant",
+                "SEVERITY": "Critical",
+                "ENTITY": "JDOE",
+                "ROLE_NAME": "ACCOUNTADMIN",
+                "OBJECT_NAME": "",
+                "DATABASE_NAME": "",
+                "DATABASE_CONTEXT": False,
+                "ENVIRONMENT": "No Database Context",
+                "GRANTED_BY": "SECURITYADMIN",
+                "CREATED_ON": "2026-05-01",
+                "PROOF_REQUIRED": "ticket and owner approval",
+            },
+            {
+                "FINDING_TYPE": "Privileged Object Grant",
+                "SEVERITY": "High",
+                "ENTITY": "ETL_RUNNER",
+                "ROLE_NAME": "",
+                "OBJECT_NAME": "ALFA_EDW_DEV.PUBLIC.POLICY_FACT",
+                "DATABASE_NAME": "ALFA_EDW_DEV",
+                "DATABASE_CONTEXT": True,
+                "ENVIRONMENT": "ALFA_EDW_DEV",
+                "GRANTED_BY": "SYSADMIN",
+                "CREATED_ON": "2026-05-02",
+                "PROOF_REQUIRED": "object owner approval",
+            },
+        ])
+
+        readiness = _annotate_security_privileged_grant_readiness(grants)
+        by_entity = {row["ENTITY"]: row for _, row in readiness.iterrows()}
+
+        self.assertEqual(by_entity["JDOE"]["GRANT_REVIEW_STATE"], "Tier 0 role grant")
+        self.assertEqual(by_entity["JDOE"]["GRANT_REVIEW_READINESS"], "Owner Approval Required")
+        self.assertEqual(by_entity["JDOE"]["SCOPE_CONFIDENCE"], "Account/User Context")
+        self.assertEqual(by_entity["JDOE"]["OWNER_ROUTE_READY"], "Yes")
+        self.assertEqual(by_entity["ETL_RUNNER"]["GRANT_REVIEW_STATE"], "Privileged object grant")
+        self.assertEqual(by_entity["ETL_RUNNER"]["SCOPE_CONFIDENCE"], "Database Context")
+        self.assertIn("OWNER_DIRECTORY", by_entity["ETL_RUNNER"]["OWNER_SOURCE"])
 
     def test_security_access_review_snapshot_sql_keeps_login_rows_under_env_filter(self):
         exceptions = pd.DataFrame(
@@ -1037,6 +1296,20 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("LOGIN_HISTORY", insert_sql)
         self.assertIn("ENVIRONMENT = 'PROD'", history_sql)
         self.assertIn("DATABASE_CONTEXT = FALSE", history_sql)
+
+    def test_security_action_queue_closure_sql_scores_evidence_gaps(self):
+        sql = _security_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()
+
+        self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
+        self.assertIn("SECURITY POSTURE - SECURITY BRIEF", sql)
+        self.assertIn("COMPANY = 'ALFA'", sql)
+        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+            self.assertIn(db_name, sql)
+        self.assertIn("FIXED_WITHOUT_VERIFICATION", sql)
+        self.assertIn("OWNER_APPROVAL_GAP_ROWS", sql)
+        self.assertIn("CLOSURE_READINESS", sql)
+        self.assertIn("SECURITY OWNER AND TICKET", sql)
+        self.assertEqual(verification_query_safety_issues(sql), [])
 
     def test_change_drift_score_weights_destructive_and_policy_changes(self):
         clean = _change_drift_score(
@@ -1080,6 +1353,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(action["Category"], "Change Control")
         self.assertEqual(action["Owner"], "DBA Change Owner")
         self.assertEqual(action["Ticket ID"], "CHG-12345")
+        self.assertEqual(action["Oncall Primary"], "DBA On-Call")
+        self.assertIn("OWNER_DIRECTORY", action["Owner Source"])
+        self.assertEqual(action["Recovery Audit State"], "Query ID captured")
         self.assertEqual(action["Owner Approval Status"], "Requested")
         self.assertIn("Data Owner", action["Approver"])
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
@@ -1111,6 +1387,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(row["CHANGE_CONTROL_STATE"], "Validate Approval")
         self.assertEqual(row["CHANGE_TICKET_STATE"], "Missing ticket evidence")
         self.assertEqual(row["OWNER"], "Security Owner")
+        self.assertEqual(row["ONCALL_PRIMARY"], "DBA On-Call")
+        self.assertIn("OWNER_DIRECTORY", row["OWNER_SOURCE"])
         self.assertIn("Review source-control", row["IAC_RECONCILIATION_STATE"])
         self.assertIn("Query ID", row["EXECUTION_AUDIT_STATE"])
         self.assertIn("change ticket", row["PROOF_REQUIRED"])
@@ -1163,6 +1441,20 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ENVIRONMENT = 'PROD'", trend_sql)
         self.assertIn("MISSING_TICKET_ROWS", trend_sql)
 
+    def test_change_action_queue_closure_sql_scores_evidence_gaps(self):
+        sql = _change_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()
+
+        self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
+        self.assertIn("CHANGE & DRIFT - BRIEF", sql)
+        self.assertIn("COMPANY = 'ALFA'", sql)
+        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+            self.assertIn(db_name, sql)
+        self.assertIn("FIXED_WITHOUT_VERIFICATION", sql)
+        self.assertIn("OWNER_APPROVAL_GAP_ROWS", sql)
+        self.assertIn("CLOSURE_READINESS", sql)
+        self.assertIn("SOURCE-CONTROL OR ROLLBACK PROOF", sql)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
     def test_change_verification_sql_is_read_only_for_missing_query_id(self):
         sql = _change_verification_sql("").upper()
         self.assertIn("WHERE 1 = 0", sql)
@@ -1176,6 +1468,28 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("'ALFA_EDW_DEV'", sql)
         self.assertIn("'POLICY_FACT'", sql)
         self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_change_drift_environment_scope_retains_account_level_changes(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_company"] = "ALFA"
+            st.session_state["global_environment"] = "PROD"
+
+            live_summary, live_exceptions = _build_change_drift_sql(None, 14, "ALFA")
+            mart_summary, mart_exceptions = _build_mart_change_drift_sql(14, "ALFA")
+            combined = "\n".join([live_summary, live_exceptions, mart_summary, mart_exceptions]).upper()
+
+            self.assertIn("DATABASE_NAME IS NULL", combined)
+            self.assertIn("UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD'", combined)
+            self.assertIn("AS DATABASE_CONTEXT", combined)
+            self.assertIn("AS SCOPE_CONFIDENCE", combined)
+            self.assertIn("ACCOUNT_SCOPE_CHANGES", combined)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_change_drift_markdown_contains_control_summary(self):
         summary_row = {
@@ -1309,6 +1623,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(annotated.iloc[0]["APPROVAL_REQUIRED"], "Yes")
         self.assertEqual(annotated.iloc[0]["ROLLBACK_REQUIRED"], "Yes")
         self.assertEqual(annotated.iloc[0]["OWNER"], "BI Platform Owner")
+        self.assertEqual(annotated.iloc[0]["ONCALL_PRIMARY"], "DBA On-Call")
+        self.assertIn("OWNER_DIRECTORY", annotated.iloc[0]["OWNER_SOURCE"])
         self.assertIn("DBA Lead", annotated.iloc[0]["APPROVER"])
         self.assertIn("MAX_CLUSTER_COUNT", annotated.iloc[0]["SETTING_CHANGE_CANDIDATE"])
         self.assertIn("Warehouse Settings Manager", annotated.iloc[0]["SAFE_CHANGE_PATH"])
@@ -1329,6 +1645,54 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertIn(db_name, sql_upper)
         self.assertNotIn("ALFA_EDW_PROD", sql_upper)
         self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_warehouse_owner_inventory_sql_uses_tags_and_environment_scope(self):
+        sql = _warehouse_owner_inventory_sql(45, "ALFA", "DEV_ALL")
+        sql_upper = sql.upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", sql_upper)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES", sql_upper)
+        self.assertIn("OWNER_TAG", sql_upper)
+        self.assertIn("COST_CENTER_TAG", sql_upper)
+        self.assertIn("ENVIRONMENT_TAG", sql_upper)
+        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+            self.assertIn(db_name, sql_upper)
+        self.assertNotIn("ALFA_EDW_PROD", sql_upper)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_warehouse_owner_inventory_marks_tag_and_directory_readiness(self):
+        inventory = pd.DataFrame([
+            {
+                "WAREHOUSE_NAME": "BI_COMPUTE_WH",
+                "WAREHOUSE_SIZE": "Medium",
+                "QUERY_COUNT": 500,
+                "DATABASE_COUNT": 2,
+                "OWNER_TAG": "BI Product Owner",
+                "COST_CENTER_TAG": "BI",
+                "ENVIRONMENT_TAG": "PROD",
+            },
+            {
+                "WAREHOUSE_NAME": "LOAD_TASK_WH",
+                "WAREHOUSE_SIZE": "Large",
+                "QUERY_COUNT": 300,
+                "DATABASE_COUNT": 1,
+                "OWNER_TAG": "",
+                "COST_CENTER_TAG": "",
+                "ENVIRONMENT_TAG": "",
+            },
+        ])
+
+        annotated = _annotate_warehouse_owner_inventory(inventory)
+        by_wh = {row["WAREHOUSE_NAME"]: row for _, row in annotated.iterrows()}
+
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["GOVERNANCE_READINESS"], "Tagged Owner Ready")
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["OWNER"], "BI Product Owner")
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["OWNER_SOURCE"], "WAREHOUSE_TAG")
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["OWNER_ROUTE_READY"], "Yes")
+        self.assertEqual(by_wh["LOAD_TASK_WH"]["GOVERNANCE_READINESS"], "Directory Route Only")
+        self.assertEqual(by_wh["LOAD_TASK_WH"]["OWNER"], "Data Engineering Owner")
+        self.assertEqual(by_wh["LOAD_TASK_WH"]["OWNER_TAG_STATE"], "Missing")
+        self.assertIn("Add warehouse owner", by_wh["LOAD_TASK_WH"]["NEXT_OWNER_ACTION"])
 
     def test_warehouse_capacity_brief_markdown_contains_evidence_limits(self):
         summary_row = {
@@ -1399,6 +1763,20 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ENVIRONMENT = 'PROD'", trend_sql)
         self.assertIn("SAVINGS_VERIFICATION_ROWS", trend_sql)
 
+    def test_warehouse_action_queue_closure_sql_scores_evidence_gaps(self):
+        sql = _warehouse_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()
+
+        self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
+        self.assertIn("WAREHOUSE HEALTH - CAPACITY BRIEF", sql)
+        self.assertIn("WAREHOUSE HEALTH - EFFICIENCY", sql)
+        self.assertIn("COMPANY = 'ALFA'", sql)
+        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+            self.assertIn(db_name, sql)
+        self.assertIn("FIXED_WITHOUT_VERIFICATION", sql)
+        self.assertIn("OWNER_APPROVAL_GAP_ROWS", sql)
+        self.assertIn("CLOSURE_READINESS", sql)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
     def test_warehouse_capacity_queue_actions_have_safe_verification_and_no_direct_alter(self):
         exceptions = pd.DataFrame(
             {
@@ -1434,6 +1812,38 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
         self.assertIn("post-change verification", action["Recovery Evidence"])
         self.assertIn("Warehouse Settings Manager", action["Generated SQL Fix"])
+        self.assertNotIn("ALTER WAREHOUSE", action["Generated SQL Fix"].upper())
+
+    def test_warehouse_efficiency_queue_actions_have_owner_and_closure_evidence(self):
+        efficiency = pd.DataFrame(
+            {
+                "WAREHOUSE_NAME": ["BI_COMPUTE_WH"],
+                "EFFICIENCY_SCORE": [42.0],
+                "QUEUE_SEC_PER_CREDIT": [15.2],
+                "REMOTE_SPILL_GB_PER_CREDIT": [0.8],
+                "METERED_CREDITS": [55.5],
+            }
+        )
+        captured = {}
+
+        def fake_upsert(_session, actions):
+            captured["actions"] = actions
+            return len(actions)
+
+        with patch("sections.warehouse_health.get_active_company", return_value="ALFA"), patch(
+            "sections.warehouse_health.get_active_environment", return_value="PROD"
+        ), patch("sections.warehouse_health.upsert_actions", side_effect=fake_upsert):
+            _queue_efficiency_findings(object(), efficiency)
+
+        action = captured["actions"][0]
+        self.assertEqual(action["Environment"], "PROD")
+        self.assertEqual(action["Owner"], "BI Platform Owner")
+        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertEqual(action["Recovery SLA Target Hours"], 24)
+        self.assertIn("OWNER_DIRECTORY", action["Owner Source"])
+        self.assertIn("Warehouse Settings Manager", action["Action"])
+        self.assertIn("QUERY_HISTORY", action["Verification Query"])
+        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
         self.assertNotIn("ALTER WAREHOUSE", action["Generated SQL Fix"].upper())
 
     def test_cortex_cost_score_tracks_budget_and_user_spikes(self):
@@ -2517,6 +2927,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(proc_context["OWNER"], "PROC_OWNER_ROLE")
         self.assertEqual(proc_context["APPROVAL_GROUP"], "Procedure Owner")
         self.assertEqual(enriched.iloc[0]["APPROVAL_GROUP"], "Platform DBA Lead")
+        self.assertIn("CHANGE_CONTROL_DEFAULT", set(directory["OWNER_KEY"]))
+        self.assertIn("ACCOUNT_HEALTH_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
         self.assertIn("OVERWATCH_OWNER_DIRECTORY", ddl)
         self.assertIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", ddl)

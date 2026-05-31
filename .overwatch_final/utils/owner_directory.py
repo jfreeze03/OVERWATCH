@@ -119,6 +119,21 @@ DEFAULT_OWNER_DIRECTORY = [
         "NOTES": "Default route for warehouse pressure, capacity, and setting-change controls.",
     },
     {
+        "OWNER_KEY": "CHANGE_CONTROL_DEFAULT",
+        "ENTITY_TYPE": "CHANGE_CONTROL",
+        "ENTITY_PATTERN": "*",
+        "OWNER_NAME": "DBA Change Owner",
+        "OWNER_EMAIL": DEFAULT_ALERT_EMAIL,
+        "ONCALL_PRIMARY": "DBA On-Call",
+        "ONCALL_SECONDARY": "Change Advisory Backup",
+        "APPROVAL_GROUP": "Change Advisory / Data Owner",
+        "ESCALATION_TARGET": "DBA Lead / Security Owner",
+        "DEFAULT_ROUTE": "Change & Drift",
+        "SERVICE_TIER": "Tier 0",
+        "MATCH_PRIORITY": 65,
+        "NOTES": "Default route for DDL, access drift, policy/tag, IaC, and change-control actions.",
+    },
+    {
         "OWNER_KEY": "SECURITY_DEFAULT",
         "ENTITY_TYPE": "SECURITY",
         "ENTITY_PATTERN": "*",
@@ -132,6 +147,21 @@ DEFAULT_OWNER_DIRECTORY = [
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 60,
         "NOTES": "Default route for grant, revoke, role, and rights controls.",
+    },
+    {
+        "OWNER_KEY": "ACCOUNT_HEALTH_DEFAULT",
+        "ENTITY_TYPE": "ACCOUNT_HEALTH",
+        "ENTITY_PATTERN": "*",
+        "OWNER_NAME": "DBA Lead",
+        "OWNER_EMAIL": DEFAULT_ALERT_EMAIL,
+        "ONCALL_PRIMARY": "DBA On-Call",
+        "ONCALL_SECONDARY": "Platform DBA Backup",
+        "APPROVAL_GROUP": "DBA Lead",
+        "ESCALATION_TARGET": "DBA Lead",
+        "DEFAULT_ROUTE": "Account Health",
+        "SERVICE_TIER": "Tier 1",
+        "MATCH_PRIORITY": 50,
+        "NOTES": "Default route for daily DBA checklist, account health closure, and control-room readiness gaps.",
     },
     {
         "OWNER_KEY": "ALERT_DEFAULT",
@@ -348,6 +378,10 @@ def _entity_type_candidates(entity_type: Any, category: Any = "", alert_type: An
         candidates.add("WAREHOUSE")
     if "GRANT" in joined or "ROLE" in joined or "SECURITY" in joined:
         candidates.add("SECURITY")
+    if "CHANGE" in joined or "DRIFT" in joined or "DDL" in joined or "IAC" in joined:
+        candidates.add("CHANGE_CONTROL")
+    if "ACCOUNT HEALTH" in joined or "CHECKLIST" in joined or "CONTROL ROOM" in joined:
+        candidates.add("ACCOUNT_HEALTH")
     candidates.add("ALERT")
     candidates.add("GLOBAL")
     return candidates
@@ -363,8 +397,12 @@ def _canonical_entity_type(entity_type: Any) -> str:
         return "TASK"
     if "WAREHOUSE" in value:
         return "WAREHOUSE"
+    if "CHANGE" in value or "DRIFT" in value or "DDL" in value or "IAC" in value:
+        return "CHANGE_CONTROL"
     if "GRANT" in value or "ROLE" in value or "SECURITY" in value:
         return "SECURITY"
+    if "ACCOUNT HEALTH" in value or "CHECKLIST" in value or "CONTROL ROOM" in value:
+        return "ACCOUNT_HEALTH"
     if "ALERT" in value:
         return "ALERT"
     return value

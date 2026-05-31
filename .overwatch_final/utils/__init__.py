@@ -40,7 +40,8 @@ from .company_filter import (
     get_global_date_clause, get_global_wh_filter_clause,
     get_global_user_filter_clause, get_global_role_filter_clause,
     get_global_db_filter_clause, get_global_filter_clause,
-    get_active_environment, get_environment_filter_clause, get_environment_case_expr,
+    get_active_environment, get_environment_filter_clause, get_environment_filter_or_no_database_clause,
+    get_environment_case_expr, environment_label_for_database,
     get_company_case_expr, get_company_scope_key, company_scoped_query, company_value_allowed,
     environment_value_allowed, invalidate_company_cache,
 )

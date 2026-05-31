@@ -7,22 +7,33 @@ import re
 import pandas as pd
 import streamlit as st
 
-from config import ALERT_DB, ALERT_SCHEMA
+from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
 from sections import dba_tools, object_change_monitor, stored_proc_tracker
 from utils import (
     filter_existing_columns,
     format_snowflake_error,
+    environment_label_for_database,
     get_active_company,
     get_active_environment,
+    get_combined_filter_clause,
+    get_environment_case_expr,
+    get_environment_filter_or_no_database_clause,
+    get_global_date_clause,
+    get_global_db_filter_clause,
     get_global_filter_clause,
+    get_global_role_filter_clause,
+    get_global_user_filter_clause,
+    get_global_wh_filter_clause,
     get_session,
     mart_object_name,
     make_action_id,
+    resolve_owner_context,
     run_query,
     safe_identifier,
     safe_float,
     safe_int,
     sql_literal,
+    action_queue_environment_clause,
     upsert_actions,
 )
 from utils.workflows import (
@@ -114,49 +125,104 @@ def _change_ticket_id(row: pd.Series | dict) -> str:
     return match.group(0).upper() if match else ""
 
 
+def _change_database_name(row: pd.Series | dict) -> str:
+    for key in ("DATABASE_NAME", "OBJECT_DATABASE", "TABLE_CATALOG"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value.strip('"')
+    entity = str(row.get("ENTITY") or "").strip()
+    if "." in entity:
+        return entity.split(".", 1)[0].strip('"')
+    if entity.upper().startswith(("ALFA_", "TRXS_")):
+        return entity.strip('"')
+    return ""
+
+
+def _change_database_context(row: pd.Series | dict) -> bool:
+    return bool(_change_database_name(row))
+
+
+def _change_environment(row: pd.Series | dict, fallback: str = "ALL") -> str:
+    database_name = _change_database_name(row)
+    if database_name:
+        return environment_label_for_database(database_name)
+    return "No Database Context" if not str(row.get("DATABASE_NAME") or "").strip() else str(fallback or "ALL")
+
+
+def _change_scope_clause(date_col: str, wh_col: str, user_col: str, role_col: str, db_col: str) -> str:
+    """Apply company/global filters while keeping account-level changes under environment scopes."""
+    return " ".join(filter(None, [
+        get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col),
+        get_environment_filter_or_no_database_clause(db_col) if db_col else "",
+        get_global_date_clause(date_col) if date_col else "",
+        get_global_wh_filter_clause(wh_col) if wh_col else "",
+        get_global_user_filter_clause(user_col) if user_col else "",
+        get_global_role_filter_clause(role_col) if role_col else "",
+        get_global_db_filter_clause(db_col) if db_col else "",
+    ])).strip()
+
+
 def _change_owner_context(row: pd.Series | dict) -> dict:
     finding = str(row.get("FINDING_TYPE") or "").lower()
     entity = str(row.get("ENTITY") or "").upper()
     if "policy" in finding or "tag" in finding or "masking" in finding:
-        return {
+        base = {
             "owner": "Security / Data Governance",
             "escalation": "Security Owner / Data Governance Lead",
             "source": "Change owner map",
         }
-    if "grant" in finding or "role" in finding or "owner" in finding:
-        return {
+    elif "grant" in finding or "role" in finding or "owner" in finding:
+        base = {
             "owner": "Security Owner",
             "escalation": "DBA Lead / Security Owner",
             "source": "Change owner map",
         }
-    if "drop" in finding or "destructive" in finding:
-        return {
+    elif "drop" in finding or "destructive" in finding:
+        base = {
             "owner": "DBA Change Owner",
             "escalation": "Data Owner / DBA Lead",
             "source": "Change owner map",
         }
-    if "drift" in finding:
-        return {
+    elif "drift" in finding:
+        base = {
             "owner": "Platform Owner",
             "escalation": "DBA Lead / Platform Owner",
             "source": "Change owner map",
         }
-    if entity.startswith("ALFA_EDW_PROD"):
-        return {
+    elif entity.startswith("ALFA_EDW_PROD"):
+        base = {
             "owner": "Production Data Owner",
             "escalation": "DBA Lead",
             "source": "Environment owner hint",
         }
-    if entity.startswith("ALFA_EDW_"):
-        return {
+    elif entity.startswith("ALFA_EDW_"):
+        base = {
             "owner": "Development Data Owner",
             "escalation": "DBA Lead",
             "source": "Environment owner hint",
         }
+    else:
+        base = {
+            "owner": "DBA Change Owner",
+            "escalation": "DBA Lead",
+            "source": "Default change owner",
+        }
+    directory_context = resolve_owner_context(
+        row,
+        entity=entity,
+        entity_type="CHANGE_CONTROL",
+        owner=base["owner"],
+        category=finding or "Change Control",
+    )
     return {
-        "owner": "DBA Change Owner",
-        "escalation": "DBA Lead",
-        "source": "Default change owner",
+        "owner": directory_context.get("OWNER") or base["owner"],
+        "escalation": base["escalation"] or directory_context.get("ESCALATION_TARGET", ""),
+        "source": f"{base['source']}; {directory_context.get('OWNER_SOURCE', '')}".strip("; "),
+        "owner_email": directory_context.get("OWNER_EMAIL", ""),
+        "oncall_primary": directory_context.get("ONCALL_PRIMARY", ""),
+        "oncall_secondary": directory_context.get("ONCALL_SECONDARY", ""),
+        "approval_group": base["escalation"] or directory_context.get("APPROVAL_GROUP", ""),
+        "owner_evidence": directory_context.get("OWNER_EVIDENCE", ""),
     }
 
 
@@ -191,6 +257,23 @@ def _enrich_change_control_evidence(readiness: pd.DataFrame) -> pd.DataFrame:
     view["OWNER"] = contexts.apply(lambda item: item["owner"])
     view["ESCALATION_TARGET"] = contexts.apply(lambda item: item["escalation"])
     view["OWNER_SOURCE"] = contexts.apply(lambda item: item["source"])
+    view["OWNER_EMAIL"] = contexts.apply(lambda item: item.get("owner_email", ""))
+    view["ONCALL_PRIMARY"] = contexts.apply(lambda item: item.get("oncall_primary", ""))
+    view["ONCALL_SECONDARY"] = contexts.apply(lambda item: item.get("oncall_secondary", ""))
+    view["APPROVAL_GROUP"] = contexts.apply(lambda item: item.get("approval_group", ""))
+    view["OWNER_EVIDENCE"] = contexts.apply(lambda item: item.get("owner_evidence", ""))
+    view["DATABASE_NAME"] = view.apply(_change_database_name, axis=1)
+    view["DATABASE_CONTEXT"] = view.apply(_change_database_context, axis=1)
+    view["ENVIRONMENT"] = view.apply(_change_environment, axis=1)
+    view["SCOPE_CONFIDENCE"] = view["DATABASE_CONTEXT"].map({True: "Database Context", False: "Account/Role Context"})
+    view["SCOPE_EVIDENCE"] = view.apply(
+        lambda row: (
+            f"Database={row.get('DATABASE_NAME')}; environment={row.get('ENVIRONMENT')}"
+            if bool(row.get("DATABASE_CONTEXT"))
+            else "No database context; environment filter retained account-level change"
+        ),
+        axis=1,
+    )
     view["CHANGE_TICKET_ID"] = view.apply(_change_ticket_id, axis=1)
     view["CHANGE_TICKET_STATE"] = view["CHANGE_TICKET_ID"].apply(
         lambda value: "Ticket detected" if str(value or "").strip() else "Missing ticket evidence"
@@ -456,6 +539,7 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
     ticket_state = "ticket detected" if ticket_id else "missing ticket evidence"
     iac_state = _change_iac_state(row)
     audit_state = _change_execution_audit_state(row)
+    env_value = str(row.get("ENVIRONMENT") or _change_environment(row, environment) or environment or "ALL")
     verification_query = _change_verification_sql(query_id)
     blast_radius_query = _change_blast_radius_sql(entity)
     finding = f"{finding_type} by {user_name} on {entity}"
@@ -477,6 +561,13 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
         "Entity Type": entity_type,
         "Entity": entity,
         "Owner": owner_context["owner"],
+        "Owner Email": owner_context.get("owner_email", ""),
+        "Oncall Primary": owner_context.get("oncall_primary", ""),
+        "Oncall Secondary": owner_context.get("oncall_secondary", ""),
+        "Approval Group": owner_context.get("approval_group", approver),
+        "Escalation Target": owner_context.get("escalation", ""),
+        "Owner Source": owner_context.get("source", ""),
+        "Owner Evidence": owner_context.get("owner_evidence", ""),
         "Finding": finding,
         "Action": action,
         "Estimated Monthly Savings": 0.0,
@@ -496,8 +587,10 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
             f"IaC/source-control evidence: {iac_state}\n"
             f"Execution audit: {audit_state}"
         ),
+        "Recovery Audit State": audit_state,
+        "Recovery SLA Target Hours": 24 if severity.upper() in {"CRITICAL", "HIGH"} else 72,
         "Company": company,
-        "Environment": environment,
+        "Environment": env_value,
         "Ticket ID": ticket_id,
     }
 
@@ -649,7 +742,7 @@ def _build_change_drift_sql(session, days: int, company: str) -> tuple[str, str]
         "AND COALESCE(query_tag, '') NOT ILIKE '%terraform%'"
         if "QUERY_TAG" in qh_cols else ""
     )
-    scope = get_global_filter_clause(
+    scope = _change_scope_clause(
         date_col="start_time",
         wh_col="warehouse_name",
         user_col="user_name",
@@ -697,7 +790,8 @@ def _build_change_drift_sql(session, days: int, company: str) -> tuple[str, str]
         COUNT_IF(change_family = 'DESTRUCTIVE') AS destructive_changes,
         COUNT_IF(change_family <> 'OTHER' {manual_drift_predicate}) AS manual_drift,
         COUNT(DISTINCT user_name) AS actors,
-        COUNT(DISTINCT database_name) AS affected_databases
+        COUNT(DISTINCT database_name) AS affected_databases,
+        COUNT_IF(database_name IS NULL) AS account_scope_changes
     FROM changes
     """
     exceptions_sql = f"""
@@ -743,6 +837,11 @@ def _build_change_drift_sql(session, days: int, company: str) -> tuple[str, str]
         start_time AS last_seen,
         1 AS event_count,
         'QUERY_HISTORY query_id = ' || query_id AS proof_query,
+        database_name,
+        IFF(database_name IS NULL, FALSE, TRUE) AS database_context,
+        {get_environment_case_expr("database_name")} AS environment,
+        IFF(database_name IS NULL, 'Account/Role Context', 'Database Context') AS scope_confidence,
+        IFF(database_name IS NULL, 'No database context; retained under environment scope', 'Database=' || database_name) AS scope_evidence,
         query_text
     FROM changes
     WHERE finding_type <> 'Other Change'
@@ -758,7 +857,7 @@ def _build_mart_change_drift_sql(days: int, company: str) -> tuple[str, str]:
     """Build change/drift brief SQL from the OVERWATCH object-change fact."""
     table = mart_object_name("FACT_OBJECT_CHANGE")
     company_filter = "" if str(company or "").upper() == "ALL" else f"AND company = {sql_literal(company, 100)}"
-    scope = get_global_filter_clause(
+    scope = _change_scope_clause(
         date_col="start_time",
         wh_col="warehouse_name",
         user_col="user_name",
@@ -780,7 +879,8 @@ def _build_mart_change_drift_sql(days: int, company: str) -> tuple[str, str]:
         COUNT_IF(change_category = 'DROP') AS destructive_changes,
         COUNT_IF(COALESCE(query_tag, '') NOT ILIKE '%terraform%') AS manual_drift,
         COUNT(DISTINCT user_name) AS actors,
-        COUNT(DISTINCT database_name) AS affected_databases
+        COUNT(DISTINCT database_name) AS affected_databases,
+        COUNT_IF(database_name IS NULL) AS account_scope_changes
     FROM {table}
     WHERE {base_where}
     """
@@ -806,6 +906,11 @@ def _build_mart_change_drift_sql(days: int, company: str) -> tuple[str, str]:
         start_time AS last_seen,
         1 AS event_count,
         'FACT_OBJECT_CHANGE query_id = ' || query_id AS proof_query,
+        database_name,
+        IFF(database_name IS NULL, FALSE, TRUE) AS database_context,
+        {get_environment_case_expr("database_name")} AS environment,
+        IFF(database_name IS NULL, 'Account/Role Context', 'Database Context') AS scope_confidence,
+        IFF(database_name IS NULL, 'No database context; retained under environment scope', 'Database=' || database_name) AS scope_evidence,
         query_tag,
         SUBSTR(query_text, 1, 1500) AS query_text
     FROM {table}
@@ -857,12 +962,13 @@ def _change_control_evidence_insert_sql(
     )
     selects = []
     for _, row in view.head(200).iterrows():
+        row_environment = str(row.get("ENVIRONMENT") or _change_environment(row, env_value) or env_value)
         selects.append(
             "SELECT "
             f"{sql_literal(snap, 64)} AS SNAPSHOT_ID, "
             "CURRENT_TIMESTAMP() AS SNAPSHOT_TS, "
             f"{sql_literal(company, 100)} AS COMPANY, "
-            f"{sql_literal(env_value, 100)} AS ENVIRONMENT, "
+            f"{sql_literal(row_environment, 100)} AS ENVIRONMENT, "
             f"{sql_literal(row.get('FINDING_TYPE', ''), 120)} AS FINDING_TYPE, "
             f"{sql_literal(row.get('SEVERITY', ''), 40)} AS SEVERITY, "
             f"{sql_literal(row.get('ENTITY', ''), 500)} AS ENTITY, "
@@ -933,6 +1039,133 @@ ORDER BY
     IAC_GAP_ROWS DESC,
     MISSING_QUERY_ID_ROWS DESC,
     LAST_SNAPSHOT_TS DESC
+LIMIT 100""".strip()
+
+
+def _change_action_queue_closure_sql(days: int, company: str, environment: str = "ALL") -> str:
+    fqn = f"{safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.{safe_identifier(ACTION_QUEUE_TABLE)}"
+    where = [
+        "SOURCE = 'Change & Drift - Brief'",
+        f"COALESCE(UPDATED_AT, CREATED_AT) >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_TIMESTAMP())",
+    ]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
+    if env_clause:
+        where.append(env_clause)
+    where_clause = " AND ".join(where)
+    return f"""
+WITH scoped_actions AS (
+    SELECT
+        COALESCE(CATEGORY, 'Change Control') AS CATEGORY,
+        COALESCE(ENTITY_TYPE, 'Change') AS ENTITY_TYPE,
+        COALESCE(ENTITY_NAME, 'Unknown') AS ENTITY,
+        COALESCE(OWNER, '') AS OWNER,
+        COALESCE(APPROVER, '') AS APPROVER,
+        COALESCE(STATUS, 'New') AS STATUS,
+        COALESCE(SEVERITY, 'Medium') AS SEVERITY,
+        COALESCE(TICKET_ID, '') AS TICKET_ID,
+        DUE_DATE,
+        COALESCE(VERIFICATION_STATUS, '') AS VERIFICATION_STATUS,
+        COALESCE(VERIFICATION_QUERY, PROOF_QUERY, '') AS VERIFICATION_QUERY,
+        COALESCE(VERIFICATION_RESULT, '') AS VERIFICATION_RESULT,
+        COALESCE(OWNER_APPROVAL_STATUS, '') AS OWNER_APPROVAL_STATUS,
+        COALESCE(RECOVERY_SLA_STATE, '') AS RECOVERY_SLA_STATE,
+        COALESCE(RECOVERY_EVIDENCE, '') AS RECOVERY_EVIDENCE,
+        COALESCE(UPDATED_AT, CREATED_AT) AS LAST_ACTIVITY_TS
+    FROM {fqn}
+    WHERE {where_clause}
+),
+rollup AS (
+    SELECT
+        CATEGORY,
+        ENTITY_TYPE,
+        ENTITY,
+        MAX_BY(OWNER, LAST_ACTIVITY_TS) AS OWNER,
+        MAX_BY(APPROVER, LAST_ACTIVITY_TS) AS APPROVER,
+        COUNT(*) AS TOTAL_ACTIONS,
+        COUNT_IF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED')) AS OPEN_ACTIONS,
+        COUNT_IF(UPPER(STATUS) = 'FIXED') AS FIXED_ACTIONS,
+        COUNT_IF(
+            UPPER(STATUS) = 'FIXED'
+            AND UPPER(VERIFICATION_STATUS) = 'VERIFIED'
+            AND LENGTH(TRIM(VERIFICATION_RESULT)) >= 15
+        ) AS VERIFIED_CLOSURES,
+        COUNT_IF(
+            UPPER(STATUS) = 'FIXED'
+            AND (
+                UPPER(VERIFICATION_STATUS) <> 'VERIFIED'
+                OR LENGTH(TRIM(VERIFICATION_RESULT)) < 15
+            )
+        ) AS FIXED_WITHOUT_VERIFICATION,
+        COUNT_IF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED') AND DUE_DATE < CURRENT_DATE()) AS OVERDUE_OPEN,
+        COUNT_IF(UPPER(OWNER) IN ('', 'DBA', 'UNKNOWN', 'N/A', 'DBA CHANGE OWNER')) AS OWNER_GAP_ROWS,
+        COUNT_IF(LENGTH(TRIM(TICKET_ID)) = 0) AS TICKET_GAP_ROWS,
+        COUNT_IF(LENGTH(TRIM(APPROVER)) = 0) AS APPROVER_GAP_ROWS,
+        COUNT_IF(LENGTH(TRIM(VERIFICATION_QUERY)) = 0) AS VERIFICATION_QUERY_GAP_ROWS,
+        COUNT_IF(UPPER(OWNER_APPROVAL_STATUS) IN ('', 'PENDING', 'REQUESTED', 'REQUIRED')) AS OWNER_APPROVAL_GAP_ROWS,
+        COUNT_IF(
+            UPPER(RECOVERY_SLA_STATE) ILIKE '%BREACH%'
+            OR UPPER(RECOVERY_SLA_STATE) ILIKE '%LATE%'
+            OR (
+                UPPER(STATUS) = 'FIXED'
+                AND LENGTH(TRIM(RECOVERY_EVIDENCE)) < 15
+            )
+        ) AS RECOVERY_RISK_ROWS,
+        MIN(IFF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED'), DUE_DATE, NULL)) AS NEXT_DUE_DATE,
+        MAX(LAST_ACTIVITY_TS) AS LAST_ACTIVITY_TS,
+        MAX_BY(STATUS, LAST_ACTIVITY_TS) AS LAST_STATUS,
+        MAX_BY(SEVERITY, LAST_ACTIVITY_TS) AS LAST_SEVERITY
+    FROM scoped_actions
+    GROUP BY CATEGORY, ENTITY_TYPE, ENTITY
+)
+SELECT
+    CATEGORY,
+    ENTITY_TYPE,
+    ENTITY,
+    CASE
+        WHEN OVERDUE_OPEN > 0 THEN 'Overdue closure'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Fixed without verification'
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Control metadata gap'
+        WHEN OPEN_ACTIONS > 0 THEN 'Open'
+        WHEN VERIFIED_CLOSURES > 0 THEN 'Verified closure'
+        ELSE 'No recent action'
+    END AS CLOSURE_READINESS,
+    CASE
+        WHEN OVERDUE_OPEN > 0 THEN 0
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 1
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 2
+        WHEN OPEN_ACTIONS > 0 THEN 3
+        WHEN VERIFIED_CLOSURES > 0 THEN 8
+        ELSE 9
+    END AS CLOSURE_RANK,
+    OWNER,
+    APPROVER,
+    TOTAL_ACTIONS,
+    OPEN_ACTIONS,
+    FIXED_ACTIONS,
+    VERIFIED_CLOSURES,
+    FIXED_WITHOUT_VERIFICATION,
+    OVERDUE_OPEN,
+    OWNER_GAP_ROWS,
+    TICKET_GAP_ROWS,
+    APPROVER_GAP_ROWS,
+    VERIFICATION_QUERY_GAP_ROWS,
+    OWNER_APPROVAL_GAP_ROWS,
+    RECOVERY_RISK_ROWS,
+    NEXT_DUE_DATE,
+    LAST_STATUS,
+    LAST_SEVERITY,
+    LAST_ACTIVITY_TS,
+    CASE
+        WHEN OVERDUE_OPEN > 0 THEN 'Escalate the change owner and ticket before accepting more drift.'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Attach query, ticket, IaC, and blast-radius evidence or reopen the action.'
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete owner, ticket, approver, and verification metadata.'
+        WHEN OPEN_ACTIONS > 0 THEN 'Work the open change action and retain source-control or rollback proof.'
+        ELSE 'Retain verified closure evidence for audit review.'
+    END AS NEXT_ACTION
+FROM rollup
+ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_ACTIONS DESC, LAST_ACTIVITY_TS DESC
 LIMIT 100""".strip()
 
 
@@ -1094,7 +1327,8 @@ def render() -> None:
                 title="Change and drift exceptions to verify first",
                 priority_columns=[
                     "SEVERITY", "FINDING_TYPE", "ENTITY", "USER_NAME",
-                    "ROLE_NAME", "QUERY_ID", "LAST_SEEN", "NEXT_WORKFLOW", "NEXT_ACTION",
+                    "ROLE_NAME", "DATABASE_NAME", "ENVIRONMENT", "SCOPE_CONFIDENCE",
+                    "QUERY_ID", "LAST_SEEN", "NEXT_WORKFLOW", "NEXT_ACTION",
                 ],
                 sort_by=["SEVERITY", "LAST_SEEN", "ENTITY"],
                 ascending=[True, False, True],
@@ -1107,7 +1341,8 @@ def render() -> None:
                 priority_columns=[
                     "SEVERITY", "CHANGE_CONTROL_STATE", "FINDING_TYPE", "ENTITY",
                     "USER_NAME", "QUERY_ID", "APPROVER", "OWNER_APPROVAL_STATUS",
-                    "OWNER", "ESCALATION_TARGET", "CHANGE_TICKET_ID", "CHANGE_TICKET_STATE",
+                    "OWNER", "ESCALATION_TARGET", "DATABASE_CONTEXT", "DATABASE_NAME",
+                    "ENVIRONMENT", "SCOPE_CONFIDENCE", "CHANGE_TICKET_ID", "CHANGE_TICKET_STATE",
                     "IAC_RECONCILIATION_STATE", "EXECUTION_AUDIT_STATE", "CONTROL_GAP", "PROOF_REQUIRED",
                 ],
                 sort_by=["SEVERITY", "CHANGE_CONTROL_STATE", "ENTITY"],
@@ -1161,6 +1396,48 @@ def render() -> None:
                     )
                 with st.expander("Change-control evidence setup SQL", expanded=False):
                     st.code(build_change_control_evidence_ddl(), language="sql")
+            with st.expander("Change Action Closure Analytics", expanded=False):
+                st.caption(
+                    "Uses Change & Drift action-queue rows to show open, overdue, unapproved, "
+                    "or closed-without-verification change-control work."
+                )
+                closure_days = st.slider("Change closure days", 7, 180, 30, key="change_action_closure_days")
+                if st.button("Load Change Closure Analytics", key="change_action_closure_load"):
+                    try:
+                        closure_sql = _change_action_queue_closure_sql(closure_days, company, environment)
+                        closure = run_query(
+                            closure_sql,
+                            ttl_key=f"change_action_closure_{company}_{environment}_{closure_days}",
+                            tier="standard",
+                            section="Change & Drift",
+                        )
+                        st.session_state["change_action_closure"] = closure
+                        st.session_state["change_action_closure_sql"] = closure_sql
+                    except Exception as exc:
+                        st.session_state["change_action_closure"] = pd.DataFrame()
+                        st.warning(f"Change closure analytics unavailable: {format_snowflake_error(exc)}")
+                closure = st.session_state.get("change_action_closure")
+                if closure is not None and not closure.empty:
+                    render_priority_dataframe(
+                        closure,
+                        title="Change closure evidence gaps",
+                        priority_columns=[
+                            "CATEGORY", "ENTITY_TYPE", "ENTITY", "CLOSURE_READINESS",
+                            "OWNER", "APPROVER", "TOTAL_ACTIONS", "OPEN_ACTIONS",
+                            "OVERDUE_OPEN", "VERIFIED_CLOSURES", "FIXED_WITHOUT_VERIFICATION",
+                            "OWNER_GAP_ROWS", "TICKET_GAP_ROWS", "APPROVER_GAP_ROWS",
+                            "OWNER_APPROVAL_GAP_ROWS", "VERIFICATION_QUERY_GAP_ROWS",
+                            "RECOVERY_RISK_ROWS", "NEXT_DUE_DATE", "LAST_STATUS", "NEXT_ACTION",
+                        ],
+                        sort_by=["CLOSURE_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS"],
+                        ascending=[True, False, False, False],
+                        raw_label="All change closure rows",
+                        height=300,
+                    )
+                    with st.expander("Change Closure Query", expanded=False):
+                        st.code(st.session_state.get("change_action_closure_sql", ""), language="sql")
+                elif closure is not None:
+                    st.info("No Change & Drift action-queue rows found for the selected scope.")
             if st.button("Save Change Exceptions to Action Queue", key="change_drift_queue"):
                 _queue_change_exceptions(session, exceptions)
         elif exceptions is not None:

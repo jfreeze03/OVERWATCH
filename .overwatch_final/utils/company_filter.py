@@ -371,6 +371,33 @@ def get_environment_filter_clause(
     return "AND (" + " OR ".join(parts) + ")"
 
 
+def get_environment_filter_or_no_database_clause(
+    column: str = "database_name",
+    environment: str = None,
+    company: str = None,
+) -> str:
+    """Filter database-context rows by environment while retaining account-scope rows."""
+    env_clause = get_environment_filter_clause(column, environment=environment, company=company)
+    if not env_clause:
+        return ""
+    env_predicate = env_clause.removeprefix("AND ").strip()
+    return f"AND ({column} IS NULL OR TRIM(TO_VARCHAR({column})) = '' OR {env_predicate})"
+
+
+def environment_label_for_database(database_name: object) -> str:
+    """Return the display environment label for a Snowflake database name."""
+    db = str(database_name or "").strip().upper()
+    if not db:
+        return "No Database Context"
+    if db == "ALFA_EDW_PROD":
+        return "PROD"
+    if db in {"ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"}:
+        return db
+    if db.startswith("ALFA_EDW_"):
+        return "Other ALFA Non-Prod"
+    return "Other / Shared"
+
+
 def get_environment_case_expr(db_col: str = "database_name") -> str:
     """Classify ALFA databases into PROD, individual DEV/SAN/SIT/etc, or Other."""
     return f"""CASE

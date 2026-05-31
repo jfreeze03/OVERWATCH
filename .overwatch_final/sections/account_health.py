@@ -23,7 +23,7 @@ from utils import (
     build_mart_account_health_top_driver_sql, build_mart_account_health_queued_sql,
     build_mart_account_health_ytd_credits_sql,
     format_snowflake_error, filter_existing_columns, make_action_id, safe_float, safe_identifier, safe_int,
-    sql_literal, upsert_actions, action_queue_environment_clause,
+    sql_literal, upsert_actions, action_queue_environment_clause, resolve_owner_context,
 )
 from utils.workflows import render_operator_briefing, render_priority_dataframe
 
@@ -247,55 +247,93 @@ def build_account_health_checklist_history_ddl(
 );"""
 
 
+def _account_health_owner_entity_type(check: object, route: object = "") -> str:
+    text = f"{check or ''} {route or ''}".lower()
+    if "cost" in text:
+        return "COST_CONTROL"
+    if "task" in text or "procedure" in text:
+        return "TASK"
+    if "warehouse" in text or "queue" in text:
+        return "WAREHOUSE"
+    if "change" in text or "drift" in text:
+        return "CHANGE_CONTROL"
+    if "security" in text or "grant" in text:
+        return "SECURITY"
+    return "ACCOUNT_HEALTH"
+
+
 def _account_health_owner_context(check: object, route: object = "") -> dict:
     name = str(check or "").lower()
     route_text = str(route or "")
     if "query failure" in name:
-        return {
+        base = {
             "owner": "DBA Query Triage",
             "escalation": "Application Owner / DBA On-Call",
             "source": "Checklist owner map",
         }
-    if "queue pressure" in name:
-        return {
+    elif "queue pressure" in name:
+        base = {
             "owner": "Platform DBA",
             "escalation": "Warehouse Owner / DBA On-Call",
             "source": "Checklist owner map",
         }
-    if "cost spike" in name:
-        return {
+    elif "cost spike" in name:
+        base = {
             "owner": "DBA / FinOps Owner",
             "escalation": "FinOps Lead",
             "source": "Checklist owner map",
         }
-    if "task" in name or "procedure" in name:
-        return {
+    elif "task" in name or "procedure" in name:
+        base = {
             "owner": "Data Engineering On-Call",
             "escalation": "Pipeline Owner / DBA On-Call",
             "source": "Checklist owner map",
         }
-    if "change" in name or "drift" in name:
-        return {
+    elif "change" in name or "drift" in name:
+        base = {
             "owner": "DBA Change Owner",
             "escalation": "Security Owner / Data Governance",
             "source": "Checklist owner map",
         }
-    if "storage" in name or "monitor" in name:
-        return {
+    elif "storage" in name or "monitor" in name:
+        base = {
             "owner": "Platform DBA",
             "escalation": "DBA Lead",
             "source": "Checklist owner map",
         }
-    if "source confidence" in name:
-        return {
+    elif "source confidence" in name:
+        base = {
             "owner": "OVERWATCH Platform Owner",
             "escalation": "DBA Lead",
             "source": "Checklist owner map",
         }
+    else:
+        base = {
+            "owner": "DBA Lead" if route_text == "DBA Control Room" else "DBA",
+            "escalation": "DBA Lead",
+            "source": "Default DBA owner",
+        }
+
+    directory_context = resolve_owner_context(
+        {
+            "ENTITY_NAME": check,
+            "CATEGORY": route_text or "Daily DBA Checklist",
+            "OWNER": base["owner"],
+        },
+        entity=check,
+        entity_type=_account_health_owner_entity_type(check, route),
+        owner=base["owner"],
+        category=route_text or "Daily DBA Checklist",
+    )
     return {
-        "owner": "DBA Lead" if route_text == "DBA Control Room" else "DBA",
-        "escalation": "DBA Lead",
-        "source": "Default DBA owner",
+        "owner": directory_context.get("OWNER") or base["owner"],
+        "escalation": base["escalation"] or directory_context.get("ESCALATION_TARGET", ""),
+        "source": f"{base['source']}; {directory_context.get('OWNER_SOURCE', '')}".strip("; "),
+        "owner_email": directory_context.get("OWNER_EMAIL", ""),
+        "oncall_primary": directory_context.get("ONCALL_PRIMARY", ""),
+        "oncall_secondary": directory_context.get("ONCALL_SECONDARY", ""),
+        "approval_group": base["escalation"] or directory_context.get("APPROVAL_GROUP", ""),
+        "owner_evidence": directory_context.get("OWNER_EVIDENCE", ""),
     }
 
 
@@ -307,6 +345,11 @@ def _enrich_account_health_checklist_owners(checklist: pd.DataFrame) -> pd.DataF
     view["OWNER"] = contexts.apply(lambda item: item["owner"])
     view["ESCALATION_TARGET"] = contexts.apply(lambda item: item["escalation"])
     view["OWNER_SOURCE"] = contexts.apply(lambda item: item["source"])
+    view["OWNER_EMAIL"] = contexts.apply(lambda item: item.get("owner_email", ""))
+    view["ONCALL_PRIMARY"] = contexts.apply(lambda item: item.get("oncall_primary", ""))
+    view["ONCALL_SECONDARY"] = contexts.apply(lambda item: item.get("oncall_secondary", ""))
+    view["APPROVAL_GROUP"] = contexts.apply(lambda item: item.get("approval_group", ""))
+    view["OWNER_EVIDENCE"] = contexts.apply(lambda item: item.get("owner_evidence", ""))
     return view
 
 
@@ -545,6 +588,306 @@ def _account_health_actionable_checklist(checklist: pd.DataFrame) -> pd.DataFram
     return view[(status != "OK") & (severity != "INFO")].copy()
 
 
+def _account_health_scope_context(check: object, route: object = "", environment: str = "") -> dict:
+    """Classify whether a checklist row has database context or account-only scope."""
+    name = str(check or "").lower()
+    route_text = str(route or "").lower()
+    env_value = str(environment or "").strip() or "ALL"
+    if env_value.upper() == "ALL":
+        env_scope = "ALL"
+    else:
+        env_scope = env_value
+
+    database_checks = (
+        "query failure",
+        "queue pressure",
+        "task",
+        "procedure",
+        "change",
+        "drift",
+        "storage",
+    )
+    if any(token in name for token in database_checks):
+        if env_scope == "ALL":
+            confidence = "Database Context - All Environments"
+            evidence = "Checklist source includes database-aware Snowflake facts and is not narrowed to a single environment."
+        else:
+            confidence = "Database Context"
+            evidence = f"Checklist source can be validated against database-aware Snowflake facts scoped to {env_scope}."
+        return {
+            "ENVIRONMENT_SCOPE": env_scope,
+            "DATABASE_CONTEXT": "Yes",
+            "SCOPE_CONFIDENCE": confidence,
+            "SCOPE_EVIDENCE": evidence,
+        }
+
+    if "cost" in name or "contract" in route_text:
+        return {
+            "ENVIRONMENT_SCOPE": env_scope,
+            "DATABASE_CONTEXT": "Allocated / Estimated",
+            "SCOPE_CONFIDENCE": "Allocated Estimate",
+            "SCOPE_EVIDENCE": (
+                "Warehouse metering is shared across database workloads; environment cost is DBA-attributed "
+                "and must be treated as allocated/estimated."
+            ),
+        }
+
+    return {
+        "ENVIRONMENT_SCOPE": "No Database Context" if env_scope == "ALL" else env_scope,
+        "DATABASE_CONTEXT": "No",
+        "SCOPE_CONFIDENCE": "Account-Level Control",
+        "SCOPE_EVIDENCE": "Checklist item is an account-level DBA control and should not be filtered as a database fact.",
+    }
+
+
+def _account_health_recovery_target_hours(severity: object) -> int:
+    sev = str(severity or "").upper()
+    if sev == "CRITICAL":
+        return 12
+    if sev == "HIGH":
+        return 24
+    if sev == "MEDIUM":
+        return 72
+    return 168
+
+
+def _account_health_readiness_for_row(row: pd.Series | dict) -> dict:
+    owner = str(row.get("OWNER") or "").strip()
+    owner_source = str(row.get("OWNER_SOURCE") or "")
+    severity = str(row.get("SEVERITY") or "").upper()
+    approval_group = str(row.get("APPROVAL_GROUP") or row.get("ESCALATION_TARGET") or "").strip()
+    proof = str(row.get("PROOF_REQUIRED") or "").strip()
+    scope_confidence = str(row.get("SCOPE_CONFIDENCE") or "").strip()
+    verification = _account_health_verification_sql(row.get("CHECK"), row.get("EVIDENCE"))
+    blockers = []
+
+    generic_owners = {"", "DBA", "UNKNOWN", "N/A", "DBA / FINOPS", "DBA / DATA ENGINEERING"}
+    if owner.upper() in generic_owners or "OWNER_DIRECTORY" not in owner_source.upper():
+        blockers.append("owner directory evidence")
+    approval_required = severity in {"CRITICAL", "HIGH", "MEDIUM"}
+    if approval_required and not approval_group:
+        blockers.append("approver or approval group")
+    if not proof:
+        blockers.append("proof requirement")
+    if not verification or "SNOWFLAKE.ACCOUNT_USAGE" not in verification.upper():
+        blockers.append("source verification SQL")
+    if not scope_confidence:
+        blockers.append("scope confidence")
+
+    return {
+        "APPROVAL_REQUIRED": "Yes" if approval_required else "No",
+        "RECOVERY_SLA_TARGET_HOURS": _account_health_recovery_target_hours(severity),
+        "VERIFICATION_QUERY": verification,
+        "QUEUE_READINESS": "Ready to Queue" if not blockers else "Needs Routing Data",
+        "QUEUE_BLOCKERS": "; ".join(blockers) if blockers else "None",
+    }
+
+
+def _annotate_account_health_checklist_readiness(
+    checklist: pd.DataFrame,
+    environment: str = "ALL",
+) -> pd.DataFrame:
+    """Add DBA routing, scope, and queue-readiness evidence to checklist rows."""
+    if checklist is None or checklist.empty:
+        return pd.DataFrame() if checklist is None else checklist
+    view = checklist.copy()
+    if "OWNER_SOURCE" not in view.columns:
+        view = _enrich_account_health_checklist_owners(view)
+    scope_rows = view.apply(
+        lambda row: _account_health_scope_context(row.get("CHECK"), row.get("ROUTE"), environment),
+        axis=1,
+    )
+    for column in ["ENVIRONMENT_SCOPE", "DATABASE_CONTEXT", "SCOPE_CONFIDENCE", "SCOPE_EVIDENCE"]:
+        view[column] = scope_rows.apply(lambda item, col=column: item.get(col, ""))
+    readiness_rows = view.apply(_account_health_readiness_for_row, axis=1)
+    for column in ["APPROVAL_REQUIRED", "RECOVERY_SLA_TARGET_HOURS", "VERIFICATION_QUERY", "QUEUE_READINESS", "QUEUE_BLOCKERS"]:
+        view[column] = readiness_rows.apply(lambda item, col=column: item.get(col, ""))
+    return view
+
+
+def _account_health_access_hygiene_sql(session, days: int, company: str, environment: str = "ALL") -> str:
+    """Build account-level user/auth hygiene SQL for the daily DBA command center.
+
+    Login and user metadata do not carry database context, so this intentionally
+    ignores the selected PROD/DEV database environment and labels the scope.
+    """
+    lookback_days = max(1, int(days or 30))
+    user_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.USERS",
+        ["HAS_PASSWORD", "EXT_AUTHN_DUO", "LAST_SUCCESS_LOGIN"],
+    ))
+    has_password_expr = (
+        "COALESCE(TO_VARCHAR(u.has_password), 'false')"
+        if "HAS_PASSWORD" in user_cols else "'unknown'"
+    )
+    mfa_expr = (
+        "COALESCE(TO_VARCHAR(u.ext_authn_duo), 'unknown')"
+        if "EXT_AUTHN_DUO" in user_cols else "'unknown'"
+    )
+    last_success_expr = (
+        "u.last_success_login"
+        if "LAST_SUCCESS_LOGIN" in user_cols else "NULL::TIMESTAMP_NTZ"
+    )
+    user_filter_u = get_user_filter_clause("u.name", company)
+    user_filter_lh = get_user_filter_clause("lh.user_name", company)
+    user_filter_g = get_user_filter_clause("g.grantee_name", company)
+    env_label = sql_literal(str(environment or "ALL"), 100)
+    return f"""
+WITH login_rollup AS (
+    SELECT
+        lh.user_name,
+        COUNT_IF(lh.is_success = 'NO') AS failed_logins,
+        COUNT(DISTINCT IFF(lh.is_success = 'NO', lh.client_ip, NULL)) AS failed_ips,
+        MAX(IFF(lh.is_success = 'YES', lh.event_timestamp, NULL)) AS last_login_from_history
+    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY lh
+    WHERE lh.event_timestamp >= DATEADD('day', -{lookback_days}, CURRENT_TIMESTAMP())
+      {user_filter_lh}
+    GROUP BY lh.user_name
+),
+admin_grants AS (
+    SELECT
+        g.grantee_name AS user_name,
+        COUNT(DISTINCT g.role) AS admin_role_count,
+        LISTAGG(DISTINCT g.role, ', ') WITHIN GROUP (ORDER BY g.role) AS admin_roles
+    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
+    WHERE g.deleted_on IS NULL
+      {user_filter_g}
+      AND (
+          UPPER(g.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN', 'SYSADMIN', 'USERADMIN')
+          OR UPPER(g.role) LIKE '%ADMIN%'
+          OR UPPER(g.role) LIKE '%SECURITY%'
+      )
+    GROUP BY g.grantee_name
+),
+user_posture AS (
+    SELECT
+        u.name AS user_name,
+        COALESCE(TO_VARCHAR(u.disabled), 'false') AS disabled,
+        {has_password_expr} AS has_password,
+        {mfa_expr} AS mfa_signal,
+        COALESCE(lr.last_login_from_history, {last_success_expr}, u.created_on) AS last_seen,
+        COALESCE(lr.failed_logins, 0) AS failed_logins,
+        COALESCE(lr.failed_ips, 0) AS failed_ips,
+        COALESCE(ag.admin_role_count, 0) AS admin_role_count,
+        COALESCE(ag.admin_roles, '') AS admin_roles
+    FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
+    LEFT JOIN login_rollup lr ON UPPER(u.name) = UPPER(lr.user_name)
+    LEFT JOIN admin_grants ag ON UPPER(u.name) = UPPER(ag.user_name)
+    WHERE u.deleted_on IS NULL
+      {user_filter_u}
+)
+SELECT
+    user_name,
+    disabled,
+    has_password,
+    mfa_signal,
+    last_seen,
+    failed_logins,
+    failed_ips,
+    admin_role_count,
+    admin_roles,
+    DATEDIFF('day', last_seen, CURRENT_TIMESTAMP()) AS days_since_seen,
+    CASE
+        WHEN failed_logins >= 25 OR failed_ips >= 5 THEN 'High'
+        WHEN admin_role_count > 0 AND (mfa_signal = 'unknown' OR LOWER(mfa_signal) <> 'true') THEN 'High'
+        WHEN DATEDIFF('day', last_seen, CURRENT_TIMESTAMP()) >= 90 THEN 'Medium'
+        WHEN failed_logins > 0 OR admin_role_count > 0 OR (mfa_signal <> 'unknown' AND LOWER(mfa_signal) <> 'true') THEN 'Medium'
+        ELSE 'Low'
+    END AS severity,
+    CONCAT_WS('; ',
+        IFF(disabled = 'true', 'disabled user retained in account', NULL),
+        IFF(failed_logins > 0, failed_logins || ' failed login(s)', NULL),
+        IFF(failed_ips >= 5, failed_ips || ' failed login source IP(s)', NULL),
+        IFF(admin_role_count > 0, admin_role_count || ' privileged role grant(s)', NULL),
+        IFF(mfa_signal <> 'unknown' AND LOWER(mfa_signal) <> 'true', 'MFA signal missing', NULL),
+        IFF(DATEDIFF('day', last_seen, CURRENT_TIMESTAMP()) >= 90, 'dormant >= 90 days', NULL)
+    ) AS posture_findings,
+    'No Database Context' AS database_context,
+    'No Database Context' AS environment_scope,
+    {env_label} AS selected_environment,
+    'Account-Level Control' AS scope_confidence,
+    'USERS, LOGIN_HISTORY, and GRANTS_TO_USERS do not expose database context; company scope uses user naming only.' AS scope_evidence,
+    'Confirm IAM owner, admin-role business need, MFA posture, and recent login evidence before disabling users or changing grants.' AS next_action,
+    'user, IAM ticket, failed login context, MFA/admin-role evidence, owner approval' AS proof_required
+FROM user_posture
+WHERE
+    failed_logins > 0
+    OR admin_role_count > 0
+    OR (mfa_signal <> 'unknown' AND LOWER(mfa_signal) <> 'true')
+    OR DATEDIFF('day', last_seen, CURRENT_TIMESTAMP()) >= 90
+ORDER BY
+    CASE severity WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END,
+    failed_logins DESC,
+    admin_role_count DESC,
+    days_since_seen DESC
+LIMIT 100
+""".strip()
+
+
+def _annotate_account_health_access_hygiene(hygiene: pd.DataFrame) -> pd.DataFrame:
+    """Add owner, queue, and scope readiness to account-level access hygiene rows."""
+    if hygiene is None or hygiene.empty:
+        return pd.DataFrame() if hygiene is None else hygiene
+    view = hygiene.copy()
+    view.columns = [str(col).upper() for col in view.columns]
+
+    def _context(row: pd.Series) -> dict:
+        return resolve_owner_context(
+            {
+                "ENTITY_NAME": row.get("USER_NAME", ""),
+                "CATEGORY": "Account Health Access Hygiene",
+                "OWNER": "DBA / Security",
+            },
+            entity=row.get("USER_NAME", ""),
+            entity_type="SECURITY",
+            owner="DBA / Security",
+            category="Account Health Access Hygiene",
+        )
+
+    contexts = view.apply(_context, axis=1)
+    view["OWNER"] = contexts.apply(lambda item: item.get("OWNER") or "DBA / Security")
+    view["OWNER_EMAIL"] = contexts.apply(lambda item: item.get("OWNER_EMAIL", ""))
+    view["ONCALL_PRIMARY"] = contexts.apply(lambda item: item.get("ONCALL_PRIMARY", ""))
+    view["APPROVAL_GROUP"] = contexts.apply(lambda item: item.get("APPROVAL_GROUP", "Security Approver"))
+    view["ESCALATION_TARGET"] = contexts.apply(lambda item: item.get("ESCALATION_TARGET", "Security Lead"))
+    view["OWNER_SOURCE"] = contexts.apply(lambda item: item.get("OWNER_SOURCE", "Default security owner"))
+    view["OWNER_EVIDENCE"] = contexts.apply(lambda item: item.get("OWNER_EVIDENCE", ""))
+
+    if "DATABASE_CONTEXT" not in view.columns:
+        view["DATABASE_CONTEXT"] = "No Database Context"
+    if "ENVIRONMENT_SCOPE" not in view.columns:
+        view["ENVIRONMENT_SCOPE"] = "No Database Context"
+    if "SCOPE_CONFIDENCE" not in view.columns:
+        view["SCOPE_CONFIDENCE"] = "Account-Level Control"
+    if "SCOPE_EVIDENCE" not in view.columns:
+        view["SCOPE_EVIDENCE"] = (
+            "USERS, LOGIN_HISTORY, and GRANTS_TO_USERS do not expose database context; "
+            "company scope uses user naming only."
+        )
+
+    severity = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
+    proof = view.get("PROOF_REQUIRED", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
+    owner_source = view["OWNER_SOURCE"].fillna("").astype(str).str.upper()
+    owner = view["OWNER"].fillna("").astype(str).str.upper()
+    approval_group = view["APPROVAL_GROUP"].fillna("").astype(str)
+    owner_ready = (~owner.isin({"", "DBA", "UNKNOWN", "N/A"})) & owner_source.str.contains("OWNER_DIRECTORY", na=False)
+    approval_required = severity.isin({"HIGH", "MEDIUM"})
+    proof_ready = proof.str.len() > 0
+    view["APPROVAL_REQUIRED"] = approval_required.map({True: "Yes", False: "No"})
+    view["QUEUE_READINESS"] = (
+        owner_ready & proof_ready & (~approval_required | (approval_group.str.len() > 0))
+    ).map({True: "Ready to Queue", False: "Needs Routing Data"})
+    view["QUEUE_BLOCKERS"] = "None"
+    view.loc[~owner_ready, "QUEUE_BLOCKERS"] = "owner directory evidence"
+    view.loc[~proof_ready, "QUEUE_BLOCKERS"] = view.loc[~proof_ready, "QUEUE_BLOCKERS"].replace("None", "proof requirement")
+    view.loc[approval_required & (approval_group.str.len() == 0), "QUEUE_BLOCKERS"] = "approver or approval group"
+    rank = {"HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    view["ACCESS_RISK_RANK"] = severity.map(rank).fillna(4).astype(int)
+    view["RECOVERY_SLA_TARGET_HOURS"] = severity.apply(_account_health_recovery_target_hours)
+    return view
+
+
 def _account_health_checklist_history_insert_sql(
     checklist: pd.DataFrame,
     *,
@@ -771,12 +1114,17 @@ def _save_account_health_checklist_snapshot(
 
 
 def _account_health_checklist_action_payload(row: pd.Series | dict, company: str, environment: str = "") -> dict:
+    if "QUEUE_READINESS" not in row or "SCOPE_CONFIDENCE" not in row:
+        annotated = _annotate_account_health_checklist_readiness(pd.DataFrame([dict(row)]), environment=environment)
+        if annotated is not None and not annotated.empty:
+            row = annotated.iloc[0].to_dict()
     check = str(row.get("CHECK") or "Daily DBA checklist")
     evidence = str(row.get("EVIDENCE") or "")
     severity = str(row.get("SEVERITY") or "Medium")
     owner = str(row.get("OWNER") or "DBA")
     escalation = str(row.get("ESCALATION_TARGET") or "DBA Lead")
     route = str(row.get("ROUTE") or "DBA Control Room")
+    approval_group = str(row.get("APPROVAL_GROUP") or escalation or owner)
     verification_query = _account_health_verification_sql(check, evidence)
     action = str(row.get("NEXT_ACTION") or "Review the failed Account Health checklist item and attach proof.")
     approval_required = severity.upper() in {"CRITICAL", "HIGH", "MEDIUM"}
@@ -791,6 +1139,13 @@ def _account_health_checklist_action_payload(row: pd.Series | dict, company: str
         "Entity Type": "DBA Checklist",
         "Entity": check,
         "Owner": owner,
+        "Owner Email": row.get("OWNER_EMAIL", ""),
+        "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
+        "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
+        "Approval Group": approval_group,
+        "Escalation Target": escalation,
+        "Owner Source": row.get("OWNER_SOURCE", ""),
+        "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
         "Finding": f"{check}: {evidence}",
         "Action": action,
         "Estimated Monthly Savings": 0.0,
@@ -798,19 +1153,33 @@ def _account_health_checklist_action_payload(row: pd.Series | dict, company: str
             "-- Daily DBA checklist action. Do not execute state-changing SQL from this row.",
             f"-- Route: {route}",
             f"-- Proof required: {row.get('PROOF_REQUIRED', 'verification evidence')}",
+            f"-- Queue readiness: {row.get('QUEUE_READINESS', 'Ready to Queue')}",
+            f"-- Scope confidence: {row.get('SCOPE_CONFIDENCE', 'Account-Level Control')}",
         ]),
         "Proof Query": verification_query,
         "Verification Query": verification_query,
         "Verification Status": "Pending",
-        "Approver": escalation if approval_required else owner,
+        "Approver": approval_group if approval_required else owner,
         "Owner Approval Status": "Requested" if approval_required else "Not Required",
-        "Owner Approval Note": f"Checklist status: {row.get('STATUS', '')}. Route: {route}. Escalation: {escalation}.",
+        "Owner Approval Note": (
+            f"Checklist status: {row.get('STATUS', '')}. Route: {route}. "
+            f"Escalation: {escalation}. Owner evidence: {row.get('OWNER_EVIDENCE', '')}. "
+            f"Queue readiness: {row.get('QUEUE_READINESS', '')}; blockers: {row.get('QUEUE_BLOCKERS', '')}. "
+            f"Scope: {row.get('SCOPE_CONFIDENCE', '')}."
+        ),
+        "Recovery Evidence": (
+            f"Proof required: {row.get('PROOF_REQUIRED', 'verification evidence')}. Evidence: {evidence}. "
+            f"Scope evidence: {row.get('SCOPE_EVIDENCE', '')}."
+        ),
+        "Recovery Audit State": "Checklist Verification Pending",
+        "Recovery SLA Target Hours": row.get("RECOVERY_SLA_TARGET_HOURS", _account_health_recovery_target_hours(severity)),
         "Company": company,
         "Environment": env_value,
     }
 
 
 def _queue_account_health_checklist(session, checklist: pd.DataFrame, company: str, environment: str) -> None:
+    checklist = _annotate_account_health_checklist_readiness(checklist, environment=environment)
     actionable = _account_health_actionable_checklist(checklist)
     if actionable.empty:
         st.info("No Daily DBA Checklist issues need queueing for the current snapshot.")
@@ -825,6 +1194,64 @@ def _queue_account_health_checklist(session, checklist: pd.DataFrame, company: s
     except Exception as exc:
         st.error(f"Could not save Daily DBA Checklist issues: {format_snowflake_error(exc)}")
         st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
+def _render_account_health_access_hygiene(session, company: str, environment: str) -> None:
+    with st.expander("Account Access Hygiene", expanded=False):
+        st.caption(
+            "Account-level user/auth posture is intentionally not database-filtered. "
+            "Rows are labeled No Database Context so PROD/DEV selections do not imply false precision."
+        )
+        days = st.slider("Access hygiene lookback days", 7, 120, 30, key="account_health_access_hygiene_days")
+        if st.button("Load Access Hygiene", key="account_health_access_hygiene_load"):
+            try:
+                sql = _account_health_access_hygiene_sql(
+                    session,
+                    days,
+                    company=company,
+                    environment=environment,
+                )
+                raw = run_query(
+                    sql,
+                    ttl_key=f"account_health_access_hygiene_{company}_{environment}_{days}",
+                    tier="standard",
+                    section="Account Health",
+                )
+                st.session_state["account_health_access_hygiene_sql"] = sql
+                st.session_state["account_health_access_hygiene"] = _annotate_account_health_access_hygiene(raw)
+            except Exception as exc:
+                st.session_state["account_health_access_hygiene"] = pd.DataFrame()
+                st.warning(f"Account access hygiene unavailable: {format_snowflake_error(exc)}")
+
+        hygiene = st.session_state.get("account_health_access_hygiene")
+        if hygiene is not None and not hygiene.empty:
+            h1, h2, h3, h4 = st.columns(4)
+            h1.metric("Users to Review", f"{len(hygiene):,}")
+            high = int((hygiene.get("SEVERITY", pd.Series(dtype=str)).astype(str).str.upper() == "HIGH").sum())
+            h2.metric("High Risk", f"{high:,}", delta_color="inverse")
+            failed = int((pd.to_numeric(hygiene.get("FAILED_LOGINS", pd.Series(dtype=float)), errors="coerce").fillna(0) > 0).sum())
+            h3.metric("Failed Login Users", f"{failed:,}")
+            admins = int((pd.to_numeric(hygiene.get("ADMIN_ROLE_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0) > 0).sum())
+            h4.metric("Admin Role Reviews", f"{admins:,}")
+            render_priority_dataframe(
+                hygiene,
+                title="Account-level user/auth hygiene candidates",
+                priority_columns=[
+                    "SEVERITY", "USER_NAME", "POSTURE_FINDINGS", "FAILED_LOGINS",
+                    "FAILED_IPS", "ADMIN_ROLE_COUNT", "ADMIN_ROLES", "MFA_SIGNAL",
+                    "DAYS_SINCE_SEEN", "DATABASE_CONTEXT", "ENVIRONMENT_SCOPE",
+                    "SCOPE_CONFIDENCE", "OWNER", "APPROVAL_GROUP", "QUEUE_READINESS",
+                    "QUEUE_BLOCKERS", "NEXT_ACTION", "PROOF_REQUIRED",
+                ],
+                sort_by=["ACCESS_RISK_RANK", "FAILED_LOGINS", "ADMIN_ROLE_COUNT", "DAYS_SINCE_SEEN"],
+                ascending=[True, False, False, False],
+                raw_label="All account access hygiene rows",
+                height=320,
+            )
+            with st.expander("Access Hygiene Query", expanded=False):
+                st.code(st.session_state.get("account_health_access_hygiene_sql", ""), language="sql")
+        elif hygiene is not None:
+            st.success("No account-level access hygiene candidates found for the selected lookback.")
 
 
 def render():
@@ -1184,12 +1611,19 @@ def render():
             control_mart_used=control_mart_used,
             detail_source=hd.get("_account_health_detail_source", ""),
         )
+        checklist = _annotate_account_health_checklist_readiness(
+            checklist,
+            environment=get_active_environment(),
+        )
         render_priority_dataframe(
             checklist,
             title="Daily DBA checklist",
             priority_columns=[
                 "SEVERITY", "STATUS", "CHECK", "EVIDENCE", "OWNER",
-                "ESCALATION_TARGET", "ROUTE", "NEXT_ACTION", "PROOF_REQUIRED",
+                "ESCALATION_TARGET", "ROUTE", "ENVIRONMENT_SCOPE",
+                "DATABASE_CONTEXT", "SCOPE_CONFIDENCE", "QUEUE_READINESS",
+                "QUEUE_BLOCKERS", "APPROVAL_REQUIRED", "RECOVERY_SLA_TARGET_HOURS",
+                "NEXT_ACTION", "PROOF_REQUIRED",
             ],
             sort_by=["SEVERITY", "CHECK"],
             ascending=[True, True],
@@ -1230,10 +1664,16 @@ def render():
             if actionable_checklist.empty:
                 st.caption("Daily checklist is clean for this snapshot; no queue item is needed. Save the snapshot for trend tracking.")
             else:
+                ready_count = int((actionable_checklist.get("QUEUE_READINESS", pd.Series(dtype=str)) == "Ready to Queue").sum())
                 st.caption(
                     f"{len(actionable_checklist):,} checklist issue(s) will be saved with owner, approver, "
-                    "verification SQL, and proof requirements."
+                    f"verification SQL, proof requirements, and scope evidence. {ready_count:,} are route-ready without blockers."
                 )
+        _render_account_health_access_hygiene(
+            session,
+            company=company,
+            environment=get_active_environment(),
+        )
         with st.expander("Daily DBA Checklist Trend", expanded=False):
             trend_days = st.slider("Checklist trend days", 7, 90, 30, key="account_health_checklist_trend_days")
             if st.button("Load Checklist Trend", key="account_health_load_checklist_trend"):

@@ -1,7 +1,6 @@
 # utils/helpers.py — Pagination, freshness tracking, safe conversions
 import pandas as pd
 import streamlit as st
-from datetime import datetime
 
 
 def paginate_df(
@@ -61,25 +60,3 @@ def safe_int(value, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
-
-
-def data_freshness_badge(ts_key: str) -> str:
-    """Return an HTML badge showing data freshness for a given section key."""
-    ts_str = st.session_state.get(f"_ts_{ts_key}")
-    if not ts_str:
-        return '<span class="status-badge badge-warning">Not loaded</span>'
-    try:
-        loaded_at = datetime.strptime(ts_str, '%H:%M:%S').replace(
-            year=datetime.now().year,
-            month=datetime.now().month,
-            day=datetime.now().day,
-        )
-        age_sec = (datetime.now() - loaded_at).total_seconds()
-        if age_sec < 300:
-            return f'<span class="status-badge badge-healthy">Fresh ({int(age_sec)}s ago)</span>'
-        elif age_sec < 3600:
-            return f'<span class="status-badge badge-warning">{int(age_sec/60)}m ago</span>'
-        else:
-            return f'<span class="status-badge badge-critical">{int(age_sec/3600)}h ago</span>'
-    except Exception:
-        return f'<span class="status-badge badge-warning">Loaded at {ts_str}</span>'

@@ -227,6 +227,24 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_COMBINED_CSS_CACHE", theme_text)
         self.assertIn("_has_company_scope_columns", data_text)
 
+    def test_utils_re_exports_are_lazy(self):
+        utils_text = (APP_ROOT / "utils" / "__init__.py").read_text(encoding="utf-8")
+
+        self.assertIn("def __getattr__", utils_text)
+        self.assertIn("_EXPORT_GROUPS", utils_text)
+        self.assertIn("_EXPORT_MODULES", utils_text)
+        self.assertNotIn("from .alerts import", utils_text)
+        self.assertNotIn("from .mart import", utils_text)
+        self.assertIn('"environment_label_for_database"', utils_text)
+        self.assertIn('"get_environment_filter_or_no_database_clause"', utils_text)
+
+    def test_dead_ui_helpers_stay_removed(self):
+        display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
+        helpers_text = (APP_ROOT / "utils" / "helpers.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("CHART_COLORS", display_text)
+        self.assertNotIn("data_freshness_badge", helpers_text)
+
 
 if __name__ == "__main__":
     unittest.main()

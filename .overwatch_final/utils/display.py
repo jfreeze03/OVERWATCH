@@ -16,11 +16,6 @@ from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh
 from .helpers import safe_float
 from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
 
-CHART_COLORS = [
-    '#38bdf8','#818cf8','#c084fc','#f472b6',
-    '#fb923c','#4ade80','#fbbf24','#22d3ee',
-]
-
 
 def _query_history_detail_exprs(prefix: str = "") -> dict:
     """Return safe query-history projection snippets for optional columns."""

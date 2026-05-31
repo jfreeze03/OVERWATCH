@@ -17,6 +17,7 @@ from utils import (
     run_query,
     safe_float,
     safe_int,
+    sql_literal,
     upsert_actions,
 )
 from utils.workflows import (
@@ -393,6 +394,9 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
     db_filter = get_db_filter_clause("d.database_name")
     login_table = mart_object_name("FACT_LOGIN_DAILY")
     grant_table = mart_object_name("FACT_GRANT_DAILY")
+    login_company_filter = "" if str(company or "").upper() == "ALL" else f"AND lh.company = {sql_literal(company, 100)}"
+    grant_company_filter = "" if str(company or "").upper() == "ALL" else f"AND g.company = {sql_literal(company, 100)}"
+    company_label = sql_literal(company, 100)
     summary_sql = f"""
     WITH login_events AS (
         SELECT
@@ -402,7 +406,7 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
             COUNT(DISTINCT IFF(COALESCE(failure_count, 0) > 0, lh.client_ip, NULL)) AS failed_ips
         FROM {login_table} lh
         WHERE lh.login_date >= DATEADD('day', -{int(days)}, CURRENT_DATE())
-          AND lh.company = '{company}'
+          {login_company_filter}
           {user_filter_lh}
     ),
     users AS (
@@ -418,7 +422,8 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
     recent_grants AS (
         SELECT COALESCE(SUM(grant_count), 0) AS recent_grants
         FROM {grant_table} g
-        WHERE g.company = '{company}'
+        WHERE 1 = 1
+          {grant_company_filter}
           AND g.deleted_on IS NULL
           AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
           {user_filter_g}
@@ -431,7 +436,7 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
           {db_filter}
     )
     SELECT
-        '{company}' AS company,
+        {company_label} AS company,
         login_events.login_events,
         login_events.failed_logins,
         login_events.failed_users,
@@ -455,7 +460,7 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
             'FACT_LOGIN_DAILY failed login attempts by user/IP' AS proof_query
         FROM {login_table} lh
         WHERE lh.login_date >= DATEADD('day', -{int(days)}, CURRENT_DATE())
-          AND lh.company = '{company}'
+          {login_company_filter}
           AND COALESCE(failure_count, 0) > 0
           {user_filter_lh}
         GROUP BY user_name
@@ -486,7 +491,8 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
             MAX(g.created_on) AS last_seen,
             'FACT_GRANT_DAILY active grants created recently' AS proof_query
         FROM {grant_table} g
-        WHERE g.company = '{company}'
+        WHERE 1 = 1
+          {grant_company_filter}
           AND g.deleted_on IS NULL
           AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
           {user_filter_g}

@@ -20,7 +20,7 @@ from theme import inject_theme, render_theme_picker
 from config import (
     ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
     DEFAULT_COMPANY, ROLE_SECTIONS, SECTION_ALIASES,
-    SECTION_BY_TITLE,
+    SECTION_BY_TITLE, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
 )
 from utils.display import clear_all_cache
 from utils.session import get_session
@@ -74,6 +74,7 @@ def _global_filter_signature() -> tuple:
         str(st.session_state.get("global_user", "")),
         str(st.session_state.get("global_role", "")),
         str(st.session_state.get("global_database", "")),
+        str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT)),
         str(date_input),
     )
 
@@ -299,6 +300,21 @@ with st.sidebar:
         st.text_input("User contains", key="global_user")
         st.text_input("Role contains", key="global_role")
         st.text_input("Database contains", key="global_database")
+        st.selectbox(
+            "Environment",
+            list(ENVIRONMENT_CONFIG.keys()),
+            index=list(ENVIRONMENT_CONFIG.keys()).index(
+                st.session_state.get("global_environment", DEFAULT_ENVIRONMENT)
+                if st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) in ENVIRONMENT_CONFIG
+                else DEFAULT_ENVIRONMENT
+            ),
+            format_func=lambda key: ENVIRONMENT_CONFIG[key]["label"],
+            key="global_environment",
+            help=(
+                "Splits ALFA_EDW_PROD from DEV/SAN/PHX/SEA/SIT. "
+                "Cost split is allocated by query database when warehouses are shared."
+            ),
+        )
 
         current_filter_signature = _global_filter_signature()
         previous_filter_signature = st.session_state.get("_prev_global_filter_signature")
@@ -311,7 +327,7 @@ with st.sidebar:
         if st.button("Clear Global Filters", key="global_filters_clear"):
             for _k in [
                 "global_start_date", "global_end_date", "global_warehouse",
-                "global_user", "global_role", "global_database",
+                "global_user", "global_role", "global_database", "global_environment",
                 "_global_date_range_input",
             ]:
                 st.session_state.pop(_k, None)

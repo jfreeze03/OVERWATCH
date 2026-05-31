@@ -30,6 +30,8 @@ class NavigationIntegrityTests(unittest.TestCase):
             SECTION_MODULES,
             {section.label: section.module for section in SECTION_DEFINITIONS},
         )
+        config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
+        self.assertEqual(config_text.count("ROLE_SECTIONS = {"), 1)
 
     def test_section_definitions_are_complete(self):
         for section in SECTION_DEFINITIONS:

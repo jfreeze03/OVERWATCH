@@ -16,6 +16,7 @@ from utils import (
     run_query,
     safe_float,
     safe_int,
+    sql_literal,
     upsert_actions,
 )
 from utils.workflows import (
@@ -367,6 +368,7 @@ def _build_change_drift_sql(session, days: int, company: str) -> tuple[str, str]
 def _build_mart_change_drift_sql(days: int, company: str) -> tuple[str, str]:
     """Build change/drift brief SQL from the OVERWATCH object-change fact."""
     table = mart_object_name("FACT_OBJECT_CHANGE")
+    company_filter = "" if str(company or "").upper() == "ALL" else f"AND company = {sql_literal(company, 100)}"
     scope = get_global_filter_clause(
         date_col="start_time",
         wh_col="warehouse_name",
@@ -376,7 +378,7 @@ def _build_mart_change_drift_sql(days: int, company: str) -> tuple[str, str]:
     )
     base_where = f"""
         start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-        AND company = '{company}'
+        {company_filter}
         {scope}
     """
     summary_sql = f"""

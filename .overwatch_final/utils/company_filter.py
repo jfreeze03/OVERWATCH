@@ -14,7 +14,7 @@ import hashlib
 
 import streamlit as st
 import fnmatch
-from config import COMPANY_CONFIG, DEFAULT_COMPANY
+from config import COMPANY_CONFIG, DEFAULT_COMPANY, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT
 from .query import sql_literal
 from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
 
@@ -28,6 +28,18 @@ def get_company_cfg(company: str = None) -> dict:
     """Return config dict for the given (or active) company."""
     company = company or get_active_company()
     return COMPANY_CONFIG.get(company, COMPANY_CONFIG["ALL"])
+
+
+def get_active_environment() -> str:
+    """Return the selected environment scope for ALFA database families."""
+    env = str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+    return env if env in ENVIRONMENT_CONFIG else DEFAULT_ENVIRONMENT
+
+
+def get_environment_cfg(environment: str = None) -> dict:
+    """Return config dict for the given (or active) environment scope."""
+    environment = environment or get_active_environment()
+    return ENVIRONMENT_CONFIG.get(environment, ENVIRONMENT_CONFIG[DEFAULT_ENVIRONMENT])
 
 
 # ── Cache invalidation ────────────────────────────────────────────────────────
@@ -306,6 +318,35 @@ def get_global_db_filter_clause(column: str = "database_name") -> str:
     return _text_filter_clause(st.session_state.get("global_database"), column)
 
 
+def get_environment_filter_clause(column: str = "database_name", environment: str = None) -> str:
+    """Return SQL WHERE fragment for PROD/DEV database-family filtering."""
+    if get_active_company() == "Trexis":
+        return ""
+    environment = environment or get_active_environment()
+    if str(environment or "").upper() == "ALL":
+        return ""
+    patterns = get_environment_cfg(environment).get("db_patterns", [])
+    if not patterns:
+        return ""
+    parts = [f"{column} ILIKE {sql_literal(pattern, 300)}" for pattern in patterns]
+    return "AND (" + " OR ".join(parts) + ")"
+
+
+def get_environment_case_expr(db_col: str = "database_name") -> str:
+    """Classify ALFA databases into PROD, individual DEV/SAN/SIT/etc, or Other."""
+    return f"""CASE
+        WHEN {db_col} ILIKE 'ALFA_EDW_PROD' THEN 'PROD'
+        WHEN {db_col} ILIKE 'ALFA_EDW_DEV' THEN 'ALFA_EDW_DEV'
+        WHEN {db_col} ILIKE 'ALFA_EDW_SAN' THEN 'ALFA_EDW_SAN'
+        WHEN {db_col} ILIKE 'ALFA_EDW_PHX' THEN 'ALFA_EDW_PHX'
+        WHEN {db_col} ILIKE 'ALFA_EDW_SEA' THEN 'ALFA_EDW_SEA'
+        WHEN {db_col} ILIKE 'ALFA_EDW_SIT' THEN 'ALFA_EDW_SIT'
+        WHEN {db_col} ILIKE 'ALFA_EDW_%' THEN 'Other ALFA Non-Prod'
+        WHEN {db_col} IS NULL THEN 'No Database Context'
+        ELSE 'Other / Shared'
+    END"""
+
+
 def get_global_filter_clause(
     date_col: str = "start_time",
     wh_col: str = "warehouse_name",
@@ -316,6 +357,7 @@ def get_global_filter_clause(
     """Combine all active global sidebar filters into one WHERE fragment."""
     return " ".join(filter(None, [
         get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col),
+        get_environment_filter_clause(db_col) if db_col else "",
         get_global_date_clause(date_col)      if date_col  else "",
         get_global_wh_filter_clause(wh_col)   if wh_col    else "",
         get_global_user_filter_clause(user_col) if user_col else "",
@@ -335,6 +377,7 @@ def get_company_scope_key(prefix: str, *parts: object) -> str:
         str(st.session_state.get("global_user", "")),
         str(st.session_state.get("global_role", "")),
         str(st.session_state.get("global_database", "")),
+        str(get_active_environment()),
         *[str(part) for part in parts],
     ])
     return f"{prefix}_{hashlib.sha1(payload.encode('utf-8', errors='ignore')).hexdigest()[:12]}"

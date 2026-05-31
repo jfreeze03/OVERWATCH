@@ -17,6 +17,7 @@ from utils import (
     run_query,
     safe_float,
     safe_int,
+    sql_literal,
     upsert_actions,
 )
 from utils.workflows import (
@@ -424,6 +425,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
     """Build root-cause brief SQL from OVERWATCH mart facts."""
     hourly = mart_object_name("FACT_QUERY_HOURLY")
     detail = mart_object_name("FACT_QUERY_DETAIL_RECENT")
+    company_filter = "" if str(company or "").upper() == "ALL" else f"AND company = {sql_literal(company, 100)}"
     hourly_filters = get_global_filter_clause(
         date_col="hour_start",
         wh_col="warehouse_name",
@@ -454,7 +456,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
                 SUM(total_bytes_scanned) / POWER(1024, 3) AS total_gb_scanned
             FROM {hourly}
             WHERE hour_start >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-              AND company = '{company}'
+              {company_filter}
               AND warehouse_name IS NOT NULL
               {hourly_filters}
         ),
@@ -467,7 +469,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
                 ) AS full_scan_queries
             FROM {detail}
             WHERE start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-              AND company = '{company}'
+              {company_filter}
               AND warehouse_name IS NOT NULL
               {detail_filters}
         )
@@ -519,7 +521,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
                 SUBSTR(query_text, 1, 4000) AS query_text
             FROM {detail}
             WHERE start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-              AND company = '{company}'
+              {company_filter}
               AND warehouse_name IS NOT NULL
               {detail_filters}
         ),

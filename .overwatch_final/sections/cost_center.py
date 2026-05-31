@@ -12,6 +12,7 @@ from utils import (
     metric_confidence_label, freshness_note,
     get_wh_filter_clause, get_global_wh_filter_clause,
     get_global_filter_clause, get_company_case_expr,
+    get_active_environment, get_environment_case_expr,
     build_mart_bill_summary_sql, build_mart_bill_warehouse_delta_sql,
     filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown, render_priority_dataframe,
@@ -794,6 +795,34 @@ def render():
                 ORDER BY allocated_credits DESC
                 LIMIT 25
                 """
+                environment_sql = f"""
+                WITH bounds AS (
+                    SELECT
+                        {bounds['current_start']} AS current_start,
+                        {bounds['current_end']} AS current_end
+                ),
+                {build_metered_credit_cte(days_back=bounds['days_back'], include_recent=False)}
+                SELECT
+                    {get_environment_case_expr("q.database_name")} AS environment,
+                    COALESCE(q.database_name, 'NO_DATABASE_CONTEXT') AS database_name,
+                    COUNT(*) AS query_count,
+                    COUNT(DISTINCT q.user_name) AS users,
+                    COUNT(DISTINCT q.warehouse_name) AS warehouses,
+                    ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS allocated_credits,
+                    ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
+                    ROUND({bytes_scanned_sum_expr} / POWER(1024, 3), 2) AS gb_scanned
+                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+                CROSS JOIN bounds
+                WHERE q.start_time >= current_start
+                  AND q.start_time < current_end
+                  AND q.warehouse_name IS NOT NULL
+                  AND q.database_name IS NOT NULL
+                  {wh_filter_query}
+                GROUP BY 1, 2
+                ORDER BY allocated_credits DESC
+                LIMIT 100
+                """
                 service_sql = f"""
                 WITH bounds AS (
                     SELECT
@@ -854,6 +883,14 @@ def render():
                     ttl_key=f"cc_explain_types_{company}_{explain_period}",
                     tier="standard",
                 )
+                st.session_state["cc_explain_environments"] = run_query(
+                    environment_sql,
+                    ttl_key=(
+                        f"cc_explain_env_{company}_{explain_period}_"
+                        f"{get_active_environment()}_{st.session_state.get('global_database', '')}"
+                    ),
+                    tier="standard",
+                )
                 try:
                     st.session_state["cc_explain_services"] = run_query(
                         service_sql,
@@ -878,6 +915,7 @@ def render():
         wh_deltas = st.session_state.get("cc_explain_wh_delta")
         drivers = st.session_state.get("cc_explain_drivers")
         type_drivers = st.session_state.get("cc_explain_types")
+        environment_drivers = st.session_state.get("cc_explain_environments")
         service_drivers = st.session_state.get("cc_explain_services")
         service_error = st.session_state.get("cc_explain_service_error", "")
         explain_meta = st.session_state.get("cc_explain_meta", {})
@@ -1090,6 +1128,59 @@ def render():
                 ascending=[False, False],
                 raw_label="All query-type driver rows",
             )
+
+            st.subheader("PROD vs DEV Cost Split")
+            st.caption(
+                f"{metric_confidence_label('allocated')} | Shared warehouses mean exact WAREHOUSE_METERING_HISTORY "
+                "cannot split PROD and DEV by itself. This view allocates metered credits to query database context, "
+                "then rolls ALFA_EDW_PROD separately from ALFA_EDW_DEV/SAN/PHX/SEA/SIT."
+            )
+            if environment_drivers is not None and not environment_drivers.empty:
+                env_display = environment_drivers.copy()
+                env_display["EST_COST"] = env_display["ALLOCATED_CREDITS"].apply(
+                    lambda x: credits_to_dollars(x, credit_price)
+                )
+                env_summary = (
+                    env_display.groupby("ENVIRONMENT", as_index=False)[
+                        ["ALLOCATED_CREDITS", "EST_COST", "QUERY_COUNT", "USERS", "WAREHOUSES", "GB_SCANNED"]
+                    ]
+                    .sum()
+                    .sort_values("EST_COST", ascending=False)
+                )
+                cenv = st.columns(min(4, max(1, len(env_summary))))
+                for idx, row in env_summary.head(4).iterrows():
+                    cenv[idx % len(cenv)].metric(
+                        str(row["ENVIRONMENT"]),
+                        f"${safe_float(row['EST_COST']):,.2f}",
+                        f"{safe_float(row['ALLOCATED_CREDITS']):,.2f} cr",
+                    )
+                render_priority_dataframe(
+                    env_summary,
+                    title="Environment cost rollup",
+                    priority_columns=[
+                        "ENVIRONMENT", "ALLOCATED_CREDITS", "EST_COST",
+                        "QUERY_COUNT", "USERS", "WAREHOUSES", "GB_SCANNED",
+                    ],
+                    sort_by=["EST_COST", "ALLOCATED_CREDITS"],
+                    ascending=[False, False],
+                    raw_label="All environment rollup rows",
+                )
+                render_priority_dataframe(
+                    env_display,
+                    title="Environment cost by database",
+                    priority_columns=[
+                        "ENVIRONMENT", "DATABASE_NAME", "ALLOCATED_CREDITS", "EST_COST",
+                        "QUERY_COUNT", "USERS", "WAREHOUSES", "AVG_ELAPSED_SEC", "GB_SCANNED",
+                    ],
+                    sort_by=["EST_COST", "ALLOCATED_CREDITS"],
+                    ascending=[False, False],
+                    raw_label="All environment/database rows",
+                )
+            else:
+                st.info(
+                    "No database-scoped query cost was available for this period. "
+                    "Try a wider period or clear the database/environment filter."
+                )
 
             st.subheader("Account-Wide Service / Serverless Contributors")
             st.caption(
@@ -1518,11 +1609,17 @@ def render():
                 company_expr = get_company_case_expr(
                     "q.warehouse_name", "q.database_name", "q.user_name"
                 )
+                environment_expr = get_environment_case_expr("q.database_name")
+                cb_scope = get_global_filter_clause(
+                    "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+                )
                 df_cb = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=cb_days)},
                 query_costs AS (
                     SELECT
                         {company_expr}         AS company,
+                        {environment_expr}     AS environment,
+                        COALESCE(q.database_name, 'NO_DATABASE_CONTEXT') AS database_name,
                         q.user_name,
                         q.warehouse_name,
                         {max_wh_size_expr} AS warehouse_size,
@@ -1532,14 +1629,14 @@ def render():
                     LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
                     WHERE q.start_time >= DATEADD('day', -{cb_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
-                      {get_wh_filter_clause("q.warehouse_name")}
-                    GROUP BY company, q.user_name, q.warehouse_name
+                      {cb_scope}
+                    GROUP BY 1, 2, 3, q.user_name, q.warehouse_name
                 )
-                SELECT company, user_name, warehouse_name, warehouse_size, query_count,
+                SELECT company, environment, database_name, user_name, warehouse_name, warehouse_size, query_count,
                        ROUND(total_credits, 4) AS total_credits
                 FROM query_costs
                 ORDER BY total_credits DESC
-                """, ttl_key=f"cc_chargeback_{company}_{cb_days}", tier="standard")
+                """, ttl_key=f"cc_chargeback_{company}_{get_active_environment()}_{cb_days}", tier="standard")
                 st.session_state["df_chargeback"] = df_cb
             except Exception as e:
                 st.warning(f"Chargeback data unavailable in this role/context: {format_snowflake_error(e)}")
@@ -1572,6 +1669,23 @@ def render():
                 ascending=[False, False],
                 raw_label="All chargeback summary rows",
             )
+            if "ENVIRONMENT" in df_cb.columns:
+                st.subheader("Summary by Environment")
+                env_summary = (
+                    df_cb.groupby(["COMPANY", "ENVIRONMENT"], as_index=False)[
+                        ["TOTAL_CREDITS", "EST_COST", "QUERY_COUNT"]
+                    ]
+                    .sum()
+                    .sort_values("EST_COST", ascending=False)
+                )
+                render_priority_dataframe(
+                    env_summary,
+                    title="Chargeback environment summary",
+                    priority_columns=["COMPANY", "ENVIRONMENT", "TOTAL_CREDITS", "EST_COST", "QUERY_COUNT"],
+                    sort_by=["EST_COST", "TOTAL_CREDITS"],
+                    ascending=[False, False],
+                    raw_label="All environment chargeback rows",
+                )
 
             st.subheader("Detail by User / Warehouse")
             company_filter = st.selectbox(
@@ -1584,6 +1698,8 @@ def render():
                 title="Chargeback detail drivers",
                 priority_columns=[
                     "COMPANY",
+                    "ENVIRONMENT",
+                    "DATABASE_NAME",
                     "USER_NAME",
                     "WAREHOUSE_NAME",
                     "WAREHOUSE_SIZE",

@@ -60,6 +60,34 @@ COMPUTE_CREDIT_CASE = """
 
 DEFAULT_COMPANY = "ALFA"
 
+DEFAULT_ENVIRONMENT = "ALL"
+
+ENVIRONMENT_CONFIG = {
+    "ALL": {
+        "label": "All environments",
+        "db_patterns": [],
+    },
+    "PROD": {
+        "label": "PROD",
+        "db_patterns": ["ALFA_EDW_PROD"],
+    },
+    "DEV_ALL": {
+        "label": "All DEV/Sandbox",
+        "db_patterns": [
+            "ALFA_EDW_DEV",
+            "ALFA_EDW_SAN",
+            "ALFA_EDW_PHX",
+            "ALFA_EDW_SEA",
+            "ALFA_EDW_SIT",
+        ],
+    },
+    "ALFA_EDW_DEV": {"label": "ALFA_EDW_DEV", "db_patterns": ["ALFA_EDW_DEV"]},
+    "ALFA_EDW_SAN": {"label": "ALFA_EDW_SAN", "db_patterns": ["ALFA_EDW_SAN"]},
+    "ALFA_EDW_PHX": {"label": "ALFA_EDW_PHX", "db_patterns": ["ALFA_EDW_PHX"]},
+    "ALFA_EDW_SEA": {"label": "ALFA_EDW_SEA", "db_patterns": ["ALFA_EDW_SEA"]},
+    "ALFA_EDW_SIT": {"label": "ALFA_EDW_SIT", "db_patterns": ["ALFA_EDW_SIT"]},
+}
+
 # Warehouse inventory confirmed from Snowflake UI:
 # ALFA uses non-TRXS warehouses; Trexis uses WH_TRXS_* only.
 COMPANY_CONFIG = {
@@ -197,52 +225,6 @@ SECTION_ALIASES = {
 def _sections_by_title(*titles: str) -> list[str]:
     return [SECTION_BY_TITLE[title] for title in titles]
 
-
-ROLE_SECTIONS = {
-    "ANALYST": _sections_by_title(
-        "DBA Control Room",
-        "Account Health",
-        "Usage Overview",
-        "Adoption Analytics",
-        "Service Health",
-        "Query Workbench",
-        "Warehouse Health",
-        "Cost & Contract",
-        "Storage Monitor",
-        "Pipeline Health",
-        "Platform Topology",
-    ),
-    "MANAGER": _sections_by_title(
-        "DBA Control Room",
-        "Account Health",
-        "Usage Overview",
-        "Adoption Analytics",
-        "Service Health",
-        "Query Workbench",
-        "Warehouse Health",
-        "Cost & Contract",
-        "Security Posture",
-        "Change & Drift",
-        "Storage Monitor",
-        "Platform Topology",
-    ),
-    "REPORT": _sections_by_title(
-        "DBA Control Room",
-        "Account Health",
-        "Usage Overview",
-        "Adoption Analytics",
-        "Service Health",
-        "Query Workbench",
-        "Warehouse Health",
-        "Cost & Contract",
-        "Storage Monitor",
-        "Pipeline Health",
-        "Platform Topology",
-    ),
-    "DBA": list(ALL_SECTIONS),
-    "SYSADMIN": list(ALL_SECTIONS),
-    "ACCOUNTADMIN": list(ALL_SECTIONS),
-}
 
 # Mission Control keeps all roles on the same simplified shell. Role-based
 # limits still apply by reducing access to governance workflows where needed.

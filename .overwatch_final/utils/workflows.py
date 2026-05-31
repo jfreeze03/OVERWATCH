@@ -114,6 +114,7 @@ def render_priority_dataframe(
     max_rows: int = 25,
     raw_label: str = "Full detail",
     height: int | None = None,
+    column_config: Mapping | None = None,
 ) -> None:
     """Show the actionable subset first, with raw detail hidden behind an expander."""
     if df is None or getattr(df, "empty", True):
@@ -160,15 +161,21 @@ def render_priority_dataframe(
             view = view[columns]
 
     st.markdown(f"**{title}**")
-    st.dataframe(
-        view.head(max_rows),
-        use_container_width=True,
-        hide_index=True,
-        height=height,
-    )
+    dataframe_kwargs = {
+        "use_container_width": True,
+        "hide_index": True,
+    }
+    if height is not None:
+        dataframe_kwargs["height"] = height
+    if column_config:
+        dataframe_kwargs["column_config"] = column_config
+    st.dataframe(view.head(max_rows), **dataframe_kwargs)
     if len(df) > max_rows:
         with st.expander(f"{raw_label} ({len(df):,} rows)", expanded=False):
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            raw_kwargs = {"use_container_width": True, "hide_index": True}
+            if column_config:
+                raw_kwargs["column_config"] = column_config
+            st.dataframe(df, **raw_kwargs)
 
 
 def render_signal_confidence(

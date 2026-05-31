@@ -629,7 +629,29 @@ def _build_release_compare_report(company: str, release_data: dict, credit_price
     return "\n".join(lines)
 
 
-def _load_control_room(session, company: str, credit_price: float, lookback_hours: int, cortex_budget_usd: float) -> dict:
+def _finalize_control_room_data(
+    data: dict[str, pd.DataFrame],
+    source_rows: list[dict],
+    credit_price: float,
+    cortex_budget_usd: float,
+) -> dict[str, pd.DataFrame]:
+    data["_loaded_at"] = pd.DataFrame({"LOADED_AT": [datetime.now().isoformat()]})
+    data["_credit_price"] = pd.DataFrame({"CREDIT_PRICE": [credit_price]})
+    data["_cortex_budget_usd"] = pd.DataFrame({"BUDGET_USD": [safe_float(cortex_budget_usd)]})
+    data["_source_modes"] = pd.DataFrame(source_rows)
+    return data
+
+
+def _load_control_room(
+    session,
+    company: str,
+    credit_price: float,
+    lookback_hours: int,
+    cortex_budget_usd: float,
+    *,
+    include_deep_evidence: bool = False,
+    allow_live_fallback: bool = False,
+) -> dict:
     wh_q = get_wh_filter_clause("q.warehouse_name", company)
     wh_m = get_wh_filter_clause("warehouse_name", company)
     db_q = get_db_filter_clause("q.database_name", company)
@@ -792,6 +814,15 @@ def _load_control_room(session, company: str, credit_price: float, lookback_hour
                 )
                 source_rows.append({"Source": key, "Mode": "OVERWATCH mart"})
             except Exception as mart_exc:
+                if not allow_live_fallback:
+                    data[key] = _empty_df()
+                    data[f"{key}_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(mart_exc)]})
+                    source_rows.append({
+                        "Source": key,
+                        "Mode": "Mart unavailable",
+                        "Message": "Live fallback skipped to keep DBA Control Room responsive.",
+                    })
+                    continue
                 data[key] = run_query(
                     sql,
                     ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_{key}",
@@ -817,25 +848,65 @@ def _load_control_room(session, company: str, credit_price: float, lookback_hour
             )
             source_rows.append({"Source": "task_failures", "Mode": "OVERWATCH mart"})
         except Exception as mart_exc:
-            data["task_failures"] = run_query(
-                build_task_failure_summary_sql(
-                    session,
-                    f"scheduled_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())",
-                    limit=10,
-                    company=company,
-                ),
-                ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_task_failures",
-                tier="recent",
-                section="DBA Control Room",
-            )
-            source_rows.append({
-                "Source": "task_failures",
-                "Mode": "Live fallback",
-                "Message": format_snowflake_error(mart_exc),
-            })
+            if not allow_live_fallback:
+                data["task_failures"] = _empty_df()
+                data["task_failures_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(mart_exc)]})
+                source_rows.append({
+                    "Source": "task_failures",
+                    "Mode": "Mart unavailable",
+                    "Message": "Live fallback skipped to keep DBA Control Room responsive.",
+                })
+            else:
+                data["task_failures"] = run_query(
+                    build_task_failure_summary_sql(
+                        session,
+                        f"scheduled_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())",
+                        limit=10,
+                        company=company,
+                    ),
+                    ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_task_failures",
+                    tier="recent",
+                    section="DBA Control Room",
+                )
+                source_rows.append({
+                    "Source": "task_failures",
+                    "Mode": "Live fallback",
+                    "Message": format_snowflake_error(mart_exc),
+                })
     except Exception as exc:
         data["task_failures"] = _empty_df()
         data["task_failures_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
+
+    if not include_deep_evidence:
+        data["task_sla_cost"] = _empty_df()
+        data["task_latest_runs"] = _empty_df()
+        data["procedure_sla_cost"] = _empty_df()
+        data["procedure_latest_runs"] = _empty_df()
+        data["cortex_summary"] = _empty_df()
+        data["cortex_exceptions"] = _empty_df()
+        source_rows.extend([
+            {
+                "Source": "task_sla_history",
+                "Mode": "Deferred",
+                "Message": "Skipped for fast DBA Control Room triage. Use Workload Operations for task run evidence.",
+            },
+            {
+                "Source": "procedure_sla",
+                "Mode": "Deferred",
+                "Message": "Skipped for fast DBA Control Room triage. Use Workload Operations for procedure SLA/cost evidence.",
+            },
+            {
+                "Source": "cortex_cost",
+                "Mode": "Deferred",
+                "Message": "Skipped for fast DBA Control Room triage. Use Cost & Contract for Cortex cost evidence.",
+            },
+        ])
+        try:
+            data["action_queue"] = load_action_queue(session, limit=25)
+        except Exception as exc:
+            data["action_queue"] = _empty_df()
+            data["action_queue_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
+        return _finalize_control_room_data(data, source_rows, credit_price, cortex_budget_usd)
 
     try:
         task_inventory = load_task_inventory(session, company)
@@ -1384,14 +1455,44 @@ def render() -> None:
     elif not snapshot_result.available:
         st.caption("Fast mart snapshot unavailable. Install/run OVERWATCH_MART_SETUP.sql to enable cheap control-room triage.")
 
-    if st.button("Load DBA Control Room Details", key="dba_control_room_load", type="primary"):
+    include_deep_evidence = st.checkbox(
+        "Include deep task/procedure/Cortex evidence",
+        value=False,
+        key="dba_control_room_include_deep_evidence",
+        help=(
+            "Default off keeps this page fast. Turn on only when you need task run baselines, "
+            "stored procedure SLA/cost evidence, and Cortex exception detail in this page."
+        ),
+    )
+    allow_live_fallback = st.checkbox(
+        "Allow live ACCOUNT_USAGE fallback queries",
+        value=False,
+        key="dba_control_room_allow_live_fallback",
+        help=(
+            "Default off prevents surprise long compiles. Turn on only when the OVERWATCH mart is missing "
+            "or stale and you accept slower direct ACCOUNT_USAGE scans."
+        ),
+    )
+    load_label = "Load DBA Control Room Deep Evidence" if include_deep_evidence else "Load DBA Control Room Triage"
+    if st.button(load_label, key="dba_control_room_load", type="primary"):
         with st.spinner("Loading exception signals..."):
             st.session_state["dba_control_room_data"] = _load_control_room(
-                session, company, credit_price, int(lookback_hours), safe_float(cortex_budget_usd)
+                session,
+                company,
+                credit_price,
+                int(lookback_hours),
+                safe_float(cortex_budget_usd),
+                include_deep_evidence=bool(include_deep_evidence),
+                allow_live_fallback=bool(allow_live_fallback),
             )
             st.session_state["dba_control_room_company"] = company
             st.session_state["dba_control_room_lookback"] = int(lookback_hours)
-            st.session_state["dba_control_room_source_mode"] = "Detailed live + fallback queries"
+            st.session_state["dba_control_room_source_mode"] = (
+                "Deep evidence live + fallback queries"
+                if include_deep_evidence
+                else "Fast triage mart queries"
+            )
+            st.session_state["dba_control_room_live_fallback"] = bool(allow_live_fallback)
 
     data = st.session_state.get("dba_control_room_data", {})
     if not data:
@@ -1407,6 +1508,10 @@ def render() -> None:
     source_mode = st.session_state.get("dba_control_room_source_mode", "Detailed live + fallback queries")
     if source_mode == "OVERWATCH mart snapshot":
         st.info("Showing fast mart snapshot. Deep evidence tabs may be sparse until you load detail.")
+    elif source_mode == "Fast triage mart queries":
+        st.info("Showing fast triage. Deep task, procedure, and Cortex evidence is deferred to keep this page responsive.")
+        if not st.session_state.get("dba_control_room_live_fallback"):
+            st.caption("Live ACCOUNT_USAGE fallbacks were skipped. Missing mart panels show as unavailable instead of running slow scans.")
 
     exceptions = _severity_rows(data, credit_price)
     summary = data.get("summary", _empty_df())

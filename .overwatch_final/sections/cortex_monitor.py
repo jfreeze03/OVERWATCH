@@ -15,7 +15,6 @@ from utils import (
     get_user_filter_clause,
     filter_existing_columns,
     make_action_id,
-    render_drillable_bar_chart,
     run_query,
     safe_float,
     safe_int,
@@ -598,23 +597,25 @@ def render():
             # Cost column
             df_cc = df_cc.copy()
             df_cc["COST_USD"] = df_cc["TOTAL_CREDITS"].apply(lambda x: round(x * AI_CREDIT_RATE, 4))
+            df_cc["COST_PER_REQUEST_USD"] = df_cc.apply(
+                lambda row: round(safe_float(row.get("COST_USD")) / max(safe_int(row.get("TOTAL_REQUESTS")), 1), 6),
+                axis=1,
+            )
 
             # Cost by user chart
             st.subheader("Cost by User")
+            st.caption(
+                "Cortex-only cost attribution. Query/user drilldown is intentionally disabled here "
+                "because query history does not expose Cortex Code cost by query."
+            )
             user_agg = (
                 df_cc.groupby("USER_NAME")["COST_USD"]
                 .sum().reset_index()
                 .sort_values("COST_USD", ascending=False)
                 .head(20)
             )
-            render_drillable_bar_chart(
-                user_agg,
-                dimension="USER_NAME",
-                measure="COST_USD",
-                key="cortex_user_cost",
-                drilldown_column="user_name",
-                lookback_hours=cc_days * 24,
-            )
+            if not user_agg.empty:
+                st.bar_chart(user_agg.set_index("USER_NAME")["COST_USD"], use_container_width=True)
 
             st.subheader("Full Breakdown")
             render_priority_dataframe(
@@ -627,12 +628,19 @@ def render():
                     "COST_USD",
                     "TOTAL_REQUESTS",
                     "TOTAL_TOKENS",
-                    "COST_PER_REQUEST",
+                    "COST_PER_REQUEST_USD",
                 ],
                 sort_by=["COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
                 ascending=[False, False, False],
                 raw_label="All Cortex user attribution rows",
                 height=350,
+                column_config={
+                    "COST_USD": st.column_config.NumberColumn("Cost", format="$%.2f"),
+                    "COST_PER_REQUEST_USD": st.column_config.NumberColumn("Cost/request", format="$%.4f"),
+                    "TOTAL_CREDITS": st.column_config.NumberColumn("AI Credits", format="%.4f"),
+                    "TOTAL_REQUESTS": st.column_config.NumberColumn("Requests", format="%d"),
+                    "TOTAL_TOKENS": st.column_config.NumberColumn("Tokens", format="%d"),
+                },
             )
             download_csv(df_cc, "cortex_code_users.csv")
 

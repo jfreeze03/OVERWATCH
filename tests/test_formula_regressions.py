@@ -4,6 +4,7 @@ import math
 import re
 import sys
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -28,6 +29,7 @@ from sections.dba_control_room import (  # noqa: E402
     _build_release_compare_report,
     _compare_release_windows,
     _control_room_snapshot_to_data,
+    _load_control_room,
     _severity_rows as _dba_control_severity_rows,
 )
 from sections.cortex_monitor import (  # noqa: E402
@@ -39,11 +41,13 @@ from sections.cortex_monitor import (  # noqa: E402
 )
 from sections.change_drift import (  # noqa: E402
     _build_change_drift_markdown,
+    _build_mart_change_drift_sql,
     _change_action_for,
     _change_drift_rating,
     _change_drift_score,
 )
 from sections.query_workbench import (  # noqa: E402
+    _build_mart_root_cause_sql,
     _build_root_cause_markdown,
     _root_cause_action_for,
     _root_cause_rating,
@@ -88,6 +92,11 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_capacity_score,
 )
 from utils.cost import build_metered_credit_cte  # noqa: E402
+from utils.company_filter import (  # noqa: E402
+    get_environment_case_expr,
+    get_environment_filter_clause,
+    get_global_filter_clause,
+)
 from utils.mart import (  # noqa: E402
     build_mart_account_health_change_sql,
     build_mart_account_health_cost_drivers_sql,
@@ -284,6 +293,29 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertFalse(data["object_changes"].empty)
         self.assertIn("_mart_snapshot", data)
 
+    def test_control_room_fast_triage_skips_live_fallback_by_default(self):
+        called_sql = []
+
+        def fail_mart(sql, **_kwargs):
+            called_sql.append(str(sql).upper())
+            raise RuntimeError("mart unavailable")
+
+        with patch("sections.dba_control_room.run_query", side_effect=fail_mart), patch(
+            "sections.dba_control_room.load_action_queue",
+            return_value=pd.DataFrame(),
+        ):
+            data = _load_control_room(
+                session=None,
+                company="ALFA",
+                credit_price=3.68,
+                lookback_hours=24,
+                cortex_budget_usd=5000,
+            )
+
+        self.assertIn("_source_modes", data)
+        self.assertTrue(any(row.get("Mode") == "Mart unavailable" for _, row in data["_source_modes"].iterrows()))
+        self.assertFalse(any("SNOWFLAKE.ACCOUNT_USAGE" in sql for sql in called_sql))
+
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []
         for path in _python_sources():
@@ -329,6 +361,62 @@ class FormulaRegressionTests(unittest.TestCase):
         mart_sql = build_mart_adoption_role_type_sql(30, "ALFA").upper()
         self.assertIn("AS ERROR_RATE", mart_sql)
         self.assertIn("SUM(FAILED_COUNT)", mart_sql)
+
+    def test_all_company_mode_does_not_filter_mart_to_literal_all(self):
+        query_summary, query_exceptions = _build_mart_root_cause_sql(7, 50, "ALL")
+        change_summary, change_exceptions = _build_mart_change_drift_sql(14, "ALL")
+        combined_sql = "\n".join([query_summary, query_exceptions, change_summary, change_exceptions]).upper()
+        self.assertNotIn("COMPANY = 'ALL'", combined_sql)
+
+        security_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
+        self.assertIn('upper() == "ALL"', security_text)
+        self.assertNotIn("lh.company = '{company}'", security_text)
+        self.assertNotIn("g.company = '{company}'", security_text)
+
+    def test_environment_filter_splits_alfa_prod_and_dev_databases(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_company"] = "ALFA"
+            prod_clause = get_environment_filter_clause("q.database_name", "PROD").upper()
+            self.assertIn("Q.DATABASE_NAME ILIKE 'ALFA_EDW_PROD'", prod_clause)
+
+            dev_clause = get_environment_filter_clause("q.database_name", "DEV_ALL").upper()
+            for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+                self.assertIn(db_name, dev_clause)
+            self.assertNotIn("ALFA_EDW_PROD", dev_clause)
+
+            st.session_state["active_company"] = "Trexis"
+            self.assertEqual(get_environment_filter_clause("q.database_name", "PROD"), "")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+        case_expr = get_environment_case_expr("q.database_name").upper()
+        self.assertIn("THEN 'PROD'", case_expr)
+        self.assertIn("THEN 'ALFA_EDW_DEV'", case_expr)
+        self.assertIn("NO DATABASE CONTEXT", case_expr)
+
+    def test_global_filter_clause_includes_environment_when_database_column_exists(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["global_environment"] = "PROD"
+            clause = get_global_filter_clause(
+                date_col="q.start_time",
+                wh_col="q.warehouse_name",
+                user_col="q.user_name",
+                role_col="q.role_name",
+                db_col="q.database_name",
+            ).upper()
+            self.assertIn("Q.DATABASE_NAME ILIKE 'ALFA_EDW_PROD'", clause)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_usage_overview_storage_sums_are_null_safe(self):
         text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
@@ -1195,6 +1283,18 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("AS AVG_ELAPSED_SEC", explain_block)
         self.assertIn('"TOTAL_CREDITS"', explain_block)
         self.assertIn('"AVG_EXECUTION_SECONDS"', explain_block)
+
+    def test_cost_center_chargeback_exposes_environment_and_database(self):
+        cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
+        chargeback_block = cost_text[
+            cost_text.index('ELIF COST_VIEW == "CHARGEBACK"'):
+            cost_text.index('ELIF COST_VIEW == "CONTRACT UTILIZATION"')
+        ]
+        self.assertIn("AS ENVIRONMENT", chargeback_block)
+        self.assertIn("AS DATABASE_NAME", chargeback_block)
+        self.assertIn('"ENVIRONMENT"', chargeback_block)
+        self.assertIn('"DATABASE_NAME"', chargeback_block)
+        self.assertIn("GET_ACTIVE_ENVIRONMENT()", chargeback_block)
 
 
 if __name__ == "__main__":

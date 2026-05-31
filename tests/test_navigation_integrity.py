@@ -17,6 +17,7 @@ from config import (  # noqa: E402
     SECTION_DEFINITIONS,
     SECTION_MODULES,
 )
+from utils.scorecards import DBA_CONTROL_PLANE_SECTION_BASELINE  # noqa: E402
 
 
 class NavigationIntegrityTests(unittest.TestCase):
@@ -65,6 +66,7 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_workflow_hubs_replace_scattered_operational_pages(self):
         visible_titles = {section.title for section in SECTION_DEFINITIONS}
+        self.assertIn("Alert Center", visible_titles)
         self.assertIn("Workload Operations", visible_titles)
         self.assertIn("Cost & Contract", visible_titles)
         self.assertIn("Security Posture", visible_titles)
@@ -86,6 +88,9 @@ class NavigationIntegrityTests(unittest.TestCase):
             with self.subTest(retired_title=retired_title):
                 self.assertNotIn(retired_title, visible_titles)
 
+    def test_visible_sections_have_strict_scorecard_baselines(self):
+        self.assertEqual(set(ALL_SECTIONS), set(DBA_CONTROL_PLANE_SECTION_BASELINE))
+
     def test_workflow_hubs_expose_expected_subworkflows(self):
         from sections import change_drift, cost_contract, security_posture, workload_operations
 
@@ -93,6 +98,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Task graphs", workload_operations.WORKFLOWS)
         self.assertIn("Stored procedures", workload_operations.WORKFLOWS)
         self.assertIn("Recommendations and action queue", cost_contract.WORKFLOWS)
+        self.assertEqual(SECTION_ALIASES["Alerts"], SECTION_BY_TITLE["Alert Center"])
         self.assertIn("Access posture", security_posture.WORKFLOWS)
         self.assertIn("Schema and object drift", change_drift.WORKFLOWS)
         self.assertIn("Data movement and replication", change_drift.WORKFLOWS)
@@ -119,6 +125,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             '"task_sla_"',
             '"sp_ops_"',
             '"sp_sla_"',
+            '"alert_center_"',
             '"cost_contract_"',
             '"pipe_"',
             '"qw_"',

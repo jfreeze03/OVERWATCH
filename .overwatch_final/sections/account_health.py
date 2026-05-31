@@ -3,6 +3,7 @@ import html
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from config import ALERT_DB, ALERT_SCHEMA
 from utils import (
     get_session, run_query, run_query_or_raise, format_credits,
     credits_to_dollars, download_csv, mark_loaded, show_loaded_time,
@@ -12,7 +13,7 @@ from utils import (
     build_task_failure_summary_sql, build_task_health_sql,
     executive_health_score,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
-    get_global_filter_clause, company_value_allowed,
+    get_global_filter_clause, company_value_allowed, get_active_environment,
     load_latest_control_room_mart, mart_source_caption,
     build_mart_account_health_storage_sql, build_mart_account_health_cost_drivers_sql,
     build_mart_account_health_change_sql, build_mart_control_room_task_failures_sql,
@@ -21,9 +22,12 @@ from utils import (
     build_mart_account_health_credits_sql, build_mart_account_health_failure_count_sql,
     build_mart_account_health_top_driver_sql, build_mart_account_health_queued_sql,
     build_mart_account_health_ytd_credits_sql,
-    format_snowflake_error, filter_existing_columns, safe_float, safe_int,
+    format_snowflake_error, filter_existing_columns, make_action_id, safe_float, safe_identifier, safe_int,
+    sql_literal, upsert_actions,
 )
 from utils.workflows import render_operator_briefing, render_priority_dataframe
+
+CHECKLIST_HISTORY_TABLE = "OVERWATCH_DBA_CHECKLIST_HISTORY"
 
 
 def _drill_to(
@@ -189,6 +193,508 @@ def _mart_health_label(score: float) -> str:
     if score >= 60:
         return "Degraded"
     return "Critical"
+
+
+def _check_status(ok: bool, watch: bool = False) -> str:
+    if ok:
+        return "OK"
+    if watch:
+        return "Watch"
+    return "Needs DBA"
+
+
+def account_health_checklist_history_fqn(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHECKLIST_HISTORY_TABLE,
+) -> str:
+    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
+
+
+def build_account_health_checklist_history_ddl(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHECKLIST_HISTORY_TABLE,
+) -> str:
+    fqn = account_health_checklist_history_fqn(db=db, schema=schema, table=table)
+    return f"""CREATE TABLE IF NOT EXISTS {fqn} (
+    SNAPSHOT_ID       VARCHAR(64),
+    SNAPSHOT_TS       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    COMPANY           VARCHAR(100),
+    ENVIRONMENT       VARCHAR(100),
+    CHECK_NAME        VARCHAR(200),
+    STATUS            VARCHAR(80),
+    SEVERITY          VARCHAR(40),
+    EVIDENCE          VARCHAR(2000),
+    OWNER             VARCHAR(200),
+    ESCALATION_TARGET VARCHAR(200),
+    OWNER_SOURCE      VARCHAR(200),
+    ROUTE             VARCHAR(120),
+    NEXT_ACTION       VARCHAR(4000),
+    PROOF_REQUIRED    VARCHAR(2000),
+    HEALTH_SCORE      FLOAT,
+    DETAIL_SOURCE     VARCHAR(500),
+    ACTIONABLE        BOOLEAN
+);"""
+
+
+def _account_health_owner_context(check: object, route: object = "") -> dict:
+    name = str(check or "").lower()
+    route_text = str(route or "")
+    if "query failure" in name:
+        return {
+            "owner": "DBA Query Triage",
+            "escalation": "Application Owner / DBA On-Call",
+            "source": "Checklist owner map",
+        }
+    if "queue pressure" in name:
+        return {
+            "owner": "Platform DBA",
+            "escalation": "Warehouse Owner / DBA On-Call",
+            "source": "Checklist owner map",
+        }
+    if "cost spike" in name:
+        return {
+            "owner": "DBA / FinOps Owner",
+            "escalation": "FinOps Lead",
+            "source": "Checklist owner map",
+        }
+    if "task" in name or "procedure" in name:
+        return {
+            "owner": "Data Engineering On-Call",
+            "escalation": "Pipeline Owner / DBA On-Call",
+            "source": "Checklist owner map",
+        }
+    if "change" in name or "drift" in name:
+        return {
+            "owner": "DBA Change Owner",
+            "escalation": "Security Owner / Data Governance",
+            "source": "Checklist owner map",
+        }
+    if "storage" in name or "monitor" in name:
+        return {
+            "owner": "Platform DBA",
+            "escalation": "DBA Lead",
+            "source": "Checklist owner map",
+        }
+    if "source confidence" in name:
+        return {
+            "owner": "OVERWATCH Platform Owner",
+            "escalation": "DBA Lead",
+            "source": "Checklist owner map",
+        }
+    return {
+        "owner": "DBA Lead" if route_text == "DBA Control Room" else "DBA",
+        "escalation": "DBA Lead",
+        "source": "Default DBA owner",
+    }
+
+
+def _enrich_account_health_checklist_owners(checklist: pd.DataFrame) -> pd.DataFrame:
+    if checklist is None or checklist.empty:
+        return checklist
+    view = checklist.copy()
+    contexts = view.apply(lambda row: _account_health_owner_context(row.get("CHECK"), row.get("ROUTE")), axis=1)
+    view["OWNER"] = contexts.apply(lambda item: item["owner"])
+    view["ESCALATION_TARGET"] = contexts.apply(lambda item: item["escalation"])
+    view["OWNER_SOURCE"] = contexts.apply(lambda item: item["source"])
+    return view
+
+
+def _build_account_health_dba_checklist(
+    *,
+    health_score: float,
+    score_label: str,
+    err_count: int,
+    queued: int,
+    pct_delta: float,
+    last24: float,
+    stor_tb: float,
+    failed_tasks: int = 0,
+    object_changes: int = 0,
+    control_mart_used: bool = False,
+    detail_source: str = "",
+) -> pd.DataFrame:
+    """Convert the broad account snapshot into a daily DBA operating checklist."""
+    score = safe_float(health_score)
+    failures = safe_int(err_count)
+    queued_count = safe_int(queued)
+    failed_task_count = safe_int(failed_tasks)
+    change_count = safe_int(object_changes)
+    delta = safe_float(pct_delta)
+    rows = [
+        {
+            "CHECK": "Refresh source confidence",
+            "STATUS": "OK" if control_mart_used else "Verify fallback",
+            "SEVERITY": "Low" if control_mart_used else "Medium",
+            "EVIDENCE": detail_source or ("OVERWATCH mart facts" if control_mart_used else "Live ACCOUNT_USAGE fallback"),
+            "OWNER": "DBA",
+            "ROUTE": "DBA Control Room",
+            "NEXT_ACTION": "Use mart snapshot for morning control when filters allow it; document live fallback before acting.",
+            "PROOF_REQUIRED": "Snapshot timestamp or fallback source note",
+        },
+        {
+            "CHECK": "Query failure review",
+            "STATUS": _check_status(failures == 0, failures <= 10),
+            "SEVERITY": "High" if failures > 10 else ("Medium" if failures > 0 else "Info"),
+            "EVIDENCE": f"{failures:,} failed queries in last 24h",
+            "OWNER": "DBA / App Owner",
+            "ROUTE": "Workload Operations",
+            "NEXT_ACTION": "Open Query diagnosis, group repeat error signatures, and queue recurring failures.",
+            "PROOF_REQUIRED": "query_id, error code/message, affected user/warehouse",
+        },
+        {
+            "CHECK": "Queue pressure review",
+            "STATUS": _check_status(queued_count == 0, queued_count <= 5),
+            "SEVERITY": "High" if queued_count > 20 else ("Medium" if queued_count > 0 else "Info"),
+            "EVIDENCE": f"{queued_count:,} queued/running pressure signals",
+            "OWNER": "DBA / Platform",
+            "ROUTE": "Warehouse Health",
+            "NEXT_ACTION": "Confirm whether pressure is sizing, concurrency, lock, or workload-shape driven before changing warehouses.",
+            "PROOF_REQUIRED": "warehouse, queued time, query count, before/after setting",
+        },
+        {
+            "CHECK": "Cost spike review",
+            "STATUS": _check_status(delta <= 20, delta <= 40),
+            "SEVERITY": "High" if delta > 60 else ("Medium" if delta > 20 else "Info"),
+            "EVIDENCE": f"{last24:,.2f} credits in last 24h; {delta:+.1f}% vs prior window",
+            "OWNER": "DBA / FinOps",
+            "ROUTE": "Cost & Contract",
+            "NEXT_ACTION": "Explain top drivers, classify allocated/estimated cost, and verify any savings action later.",
+            "PROOF_REQUIRED": "driver row, credit/cost formula, approval for warehouse changes",
+        },
+        {
+            "CHECK": "Task and procedure reliability",
+            "STATUS": _check_status(failed_task_count == 0),
+            "SEVERITY": "High" if failed_task_count > 0 else "Info",
+            "EVIDENCE": f"{failed_task_count:,} failed task groups in last 24h",
+            "OWNER": "DBA / Data Engineering",
+            "ROUTE": "Workload Operations",
+            "NEXT_ACTION": "Open task graphs and verify recovery SLA, downstream impact, and retry approval.",
+            "PROOF_REQUIRED": "task history, root cause, owner approval, recovery evidence",
+        },
+        {
+            "CHECK": "Change and drift review",
+            "STATUS": _check_status(change_count == 0, change_count <= 10),
+            "SEVERITY": "Medium" if change_count > 0 else "Info",
+            "EVIDENCE": f"{change_count:,} object/access change signals in last 24h",
+            "OWNER": "DBA / Security Owner",
+            "ROUTE": "Change & Drift",
+            "NEXT_ACTION": "Validate query IDs against change tickets, approvers, and IaC/source-control state.",
+            "PROOF_REQUIRED": "query_id, approver, change ticket, dependency note",
+        },
+        {
+            "CHECK": "Storage and monitor posture",
+            "STATUS": _check_status(stor_tb > 0, stor_tb == 0),
+            "SEVERITY": "Low" if stor_tb > 0 else "Medium",
+            "EVIDENCE": f"{safe_float(stor_tb):.1f} TB latest storage reading",
+            "OWNER": "DBA / Platform",
+            "ROUTE": "Account Health",
+            "NEXT_ACTION": "Review Resource Monitors for quota, notify, suspend, and suspend-immediate coverage.",
+            "PROOF_REQUIRED": "resource monitor thresholds and warehouse scope",
+        },
+    ]
+    if score < 75:
+        rows.insert(0, {
+            "CHECK": "Overall health escalation",
+            "STATUS": "Needs DBA",
+            "SEVERITY": "High" if score < 60 else "Medium",
+            "EVIDENCE": f"Health score {score:.0f} ({score_label})",
+            "OWNER": "DBA Lead",
+            "ROUTE": "DBA Control Room",
+            "NEXT_ACTION": "Run DBA Control Room triage and convert active signals into owned action queue items.",
+            "PROOF_REQUIRED": "control-room exception row and action queue ID",
+        })
+    rank = {"High": 0, "Medium": 1, "Low": 2, "Info": 3}
+    checklist = pd.DataFrame(rows)
+    checklist = _enrich_account_health_checklist_owners(checklist)
+    checklist["_RANK"] = checklist["SEVERITY"].map(rank).fillna(4)
+    return checklist.sort_values(["_RANK", "CHECK"]).drop(columns=["_RANK"])
+
+
+def _account_health_verification_sql(check: object, evidence: object = "") -> str:
+    """Build a read-only source query for a daily DBA checklist action."""
+    name = str(check or "").lower()
+    if "query failure" in name:
+        return """
+SELECT
+    query_id,
+    start_time,
+    user_name,
+    role_name,
+    warehouse_name,
+    database_name,
+    query_type,
+    execution_status,
+    error_code,
+    error_message
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
+  AND (error_code IS NOT NULL OR UPPER(execution_status) = 'FAILED_WITH_ERROR')
+ORDER BY start_time DESC
+LIMIT 50""".strip()
+    if "queue pressure" in name:
+        return """
+SELECT
+    query_id,
+    start_time,
+    user_name,
+    warehouse_name,
+    execution_status,
+    COALESCE(queued_overload_time, 0)
+      + COALESCE(queued_provisioning_time, 0)
+      + COALESCE(queued_repair_time, 0) AS queued_ms,
+    total_elapsed_time
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
+  AND (
+      COALESCE(queued_overload_time, 0)
+      + COALESCE(queued_provisioning_time, 0)
+      + COALESCE(queued_repair_time, 0) > 0
+      OR execution_status ILIKE '%QUEUED%'
+  )
+ORDER BY queued_ms DESC
+LIMIT 50""".strip()
+    if "cost spike" in name:
+        return """
+SELECT
+    warehouse_name,
+    DATE_TRUNC('hour', start_time) AS usage_hour,
+    SUM(credits_used) AS credits_used
+FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+WHERE start_time >= DATEADD('hours', -48, CURRENT_TIMESTAMP())
+GROUP BY warehouse_name, DATE_TRUNC('hour', start_time)
+ORDER BY credits_used DESC
+LIMIT 50""".strip()
+    if "task" in name or "procedure" in name:
+        return """
+SELECT
+    database_name,
+    schema_name,
+    name AS task_name,
+    state,
+    scheduled_time,
+    completed_time,
+    query_id,
+    error_message
+FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+WHERE scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
+  AND UPPER(state) = 'FAILED'
+ORDER BY scheduled_time DESC
+LIMIT 50""".strip()
+    if "change" in name or "drift" in name:
+        return """
+SELECT
+    query_id,
+    start_time,
+    user_name,
+    role_name,
+    database_name,
+    schema_name,
+    query_type,
+    query_tag,
+    query_text
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())
+  AND (
+      query_text ILIKE 'CREATE%'
+      OR query_text ILIKE 'ALTER%'
+      OR query_text ILIKE 'DROP%'
+      OR query_text ILIKE 'GRANT%'
+      OR query_text ILIKE 'REVOKE%'
+      OR query_text ILIKE '%OWNERSHIP%'
+      OR query_text ILIKE '%MASKING POLICY%'
+      OR query_text ILIKE '%ROW ACCESS POLICY%'
+      OR query_text ILIKE '%TAG%'
+  )
+ORDER BY start_time DESC
+LIMIT 50""".strip()
+    if "storage" in name or "monitor" in name:
+        return """
+SELECT
+    database_name,
+    usage_date,
+    ROUND((COALESCE(average_database_bytes, 0) + COALESCE(average_failsafe_bytes, 0)) / POWER(1024, 4), 4) AS storage_tb
+FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
+WHERE usage_date >= DATEADD('day', -7, CURRENT_DATE())
+ORDER BY usage_date DESC, storage_tb DESC
+LIMIT 50""".strip()
+    return f"""
+SELECT
+    CURRENT_TIMESTAMP() AS verification_ts,
+    {sql_literal(str(check or 'Account Health checklist'), 500)} AS check_name,
+    {sql_literal(str(evidence or ''), 1000)} AS observed_evidence
+LIMIT 50""".strip()
+
+
+def _account_health_actionable_checklist(checklist: pd.DataFrame) -> pd.DataFrame:
+    if checklist is None or checklist.empty:
+        return pd.DataFrame()
+    view = checklist.copy()
+    status = view.get("STATUS", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
+    severity = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
+    return view[(status != "OK") & (severity != "INFO")].copy()
+
+
+def _account_health_checklist_history_insert_sql(
+    checklist: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    health_score: float,
+    detail_source: str = "",
+    snapshot_id: str = "",
+) -> str:
+    if checklist is None or checklist.empty:
+        raise ValueError("Daily DBA Checklist snapshot has no rows to save.")
+    fqn = account_health_checklist_history_fqn()
+    env_value = str(environment or "").strip() or "ALL"
+    snap = snapshot_id or make_action_id(
+        "Account Health Checklist Snapshot",
+        company,
+        f"{env_value}|{datetime.now().strftime('%Y%m%d%H%M%S')}",
+    )
+    selects = []
+    actionable = _account_health_actionable_checklist(checklist)
+    actionable_checks = set(actionable.get("CHECK", pd.Series(dtype=str)).astype(str).tolist())
+    for _, row in checklist.head(100).iterrows():
+        check = str(row.get("CHECK") or "")
+        selects.append(
+            "SELECT "
+            f"{sql_literal(snap, 64)} AS SNAPSHOT_ID, "
+            "CURRENT_TIMESTAMP() AS SNAPSHOT_TS, "
+            f"{sql_literal(company, 100)} AS COMPANY, "
+            f"{sql_literal(env_value, 100)} AS ENVIRONMENT, "
+            f"{sql_literal(check, 200)} AS CHECK_NAME, "
+            f"{sql_literal(row.get('STATUS', ''), 80)} AS STATUS, "
+            f"{sql_literal(row.get('SEVERITY', ''), 40)} AS SEVERITY, "
+            f"{sql_literal(row.get('EVIDENCE', ''), 2000)} AS EVIDENCE, "
+            f"{sql_literal(row.get('OWNER', ''), 200)} AS OWNER, "
+            f"{sql_literal(row.get('ESCALATION_TARGET', ''), 200)} AS ESCALATION_TARGET, "
+            f"{sql_literal(row.get('OWNER_SOURCE', ''), 200)} AS OWNER_SOURCE, "
+            f"{sql_literal(row.get('ROUTE', ''), 120)} AS ROUTE, "
+            f"{sql_literal(row.get('NEXT_ACTION', ''), 4000)} AS NEXT_ACTION, "
+            f"{sql_literal(row.get('PROOF_REQUIRED', ''), 2000)} AS PROOF_REQUIRED, "
+            f"{safe_float(health_score)}::FLOAT AS HEALTH_SCORE, "
+            f"{sql_literal(detail_source, 500)} AS DETAIL_SOURCE, "
+            f"{'TRUE' if check in actionable_checks else 'FALSE'} AS ACTIONABLE"
+        )
+    return f"""
+INSERT INTO {fqn} (
+    SNAPSHOT_ID, SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_NAME, STATUS,
+    SEVERITY, EVIDENCE, OWNER, ESCALATION_TARGET, OWNER_SOURCE, ROUTE,
+    NEXT_ACTION, PROOF_REQUIRED, HEALTH_SCORE, DETAIL_SOURCE, ACTIONABLE
+)
+{" UNION ALL ".join(selects)}""".strip()
+
+
+def _account_health_checklist_history_sql(days: int, company: str, environment: str = "ALL") -> str:
+    fqn = account_health_checklist_history_fqn()
+    where = [f"SNAPSHOT_TS >= DATEADD('day', -{max(1, int(days or 14))}, CURRENT_TIMESTAMP())"]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_value = str(environment or "").strip()
+    if env_value and env_value.upper() != "ALL":
+        where.append(f"ENVIRONMENT = {sql_literal(env_value, 100)}")
+    where_clause = " AND ".join(where)
+    return f"""
+SELECT
+    CHECK_NAME,
+    COUNT(*) AS SNAPSHOT_ROWS,
+    COUNT_IF(ACTIONABLE) AS ISSUE_SNAPSHOTS,
+    MAX(SNAPSHOT_TS) AS LAST_SNAPSHOT_TS,
+    MAX_BY(STATUS, SNAPSHOT_TS) AS LAST_STATUS,
+    MAX_BY(SEVERITY, SNAPSHOT_TS) AS LAST_SEVERITY,
+    MAX_BY(OWNER, SNAPSHOT_TS) AS OWNER,
+    MAX_BY(ESCALATION_TARGET, SNAPSHOT_TS) AS ESCALATION_TARGET,
+    MAX_BY(ROUTE, SNAPSHOT_TS) AS ROUTE,
+    ROUND(AVG(HEALTH_SCORE), 1) AS AVG_HEALTH_SCORE
+FROM {fqn}
+WHERE {where_clause}
+GROUP BY CHECK_NAME
+ORDER BY ISSUE_SNAPSHOTS DESC, LAST_SNAPSHOT_TS DESC, CHECK_NAME
+LIMIT 100""".strip()
+
+
+def _save_account_health_checklist_snapshot(
+    session,
+    checklist: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    health_score: float,
+    detail_source: str = "",
+) -> None:
+    try:
+        session.sql(build_account_health_checklist_history_ddl()).collect()
+        session.sql(_account_health_checklist_history_insert_sql(
+            checklist,
+            company=company,
+            environment=environment,
+            health_score=health_score,
+            detail_source=detail_source,
+        )).collect()
+        st.success("Saved the Daily DBA Checklist snapshot for trend tracking.")
+    except Exception as exc:
+        st.error(f"Could not save Daily DBA Checklist snapshot: {format_snowflake_error(exc)}")
+        st.info("Deploy the checklist history table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
+def _account_health_checklist_action_payload(row: pd.Series | dict, company: str, environment: str = "") -> dict:
+    check = str(row.get("CHECK") or "Daily DBA checklist")
+    evidence = str(row.get("EVIDENCE") or "")
+    severity = str(row.get("SEVERITY") or "Medium")
+    owner = str(row.get("OWNER") or "DBA")
+    escalation = str(row.get("ESCALATION_TARGET") or "DBA Lead")
+    route = str(row.get("ROUTE") or "DBA Control Room")
+    verification_query = _account_health_verification_sql(check, evidence)
+    action = str(row.get("NEXT_ACTION") or "Review the failed Account Health checklist item and attach proof.")
+    approval_required = severity.upper() in {"CRITICAL", "HIGH", "MEDIUM"}
+    env_value = str(environment or "").strip()
+    if not env_value or env_value.upper() == "ALL":
+        env_value = "No Database Context"
+    return {
+        "Action ID": make_action_id("Account Health Checklist", check, f"{company}|{evidence}"),
+        "Source": "Account Health - Daily DBA Checklist",
+        "Severity": "Low" if severity.upper() == "INFO" else severity,
+        "Category": "Daily DBA Checklist",
+        "Entity Type": "DBA Checklist",
+        "Entity": check,
+        "Owner": owner,
+        "Finding": f"{check}: {evidence}",
+        "Action": action,
+        "Estimated Monthly Savings": 0.0,
+        "Generated SQL Fix": "\n".join([
+            "-- Daily DBA checklist action. Do not execute state-changing SQL from this row.",
+            f"-- Route: {route}",
+            f"-- Proof required: {row.get('PROOF_REQUIRED', 'verification evidence')}",
+        ]),
+        "Proof Query": verification_query,
+        "Verification Query": verification_query,
+        "Verification Status": "Pending",
+        "Approver": escalation if approval_required else owner,
+        "Owner Approval Status": "Requested" if approval_required else "Not Required",
+        "Owner Approval Note": f"Checklist status: {row.get('STATUS', '')}. Route: {route}. Escalation: {escalation}.",
+        "Company": company,
+        "Environment": env_value,
+    }
+
+
+def _queue_account_health_checklist(session, checklist: pd.DataFrame, company: str, environment: str) -> None:
+    actionable = _account_health_actionable_checklist(checklist)
+    if actionable.empty:
+        st.info("No Daily DBA Checklist issues need queueing for the current snapshot.")
+        return
+    actions = [
+        _account_health_checklist_action_payload(row, company=company, environment=environment)
+        for _, row in actionable.head(25).iterrows()
+    ]
+    try:
+        saved = upsert_actions(session, actions)
+        st.success(f"Saved {saved} Daily DBA Checklist issue(s) to the action queue.")
+    except Exception as exc:
+        st.error(f"Could not save Daily DBA Checklist issues: {format_snowflake_error(exc)}")
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
 def render():
@@ -477,6 +983,7 @@ def render():
             cost24 = safe_float(control_mart_row.get("COST_24H_USD", credits_to_dollars(last24, credit_price)))
             err_count = safe_int(control_mart_row.get("FAILED_QUERIES_24H", 0))
             failed_tasks = safe_int(control_mart_row.get("FAILED_TASKS_24H", 0))
+            object_changes = safe_int(control_mart_row.get("OBJECT_CHANGES_24H", 0))
             queued_ms = safe_float(control_mart_row.get("QUEUED_MS_24H", 0))
             pct_delta = 0
             health_score = safe_float(control_mart_row.get("HEALTH_SCORE", 0))
@@ -494,6 +1001,8 @@ def render():
             prior24 = safe_float(burn_df["PRIOR_24H"].iloc[0]) if not burn_df.empty else 0
             cost24 = credits_to_dollars(last24, credit_price)
             err_count = safe_int(err_df["ERR_COUNT"].iloc[0]) if not err_df.empty else 0
+            failed_tasks = safe_int(task_health_df["FAILED_TASKS"].iloc[0]) if not task_health_df.empty else 0
+            object_changes = 0
             pct_delta = ((last24 - prior24) / prior24 * 100) if prior24 > 0 else 0
             health = executive_health_score({
                 "total_queries": safe_float(query_stats_df["TOTAL_QUERIES"].iloc[0]) if not query_stats_df.empty else 0,
@@ -532,6 +1041,105 @@ def render():
         if control_mart_used:
             st.caption(f"Mart snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
         st.caption(f"Landing signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
+        checklist = _build_account_health_dba_checklist(
+            health_score=health_score,
+            score_label=score_label,
+            err_count=err_count,
+            queued=queued,
+            pct_delta=pct_delta,
+            last24=last24,
+            stor_tb=stor_tb,
+            failed_tasks=failed_tasks,
+            object_changes=object_changes,
+            control_mart_used=control_mart_used,
+            detail_source=hd.get("_account_health_detail_source", ""),
+        )
+        render_priority_dataframe(
+            checklist,
+            title="Daily DBA checklist",
+            priority_columns=[
+                "SEVERITY", "STATUS", "CHECK", "EVIDENCE", "OWNER",
+                "ESCALATION_TARGET", "ROUTE", "NEXT_ACTION", "PROOF_REQUIRED",
+            ],
+            sort_by=["SEVERITY", "CHECK"],
+            ascending=[True, True],
+            raw_label="All daily DBA checklist rows",
+            height=300,
+            max_rows=12,
+        )
+        actionable_checklist = _account_health_actionable_checklist(checklist)
+        q1, q2, q3 = st.columns([1, 1, 3])
+        with q1:
+            if st.button(
+                "Queue Checklist Issues",
+                key="account_health_queue_checklist",
+                use_container_width=True,
+                disabled=actionable_checklist.empty,
+            ):
+                _queue_account_health_checklist(
+                    session,
+                    checklist,
+                    company=company,
+                    environment=get_active_environment(),
+                )
+        with q2:
+            if st.button(
+                "Save Checklist Snapshot",
+                key="account_health_save_checklist_snapshot",
+                use_container_width=True,
+            ):
+                _save_account_health_checklist_snapshot(
+                    session,
+                    checklist,
+                    company=company,
+                    environment=get_active_environment(),
+                    health_score=health_score,
+                    detail_source=hd.get("_account_health_detail_source", ""),
+                )
+        with q3:
+            if actionable_checklist.empty:
+                st.caption("Daily checklist is clean for this snapshot; no queue item is needed. Save the snapshot for trend tracking.")
+            else:
+                st.caption(
+                    f"{len(actionable_checklist):,} checklist issue(s) will be saved with owner, approver, "
+                    "verification SQL, and proof requirements."
+                )
+        with st.expander("Daily DBA Checklist Trend", expanded=False):
+            trend_days = st.slider("Checklist trend days", 7, 90, 30, key="account_health_checklist_trend_days")
+            if st.button("Load Checklist Trend", key="account_health_load_checklist_trend"):
+                try:
+                    trend_sql = _account_health_checklist_history_sql(
+                        trend_days,
+                        company=company,
+                        environment=get_active_environment(),
+                    )
+                    st.session_state["account_health_checklist_trend"] = run_query(
+                        trend_sql,
+                        ttl_key=f"account_health_checklist_trend_{company}_{get_active_environment()}_{trend_days}",
+                        tier="standard",
+                        section="Account Health",
+                    )
+                    st.session_state["account_health_checklist_trend_sql"] = trend_sql
+                except Exception as exc:
+                    st.warning(f"Checklist trend unavailable: {format_snowflake_error(exc)}")
+            trend = st.session_state.get("account_health_checklist_trend")
+            if trend is not None and not trend.empty:
+                render_priority_dataframe(
+                    trend,
+                    title="Checklist issues by recurring snapshot",
+                    priority_columns=[
+                        "CHECK_NAME", "ISSUE_SNAPSHOTS", "SNAPSHOT_ROWS", "LAST_STATUS",
+                        "LAST_SEVERITY", "OWNER", "ESCALATION_TARGET", "ROUTE", "AVG_HEALTH_SCORE",
+                    ],
+                    sort_by=["ISSUE_SNAPSHOTS", "LAST_SNAPSHOT_TS"],
+                    ascending=[False, False],
+                    raw_label="All checklist trend rows",
+                    height=260,
+                )
+            elif trend is not None:
+                st.info("No checklist history rows found for the selected scope.")
+            with st.expander("Checklist history setup SQL", expanded=False):
+                st.code(build_account_health_checklist_history_ddl(), language="sql")
         with st.expander("Health score contributors", expanded=False):
             render_priority_dataframe(
                 health_components,

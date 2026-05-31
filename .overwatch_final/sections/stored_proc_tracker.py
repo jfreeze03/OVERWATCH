@@ -125,6 +125,28 @@ def _build_procedure_ops_frames(
     if "CLOUD_CREDITS" not in joined.columns:
         joined["CLOUD_CREDITS"] = 0.0
     joined["CLOUD_CREDITS"] = pd.to_numeric(joined["CLOUD_CREDITS"], errors="coerce").fillna(0.0)
+    joined["ORCHESTRATION_STATUS"] = joined.apply(
+        lambda row: "Task blocked - suspended"
+        if safe_int(row.get("SUSPENDED_TASKS")) > 0
+        else "Task-managed"
+        if safe_int(row.get("TASK_COUNT")) > 0
+        else "Manual CALL only"
+        if safe_int(row.get("CALL_COUNT")) > 0
+        else "No recent execution evidence",
+        axis=1,
+    )
+    joined["OWNER_REVIEW"] = joined["ORCHESTRATION_STATUS"].apply(
+        lambda status: "Required" if status != "Task-managed" else "Routine"
+    )
+    joined["OPERATING_RISK"] = joined.apply(
+        lambda row: "High"
+        if row.get("ORCHESTRATION_STATUS") == "Task blocked - suspended"
+        else "Medium"
+        if row.get("ORCHESTRATION_STATUS") in {"Manual CALL only", "No recent execution evidence"}
+        else "Low",
+        axis=1,
+    )
+    joined["OPERATING_RISK_RANK"] = joined["OPERATING_RISK"].map({"High": 0, "Medium": 1, "Low": 2}).fillna(3).astype(int)
 
     exceptions = []
     for _, row in joined.iterrows():
@@ -134,7 +156,12 @@ def _build_procedure_ops_frames(
                 "SEVERITY": "Medium",
                 "SIGNAL": "Orphan Procedure Candidate",
                 "PROCEDURE": proc,
+                "PROCEDURE_NAME": proc,
                 "DETAIL": "Procedure has no detected task link and no recent CALL history in the selected lookback.",
+                "ORCHESTRATION_STATUS": row.get("ORCHESTRATION_STATUS", ""),
+                "OWNER_REVIEW": row.get("OWNER_REVIEW", ""),
+                "OPERATING_RISK": row.get("OPERATING_RISK", ""),
+                "OPERATING_RISK_RANK": row.get("OPERATING_RISK_RANK", 3),
                 "TASKS": "",
                 "LAST_CALL": row.get("LAST_CALL", ""),
             })
@@ -143,7 +170,12 @@ def _build_procedure_ops_frames(
                 "SEVERITY": "Low",
                 "SIGNAL": "Procedure Runs Outside Task Graph",
                 "PROCEDURE": proc,
+                "PROCEDURE_NAME": proc,
                 "DETAIL": "Recent CALL history exists but no task definition references this procedure.",
+                "ORCHESTRATION_STATUS": row.get("ORCHESTRATION_STATUS", ""),
+                "OWNER_REVIEW": row.get("OWNER_REVIEW", ""),
+                "OPERATING_RISK": row.get("OPERATING_RISK", ""),
+                "OPERATING_RISK_RANK": row.get("OPERATING_RISK_RANK", 3),
                 "TASKS": "",
                 "LAST_CALL": row.get("LAST_CALL", ""),
             })
@@ -152,7 +184,12 @@ def _build_procedure_ops_frames(
                 "SEVERITY": "Medium",
                 "SIGNAL": "Procedure Behind Suspended Task",
                 "PROCEDURE": proc,
+                "PROCEDURE_NAME": proc,
                 "DETAIL": f"{safe_int(row.get('SUSPENDED_TASKS'))} linked task(s) are suspended.",
+                "ORCHESTRATION_STATUS": row.get("ORCHESTRATION_STATUS", ""),
+                "OWNER_REVIEW": row.get("OWNER_REVIEW", ""),
+                "OPERATING_RISK": row.get("OPERATING_RISK", ""),
+                "OPERATING_RISK_RANK": row.get("OPERATING_RISK_RANK", 3),
                 "TASKS": row.get("TASKS", ""),
                 "LAST_CALL": row.get("LAST_CALL", ""),
             })
@@ -162,6 +199,9 @@ def _build_procedure_ops_frames(
         "LINKED_TO_TASKS": int((joined["TASK_COUNT"] > 0).sum()) if not joined.empty else 0,
         "RECENT_CALLS": int(joined["CALL_COUNT"].sum()) if not joined.empty else 0,
         "ORPHAN_CANDIDATES": sum(1 for row in exceptions if row["SIGNAL"] == "Orphan Procedure Candidate"),
+        "OWNER_REVIEW_REQUIRED": int((joined["OWNER_REVIEW"] == "Required").sum()) if not joined.empty else 0,
+        "MANUAL_ONLY": int((joined["ORCHESTRATION_STATUS"] == "Manual CALL only").sum()) if not joined.empty else 0,
+        "BLOCKED_BY_SUSPENDED_TASK": int((joined["ORCHESTRATION_STATUS"] == "Task blocked - suspended").sum()) if not joined.empty else 0,
     }
     exception_df = add_signal_routes(pd.DataFrame(exceptions), PROCEDURE_SIGNAL_ROUTES)
     return summary, exception_df, joined
@@ -399,10 +439,9 @@ def _procedure_verification_sql(row: pd.Series, lookback_days: int = 7) -> str:
     proc = str(row.get("PROCEDURE_NAME") or row.get("PROCEDURE") or "").strip()
     root_query_id = str(row.get("ROOT_QUERY_ID") or "").strip()
     proc_filter = f"AND query_text ILIKE {sql_literal('%' + proc + '%', 600)}" if proc else ""
-    root_filter = f"OR root_query_id = {sql_literal(root_query_id, 200)}" if root_query_id else ""
+    root_filter = f"OR query_id = {sql_literal(root_query_id, 200)}" if root_query_id else ""
     return f"""-- Stored procedure reliability proof and post-fix verification
 SELECT query_id,
-       root_query_id,
        user_name,
        role_name,
        warehouse_name,
@@ -442,23 +481,28 @@ def _build_procedure_reliability_action(row: pd.Series, company: str, source: st
     cost_pct = safe_float(row.get("COST_CHANGE_PCT"))
     detail = (
         f"runtime change={runtime_pct:,.1f}%, cost change={cost_pct:,.1f}%, "
-        f"root_query_id={row.get('ROOT_QUERY_ID', '')}"
+        f"root_query_id={row.get('ROOT_QUERY_ID', '')}, "
+        f"orchestration={row.get('ORCHESTRATION_STATUS', '')}, owner_review={row.get('OWNER_REVIEW', '')}"
     )
     action = str(row.get("RECOMMENDED_ACTION") or "Review procedure regression and linked task graph.")
     if "verify" not in action.lower():
         action += " Verify the next run against the baseline and attach QUERY_HISTORY evidence before closing."
+    if str(row.get("OWNER_REVIEW") or "").upper() == "REQUIRED" and "owner review" not in action.lower():
+        action += " Owner review is required before treating this procedure as production-safe."
     generated_sql = (
         "-- Reviewed procedure reliability plan. Do not redeploy or retry blindly.\n"
         f"-- Procedure: {proc}\n"
         f"-- Signal: {signal}\n"
         f"-- Root query: {row.get('ROOT_QUERY_ID', '')}\n"
+        f"-- Orchestration status: {row.get('ORCHESTRATION_STATUS', '')}\n"
+        f"-- Owner review: {row.get('OWNER_REVIEW', '')}\n"
         "-- Inspect child queries, recent procedure changes, warehouse size, and task graph schedule.\n"
         "-- If code changed, redeploy through the approved release path; if runtime capacity changed, use Warehouse Health first."
     )
     finding = f"{signal}: {proc}. {detail}"
     verification_query = _procedure_verification_sql(row)[:8000]
-    baseline_value = _procedure_metric(row, "AVG_EXECUTION_SECONDS", "AVG_DURATION_SEC", "BASELINE_SECONDS")
-    current_value = _procedure_metric(row, "EXECUTION_SECONDS", "ELAPSED_SEC", "LATEST_DURATION_SEC")
+    baseline_value = _procedure_metric(row, "AVG_ELAPSED_SEC", "AVG_EXECUTION_SECONDS", "AVG_DURATION_SEC", "BASELINE_SECONDS")
+    current_value = _procedure_metric(row, "LATEST_ELAPSED_SEC", "TOTAL_ELAPSED_SEC", "EXECUTION_SECONDS", "ELAPSED_SEC", "LATEST_DURATION_SEC")
     measured_delta = (
         round(current_value - baseline_value, 4)
         if current_value is not None and baseline_value is not None
@@ -607,6 +651,12 @@ def render():
             c2.metric("Linked to Tasks", f"{safe_int(summary.get('LINKED_TO_TASKS')):,}")
             c3.metric("Recent Calls", f"{safe_int(summary.get('RECENT_CALLS')):,}")
             c4.metric("Orphan Candidates", f"{safe_int(summary.get('ORPHAN_CANDIDATES')):,}", delta_color="inverse")
+            if safe_int(summary.get("OWNER_REVIEW_REQUIRED")) or safe_int(summary.get("BLOCKED_BY_SUSPENDED_TASK")):
+                st.caption(
+                    f"Owner review required: {safe_int(summary.get('OWNER_REVIEW_REQUIRED')):,} | "
+                    f"Manual-call only: {safe_int(summary.get('MANUAL_ONLY')):,} | "
+                    f"Blocked by suspended task: {safe_int(summary.get('BLOCKED_BY_SUSPENDED_TASK')):,}"
+                )
             sources = st.session_state.get("sp_ops_sources", {})
             if sources:
                 st.caption(" | ".join(str(v) for v in sources.values()))
@@ -616,12 +666,13 @@ def render():
                     exceptions,
                     title="Procedure operations exceptions",
                     priority_columns=[
-                        "SIGNAL", "SEVERITY", "PROCEDURE_NAME", "PROCEDURE_SCHEMA",
+                        "OPERATING_RISK", "SIGNAL", "SEVERITY", "PROCEDURE_NAME", "PROCEDURE_SCHEMA",
+                        "ORCHESTRATION_STATUS", "OWNER_REVIEW",
                         "TASK_COUNT", "SUSPENDED_TASKS", "CALL_COUNT",
                         "NEXT_WORKFLOW", "NEXT_ACTION",
                     ],
-                    sort_by=["SEVERITY", "CALL_COUNT"],
-                    ascending=[True, False],
+                    sort_by=["OPERATING_RISK_RANK", "SEVERITY", "CALL_COUNT"],
+                    ascending=[True, True, False],
                     raw_label="All procedure operation exceptions",
                 )
                 if st.button("Save Procedure Operations Findings to Action Queue", key="sp_ops_queue"):
@@ -642,6 +693,7 @@ def render():
                     col for col in [
                         "PROCEDURE_CATALOG", "PROCEDURE_SCHEMA", "PROCEDURE_NAME",
                         "PROCEDURE_OWNER", "PROCEDURE_LANGUAGE", "LAST_ALTERED",
+                        "ORCHESTRATION_STATUS", "OWNER_REVIEW", "OPERATING_RISK", "OPERATING_RISK_RANK",
                         "TASK_COUNT", "TASKS", "SUSPENDED_TASKS", "CALL_COUNT",
                         "DOWNSTREAM_QUERY_COUNT", "CLOUD_CREDITS", "LAST_CALL"
                     ] if col in joined.columns
@@ -651,11 +703,12 @@ def render():
                     title="Procedure inventory and task linkage",
                     priority_columns=[
                         "PROCEDURE_CATALOG", "PROCEDURE_SCHEMA", "PROCEDURE_NAME",
+                        "ORCHESTRATION_STATUS", "OWNER_REVIEW", "OPERATING_RISK",
                         "TASK_COUNT", "SUSPENDED_TASKS", "CALL_COUNT",
                         "DOWNSTREAM_QUERY_COUNT", "CLOUD_CREDITS", "LAST_CALL",
                     ],
-                    sort_by=["CLOUD_CREDITS", "DOWNSTREAM_QUERY_COUNT", "CALL_COUNT"],
-                    ascending=[False, False, False],
+                    sort_by=["OPERATING_RISK_RANK", "CLOUD_CREDITS", "DOWNSTREAM_QUERY_COUNT", "CALL_COUNT"],
+                    ascending=[True, False, False, False],
                     raw_label="All procedure inventory rows",
                     max_rows=50,
                 )

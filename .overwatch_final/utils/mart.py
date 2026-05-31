@@ -692,6 +692,71 @@ def build_mart_bill_warehouse_delta_sql(
     """
 
 
+def build_mart_chargeback_sql(
+    days_back: int = 30,
+    company: str = "ALFA",
+    warehouse_contains: str = "",
+    user_contains: str = "",
+    role_contains: str = "",
+    database_contains: str = "",
+) -> str:
+    """Build chargeback detail from the daily chargeback snapshot mart."""
+    table = mart_object_name("FACT_CHARGEBACK_DAILY")
+    company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("ENVIRONMENT", company)
+    wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
+    user_filter = _mart_text_filter("USER_NAME", user_contains)
+    role_filter = _mart_text_filter("ROLE_NAME", role_contains)
+    db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    return f"""
+        SELECT
+            COMPANY,
+            ENVIRONMENT,
+            ENVIRONMENT_ROLLUP,
+            DATABASE_NAME,
+            USER_NAME,
+            ROLE_NAME,
+            WAREHOUSE_NAME,
+            WAREHOUSE_SIZE,
+            SUM(QUERY_COUNT) AS QUERY_COUNT,
+            ROUND(SUM(ALLOCATED_CREDITS), 4) AS TOTAL_CREDITS,
+            ROUND(SUM(EST_COST_USD), 2) AS EST_COST,
+            ALLOCATION_CONFIDENCE,
+            ALLOCATION_BASIS,
+            CHARGEBACK_READY,
+            SCOPE_REVIEW,
+            COST_OWNER,
+            OWNER_SOURCE,
+            OWNER_EVIDENCE,
+            MAX(LOAD_TS) AS MART_LOAD_TS
+        FROM {table}
+        WHERE USAGE_DATE >= DATEADD('DAY', -{int(days_back)}, CURRENT_DATE())
+          {company_filter}
+          {env_filter}
+          {wh_filter}
+          {user_filter}
+          {role_filter}
+          {db_filter}
+        GROUP BY
+            COMPANY,
+            ENVIRONMENT,
+            ENVIRONMENT_ROLLUP,
+            DATABASE_NAME,
+            USER_NAME,
+            ROLE_NAME,
+            WAREHOUSE_NAME,
+            WAREHOUSE_SIZE,
+            ALLOCATION_CONFIDENCE,
+            ALLOCATION_BASIS,
+            CHARGEBACK_READY,
+            SCOPE_REVIEW,
+            COST_OWNER,
+            OWNER_SOURCE,
+            OWNER_EVIDENCE
+        ORDER BY TOTAL_CREDITS DESC, QUERY_COUNT DESC
+    """
+
+
 def build_mart_cost_cockpit_sql(company: str = "ALFA", days: int = 7) -> str:
     """Build the Cost & Contract landing cockpit from hourly warehouse facts."""
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")
@@ -1713,6 +1778,58 @@ def build_mart_task_history_sql(
           {company_filter}
           {db_filter}
         ORDER BY scheduled_time DESC
+        LIMIT {int(limit)}
+    """
+
+
+def build_mart_task_critical_path_sql(
+    days_back: int,
+    company: str = "ALFA",
+    database_contains: str = "",
+    limit: int = 200,
+) -> str:
+    """Build latest persisted task graph critical-path facts."""
+    table = mart_object_name("FACT_TASK_CRITICAL_PATH")
+    company_filter = _mart_company_filter(company).replace("COMPANY", "t.company")
+    db_filter = _mart_database_filter("t.database_name", database_contains, company)
+    return f"""
+        WITH latest AS (
+            SELECT
+                t.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY t.company, t.database_name, t.root_task_name
+                    ORDER BY t.snapshot_ts DESC
+                ) AS rn
+            FROM {table} t
+            WHERE t.snapshot_ts >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
+              {company_filter}
+              {db_filter}
+        )
+        SELECT
+            snapshot_ts,
+            company,
+            environment,
+            database_name,
+            root_task_name,
+            critical_path_state,
+            critical_path_score,
+            task_count,
+            downstream_task_count,
+            suspended_tasks,
+            failures_7d AS failures,
+            runs_7d AS runs,
+            successes_7d AS successes,
+            max_duration_sec,
+            last_run_at,
+            blast_radius,
+            warehouses,
+            procedures,
+            owner_role,
+            approval_path,
+            source_freshness
+        FROM latest
+        WHERE rn = 1
+        ORDER BY critical_path_score DESC, downstream_task_count DESC, max_duration_sec DESC
         LIMIT {int(limit)}
     """
 

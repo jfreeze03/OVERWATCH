@@ -1,18 +1,20 @@
 # sections/warehouse_health.py - Warehouse stats, scaling events, idle detection, spill, heatmap
+from datetime import datetime
+
 import streamlit as st
 import pandas as pd
 from utils.workflows import render_operator_briefing, render_priority_dataframe, render_workflow_selector
 from utils import (
     get_session, format_credits,
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
-    get_active_company, get_global_filter_clause,
+    get_active_company, get_active_environment, get_environment_filter_clause, get_global_filter_clause,
     metric_confidence_label, freshness_note,
     build_metered_credit_cte, make_action_id, upsert_actions,
     run_query, format_snowflake_error, filter_existing_columns, render_optimization_advisor,
     build_mart_warehouse_overview_sql, build_mart_warehouse_scaling_sql,
-    safe_float, safe_int,
+    safe_float, safe_identifier, safe_int, sql_literal,
 )
-from config import THRESHOLDS
+from config import ALERT_DB, ALERT_SCHEMA, THRESHOLDS
 
 
 WAREHOUSE_HEALTH_VIEWS = (
@@ -30,6 +32,54 @@ WAREHOUSE_HEALTH_DETAILS = {
     "Workload Heatmap": "Concurrency by warehouse, day, and hour.",
     "Optimization Advisor": "Actionable sizing, suspend, spill, and reliability recommendations.",
 }
+
+WAREHOUSE_SETTING_REVIEW_TABLE = "OVERWATCH_WAREHOUSE_SETTING_REVIEW"
+
+
+def warehouse_setting_review_fqn(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = WAREHOUSE_SETTING_REVIEW_TABLE,
+) -> str:
+    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
+
+
+def build_warehouse_setting_review_ddl(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = WAREHOUSE_SETTING_REVIEW_TABLE,
+) -> str:
+    fqn = warehouse_setting_review_fqn(db=db, schema=schema, table=table)
+    return f"""CREATE TABLE IF NOT EXISTS {fqn} (
+    SNAPSHOT_ID                  VARCHAR(64),
+    SNAPSHOT_TS                  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    COMPANY                      VARCHAR(100),
+    ENVIRONMENT                  VARCHAR(100),
+    WAREHOUSE_NAME               VARCHAR(300),
+    SEVERITY                     VARCHAR(40),
+    SIGNAL                       VARCHAR(120),
+    OWNER                        VARCHAR(200),
+    ESCALATION_TARGET            VARCHAR(200),
+    OWNER_SOURCE                 VARCHAR(200),
+    APPROVER                     VARCHAR(200),
+    APPROVAL_REQUIRED            VARCHAR(20),
+    ROLLBACK_REQUIRED            VARCHAR(20),
+    SAFE_CHANGE_PATH             VARCHAR(4000),
+    SETTING_CHANGE_CANDIDATE     VARCHAR(4000),
+    CHANGE_RISK                  VARCHAR(2000),
+    POST_CHANGE_VERIFICATION     VARCHAR(2000),
+    PRESSURE_EVIDENCE            VARCHAR(2000),
+    BASELINE_CAPACITY_SCORE      FLOAT,
+    BASELINE_QUEUED_QUERIES      NUMBER,
+    BASELINE_SPILL_QUERIES       NUMBER,
+    BASELINE_HIGH_LATENCY_QUERIES NUMBER,
+    BASELINE_P95_ELAPSED_SEC     FLOAT,
+    BASELINE_METERED_CREDITS     FLOAT,
+    VERIFICATION_QUERY           VARCHAR(8000),
+    GENERATED_REVIEW_SQL         VARCHAR(8000),
+    SAVINGS_VERIFICATION_REQUIRED VARCHAR(20),
+    SOURCE                       VARCHAR(500)
+);"""
 
 
 def _warehouse_capacity_score(
@@ -86,6 +136,338 @@ def _warehouse_capacity_action_for(signal: str) -> tuple[str, str]:
     )
 
 
+def _warehouse_capacity_verification_sql(
+    warehouse_name: str,
+    days: int = 7,
+    environment: str | None = None,
+    company: str | None = None,
+) -> str:
+    """Build read-only post-change evidence for one warehouse and environment scope."""
+    wh = sql_literal(warehouse_name, 300)
+    days = max(1, min(int(days or 7), 30))
+    env_clause = get_environment_filter_clause(
+        "database_name",
+        environment=environment,
+        company=company,
+    )
+    return f"""WITH query_window AS (
+    SELECT
+        warehouse_name,
+        COUNT(*) AS total_queries,
+        SUM(IFF(
+            COALESCE(queued_overload_time, 0)
+            + COALESCE(queued_provisioning_time, 0)
+            + COALESCE(queued_repair_time, 0) > 0,
+            1,
+            0
+        )) AS queued_queries,
+        SUM(IFF(
+            COALESCE(bytes_spilled_to_local_storage, 0)
+            + COALESCE(bytes_spilled_to_remote_storage, 0) > 0,
+            1,
+            0
+        )) AS spill_queries,
+        AVG(total_elapsed_time) / 1000 AS avg_elapsed_sec,
+        APPROX_PERCENTILE(total_elapsed_time / 1000, 0.95) AS p95_elapsed_sec,
+        MAX(start_time) AS latest_query_time
+    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+    WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+      AND warehouse_name = {wh}
+      {env_clause}
+    GROUP BY warehouse_name
+),
+metering_window AS (
+    SELECT
+        warehouse_name,
+        SUM(COALESCE(credits_used_compute, credits_used)) AS metered_credits,
+        MAX(end_time) AS latest_metering_time
+    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+    WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+      AND warehouse_name = {wh}
+    GROUP BY warehouse_name
+)
+SELECT
+    COALESCE(q.warehouse_name, m.warehouse_name) AS warehouse_name,
+    COALESCE(q.total_queries, 0) AS total_queries,
+    COALESCE(q.queued_queries, 0) AS queued_queries,
+    COALESCE(q.spill_queries, 0) AS spill_queries,
+    ROUND(COALESCE(q.avg_elapsed_sec, 0), 2) AS avg_elapsed_sec,
+    ROUND(COALESCE(q.p95_elapsed_sec, 0), 2) AS p95_elapsed_sec,
+    ROUND(COALESCE(m.metered_credits, 0), 4) AS metered_credits,
+    q.latest_query_time,
+    m.latest_metering_time
+FROM query_window q
+FULL OUTER JOIN metering_window m
+  ON m.warehouse_name = q.warehouse_name
+ORDER BY metered_credits DESC
+LIMIT 50"""
+
+
+def _warehouse_owner_context(row: pd.Series | dict) -> dict:
+    wh = str(row.get("WAREHOUSE_NAME") or "").upper()
+    signal = str(row.get("SIGNAL") or "").upper()
+    if "CREDIT" in signal:
+        return {
+            "owner": "DBA / FinOps Owner",
+            "escalation": "FinOps Lead / DBA Lead",
+            "source": "Warehouse signal owner map",
+        }
+    if any(token in wh for token in ("ETL", "LOAD", "TASK", "PIPE", "AIRFLOW", "DBT")):
+        return {
+            "owner": "Data Engineering Owner",
+            "escalation": "Pipeline Owner / DBA On-Call",
+            "source": "Warehouse name owner hint",
+        }
+    if any(token in wh for token in ("BI", "REPORT", "LOOKER", "POWERBI", "TABLEAU")):
+        return {
+            "owner": "BI Platform Owner",
+            "escalation": "BI Product Owner / DBA Lead",
+            "source": "Warehouse name owner hint",
+        }
+    if any(token in wh for token in ("DEV", "SAN", "SIT", "PHX", "SEA")):
+        return {
+            "owner": "Development Platform Owner",
+            "escalation": "DBA Lead",
+            "source": "Warehouse name owner hint",
+        }
+    return {
+        "owner": "Platform DBA",
+        "escalation": "DBA Lead",
+        "source": "Default warehouse owner",
+    }
+
+
+def _warehouse_approval_for(row: pd.Series | dict) -> str:
+    signal = str(row.get("SIGNAL") or "").upper()
+    owner = str(row.get("OWNER") or _warehouse_owner_context(row)["owner"])
+    if "CREDIT" in signal:
+        return "FinOps Lead / Warehouse Owner"
+    if "QUEUE" in signal:
+        return f"{owner} / DBA Lead"
+    if "SPILL" in signal:
+        return f"{owner} / Query Owner"
+    return f"{owner} / DBA Lead"
+
+
+def _warehouse_setting_candidate_for(row: pd.Series) -> dict:
+    """Return the reviewed settings lane for a warehouse capacity exception."""
+    signal = str(row.get("SIGNAL") or "").upper()
+    queued = safe_int(row.get("QUEUED_QUERIES"))
+    spill = safe_int(row.get("SPILL_QUERIES"))
+    high_latency = safe_int(row.get("HIGH_LATENCY_QUERIES"))
+    spike = safe_float(row.get("CREDIT_SPIKE_PCT"))
+    p95 = safe_float(row.get("P95_ELAPSED_SEC"))
+
+    if "QUEUE" in signal:
+        candidate = "Review MAX_CLUSTER_COUNT, SCALING_POLICY, WAREHOUSE_SIZE, and workload routing."
+        safe_path = (
+            "Use Warehouse Settings Manager to load current settings, approve any multi-cluster or size change, "
+            "capture rollback SQL, then verify queue count and p95 latency."
+        )
+        risk = "Scaling can improve concurrency but may multiply credit burn or hide workload design problems."
+    elif "SPILL" in signal:
+        candidate = "Review WAREHOUSE_SIZE only after top spilling queries, clustering, and query shape are inspected."
+        safe_path = (
+            "Use Query Profile evidence before resizing; if a size change is approved, capture rollback SQL and "
+            "verify spill count, p95 latency, and credits after the change."
+        )
+        risk = "Blind resizing can mask inefficient SQL and permanently raise run-rate cost."
+    elif "CREDIT" in signal:
+        candidate = "Review AUTO_SUSPEND, MIN_CLUSTER_COUNT, MAX_CLUSTER_COUNT, QAS, and workload schedule alignment."
+        safe_path = (
+            "Use Warehouse Settings Manager to compare current settings with burn drivers, require owner approval, "
+            "save rollback SQL, then verify credits and query volume after the change."
+        )
+        risk = "Cost controls can affect availability, queueing, or service-level expectations if applied broadly."
+    else:
+        candidate = "Review STATEMENT_TIMEOUT_IN_SECONDS, MAX_CONCURRENCY_LEVEL, WAREHOUSE_SIZE, and workload routing."
+        safe_path = (
+            "Use Warehouse Settings Manager for changed-only SQL, owner approval, rollback SQL, and post-change "
+            "runtime verification."
+        )
+        risk = "Latency changes can shift failures, queueing, or user experience if applied without workload evidence."
+
+    readiness = "Ready for DBA review" if str(row.get("WAREHOUSE_NAME") or "").strip() else "Missing warehouse identity"
+    owner_context = _warehouse_owner_context(row)
+    return {
+        "ADMIN_READINESS": readiness,
+        "OWNER": owner_context["owner"],
+        "ESCALATION_TARGET": owner_context["escalation"],
+        "OWNER_SOURCE": owner_context["source"],
+        "APPROVER": _warehouse_approval_for({**row.to_dict(), **owner_context} if hasattr(row, "to_dict") else row),
+        "SETTING_CHANGE_CANDIDATE": candidate,
+        "APPROVAL_REQUIRED": "Yes",
+        "ROLLBACK_REQUIRED": "Yes",
+        "SAFE_CHANGE_PATH": safe_path,
+        "CHANGE_RISK": risk,
+        "POST_CHANGE_VERIFICATION": (
+            "Compare queued queries, spill queries, p95 latency, and metered credits for the same warehouse/environment "
+            "before closing the action."
+        ),
+        "SAVINGS_VERIFICATION_REQUIRED": "Yes" if "CREDIT" in signal else "No",
+        "PRESSURE_EVIDENCE": (
+            f"queued={queued:,}; spill={spill:,}; high_latency={high_latency:,}; "
+            f"credit_spike={spike:,.1f}%; p95={p95:,.2f}s"
+        ),
+    }
+
+
+def _annotate_warehouse_admin_readiness(exceptions: pd.DataFrame) -> pd.DataFrame:
+    if exceptions is None or exceptions.empty:
+        return pd.DataFrame() if exceptions is None else exceptions
+    rows = []
+    for _, row in exceptions.iterrows():
+        rows.append(_warehouse_setting_candidate_for(row))
+    readiness = pd.DataFrame(rows, index=exceptions.index)
+    annotated = exceptions.copy()
+    for column in readiness.columns:
+        annotated[column] = readiness[column]
+    return annotated
+
+
+def _warehouse_capacity_review_sql(row: pd.Series) -> str:
+    candidate = row.get("SETTING_CHANGE_CANDIDATE") or _warehouse_setting_candidate_for(row)["SETTING_CHANGE_CANDIDATE"]
+    safe_path = row.get("SAFE_CHANGE_PATH") or _warehouse_setting_candidate_for(row)["SAFE_CHANGE_PATH"]
+    verification = row.get("POST_CHANGE_VERIFICATION") or _warehouse_setting_candidate_for(row)["POST_CHANGE_VERIFICATION"]
+    return "\n".join([
+        "-- Reviewed warehouse setting plan required.",
+        "-- Do not execute a warehouse change from this advisory row.",
+        f"-- Candidate: {candidate}",
+        f"-- Safe path: {safe_path}",
+        "-- Route through DBA Tools > Warehouse Settings Manager for changed-only SQL, approval, and rollback.",
+        f"-- Closure evidence: {verification}",
+    ])
+
+
+def _warehouse_setting_review_insert_sql(
+    findings: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    source: str = "",
+    snapshot_id: str = "",
+) -> str:
+    if findings is None or findings.empty:
+        raise ValueError("Warehouse setting review snapshot has no rows to save.")
+    view = _annotate_warehouse_admin_readiness(findings)
+    fqn = warehouse_setting_review_fqn()
+    env_value = str(environment or "").strip() or "ALL"
+    snap = snapshot_id or make_action_id(
+        "Warehouse Setting Review Snapshot",
+        company,
+        f"{env_value}|{datetime.now().strftime('%Y%m%d%H%M%S')}",
+    )
+    selects = []
+    for _, row in view.head(200).iterrows():
+        wh = str(row.get("WAREHOUSE_NAME") or "")
+        verification_sql = _warehouse_capacity_verification_sql(
+            wh,
+            days=7,
+            environment=environment,
+            company=company,
+        )
+        review_sql = _warehouse_capacity_review_sql(row)
+        selects.append(
+            "SELECT "
+            f"{sql_literal(snap, 64)} AS SNAPSHOT_ID, "
+            "CURRENT_TIMESTAMP() AS SNAPSHOT_TS, "
+            f"{sql_literal(company, 100)} AS COMPANY, "
+            f"{sql_literal(env_value, 100)} AS ENVIRONMENT, "
+            f"{sql_literal(wh, 300)} AS WAREHOUSE_NAME, "
+            f"{sql_literal(row.get('SEVERITY', ''), 40)} AS SEVERITY, "
+            f"{sql_literal(row.get('SIGNAL', ''), 120)} AS SIGNAL, "
+            f"{sql_literal(row.get('OWNER', ''), 200)} AS OWNER, "
+            f"{sql_literal(row.get('ESCALATION_TARGET', ''), 200)} AS ESCALATION_TARGET, "
+            f"{sql_literal(row.get('OWNER_SOURCE', ''), 200)} AS OWNER_SOURCE, "
+            f"{sql_literal(row.get('APPROVER', ''), 200)} AS APPROVER, "
+            f"{sql_literal(row.get('APPROVAL_REQUIRED', ''), 20)} AS APPROVAL_REQUIRED, "
+            f"{sql_literal(row.get('ROLLBACK_REQUIRED', ''), 20)} AS ROLLBACK_REQUIRED, "
+            f"{sql_literal(row.get('SAFE_CHANGE_PATH', ''), 4000)} AS SAFE_CHANGE_PATH, "
+            f"{sql_literal(row.get('SETTING_CHANGE_CANDIDATE', ''), 4000)} AS SETTING_CHANGE_CANDIDATE, "
+            f"{sql_literal(row.get('CHANGE_RISK', ''), 2000)} AS CHANGE_RISK, "
+            f"{sql_literal(row.get('POST_CHANGE_VERIFICATION', ''), 2000)} AS POST_CHANGE_VERIFICATION, "
+            f"{sql_literal(row.get('PRESSURE_EVIDENCE', ''), 2000)} AS PRESSURE_EVIDENCE, "
+            f"{safe_float(row.get('CAPACITY_SCORE'))}::FLOAT AS BASELINE_CAPACITY_SCORE, "
+            f"{safe_int(row.get('QUEUED_QUERIES'))}::NUMBER AS BASELINE_QUEUED_QUERIES, "
+            f"{safe_int(row.get('SPILL_QUERIES'))}::NUMBER AS BASELINE_SPILL_QUERIES, "
+            f"{safe_int(row.get('HIGH_LATENCY_QUERIES'))}::NUMBER AS BASELINE_HIGH_LATENCY_QUERIES, "
+            f"{safe_float(row.get('P95_ELAPSED_SEC'))}::FLOAT AS BASELINE_P95_ELAPSED_SEC, "
+            f"{safe_float(row.get('METERED_CREDITS'))}::FLOAT AS BASELINE_METERED_CREDITS, "
+            f"{sql_literal(verification_sql, 8000)} AS VERIFICATION_QUERY, "
+            f"{sql_literal(review_sql, 8000)} AS GENERATED_REVIEW_SQL, "
+            f"{sql_literal(row.get('SAVINGS_VERIFICATION_REQUIRED', ''), 20)} AS SAVINGS_VERIFICATION_REQUIRED, "
+            f"{sql_literal(source, 500)} AS SOURCE"
+        )
+    return f"""
+INSERT INTO {fqn} (
+    SNAPSHOT_ID, SNAPSHOT_TS, COMPANY, ENVIRONMENT, WAREHOUSE_NAME, SEVERITY,
+    SIGNAL, OWNER, ESCALATION_TARGET, OWNER_SOURCE, APPROVER, APPROVAL_REQUIRED,
+    ROLLBACK_REQUIRED, SAFE_CHANGE_PATH, SETTING_CHANGE_CANDIDATE, CHANGE_RISK,
+    POST_CHANGE_VERIFICATION, PRESSURE_EVIDENCE, BASELINE_CAPACITY_SCORE,
+    BASELINE_QUEUED_QUERIES, BASELINE_SPILL_QUERIES, BASELINE_HIGH_LATENCY_QUERIES,
+    BASELINE_P95_ELAPSED_SEC, BASELINE_METERED_CREDITS, VERIFICATION_QUERY,
+    GENERATED_REVIEW_SQL, SAVINGS_VERIFICATION_REQUIRED, SOURCE
+)
+{" UNION ALL ".join(selects)}""".strip()
+
+
+def _warehouse_setting_review_history_sql(days: int, company: str, environment: str = "ALL") -> str:
+    fqn = warehouse_setting_review_fqn()
+    where = [f"SNAPSHOT_TS >= DATEADD('day', -{max(1, int(days or 14))}, CURRENT_TIMESTAMP())"]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_value = str(environment or "").strip()
+    if env_value and env_value.upper() != "ALL":
+        where.append(f"ENVIRONMENT = {sql_literal(env_value, 100)}")
+    where_clause = " AND ".join(where)
+    return f"""
+SELECT
+    WAREHOUSE_NAME,
+    OWNER,
+    ESCALATION_TARGET,
+    COUNT(*) AS REVIEW_ROWS,
+    COUNT_IF(APPROVAL_REQUIRED = 'Yes') AS APPROVAL_REQUIRED_ROWS,
+    COUNT_IF(ROLLBACK_REQUIRED = 'Yes') AS ROLLBACK_REQUIRED_ROWS,
+    COUNT_IF(SAVINGS_VERIFICATION_REQUIRED = 'Yes') AS SAVINGS_VERIFICATION_ROWS,
+    MIN(BASELINE_CAPACITY_SCORE) AS WORST_BASELINE_CAPACITY_SCORE,
+    MAX(BASELINE_QUEUED_QUERIES) AS MAX_BASELINE_QUEUED_QUERIES,
+    MAX(BASELINE_SPILL_QUERIES) AS MAX_BASELINE_SPILL_QUERIES,
+    MAX(BASELINE_METERED_CREDITS) AS MAX_BASELINE_METERED_CREDITS,
+    MAX(SNAPSHOT_TS) AS LAST_SNAPSHOT_TS,
+    MAX_BY(SIGNAL, SNAPSHOT_TS) AS LAST_SIGNAL,
+    MAX_BY(SETTING_CHANGE_CANDIDATE, SNAPSHOT_TS) AS LAST_SETTING_CHANGE_CANDIDATE
+FROM {fqn}
+WHERE {where_clause}
+GROUP BY WAREHOUSE_NAME, OWNER, ESCALATION_TARGET
+ORDER BY
+    WORST_BASELINE_CAPACITY_SCORE ASC,
+    APPROVAL_REQUIRED_ROWS DESC,
+    LAST_SNAPSHOT_TS DESC
+LIMIT 100""".strip()
+
+
+def _save_warehouse_setting_review_snapshot(
+    session,
+    findings: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    source: str = "",
+) -> None:
+    try:
+        session.sql(build_warehouse_setting_review_ddl()).collect()
+        session.sql(_warehouse_setting_review_insert_sql(
+            findings,
+            company=company,
+            environment=environment,
+            source=source,
+        )).collect()
+        st.success("Saved the Warehouse Setting Review snapshot for approval and verification tracking.")
+    except Exception as exc:
+        st.error(f"Could not save Warehouse Setting Review snapshot: {format_snowflake_error(exc)}")
+        st.info("Deploy the warehouse setting review table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
 def _warehouse_capacity_workflow_for(signal: str) -> str:
     signal = str(signal or "").upper()
     if "SPILL" in signal:
@@ -101,7 +483,7 @@ def _warehouse_capacity_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
     if exceptions is None or exceptions.empty:
         return pd.DataFrame()
     rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
-    view = exceptions.copy()
+    view = _annotate_warehouse_admin_readiness(exceptions)
     view["_RANK"] = view.get("SEVERITY", pd.Series(dtype=str)).map(rank).fillna(4)
     view["NEXT_ACTION"] = view.get("SIGNAL", pd.Series(dtype=str)).apply(lambda value: _warehouse_capacity_action_for(value)[0])
     view["NEXT_WORKFLOW"] = view.get("SIGNAL", pd.Series(dtype=str)).apply(_warehouse_capacity_workflow_for)
@@ -164,6 +546,7 @@ def _build_warehouse_capacity_markdown(
     summary_row: dict,
     exceptions: pd.DataFrame,
 ) -> str:
+    exceptions_view = _annotate_warehouse_admin_readiness(exceptions)
     lines = [
         f"# OVERWATCH Warehouse Capacity Brief - {company}",
         "",
@@ -187,14 +570,22 @@ def _build_warehouse_capacity_markdown(
     if exceptions is None or exceptions.empty:
         lines.append("- No warehouse capacity exceptions found for the selected scope.")
     else:
-        for _, row in exceptions.head(10).iterrows():
+        for _, row in exceptions_view.head(10).iterrows():
             lines.append(
                 "- "
                 f"{row.get('SEVERITY', 'Watch')} | {row.get('SIGNAL', 'Unknown')} | "
                 f"{row.get('WAREHOUSE_NAME', '')} | score {safe_float(row.get('CAPACITY_SCORE')):,.1f} | "
-                f"{safe_float(row.get('METERED_CREDITS')):,.2f} credits"
+                f"{safe_float(row.get('METERED_CREDITS')):,.2f} credits | "
+                f"{row.get('SETTING_CHANGE_CANDIDATE', 'Review warehouse settings')}"
             )
     lines.extend([
+        "",
+        "## Settings Change Readiness",
+        (
+            "- Warehouse Health findings are not direct change orders. Route setting changes through "
+            "DBA Tools > Warehouse Settings Manager so current values, owner approval, rollback SQL, "
+            "and post-change verification are captured."
+        ),
         "",
         "## Evidence Limits",
         "- ACCOUNT_USAGE can lag; Live Monitor should be used for current in-flight warehouse pressure.",
@@ -403,15 +794,24 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
     if exceptions is None or exceptions.empty:
         return 0
     company = get_active_company()
+    environment = get_active_environment()
+    exceptions = _annotate_warehouse_admin_readiness(exceptions)
     actions = []
     for _, row in exceptions.head(50).iterrows():
         wh = str(row.get("WAREHOUSE_NAME", ""))
         signal = str(row.get("SIGNAL", "Warehouse Pressure"))
-        action_text, generated_sql = _warehouse_capacity_action_for(signal)
+        action_text, _ = _warehouse_capacity_action_for(signal)
+        verification_sql = _warehouse_capacity_verification_sql(
+            wh,
+            days=7,
+            environment=environment,
+            company=company,
+        )
         finding = (
             f"{signal} on {wh}: capacity score={safe_float(row.get('CAPACITY_SCORE')):,.1f}, "
             f"queued={safe_int(row.get('QUEUED_QUERIES')):,}, spill={safe_int(row.get('SPILL_QUERIES')):,}, "
-            f"credits={safe_float(row.get('METERED_CREDITS')):,.2f}."
+            f"credits={safe_float(row.get('METERED_CREDITS')):,.2f}; "
+            f"{row.get('PRESSURE_EVIDENCE', '')}."
         )
         actions.append({
             "Action ID": make_action_id("Warehouse Capacity", wh, finding),
@@ -420,18 +820,40 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
             "Severity": row.get("SEVERITY", "High"),
             "Entity Type": "Warehouse",
             "Entity": wh,
-            "Owner": "DBA",
+            "Owner": row.get("OWNER", "Platform DBA"),
             "Finding": finding,
-            "Action": action_text,
+            "Action": (
+                f"{action_text} {row.get('SAFE_CHANGE_PATH', '')} "
+                f"Owner approval from {row.get('APPROVER', 'Warehouse Owner / DBA Lead')} is required. "
+                "Actual warehouse changes must be generated from the Warehouse Settings Manager."
+            ),
             "Estimated Monthly Savings": 0,
-            "Generated SQL Fix": generated_sql,
-            "Proof Query": "Review QUERY_HISTORY and WAREHOUSE_METERING_HISTORY for this warehouse and period.",
+            "Generated SQL Fix": _warehouse_capacity_review_sql(row),
+            "Proof Query": verification_sql,
+            "Verification Status": "Pending",
+            "Verification Query": verification_sql,
+            "Approver": row.get("APPROVER", "Warehouse Owner / DBA Lead"),
+            "Owner Approval Status": "Requested",
+            "Owner Approval Note": (
+                f"{row.get('CHANGE_RISK', '')} "
+                f"Escalation: {row.get('ESCALATION_TARGET', 'DBA Lead')}. "
+                f"Rollback required: {row.get('ROLLBACK_REQUIRED', 'Yes')}; "
+                f"savings verification required: {row.get('SAVINGS_VERIFICATION_REQUIRED', 'No')}."
+            ),
+            "Recovery Evidence": (
+                f"Baseline: {row.get('PRESSURE_EVIDENCE', '')}. "
+                f"Closure requires post-change verification: {row.get('POST_CHANGE_VERIFICATION', '')}"
+            ),
+            "Baseline Value": safe_float(row.get("CAPACITY_SCORE")),
+            "Current Value": safe_float(row.get("CAPACITY_SCORE")),
+            "Measured Delta": 0,
             "Company": company,
+            "Environment": environment,
         })
     return upsert_actions(session, actions)
 
 
-def _render_capacity_brief(session, company: str) -> None:
+def _render_capacity_brief(session, company: str, environment: str) -> None:
     with st.expander("Capacity Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
         days = st.slider("Capacity lookback (days)", 1, 30, 7, key="wh_capacity_days")
         if st.button("Load Capacity Brief", key="wh_capacity_load"):
@@ -440,13 +862,13 @@ def _render_capacity_brief(session, company: str) -> None:
                     summary_sql, exceptions_sql = _build_warehouse_capacity_sql(session, days)
                     summary = run_query(
                         summary_sql,
-                        ttl_key=f"wh_capacity_summary_{company}_{days}",
+                        ttl_key=f"wh_capacity_summary_{company}_{environment}_{days}",
                         tier="historical",
                         section="Warehouse Health",
                     )
                     exceptions = run_query(
                         exceptions_sql,
-                        ttl_key=f"wh_capacity_exceptions_{company}_{days}",
+                        ttl_key=f"wh_capacity_exceptions_{company}_{environment}_{days}",
                         tier="historical",
                         section="Warehouse Health",
                     )
@@ -458,6 +880,7 @@ def _render_capacity_brief(session, company: str) -> None:
                     }
                     st.session_state["wh_capacity_meta"] = {
                         "company": company,
+                        "environment": environment,
                         "days": int(days),
                     }
                 except Exception as e:
@@ -470,9 +893,11 @@ def _render_capacity_brief(session, company: str) -> None:
             summary is None
             or summary.empty
             or meta.get("company") != company
+            or meta.get("environment") != environment
             or meta.get("days") != int(days)
         ):
             return
+        exceptions = _warehouse_capacity_priority_view(exceptions)
         row = summary.iloc[0].to_dict()
         score = _warehouse_capacity_score(
             queued_queries=safe_int(row.get("QUEUED_QUERIES")),
@@ -506,12 +931,62 @@ def _render_capacity_brief(session, company: str) -> None:
                 priority_columns=[
                     "SEVERITY", "SIGNAL", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
                     "QUEUED_QUERIES", "SPILL_QUERIES", "HIGH_LATENCY_QUERIES",
-                    "METERED_CREDITS", "NEXT_ACTION",
+                    "METERED_CREDITS", "ADMIN_READINESS", "SETTING_CHANGE_CANDIDATE",
+                    "OWNER", "ESCALATION_TARGET", "APPROVER",
+                    "APPROVAL_REQUIRED", "ROLLBACK_REQUIRED", "SAVINGS_VERIFICATION_REQUIRED", "NEXT_ACTION",
                 ],
                 sort_by=["QUEUED_QUERIES", "SPILL_QUERIES", "HIGH_LATENCY_QUERIES", "METERED_CREDITS"],
                 ascending=[False, False, False, False],
                 raw_label="All warehouse capacity exceptions",
             )
+            save_col, setup_col = st.columns([1, 2])
+            with save_col:
+                if st.button("Save Setting Review Snapshot", key="wh_setting_review_snapshot", use_container_width=True):
+                    _save_warehouse_setting_review_snapshot(
+                        session,
+                        exceptions,
+                        company=company,
+                        environment=environment,
+                        source="Warehouse Health Capacity Brief",
+                    )
+            with setup_col:
+                st.caption(
+                    "Snapshot stores owner approval path, rollback requirement, baseline pressure, and post-change verification SQL."
+                )
+            with st.expander("Warehouse Setting Review Trend", expanded=False):
+                trend_days = st.slider("Setting review trend days", 7, 180, 30, key="wh_setting_review_trend_days")
+                if st.button("Load Setting Review Trend", key="wh_setting_review_trend_load"):
+                    try:
+                        trend_sql = _warehouse_setting_review_history_sql(trend_days, company, environment)
+                        trend = run_query(
+                            trend_sql,
+                            ttl_key=f"wh_setting_review_trend_{company}_{environment}_{trend_days}",
+                            tier="standard",
+                            section="Warehouse Health",
+                        )
+                        st.session_state["wh_setting_review_trend"] = trend
+                        st.session_state["wh_setting_review_trend_sql"] = trend_sql
+                    except Exception as exc:
+                        st.error(f"Unable to load warehouse setting review trend: {format_snowflake_error(exc)}")
+                trend = st.session_state.get("wh_setting_review_trend")
+                if trend is not None and not trend.empty:
+                    render_priority_dataframe(
+                        trend,
+                        title="Persistent warehouse setting review backlog",
+                        priority_columns=[
+                            "WAREHOUSE_NAME", "OWNER", "ESCALATION_TARGET", "REVIEW_ROWS",
+                            "APPROVAL_REQUIRED_ROWS", "ROLLBACK_REQUIRED_ROWS",
+                            "SAVINGS_VERIFICATION_ROWS", "WORST_BASELINE_CAPACITY_SCORE",
+                            "MAX_BASELINE_QUEUED_QUERIES", "MAX_BASELINE_SPILL_QUERIES",
+                            "LAST_SIGNAL", "LAST_SETTING_CHANGE_CANDIDATE",
+                        ],
+                        sort_by=["WORST_BASELINE_CAPACITY_SCORE", "APPROVAL_REQUIRED_ROWS", "LAST_SNAPSHOT_TS"],
+                        ascending=[True, False, False],
+                        raw_label="All persisted warehouse setting reviews",
+                        height=260,
+                    )
+                with st.expander("Warehouse setting review setup SQL", expanded=False):
+                    st.code(build_warehouse_setting_review_ddl(), language="sql")
             if st.button("Save Capacity Findings to Action Queue", key="wh_capacity_queue"):
                 try:
                     saved = _queue_capacity_findings(session, exceptions)
@@ -579,6 +1054,7 @@ def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     company = get_active_company()
+    environment = get_active_environment()
     global_warehouse = str(st.session_state.get("global_warehouse", "") or "").strip()
     global_user = str(st.session_state.get("global_user", "") or "").strip()
     global_role = str(st.session_state.get("global_role", "") or "").strip()
@@ -660,7 +1136,7 @@ def render():
         ],
         columns=4,
     )
-    _render_capacity_brief(session, company)
+    _render_capacity_brief(session, company, environment)
     if st.session_state.get("exceptions_only_mode"):
         st.stop()
 

@@ -174,7 +174,9 @@ with st.sidebar:
             elif "COST" in upper or "SPEND" in upper:
                 target = SECTION_BY_TITLE["Cost & Contract"]
                 st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
-            elif "ALERT" in upper or "RECOMMEND" in upper or "ACTION" in upper:
+            elif "ALERT" in upper or "INCIDENT" in upper:
+                target = SECTION_BY_TITLE["Alert Center"]
+            elif "RECOMMEND" in upper or "ACTION" in upper:
                 target = SECTION_BY_TITLE["Cost & Contract"]
                 st.session_state["cost_contract_workflow"] = "Recommendations and action queue"
             elif "VALUE" in upper or "ROI" in upper or "SAVING" in upper:

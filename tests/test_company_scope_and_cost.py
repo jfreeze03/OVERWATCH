@@ -25,6 +25,7 @@ from utils.metadata import (  # noqa: E402
     scope_metadata_df,
     scope_warehouse_names,
 )
+from sections.cost_center import _annotate_allocation_quality  # noqa: E402
 
 
 class CompanyScopeAndCostTests(unittest.TestCase):
@@ -74,6 +75,74 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn("EXACT_METERED_CREDITS", sql)
         self.assertIn("ALLOCATED_QUERY_CREDITS", sql)
         self.assertIn("VARIANCE_CREDITS", sql)
+
+    def test_cost_allocation_quality_rolls_up_alfa_prod_and_dev(self):
+        rows = pd.DataFrame(
+            [
+                {"COMPANY": "ALFA", "ENVIRONMENT": "PROD", "DATABASE_NAME": "ALFA_EDW_PROD"},
+                {"COMPANY": "ALFA", "ENVIRONMENT": "ALFA_EDW_DEV", "DATABASE_NAME": "ALFA_EDW_DEV"},
+                {"COMPANY": "ALFA", "ENVIRONMENT": "ALFA_EDW_SAN", "DATABASE_NAME": "ALFA_EDW_SAN"},
+            ]
+        )
+
+        annotated = _annotate_allocation_quality(rows)
+
+        self.assertEqual(annotated["ENVIRONMENT_ROLLUP"].tolist(), ["PROD", "DEV_ALL", "DEV_ALL"])
+        self.assertEqual(set(annotated["ALLOCATION_CONFIDENCE"]), {"Allocated / Estimated"})
+        self.assertEqual(set(annotated["CHARGEBACK_READY"]), {"Directional"})
+
+    def test_cost_allocation_quality_promotes_owner_tagged_chargeback_rows(self):
+        rows = pd.DataFrame(
+            [
+                {
+                    "COMPANY": "ALFA",
+                    "ENVIRONMENT": "PROD",
+                    "DATABASE_NAME": "ALFA_EDW_PROD",
+                    "COST_OWNER": "FINANCE_ANALYTICS",
+                    "OWNER_SOURCE": "DATABASE_TAG:COST_OWNER",
+                    "OWNER_EVIDENCE": "Database owner tag COST_OWNER=FINANCE_ANALYTICS.",
+                },
+                {
+                    "COMPANY": "ALFA",
+                    "ENVIRONMENT": "ALFA_EDW_DEV",
+                    "DATABASE_NAME": "ALFA_EDW_DEV",
+                    "COST_OWNER": "EDW_DEV_TEAM",
+                    "OWNER_SOURCE": "WAREHOUSE_TAG:COST_OWNER",
+                    "OWNER_EVIDENCE": "Warehouse owner tag COST_OWNER=EDW_DEV_TEAM.",
+                },
+            ]
+        )
+
+        annotated = _annotate_allocation_quality(rows)
+
+        self.assertEqual(annotated["ENVIRONMENT_ROLLUP"].tolist(), ["PROD", "DEV_ALL"])
+        self.assertEqual(set(annotated["CHARGEBACK_READY"]), {"Ready"})
+        self.assertIn("owner tag proof is attached", annotated.iloc[0]["ALLOCATION_BASIS"])
+        self.assertEqual(annotated.iloc[0]["COST_OWNER"], "FINANCE_ANALYTICS")
+        self.assertEqual(annotated.iloc[1]["OWNER_SOURCE"], "WAREHOUSE_TAG:COST_OWNER")
+
+    def test_cost_allocation_quality_rejects_missing_database_chargeback(self):
+        rows = pd.DataFrame(
+            [
+                {
+                    "COMPANY": "ALFA",
+                    "ENVIRONMENT": "No Database Context",
+                    "DATABASE_NAME": "NO_DATABASE_CONTEXT",
+                },
+                {
+                    "COMPANY": "ALFA",
+                    "ENVIRONMENT": "Other / Shared",
+                    "DATABASE_NAME": "SHARED_ANALYTICS",
+                },
+            ]
+        )
+
+        annotated = _annotate_allocation_quality(rows)
+
+        self.assertEqual(annotated.iloc[0]["ALLOCATION_CONFIDENCE"], "Account-wide / Shared")
+        self.assertEqual(annotated.iloc[0]["CHARGEBACK_READY"], "No")
+        self.assertEqual(annotated.iloc[1]["ALLOCATION_CONFIDENCE"], "Shared / Needs Owner")
+        self.assertEqual(annotated.iloc[1]["CHARGEBACK_READY"], "Review")
 
     def test_unclassified_asset_sql_uses_explicit_allowlists(self):
         sql = build_unclassified_assets_sql(30).upper()

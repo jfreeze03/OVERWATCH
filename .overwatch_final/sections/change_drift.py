@@ -1,19 +1,25 @@
 # sections/change_drift.py - Consolidated change, drift, and lineage workflow
 from __future__ import annotations
 
+from datetime import datetime
+import re
+
 import pandas as pd
 import streamlit as st
 
+from config import ALERT_DB, ALERT_SCHEMA
 from sections import dba_tools, object_change_monitor, stored_proc_tracker
 from utils import (
     filter_existing_columns,
     format_snowflake_error,
     get_active_company,
+    get_active_environment,
     get_global_filter_clause,
     get_session,
     mart_object_name,
     make_action_id,
     run_query,
+    safe_identifier,
     safe_float,
     safe_int,
     sql_literal,
@@ -42,6 +48,163 @@ WORKFLOW_DETAILS = {
     "Data movement and replication": "Replication, dynamic tables, Snowpipe, data loading, and freshness risk.",
     "Controlled DBA actions": "Guarded admin actions, generated SQL, and operational controls.",
 }
+
+CHANGE_CONTROL_EVIDENCE_TABLE = "OVERWATCH_CHANGE_CONTROL_EVIDENCE"
+CHANGE_TICKET_PATTERN = re.compile(
+    r"\b(?:CHG|CHANGE|INC|REQ|RFC|JIRA)[-_]?\d+\b|\b[A-Z][A-Z0-9]+-\d+\b",
+    re.IGNORECASE,
+)
+
+
+def change_control_evidence_fqn(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHANGE_CONTROL_EVIDENCE_TABLE,
+) -> str:
+    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
+
+
+def build_change_control_evidence_ddl(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHANGE_CONTROL_EVIDENCE_TABLE,
+) -> str:
+    fqn = change_control_evidence_fqn(db=db, schema=schema, table=table)
+    return f"""CREATE TABLE IF NOT EXISTS {fqn} (
+    SNAPSHOT_ID              VARCHAR(64),
+    SNAPSHOT_TS              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    COMPANY                  VARCHAR(100),
+    ENVIRONMENT              VARCHAR(100),
+    FINDING_TYPE             VARCHAR(120),
+    SEVERITY                 VARCHAR(40),
+    ENTITY                   VARCHAR(500),
+    USER_NAME                VARCHAR(300),
+    ROLE_NAME                VARCHAR(300),
+    QUERY_ID                 VARCHAR(200),
+    QUERY_TAG                VARCHAR(1000),
+    LAST_SEEN                VARCHAR(100),
+    CHANGE_CONTROL_STATE     VARCHAR(120),
+    CONTROL_GAP              VARCHAR(1000),
+    CHANGE_TICKET_ID         VARCHAR(200),
+    CHANGE_TICKET_STATE      VARCHAR(120),
+    IAC_RECONCILIATION_STATE VARCHAR(160),
+    EXECUTION_AUDIT_STATE    VARCHAR(160),
+    OWNER                    VARCHAR(200),
+    ESCALATION_TARGET        VARCHAR(200),
+    OWNER_SOURCE             VARCHAR(200),
+    APPROVER                 VARCHAR(200),
+    OWNER_APPROVAL_STATUS    VARCHAR(40),
+    APPROVAL_REQUIRED        VARCHAR(20),
+    TICKET_REQUIRED          VARCHAR(20),
+    BLAST_RADIUS_REQUIRED    VARCHAR(20),
+    PROOF_REQUIRED           VARCHAR(2000),
+    VERIFICATION_QUERY       VARCHAR(8000),
+    BLAST_RADIUS_QUERY       VARCHAR(8000),
+    SOURCE                   VARCHAR(500)
+);"""
+
+
+def _change_ticket_id(row: pd.Series | dict) -> str:
+    haystack = " ".join([
+        str(row.get("QUERY_TAG") or ""),
+        str(row.get("QUERY_TEXT") or ""),
+        str(row.get("PROOF_QUERY") or ""),
+    ])
+    match = CHANGE_TICKET_PATTERN.search(haystack)
+    return match.group(0).upper() if match else ""
+
+
+def _change_owner_context(row: pd.Series | dict) -> dict:
+    finding = str(row.get("FINDING_TYPE") or "").lower()
+    entity = str(row.get("ENTITY") or "").upper()
+    if "policy" in finding or "tag" in finding or "masking" in finding:
+        return {
+            "owner": "Security / Data Governance",
+            "escalation": "Security Owner / Data Governance Lead",
+            "source": "Change owner map",
+        }
+    if "grant" in finding or "role" in finding or "owner" in finding:
+        return {
+            "owner": "Security Owner",
+            "escalation": "DBA Lead / Security Owner",
+            "source": "Change owner map",
+        }
+    if "drop" in finding or "destructive" in finding:
+        return {
+            "owner": "DBA Change Owner",
+            "escalation": "Data Owner / DBA Lead",
+            "source": "Change owner map",
+        }
+    if "drift" in finding:
+        return {
+            "owner": "Platform Owner",
+            "escalation": "DBA Lead / Platform Owner",
+            "source": "Change owner map",
+        }
+    if entity.startswith("ALFA_EDW_PROD"):
+        return {
+            "owner": "Production Data Owner",
+            "escalation": "DBA Lead",
+            "source": "Environment owner hint",
+        }
+    if entity.startswith("ALFA_EDW_"):
+        return {
+            "owner": "Development Data Owner",
+            "escalation": "DBA Lead",
+            "source": "Environment owner hint",
+        }
+    return {
+        "owner": "DBA Change Owner",
+        "escalation": "DBA Lead",
+        "source": "Default change owner",
+    }
+
+
+def _change_iac_state(row: pd.Series | dict) -> str:
+    query_tag = str(row.get("QUERY_TAG") or "").lower()
+    finding = str(row.get("FINDING_TYPE") or "").lower()
+    if any(token in query_tag for token in ("terraform", "iac", "liquibase", "flyway", "dbt", "deploy", "release")):
+        return "Codified / deployment-tagged"
+    if "drift" in finding:
+        return "Reconcile IaC"
+    severity = str(row.get("SEVERITY") or "").upper()
+    if severity in {"CRITICAL", "HIGH"}:
+        return "Manual change - IaC proof required"
+    return "Review source-control state"
+
+
+def _change_execution_audit_state(row: pd.Series | dict) -> str:
+    query_id = str(row.get("QUERY_ID") or "").strip()
+    last_seen = str(row.get("LAST_SEEN") or "").strip()
+    if query_id and last_seen:
+        return "Query ID and timestamp captured"
+    if query_id:
+        return "Query ID captured"
+    return "Missing query_id proof"
+
+
+def _enrich_change_control_evidence(readiness: pd.DataFrame) -> pd.DataFrame:
+    if readiness is None or readiness.empty:
+        return readiness
+    view = readiness.copy()
+    contexts = view.apply(_change_owner_context, axis=1)
+    view["OWNER"] = contexts.apply(lambda item: item["owner"])
+    view["ESCALATION_TARGET"] = contexts.apply(lambda item: item["escalation"])
+    view["OWNER_SOURCE"] = contexts.apply(lambda item: item["source"])
+    view["CHANGE_TICKET_ID"] = view.apply(_change_ticket_id, axis=1)
+    view["CHANGE_TICKET_STATE"] = view["CHANGE_TICKET_ID"].apply(
+        lambda value: "Ticket detected" if str(value or "").strip() else "Missing ticket evidence"
+    )
+    view["IAC_RECONCILIATION_STATE"] = view.apply(_change_iac_state, axis=1)
+    view["EXECUTION_AUDIT_STATE"] = view.apply(_change_execution_audit_state, axis=1)
+
+    missing_ticket = view["CHANGE_TICKET_ID"].fillna("").astype(str).str.strip().eq("")
+    missing_iac = view["IAC_RECONCILIATION_STATE"].fillna("").astype(str).str.contains("required|reconcile", case=False, na=False)
+    missing_query = view["EXECUTION_AUDIT_STATE"].fillna("").astype(str).str.contains("missing", case=False, na=False)
+    view.loc[missing_ticket, "CONTROL_GAP"] = "Missing change ticket evidence"
+    view.loc[missing_iac, "CONTROL_GAP"] = "Missing IaC reconciliation evidence"
+    view.loc[missing_query, "CONTROL_GAP"] = "Missing query_id proof"
+    return view
 
 
 def _change_drift_score(
@@ -111,6 +274,232 @@ def _change_action_for(finding_type: str) -> tuple[str, str, str]:
         "Review change for approval, ownership, dependency impact, and drift risk.",
         "-- Proof: QUERY_HISTORY change statement.",
     )
+
+
+def _change_approval_for(finding_type: str) -> tuple[str, str, str]:
+    value = str(finding_type or "").lower()
+    if "drop" in value or "destructive" in value:
+        return (
+            "Requested",
+            "DBA Lead / Data Owner",
+            "Destructive DDL requires data-owner approval, dependency review, and recovery evidence.",
+        )
+    if "policy" in value or "tag" in value or "masking" in value:
+        return (
+            "Requested",
+            "Security Owner / Data Governance",
+            "Policy, tag, masking, and row-access changes require security/governance approval.",
+        )
+    if "grant" in value or "role" in value or "owner" in value:
+        return (
+            "Requested",
+            "Security Owner",
+            "Grant, revoke, role, and ownership changes require access-request approval evidence.",
+        )
+    if "drift" in value:
+        return (
+            "Requested",
+            "DBA Lead / Platform Owner",
+            "Manual drift must be tied to a change ticket, codified in IaC, or reverted through deployment.",
+        )
+    return (
+        "Requested",
+        "Data Owner",
+        "Object changes require requester, approver, and change-ticket evidence before closure.",
+    )
+
+
+def _change_verification_sql(query_id: object) -> str:
+    query_id_text = str(query_id or "").strip()
+    if not query_id_text:
+        return """
+SELECT
+    query_id,
+    start_time,
+    user_name,
+    role_name,
+    database_name,
+    schema_name,
+    query_type,
+    query_tag,
+    query_text
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE 1 = 0
+LIMIT 50""".strip()
+    return f"""
+SELECT
+    query_id,
+    start_time,
+    user_name,
+    role_name,
+    database_name,
+    schema_name,
+    query_type,
+    query_tag,
+    query_text
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE query_id = {sql_literal(query_id_text, 200)}
+LIMIT 50""".strip()
+
+
+def _change_blast_radius_sql(entity: object) -> str:
+    """Build read-only object dependency evidence for a changed object or schema."""
+    raw = str(entity or "").strip().strip('"')
+    pieces = [piece.strip().strip('"') for piece in raw.split(".") if piece.strip()]
+    if not pieces or raw.lower() in {"unknown", "snowflake account"}:
+        return """
+SELECT
+    referenced_database,
+    referenced_schema,
+    referenced_object_name,
+    referencing_database,
+    referencing_schema,
+    referencing_object_name,
+    dependency_type
+FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
+WHERE 1 = 0
+LIMIT 100""".strip()
+
+    predicates = []
+    if len(pieces) >= 3:
+        db_name, schema_name, object_name = pieces[0], pieces[1], pieces[2]
+        predicates.append(
+            "("
+            f"UPPER(referenced_database) = UPPER({sql_literal(db_name, 300)}) "
+            f"AND UPPER(referenced_schema) = UPPER({sql_literal(schema_name, 300)}) "
+            f"AND UPPER(referenced_object_name) = UPPER({sql_literal(object_name, 500)})"
+            ")"
+        )
+        predicates.append(
+            "("
+            f"UPPER(referencing_database) = UPPER({sql_literal(db_name, 300)}) "
+            f"AND UPPER(referencing_schema) = UPPER({sql_literal(schema_name, 300)}) "
+            f"AND UPPER(referencing_object_name) = UPPER({sql_literal(object_name, 500)})"
+            ")"
+        )
+    elif len(pieces) == 2:
+        db_name, schema_name = pieces[0], pieces[1]
+        predicates.append(
+            "("
+            f"UPPER(referenced_database) = UPPER({sql_literal(db_name, 300)}) "
+            f"AND UPPER(referenced_schema) = UPPER({sql_literal(schema_name, 300)})"
+            ")"
+        )
+        predicates.append(
+            "("
+            f"UPPER(referencing_database) = UPPER({sql_literal(db_name, 300)}) "
+            f"AND UPPER(referencing_schema) = UPPER({sql_literal(schema_name, 300)})"
+            ")"
+        )
+    else:
+        db_name = pieces[0]
+        predicates.append(f"UPPER(referenced_database) = UPPER({sql_literal(db_name, 300)})")
+        predicates.append(f"UPPER(referencing_database) = UPPER({sql_literal(db_name, 300)})")
+
+    where_clause = " OR\n      ".join(predicates)
+    return f"""
+SELECT
+    referenced_database,
+    referenced_schema,
+    referenced_object_name,
+    referenced_object_domain,
+    referencing_database,
+    referencing_schema,
+    referencing_object_name,
+    referencing_object_domain,
+    dependency_type
+FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
+WHERE {where_clause}
+ORDER BY referenced_database, referenced_schema, referenced_object_name, referencing_database, referencing_schema, referencing_object_name
+LIMIT 100""".strip()
+
+
+def _build_change_control_readiness(exceptions: pd.DataFrame) -> pd.DataFrame:
+    """Add ticket, approval, and proof requirements before queueing changes."""
+    if exceptions is None or exceptions.empty:
+        return pd.DataFrame()
+    view = _change_priority_view(exceptions).copy()
+    approval_rows = view.get("FINDING_TYPE", pd.Series(dtype=str)).apply(_change_approval_for)
+    view["APPROVAL_REQUIRED"] = "Yes"
+    view["OWNER_APPROVAL_STATUS"] = approval_rows.apply(lambda item: item[0])
+    view["APPROVER"] = approval_rows.apply(lambda item: item[1])
+    view["OWNER_APPROVAL_NOTE"] = approval_rows.apply(lambda item: item[2])
+    view["TICKET_REQUIRED"] = "Yes"
+    view["VERIFICATION_QUERY"] = view.get("QUERY_ID", pd.Series([""] * len(view), index=view.index)).apply(_change_verification_sql)
+    view["BLAST_RADIUS_QUERY"] = view.get("ENTITY", pd.Series([""] * len(view), index=view.index)).apply(_change_blast_radius_sql)
+    view["BLAST_RADIUS_REQUIRED"] = "Yes"
+    view["PROOF_REQUIRED"] = "query_id, approver, change ticket, dependency/blast-radius note"
+
+    query_missing = view.get("QUERY_ID", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.strip().eq("")
+    high_risk = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper().isin(["CRITICAL", "HIGH"])
+    finding = view.get("FINDING_TYPE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.lower()
+
+    view["CONTROL_GAP"] = "Needs approver, change ticket, and blast-radius note"
+    view.loc[query_missing, "CONTROL_GAP"] = "Missing query_id proof"
+    view["CHANGE_CONTROL_STATE"] = "Validate Approval"
+    view.loc[finding.str.contains("drift", na=False), "CHANGE_CONTROL_STATE"] = "Reconcile IaC"
+    view.loc[high_risk, "CHANGE_CONTROL_STATE"] = "Approval Required"
+    view.loc[query_missing, "CHANGE_CONTROL_STATE"] = "Proof Missing"
+    return _enrich_change_control_evidence(view)
+
+
+def _change_action_payload(row: pd.Series | dict, company: str, environment: str = "") -> dict:
+    finding_type = str(row.get("FINDING_TYPE") or "Change")
+    entity = str(row.get("ENTITY") or row.get("QUERY_ID") or "Snowflake account")
+    user_name = str(row.get("USER_NAME") or "unknown")
+    severity = str(row.get("SEVERITY") or "Medium")
+    query_id = str(row.get("QUERY_ID") or "").strip()
+    entity_type, action, generated_sql = _change_action_for(finding_type)
+    approval_status, approver, approval_note = _change_approval_for(finding_type)
+    owner_context = _change_owner_context(row)
+    ticket_id = _change_ticket_id(row)
+    ticket_state = "ticket detected" if ticket_id else "missing ticket evidence"
+    iac_state = _change_iac_state(row)
+    audit_state = _change_execution_audit_state(row)
+    verification_query = _change_verification_sql(query_id)
+    blast_radius_query = _change_blast_radius_sql(entity)
+    finding = f"{finding_type} by {user_name} on {entity}"
+    generated_review = "\n".join([
+        "-- Review-only change-control record. Do not execute state-changing SQL from this queue row.",
+        generated_sql,
+        f"-- Required proof: query_id={query_id or 'missing'}, approver, change ticket, and dependency/blast-radius note.",
+        f"-- Ticket evidence: {ticket_id or 'missing'} ({ticket_state}).",
+        f"-- IaC/source-control state: {iac_state}.",
+        f"-- Execution audit state: {audit_state}.",
+        "-- Read-only blast-radius check to run before approval:",
+        blast_radius_query,
+    ])
+    return {
+        "Action ID": make_action_id("Change Drift", entity, f"{finding}|{query_id}"),
+        "Source": "Change & Drift - Brief",
+        "Severity": severity,
+        "Category": "Change Control",
+        "Entity Type": entity_type,
+        "Entity": entity,
+        "Owner": owner_context["owner"],
+        "Finding": finding,
+        "Action": action,
+        "Estimated Monthly Savings": 0.0,
+        "Generated SQL Fix": generated_review,
+        "Proof Query": verification_query,
+        "Verification Query": verification_query,
+        "Verification Status": "Pending",
+        "Approver": approver,
+        "Owner Approval Status": approval_status,
+        "Owner Approval Note": (
+            f"{approval_note} Ticket={ticket_id or 'missing'}; "
+            f"IaC={iac_state}; escalation={owner_context['escalation']}."
+        ),
+        "Recovery Evidence": (
+            f"Run blast-radius check before closure:\n{blast_radius_query}\n\n"
+            f"Ticket evidence: {ticket_id or 'missing'}\n"
+            f"IaC/source-control evidence: {iac_state}\n"
+            f"Execution audit: {audit_state}"
+        ),
+        "Company": company,
+        "Environment": environment,
+        "Ticket ID": ticket_id,
+    }
 
 
 def _change_workflow_for(row: pd.Series) -> str:
@@ -436,40 +825,143 @@ def _queue_change_exceptions(session, exceptions: pd.DataFrame) -> None:
         st.info("No change/drift exceptions to queue.")
         return
     company = get_active_company()
+    environment = get_active_environment()
     actions = []
     for _, row in exceptions.head(100).iterrows():
-        finding_type = str(row.get("FINDING_TYPE") or "Change")
-        entity = str(row.get("ENTITY") or row.get("QUERY_ID") or "Snowflake account")
-        user_name = str(row.get("USER_NAME") or "unknown")
-        severity = str(row.get("SEVERITY") or "Medium")
-        entity_type, action, generated_sql = _change_action_for(finding_type)
-        finding = f"{finding_type} by {user_name} on {entity}"
-        actions.append({
-            "Action ID": make_action_id("Change Drift", entity, f"{finding}|{row.get('QUERY_ID', '')}"),
-            "Source": "Change & Drift - Brief",
-            "Severity": severity,
-            "Category": "Governance",
-            "Entity Type": entity_type,
-            "Entity": entity,
-            "Owner": "DBA",
-            "Finding": finding,
-            "Action": action,
-            "Estimated Monthly Savings": 0.0,
-            "Generated SQL Fix": generated_sql,
-            "Proof Query": str(row.get("PROOF_QUERY") or f"QUERY_HISTORY query_id = '{row.get('QUERY_ID', '')}'"),
-            "Company": company,
-        })
+        actions.append(_change_action_payload(row, company=company, environment=environment))
     try:
         saved = upsert_actions(session, actions)
-        st.success(f"Saved {saved} change/drift exceptions to the action queue.")
+        st.success(f"Saved {saved} change/drift exceptions to the action queue with approval and verification fields.")
     except Exception as e:
         st.error(f"Could not save change/drift exceptions: {format_snowflake_error(e)}")
         st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
+def _change_control_evidence_insert_sql(
+    readiness: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    source: str = "",
+    snapshot_id: str = "",
+) -> str:
+    if readiness is None or readiness.empty:
+        raise ValueError("Change-control evidence snapshot has no rows to save.")
+    view = _enrich_change_control_evidence(readiness)
+    fqn = change_control_evidence_fqn()
+    env_value = str(environment or "").strip() or "ALL"
+    snap = snapshot_id or make_action_id(
+        "Change Control Evidence Snapshot",
+        company,
+        f"{env_value}|{datetime.now().strftime('%Y%m%d%H%M%S')}",
+    )
+    selects = []
+    for _, row in view.head(200).iterrows():
+        selects.append(
+            "SELECT "
+            f"{sql_literal(snap, 64)} AS SNAPSHOT_ID, "
+            "CURRENT_TIMESTAMP() AS SNAPSHOT_TS, "
+            f"{sql_literal(company, 100)} AS COMPANY, "
+            f"{sql_literal(env_value, 100)} AS ENVIRONMENT, "
+            f"{sql_literal(row.get('FINDING_TYPE', ''), 120)} AS FINDING_TYPE, "
+            f"{sql_literal(row.get('SEVERITY', ''), 40)} AS SEVERITY, "
+            f"{sql_literal(row.get('ENTITY', ''), 500)} AS ENTITY, "
+            f"{sql_literal(row.get('USER_NAME', ''), 300)} AS USER_NAME, "
+            f"{sql_literal(row.get('ROLE_NAME', ''), 300)} AS ROLE_NAME, "
+            f"{sql_literal(row.get('QUERY_ID', ''), 200)} AS QUERY_ID, "
+            f"{sql_literal(row.get('QUERY_TAG', ''), 1000)} AS QUERY_TAG, "
+            f"{sql_literal(row.get('LAST_SEEN', ''), 100)} AS LAST_SEEN, "
+            f"{sql_literal(row.get('CHANGE_CONTROL_STATE', ''), 120)} AS CHANGE_CONTROL_STATE, "
+            f"{sql_literal(row.get('CONTROL_GAP', ''), 1000)} AS CONTROL_GAP, "
+            f"{sql_literal(row.get('CHANGE_TICKET_ID', ''), 200)} AS CHANGE_TICKET_ID, "
+            f"{sql_literal(row.get('CHANGE_TICKET_STATE', ''), 120)} AS CHANGE_TICKET_STATE, "
+            f"{sql_literal(row.get('IAC_RECONCILIATION_STATE', ''), 160)} AS IAC_RECONCILIATION_STATE, "
+            f"{sql_literal(row.get('EXECUTION_AUDIT_STATE', ''), 160)} AS EXECUTION_AUDIT_STATE, "
+            f"{sql_literal(row.get('OWNER', ''), 200)} AS OWNER, "
+            f"{sql_literal(row.get('ESCALATION_TARGET', ''), 200)} AS ESCALATION_TARGET, "
+            f"{sql_literal(row.get('OWNER_SOURCE', ''), 200)} AS OWNER_SOURCE, "
+            f"{sql_literal(row.get('APPROVER', ''), 200)} AS APPROVER, "
+            f"{sql_literal(row.get('OWNER_APPROVAL_STATUS', ''), 40)} AS OWNER_APPROVAL_STATUS, "
+            f"{sql_literal(row.get('APPROVAL_REQUIRED', ''), 20)} AS APPROVAL_REQUIRED, "
+            f"{sql_literal(row.get('TICKET_REQUIRED', ''), 20)} AS TICKET_REQUIRED, "
+            f"{sql_literal(row.get('BLAST_RADIUS_REQUIRED', ''), 20)} AS BLAST_RADIUS_REQUIRED, "
+            f"{sql_literal(row.get('PROOF_REQUIRED', ''), 2000)} AS PROOF_REQUIRED, "
+            f"{sql_literal(row.get('VERIFICATION_QUERY', ''), 8000)} AS VERIFICATION_QUERY, "
+            f"{sql_literal(row.get('BLAST_RADIUS_QUERY', ''), 8000)} AS BLAST_RADIUS_QUERY, "
+            f"{sql_literal(source, 500)} AS SOURCE"
+        )
+    return f"""
+INSERT INTO {fqn} (
+    SNAPSHOT_ID, SNAPSHOT_TS, COMPANY, ENVIRONMENT, FINDING_TYPE, SEVERITY,
+    ENTITY, USER_NAME, ROLE_NAME, QUERY_ID, QUERY_TAG, LAST_SEEN,
+    CHANGE_CONTROL_STATE, CONTROL_GAP, CHANGE_TICKET_ID, CHANGE_TICKET_STATE,
+    IAC_RECONCILIATION_STATE, EXECUTION_AUDIT_STATE, OWNER, ESCALATION_TARGET,
+    OWNER_SOURCE, APPROVER, OWNER_APPROVAL_STATUS, APPROVAL_REQUIRED,
+    TICKET_REQUIRED, BLAST_RADIUS_REQUIRED, PROOF_REQUIRED, VERIFICATION_QUERY,
+    BLAST_RADIUS_QUERY, SOURCE
+)
+{" UNION ALL ".join(selects)}""".strip()
+
+
+def _change_control_evidence_history_sql(days: int, company: str, environment: str = "ALL") -> str:
+    fqn = change_control_evidence_fqn()
+    where = [f"SNAPSHOT_TS >= DATEADD('day', -{max(1, int(days or 14))}, CURRENT_TIMESTAMP())"]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_value = str(environment or "").strip()
+    if env_value and env_value.upper() != "ALL":
+        where.append(f"ENVIRONMENT = {sql_literal(env_value, 100)}")
+    where_clause = " AND ".join(where)
+    return f"""
+SELECT
+    FINDING_TYPE,
+    SEVERITY,
+    OWNER,
+    ESCALATION_TARGET,
+    COUNT(*) AS EVIDENCE_ROWS,
+    COUNT_IF(CHANGE_TICKET_STATE ILIKE 'Missing%') AS MISSING_TICKET_ROWS,
+    COUNT_IF(IAC_RECONCILIATION_STATE ILIKE '%required%' OR IAC_RECONCILIATION_STATE ILIKE '%Reconcile%') AS IAC_GAP_ROWS,
+    COUNT_IF(EXECUTION_AUDIT_STATE ILIKE 'Missing%') AS MISSING_QUERY_ID_ROWS,
+    MAX(SNAPSHOT_TS) AS LAST_SNAPSHOT_TS,
+    MAX_BY(CHANGE_CONTROL_STATE, SNAPSHOT_TS) AS LAST_CONTROL_STATE,
+    MAX_BY(CONTROL_GAP, SNAPSHOT_TS) AS LAST_CONTROL_GAP
+FROM {fqn}
+WHERE {where_clause}
+GROUP BY FINDING_TYPE, SEVERITY, OWNER, ESCALATION_TARGET
+ORDER BY
+    MISSING_TICKET_ROWS DESC,
+    IAC_GAP_ROWS DESC,
+    MISSING_QUERY_ID_ROWS DESC,
+    LAST_SNAPSHOT_TS DESC
+LIMIT 100""".strip()
+
+
+def _save_change_control_evidence_snapshot(
+    session,
+    readiness: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    source: str = "",
+) -> None:
+    try:
+        session.sql(build_change_control_evidence_ddl()).collect()
+        session.sql(_change_control_evidence_insert_sql(
+            readiness,
+            company=company,
+            environment=environment,
+            source=source,
+        )).collect()
+        st.success("Saved the Change Control Evidence snapshot for audit and trend tracking.")
+    except Exception as exc:
+        st.error(f"Could not save Change Control Evidence snapshot: {format_snowflake_error(exc)}")
+        st.info("Deploy the change-control evidence table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
 def render() -> None:
     session = get_session()
     company = get_active_company()
+    environment = get_active_environment()
     if st.session_state.get("exceptions_only_mode") and "change_drift_workflow" not in st.session_state:
         st.session_state["change_drift_workflow"] = "Object and access changes"
     st.header("Change & Drift")
@@ -511,12 +1003,12 @@ def render() -> None:
             summary_sql, exceptions_sql = _build_mart_change_drift_sql(days, company)
             st.session_state["change_drift_summary"] = run_query(
                 summary_sql,
-                ttl_key=f"change_drift_summary_mart_{company}_{days}",
+                ttl_key=f"change_drift_summary_mart_{company}_{environment}_{days}",
                 tier="standard",
             )
             st.session_state["change_drift_exceptions"] = run_query(
                 exceptions_sql,
-                ttl_key=f"change_drift_exceptions_mart_{company}_{days}",
+                ttl_key=f"change_drift_exceptions_mart_{company}_{environment}_{days}",
                 tier="standard",
             )
             st.session_state["change_drift_proof_sql"] = {
@@ -525,6 +1017,7 @@ def render() -> None:
             }
             st.session_state["change_drift_meta"] = {
                 "company": company,
+                "environment": environment,
                 "days": days,
                 "source": "OVERWATCH mart: FACT_OBJECT_CHANGE",
             }
@@ -533,12 +1026,12 @@ def render() -> None:
                 summary_sql, exceptions_sql = _build_change_drift_sql(session, days, company)
                 st.session_state["change_drift_summary"] = run_query(
                     summary_sql,
-                    ttl_key=f"change_drift_summary_live_{company}_{days}",
+                    ttl_key=f"change_drift_summary_live_{company}_{environment}_{days}",
                     tier="standard",
                 )
                 st.session_state["change_drift_exceptions"] = run_query(
                     exceptions_sql,
-                    ttl_key=f"change_drift_exceptions_live_{company}_{days}",
+                    ttl_key=f"change_drift_exceptions_live_{company}_{environment}_{days}",
                     tier="standard",
                 )
                 st.session_state["change_drift_proof_sql"] = {
@@ -547,6 +1040,7 @@ def render() -> None:
                 }
                 st.session_state["change_drift_meta"] = {
                     "company": company,
+                    "environment": environment,
                     "days": days,
                     "source": "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
                 }
@@ -563,6 +1057,7 @@ def render() -> None:
         summary is not None
         and not summary.empty
         and meta.get("company") == company
+        and meta.get("environment") == environment
         and meta.get("days") == days
     ):
         row = summary.iloc[0]
@@ -593,17 +1088,79 @@ def render() -> None:
 
         if exceptions is not None and not exceptions.empty:
             st.subheader("Change & Drift Exceptions")
+            priority_exceptions = _change_priority_view(exceptions)
             render_priority_dataframe(
-                exceptions,
+                priority_exceptions,
                 title="Change and drift exceptions to verify first",
                 priority_columns=[
-                    "SEVERITY", "FINDING_TYPE", "OBJECT_NAME", "USER_NAME",
-                    "QUERY_ID", "EVENT_TIMESTAMP", "RISK", "NEXT_ACTION",
+                    "SEVERITY", "FINDING_TYPE", "ENTITY", "USER_NAME",
+                    "ROLE_NAME", "QUERY_ID", "LAST_SEEN", "NEXT_WORKFLOW", "NEXT_ACTION",
                 ],
-                sort_by=["SEVERITY", "EVENT_TIMESTAMP", "OBJECT_NAME"],
+                sort_by=["SEVERITY", "LAST_SEEN", "ENTITY"],
                 ascending=[True, False, True],
                 raw_label="All change and drift exceptions",
             )
+            readiness = _build_change_control_readiness(exceptions)
+            render_priority_dataframe(
+                readiness,
+                title="Change-control readiness before queueing",
+                priority_columns=[
+                    "SEVERITY", "CHANGE_CONTROL_STATE", "FINDING_TYPE", "ENTITY",
+                    "USER_NAME", "QUERY_ID", "APPROVER", "OWNER_APPROVAL_STATUS",
+                    "OWNER", "ESCALATION_TARGET", "CHANGE_TICKET_ID", "CHANGE_TICKET_STATE",
+                    "IAC_RECONCILIATION_STATE", "EXECUTION_AUDIT_STATE", "CONTROL_GAP", "PROOF_REQUIRED",
+                ],
+                sort_by=["SEVERITY", "CHANGE_CONTROL_STATE", "ENTITY"],
+                ascending=[True, True, True],
+                raw_label="All change-control readiness rows",
+                height=260,
+            )
+            save_col, setup_col = st.columns([1, 2])
+            with save_col:
+                if st.button("Save Change Evidence Snapshot", key="change_drift_evidence_snapshot", use_container_width=True):
+                    _save_change_control_evidence_snapshot(
+                        session,
+                        readiness,
+                        company=company,
+                        environment=environment,
+                        source=meta.get("source", ""),
+                    )
+            with setup_col:
+                st.caption(
+                    "Snapshot stores ticket, IaC, owner, approver, query-id, and blast-radius requirements for audit trend review."
+                )
+            with st.expander("Change Control Evidence Trend", expanded=False):
+                trend_days = st.slider("Change evidence trend days", 7, 180, 30, key="change_drift_evidence_trend_days")
+                if st.button("Load Change Evidence Trend", key="change_drift_evidence_trend_load"):
+                    try:
+                        trend_sql = _change_control_evidence_history_sql(trend_days, company, environment)
+                        trend = run_query(
+                            trend_sql,
+                            ttl_key=f"change_drift_evidence_trend_{company}_{environment}_{trend_days}",
+                            tier="standard",
+                            section="Change & Drift",
+                        )
+                        st.session_state["change_drift_evidence_trend"] = trend
+                        st.session_state["change_drift_evidence_trend_sql"] = trend_sql
+                    except Exception as exc:
+                        st.error(f"Unable to load change-control evidence trend: {format_snowflake_error(exc)}")
+                trend = st.session_state.get("change_drift_evidence_trend")
+                if trend is not None and not trend.empty:
+                    render_priority_dataframe(
+                        trend,
+                        title="Persistent change-control evidence gaps",
+                        priority_columns=[
+                            "FINDING_TYPE", "SEVERITY", "OWNER", "ESCALATION_TARGET",
+                            "EVIDENCE_ROWS", "MISSING_TICKET_ROWS", "IAC_GAP_ROWS",
+                            "MISSING_QUERY_ID_ROWS", "LAST_CONTROL_STATE", "LAST_CONTROL_GAP",
+                        ],
+                        sort_by=["MISSING_TICKET_ROWS", "IAC_GAP_ROWS", "LAST_SNAPSHOT_TS"],
+                        ascending=[False, False, False],
+                        raw_label="All persisted change-control evidence",
+                        height=260,
+                    )
+                with st.expander("Change-control evidence setup SQL", expanded=False):
+                    st.code(build_change_control_evidence_ddl(), language="sql")
             if st.button("Save Change Exceptions to Action Queue", key="change_drift_queue"):
                 _queue_change_exceptions(session, exceptions)
         elif exceptions is not None:

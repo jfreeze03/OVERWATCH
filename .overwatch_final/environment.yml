@@ -18,4 +18,4 @@ dependencies:
   - snowflake-snowpark-python
   - pyarrow                  # Required for Arrow-based DataFrame interchange
   - python-dateutil           # Date parsing helpers
-  - requests                  # Teams webhook (send_teams_alert)
+  - requests                  # Future webhook support; current alerts are email-first

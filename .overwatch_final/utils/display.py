@@ -113,7 +113,7 @@ def clear_all_cache():
     """
     transient_prefixes = (
         "_data_", "_ts_", "df_", "_refresh_salt_", "_sec_",
-        "_overwatch_query_", "cortex_", "cost_contract_", "cc_", "ah_", "cm_", "ds_", "dba_",
+        "_overwatch_query_", "alert_center_", "cortex_", "cost_contract_", "cc_", "ah_", "cm_", "ds_", "dba_",
         "_overwatch_available_columns", "_overwatch_unavailable_column_views",
         "_overwatch_column_probe", "_overwatch_qh_detail_exprs",
         "lm_", "mc_", "ocm_", "opt_", "qa_", "qs_", "rec_", "sec_", "spcs_",

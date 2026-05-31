@@ -46,13 +46,14 @@ scores should not be inflated until the missing control-plane evidence exists.
 
 | Section | Score | Raw Score | Label | Main Score Cap Drivers |
 | --- | ---: | ---: | --- | --- |
-| DBA Control Room | 84.6 | 84.6 | Operational | Admin safety/audit, governance/ownership |
-| Workload Operations | 87.0 | 87.0 | Operational | None below hard-cap threshold; still below 95 on mart depth and control excellence |
-| Warehouse Health | 79.9 | 79.9 | Pilot | Weak control component, data correctness, admin safety/audit, governance/ownership |
-| Cost & Contract | 86.0 | 86.0 | Operational | Data correctness, admin safety/audit |
-| Security Posture | 80.3 | 80.3 | Operational | Data correctness, admin safety/audit, governance/ownership |
-| Change & Drift | 76.1 | 76.1 | Pilot | Weak control component, data correctness, admin safety/audit, governance/ownership |
-| Account Health | 69.0 | 69.0 | Not Ready | Weak control component, data correctness, admin safety/audit, governance/ownership |
+| DBA Control Room | 86.9 | 86.9 | Operational | Admin safety/audit, governance/ownership |
+| Alert Center | 91.8 | 91.8 | Near Target | Still below 95 on approved Snowflake email integration, owner on-call mapping, and delivery evidence replay |
+| Workload Operations | 93.2 | 93.2 | Near Target | None below hard-cap threshold; still below 95 on owner/on-call enrichment and approved recovery execution audit |
+| Warehouse Health | 85.3 | 85.3 | Operational | Admin safety/audit |
+| Cost & Contract | 91.2 | 91.2 | Near Target | Still below 95 on verified savings closure and optional CMDB owner enrichment |
+| Security Posture | 85.0 | 85.0 | Operational | Data correctness/scope, admin safety/audit |
+| Change & Drift | 85.2 | 85.2 | Operational | Data correctness, admin safety/audit, governance/ownership |
+| Account Health | 80.4 | 80.4 | Operational | Data correctness, admin safety/audit, governance/ownership |
 
 ## What 95 Requires
 
@@ -72,15 +73,36 @@ scores should not be inflated until the missing control-plane evidence exists.
 
 ## Near-Term Priorities
 
-1. Admin Readiness panel.
-2. Warehouse Settings Control Center.
-3. Role & Grant Control Center owner/approval workflow and verification evidence.
-4. Task/Procedure SLA Center polish.
-5. Unified Action Queue upgrade.
+1. Live warehouse-owner tags, approval closure, rollback execution evidence, and verified savings trends.
+2. Live IAM/access-owner inventory, ticket integration, and automated security closure evidence.
+3. Live change-ticket ingestion, source-control comparison, and approval closure automation for Change & Drift.
+4. Named owner/on-call enrichment across action queue rows.
+5. Live service/on-call owner integration and automated closure analytics.
 
 ## Scope Correction
 
-Account Health should be demoted, merged, or re-scoped as a Daily DBA Checklist.
-As a broad health page it is too generic for a 95 DBA control-plane score. It
-becomes valuable only when it routes the DBA to owned actions with proof,
-urgency, and verification.
+Account Health is being re-scoped as a Daily DBA Checklist. It remains below
+95 because broad health and briefing panels are not enough for DBA operation.
+Failed checks now route to owned action-queue items with proof, urgency,
+approval state, verification SQL, owner/escalation hints, and persisted trend
+history. It still needs live service/on-call owner integration and automated
+closure analytics before it can score as a mature DBA operating surface.
+
+Change & Drift now stores change-control evidence snapshots with ticket,
+IaC/source-control, execution-audit, owner, escalation, approver, query-id,
+and blast-radius requirements. It is still capped because ticket and IaC
+status are inferred from query tags/text until integrated with the real
+change-management and source-control systems.
+
+Warehouse Health now stores setting-review snapshots with owner/escalation,
+approval path, rollback requirement, baseline pressure metrics, and
+post-change verification SQL. It remains capped because owner routing is still
+partly name/signal inferred, and rollback/savings closure is not yet proven
+from executed admin audit plus after-state trend evidence.
+
+Security Posture now separates database-context exposure from login-only and
+account-role findings, stores access-review snapshots, keeps login-only rows
+visible under environment filters, and requires owner, approver, ticket,
+review-by, capability, and verification evidence before queue closure. It
+remains capped because owner/approver routing is inferred until connected to
+live IAM/access-owner inventory, ticket workflow, and closure evidence.

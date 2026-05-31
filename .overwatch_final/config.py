@@ -149,6 +149,7 @@ class SectionDefinition:
 # through aliases/workflow hubs, but the app shell exposes only DBA workflows.
 SECTION_DEFINITIONS = (
     SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room"),
+    SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center"),
     SectionDefinition("COMMAND CENTER", "home", "Account Health", "sections.account_health"),
     SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations"),
     SectionDefinition("OPERATIONS", "warehouse", "Warehouse Health", "sections.warehouse_health"),
@@ -180,6 +181,9 @@ SECTION_BY_TITLE.update({
     "AI & Cortex Monitor": SECTION_BY_TITLE["Cost & Contract"],
     "SPCS Tracker": SECTION_BY_TITLE["Cost & Contract"],
     "Usage Overview": SECTION_BY_TITLE["DBA Control Room"],
+    "Alerts": SECTION_BY_TITLE["Alert Center"],
+    "Alert History": SECTION_BY_TITLE["Alert Center"],
+    "Alert Configuration": SECTION_BY_TITLE["Alert Center"],
     "Adoption Analytics": SECTION_BY_TITLE["Security Posture"],
     "Service Health": SECTION_BY_TITLE["DBA Control Room"],
     "Storage Monitor": SECTION_BY_TITLE["Cost & Contract"],
@@ -194,6 +198,10 @@ SECTION_ICONS = {_section.title: _section.icon for _section in SECTION_DEFINITIO
 SECTION_ALIASES = {
     "DBA Control Room": SECTION_BY_TITLE["DBA Control Room"],
     "Command Center": SECTION_BY_TITLE["DBA Control Room"],
+    "Alert Center": SECTION_BY_TITLE["Alert Center"],
+    "Alerts": SECTION_BY_TITLE["Alert Center"],
+    "Alert History": SECTION_BY_TITLE["Alert Center"],
+    "Alert Configuration": SECTION_BY_TITLE["Alert Center"],
     "Account Health": SECTION_BY_TITLE["Account Health"],
     "Query Workbench": SECTION_BY_TITLE["Workload Operations"],
     "Live Monitor": SECTION_BY_TITLE["Workload Operations"],
@@ -231,6 +239,7 @@ def _sections_by_title(*titles: str) -> list[str]:
 ROLE_SECTIONS = {
     "ANALYST": _sections_by_title(
         "DBA Control Room",
+        "Alert Center",
         "Account Health",
         "Workload Operations",
         "Warehouse Health",
@@ -239,6 +248,7 @@ ROLE_SECTIONS = {
     "MANAGER": list(ALL_SECTIONS),
     "REPORT": _sections_by_title(
         "DBA Control Room",
+        "Alert Center",
         "Account Health",
         "Workload Operations",
         "Warehouse Health",
@@ -256,5 +266,7 @@ ETL_AUDIT_TABLE = "ETL_RUN_AUDIT"
 ALERT_DB = "DBA_MAINT_DB"
 ALERT_SCHEMA = "OVERWATCH"
 ALERT_TABLE = "OVERWATCH_ALERTS"
+DEFAULT_ALERT_EMAIL = "jdees@alfains.com"
+ALERT_DELIVERY_METHOD = "EMAIL"
 
 ACTION_QUEUE_TABLE = "OVERWATCH_ACTION_QUEUE"

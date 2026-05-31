@@ -13,7 +13,16 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
-from sections.account_health import _live_query_status_sql  # noqa: E402
+from sections.account_health import (  # noqa: E402
+    _account_health_actionable_checklist,
+    _account_health_checklist_action_payload,
+    _account_health_checklist_history_insert_sql,
+    _account_health_checklist_history_sql,
+    _build_account_health_dba_checklist,
+    _enrich_account_health_checklist_owners,
+    build_account_health_checklist_history_ddl,
+    _live_query_status_sql,
+)
 from sections.adoption_analytics import (  # noqa: E402
     _load_adoption_live,
     _metric as adoption_metric,
@@ -22,11 +31,16 @@ from sections.cost_center import (  # noqa: E402
     _bill_driver_summary,
     _build_bill_waterfall,
     _build_finance_movement_summary,
+    _chargeback_cost_verification_sql,
+    _queue_cost_outliers,
     _warehouse_cost_control_action,
     _service_cost_category,
+    _warehouse_cost_verification_sql,
 )
 from sections.dba_control_room import (  # noqa: E402
     _build_report as _build_dba_control_report,
+    _build_command_queue,
+    _command_queue_summary,
     _build_release_compare_report,
     _compare_release_windows,
     _control_room_snapshot_to_data,
@@ -41,11 +55,19 @@ from sections.cortex_monitor import (  # noqa: E402
     _cortex_cost_score,
 )
 from sections.change_drift import (  # noqa: E402
+    _change_blast_radius_sql,
+    _build_change_control_readiness,
     _build_change_drift_markdown,
     _build_mart_change_drift_sql,
     _change_action_for,
+    _change_action_payload,
+    _change_control_evidence_history_sql,
+    _change_control_evidence_insert_sql,
     _change_drift_rating,
     _change_drift_score,
+    _change_verification_sql,
+    _enrich_change_control_evidence,
+    build_change_control_evidence_ddl,
 )
 from sections.query_workbench import (  # noqa: E402
     _build_mart_root_cause_sql,
@@ -54,12 +76,23 @@ from sections.query_workbench import (  # noqa: E402
     _root_cause_rating,
     _root_cause_score,
 )
+from sections.recommendations import (  # noqa: E402
+    _idle_warehouse_verification_sql,
+    _query_failure_verification_sql,
+    _remote_spill_verification_sql,
+    _task_failure_verification_sql,
+)
 from sections.service_health import _value as service_value  # noqa: E402
 from sections.security_posture import (  # noqa: E402
+    _build_security_access_review,
     _build_security_brief_markdown,
+    _security_access_review_history_sql,
+    _security_access_review_insert_sql,
     _security_action_for,
+    _security_exception_verification_sql,
     _security_rating,
     _security_score,
+    build_security_access_review_ddl,
 )
 from sections.stored_proc_tracker import (  # noqa: E402
     _build_procedure_reliability_action,
@@ -71,12 +104,15 @@ from sections.stored_proc_tracker import (  # noqa: E402
 from sections.task_management import (  # noqa: E402
     _admin_sql_for_graph,
     _admin_sql_for_task,
+    _annotate_task_graph_impact,
     _build_failure_console_frames,
     _build_failure_runbook_markdown,
+    _build_task_critical_path_snapshot,
     _build_task_reliability_action,
     _build_task_graph_dot,
     _build_task_ops_frames,
     _build_task_ops_markdown,
+    _build_task_recovery_sla_frame,
     build_admin_preflight_sql,
     _collect_graph_tasks,
     _extract_object_candidates,
@@ -89,16 +125,46 @@ from sections.task_management import (  # noqa: E402
 )
 from sections.usage_overview import _first_number as usage_first_number  # noqa: E402
 from sections.warehouse_health import (  # noqa: E402
+    _annotate_warehouse_admin_readiness,
     _build_warehouse_capacity_markdown,
+    _queue_capacity_findings,
     _warehouse_capacity_action_for,
     _warehouse_capacity_rating,
     _warehouse_capacity_score,
+    _warehouse_capacity_verification_sql,
+    _warehouse_setting_review_history_sql,
+    _warehouse_setting_review_insert_sql,
+    build_warehouse_setting_review_ddl,
 )
 from utils.cost import build_metered_credit_cte  # noqa: E402
 from utils.company_filter import (  # noqa: E402
     get_environment_case_expr,
     get_environment_filter_clause,
     get_global_filter_clause,
+)
+from utils.action_queue import verification_query_safety_issues  # noqa: E402
+from utils.alerts import (  # noqa: E402
+    annotate_alert_triage_frame,
+    alert_escalation_candidates,
+    alert_history_to_actions,
+    alert_rule_catalog,
+    build_alert_digest_body,
+    build_alert_digest_subject,
+    build_alert_digest_summary,
+    build_alert_delivery_log_ddl,
+    build_alert_delivery_log_insert_sql,
+    build_alert_delivery_mark_sql,
+    build_alert_email_body,
+    build_alert_email_subject,
+    build_alert_escalation_ack_sql,
+    build_alert_rule_audit_ddl,
+    build_alert_rule_audit_insert_sql,
+    build_alert_rule_update_sql,
+    build_alert_status_update_sql,
+    build_alert_task_sql,
+    build_alert_triage_view_sql,
+    build_dashboard_issue_rows,
+    normalize_alert_rule_frame,
 )
 from utils.mart import (  # noqa: E402
     build_mart_account_health_change_sql,
@@ -113,6 +179,7 @@ from utils.mart import (  # noqa: E402
     build_mart_account_health_ytd_credits_sql,
     build_mart_adoption_users_db_sql,
     build_mart_adoption_role_type_sql,
+    build_mart_chargeback_sql,
     build_mart_control_room_failed_logins_sql,
     build_mart_control_room_cost_drivers_sql,
     build_mart_control_room_summary_sql,
@@ -127,6 +194,7 @@ from utils.mart import (  # noqa: E402
     build_mart_recommendation_idle_sql,
     build_mart_recommendation_query_errors_sql,
     build_mart_recommendation_spill_sql,
+    build_mart_task_critical_path_sql,
 )
 
 
@@ -153,6 +221,111 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("QUEUED_PROVISIONING_TIME", sql)
         self.assertIn("QUEUED_REPAIR_TIME", sql)
         self.assertIn("RESUMING_WAREHOUSE", sql)
+
+    def test_account_health_builds_daily_dba_checklist(self):
+        checklist = _build_account_health_dba_checklist(
+            health_score=68,
+            score_label="Degraded",
+            err_count=14,
+            queued=7,
+            pct_delta=45.0,
+            last24=120.0,
+            stor_tb=4.2,
+            failed_tasks=2,
+            object_changes=3,
+            control_mart_used=False,
+            detail_source="Live fallback: ACCOUNT_USAGE",
+        )
+        by_check = {row["CHECK"]: row for _, row in checklist.iterrows()}
+
+        self.assertEqual(by_check["Overall health escalation"]["OWNER"], "DBA Lead")
+        self.assertEqual(by_check["Query failure review"]["SEVERITY"], "High")
+        self.assertEqual(by_check["Task and procedure reliability"]["ROUTE"], "Workload Operations")
+        self.assertIn("query_id", by_check["Change and drift review"]["PROOF_REQUIRED"])
+        self.assertIn("Snapshot timestamp", by_check["Refresh source confidence"]["PROOF_REQUIRED"])
+
+    def test_account_health_checklist_actions_are_queue_ready(self):
+        checklist = _build_account_health_dba_checklist(
+            health_score=68,
+            score_label="Degraded",
+            err_count=14,
+            queued=7,
+            pct_delta=45.0,
+            last24=120.0,
+            stor_tb=4.2,
+            failed_tasks=2,
+            object_changes=3,
+            control_mart_used=False,
+            detail_source="Live fallback: ACCOUNT_USAGE",
+        )
+        actionable = _account_health_actionable_checklist(checklist)
+        by_check = {row["CHECK"]: row for _, row in actionable.iterrows()}
+        action = _account_health_checklist_action_payload(
+            by_check["Query failure review"],
+            company="ALFA",
+            environment="DEV_ALL",
+        )
+
+        self.assertEqual(action["Category"], "Daily DBA Checklist")
+        self.assertEqual(action["Entity"], "Query failure review")
+        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertEqual(action["Approver"], "Application Owner / DBA On-Call")
+        self.assertEqual(action["Environment"], "DEV_ALL")
+        self.assertIn("QUERY_HISTORY", action["Verification Query"])
+        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
+        self.assertNotIn("ALTER", action["Generated SQL Fix"].upper())
+
+    def test_account_health_checklist_has_owner_and_escalation_context(self):
+        checklist = pd.DataFrame([
+            {
+                "CHECK": "Queue pressure review",
+                "STATUS": "Needs DBA",
+                "SEVERITY": "Medium",
+                "ROUTE": "Warehouse Health",
+                "EVIDENCE": "7 queued",
+            }
+        ])
+        enriched = _enrich_account_health_checklist_owners(checklist)
+        row = enriched.iloc[0]
+
+        self.assertEqual(row["OWNER"], "Platform DBA")
+        self.assertEqual(row["ESCALATION_TARGET"], "Warehouse Owner / DBA On-Call")
+        self.assertEqual(row["OWNER_SOURCE"], "Checklist owner map")
+
+    def test_account_health_checklist_history_sql_is_persistable_and_scoped(self):
+        checklist = _build_account_health_dba_checklist(
+            health_score=68,
+            score_label="Degraded",
+            err_count=14,
+            queued=7,
+            pct_delta=45.0,
+            last24=120.0,
+            stor_tb=4.2,
+            failed_tasks=2,
+            object_changes=3,
+            control_mart_used=False,
+            detail_source="Live fallback: ACCOUNT_USAGE",
+        )
+        ddl = build_account_health_checklist_history_ddl().upper()
+        insert_sql = _account_health_checklist_history_insert_sql(
+            checklist,
+            company="ALFA",
+            environment="DEV_ALL",
+            health_score=68,
+            detail_source="Live fallback: ACCOUNT_USAGE",
+            snapshot_id="SNAP1",
+        ).upper()
+        trend_sql = _account_health_checklist_history_sql(30, "ALFA", "DEV_ALL").upper()
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
+        self.assertIn("OVERWATCH_DBA_CHECKLIST_HISTORY", ddl)
+        self.assertIn("ESCALATION_TARGET", ddl)
+        self.assertIn("INSERT INTO", insert_sql)
+        self.assertIn("'SNAP1'", insert_sql)
+        self.assertIn("ACTIONABLE", insert_sql)
+        self.assertIn("MAX_BY(STATUS", trend_sql)
+        self.assertIn("COMPANY = 'ALFA'", trend_sql)
+        self.assertIn("ENVIRONMENT = 'DEV_ALL'", trend_sql)
 
     def test_cortex_ai_functions_sql_is_optional_and_live(self):
         sql = _build_cortex_ai_functions_daily_sql(
@@ -221,6 +394,17 @@ class FormulaRegressionTests(unittest.TestCase):
         task_sql = build_mart_control_room_task_failures_sql(24, "ALFA").upper()
         self.assertIn("FACT_TASK_RUN", task_sql)
         self.assertIn("'FAILED_WITH_ERROR'", task_sql)
+
+    def test_task_critical_path_mart_sql_uses_persisted_graph_facts(self):
+        sql = build_mart_task_critical_path_sql(7, "ALFA", database_contains="EDW").upper()
+
+        self.assertIn("FACT_TASK_CRITICAL_PATH", sql)
+        self.assertIn("CRITICAL_PATH_SCORE", sql)
+        self.assertIn("APPROVAL_PATH", sql)
+        self.assertIn("SOURCE_FRESHNESS", sql)
+        self.assertIn("ROW_NUMBER() OVER", sql)
+        self.assertIn("DATABASE_NAME ILIKE", sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", sql)
 
     def test_account_health_mart_sql_uses_dashboard_facts(self):
         storage_sql = build_mart_account_health_storage_sql("ALFA").upper()
@@ -321,6 +505,46 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("_source_modes", data)
         self.assertTrue(any(row.get("Mode") == "Mart unavailable" for _, row in data["_source_modes"].iterrows()))
         self.assertFalse(any("SNOWFLAKE.ACCOUNT_USAGE" in sql for sql in called_sql))
+
+    def test_dba_control_room_command_queue_flags_control_gaps(self):
+        queue = pd.DataFrame([
+            {
+                "ACTION_ID": "A1",
+                "CATEGORY": "Task & Procedure Reliability",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "ALFA_EDW_DEV.PUBLIC.T_ROOT",
+                "OWNER": "DBA",
+                "STATUS": "New",
+                "DUE_DATE": "2026-05-30",
+                "PROOF_QUERY": "",
+                "TICKET_ID": "",
+                "APPROVER": "",
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "RECOVERY_SLA_STATE": "Open Failure",
+                "RECOVERY_EVIDENCE": "",
+            },
+            {
+                "ACTION_ID": "A2",
+                "CATEGORY": "Cost Control",
+                "SEVERITY": "Medium",
+                "ENTITY_NAME": "WH_LOAD",
+                "OWNER": "FinOps Owner",
+                "STATUS": "Fixed",
+                "DUE_DATE": "2026-05-29",
+                "PROOF_QUERY": "SELECT 1",
+            },
+        ])
+
+        command_queue = _build_command_queue(queue, today="2026-05-31")
+        summary = _command_queue_summary(command_queue)
+
+        self.assertEqual(len(command_queue), 1)
+        self.assertEqual(command_queue.iloc[0]["ROUTE"], "Workload Operations")
+        self.assertEqual(command_queue.iloc[0]["COMMAND_STATE"], "Escalate Overdue")
+        self.assertEqual(summary["open"], 1)
+        self.assertEqual(summary["overdue"], 1)
+        self.assertEqual(summary["owner_gaps"], 1)
+        self.assertGreater(summary["control_gaps"], 0)
 
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []
@@ -463,6 +687,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "FACT_STORAGE_DAILY",
             "DIM_TABLE_SNAPSHOT",
             "FACT_COPY_LOAD_DAILY",
+            "FACT_CHARGEBACK_DAILY",
         ]
         for table_name in env_tables:
             ddl_start = setup_sql.index(f"CREATE TRANSIENT TABLE IF NOT EXISTS {table_name}")
@@ -488,6 +713,24 @@ class FormulaRegressionTests(unittest.TestCase):
         ]
         for expected in expected_loads:
             self.assertIn(expected, setup_sql)
+
+    def test_chargeback_mart_sql_uses_daily_snapshot(self):
+        sql = build_mart_chargeback_sql(
+            30,
+            "ALFA",
+            warehouse_contains="BI",
+            user_contains="ETL",
+            role_contains="ROLE",
+            database_contains="ALFA_EDW_DEV",
+        ).upper()
+
+        self.assertIn("FACT_CHARGEBACK_DAILY", sql)
+        self.assertNotIn("ACCOUNT_USAGE", sql)
+        self.assertIn("WAREHOUSE_NAME ILIKE", sql)
+        self.assertIn("USER_NAME ILIKE", sql)
+        self.assertIn("ROLE_NAME ILIKE", sql)
+        self.assertIn("DATABASE_NAME ILIKE", sql)
+        self.assertIn("ENVIRONMENT_ROLLUP", sql)
 
     def test_mart_procedure_runs_filter_by_environment(self):
         import streamlit as st
@@ -642,6 +885,80 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("MFA Gap", md)
         self.assertIn("Company scope uses user/database naming", md)
 
+    def test_security_access_review_marks_login_only_rows_no_database_context(self):
+        exceptions = pd.DataFrame(
+            {
+                "SEVERITY": ["High", "High", "Low", "Medium"],
+                "FINDING_TYPE": [
+                    "Failed Login",
+                    "MFA Gap",
+                    "Recent Grant",
+                    "Shared Database Exposure",
+                ],
+                "ENTITY": ["ALFA_USER", "ALFA_MFA_GAP", "ETL_RUNNER", "ALFA_EDW_PROD"],
+                "EVENT_COUNT": [12, 1, 4, 1],
+                "DISTINCT_SOURCES": [3, 0, 2, 0],
+                "LAST_SEEN": ["2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04"],
+                "PROOF_QUERY": [
+                    "LOGIN_HISTORY",
+                    "ACCOUNT_USAGE.USERS",
+                    "FACT_GRANT_DAILY",
+                    "ACCOUNT_USAGE.DATABASES",
+                ],
+            }
+        )
+
+        review = _build_security_access_review(exceptions, "PROD")
+        by_type = {row["FINDING_TYPE"]: row for _, row in review.iterrows()}
+
+        for finding in ["Failed Login", "MFA Gap", "Recent Grant"]:
+            self.assertFalse(by_type[finding]["DATABASE_CONTEXT"])
+            self.assertEqual(by_type[finding]["ENVIRONMENT"], "No Database Context")
+        self.assertTrue(by_type["Shared Database Exposure"]["DATABASE_CONTEXT"])
+        self.assertEqual(by_type["Shared Database Exposure"]["ENVIRONMENT"], "PROD")
+        self.assertEqual(by_type["Failed Login"]["OWNER"], "IAM / Security Owner")
+        self.assertEqual(by_type["MFA Gap"]["APPROVER"], "IAM / Security Owner")
+        self.assertIn("MANAGE GRANTS", by_type["Recent Grant"]["ROLE_CAPABILITY_STATE"])
+
+        for _, row in review.iterrows():
+            self.assertEqual(verification_query_safety_issues(row["VERIFICATION_QUERY"]), [])
+            self.assertEqual(verification_query_safety_issues(_security_exception_verification_sql(row)), [])
+
+    def test_security_access_review_snapshot_sql_keeps_login_rows_under_env_filter(self):
+        exceptions = pd.DataFrame(
+            {
+                "SEVERITY": ["High", "Medium"],
+                "FINDING_TYPE": ["Failed Login", "Shared Database Exposure"],
+                "ENTITY": ["ALFA_USER", "ALFA_EDW_PROD"],
+                "EVENT_COUNT": [12, 1],
+                "DISTINCT_SOURCES": [3, 0],
+                "LAST_SEEN": ["2026-05-01", "2026-05-04"],
+                "PROOF_QUERY": ["LOGIN_HISTORY", "ACCOUNT_USAGE.DATABASES"],
+            }
+        )
+        review = _build_security_access_review(exceptions, "PROD")
+        ddl = build_security_access_review_ddl().upper()
+        insert_sql = _security_access_review_insert_sql(
+            review,
+            company="ALFA",
+            environment="PROD",
+            source="unit test",
+            snapshot_id="SECURITYSNAP1",
+        ).upper()
+        history_sql = _security_access_review_history_sql(30, "ALFA", "PROD").upper()
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
+        self.assertIn("OVERWATCH_SECURITY_ACCESS_REVIEW", ddl)
+        self.assertIn("DATABASE_CONTEXT", ddl)
+        self.assertIn("ROLE_CAPABILITY_STATE", ddl)
+        self.assertIn("INSERT INTO", insert_sql)
+        self.assertIn("'SECURITYSNAP1'", insert_sql)
+        self.assertIn("'NO DATABASE CONTEXT'", insert_sql)
+        self.assertIn("IAM / SECURITY OWNER", insert_sql)
+        self.assertIn("LOGIN_HISTORY", insert_sql)
+        self.assertIn("ENVIRONMENT = 'PROD'", history_sql)
+        self.assertIn("DATABASE_CONTEXT = FALSE", history_sql)
+
     def test_change_drift_score_weights_destructive_and_policy_changes(self):
         clean = _change_drift_score(
             object_changes=0,
@@ -669,6 +986,117 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(_change_action_for("Policy or Tag Change")[0], "Policy/Tag")
         self.assertEqual(_change_action_for("Grant or Role Change")[0], "Grant/Role")
         self.assertEqual(_change_action_for("Manual Drift")[0], "Drift")
+
+    def test_change_drift_queue_payload_is_auditable_and_readonly(self):
+        row = {
+            "FINDING_TYPE": "Destructive DDL",
+            "SEVERITY": "High",
+            "ENTITY": "ALFA_EDW_DEV.PUBLIC.POLICY_FACT",
+            "USER_NAME": "DEPLOY_USER",
+            "QUERY_ID": "01abc",
+            "QUERY_TAG": "CHG-12345 terraform release",
+        }
+        action = _change_action_payload(row, company="ALFA", environment="ALFA_EDW_DEV")
+
+        self.assertEqual(action["Category"], "Change Control")
+        self.assertEqual(action["Owner"], "DBA Change Owner")
+        self.assertEqual(action["Ticket ID"], "CHG-12345")
+        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertIn("Data Owner", action["Approver"])
+        self.assertIn("QUERY_HISTORY", action["Verification Query"])
+        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
+        self.assertIn("OBJECT_DEPENDENCIES", action["Recovery Evidence"])
+        self.assertIn("Codified / deployment-tagged", action["Recovery Evidence"])
+        self.assertIn("blast-radius", action["Generated SQL Fix"])
+        self.assertNotIn("DROP TABLE", action["Generated SQL Fix"].upper())
+
+    def test_change_control_readiness_requires_ticket_approval_and_proof(self):
+        exceptions = pd.DataFrame([
+            {
+                "FINDING_TYPE": "Grant or Role Change",
+                "SEVERITY": "Medium",
+                "ENTITY": "ALFA_EDW_DEV.PUBLIC",
+                "USER_NAME": "SECURITY_ADMIN",
+                "QUERY_ID": "01def",
+                "QUERY_TAG": "manual-console-change",
+                "LAST_SEEN": "2026-05-31 10:00:00",
+            }
+        ])
+        readiness = _build_change_control_readiness(exceptions)
+        row = readiness.iloc[0]
+
+        self.assertEqual(row["APPROVAL_REQUIRED"], "Yes")
+        self.assertEqual(row["OWNER_APPROVAL_STATUS"], "Requested")
+        self.assertEqual(row["TICKET_REQUIRED"], "Yes")
+        self.assertEqual(row["BLAST_RADIUS_REQUIRED"], "Yes")
+        self.assertEqual(row["CHANGE_CONTROL_STATE"], "Validate Approval")
+        self.assertEqual(row["CHANGE_TICKET_STATE"], "Missing ticket evidence")
+        self.assertEqual(row["OWNER"], "Security Owner")
+        self.assertIn("Review source-control", row["IAC_RECONCILIATION_STATE"])
+        self.assertIn("Query ID", row["EXECUTION_AUDIT_STATE"])
+        self.assertIn("change ticket", row["PROOF_REQUIRED"])
+        self.assertEqual(verification_query_safety_issues(row["VERIFICATION_QUERY"]), [])
+        self.assertEqual(verification_query_safety_issues(row["BLAST_RADIUS_QUERY"]), [])
+
+    def test_change_control_evidence_snapshot_sql_is_scoped_and_auditable(self):
+        readiness = _enrich_change_control_evidence(pd.DataFrame([
+            {
+                "FINDING_TYPE": "Policy or Tag Change",
+                "SEVERITY": "High",
+                "ENTITY": "ALFA_EDW_PROD.SECURE.CUSTOMER",
+                "USER_NAME": "DEPLOY_USER",
+                "ROLE_NAME": "SECURITYADMIN",
+                "QUERY_ID": "01policy",
+                "QUERY_TAG": "RFC98765 flyway release",
+                "LAST_SEEN": "2026-05-31 09:00:00",
+                "CHANGE_CONTROL_STATE": "Approval Required",
+                "CONTROL_GAP": "Needs approver, change ticket, and blast-radius note",
+                "APPROVER": "Security Owner / Data Governance",
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "APPROVAL_REQUIRED": "Yes",
+                "TICKET_REQUIRED": "Yes",
+                "BLAST_RADIUS_REQUIRED": "Yes",
+                "PROOF_REQUIRED": "query_id, approver, change ticket, dependency/blast-radius note",
+                "VERIFICATION_QUERY": _change_verification_sql("01policy"),
+                "BLAST_RADIUS_QUERY": _change_blast_radius_sql("ALFA_EDW_PROD.SECURE.CUSTOMER"),
+            }
+        ]))
+        ddl = build_change_control_evidence_ddl().upper()
+        insert_sql = _change_control_evidence_insert_sql(
+            readiness,
+            company="ALFA",
+            environment="PROD",
+            source="unit test",
+            snapshot_id="snap1",
+        ).upper()
+        trend_sql = _change_control_evidence_history_sql(30, "ALFA", "PROD").upper()
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
+        self.assertIn("OVERWATCH_CHANGE_CONTROL_EVIDENCE", ddl)
+        self.assertIn("CHANGE_TICKET_ID", ddl)
+        self.assertIn("IAC_RECONCILIATION_STATE", ddl)
+        self.assertIn("INSERT INTO", insert_sql)
+        self.assertIn("'RFC98765'", insert_sql)
+        self.assertIn("'PROD'", insert_sql)
+        self.assertIn("CODIFIED / DEPLOYMENT-TAGGED", insert_sql)
+        self.assertIn("SNAPSHOT_TS >= DATEADD('DAY', -30", trend_sql)
+        self.assertIn("COMPANY = 'ALFA'", trend_sql)
+        self.assertIn("ENVIRONMENT = 'PROD'", trend_sql)
+        self.assertIn("MISSING_TICKET_ROWS", trend_sql)
+
+    def test_change_verification_sql_is_read_only_for_missing_query_id(self):
+        sql = _change_verification_sql("").upper()
+        self.assertIn("WHERE 1 = 0", sql)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_change_blast_radius_sql_scopes_dependencies_by_entity(self):
+        sql = _change_blast_radius_sql("ALFA_EDW_DEV.PUBLIC.POLICY_FACT").upper()
+        self.assertIn("OBJECT_DEPENDENCIES", sql)
+        self.assertIn("REFERENCED_DATABASE", sql)
+        self.assertIn("REFERENCING_DATABASE", sql)
+        self.assertIn("'ALFA_EDW_DEV'", sql)
+        self.assertIn("'POLICY_FACT'", sql)
+        self.assertEqual(verification_query_safety_issues(sql), [])
 
     def test_change_drift_markdown_contains_control_summary(self):
         summary_row = {
@@ -782,6 +1210,47 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("spilling queries", _warehouse_capacity_action_for("Memory Spill")[0])
         self.assertIn("current burn", _warehouse_capacity_action_for("Credit Spike")[0])
 
+    def test_warehouse_capacity_readiness_routes_setting_changes_safely(self):
+        exceptions = pd.DataFrame(
+            {
+                "SEVERITY": ["High"],
+                "SIGNAL": ["Queue Pressure"],
+                "WAREHOUSE_NAME": ["BI_COMPUTE_WH"],
+                "QUEUED_QUERIES": [44],
+                "SPILL_QUERIES": [2],
+                "HIGH_LATENCY_QUERIES": [7],
+                "CREDIT_SPIKE_PCT": [10.0],
+                "P95_ELAPSED_SEC": [64.5],
+            }
+        )
+
+        annotated = _annotate_warehouse_admin_readiness(exceptions)
+
+        self.assertEqual(annotated.iloc[0]["ADMIN_READINESS"], "Ready for DBA review")
+        self.assertEqual(annotated.iloc[0]["APPROVAL_REQUIRED"], "Yes")
+        self.assertEqual(annotated.iloc[0]["ROLLBACK_REQUIRED"], "Yes")
+        self.assertEqual(annotated.iloc[0]["OWNER"], "BI Platform Owner")
+        self.assertIn("DBA Lead", annotated.iloc[0]["APPROVER"])
+        self.assertIn("MAX_CLUSTER_COUNT", annotated.iloc[0]["SETTING_CHANGE_CANDIDATE"])
+        self.assertIn("Warehouse Settings Manager", annotated.iloc[0]["SAFE_CHANGE_PATH"])
+        self.assertEqual(annotated.iloc[0]["SAVINGS_VERIFICATION_REQUIRED"], "No")
+
+    def test_warehouse_capacity_verification_sql_is_read_only_and_environment_scoped(self):
+        sql = _warehouse_capacity_verification_sql(
+            "BI_COMPUTE_WH",
+            days=7,
+            environment="DEV_ALL",
+            company="ALFA",
+        )
+        sql_upper = sql.upper()
+
+        self.assertIn("QUERY_HISTORY", sql_upper)
+        self.assertIn("WAREHOUSE_METERING_HISTORY", sql_upper)
+        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+            self.assertIn(db_name, sql_upper)
+        self.assertNotIn("ALFA_EDW_PROD", sql_upper)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
     def test_warehouse_capacity_brief_markdown_contains_evidence_limits(self):
         summary_row = {
             "WAREHOUSES_ACTIVE": 4,
@@ -809,7 +1278,84 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH Warehouse Capacity Brief - ALFA", md)
         self.assertIn("Capacity score: 80", md)
         self.assertIn("Credit Spike", md)
+        self.assertIn("Settings Change Readiness", md)
+        self.assertIn("Warehouse Settings Manager", md)
         self.assertIn("ACCOUNT_USAGE can lag", md)
+
+    def test_warehouse_setting_review_snapshot_sql_is_persistable_and_scoped(self):
+        findings = pd.DataFrame(
+            {
+                "SEVERITY": ["High"],
+                "SIGNAL": ["Credit Spike"],
+                "WAREHOUSE_NAME": ["BI_COMPUTE_WH"],
+                "CAPACITY_SCORE": [71.0],
+                "QUEUED_QUERIES": [3],
+                "SPILL_QUERIES": [1],
+                "HIGH_LATENCY_QUERIES": [2],
+                "P95_ELAPSED_SEC": [52.5],
+                "METERED_CREDITS": [120.0],
+                "CREDIT_SPIKE_PCT": [88.0],
+            }
+        )
+        ddl = build_warehouse_setting_review_ddl().upper()
+        insert_sql = _warehouse_setting_review_insert_sql(
+            findings,
+            company="ALFA",
+            environment="PROD",
+            source="unit test",
+            snapshot_id="whsnap1",
+        ).upper()
+        trend_sql = _warehouse_setting_review_history_sql(30, "ALFA", "PROD").upper()
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
+        self.assertIn("OVERWATCH_WAREHOUSE_SETTING_REVIEW", ddl)
+        self.assertIn("SAVINGS_VERIFICATION_REQUIRED", ddl)
+        self.assertIn("INSERT INTO", insert_sql)
+        self.assertIn("'BI_COMPUTE_WH'", insert_sql)
+        self.assertIn("'DBA / FINOPS OWNER'", insert_sql)
+        self.assertIn("'PROD'", insert_sql)
+        self.assertIn("WAREHOUSE_METERING_HISTORY", insert_sql)
+        self.assertIn("SNAPSHOT_TS >= DATEADD('DAY', -30", trend_sql)
+        self.assertIn("COMPANY = 'ALFA'", trend_sql)
+        self.assertIn("ENVIRONMENT = 'PROD'", trend_sql)
+        self.assertIn("SAVINGS_VERIFICATION_ROWS", trend_sql)
+
+    def test_warehouse_capacity_queue_actions_have_safe_verification_and_no_direct_alter(self):
+        exceptions = pd.DataFrame(
+            {
+                "SEVERITY": ["Critical"],
+                "SIGNAL": ["Credit Spike"],
+                "WAREHOUSE_NAME": ["BI_COMPUTE_WH"],
+                "CAPACITY_SCORE": [61.0],
+                "QUEUED_QUERIES": [4],
+                "SPILL_QUERIES": [1],
+                "HIGH_LATENCY_QUERIES": [3],
+                "CREDIT_SPIKE_PCT": [82.0],
+                "METERED_CREDITS": [91.5],
+            }
+        )
+        captured = {}
+
+        def fake_upsert(_session, actions):
+            captured["actions"] = actions
+            return len(actions)
+
+        with patch("sections.warehouse_health.get_active_company", return_value="ALFA"), patch(
+            "sections.warehouse_health.get_active_environment", return_value="PROD"
+        ), patch("sections.warehouse_health.upsert_actions", side_effect=fake_upsert):
+            saved = _queue_capacity_findings(object(), exceptions)
+
+        self.assertEqual(saved, 1)
+        action = captured["actions"][0]
+        self.assertEqual(action["Environment"], "PROD")
+        self.assertEqual(action["Owner"], "DBA / FinOps Owner")
+        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertIn("FinOps", action["Approver"])
+        self.assertEqual(action["Verification Status"], "Pending")
+        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
+        self.assertIn("post-change verification", action["Recovery Evidence"])
+        self.assertIn("Warehouse Settings Manager", action["Generated SQL Fix"])
+        self.assertNotIn("ALTER WAREHOUSE", action["Generated SQL Fix"].upper())
 
     def test_cortex_cost_score_tracks_budget_and_user_spikes(self):
         controlled = _cortex_cost_score(
@@ -1073,7 +1619,7 @@ class FormulaRegressionTests(unittest.TestCase):
             {
                 "TASK_NAME": ["ROOT_TASK", "ROOT_TASK"],
                 "SCHEDULED_TIME": pd.to_datetime(["2026-05-01", "2026-05-02"]),
-                "STATE": ["SUCCEEDED", "FAILED"],
+                "STATE": ["SUCCEEDED", "FAILED_WITH_ERROR"],
                 "DURATION_SEC": [100, 400],
                 "QUERY_ID": ["q1", "q2"],
                 "ERROR_MESSAGE": ["", "bad object"],
@@ -1083,9 +1629,18 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["TOTAL_TASKS"], 2)
         self.assertEqual(summary["FAILED_RUNS"], 1)
         self.assertEqual(summary["SUSPENDED_TASKS"], 1)
+        self.assertEqual(summary["BLOCKED_RECOVERIES"], 3)
+        self.assertEqual(summary["OPEN_RECOVERIES"], 1)
+        self.assertEqual(summary["RECOVERY_SLA_BREACHES"], 1)
         self.assertIn("SP_ROOT", str(latest.get("PROCEDURE_NAME", "")))
         self.assertIn("Failed Task Run", set(exceptions["SIGNAL"]))
         self.assertIn("Suspended Task", set(exceptions["SIGNAL"]))
+        self.assertIn("OWNER_APPROVAL_STATE", exceptions.columns)
+        failed = exceptions[exceptions["SIGNAL"] == "Failed Task Run"].iloc[0]
+        self.assertEqual(failed["INCIDENT_PRIORITY"], "P2 - Production Risk")
+        self.assertEqual(failed["DOWNSTREAM_TASK_COUNT"], 1)
+        self.assertEqual(failed["RECOVERY_READINESS"], "Blocked - fix failure root cause first")
+        self.assertEqual(failed["RECOVERY_STATE"], "Open Failure")
 
     def test_task_ops_frames_flag_sla_and_cost_regression(self):
         inventory = pd.DataFrame(
@@ -1129,6 +1684,98 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Long Running / SLA Risk", set(exceptions["SIGNAL"]))
         self.assertIn("Cost Drift / Release Regression", set(exceptions["SIGNAL"]))
         self.assertIn("POLICY_FACT", str(latest.iloc[0]["IMPACT_OBJECTS"]))
+        self.assertIn("INCIDENT_PRIORITY", exceptions.columns)
+
+    def test_task_recovery_sla_frame_tracks_open_and_late_recoveries(self):
+        inventory = pd.DataFrame(
+            {
+                "DATABASE_NAME": ["ALFA_EDW_DEV", "ALFA_EDW_DEV"],
+                "SCHEMA_NAME": ["PUBLIC", "PUBLIC"],
+                "NAME": ["ROOT_TASK", "CHILD_TASK"],
+                "STATE": ["STARTED", "STARTED"],
+                "PREDECESSORS": ["[]", "ALFA_EDW_DEV.PUBLIC.ROOT_TASK"],
+                "DEFINITION": [
+                    "CALL ALFA_EDW_DEV.PUBLIC.SP_ROOT();",
+                    "CALL ALFA_EDW_DEV.PUBLIC.SP_CHILD();",
+                ],
+            }
+        )
+        history = pd.DataFrame(
+            {
+                "TASK_NAME": ["ROOT_TASK", "ROOT_TASK", "CHILD_TASK"],
+                "SCHEDULED_TIME": pd.to_datetime(["2026-05-01 00:00", "2026-05-01 07:00", "2026-05-01 01:00"]),
+                "COMPLETED_TIME": pd.to_datetime(["2026-05-01 00:10", "2026-05-01 07:10", "2026-05-01 01:05"]),
+                "STATE": ["FAILED", "SUCCEEDED", "FAILED_WITH_ERROR"],
+                "DURATION_SEC": [600, 610, 300],
+                "QUERY_ID": ["q_fail_root", "q_success_root", "q_fail_child"],
+                "ERROR_MESSAGE": ["object missing", "", "privilege denied"],
+            }
+        )
+
+        recovery = _build_task_recovery_sla_frame(
+            history,
+            inventory,
+            target_hours=4,
+            current_time=pd.Timestamp("2026-05-01 08:00"),
+        )
+
+        by_task = {row["TASK_NAME"]: row for _, row in recovery.iterrows()}
+        self.assertEqual(by_task["ROOT_TASK"]["RECOVERY_STATE"], "Recovered Late")
+        self.assertAlmostEqual(float(by_task["ROOT_TASK"]["RECOVERY_HOURS"]), 7.0)
+        self.assertEqual(by_task["CHILD_TASK"]["RECOVERY_STATE"], "Open Failure")
+        self.assertEqual(by_task["CHILD_TASK"]["OWNER_APPROVAL_STATE"], "Root-cause owner approval required")
+        self.assertIn("P", by_task["CHILD_TASK"]["INCIDENT_PRIORITY"])
+
+    def test_task_critical_path_snapshot_ranks_graph_blast_radius(self):
+        inventory = pd.DataFrame(
+            {
+                "NAME": ["ROOT_TASK", "CHILD_A", "CHILD_B", "LEAF_TASK"],
+                "STATE": ["STARTED", "STARTED", "SUSPENDED", "STARTED"],
+                "WAREHOUSE": ["WH_A", "WH_A", "WH_B", "WH_B"],
+                "PREDECESSORS": ["[]", "ROOT_TASK", "ROOT_TASK", "CHILD_A"],
+                "DEFINITION": [
+                    "CALL ALFA_EDW_DEV.PUBLIC.SP_ROOT();",
+                    "CALL ALFA_EDW_DEV.PUBLIC.SP_A();",
+                    "CALL ALFA_EDW_DEV.PUBLIC.SP_B();",
+                    "CALL ALFA_EDW_DEV.PUBLIC.SP_LEAF();",
+                ],
+            }
+        )
+        history = pd.DataFrame(
+            {
+                "TASK_NAME": ["ROOT_TASK", "CHILD_A", "CHILD_B"],
+                "SCHEDULED_TIME": pd.to_datetime(["2026-05-01", "2026-05-01", "2026-05-01"]),
+                "STATE": ["SUCCEEDED", "FAILED_WITH_ERROR", "SUCCEEDED"],
+                "DURATION_SEC": [120, 900, 60],
+                "ERROR_MESSAGE": ["", "bad column", ""],
+            }
+        )
+
+        snapshot = _build_task_critical_path_snapshot(inventory, history)
+
+        self.assertFalse(snapshot.empty)
+        self.assertEqual(snapshot.iloc[0]["ROOT_TASK_NAME"], "ROOT_TASK")
+        self.assertEqual(snapshot.iloc[0]["CRITICAL_PATH_STATE"], "Incident Path")
+        self.assertGreaterEqual(int(snapshot.iloc[0]["DOWNSTREAM_TASK_COUNT"]), 3)
+        self.assertIn("SP_ROOT", snapshot.iloc[0]["PROCEDURES"])
+
+    def test_task_graph_impact_counts_downstream_tasks(self):
+        inventory = pd.DataFrame(
+            {
+                "NAME": ["ROOT_TASK", "CHILD_A", "CHILD_B", "LEAF_TASK"],
+                "PREDECESSORS": ["[]", "ROOT_TASK", "ROOT_TASK", "CHILD_A"],
+            }
+        )
+
+        annotated = _annotate_task_graph_impact(inventory)
+        root = annotated[annotated["NAME"] == "ROOT_TASK"].iloc[0]
+        leaf = annotated[annotated["NAME"] == "LEAF_TASK"].iloc[0]
+
+        self.assertEqual(root["DOWNSTREAM_TASK_COUNT"], 3)
+        self.assertEqual(root["GRAPH_ROLE"], "Root")
+        self.assertEqual(root["BLAST_RADIUS"], "Medium")
+        self.assertEqual(leaf["DOWNSTREAM_TASK_COUNT"], 0)
+        self.assertEqual(leaf["GRAPH_ROLE"], "Leaf")
 
     def test_extract_object_candidates_from_visible_sql(self):
         objects = _extract_object_candidates(
@@ -1226,10 +1873,18 @@ class FormulaRegressionTests(unittest.TestCase):
         summary, failures, patterns = _build_failure_console_frames(history, inventory, query_details)
         self.assertEqual(summary["FAILURES"], 1)
         self.assertEqual(summary["TASKS"], 1)
+        self.assertEqual(summary["BLOCKED_RECOVERIES"], 1)
         self.assertEqual(failures.iloc[0]["PROCEDURE_NAME"], "ALFA_EDW_DEV.PUBLIC.SP_LOAD_POLICY")
         self.assertEqual(failures.iloc[0]["FAILURE_CATEGORY"], "Object Dependency / Drift")
+        self.assertEqual(failures.iloc[0]["INCIDENT_PRIORITY"], "P2 - Production Risk")
+        self.assertEqual(failures.iloc[0]["RECOVERY_READINESS"], "Blocked - object dependency fix first")
+        self.assertEqual(failures.iloc[0]["DOWNSTREAM_TASK_COUNT"], 1)
+        self.assertIn("CUSTOMER_ID", failures.iloc[0]["VERIFY_AFTER_FIX"])
         self.assertIn("EXECUTE TASK", failures.iloc[0]["RETRY_SQL"])
         self.assertEqual(patterns.iloc[0]["FAILURE_COUNT"], 1)
+        self.assertEqual(patterns.iloc[0]["TASK_COUNT"], 1)
+        self.assertIn("RECOVERY_READINESS", patterns.columns)
+        self.assertIn("RECOMMENDED_ACTION", patterns.columns)
         self.assertIn("CUSTOMER_ID", patterns.iloc[0]["ERROR_SIGNATURE"])
 
     def test_failure_runbook_markdown_contains_triage_context(self):
@@ -1262,6 +1917,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH Failure Runbook - ALFA", md)
         self.assertIn("Object Dependency / Drift", md)
         self.assertIn("Retry SQL after fix", md)
+        self.assertIn("P1 graph incidents", md)
         self.assertIn("Evidence Limits", md)
 
     def test_procedure_ops_frames_identify_orphans_and_task_links(self):
@@ -1294,10 +1950,15 @@ class FormulaRegressionTests(unittest.TestCase):
         summary, exceptions, joined = _build_procedure_ops_frames(procedures, tasks, calls)
         self.assertEqual(summary["PROCEDURES"], 2)
         self.assertEqual(summary["LINKED_TO_TASKS"], 1)
+        self.assertEqual(summary["OWNER_REVIEW_REQUIRED"], 1)
         self.assertEqual(_procedure_key("ALFA_EDW_DEV.PUBLIC.SP_ROOT()"), "SP_ROOT")
         self.assertEqual(_procedure_from_task_definition("CALL DB.SCH.SP_ROOT();"), "DB.SCH.SP_ROOT")
         self.assertIn("Orphan Procedure Candidate", set(exceptions["SIGNAL"]))
         self.assertIn("TASK_COUNT", joined.columns)
+        self.assertIn("ORCHESTRATION_STATUS", joined.columns)
+        unused = joined[joined["PROC_KEY"] == "SP_UNUSED"].iloc[0]
+        self.assertEqual(unused["ORCHESTRATION_STATUS"], "No recent execution evidence")
+        self.assertEqual(unused["OWNER_REVIEW"], "Required")
 
     def test_procedure_sla_frames_flag_runtime_and_cost_regression(self):
         runs = pd.DataFrame(
@@ -1401,6 +2062,87 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("WAREHOUSE_METERING_HISTORY", action["Proof Query"])
         self.assertIn("post-fix verification", action["Proof Query"].lower())
         self.assertIn("Warehouse Settings Manager", action["Action"])
+        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
+
+    def test_chargeback_cost_verification_sql_is_runnable_and_scoped(self):
+        sql = _chargeback_cost_verification_sql(
+            pd.Series({
+                "COMPANY": "ALFA",
+                "ENVIRONMENT": "ALFA_EDW_DEV",
+                "DATABASE_NAME": "ALFA_EDW_DEV",
+                "USER_NAME": "ETL_RUNNER",
+                "WAREHOUSE_NAME": "WH_ALFA_ETL",
+            }),
+            lookback_days=30,
+            company="ALFA",
+        )
+        sql_upper = sql.upper()
+
+        self.assertIn("QUERY_HISTORY", sql_upper)
+        self.assertIn("WAREHOUSE_METERING_HISTORY", sql_upper)
+        self.assertIn("TAG_REFERENCES", sql_upper)
+        self.assertIn("COST_OWNER", sql_upper)
+        self.assertIn("Q.USER_NAME = 'ETL_RUNNER'", sql_upper)
+        self.assertIn("Q.DATABASE_NAME = 'ALFA_EDW_DEV'", sql_upper)
+        self.assertIn("ALLOCATED / ESTIMATED", sql_upper)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_chargeback_outlier_queue_uses_owner_review_and_verification_sql(self):
+        import streamlit as st
+
+        df = pd.DataFrame(
+            {
+                "COMPANY": ["ALFA"],
+                "ENVIRONMENT": ["Other / Shared"],
+                "DATABASE_NAME": ["NO_DATABASE_CONTEXT"],
+                "USER_NAME": ["Unknown user"],
+                "WAREHOUSE_NAME": ["BI_COMPUTE_WH"],
+                "TOTAL_CREDITS": [400.0],
+                "ALLOCATION_CONFIDENCE": ["Account-wide / Shared"],
+                "ALLOCATION_BASIS": ["No database context; do not split PROD/DEV without tags or session lineage."],
+                "CHARGEBACK_READY": ["No"],
+                "SCOPE_REVIEW": ["Missing database context"],
+            }
+        )
+        captured = {}
+
+        def fake_upsert(_session, actions):
+            captured["actions"] = actions
+            return len(actions)
+
+        previous_company = st.session_state.get("active_company")
+        st.session_state["active_company"] = "ALFA"
+        try:
+            with patch("sections.cost_center.upsert_actions", side_effect=fake_upsert), patch(
+                "sections.cost_center.get_active_environment", return_value="ALL"
+            ):
+                _queue_cost_outliers(object(), df, 3.0, "Cost & Contract - Chargeback")
+        finally:
+            if previous_company is None:
+                st.session_state.pop("active_company", None)
+            else:
+                st.session_state["active_company"] = previous_company
+
+        action = captured["actions"][0]
+        self.assertEqual(action["Category"], "Chargeback Review")
+        self.assertEqual(action["Owner"], "DBA / FinOps")
+        self.assertEqual(action["Environment"], "No Database Context")
+        self.assertEqual(action["Verification Status"], "Pending")
+        self.assertIn("not cleanly chargeback-ready", action["Action"])
+        self.assertIn("Chargeback readiness: No", action["Generated SQL Fix"])
+        self.assertIn("QUERY_HISTORY", action["Verification Query"])
+        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
+
+    def test_recommendation_actions_have_runnable_verification_sql(self):
+        queries = [
+            _idle_warehouse_verification_sql("WH_ALFA_BI"),
+            _remote_spill_verification_sql("WH_ALFA_BI"),
+            _task_failure_verification_sql("LOAD_POLICY"),
+            _query_failure_verification_sql("WH_ALFA_BI"),
+        ]
+
+        for sql in queries:
+            self.assertEqual(verification_query_safety_issues(sql), [])
 
     def test_task_reliability_action_includes_retry_guard_and_verification(self):
         action = _build_task_reliability_action(
@@ -1414,6 +2156,15 @@ class FormulaRegressionTests(unittest.TestCase):
                 "ERROR_SIGNATURE": "table does not exist",
                 "RETRY_SQL": 'EXECUTE TASK "ALFA_EDW_PROD"."PUBLIC"."LOAD_POLICY";',
                 "ROLE_NAME": "TASK_OWNER_ROLE",
+                "INCIDENT_PRIORITY": "P2 - Production Risk",
+                "RECOVERY_READINESS": "Blocked - object dependency fix first",
+                "RECOVERY_STATE": "Open Failure",
+                "RECOVERY_HOURS": 2.25,
+                "RECOVERY_SLA_TARGET_HOURS": 4,
+                "OWNER_APPROVAL_STATE": "Root-cause owner approval required",
+                "VERIFY_AFTER_FIX": "Latest task run succeeds within recovery SLA.",
+                "DOWNSTREAM_TASK_COUNT": 2,
+                "GRAPH_ROLE": "Root",
             }),
             "ALFA",
             "Task Management - Failure Console",
@@ -1422,12 +2173,22 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(action["Owner"], "TASK_OWNER_ROLE")
         self.assertEqual(action["Category"], "Task & Procedure Reliability")
         self.assertIn("Environment", action)
+        self.assertIn("P2 - Production Risk", action["Finding"])
+        self.assertIn("Recovery readiness", action["Action"])
         self.assertEqual(action["Verification Status"], "Pending")
         self.assertIn("TASK_HISTORY", action["Verification Query"])
+        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
         self.assertIn("Do not execute until root cause is fixed", action["Generated SQL Fix"])
+        self.assertIn("downstream tasks: 2", action["Generated SQL Fix"])
         self.assertIn("TASK_HISTORY", action["Proof Query"])
         self.assertIn("QUERY_HISTORY", action["Proof Query"])
         self.assertIn("Verify", action["Action"])
+        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertIn("Root-cause owner approval", action["Owner Approval Note"])
+        self.assertEqual(action["Recovery SLA State"], "Open Failure")
+        self.assertEqual(action["Recovery SLA Hours"], 2.25)
+        self.assertEqual(action["Recovery SLA Target Hours"], 4.0)
+        self.assertIn("Latest task run succeeds", action["Recovery Evidence"])
 
     def test_procedure_reliability_action_includes_owner_and_baseline_verification(self):
         action = _build_procedure_reliability_action(
@@ -1438,6 +2199,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "RUNTIME_CHANGE_PCT": 25,
                 "COST_CHANGE_PCT": 180,
                 "PROCEDURE_OWNER": "PROC_OWNER_ROLE",
+                "ORCHESTRATION_STATUS": "Manual CALL only",
+                "OWNER_REVIEW": "Required",
                 "RECOMMENDED_ACTION": "Review child-query scan volume.",
             }),
             "ALFA",
@@ -1449,6 +2212,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Environment", action)
         self.assertEqual(action["Verification Status"], "Pending")
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
+        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
+        self.assertNotIn("ROOT_QUERY_ID", action["Verification Query"].upper())
+        self.assertIn("orchestration=Manual CALL only", action["Finding"])
+        self.assertIn("Owner review is required", action["Action"])
         self.assertIn("Procedure Cost Regression", action["Finding"])
         self.assertIn("QUERY_HISTORY", action["Proof Query"])
         self.assertIn("next procedure run", action["Proof Query"])
@@ -1464,7 +2231,441 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("AS DATABASE_NAME", chargeback_block)
         self.assertIn('"ENVIRONMENT"', chargeback_block)
         self.assertIn('"DATABASE_NAME"', chargeback_block)
+        self.assertIn("ENVIRONMENT_ROLLUP", chargeback_block)
+        self.assertIn("ALLOCATION_CONFIDENCE", chargeback_block)
+        self.assertIn("CHARGEBACK_READY", chargeback_block)
+        self.assertIn("CHARGEBACK INDIVIDUAL DEV DATABASES", chargeback_block)
         self.assertIn("GET_ACTIVE_ENVIRONMENT()", chargeback_block)
+        self.assertIn("BUILD_MART_CHARGEBACK_SQL", chargeback_block)
+        self.assertIn("FACT_CHARGEBACK_DAILY", chargeback_block)
+        self.assertIn("LOAD_MART_TABLE", chargeback_block)
+        self.assertIn("OWNER_PROOF", chargeback_block)
+        self.assertIn("COST_OWNER", chargeback_block)
+        self.assertIn("OWNER_EVIDENCE", chargeback_block)
+
+    def test_alert_task_is_email_first_and_dba_focused(self):
+        sql = build_alert_task_sql(email_target="jdees@alfains.com").upper()
+
+        self.assertIn("OVERWATCH_ANOMALY_CHECK", sql)
+        self.assertIn("JDEES@ALFAINS.COM", sql)
+        self.assertIn("EMAIL_TARGET", sql)
+        self.assertIn("EMAIL_SUBJECT", sql)
+        self.assertIn("EMAIL_BODY", sql)
+        self.assertIn("EMAIL_READY", sql)
+        self.assertIn("TASK FAILURE", sql)
+        self.assertIn("STORED PROCEDURE", sql)
+        self.assertIn("GRANT/REVOKE ACTIVITY", sql)
+        self.assertIn("WAREHOUSE SETTING CHANGE", sql)
+        self.assertIn("OVERWATCH_ALERT_RULES", sql)
+        self.assertIn("OVERWATCH_ALERT_RULE_AUDIT", sql)
+        self.assertIn("OVERWATCH_ALERT_TRIAGE_V", sql)
+        self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", sql)
+        self.assertIn("STATUS_REASON", sql)
+        self.assertIn("LAST_DELIVERY_AT", sql)
+        self.assertIn("ESCALATION_ACK_BY", sql)
+        self.assertIn("ROUTED_TO_ACTION_QUEUE_AT", sql)
+        self.assertNotIn("TEAMS_TARGET", sql)
+
+    def test_alert_email_builders_and_unified_issue_rows(self):
+        alert = pd.DataFrame([{
+            "ALERT_TS": "2026-05-31 09:00:00",
+            "COMPANY": "ALFA",
+            "ENVIRONMENT": "PROD",
+            "CATEGORY": "Reliability",
+            "ALERT_TYPE": "Task Failure",
+            "SEVERITY": "Critical",
+            "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD",
+            "MESSAGE": "Task failed.",
+            "SUGGESTED_ACTION": "Open task graph.",
+            "OWNER": "DBA",
+            "EMAIL_TARGET": "jdees@alfains.com",
+            "DELIVERY_STATUS": "EMAIL_READY",
+            "STATUS": "New",
+        }])
+        queue = pd.DataFrame([{
+            "UPDATED_AT": "2026-05-31 08:00:00",
+            "SOURCE": "Warehouse Health",
+            "CATEGORY": "Capacity",
+            "SEVERITY": "Medium",
+            "ENTITY_NAME": "WH_ALFA_LOAD",
+            "STATUS": "New",
+            "FINDING": "Queued workload.",
+            "RECOMMENDED_ACTION": "Review settings.",
+            "OWNER": "DBA",
+        }])
+        exceptions = pd.DataFrame([{
+            "Severity": "High",
+            "Signal": "Credit spike",
+            "Evidence": "Credits rose 80%.",
+            "Action": "Explain bill movement.",
+            "Route": "Cost & Contract",
+            "Workflow": "Explain bill / attribution / contract",
+        }])
+
+        subject = build_alert_email_subject(alert.iloc[0], company="ALFA")
+        body = build_alert_email_body(alert.iloc[0], company="ALFA")
+        issues = build_dashboard_issue_rows(exceptions=exceptions, alerts=alert, queue=queue)
+
+        self.assertIn("OVERWATCH Critical", subject)
+        self.assertIn("jdees@alfains.com", alert["EMAIL_TARGET"].iloc[0])
+        self.assertIn("Environment: PROD", body)
+        self.assertEqual(len(issues), 3)
+        self.assertEqual(issues.iloc[0]["SEVERITY"], "Critical")
+        self.assertEqual(set(issues["ISSUE_SOURCE"]), {"Alert History", "Action Queue", "Control Room Signal"})
+        self.assertTrue((issues["EMAIL_TARGET"] == "jdees@alfains.com").all())
+
+    def test_alert_lifecycle_sla_and_status_sql(self):
+        df = pd.DataFrame([
+            {
+                "ALERT_ID": 10,
+                "ALERT_TS": "2026-05-31 00:00:00",
+                "ALERT_TYPE": "Task Failure",
+                "SEVERITY": "High",
+                "STATUS": "New",
+                "OWNER": "DBA",
+            },
+            {
+                "ALERT_ID": 11,
+                "ALERT_TS": "2026-05-30 00:00:00",
+                "ALERT_TYPE": "Credit Spike",
+                "SEVERITY": "Medium",
+                "STATUS": "Fixed",
+                "OWNER": "DBA",
+            },
+        ])
+        triage = annotate_alert_triage_frame(df, now="2026-05-31 12:00:00")
+        status_sql = build_alert_status_update_sql(
+            alert_id=10,
+            status="Fixed",
+            reason="Verified next task run succeeded under INC123.",
+            actor="DBA_USER",
+            columns={
+                "STATUS", "RESOLVED", "ACKNOWLEDGED_BY", "ACKNOWLEDGED_AT",
+                "STATUS_REASON", "LAST_STATUS_BY", "LAST_STATUS_AT",
+            },
+        ).upper()
+        rules = alert_rule_catalog()
+
+        self.assertEqual(triage.loc[triage["ALERT_ID"] == 10, "SLA_STATE"].iloc[0], "Overdue")
+        self.assertEqual(triage.loc[triage["ALERT_ID"] == 11, "SLA_STATE"].iloc[0], "Closed")
+        self.assertIn("STATUS = 'FIXED'", status_sql)
+        self.assertIn("RESOLVED = TRUE", status_sql)
+        self.assertIn("STATUS_REASON", status_sql)
+        self.assertIn("LAST_STATUS_BY = 'DBA_USER'", status_sql)
+        self.assertIn("WHERE ALERT_ID = 10", status_sql)
+        self.assertIn("TASK_FAILURE", set(rules["RULE_ID"]))
+        self.assertIn("SLA_HOURS", rules.columns)
+
+    def test_alert_triage_preserves_snowflake_view_rule_outputs(self):
+        df = pd.DataFrame([{
+            "ALERT_ID": 12,
+            "ALERT_TS": "2026-05-30 00:00:00",
+            "ALERT_TYPE": "Task Failure",
+            "SEVERITY": "High",
+            "STATUS": "New",
+            "OWNER": "Pipeline Owner",
+            "SLA_TARGET_HOURS": 48,
+            "ALERT_AGE_HOURS": 10,
+            "SLA_STATE": "Within SLA",
+            "ESCALATION_TARGET": "Pipeline Owner",
+            "TRIAGE_PRIORITY": 777,
+        }])
+
+        triage = annotate_alert_triage_frame(df, now="2026-05-31 12:00:00")
+
+        self.assertEqual(triage["SLA_TARGET_HOURS"].iloc[0], 48)
+        self.assertEqual(triage["ALERT_AGE_HOURS"].iloc[0], 10)
+        self.assertEqual(triage["SLA_STATE"].iloc[0], "Within SLA")
+        self.assertEqual(triage["ESCALATION_TARGET"].iloc[0], "Pipeline Owner")
+        self.assertEqual(triage["TRIAGE_PRIORITY"].iloc[0], 777)
+
+    def test_alert_history_routes_task_and_procedure_alerts_with_recovery_governance(self):
+        alerts = pd.DataFrame([
+            {
+                "ALERT_ID": 30,
+                "ALERT_TS": "2026-05-31 10:00:00",
+                "COMPANY": "ALFA",
+                "ENVIRONMENT": "PROD",
+                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "SCHEMA_NAME": "PUBLIC",
+                "CATEGORY": "Reliability",
+                "ALERT_TYPE": "Task Failure",
+                "SEVERITY": "High",
+                "STATUS": "New",
+                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY",
+                "MESSAGE": "2 failed task run(s) in the last 24 hours. Sample: table does not exist.",
+                "SUGGESTED_ACTION": "Open Workload Operations task graphs.",
+                "PROOF_QUERY": "",
+                "OWNER": "DBA / Pipeline Owner",
+                "ESCALATION_TARGET": "Pipeline Owner",
+                "SLA_TARGET_HOURS": 4,
+                "ALERT_AGE_HOURS": 6.5,
+                "SLA_STATE": "Overdue",
+            },
+            {
+                "ALERT_ID": 31,
+                "ALERT_TS": "2026-05-31 10:05:00",
+                "COMPANY": "ALFA",
+                "ENVIRONMENT": "ALFA_EDW_DEV",
+                "DATABASE_NAME": "ALFA_EDW_DEV",
+                "SCHEMA_NAME": "PUBLIC",
+                "CATEGORY": "Reliability",
+                "ALERT_TYPE": "Stored Procedure Runtime Spike",
+                "SEVERITY": "High",
+                "STATUS": "Acknowledged",
+                "ENTITY_NAME": "ALFA_EDW_DEV.PUBLIC.SP_LOAD_POLICY",
+                "MESSAGE": "Average CALL duration 90.0s vs baseline 30.0s.",
+                "SUGGESTED_ACTION": "Open Workload Operations stored procedures.",
+                "PROOF_QUERY": "CALL BAD_PROC()",
+                "OWNER": "Procedure Owner",
+                "SLA_TARGET_HOURS": 8,
+                "ALERT_AGE_HOURS": 2,
+                "SLA_STATE": "Within SLA",
+            },
+            {
+                "ALERT_ID": 32,
+                "ALERT_TS": "2026-05-31 10:10:00",
+                "COMPANY": "ALFA",
+                "ENVIRONMENT": "No Database Context",
+                "CATEGORY": "Cost Control",
+                "ALERT_TYPE": "Credit Spike",
+                "SEVERITY": "Medium",
+                "STATUS": "New",
+                "ENTITY_NAME": "WH_ALFA_LOAD",
+                "MESSAGE": "Credits doubled.",
+                "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY LIMIT 10",
+                "OWNER": "DBA / FinOps",
+            },
+        ])
+
+        actions = alert_history_to_actions(alerts, company="ALFA")
+        by_entity = {action["Entity"]: action for action in actions}
+        task = by_entity["ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY"]
+        proc = by_entity["ALFA_EDW_DEV.PUBLIC.SP_LOAD_POLICY"]
+        cost = by_entity["WH_ALFA_LOAD"]
+
+        self.assertEqual(task["Category"], "Task & Procedure Reliability")
+        self.assertEqual(task["Entity Type"], "Task")
+        self.assertEqual(task["Owner Approval Status"], "Requested")
+        self.assertEqual(task["Approver"], "Pipeline Owner")
+        self.assertEqual(task["Recovery SLA State"], "Recovery SLA Breach")
+        self.assertEqual(task["Recovery SLA Target Hours"], 4.0)
+        self.assertEqual(task["Recovery SLA Hours"], 6.5)
+        self.assertEqual(task["Baseline Value"], 0.0)
+        self.assertEqual(task["Current Value"], 2.0)
+        self.assertIn("TASK_HISTORY", task["Verification Query"])
+        self.assertNotIn("EXECUTE TASK", task["Generated SQL Fix"].upper())
+        self.assertEqual(verification_query_safety_issues(task["Verification Query"]), [])
+
+        self.assertEqual(proc["Category"], "Task & Procedure Reliability")
+        self.assertEqual(proc["Entity Type"], "Stored Procedure")
+        self.assertEqual(proc["Owner Approval Status"], "Requested")
+        self.assertEqual(proc["Recovery SLA State"], "Open Failure")
+        self.assertEqual(proc["Baseline Value"], 30.0)
+        self.assertEqual(proc["Current Value"], 90.0)
+        self.assertIn("QUERY_HISTORY", proc["Verification Query"])
+        self.assertIn("QUERY_TYPE = 'CALL'", proc["Verification Query"])
+        self.assertEqual(verification_query_safety_issues(proc["Verification Query"]), [])
+
+        self.assertEqual(cost["Category"], "Cost Control")
+        self.assertNotIn("Owner Approval Status", cost)
+        self.assertEqual(verification_query_safety_issues(cost["Verification Query"]), [])
+
+    def test_alert_triage_view_sql_exposes_auditable_sla_state(self):
+        sql = build_alert_triage_view_sql().upper()
+
+        self.assertIn("CREATE OR REPLACE VIEW", sql)
+        self.assertIn("OVERWATCH_ALERT_TRIAGE_V", sql)
+        self.assertIn("SLA_TARGET_HOURS", sql)
+        self.assertIn("SLA_STATE", sql)
+        self.assertIn("ESCALATION_TARGET", sql)
+        self.assertIn("TRIAGE_PRIORITY", sql)
+        self.assertIn("OVERWATCH_ALERT_RULES", sql)
+
+    def test_alert_rule_update_sql_is_guarded_and_configurable(self):
+        rules = normalize_alert_rule_frame(pd.DataFrame([{
+            "RULE_ID": "TASK_FAILURE",
+            "CATEGORY": "Reliability",
+            "ALERT_TYPE": "Task Failure",
+            "DEFAULT_SEVERITY": "high",
+            "SLA_HOURS": 8,
+            "OWNER": "DBA",
+            "ROUTE": "Alert Center",
+            "RUNBOOK": "Review task graph evidence and route to owner.",
+            "IS_ACTIVE": True,
+        }]), source="Database")
+        sql = build_alert_rule_update_sql(
+            rule_id="TASK_FAILURE",
+            default_severity="Critical",
+            sla_hours=4,
+            owner="DBA Lead",
+            route="Workload Operations",
+            runbook="Escalate failed critical task graph to the DBA lead and pipeline owner.",
+            actor="DBA_USER",
+        ).upper()
+        audit_ddl = build_alert_rule_audit_ddl().upper()
+        audit_insert = build_alert_rule_audit_insert_sql(
+            rule_id="TASK_FAILURE",
+            default_severity="Critical",
+            sla_hours=4,
+            owner="DBA Lead",
+            route="Workload Operations",
+            runbook="Escalate failed critical task graph to the DBA lead and pipeline owner.",
+            actor="DBA_USER",
+            reason="Tighten failed task SLA before production release.",
+        ).upper()
+
+        self.assertEqual(rules.iloc[0]["DEFAULT_SEVERITY"], "High")
+        self.assertEqual(rules.iloc[0]["RULE_SOURCE"], "Database")
+        self.assertIn("OVERWATCH_ALERT_RULE_AUDIT", audit_ddl)
+        self.assertIn("PRIOR_DEFAULT_SEVERITY", audit_ddl)
+        self.assertIn("INSERT INTO", audit_insert)
+        self.assertIn("OVERWATCH_ALERT_RULE_AUDIT", audit_insert)
+        self.assertIn("PRIOR_SLA_HOURS", audit_insert)
+        self.assertIn("NEW_SLA_HOURS", audit_insert)
+        self.assertIn("CHANGED_BY", audit_insert)
+        self.assertIn("TIGHTEN FAILED TASK SLA", audit_insert)
+        self.assertIn("UPDATE", sql)
+        self.assertIn("OVERWATCH_ALERT_RULES", sql)
+        self.assertIn("DEFAULT_SEVERITY = 'CRITICAL'", sql)
+        self.assertIn("SLA_HOURS = 4", sql)
+        self.assertIn("OWNER = 'DBA LEAD'", sql)
+        self.assertIn("UPDATED_BY = 'DBA_USER'", sql)
+        self.assertIn("WHERE RULE_ID = 'TASK_FAILURE'", sql)
+        with self.assertRaises(ValueError):
+            build_alert_rule_update_sql(
+                rule_id="TASK_FAILURE",
+                default_severity="High",
+                sla_hours=0,
+                owner="DBA",
+                route="Alert Center",
+                runbook="Too short.",
+            )
+
+    def test_alert_delivery_audit_and_escalation_ack_sql(self):
+        ddl = build_alert_delivery_log_ddl().upper()
+        insert_sql = build_alert_delivery_log_insert_sql(
+            alert_ids=[101, "102"],
+            company="ALFA",
+            environment="PROD",
+            delivery_target="jdees@alfains.com",
+            email_subject="OVERWATCH Alert Digest",
+            email_body="Digest body",
+            actor="DBA_USER",
+            notes="Sent digest through Outlook and opened INC123.",
+        ).upper()
+        mark_sql = build_alert_delivery_mark_sql(
+            alert_ids=[101, 102],
+            delivery_target="jdees@alfains.com",
+            actor="DBA_USER",
+            columns={
+                "DELIVERY_STATUS", "DELIVERY_TARGET", "EMAIL_TARGET",
+                "LAST_DELIVERY_AT", "LAST_DELIVERY_BY", "DELIVERY_LOG_COUNT",
+                "ESCALATED_TO", "ESCALATED_AT", "LAST_STATUS_BY", "LAST_STATUS_AT",
+            },
+        ).upper()
+        ack_sql = build_alert_escalation_ack_sql(
+            alert_id=101,
+            actor="DBA_USER",
+            note="Owner acknowledged escalation under INC123.",
+            columns={
+                "STATUS", "ACKNOWLEDGED_BY", "ACKNOWLEDGED_AT",
+                "ESCALATION_ACK_BY", "ESCALATION_ACK_AT", "ESCALATION_ACK_NOTE",
+                "LAST_STATUS_BY", "LAST_STATUS_AT",
+            },
+        ).upper()
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
+        self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", ddl)
+        self.assertIn("ALERT_IDS", ddl)
+        self.assertIn("PARSE_JSON", insert_sql)
+        self.assertIn("EMAIL_LOGGED", insert_sql)
+        self.assertIn("LAST_DELIVERY_AT = CURRENT_TIMESTAMP()", mark_sql)
+        self.assertIn("DELIVERY_LOG_COUNT = COALESCE", mark_sql)
+        self.assertIn("ESCALATED_TO = COALESCE", mark_sql)
+        self.assertIn("ESCALATION_ACK_BY = 'DBA_USER'", ack_sql)
+        self.assertIn("ESCALATION_ACK_NOTE", ack_sql)
+        self.assertIn("STATUS = CASE", ack_sql)
+        with self.assertRaises(ValueError):
+            build_alert_delivery_log_insert_sql(
+                alert_ids=[],
+                company="ALFA",
+                environment="PROD",
+                delivery_target="jdees@alfains.com",
+                email_subject="Subject",
+                email_body="Body",
+                actor="DBA_USER",
+                notes="Sent email.",
+            )
+
+    def test_alert_digest_prioritizes_overdue_and_owner_gaps(self):
+        now = pd.Timestamp.now()
+        df = pd.DataFrame([
+            {
+                "ALERT_ID": 20,
+                "ALERT_TS": now - pd.Timedelta(hours=10),
+                "ALERT_TYPE": "Task Failure",
+                "CATEGORY": "Reliability",
+                "SEVERITY": "High",
+                "STATUS": "New",
+                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD",
+                "OWNER": "DBA",
+                "MESSAGE": "Task failed twice.",
+                "SUGGESTED_ACTION": "Open task graph and assign owner.",
+                "DELIVERY_STATUS": "EMAIL_READY",
+            },
+            {
+                "ALERT_ID": 21,
+                "ALERT_TS": now - pd.Timedelta(hours=6),
+                "ALERT_TYPE": "Stored Procedure Failure / Runtime Spike",
+                "CATEGORY": "Reliability",
+                "SEVERITY": "High",
+                "STATUS": "Acknowledged",
+                "ENTITY_NAME": "ALFA_EDW_DEV.PUBLIC.P_LOAD",
+                "OWNER": "ALFA Data Engineering",
+                "MESSAGE": "Procedure runtime doubled.",
+                "SUGGESTED_ACTION": "Compare child query history.",
+                "DELIVERY_STATUS": "EMAIL_READY",
+            },
+            {
+                "ALERT_ID": 22,
+                "ALERT_TS": now - pd.Timedelta(hours=2),
+                "ALERT_TYPE": "Credit Spike",
+                "CATEGORY": "Cost Control",
+                "SEVERITY": "Medium",
+                "STATUS": "Fixed",
+                "ENTITY_NAME": "WH_ALFA_LOAD",
+                "OWNER": "DBA / FinOps",
+                "MESSAGE": "Credits returned to baseline.",
+                "DELIVERY_STATUS": "EMAIL_READY",
+            },
+        ])
+
+        summary = build_alert_digest_summary(df)
+        subject = build_alert_digest_subject(df, company="ALFA", environment="PROD")
+        body = build_alert_digest_body(df, company="ALFA", environment="PROD", recipient="jdees@alfains.com")
+        candidates = alert_escalation_candidates(df, limit=5)
+
+        self.assertEqual(summary["open"], 2)
+        self.assertEqual(summary["critical_high"], 2)
+        self.assertGreaterEqual(summary["overdue"], 1)
+        self.assertGreaterEqual(summary["needs_owner"], 1)
+        self.assertIn("2 open", subject)
+        self.assertIn("jdees@alfains.com", body)
+        self.assertIn("Escalate first", body)
+        self.assertEqual(candidates.iloc[0]["ALERT_ID"], 20)
+        self.assertIn("SLA_STATE", candidates.columns)
+
+    def test_alert_surfaces_are_consolidated_to_alert_center(self):
+        config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
+        dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
+        rec_text = (APP_ROOT / "sections" / "recommendations.py").read_text(encoding="utf-8")
+
+        self.assertIn('"Alert Center"', config_text)
+        self.assertIn('"sections.alert_center"', config_text)
+        self.assertIn("consolidated Alert Center", dba_tools_text)
+        self.assertNotIn("Alert Configuration", rec_text)
+        self.assertNotIn("tab_alerts", rec_text)
 
 
 if __name__ == "__main__":

@@ -124,14 +124,20 @@ class ScorecardTests(unittest.TestCase):
         rows = scorecards.dba_control_plane_section_scorecards()
         by_section = {row["SECTION"]: row for row in rows}
 
-        self.assertEqual(by_section["DBA Control Room"]["SCORE"], 84.6)
-        self.assertEqual(by_section["Warehouse Health"]["SCORE"], 79.9)
-        self.assertEqual(by_section["Workload Operations"]["SCORE"], 87.0)
-        self.assertEqual(by_section["Cost & Contract"]["SCORE"], 86.0)
-        self.assertEqual(by_section["Security Posture"]["SCORE"], 80.3)
-        self.assertEqual(by_section["Account Health"]["LABEL"], "Not Ready")
+        self.assertEqual(by_section["DBA Control Room"]["SCORE"], 86.9)
+        self.assertEqual(by_section["Alert Center"]["SCORE"], 91.8)
+        self.assertEqual(by_section["Alert Center"]["LABEL"], "Near Target")
+        self.assertEqual(by_section["Warehouse Health"]["SCORE"], 85.3)
+        self.assertEqual(by_section["Workload Operations"]["SCORE"], 93.2)
+        self.assertEqual(by_section["Cost & Contract"]["SCORE"], 91.2)
+        self.assertEqual(by_section["Security Posture"]["SCORE"], 85.0)
+        self.assertIn("data correctness/scope", by_section["Security Posture"]["CAP_DRIVERS"])
+        self.assertEqual(by_section["Change & Drift"]["SCORE"], 85.2)
+        self.assertEqual(by_section["Account Health"]["SCORE"], 80.4)
+        self.assertEqual(by_section["Account Health"]["LABEL"], "Operational")
         self.assertLess(max(row["SCORE"] for row in rows), 95)
         self.assertIn("admin safety/audit", by_section["DBA Control Room"]["CAP_DRIVERS"])
+        self.assertIn("email integration", by_section["Alert Center"]["NEXT_95_MOVE"])
 
 
 if __name__ == "__main__":

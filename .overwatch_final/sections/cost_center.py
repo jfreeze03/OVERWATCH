@@ -12,8 +12,9 @@ from utils import (
     metric_confidence_label, freshness_note,
     get_wh_filter_clause, get_global_wh_filter_clause,
     get_global_filter_clause, get_company_case_expr,
-    get_active_environment, get_environment_case_expr,
+    get_active_environment, get_environment_case_expr, get_environment_filter_clause,
     build_mart_bill_summary_sql, build_mart_bill_warehouse_delta_sql,
+    build_mart_chargeback_sql, load_mart_table, mart_source_caption,
     filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown, render_priority_dataframe,
     make_action_id, upsert_actions,
@@ -46,11 +47,363 @@ COST_CENTER_VIEW_DETAILS = {
     "Contract Utilization": "Committed-use utilization and risk.",
 }
 
+ALFA_DEV_DATABASES = {
+    "ALFA_EDW_DEV",
+    "ALFA_EDW_SAN",
+    "ALFA_EDW_PHX",
+    "ALFA_EDW_SEA",
+    "ALFA_EDW_SIT",
+}
+
+NO_DATABASE_CONTEXT_VALUES = {
+    "",
+    "NONE",
+    "NULL",
+    "NAN",
+    "NO_DATABASE_CONTEXT",
+    "NO DATABASE CONTEXT",
+}
+
+
+def _row_text(row, *columns: str) -> str:
+    """Read a row value using Snowflake/Pandas column casing defensively."""
+    if row is None:
+        return ""
+    keys = []
+    for column in columns:
+        keys.extend([column, column.upper(), column.lower(), column.title()])
+    for key in keys:
+        try:
+            if key in row:
+                value = row.get(key)
+                if pd.notna(value):
+                    return str(value).strip()
+        except Exception:
+            continue
+    return ""
+
+
+def _environment_rollup_for_cost(row) -> str:
+    """Return the DBA chargeback rollup for a database-scoped cost row."""
+    env = _row_text(row, "ENVIRONMENT").upper()
+    db = _row_text(row, "DATABASE_NAME").upper()
+    if db in NO_DATABASE_CONTEXT_VALUES or env in NO_DATABASE_CONTEXT_VALUES:
+        return "No Database Context"
+    if db == "ALFA_EDW_PROD" or env == "PROD":
+        return "PROD"
+    if db in ALFA_DEV_DATABASES or env in ALFA_DEV_DATABASES or env == "DEV_ALL":
+        return "DEV_ALL"
+    if db.startswith("ALFA_EDW_") or env == "OTHER ALFA NON-PROD":
+        return "Other ALFA Non-Prod"
+    if db.startswith("TRXS_"):
+        return "Trexis"
+    return "Other / Shared"
+
+
+def _cost_allocation_quality(row) -> dict:
+    """Describe whether a cost row is safe for chargeback or only directional."""
+    db = _row_text(row, "DATABASE_NAME").upper()
+    company = _row_text(row, "COMPANY").upper()
+    rollup = _environment_rollup_for_cost(row)
+    owner_source = _row_text(row, "OWNER_SOURCE").upper()
+    cost_owner = _row_text(row, "COST_OWNER")
+    has_owner_tag = "TAG" in owner_source and bool(cost_owner)
+
+    if db in NO_DATABASE_CONTEXT_VALUES or rollup == "No Database Context":
+        return {
+            "ENVIRONMENT_ROLLUP": "No Database Context",
+            "ALLOCATION_CONFIDENCE": "Account-wide / Shared",
+            "ALLOCATION_BASIS": "No database context; do not split PROD/DEV without tags or session lineage.",
+            "CHARGEBACK_READY": "No",
+            "SCOPE_REVIEW": "Missing database context",
+        }
+    if rollup in {"PROD", "DEV_ALL"}:
+        return {
+            "ENVIRONMENT_ROLLUP": rollup,
+            "ALLOCATION_CONFIDENCE": "Allocated / Estimated",
+            "ALLOCATION_BASIS": (
+                "Query database context allocated across metered warehouse-hour credits; owner tag proof is attached."
+                if has_owner_tag
+                else "Query database context allocated across metered warehouse-hour credits."
+            ),
+            "CHARGEBACK_READY": "Ready" if has_owner_tag else "Directional",
+            "SCOPE_REVIEW": "None",
+        }
+    if rollup == "Trexis" and company in {"TREXIS", "ALL", ""}:
+        return {
+            "ENVIRONMENT_ROLLUP": rollup,
+            "ALLOCATION_CONFIDENCE": "Allocated / Estimated",
+            "ALLOCATION_BASIS": (
+                "Trexis database context allocated across metered warehouse-hour credits; owner tag proof is attached."
+                if has_owner_tag
+                else "Trexis database context allocated across metered warehouse-hour credits."
+            ),
+            "CHARGEBACK_READY": "Ready" if has_owner_tag else "Directional",
+            "SCOPE_REVIEW": "None",
+        }
+    if rollup == "Other ALFA Non-Prod":
+        return {
+            "ENVIRONMENT_ROLLUP": rollup,
+            "ALLOCATION_CONFIDENCE": "Allocated / Estimated",
+            "ALLOCATION_BASIS": "ALFA database context exists, but the environment is outside the approved PROD/DEV family.",
+            "CHARGEBACK_READY": "Review",
+            "SCOPE_REVIEW": "Unmapped ALFA environment",
+        }
+    return {
+        "ENVIRONMENT_ROLLUP": rollup,
+        "ALLOCATION_CONFIDENCE": "Shared / Needs Owner",
+        "ALLOCATION_BASIS": "Database context is shared, external, or unmapped; owner evidence is required before chargeback.",
+        "CHARGEBACK_READY": "Review",
+        "SCOPE_REVIEW": "Shared or unmapped database",
+    }
+
+
+def _annotate_allocation_quality(df: pd.DataFrame) -> pd.DataFrame:
+    """Add DBA chargeback rollup and confidence columns to cost attribution rows."""
+    if df is None or df.empty:
+        return df
+    annotated = df.copy()
+    quality = pd.DataFrame(
+        [_cost_allocation_quality(row) for _, row in annotated.iterrows()],
+        index=annotated.index,
+    )
+    for column in quality.columns:
+        annotated[column] = quality[column]
+    if "COST_OWNER" not in annotated.columns:
+        annotated["COST_OWNER"] = annotated.apply(
+            lambda row: (
+                _row_text(row, "USER_NAME")
+                if _row_text(row, "USER_NAME").upper() not in {"", "UNKNOWN USER", "UNKNOWN_USER"}
+                else "DBA / FinOps"
+            ),
+            axis=1,
+        )
+    if "OWNER_SOURCE" not in annotated.columns:
+        annotated["OWNER_SOURCE"] = annotated.apply(
+            lambda row: (
+                "QUERY_USER"
+                if _row_text(row, "USER_NAME").upper() not in {"", "UNKNOWN USER", "UNKNOWN_USER"}
+                else "MISSING_OWNER"
+            ),
+            axis=1,
+        )
+    if "OWNER_EVIDENCE" not in annotated.columns:
+        annotated["OWNER_EVIDENCE"] = annotated.apply(
+            lambda row: (
+                "Query user present; validate owner/tag evidence before billing."
+                if _row_text(row, "OWNER_SOURCE").upper() == "QUERY_USER"
+                else "No query user owner evidence; shared/unallocated review required."
+            ),
+            axis=1,
+        )
+    return annotated
+
+
+def _mixed_label(values, *, default: str = "Unknown") -> str:
+    cleaned = [str(value).strip() for value in values if str(value or "").strip()]
+    unique = sorted(set(cleaned))
+    if not unique:
+        return default
+    return unique[0] if len(unique) == 1 else "Mixed"
+
+
+def _chargeback_readiness_label(values) -> str:
+    cleaned = {str(value).strip().upper() for value in values if str(value or "").strip()}
+    if not cleaned:
+        return "Unknown"
+    if "NO" in cleaned:
+        return "Review Required"
+    if "REVIEW" in cleaned:
+        return "Review"
+    if cleaned == {"READY"}:
+        return "Ready"
+    if cleaned == {"DIRECTIONAL"}:
+        return "Directional"
+    return "Mixed"
+
+
+def _owner_proof_label(values) -> str:
+    cleaned = {str(value).strip().upper() for value in values if str(value or "").strip()}
+    if not cleaned:
+        return "Missing"
+    if any("TAG" in value for value in cleaned):
+        return "Tag Proof"
+    if cleaned == {"QUERY_USER"}:
+        return "Query User Only"
+    if "MISSING_OWNER" in cleaned:
+        return "Missing"
+    return "Mixed"
+
+
+def _chargeback_cost_verification_sql(
+    row: pd.Series,
+    *,
+    lookback_days: int = 30,
+    company: str = "",
+) -> str:
+    """Build read-only evidence for a chargeback/cost-outlier queue item."""
+    days = max(1, min(int(lookback_days or 30), 90))
+    wh = _row_text(row, "WAREHOUSE_NAME") or "Unknown warehouse"
+    user = _row_text(row, "USER_NAME")
+    database = _row_text(row, "DATABASE_NAME")
+    environment = _row_text(row, "ENVIRONMENT")
+    row_company = _row_text(row, "COMPANY") or company
+    wh_clause = f"AND q.warehouse_name = {sql_literal(wh, 300)}"
+    user_clause = (
+        f"AND q.user_name = {sql_literal(user, 300)}"
+        if user and user.upper() not in {"UNKNOWN USER", "UNKNOWN_USER"}
+        else ""
+    )
+    database_clause = ""
+    if database and database.upper() not in NO_DATABASE_CONTEXT_VALUES:
+        database_clause = f"AND q.database_name = {sql_literal(database, 300)}"
+    elif environment and environment.upper() not in {"ALL", "NO DATABASE CONTEXT", "NO_DATABASE_CONTEXT"}:
+        env_filter = get_environment_filter_clause(
+            "q.database_name",
+            environment=environment,
+            company=row_company,
+        )
+        database_clause = env_filter
+
+    return f"""WITH query_scope AS (
+    SELECT
+        q.warehouse_name,
+        COALESCE(q.database_name, 'NO_DATABASE_CONTEXT') AS database_name,
+        COALESCE(q.user_name, 'UNKNOWN_USER') AS user_name,
+        COUNT(*) AS query_count,
+        SUM(COALESCE(q.total_elapsed_time, 0)) / 1000 AS total_elapsed_sec,
+        AVG(COALESCE(q.total_elapsed_time, 0)) / 1000 AS avg_elapsed_sec,
+        APPROX_PERCENTILE(COALESCE(q.total_elapsed_time, 0) / 1000, 0.95) AS p95_elapsed_sec,
+        SUM(COALESCE(q.bytes_scanned, 0)) / POWER(1024, 4) AS tb_scanned,
+        SUM(
+            COALESCE(q.bytes_spilled_to_local_storage, 0)
+            + COALESCE(q.bytes_spilled_to_remote_storage, 0)
+        ) / POWER(1024, 3) AS spill_gb,
+        MAX(q.start_time) AS latest_query_time
+    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+    WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+      {wh_clause}
+      {user_clause}
+      {database_clause}
+    GROUP BY q.warehouse_name, COALESCE(q.database_name, 'NO_DATABASE_CONTEXT'), COALESCE(q.user_name, 'UNKNOWN_USER')
+),
+metering_scope AS (
+    SELECT
+        warehouse_name,
+        SUM(COALESCE(credits_used_compute, credits_used)) AS warehouse_compute_credits,
+        SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits,
+        MAX(end_time) AS latest_metering_time
+    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+    WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+      AND warehouse_name = {sql_literal(wh, 300)}
+    GROUP BY warehouse_name
+),
+owner_tag_scope AS (
+    SELECT
+        domain,
+        object_database,
+        object_name,
+        tag_name,
+        tag_value
+    FROM SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES
+    WHERE UPPER(tag_name) IN ('COST_OWNER', 'DATA_OWNER', 'APP_OWNER', 'APPLICATION_OWNER', 'BUSINESS_OWNER', 'SERVICE_OWNER')
+      AND tag_value IS NOT NULL
+      AND (
+        (UPPER(domain) = 'WAREHOUSE' AND UPPER(object_name) = UPPER({sql_literal(wh, 300)}))
+        OR (
+          UPPER(domain) = 'DATABASE'
+          AND UPPER(COALESCE(object_database, object_name)) = UPPER({sql_literal(database, 300)})
+        )
+      )
+)
+SELECT
+    q.warehouse_name,
+    q.database_name,
+    q.user_name,
+    q.query_count,
+    ROUND(q.total_elapsed_sec, 2) AS total_elapsed_sec,
+    ROUND(q.avg_elapsed_sec, 2) AS avg_elapsed_sec,
+    ROUND(q.p95_elapsed_sec, 2) AS p95_elapsed_sec,
+    ROUND(q.tb_scanned, 4) AS tb_scanned,
+    ROUND(q.spill_gb, 4) AS spill_gb,
+    ROUND(COALESCE(m.warehouse_compute_credits, 0), 4) AS warehouse_compute_credits,
+    ROUND(COALESCE(m.cloud_services_credits, 0), 4) AS cloud_services_credits,
+    'Allocated / Estimated' AS allocation_confidence,
+    LISTAGG(DISTINCT o.domain || ':' || o.tag_name || '=' || o.tag_value, '; ') AS owner_tag_evidence,
+    q.latest_query_time,
+    m.latest_metering_time
+FROM query_scope q
+LEFT JOIN metering_scope m
+  ON m.warehouse_name = q.warehouse_name
+LEFT JOIN owner_tag_scope o
+  ON 1 = 1
+GROUP BY
+    q.warehouse_name,
+    q.database_name,
+    q.user_name,
+    q.query_count,
+    q.total_elapsed_sec,
+    q.avg_elapsed_sec,
+    q.p95_elapsed_sec,
+    q.tb_scanned,
+    q.spill_gb,
+    m.warehouse_compute_credits,
+    m.cloud_services_credits,
+    q.latest_query_time,
+    m.latest_metering_time
+ORDER BY total_elapsed_sec DESC, query_count DESC
+LIMIT 50"""
+
+
+def _chargeback_action_owner(row: pd.Series) -> str:
+    readiness = _row_text(row, "CHARGEBACK_READY").upper()
+    owner_source = _row_text(row, "OWNER_SOURCE").upper()
+    cost_owner = _row_text(row, "COST_OWNER")
+    if "TAG" in owner_source and cost_owner:
+        return cost_owner
+    user = _row_text(row, "USER_NAME")
+    if readiness in {"NO", "REVIEW"}:
+        return "DBA / FinOps"
+    return user if user and user.upper() not in {"UNKNOWN USER", "UNKNOWN_USER"} else "DBA / FinOps"
+
+
+def _chargeback_action_sql_note(row: pd.Series, credits: float, est_cost: float) -> str:
+    confidence = _row_text(row, "ALLOCATION_CONFIDENCE") or "Unknown"
+    readiness = _row_text(row, "CHARGEBACK_READY") or "Unknown"
+    basis = _row_text(row, "ALLOCATION_BASIS") or "Review allocation basis before chargeback."
+    scope_review = _row_text(row, "SCOPE_REVIEW") or "None"
+    database = _row_text(row, "DATABASE_NAME") or "NO_DATABASE_CONTEXT"
+    env_rollup = _row_text(row, "ENVIRONMENT_ROLLUP") or _environment_rollup_for_cost(row)
+    cost_owner = _row_text(row, "COST_OWNER") or "Missing"
+    owner_source = _row_text(row, "OWNER_SOURCE") or "Missing"
+    owner_evidence = _row_text(row, "OWNER_EVIDENCE") or "No owner evidence attached."
+    return "\n".join([
+        "-- Chargeback review plan, not state-changing SQL.",
+        "-- Do not bill an owner from this row until allocation confidence and ownership evidence are attached.",
+        f"-- Database: {database}",
+        f"-- Environment rollup: {env_rollup}",
+        f"-- Cost owner: {cost_owner}",
+        f"-- Owner source: {owner_source}",
+        f"-- Owner evidence: {owner_evidence}",
+        f"-- Credits: {credits:,.4f}; estimated cost: ${est_cost:,.2f}",
+        f"-- Allocation confidence: {confidence}",
+        f"-- Chargeback readiness: {readiness}",
+        f"-- Allocation basis: {basis}",
+        f"-- Scope review: {scope_review}",
+        "-- Required closure: attach owner/tag evidence or mark shared/unallocated with reason.",
+    ])
+
 
 def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source: str) -> None:
     if df is None or df.empty:
         st.info("No cost outliers to queue.")
         return
+    if (
+        "ALLOCATION_CONFIDENCE" not in df.columns
+        or "CHARGEBACK_READY" not in df.columns
+        or "ENVIRONMENT_ROLLUP" not in df.columns
+    ):
+        df = _annotate_allocation_quality(df)
     if "TOTAL_CREDITS" not in df.columns:
         if "ALLOCATED_CREDITS" in df.columns:
             df = df.copy()
@@ -59,39 +412,85 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             st.info("No total-credit measure was available for cost outlier queueing.")
             return
     company = st.session_state.get("active_company", "ALFA")
+    is_chargeback = "CHARGEBACK" in str(source or "").upper()
     actions = []
     baseline = safe_float(df["TOTAL_CREDITS"].median()) if "TOTAL_CREDITS" in df.columns else 0
     candidates = df.sort_values("TOTAL_CREDITS", ascending=False).head(20)
     for _, row in candidates.iterrows():
         active_env = get_active_environment()
-        action_env = str(row.get("ENVIRONMENT") or (active_env if active_env != "ALL" else "") or "")
-        user = str(row.get("USER_NAME") or "Unknown user")
-        wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
+        action_env = str(
+            row.get("ENVIRONMENT_ROLLUP")
+            or row.get("ENVIRONMENT")
+            or (active_env if active_env != "ALL" else "")
+            or ""
+        )
+        user = _row_text(row, "USER_NAME") or "Unknown user"
+        wh = _row_text(row, "WAREHOUSE_NAME") or "Unknown warehouse"
+        database = _row_text(row, "DATABASE_NAME")
+        confidence = _row_text(row, "ALLOCATION_CONFIDENCE")
+        readiness = _row_text(row, "CHARGEBACK_READY")
+        scope_review = _row_text(row, "SCOPE_REVIEW")
+        owner_source = _row_text(row, "OWNER_SOURCE")
+        owner_evidence = _row_text(row, "OWNER_EVIDENCE")
         credits = safe_float(row.get("TOTAL_CREDITS", 0))
         est_cost = credits_to_dollars(credits, credit_price)
         if baseline > 0 and credits < baseline * 2 and est_cost < 500:
             continue
-        entity = f"{user} on {wh}"
+        if is_chargeback and database:
+            entity = f"{database} / {user} on {wh}"
+        else:
+            entity = f"{user} on {wh}"
         monthly_savings = max(0.0, est_cost * 0.15)
-        finding = f"{entity} consumed {credits:,.2f} credits (${est_cost:,.2f}) in the selected window"
+        confidence_note = f" ({confidence})" if confidence else ""
+        readiness_note = f"; chargeback readiness: {readiness}" if readiness else ""
+        scope_note = f"; scope review: {scope_review}" if scope_review and scope_review != "None" else ""
+        owner_note = f"; owner proof: {owner_source}" if owner_source else ""
+        finding = (
+            f"{entity} consumed {credits:,.2f} credits (${est_cost:,.2f}) "
+            f"in the selected window{confidence_note}{readiness_note}{scope_note}{owner_note}"
+        )
+        verification_sql = _chargeback_cost_verification_sql(
+            row,
+            lookback_days=30,
+            company=str(row.get("COMPANY") or company),
+        )
+        action_text = (
+            "Validate owner/tag evidence, confirm whether this is billable or shared/unallocated, "
+            "and rerun the verification query for the next complete period before closing."
+            if is_chargeback
+            else "Review query patterns, warehouse sizing, cache use, and whether the workload can be optimized or scheduled differently."
+        )
+        if readiness and readiness.upper() in {"NO", "REVIEW"}:
+            action_text = (
+                f"{action_text} This row is not cleanly chargeback-ready; resolve scope/owner evidence before billing."
+            )
+        if is_chargeback and "TAG" not in owner_source.upper():
+            action_text = (
+                f"{action_text} Missing Snowflake owner-tag proof; attach COST_OWNER/DATA_OWNER/APP_OWNER evidence "
+                "or classify this as shared/unallocated."
+            )
+        if owner_evidence:
+            action_text = f"{action_text} Owner evidence: {owner_evidence[:300]}"
         actions.append({
             "Action ID": make_action_id("Cost Outlier", entity, finding),
             "Source": source,
             "Severity": "Medium" if est_cost < 2500 else "High",
-            "Category": "Cost",
-            "Entity Type": "User/Warehouse",
+            "Category": "Chargeback Review" if is_chargeback else "Cost",
+            "Entity Type": "Database/User/Warehouse" if is_chargeback else "User/Warehouse",
             "Entity": entity,
-            "Owner": user if user and user != "Unknown user" else "DBA",
+            "Owner": _chargeback_action_owner(row) if is_chargeback else (user if user != "Unknown user" else "DBA"),
             "Finding": finding,
-            "Action": "Review query patterns, warehouse sizing, cache use, and whether the workload can be optimized or scheduled differently.",
+            "Action": action_text,
             "Estimated Monthly Savings": round(monthly_savings, 2),
-            "Generated SQL Fix": "-- Use Cost & Contract drilldown to identify top query patterns before applying warehouse/query changes.",
-            "Proof Query": "Cost & Contract metered credit attribution query.",
+            "Generated SQL Fix": _chargeback_action_sql_note(row, credits, est_cost)[:8000],
+            "Proof Query": verification_sql[:8000],
             "Company": company,
             "Environment": action_env,
             "Verification Status": "Pending",
-            "Verification Query": "Cost & Contract metered credit attribution query.",
+            "Verification Query": verification_sql[:8000],
+            "Baseline Value": 0,
             "Current Value": round(credits, 4),
+            "Measured Delta": round(credits, 4),
         })
     if not actions:
         st.success("No cost outliers crossed the queue threshold.")
@@ -1228,12 +1627,15 @@ def render():
                 "then rolls ALFA_EDW_PROD separately from ALFA_EDW_DEV/SAN/PHX/SEA/SIT."
             )
             if environment_drivers is not None and not environment_drivers.empty:
-                env_display = environment_drivers.copy()
+                env_display = _annotate_allocation_quality(environment_drivers)
                 env_display["EST_COST"] = env_display["ALLOCATED_CREDITS"].apply(
                     lambda x: credits_to_dollars(x, credit_price)
                 )
                 env_summary = (
-                    env_display.groupby("ENVIRONMENT", as_index=False)[
+                    env_display.groupby(
+                        ["ENVIRONMENT_ROLLUP", "ALLOCATION_CONFIDENCE", "CHARGEBACK_READY"],
+                        as_index=False,
+                    )[
                         ["ALLOCATED_CREDITS", "EST_COST", "QUERY_COUNT", "USERS", "WAREHOUSES", "GB_SCANNED"]
                     ]
                     .sum()
@@ -1242,7 +1644,7 @@ def render():
                 cenv = st.columns(min(4, max(1, len(env_summary))))
                 for idx, row in env_summary.head(4).iterrows():
                     cenv[idx % len(cenv)].metric(
-                        str(row["ENVIRONMENT"]),
+                        str(row["ENVIRONMENT_ROLLUP"]),
                         f"${safe_float(row['EST_COST']):,.2f}",
                         f"{safe_float(row['ALLOCATED_CREDITS']):,.2f} cr",
                     )
@@ -1250,19 +1652,34 @@ def render():
                     env_summary,
                     title="Environment cost rollup",
                     priority_columns=[
-                        "ENVIRONMENT", "ALLOCATED_CREDITS", "EST_COST",
-                        "QUERY_COUNT", "USERS", "WAREHOUSES", "GB_SCANNED",
+                        "ENVIRONMENT_ROLLUP", "ALLOCATION_CONFIDENCE", "CHARGEBACK_READY",
+                        "ALLOCATED_CREDITS", "EST_COST", "QUERY_COUNT", "USERS", "WAREHOUSES", "GB_SCANNED",
                     ],
                     sort_by=["EST_COST", "ALLOCATED_CREDITS"],
                     ascending=[False, False],
                     raw_label="All environment rollup rows",
                 )
+                dev_detail = env_display[env_display["ENVIRONMENT_ROLLUP"] == "DEV_ALL"]
+                if not dev_detail.empty:
+                    render_priority_dataframe(
+                        dev_detail,
+                        title="Individual DEV database cost",
+                        priority_columns=[
+                            "ENVIRONMENT", "DATABASE_NAME", "ALLOCATED_CREDITS", "EST_COST",
+                            "QUERY_COUNT", "USERS", "WAREHOUSES", "ALLOCATION_CONFIDENCE", "GB_SCANNED",
+                        ],
+                        sort_by=["EST_COST", "ALLOCATED_CREDITS"],
+                        ascending=[False, False],
+                        raw_label="All individual DEV database rows",
+                    )
                 render_priority_dataframe(
                     env_display,
                     title="Environment cost by database",
                     priority_columns=[
-                        "ENVIRONMENT", "DATABASE_NAME", "ALLOCATED_CREDITS", "EST_COST",
-                        "QUERY_COUNT", "USERS", "WAREHOUSES", "AVG_ELAPSED_SEC", "GB_SCANNED",
+                        "ENVIRONMENT_ROLLUP", "ENVIRONMENT", "DATABASE_NAME",
+                        "ALLOCATION_CONFIDENCE", "CHARGEBACK_READY", "SCOPE_REVIEW",
+                        "ALLOCATED_CREDITS", "EST_COST", "QUERY_COUNT", "USERS",
+                        "WAREHOUSES", "AVG_ELAPSED_SEC", "GB_SCANNED",
                     ],
                     sort_by=["EST_COST", "ALLOCATED_CREDITS"],
                     ascending=[False, False],
@@ -1696,16 +2113,33 @@ def render():
 
         if st.button("Load Chargeback", key="cc_cb_load"):
             try:
-                # FIX: replaced hardcoded CASE with get_company_case_expr()
-                # which reads from COMPANY_CONFIG and includes all WH_ALFA_* warehouses
-                company_expr = get_company_case_expr(
-                    "q.warehouse_name", "q.database_name", "q.user_name"
+                mart_sql = build_mart_chargeback_sql(
+                    cb_days,
+                    company=company,
+                    warehouse_contains=st.session_state.get("global_warehouse", ""),
+                    user_contains=st.session_state.get("global_user", ""),
+                    role_contains=st.session_state.get("global_role", ""),
+                    database_contains=st.session_state.get("global_database", ""),
                 )
-                environment_expr = get_environment_case_expr("q.database_name")
-                cb_scope = get_global_filter_clause(
-                    "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+                mart_result = load_mart_table(
+                    "FACT_CHARGEBACK_DAILY",
+                    mart_sql,
+                    source_label="FACT_CHARGEBACK_DAILY",
                 )
-                df_cb = run_query(f"""
+                if mart_result.available and not mart_result.data.empty:
+                    df_cb = mart_result.data
+                    source_caption = mart_source_caption(mart_result)
+                else:
+                    # FIX: replaced hardcoded CASE with get_company_case_expr()
+                    # which reads from COMPANY_CONFIG and includes all WH_ALFA_* warehouses
+                    company_expr = get_company_case_expr(
+                        "q.warehouse_name", "q.database_name", "q.user_name"
+                    )
+                    environment_expr = get_environment_case_expr("q.database_name")
+                    cb_scope = get_global_filter_clause(
+                        "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+                    )
+                    live_chargeback_sql = f"""
                 WITH {build_metered_credit_cte(days_back=cb_days)},
                 query_costs AS (
                     SELECT
@@ -1713,6 +2147,7 @@ def render():
                         {environment_expr}     AS environment,
                         COALESCE(q.database_name, 'NO_DATABASE_CONTEXT') AS database_name,
                         q.user_name,
+                        q.role_name,
                         q.warehouse_name,
                         {max_wh_size_expr} AS warehouse_size,
                         COUNT(*)               AS query_count,
@@ -1722,30 +2157,57 @@ def render():
                     WHERE q.start_time >= DATEADD('day', -{cb_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
                       {cb_scope}
-                    GROUP BY 1, 2, 3, q.user_name, q.warehouse_name
+                    GROUP BY 1, 2, 3, q.user_name, q.role_name, q.warehouse_name
                 )
-                SELECT company, environment, database_name, user_name, warehouse_name, warehouse_size, query_count,
+                SELECT company, environment, database_name, user_name, role_name, warehouse_name, warehouse_size, query_count,
                        ROUND(total_credits, 4) AS total_credits
                 FROM query_costs
                 ORDER BY total_credits DESC
-                """, ttl_key=f"cc_chargeback_{company}_{get_active_environment()}_{cb_days}", tier="standard")
+                """
+                    df_cb = run_query(
+                        live_chargeback_sql,
+                        ttl_key=f"cc_chargeback_{company}_{get_active_environment()}_{cb_days}",
+                        tier="standard",
+                    )
+                    fallback_note = ""
+                    if mart_result.message:
+                        fallback_note = f" Mart unavailable: {mart_result.message[:160]}"
+                    elif mart_result.available:
+                        fallback_note = " Mart returned no chargeback rows for the selected scope."
+                    source_caption = (
+                        "Live fallback: ACCOUNT_USAGE query allocation. "
+                        "Database-attributed cost remains Allocated / Estimated."
+                        f"{fallback_note}"
+                    )
                 st.session_state["df_chargeback"] = df_cb
+                st.session_state["df_chargeback_source"] = source_caption
             except Exception as e:
                 st.warning(f"Chargeback data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("df_chargeback") is not None and not st.session_state["df_chargeback"].empty:
-            df_cb = st.session_state["df_chargeback"]
+            df_cb = _annotate_allocation_quality(st.session_state["df_chargeback"])
             df_cb["EST_COST"] = df_cb["TOTAL_CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
+            st.caption(st.session_state.get(
+                "df_chargeback_source",
+                "Chargeback source: not loaded",
+            ))
 
             # Summary by company — the key chargeback output
             summary = (
-                df_cb.groupby("COMPANY", as_index=False)[["TOTAL_CREDITS","EST_COST","QUERY_COUNT"]]
-                .sum()
+                df_cb.groupby("COMPANY", as_index=False)
+                .agg(
+                    TOTAL_CREDITS=("TOTAL_CREDITS", "sum"),
+                    EST_COST=("EST_COST", "sum"),
+                    QUERY_COUNT=("QUERY_COUNT", "sum"),
+                    ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
+                    CHARGEBACK_READY=("CHARGEBACK_READY", _chargeback_readiness_label),
+                    OWNER_PROOF=("OWNER_SOURCE", _owner_proof_label),
+                )
                 .sort_values("EST_COST", ascending=False)
             )
-            c1, c2, c3 = st.columns(len(summary))
+            metric_cols = st.columns(min(3, max(1, len(summary))))
             for idx, srow in summary.iterrows():
-                col = [c1, c2, c3][idx % 3]
+                col = metric_cols[idx % len(metric_cols)]
                 col.metric(
                     srow["COMPANY"],
                     f"${srow['EST_COST']:,.2f}",
@@ -1756,28 +2218,63 @@ def render():
             render_priority_dataframe(
                 summary,
                 title="Chargeback summary",
-                priority_columns=["COMPANY", "TOTAL_CREDITS", "EST_COST", "QUERY_COUNT"],
+                priority_columns=[
+                    "COMPANY", "ALLOCATION_CONFIDENCE", "CHARGEBACK_READY", "OWNER_PROOF",
+                    "TOTAL_CREDITS", "EST_COST", "QUERY_COUNT",
+                ],
                 sort_by=["EST_COST", "TOTAL_CREDITS"],
                 ascending=[False, False],
                 raw_label="All chargeback summary rows",
             )
             if "ENVIRONMENT" in df_cb.columns:
-                st.subheader("Summary by Environment")
+                st.subheader("Summary by Environment Rollup")
                 env_summary = (
-                    df_cb.groupby(["COMPANY", "ENVIRONMENT"], as_index=False)[
-                        ["TOTAL_CREDITS", "EST_COST", "QUERY_COUNT"]
-                    ]
-                    .sum()
+                    df_cb.groupby(["COMPANY", "ENVIRONMENT_ROLLUP"], as_index=False)
+                    .agg(
+                        TOTAL_CREDITS=("TOTAL_CREDITS", "sum"),
+                        EST_COST=("EST_COST", "sum"),
+                        QUERY_COUNT=("QUERY_COUNT", "sum"),
+                        ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
+                        CHARGEBACK_READY=("CHARGEBACK_READY", _chargeback_readiness_label),
+                        OWNER_PROOF=("OWNER_SOURCE", _owner_proof_label),
+                    )
                     .sort_values("EST_COST", ascending=False)
                 )
                 render_priority_dataframe(
                     env_summary,
                     title="Chargeback environment summary",
-                    priority_columns=["COMPANY", "ENVIRONMENT", "TOTAL_CREDITS", "EST_COST", "QUERY_COUNT"],
+                    priority_columns=[
+                        "COMPANY", "ENVIRONMENT_ROLLUP", "ALLOCATION_CONFIDENCE", "CHARGEBACK_READY", "OWNER_PROOF",
+                        "TOTAL_CREDITS", "EST_COST", "QUERY_COUNT",
+                    ],
                     sort_by=["EST_COST", "TOTAL_CREDITS"],
                     ascending=[False, False],
                     raw_label="All environment chargeback rows",
                 )
+                dev_rows = df_cb[df_cb["ENVIRONMENT_ROLLUP"] == "DEV_ALL"]
+                if not dev_rows.empty:
+                    dev_summary = (
+                        dev_rows.groupby(["COMPANY", "ENVIRONMENT", "DATABASE_NAME"], as_index=False)
+                        .agg(
+                            TOTAL_CREDITS=("TOTAL_CREDITS", "sum"),
+                            EST_COST=("EST_COST", "sum"),
+                            QUERY_COUNT=("QUERY_COUNT", "sum"),
+                            ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
+                            OWNER_PROOF=("OWNER_SOURCE", _owner_proof_label),
+                        )
+                        .sort_values("EST_COST", ascending=False)
+                    )
+                    render_priority_dataframe(
+                        dev_summary,
+                        title="Chargeback individual DEV databases",
+                        priority_columns=[
+                            "COMPANY", "ENVIRONMENT", "DATABASE_NAME", "ALLOCATION_CONFIDENCE", "OWNER_PROOF",
+                            "TOTAL_CREDITS", "EST_COST", "QUERY_COUNT",
+                        ],
+                        sort_by=["EST_COST", "TOTAL_CREDITS"],
+                        ascending=[False, False],
+                        raw_label="All chargeback individual DEV database rows",
+                    )
 
             st.subheader("Detail by User / Warehouse")
             company_filter = st.selectbox(
@@ -1790,9 +2287,17 @@ def render():
                 title="Chargeback detail drivers",
                 priority_columns=[
                     "COMPANY",
+                    "ENVIRONMENT_ROLLUP",
                     "ENVIRONMENT",
                     "DATABASE_NAME",
+                    "ALLOCATION_CONFIDENCE",
+                    "CHARGEBACK_READY",
+                    "SCOPE_REVIEW",
+                    "COST_OWNER",
+                    "OWNER_SOURCE",
+                    "OWNER_EVIDENCE",
                     "USER_NAME",
+                    "ROLE_NAME",
                     "WAREHOUSE_NAME",
                     "WAREHOUSE_SIZE",
                     "TOTAL_CREDITS",

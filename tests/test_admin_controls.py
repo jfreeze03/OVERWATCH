@@ -19,8 +19,13 @@ from utils.action_queue import (  # noqa: E402
     action_queue_environment_clause,
     action_queue_environment_values,
     action_queue_fixed_missing_fields,
+    action_queue_default_due_days,
+    build_safe_verification_query,
     build_action_queue_ddl,
+    enrich_action_queue_view,
+    summarize_verification_frame,
     update_action_status_with_evidence,
+    verification_query_safety_issues,
 )
 
 
@@ -216,9 +221,66 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("VERIFICATION_STATUS", ddl)
         self.assertIn("VERIFICATION_RESULT", ddl)
         self.assertIn("MEASURED_DELTA", ddl)
+        self.assertIn("OWNER_APPROVAL_STATUS", ddl)
+        self.assertIn("RECOVERY_SLA_STATE", ddl)
+        self.assertIn("RECOVERY_EVIDENCE", ddl)
         self.assertIn("COMPANY", ddl)
         self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS VERIFICATION_STATUS", setup_sql)
         self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS VERIFIED_AT", setup_sql)
+        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS OWNER_APPROVAL_STATUS", setup_sql)
+        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS RECOVERY_EVIDENCE", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_DBA_CHECKLIST_HISTORY", setup_sql)
+        self.assertIn("ESCALATION_TARGET", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_CHANGE_CONTROL_EVIDENCE", setup_sql)
+        self.assertIn("CHANGE_TICKET_ID", setup_sql)
+        self.assertIn("IAC_RECONCILIATION_STATE", setup_sql)
+        self.assertIn("EXECUTION_AUDIT_STATE", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_WAREHOUSE_SETTING_REVIEW", setup_sql)
+        self.assertIn("BASELINE_CAPACITY_SCORE", setup_sql)
+        self.assertIn("SAVINGS_VERIFICATION_REQUIRED", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_SECURITY_ACCESS_REVIEW", setup_sql)
+        self.assertIn("DATABASE_CONTEXT", setup_sql)
+        self.assertIn("ROLE_CAPABILITY_STATE", setup_sql)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_CHARGEBACK_DAILY", setup_sql)
+        self.assertIn("ALLOCATED_CREDITS", setup_sql)
+        self.assertIn("OWNER_EVIDENCE", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_TAG_NAMES", setup_sql)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS DIM_COST_OWNER_TAG", setup_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES", setup_sql)
+        self.assertIn("WAREHOUSE_TAG:", setup_sql)
+        self.assertIn("DATABASE_TAG:", setup_sql)
+        self.assertIn("DELETE FROM FACT_CHARGEBACK_DAILY", setup_sql)
+        self.assertIn("INSERT INTO FACT_CHARGEBACK_DAILY", setup_sql)
+        self.assertIn("DEFAULT_ALERT_EMAIL", setup_sql)
+        self.assertIn("JDEES@ALFAINS.COM", setup_sql)
+        self.assertIn("ALERT_DELIVERY_METHOD", setup_sql)
+        self.assertIn("EMAIL_TARGET", setup_sql)
+        self.assertIn("EMAIL_SUBJECT", setup_sql)
+        self.assertIn("EMAIL_BODY", setup_sql)
+        self.assertIn("EMAIL_READY", setup_sql)
+        self.assertIn("STATUS_REASON", setup_sql)
+        self.assertIn("LAST_STATUS_BY", setup_sql)
+        self.assertIn("LAST_DELIVERY_AT", setup_sql)
+        self.assertIn("DELIVERY_LOG_COUNT", setup_sql)
+        self.assertIn("ESCALATION_ACK_BY", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ALERT_DELIVERY_LOG", setup_sql)
+        self.assertIn("ROUTED_TO_ACTION_QUEUE_AT", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ALERT_RULES", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ALERT_RULE_AUDIT", setup_sql)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_TASK_CRITICAL_PATH", setup_sql)
+        self.assertIn("INSERT INTO FACT_TASK_CRITICAL_PATH", setup_sql)
+        self.assertIn("OWNER_ROLE", setup_sql)
+        self.assertIn("APPROVAL_PATH", setup_sql)
+        self.assertIn("SOURCE_FRESHNESS", setup_sql)
+        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_ALERT_TRIAGE_V", setup_sql)
+        self.assertIn("SLA_HOURS", setup_sql)
+        self.assertIn("TRIAGE_PRIORITY", setup_sql)
+        self.assertIn("PROCEDURE_FAILURE_OR_SPIKE", setup_sql)
+        self.assertIn("CREATE OR REPLACE TASK OVERWATCH_ANOMALY_CHECK", setup_sql)
+        self.assertIn("TASK FAILURE", setup_sql)
+        self.assertIn("STORED PROCEDURE", setup_sql)
+        self.assertIn("GRANT/REVOKE ACTIVITY", setup_sql)
+        self.assertIn("WAREHOUSE SETTING CHANGE", setup_sql)
 
         dev_values = action_queue_environment_values("DEV_ALL")
         self.assertIn("DEV_ALL", dev_values)
@@ -275,9 +337,16 @@ class AdminControlTests(unittest.TestCase):
             verification_query="SELECT 1;",
             ticket_id="INC777",
             approver="DBA_MANAGER",
+            due_date="2026-06-01",
             baseline_value=100,
             current_value=70,
             measured_delta=-30,
+            owner_approval_status="Approved",
+            owner_approval_note="Pipeline owner approved recovery after INC777.",
+            recovery_sla_state="Recovered Within SLA",
+            recovery_sla_hours=1.5,
+            recovery_sla_target_hours=4,
+            recovery_evidence="Latest task run succeeded 1.5 hours after failure.",
         )
         update_sql = session.sql_texts[-1].upper()
 
@@ -285,7 +354,105 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("VERIFICATION_RESULT", update_sql)
         self.assertIn("VERIFIED_AT = CURRENT_TIMESTAMP()", update_sql)
         self.assertIn("TICKET_ID", update_sql)
+        self.assertIn("DUE_DATE", update_sql)
+        self.assertIn("2026-06-01", update_sql)
         self.assertIn("MEASURED_DELTA = COALESCE(-30.0", update_sql)
+        self.assertIn("OWNER_APPROVAL_STATUS", update_sql)
+        self.assertIn("OWNER_APPROVAL_BY", update_sql)
+        self.assertIn("OWNER_APPROVAL_AT", update_sql)
+        self.assertIn("RECOVERY_SLA_STATE", update_sql)
+        self.assertIn("RECOVERY_EVIDENCE", update_sql)
+
+    def test_action_queue_triage_fields_expose_due_state_and_evidence_gaps(self):
+        self.assertEqual(action_queue_default_due_days("Critical"), 1)
+        self.assertEqual(action_queue_default_due_days("unknown"), 7)
+        df = pd.DataFrame([
+            {
+                "ACTION_ID": "OVERDUE1",
+                "STATUS": "New",
+                "SEVERITY": "Critical",
+                "CATEGORY": "Cost Control",
+                "OWNER": "FINOPS_OWNER",
+                "TICKET_ID": "",
+                "APPROVER": "",
+                "DUE_DATE": "2026-05-30",
+                "VERIFICATION_QUERY": "SELECT * FROM COST_PROOF",
+                "PROOF_QUERY": "",
+                "BASELINE_VALUE": 100,
+                "CURRENT_VALUE": 140,
+            },
+            {
+                "ACTION_ID": "FIXED1",
+                "STATUS": "Fixed",
+                "SEVERITY": "High",
+                "CATEGORY": "Task & Procedure Reliability",
+                "OWNER": "TASK_OWNER",
+                "TICKET_ID": "INC1",
+                "APPROVER": "DBA_MANAGER",
+                "DUE_DATE": "2026-05-31",
+                "VERIFICATION_STATUS": "Verified",
+                "VERIFICATION_RESULT": "Latest task run succeeded within the baseline.",
+                "VERIFICATION_QUERY": "SELECT * FROM TASK_HISTORY",
+                "BASELINE_VALUE": 300,
+                "CURRENT_VALUE": 240,
+                "OWNER_APPROVAL_STATUS": "Approved",
+                "RECOVERY_SLA_STATE": "Recovered Within SLA",
+                "RECOVERY_EVIDENCE": "Successful recovery run attached.",
+            },
+            {
+                "ACTION_ID": "TASKOPEN1",
+                "STATUS": "In Progress",
+                "SEVERITY": "High",
+                "CATEGORY": "Task & Procedure Reliability",
+                "OWNER": "TASK_OWNER",
+                "TICKET_ID": "INC2",
+                "APPROVER": "DBA_MANAGER",
+                "DUE_DATE": "2026-06-01",
+                "VERIFICATION_QUERY": "SELECT * FROM TASK_HISTORY",
+                "BASELINE_VALUE": 300,
+                "CURRENT_VALUE": 500,
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "RECOVERY_SLA_STATE": "Open Failure",
+                "RECOVERY_EVIDENCE": "",
+            },
+        ])
+
+        enriched = enrich_action_queue_view(df, today="2026-05-31")
+        by_id = {row["ACTION_ID"]: row for _, row in enriched.iterrows()}
+
+        self.assertEqual(by_id["OVERDUE1"]["DUE_STATE"], "Overdue")
+        self.assertIn("missing ticket/change ID", by_id["OVERDUE1"]["EVIDENCE_GAP"])
+        self.assertIn("Escalate", by_id["OVERDUE1"]["NEXT_ACTION"])
+        self.assertEqual(by_id["FIXED1"]["DUE_STATE"], "Closed")
+        self.assertEqual(by_id["FIXED1"]["EVIDENCE_GAP"], "Verified closure")
+        self.assertGreater(by_id["FIXED1"]["QUEUE_PRIORITY"], by_id["OVERDUE1"]["QUEUE_PRIORITY"])
+        self.assertIn("missing owner approval", by_id["TASKOPEN1"]["EVIDENCE_GAP"])
+        self.assertIn("missing recovery evidence", by_id["TASKOPEN1"]["EVIDENCE_GAP"])
+
+    def test_verification_query_runner_rejects_non_read_only_sql(self):
+        self.assertEqual(verification_query_safety_issues("SELECT * FROM FOO"), [])
+        self.assertEqual(
+            build_safe_verification_query("-- proof\nSELECT * FROM FOO", limit=25),
+            "SELECT * FROM FOO\nLIMIT 25",
+        )
+        self.assertIn("exactly one", verification_query_safety_issues("SELECT * FROM FOO; DROP TABLE BAR;")[0])
+        with self.assertRaises(ValueError):
+            build_safe_verification_query("SELECT * FROM FOO; DROP TABLE BAR;")
+        self.assertIn("must start", verification_query_safety_issues("ALTER WAREHOUSE WH SET AUTO_SUSPEND = 60")[0])
+        self.assertEqual(verification_query_safety_issues("SELECT * FROM QUERY_HISTORY WHERE QUERY_TYPE = 'CALL'"), [])
+        self.assertIn("CALL", verification_query_safety_issues("SELECT * FROM FOO WHERE 1=1 CALL BAD_PROC()")[0])
+
+    def test_verification_result_summary_is_compact(self):
+        df = pd.DataFrame([
+            {"STATUS": "SUCCEEDED", "CREDITS_USED": 10.5},
+            {"STATUS": "SUCCEEDED", "CREDITS_USED": 9.2},
+        ])
+
+        summary = summarize_verification_frame(df)
+
+        self.assertIn("2 row(s)", summary)
+        self.assertIn("STATUS", summary)
+        self.assertIn("SUCCEEDED", summary)
 
 
 if __name__ == "__main__":

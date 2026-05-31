@@ -21,6 +21,7 @@ from utils import (
     dba_control_plane_component_rows,
     dba_control_plane_section_scorecards,
     download_csv,
+    enrich_action_queue_view,
     format_credits,
     format_snowflake_error,
     freshness_note,
@@ -1212,6 +1213,114 @@ def _priority_exceptions(exceptions: pd.DataFrame) -> pd.DataFrame:
     return view.sort_values(["_RANK", "Signal"]).drop(columns=["_RANK"], errors="ignore")
 
 
+def _command_queue_route(category: object) -> str:
+    value = str(category or "").upper()
+    if "COST" in value:
+        return "Cost & Contract"
+    if "TASK" in value or "PROCEDURE" in value or "RELIABILITY" in value:
+        return "Workload Operations"
+    if "SECURITY" in value or "ACCESS" in value or "GRANT" in value:
+        return "Security Posture"
+    if "CHANGE" in value or "DRIFT" in value or "GOVERNANCE" in value:
+        return "Change & Drift"
+    if "WAREHOUSE" in value or "CAPACITY" in value:
+        return "Warehouse Health"
+    return "Alert Center"
+
+
+def _build_command_queue(queue: pd.DataFrame, today: str | pd.Timestamp | None = None) -> pd.DataFrame:
+    """Return open action-queue rows as a DBA command queue with control gaps."""
+    if queue is None or queue.empty:
+        return _empty_df()
+
+    view = enrich_action_queue_view(queue, today=today).copy()
+    status = view.get("STATUS", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
+    view = view[~status.isin(["FIXED", "IGNORED"])].copy()
+    if view.empty:
+        return _empty_df()
+
+    severity_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    due_rank = {"Overdue": 0, "Due today": 1, "Due soon": 2, "Unscheduled": 3, "Scheduled": 4}
+    evidence = view.get("EVIDENCE_GAP", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
+    severity = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
+    due_state = view.get("DUE_STATE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
+
+    view["ROUTE"] = view.get("CATEGORY", pd.Series([""] * len(view), index=view.index)).apply(_command_queue_route)
+    view["CONTROL_GAP"] = evidence.where(evidence.ne("Ready to work"), "")
+    view["PROOF_READY"] = evidence.isin(["Ready to work", "Verified closure"]).map({True: "Yes", False: "No"})
+    view["COMMAND_STATE"] = "Work Ready"
+    view.loc[evidence.ne("Ready to work"), "COMMAND_STATE"] = "Complete Control Metadata"
+    view.loc[due_state.eq("Overdue"), "COMMAND_STATE"] = "Escalate Overdue"
+    view.loc[severity.isin(["CRITICAL", "HIGH"]) & evidence.eq("Ready to work"), "COMMAND_STATE"] = "Work Now"
+    view["_COMMAND_SORT"] = (
+        due_state.map(due_rank).fillna(5).astype(float) * 10
+        + severity.map(severity_rank).fillna(4).astype(float)
+        + evidence.ne("Ready to work").astype(int)
+    )
+    return view.sort_values(["_COMMAND_SORT", "QUEUE_PRIORITY"], ascending=[True, True]).drop(
+        columns=["_COMMAND_SORT"],
+        errors="ignore",
+    )
+
+
+def _command_queue_summary(queue: pd.DataFrame) -> dict:
+    """Summarize command-queue readiness without changing stored queue data."""
+    if queue is None or queue.empty:
+        return {
+            "open": 0,
+            "overdue": 0,
+            "ready": 0,
+            "control_gaps": 0,
+            "owner_gaps": 0,
+            "approval_gaps": 0,
+            "ticket_gaps": 0,
+            "high_risk": 0,
+        }
+    evidence = queue.get("EVIDENCE_GAP", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str)
+    severity = queue.get("SEVERITY", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str).str.upper()
+    due_state = queue.get("DUE_STATE", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str)
+    return {
+        "open": int(len(queue)),
+        "overdue": int(due_state.eq("Overdue").sum()),
+        "ready": int(evidence.eq("Ready to work").sum()),
+        "control_gaps": int(evidence.ne("Ready to work").sum()),
+        "owner_gaps": int(evidence.str.contains("named owner", case=False, na=False).sum()),
+        "approval_gaps": int(evidence.str.contains("approver|owner approval", case=False, na=False).sum()),
+        "ticket_gaps": int(evidence.str.contains("ticket|change ID", case=False, na=False).sum()),
+        "high_risk": int(severity.isin(["CRITICAL", "HIGH"]).sum()),
+    }
+
+
+def _render_command_queue_control(queue: pd.DataFrame) -> None:
+    summary = _command_queue_summary(queue)
+    st.markdown("**DBA Command Queue Control**")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Open DBA Actions", f"{summary['open']:,}", delta_color="inverse")
+    c2.metric("Overdue", f"{summary['overdue']:,}", delta_color="inverse")
+    c3.metric("Work Ready", f"{summary['ready']:,}")
+    c4.metric("Control Gaps", f"{summary['control_gaps']:,}", delta_color="inverse")
+    c5.metric("High Risk", f"{summary['high_risk']:,}", delta_color="inverse")
+
+    if queue.empty:
+        st.success("No open action queue items for the current company/environment scope.")
+        return
+
+    render_priority_dataframe(
+        queue,
+        title="Open queue items to assign, approve, verify, or escalate",
+        priority_columns=[
+            "SEVERITY", "DUE_STATE", "COMMAND_STATE", "CATEGORY", "ENTITY_NAME",
+            "OWNER", "STATUS", "CONTROL_GAP", "NEXT_ACTION", "TICKET_ID",
+            "APPROVER", "ROUTE",
+        ],
+        sort_by=["QUEUE_PRIORITY", "SEVERITY"],
+        ascending=[True, True],
+        raw_label="All open DBA command queue rows",
+        height=300,
+        max_rows=15,
+    )
+
+
 def _control_room_score(
     exceptions: pd.DataFrame,
     row: pd.Series | dict,
@@ -1611,6 +1720,14 @@ def render() -> None:
     m7.metric("SLA/Cost Drift", f"{regression_count:,}", delta_color="inverse")
     m8.metric("Cortex Risk", f"{0 if cortex_exceptions.empty else len(cortex_exceptions):,}", f"${cortex_projected:,.0f}/30d", delta_color="inverse")
 
+    a1, a2 = st.columns([1, 5])
+    with a1:
+        if st.button("Alert Center", key="dba_control_room_open_alert_center", use_container_width=True):
+            _jump("Alert Center")
+            st.rerun()
+    with a2:
+        st.caption("All alert history, email-ready messages, suppression windows, and action queue routing are consolidated in Alert Center.")
+
     _render_watch_floor(
         data,
         exceptions,
@@ -1621,6 +1738,8 @@ def render() -> None:
         regression_count,
         0 if cortex_exceptions.empty else len(cortex_exceptions),
     )
+    command_queue = _build_command_queue(data.get("action_queue", _empty_df()))
+    _render_command_queue_control(command_queue)
     st.divider()
 
     tab_triage, tab_routes, tab_release, tab_evidence, tab_sources = st.tabs([
@@ -1757,20 +1876,33 @@ def render() -> None:
             with tab:
                 df = data.get(key, _empty_df())
                 if not df.empty:
-                    render_priority_dataframe(
-                        df,
-                        title=f"{key.replace('_', ' ').title()} evidence",
-                        priority_columns=[
+                    display_df = _build_command_queue(df) if key == "action_queue" else df
+                    if key == "action_queue":
+                        priority_columns = [
+                            "SEVERITY", "DUE_STATE", "COMMAND_STATE", "CATEGORY", "ENTITY_NAME",
+                            "OWNER", "STATUS", "CONTROL_GAP", "NEXT_ACTION", "TICKET_ID",
+                            "APPROVER", "VERIFICATION_STATUS", "ROUTE",
+                        ]
+                        sort_by = ["QUEUE_PRIORITY", "SEVERITY"]
+                        ascending = [True, True]
+                    else:
+                        priority_columns = [
                             "SEVERITY", "SIGNAL", "ENTITY", "TASK_NAME", "PROCEDURE_NAME",
                             "QUERY_ID", "WAREHOUSE_NAME", "USER_NAME", "ERROR_MESSAGE",
                             "ALLOCATED_CREDITS", "EST_TOTAL_CREDITS", "DURATION_SEC",
                             "START_TIME", "SCHEDULED_TIME", "EVENT_TIMESTAMP",
-                        ],
-                        sort_by=[
+                        ]
+                        sort_by = [
                             "ALLOCATED_CREDITS", "EST_TOTAL_CREDITS", "DURATION_SEC",
                             "START_TIME", "SCHEDULED_TIME", "EVENT_TIMESTAMP",
-                        ],
-                        ascending=[False, False, False, False, False, False],
+                        ]
+                        ascending = [False, False, False, False, False, False]
+                    render_priority_dataframe(
+                        display_df,
+                        title=f"{key.replace('_', ' ').title()} evidence",
+                        priority_columns=priority_columns,
+                        sort_by=sort_by,
+                        ascending=ascending,
                         raw_label=f"All {key.replace('_', ' ')} evidence rows",
                         height=320,
                     )

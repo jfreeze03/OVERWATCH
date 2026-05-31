@@ -18,6 +18,7 @@ from utils import (
     filter_existing_columns,
     load_task_inventory,
     make_action_id,
+    build_mart_task_critical_path_sql,
     build_mart_task_inventory_sql,
     build_mart_task_history_sql,
     build_mart_query_detail_recent_sql,
@@ -49,6 +50,10 @@ TASK_CONTROL_DETAILS = {
     "Control Center": "Guarded suspend, resume, retry, execute, and cancel workflows.",
     "Execute Task": "Focused manual task execution with pre-flight checks.",
 }
+
+TASK_FAILURE_STATES = {"FAILED", "FAILED_WITH_ERROR"}
+TASK_SUCCESS_STATES = {"SUCCEEDED", "SUCCESS", "COMPLETED"}
+TASK_RECOVERY_SLA_HOURS = 4
 
 
 def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
@@ -171,12 +176,76 @@ def _df_col(df: pd.DataFrame, column: str, default: object = "") -> pd.Series:
     return pd.Series([default] * len(df), index=df.index)
 
 
+def _blankish_series(series: pd.Series) -> pd.Series:
+    return series.fillna("").astype(str).str.strip().str.upper().isin({"", "NONE", "NULL", "NAN"})
+
+
+def _task_failure_mask(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    state = _df_col(df, "STATE").fillna("").astype(str).str.upper()
+    error_text = _df_col(df, "ERROR_MESSAGE")
+    return state.isin(TASK_FAILURE_STATES) | ~_blankish_series(error_text)
+
+
+def _task_success_mask(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    return _df_col(df, "STATE").fillna("").astype(str).str.upper().isin(TASK_SUCCESS_STATES)
+
+
 def _parse_task_predecessors(value: object) -> list[str]:
     text = str(value or "").strip()
     if not text or text.upper() in {"[]", "NONE", "NULL"}:
         return []
     cleaned = re.sub(r"[\[\]'\"\s]", "", text)
     return [part.split(".")[-1] for part in cleaned.split(",") if part]
+
+
+def _annotate_task_graph_impact(inventory: pd.DataFrame) -> pd.DataFrame:
+    """Add task graph blast-radius context used for DBA incident triage."""
+    if inventory is None or inventory.empty or "NAME" not in inventory.columns:
+        return inventory
+    annotated = inventory.copy()
+    names = set(_df_col(annotated, "NAME").astype(str))
+    children: dict[str, set[str]] = {name: set() for name in names}
+    predecessor_map: dict[str, list[str]] = {}
+    for _, row in annotated.iterrows():
+        name = str(row.get("NAME") or "")
+        predecessors = [pred for pred in _parse_task_predecessors(row.get("PREDECESSORS")) if pred]
+        predecessor_map[name] = predecessors
+        for pred in predecessors:
+            children.setdefault(pred, set()).add(name)
+
+    downstream_counts: list[int] = []
+    graph_roles: list[str] = []
+    blast_radius: list[str] = []
+    retry_scope: list[str] = []
+    for _, row in annotated.iterrows():
+        name = str(row.get("NAME") or "")
+        seen: set[str] = set()
+        stack = list(children.get(name, set()))
+        while stack:
+            child = stack.pop()
+            if child in seen:
+                continue
+            seen.add(child)
+            stack.extend(children.get(child, set()))
+        downstream = len(seen)
+        predecessors = predecessor_map.get(name, [])
+        has_in_scope_predecessor = any(pred in names for pred in predecessors)
+        has_child = bool(children.get(name))
+        role = "Root" if not has_in_scope_predecessor else "Leaf" if not has_child else "Intermediate"
+        downstream_counts.append(downstream)
+        graph_roles.append(role)
+        blast_radius.append("High" if downstream >= 5 else "Medium" if downstream >= 1 else "Local")
+        retry_scope.append("Root graph retry" if role == "Root" else "Targeted task retry")
+
+    annotated["DOWNSTREAM_TASK_COUNT"] = downstream_counts
+    annotated["GRAPH_ROLE"] = graph_roles
+    annotated["BLAST_RADIUS"] = blast_radius
+    annotated["RETRY_SCOPE"] = retry_scope
+    return annotated
 
 
 def _task_full_name(row: pd.Series) -> str:
@@ -337,15 +406,306 @@ def _task_ops_rating(score: int) -> str:
     return "Incident Risk"
 
 
+def _task_time_series(df: pd.DataFrame, *columns: str) -> pd.Series:
+    values = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+    for column in columns:
+        if column in df.columns:
+            parsed = pd.to_datetime(df[column], errors="coerce")
+            values = values.combine_first(parsed)
+    return values
+
+
+def _normalize_task_history_for_recovery(history: pd.DataFrame) -> pd.DataFrame:
+    hist = history.copy() if history is not None else pd.DataFrame()
+    if hist.empty:
+        return hist
+    task_names = _df_col(hist, "TASK_NAME")
+    if _blankish_series(task_names).all() and "NAME" in hist.columns:
+        task_names = hist["NAME"]
+    hist["TASK_NAME"] = task_names.fillna("").astype(str)
+    hist["STATE"] = _df_col(hist, "STATE").fillna("").astype(str).str.upper()
+    hist["EVENT_TIME"] = _task_time_series(hist, "COMPLETED_TIME", "QUERY_START_TIME", "SCHEDULED_TIME")
+    hist["SCHEDULED_EVENT_TIME"] = _task_time_series(hist, "SCHEDULED_TIME", "QUERY_START_TIME", "COMPLETED_TIME")
+    hist["DURATION_SEC"] = pd.to_numeric(_df_col(hist, "DURATION_SEC", 0), errors="coerce").fillna(0.0)
+    hist["IS_FAILED"] = _task_failure_mask(hist)
+    hist["IS_SUCCEEDED"] = _task_success_mask(hist)
+    return hist[hist["TASK_NAME"].astype(str).str.strip().ne("")].copy()
+
+
+def _recovery_state_rank(value: object) -> int:
+    state = str(value or "").upper()
+    if "OPEN" in state:
+        return 0
+    if "LATE" in state or "BREACH" in state:
+        return 1
+    if "WITHIN" in state:
+        return 2
+    return 9
+
+
+def _task_recovery_priority(state: str, downstream: int) -> str:
+    state_upper = str(state or "").upper()
+    if "OPEN" in state_upper and downstream >= 3:
+        return "P1 - Open Graph Recovery"
+    if "OPEN" in state_upper:
+        return "P2 - Open Recovery"
+    if ("LATE" in state_upper or "BREACH" in state_upper) and downstream >= 3:
+        return "P2 - Late Graph Recovery"
+    if "LATE" in state_upper or "BREACH" in state_upper:
+        return "P3 - Late Recovery"
+    return "P4 - Verified Recovery"
+
+
+def _task_owner_approval_state(row: pd.Series) -> str:
+    recovery_state = str(row.get("RECOVERY_STATE") or "").upper()
+    signal = str(row.get("SIGNAL") or row.get("FAILURE_CATEGORY") or "").upper()
+    if "OPEN" in recovery_state or "FAILED" in signal:
+        return "Root-cause owner approval required"
+    if "LATE" in recovery_state or "SLA" in signal:
+        return "DBA lead verifies recovery evidence"
+    if "SUSPENDED" in signal:
+        return "Owner approval required before resume"
+    if "COST" in signal or "REGRESSION" in signal:
+        return "DBA release owner accepts or remediates baseline"
+    return "DBA review before close"
+
+
+def _task_owner_approval_status(row: pd.Series) -> str:
+    state = str(row.get("OWNER_APPROVAL_STATE") or "").upper()
+    if "NOT REQUIRED" in state:
+        return "Not Required"
+    if "APPROVAL REQUIRED" in state or "OWNER APPROVAL" in state or "ROOT-CAUSE OWNER" in state:
+        return "Requested"
+    if "VERIFIES" in state or "ACCEPTS" in state:
+        return "Requested"
+    return "Requested"
+
+
+def _build_task_recovery_sla_frame(
+    history: pd.DataFrame,
+    inventory: pd.DataFrame,
+    target_hours: int = TASK_RECOVERY_SLA_HOURS,
+    current_time: object | None = None,
+) -> pd.DataFrame:
+    hist = _normalize_task_history_for_recovery(history)
+    if hist.empty or "TASK_NAME" not in hist.columns:
+        return pd.DataFrame()
+
+    inv = _prepare_inventory_for_failures(inventory)
+    inv_lookup = {}
+    if inv is not None and not inv.empty and "NAME" in inv.columns:
+        inv_lookup = {
+            str(row.get("NAME") or ""): row
+            for _, row in inv.drop_duplicates("NAME", keep="last").iterrows()
+        }
+
+    now = pd.to_datetime(current_time, errors="coerce") if current_time is not None else pd.Timestamp.now(tz="UTC")
+    if pd.isna(now):
+        now = pd.Timestamp.now(tz="UTC")
+    if getattr(now, "tzinfo", None) is not None:
+        now = now.tz_localize(None)
+    target_hours = max(1, safe_int(target_hours) or TASK_RECOVERY_SLA_HOURS)
+    rows: list[dict] = []
+
+    for task_name, group in hist.sort_values("EVENT_TIME").groupby("TASK_NAME", dropna=False):
+        group = group.copy()
+        failures = group[group["IS_FAILED"] & group["EVENT_TIME"].notna()]
+        if failures.empty:
+            continue
+        latest_failure = failures.sort_values("EVENT_TIME").iloc[-1]
+        failure_at = latest_failure.get("EVENT_TIME")
+        after_success = group[
+            group["IS_SUCCEEDED"]
+            & group["EVENT_TIME"].notna()
+            & (group["EVENT_TIME"] > failure_at)
+        ].sort_values("EVENT_TIME")
+        recovery_at = after_success.iloc[0].get("EVENT_TIME") if not after_success.empty else pd.NaT
+        latest_run = group.sort_values("EVENT_TIME").iloc[-1]
+
+        if pd.notna(recovery_at):
+            recovery_hours = max(0.0, (recovery_at - failure_at).total_seconds() / 3600.0)
+            recovery_state = "Recovered Within SLA" if recovery_hours <= target_hours else "Recovered Late"
+        else:
+            recovery_hours = max(0.0, (now - failure_at).total_seconds() / 3600.0) if pd.notna(failure_at) else None
+            recovery_state = "Open Failure"
+
+        meta = inv_lookup.get(str(task_name), pd.Series(dtype=object))
+        downstream = safe_int(meta.get("DOWNSTREAM_TASK_COUNT", 0) if not meta.empty else 0)
+        task_fqn = str(meta.get("TASK_FQN") or "").strip() if not meta.empty else ""
+        if not task_fqn:
+            db_name = latest_failure.get("DATABASE_NAME") or meta.get("DATABASE_NAME", "") if not meta.empty else latest_failure.get("DATABASE_NAME", "")
+            schema_name = latest_failure.get("SCHEMA_NAME") or meta.get("SCHEMA_NAME", "") if not meta.empty else latest_failure.get("SCHEMA_NAME", "")
+            if str(db_name or "").strip() and str(schema_name or "").strip():
+                task_fqn = f"{db_name}.{schema_name}.{task_name}"
+
+        row = {
+            "TASK_NAME": str(task_name),
+            "ROOT_TASK_NAME": meta.get("ROOT_TASK_NAME", str(task_name)) if not meta.empty else str(task_name),
+            "PROCEDURE_NAME": meta.get("PROCEDURE_NAME", "") if not meta.empty else "",
+            "TASK_FQN": task_fqn,
+            "OWNER": _task_owner(meta if not meta.empty else latest_failure),
+            "GRAPH_ROLE": meta.get("GRAPH_ROLE", "Unknown") if not meta.empty else "Unknown",
+            "DOWNSTREAM_TASK_COUNT": downstream,
+            "BLAST_RADIUS": meta.get("BLAST_RADIUS", "Unknown") if not meta.empty else "Unknown",
+            "LAST_FAILURE_AT": failure_at,
+            "RECOVERY_AT": recovery_at if pd.notna(recovery_at) else pd.NaT,
+            "RECOVERY_HOURS": round(float(recovery_hours), 2) if recovery_hours is not None else None,
+            "RECOVERY_SLA_TARGET_HOURS": target_hours,
+            "RECOVERY_STATE": recovery_state,
+            "RECOVERY_SLA_BREACH": recovery_state in {"Open Failure", "Recovered Late"},
+            "LATEST_STATE": latest_run.get("STATE", ""),
+            "FAILURE_QUERY_ID": latest_failure.get("QUERY_ID", ""),
+            "LATEST_QUERY_ID": latest_run.get("QUERY_ID", ""),
+            "ERROR_SIGNATURE": _failure_signature(latest_failure.get("ERROR_MESSAGE")),
+        }
+        row["INCIDENT_PRIORITY"] = _task_recovery_priority(recovery_state, downstream)
+        row["OWNER_APPROVAL_STATE"] = _task_owner_approval_state(pd.Series(row))
+        row["VERIFY_AFTER_FIX"] = (
+            "Latest TASK_HISTORY run succeeds after the failure and recovery time is inside the configured SLA."
+            if recovery_state == "Open Failure"
+            else "Attach TASK_HISTORY evidence proving the successful recovery run and elapsed recovery time."
+        )
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+    frame = pd.DataFrame(rows)
+    frame["_RECOVERY_RANK"] = frame["RECOVERY_STATE"].apply(_recovery_state_rank)
+    return frame.sort_values(
+        ["_RECOVERY_RANK", "DOWNSTREAM_TASK_COUNT", "LAST_FAILURE_AT"],
+        ascending=[True, False, False],
+    ).drop(columns=["_RECOVERY_RANK"], errors="ignore")
+
+
+def _task_recovery_sla_summary(recovery: pd.DataFrame, target_hours: int = TASK_RECOVERY_SLA_HOURS) -> dict:
+    if recovery is None or recovery.empty:
+        return {
+            "RECOVERY_TASKS": 0,
+            "OPEN_RECOVERIES": 0,
+            "RECOVERY_SLA_BREACHES": 0,
+            "VERIFIED_RECOVERIES": 0,
+            "RECOVERY_SLA_TARGET_HOURS": max(1, safe_int(target_hours) or TASK_RECOVERY_SLA_HOURS),
+        }
+    states = recovery.get("RECOVERY_STATE", pd.Series(dtype=str)).astype(str)
+    open_mask = states.eq("Open Failure")
+    late_mask = states.eq("Recovered Late")
+    verified_mask = states.eq("Recovered Within SLA")
+    return {
+        "RECOVERY_TASKS": len(recovery),
+        "OPEN_RECOVERIES": int(open_mask.sum()),
+        "RECOVERY_SLA_BREACHES": int((open_mask | late_mask).sum()),
+        "VERIFIED_RECOVERIES": int(verified_mask.sum()),
+        "RECOVERY_SLA_TARGET_HOURS": max(1, safe_int(target_hours) or TASK_RECOVERY_SLA_HOURS),
+    }
+
+
+def _build_task_critical_path_snapshot(inventory: pd.DataFrame, history: pd.DataFrame) -> pd.DataFrame:
+    inv = _prepare_inventory_for_failures(inventory)
+    if inv is None or inv.empty or "NAME" not in inv.columns:
+        return pd.DataFrame()
+    hist = _normalize_task_history_for_recovery(history)
+    root_lookup = dict(zip(inv["NAME"].astype(str), inv["ROOT_TASK_NAME"].fillna(inv["NAME"]).astype(str)))
+    if not hist.empty:
+        hist["ROOT_TASK_NAME"] = hist["TASK_NAME"].map(root_lookup).fillna(hist["TASK_NAME"])
+        hist_summary = hist.groupby("ROOT_TASK_NAME", dropna=False).agg(
+            RUNS=("TASK_NAME", "count"),
+            FAILURES=("IS_FAILED", lambda s: int(pd.Series(s).fillna(False).sum())),
+            SUCCESSES=("IS_SUCCEEDED", lambda s: int(pd.Series(s).fillna(False).sum())),
+            LAST_RUN_AT=("EVENT_TIME", "max"),
+            MAX_DURATION_SEC=("DURATION_SEC", "max"),
+        ).reset_index()
+    else:
+        hist_summary = pd.DataFrame(columns=["ROOT_TASK_NAME", "RUNS", "FAILURES", "SUCCESSES", "LAST_RUN_AT", "MAX_DURATION_SEC"])
+
+    inv_state = _df_col(inv, "STATE").fillna("").astype(str).str.upper()
+    inv = inv.copy()
+    inv["IS_SUSPENDED"] = inv_state.eq("SUSPENDED")
+    graph_summary = inv.groupby("ROOT_TASK_NAME", dropna=False).agg(
+        TASK_COUNT=("NAME", "nunique"),
+        SUSPENDED_TASKS=("IS_SUSPENDED", lambda s: int(pd.Series(s).fillna(False).sum())),
+        DOWNSTREAM_TASK_COUNT=("DOWNSTREAM_TASK_COUNT", "max"),
+        BLAST_RADIUS=("BLAST_RADIUS", lambda s: next((str(v) for v in s if str(v or "").strip()), "Unknown")),
+        WAREHOUSES=("WAREHOUSE", lambda s: ", ".join(sorted({str(v) for v in s if str(v or "").strip()})[:5]) if "WAREHOUSE" in inv.columns else ""),
+        PROCEDURES=("PROCEDURE_NAME", lambda s: ", ".join(sorted({str(v) for v in s if str(v or "").strip()})[:5])),
+    ).reset_index()
+    snapshot = graph_summary.merge(hist_summary, on="ROOT_TASK_NAME", how="left")
+    for col in ["RUNS", "FAILURES", "SUCCESSES", "MAX_DURATION_SEC", "SUSPENDED_TASKS", "DOWNSTREAM_TASK_COUNT"]:
+        if col not in snapshot.columns:
+            snapshot[col] = 0
+        snapshot[col] = pd.to_numeric(snapshot[col], errors="coerce").fillna(0)
+    snapshot["CRITICAL_PATH_SCORE"] = (
+        snapshot["FAILURES"] * 12
+        + snapshot["SUSPENDED_TASKS"] * 10
+        + snapshot["DOWNSTREAM_TASK_COUNT"] * 5
+        + (snapshot["MAX_DURATION_SEC"] / 300).clip(upper=20)
+    ).round(1)
+    snapshot["CRITICAL_PATH_STATE"] = snapshot.apply(
+        lambda row: "Incident Path" if safe_int(row.get("FAILURES")) > 0 or safe_int(row.get("SUSPENDED_TASKS")) > 0
+        else "Watch Path" if safe_int(row.get("DOWNSTREAM_TASK_COUNT")) >= 3 or safe_float(row.get("MAX_DURATION_SEC")) >= 900
+        else "Stable Path",
+        axis=1,
+    )
+    return snapshot.sort_values(
+        ["CRITICAL_PATH_SCORE", "DOWNSTREAM_TASK_COUNT", "MAX_DURATION_SEC"],
+        ascending=[False, False, False],
+    )
+
+
+def _normalize_task_critical_path_mart(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    frame = df.copy()
+    rename = {
+        "critical_path_state": "CRITICAL_PATH_STATE",
+        "critical_path_score": "CRITICAL_PATH_SCORE",
+        "root_task_name": "ROOT_TASK_NAME",
+        "task_count": "TASK_COUNT",
+        "downstream_task_count": "DOWNSTREAM_TASK_COUNT",
+        "suspended_tasks": "SUSPENDED_TASKS",
+        "failures": "FAILURES",
+        "runs": "RUNS",
+        "successes": "SUCCESSES",
+        "max_duration_sec": "MAX_DURATION_SEC",
+        "last_run_at": "LAST_RUN_AT",
+        "blast_radius": "BLAST_RADIUS",
+        "warehouses": "WAREHOUSES",
+        "procedures": "PROCEDURES",
+        "owner_role": "OWNER_ROLE",
+        "approval_path": "APPROVAL_PATH",
+        "source_freshness": "SOURCE_FRESHNESS",
+        "snapshot_ts": "SNAPSHOT_TS",
+        "company": "COMPANY",
+        "environment": "ENVIRONMENT",
+        "database_name": "DATABASE_NAME",
+    }
+    frame = frame.rename(columns={col: rename.get(str(col), str(col).upper()) for col in frame.columns})
+    for col in [
+        "CRITICAL_PATH_SCORE", "TASK_COUNT", "DOWNSTREAM_TASK_COUNT", "SUSPENDED_TASKS",
+        "FAILURES", "RUNS", "SUCCESSES", "MAX_DURATION_SEC",
+    ]:
+        if col in frame.columns:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce").fillna(0)
+    return frame.sort_values(
+        ["CRITICAL_PATH_SCORE", "DOWNSTREAM_TASK_COUNT", "MAX_DURATION_SEC"],
+        ascending=[False, False, False],
+    )
+
+
 def _task_ops_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
     if exceptions is None or exceptions.empty:
         return pd.DataFrame()
-    rank = {"High": 0, "Medium": 1, "Low": 2}
+    rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
     view = exceptions.copy()
     view["_RANK"] = view.get("SEVERITY", pd.Series(dtype=str)).map(rank).fillna(3)
+    if "INCIDENT_PRIORITY" in view.columns:
+        view["_INCIDENT_RANK"] = view["INCIDENT_PRIORITY"].astype(str).str.extract(r"P(\d)", expand=False).fillna("9").astype(int)
+    else:
+        view["_INCIDENT_RANK"] = 9
     view["NEXT_WORKFLOW"] = view.get("SIGNAL", pd.Series(dtype=str)).apply(_task_ops_workflow_for)
     view["NEXT_ACTION"] = view.get("SIGNAL", pd.Series(dtype=str)).apply(lambda signal: _task_action_for(signal)[0])
-    return view.sort_values(["_RANK", "SIGNAL", "TASK_NAME"]).drop(columns=["_RANK"], errors="ignore")
+    return view.sort_values(["_INCIDENT_RANK", "_RANK", "SIGNAL", "TASK_NAME"]).drop(
+        columns=["_RANK", "_INCIDENT_RANK"], errors="ignore"
+    )
 
 
 def _task_ops_workflow_for(signal: str) -> str:
@@ -361,6 +721,16 @@ def _task_ops_workflow_for(signal: str) -> str:
 
 def _task_action_for(signal: str) -> tuple[str, str]:
     signal = str(signal or "").upper()
+    if "OPEN RECOVERY" in signal:
+        return (
+            "Keep the incident open until a successful recovery run is visible and owner approval is attached.",
+            "-- Verify with TASK_HISTORY before retrying or closing the incident.",
+        )
+    if "RECOVERY" in signal:
+        return (
+            "Attach the recovery evidence, compare elapsed recovery time to SLA, and decide whether the task graph needs tuning.",
+            "-- Review TASK_HISTORY failure and succeeding run timestamps.",
+        )
     if "FAILED" in signal:
         return (
             "Review task error, linked query/procedure, upstream dependency, and retry the root task after correction.",
@@ -517,7 +887,84 @@ def _prepare_inventory_for_failures(inventory: pd.DataFrame) -> pd.DataFrame:
     prepared["IMPACT_OBJECTS"] = _df_col(prepared, "DEFINITION").apply(_extract_object_candidates)
     prepared["ROOT_TASK_NAME"] = prepared.apply(_task_root_name, axis=1)
     prepared["TASK_FQN"] = prepared.apply(_task_full_name, axis=1)
-    return prepared
+    return _annotate_task_graph_impact(prepared)
+
+
+def _failure_incident_priority(row: pd.Series) -> str:
+    category = str(row.get("FAILURE_CATEGORY") or "").upper()
+    downstream = safe_int(row.get("DOWNSTREAM_TASK_COUNT"))
+    pattern_failures = safe_int(row.get("PATTERN_FAILURE_COUNT"))
+    pattern_tasks = safe_int(row.get("PATTERN_TASK_COUNT"))
+    duration = safe_float(row.get("DURATION_SEC") or row.get("QUERY_ELAPSED_SEC"))
+    critical_categories = {"PRIVILEGE / RBAC", "OBJECT DEPENDENCY / DRIFT", "WAREHOUSE / RUNTIME CAPACITY"}
+    if category in critical_categories and (downstream >= 3 or pattern_tasks >= 2 or pattern_failures >= 3):
+        return "P1 - Graph Incident"
+    if category in critical_categories or downstream >= 1 or pattern_failures >= 3:
+        return "P2 - Production Risk"
+    if "DATA QUALITY" in category or duration >= 300:
+        return "P3 - Pipeline Defect"
+    return "P4 - Review"
+
+
+def _failure_recovery_readiness(row: pd.Series) -> str:
+    category = str(row.get("FAILURE_CATEGORY") or "").upper()
+    retry_sql = str(row.get("RETRY_SQL") or "").strip()
+    if not retry_sql or retry_sql.startswith("--"):
+        return "Blocked - task FQN missing"
+    if "PRIVILEGE" in category:
+        return "Blocked - grant or role fix first"
+    if "OBJECT DEPENDENCY" in category:
+        return "Blocked - object dependency fix first"
+    if "WAREHOUSE" in category or "RUNTIME CAPACITY" in category:
+        return "Blocked - warehouse or capacity review first"
+    if "DATA QUALITY" in category:
+        return "Blocked - data correction first"
+    return "Ready after DBA owner approval"
+
+
+def _verification_after_failure(row: pd.Series) -> str:
+    signature = str(row.get("ERROR_SIGNATURE") or "").strip()
+    if signature and signature != "No error text":
+        return f"Latest TASK_HISTORY run succeeds and no longer shows signature: {signature[:120]}"
+    return "Latest TASK_HISTORY run succeeds and linked QUERY_HISTORY has no error_code/error_message."
+
+
+def _task_exception_incident_priority(row: pd.Series) -> str:
+    signal = str(row.get("SIGNAL") or "").upper()
+    downstream = safe_int(row.get("DOWNSTREAM_TASK_COUNT"))
+    graph_role = str(row.get("GRAPH_ROLE") or "").upper()
+    if "OPEN RECOVERY" in signal and downstream >= 3:
+        return "P1 - Open Graph Recovery"
+    if "OPEN RECOVERY" in signal:
+        return "P2 - Open Recovery"
+    if "RECOVERY" in signal and downstream >= 3:
+        return "P2 - Late Graph Recovery"
+    if "RECOVERY" in signal:
+        return "P3 - Late Recovery"
+    if "FAILED" in signal and downstream >= 3:
+        return "P1 - Graph Incident"
+    if "FAILED" in signal or ("SUSPENDED" in signal and (downstream >= 1 or graph_role == "ROOT")):
+        return "P2 - Production Risk"
+    if "LONG" in signal or "SLA" in signal or "COST" in signal or "REGRESSION" in signal:
+        return "P3 - Performance Regression"
+    return "P4 - Review"
+
+
+def _task_exception_recovery_readiness(row: pd.Series) -> str:
+    signal = str(row.get("SIGNAL") or "").upper()
+    if "OPEN RECOVERY" in signal:
+        return "Blocked - verify successful recovery run first"
+    if "RECOVERY" in signal:
+        return "Blocked - attach late recovery evidence before close"
+    if "FAILED" in signal:
+        return "Blocked - fix failure root cause first"
+    if "SUSPENDED" in signal:
+        return "Blocked - owner approval before resume"
+    if "LONG" in signal or "SLA" in signal:
+        return "Blocked - tune or capacity-review before next release handoff"
+    if "COST" in signal or "REGRESSION" in signal:
+        return "Blocked - explain cost driver before accepting baseline"
+    return "Ready after DBA review"
 
 
 def _build_failure_console_frames(
@@ -532,8 +979,7 @@ def _build_failure_console_frames(
         return {"FAILURES": 0, "CATEGORIES": 0, "TASKS": 0, "CRITICAL": 0}, pd.DataFrame(), pd.DataFrame()
 
     hist["STATE"] = _df_col(hist, "STATE").astype(str).str.upper()
-    err_msg = _df_col(hist, "ERROR_MESSAGE").astype(str)
-    failures = hist[(hist["STATE"] == "FAILED") | (err_msg.str.strip() != "")].copy()
+    failures = hist[_task_failure_mask(hist)].copy()
     if failures.empty:
         return {"FAILURES": 0, "CATEGORIES": 0, "TASKS": 0, "CRITICAL": 0}, failures, pd.DataFrame()
 
@@ -541,7 +987,8 @@ def _build_failure_console_frames(
         join_cols = [
             col for col in [
             "NAME", "DATABASE_NAME", "SCHEMA_NAME", "ROOT_TASK_NAME",
-                "PROCEDURE_NAME", "TASK_FQN", "WAREHOUSE", "DEFINITION", "IMPACT_OBJECTS"
+                "PROCEDURE_NAME", "TASK_FQN", "WAREHOUSE", "DEFINITION", "IMPACT_OBJECTS",
+                "DOWNSTREAM_TASK_COUNT", "GRAPH_ROLE", "BLAST_RADIUS", "RETRY_SCOPE",
             ] if col in inv.columns
         ]
         failures = failures.merge(
@@ -577,34 +1024,94 @@ def _build_failure_console_frames(
         lambda row: f"EXECUTE TASK {row.get('TASK_FQN')};" if str(row.get("TASK_FQN") or "").strip() else "-- Task FQN unavailable; reload task inventory.",
         axis=1,
     )
-    failures["RUNBOOK_NOTE"] = failures.apply(
-        lambda row: (
-            f"{row.get('TASK_NAME', 'Unknown task')} failed. "
-            f"Category: {row.get('FAILURE_CATEGORY')}. "
-            f"Next action: {row.get('RECOMMENDED_ACTION')}"
-        ),
-        axis=1,
-    )
     if "IMPACT_OBJECTS" not in failures.columns:
         failures["IMPACT_OBJECTS"] = ""
     failures["IMPACT_OBJECTS"] = [
         existing if str(existing or "").strip() else _extract_object_candidates(query_text)
         for existing, query_text in zip(_df_col(failures, "IMPACT_OBJECTS"), _df_col(failures, "QUERY_TEXT"))
     ]
+    for col in ["DOWNSTREAM_TASK_COUNT"]:
+        if col not in failures.columns:
+            failures[col] = 0
+        failures[col] = pd.to_numeric(failures[col], errors="coerce").fillna(0).astype(int)
+    for col, default in [
+        ("GRAPH_ROLE", "Unknown"),
+        ("BLAST_RADIUS", "Unknown"),
+        ("RETRY_SCOPE", "Targeted task retry"),
+    ]:
+        if col not in failures.columns:
+            failures[col] = default
+        failures[col] = failures[col].fillna(default).astype(str)
+    pattern_keys = ["FAILURE_CATEGORY", "ERROR_SIGNATURE"]
+    failures["PATTERN_FAILURE_COUNT"] = failures.groupby(pattern_keys, dropna=False)["TASK_NAME"].transform("count")
+    failures["PATTERN_TASK_COUNT"] = failures.groupby(pattern_keys, dropna=False)["TASK_NAME"].transform("nunique")
+    failures["INCIDENT_PRIORITY"] = failures.apply(_failure_incident_priority, axis=1)
+    failures["RECOVERY_READINESS"] = failures.apply(_failure_recovery_readiness, axis=1)
+    failures["VERIFY_AFTER_FIX"] = failures.apply(_verification_after_failure, axis=1)
+    recovery = _build_task_recovery_sla_frame(hist, inv)
+    if not recovery.empty:
+        recovery_cols = [
+            col for col in [
+                "TASK_NAME", "RECOVERY_STATE", "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS",
+                "RECOVERY_AT", "OWNER_APPROVAL_STATE",
+            ] if col in recovery.columns
+        ]
+        failures = failures.merge(recovery[recovery_cols], on="TASK_NAME", how="left")
+        failures["RECOVERY_STATE"] = failures["RECOVERY_STATE"].fillna("No recent recovery signal")
+        failures["OWNER_APPROVAL_STATE"] = failures.apply(
+            lambda row: row.get("OWNER_APPROVAL_STATE") or _task_owner_approval_state(row),
+            axis=1,
+        )
+        failures["VERIFY_AFTER_FIX"] = failures.apply(
+            lambda row: (
+                f"{row.get('VERIFY_AFTER_FIX')} Recovery SLA: {row.get('RECOVERY_STATE')} "
+                f"against {safe_int(row.get('RECOVERY_SLA_TARGET_HOURS'))}h target."
+            ),
+            axis=1,
+        )
+    else:
+        failures["RECOVERY_STATE"] = "No recent recovery signal"
+        failures["OWNER_APPROVAL_STATE"] = failures.apply(_task_owner_approval_state, axis=1)
+    failures["SEVERITY"] = failures["INCIDENT_PRIORITY"].apply(
+        lambda value: "Critical" if str(value).startswith("P1")
+        else "High" if str(value).startswith("P2")
+        else "Medium" if str(value).startswith("P3")
+        else "Low"
+    )
+    failures["RUNBOOK_NOTE"] = failures.apply(
+        lambda row: (
+            f"{row.get('INCIDENT_PRIORITY', 'Priority pending')} | {row.get('TASK_NAME', 'Unknown task')} failed. "
+            f"Category: {row.get('FAILURE_CATEGORY')}. "
+            f"Recovery: {row.get('RECOVERY_READINESS')}. "
+            f"Next action: {row.get('RECOMMENDED_ACTION')}"
+        ),
+        axis=1,
+    )
 
     patterns = failures.groupby(["FAILURE_CATEGORY", "ERROR_SIGNATURE"], dropna=False).agg(
         FAILURE_COUNT=("TASK_NAME", "count"),
+        TASK_COUNT=("TASK_NAME", "nunique"),
         TASKS=("TASK_NAME", lambda s: ", ".join(sorted(set(s.astype(str)))[:8])),
+        INCIDENT_PRIORITY=("INCIDENT_PRIORITY", lambda s: sorted(set(s.astype(str)))[0]),
+        RECOVERY_READINESS=("RECOVERY_READINESS", lambda s: sorted(set(s.astype(str)))[0]),
+        RECOMMENDED_ACTION=("RECOMMENDED_ACTION", lambda s: next((str(v) for v in s if str(v or "").strip()), "")),
+        DOWNSTREAM_TASK_COUNT=("DOWNSTREAM_TASK_COUNT", "max"),
         FIRST_SEEN=("SCHEDULED_TIME", "min") if "SCHEDULED_TIME" in failures.columns else ("TASK_NAME", "count"),
         LAST_SEEN=("SCHEDULED_TIME", "max") if "SCHEDULED_TIME" in failures.columns else ("TASK_NAME", "count"),
-    ).reset_index().sort_values(["FAILURE_COUNT", "FAILURE_CATEGORY"], ascending=[False, True])
+    ).reset_index().sort_values(["INCIDENT_PRIORITY", "FAILURE_COUNT", "TASK_COUNT"], ascending=[True, False, False])
 
     critical_categories = {"Privilege / RBAC", "Object Dependency / Drift", "Warehouse / Runtime Capacity"}
     summary = {
         "FAILURES": len(failures),
         "CATEGORIES": failures["FAILURE_CATEGORY"].nunique(),
         "TASKS": failures["TASK_NAME"].nunique() if "TASK_NAME" in failures.columns else 0,
-        "CRITICAL": int(failures["FAILURE_CATEGORY"].isin(critical_categories).sum()),
+        "CRITICAL": int(
+            failures["INCIDENT_PRIORITY"].astype(str).str.startswith("P1").sum()
+            + failures["INCIDENT_PRIORITY"].astype(str).str.startswith("P2").sum()
+        ),
+        "P1_INCIDENTS": int(failures["INCIDENT_PRIORITY"].astype(str).str.startswith("P1").sum()),
+        "BLOCKED_RECOVERIES": int(failures["RECOVERY_READINESS"].astype(str).str.startswith("Blocked").sum()),
+        **_task_recovery_sla_summary(recovery),
     }
     return summary, failures, patterns
 
@@ -618,6 +1125,10 @@ def _build_failure_runbook_markdown(company: str, days: int, summary: dict, fail
         f"- Affected tasks: {safe_int(summary.get('TASKS')):,}",
         f"- Failure categories: {safe_int(summary.get('CATEGORIES')):,}",
         f"- High-priority findings: {safe_int(summary.get('CRITICAL')):,}",
+        f"- P1 graph incidents: {safe_int(summary.get('P1_INCIDENTS')):,}",
+        f"- Blocked recoveries: {safe_int(summary.get('BLOCKED_RECOVERIES')):,}",
+        f"- Open recoveries: {safe_int(summary.get('OPEN_RECOVERIES')):,}",
+        f"- Recovery SLA breaches: {safe_int(summary.get('RECOVERY_SLA_BREACHES')):,}",
         "",
         "## Common Failure Patterns",
     ]
@@ -627,7 +1138,7 @@ def _build_failure_runbook_markdown(company: str, days: int, summary: dict, fail
         for _, row in patterns.head(10).iterrows():
             lines.append(
                 "- "
-                f"{safe_int(row.get('FAILURE_COUNT'))}x | {row.get('FAILURE_CATEGORY')} | "
+                f"{row.get('INCIDENT_PRIORITY', '')} | {safe_int(row.get('FAILURE_COUNT'))}x | {row.get('FAILURE_CATEGORY')} | "
                 f"{row.get('ERROR_SIGNATURE')} | Tasks: {row.get('TASKS')}"
             )
     lines.extend(["", "## DBA Triage Steps"])
@@ -637,10 +1148,17 @@ def _build_failure_runbook_markdown(company: str, days: int, summary: dict, fail
                 f"### {row.get('TASK_NAME', 'Unknown task')}",
                 f"- Query ID: {row.get('QUERY_ID', '')}",
                 f"- Procedure: {row.get('PROCEDURE_NAME', '')}",
+                f"- Priority: {row.get('INCIDENT_PRIORITY', '')}",
+                f"- Graph role: {row.get('GRAPH_ROLE', '')}",
+                f"- Downstream tasks: {safe_int(row.get('DOWNSTREAM_TASK_COUNT')):,}",
                 f"- Category: {row.get('FAILURE_CATEGORY', '')}",
                 f"- Impact hints: {row.get('IMPACT_OBJECTS', '')}",
                 f"- Probable cause: {row.get('PROBABLE_CAUSE', '')}",
                 f"- Recommended action: {row.get('RECOMMENDED_ACTION', '')}",
+                f"- Recovery readiness: {row.get('RECOVERY_READINESS', '')}",
+                f"- Recovery SLA state: {row.get('RECOVERY_STATE', '')}",
+                f"- Owner approval: {row.get('OWNER_APPROVAL_STATE', '')}",
+                f"- Verify after fix: {row.get('VERIFY_AFTER_FIX', '')}",
                 f"- Retry SQL after fix: `{row.get('RETRY_SQL', '')}`",
                 "",
             ])
@@ -683,25 +1201,9 @@ def _task_environment(row: pd.Series) -> str:
 def _task_reliability_verification_sql(row: pd.Series, lookback_days: int = 7) -> str:
     task_name = str(row.get("TASK_NAME") or row.get("NAME") or "").strip()
     task_fqn = str(row.get("TASK_FQN") or "").strip()
-    query_id = str(row.get("QUERY_ID") or "").strip()
     name_filter = ""
     if task_name:
         name_filter = f"AND name = {sql_literal(task_name, 500)}"
-    query_block = (
-        f"""
-
-SELECT query_id,
-       execution_status,
-       start_time,
-       end_time,
-       total_elapsed_time / 1000 AS elapsed_sec,
-       error_code,
-       error_message,
-       SUBSTR(query_text, 1, 4000) AS query_text
-FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-WHERE query_id = {sql_literal(query_id, 200)};"""
-        if query_id else ""
-    )
     return f"""-- Task reliability proof and post-fix verification
 -- Task FQN: {task_fqn or task_name or 'UNKNOWN'}
 SELECT name,
@@ -717,15 +1219,40 @@ FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
 WHERE scheduled_time >= DATEADD('day', -{max(1, int(lookback_days or 7))}, CURRENT_TIMESTAMP())
   {name_filter}
 ORDER BY scheduled_time DESC
-LIMIT 50;{query_block}
+LIMIT 50;
 
 -- Verification rule: latest run should be SUCCEEDED and runtime/credits should return inside the selected SLA baseline.
+"""
+
+
+def _task_reliability_proof_sql(row: pd.Series, lookback_days: int = 7) -> str:
+    """Return richer human proof text while keeping runnable verification separate."""
+    verification_sql = _task_reliability_verification_sql(row, lookback_days).strip()
+    query_id = str(row.get("QUERY_ID") or "").strip()
+    if not query_id:
+        return verification_sql
+    return f"""{verification_sql}
+
+-- Linked QUERY_HISTORY evidence for root-cause review:
+SELECT query_id,
+       execution_status,
+       start_time,
+       end_time,
+       total_elapsed_time / 1000 AS elapsed_sec,
+       error_code,
+       error_message,
+       SUBSTR(query_text, 1, 4000) AS query_text
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE query_id = {sql_literal(query_id, 200)};
 """
 
 
 def _task_reliability_generated_sql(row: pd.Series) -> str:
     retry_sql = str(row.get("RETRY_SQL") or "").strip()
     task_fqn = str(row.get("TASK_FQN") or row.get("TASK_NAME") or "UNKNOWN_TASK")
+    incident_priority = str(row.get("INCIDENT_PRIORITY") or "").strip()
+    recovery_readiness = str(row.get("RECOVERY_READINESS") or "").strip()
+    owner_approval_state = str(row.get("OWNER_APPROVAL_STATE") or "").strip()
     if retry_sql and not retry_sql.startswith("--"):
         retry_line = retry_sql
     else:
@@ -733,6 +1260,10 @@ def _task_reliability_generated_sql(row: pd.Series) -> str:
     return (
         "-- Reviewed recovery plan. Do not execute until root cause is fixed.\n"
         f"-- Task: {task_fqn}\n"
+        f"-- Priority: {incident_priority or 'Unranked'}\n"
+        f"-- Recovery readiness: {recovery_readiness or 'DBA review required'}\n"
+        f"-- Owner approval: {owner_approval_state or 'Required before close'}\n"
+        f"-- Graph role: {row.get('GRAPH_ROLE', '')}; downstream tasks: {safe_int(row.get('DOWNSTREAM_TASK_COUNT'))}\n"
         f"-- Linked procedure: {row.get('PROCEDURE_NAME', '')}\n"
         f"-- Impact objects: {row.get('IMPACT_OBJECTS', '')}\n"
         f"{retry_line}\n"
@@ -758,8 +1289,21 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
     if "verify" not in action_text.lower():
         action_text += " Verify the next successful run and attach TASK_HISTORY evidence before closing."
     severity = str(row.get("SEVERITY") or ("High" if category != "Unclassified Failure" else "Medium"))
-    finding = f"{signal}: {task}. {detail}".strip()
+    incident_priority = str(row.get("INCIDENT_PRIORITY") or "").strip()
+    recovery_readiness = str(row.get("RECOVERY_READINESS") or "").strip()
+    owner_approval_state = str(row.get("OWNER_APPROVAL_STATE") or "").strip()
+    recovery_state = str(row.get("RECOVERY_STATE") or "").strip()
+    recovery_evidence = str(row.get("VERIFY_AFTER_FIX") or "").strip()
+    if recovery_readiness and recovery_readiness.lower() not in action_text.lower():
+        action_text += f" Recovery readiness: {recovery_readiness}."
+    if owner_approval_state and owner_approval_state.lower() not in action_text.lower():
+        action_text += f" Owner approval: {owner_approval_state}."
+    finding_prefix = f"{incident_priority}: " if incident_priority else ""
+    finding = f"{finding_prefix}{signal}: {task}. {detail}".strip()
+    if recovery_state:
+        finding = f"{finding} Recovery SLA state: {recovery_state}."
     verification_query = _task_reliability_verification_sql(row)[:8000]
+    proof_query = _task_reliability_proof_sql(row)[:8000]
     baseline_value = _task_metric(row, "AVG_DURATION_SEC", "AVG_EXECUTION_SECONDS", "BASELINE_SECONDS")
     current_value = _task_metric(row, "DURATION_SEC", "ELAPSED_SEC", "LATEST_DURATION_SEC", "EXECUTION_SECONDS")
     measured_delta = (
@@ -779,7 +1323,7 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
         "Action": action_text,
         "Estimated Monthly Savings": 0.0,
         "Generated SQL Fix": _task_reliability_generated_sql(row)[:8000],
-        "Proof Query": verification_query,
+        "Proof Query": proof_query,
         "Company": company,
         "Environment": _task_environment(row),
         "Verification Status": "Pending",
@@ -787,6 +1331,12 @@ def _build_task_reliability_action(row: pd.Series, company: str, source: str) ->
         "Baseline Value": baseline_value,
         "Current Value": current_value,
         "Measured Delta": measured_delta,
+        "Owner Approval Status": _task_owner_approval_status(row),
+        "Owner Approval Note": owner_approval_state,
+        "Recovery SLA State": recovery_state,
+        "Recovery SLA Hours": _task_metric(row, "RECOVERY_HOURS", "RECOVERY_SLA_HOURS"),
+        "Recovery SLA Target Hours": _task_metric(row, "RECOVERY_SLA_TARGET_HOURS"),
+        "Recovery Evidence": recovery_evidence,
     }
 
 
@@ -808,6 +1358,11 @@ def _build_task_ops_markdown(
         f"- Suspended tasks: {safe_int(summary.get('SUSPENDED_TASKS')):,}",
         f"- Long-running/SLA candidates: {safe_int(summary.get('LONG_RUNNING_TASKS')):,}",
         f"- Cost drift/release-regression candidates: {safe_int(summary.get('COST_DRIFT_TASKS')):,}",
+        f"- P1 graph incidents: {safe_int(summary.get('P1_INCIDENTS')):,}",
+        f"- Blocked recoveries: {safe_int(summary.get('BLOCKED_RECOVERIES')):,}",
+        f"- Open recoveries: {safe_int(summary.get('OPEN_RECOVERIES')):,}",
+        f"- Recovery SLA breaches: {safe_int(summary.get('RECOVERY_SLA_BREACHES')):,}",
+        f"- Recovery SLA target: {safe_int(summary.get('RECOVERY_SLA_TARGET_HOURS')):,} hours",
         "",
         "## DBA Narrative",
         (
@@ -824,9 +1379,13 @@ def _build_task_ops_markdown(
         for _, row in exceptions.head(10).iterrows():
             lines.append(
                 "- "
-                f"{row.get('SEVERITY', 'Watch')} | {row.get('SIGNAL', 'Unknown')} | "
+                f"{row.get('INCIDENT_PRIORITY', row.get('SEVERITY', 'Watch'))} | "
+                f"{row.get('SIGNAL', 'Unknown')} | "
                 f"{row.get('TASK_NAME', '')} | {row.get('PROCEDURE_NAME', '')} | "
-                f"{row.get('DETAIL', '')} | Impact hints: {row.get('IMPACT_OBJECTS', '')}"
+                f"{row.get('DETAIL', '')} | Recovery: {row.get('RECOVERY_READINESS', '')} | "
+                f"SLA state: {row.get('RECOVERY_STATE', '')} | Owner approval: {row.get('OWNER_APPROVAL_STATE', '')} | "
+                f"Downstream tasks: {safe_int(row.get('DOWNSTREAM_TASK_COUNT')):,} | "
+                f"Impact hints: {row.get('IMPACT_OBJECTS', '')}"
             )
     lines.extend([
         "",
@@ -918,6 +1477,7 @@ def _build_task_ops_frames(
             + _df_col(inventory, "SCHEMA_NAME").astype(str) + "."
             + _df_col(inventory, "NAME").astype(str)
         )
+        inventory = _annotate_task_graph_impact(inventory)
     if not history.empty:
         history["DURATION_SEC"] = pd.to_numeric(_df_col(history, "DURATION_SEC", 0), errors="coerce").fillna(0)
         history["STATE"] = _df_col(history, "STATE").astype(str).str.upper()
@@ -938,7 +1498,7 @@ def _build_task_ops_frames(
         latest = history.loc[latest_idx].copy() if len(latest_idx) else pd.DataFrame()
         trend = history.groupby("TASK_NAME", dropna=False).agg(
             RUNS=("TASK_NAME", "count"),
-            FAILURES=("STATE", lambda s: int((s == "FAILED").sum())),
+            FAILURES=("STATE", lambda s: int(s.astype(str).str.upper().isin(TASK_FAILURE_STATES).sum())),
             AVG_DURATION_SEC=("DURATION_SEC", "mean"),
             MAX_DURATION_SEC=("DURATION_SEC", "max"),
             AVG_EST_CREDITS=("EST_TOTAL_CREDITS", "mean"),
@@ -949,8 +1509,14 @@ def _build_task_ops_frames(
         latest = pd.DataFrame()
 
     if not latest.empty and not inventory.empty:
+        inventory_merge_cols = [
+            col for col in [
+                "NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "TASK_FQN", "STATE", "IMPACT_OBJECTS",
+                "DOWNSTREAM_TASK_COUNT", "GRAPH_ROLE", "BLAST_RADIUS", "RETRY_SCOPE",
+            ] if col in inventory.columns
+        ]
         latest = latest.merge(
-            inventory[["NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "TASK_FQN", "STATE", "IMPACT_OBJECTS"]].rename(
+            inventory[inventory_merge_cols].rename(
                 columns={"NAME": "INV_TASK_NAME", "STATE": "INVENTORY_STATE"}
             ),
             left_on="TASK_NAME",
@@ -972,6 +1538,7 @@ def _build_task_ops_frames(
         latest["IMPACT_OBJECTS"] = combined_objects
 
     exception_rows = []
+    recovery = _build_task_recovery_sla_frame(history, inventory)
     if not latest.empty:
         for _, row in latest.iterrows():
             duration = safe_float(row.get("DURATION_SEC"))
@@ -979,6 +1546,8 @@ def _build_task_ops_frames(
             est_credits = safe_float(row.get("EST_TOTAL_CREDITS"))
             avg_credits = safe_float(row.get("AVG_EST_CREDITS"))
             state = str(row.get("STATE", "")).upper()
+            error_text = str(row.get("ERROR_MESSAGE") or "").strip().upper()
+            has_error_text = error_text not in {"", "NONE", "NULL", "NAN"}
             duration_change_pct = ((duration - avg_duration) / avg_duration * 100) if avg_duration > 0 else 0.0
             cost_change_pct = ((est_credits - avg_credits) / avg_credits * 100) if avg_credits > 0 else 0.0
             common = {
@@ -995,8 +1564,12 @@ def _build_task_ops_frames(
                 "COST_CHANGE_PCT": round(cost_change_pct, 1),
                 "IMPACT_OBJECTS": row.get("IMPACT_OBJECTS", ""),
                 "TASK_FQN": row.get("TASK_FQN", ""),
+                "DOWNSTREAM_TASK_COUNT": safe_int(row.get("DOWNSTREAM_TASK_COUNT")),
+                "GRAPH_ROLE": row.get("GRAPH_ROLE", ""),
+                "BLAST_RADIUS": row.get("BLAST_RADIUS", ""),
+                "RETRY_SCOPE": row.get("RETRY_SCOPE", ""),
             }
-            if state == "FAILED":
+            if state in TASK_FAILURE_STATES or has_error_text:
                 exception_rows.append({
                     **common,
                     "SEVERITY": "High",
@@ -1037,18 +1610,110 @@ def _build_task_ops_frames(
                 "IMPACT_OBJECTS": row.get("IMPACT_OBJECTS", ""),
                 "DETAIL": "Task is suspended in SHOW TASKS.",
                 "TASK_FQN": row.get("TASK_FQN", ""),
+                "DOWNSTREAM_TASK_COUNT": safe_int(row.get("DOWNSTREAM_TASK_COUNT")),
+                "GRAPH_ROLE": row.get("GRAPH_ROLE", ""),
+                "BLAST_RADIUS": row.get("BLAST_RADIUS", ""),
+                "RETRY_SCOPE": row.get("RETRY_SCOPE", ""),
+            })
+    existing_failed_tasks = {
+        str(row.get("TASK_NAME") or "")
+        for row in exception_rows
+        if str(row.get("SIGNAL") or "") == "Failed Task Run"
+    }
+    if not recovery.empty:
+        for _, row in recovery.iterrows():
+            recovery_state = str(row.get("RECOVERY_STATE") or "")
+            if recovery_state == "Recovered Within SLA":
+                continue
+            if recovery_state == "Open Failure" and str(row.get("TASK_NAME") or "") in existing_failed_tasks:
+                continue
+            exception_rows.append({
+                "SEVERITY": "High" if str(row.get("INCIDENT_PRIORITY") or "").startswith(("P1", "P2")) else "Medium",
+                "SIGNAL": "Open Recovery SLA" if recovery_state == "Open Failure" else "Recovery SLA Breach",
+                "TASK_NAME": row.get("TASK_NAME", ""),
+                "ROOT_TASK_NAME": row.get("ROOT_TASK_NAME", ""),
+                "PROCEDURE_NAME": row.get("PROCEDURE_NAME", ""),
+                "QUERY_ID": row.get("FAILURE_QUERY_ID", ""),
+                "STATE": row.get("LATEST_STATE", ""),
+                "DURATION_SEC": 0,
+                "AVG_DURATION_SEC": 0,
+                "DURATION_CHANGE_PCT": 0,
+                "EST_TOTAL_CREDITS": 0,
+                "AVG_EST_CREDITS": 0,
+                "COST_CHANGE_PCT": 0,
+                "IMPACT_OBJECTS": "",
+                "TASK_FQN": row.get("TASK_FQN", ""),
+                "DOWNSTREAM_TASK_COUNT": safe_int(row.get("DOWNSTREAM_TASK_COUNT")),
+                "GRAPH_ROLE": row.get("GRAPH_ROLE", ""),
+                "BLAST_RADIUS": row.get("BLAST_RADIUS", ""),
+                "RETRY_SCOPE": "Root graph retry" if row.get("GRAPH_ROLE") == "Root" else "Targeted task retry",
+                "DETAIL": (
+                    f"{recovery_state}: recovery time {safe_float(row.get('RECOVERY_HOURS')):,.2f}h "
+                    f"vs {safe_int(row.get('RECOVERY_SLA_TARGET_HOURS'))}h target."
+                ),
             })
     exceptions = pd.DataFrame(exception_rows)
+    if not exceptions.empty:
+        if "DOWNSTREAM_TASK_COUNT" not in exceptions.columns:
+            exceptions["DOWNSTREAM_TASK_COUNT"] = 0
+        exceptions["DOWNSTREAM_TASK_COUNT"] = pd.to_numeric(
+            exceptions["DOWNSTREAM_TASK_COUNT"], errors="coerce"
+        ).fillna(0).astype(int)
+        for col, default in [
+            ("GRAPH_ROLE", "Unknown"),
+            ("BLAST_RADIUS", "Unknown"),
+            ("RETRY_SCOPE", "Targeted task retry"),
+        ]:
+            if col not in exceptions.columns:
+                exceptions[col] = default
+            exceptions[col] = exceptions[col].fillna(default).astype(str)
+        if not recovery.empty and "TASK_NAME" in exceptions.columns:
+            recovery_by_task = recovery.drop_duplicates("TASK_NAME", keep="last").set_index("TASK_NAME")
+            for col in [
+                "RECOVERY_STATE", "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS",
+                "RECOVERY_AT", "LAST_FAILURE_AT", "OWNER_APPROVAL_STATE",
+            ]:
+                if col in recovery_by_task.columns:
+                    mapped = exceptions["TASK_NAME"].map(recovery_by_task[col])
+                    if col in exceptions.columns:
+                        exceptions[col] = exceptions[col].combine_first(mapped)
+                    else:
+                        exceptions[col] = mapped
+        exceptions["INCIDENT_PRIORITY"] = exceptions.apply(_task_exception_incident_priority, axis=1)
+        exceptions["RECOVERY_READINESS"] = exceptions.apply(_task_exception_recovery_readiness, axis=1)
+        owner_approval = exceptions.get("OWNER_APPROVAL_STATE", pd.Series([""] * len(exceptions), index=exceptions.index))
+        missing_owner_approval = owner_approval.fillna("").astype(str).str.strip().eq("")
+        exceptions["OWNER_APPROVAL_STATE"] = owner_approval
+        exceptions.loc[missing_owner_approval, "OWNER_APPROVAL_STATE"] = exceptions.loc[missing_owner_approval].apply(
+            _task_owner_approval_state,
+            axis=1,
+        )
+        exceptions["VERIFY_AFTER_FIX"] = exceptions.apply(
+            lambda row: "Latest TASK_HISTORY run succeeds and runtime/credits return within baseline."
+            if "FAILED" in str(row.get("SIGNAL") or "").upper()
+            else "Next scheduled run remains within the selected SLA/cost threshold.",
+            axis=1,
+        )
+        exceptions["SEVERITY"] = exceptions.apply(
+            lambda row: "Critical" if str(row.get("INCIDENT_PRIORITY")).startswith("P1")
+            else row.get("SEVERITY", "Medium"),
+            axis=1,
+        )
+        exceptions["NEXT_WORKFLOW"] = exceptions["SIGNAL"].apply(_task_ops_workflow_for)
+        exceptions["NEXT_ACTION"] = exceptions["SIGNAL"].apply(lambda signal: _task_action_for(signal)[0])
     history_state = history.get("STATE", pd.Series(dtype=str)).astype(str).str.upper() if not history.empty else pd.Series(dtype=str)
     inventory_state = inventory.get("STATE", pd.Series(dtype=str)).astype(str).str.upper() if not inventory.empty else pd.Series(dtype=str)
     summary = {
         "TOTAL_TASKS": len(inventory),
         "TOTAL_RUNS": len(history),
-        "FAILED_RUNS": int((history_state == "FAILED").sum()),
+        "FAILED_RUNS": int(history_state.isin(TASK_FAILURE_STATES).sum()) if not history_state.empty else 0,
         "SUSPENDED_TASKS": int((inventory_state == "SUSPENDED").sum()),
         "LONG_RUNNING_TASKS": int((exceptions.get("SIGNAL", pd.Series(dtype=str)) == "Long Running / SLA Risk").sum()) if not exceptions.empty else 0,
         "COST_DRIFT_TASKS": int((exceptions.get("SIGNAL", pd.Series(dtype=str)) == "Cost Drift / Release Regression").sum()) if not exceptions.empty else 0,
         "PROCEDURE_LINKS": int((inventory.get("PROCEDURE_NAME", pd.Series(dtype=str)).astype(str).str.len() > 0).sum()) if not inventory.empty else 0,
+        "P1_INCIDENTS": int(exceptions.get("INCIDENT_PRIORITY", pd.Series(dtype=str)).astype(str).str.startswith("P1").sum()) if not exceptions.empty else 0,
+        "BLOCKED_RECOVERIES": int(exceptions.get("RECOVERY_READINESS", pd.Series(dtype=str)).astype(str).str.startswith("Blocked").sum()) if not exceptions.empty else 0,
+        **_task_recovery_sla_summary(recovery),
     }
     return summary, exceptions, latest
 
@@ -1068,12 +1733,13 @@ def _load_task_ops_scope(
     session,
     days: int,
     ttl_prefix: str,
-) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
+) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
     company = get_active_company()
     database_contains = str(st.session_state.get("global_database", "") or "").strip()
     inventory_source = "Live: SHOW TASKS IN ACCOUNT"
     history_source = "Live: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY"
     query_detail_source = "Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+    critical_path_source = "Computed: task inventory + task history"
     try:
         inventory = run_query(
             build_mart_task_inventory_sql(company=company, database_contains=database_contains),
@@ -1139,12 +1805,33 @@ def _load_task_ops_scope(
         except Exception as e:
             st.info(f"Linked query cost/detail unavailable: {format_snowflake_error(e)}")
     summary, exceptions, latest = _build_task_ops_frames(inventory, history, query_details)
+    try:
+        critical_paths = run_query(
+            build_mart_task_critical_path_sql(
+                days,
+                company=company,
+                database_contains=database_contains,
+                limit=200,
+            ),
+            ttl_key=f"{ttl_prefix}_critical_path_mart_{company}_{days}",
+            tier="historical",
+            section="Task Management",
+        )
+        critical_paths = _normalize_task_critical_path_mart(critical_paths)
+        if critical_paths.empty:
+            critical_paths = _build_task_critical_path_snapshot(inventory, history)
+        else:
+            critical_path_source = "OVERWATCH mart: FACT_TASK_CRITICAL_PATH"
+    except Exception:
+        critical_paths = _build_task_critical_path_snapshot(inventory, history)
+    recovery_sla = _build_task_recovery_sla_frame(history, inventory)
     st.session_state[f"{ttl_prefix}_sources"] = {
         "inventory": inventory_source,
         "history": history_source,
         "query_detail": query_detail_source if not query_details.empty else "Not loaded",
+        "critical_path": critical_path_source,
     }
-    return summary, exceptions, latest, inventory, not query_details.empty
+    return summary, exceptions, latest, inventory, critical_paths, recovery_sla, not query_details.empty
 
 
 def _render_task_ops_brief(session) -> None:
@@ -1157,13 +1844,15 @@ def _render_task_ops_brief(session) -> None:
     with st.container():
         days = st.slider("Task graph lookback (days)", 1, 30, 7, key="task_ops_days")
         if st.button("Load Task Graph Operations", key="task_ops_load"):
-            summary, exceptions, latest, inventory, details_loaded = _load_task_ops_scope(
+            summary, exceptions, latest, inventory, critical_paths, recovery_sla, details_loaded = _load_task_ops_scope(
                 session, days, "task_ops"
             )
             st.session_state["task_ops_summary"] = summary
             st.session_state["task_ops_exceptions"] = exceptions
             st.session_state["task_ops_latest"] = latest
             st.session_state["task_ops_inventory"] = inventory
+            st.session_state["task_ops_critical_paths"] = critical_paths
+            st.session_state["task_ops_recovery_sla"] = recovery_sla
             st.session_state["task_ops_query_details_loaded"] = details_loaded
 
         summary = st.session_state.get("task_ops_summary")
@@ -1172,6 +1861,8 @@ def _render_task_ops_brief(session) -> None:
         exceptions = st.session_state.get("task_ops_exceptions", pd.DataFrame())
         latest = st.session_state.get("task_ops_latest", pd.DataFrame())
         inventory = st.session_state.get("task_ops_inventory", pd.DataFrame())
+        critical_paths = st.session_state.get("task_ops_critical_paths", pd.DataFrame())
+        recovery_sla = st.session_state.get("task_ops_recovery_sla", pd.DataFrame())
         score = _task_ops_score(
             failed_runs=safe_int(summary.get("FAILED_RUNS")),
             suspended_tasks=safe_int(summary.get("SUSPENDED_TASKS")),
@@ -1179,13 +1870,22 @@ def _render_task_ops_brief(session) -> None:
             total_runs=safe_int(summary.get("TOTAL_RUNS")),
             total_tasks=safe_int(summary.get("TOTAL_TASKS")),
         )
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Ops Score", score, _task_ops_rating(score))
         c2.metric("Tasks", f"{safe_int(summary.get('TOTAL_TASKS')):,}")
         c3.metric("Runs", f"{safe_int(summary.get('TOTAL_RUNS')):,}")
         c4.metric("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}", delta_color="inverse")
+        c5, c6, c7, c8 = st.columns(4)
         c5.metric("Suspended", f"{safe_int(summary.get('SUSPENDED_TASKS')):,}", delta_color="inverse")
         c6.metric("SLA/Cost Drift", f"{safe_int(summary.get('LONG_RUNNING_TASKS')) + safe_int(summary.get('COST_DRIFT_TASKS')):,}", delta_color="inverse")
+        c7.metric("Open Recovery", f"{safe_int(summary.get('OPEN_RECOVERIES')):,}", delta_color="inverse")
+        c8.metric("Recovery SLA", f"{safe_int(summary.get('RECOVERY_SLA_BREACHES')):,}", delta_color="inverse")
+        if safe_int(summary.get("P1_INCIDENTS")) or safe_int(summary.get("BLOCKED_RECOVERIES")):
+            st.caption(
+                f"P1 graph incidents: {safe_int(summary.get('P1_INCIDENTS')):,} | "
+                f"Blocked recoveries: {safe_int(summary.get('BLOCKED_RECOVERIES')):,} | "
+                f"Recovery target: {safe_int(summary.get('RECOVERY_SLA_TARGET_HOURS')):,}h"
+            )
         task_ops_sources = st.session_state.get("task_ops_sources", {})
         if task_ops_sources:
             st.caption(
@@ -1193,6 +1893,7 @@ def _render_task_ops_brief(session) -> None:
                     str(task_ops_sources.get("inventory", "")),
                     str(task_ops_sources.get("history", "")),
                     str(task_ops_sources.get("query_detail", "")),
+                    str(task_ops_sources.get("critical_path", "")),
                 ])
             )
         if not st.session_state.get("task_ops_query_details_loaded"):
@@ -1226,17 +1927,53 @@ def _render_task_ops_brief(session) -> None:
                         st.session_state["task_management_view"] = workflow
                         st.rerun()
 
+        if not critical_paths.empty:
+            st.subheader("Critical Path Snapshot")
+            render_priority_dataframe(
+                critical_paths,
+                title="Task graph paths ranked by blast radius, failures, suspension, and runtime",
+                priority_columns=[
+                    "CRITICAL_PATH_STATE", "ROOT_TASK_NAME", "CRITICAL_PATH_SCORE",
+                    "TASK_COUNT", "DOWNSTREAM_TASK_COUNT", "SUSPENDED_TASKS",
+                    "FAILURES", "RUNS", "MAX_DURATION_SEC", "LAST_RUN_AT",
+                    "BLAST_RADIUS", "OWNER_ROLE", "APPROVAL_PATH", "WAREHOUSES", "PROCEDURES",
+                ],
+                sort_by=["CRITICAL_PATH_SCORE", "DOWNSTREAM_TASK_COUNT", "MAX_DURATION_SEC"],
+                ascending=[False, False, False],
+                raw_label="All critical path rows",
+                max_rows=20,
+            )
+
+        if not recovery_sla.empty:
+            st.subheader("Recovery SLA Verification")
+            render_priority_dataframe(
+                recovery_sla,
+                title="Failed task graph recovery proof",
+                priority_columns=[
+                    "INCIDENT_PRIORITY", "RECOVERY_STATE", "TASK_NAME", "ROOT_TASK_NAME",
+                    "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT", "LAST_FAILURE_AT", "RECOVERY_AT",
+                    "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS", "OWNER", "OWNER_APPROVAL_STATE",
+                    "ERROR_SIGNATURE", "VERIFY_AFTER_FIX",
+                ],
+                sort_by=["INCIDENT_PRIORITY", "DOWNSTREAM_TASK_COUNT", "LAST_FAILURE_AT"],
+                ascending=[True, False, False],
+                raw_label="All recovery SLA rows",
+                max_rows=30,
+            )
+
         if not exceptions.empty:
             st.subheader("Task Graph Exceptions")
             render_priority_dataframe(
                 exceptions,
                 title="Task graph exceptions to work first",
                 priority_columns=[
-                    "SEVERITY", "SIGNAL", "TASK_NAME", "ROOT_TASK_NAME",
-                    "PROCEDURE_NAME", "DETAIL", "NEXT_WORKFLOW", "NEXT_ACTION",
+                    "INCIDENT_PRIORITY", "SEVERITY", "SIGNAL", "TASK_NAME", "ROOT_TASK_NAME",
+                    "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT", "BLAST_RADIUS",
+                    "PROCEDURE_NAME", "RECOVERY_STATE", "RECOVERY_HOURS", "OWNER_APPROVAL_STATE",
+                    "RECOVERY_READINESS", "DETAIL", "NEXT_WORKFLOW", "NEXT_ACTION",
                 ],
-                sort_by=["SEVERITY", "SIGNAL", "TASK_NAME"],
-                ascending=[True, True, True],
+                sort_by=["INCIDENT_PRIORITY", "SEVERITY", "DOWNSTREAM_TASK_COUNT", "SIGNAL", "TASK_NAME"],
+                ascending=[True, True, False, True, True],
                 raw_label="All task graph exceptions",
             )
             if st.button("Save Task Graph Findings to Action Queue", key="task_ops_queue"):
@@ -1258,6 +1995,7 @@ def _render_task_ops_brief(session) -> None:
             map_cols = [
                 col for col in [
                     "DATABASE_NAME", "SCHEMA_NAME", "ROOT_TASK_NAME", "NAME", "STATE",
+                    "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT", "BLAST_RADIUS",
                     "SCHEDULE", "WAREHOUSE", "PREDECESSORS", "PROCEDURE_NAME", "IMPACT_OBJECTS"
                 ] if col in inventory.columns
             ]
@@ -1266,10 +2004,11 @@ def _render_task_ops_brief(session) -> None:
                 title="Task graph and procedure map",
                 priority_columns=[
                     "DATABASE_NAME", "SCHEMA_NAME", "ROOT_TASK_NAME", "NAME",
-                    "STATE", "WAREHOUSE", "PROCEDURE_NAME", "IMPACT_OBJECTS",
+                    "STATE", "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT", "BLAST_RADIUS",
+                    "WAREHOUSE", "PROCEDURE_NAME", "IMPACT_OBJECTS",
                 ],
-                sort_by=["STATE", "ROOT_TASK_NAME", "NAME"],
-                ascending=[True, True, True],
+                sort_by=["DOWNSTREAM_TASK_COUNT", "STATE", "ROOT_TASK_NAME", "NAME"],
+                ascending=[False, True, True, True],
                 raw_label="Full task graph/procedure map",
                 max_rows=50,
             )
@@ -1280,7 +2019,8 @@ def _render_task_ops_brief(session) -> None:
                 col for col in [
                     "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "STATE", "QUERY_ID",
                     "DURATION_SEC", "AVG_DURATION_SEC", "MAX_DURATION_SEC", "FAILURES",
-                    "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "IMPACT_OBJECTS"
+                    "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "GRAPH_ROLE",
+                    "DOWNSTREAM_TASK_COUNT", "IMPACT_OBJECTS"
                 ] if col in latest.columns
             ]
             render_priority_dataframe(
@@ -1289,10 +2029,11 @@ def _render_task_ops_brief(session) -> None:
                 priority_columns=[
                     "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "STATE",
                     "DURATION_SEC", "AVG_DURATION_SEC", "FAILURES",
-                    "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "IMPACT_OBJECTS",
+                    "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "GRAPH_ROLE",
+                    "DOWNSTREAM_TASK_COUNT", "IMPACT_OBJECTS",
                 ],
-                sort_by=["FAILURES", "DURATION_SEC", "EST_TOTAL_CREDITS"],
-                ascending=[False, False, False],
+                sort_by=["FAILURES", "DOWNSTREAM_TASK_COUNT", "DURATION_SEC", "EST_TOTAL_CREDITS"],
+                ascending=[False, False, False, False],
                 raw_label="All latest task runs",
                 max_rows=50,
             )
@@ -1423,7 +2164,8 @@ def _render_sla_cost_drift_console(session) -> None:
             "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "STATE", "QUERY_ID",
             "DURATION_SEC", "AVG_DURATION_SEC", "DURATION_CHANGE_PCT",
             "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "COST_CHANGE_PCT",
-            "BREACH_REASON", "WAREHOUSE_NAME", "IMPACT_OBJECTS", "TASK_FQN",
+            "BREACH_REASON", "WAREHOUSE_NAME", "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT",
+            "BLAST_RADIUS", "IMPACT_OBJECTS", "TASK_FQN",
         ] if col in view.columns
     ]
     if breaches.empty:
@@ -1437,10 +2179,11 @@ def _render_sla_cost_drift_console(session) -> None:
                 "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "BREACH_REASON",
                 "DURATION_SEC", "AVG_DURATION_SEC", "DURATION_CHANGE_PCT",
                 "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "COST_CHANGE_PCT",
-                "WAREHOUSE_NAME", "IMPACT_OBJECTS",
+                "WAREHOUSE_NAME", "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT",
+                "BLAST_RADIUS", "IMPACT_OBJECTS",
             ],
-            sort_by=["DURATION_CHANGE_PCT", "COST_CHANGE_PCT", "DURATION_SEC"],
-            ascending=[False, False, False],
+            sort_by=["DOWNSTREAM_TASK_COUNT", "DURATION_CHANGE_PCT", "COST_CHANGE_PCT", "DURATION_SEC"],
+            ascending=[False, False, False, False],
             raw_label="All task SLA/cost breach rows",
         )
         top_duration = breaches.sort_values("DURATION_CHANGE_PCT", ascending=False).head(15)
@@ -1459,9 +2202,16 @@ def _render_sla_cost_drift_console(session) -> None:
             signal = "Long Running / SLA Risk" if row.get("SLA_BREACH") else "Cost Drift / Release Regression"
             if row.get("SLA_BREACH") and row.get("COST_DRIFT"):
                 signal = "SLA and Cost Drift"
+            queue_stub = pd.Series({
+                "SIGNAL": signal,
+                "DOWNSTREAM_TASK_COUNT": row.get("DOWNSTREAM_TASK_COUNT", 0),
+                "GRAPH_ROLE": row.get("GRAPH_ROLE", ""),
+            })
             queue_rows.append({
                 "SEVERITY": "High" if row.get("SLA_BREACH") and safe_float(row.get("DURATION_CHANGE_PCT")) >= duration_pct * 2 else "Medium",
                 "SIGNAL": signal,
+                "INCIDENT_PRIORITY": _task_exception_incident_priority(queue_stub),
+                "RECOVERY_READINESS": _task_exception_recovery_readiness(queue_stub),
                 "TASK_NAME": row.get("TASK_NAME", ""),
                 "ROOT_TASK_NAME": row.get("ROOT_TASK_NAME", ""),
                 "PROCEDURE_NAME": row.get("PROCEDURE_NAME", ""),
@@ -1477,6 +2227,10 @@ def _render_sla_cost_drift_console(session) -> None:
                 ),
                 "IMPACT_OBJECTS": row.get("IMPACT_OBJECTS", ""),
                 "TASK_FQN": row.get("TASK_FQN", ""),
+                "GRAPH_ROLE": row.get("GRAPH_ROLE", ""),
+                "DOWNSTREAM_TASK_COUNT": row.get("DOWNSTREAM_TASK_COUNT", 0),
+                "BLAST_RADIUS": row.get("BLAST_RADIUS", ""),
+                "RETRY_SCOPE": row.get("RETRY_SCOPE", ""),
             })
         queue_df = pd.DataFrame(queue_rows)
         if st.button("Save SLA/Cost Drift Findings to Action Queue", key="task_sla_queue"):
@@ -1652,17 +2406,25 @@ def render():
                 st.success("No failed task runs found for the selected scope.")
             else:
                 st.warning("Failed task runs found. Review probable cause before using retry controls.")
+                if safe_int(summary.get("P1_INCIDENTS")) or safe_int(summary.get("BLOCKED_RECOVERIES")):
+                    st.caption(
+                        f"P1 graph incidents: {safe_int(summary.get('P1_INCIDENTS')):,} | "
+                        f"Blocked recoveries: {safe_int(summary.get('BLOCKED_RECOVERIES')):,} | "
+                        f"Open recoveries: {safe_int(summary.get('OPEN_RECOVERIES')):,} | "
+                        f"Recovery SLA breaches: {safe_int(summary.get('RECOVERY_SLA_BREACHES')):,}"
+                    )
                 if not patterns.empty:
                     st.subheader("Common Failure Patterns")
                     render_priority_dataframe(
                         patterns,
                         title="Most common failure patterns",
                         priority_columns=[
-                            "FAILURE_CATEGORY", "ERROR_SIGNATURE", "FAILURE_COUNT",
-                            "TASK_COUNT", "LAST_SEEN", "RECOMMENDED_ACTION",
+                            "INCIDENT_PRIORITY", "FAILURE_CATEGORY", "ERROR_SIGNATURE", "FAILURE_COUNT",
+                            "TASK_COUNT", "DOWNSTREAM_TASK_COUNT", "RECOVERY_READINESS",
+                            "LAST_SEEN", "RECOMMENDED_ACTION",
                         ],
-                        sort_by=["FAILURE_COUNT", "TASK_COUNT"],
-                        ascending=[False, False],
+                        sort_by=["INCIDENT_PRIORITY", "FAILURE_COUNT", "TASK_COUNT", "DOWNSTREAM_TASK_COUNT"],
+                        ascending=[True, False, False, False],
                         raw_label="All failure patterns",
                     )
 
@@ -1671,8 +2433,12 @@ def render():
                 view = failures if selected_category == "All" else failures[failures["FAILURE_CATEGORY"] == selected_category]
                 display_cols = [
                     col for col in [
-                        "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "QUERY_ID",
+                        "INCIDENT_PRIORITY", "SEVERITY", "TASK_NAME", "ROOT_TASK_NAME",
+                        "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT", "BLAST_RADIUS",
+                        "PROCEDURE_NAME", "QUERY_ID",
                         "FAILURE_CATEGORY", "PROBABLE_CAUSE", "RECOMMENDED_ACTION",
+                        "RECOVERY_STATE", "RECOVERY_HOURS", "RECOVERY_SLA_TARGET_HOURS",
+                        "OWNER_APPROVAL_STATE", "RECOVERY_READINESS", "VERIFY_AFTER_FIX",
                         "STATE", "DURATION_SEC", "QUERY_ELAPSED_SEC", "WAREHOUSE_NAME",
                         "IMPACT_OBJECTS", "ERROR_SIGNATURE", "RETRY_SQL"
                     ] if col in view.columns
@@ -1682,12 +2448,14 @@ def render():
                     view[display_cols],
                     title="Failure rows to resolve first",
                     priority_columns=[
-                        "TASK_NAME", "ROOT_TASK_NAME", "PROCEDURE_NAME", "FAILURE_CATEGORY",
+                        "INCIDENT_PRIORITY", "TASK_NAME", "ROOT_TASK_NAME", "GRAPH_ROLE",
+                        "DOWNSTREAM_TASK_COUNT", "PROCEDURE_NAME", "FAILURE_CATEGORY",
+                        "RECOVERY_STATE", "OWNER_APPROVAL_STATE", "RECOVERY_READINESS",
                         "PROBABLE_CAUSE", "RECOMMENDED_ACTION", "QUERY_ID",
                         "DURATION_SEC", "QUERY_ELAPSED_SEC", "WAREHOUSE_NAME",
                     ],
-                    sort_by=["DURATION_SEC", "QUERY_ELAPSED_SEC"],
-                    ascending=[False, False],
+                    sort_by=["INCIDENT_PRIORITY", "DOWNSTREAM_TASK_COUNT", "DURATION_SEC", "QUERY_ELAPSED_SEC"],
+                    ascending=[True, False, False, False],
                     raw_label="All failure drilldown rows",
                 )
                 download_csv(view[display_cols], "task_failure_console.csv")
@@ -1704,14 +2472,23 @@ def render():
                             st.write(row.get("PROBABLE_CAUSE", ""))
                             st.markdown("**Recommended Action**")
                             st.write(row.get("RECOMMENDED_ACTION", ""))
+                            st.markdown("**Recovery Readiness**")
+                            st.write(row.get("RECOVERY_READINESS", ""))
+                            st.markdown("**Recovery SLA**")
+                            st.write(row.get("RECOVERY_STATE", ""))
+                            st.markdown("**Owner Approval**")
+                            st.write(row.get("OWNER_APPROVAL_STATE", ""))
                         with c2:
                             st.markdown("**Retry SQL After Fix**")
                             st.code(str(row.get("RETRY_SQL") or ""), language="sql")
                             st.markdown("**Evidence**")
+                            st.caption(f"Priority: {row.get('INCIDENT_PRIORITY', '')}")
+                            st.caption(f"Downstream tasks: {safe_int(row.get('DOWNSTREAM_TASK_COUNT')):,}")
                             st.caption(f"Query ID: {row.get('QUERY_ID', '')}")
                             st.caption(f"Procedure: {row.get('PROCEDURE_NAME', '')}")
                             st.caption(f"Impact hints: {row.get('IMPACT_OBJECTS', '')}")
                             st.caption(f"Signature: {row.get('ERROR_SIGNATURE', '')}")
+                            st.caption(f"Verify after fix: {row.get('VERIFY_AFTER_FIX', '')}")
                         if "QUERY_TEXT" in row.index and str(row.get("QUERY_TEXT") or "").strip():
                             with st.expander("Linked Query Text"):
                                 st.code(str(row.get("QUERY_TEXT")), language="sql")

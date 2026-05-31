@@ -25,7 +25,6 @@ from utils import (
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
     load_warehouse_inventory, build_unclassified_assets_sql,
     safe_float, safe_int,
-    make_action_id, upsert_actions,
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
@@ -365,215 +364,6 @@ def _setup_status_df(session) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _alert_table_fqn() -> str:
-    # Compatibility column probes expect an unquoted db.schema.object name.
-    return f"{ALERT_DB}.{ALERT_SCHEMA}.{ALERT_TABLE}"
-
-
-def _first_col(columns: set[str], *candidates: str) -> str | None:
-    for col in candidates:
-        col_upper = col.upper()
-        if col_upper in columns:
-            return col_upper
-    return None
-
-
-def _load_alert_history(session, company: str, days: int = 7, limit: int = 200) -> pd.DataFrame:
-    """Load alert history from either the mart setup schema or the legacy generated schema."""
-    table = _alert_table_fqn()
-    requested = [
-        "ALERT_ID", "ALERT_TS", "ALERT_DATE", "CREATED_AT", "COMPANY",
-        "CATEGORY", "ALERT_TYPE", "SEVERITY", "ENTITY_NAME", "ENTITY",
-        "MESSAGE", "DETAIL", "PROOF_QUERY", "SUGGESTED_ACTION", "OWNER",
-        "STATUS", "ACKNOWLEDGED_BY", "ACKNOWLEDGED_AT", "DELIVERY_STATUS",
-    ]
-    columns = set(filter_existing_columns(session, table, requested))
-    if not columns:
-        raise ValueError(f"{table} is unavailable or has no recognized alert columns.")
-
-    ts_col = _first_col(columns, "ALERT_TS", "ALERT_DATE", "CREATED_AT") or "CURRENT_TIMESTAMP()"
-    category_col = _first_col(columns, "CATEGORY", "ALERT_TYPE")
-    entity_col = _first_col(columns, "ENTITY_NAME", "ENTITY")
-    message_col = _first_col(columns, "MESSAGE", "DETAIL")
-    proof_col = _first_col(columns, "PROOF_QUERY")
-    owner_col = _first_col(columns, "OWNER")
-    delivery_col = _first_col(columns, "DELIVERY_STATUS")
-    alert_id_expr = "ALERT_ID" if "ALERT_ID" in columns else "UUID_STRING()"
-    severity_expr = "COALESCE(SEVERITY, 'Medium')" if "SEVERITY" in columns else "'Medium'"
-
-    status_expr = (
-        "STATUS"
-        if "STATUS" in columns
-        else "CASE WHEN ACKNOWLEDGED_AT IS NOT NULL THEN 'Acknowledged' ELSE 'New' END"
-        if "ACKNOWLEDGED_AT" in columns
-        else "'New'"
-    )
-    company_select = "COMPANY" if "COMPANY" in columns else f"{sql_literal(company)} AS COMPANY"
-    company_filter = "" if company == "ALL" or "COMPANY" not in columns else f"AND COMPANY = {sql_literal(company)}"
-    ts_filter = "" if ts_col == "CURRENT_TIMESTAMP()" else f"AND {ts_col} >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())"
-
-    df = run_query(f"""
-        SELECT
-            {alert_id_expr} AS ALERT_ID,
-            {ts_col} AS ALERT_TS,
-            {company_select},
-            {category_col or "'Alert'"} AS CATEGORY,
-            {severity_expr} AS SEVERITY,
-            {entity_col or "'Snowflake account'"} AS ENTITY_NAME,
-            {message_col or "''"} AS MESSAGE,
-            {proof_col or "''"} AS PROOF_QUERY,
-            {owner_col or "'DBA'"} AS OWNER,
-            {status_expr} AS STATUS,
-            {delivery_col or "''"} AS DELIVERY_STATUS
-        FROM {table}
-        WHERE 1 = 1
-          {ts_filter}
-          {company_filter}
-        ORDER BY ALERT_TS DESC
-        LIMIT {int(limit)}
-    """, ttl_key=f"dba_alert_history_{company}_{days}_{limit}", tier="recent", section="DBA Tools")
-
-    if df.empty or company == "ALL" or "COMPANY" in columns:
-        return df
-
-    # Legacy alert rows may not have COMPANY. Scope by entity name when possible.
-    if "ENTITY_NAME" in df.columns:
-        scoped = df[
-            df["ENTITY_NAME"].apply(lambda value: company_value_allowed(value, "warehouse", company))
-            | df["ENTITY_NAME"].apply(lambda value: company_value_allowed(value, "database", company))
-            | df["ENTITY_NAME"].isna()
-        ]
-        return scoped
-    return df
-
-
-def _alert_actions(df_alerts: pd.DataFrame, company: str) -> list[dict]:
-    actions = []
-    if df_alerts is None or df_alerts.empty:
-        return actions
-    for _, row in df_alerts.head(200).iterrows():
-        alert_id = str(row.get("ALERT_ID") or row.get("ALERT_TS") or "")
-        category = str(row.get("CATEGORY") or "Alert")
-        entity = str(row.get("ENTITY_NAME") or "Snowflake account")
-        severity = str(row.get("SEVERITY") or "Medium").title()
-        if severity not in {"Critical", "High", "Medium", "Low"}:
-            severity = "Medium"
-        message = str(row.get("MESSAGE") or "")
-        actions.append({
-            "Action ID": make_action_id("Alert", entity, f"{category}|{message}|{alert_id}"),
-            "Source": "DBA Alert Console",
-            "Severity": severity,
-            "Category": "Alert",
-            "Entity Type": "Alert Entity",
-            "Entity": entity,
-            "Owner": str(row.get("OWNER") or "DBA"),
-            "Finding": f"{category}: {message}",
-            "Action": "Review the proof query, determine owner, and route through the DBA action queue.",
-            "Estimated Monthly Savings": 0.0,
-            "Generated SQL Fix": "-- No automatic fix. Validate alert evidence before changing Snowflake objects.",
-            "Proof Query": str(row.get("PROOF_QUERY") or "Alert history row."),
-            "Company": company,
-        })
-    return actions
-
-
-def _render_alert_console(session, company: str):
-    st.subheader("Alert Console")
-    st.caption(
-        "Operational alerts from the deployed OVERWATCH mart/task layer. "
-        "Setup SQL now lives outside the dashboard; this view only reads, scopes, exports, and routes alerts."
-    )
-
-    c1, c2, c3 = st.columns([1, 1, 2])
-    with c1:
-        alert_days = st.selectbox("Alert window", [1, 3, 7, 14, 30], index=2, format_func=lambda d: f"{d} days")
-    with c2:
-        alert_limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
-    with c3:
-        load_alerts = st.button("Load Alert Console", key="dba_alert_console_load", type="primary")
-
-    if load_alerts:
-        try:
-            st.session_state["dba_alert_console"] = _load_alert_history(session, company, alert_days, alert_limit)
-            st.session_state["dba_alert_console_company"] = company
-        except Exception as e:
-            st.session_state["dba_alert_console"] = pd.DataFrame()
-            st.info(
-                "Alert history is not available yet. Deploy the OVERWATCH mart setup outside the dashboard, "
-                f"then refresh this console. ({format_snowflake_error(e)})"
-            )
-
-    df_alerts = st.session_state.get("dba_alert_console")
-    if df_alerts is None:
-        return
-    if df_alerts.empty:
-        st.success("No alerts found for the selected company/window.")
-        return
-
-    sev_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
-    df_alerts = df_alerts.copy()
-    df_alerts["SEVERITY"] = df_alerts["SEVERITY"].fillna("Medium").astype(str).str.title()
-    df_alerts["_sort"] = df_alerts["SEVERITY"].map(sev_order).fillna(9)
-    open_statuses = {"New", "Open", "Acknowledged", "In Progress", "Active"}
-    open_mask = df_alerts["STATUS"].fillna("New").astype(str).str.title().isin(open_statuses)
-    high_mask = df_alerts["SEVERITY"].isin(["Critical", "High"]) & open_mask
-
-    a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Open Alerts", f"{int(open_mask.sum()):,}")
-    a2.metric("Critical / High", f"{int(high_mask.sum()):,}")
-    a3.metric("Entities", f"{df_alerts['ENTITY_NAME'].nunique():,}")
-    a4.metric("Latest", str(df_alerts["ALERT_TS"].max())[:19])
-
-    status_options = ["ALL"] + sorted(df_alerts["STATUS"].fillna("New").astype(str).unique().tolist())
-    severity_options = ["ALL", "Critical", "High", "Medium", "Low"]
-    f1, f2 = st.columns(2)
-    with f1:
-        selected_status = st.selectbox("Status", status_options, key="dba_alert_status_filter")
-    with f2:
-        selected_severity = st.selectbox("Severity", severity_options, key="dba_alert_severity_filter")
-    visible = df_alerts
-    if selected_status != "ALL":
-        visible = visible[visible["STATUS"].fillna("New").astype(str) == selected_status]
-    if selected_severity != "ALL":
-        visible = visible[visible["SEVERITY"] == selected_severity]
-    visible = visible.sort_values(["_sort", "ALERT_TS"], ascending=[True, False]).drop(columns=["_sort"], errors="ignore")
-
-    render_priority_dataframe(
-        visible,
-        title="Alert queue triage",
-        priority_columns=[
-            "ALERT_TS", "SEVERITY", "STATUS", "ALERT_TYPE", "ENTITY_NAME",
-            "MESSAGE", "RECOMMENDED_ACTION", "OWNER",
-        ],
-        sort_by=["ALERT_TS"],
-        ascending=False,
-        max_rows=25,
-        raw_label="All visible alerts",
-        height=320,
-    )
-    download_csv(visible, "overwatch_alert_console.csv")
-
-    b1, b2 = st.columns([1, 2])
-    with b1:
-        if st.button("Send visible alerts to Action Queue", key="dba_alerts_to_queue"):
-            try:
-                saved = upsert_actions(session, _alert_actions(visible, company))
-                st.success(f"Saved {saved} alert action(s) to the action queue.")
-            except Exception as e:
-                st.error(f"Could not save alerts to action queue: {format_snowflake_error(e)}")
-    with b2:
-        st.caption("Action Queue setup is handled by the Snowflake architecture script, not generated from this dashboard.")
-
-    with st.expander("Proof queries for visible alerts", expanded=False):
-        for _, row in visible.head(25).iterrows():
-            st.markdown(f"**{row.get('SEVERITY', 'Medium')} - {row.get('ENTITY_NAME', 'Snowflake account')}**")
-            proof = str(row.get("PROOF_QUERY") or "").strip()
-            if proof:
-                st.code(proof, language="sql")
-            else:
-                st.caption(str(row.get("MESSAGE") or "No proof query captured."))
-
-
 def render():
     session = get_session()
     company = get_active_company()
@@ -648,12 +438,10 @@ def render():
             "ALTER, CANCEL, EXECUTE, SUSPEND, and RESUME buttons stay locked until Admin actions are enabled in Settings."
         )
 
-    with st.expander("Alert Console - parked until signal inventory is finalized", expanded=False):
-        st.caption(
-            "Alerts stay available for inspection, but the main build priority is now stabilizing "
-            "the operational workflows that will generate alert rules later."
-        )
-        _render_alert_console(session, company)
+    st.info("Alert history, email-ready delivery rows, routing, and suppression windows now live in the consolidated Alert Center.")
+    if st.button("Open Alert Center", key="dba_tools_open_alert_center"):
+        st.session_state["nav_section"] = "Alert Center"
+        st.rerun()
     st.divider()
 
     tool_groups = {

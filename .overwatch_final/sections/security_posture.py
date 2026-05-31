@@ -1,14 +1,18 @@
 # sections/security_posture.py - Consolidated security and access workflow
 from __future__ import annotations
 
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
+from config import ALERT_DB, ALERT_SCHEMA
 from sections import data_sharing, security_access
 from utils import (
     filter_existing_columns,
     format_snowflake_error,
     get_active_company,
+    get_active_environment,
     get_db_filter_clause,
     get_session,
     get_user_filter_clause,
@@ -16,6 +20,7 @@ from utils import (
     make_action_id,
     run_query,
     safe_float,
+    safe_identifier,
     safe_int,
     sql_literal,
     upsert_actions,
@@ -34,6 +39,52 @@ WORKFLOW_DETAILS = {
     "Access posture": "Failed logins, MFA gaps, grants, role risk, and security exceptions.",
     "Data sharing exposure": "Shares, imported databases, exposed datasets, and owner follow-up.",
 }
+
+SECURITY_ACCESS_REVIEW_TABLE = "OVERWATCH_SECURITY_ACCESS_REVIEW"
+
+
+def security_access_review_fqn(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = SECURITY_ACCESS_REVIEW_TABLE,
+) -> str:
+    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
+
+
+def build_security_access_review_ddl(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = SECURITY_ACCESS_REVIEW_TABLE,
+) -> str:
+    fqn = security_access_review_fqn(db=db, schema=schema, table=table)
+    return f"""CREATE TABLE IF NOT EXISTS {fqn} (
+    SNAPSHOT_ID             VARCHAR(64),
+    SNAPSHOT_TS             TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    COMPANY                 VARCHAR(100),
+    ENVIRONMENT             VARCHAR(100),
+    DATABASE_CONTEXT        BOOLEAN,
+    FINDING_TYPE            VARCHAR(120),
+    SEVERITY                VARCHAR(40),
+    ENTITY_TYPE             VARCHAR(120),
+    ENTITY                  VARCHAR(500),
+    EVENT_COUNT             NUMBER,
+    DISTINCT_SOURCES        NUMBER,
+    LAST_SEEN               VARCHAR(100),
+    OWNER                   VARCHAR(200),
+    ESCALATION_TARGET       VARCHAR(200),
+    OWNER_SOURCE            VARCHAR(200),
+    APPROVER                VARCHAR(200),
+    OWNER_APPROVAL_STATUS   VARCHAR(40),
+    ACCESS_REVIEW_STATE     VARCHAR(160),
+    ROLE_CAPABILITY_STATE   VARCHAR(200),
+    TICKET_REQUIRED         VARCHAR(20),
+    REVIEW_BY_REQUIRED      VARCHAR(20),
+    PROOF_REQUIRED          VARCHAR(2000),
+    VERIFICATION_QUERY      VARCHAR(8000),
+    NEXT_ACTION             VARCHAR(4000),
+    PROOF_QUERY             VARCHAR(4000),
+    SOURCE                  VARCHAR(500)
+);"""
 
 
 def _security_score(
@@ -95,6 +146,180 @@ def _security_action_for(finding_type: str) -> tuple[str, str, str]:
         "Validate with IAM/Snowflake history, confirm owner, then remediate access or authentication configuration.",
         "-- Review proof query and owner before revoking grants, disabling users, or enforcing MFA.",
     )
+
+
+def _security_exception_has_database_context(row: pd.Series | dict) -> bool:
+    finding_type = str(row.get("FINDING_TYPE") or "").lower()
+    return "shared" in finding_type or "database exposure" in finding_type
+
+
+def _security_exception_environment(row: pd.Series | dict, environment: str = "ALL") -> str:
+    if not _security_exception_has_database_context(row):
+        return "No Database Context"
+    return str(environment or "").strip() or "ALL"
+
+
+def _security_owner_context(row: pd.Series | dict) -> dict:
+    finding_type = str(row.get("FINDING_TYPE") or "").lower()
+    entity = str(row.get("ENTITY") or "").upper()
+    if "failed login" in finding_type or "mfa" in finding_type:
+        return {
+            "owner": "IAM / Security Owner",
+            "escalation": "Security Owner / DBA Lead",
+            "source": "Security owner map",
+        }
+    if "grant" in finding_type:
+        if any(token in entity for token in ("ADMIN", "SECURITY", "SYSADMIN", "ACCOUNTADMIN")):
+            return {
+                "owner": "Security Owner",
+                "escalation": "DBA Lead / Security Owner",
+                "source": "Admin-role owner hint",
+            }
+        return {
+            "owner": "Access Owner / DBA Security",
+            "escalation": "Data Owner / Security Owner",
+            "source": "Security owner map",
+        }
+    if "shared" in finding_type or "exposure" in finding_type:
+        return {
+            "owner": "Data Owner / Security Owner",
+            "escalation": "Data Governance / Legal",
+            "source": "Shared-data owner map",
+        }
+    return {
+        "owner": "Security/DBA",
+        "escalation": "DBA Lead",
+        "source": "Default security owner",
+    }
+
+
+def _security_approval_context(row: pd.Series | dict) -> dict:
+    finding_type = str(row.get("FINDING_TYPE") or "").lower()
+    if "failed login" in finding_type:
+        return {
+            "approver": "IAM / Security Owner",
+            "review_state": "Identity investigation required",
+            "role_capability_state": "Not required",
+            "proof_required": "user, source IP/client, error code, IAM corroboration, disposition",
+        }
+    if "mfa" in finding_type:
+        return {
+            "approver": "IAM / Security Owner",
+            "review_state": "MFA enforcement approval required",
+            "role_capability_state": "Not required",
+            "proof_required": "user, auth path, MFA/SSO enforcement evidence, exception approval if any",
+        }
+    if "grant" in finding_type:
+        return {
+            "approver": "Access Owner / Security Owner",
+            "review_state": "Access review required",
+            "role_capability_state": "MANAGE GRANTS or role ownership proof required before change",
+            "proof_required": "role, grantee, requester, approver, ticket, review/expiry date, rollback/verification",
+        }
+    if "shared" in finding_type or "exposure" in finding_type:
+        return {
+            "approver": "Data Owner / Data Governance",
+            "review_state": "External sharing approval required",
+            "role_capability_state": "OWNERSHIP / IMPORTED PRIVILEGES proof required for remediation",
+            "proof_required": "consumer, provider, data classification, contract, owner approval, review date",
+        }
+    return {
+        "approver": "Security Owner",
+        "review_state": "Security review required",
+        "role_capability_state": "Capability proof depends on remediation",
+        "proof_required": "finding evidence, owner, approver, ticket, verification result",
+    }
+
+
+def _security_exception_verification_sql(row: pd.Series | dict) -> str:
+    finding_type = str(row.get("FINDING_TYPE") or "").lower()
+    entity = str(row.get("ENTITY") or "").strip()
+    entity_lit = sql_literal(entity, 500)
+    if "failed login" in finding_type:
+        return f"""
+SELECT
+    user_name,
+    event_timestamp,
+    client_ip,
+    reported_client_type,
+    error_code,
+    error_message,
+    is_success
+FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+WHERE event_timestamp >= DATEADD('day', -14, CURRENT_TIMESTAMP())
+  AND UPPER(user_name) = UPPER({entity_lit})
+  AND is_success = 'NO'
+ORDER BY event_timestamp DESC
+LIMIT 100""".strip()
+    if "mfa" in finding_type:
+        return f"""
+SELECT
+    name AS user_name,
+    disabled,
+    has_password,
+    ext_authn_duo,
+    last_success_login,
+    owner,
+    created_on
+FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+WHERE UPPER(name) = UPPER({entity_lit})
+LIMIT 50""".strip()
+    if "grant" in finding_type:
+        return f"""
+SELECT
+    grantee_name,
+    role,
+    granted_to,
+    granted_by,
+    created_on,
+    deleted_on
+FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+WHERE UPPER(grantee_name) = UPPER({entity_lit})
+  AND deleted_on IS NULL
+ORDER BY created_on DESC
+LIMIT 100""".strip()
+    if "shared" in finding_type or "exposure" in finding_type:
+        return f"""
+SELECT
+    database_name,
+    database_owner,
+    type,
+    origin,
+    owner,
+    comment,
+    created
+FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES
+WHERE UPPER(database_name) = UPPER({entity_lit})
+  AND deleted IS NULL
+LIMIT 50""".strip()
+    return f"""
+SELECT
+    CURRENT_TIMESTAMP() AS verification_ts,
+    {sql_literal(str(row.get('FINDING_TYPE') or 'Security Finding'), 200)} AS finding_type,
+    {entity_lit} AS entity
+LIMIT 50""".strip()
+
+
+def _build_security_access_review(exceptions: pd.DataFrame, environment: str = "ALL") -> pd.DataFrame:
+    if exceptions is None or exceptions.empty:
+        return pd.DataFrame()
+    view = _security_priority_view(exceptions).copy()
+    owner_contexts = view.apply(_security_owner_context, axis=1)
+    approval_contexts = view.apply(_security_approval_context, axis=1)
+    view["OWNER"] = owner_contexts.apply(lambda item: item["owner"])
+    view["ESCALATION_TARGET"] = owner_contexts.apply(lambda item: item["escalation"])
+    view["OWNER_SOURCE"] = owner_contexts.apply(lambda item: item["source"])
+    view["APPROVER"] = approval_contexts.apply(lambda item: item["approver"])
+    view["OWNER_APPROVAL_STATUS"] = "Requested"
+    view["ACCESS_REVIEW_STATE"] = approval_contexts.apply(lambda item: item["review_state"])
+    view["ROLE_CAPABILITY_STATE"] = approval_contexts.apply(lambda item: item["role_capability_state"])
+    view["TICKET_REQUIRED"] = "Yes"
+    view["REVIEW_BY_REQUIRED"] = "Yes"
+    view["PROOF_REQUIRED"] = approval_contexts.apply(lambda item: item["proof_required"])
+    view["VERIFICATION_QUERY"] = view.apply(_security_exception_verification_sql, axis=1)
+    view["DATABASE_CONTEXT"] = view.apply(_security_exception_has_database_context, axis=1)
+    view["ENVIRONMENT"] = view.apply(lambda row: _security_exception_environment(row, environment), axis=1)
+    return view
 
 
 def _security_workflow_for(finding_type: str) -> str:
@@ -529,19 +754,141 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
     return summary_sql, exceptions_sql
 
 
+def _security_access_review_insert_sql(
+    review: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    source: str = "",
+    snapshot_id: str = "",
+) -> str:
+    if review is None or review.empty:
+        raise ValueError("Security access review snapshot has no rows to save.")
+    view = _build_security_access_review(review, environment) if "ACCESS_REVIEW_STATE" not in review.columns else review.copy()
+    fqn = security_access_review_fqn()
+    snap = snapshot_id or make_action_id(
+        "Security Access Review Snapshot",
+        company,
+        f"{environment or 'ALL'}|{datetime.now().strftime('%Y%m%d%H%M%S')}",
+    )
+    selects = []
+    for _, row in view.head(200).iterrows():
+        selects.append(
+            "SELECT "
+            f"{sql_literal(snap, 64)} AS SNAPSHOT_ID, "
+            "CURRENT_TIMESTAMP() AS SNAPSHOT_TS, "
+            f"{sql_literal(company, 100)} AS COMPANY, "
+            f"{sql_literal(row.get('ENVIRONMENT', _security_exception_environment(row, environment)), 100)} AS ENVIRONMENT, "
+            f"{'TRUE' if bool(row.get('DATABASE_CONTEXT', _security_exception_has_database_context(row))) else 'FALSE'} AS DATABASE_CONTEXT, "
+            f"{sql_literal(row.get('FINDING_TYPE', ''), 120)} AS FINDING_TYPE, "
+            f"{sql_literal(row.get('SEVERITY', ''), 40)} AS SEVERITY, "
+            f"{sql_literal(row.get('ENTITY_TYPE', ''), 120)} AS ENTITY_TYPE, "
+            f"{sql_literal(row.get('ENTITY', ''), 500)} AS ENTITY, "
+            f"{safe_int(row.get('EVENT_COUNT'))}::NUMBER AS EVENT_COUNT, "
+            f"{safe_int(row.get('DISTINCT_SOURCES'))}::NUMBER AS DISTINCT_SOURCES, "
+            f"{sql_literal(row.get('LAST_SEEN', ''), 100)} AS LAST_SEEN, "
+            f"{sql_literal(row.get('OWNER', ''), 200)} AS OWNER, "
+            f"{sql_literal(row.get('ESCALATION_TARGET', ''), 200)} AS ESCALATION_TARGET, "
+            f"{sql_literal(row.get('OWNER_SOURCE', ''), 200)} AS OWNER_SOURCE, "
+            f"{sql_literal(row.get('APPROVER', ''), 200)} AS APPROVER, "
+            f"{sql_literal(row.get('OWNER_APPROVAL_STATUS', ''), 40)} AS OWNER_APPROVAL_STATUS, "
+            f"{sql_literal(row.get('ACCESS_REVIEW_STATE', ''), 160)} AS ACCESS_REVIEW_STATE, "
+            f"{sql_literal(row.get('ROLE_CAPABILITY_STATE', ''), 200)} AS ROLE_CAPABILITY_STATE, "
+            f"{sql_literal(row.get('TICKET_REQUIRED', ''), 20)} AS TICKET_REQUIRED, "
+            f"{sql_literal(row.get('REVIEW_BY_REQUIRED', ''), 20)} AS REVIEW_BY_REQUIRED, "
+            f"{sql_literal(row.get('PROOF_REQUIRED', ''), 2000)} AS PROOF_REQUIRED, "
+            f"{sql_literal(row.get('VERIFICATION_QUERY', ''), 8000)} AS VERIFICATION_QUERY, "
+            f"{sql_literal(row.get('NEXT_ACTION', ''), 4000)} AS NEXT_ACTION, "
+            f"{sql_literal(row.get('PROOF_QUERY', ''), 4000)} AS PROOF_QUERY, "
+            f"{sql_literal(source, 500)} AS SOURCE"
+        )
+    return f"""
+INSERT INTO {fqn} (
+    SNAPSHOT_ID, SNAPSHOT_TS, COMPANY, ENVIRONMENT, DATABASE_CONTEXT,
+    FINDING_TYPE, SEVERITY, ENTITY_TYPE, ENTITY, EVENT_COUNT, DISTINCT_SOURCES,
+    LAST_SEEN, OWNER, ESCALATION_TARGET, OWNER_SOURCE, APPROVER,
+    OWNER_APPROVAL_STATUS, ACCESS_REVIEW_STATE, ROLE_CAPABILITY_STATE,
+    TICKET_REQUIRED, REVIEW_BY_REQUIRED, PROOF_REQUIRED, VERIFICATION_QUERY,
+    NEXT_ACTION, PROOF_QUERY, SOURCE
+)
+{" UNION ALL ".join(selects)}""".strip()
+
+
+def _security_access_review_history_sql(days: int, company: str, environment: str = "ALL") -> str:
+    fqn = security_access_review_fqn()
+    where = [f"SNAPSHOT_TS >= DATEADD('day', -{max(1, int(days or 14))}, CURRENT_TIMESTAMP())"]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_value = str(environment or "").strip()
+    if env_value and env_value.upper() != "ALL":
+        # Login-only and account-role rows have no database context; keep them visible under environment filters.
+        where.append(f"(ENVIRONMENT = {sql_literal(env_value, 100)} OR DATABASE_CONTEXT = FALSE)")
+    where_clause = " AND ".join(where)
+    return f"""
+SELECT
+    FINDING_TYPE,
+    SEVERITY,
+    OWNER,
+    ESCALATION_TARGET,
+    COUNT(*) AS REVIEW_ROWS,
+    SUM(EVENT_COUNT) AS TOTAL_EVENTS,
+    COUNT_IF(TICKET_REQUIRED = 'Yes') AS TICKET_REQUIRED_ROWS,
+    COUNT_IF(REVIEW_BY_REQUIRED = 'Yes') AS REVIEW_BY_REQUIRED_ROWS,
+    COUNT_IF(ROLE_CAPABILITY_STATE ILIKE '%required%') AS CAPABILITY_PROOF_ROWS,
+    COUNT_IF(DATABASE_CONTEXT = FALSE) AS NO_DATABASE_CONTEXT_ROWS,
+    MAX(SNAPSHOT_TS) AS LAST_SNAPSHOT_TS,
+    MAX_BY(ACCESS_REVIEW_STATE, SNAPSHOT_TS) AS LAST_ACCESS_REVIEW_STATE,
+    MAX_BY(ROLE_CAPABILITY_STATE, SNAPSHOT_TS) AS LAST_ROLE_CAPABILITY_STATE,
+    MAX_BY(PROOF_REQUIRED, SNAPSHOT_TS) AS LAST_PROOF_REQUIRED
+FROM {fqn}
+WHERE {where_clause}
+GROUP BY FINDING_TYPE, SEVERITY, OWNER, ESCALATION_TARGET
+ORDER BY
+    TICKET_REQUIRED_ROWS DESC,
+    CAPABILITY_PROOF_ROWS DESC,
+    TOTAL_EVENTS DESC,
+    LAST_SNAPSHOT_TS DESC
+LIMIT 100""".strip()
+
+
+def _save_security_access_review_snapshot(
+    session,
+    review: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    source: str = "",
+) -> None:
+    try:
+        session.sql(build_security_access_review_ddl()).collect()
+        session.sql(_security_access_review_insert_sql(
+            review,
+            company=company,
+            environment=environment,
+            source=source,
+        )).collect()
+        st.success("Saved the Security Access Review snapshot for owner, ticket, and verification tracking.")
+    except Exception as exc:
+        st.error(f"Could not save Security Access Review snapshot: {format_snowflake_error(exc)}")
+        st.info("Deploy the security access review table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
 def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
     if exceptions is None or exceptions.empty:
         st.info("No security exceptions to queue.")
         return
     company = get_active_company()
+    environment = get_active_environment()
+    review = _build_security_access_review(exceptions, environment)
     actions = []
-    for _, row in exceptions.head(100).iterrows():
+    for _, row in review.head(100).iterrows():
         finding_type = str(row.get("FINDING_TYPE") or "Security Finding")
         entity = str(row.get("ENTITY") or "Unknown")
         severity = str(row.get("SEVERITY") or "Medium")
         event_count = safe_int(row.get("EVENT_COUNT", 0))
         finding = f"{finding_type}: {entity} has {event_count} event(s) requiring review"
         entity_type, action, generated_sql = _security_action_for(finding_type)
+        verification_query = str(row.get("VERIFICATION_QUERY") or _security_exception_verification_sql(row))
         actions.append({
             "Action ID": make_action_id("Security Posture", entity, finding),
             "Source": "Security Posture - Security Brief",
@@ -549,13 +896,35 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
             "Category": "Security",
             "Entity Type": entity_type,
             "Entity": entity,
-            "Owner": "Security/DBA",
+            "Owner": row.get("OWNER", "Security/DBA"),
             "Finding": finding,
-            "Action": action,
+            "Action": (
+                f"{action} Owner approval from {row.get('APPROVER', 'Security Owner')} is required; "
+                f"proof required: {row.get('PROOF_REQUIRED', 'security evidence and verification result')}."
+            ),
             "Estimated Monthly Savings": 0.0,
-            "Generated SQL Fix": generated_sql,
-            "Proof Query": str(row.get("PROOF_QUERY") or "Security Posture proof query."),
+            "Generated SQL Fix": "\n".join([
+                "-- Review-only security/access record. Do not revoke, disable, or grant access from this row.",
+                generated_sql,
+                f"-- Access review state: {row.get('ACCESS_REVIEW_STATE', '')}.",
+                f"-- Role/capability state: {row.get('ROLE_CAPABILITY_STATE', '')}.",
+                f"-- Environment context: {row.get('ENVIRONMENT', _security_exception_environment(row, environment))}.",
+            ]),
+            "Proof Query": verification_query,
+            "Verification Query": verification_query,
+            "Verification Status": "Pending",
+            "Approver": row.get("APPROVER", "Security Owner"),
+            "Owner Approval Status": row.get("OWNER_APPROVAL_STATUS", "Requested"),
+            "Owner Approval Note": (
+                f"{row.get('ACCESS_REVIEW_STATE', '')}; escalation={row.get('ESCALATION_TARGET', 'DBA Lead')}; "
+                f"ticket required={row.get('TICKET_REQUIRED', 'Yes')}; review-by required={row.get('REVIEW_BY_REQUIRED', 'Yes')}."
+            ),
+            "Recovery Evidence": (
+                f"Proof required: {row.get('PROOF_REQUIRED', '')}. "
+                f"Role capability: {row.get('ROLE_CAPABILITY_STATE', '')}."
+            ),
             "Company": company,
+            "Environment": row.get("ENVIRONMENT", _security_exception_environment(row, environment)),
         })
     try:
         saved = upsert_actions(session, actions)
@@ -568,6 +937,7 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
 def render() -> None:
     session = get_session()
     company = get_active_company()
+    environment = get_active_environment()
     if st.session_state.get("exceptions_only_mode") and "security_posture_workflow" not in st.session_state:
         st.session_state["security_posture_workflow"] = "Access posture"
     st.header("Security Posture")
@@ -606,16 +976,17 @@ def render() -> None:
             summary_sql, exceptions_sql = _build_security_mart_brief_sql(session, days, company)
             st.session_state["security_posture_summary"] = run_query(
                 summary_sql,
-                ttl_key=f"security_posture_summary_mart_{company}_{days}",
+                ttl_key=f"security_posture_summary_mart_{company}_{environment}_{days}",
                 tier="standard",
             )
             st.session_state["security_posture_exceptions"] = run_query(
                 exceptions_sql,
-                ttl_key=f"security_posture_exceptions_mart_{company}_{days}",
+                ttl_key=f"security_posture_exceptions_mart_{company}_{environment}_{days}",
                 tier="standard",
             )
             st.session_state["security_posture_meta"] = {
                 "company": company,
+                "environment": environment,
                 "days": days,
                 "source": "OVERWATCH mart: FACT_LOGIN_DAILY + FACT_GRANT_DAILY; MFA/sharing: ACCOUNT_USAGE",
             }
@@ -628,16 +999,17 @@ def render() -> None:
                 summary_sql, exceptions_sql = _build_security_summary_sql(session, days, company)
                 st.session_state["security_posture_summary"] = run_query(
                     summary_sql,
-                    ttl_key=f"security_posture_summary_live_{company}_{days}",
+                    ttl_key=f"security_posture_summary_live_{company}_{environment}_{days}",
                     tier="standard",
                 )
                 st.session_state["security_posture_exceptions"] = run_query(
                     exceptions_sql,
-                    ttl_key=f"security_posture_exceptions_live_{company}_{days}",
+                    ttl_key=f"security_posture_exceptions_live_{company}_{environment}_{days}",
                     tier="standard",
                 )
                 st.session_state["security_posture_meta"] = {
                     "company": company,
+                    "environment": environment,
                     "days": days,
                     "source": "Live fallback: SNOWFLAKE.ACCOUNT_USAGE",
                 }
@@ -658,6 +1030,7 @@ def render() -> None:
         summary is not None
         and not summary.empty
         and meta.get("company") == company
+        and meta.get("environment") == environment
         and meta.get("days") == days
     ):
         row = summary.iloc[0]
@@ -692,19 +1065,93 @@ def render() -> None:
         st.divider()
         if exceptions is not None and not exceptions.empty:
             st.subheader("Security Exceptions")
+            priority_exceptions = _security_priority_view(exceptions)
             render_priority_dataframe(
-                exceptions,
+                priority_exceptions,
                 title="Security exceptions to validate first",
                 priority_columns=[
-                    "SEVERITY", "FINDING_TYPE", "USER_NAME", "ROLE_NAME",
-                    "CLIENT_IP", "EVENT_TIMESTAMP", "RISK", "NEXT_ACTION",
+                    "SEVERITY", "FINDING_TYPE", "ENTITY", "EVENT_COUNT",
+                    "DISTINCT_SOURCES", "LAST_SEEN", "ENTITY_TYPE",
+                    "NEXT_WORKFLOW", "NEXT_ACTION",
                 ],
-                sort_by=["SEVERITY", "EVENT_TIMESTAMP", "USER_NAME"],
-                ascending=[True, False, True],
+                sort_by=["SEVERITY", "EVENT_COUNT", "LAST_SEEN"],
+                ascending=[True, False, False],
                 raw_label="All security exceptions",
             )
-            if st.button("Save Security Exceptions to Action Queue", key="security_posture_queue"):
-                _queue_security_exceptions(session, exceptions)
+
+            access_review = _build_security_access_review(exceptions, environment)
+            render_priority_dataframe(
+                access_review,
+                title="Security access-review readiness before queueing",
+                priority_columns=[
+                    "SEVERITY", "ACCESS_REVIEW_STATE", "FINDING_TYPE", "ENTITY",
+                    "OWNER", "ESCALATION_TARGET", "APPROVER", "ROLE_CAPABILITY_STATE",
+                    "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "DATABASE_CONTEXT",
+                    "ENVIRONMENT", "PROOF_REQUIRED",
+                ],
+                sort_by=["SEVERITY", "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "ENTITY"],
+                ascending=[True, False, False, True],
+                raw_label="Full security access review",
+            )
+
+            review_col, queue_col = st.columns(2)
+            with review_col:
+                if st.button("Save Access Review Snapshot", key="security_posture_access_review_snapshot"):
+                    _save_security_access_review_snapshot(
+                        session,
+                        access_review,
+                        company=company,
+                        environment=environment,
+                        source=meta.get("source", ""),
+                    )
+            with queue_col:
+                if st.button("Save Security Exceptions to Action Queue", key="security_posture_queue"):
+                    _queue_security_exceptions(session, exceptions)
+
+            with st.expander("Security Access Review Trend", expanded=False):
+                trend_days = st.slider(
+                    "Access review history lookback (days)",
+                    7,
+                    120,
+                    30,
+                    key="security_access_review_trend_days",
+                )
+                if st.button("Load Access Review Trend", key="security_access_review_trend_load"):
+                    try:
+                        trend_sql = _security_access_review_history_sql(trend_days, company, environment)
+                        st.session_state["security_access_review_trend_sql"] = trend_sql
+                        st.session_state["security_access_review_trend"] = run_query(
+                            trend_sql,
+                            ttl_key=f"security_access_review_trend_{company}_{environment}_{trend_days}",
+                            tier="standard",
+                            section="Security Posture",
+                        )
+                    except Exception as exc:
+                        st.session_state["security_access_review_trend"] = pd.DataFrame()
+                        st.error(f"Could not load security access-review history: {format_snowflake_error(exc)}")
+                        st.info("Deploy the access-review table from `snowflake/OVERWATCH_MART_SETUP.sql`, then reload.")
+                trend = st.session_state.get("security_access_review_trend")
+                if trend is not None and not trend.empty:
+                    render_priority_dataframe(
+                        trend,
+                        title="Security review findings still needing DBA evidence",
+                        priority_columns=[
+                            "FINDING_TYPE", "SEVERITY", "OWNER", "ESCALATION_TARGET",
+                            "REVIEW_ROWS", "TOTAL_EVENTS", "TICKET_REQUIRED_ROWS",
+                            "REVIEW_BY_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS",
+                            "NO_DATABASE_CONTEXT_ROWS", "LAST_ACCESS_REVIEW_STATE",
+                            "LAST_ROLE_CAPABILITY_STATE",
+                        ],
+                        sort_by=["TICKET_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS", "TOTAL_EVENTS"],
+                        ascending=[False, False, False],
+                        raw_label="Access review history",
+                    )
+                    with st.expander("Trend Query", expanded=False):
+                        st.code(st.session_state.get("security_access_review_trend_sql", ""), language="sql")
+                elif trend is not None:
+                    st.info("No saved security access-review snapshots found for the selected scope.")
+                with st.expander("Access Review Setup SQL", expanded=False):
+                    st.code(build_security_access_review_ddl(), language="sql")
         elif exceptions is not None:
             st.success("No security exceptions crossed the default thresholds.")
         brief_md = _build_security_brief_markdown(

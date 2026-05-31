@@ -96,13 +96,10 @@ def get_wh_filter_clause(column: str = "warehouse_name", company: str = None) ->
 
 
 def get_db_filter_clause(column: str = "database_name", company: str = None) -> str:
-    """Return SQL WHERE fragment to filter databases by company."""
+    """Return SQL WHERE fragment to filter databases by company and environment."""
     cfg = get_company_cfg(company)
     patterns   = cfg.get("db_patterns", [])
     exclude_pt = cfg.get("exclude_db_pattern", "")
-
-    if not patterns and not exclude_pt:
-        return ""
 
     clauses = []
     if patterns:
@@ -110,6 +107,9 @@ def get_db_filter_clause(column: str = "database_name", company: str = None) -> 
         clauses.append(f"({like_parts})")
     if exclude_pt:
         clauses.append(f"{column} NOT ILIKE '{exclude_pt}'")
+    env_clause = get_environment_filter_clause(column, company=company)
+    if env_clause:
+        clauses.append(env_clause.removeprefix("AND ").strip())
 
     return "AND " + " AND ".join(clauses) if clauses else ""
 
@@ -135,10 +135,12 @@ def get_role_filter_clause(column: str = "role_name", company: str = None) -> st
 
 
 def company_value_allowed(value: str, kind: str = "database", company: str = None) -> bool:
-    """Return whether an entered DB/user/warehouse value belongs to the active company."""
+    """Return whether an entered DB/user/warehouse value belongs to the active scope."""
     company = company or get_active_company()
     if company == "ALL":
-        return True
+        company_allowed = True
+    else:
+        company_allowed = None
     cfg = get_company_cfg(company)
     text = str(value or "").upper()
     if not text:
@@ -158,7 +160,34 @@ def company_value_allowed(value: str, kind: str = "database", company: str = Non
 
     if any(_match(pattern) for pattern in exclude):
         return False
-    return any(_match(pattern) for pattern in include) if include else True
+    if company_allowed is None:
+        company_allowed = any(_match(pattern) for pattern in include) if include else True
+    if not company_allowed:
+        return False
+    if kind == "database" and not environment_value_allowed(value, company=company):
+        return False
+    return True
+
+
+def environment_value_allowed(value: str, environment: str = None, company: str = None) -> bool:
+    """Return whether a database value belongs to the selected ALFA environment."""
+    company = company or get_active_company()
+    if str(company or "").upper() == "TREXIS":
+        return True
+    environment = environment or get_active_environment()
+    if str(environment or "").upper() == "ALL":
+        return True
+    patterns = get_environment_cfg(environment).get("db_patterns", [])
+    if not patterns:
+        return True
+    text = str(value or "").upper()
+    if not text:
+        return False
+
+    def _match(pattern: str) -> bool:
+        return fnmatch.fnmatchcase(text, str(pattern or "").upper().replace("%", "*"))
+
+    return any(_match(pattern) for pattern in patterns)
 
 
 def get_combined_filter_clause(
@@ -318,9 +347,14 @@ def get_global_db_filter_clause(column: str = "database_name") -> str:
     return _text_filter_clause(st.session_state.get("global_database"), column)
 
 
-def get_environment_filter_clause(column: str = "database_name", environment: str = None) -> str:
+def get_environment_filter_clause(
+    column: str = "database_name",
+    environment: str = None,
+    company: str = None,
+) -> str:
     """Return SQL WHERE fragment for PROD/DEV database-family filtering."""
-    if get_active_company() == "Trexis":
+    company = company or get_active_company()
+    if str(company or "").upper() == "TREXIS":
         return ""
     environment = environment or get_active_environment()
     if str(environment or "").upper() == "ALL":

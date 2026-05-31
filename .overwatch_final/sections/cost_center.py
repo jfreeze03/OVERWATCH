@@ -390,7 +390,7 @@ def _build_finance_movement_summary(
             "Delta Credits": None,
             "Current Cost": round(credits_to_dollars(allocated_credits, credit_price), 2),
             "Delta Cost": None,
-            "Confidence": "Allocated",
+            "Confidence": "Allocated / Estimated",
             "Action": "Use for directional user, role, database, and query-type chargeback.",
         },
         {
@@ -1597,8 +1597,8 @@ def render():
     elif cost_view == "Chargeback":
         st.header("ALFA / Trexis Chargeback")
         st.caption(
-            "Credits split by company using the canonical warehouse/DB/user classification. "
-            "Uses `get_company_case_expr()` — stays in sync with config.py warehouse inventory."
+            "Allocated / Estimated credits split by company, environment, database, user, and warehouse. "
+            "Database-attributed cost is directional because shared warehouses cannot be exactly split by PROD/DEV."
         )
         cb_days = st.slider("Lookback (days)", 1, 90, 30, key="cc_cb_days")
 

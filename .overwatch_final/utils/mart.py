@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
+from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT
 from .data import normalize_df
 from .query import safe_identifier, sql_literal
 from .session import get_session
@@ -90,6 +90,7 @@ def build_mart_control_room_summary_sql(hours_back: int, company: str = "ALFA") 
     """Build DBA Control Room summary metrics from recent query-detail facts."""
     table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
     company_filter = _mart_company_filter(company).replace("COMPANY", "q.company")
+    env_filter = _mart_environment_filter("q.database_name", company)
     return f"""
         SELECT
             COUNT(*) AS total_queries,
@@ -110,6 +111,7 @@ def build_mart_control_room_summary_sql(hours_back: int, company: str = "ALFA") 
         WHERE q.start_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
     """
 
 
@@ -140,6 +142,7 @@ def build_mart_control_room_cost_drivers_sql(hours_back: int, company: str = "AL
     wh_table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter_q = _mart_company_filter(company).replace("COMPANY", "q.company")
     company_filter_wh = _mart_company_filter(company).replace("COMPANY", "w.company")
+    env_filter_q = _mart_environment_filter("q.database_name", company)
     return f"""
         WITH wh_credits AS (
             SELECT warehouse_name, SUM(COALESCE(credits_used, 0)) AS warehouse_credits
@@ -147,6 +150,16 @@ def build_mart_control_room_cost_drivers_sql(hours_back: int, company: str = "AL
             WHERE w.hour_start >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
               {company_filter_wh}
             GROUP BY warehouse_name
+        ),
+        wh_elapsed AS (
+            SELECT
+                q.warehouse_name,
+                SUM(COALESCE(q.total_elapsed_time, 0)) AS wh_elapsed_ms
+            FROM {q_table} q
+            WHERE q.start_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              {company_filter_q}
+            GROUP BY q.warehouse_name
         ),
         query_work AS (
             SELECT
@@ -160,14 +173,8 @@ def build_mart_control_room_cost_drivers_sql(hours_back: int, company: str = "AL
             WHERE q.start_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
               AND q.warehouse_name IS NOT NULL
               {company_filter_q}
+              {env_filter_q}
             GROUP BY q.user_name, q.warehouse_name
-        ),
-        wh_elapsed AS (
-            SELECT
-                warehouse_name,
-                SUM(elapsed_ms) AS wh_elapsed_ms
-            FROM query_work
-            GROUP BY warehouse_name
         )
         SELECT
             qw.user_name,
@@ -189,6 +196,7 @@ def build_mart_control_room_warehouse_pressure_sql(hours_back: int, company: str
     """Build warehouse pressure exceptions from query-detail facts."""
     table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
     company_filter = _mart_company_filter(company).replace("COMPANY", "q.company")
+    env_filter = _mart_environment_filter("q.database_name", company)
     return f"""
         SELECT
             q.warehouse_name,
@@ -206,6 +214,7 @@ def build_mart_control_room_warehouse_pressure_sql(hours_back: int, company: str
         WHERE q.start_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
         GROUP BY q.warehouse_name
         HAVING queued_queries > 0 OR remote_spill_queries > 0 OR p95_elapsed_sec >= 60
         ORDER BY queued_queries DESC, remote_spill_gb DESC, p95_elapsed_sec DESC
@@ -217,6 +226,7 @@ def build_mart_control_room_failed_queries_sql(hours_back: int, company: str = "
     """Build recent failed query samples from query-detail facts."""
     table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
     company_filter = _mart_company_filter(company).replace("COMPANY", "q.company")
+    env_filter = _mart_environment_filter("q.database_name", company)
     return f"""
         SELECT
             q.query_id,
@@ -232,6 +242,7 @@ def build_mart_control_room_failed_queries_sql(hours_back: int, company: str = "
         WHERE q.start_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           AND (q.error_code IS NOT NULL OR UPPER(COALESCE(q.execution_status, '')) = 'FAILED_WITH_ERROR')
           {company_filter}
+          {env_filter}
         ORDER BY q.start_time DESC
         LIMIT 25
     """
@@ -241,6 +252,7 @@ def build_mart_control_room_object_changes_sql(hours_back: int, company: str = "
     """Build object/access change samples from object-change facts."""
     table = mart_object_name("FACT_OBJECT_CHANGE")
     company_filter = _mart_company_filter(company).replace("COMPANY", "c.company")
+    env_filter = _mart_environment_filter("c.database_name", company)
     return f"""
         SELECT
             c.start_time,
@@ -254,6 +266,7 @@ def build_mart_control_room_object_changes_sql(hours_back: int, company: str = "
         FROM {table} c
         WHERE c.start_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           {company_filter}
+          {env_filter}
         ORDER BY c.start_time DESC
         LIMIT 25
     """
@@ -286,6 +299,7 @@ def build_mart_control_room_task_failures_sql(hours_back: int, company: str = "A
     """Build task failure summary from task-run facts."""
     table = mart_object_name("FACT_TASK_RUN")
     company_filter = _mart_company_filter(company).replace("COMPANY", "t.company")
+    env_filter = _mart_environment_filter("t.database_name", company)
     return f"""
         SELECT
             t.task_name,
@@ -299,6 +313,7 @@ def build_mart_control_room_task_failures_sql(hours_back: int, company: str = "A
         WHERE t.scheduled_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           AND UPPER(COALESCE(t.state, '')) IN ('FAILED', 'FAILED_WITH_ERROR')
           {company_filter}
+          {env_filter}
         GROUP BY t.task_name, t.database_name, t.schema_name, t.root_task_name
         ORDER BY failures DESC, last_failure DESC
         LIMIT 10
@@ -310,12 +325,15 @@ def build_mart_account_health_storage_sql(company: str = "ALFA") -> str:
     table = mart_object_name("FACT_STORAGE_DAILY")
     company_filter = _mart_company_filter(company).replace("COMPANY", "s.company")
     latest_filter = _mart_company_filter(company).replace("COMPANY", "company")
+    latest_env_filter = _mart_environment_filter("database_name", company)
+    env_filter = _mart_environment_filter("s.database_name", company)
     return f"""
         WITH latest AS (
             SELECT MAX(snapshot_date) AS snapshot_date
             FROM {table}
             WHERE 1 = 1
               {latest_filter}
+              {latest_env_filter}
         )
         SELECT
             COALESCE(ROUND(SUM(COALESCE(s.est_storage_tb, 0)), 2), 0) AS storage_tb
@@ -323,6 +341,7 @@ def build_mart_account_health_storage_sql(company: str = "ALFA") -> str:
         JOIN latest l ON s.snapshot_date = l.snapshot_date
         WHERE 1 = 1
           {company_filter}
+          {env_filter}
     """
 
 
@@ -336,6 +355,7 @@ def build_mart_account_health_cost_drivers_sql(hours_back: int, company: str = "
     wh_table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter_q = _mart_company_filter(company).replace("COMPANY", "q.company")
     company_filter_wh = _mart_company_filter(company).replace("COMPANY", "w.company")
+    env_filter_q = _mart_environment_filter("q.database_name", company)
     return f"""
         WITH wh_credits AS (
             SELECT
@@ -345,6 +365,16 @@ def build_mart_account_health_cost_drivers_sql(hours_back: int, company: str = "
             WHERE w.hour_start >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
               {company_filter_wh}
             GROUP BY warehouse_name
+        ),
+        wh_elapsed AS (
+            SELECT
+                q.warehouse_name,
+                SUM(COALESCE(q.total_elapsed_time, 0)) AS wh_elapsed_ms
+            FROM {q_table} q
+            WHERE q.start_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              {company_filter_q}
+            GROUP BY q.warehouse_name
         ),
         query_work AS (
             SELECT
@@ -358,12 +388,8 @@ def build_mart_account_health_cost_drivers_sql(hours_back: int, company: str = "
             WHERE q.start_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
               AND q.warehouse_name IS NOT NULL
               {company_filter_q}
+              {env_filter_q}
             GROUP BY q.user_name, q.warehouse_name
-        ),
-        wh_elapsed AS (
-            SELECT warehouse_name, SUM(elapsed_ms) AS wh_elapsed_ms
-            FROM query_work
-            GROUP BY warehouse_name
         )
         SELECT
             qw.user_name,
@@ -387,6 +413,7 @@ def build_mart_account_health_change_sql(hours_back: int, company: str = "ALFA")
     warehouse_table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter_q = _mart_company_filter(company).replace("COMPANY", "q.company")
     company_filter_w = _mart_company_filter(company).replace("COMPANY", "w.company")
+    env_filter_q = _mart_environment_filter("q.database_name", company)
     return f"""
         WITH query_periods AS (
             SELECT
@@ -400,6 +427,7 @@ def build_mart_account_health_change_sql(hours_back: int, company: str = "ALFA")
             WHERE q.hour_start >= DATEADD('HOUR', -{int(hours_back * 2)}, CURRENT_TIMESTAMP())
               AND q.hour_start < CURRENT_TIMESTAMP()
               {company_filter_q}
+              {env_filter_q}
             GROUP BY period
         ),
         credit_periods AS (
@@ -434,6 +462,7 @@ def build_mart_account_health_failure_types_sql(hours_back: int, company: str = 
     """Build Morning Report failure groups from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company).replace("COMPANY", "q.company")
+    env_filter = _mart_environment_filter("q.database_name", company)
     return f"""
         SELECT
             q.query_type,
@@ -444,6 +473,7 @@ def build_mart_account_health_failure_types_sql(hours_back: int, company: str = 
         WHERE q.hour_start >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           AND COALESCE(q.failed_count, 0) > 0
           {company_filter}
+          {env_filter}
         GROUP BY q.query_type
         ORDER BY fail_count DESC
     """
@@ -453,6 +483,7 @@ def build_mart_account_health_long_queries_sql(hours_back: int, company: str = "
     """Build Morning Report long-query watchlist from recent query details."""
     table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
     company_filter = _mart_company_filter(company).replace("COMPANY", "q.company")
+    env_filter = _mart_environment_filter("q.database_name", company)
     return f"""
         SELECT
             q.query_id,
@@ -465,6 +496,7 @@ def build_mart_account_health_long_queries_sql(hours_back: int, company: str = "
         WHERE q.start_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
         ORDER BY COALESCE(q.total_elapsed_time, 0) DESC
         LIMIT {int(limit)}
     """
@@ -496,12 +528,14 @@ def build_mart_account_health_failure_count_sql(hours_back: int, company: str = 
     """Build query failure count for Account Health briefings."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company).replace("COMPANY", "q.company")
+    env_filter = _mart_environment_filter("q.database_name", company)
     return f"""
         SELECT
             COALESCE(SUM(q.failed_count), 0) AS fail_count
         FROM {table} q
         WHERE q.hour_start >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           {company_filter}
+          {env_filter}
     """
 
 
@@ -526,12 +560,14 @@ def build_mart_account_health_queued_sql(hours_back: int, company: str = "ALFA")
     """Build queued query count for Account Health briefing inputs."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company).replace("COMPANY", "q.company")
+    env_filter = _mart_environment_filter("q.database_name", company)
     return f"""
         SELECT
             COALESCE(SUM(IFF(COALESCE(q.total_queued_ms, 0) > 0, q.query_count, 0)), 0) AS queued
         FROM {table} q
         WHERE q.hour_start >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           {company_filter}
+          {env_filter}
     """
 
 
@@ -715,6 +751,41 @@ def _mart_company_filter(company: str = "ALFA") -> str:
     return f"AND COMPANY = {sql_literal(company, 100)}"
 
 
+def _active_environment() -> str:
+    try:
+        import streamlit as st
+
+        env = str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+    except Exception:
+        env = DEFAULT_ENVIRONMENT
+    return env if env in ENVIRONMENT_CONFIG else DEFAULT_ENVIRONMENT
+
+
+def _mart_environment_filter(column: str = "DATABASE_NAME", company: str = "ALFA") -> str:
+    if str(company or "").upper() == "TREXIS":
+        return ""
+    environment = _active_environment()
+    if environment.upper() == "ALL":
+        return ""
+    patterns = ENVIRONMENT_CONFIG.get(environment, ENVIRONMENT_CONFIG[DEFAULT_ENVIRONMENT]).get("db_patterns", [])
+    if not patterns:
+        return ""
+    parts = [f"{column} ILIKE {sql_literal(pattern, 300)}" for pattern in patterns]
+    return "AND (" + " OR ".join(parts) + ")"
+
+
+def _mart_database_filter(column: str = "DATABASE_NAME", value: str = "", company: str = "ALFA") -> str:
+    return " ".join(
+        filter(
+            None,
+            [
+                _mart_text_filter(column, value),
+                _mart_environment_filter(column, company),
+            ],
+        )
+    )
+
+
 def _mart_window_filter(column: str, days_back: int, start_date: object = None, end_date: object = None) -> str:
     clauses = [f"{column} >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())"]
     if start_date:
@@ -748,7 +819,7 @@ def build_mart_warehouse_overview_sql(
     wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
     user_filter = _mart_text_filter("USER_NAME", user_contains)
     role_filter = _mart_text_filter("ROLE_NAME", role_contains)
-    db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    db_filter = _mart_database_filter("DATABASE_NAME", database_contains, company)
     return f"""
         WITH query_rollup AS (
             SELECT
@@ -856,7 +927,7 @@ def build_mart_usage_overview_sql(
     wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
     user_filter = _mart_text_filter("USER_NAME", user_contains)
     role_filter = _mart_text_filter("ROLE_NAME", role_contains)
-    db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    db_filter = _mart_database_filter("DATABASE_NAME", database_contains, company)
     return f"""
         SELECT
             COALESCE(SUM(query_count), 0) AS total_queries,
@@ -932,7 +1003,7 @@ def build_mart_usage_pressure_sql(
     wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
     user_filter = _mart_text_filter("USER_NAME", user_contains)
     role_filter = _mart_text_filter("ROLE_NAME", role_contains)
-    db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    db_filter = _mart_database_filter("DATABASE_NAME", database_contains, company)
     return f"""
         WITH wh AS (
             SELECT
@@ -1004,7 +1075,7 @@ def build_mart_usage_query_mix_sql(
     wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
     user_filter = _mart_text_filter("USER_NAME", user_contains)
     role_filter = _mart_text_filter("ROLE_NAME", role_contains)
-    db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    db_filter = _mart_database_filter("DATABASE_NAME", database_contains, company)
     return f"""
         SELECT
             COALESCE(query_type, 'UNKNOWN') AS query_type,
@@ -1043,7 +1114,7 @@ def build_mart_usage_database_adoption_sql(
     wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
     user_filter = _mart_text_filter("USER_NAME", user_contains)
     role_filter = _mart_text_filter("ROLE_NAME", role_contains)
-    db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    db_filter = _mart_database_filter("DATABASE_NAME", database_contains, company)
     return f"""
         SELECT
             COALESCE(database_name, 'UNKNOWN') AS database_name,
@@ -1067,6 +1138,7 @@ def build_mart_adoption_summary_sql(days_back: int, company: str = "ALFA") -> st
     """Build adoption KPI summary from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             COALESCE(SUM(query_count), 0) AS total_queries,
@@ -1078,6 +1150,7 @@ def build_mart_adoption_summary_sql(days_back: int, company: str = "ALFA") -> st
         WHERE hour_start >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
     """
 
 
@@ -1085,6 +1158,7 @@ def build_mart_adoption_warehouse_size_sql(days_back: int, company: str = "ALFA"
     """Build adoption by warehouse size from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             COALESCE(warehouse_size, 'UNKNOWN') AS warehouse_size,
@@ -1095,6 +1169,7 @@ def build_mart_adoption_warehouse_size_sql(days_back: int, company: str = "ALFA"
         WHERE hour_start >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
         GROUP BY warehouse_size
         ORDER BY query_count DESC
     """
@@ -1104,6 +1179,7 @@ def build_mart_adoption_trend_sql(days_back: int, company: str = "ALFA") -> str:
     """Build daily adoption trend from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             DATE_TRUNC('DAY', hour_start) AS activity_day,
@@ -1115,6 +1191,7 @@ def build_mart_adoption_trend_sql(days_back: int, company: str = "ALFA") -> str:
         WHERE hour_start >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
         GROUP BY activity_day
         ORDER BY activity_day
     """
@@ -1124,6 +1201,7 @@ def build_mart_adoption_users_wh_sql(days_back: int, company: str = "ALFA") -> s
     """Build users per warehouse from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             warehouse_name,
@@ -1134,6 +1212,7 @@ def build_mart_adoption_users_wh_sql(days_back: int, company: str = "ALFA") -> s
         WHERE hour_start >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
         GROUP BY warehouse_name
         ORDER BY users DESC, query_count DESC
         LIMIT 50
@@ -1144,6 +1223,7 @@ def build_mart_adoption_users_db_sql(days_back: int, company: str = "ALFA") -> s
     """Build users per database from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             COALESCE(database_name, 'UNKNOWN') AS database_name,
@@ -1154,6 +1234,7 @@ def build_mart_adoption_users_db_sql(days_back: int, company: str = "ALFA") -> s
         WHERE hour_start >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
         GROUP BY database_name
         ORDER BY users DESC, query_count DESC
         LIMIT 50
@@ -1164,6 +1245,7 @@ def build_mart_adoption_role_type_sql(days_back: int, company: str = "ALFA") -> 
     """Build role/query-type mix from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             COALESCE(role_name, 'UNKNOWN') AS role_name,
@@ -1175,6 +1257,7 @@ def build_mart_adoption_role_type_sql(days_back: int, company: str = "ALFA") -> 
         WHERE hour_start >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
         GROUP BY role_name, query_type
         ORDER BY query_count DESC
         LIMIT 100
@@ -1185,6 +1268,7 @@ def build_mart_storage_trend_sql(days_back: int, company: str = "ALFA") -> str:
     """Build storage trend from daily storage facts."""
     table = mart_object_name("FACT_STORAGE_DAILY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             snapshot_date AS usage_date,
@@ -1196,6 +1280,7 @@ def build_mart_storage_trend_sql(days_back: int, company: str = "ALFA") -> str:
         FROM {table}
         WHERE snapshot_date >= DATEADD('DAY', -{int(days_back)}, CURRENT_DATE())
           {company_filter}
+          {env_filter}
         GROUP BY snapshot_date
         ORDER BY snapshot_date
     """
@@ -1205,12 +1290,15 @@ def build_mart_storage_db_detail_sql(company: str = "ALFA") -> str:
     """Build latest per-database storage detail from daily storage facts."""
     table = mart_object_name("FACT_STORAGE_DAILY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
+    env_filter_s = _mart_environment_filter("s.database_name", company)
     return f"""
         WITH latest AS (
             SELECT MAX(snapshot_date) AS snapshot_date
             FROM {table}
             WHERE 1 = 1
               {company_filter}
+              {env_filter}
         )
         SELECT
             database_name,
@@ -1223,6 +1311,7 @@ def build_mart_storage_db_detail_sql(company: str = "ALFA") -> str:
         JOIN latest l ON s.snapshot_date = l.snapshot_date
         WHERE 1 = 1
           {company_filter}
+          {env_filter_s}
         ORDER BY database_gb DESC
         LIMIT 50
     """
@@ -1233,12 +1322,15 @@ def build_mart_pipeline_freshness_sql(stale_hours: int, company: str = "ALFA") -
     table = mart_object_name("DIM_TABLE_SNAPSHOT")
     latest_company_filter = _mart_company_filter(company)
     table_company_filter = _mart_company_filter(company).replace("COMPANY", "t.company")
+    latest_env_filter = _mart_environment_filter("DATABASE_NAME", company)
+    table_env_filter = _mart_environment_filter("t.database_name", company)
     return f"""
         WITH latest AS (
             SELECT MAX(snapshot_ts) AS latest_snapshot_ts
             FROM {table}
             WHERE 1 = 1
               {latest_company_filter}
+              {latest_env_filter}
         )
         SELECT
             t.database_name,
@@ -1254,6 +1346,7 @@ def build_mart_pipeline_freshness_sql(stale_hours: int, company: str = "ALFA") -
         WHERE t.last_altered IS NOT NULL
           AND DATEDIFF('HOUR', t.last_altered, CURRENT_TIMESTAMP()) >= {int(stale_hours)}
           {table_company_filter}
+          {table_env_filter}
         ORDER BY hours_since_change DESC, size_gb DESC
         LIMIT 300
     """
@@ -1263,6 +1356,7 @@ def build_mart_pipeline_load_failures_sql(load_days: int, company: str = "ALFA")
     """Build load failure groups from the daily COPY_HISTORY mart."""
     table = mart_object_name("FACT_COPY_LOAD_DAILY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             database_name,
@@ -1280,6 +1374,7 @@ def build_mart_pipeline_load_failures_sql(load_days: int, company: str = "ALFA")
         WHERE load_date >= DATEADD('DAY', -{int(load_days)}, CURRENT_DATE())
           AND UPPER(COALESCE(status, '')) <> 'LOADED'
           {company_filter}
+          {env_filter}
         GROUP BY database_name, schema_name, table_name, status
         ORDER BY file_count DESC, last_seen DESC
         LIMIT 300
@@ -1291,12 +1386,15 @@ def build_mart_pipeline_volume_sql(min_gb: float, company: str = "ALFA") -> str:
     table = mart_object_name("DIM_TABLE_SNAPSHOT")
     latest_company_filter = _mart_company_filter(company)
     table_company_filter = _mart_company_filter(company).replace("COMPANY", "t.company")
+    latest_env_filter = _mart_environment_filter("DATABASE_NAME", company)
+    table_env_filter = _mart_environment_filter("t.database_name", company)
     return f"""
         WITH latest AS (
             SELECT MAX(snapshot_ts) AS latest_snapshot_ts
             FROM {table}
             WHERE 1 = 1
               {latest_company_filter}
+              {latest_env_filter}
         )
         SELECT
             t.database_name,
@@ -1314,6 +1412,7 @@ def build_mart_pipeline_volume_sql(min_gb: float, company: str = "ALFA") -> str:
         JOIN latest l ON t.snapshot_ts = l.latest_snapshot_ts
         WHERE t.bytes / POWER(1024, 3) >= {float(min_gb or 0)}
           {table_company_filter}
+          {table_env_filter}
         ORDER BY size_gb DESC
         LIMIT 300
     """
@@ -1324,6 +1423,7 @@ def build_mart_recommendation_idle_sql(company: str = "ALFA") -> str:
     wh_table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     q_table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    query_env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         WITH wh AS (
             SELECT
@@ -1348,6 +1448,7 @@ def build_mart_recommendation_idle_sql(company: str = "ALFA") -> str:
             WHERE hour_start >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
               AND warehouse_name IS NOT NULL
               {company_filter}
+              {query_env_filter}
             GROUP BY hour_start, company, warehouse_name
         )
         SELECT
@@ -1371,6 +1472,7 @@ def build_mart_recommendation_spill_sql(company: str = "ALFA") -> str:
     """Build remote spill recommendation candidates from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             warehouse_name,
@@ -1380,6 +1482,7 @@ def build_mart_recommendation_spill_sql(company: str = "ALFA") -> str:
         WHERE hour_start >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
         GROUP BY warehouse_name
         HAVING remote_gb > 5
         ORDER BY remote_gb DESC
@@ -1391,6 +1494,7 @@ def build_mart_recommendation_failed_tasks_sql(company: str = "ALFA") -> str:
     """Build task failure recommendation candidates from task run facts."""
     table = mart_object_name("FACT_TASK_RUN")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             task_name,
@@ -1399,6 +1503,7 @@ def build_mart_recommendation_failed_tasks_sql(company: str = "ALFA") -> str:
         WHERE scheduled_time >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
           AND UPPER(COALESCE(state, '')) IN ('FAILED', 'FAILED_WITH_ERROR')
           {company_filter}
+          {env_filter}
         GROUP BY task_name
         HAVING failures > 3
         ORDER BY failures DESC
@@ -1410,6 +1515,7 @@ def build_mart_recommendation_query_errors_sql(company: str = "ALFA", min_failur
     """Build query failure recommendation candidates from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             warehouse_name,
@@ -1418,6 +1524,7 @@ def build_mart_recommendation_query_errors_sql(company: str = "ALFA", min_failur
         WHERE hour_start >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
         GROUP BY warehouse_name
         HAVING failures > {int(min_failures)}
         ORDER BY failures DESC
@@ -1434,6 +1541,7 @@ def build_mart_query_bottleneck_sql(
     """Build Query Analysis bottleneck rows from recent query-detail mart."""
     table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
     company_filter = _mart_company_filter(company).replace("COMPANY", "q.company")
+    env_filter = _mart_environment_filter("q.database_name", company)
     return f"""
         SELECT
             q.query_id,
@@ -1461,6 +1569,7 @@ def build_mart_query_bottleneck_sql(
           AND q.warehouse_name IS NOT NULL
           AND COALESCE(q.total_elapsed_time, 0) > {int(min_elapsed_ms)}
           {company_filter}
+          {env_filter}
           {extra_filter}
         ORDER BY q.total_elapsed_time DESC
         LIMIT 500
@@ -1471,6 +1580,7 @@ def build_mart_query_degradation_sql(company: str = "ALFA", extra_filter: str = 
     """Build query-pattern degradation rows from recent query-detail mart."""
     table = mart_object_name("FACT_QUERY_DETAIL_RECENT")
     company_filter = _mart_company_filter(company).replace("COMPANY", "q.company")
+    env_filter = _mart_environment_filter("q.database_name", company)
     return f"""
         WITH base AS (
             SELECT
@@ -1481,6 +1591,7 @@ def build_mart_query_degradation_sql(company: str = "ALFA", extra_filter: str = 
             WHERE q.start_time >= DATEADD('DAY', -14, CURRENT_TIMESTAMP())
               AND q.warehouse_name IS NOT NULL
               {company_filter}
+              {env_filter}
               {extra_filter}
         ),
         sig_recent AS (
@@ -1522,9 +1633,9 @@ def build_mart_task_inventory_sql(
     """Build latest task inventory from the task snapshot mart."""
     table = mart_object_name("DIM_TASK_SNAPSHOT")
     latest_company_filter = _mart_company_filter(company)
-    latest_db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    latest_db_filter = _mart_database_filter("DATABASE_NAME", database_contains, company)
     task_company_filter = _mart_company_filter(company).replace("COMPANY", "t.company")
-    task_db_filter = _mart_text_filter("t.database_name", database_contains)
+    task_db_filter = _mart_database_filter("t.database_name", database_contains, company)
     return f"""
         WITH latest AS (
             SELECT MAX(snapshot_ts) AS latest_snapshot_ts
@@ -1563,7 +1674,7 @@ def build_mart_task_history_sql(
     """Build task history detail from FACT_TASK_RUN."""
     table = mart_object_name("FACT_TASK_RUN")
     company_filter = _mart_company_filter(company)
-    db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    db_filter = _mart_database_filter("DATABASE_NAME", database_contains, company)
     return f"""
         SELECT
             scheduled_time,
@@ -1628,9 +1739,9 @@ def build_mart_procedure_inventory_sql(
     """Build latest stored procedure inventory from DIM_PROCEDURE_SNAPSHOT."""
     table = mart_object_name("DIM_PROCEDURE_SNAPSHOT")
     latest_company_filter = _mart_company_filter(company)
-    latest_db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    latest_db_filter = _mart_database_filter("DATABASE_NAME", database_contains, company)
     proc_company_filter = _mart_company_filter(company).replace("COMPANY", "p.company")
-    proc_db_filter = _mart_text_filter("p.database_name", database_contains)
+    proc_db_filter = _mart_database_filter("p.database_name", database_contains, company)
     return f"""
         WITH latest AS (
             SELECT MAX(snapshot_ts) AS latest_snapshot_ts
@@ -1720,6 +1831,7 @@ def build_mart_service_query_health_sql(hours_back: int, company: str = "ALFA") 
     """Build service-health query processor summary from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             COALESCE(SUM(query_count), 0) AS total_queries,
@@ -1732,6 +1844,7 @@ def build_mart_service_query_health_sql(hours_back: int, company: str = "ALFA") 
         WHERE hour_start >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
     """
 
 
@@ -1739,6 +1852,7 @@ def build_mart_service_warehouse_health_sql(hours_back: int, company: str = "ALF
     """Build service-health warehouse pressure detail from hourly query facts."""
     table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             warehouse_name,
@@ -1752,6 +1866,7 @@ def build_mart_service_warehouse_health_sql(hours_back: int, company: str = "ALF
         WHERE hour_start >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           AND warehouse_name IS NOT NULL
           {company_filter}
+          {env_filter}
         GROUP BY warehouse_name
         ORDER BY queued_sec DESC, remote_spill_gb DESC, failed_queries DESC
         LIMIT 100
@@ -1779,6 +1894,7 @@ def build_mart_service_task_health_sql(hours_back: int, company: str = "ALFA") -
     """Build service-health task summary from task run facts."""
     table = mart_object_name("FACT_TASK_RUN")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("DATABASE_NAME", company)
     return f"""
         SELECT
             COUNT(*) AS task_runs,
@@ -1788,6 +1904,7 @@ def build_mart_service_task_health_sql(hours_back: int, company: str = "ALFA") -
         FROM {table}
         WHERE scheduled_time >= DATEADD('HOUR', -{int(hours_back)}, CURRENT_TIMESTAMP())
           {company_filter}
+          {env_filter}
     """
 
 

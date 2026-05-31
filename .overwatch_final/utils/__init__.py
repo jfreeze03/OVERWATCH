@@ -30,7 +30,7 @@ from .company_filter import (
     get_global_db_filter_clause, get_global_filter_clause,
     get_active_environment, get_environment_filter_clause, get_environment_case_expr,
     get_company_case_expr, get_company_scope_key, company_scoped_query, company_value_allowed,
-    invalidate_company_cache,
+    environment_value_allowed, invalidate_company_cache,
 )
 from .helpers import paginate_df, safe_float, safe_int
 from .alerts import send_teams_alert
@@ -126,7 +126,7 @@ __all__ = [
     "get_global_db_filter_clause", "get_global_filter_clause",
     "get_active_environment", "get_environment_filter_clause", "get_environment_case_expr",
     "get_company_case_expr", "get_company_scope_key", "company_scoped_query",
-    "company_value_allowed", "invalidate_company_cache",
+    "company_value_allowed", "environment_value_allowed", "invalidate_company_cache",
     "paginate_df", "safe_float", "safe_int",
     "send_teams_alert",
     "log_section_load", "set_logging_enabled",

@@ -13,7 +13,9 @@ sys.path.insert(0, str(APP_ROOT))
 from config import COMPANY_CONFIG  # noqa: E402
 from utils.company_filter import (  # noqa: E402
     company_value_allowed,
+    environment_value_allowed,
     get_combined_filter_clause,
+    get_db_filter_clause,
     get_wh_filter_clause,
 )
 from utils.cost import build_cost_reconciliation_sql  # noqa: E402
@@ -47,6 +49,24 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn("Q.DATABASE_NAME IS NOT NULL", upper)
         self.assertIn("WH_TRXS_%", upper)
         self.assertIn("TRXS_%", upper)
+
+    def test_database_scope_includes_selected_environment(self):
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_company"] = "ALFA"
+            st.session_state["global_environment"] = "PROD"
+
+            clause = get_db_filter_clause("database_name", company="ALFA").upper()
+            self.assertIn("DATABASE_NAME ILIKE 'ALFA_EDW_PROD'", clause)
+            self.assertTrue(environment_value_allowed("ALFA_EDW_PROD", company="ALFA"))
+            self.assertFalse(environment_value_allowed("ALFA_EDW_DEV", company="ALFA"))
+
+            trexis_clause = get_db_filter_clause("database_name", company="Trexis").upper()
+            self.assertNotIn("ALFA_EDW_PROD", trexis_clause)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_cost_reconciliation_sql_uses_metering_and_variance(self):
         sql = build_cost_reconciliation_sql(30).upper()

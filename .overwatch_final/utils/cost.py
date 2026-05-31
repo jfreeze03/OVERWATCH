@@ -428,7 +428,7 @@ def metric_confidence_label(kind: str) -> str:
     """Small UI label explaining whether a metric is exact or estimated."""
     labels = {
         "exact": "Confidence: Exact",
-        "allocated": "Confidence: Allocated from exact warehouse metering",
+        "allocated": "Confidence: Allocated / Estimated from exact warehouse metering",
         "estimated": "Confidence: Estimated",
         "forecast": "Confidence: Forecast based on recent observed burn",
         "projection": "Confidence: Projection based on recent observed burn",

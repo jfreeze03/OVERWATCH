@@ -108,7 +108,9 @@ from utils.mart import (  # noqa: E402
     build_mart_account_health_storage_sql,
     build_mart_account_health_top_driver_sql,
     build_mart_account_health_ytd_credits_sql,
+    build_mart_adoption_users_db_sql,
     build_mart_adoption_role_type_sql,
+    build_mart_control_room_failed_logins_sql,
     build_mart_control_room_cost_drivers_sql,
     build_mart_control_room_summary_sql,
     build_mart_control_room_task_failures_sql,
@@ -418,6 +420,27 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state.update(previous)
 
+    def test_mart_environment_scope_applies_only_to_database_facts(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_company"] = "ALFA"
+            st.session_state["global_environment"] = "DEV_ALL"
+
+            db_sql = build_mart_adoption_users_db_sql(30, "ALFA").upper()
+            for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+                self.assertIn(db_name, db_sql)
+            self.assertNotIn("ALFA_EDW_PROD", db_sql)
+
+            login_sql = build_mart_control_room_failed_logins_sql(24, "ALFA").upper()
+            self.assertNotIn("ALFA_EDW_DEV", login_sql)
+            self.assertNotIn("DATABASE_NAME", login_sql)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
     def test_usage_overview_storage_sums_are_null_safe(self):
         text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
         self.assertIn("SUM(COALESCE(c.average_database_bytes, 0))", text)
@@ -491,7 +514,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Budget variance", categories)
         confidence = dict(zip(summary["Category"], summary["Confidence"]))
         self.assertEqual(confidence["Warehouse metering"], "Exact")
-        self.assertEqual(confidence["Query-attributed workload"], "Allocated")
+        self.assertEqual(confidence["Query-attributed workload"], "Allocated / Estimated")
         self.assertEqual(confidence["Data loading / ingestion"], "Account-wide")
 
     def test_security_score_weights_mfa_and_failures(self):

@@ -132,7 +132,7 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual(by_section["Warehouse Health"]["LABEL"], "Near Target")
         self.assertEqual(by_section["Workload Operations"]["SCORE"], 95.7)
         self.assertEqual(by_section["Workload Operations"]["LABEL"], "95 Target")
-        self.assertEqual(by_section["Cost & Contract"]["SCORE"], 96.2)
+        self.assertEqual(by_section["Cost & Contract"]["SCORE"], 96.4)
         self.assertEqual(by_section["Cost & Contract"]["LABEL"], "95 Target")
         self.assertEqual(by_section["Security Posture"]["SCORE"], 94.8)
         self.assertEqual(by_section["Security Posture"]["LABEL"], "Near Target")

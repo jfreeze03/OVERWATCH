@@ -18,6 +18,7 @@ from utils import (
     credits_to_dollars,
     format_snowflake_error,
     get_active_company,
+    get_credit_price,
     get_session,
     get_wh_filter_clause,
     load_action_queue,
@@ -494,6 +495,18 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
     err = st.session_state.get("cost_contract_cockpit_error", "")
     if err:
         st.warning(f"Cost cockpit unavailable: {err}")
+    loaded_days = meta.get("days")
+    if (
+        isinstance(data, pd.DataFrame)
+        and not data.empty
+        and meta.get("company") == company
+        and loaded_days is not None
+        and int(loaded_days) != int(days)
+    ):
+        st.info(
+            f"Loaded cockpit data is for {int(loaded_days)} days; selected window is {int(days)} days. "
+            "Click Load Cost Cockpit to refresh the watch floor."
+        )
     if (
         not isinstance(data, pd.DataFrame)
         or data.empty
@@ -577,7 +590,7 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
 def render() -> None:
     session = get_session()
     company = get_active_company()
-    credit_price = safe_float(st.session_state.get("credit_price", 3.0)) or 3.0
+    credit_price = safe_float(get_credit_price()) or 3.68
     if st.session_state.get("exceptions_only_mode") and "cost_contract_workflow" not in st.session_state:
         st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
     st.header("Cost & Contract")

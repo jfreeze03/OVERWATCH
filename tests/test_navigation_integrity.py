@@ -1,4 +1,5 @@
 from pathlib import Path
+import ast
 import importlib.util
 import sys
 import unittest
@@ -63,6 +64,32 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Posture"])
         self.assertEqual(SECTION_ALIASES["DBA Tools"], SECTION_BY_TITLE["Change & Drift"])
         self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Warehouse Health"])
+
+    def test_section_alias_literal_has_no_duplicate_keys(self):
+        config_tree = ast.parse((APP_ROOT / "config.py").read_text(encoding="utf-8"))
+        alias_dict = None
+        for node in config_tree.body:
+            if (
+                isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "SECTION_ALIASES" for target in node.targets)
+                and isinstance(node.value, ast.Dict)
+            ):
+                alias_dict = node.value
+                break
+
+        self.assertIsNotNone(alias_dict)
+        literal_keys = [
+            key.value
+            for key in alias_dict.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        ]
+        duplicates = sorted({key for key in literal_keys if literal_keys.count(key) > 1})
+        self.assertEqual(duplicates, [])
+
+    def test_cortex_prompt_input_is_sql_escaped(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertIn("safe_q      = safe_sql(ask_q.strip()[:500])", app_text)
+        self.assertNotIn("safe_q      = ask_q.strip()[:500]", app_text)
 
     def test_workflow_hubs_replace_scattered_operational_pages(self):
         visible_titles = {section.title for section in SECTION_DEFINITIONS}

@@ -16,6 +16,7 @@ from utils.company_filter import (  # noqa: E402
     environment_value_allowed,
     get_combined_filter_clause,
     get_db_filter_clause,
+    get_global_filter_clause,
     get_wh_filter_clause,
 )
 from utils.cost import build_cost_reconciliation_sql  # noqa: E402
@@ -50,6 +51,63 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn("Q.DATABASE_NAME IS NOT NULL", upper)
         self.assertIn("WH_TRXS_%", upper)
         self.assertIn("TRXS_%", upper)
+
+    def test_global_filter_clause_can_avoid_duplicate_scope_predicates(self):
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_company"] = "ALFA"
+            st.session_state["global_environment"] = "PROD"
+            st.session_state["global_user"] = "ETL"
+
+            scoped = get_global_filter_clause(
+                "q.start_time",
+                "q.warehouse_name",
+                "q.user_name",
+                "q.role_name",
+                "q.database_name",
+            ).upper()
+            ui_only = get_global_filter_clause(
+                "q.start_time",
+                "q.warehouse_name",
+                "q.user_name",
+                "q.role_name",
+                "q.database_name",
+                include_company_scope=False,
+                include_environment_scope=False,
+            ).upper()
+
+            self.assertIn("WH_TRXS_%", scoped)
+            self.assertIn("UPPER(Q.DATABASE_NAME) = 'ALFA_EDW_PROD'", scoped)
+            self.assertIn("Q.USER_NAME ILIKE '%ETL%'", scoped)
+            self.assertNotIn("WH_TRXS_%", ui_only)
+            self.assertNotIn("ALFA_EDW_PROD", ui_only)
+            self.assertIn("Q.USER_NAME ILIKE '%ETL%'", ui_only)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_global_environment_filter_can_preserve_account_level_rows(self):
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_company"] = "ALFA"
+            st.session_state["global_environment"] = "PROD"
+
+            clause = get_global_filter_clause(
+                date_col="",
+                wh_col="q.warehouse_name",
+                user_col="q.user_name",
+                role_col="",
+                db_col="q.database_name",
+                preserve_no_database_context=True,
+            ).upper()
+
+            self.assertIn("Q.DATABASE_NAME IS NULL", clause)
+            self.assertIn("UPPER(Q.DATABASE_NAME) = 'ALFA_EDW_PROD'", clause)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_database_scope_includes_selected_environment(self):
         previous = dict(st.session_state)

@@ -7,7 +7,9 @@ from .query import (
 )
 from .data import normalize_df, safe_strip_tz
 from .cost import (
+    get_credit_price, get_storage_cost_per_tb,
     format_credits, credits_to_dollars, estimate_live_credits,
+    query_attribution_supported,
     build_metered_credit_cte, build_idle_warehouse_sql,
     build_monitoring_cost_sql, build_app_runtime_cost_sql, build_cost_reconciliation_sql,
     metric_confidence_label,
@@ -172,7 +174,9 @@ __all__ = [
     "safe_sql", "safe_identifier", "safe_schedule", "sql_literal",
     "get_query_telemetry", "get_query_budget_summary", "clear_query_telemetry", "format_snowflake_error",
     "normalize_df", "safe_strip_tz",
+    "get_credit_price", "get_storage_cost_per_tb",
     "format_credits", "credits_to_dollars", "estimate_live_credits",
+    "query_attribution_supported",
     "build_metered_credit_cte", "build_idle_warehouse_sql",
     "build_monitoring_cost_sql", "build_app_runtime_cost_sql", "build_cost_reconciliation_sql",
     "metric_confidence_label",

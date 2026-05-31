@@ -5,7 +5,9 @@ from config import CREDIT_RATES, COMPUTE_CREDIT_CASE, DEFAULTS
 
 # Re-export for convenience
 __all__ = [
+    "get_credit_price", "get_storage_cost_per_tb",
     "format_credits", "credits_to_dollars", "estimate_live_credits",
+    "query_attribution_supported",
     "build_metered_credit_cte", "build_idle_warehouse_sql",
     "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
     "build_cost_reconciliation_sql", "metric_confidence_label", "freshness_note",
@@ -13,8 +15,14 @@ __all__ = [
 ]
 
 
-def _get_credit_price() -> float:
-    return st.session_state.get("credit_price", DEFAULTS["credit_price"])
+def get_credit_price() -> float:
+    """Return the active credit price, defaulting to the mart contract setting."""
+    return float(st.session_state.get("credit_price", DEFAULTS["credit_price"]))
+
+
+def get_storage_cost_per_tb() -> float:
+    """Return the active storage cost estimate for display-only dollarization."""
+    return float(st.session_state.get("storage_cost_per_tb", DEFAULTS["storage_cost_per_tb"]))
 
 
 def format_credits(credits: float, credit_price: float = None) -> str:
@@ -23,7 +31,7 @@ def format_credits(credits: float, credit_price: float = None) -> str:
         return "0 ($0.00)"
     credits = float(credits)
     if credit_price is None:
-        credit_price = _get_credit_price()
+        credit_price = get_credit_price()
     dollars = credits * credit_price
 
     if credits < 0.01:
@@ -48,7 +56,7 @@ def format_credits(credits: float, credit_price: float = None) -> str:
 def credits_to_dollars(credits: float, credit_price: float = None) -> float:
     """Convert credits to dollars using configured credit price."""
     if credit_price is None:
-        credit_price = _get_credit_price()
+        credit_price = get_credit_price()
     return round((credits or 0) * credit_price, 2)
 
 
@@ -64,12 +72,38 @@ def estimate_live_credits(row) -> float:
     return round(rate * (exec_sec / 3600), 6)
 
 
+def query_attribution_supported(session) -> bool:
+    """Return whether Snowflake's official query attribution view is usable."""
+    try:
+        from .compatibility import filter_existing_columns
+
+        columns = set(filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY",
+            [
+                "QUERY_ID",
+                "START_TIME",
+                "CREDITS_ATTRIBUTED_COMPUTE",
+                "CREDITS_USED_QUERY_ACCELERATION",
+            ],
+        ))
+        return {
+            "QUERY_ID",
+            "START_TIME",
+            "CREDITS_ATTRIBUTED_COMPUTE",
+            "CREDITS_USED_QUERY_ACCELERATION",
+        }.issubset(columns)
+    except Exception:
+        return False
+
+
 def build_metered_credit_cte(
     days_back: int = None,
     hours_back: int = None,
     include_recent: bool = False,
+    prefer_query_attribution: bool = False,
 ) -> str:
-    """Build CTE that allocates exact warehouse metering to queries by hourly execution share.
+    """Build CTE that estimates per-query credits from the best available source.
 
     Args:
         days_back:       Time window in days (used if hours_back not set).
@@ -77,10 +111,14 @@ def build_metered_credit_cte(
         include_recent:  If True, extends upper bound to CURRENT_TIMESTAMP()
                          (use for live/recent views). If False, upper bound is
                          DATEADD('hour', -24, ...) to avoid partial billing windows.
+        prefer_query_attribution:
+                         If True, prefer QUERY_ATTRIBUTION_HISTORY compute
+                         credits and fall back to OVERWATCH allocation for gaps.
 
     Returns:
         SQL CTE fragment (metered_hourly, query_exec_share, per_query_credits).
-        The warehouse-hour total is exact; per-query credits are allocated estimates.
+        Query-attribution credits are Snowflake official execution-only compute.
+        Fallback allocation uses warehouse-hour metering by execution-time share.
         Caller wraps this in WITH ... SELECT ...
     """
     if hours_back:
@@ -101,6 +139,36 @@ def build_metered_credit_cte(
     except Exception:
         metered_scope = ""
         query_scope = ""
+
+    official_attribution_cte = ""
+    official_join = ""
+    official_credit_expr = "NULL::FLOAT"
+    credit_source_expr = "'OVERWATCH_ALLOCATED'"
+    if prefer_query_attribution:
+        official_attribution_cte = f""",
+    official_query_attribution AS (
+        SELECT
+            query_id,
+            ROUND(
+                SUM(
+                    COALESCE(credits_attributed_compute, 0)
+                    + COALESCE(credits_used_query_acceleration, 0)
+                ),
+                6
+            ) AS official_attributed_compute_credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY
+        WHERE start_time >= {time_filter}
+          AND start_time <  {upper_bound}
+        GROUP BY query_id
+    )"""
+        official_join = """
+        LEFT JOIN official_query_attribution oqa
+          ON qs.query_id = oqa.query_id"""
+        official_credit_expr = "oqa.official_attributed_compute_credits"
+        credit_source_expr = (
+            "IFF(oqa.official_attributed_compute_credits IS NOT NULL, "
+            "'QUERY_ATTRIBUTION_HISTORY', 'OVERWATCH_ALLOCATED')"
+        )
 
     return f"""
     metered_hourly AS (
@@ -130,7 +198,7 @@ def build_metered_credit_cte(
           AND q.warehouse_name IS NOT NULL
           AND q.execution_time > 0
           {query_scope}
-    ),
+    ){official_attribution_cte},
     per_query_credits AS (
         SELECT
             qs.query_id,
@@ -140,11 +208,22 @@ def build_metered_credit_cte(
                 COALESCE(m.hourly_compute_credits, 0)
                 * qs.exec_ms / NULLIF(qs.hour_total_exec_ms, 0),
                 6
+            ) AS allocated_metered_credits,
+            {official_credit_expr} AS official_attributed_compute_credits,
+            {credit_source_expr} AS credit_source,
+            ROUND(
+                COALESCE(
+                    {official_credit_expr},
+                    COALESCE(m.hourly_compute_credits, 0)
+                    * qs.exec_ms / NULLIF(qs.hour_total_exec_ms, 0)
+                ),
+                6
             ) AS metered_credits
         FROM query_exec_share qs
         LEFT JOIN metered_hourly m
           ON  qs.warehouse_name = m.warehouse_name
           AND qs.hour_bucket    = m.hour_bucket
+        {official_join}
     )
     """
 
@@ -164,7 +243,7 @@ def build_idle_warehouse_sql(
         SELECT
             warehouse_name,
             DATE_TRUNC('hour', start_time) AS hour_bucket,
-            SUM(credits_used) AS hourly_credits
+            SUM(COALESCE(credits_used_compute, credits_used)) AS hourly_credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
         WHERE start_time >= DATEADD('day', -{int(days_back)}, CURRENT_TIMESTAMP())
           AND start_time <  DATEADD('hour', -24, CURRENT_TIMESTAMP())
@@ -348,13 +427,14 @@ def build_app_runtime_cost_sql(days_back: int = 30) -> str:
     """
 
 
-def build_cost_reconciliation_sql(days_back: int = 30) -> str:
+def build_cost_reconciliation_sql(days_back: int = 30, prefer_query_attribution: bool = False) -> str:
     """Compare exact warehouse credits to allocated query credits by warehouse/day.
 
     WAREHOUSE_METERING_HISTORY is the source of truth. Query-level costs are
-    allocated by execution-time share and will not always reconcile perfectly
-    when warehouses are idle, when cloud services are involved, or when
-    ACCOUNT_USAGE has latency.
+    official execution-only compute when QUERY_ATTRIBUTION_HISTORY is available,
+    otherwise allocated by execution-time share. Query-level totals will not
+    fully reconcile when warehouses are idle, when cloud services are involved,
+    or when ACCOUNT_USAGE has latency.
     """
     days_back = max(1, int(days_back or 30))
     try:
@@ -378,13 +458,25 @@ def build_cost_reconciliation_sql(days_back: int = 30) -> str:
           {metered_scope}
         GROUP BY usage_day, warehouse_name
     ),
-    {build_metered_credit_cte(days_back=days_back, include_recent=False)},
+    {build_metered_credit_cte(
+        days_back=days_back,
+        include_recent=False,
+        prefer_query_attribution=prefer_query_attribution,
+    )},
     allocated_daily AS (
         SELECT
             DATE_TRUNC('day', q.start_time) AS usage_day,
             q.warehouse_name,
             COUNT(*) AS query_count,
-            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 6) AS allocated_query_credits
+            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 6) AS allocated_query_credits,
+            ROUND(SUM(COALESCE(pqc.allocated_metered_credits, 0)), 6) AS overwatch_allocated_credits,
+            ROUND(SUM(COALESCE(pqc.official_attributed_compute_credits, 0)), 6) AS official_attributed_compute_credits,
+            COUNT_IF(pqc.credit_source = 'QUERY_ATTRIBUTION_HISTORY') AS official_attributed_queries,
+            CASE
+                WHEN COUNT_IF(pqc.credit_source = 'QUERY_ATTRIBUTION_HISTORY') > 0
+                    THEN 'QUERY_ATTRIBUTION_HISTORY preferred; OVERWATCH fallback for gaps'
+                ELSE 'OVERWATCH allocated fallback'
+            END AS attribution_source
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         LEFT JOIN per_query_credits pqc
           ON q.query_id = pqc.query_id
@@ -400,6 +492,10 @@ def build_cost_reconciliation_sql(days_back: int = 30) -> str:
         COALESCE(a.query_count, 0) AS query_count,
         COALESCE(m.exact_metered_credits, 0) AS exact_metered_credits,
         COALESCE(a.allocated_query_credits, 0) AS allocated_query_credits,
+        COALESCE(a.overwatch_allocated_credits, 0) AS overwatch_allocated_credits,
+        COALESCE(a.official_attributed_compute_credits, 0) AS official_attributed_compute_credits,
+        COALESCE(a.official_attributed_queries, 0) AS official_attributed_queries,
+        COALESCE(a.attribution_source, 'No query attribution') AS attribution_source,
         ROUND(COALESCE(m.exact_metered_credits, 0) - COALESCE(a.allocated_query_credits, 0), 6) AS variance_credits,
         ROUND(
             100 * ABS(COALESCE(m.exact_metered_credits, 0) - COALESCE(a.allocated_query_credits, 0))

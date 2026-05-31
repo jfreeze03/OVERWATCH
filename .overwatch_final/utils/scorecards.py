@@ -98,7 +98,7 @@ DBA_CONTROL_PLANE_SECTION_BASELINE = {
     },
     "Cost & Contract": {
         "domain_coverage": 95,
-        "data_correctness": 95,
+        "data_correctness": 96,
         "actionability": 99,
         "admin_safety_audit": 97,
         "performance_mart": 94,

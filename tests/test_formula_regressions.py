@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+from config import DEFAULTS  # noqa: E402
 from sections.account_health import (  # noqa: E402
     _account_health_actionable_checklist,
     _account_health_access_hygiene_sql,
@@ -181,7 +182,13 @@ from sections.warehouse_health import (  # noqa: E402
     build_warehouse_setting_review_ddl,
     build_warehouse_setting_review_migration_sql,
 )
-from utils.cost import build_metered_credit_cte  # noqa: E402
+from utils.cost import (  # noqa: E402
+    build_cost_reconciliation_sql,
+    build_idle_warehouse_sql,
+    build_metered_credit_cte,
+    credits_to_dollars,
+    query_attribution_supported,
+)
 from utils.company_filter import (  # noqa: E402
     environment_label_for_database,
     get_environment_case_expr,
@@ -262,12 +269,91 @@ def _python_sources():
 
 
 class FormulaRegressionTests(unittest.TestCase):
+    def test_streamlit_and_mart_credit_defaults_stay_aligned(self):
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+
+        self.assertEqual(DEFAULTS["credit_price"], 3.68)
+        self.assertIn("('CREDIT_PRICE_USD', '3.68'", setup_sql)
+        self.assertIn("credit_price := COALESCE(credit_price, 3.68)", setup_sql)
+        self.assertEqual(credits_to_dollars(10, DEFAULTS["credit_price"]), 36.8)
+
     def test_metered_credit_cte_uses_compute_credits_with_total_fallback(self):
         sql = build_metered_credit_cte(hours_back=24, include_recent=True).upper()
         self.assertIn("WAREHOUSE_METERING_HISTORY", sql)
         self.assertIn("COALESCE(CREDITS_USED_COMPUTE, CREDITS_USED)", sql)
         self.assertIn("AS HOURLY_COMPUTE_CREDITS", sql)
         self.assertNotIn("SUM(CREDITS_USED)               AS HOURLY_COMPUTE_CREDITS", sql)
+
+    def test_metered_credit_cte_can_prefer_official_query_attribution(self):
+        sql = build_metered_credit_cte(
+            hours_back=24,
+            include_recent=False,
+            prefer_query_attribution=True,
+        ).upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY", sql)
+        self.assertIn("CREDITS_ATTRIBUTED_COMPUTE", sql)
+        self.assertIn("CREDITS_USED_QUERY_ACCELERATION", sql)
+        self.assertIn("OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS", sql)
+        self.assertIn("ALLOCATED_METERED_CREDITS", sql)
+        self.assertIn("QUERY_ATTRIBUTION_HISTORY", sql)
+        self.assertIn("OVERWATCH_ALLOCATED", sql)
+
+    def test_cost_reconciliation_exposes_attribution_source_columns(self):
+        sql = build_cost_reconciliation_sql(30, prefer_query_attribution=True).upper()
+
+        self.assertIn("QUERY_ATTRIBUTION_HISTORY", sql)
+        self.assertIn("ATTRIBUTION_SOURCE", sql)
+        self.assertIn("OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS", sql)
+        self.assertIn("OVERWATCH_ALLOCATED_CREDITS", sql)
+        self.assertIn("OFFICIAL_ATTRIBUTED_QUERIES", sql)
+
+    def test_query_attribution_support_requires_all_generated_sql_columns(self):
+        import streamlit as st
+
+        class Result:
+            def __init__(self, columns=None):
+                self.columns = columns or []
+
+            def to_pandas(self):
+                return pd.DataFrame(columns=self.columns)
+
+            def collect(self):
+                return []
+
+        class Session:
+            def __init__(self, columns):
+                self.columns = columns
+
+            def sql(self, _statement):
+                return Result(self.columns)
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            self.assertTrue(query_attribution_supported(Session([
+                "QUERY_ID",
+                "START_TIME",
+                "CREDITS_ATTRIBUTED_COMPUTE",
+                "CREDITS_USED_QUERY_ACCELERATION",
+            ])))
+
+            st.session_state.clear()
+            self.assertFalse(query_attribution_supported(Session([
+                "QUERY_ID",
+                "START_TIME",
+                "CREDITS_ATTRIBUTED_COMPUTE",
+            ])))
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_idle_warehouse_sql_uses_compute_credits_not_total_cloud_services(self):
+        sql = build_idle_warehouse_sql(days_back=7, min_idle_credits=1.0).upper()
+
+        self.assertIn("WAREHOUSE_METERING_HISTORY", sql)
+        self.assertIn("COALESCE(CREDITS_USED_COMPUTE, CREDITS_USED)", sql)
+        self.assertIn("START_TIME <  DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", sql)
 
     def test_account_health_live_counts_prefer_information_schema(self):
         sql = _live_query_status_sql("", "", "").upper()
@@ -1867,6 +1953,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("REFERENCING_DATABASE", sql)
         self.assertIn("'ALFA_EDW_DEV'", sql)
         self.assertIn("'POLICY_FACT'", sql)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_change_blast_radius_sql_preserves_dots_inside_quoted_identifiers(self):
+        sql = _change_blast_radius_sql('"DB.WITH.DOTS"."SCHEMA.ONE"."TABLE.TWO"')
+
+        self.assertIn("'DB.WITH.DOTS'", sql)
+        self.assertIn("'SCHEMA.ONE'", sql)
+        self.assertIn("'TABLE.TWO'", sql)
         self.assertEqual(verification_query_safety_issues(sql), [])
 
     def test_change_drift_environment_scope_retains_account_level_changes(self):

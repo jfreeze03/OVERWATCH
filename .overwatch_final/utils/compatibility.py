@@ -53,6 +53,14 @@ VIEW_SPECS: tuple[ViewSpec, ...] = (
         "Exact warehouse cost comes from this view.",
     ),
     ViewSpec(
+        "Official query attribution",
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY",
+        ("QUERY_ID", "START_TIME", "CREDITS_ATTRIBUTED_COMPUTE"),
+        ("CREDITS_USED_QUERY_ACCELERATION", "QUERY_TAG", "USER_NAME", "WAREHOUSE_NAME"),
+        "Cost & Contract reconciliation, query/user cost attribution",
+        "Preferred source for execution-only query compute attribution when exposed by the active role.",
+    ),
+    ViewSpec(
         "Storage",
         "SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY",
         ("USAGE_DATE", "DATABASE_NAME"),
@@ -440,9 +448,9 @@ def build_cost_formula_audit() -> pd.DataFrame:
     rows = [
         (
             "Warehouse credits",
-            "SUM(CREDITS_USED) from WAREHOUSE_METERING_HISTORY for completed billing windows",
-            "Exact",
-            "Primary source for warehouse chargeback and burn-rate views. Includes total billed warehouse credits so optional compute-only columns cannot break the app.",
+            "SUM(CREDITS_USED) from WAREHOUSE_METERING_HISTORY for completed metering windows",
+            "Metered / invoice-adjustment caveat",
+            "Primary source for warehouse burn-rate views. Snowflake documents this as hourly metering, but final billed credits can differ because cloud-services adjustments are reconciled separately.",
         ),
         (
             "Cloud services credits",
@@ -457,6 +465,12 @@ def build_cost_formula_audit() -> pd.DataFrame:
             "Reconciles to warehouse-hour totals but is not Snowflake-billed at query granularity.",
         ),
         (
+            "Official query attribution",
+            "Prefer QUERY_ATTRIBUTION_HISTORY.CREDITS_ATTRIBUTED_COMPUTE where enabled; otherwise use OVERWATCH allocation fallback",
+            "Official execution-only / no idle",
+            "Snowflake attribution excludes warehouse idle time, cloud services, storage, serverless services, and AI token costs, so it should not be presented as a full invoice number.",
+        ),
+        (
             "Company chargeback scope",
             "Apply ALFA/Trexis warehouse/database boundary before allocating metered warehouse credits",
             "Exact boundary when naming patterns are current",
@@ -464,7 +478,7 @@ def build_cost_formula_audit() -> pd.DataFrame:
         ),
         (
             "Idle warehouse waste",
-            "Use finalized WAREHOUSE_METERING_HISTORY compute credits minus observed query execution windows",
+            "Use finalized WAREHOUSE_METERING_HISTORY compute credits with no observed query execution windows",
             "Estimated",
             "Idle time is inferred from metering windows and activity history; use as a savings signal, not an invoice number.",
         ),

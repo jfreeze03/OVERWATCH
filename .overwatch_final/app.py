@@ -356,6 +356,10 @@ with st.sidebar:
             step=1.0, key="_storage_cost_input",
         )
         st.session_state["storage_cost_per_tb"] = storage_cost
+        st.caption(
+            "Dollar values use the configured rate. Database, user, role, and query cost views are "
+            "allocated estimates unless a panel explicitly marks the metric as exact."
+        )
 
         current_metric_signature = _metric_settings_signature()
         previous_metric_signature = st.session_state.get("_prev_metric_settings_signature")

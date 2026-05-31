@@ -419,11 +419,29 @@ def get_global_filter_clause(
     user_col: str = "user_name",
     role_col: str = "role_name",
     db_col: str = "database_name",
+    *,
+    include_company_scope: bool = True,
+    include_environment_scope: bool = True,
+    preserve_no_database_context: bool = False,
 ) -> str:
-    """Combine all active global sidebar filters into one WHERE fragment."""
+    """Combine active sidebar filters into one WHERE fragment.
+
+    By default this includes company and environment scope for backward
+    compatibility. Callers that already apply their own company boundary can
+    set include_company_scope=False to avoid duplicate predicates.
+    """
+    environment_clause = ""
+    if include_environment_scope and db_col:
+        environment_clause = (
+            get_environment_filter_or_no_database_clause(db_col)
+            if preserve_no_database_context
+            else get_environment_filter_clause(db_col)
+        )
     return " ".join(filter(None, [
-        get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col),
-        get_environment_filter_clause(db_col) if db_col else "",
+        get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col)
+        if include_company_scope
+        else "",
+        environment_clause,
         get_global_date_clause(date_col)      if date_col  else "",
         get_global_wh_filter_clause(wh_col)   if wh_col    else "",
         get_global_user_filter_clause(user_col) if user_col else "",

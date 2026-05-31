@@ -12,6 +12,7 @@ from utils import (
     render_drillable_bar_chart,
     build_task_failure_summary_sql, build_task_health_sql,
     executive_health_score,
+    get_credit_price,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
     get_global_filter_clause, company_value_allowed, get_active_environment,
     load_latest_control_room_mart, mart_source_caption,
@@ -1600,7 +1601,7 @@ def _render_account_health_access_hygiene(session, company: str, environment: st
 
 def render():
     session      = get_session()
-    credit_price = st.session_state.get("credit_price", 3.00)
+    credit_price = get_credit_price()
     company      = st.session_state.get("active_company", "ALFA")
     wh_filter_q = get_wh_filter_clause("q.warehouse_name", company)
     wh_filter_m = get_wh_filter_clause("warehouse_name", company)

@@ -8,8 +8,10 @@ from utils.workflows import render_workflow_selector
 from utils import (
     get_session, format_credits, credits_to_dollars,
     download_csv, build_metered_credit_cte, build_cost_reconciliation_sql,
+    query_attribution_supported,
     burn_trend_label,
     metric_confidence_label, freshness_note,
+    get_credit_price,
     get_wh_filter_clause, get_global_wh_filter_clause,
     get_global_filter_clause, get_company_case_expr,
     get_active_environment, get_environment_case_expr, get_environment_filter_clause,
@@ -1107,7 +1109,7 @@ def _queue_bill_exceptions(
 
 def render():
     session = get_session()
-    credit_price = st.session_state.get("credit_price", 3.00)
+    credit_price = get_credit_price()
     company = st.session_state.get("active_company", "ALFA")
     qh_cols = set(filter_existing_columns(
         session,
@@ -1968,11 +1970,20 @@ def render():
         recon_days = st.slider("Reconciliation window (days)", 7, 90, 30, key="cc_recon_days")
         if st.button("Load Reconciliation", key="cc_recon_load"):
             try:
+                use_official_attribution = query_attribution_supported(session)
                 st.session_state["df_cc_recon"] = run_query(
-                    build_cost_reconciliation_sql(recon_days),
-                    ttl_key=f"cc_recon_{company}_{recon_days}",
+                    build_cost_reconciliation_sql(
+                        recon_days,
+                        prefer_query_attribution=use_official_attribution,
+                    ),
+                    ttl_key=f"cc_recon_{company}_{recon_days}_{int(use_official_attribution)}",
                     tier="standard",
                     section="Cost & Contract",
+                )
+                st.session_state["cc_recon_attribution_source"] = (
+                    "QUERY_ATTRIBUTION_HISTORY preferred with OVERWATCH allocation fallback"
+                    if use_official_attribution
+                    else "OVERWATCH allocated fallback"
                 )
             except Exception as e:
                 st.warning(f"Cost reconciliation unavailable in this role/context: {format_snowflake_error(e)}")
@@ -1988,7 +1999,8 @@ def render():
             c3.metric("Unallocated / Variance", format_credits(total_var))
             st.caption(
                 f"{metric_confidence_label('exact')} for metering; "
-                f"{metric_confidence_label('allocated')} for query attribution | "
+                f"{metric_confidence_label('allocated')} for query attribution. "
+                f"Source: {st.session_state.get('cc_recon_attribution_source', 'OVERWATCH allocated fallback')} | "
                 f"{freshness_note('WAREHOUSE_METERING_HISTORY')}"
             )
             if "RECONCILIATION_STATUS" in df_r.columns:
@@ -2000,6 +2012,10 @@ def render():
                     "WAREHOUSE_NAME",
                     "EXACT_METERED_CREDITS",
                     "ALLOCATED_QUERY_CREDITS",
+                    "OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS",
+                    "OVERWATCH_ALLOCATED_CREDITS",
+                    "OFFICIAL_ATTRIBUTED_QUERIES",
+                    "ATTRIBUTION_SOURCE",
                     "VARIANCE_CREDITS",
                     "VARIANCE_PCT",
                     "RECONCILIATION_STATUS",

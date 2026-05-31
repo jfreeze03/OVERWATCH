@@ -9,7 +9,8 @@ from dataclasses import dataclass
 
 
 DEFAULTS = {
-    "credit_price": 3.00,
+    # Keep aligned with OVERWATCH_SETTINGS.CREDIT_PRICE_USD in the mart setup SQL.
+    "credit_price": 3.68,
     "ai_credit_price": 2.20,
     "storage_cost_per_tb": 23.00,
     "rt_interval_sec": 30,

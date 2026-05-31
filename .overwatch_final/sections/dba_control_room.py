@@ -27,6 +27,7 @@ from utils import (
     freshness_note,
     filter_existing_columns,
     get_db_filter_clause,
+    get_credit_price,
     get_global_filter_clause,
     get_query_budget_summary,
     get_session,
@@ -2159,7 +2160,7 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
 def render() -> None:
     session = get_session()
     company = st.session_state.get("active_company", "ALFA")
-    credit_price = safe_float(st.session_state.get("credit_price", 3.0)) or 3.0
+    credit_price = safe_float(get_credit_price()) or 3.68
 
     st.header("DBA Control Room")
     st.caption(

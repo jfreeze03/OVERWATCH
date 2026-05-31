@@ -15,15 +15,8 @@ from utils import (
     environment_label_for_database,
     get_active_company,
     get_active_environment,
-    get_combined_filter_clause,
     get_environment_case_expr,
-    get_environment_filter_or_no_database_clause,
-    get_global_date_clause,
-    get_global_db_filter_clause,
     get_global_filter_clause,
-    get_global_role_filter_clause,
-    get_global_user_filter_clause,
-    get_global_wh_filter_clause,
     get_session,
     mart_object_name,
     make_action_id,
@@ -204,6 +197,39 @@ def _change_ticket_id(row: pd.Series | dict) -> str:
     return match.group(0).upper() if match else ""
 
 
+def _split_snowflake_qualified_name(value: object) -> list[str]:
+    """Split a Snowflake qualified name while preserving dots inside quotes."""
+    text = str(value or "").strip()
+    if not text:
+        return []
+    parts: list[str] = []
+    current: list[str] = []
+    in_quotes = False
+    idx = 0
+    while idx < len(text):
+        char = text[idx]
+        if char == '"':
+            if in_quotes and idx + 1 < len(text) and text[idx + 1] == '"':
+                current.append('"')
+                idx += 2
+                continue
+            in_quotes = not in_quotes
+            idx += 1
+            continue
+        if char == "." and not in_quotes:
+            part = "".join(current).strip()
+            if part:
+                parts.append(part)
+            current = []
+        else:
+            current.append(char)
+        idx += 1
+    part = "".join(current).strip()
+    if part:
+        parts.append(part)
+    return parts
+
+
 def _change_database_name(row: pd.Series | dict) -> str:
     for key in ("DATABASE_NAME", "OBJECT_DATABASE", "TABLE_CATALOG"):
         value = str(row.get(key) or "").strip()
@@ -211,7 +237,8 @@ def _change_database_name(row: pd.Series | dict) -> str:
             return value.strip('"')
     entity = str(row.get("ENTITY") or "").strip()
     if "." in entity:
-        return entity.split(".", 1)[0].strip('"')
+        pieces = _split_snowflake_qualified_name(entity)
+        return pieces[0] if pieces else ""
     if entity.upper().startswith(("ALFA_", "TRXS_")):
         return entity.strip('"')
     return ""
@@ -230,20 +257,20 @@ def _change_environment(row: pd.Series | dict, fallback: str = "ALL") -> str:
 
 def _change_scope_clause(date_col: str, wh_col: str, user_col: str, role_col: str, db_col: str) -> str:
     """Apply company/global filters while keeping account-level changes under environment scopes."""
-    return " ".join(filter(None, [
-        get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col),
-        get_environment_filter_or_no_database_clause(db_col) if db_col else "",
-        get_global_date_clause(date_col) if date_col else "",
-        get_global_wh_filter_clause(wh_col) if wh_col else "",
-        get_global_user_filter_clause(user_col) if user_col else "",
-        get_global_role_filter_clause(role_col) if role_col else "",
-        get_global_db_filter_clause(db_col) if db_col else "",
-    ])).strip()
+    return get_global_filter_clause(
+        date_col=date_col,
+        wh_col=wh_col,
+        user_col=user_col,
+        role_col=role_col,
+        db_col=db_col,
+        preserve_no_database_context=True,
+    )
 
 
 def _change_owner_context(row: pd.Series | dict) -> dict:
     finding = str(row.get("FINDING_TYPE") or "").lower()
     entity = str(row.get("ENTITY") or "").upper()
+    environment_label = environment_label_for_database(_change_database_name(row))
     if "policy" in finding or "tag" in finding or "masking" in finding:
         base = {
             "owner": "Security / Data Governance",
@@ -268,13 +295,20 @@ def _change_owner_context(row: pd.Series | dict) -> dict:
             "escalation": "DBA Lead / Platform Owner",
             "source": "Change owner map",
         }
-    elif entity.startswith("ALFA_EDW_PROD"):
+    elif environment_label == "PROD":
         base = {
             "owner": "Production Data Owner",
             "escalation": "DBA Lead",
             "source": "Environment owner hint",
         }
-    elif entity.startswith("ALFA_EDW_"):
+    elif environment_label in {
+        "ALFA_EDW_DEV",
+        "ALFA_EDW_SAN",
+        "ALFA_EDW_PHX",
+        "ALFA_EDW_SEA",
+        "ALFA_EDW_SIT",
+        "Other ALFA Non-Prod",
+    }:
         base = {
             "owner": "Development Data Owner",
             "escalation": "DBA Lead",
@@ -656,8 +690,8 @@ LIMIT 50""".strip()
 
 def _change_blast_radius_sql(entity: object) -> str:
     """Build read-only object dependency evidence for a changed object or schema."""
-    raw = str(entity or "").strip().strip('"')
-    pieces = [piece.strip().strip('"') for piece in raw.split(".") if piece.strip()]
+    raw = str(entity or "").strip()
+    pieces = _split_snowflake_qualified_name(raw)
     if not pieces or raw.lower() in {"unknown", "snowflake account"}:
         return """
 SELECT

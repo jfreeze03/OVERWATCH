@@ -1,5 +1,4 @@
 # sections/usage_overview.py - executive Snowflake usage overview
-import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -31,6 +30,13 @@ from utils import (
     upsert_actions,
 )
 from utils.workflows import render_priority_dataframe
+
+
+def _altair():
+    """Import Altair only after a chart panel is requested."""
+    import altair as alt
+
+    return alt
 
 
 def _load_overview(session, days: int) -> dict:
@@ -595,6 +601,7 @@ def render():
             st.info("Query mix is deferred to keep Usage Overview lightweight.")
         elif not qt.empty:
             st.caption(st.session_state.get("uo_query_types_source", "Source unavailable"))
+            alt = _altair()
             chart = alt.Chart(qt.sort_values("QUERY_COUNT", ascending=False)).mark_bar().encode(
                 x=alt.X("QUERY_COUNT:Q", title="Queries"),
                 y=alt.Y("QUERY_TYPE:N", sort="-x", title=None),

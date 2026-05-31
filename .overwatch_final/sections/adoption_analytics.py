@@ -1,5 +1,4 @@
 # sections/adoption_analytics.py - user and workload adoption analytics
-import altair as alt
 import streamlit as st
 
 from utils import (
@@ -20,6 +19,13 @@ from utils import (
     safe_float,
 )
 from utils.workflows import render_priority_dataframe
+
+
+def _altair():
+    """Import Altair only after adoption charts are requested."""
+    import altair as alt
+
+    return alt
 
 
 def _load_adoption_mart(days: int) -> dict:
@@ -227,6 +233,7 @@ def render():
     with tab_trend:
         trend = data["trend"]
         if not trend.empty:
+            alt = _altair()
             chart = alt.Chart(trend).mark_bar().encode(
                 x=alt.X("ACTIVITY_DAY:T", title=None),
                 y=alt.Y("USERS:Q", title="Users"),
@@ -277,6 +284,7 @@ def render():
             if apps is None:
                 st.info("Query-tag adoption is intentionally deferred in mart mode. Use History Search when you need exact query-tag evidence.")
             elif not apps.empty:
+                alt = _altair()
                 chart = alt.Chart(apps).mark_bar().encode(
                     x=alt.X("QUERY_COUNT:Q", title="Queries"),
                     y=alt.Y("CLIENT_APPLICATION:N", sort="-x", title=None),

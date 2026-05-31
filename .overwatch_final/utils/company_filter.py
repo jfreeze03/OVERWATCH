@@ -64,7 +64,7 @@ def invalidate_company_cache(
 
     The query cache already includes active company in its context, so normal
     company switches only drop loaded panel state. A hard refresh can still
-    purge st.cache_data through utils.display.clear_all_cache().
+    purge st.cache_data through utils.cache.clear_all_cache().
     """
     keys_to_drop = [
         k for k in list(st.session_state.keys())

@@ -46,8 +46,13 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "WORKLOAD_RECOVERY_AUDIT_TABLE", "build_workload_recovery_audit_ddl",
         "workload_recovery_audit_fqn",
     ),
+    "cache": (
+        "clear_all_cache",
+    ),
+    "downloads": (
+        "download_csv", "show_loaded_time", "mark_loaded",
+    ),
     "display": (
-        "download_csv", "show_loaded_time", "mark_loaded", "clear_all_cache",
         "render_query_drilldown", "render_warehouse_drilldown",
         "render_drillable_bar_chart", "render_entity_query_drilldown",
     ),

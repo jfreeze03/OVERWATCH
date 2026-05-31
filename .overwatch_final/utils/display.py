@@ -1,20 +1,20 @@
-# utils/display.py — Charts, dataframe wrappers, CSV export, drill-downs
-# FIXES vs previous version:
-#   1. clear_all_cache() clears cached data while preserving operator context
-#      and resetting the session TTL marker.
-#   2. safe_sql() applied to qid in render_query_drilldown operator stats call
-#      (was a bare string embed — low risk but now consistent).
-#   3. st.dataframe() in fallback path now includes use_container_width=True.
+# utils/display.py - chart and drill-down rendering helpers
 import streamlit as st
 import pandas as pd
-import altair as alt
-from datetime import datetime
+from .cache import clear_all_cache
 from .cost import format_credits
 from .compatibility import filter_existing_columns
+from .downloads import download_csv, mark_loaded, show_loaded_time
 from .query import format_snowflake_error, run_query, run_query_or_raise, sql_literal
 from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause
 from .helpers import safe_float
-from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
+
+
+def _altair():
+    """Import Altair only when a chart path actually needs it."""
+    import altair as alt
+
+    return alt
 
 
 def _query_history_detail_exprs(prefix: str = "") -> dict:
@@ -73,97 +73,6 @@ def _query_history_detail_exprs(prefix: str = "") -> dict:
     }
     st.session_state[cache_key] = result
     return result
-
-
-# ── CSV Export ─────────────────────────────────────────────────────────────────
-
-@st.cache_data(ttl=600, max_entries=32, show_spinner=False)
-def _csv_download_payload(df: pd.DataFrame) -> str:
-    """Cache CSV serialization so download buttons do not tax every rerun."""
-    return df.to_csv(index=False)
-
-
-def download_csv(df: pd.DataFrame, filename: str, label: str = "📥 Export CSV"):
-    if df is not None and not df.empty:
-        st.download_button(
-            label, _csv_download_payload(df),
-            file_name=filename, mime="text/csv",
-            key=f"dl_{filename}_{id(df)}",
-        )
-
-
-# ── Load timestamps ────────────────────────────────────────────────────────────
-
-def mark_loaded(key: str):
-    st.session_state[f"_ts_{key}"] = datetime.now().strftime('%H:%M:%S')
-
-
-def show_loaded_time(key: str):
-    ts = st.session_state.get(f"_ts_{key}")
-    if ts:
-        st.caption(f"📅 Last loaded: {ts}")
-
-
-# ── Cache + session clearing ───────────────────────────────────────────────────
-
-_METADATA_CACHE_PREFIXES = (
-    "_overwatch_available_columns",
-    "_overwatch_unavailable_column_views",
-    "_overwatch_column_probe",
-    "_overwatch_qh_detail_exprs",
-    "_overwatch_show_statement_cache",
-    "_task_management_execution_context_cache",
-)
-
-
-def clear_all_cache(
-    *,
-    clear_streamlit_cache: bool = True,
-    clear_metadata: bool = True,
-):
-    """
-    Clear all OVERWATCH cached data from session state.
-    Preserves settings, navigation, company scope, and operator modes while
-    resetting the session TTL clock.
-
-    Routine filter/metric changes should pass clear_streamlit_cache=False so
-    scoped st.cache_data entries can be reused when their query context still
-    matches. The top-level Refresh button keeps the default hard purge.
-    """
-    transient_prefixes = (
-        "_data_", "_ts_", "df_", "_refresh_salt_", "_sec_",
-        "_overwatch_query_", "alert_center_", "cortex_", "cost_contract_", "cc_", "ah_", "cm_", "ds_", "dba_",
-        "lm_", "mc_", "ocm_", "opt_", "qa_", "qs_", "rec_", "sec_", "spcs_",
-        "stor_", "spt_", "sp_ops_", "sp_sla_", "tm_", "task_ops_", "task_sla_",
-        "pipe_", "qw_", "sf_value_",
-        "wh_", "uo_", "aa_", "dd_", "svc_",
-        "contract_", "topology_", "recommendations", "anomalies",
-        "health_data", "morning_data", "tg_list", "tg_hist", "cm_base_",
-        "change_drift_summary", "change_drift_exceptions", "change_drift_meta",
-        "change_drift_proof_sql", "security_posture_summary",
-        "security_posture_exceptions", "security_posture_meta",
-        "security_posture_proof_sql",
-    )
-    if clear_metadata:
-        transient_prefixes = transient_prefixes + _METADATA_CACHE_PREFIXES
-    keys_to_remove = [
-        k for k in list(st.session_state.keys())
-        if k not in PRESERVE_STATE_EXACT
-        and not any(k.startswith(p) for p in PRESERVE_STATE_PREFIXES)
-        and any(k.startswith(p) for p in transient_prefixes)
-    ]
-    for k in keys_to_remove:
-        del st.session_state[k]
-
-    # Reset the TTL timestamp; get_session() will stamp an existing session
-    # without paying for an immediate SELECT 1 check.
-    st.session_state.pop("_sf_session_created_at", None)
-
-    if clear_streamlit_cache:
-        try:
-            st.cache_data.clear()
-        except Exception:
-            pass
 
 
 # ── Query drill-down ───────────────────────────────────────────────────────────
@@ -399,6 +308,7 @@ def render_drillable_bar_chart(
     if title:
         st.subheader(title)
 
+    alt = _altair()
     selection_name    = f"{key}_select"
     selection_factory = getattr(alt, "selection_point", alt.selection_single)
     selection         = selection_factory(fields=[dimension], name=selection_name, empty=False)

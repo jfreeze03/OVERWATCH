@@ -1,5 +1,4 @@
 # sections/platform_topology.py - relationship maps for teams, objects, and workloads
-import altair as alt
 import streamlit as st
 
 from utils import (
@@ -16,6 +15,13 @@ from utils import (
     run_query,
 )
 from utils.workflows import render_priority_dataframe
+
+
+def _altair():
+    """Import Altair only after topology chart data is loaded."""
+    import altair as alt
+
+    return alt
 
 
 def _load_topology(session, days: int, row_limit: int) -> dict:
@@ -192,6 +198,7 @@ def render():
 
     with tab_db:
         if not db_schema.empty:
+            alt = _altair()
             chart = alt.Chart(db_schema.head(50)).mark_rect().encode(
                 x=alt.X("DATABASE_NAME:N", title=None),
                 y=alt.Y("SCHEMA_NAME:N", title=None),
@@ -240,6 +247,7 @@ def render():
                 "USERS": "sum",
                 "FAILED_QUERIES": "sum",
             }).sort_values("QUERY_COUNT", ascending=False)
+            alt = _altair()
             chart = alt.Chart(app_summary.head(25)).mark_bar(color="#38bdf8").encode(
                 x=alt.X("QUERY_COUNT:Q", title="Queries"),
                 y=alt.Y("CLIENT_APPLICATION:N", sort="-x", title=None),

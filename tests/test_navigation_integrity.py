@@ -140,7 +140,7 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_global_filter_and_metric_changes_clear_loaded_state(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
+        cache_text = (APP_ROOT / "utils" / "cache.py").read_text(encoding="utf-8")
         query_text = (APP_ROOT / "utils" / "query.py").read_text(encoding="utf-8")
         state_keys_text = (APP_ROOT / "utils" / "state_keys.py").read_text(encoding="utf-8")
         self.assertIn("def _global_filter_signature", app_text)
@@ -166,7 +166,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             '"security_posture_summary"',
         ):
             with self.subTest(prefix=prefix):
-                self.assertIn(prefix, display_text)
+                self.assertIn(prefix, cache_text)
         self.assertIn('"_prev_global_filter_signature"', state_keys_text)
         self.assertIn('"_prev_metric_settings_signature"', state_keys_text)
 
@@ -191,6 +191,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         logging_text = (APP_ROOT / "utils" / "logging.py").read_text(encoding="utf-8")
         metadata_text = (APP_ROOT / "utils" / "metadata.py").read_text(encoding="utf-8")
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
+        cache_text = (APP_ROOT / "utils" / "cache.py").read_text(encoding="utf-8")
+        downloads_text = (APP_ROOT / "utils" / "downloads.py").read_text(encoding="utf-8")
         dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
         task_management_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
@@ -219,10 +221,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('_QUERY_TAG = "OVERWATCH"', session_text)
         self.assertNotIn("OVERWATCH:v3", session_text)
         self.assertIn('st.session_state["_overwatch_active_query_tag"] = _QUERY_TAG', session_text)
-        self.assertIn("_overwatch_show_statement_cache", display_text)
-        self.assertIn("_task_management_execution_context_cache", display_text)
-        self.assertIn("def _csv_download_payload", display_text)
-        self.assertIn("max_entries=32", display_text)
+        self.assertIn("from utils.cache import clear_all_cache", app_text)
+        self.assertNotIn("from utils.display import clear_all_cache", app_text)
+        self.assertIn("_overwatch_show_statement_cache", cache_text)
+        self.assertIn("_task_management_execution_context_cache", cache_text)
+        self.assertIn("from .cache import clear_all_cache", display_text)
+        self.assertIn("from .downloads import download_csv, mark_loaded, show_loaded_time", display_text)
+        self.assertNotIn("def _csv_download_payload", display_text)
+        self.assertIn("def _csv_download_payload", downloads_text)
+        self.assertNotIn("import pandas", downloads_text)
+        self.assertIn("max_entries=32", downloads_text)
         self.assertIn('st.session_state.get("_query_logging_enabled", False)', query_text)
         self.assertIn("_COMBINED_CSS_CACHE", theme_text)
         self.assertIn("_has_company_scope_columns", data_text)
@@ -244,6 +252,19 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         self.assertNotIn("CHART_COLORS", display_text)
         self.assertNotIn("data_freshness_badge", helpers_text)
+
+    def test_heavy_chart_dependency_stays_lazy(self):
+        display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
+        usage_text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
+        adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8")
+        topology_text = (APP_ROOT / "sections" / "platform_topology.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("\nimport altair as alt", display_text)
+        self.assertIn("def _altair", display_text)
+        self.assertIn("alt = _altair()", display_text)
+        for section_text in (usage_text, adoption_text, topology_text):
+            self.assertNotIn("\nimport altair as alt", section_text)
+            self.assertIn("def _altair", section_text)
 
 
 if __name__ == "__main__":

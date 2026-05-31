@@ -25,7 +25,7 @@ from config import (
     SECTION_BY_TITLE, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
     SECTION_ICONS,
 )
-from utils.display import clear_all_cache
+from utils.cache import clear_all_cache
 from utils.session import get_session
 from utils.query import (
     sql_literal, get_query_telemetry, get_query_budget_summary,

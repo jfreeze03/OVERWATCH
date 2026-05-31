@@ -16,7 +16,9 @@ sys.path.insert(0, str(APP_ROOT))
 from config import DEFAULTS  # noqa: E402
 from sections.account_health import (  # noqa: E402
     _account_health_actionable_checklist,
+    _account_health_access_hygiene_action_payload,
     _account_health_access_hygiene_sql,
+    _account_health_access_hygiene_verification_sql,
     _annotate_account_health_access_hygiene,
     _annotate_account_health_checklist_readiness,
     _account_health_checklist_action_payload,
@@ -59,6 +61,9 @@ from sections.dba_control_room import (  # noqa: E402
     _command_queue_summary,
     _command_queue_route_readiness,
     _dba_section_operability_board,
+    _dba_control_scope_meta,
+    _dba_control_source_health_rows,
+    _dba_snapshot_scope_compatible,
     _build_release_compare_report,
     _compare_release_windows,
     _control_room_snapshot_to_data,
@@ -87,6 +92,7 @@ from sections.change_drift import (  # noqa: E402
     _change_drift_rating,
     _change_drift_score,
     _change_control_operability_fact_sql,
+    _change_source_health_rows,
     _change_verification_sql,
     _enrich_change_control_evidence,
     build_change_control_evidence_ddl,
@@ -112,6 +118,8 @@ from sections.security_posture import (  # noqa: E402
     _security_action_queue_closure_sql,
     _security_access_review_readiness_for_row,
     _annotate_security_privileged_grant_readiness,
+    _privileged_grant_action_payload,
+    _privileged_grant_verification_sql,
     _build_security_access_review,
     _build_security_brief_markdown,
     _build_security_mart_brief_sql,
@@ -585,6 +593,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
         self.assertIn("ACCOUNT HEALTH - DAILY DBA CHECKLIST", sql)
+        self.assertIn("ACCOUNT HEALTH - ACCOUNT ACCESS HYGIENE", sql)
         self.assertIn("COMPANY = 'ALFA'", sql)
         self.assertIn("NO DATABASE CONTEXT", sql)
         self.assertIn("ENVIRONMENT", sql)
@@ -650,14 +659,9 @@ class FormulaRegressionTests(unittest.TestCase):
             "account_health_access_hygiene": pd.DataFrame({"USER_NAME": ["ALFA_ADMIN"]}),
             "account_health_access_hygiene_meta": {
                 "company": "ALFA",
-                "environment": "DEV_ALL",
+                "environment": "No Database Context",
                 "window": "30d",
-                "global_start_date": "",
-                "global_end_date": "",
-                "global_warehouse": "",
                 "global_user": "",
-                "global_role": "",
-                "global_database": "",
             },
         }
 
@@ -668,9 +672,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Overview snapshot"]["CONFIDENCE"], "Pre-aggregated")
         self.assertEqual(by_surface["Live status probe"]["STATE"], "Stale")
         self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
-        self.assertEqual(by_surface["Access hygiene"]["STATE"], "Stale")
+        self.assertEqual(by_surface["Access hygiene"]["STATE"], "Loaded")
+        self.assertEqual(by_surface["Access hygiene"]["SCOPE"], "ALFA / No Database Context / 30d")
+        self.assertEqual(by_surface["Access hygiene"]["CONFIDENCE"], "Live Snowflake metadata")
         self.assertEqual(by_surface["Checklist trend"]["STATE"], "Not Loaded")
-        self.assertIn("Reload", by_surface["Access hygiene"]["NEXT_ACTION"])
+        self.assertIn("Current", by_surface["Access hygiene"]["NEXT_ACTION"])
 
     def test_account_health_access_hygiene_keeps_user_auth_scope_account_level(self):
         with patch(
@@ -723,6 +729,39 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(row["RECOVERY_SLA_TARGET_HOURS"], 24)
         self.assertIn("OWNER_DIRECTORY", row["OWNER_SOURCE"])
         self.assertIn("Security", row["APPROVAL_GROUP"])
+
+    def test_account_health_access_hygiene_action_payload_is_review_only_and_account_scoped(self):
+        hygiene = pd.DataFrame([
+            {
+                "USER_NAME": "ALFA_ADMIN",
+                "SEVERITY": "High",
+                "POSTURE_FINDINGS": "privileged role grant; MFA signal missing",
+                "FAILED_LOGINS": 2,
+                "FAILED_IPS": 1,
+                "ADMIN_ROLE_COUNT": 1,
+                "ADMIN_ROLES": "ACCOUNTADMIN",
+                "MFA_SIGNAL": "false",
+                "DAYS_SINCE_SEEN": 4,
+                "DATABASE_CONTEXT": "No Database Context",
+                "ENVIRONMENT_SCOPE": "No Database Context",
+                "SCOPE_CONFIDENCE": "Account-Level Control",
+                "SCOPE_EVIDENCE": "USERS and LOGIN_HISTORY do not expose database context.",
+                "NEXT_ACTION": "Confirm IAM owner and admin-role business need.",
+                "PROOF_REQUIRED": "user, IAM ticket, admin-role evidence, owner approval",
+            }
+        ])
+        row = _annotate_account_health_access_hygiene(hygiene).iloc[0]
+        action = _account_health_access_hygiene_action_payload(row, company="ALFA", days=30)
+        verification_sql = _account_health_access_hygiene_verification_sql(row, days=30)
+
+        self.assertEqual(action["Source"], "Account Health - Account Access Hygiene")
+        self.assertEqual(action["Environment"], "No Database Context")
+        self.assertEqual(action["Entity"], "ALFA_ADMIN")
+        self.assertIn("Review only", action["Generated SQL Fix"])
+        self.assertIn("do not grant, revoke, disable, or alter users", action["Generated SQL Fix"])
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.USERS", action["Verification Query"])
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS", verification_sql)
+        self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
 
     def test_cortex_ai_functions_sql_is_optional_and_live(self):
         sql = _build_cortex_ai_functions_daily_sql(
@@ -902,6 +941,79 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("_source_modes", data)
         self.assertTrue(any(row.get("Mode") == "Mart unavailable" for _, row in data["_source_modes"].iterrows()))
         self.assertFalse(any("SNOWFLAKE.ACCOUNT_USAGE" in sql for sql in called_sql))
+
+    def test_dba_control_room_source_health_flags_scope_stale_and_deferred_sources(self):
+        data = {
+            "summary": pd.DataFrame({"FAILED_QUERIES": [2]}),
+            "credits": pd.DataFrame({"PERIOD_CREDITS": [4.2]}),
+            "task_sla_cost": pd.DataFrame(),
+            "procedure_sla_cost": pd.DataFrame(),
+            "warehouse_pressure": pd.DataFrame({"WAREHOUSE_NAME": ["WH_ALFA_LOAD"]}),
+            "failed_queries": pd.DataFrame(),
+            "cortex_summary": pd.DataFrame(),
+            "cortex_summary_error": pd.DataFrame({"ERROR": ["Cortex mart missing"]}),
+            "_source_modes": pd.DataFrame([
+                {"Source": "summary", "Mode": "OVERWATCH mart"},
+                {"Source": "credits", "Mode": "OVERWATCH mart"},
+                {"Source": "task_sla_history", "Mode": "Deferred"},
+                {"Source": "procedure_sla", "Mode": "Deferred"},
+                {"Source": "warehouse_pressure", "Mode": "Live fallback", "Message": "mart unavailable"},
+                {"Source": "cortex_cost", "Mode": "Mart unavailable"},
+            ]),
+        }
+        state = {
+            "global_warehouse": "WH_ALFA",
+            "global_user": "",
+            "global_role": "",
+            "global_database": "ALFA_EDW_PROD",
+            "global_start_date": "",
+            "global_end_date": "",
+        }
+        state["dba_control_room_meta"] = _dba_control_scope_meta(
+            "ALFA",
+            "PROD",
+            24,
+            5000,
+            False,
+            False,
+            state=state,
+        )
+
+        rows = _dba_control_source_health_rows(
+            data,
+            state,
+            company="ALFA",
+            environment="PROD",
+            lookback_hours=24,
+            cortex_budget_usd=5250,
+            include_deep_evidence=False,
+            allow_live_fallback=False,
+        )
+        by_surface = {row["SURFACE"]: row for _, row in rows.iterrows()}
+
+        self.assertEqual(by_surface["summary"]["STATE"], "Stale")
+        self.assertEqual(by_surface["credits"]["MODE"], "OVERWATCH mart")
+        self.assertEqual(by_surface["task_sla_cost"]["STATE"], "Deferred")
+        self.assertEqual(by_surface["procedure_sla_cost"]["STATE"], "Deferred")
+        self.assertEqual(by_surface["warehouse_pressure"]["MODE"], "Live fallback")
+        self.assertEqual(by_surface["cortex_summary"]["STATE"], "Unavailable")
+        self.assertIn("Reload DBA Control Room", by_surface["summary"]["NEXT_ACTION"])
+
+    def test_dba_control_room_snapshot_is_only_available_for_unfiltered_all_environment(self):
+        unfiltered = {
+            "global_warehouse": "",
+            "global_user": "",
+            "global_role": "",
+            "global_database": "",
+            "global_start_date": "",
+            "global_end_date": "",
+        }
+        filtered = dict(unfiltered)
+        filtered["global_database"] = "ALFA_EDW_PROD"
+
+        self.assertTrue(_dba_snapshot_scope_compatible("ALL", unfiltered))
+        self.assertFalse(_dba_snapshot_scope_compatible("PROD", unfiltered))
+        self.assertFalse(_dba_snapshot_scope_compatible("ALL", filtered))
 
     def test_dba_control_room_command_queue_flags_control_gaps(self):
         queue = pd.DataFrame([
@@ -1653,6 +1765,44 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_entity["ETL_RUNNER"]["SCOPE_CONFIDENCE"], "Database Context")
         self.assertIn("OWNER_DIRECTORY", by_entity["ETL_RUNNER"]["OWNER_SOURCE"])
 
+    def test_privileged_grant_action_payload_is_review_only_and_closure_tracked(self):
+        row = {
+            "FINDING_TYPE": "Privileged Role Grant",
+            "SEVERITY": "Critical",
+            "ENTITY": "JDOE",
+            "ROLE_NAME": "ACCOUNTADMIN",
+            "OBJECT_NAME": "",
+            "DATABASE_NAME": "",
+            "ENVIRONMENT": "No Database Context",
+            "OWNER": "IAM / Security Owner",
+            "OWNER_EMAIL": "iam@example.com",
+            "ONCALL_PRIMARY": "DBA On-Call",
+            "APPROVAL_GROUP": "Security Owner",
+            "ESCALATION_TARGET": "DBA Lead / Security Owner",
+            "OWNER_SOURCE": "OWNER_DIRECTORY exact",
+            "OWNER_EVIDENCE": "role owner map",
+            "GRANT_REVIEW_STATE": "Tier 0 role grant",
+            "GRANT_REVIEW_READINESS": "Owner Approval Required",
+            "OWNER_ROUTE_READY": "Yes",
+            "SCOPE_CONFIDENCE": "Account/User Context",
+            "PROOF_REQUIRED": "role, grantee, approver, ticket, rollback/verification",
+        }
+
+        verification_sql = _privileged_grant_verification_sql(row)
+        action = _privileged_grant_action_payload(row, company="ALFA", environment="PROD")
+
+        self.assertEqual(action["Source"], "Security Posture - Privileged Grant Readiness")
+        self.assertEqual(action["Category"], "Security Access Review")
+        self.assertEqual(action["Entity Type"], "Privileged Grant")
+        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertEqual(action["Environment"], "No Database Context")
+        self.assertIn("ACCOUNTADMIN", action["Finding"])
+        self.assertIn("Do not grant, revoke, or narrow access", action["Generated SQL Fix"])
+        self.assertEqual(action["Verification Query"], verification_sql)
+        self.assertIn("GRANTS_TO_USERS", verification_sql)
+        self.assertIn("UPPER(role) = UPPER('ACCOUNTADMIN')", verification_sql)
+        self.assertEqual(verification_query_safety_issues(verification_sql), [])
+
     def test_security_access_review_snapshot_sql_keeps_login_rows_under_env_filter(self):
         exceptions = pd.DataFrame(
             {
@@ -1755,6 +1905,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
         self.assertIn("SECURITY POSTURE - SECURITY BRIEF", sql)
+        self.assertIn("SECURITY POSTURE - PRIVILEGED GRANT READINESS", sql)
         self.assertIn("COMPANY = 'ALFA'", sql)
         for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
             self.assertIn(db_name, sql)
@@ -2031,6 +2182,57 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertIn(db_name, fact_sql)
         self.assertNotIn("ACCOUNT_USAGE.QUERY_HISTORY", fact_sql)
         self.assertNotIn("OVERWATCH_ACTION_QUEUE", fact_sql)
+
+    def test_change_source_health_flags_loaded_stale_and_unavailable_evidence(self):
+        state = {
+            "global_warehouse": "",
+            "global_user": "",
+            "global_role": "",
+            "global_database": "ALFA_EDW_PROD",
+            "global_start_date": "",
+            "global_end_date": "",
+            "change_drift_brief_days": 14,
+            "change_drift_summary": pd.DataFrame({"OBJECT_CHANGES": [3]}),
+            "change_drift_exceptions": pd.DataFrame({"FINDING_TYPE": ["Manual Drift"]}),
+            "change_drift_source": "OVERWATCH mart: FACT_OBJECT_CHANGE",
+            "change_drift_meta": {
+                "company": "ALFA",
+                "environment": "PROD",
+                "days": 14,
+                "global_warehouse": "",
+                "global_user": "",
+                "global_role": "",
+                "global_database": "ALFA_EDW_PROD",
+                "global_start_date": "",
+                "global_end_date": "",
+            },
+            "change_control_operability_fact": pd.DataFrame(),
+            "change_control_operability_fact_error": "FACT_CHANGE_CONTROL_OPERABILITY_DAILY missing",
+            "change_drift_evidence_trend_days": 30,
+            "change_drift_evidence_trend": pd.DataFrame({"FINDING_TYPE": ["Manual Drift"]}),
+            "change_drift_evidence_trend_meta": {
+                "company": "ALFA",
+                "environment": "DEV_ALL",
+                "days": 30,
+                "global_warehouse": "",
+                "global_user": "",
+                "global_role": "",
+                "global_database": "ALFA_EDW_PROD",
+                "global_start_date": "",
+                "global_end_date": "",
+            },
+        }
+
+        rows = _change_source_health_rows(state, company="ALFA", environment="PROD")
+        by_surface = {row["SURFACE"]: row for _, row in rows.iterrows()}
+
+        self.assertEqual(by_surface["Change brief"]["STATE"], "Loaded")
+        self.assertEqual(by_surface["Change brief"]["CONFIDENCE"], "Pre-aggregated")
+        self.assertEqual(by_surface["Change exceptions"]["ROWS"], 1)
+        self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
+        self.assertEqual(by_surface["Evidence trend"]["STATE"], "Stale")
+        self.assertEqual(by_surface["Closure analytics"]["STATE"], "Not Loaded")
+        self.assertIn("Reload", by_surface["Evidence trend"]["NEXT_ACTION"])
 
     def test_change_action_queue_closure_sql_scores_evidence_gaps(self):
         sql = _change_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()

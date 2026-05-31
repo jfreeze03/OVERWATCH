@@ -31,6 +31,7 @@ from utils.workflows import render_operator_briefing, render_priority_dataframe
 CHECKLIST_HISTORY_TABLE = "OVERWATCH_DBA_CHECKLIST_HISTORY"
 ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE = "FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY"
 ACCOUNT_HEALTH_ACTION_SOURCE = "Account Health - Daily DBA Checklist"
+ACCOUNT_HEALTH_ACCESS_HYGIENE_SOURCE = "Account Health - Account Access Hygiene"
 ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (
     "global_start_date",
     "global_end_date",
@@ -54,16 +55,18 @@ def _account_health_scope_meta(
     environment: str,
     window: str = "",
     state: dict | None = None,
+    ignore_environment: bool = False,
+    filter_keys: tuple[str, ...] | None = None,
 ) -> dict:
     """Return the filter scope that loaded Account Health evidence must match."""
     state = state if state is not None else st.session_state
     meta = {
         "company": _account_health_scope_value(company),
-        "environment": _account_health_scope_value(environment),
+        "environment": "No Database Context" if ignore_environment else _account_health_scope_value(environment),
     }
     if window:
         meta["window"] = _account_health_scope_value(window)
-    for key in ACCOUNT_HEALTH_SCOPE_FILTER_KEYS:
+    for key in (ACCOUNT_HEALTH_SCOPE_FILTER_KEYS if filter_keys is None else filter_keys):
         meta[key] = _account_health_scope_value(state.get(key))
     return meta
 
@@ -179,6 +182,8 @@ def _account_health_source_health_rows(
             "window_key": "account_health_access_hygiene_days",
             "default_window": "30d",
             "confidence": "Account-level control",
+            "ignore_environment": True,
+            "filter_keys": ("global_user",),
         },
         {
             "surface": "Checklist trend",
@@ -218,10 +223,23 @@ def _account_health_source_health_rows(
     ]
     rows = []
     for item in definitions:
-        window = _account_health_scope_value(
-            item.get("window", state.get(item.get("window_key"), item.get("default_window", "")))
-        )
+        raw_window = item.get("window")
+        if raw_window is None:
+            raw_window = state.get(item.get("window_key"), item.get("default_window", ""))
+            raw_window_text = _account_health_scope_value(raw_window)
+            if item.get("window_key") and raw_window_text.isdigit():
+                raw_window = f"{int(raw_window_text)}d"
+        window = _account_health_scope_value(raw_window)
         expected_meta = _account_health_scope_meta(company, environment, window=window, state=state)
+        if item.get("ignore_environment"):
+            expected_meta = _account_health_scope_meta(
+                company,
+                environment,
+                window=window,
+                state=state,
+                ignore_environment=True,
+                filter_keys=item.get("filter_keys"),
+            )
         value = item.get("value")
         error = state.get(item.get("error_key", ""))
         if error:
@@ -234,6 +252,7 @@ def _account_health_source_health_rows(
             status = "No Rows"
         else:
             status = "Loaded"
+        scope_environment = "No Database Context" if item.get("ignore_environment") else environment
         rows.append({
             "SURFACE": item["surface"],
             "STATE": status,
@@ -247,7 +266,7 @@ def _account_health_source_health_rows(
             "SOURCE": item["source"],
             "CONFIDENCE": _account_health_source_confidence(item["source"], item["confidence"]),
             "ROWS": _account_health_row_count(value),
-            "SCOPE": f"{company} / {environment} / {window}",
+            "SCOPE": f"{company} / {scope_environment} / {window}",
             "NEXT_ACTION": _account_health_source_next_action(status, item["source"]),
         })
     return pd.DataFrame(rows)
@@ -1485,7 +1504,12 @@ LIMIT 100""".strip()
 def _account_health_closure_analytics_sql(days: int, company: str, environment: str = "ALL") -> str:
     fqn = account_health_action_queue_fqn()
     where = [
-        f"SOURCE = {sql_literal(ACCOUNT_HEALTH_ACTION_SOURCE, 100)}",
+        (
+            "SOURCE IN ("
+            f"{sql_literal(ACCOUNT_HEALTH_ACTION_SOURCE, 100)}, "
+            f"{sql_literal(ACCOUNT_HEALTH_ACCESS_HYGIENE_SOURCE, 100)}"
+            ")"
+        ),
         f"COALESCE(UPDATED_AT, CREATED_AT) >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_TIMESTAMP())",
     ]
     if str(company or "").upper() != "ALL":
@@ -1761,6 +1785,149 @@ def _queue_account_health_checklist(session, checklist: pd.DataFrame, company: s
         st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
+def _account_health_access_hygiene_verification_sql(row: pd.Series | dict, days: int = 30) -> str:
+    """Read-only verification for a user/auth hygiene action."""
+    user_name = str(row.get("USER_NAME") or row.get("Entity") or "").strip()
+    user_lit = sql_literal(user_name, 256)
+    lookback = max(1, int(days or 30))
+    return f"""
+WITH selected_user AS (
+    SELECT {user_lit} AS user_name
+),
+login_rollup AS (
+    SELECT
+        lh.user_name,
+        COUNT_IF(lh.is_success = 'NO') AS failed_logins,
+        COUNT(DISTINCT IFF(lh.is_success = 'NO', lh.client_ip, NULL)) AS failed_ips,
+        MAX(IFF(lh.is_success = 'YES', lh.event_timestamp, NULL)) AS last_success_login
+    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY lh
+    JOIN selected_user su ON UPPER(lh.user_name) = UPPER(su.user_name)
+    WHERE lh.event_timestamp >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())
+    GROUP BY lh.user_name
+),
+admin_grants AS (
+    SELECT
+        g.grantee_name AS user_name,
+        LISTAGG(DISTINCT g.role, ', ') WITHIN GROUP (ORDER BY g.role) AS admin_roles,
+        COUNT(DISTINCT g.role) AS admin_role_count
+    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS g
+    JOIN selected_user su ON UPPER(g.grantee_name) = UPPER(su.user_name)
+    WHERE g.deleted_on IS NULL
+      AND (
+          UPPER(g.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN', 'SYSADMIN', 'USERADMIN')
+          OR UPPER(g.role) LIKE '%ADMIN%'
+          OR UPPER(g.role) LIKE '%SECURITY%'
+      )
+    GROUP BY g.grantee_name
+)
+SELECT
+    su.user_name,
+    COALESCE(TO_VARCHAR(u.disabled), 'unknown') AS disabled,
+    COALESCE(TO_VARCHAR(u.has_password), 'unknown') AS has_password,
+    COALESCE(TO_VARCHAR(u.ext_authn_duo), 'unknown') AS mfa_signal,
+    COALESCE(lr.failed_logins, 0) AS failed_logins,
+    COALESCE(lr.failed_ips, 0) AS failed_ips,
+    COALESCE(ag.admin_role_count, 0) AS admin_role_count,
+    COALESCE(ag.admin_roles, '') AS admin_roles,
+    COALESCE(lr.last_success_login, u.last_success_login, u.created_on) AS last_seen,
+    'No Database Context' AS environment_scope,
+    'Account-Level Control' AS scope_confidence
+FROM selected_user su
+LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON UPPER(u.name) = UPPER(su.user_name)
+LEFT JOIN login_rollup lr ON UPPER(lr.user_name) = UPPER(su.user_name)
+LEFT JOIN admin_grants ag ON UPPER(ag.user_name) = UPPER(su.user_name)
+""".strip()
+
+
+def _account_health_access_hygiene_action_payload(
+    row: pd.Series | dict,
+    company: str,
+    days: int = 30,
+) -> dict:
+    """Build a review-only action queue item for account-level user/auth hygiene."""
+    if "QUEUE_READINESS" not in row:
+        annotated = _annotate_account_health_access_hygiene(pd.DataFrame([dict(row)]))
+        if annotated is not None and not annotated.empty:
+            row = annotated.iloc[0].to_dict()
+    user_name = str(row.get("USER_NAME") or "Unknown User")
+    severity = str(row.get("SEVERITY") or "Medium")
+    findings = str(row.get("POSTURE_FINDINGS") or "Account access hygiene review required.")
+    owner = str(row.get("OWNER") or "DBA / Security")
+    approval_group = str(row.get("APPROVAL_GROUP") or "Security Approver")
+    verification_query = _account_health_access_hygiene_verification_sql(row, days=days)
+    return {
+        "Action ID": make_action_id("Account Health Access Hygiene", user_name, f"{company}|{findings}"),
+        "Source": ACCOUNT_HEALTH_ACCESS_HYGIENE_SOURCE,
+        "Severity": severity,
+        "Category": "Account Access Hygiene",
+        "Entity Type": "User",
+        "Entity": user_name,
+        "Owner": owner,
+        "Owner Email": row.get("OWNER_EMAIL", ""),
+        "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
+        "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
+        "Approval Group": approval_group,
+        "Escalation Target": row.get("ESCALATION_TARGET", "Security Lead"),
+        "Owner Source": row.get("OWNER_SOURCE", ""),
+        "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
+        "Finding": f"{user_name}: {findings}",
+        "Action": str(row.get("NEXT_ACTION") or "Confirm IAM owner, MFA posture, privileged grants, and recent login evidence."),
+        "Estimated Monthly Savings": 0.0,
+        "Generated SQL Fix": "\n".join([
+            "-- Account access hygiene action. Review only; do not grant, revoke, disable, or alter users from this queue row.",
+            f"-- User: {user_name}",
+            f"-- Findings: {findings}",
+            f"-- Queue readiness: {row.get('QUEUE_READINESS', 'Ready to Queue')}",
+            f"-- Blockers: {row.get('QUEUE_BLOCKERS', 'None')}",
+            "-- Use IAM/Snowflake approval workflow before any access change.",
+        ]),
+        "Proof Query": verification_query,
+        "Verification Query": verification_query,
+        "Verification Status": "Pending",
+        "Approver": approval_group,
+        "Owner Approval Status": "Requested" if severity.upper() in {"CRITICAL", "HIGH", "MEDIUM"} else "Not Required",
+        "Owner Approval Note": (
+            f"Account-level user/auth hygiene review. Scope: {row.get('SCOPE_CONFIDENCE', 'Account-Level Control')}. "
+            f"Evidence: {row.get('SCOPE_EVIDENCE', '')}. Queue blockers: {row.get('QUEUE_BLOCKERS', '')}."
+        ),
+        "Recovery Evidence": (
+            f"Proof required: {row.get('PROOF_REQUIRED', 'user, IAM ticket, failed login context, MFA/admin-role evidence, owner approval')}. "
+            f"Current findings: {findings}."
+        ),
+        "Recovery Audit State": "Access Hygiene Verification Pending",
+        "Recovery SLA Target Hours": row.get("RECOVERY_SLA_TARGET_HOURS", _account_health_recovery_target_hours(severity)),
+        "Company": company,
+        "Environment": "No Database Context",
+    }
+
+
+def _queue_account_health_access_hygiene(
+    session,
+    hygiene: pd.DataFrame,
+    company: str,
+    days: int = 30,
+) -> None:
+    hygiene = _annotate_account_health_access_hygiene(hygiene)
+    if hygiene is None or hygiene.empty:
+        st.info("No Account Access Hygiene rows are loaded for queueing.")
+        return
+    severity = hygiene.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+    actionable = hygiene[severity.isin({"CRITICAL", "HIGH", "MEDIUM"})].copy()
+    if actionable.empty:
+        st.info("No medium-or-higher Account Access Hygiene issues need queueing.")
+        return
+    actions = [
+        _account_health_access_hygiene_action_payload(row, company=company, days=days)
+        for _, row in actionable.head(50).iterrows()
+    ]
+    try:
+        saved = upsert_actions(session, actions)
+        st.success(f"Saved {saved} Account Access Hygiene review(s) to the action queue.")
+    except Exception as exc:
+        st.error(f"Could not save Account Access Hygiene reviews: {format_snowflake_error(exc)}")
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
 def _render_account_health_access_hygiene(session, company: str, environment: str) -> None:
     with st.expander("Account Access Hygiene", expanded=False):
         st.caption(
@@ -1785,7 +1952,11 @@ def _render_account_health_access_hygiene(session, company: str, environment: st
                 st.session_state["account_health_access_hygiene_sql"] = sql
                 st.session_state["account_health_access_hygiene"] = _annotate_account_health_access_hygiene(raw)
                 st.session_state["account_health_access_hygiene_meta"] = _account_health_scope_meta(
-                    company, environment, window=f"{int(days)}d"
+                    company,
+                    environment,
+                    window=f"{int(days)}d",
+                    ignore_environment=True,
+                    filter_keys=("global_user",),
                 )
             except Exception as exc:
                 st.session_state["account_health_access_hygiene"] = pd.DataFrame()
@@ -1796,7 +1967,13 @@ def _render_account_health_access_hygiene(session, company: str, environment: st
             hygiene is not None
             and not _account_health_meta_matches(
                 st.session_state.get("account_health_access_hygiene_meta"),
-                _account_health_scope_meta(company, environment, window=f"{int(days)}d"),
+                _account_health_scope_meta(
+                    company,
+                    environment,
+                    window=f"{int(days)}d",
+                    ignore_environment=True,
+                    filter_keys=("global_user",),
+                ),
             )
         ):
             st.info("Loaded access hygiene is stale for the active scope. Reload before queuing access work.")
@@ -1829,6 +2006,31 @@ def _render_account_health_access_hygiene(session, company: str, environment: st
                 raw_label="All account access hygiene rows",
                 height=320,
             )
+            actionable = hygiene[
+                hygiene.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper().isin(
+                    {"CRITICAL", "HIGH", "MEDIUM"}
+                )
+            ]
+            b1, b2 = st.columns([1, 3])
+            with b1:
+                if st.button(
+                    "Queue Access Hygiene Reviews",
+                    key="account_health_queue_access_hygiene",
+                    use_container_width=True,
+                    disabled=actionable.empty,
+                ):
+                    _queue_account_health_access_hygiene(
+                        session,
+                        hygiene,
+                        company=company,
+                        days=days,
+                    )
+            with b2:
+                route_ready = int((hygiene.get("QUEUE_READINESS", pd.Series(dtype=str)) == "Ready to Queue").sum())
+                st.caption(
+                    f"{len(actionable):,} medium-or-higher user/auth review(s) can be saved with read-only verification, "
+                    f"owner approval, and No Database Context scope. {route_ready:,} loaded row(s) are route-ready."
+                )
             with st.expander("Access Hygiene Query", expanded=False):
                 st.code(st.session_state.get("account_health_access_hygiene_sql", ""), language="sql")
         elif hygiene is not None:

@@ -55,6 +55,14 @@ WORKFLOW_DETAILS = {
 
 CHANGE_CONTROL_EVIDENCE_TABLE = "OVERWATCH_CHANGE_CONTROL_EVIDENCE"
 CHANGE_CONTROL_OPERABILITY_FACT_TABLE = "FACT_CHANGE_CONTROL_OPERABILITY_DAILY"
+CHANGE_SCOPE_FILTER_KEYS = (
+    "global_warehouse",
+    "global_user",
+    "global_role",
+    "global_database",
+    "global_start_date",
+    "global_end_date",
+)
 CHANGE_TICKET_PATTERN = re.compile(
     r"\b(?:CHG|CHANGE|INC|REQ|RFC|JIRA)[-_]?\d+\b|\b[A-Z][A-Z0-9]+-\d+\b",
     re.IGNORECASE,
@@ -265,6 +273,178 @@ def _change_scope_clause(date_col: str, wh_col: str, user_col: str, role_col: st
         db_col=db_col,
         preserve_no_database_context=True,
     )
+
+
+def _change_scope_value(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def _change_scope_meta(
+    company: str,
+    environment: str,
+    days: int | None = None,
+    state: dict | None = None,
+) -> dict:
+    """Return the filter scope that loaded Change & Drift evidence must match."""
+    state = state if state is not None else st.session_state
+    meta = {
+        "company": _change_scope_value(company),
+        "environment": _change_scope_value(environment),
+    }
+    if days is not None:
+        meta["days"] = int(days)
+    for key in CHANGE_SCOPE_FILTER_KEYS:
+        meta[key] = _change_scope_value(state.get(key))
+    return meta
+
+
+def _change_meta_matches(meta: dict | None, expected: dict | None) -> bool:
+    if not isinstance(meta, dict) or not isinstance(expected, dict):
+        return False
+    for key, expected_value in expected.items():
+        actual = meta.get(key)
+        if key == "days":
+            try:
+                if int(actual) != int(expected_value):
+                    return False
+            except Exception:
+                return False
+        elif _change_scope_value(actual) != _change_scope_value(expected_value):
+            return False
+    return True
+
+
+def _change_row_count(frame) -> int:
+    return len(frame) if isinstance(frame, pd.DataFrame) else 0
+
+
+def _change_source_confidence(source: str, default: str) -> str:
+    source_lower = str(source or "").lower()
+    if "mart" in source_lower or "fact_" in source_lower:
+        return "Pre-aggregated"
+    if "fallback" in source_lower:
+        return "Live fallback"
+    if "account_usage" in source_lower:
+        return "Live ACCOUNT_USAGE"
+    if "action queue" in source_lower or "workflow" in source_lower or "evidence" in source_lower:
+        return "Workflow evidence"
+    return default
+
+
+def _change_source_next_action(state: str, source: str) -> str:
+    source_lower = str(source or "").lower()
+    if state == "Stale":
+        return "Reload after changing company, environment, lookback, or global filters."
+    if state == "Unavailable":
+        return "Deploy or refresh the mart/evidence tables before relying on this surface."
+    if state == "Not Loaded":
+        return "Load only when this workflow is part of the current change investigation."
+    if state == "No Rows":
+        return "Confirm the selected scope has recent change events, evidence, or action rows."
+    if "fallback" in source_lower:
+        return "Use for investigation; prefer mart refresh for repeated daily change control."
+    return "Current for the active DBA change scope."
+
+
+def _change_source_health_rows(
+    state: dict,
+    company: str,
+    environment: str,
+) -> pd.DataFrame:
+    """Summarize Change & Drift evidence freshness and source strategy."""
+    definitions = [
+        {
+            "surface": "Change brief",
+            "frame_key": "change_drift_summary",
+            "source_key": "change_drift_source",
+            "meta_key": "change_drift_meta",
+            "days_key": "change_drift_brief_days",
+            "default_days": 14,
+            "source": "OVERWATCH mart or live QUERY_HISTORY change brief",
+            "confidence": "Mixed",
+            "error_key": "change_drift_error",
+        },
+        {
+            "surface": "Change exceptions",
+            "frame_key": "change_drift_exceptions",
+            "source_key": "change_drift_source",
+            "meta_key": "change_drift_meta",
+            "days_key": "change_drift_brief_days",
+            "default_days": 14,
+            "source": "OVERWATCH mart or live QUERY_HISTORY exception set",
+            "confidence": "Mixed",
+            "error_key": "change_drift_error",
+        },
+        {
+            "surface": "Operability fact",
+            "frame_key": "change_control_operability_fact",
+            "meta_key": "change_control_operability_fact_meta",
+            "days_key": "change_drift_brief_days",
+            "default_days": 14,
+            "source": f"OVERWATCH mart: {CHANGE_CONTROL_OPERABILITY_FACT_TABLE}",
+            "confidence": "Pre-aggregated",
+            "error_key": "change_control_operability_fact_error",
+        },
+        {
+            "surface": "Evidence trend",
+            "frame_key": "change_drift_evidence_trend",
+            "meta_key": "change_drift_evidence_trend_meta",
+            "days_key": "change_drift_evidence_trend_days",
+            "default_days": 30,
+            "source": f"Workflow mart: {CHANGE_CONTROL_EVIDENCE_TABLE}",
+            "confidence": "Workflow evidence",
+            "error_key": "change_drift_evidence_trend_error",
+        },
+        {
+            "surface": "Closure analytics",
+            "frame_key": "change_action_closure",
+            "meta_key": "change_action_closure_meta",
+            "days_key": "change_action_closure_days",
+            "default_days": 30,
+            "source": "Action queue closure evidence",
+            "confidence": "Workflow evidence",
+            "error_key": "change_action_closure_error",
+        },
+    ]
+    rows = []
+    for item in definitions:
+        source = str(state.get(item.get("source_key", ""), item["source"]) or item["source"])
+        frame = state.get(item["frame_key"])
+        error = state.get(item.get("error_key", ""))
+        days = state.get(item.get("days_key"), item.get("default_days"))
+        expected_meta = _change_scope_meta(company, environment, days=days, state=state)
+        loaded = isinstance(frame, pd.DataFrame)
+        if error:
+            status = "Unavailable"
+        elif not loaded:
+            status = "Not Loaded"
+        elif not _change_meta_matches(state.get(item["meta_key"]), expected_meta):
+            status = "Stale"
+        elif frame.empty:
+            status = "No Rows"
+        else:
+            status = "Loaded"
+        rows.append({
+            "SURFACE": item["surface"],
+            "STATE": status,
+            "STATE_RANK": {
+                "Unavailable": 0,
+                "Stale": 1,
+                "Loaded": 2,
+                "No Rows": 3,
+                "Not Loaded": 4,
+            }.get(status, 9),
+            "SOURCE": source,
+            "CONFIDENCE": _change_source_confidence(source, item["confidence"]),
+            "ROWS": _change_row_count(frame),
+            "SCOPE": f"{company} / {environment} / {int(days)}d",
+            "NEXT_ACTION": _change_source_next_action(status, source),
+        })
+    return pd.DataFrame(rows)
 
 
 def _change_owner_context(row: pd.Series | dict) -> dict:
@@ -1515,6 +1695,42 @@ def _save_change_control_evidence_snapshot(
         st.info("Deploy the change-control evidence table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
+def _render_change_source_health(company: str, environment: str) -> None:
+    source_health = _change_source_health_rows(dict(st.session_state), company, environment)
+    if source_health.empty:
+        return
+    with st.expander("Change Source Health", expanded=False):
+        current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
+        stale = int(source_health["STATE"].eq("Stale").sum())
+        unavailable = int(source_health["STATE"].eq("Unavailable").sum())
+        mart_backed = int(
+            source_health[
+                source_health["STATE"].isin(["Loaded", "No Rows"])
+                & source_health["SOURCE"].astype(str).str.contains("mart|FACT_", case=False, regex=True)
+            ].shape[0]
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
+        c2.metric("Mart-Backed", f"{mart_backed:,}")
+        c3.metric("Stale", f"{stale:,}", delta_color="inverse")
+        c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
+        st.caption(
+            "Use this before acting on change findings. DDL/DCL detection is text-pattern based, "
+            "and account/role-only events are intentionally retained when no database context exists."
+        )
+        render_priority_dataframe(
+            source_health,
+            title="Change evidence freshness and source quality",
+            priority_columns=[
+                "STATE", "SURFACE", "CONFIDENCE", "ROWS", "SCOPE", "SOURCE", "NEXT_ACTION",
+            ],
+            sort_by=["STATE_RANK", "SURFACE"],
+            ascending=[True, True],
+            raw_label="All change source health rows",
+            height=260,
+        )
+
+
 def render() -> None:
     session = get_session()
     company = get_active_company()
@@ -1555,9 +1771,11 @@ def render() -> None:
     )
 
     days = st.slider("Change brief lookback (days)", 1, 90, 14, key="change_drift_brief_days")
+    _render_change_source_health(company, environment)
     if st.button("Load Change & Drift Brief", key="change_drift_brief_load", type="primary"):
         try:
             summary_sql, exceptions_sql = _build_mart_change_drift_sql(days, company)
+            source_label = "OVERWATCH mart: FACT_OBJECT_CHANGE"
             st.session_state["change_drift_summary"] = run_query(
                 summary_sql,
                 ttl_key=f"change_drift_summary_mart_{company}_{environment}_{days}",
@@ -1572,15 +1790,16 @@ def render() -> None:
                 "summary": summary_sql,
                 "exceptions": exceptions_sql,
             }
+            st.session_state["change_drift_source"] = source_label
             st.session_state["change_drift_meta"] = {
-                "company": company,
-                "environment": environment,
-                "days": days,
-                "source": "OVERWATCH mart: FACT_OBJECT_CHANGE",
+                **_change_scope_meta(company, environment, days),
+                "source": source_label,
             }
+            st.session_state.pop("change_drift_error", None)
         except Exception as exc:
             try:
                 summary_sql, exceptions_sql = _build_change_drift_sql(session, days, company)
+                source_label = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                 st.session_state["change_drift_summary"] = run_query(
                     summary_sql,
                     ttl_key=f"change_drift_summary_live_{company}_{environment}_{days}",
@@ -1595,16 +1814,19 @@ def render() -> None:
                     "summary": summary_sql,
                     "exceptions": exceptions_sql,
                 }
+                st.session_state["change_drift_source"] = source_label
                 st.session_state["change_drift_meta"] = {
-                    "company": company,
-                    "environment": environment,
-                    "days": days,
-                    "source": "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                    **_change_scope_meta(company, environment, days),
+                    "source": source_label,
                 }
+                st.session_state.pop("change_drift_error", None)
                 st.info(f"Change mart unavailable; used live QUERY_HISTORY fallback. {format_snowflake_error(exc)}")
             except Exception as live_exc:
                 st.session_state["change_drift_summary"] = pd.DataFrame()
                 st.session_state["change_drift_exceptions"] = pd.DataFrame()
+                st.session_state["change_drift_source"] = "Unavailable: change brief"
+                st.session_state["change_drift_meta"] = _change_scope_meta(company, environment, days)
+                st.session_state["change_drift_error"] = format_snowflake_error(live_exc)
                 st.error(f"Unable to load change brief: {format_snowflake_error(live_exc)}")
         try:
             operability_sql = _change_control_operability_fact_sql(days, company, environment)
@@ -1615,6 +1837,7 @@ def render() -> None:
                 tier="standard",
                 section="Change & Drift",
             )
+            st.session_state["change_control_operability_fact_meta"] = _change_scope_meta(company, environment, days)
             st.session_state.pop("change_control_operability_fact_error", None)
         except Exception as fact_exc:
             st.session_state["change_control_operability_fact"] = pd.DataFrame()
@@ -1623,12 +1846,14 @@ def render() -> None:
     summary = st.session_state.get("change_drift_summary")
     exceptions = st.session_state.get("change_drift_exceptions")
     meta = st.session_state.get("change_drift_meta", {})
+    expected_brief_meta = _change_scope_meta(company, environment, days)
+    brief_is_current = _change_meta_matches(meta, expected_brief_meta)
+    if summary is not None and not summary.empty and not brief_is_current:
+        st.info("Loaded Change & Drift brief is stale for the active scope. Reload the brief before acting.")
     if (
         summary is not None
         and not summary.empty
-        and meta.get("company") == company
-        and meta.get("environment") == environment
-        and meta.get("days") == days
+        and brief_is_current
     ):
         row = summary.iloc[0]
         score = _change_drift_score(
@@ -1654,7 +1879,11 @@ def render() -> None:
         st.caption(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
         operability_fact = st.session_state.get("change_control_operability_fact")
-        if operability_fact is not None and not operability_fact.empty:
+        operability_fact_current = _change_meta_matches(
+            st.session_state.get("change_control_operability_fact_meta"),
+            expected_brief_meta,
+        )
+        if operability_fact is not None and not operability_fact.empty and operability_fact_current:
             st.subheader("Change Control Operability Mart")
             f1, f2, f3, f4 = st.columns(4)
             f1.metric("Fact Rows", f"{len(operability_fact):,}")
@@ -1683,6 +1912,8 @@ def render() -> None:
             )
             with st.expander("Operability fact query", expanded=False):
                 st.code(st.session_state.get("change_control_operability_fact_sql", ""), language="sql")
+        elif operability_fact is not None and not operability_fact.empty and not operability_fact_current:
+            st.info("Loaded change-control operability facts are stale for the active scope. Reload the brief before acting.")
         elif st.session_state.get("change_control_operability_fact_error"):
             st.caption(
                 "Change-control operability mart not available yet; deploy or refresh "
@@ -1785,10 +2016,20 @@ def render() -> None:
                         )
                         st.session_state["change_drift_evidence_trend"] = trend
                         st.session_state["change_drift_evidence_trend_sql"] = trend_sql
+                        st.session_state["change_drift_evidence_trend_meta"] = _change_scope_meta(
+                            company, environment, trend_days
+                        )
+                        st.session_state.pop("change_drift_evidence_trend_error", None)
                     except Exception as exc:
+                        st.session_state["change_drift_evidence_trend"] = pd.DataFrame()
+                        st.session_state["change_drift_evidence_trend_error"] = format_snowflake_error(exc)
                         st.error(f"Unable to load change-control evidence trend: {format_snowflake_error(exc)}")
                 trend = st.session_state.get("change_drift_evidence_trend")
-                if trend is not None and not trend.empty:
+                trend_current = _change_meta_matches(
+                    st.session_state.get("change_drift_evidence_trend_meta"),
+                    _change_scope_meta(company, environment, trend_days),
+                )
+                if trend is not None and not trend.empty and trend_current:
                     render_priority_dataframe(
                         trend,
                         title="Persistent change-control evidence gaps",
@@ -1802,6 +2043,12 @@ def render() -> None:
                         raw_label="All persisted change-control evidence",
                         height=260,
                     )
+                elif (
+                    trend is not None
+                    and not trend_current
+                    and not st.session_state.get("change_drift_evidence_trend_error")
+                ):
+                    st.info("Loaded change-control evidence trend is stale for the active scope. Reload the trend before acting.")
                 with st.expander("Change-control evidence setup SQL", expanded=False):
                     st.code(build_change_control_evidence_ddl(), language="sql")
             with st.expander("Change Action Closure Analytics", expanded=False):
@@ -1821,11 +2068,20 @@ def render() -> None:
                         )
                         st.session_state["change_action_closure"] = closure
                         st.session_state["change_action_closure_sql"] = closure_sql
+                        st.session_state["change_action_closure_meta"] = _change_scope_meta(
+                            company, environment, closure_days
+                        )
+                        st.session_state.pop("change_action_closure_error", None)
                     except Exception as exc:
                         st.session_state["change_action_closure"] = pd.DataFrame()
+                        st.session_state["change_action_closure_error"] = format_snowflake_error(exc)
                         st.warning(f"Change closure analytics unavailable: {format_snowflake_error(exc)}")
                 closure = st.session_state.get("change_action_closure")
-                if closure is not None and not closure.empty:
+                closure_current = _change_meta_matches(
+                    st.session_state.get("change_action_closure_meta"),
+                    _change_scope_meta(company, environment, closure_days),
+                )
+                if closure is not None and not closure.empty and closure_current:
                     render_priority_dataframe(
                         closure,
                         title="Change closure evidence gaps",
@@ -1844,7 +2100,13 @@ def render() -> None:
                     )
                     with st.expander("Change Closure Query", expanded=False):
                         st.code(st.session_state.get("change_action_closure_sql", ""), language="sql")
-                elif closure is not None:
+                elif (
+                    closure is not None
+                    and not closure_current
+                    and not st.session_state.get("change_action_closure_error")
+                ):
+                    st.info("Loaded change closure analytics are stale for the active scope. Reload closure analytics before acting.")
+                elif closure is not None and closure_current:
                     st.info("No Change & Drift action-queue rows found for the selected scope.")
             if st.button("Save Change Exceptions to Action Queue", key="change_drift_queue"):
                 _queue_change_exceptions(session, exceptions)

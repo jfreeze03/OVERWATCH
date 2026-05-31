@@ -57,13 +57,13 @@ DBA_CONTROL_PLANE_COMPONENTS = tuple(item["key"] for item in DBA_CONTROL_PLANE_R
 
 DBA_CONTROL_PLANE_SECTION_BASELINE = {
     "DBA Control Room": {
-        "domain_coverage": 93,
-        "data_correctness": 91,
+        "domain_coverage": 95,
+        "data_correctness": 95,
         "actionability": 96,
-        "admin_safety_audit": 93,
-        "performance_mart": 90,
-        "workflow_ux": 94,
-        "governance_ownership": 93,
+        "admin_safety_audit": 95,
+        "performance_mart": 95,
+        "workflow_ux": 95,
+        "governance_ownership": 95,
         "tests_operability": 95,
     },
     "Alert Center": {
@@ -109,44 +109,44 @@ DBA_CONTROL_PLANE_SECTION_BASELINE = {
     "Security Posture": {
         "domain_coverage": 95,
         "data_correctness": 95,
-        "actionability": 96,
+        "actionability": 97,
         "admin_safety_audit": 95,
         "performance_mart": 93,
         "workflow_ux": 95,
-        "governance_ownership": 95,
-        "tests_operability": 97,
+        "governance_ownership": 96,
+        "tests_operability": 98,
     },
     "Change & Drift": {
-        "domain_coverage": 93,
-        "data_correctness": 94,
+        "domain_coverage": 95,
+        "data_correctness": 95,
         "actionability": 96,
         "admin_safety_audit": 95,
-        "performance_mart": 91,
+        "performance_mart": 95,
         "workflow_ux": 94,
         "governance_ownership": 95,
         "tests_operability": 97,
     },
     "Account Health": {
         "domain_coverage": 95,
-        "data_correctness": 95,
-        "actionability": 96,
+        "data_correctness": 96,
+        "actionability": 97,
         "admin_safety_audit": 95,
         "performance_mart": 94,
-        "workflow_ux": 94,
+        "workflow_ux": 95,
         "governance_ownership": 95,
-        "tests_operability": 97,
+        "tests_operability": 98,
     },
 }
 
 DBA_CONTROL_PLANE_SECTION_NEXT_MOVES = {
-    "DBA Control Room": "Connect the operating board to live ITSM ticket state, execution audit writes, and named ALFA owner groups.",
+    "DBA Control Room": "Connect the operating board to live ITSM ticket state and execution audit writes for verified auto-close.",
     "Alert Center": "Replace placeholder owner rows with named ALFA on-call groups and enable the approved Snowflake notification integration.",
     "Workload Operations": "Replace placeholder owner rows with named pipeline/procedure owners and wire recovery audit rows to the ITSM ticket lifecycle.",
     "Warehouse Health": "Connect warehouse operability facts to live owner/ITSM approval and auto-close verified setting-change evidence.",
     "Cost & Contract": "Replace placeholder owner rows with named ALFA cost owners and connect owner approval to the ITSM closure workflow.",
-    "Security Posture": "Connect IAM/ITSM approvals to privileged grant readiness and auto-close verified security actions from evidence.",
+    "Security Posture": "Connect IAM/ITSM approval state to verified auto-close for privileged grant and access-review actions.",
     "Change & Drift": "Ingest live change tickets/source-control state, then auto-close verified approval and closure evidence from ITSM/deployment systems.",
-    "Account Health": "Wire Account Health operability facts to evidence-backed auto-close and live ITSM owner approval.",
+    "Account Health": "Connect queued checklist and access-hygiene actions to live IAM/ITSM approval state and verified auto-close.",
 }
 
 

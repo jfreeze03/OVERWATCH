@@ -957,6 +957,123 @@ def _annotate_security_privileged_grant_readiness(grants: pd.DataFrame) -> pd.Da
     )
 
 
+def _privileged_grant_verification_sql(row: pd.Series | dict) -> str:
+    """Return read-only verification SQL for a privileged grant review row."""
+    entity = str(row.get("ENTITY") or "").strip()
+    role_name = str(row.get("ROLE_NAME") or "").strip()
+    object_name = str(row.get("OBJECT_NAME") or "").strip()
+    database_name = str(row.get("DATABASE_NAME") or "").strip()
+    entity_lit = sql_literal(entity, 500)
+    if role_name:
+        role_lit = sql_literal(role_name, 300)
+        return f"""
+SELECT
+    grantee_name,
+    role,
+    granted_by,
+    created_on,
+    deleted_on
+FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+WHERE deleted_on IS NULL
+  AND UPPER(grantee_name) = UPPER({entity_lit})
+  AND UPPER(role) = UPPER({role_lit})
+ORDER BY created_on DESC
+LIMIT 100""".strip()
+    if object_name:
+        object_lit = sql_literal(object_name, 800)
+        db_clause = ""
+        if database_name:
+            db_clause = f"\n  AND UPPER(table_catalog) = UPPER({sql_literal(database_name, 300)})"
+        return f"""
+SELECT
+    created_on,
+    privilege,
+    granted_on,
+    name,
+    table_catalog AS database_name,
+    table_schema AS schema_name,
+    granted_to,
+    grantee_name,
+    grant_option,
+    granted_by,
+    deleted_on
+FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES
+WHERE deleted_on IS NULL
+  AND UPPER(grantee_name) = UPPER({entity_lit})
+  AND UPPER(name) = UPPER({object_lit}){db_clause}
+ORDER BY created_on DESC
+LIMIT 100""".strip()
+    return f"""
+SELECT
+    CURRENT_TIMESTAMP() AS verification_ts,
+    {entity_lit} AS grantee_name,
+    'Privileged grant review row did not include a role or object name.' AS review_note
+LIMIT 50""".strip()
+
+
+def _privileged_grant_action_payload(row: pd.Series | dict, *, company: str, environment: str) -> dict:
+    finding_type = str(row.get("FINDING_TYPE") or "Privileged Grant")
+    entity = str(row.get("ENTITY") or "Unknown")
+    role_name = str(row.get("ROLE_NAME") or "").strip()
+    object_name = str(row.get("OBJECT_NAME") or "").strip()
+    database_name = str(row.get("DATABASE_NAME") or "").strip()
+    severity = str(row.get("SEVERITY") or "High")
+    target = role_name or object_name or database_name or entity
+    finding = f"{finding_type}: {entity} has privileged access to {target}"
+    verification_query = _privileged_grant_verification_sql(row)
+    row_environment = str(row.get("ENVIRONMENT") or environment or "ALL")
+    return {
+        "Action ID": make_action_id("Security Privileged Grant", entity, target),
+        "Source": "Security Posture - Privileged Grant Readiness",
+        "Severity": severity,
+        "Category": "Security Access Review",
+        "Entity Type": "Privileged Grant",
+        "Entity": entity,
+        "Owner": row.get("OWNER", "Security/DBA"),
+        "Owner Email": row.get("OWNER_EMAIL", ""),
+        "Oncall Primary": row.get("ONCALL_PRIMARY", ""),
+        "Oncall Secondary": row.get("ONCALL_SECONDARY", ""),
+        "Approval Group": row.get("APPROVAL_GROUP", row.get("ESCALATION_TARGET", "Security Owner")),
+        "Escalation Target": row.get("ESCALATION_TARGET", "DBA Lead / Security Owner"),
+        "Owner Source": row.get("OWNER_SOURCE", ""),
+        "Owner Evidence": row.get("OWNER_EVIDENCE", ""),
+        "Finding": finding,
+        "Action": (
+            "Review privileged grant with the owner before granting, revoking, or narrowing access. "
+            f"Readiness={row.get('GRANT_REVIEW_READINESS', '')}; "
+            f"state={row.get('GRANT_REVIEW_STATE', '')}; proof required={row.get('PROOF_REQUIRED', '')}."
+        ),
+        "Estimated Monthly Savings": 0.0,
+        "Generated SQL Fix": "\n".join([
+            "-- Review-only privileged grant control row.",
+            "-- Do not grant, revoke, or narrow access from OVERWATCH without IAM/security owner approval.",
+            f"-- Role: {role_name or 'N/A'}",
+            f"-- Object: {object_name or 'N/A'}",
+            f"-- Database: {database_name or 'No database context'}",
+            f"-- Environment: {row_environment}",
+            "-- Use the verification query and approved change ticket before remediation.",
+        ]),
+        "Proof Query": verification_query,
+        "Verification Query": verification_query,
+        "Verification Status": "Pending",
+        "Ticket ID": "",
+        "Approver": row.get("APPROVAL_GROUP", row.get("ESCALATION_TARGET", "Security Owner")),
+        "Owner Approval Status": "Requested",
+        "Owner Approval Note": (
+            f"{row.get('GRANT_REVIEW_STATE', '')}; readiness={row.get('GRANT_REVIEW_READINESS', '')}; "
+            f"owner route ready={row.get('OWNER_ROUTE_READY', '')}; scope={row.get('SCOPE_CONFIDENCE', '')}."
+        ),
+        "Recovery Evidence": (
+            f"Proof required: {row.get('PROOF_REQUIRED', '')}. "
+            "Attach IAM/security approval, ticket, rollback note, and post-change grant verification."
+        ),
+        "Recovery Audit State": row.get("GRANT_REVIEW_READINESS", "Owner Approval Required"),
+        "Recovery SLA Target Hours": 24 if str(severity).upper() in {"CRITICAL", "HIGH"} else 72,
+        "Company": company,
+        "Environment": row_environment,
+    }
+
+
 def _security_workflow_for(finding_type: str) -> str:
     value = str(finding_type or "").lower()
     if "shared" in value or "exposure" in value:
@@ -1579,7 +1696,7 @@ LIMIT 100""".strip()
 def _security_action_queue_closure_sql(days: int, company: str, environment: str = "ALL") -> str:
     fqn = f"{safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.{safe_identifier(ACTION_QUEUE_TABLE)}"
     where = [
-        "SOURCE = 'Security Posture - Security Brief'",
+        "SOURCE IN ('Security Posture - Security Brief', 'Security Posture - Privileged Grant Readiness')",
         f"COALESCE(UPDATED_AT, CREATED_AT) >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_TIMESTAMP())",
     ]
     if str(company or "").upper() != "ALL":
@@ -1975,6 +2092,38 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
         st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
+def _queue_privileged_grant_actions(
+    session,
+    grants: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+) -> None:
+    if grants is None or grants.empty:
+        st.info("No privileged grant rows to queue.")
+        return
+    actionable = grants[
+        grants.get("GRANT_REVIEW_READINESS", pd.Series(dtype=str)).astype(str).isin([
+            "Owner Route Blocked",
+            "Owner Approval Required",
+            "Review Ready",
+        ])
+    ].copy()
+    if actionable.empty:
+        st.info("No privileged grant rows need action-queue tracking for the selected scope.")
+        return
+    actions = [
+        _privileged_grant_action_payload(row, company=company, environment=environment)
+        for _, row in actionable.head(100).iterrows()
+    ]
+    try:
+        saved = upsert_actions(session, actions)
+        st.success(f"Saved {saved} privileged grant review rows to the action queue.")
+    except Exception as exc:
+        st.error(f"Could not save privileged grant actions: {format_snowflake_error(exc)}")
+        st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
 def _render_privileged_grant_readiness(session, company: str, environment: str, days: int) -> None:
     with st.expander("Privileged Grant Readiness", expanded=False):
         st.caption(
@@ -2048,6 +2197,8 @@ def _render_privileged_grant_readiness(session, company: str, environment: str, 
             raw_label="All privileged grant readiness rows",
             height=320,
         )
+        if st.button("Save Privileged Grants to Action Queue", key="security_priv_grants_queue"):
+            _queue_privileged_grant_actions(session, grants, company=company, environment=environment)
         with st.expander("Privileged grant readiness query", expanded=False):
             st.code(st.session_state.get("security_privileged_grants_sql", ""), language="sql")
 

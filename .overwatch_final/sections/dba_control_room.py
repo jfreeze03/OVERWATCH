@@ -27,6 +27,7 @@ from utils import (
     freshness_note,
     filter_existing_columns,
     get_db_filter_clause,
+    get_active_environment,
     get_credit_price,
     get_global_filter_clause,
     get_query_budget_summary,
@@ -75,6 +76,15 @@ from sections.stored_proc_tracker import (
 )
 from utils.workflows import render_operator_briefing, render_priority_dataframe
 
+DBA_CONTROL_SCOPE_FILTER_KEYS = (
+    "global_warehouse",
+    "global_user",
+    "global_role",
+    "global_database",
+    "global_start_date",
+    "global_end_date",
+)
+
 
 def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = "") -> None:
     """Navigate to a registered section and carry useful filter context."""
@@ -106,6 +116,167 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
 
 def _empty_df() -> pd.DataFrame:
     return pd.DataFrame()
+
+
+def _dba_control_scope_value(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def _dba_control_scope_meta(
+    company: str,
+    environment: str,
+    lookback_hours: int | None = None,
+    cortex_budget_usd: float | None = None,
+    include_deep_evidence: bool | None = None,
+    allow_live_fallback: bool | None = None,
+    state: dict | None = None,
+) -> dict:
+    """Return the exact operator scope a loaded DBA Control Room surface must match."""
+    state = state if state is not None else st.session_state
+    meta = {
+        "company": _dba_control_scope_value(company),
+        "environment": _dba_control_scope_value(environment),
+    }
+    if lookback_hours is not None:
+        meta["lookback_hours"] = int(lookback_hours)
+    if cortex_budget_usd is not None:
+        meta["cortex_budget_usd"] = round(safe_float(cortex_budget_usd), 2)
+    if include_deep_evidence is not None:
+        meta["include_deep_evidence"] = bool(include_deep_evidence)
+    if allow_live_fallback is not None:
+        meta["allow_live_fallback"] = bool(allow_live_fallback)
+    for key in DBA_CONTROL_SCOPE_FILTER_KEYS:
+        meta[key] = _dba_control_scope_value(state.get(key))
+    return meta
+
+
+def _dba_control_meta_matches(meta: dict | None, expected: dict | None) -> bool:
+    if not isinstance(meta, dict) or not isinstance(expected, dict):
+        return False
+    for key, expected_value in expected.items():
+        actual = meta.get(key)
+        if key == "lookback_hours":
+            try:
+                if int(actual) != int(expected_value):
+                    return False
+            except Exception:
+                return False
+        elif key == "cortex_budget_usd":
+            if round(safe_float(actual), 2) != round(safe_float(expected_value), 2):
+                return False
+        elif isinstance(expected_value, bool):
+            if bool(actual) != expected_value:
+                return False
+        elif _dba_control_scope_value(actual) != _dba_control_scope_value(expected_value):
+            return False
+    return True
+
+
+def _dba_snapshot_scope_compatible(environment: str, state: dict | None = None) -> bool:
+    """Fast snapshot is company-level only; scoped DBA evidence needs detail load."""
+    state = state if state is not None else st.session_state
+    if str(environment or "ALL").upper() != "ALL":
+        return False
+    return not any(_dba_control_scope_value(state.get(key)) for key in DBA_CONTROL_SCOPE_FILTER_KEYS)
+
+
+def _dba_control_source_health_rows(
+    data: dict,
+    state: dict,
+    company: str,
+    environment: str,
+    lookback_hours: int,
+    cortex_budget_usd: float,
+    include_deep_evidence: bool,
+    allow_live_fallback: bool,
+) -> pd.DataFrame:
+    """Summarize control-room evidence freshness, source mode, and actionability."""
+    if not isinstance(data, dict) or not data:
+        return _empty_df()
+    expected_meta = _dba_control_scope_meta(
+        company,
+        environment,
+        lookback_hours,
+        cortex_budget_usd,
+        include_deep_evidence,
+        allow_live_fallback,
+        state=state,
+    )
+    loaded_meta = state.get("dba_control_room_meta", {})
+    source_modes = data.get("_source_modes", _empty_df())
+    mode_map = {}
+    if source_modes is not None and not source_modes.empty and "Source" in source_modes.columns:
+        for _, source_row in source_modes.iterrows():
+            mode_map[str(source_row.get("Source"))] = {
+                "Mode": str(source_row.get("Mode", "")),
+                "Mode Message": str(source_row.get("Message", "")),
+            }
+    source_aliases = {
+        "task_sla_cost": "task_sla_history",
+        "task_latest_runs": "task_sla_history",
+        "procedure_sla_cost": "procedure_sla",
+        "procedure_latest_runs": "procedure_sla",
+        "cortex_summary": "cortex_cost",
+        "cortex_exceptions": "cortex_cost",
+    }
+    rows = []
+    for key, value in data.items():
+        if key.startswith("_") or key.endswith("_error"):
+            continue
+        source_key = source_aliases.get(key, key)
+        mode_info = mode_map.get(str(source_key), mode_map.get(str(key), {}))
+        mode = mode_info.get("Mode", "Live or local")
+        err = data.get(f"{key}_error", _empty_df())
+        message = "" if err is None or err.empty else str(err["ERROR"].iloc[0])
+        if not message and mode_info.get("Mode Message", "").lower() not in ("", "nan", "none"):
+            message = mode_info["Mode Message"]
+        loaded = isinstance(value, pd.DataFrame)
+        if str(mode).lower() == "deferred":
+            state_label = "Deferred"
+        elif err is not None and not err.empty:
+            state_label = "Unavailable"
+        elif not loaded:
+            state_label = "Not Loaded"
+        elif not _dba_control_meta_matches(loaded_meta, expected_meta):
+            state_label = "Stale"
+        elif value.empty:
+            state_label = "No Rows"
+        else:
+            state_label = "Loaded"
+        if state_label == "Stale":
+            next_action = "Reload DBA Control Room after changing company, environment, lookback, budget, or global filters."
+        elif state_label == "Unavailable":
+            next_action = "Deploy or refresh the mart/source before relying on this surface."
+        elif state_label == "Deferred":
+            next_action = "Load deep evidence only when this source is needed for the current investigation."
+        elif state_label == "No Rows":
+            next_action = "Confirm the selected scope has relevant events or mart rows."
+        elif "fallback" in str(mode).lower():
+            next_action = "Use for investigation; prefer mart refresh for repeated morning triage."
+        else:
+            next_action = "Current for the active DBA control-room scope."
+        rows.append({
+            "SURFACE": key,
+            "STATE": state_label,
+            "STATE_RANK": {
+                "Unavailable": 0,
+                "Stale": 1,
+                "Loaded": 2,
+                "No Rows": 3,
+                "Deferred": 4,
+                "Not Loaded": 5,
+            }.get(state_label, 9),
+            "MODE": mode,
+            "ROWS": 0 if value is None or not hasattr(value, "empty") or value.empty else len(value),
+            "SCOPE": f"{company} / {environment} / {int(lookback_hours)}h",
+            "MESSAGE": message,
+            "NEXT_ACTION": next_action,
+        })
+    return pd.DataFrame(rows)
 
 
 def _snapshot_metric(df: pd.DataFrame, column: str) -> float:
@@ -172,7 +343,19 @@ def _control_room_snapshot_to_data(snapshot: pd.DataFrame) -> dict:
         "object_changes": object_df,
         "cortex_summary": cortex_summary,
         "_mart_snapshot": latest,
-        "_source_mode": pd.DataFrame([{"MODE": "OVERWATCH mart snapshot"}]),
+        "_source_modes": pd.DataFrame([
+            {
+                "Source": "mart_snapshot",
+                "Mode": "OVERWATCH mart snapshot",
+                "Message": "Company-level snapshot; use scoped detail load when environment or global filters are active.",
+            },
+            {"Source": "summary", "Mode": "OVERWATCH mart snapshot"},
+            {"Source": "credits", "Mode": "OVERWATCH mart snapshot"},
+            {"Source": "task_failures", "Mode": "OVERWATCH mart snapshot"},
+            {"Source": "failed_logins", "Mode": "OVERWATCH mart snapshot"},
+            {"Source": "object_changes", "Mode": "OVERWATCH mart snapshot"},
+            {"Source": "cortex_cost", "Mode": "OVERWATCH mart snapshot"},
+        ]),
     }
 
 
@@ -1989,6 +2172,58 @@ def _render_watch_floor(
                 _jump(route, workflow=workflow)
 
 
+def _render_control_room_source_health(
+    data: dict,
+    company: str,
+    environment: str,
+    lookback_hours: int,
+    cortex_budget_usd: float,
+    include_deep_evidence: bool,
+    allow_live_fallback: bool,
+) -> pd.DataFrame:
+    source_health = _dba_control_source_health_rows(
+        data,
+        dict(st.session_state),
+        company,
+        environment,
+        lookback_hours,
+        cortex_budget_usd,
+        include_deep_evidence,
+        allow_live_fallback,
+    )
+    if source_health.empty:
+        st.info("No source health rows are available yet.")
+        return source_health
+    current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
+    stale = int(source_health["STATE"].eq("Stale").sum())
+    unavailable = int(source_health["STATE"].eq("Unavailable").sum())
+    mart_backed = int(
+        source_health[
+            source_health["STATE"].isin(["Loaded", "No Rows"])
+            & source_health["MODE"].astype(str).str.contains("mart", case=False, regex=True)
+        ].shape[0]
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
+    c2.metric("Mart-Backed", f"{mart_backed:,}")
+    c3.metric("Stale", f"{stale:,}", delta_color="inverse")
+    c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
+    st.caption(
+        "Use this before acting from the Control Room. Stale rows mean evidence was loaded under a different "
+        "company, environment, lookback, budget, fallback mode, or global filter scope."
+    )
+    render_priority_dataframe(
+        source_health,
+        title="Control-room evidence freshness and source mode",
+        priority_columns=["STATE", "SURFACE", "MODE", "ROWS", "SCOPE", "MESSAGE", "NEXT_ACTION"],
+        sort_by=["STATE_RANK", "SURFACE"],
+        ascending=[True, True],
+        raw_label="All control-room source health rows",
+        height=360,
+    )
+    return source_health
+
+
 def _render_admin_readiness_panel() -> None:
     section_rows = pd.DataFrame(dba_control_plane_section_scorecards())
     component_rows = pd.DataFrame(dba_control_plane_component_rows())
@@ -2160,6 +2395,7 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
 def render() -> None:
     session = get_session()
     company = st.session_state.get("active_company", "ALFA")
+    environment = get_active_environment()
     credit_price = safe_float(get_credit_price()) or 3.68
 
     st.header("DBA Control Room")
@@ -2195,7 +2431,7 @@ def render() -> None:
             key="dba_control_room_cortex_budget_usd",
         )
     with c3:
-        st.metric("Company Scope", company)
+        st.metric("Scope", f"{company} / {environment}")
     with c4:
         st.info(
             f"{freshness_note('ACCOUNT_USAGE')} "
@@ -2203,8 +2439,9 @@ def render() -> None:
             "Use this as triage, then validate high-impact actions in the drilldown page."
         )
 
-    snapshot_result = load_latest_control_room_mart(company, max_age_hours=6)
-    if snapshot_result.available and not snapshot_result.data.empty:
+    snapshot_scope_ok = _dba_snapshot_scope_compatible(environment, dict(st.session_state))
+    snapshot_result = load_latest_control_room_mart(company, max_age_hours=6) if snapshot_scope_ok else None
+    if snapshot_result is not None and snapshot_result.available and not snapshot_result.data.empty:
         snapshot = snapshot_result.data.copy()
         st.caption(f"Fast snapshot available from {snapshot_result.source}. Use it for cheap triage; load detail only for investigation.")
         s1, s2, s3, s4, s5 = st.columns(5)
@@ -2218,9 +2455,22 @@ def render() -> None:
             st.session_state["dba_control_room_company"] = company
             st.session_state["dba_control_room_lookback"] = 24
             st.session_state["dba_control_room_source_mode"] = "OVERWATCH mart snapshot"
+            st.session_state["dba_control_room_meta"] = _dba_control_scope_meta(
+                company,
+                environment,
+                24,
+                safe_float(cortex_budget_usd),
+                False,
+                False,
+            )
             st.rerun()
-    elif not snapshot_result.available:
+    elif snapshot_result is not None and not snapshot_result.available:
         st.caption("Fast mart snapshot unavailable. Install/run OVERWATCH_MART_SETUP.sql to enable cheap control-room triage.")
+    elif not snapshot_scope_ok:
+        st.caption(
+            "Fast mart snapshot is company-level only. Clear environment/global filters to use it, "
+            "or load DBA Control Room triage for scoped evidence."
+        )
 
     include_deep_evidence = st.checkbox(
         "Include deep task/procedure/Cortex evidence",
@@ -2260,6 +2510,14 @@ def render() -> None:
                 else "Fast triage mart queries"
             )
             st.session_state["dba_control_room_live_fallback"] = bool(allow_live_fallback)
+            st.session_state["dba_control_room_meta"] = _dba_control_scope_meta(
+                company,
+                environment,
+                int(lookback_hours),
+                safe_float(cortex_budget_usd),
+                bool(include_deep_evidence),
+                bool(allow_live_fallback),
+            )
 
     data = st.session_state.get("dba_control_room_data", {})
     if not data:
@@ -2268,11 +2526,33 @@ def render() -> None:
         st.write("Fast snapshot -> investigate exception -> assign action -> export leadership evidence.")
         return
 
-    loaded_company = st.session_state.get("dba_control_room_company", company)
     loaded_lookback = st.session_state.get("dba_control_room_lookback", lookback_hours)
-    if loaded_company != company:
-        st.warning("Company selection changed after this control-room load. Reload before taking action.")
     source_mode = st.session_state.get("dba_control_room_source_mode", "Detailed live + fallback queries")
+    expected_meta = _dba_control_scope_meta(
+        company,
+        environment,
+        int(lookback_hours),
+        safe_float(cortex_budget_usd),
+        bool(include_deep_evidence),
+        bool(allow_live_fallback),
+    )
+    loaded_meta = st.session_state.get("dba_control_room_meta", {})
+    data_current = _dba_control_meta_matches(loaded_meta, expected_meta)
+    if not data_current:
+        st.warning(
+            "Loaded DBA Control Room evidence is stale for the active scope. Reload before taking action "
+            "or exporting a brief."
+        )
+        _render_control_room_source_health(
+            data,
+            company,
+            environment,
+            int(lookback_hours),
+            safe_float(cortex_budget_usd),
+            bool(include_deep_evidence),
+            bool(allow_live_fallback),
+        )
+        return
     if source_mode == "OVERWATCH mart snapshot":
         st.info("Showing fast mart snapshot. Deep evidence tabs may be sparse until you load detail.")
     elif source_mode == "Fast triage mart queries":
@@ -2708,41 +2988,14 @@ def render() -> None:
 
     with tab_sources:
         st.subheader("Control Room Source Status")
-        rows = []
-        source_modes = data.get("_source_modes", _empty_df())
-        mode_map = {}
-        if source_modes is not None and not source_modes.empty and "Source" in source_modes.columns:
-            for _, source_row in source_modes.iterrows():
-                mode_map[str(source_row.get("Source"))] = {
-                    "Mode": str(source_row.get("Mode", "")),
-                    "Mode Message": str(source_row.get("Message", "")),
-                }
-        for key, value in data.items():
-            if key.startswith("_"):
-                continue
-            if key.endswith("_error"):
-                continue
-            err = data.get(f"{key}_error", _empty_df())
-            mode_info = mode_map.get(str(key), {})
-            message = "" if err.empty else str(err["ERROR"].iloc[0])
-            if not message and mode_info.get("Mode Message", "").lower() not in ("", "nan", "none"):
-                message = mode_info["Mode Message"]
-            rows.append({
-                "Source": key,
-                "Mode": mode_info.get("Mode", "Live or local"),
-                "Rows": 0 if value is None or value.empty else len(value),
-                "Status": "Warning" if not err.empty else "OK",
-                "Message": message,
-            })
-        source_status = pd.DataFrame(rows)
-        render_priority_dataframe(
-            source_status,
-            title="Source status by warning first",
-            priority_columns=["Source", "Mode", "Rows", "Status", "Message"],
-            sort_by=["Status", "Rows"],
-            ascending=[False, False],
-            raw_label="All source status rows",
-            height=360,
+        _render_control_room_source_health(
+            data,
+            company,
+            environment,
+            int(lookback_hours),
+            safe_float(cortex_budget_usd),
+            bool(include_deep_evidence),
+            bool(allow_live_fallback),
         )
         snapshot_df = data.get("_mart_snapshot", _empty_df())
         if snapshot_df is not None and not snapshot_df.empty:

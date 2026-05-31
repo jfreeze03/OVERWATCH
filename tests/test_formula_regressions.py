@@ -65,9 +65,12 @@ from sections.dba_control_room import (  # noqa: E402
     _command_queue_summary,
     _command_queue_route_readiness,
     _dba_section_operability_board,
+    _dba_section_proof_required,
+    _dba_handoff_rows,
     _dba_control_scope_meta,
     _dba_control_source_health_rows,
     _dba_snapshot_scope_compatible,
+    _build_dba_shift_handoff_markdown,
     _build_release_compare_report,
     _compare_release_windows,
     _control_room_snapshot_to_data,
@@ -96,6 +99,7 @@ from sections.change_drift import (  # noqa: E402
     _change_drift_rating,
     _change_drift_score,
     _change_control_operability_fact_sql,
+    _change_operator_next_moves,
     _change_source_health_rows,
     _change_verification_sql,
     _enrich_change_control_evidence,
@@ -180,6 +184,7 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_setting_audit_readiness_for_row,
     _warehouse_setting_control_board,
     _warehouse_setting_execution_audit_sql,
+    _warehouse_operator_next_moves,
     _build_warehouse_capacity_markdown,
     _queue_efficiency_findings,
     _queue_capacity_findings,
@@ -1259,10 +1264,91 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_section["Warehouse Health"]["OVERDUE"], 1)
         self.assertGreaterEqual(by_section["Warehouse Health"]["CLOSURE_BLOCKERS"], 1)
         self.assertIn("Escalate overdue", by_section["Warehouse Health"]["NEXT_CONTROL_ACTION"])
+        self.assertIn("rollback SQL", by_section["Warehouse Health"]["PROOF_REQUIRED"])
         self.assertEqual(by_section["Cost & Contract"]["OPERABILITY_STATE"], "Work Open Actions")
         self.assertEqual(by_section["Cost & Contract"]["EXECUTION_READY"], 1)
         self.assertEqual(by_section["Security Posture"]["OPERABILITY_STATE"], "Build Toward 95")
         self.assertIn("Connect IAM", by_section["Security Posture"]["NEXT_CONTROL_ACTION"])
+        self.assertIn("least-privilege", by_section["Security Posture"]["PROOF_REQUIRED"])
+
+    def test_dba_section_proof_required_names_section_evidence_contracts(self):
+        self.assertIn("source-control/IaC", _dba_section_proof_required("Change & Drift"))
+        self.assertIn("savings verification", _dba_section_proof_required("Cost & Contract"))
+        self.assertIn("email evidence", _dba_section_proof_required("Alert Center"))
+
+    def test_dba_shift_handoff_combines_watch_queue_closure_and_source_health(self):
+        exceptions = pd.DataFrame([
+            {
+                "Severity": "High",
+                "Signal": "Queue or warehouse pressure",
+                "Evidence": "80 queued queries; 1 pressured warehouse",
+                "Action": "Open Warehouse Health and validate capacity pressure.",
+                "Route": "Warehouse Health",
+                "Workflow": "",
+            }
+        ])
+        raw_queue = pd.DataFrame([
+            {
+                "ACTION_ID": "W1",
+                "CATEGORY": "Warehouse Health",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "BI_COMPUTE_WH",
+                "OWNER": "DBA",
+                "STATUS": "New",
+                "DUE_DATE": "2026-05-29",
+                "TICKET_ID": "",
+                "APPROVER": "",
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "VERIFICATION_QUERY": "",
+                "RECOVERY_SLA_STATE": "Open Failure",
+                "RECOVERY_EVIDENCE": "",
+            }
+        ])
+        command_queue = _build_command_queue(raw_queue, today="2026-05-31")
+        closure = _command_queue_closure_readiness(raw_queue, today="2026-05-31")
+        source_health = pd.DataFrame([
+            {
+                "SURFACE": "Task SLA / Cost",
+                "STATE": "Unavailable",
+                "ROWS": 0,
+                "SCOPE": "ALFA/PROD",
+                "NEXT_ACTION": "Refresh mart grants before relying on this surface.",
+            }
+        ])
+
+        handoff = _dba_handoff_rows(exceptions, command_queue, closure, source_health)
+        states = set(handoff["STATE"].astype(str))
+
+        self.assertIn("High Exception", states)
+        self.assertIn("Escalate Overdue", states)
+        self.assertIn("Overdue closure", states)
+        self.assertIn("Unavailable", states)
+        self.assertTrue(handoff["PROOF_REQUIRED"].astype(str).str.contains("verification", case=False).any())
+
+    def test_dba_shift_handoff_markdown_is_email_ready(self):
+        handoff = pd.DataFrame([
+            {
+                "STATE": "Overdue closure",
+                "LANE": "Warehouse Health",
+                "EVIDENCE": "1 open; 1 overdue; 0 fixed without verification",
+                "OWNER_OR_ROUTE": "DBA",
+                "NEXT_ACTION": "Escalate overdue work.",
+                "PROOF_REQUIRED": "owner, ticket, approval, verification",
+            }
+        ])
+
+        markdown = _build_dba_shift_handoff_markdown(
+            handoff,
+            company="ALFA",
+            environment="PROD",
+            lookback_hours=24,
+            source_mode="Fast triage mart queries",
+        )
+
+        self.assertIn("# OVERWATCH DBA Shift Handoff", markdown)
+        self.assertIn("Scope: ALFA / PROD", markdown)
+        self.assertIn("Overdue closure", markdown)
+        self.assertIn("Closure Standard", markdown)
 
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []
@@ -2252,6 +2338,40 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SOURCE-CONTROL OR ROLLBACK PROOF", sql)
         self.assertEqual(verification_query_safety_issues(sql), [])
 
+    def test_change_operator_next_moves_prioritize_route_proof_scope_and_closure(self):
+        readiness_summary = pd.DataFrame(
+            {
+                "ROUTE_BLOCKED": [1],
+                "CLOSURE_BLOCKED": [2],
+                "MISSING_TICKET_ROWS": [1],
+                "IAC_GAP_ROWS": [1],
+                "MISSING_QUERY_ID_ROWS": [1],
+                "ACCOUNT_SCOPE_ROWS": [1],
+                "HIGH_RISK_CHANGES": [1],
+            }
+        )
+        closure = pd.DataFrame(
+            {
+                "OVERDUE_OPEN": [1],
+                "FIXED_WITHOUT_VERIFICATION": [1],
+                "RECOVERY_RISK_ROWS": [0],
+                "VERIFIED_CLOSURES": [0],
+            }
+        )
+        gates = _change_operator_next_moves(
+            score=82,
+            exceptions=pd.DataFrame({"ENTITY": ["SNOWFLAKE ACCOUNT"]}),
+            readiness_summary=readiness_summary,
+            closure=closure,
+        )
+        by_gate = {row["GATE"]: row for _, row in gates.iterrows()}
+
+        self.assertEqual(by_gate["Owner approval route"]["STATE"], "Route Blocked")
+        self.assertEqual(by_gate["Change proof"]["STATE"], "Evidence Blocked")
+        self.assertEqual(by_gate["Closure proof"]["STATE"], "Closure Blocked")
+        self.assertEqual(by_gate["Scope confidence"]["STATE"], "Account-Scope Review")
+        self.assertIn("database environment scope cannot prove", by_gate["Scope confidence"]["NEXT_ACTION"])
+
     def test_change_verification_sql_is_read_only_for_missing_query_id(self):
         sql = _change_verification_sql("").upper()
         self.assertIn("WHERE 1 = 0", sql)
@@ -2766,6 +2886,38 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_wh["LOAD_TASK_WH"]["CONTROL_STATE"], "Execution Failed")
         self.assertEqual(by_wh["DEV_WH"]["CONTROL_STATE"], "Pre-Change Blocked")
         self.assertIn("rollback", by_wh["DEV_WH"]["AUDIT_BLOCKERS"].lower())
+
+    def test_warehouse_operator_next_moves_prioritize_closure_and_audit_gates(self):
+        exceptions = pd.DataFrame(
+            {
+                "WAREHOUSE_NAME": ["BI_COMPUTE_WH"],
+                "SIGNAL": ["Queue Pressure"],
+                "QUEUED_QUERIES": [80],
+            }
+        )
+        control_board = pd.DataFrame(
+            {
+                "CONTROL_STATE": ["Closure Overdue", "Execution Failed", "Pre-Change Blocked"],
+                "OVERDUE": [1, 0, 0],
+                "CLOSURE_BLOCKERS": [1, 0, 0],
+                "FAILED_CHANGES": [0, 1, 0],
+                "AUDIT_ROWS": [0, 1, 0],
+                "AUDIT_READINESS": ["Verification Blocked", "Execution Failed", "Pre-Change Blocked"],
+            }
+        )
+        gates = _warehouse_operator_next_moves(
+            score=54,
+            exceptions=exceptions,
+            control_board=control_board,
+            closure=pd.DataFrame({"OVERDUE_OPEN": [1], "FIXED_WITHOUT_VERIFICATION": [0]}),
+            execution_audit=pd.DataFrame({"FAILED_CHANGES": [1], "AUDIT_ROWS": [1]}),
+        )
+        by_gate = {row["GATE"]: row for _, row in gates.iterrows()}
+
+        self.assertEqual(by_gate["Closure proof"]["STATE"], "Blocked")
+        self.assertEqual(by_gate["Execution audit"]["STATE"], "Failed Execution")
+        self.assertEqual(by_gate["Owner approval route"]["STATE"], "Approval Route Blocked")
+        self.assertIn("before approving", by_gate["Closure proof"]["NEXT_ACTION"])
 
     def test_warehouse_action_queue_closure_sql_scores_evidence_gaps(self):
         sql = _warehouse_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()

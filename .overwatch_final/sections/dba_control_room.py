@@ -1881,6 +1881,29 @@ def _command_queue_route_readiness(queue: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _dba_section_proof_required(section: object, lowest_component: object = "") -> str:
+    """Return the minimum proof contract for a section to remain credibly 95+."""
+    name = str(section or "").upper()
+    component = str(lowest_component or "").lower()
+    if "WAREHOUSE" in name:
+        return "capacity evidence, setting review snapshot, owner approval, rollback SQL, post-change verification"
+    if "CHANGE" in name or "DRIFT" in name:
+        return "change ticket, query_id, source-control/IaC proof, blast-radius review, closure verification"
+    if "COST" in name:
+        return "allocated cost basis, owner chargeback, savings verification, finance-ready closure evidence"
+    if "SECURITY" in name:
+        return "role/grant owner, approver, ticket, least-privilege verification, access closure proof"
+    if "ACCOUNT" in name:
+        return "checklist owner, hygiene evidence, approved remediation, verified closure notes"
+    if "ALERT" in name:
+        return "alert source health, routed owner, email evidence, suppression/acknowledgement history"
+    if "WORKLOAD" in name:
+        return "task/procedure failure proof, owner, runbook, recovery SLA, successful retry evidence"
+    if "DBA CONTROL" in name or "operability" in component:
+        return "current source health, command queue route, owner/ticket metadata, closure proof"
+    return "owner, ticket, approver, verification query, closure evidence"
+
+
 def _dba_section_operability_board(
     section_rows: pd.DataFrame | None = None,
     command_queue: pd.DataFrame | None = None,
@@ -1960,6 +1983,7 @@ def _dba_section_operability_board(
             "LOWEST_COMPONENT": section.get("LOWEST_COMPONENT", ""),
             "LOWEST_SCORE": safe_float(section.get("LOWEST_SCORE", 0)),
             "CAP_DRIVERS": section.get("CAP_DRIVERS", ""),
+            "PROOF_REQUIRED": _dba_section_proof_required(name, section.get("LOWEST_COMPONENT", "")),
             "NEXT_CONTROL_ACTION": next_action,
             "NEXT_95_MOVE": section.get("NEXT_95_MOVE", ""),
         })
@@ -2016,7 +2040,7 @@ def _render_command_queue_control(queue: pd.DataFrame, raw_queue: pd.DataFrame |
                 "OVERDUE", "EXECUTION_READY", "METADATA_BLOCKS", "APPROVAL_BLOCKS",
                 "CLOSURE_READINESS", "CLOSURE_BLOCKERS", "FIXED_WITHOUT_VERIFICATION",
                 "RECOVERY_RISK_ROWS", "LOWEST_COMPONENT", "LOWEST_SCORE",
-                "NEXT_CONTROL_ACTION",
+                "PROOF_REQUIRED", "NEXT_CONTROL_ACTION",
             ],
             sort_by=["OPERABILITY_RANK", "SCORE"],
             ascending=[True, True],
@@ -2170,6 +2194,203 @@ def _render_watch_floor(
             st.write(str(item.get("Action", "")))
             if route and st.button(f"Open {route}", key=f"dba_watch_floor_{idx}_{route}", use_container_width=True):
                 _jump(route, workflow=workflow)
+
+
+def _dba_handoff_rows(
+    exceptions: pd.DataFrame | None,
+    command_queue: pd.DataFrame | None,
+    closure_rollup: pd.DataFrame | None,
+    source_health: pd.DataFrame | None,
+    *,
+    max_rows: int = 14,
+) -> pd.DataFrame:
+    """Build an operational shift handoff from already-loaded Control Room evidence."""
+    rows: list[dict] = []
+
+    priority_exceptions = _priority_exceptions(exceptions if exceptions is not None else _empty_df())
+    for _, item in priority_exceptions.head(5).iterrows():
+        severity = str(item.get("Severity") or item.get("SEVERITY") or "Medium")
+        route = str(item.get("Route") or item.get("ROUTE") or item.get("Domain") or "DBA Control Room")
+        signal = str(item.get("Signal") or item.get("SIGNAL") or "Control-room exception")
+        workflow = str(item.get("Workflow") or "")
+        rows.append({
+            "PRIORITY_RANK": 0 if severity.upper() in {"CRITICAL", "HIGH"} else 3,
+            "LANE": route,
+            "STATE": f"{severity} Exception",
+            "EVIDENCE": str(item.get("Evidence") or item.get("DETAIL") or signal),
+            "OWNER_OR_ROUTE": f"{route}{' / ' + workflow if workflow else ''}",
+            "NEXT_ACTION": str(item.get("Action") or item.get("NEXT_ACTION") or "Open the routed workflow and validate evidence."),
+            "PROOF_REQUIRED": _dba_section_proof_required(route),
+            "SOURCE": "Watch Floor",
+        })
+
+    queue = command_queue.copy() if command_queue is not None and not command_queue.empty else _empty_df()
+    if not queue.empty:
+        queue.columns = [str(col).upper() for col in queue.columns]
+        due_state = queue.get("DUE_STATE", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str)
+        gate = queue.get("COMMAND_EXECUTION_GATE", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str)
+        severity = queue.get("SEVERITY", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str).str.upper()
+        important = queue[
+            due_state.eq("Overdue")
+            | gate.str.startswith("Blocked")
+            | severity.isin(["CRITICAL", "HIGH"])
+        ].head(5)
+        for _, item in important.iterrows():
+            route = str(item.get("ROUTE") or _command_queue_route(item.get("CATEGORY")) or "DBA Control Room")
+            entity = str(item.get("ENTITY_NAME") or item.get("ENTITY") or item.get("CATEGORY") or "queued item")
+            owner = str(item.get("OWNER") or item.get("OWNER_EMAIL") or item.get("APPROVAL_GROUP") or route)
+            evidence_required = str(item.get("COMMAND_EVIDENCE_REQUIRED") or item.get("EVIDENCE_GAP") or "")
+            rows.append({
+                "PRIORITY_RANK": 0 if str(item.get("DUE_STATE")) == "Overdue" else 1 if str(item.get("COMMAND_EXECUTION_GATE", "")).startswith("Blocked") else 2,
+                "LANE": route,
+                "STATE": str(item.get("COMMAND_STATE") or item.get("COMMAND_EXECUTION_GATE") or "Queued Action"),
+                "EVIDENCE": f"{entity}; due={item.get('DUE_STATE', '')}; gate={item.get('COMMAND_EXECUTION_GATE', '')}",
+                "OWNER_OR_ROUTE": owner,
+                "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Complete the queue row, then attach verification before closure."),
+                "PROOF_REQUIRED": evidence_required or _dba_section_proof_required(route),
+                "SOURCE": "Action Queue",
+            })
+
+    closure = closure_rollup.copy() if closure_rollup is not None and not closure_rollup.empty else _empty_df()
+    if not closure.empty:
+        closure.columns = [str(col).upper() for col in closure.columns]
+        blocked = closure[
+            (pd.to_numeric(closure.get("CLOSURE_RANK", pd.Series([9] * len(closure))), errors="coerce").fillna(9) <= 3)
+            | (pd.to_numeric(closure.get("CLOSURE_BLOCKER_ROWS", pd.Series([0] * len(closure))), errors="coerce").fillna(0) > 0)
+        ].head(5)
+        for _, item in blocked.iterrows():
+            route = str(item.get("ROUTE") or "DBA Control Room")
+            rows.append({
+                "PRIORITY_RANK": safe_int(item.get("CLOSURE_RANK", 3)),
+                "LANE": route,
+                "STATE": str(item.get("CLOSURE_READINESS") or "Closure Blocked"),
+                "EVIDENCE": (
+                    f"{safe_int(item.get('OPEN_ACTIONS')):,} open; "
+                    f"{safe_int(item.get('OVERDUE_OPEN')):,} overdue; "
+                    f"{safe_int(item.get('FIXED_WITHOUT_VERIFICATION')):,} fixed without verification"
+                ),
+                "OWNER_OR_ROUTE": str(item.get("OWNER") or route),
+                "NEXT_ACTION": str(item.get("NEXT_CONTROL_ACTION") or "Attach closure proof before accepting the work as done."),
+                "PROOF_REQUIRED": _dba_section_proof_required(route),
+                "SOURCE": "Closure Rollup",
+            })
+
+    sources = source_health.copy() if source_health is not None and not source_health.empty else _empty_df()
+    if not sources.empty:
+        sources.columns = [str(col).upper() for col in sources.columns]
+        source_blocks = sources[
+            sources.get("STATE", pd.Series([""] * len(sources), index=sources.index)).fillna("").astype(str).isin(["Unavailable", "Stale"])
+        ].head(4)
+        for _, item in source_blocks.iterrows():
+            state = str(item.get("STATE") or "Source Check")
+            surface = str(item.get("SURFACE") or "Evidence surface")
+            rows.append({
+                "PRIORITY_RANK": 1 if state == "Unavailable" else 2,
+                "LANE": "Source Health",
+                "STATE": state,
+                "EVIDENCE": f"{surface}; rows={safe_int(item.get('ROWS')):,}; scope={item.get('SCOPE', '')}",
+                "OWNER_OR_ROUTE": "DBA / Platform",
+                "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Reload or refresh this evidence before acting."),
+                "PROOF_REQUIRED": "current source health for active company, environment, lookback, budget, and global filters",
+                "SOURCE": "Source Health",
+            })
+
+    if not rows:
+        rows.append({
+            "PRIORITY_RANK": 8,
+            "LANE": "DBA Control Room",
+            "STATE": "Routine Watch",
+            "EVIDENCE": "No loaded exceptions, open command blockers, closure blockers, or stale evidence surfaces.",
+            "OWNER_OR_ROUTE": "On-call DBA",
+            "NEXT_ACTION": "Keep the fast snapshot current and review Alert Center for new routed issues.",
+            "PROOF_REQUIRED": "fresh Control Room load and current Alert Center review",
+            "SOURCE": "Handoff",
+        })
+
+    return pd.DataFrame(rows).sort_values(
+        ["PRIORITY_RANK", "LANE", "STATE"],
+        ascending=[True, True, True],
+    ).head(max_rows).reset_index(drop=True)
+
+
+def _build_dba_shift_handoff_markdown(
+    handoff_rows: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    lookback_hours: int,
+    source_mode: str,
+) -> str:
+    """Create an email-friendly DBA shift handoff packet."""
+    rows = handoff_rows if handoff_rows is not None and not handoff_rows.empty else _empty_df()
+    lines = [
+        "# OVERWATCH DBA Shift Handoff",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Scope: {company} / {environment}",
+        f"Lookback: {int(lookback_hours)} hours",
+        f"Source mode: {source_mode}",
+        "",
+        "## Work First",
+    ]
+    if rows.empty:
+        lines.append("- No handoff rows were available.")
+    else:
+        for _, row in rows.iterrows():
+            lines.append(
+                f"- [{row.get('STATE', '')}] {row.get('LANE', '')}: {row.get('EVIDENCE', '')}. "
+                f"Owner/route: {row.get('OWNER_OR_ROUTE', '')}. "
+                f"Next: {row.get('NEXT_ACTION', '')}. "
+                f"Proof: {row.get('PROOF_REQUIRED', '')}."
+            )
+    lines.extend([
+        "",
+        "## Closure Standard",
+        "- Do not mark work done unless owner, ticket/change ID, approval, verification result, and recovery evidence are present where applicable.",
+        "- Treat shared warehouse cost attribution as allocated/estimated unless verified against billing or finance evidence.",
+        "- Reload stale evidence after changing company, environment, lookback, budget, or global filters.",
+    ])
+    return "\n".join(lines)
+
+
+def _render_shift_handoff_panel(
+    handoff_rows: pd.DataFrame,
+    handoff_md: str,
+    *,
+    company: str,
+    environment: str,
+) -> None:
+    if handoff_rows is None or handoff_rows.empty:
+        return
+    st.markdown("**DBA Shift Handoff**")
+    h1, h2, h3, h4 = st.columns(4)
+    h1.metric("Handoff Items", f"{len(handoff_rows):,}", delta_color="inverse")
+    h2.metric("Escalate", f"{int((handoff_rows['PRIORITY_RANK'] <= 1).sum()):,}", delta_color="inverse")
+    h3.metric(
+        "Proof Blocks",
+        f"{int(handoff_rows['STATE'].astype(str).str.contains('Blocked|Overdue|Unavailable|Stale', case=False, regex=True).sum()):,}",
+        delta_color="inverse",
+    )
+    h4.metric("Source Issues", f"{int(handoff_rows['SOURCE'].astype(str).eq('Source Health').sum()):,}", delta_color="inverse")
+    render_priority_dataframe(
+        handoff_rows,
+        title="Incoming DBA handoff queue",
+        priority_columns=[
+            "LANE", "STATE", "EVIDENCE", "OWNER_OR_ROUTE",
+            "NEXT_ACTION", "PROOF_REQUIRED", "SOURCE",
+        ],
+        sort_by=["PRIORITY_RANK", "LANE", "STATE"],
+        ascending=[True, True, True],
+        raw_label="All DBA handoff rows",
+        height=300,
+        max_rows=12,
+    )
+    st.download_button(
+        "Download DBA Shift Handoff",
+        handoff_md,
+        file_name=f"overwatch_dba_shift_handoff_{company.lower()}_{environment.lower()}.md",
+        mime="text/markdown",
+        key="dba_shift_handoff_download",
+    )
 
 
 def _render_control_room_source_health(
@@ -2607,6 +2828,36 @@ def render() -> None:
     action_queue = data.get("action_queue", _empty_df())
     command_queue = _build_command_queue(action_queue)
     _render_command_queue_control(command_queue, action_queue)
+    source_health_for_handoff = _dba_control_source_health_rows(
+        data,
+        dict(st.session_state),
+        company,
+        environment,
+        int(lookback_hours),
+        safe_float(cortex_budget_usd),
+        bool(include_deep_evidence),
+        bool(allow_live_fallback),
+    )
+    closure_rollup_for_handoff = _command_queue_closure_readiness(action_queue)
+    handoff_rows = _dba_handoff_rows(
+        exceptions,
+        command_queue,
+        closure_rollup_for_handoff,
+        source_health_for_handoff,
+    )
+    handoff_md = _build_dba_shift_handoff_markdown(
+        handoff_rows,
+        company=company,
+        environment=environment,
+        lookback_hours=int(lookback_hours),
+        source_mode=source_mode,
+    )
+    _render_shift_handoff_panel(
+        handoff_rows,
+        handoff_md,
+        company=company,
+        environment=environment,
+    )
     st.divider()
 
     tab_triage, tab_routes, tab_release, tab_evidence, tab_sources = st.tabs([

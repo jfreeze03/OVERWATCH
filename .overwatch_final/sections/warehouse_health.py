@@ -1023,6 +1023,180 @@ def _warehouse_setting_control_board(
     ).reset_index(drop=True)
 
 
+def _warehouse_frame_sum(frame: pd.DataFrame | None, column: str) -> int:
+    if frame is None or frame.empty or column not in frame.columns:
+        return 0
+    return int(pd.to_numeric(frame[column], errors="coerce").fillna(0).sum())
+
+
+def _warehouse_state_count(frame: pd.DataFrame | None, column: str, states: set[str]) -> int:
+    if frame is None or frame.empty or column not in frame.columns:
+        return 0
+    normalized = {state.upper() for state in states}
+    return int(frame[column].fillna("").astype(str).str.upper().isin(normalized).sum())
+
+
+def _warehouse_operator_next_moves(
+    *,
+    score: int | float,
+    exceptions: pd.DataFrame | None,
+    control_board: pd.DataFrame | None = None,
+    closure: pd.DataFrame | None = None,
+    execution_audit: pd.DataFrame | None = None,
+    operability_fact: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Build a no-query decision gate for the loaded warehouse evidence."""
+    exception_count = 0 if exceptions is None or exceptions.empty else int(len(exceptions))
+    control = pd.DataFrame() if control_board is None else control_board.copy()
+    close = pd.DataFrame() if closure is None else closure.copy()
+    audit = pd.DataFrame() if execution_audit is None else execution_audit.copy()
+    fact = pd.DataFrame() if operability_fact is None else operability_fact.copy()
+    for frame in (control, close, audit, fact):
+        if not frame.empty:
+            frame.columns = [str(col).upper() for col in frame.columns]
+
+    overdue = max(
+        _warehouse_frame_sum(control, "OVERDUE"),
+        _warehouse_frame_sum(close, "OVERDUE_OPEN"),
+        _warehouse_frame_sum(fact, "OVERDUE_OPEN"),
+    )
+    fixed_without_verification = max(
+        _warehouse_frame_sum(control, "FIXED_WITHOUT_VERIFICATION"),
+        _warehouse_frame_sum(close, "FIXED_WITHOUT_VERIFICATION"),
+        _warehouse_frame_sum(fact, "FIXED_WITHOUT_VERIFICATION"),
+    )
+    recovery_risk = max(
+        _warehouse_frame_sum(close, "RECOVERY_RISK_ROWS"),
+        _warehouse_frame_sum(fact, "RECOVERY_RISK_ROWS"),
+    )
+    closure_blockers = max(
+        _warehouse_frame_sum(control, "CLOSURE_BLOCKERS"),
+        _warehouse_frame_sum(close, "CLOSURE_BLOCKER_ROWS"),
+        overdue + fixed_without_verification + recovery_risk,
+    )
+    failed_changes = max(
+        _warehouse_frame_sum(control, "FAILED_CHANGES"),
+        _warehouse_frame_sum(audit, "FAILED_CHANGES"),
+    )
+    audit_rows = max(
+        _warehouse_frame_sum(control, "AUDIT_ROWS"),
+        _warehouse_frame_sum(audit, "AUDIT_ROWS"),
+    )
+    route_blocks = (
+        _warehouse_state_count(control, "CONTROL_STATE", {"Owner Route Blocked", "Pre-Change Blocked"})
+        + _warehouse_state_count(control, "AUDIT_READINESS", {"Owner Route Blocked", "Pre-Change Blocked"})
+        + _warehouse_frame_sum(fact, "APPROVAL_REQUIRED_ROWS")
+        + _warehouse_frame_sum(fact, "ROLLBACK_REQUIRED_ROWS")
+    )
+    pressure_rows = max(
+        exception_count,
+        _warehouse_frame_sum(fact, "QUEUE_PRESSURE_ROWS") + _warehouse_frame_sum(fact, "SPILL_PRESSURE_ROWS"),
+    )
+
+    rows: list[dict] = []
+    if closure_blockers:
+        state = "Blocked"
+        rank = 0
+        next_action = "Escalate overdue or unverified Warehouse Health work before approving more setting changes."
+        count = closure_blockers
+    elif exception_count and close.empty:
+        state = "Load Closure Analytics"
+        rank = 4
+        next_action = "Load closure analytics before closing or declaring capacity actions controlled."
+        count = exception_count
+    else:
+        state = "Clear"
+        rank = 8
+        next_action = "Retain verified closure evidence with the setting review history."
+        count = _warehouse_frame_sum(close, "VERIFIED_CLOSURES") + _warehouse_frame_sum(fact, "VERIFIED_CLOSURES")
+    rows.append({
+        "GATE": "Closure proof",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "owner, ticket/change ID, owner approval, verification result, recovery evidence",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if failed_changes:
+        state = "Failed Execution"
+        rank = 1
+        next_action = "Review failed ALTER WAREHOUSE audit rows and verify rollback or no-op state."
+        count = failed_changes
+    elif exception_count and not audit_rows:
+        state = "Load Execution Audit"
+        rank = 3
+        next_action = "Load execution audit before approving warehouse changes or claiming verified savings."
+        count = exception_count
+    elif audit_rows:
+        state = "Audit Linked"
+        rank = 7
+        next_action = "Confirm SQL hash, executor, rollback SQL, and post-change verification remain attached."
+        count = audit_rows
+    else:
+        state = "No Change Evidence Needed"
+        rank = 9
+        next_action = "No capacity exception currently requires warehouse setting audit evidence."
+        count = 0
+    rows.append({
+        "GATE": "Execution audit",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "SQL hash, executor, approval state, rollback SQL, post-change pressure check",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if route_blocks:
+        state = "Approval Route Blocked"
+        rank = 2
+        next_action = "Complete named owner, approver, ticket, rollback, and savings-verification route before execution."
+        count = route_blocks
+    elif exception_count:
+        state = "Ready for Review"
+        rank = 6
+        next_action = "Save the setting review snapshot, then work only changed settings through DBA Tools."
+        count = exception_count
+    else:
+        state = "Clear"
+        rank = 8
+        next_action = "Keep owner inventory current for future capacity exceptions."
+        count = 0
+    rows.append({
+        "GATE": "Owner approval route",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "named owner, approver, approval group, rollback requirement, savings evidence requirement",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if pressure_rows:
+        if safe_float(score) < 65:
+            state, rank = "High Pressure", 1
+        elif safe_float(score) < 90:
+            state, rank = "Watch Pressure", 5
+        else:
+            state, rank = "Exceptions Present", 6
+        next_action = "Verify queue, spill, latency, and credit pressure before changing warehouse settings."
+        count = pressure_rows
+    else:
+        state = "Clear"
+        rank = 8
+        next_action = "No pressured warehouse crossed the current threshold."
+        count = 0
+    rows.append({
+        "GATE": "Capacity pressure",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "queued queries, spill queries, p95 latency, metered credits, setting candidate",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    return pd.DataFrame(rows).sort_values(["GATE_RANK", "COUNT"], ascending=[True, False]).reset_index(drop=True)
+
+
 def _warehouse_capacity_review_sql(row: pd.Series) -> str:
     candidate = row.get("SETTING_CHANGE_CANDIDATE") or _warehouse_setting_candidate_for(row)["SETTING_CHANGE_CANDIDATE"]
     safe_path = row.get("SAFE_CHANGE_PATH") or _warehouse_setting_candidate_for(row)["SAFE_CHANGE_PATH"]
@@ -2033,11 +2207,43 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                     "approval, rollback, SQL hash, executor, and verification evidence."
                 )
 
+            closure_days_for_board = safe_int(st.session_state.get("wh_action_closure_days", 30)) or 30
+            closure_for_board = st.session_state.get("wh_action_closure")
+            if not _warehouse_meta_matches(
+                st.session_state.get("wh_action_closure_meta"),
+                _warehouse_scope_meta(company, environment, closure_days_for_board),
+            ):
+                closure_for_board = pd.DataFrame()
+            audit_for_board = st.session_state.get("wh_setting_execution_audit")
+            if not _warehouse_meta_matches(
+                st.session_state.get("wh_setting_execution_audit_meta"),
+                _warehouse_scope_meta(company, environment, 30),
+            ):
+                audit_for_board = pd.DataFrame()
+
             control_board = _warehouse_setting_control_board(
                 exceptions,
                 owner_inventory=st.session_state.get("wh_owner_inventory"),
-                closure=st.session_state.get("wh_action_closure"),
-                execution_audit=st.session_state.get("wh_setting_execution_audit"),
+                closure=closure_for_board,
+                execution_audit=audit_for_board,
+            )
+            operator_moves = _warehouse_operator_next_moves(
+                score=score,
+                exceptions=exceptions,
+                control_board=control_board,
+                closure=closure_for_board,
+                execution_audit=audit_for_board,
+                operability_fact=operability_fact,
+            )
+            render_priority_dataframe(
+                operator_moves,
+                title="Warehouse operator next-move gates",
+                priority_columns=["GATE", "STATE", "COUNT", "PROOF_REQUIRED", "NEXT_ACTION"],
+                sort_by=["GATE_RANK", "COUNT"],
+                ascending=[True, False],
+                raw_label="All warehouse operator gates",
+                height=220,
+                max_rows=4,
             )
             if not control_board.empty:
                 render_priority_dataframe(
@@ -2149,7 +2355,11 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                         st.session_state["wh_action_closure"] = pd.DataFrame()
                         st.warning(f"Warehouse closure analytics unavailable: {format_snowflake_error(exc)}")
                 closure = st.session_state.get("wh_action_closure")
-                if closure is not None and not closure.empty:
+                closure_current = _warehouse_meta_matches(
+                    st.session_state.get("wh_action_closure_meta"),
+                    _warehouse_scope_meta(company, environment, closure_days),
+                )
+                if closure is not None and not closure.empty and closure_current:
                     render_priority_dataframe(
                         closure,
                         title="Warehouse closure evidence gaps",
@@ -2168,11 +2378,17 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                     )
                     with st.expander("Warehouse Closure Query", expanded=False):
                         st.code(st.session_state.get("wh_action_closure_sql", ""), language="sql")
+                elif closure is not None and not closure.empty and not closure_current:
+                    st.info("Loaded warehouse closure analytics are stale for the active scope. Reload closure analytics before acting.")
                 elif closure is not None:
                     st.info("No Warehouse Health action-queue rows found for the selected scope.")
             with st.expander("Warehouse Execution Audit Evidence", expanded=False):
                 audit = st.session_state.get("wh_setting_execution_audit")
-                if audit is not None and not audit.empty:
+                audit_current = _warehouse_meta_matches(
+                    st.session_state.get("wh_setting_execution_audit_meta"),
+                    _warehouse_scope_meta(company, environment, 30),
+                )
+                if audit is not None and not audit.empty and audit_current:
                     render_priority_dataframe(
                         audit,
                         title="Warehouse setting execution audit",
@@ -2189,6 +2405,8 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                         raw_label="All warehouse execution audit rows",
                         height=300,
                     )
+                elif audit is not None and not audit.empty and not audit_current:
+                    st.info("Loaded warehouse execution audit is stale for the active scope. Reload execution audit before acting.")
                 elif audit is not None:
                     st.info("No warehouse setting review or ALTER WAREHOUSE audit rows found for the selected scope.")
                 st.caption("Warehouse execution audit query")

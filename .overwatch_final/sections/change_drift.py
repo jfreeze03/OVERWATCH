@@ -733,6 +733,191 @@ def _change_control_readiness_summary(readiness: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def _change_frame_sum(frame: pd.DataFrame | None, column: str) -> int:
+    if frame is None or frame.empty or column not in frame.columns:
+        return 0
+    return int(pd.to_numeric(frame[column], errors="coerce").fillna(0).sum())
+
+
+def _change_operator_next_moves(
+    *,
+    score: int | float,
+    exceptions: pd.DataFrame | None,
+    readiness_summary: pd.DataFrame | None = None,
+    readiness: pd.DataFrame | None = None,
+    closure: pd.DataFrame | None = None,
+    operability_fact: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Build a no-query decision gate for loaded change and drift evidence."""
+    exception_count = 0 if exceptions is None or exceptions.empty else int(len(exceptions))
+    summary = pd.DataFrame() if readiness_summary is None else readiness_summary.copy()
+    detail = pd.DataFrame() if readiness is None else readiness.copy()
+    close = pd.DataFrame() if closure is None else closure.copy()
+    fact = pd.DataFrame() if operability_fact is None else operability_fact.copy()
+    for frame in (summary, detail, close, fact):
+        if not frame.empty:
+            frame.columns = [str(col).upper() for col in frame.columns]
+
+    route_blocked = max(
+        _change_frame_sum(summary, "ROUTE_BLOCKED"),
+        _change_frame_sum(fact, "ROUTE_BLOCKED"),
+    )
+    closure_blocked = max(
+        _change_frame_sum(summary, "CLOSURE_BLOCKED"),
+        _change_frame_sum(fact, "CLOSURE_BLOCKED"),
+    )
+    missing_ticket = max(
+        _change_frame_sum(summary, "MISSING_TICKET_ROWS"),
+        _change_frame_sum(fact, "MISSING_TICKET_ROWS"),
+    )
+    iac_gap = max(
+        _change_frame_sum(summary, "IAC_GAP_ROWS"),
+        _change_frame_sum(fact, "IAC_GAP_ROWS"),
+    )
+    missing_query = max(
+        _change_frame_sum(summary, "MISSING_QUERY_ID_ROWS"),
+        _change_frame_sum(fact, "MISSING_QUERY_ID_ROWS"),
+    )
+    account_scope = max(
+        _change_frame_sum(summary, "ACCOUNT_SCOPE_ROWS"),
+        int((~detail.get("DATABASE_CONTEXT", pd.Series(dtype=bool)).astype(bool)).sum()) if not detail.empty and "DATABASE_CONTEXT" in detail.columns else 0,
+    )
+    high_risk = max(
+        _change_frame_sum(summary, "HIGH_RISK_CHANGES"),
+        _change_frame_sum(fact, "HIGH_RISK_CHANGES"),
+    )
+    overdue = max(
+        _change_frame_sum(close, "OVERDUE_OPEN"),
+        _change_frame_sum(fact, "OVERDUE_OPEN"),
+    )
+    fixed_without_verification = max(
+        _change_frame_sum(close, "FIXED_WITHOUT_VERIFICATION"),
+        _change_frame_sum(fact, "FIXED_WITHOUT_VERIFICATION"),
+    )
+    recovery_risk = max(
+        _change_frame_sum(close, "RECOVERY_RISK_ROWS"),
+        _change_frame_sum(fact, "RECOVERY_RISK_ROWS"),
+    )
+    closure_proof_blocks = max(
+        _change_frame_sum(close, "CLOSURE_BLOCKER_ROWS"),
+        overdue + fixed_without_verification + recovery_risk,
+    )
+    evidence_gaps = closure_blocked + missing_ticket + iac_gap + missing_query
+
+    rows: list[dict] = []
+    if route_blocked:
+        state = "Route Blocked"
+        rank = 0
+        next_action = "Assign named owners and approvers before accepting or queueing the change."
+        count = route_blocked
+    elif exception_count:
+        state = "Route Ready"
+        rank = 6
+        next_action = "Use the readiness rows to confirm owner and approver evidence before closure."
+        count = exception_count
+    else:
+        state = "Clear"
+        rank = 8
+        next_action = "No change route needs owner intervention in the loaded scope."
+        count = 0
+    rows.append({
+        "GATE": "Owner approval route",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "named owner, approver, approval group, owner evidence",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if evidence_gaps:
+        state = "Evidence Blocked"
+        rank = 1
+        next_action = "Attach ticket, source-control/IaC, query_id, and blast-radius proof before closure."
+        count = evidence_gaps
+    elif exception_count:
+        state = "Review Ready"
+        rank = 6
+        next_action = "Save the evidence snapshot, then queue only verified exceptions that still need DBA action."
+        count = exception_count
+    else:
+        state = "Clear"
+        rank = 8
+        next_action = "No ticket, IaC, or query proof gap crossed the current thresholds."
+        count = 0
+    rows.append({
+        "GATE": "Change proof",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "change ticket, query_id, source-control/IaC note, blast-radius evidence",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if closure_proof_blocks:
+        state = "Closure Blocked"
+        rank = 2
+        next_action = "Reopen or hold change actions until verification and recovery evidence is attached."
+        count = closure_proof_blocks
+    elif exception_count and close.empty:
+        state = "Load Closure Analytics"
+        rank = 4
+        next_action = "Load closure analytics before claiming drift or change-control work is complete."
+        count = exception_count
+    else:
+        state = "Clear"
+        rank = 8
+        next_action = "Retain verified closure evidence for audit review."
+        count = _change_frame_sum(close, "VERIFIED_CLOSURES") + _change_frame_sum(fact, "VERIFIED_CLOSURES")
+    rows.append({
+        "GATE": "Closure proof",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "verification result, recovery evidence, ticket closure, owner approval",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if account_scope:
+        state = "Account-Scope Review"
+        rank = 3
+        next_action = "Validate account/role-only changes separately; database environment scope cannot prove ownership alone."
+        count = account_scope
+    else:
+        state = "Database Scoped"
+        rank = 8
+        next_action = "Use the selected environment/database evidence for scoped change review."
+        count = 0
+    rows.append({
+        "GATE": "Scope confidence",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "database context where present; explicit account-level approval where database context is absent",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if high_risk or safe_float(score) < 95:
+        state = "Review Required" if high_risk else "Watch"
+        rank = 5
+        next_action = "Work high-risk destructive, policy, owner, role, and manual drift rows before routine changes."
+        count = high_risk or exception_count
+    else:
+        state = "Controlled"
+        rank = 8
+        next_action = "No high-risk change exceeded the current threshold."
+        count = 0
+    rows.append({
+        "GATE": "Change pressure",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "severity, finding type, user, role, last seen, blast-radius review",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    return pd.DataFrame(rows).sort_values(["GATE_RANK", "COUNT"], ascending=[True, False]).reset_index(drop=True)
+
+
 def _change_drift_score(
     *,
     object_changes: int,
@@ -1940,6 +2125,31 @@ def render() -> None:
             )
             readiness = _build_change_control_readiness(exceptions)
             readiness_summary = _change_control_readiness_summary(readiness)
+            closure_days_for_gate = safe_int(st.session_state.get("change_action_closure_days", 30)) or 30
+            closure_for_gate = st.session_state.get("change_action_closure")
+            if not _change_meta_matches(
+                st.session_state.get("change_action_closure_meta"),
+                _change_scope_meta(company, environment, closure_days_for_gate),
+            ):
+                closure_for_gate = pd.DataFrame()
+            operator_moves = _change_operator_next_moves(
+                score=score,
+                exceptions=exceptions,
+                readiness_summary=readiness_summary,
+                readiness=readiness,
+                closure=closure_for_gate,
+                operability_fact=operability_fact if operability_fact_current else pd.DataFrame(),
+            )
+            render_priority_dataframe(
+                operator_moves,
+                title="Change operator next-move gates",
+                priority_columns=["GATE", "STATE", "COUNT", "PROOF_REQUIRED", "NEXT_ACTION"],
+                sort_by=["GATE_RANK", "COUNT"],
+                ascending=[True, False],
+                raw_label="All change operator gates",
+                height=240,
+                max_rows=5,
+            )
             if not readiness_summary.empty:
                 r1, r2, r3, r4 = st.columns(4)
                 r1.metric("Change Routes", f"{len(readiness_summary):,}")

@@ -140,7 +140,7 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual(by_section["Change & Drift"]["SCORE"], 94.2)
         self.assertEqual(by_section["Change & Drift"]["LABEL"], "Near Target")
         self.assertEqual(by_section["Change & Drift"]["CAP_DRIVERS"], "none")
-        self.assertEqual(by_section["Account Health"]["SCORE"], 94.2)
+        self.assertEqual(by_section["Account Health"]["SCORE"], 94.8)
         self.assertEqual(by_section["Account Health"]["LABEL"], "Near Target")
         self.assertGreaterEqual(max(row["SCORE"] for row in rows), 95)
         self.assertEqual(by_section["DBA Control Room"]["CAP_DRIVERS"], "none")

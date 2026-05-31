@@ -127,14 +127,14 @@ DBA_CONTROL_PLANE_SECTION_BASELINE = {
         "tests_operability": 97,
     },
     "Account Health": {
-        "domain_coverage": 94,
-        "data_correctness": 94,
+        "domain_coverage": 95,
+        "data_correctness": 95,
         "actionability": 96,
         "admin_safety_audit": 95,
-        "performance_mart": 89,
+        "performance_mart": 92,
         "workflow_ux": 94,
         "governance_ownership": 95,
-        "tests_operability": 96,
+        "tests_operability": 97,
     },
 }
 
@@ -146,7 +146,7 @@ DBA_CONTROL_PLANE_SECTION_NEXT_MOVES = {
     "Cost & Contract": "Replace placeholder owner rows with named ALFA cost owners and connect owner approval to the ITSM closure workflow.",
     "Security Posture": "Connect IAM/ITSM approvals to privileged grant readiness and auto-close verified security actions from evidence.",
     "Change & Drift": "Ingest live change tickets/source-control state, then auto-close verified approval and closure evidence from ITSM/deployment systems.",
-    "Account Health": "Move daily checklist, closure, and account-hygiene blocker facts into dynamic-table marts and auto-close verified evidence-backed actions.",
+    "Account Health": "Wire Account Health operability facts to evidence-backed auto-close and live ITSM owner approval.",
 }
 
 

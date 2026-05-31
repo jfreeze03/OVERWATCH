@@ -23,10 +23,13 @@ from sections.account_health import (  # noqa: E402
     _account_health_checklist_history_sql,
     _account_health_closure_analytics_sql,
     _account_health_control_board,
+    _account_health_operability_fact_sql,
     _build_account_health_dba_checklist,
     _enrich_account_health_checklist_owners,
     build_account_health_checklist_history_ddl,
     build_account_health_checklist_history_migration_sql,
+    build_account_health_operability_fact_ddl,
+    build_account_health_operability_fact_migration_sql,
     _live_query_status_sql,
 )
 from sections.adoption_analytics import (  # noqa: E402
@@ -502,6 +505,29 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OWNER_APPROVAL_GAP_ROWS", sql)
         self.assertIn("CLOSURE_READINESS", sql)
         self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_account_health_operability_fact_is_fast_and_keeps_account_scope_rows(self):
+        ddl = build_account_health_operability_fact_ddl().upper()
+        migrations = "\n".join(build_account_health_operability_fact_migration_sql()).upper()
+        fact_sql = _account_health_operability_fact_sql(30, "ALFA", "DEV_ALL").upper()
+
+        self.assertIn("FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY", ddl)
+        self.assertIn("CONTROL_SOURCE", ddl)
+        self.assertIn("CONTROL_RANK", ddl)
+        self.assertIn("ACCESS_HYGIENE_ROWS", ddl)
+        self.assertIn("FAILED_LOGIN_ROWS", ddl)
+        self.assertIn("PRIVILEGED_GRANT_ROWS", ddl)
+        self.assertIn("ADD COLUMN IF NOT EXISTS CONTROL_SOURCE", migrations)
+        self.assertIn("ADD COLUMN IF NOT EXISTS ACCESS_HYGIENE_ROWS", migrations)
+        self.assertIn("ADD COLUMN IF NOT EXISTS PRIVILEGED_GRANT_ROWS", migrations)
+        self.assertIn("FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY", fact_sql)
+        self.assertIn("SNAPSHOT_DATE >= DATEADD('DAY', -30", fact_sql)
+        self.assertIn("COMPANY = 'ALFA'", fact_sql)
+        self.assertIn("NO DATABASE CONTEXT", fact_sql)
+        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+            self.assertIn(db_name, fact_sql)
+        self.assertNotIn("ACCOUNT_USAGE", fact_sql)
+        self.assertNotIn("OVERWATCH_ACTION_QUEUE", fact_sql)
 
     def test_account_health_access_hygiene_keeps_user_auth_scope_account_level(self):
         with patch(

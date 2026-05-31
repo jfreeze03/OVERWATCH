@@ -23,11 +23,12 @@ from utils import (
     build_mart_account_health_top_driver_sql, build_mart_account_health_queued_sql,
     build_mart_account_health_ytd_credits_sql,
     format_snowflake_error, filter_existing_columns, make_action_id, safe_float, safe_identifier, safe_int,
-    sql_literal, upsert_actions, action_queue_environment_clause, resolve_owner_context,
+    sql_literal, upsert_actions, action_queue_environment_clause, resolve_owner_context, mart_object_name,
 )
 from utils.workflows import render_operator_briefing, render_priority_dataframe
 
 CHECKLIST_HISTORY_TABLE = "OVERWATCH_DBA_CHECKLIST_HISTORY"
+ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE = "FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY"
 ACCOUNT_HEALTH_ACTION_SOURCE = "Account Health - Daily DBA Checklist"
 
 
@@ -220,6 +221,10 @@ def account_health_action_queue_fqn(
     return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
 
 
+def account_health_operability_fact_fqn(table: str = ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE) -> str:
+    return mart_object_name(table)
+
+
 def build_account_health_checklist_history_ddl(
     db: str = ALERT_DB,
     schema: str = ALERT_SCHEMA,
@@ -257,6 +262,59 @@ def build_account_health_checklist_history_ddl(
     DETAIL_SOURCE     VARCHAR(500),
     ACTIONABLE        BOOLEAN
 );"""
+
+
+def build_account_health_operability_fact_ddl(table: str = ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE) -> str:
+    fqn = account_health_operability_fact_fqn(table=table)
+    return f"""CREATE TRANSIENT TABLE IF NOT EXISTS {fqn} (
+    SNAPSHOT_DATE                   DATE,
+    COMPANY                         VARCHAR(100),
+    ENVIRONMENT                     VARCHAR(100),
+    CONTROL_SOURCE                  VARCHAR(80),
+    CHECK_NAME                      VARCHAR(200),
+    ROUTE                           VARCHAR(120),
+    SEVERITY                        VARCHAR(40),
+    CONTROL_STATE                   VARCHAR(120),
+    CONTROL_RANK                    NUMBER,
+    HEALTH_SCORE                    FLOAT,
+    ISSUE_ROWS                      NUMBER,
+    ROUTE_BLOCKER_ROWS              NUMBER,
+    QUEUE_REQUIRED_ROWS             NUMBER,
+    ACCESS_HYGIENE_ROWS             NUMBER,
+    FAILED_LOGIN_ROWS               NUMBER,
+    PRIVILEGED_GRANT_ROWS           NUMBER,
+    OPEN_ACTIONS                    NUMBER,
+    OVERDUE_OPEN                    NUMBER,
+    FIXED_WITHOUT_VERIFICATION      NUMBER,
+    VERIFIED_CLOSURES               NUMBER,
+    OWNER_APPROVAL_GAP_ROWS         NUMBER,
+    RECOVERY_RISK_ROWS              NUMBER,
+    NEXT_CONTROL_ACTION             VARCHAR(4000),
+    LAST_ACTIVITY_TS                TIMESTAMP_NTZ,
+    LOAD_TS                         TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);"""
+
+
+def build_account_health_operability_fact_migration_sql(
+    table: str = ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE,
+) -> list[str]:
+    fqn = account_health_operability_fact_fqn(table=table)
+    return [
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_SOURCE VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_STATE VARCHAR(120)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_RANK NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS HEALTH_SCORE FLOAT",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ISSUE_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ROUTE_BLOCKER_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS QUEUE_REQUIRED_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ACCESS_HYGIENE_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS FAILED_LOGIN_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS PRIVILEGED_GRANT_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS OWNER_APPROVAL_GAP_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS RECOVERY_RISK_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LAST_ACTIVITY_TS TIMESTAMP_NTZ",
+    ]
 
 
 def build_account_health_checklist_history_migration_sql(
@@ -1324,6 +1382,55 @@ ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_
 LIMIT 100""".strip()
 
 
+def _account_health_operability_fact_sql(days: int, company: str, environment: str = "ALL") -> str:
+    """Read pre-aggregated Account Health checklist, hygiene, and closure blockers."""
+    table = account_health_operability_fact_fqn()
+    where = [f"SNAPSHOT_DATE >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_DATE())"]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
+    if env_clause:
+        where.append(env_clause)
+    where_clause = " AND ".join(where)
+    return f"""
+SELECT
+    SNAPSHOT_DATE,
+    COMPANY,
+    ENVIRONMENT,
+    CONTROL_SOURCE,
+    CHECK_NAME,
+    ROUTE,
+    SEVERITY,
+    CONTROL_STATE,
+    CONTROL_RANK,
+    HEALTH_SCORE,
+    ISSUE_ROWS,
+    ROUTE_BLOCKER_ROWS,
+    QUEUE_REQUIRED_ROWS,
+    ACCESS_HYGIENE_ROWS,
+    FAILED_LOGIN_ROWS,
+    PRIVILEGED_GRANT_ROWS,
+    OPEN_ACTIONS,
+    OVERDUE_OPEN,
+    FIXED_WITHOUT_VERIFICATION,
+    VERIFIED_CLOSURES,
+    OWNER_APPROVAL_GAP_ROWS,
+    RECOVERY_RISK_ROWS,
+    NEXT_CONTROL_ACTION,
+    LAST_ACTIVITY_TS,
+    LOAD_TS
+FROM {table}
+WHERE {where_clause}
+ORDER BY
+    CONTROL_RANK,
+    OVERDUE_OPEN DESC,
+    FIXED_WITHOUT_VERIFICATION DESC,
+    ROUTE_BLOCKER_ROWS DESC,
+    ISSUE_ROWS DESC,
+    LAST_ACTIVITY_TS DESC
+LIMIT 100""".strip()
+
+
 def _save_account_health_checklist_snapshot(
     session,
     checklist: pd.DataFrame,
@@ -1852,6 +1959,19 @@ def render():
             checklist,
             environment=get_active_environment(),
         )
+        try:
+            operability_sql = _account_health_operability_fact_sql(30, company, get_active_environment())
+            st.session_state["account_health_operability_fact_sql"] = operability_sql
+            st.session_state["account_health_operability_fact"] = run_query(
+                operability_sql,
+                ttl_key=f"account_health_operability_fact_{company}_{get_active_environment()}_30",
+                tier="standard",
+                section="Account Health",
+            )
+            st.session_state.pop("account_health_operability_fact_error", None)
+        except Exception as fact_exc:
+            st.session_state["account_health_operability_fact"] = pd.DataFrame()
+            st.session_state["account_health_operability_fact_error"] = format_snowflake_error(fact_exc)
         render_priority_dataframe(
             checklist,
             title="Daily DBA checklist",
@@ -1868,6 +1988,41 @@ def render():
             height=300,
             max_rows=12,
         )
+        operability_fact = st.session_state.get("account_health_operability_fact")
+        if operability_fact is not None and not operability_fact.empty:
+            st.subheader("Account Health Operability Mart")
+            f1, f2, f3, f4 = st.columns(4)
+            blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
+                "Blocked|Overdue|Required|Review", case=False, na=False
+            )
+            f1.metric("Fact Rows", f"{len(operability_fact):,}")
+            f2.metric("Blocked / Review", f"{int(blocked_states.sum()):,}", delta_color="inverse")
+            f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+            f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+            render_priority_dataframe(
+                operability_fact,
+                title="Pre-aggregated Account Health blockers",
+                priority_columns=[
+                    "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "CHECK_NAME",
+                    "ROUTE", "SEVERITY", "ENVIRONMENT", "HEALTH_SCORE", "ISSUE_ROWS",
+                    "ROUTE_BLOCKER_ROWS", "QUEUE_REQUIRED_ROWS", "ACCESS_HYGIENE_ROWS",
+                    "FAILED_LOGIN_ROWS", "PRIVILEGED_GRANT_ROWS", "OPEN_ACTIONS",
+                    "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "VERIFIED_CLOSURES",
+                    "OWNER_APPROVAL_GAP_ROWS", "RECOVERY_RISK_ROWS", "NEXT_CONTROL_ACTION",
+                ],
+                sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "ISSUE_ROWS"],
+                ascending=[True, False, False, False],
+                raw_label="All Account Health operability facts",
+                height=320,
+                max_rows=12,
+            )
+            with st.expander("Account Health operability fact query", expanded=False):
+                st.code(st.session_state.get("account_health_operability_fact_sql", ""), language="sql")
+        elif st.session_state.get("account_health_operability_fact_error"):
+            st.caption(
+                "Account Health operability mart not available yet; deploy or refresh "
+                "`FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY` to enable the fast blocker surface."
+            )
         account_control_board = _account_health_control_board(
             checklist,
             closure=st.session_state.get("account_health_closure_analytics"),

@@ -105,17 +105,31 @@ def show_loaded_time(key: str):
 
 # ── Cache + session clearing ───────────────────────────────────────────────────
 
-def clear_all_cache():
+_METADATA_CACHE_PREFIXES = (
+    "_overwatch_available_columns",
+    "_overwatch_unavailable_column_views",
+    "_overwatch_column_probe",
+    "_overwatch_qh_detail_exprs",
+)
+
+
+def clear_all_cache(
+    *,
+    clear_streamlit_cache: bool = True,
+    clear_metadata: bool = True,
+):
     """
     Clear all OVERWATCH cached data from session state.
     Preserves settings, navigation, company scope, and operator modes while
     resetting the session TTL clock.
+
+    Routine filter/metric changes should pass clear_streamlit_cache=False so
+    scoped st.cache_data entries can be reused when their query context still
+    matches. The top-level Refresh button keeps the default hard purge.
     """
     transient_prefixes = (
         "_data_", "_ts_", "df_", "_refresh_salt_", "_sec_",
         "_overwatch_query_", "alert_center_", "cortex_", "cost_contract_", "cc_", "ah_", "cm_", "ds_", "dba_",
-        "_overwatch_available_columns", "_overwatch_unavailable_column_views",
-        "_overwatch_column_probe", "_overwatch_qh_detail_exprs",
         "lm_", "mc_", "ocm_", "opt_", "qa_", "qs_", "rec_", "sec_", "spcs_",
         "stor_", "spt_", "sp_ops_", "sp_sla_", "tm_", "task_ops_", "task_sla_",
         "pipe_", "qw_", "sf_value_",
@@ -127,6 +141,8 @@ def clear_all_cache():
         "security_posture_exceptions", "security_posture_meta",
         "security_posture_proof_sql",
     )
+    if clear_metadata:
+        transient_prefixes = transient_prefixes + _METADATA_CACHE_PREFIXES
     keys_to_remove = [
         k for k in list(st.session_state.keys())
         if k not in PRESERVE_STATE_EXACT
@@ -140,10 +156,11 @@ def clear_all_cache():
     # without paying for an immediate SELECT 1 check.
     st.session_state.pop("_sf_session_created_at", None)
 
-    try:
-        st.cache_data.clear()
-    except Exception:
-        pass
+    if clear_streamlit_cache:
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
 
 
 # ── Query drill-down ───────────────────────────────────────────────────────────
@@ -158,9 +175,12 @@ def render_query_drilldown(
         return
 
     st.subheader(title)
+    grid_df = df.head(1000)
+    if len(df) > len(grid_df):
+        st.caption(f"Showing the first {len(grid_df):,} rows for fast selection. Narrow filters to inspect deeper rows.")
     try:
         event = st.dataframe(
-            df,
+            grid_df,
             use_container_width=True,
             height=380,
             selection_mode="single-row",
@@ -169,19 +189,20 @@ def render_query_drilldown(
         )
         selected_rows = event.selection.rows
     except Exception:
-        st.dataframe(df, use_container_width=True, height=380)
+        st.dataframe(grid_df, use_container_width=True, height=380)
         selected_qid = st.selectbox(
             "Select query_id",
-            df["QUERY_ID"].astype(str).tolist(),
+            grid_df["QUERY_ID"].astype(str).tolist(),
             key=f"{key}_fallback_select",
         )
-        selected_rows = df.index[df["QUERY_ID"].astype(str) == selected_qid].tolist()[:1]
+        query_ids = grid_df["QUERY_ID"].astype(str).tolist()
+        selected_rows = [query_ids.index(selected_qid)] if selected_qid in query_ids else []
 
     if not selected_rows:
         st.caption("Select a row to open the drill-down panel.")
         return
 
-    row = df.iloc[selected_rows[0]]
+    row = grid_df.iloc[selected_rows[0]]
     qid = str(row.get("QUERY_ID", ""))
 
     with st.expander(f"Details for `{qid}`", expanded=True):

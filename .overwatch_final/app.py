@@ -382,14 +382,21 @@ with st.sidebar:
     # Saved views / bookmarks.
     with st.expander("Saved Views", expanded=False):
         _session = st.session_state.get("sf_session")
-        if not _session and st.button(
-            "Load Saved Views",
+        saved_views_loaded = bool(st.session_state.get("_overwatch_saved_views_loaded"))
+        bookmarks = st.session_state.get("_overwatch_saved_views_cache", [])
+        if st.button(
+            "Refresh Saved Views" if saved_views_loaded else "Load Saved Views",
             key="bm_load_saved_views",
             use_container_width=True,
             disabled=not connection_available,
         ):
             try:
                 _session = get_session()
+                bookmarks = load_bookmarks(_session)
+                st.session_state["_overwatch_saved_views_cache"] = bookmarks
+                st.session_state["_overwatch_saved_views_loaded"] = True
+                st.session_state["_overwatch_saved_views_loaded_at"] = datetime.now().strftime("%H:%M:%S")
+                saved_views_loaded = True
                 st.session_state.pop("_overwatch_connection_unavailable", None)
             except StopException:
                 _session = None
@@ -398,12 +405,15 @@ with st.sidebar:
                 _session = None
                 st.session_state["_overwatch_connection_unavailable"] = True
                 st.caption(f"Saved views unavailable until Snowflake is connected. {format_snowflake_error(e)}")
-        bookmarks = load_bookmarks(_session) if _session else []
 
-        if not _session:
-            st.caption("Saved views load on demand after Snowflake is connected.")
+        if not saved_views_loaded:
+            st.caption("Saved views are skipped during normal reruns. Load them only when you need to jump or manage views.")
         elif bookmarks:
-            st.caption("Click a bookmark to jump directly to that view.")
+            loaded_at = st.session_state.get("_overwatch_saved_views_loaded_at", "")
+            if loaded_at:
+                st.caption(f"Loaded at {loaded_at}. Click a bookmark to jump directly to that view.")
+            else:
+                st.caption("Click a bookmark to jump directly to that view.")
             for bm in bookmarks:
                 shared_badge = " Shared" if bm["shared"] else ""
                 uses_badge   = f" - {bm['uses']}x" if bm["uses"] else ""
@@ -415,12 +425,18 @@ with st.sidebar:
                         help=f"Section: {bm['section']}\nCreated: {bm['created']}",
                         use_container_width=True,
                     ):
+                        if not _session:
+                            _session = get_session()
                         apply_bookmark(_session, bm)  # calls st.rerun()
                 with col_del:
                     if st.button("Delete", key=f"bm_del_{bm['id']}", help="Delete bookmark"):
+                        if not _session:
+                            _session = get_session()
                         if delete_bookmark(_session, bm["id"]):
+                            st.session_state.pop("_overwatch_saved_views_cache", None)
+                            st.session_state["_overwatch_saved_views_loaded"] = False
                             st.rerun()
-        elif _session:
+        elif saved_views_loaded:
             st.caption("No saved views yet.")
 
         st.divider()
@@ -435,10 +451,17 @@ with st.sidebar:
         bm_shared = st.checkbox("Share with all users", key="bm_shared_toggle")
         if st.button("Save View", key="bm_save_btn", disabled=not new_bm_name):
             if not _session:
+                try:
+                    _session = get_session()
+                except Exception:
+                    _session = None
+            if not _session:
                 st.warning("Connect Snowflake before saving views.")
             elif save_bookmark(_session, new_bm_name, bm_shared):
                 st.success(f"Saved '{new_bm_name}'")
                 st.session_state.pop("bm_name_input", None)
+                st.session_state.pop("_overwatch_saved_views_cache", None)
+                st.session_state["_overwatch_saved_views_loaded"] = False
                 st.rerun()
 
         if _session:
@@ -486,7 +509,7 @@ with st.sidebar:
         if previous_filter_signature is None:
             st.session_state["_prev_global_filter_signature"] = current_filter_signature
         elif previous_filter_signature != current_filter_signature:
-            clear_all_cache()
+            clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
             st.session_state["_prev_global_filter_signature"] = current_filter_signature
 
         if st.button("Clear Global Filters", key="global_filters_clear"):
@@ -496,7 +519,7 @@ with st.sidebar:
                 "_global_date_range_input",
             ]:
                 st.session_state.pop(_k, None)
-            clear_all_cache()
+            clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
             st.rerun()
 
     st.divider()
@@ -529,7 +552,7 @@ with st.sidebar:
         if previous_metric_signature is None:
             st.session_state["_prev_metric_settings_signature"] = current_metric_signature
         elif previous_metric_signature != current_metric_signature:
-            clear_all_cache()
+            clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
             st.session_state["_prev_metric_settings_signature"] = current_metric_signature
 
         st.selectbox(

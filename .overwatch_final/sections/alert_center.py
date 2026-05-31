@@ -61,9 +61,13 @@ def _load_center_data(session, company: str, environment: str, days: int, limit:
         "action_queue": pd.DataFrame(),
         "issues": pd.DataFrame(),
         "delivery_log": pd.DataFrame(),
+        "rules": pd.DataFrame(),
+        "rule_audit": pd.DataFrame(),
         "alerts_error": "",
         "queue_error": "",
         "delivery_error": "",
+        "rule_error": "",
+        "rule_audit_error": "",
         "loaded_at": datetime.now().isoformat(timespec="seconds"),
     }
     try:
@@ -85,6 +89,14 @@ def _load_center_data(session, company: str, environment: str, days: int, limit:
         data["delivery_log"] = load_alert_delivery_log(days=max(days, 14), limit=100, section="Alert Center")
     except Exception as exc:
         data["delivery_error"] = format_snowflake_error(exc)
+    try:
+        data["rules"] = load_alert_rule_catalog(section="Alert Center")
+    except Exception as exc:
+        data["rule_error"] = format_snowflake_error(exc)
+    try:
+        data["rule_audit"] = load_alert_rule_audit(section="Alert Center", limit=50)
+    except Exception as exc:
+        data["rule_audit_error"] = format_snowflake_error(exc)
     data["issues"] = build_dashboard_issue_rows(
         alerts=data["alerts"] if isinstance(data["alerts"], pd.DataFrame) else pd.DataFrame(),
         queue=data["action_queue"] if isinstance(data["action_queue"], pd.DataFrame) else pd.DataFrame(),
@@ -237,6 +249,220 @@ def _filtered_issues(issues: pd.DataFrame) -> pd.DataFrame:
     return visible
 
 
+def _alert_center_operability_rows(
+    data: dict,
+    *,
+    company: str,
+    environment: str,
+    days: int,
+    limit: int,
+    loaded_scope: tuple | None = None,
+) -> pd.DataFrame:
+    """Build a fast Alert Center control-health table from already-loaded data."""
+
+    alerts = data.get("alerts") if isinstance(data.get("alerts"), pd.DataFrame) else pd.DataFrame()
+    queue = data.get("action_queue") if isinstance(data.get("action_queue"), pd.DataFrame) else pd.DataFrame()
+    delivery_log = data.get("delivery_log") if isinstance(data.get("delivery_log"), pd.DataFrame) else pd.DataFrame()
+    rules = data.get("rules") if isinstance(data.get("rules"), pd.DataFrame) else pd.DataFrame()
+    issues = data.get("issues") if isinstance(data.get("issues"), pd.DataFrame) else pd.DataFrame()
+
+    rows: list[dict] = []
+
+    def add(control: str, state: str, severity: str, evidence: str, next_action: str, owner: str = "DBA") -> None:
+        rows.append({
+            "CONTROL": control,
+            "STATE": state,
+            "SEVERITY": severity,
+            "EVIDENCE": evidence,
+            "NEXT_ACTION": next_action,
+            "OWNER": owner,
+            "SCOPE": f"{company} / {environment} / {int(days)}d / {int(limit)} rows",
+        })
+
+    expected_scope = (company, environment, int(days), int(limit))
+    if loaded_scope and loaded_scope != expected_scope:
+        add(
+            "Loaded scope freshness",
+            "Scope Stale",
+            "High",
+            f"Loaded {loaded_scope}; current filter is {expected_scope}.",
+            "Reload Alert Center before triage, routing, or delivery logging.",
+        )
+    else:
+        add(
+            "Loaded scope freshness",
+            "Ready",
+            "Low",
+            f"Loaded scope matches current filters: {expected_scope}.",
+            "Continue triage from the loaded evidence.",
+        )
+
+    alert_error = str(data.get("alerts_error") or "")
+    if alert_error:
+        add(
+            "Alert history source",
+            "Needs Setup",
+            "High",
+            alert_error,
+            "Deploy alert table, triage view, and hourly task from Setup SQL.",
+        )
+    elif alerts.empty:
+        add(
+            "Alert history source",
+            "No Rows",
+            "Low",
+            "Alert source loaded successfully but returned zero rows.",
+            "If issues are expected, validate the hourly alert task and source grants.",
+        )
+    else:
+        open_mask = _open_alert_mask(alerts)
+        overdue = int((alerts.get("SLA_STATE", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str).eq("Overdue") & open_mask).sum())
+        add(
+            "Alert history source",
+            "Ready",
+            "Low" if overdue == 0 else "High",
+            f"{len(alerts):,} alert row(s), {int(open_mask.sum()):,} open, {overdue:,} overdue.",
+            "Work overdue rows first, then route confirmed alerts to the action queue.",
+        )
+
+    queue_error = str(data.get("queue_error") or "")
+    if queue_error:
+        add(
+            "Action queue source",
+            "Degraded",
+            "Medium",
+            queue_error,
+            "Deploy or grant action queue access before relying on alert-to-action routing.",
+        )
+    elif queue.empty:
+        add(
+            "Action queue source",
+            "No Rows",
+            "Low",
+            "Action queue source loaded successfully with no rows.",
+            "Route confirmed open alerts when work needs owner, ticket, and proof tracking.",
+        )
+    else:
+        open_queue = 0
+        if "STATUS" in queue.columns:
+            open_queue_mask = ~queue["STATUS"].fillna("New").astype(str).str.title().isin(["Fixed", "Ignored"])
+            open_queue = int(open_queue_mask.sum())
+        add(
+            "Action queue source",
+            "Ready",
+            "Low",
+            f"{len(queue):,} queue row(s) loaded; open count is {open_queue:,}.",
+            "Use queue rows to verify owner, due date, ticket, and closure evidence.",
+        )
+
+    delivery_error = str(data.get("delivery_error") or "")
+    if delivery_error:
+        add(
+            "Delivery audit source",
+            "Needs Setup",
+            "Medium",
+            delivery_error,
+            "Deploy OVERWATCH_ALERT_DELIVERY_LOG before logging digest/email evidence.",
+        )
+    elif delivery_log.empty:
+        add(
+            "Delivery audit source",
+            "No Rows",
+            "Low",
+            "Delivery audit table loaded but has no recent rows.",
+            "Log the next digest delivery so escalations have audit evidence.",
+        )
+    else:
+        add(
+            "Delivery audit source",
+            "Ready",
+            "Low",
+            f"{len(delivery_log):,} delivery audit row(s) loaded.",
+            "Use delivery audit rows to prove who was notified and when.",
+        )
+
+    if rules.empty:
+        add(
+            "Rule catalog source",
+            "Needs Setup",
+            "Medium",
+            str(data.get("rule_error") or "No alert rules were loaded."),
+            "Deploy OVERWATCH_ALERT_RULES so DBA-owned severity, SLA, route, and runbook edits are persisted.",
+        )
+    else:
+        source = rules.get("RULE_SOURCE", pd.Series(index=rules.index, dtype=str)).fillna("").astype(str)
+        configured = int(source.eq("Database").sum())
+        fallback = int(len(rules) - configured)
+        state = "Ready" if configured else "Fallback"
+        add(
+            "Rule catalog source",
+            state,
+            "Low" if configured else "Medium",
+            f"{configured:,} database rule(s), {fallback:,} built-in fallback rule(s).",
+            "Persist rules in Snowflake before production ownership/SLA changes.",
+        )
+
+    email_targets = pd.Series(dtype=str)
+    if not alerts.empty and "EMAIL_TARGET" in alerts.columns:
+        email_targets = alerts["EMAIL_TARGET"].fillna("").astype(str).str.strip()
+    missing_email = int(email_targets.eq("").sum()) if len(email_targets) else 0
+    ready_email = int(alerts.get("DELIVERY_STATUS", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str).str.upper().str.contains("EMAIL_READY").sum()) if not alerts.empty else 0
+    add(
+        "Email route",
+        "Ready" if missing_email == 0 else "Review",
+        "Low" if missing_email == 0 else "Medium",
+        f"Default recipient {DEFAULT_ALERT_EMAIL}; {ready_email:,} email-ready alert(s); {missing_email:,} missing target(s).",
+        "Keep email-first delivery until the approved Snowflake notification integration is available.",
+    )
+
+    generic_owners = {"", "DBA", "OVERWATCH"}
+    if alerts.empty or "OWNER" not in alerts.columns:
+        generic_count = 0
+    else:
+        open_mask = _open_alert_mask(alerts)
+        generic_count = int(alerts.loc[open_mask, "OWNER"].fillna("").astype(str).str.upper().isin(generic_owners).sum())
+    add(
+        "Owner route",
+        "Ready" if generic_count == 0 else "Review",
+        "Low" if generic_count == 0 else "Medium",
+        f"{generic_count:,} open alert(s) still have generic or missing owner.",
+        "Use owner directory routing before escalating high-severity alerts.",
+    )
+
+    add(
+        "Unified issue inbox",
+        "Ready" if not issues.empty else "No Rows",
+        "Low",
+        f"{len(issues):,} consolidated issue row(s) from alert history and action queue.",
+        "Use the unified inbox as the front door for active DBA issues.",
+    )
+
+    order = {"High": 0, "Medium": 1, "Low": 2}
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    result["_SORT"] = result["SEVERITY"].map(order).fillna(9)
+    return result.sort_values(["_SORT", "CONTROL"]).drop(columns=["_SORT"]).reset_index(drop=True)
+
+
+def _alert_center_readiness_score(rows: pd.DataFrame) -> int:
+    if rows is None or rows.empty:
+        return 0
+    penalty = 0
+    for _, row in rows.iterrows():
+        state = str(row.get("STATE") or "").upper()
+        severity = str(row.get("SEVERITY") or "").upper()
+        if state in {"READY", "NO ROWS"}:
+            continue
+        if severity == "HIGH":
+            penalty += 18
+        elif severity == "MEDIUM":
+            penalty += 10
+        else:
+            penalty += 4
+    return max(0, min(100, 100 - penalty))
+
+
 def render() -> None:
     session = get_session()
     company = get_active_company()
@@ -279,12 +505,18 @@ def render() -> None:
     queue = data.get("action_queue") if isinstance(data.get("action_queue"), pd.DataFrame) else pd.DataFrame()
     issues = data.get("issues") if isinstance(data.get("issues"), pd.DataFrame) else pd.DataFrame()
     delivery_log = data.get("delivery_log") if isinstance(data.get("delivery_log"), pd.DataFrame) else pd.DataFrame()
+    rules = data.get("rules") if isinstance(data.get("rules"), pd.DataFrame) else pd.DataFrame()
+    rule_audit = data.get("rule_audit") if isinstance(data.get("rule_audit"), pd.DataFrame) else pd.DataFrame()
     if data.get("alerts_error"):
         st.info(f"Alert history unavailable. Deploy the alert table/task setup SQL first. {data['alerts_error']}")
     if data.get("queue_error"):
         st.caption(f"Action queue unavailable for this role/context: {data['queue_error']}")
     if data.get("delivery_error"):
         st.caption(f"Delivery audit unavailable until setup SQL is deployed: {data['delivery_error']}")
+    if data.get("rule_error"):
+        st.caption(f"Alert rule catalog unavailable until setup SQL is deployed: {data['rule_error']}")
+    if data.get("rule_audit_error"):
+        st.caption(f"Alert rule audit unavailable until setup SQL is deployed: {data['rule_audit_error']}")
     st.caption(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {DEFAULT_ALERT_EMAIL}.")
 
     open_alerts = _open_alert_mask(alerts)
@@ -313,7 +545,18 @@ def render() -> None:
     m6.metric("Delivery Logged", f"{int(email_logged.sum()) if len(email_logged) else 0:,}")
     m7.metric("Open Queue", f"{int(open_queue.sum()) if len(open_queue) else 0:,}")
 
-    tab_issues, tab_digest, tab_alerts, tab_email, tab_queue, tab_rules, tab_annotations, tab_setup = st.tabs([
+    readiness_rows = _alert_center_operability_rows(
+        data,
+        company=company,
+        environment=environment,
+        days=int(days),
+        limit=int(limit),
+        loaded_scope=loaded_scope,
+    )
+    readiness_score = _alert_center_readiness_score(readiness_rows)
+
+    tab_health, tab_issues, tab_digest, tab_alerts, tab_email, tab_queue, tab_rules, tab_annotations, tab_setup = st.tabs([
+        "Control Health",
         "Issue Inbox",
         "Triage Digest",
         "Alert History",
@@ -323,6 +566,29 @@ def render() -> None:
         "Suppression Windows",
         "Setup SQL",
     ])
+
+    with tab_health:
+        st.subheader("Alert Control Health")
+        st.caption("Uses only the data loaded by the explicit Alert Center refresh. No hidden tab scans are required to review source readiness.")
+        h1, h2, h3, h4 = st.columns(4)
+        blocked = int(readiness_rows["STATE"].isin(["Needs Setup", "Degraded", "Scope Stale"]).sum()) if not readiness_rows.empty else 0
+        review = int(readiness_rows["STATE"].eq("Review").sum()) if not readiness_rows.empty else 0
+        ready = int(readiness_rows["STATE"].isin(["Ready", "No Rows"]).sum()) if not readiness_rows.empty else 0
+        h1.metric("Readiness", f"{readiness_score}/100")
+        h2.metric("Ready Controls", f"{ready:,}")
+        h3.metric("Needs Review", f"{review:,}", delta_color="inverse")
+        h4.metric("Blocked / Setup", f"{blocked:,}", delta_color="inverse")
+        render_priority_dataframe(
+            readiness_rows,
+            title="Alert source and delivery readiness",
+            priority_columns=[
+                "SEVERITY", "CONTROL", "STATE", "EVIDENCE", "NEXT_ACTION", "OWNER", "SCOPE",
+            ],
+            sort_by=["SEVERITY", "CONTROL"],
+            ascending=[True, True],
+            raw_label="All alert control-health rows",
+            height=360,
+        )
 
     with tab_issues:
         st.subheader("All Active DBA Issues")
@@ -614,7 +880,6 @@ def render() -> None:
 
     with tab_rules:
         st.subheader("Alert Rules And SLAs")
-        rules = load_alert_rule_catalog(section="Alert Center")
         render_priority_dataframe(
             rules,
             title="Active alert rules",
@@ -628,7 +893,6 @@ def render() -> None:
             raw_label="All alert rules",
             height=320,
         )
-        rule_audit = load_alert_rule_audit(section="Alert Center", limit=50)
         if not rule_audit.empty:
             render_priority_dataframe(
                 rule_audit,

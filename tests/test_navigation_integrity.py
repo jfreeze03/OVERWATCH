@@ -141,12 +141,17 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_global_filter_and_metric_changes_clear_loaded_state(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
+        query_text = (APP_ROOT / "utils" / "query.py").read_text(encoding="utf-8")
         state_keys_text = (APP_ROOT / "utils" / "state_keys.py").read_text(encoding="utf-8")
         self.assertIn("def _global_filter_signature", app_text)
         self.assertIn("def _metric_settings_signature", app_text)
         self.assertIn("previous_filter_signature != current_filter_signature", app_text)
         self.assertIn("previous_metric_signature != current_metric_signature", app_text)
         self.assertIn("clear_all_cache()", app_text)
+        self.assertIn("clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)", app_text)
+        self.assertIn('st.session_state.get("global_environment"', query_text)
+        self.assertIn('st.session_state.get("_overwatch_current_role"', query_text)
+        self.assertIn("_query_tag", query_text)
         for prefix in (
             '"task_ops_"',
             '"task_sla_"',
@@ -164,6 +169,20 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertIn(prefix, display_text)
         self.assertIn('"_prev_global_filter_signature"', state_keys_text)
         self.assertIn('"_prev_metric_settings_signature"', state_keys_text)
+
+    def test_sidebar_saved_views_are_explicit_load_only(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertIn("_overwatch_saved_views_loaded", app_text)
+        self.assertIn("_overwatch_saved_views_cache", app_text)
+        self.assertIn("Saved views are skipped during normal reruns", app_text)
+        self.assertNotIn("bookmarks = load_bookmarks(_session) if _session else []", app_text)
+
+    def test_priority_tables_defer_full_raw_detail_rendering(self):
+        workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
+        display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
+        self.assertIn("Full detail rendering is deferred", workflows_text)
+        self.assertIn('st.button("Render full detail"', workflows_text)
+        self.assertIn("grid_df = df.head(1000)", display_text)
 
 
 if __name__ == "__main__":

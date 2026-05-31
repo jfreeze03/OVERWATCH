@@ -1,7 +1,9 @@
 # utils/workflows.py - helpers for DBA workflow hub navigation
 from __future__ import annotations
 
+import hashlib
 import html
+import inspect
 from collections.abc import Mapping, Sequence
 
 import streamlit as st
@@ -194,10 +196,24 @@ def render_priority_dataframe(
     st.dataframe(view.head(max_rows), **dataframe_kwargs)
     if len(df) > max_rows:
         with st.expander(f"{raw_label} ({len(df):,} rows)", expanded=False):
-            raw_kwargs = {"use_container_width": True, "hide_index": True}
-            if column_config:
-                raw_kwargs["column_config"] = column_config
-            st.dataframe(df, **raw_kwargs)
+            st.caption(
+                "Full detail rendering is deferred to keep page navigation fast. "
+                "Load it only when you need raw row-level evidence."
+            )
+            frame = inspect.currentframe()
+            caller = frame.f_back if frame is not None else None
+            key_basis = "|".join([
+                str(getattr(getattr(caller, "f_code", None), "co_filename", "")),
+                str(getattr(caller, "f_lineno", "")),
+                str(title),
+                str(raw_label),
+            ])
+            button_key = f"ow_raw_detail_{hashlib.sha1(key_basis.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
+            if st.button("Render full detail", key=button_key):
+                raw_kwargs = {"use_container_width": True, "hide_index": True}
+                if column_config:
+                    raw_kwargs["column_config"] = column_config
+                st.dataframe(df, **raw_kwargs)
 
 
 def render_signal_confidence(

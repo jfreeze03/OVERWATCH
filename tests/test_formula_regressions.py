@@ -40,6 +40,10 @@ from sections.adoption_analytics import (  # noqa: E402
     _load_adoption_live,
     _metric as adoption_metric,
 )
+from sections.alert_center import (  # noqa: E402
+    _alert_center_operability_rows,
+    _alert_center_readiness_score,
+)
 from sections.cost_center import (  # noqa: E402
     _bill_driver_summary,
     _build_bill_waterfall,
@@ -4425,6 +4429,88 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Escalate first", body)
         self.assertEqual(candidates.iloc[0]["ALERT_ID"], 20)
         self.assertIn("SLA_STATE", candidates.columns)
+
+    def test_alert_center_operability_rows_flag_source_health_and_scope(self):
+        alerts = pd.DataFrame([
+            {
+                "ALERT_ID": 501,
+                "ALERT_TS": "2026-05-31 09:00:00",
+                "CATEGORY": "Reliability",
+                "ALERT_TYPE": "Task Failure",
+                "SEVERITY": "High",
+                "STATUS": "New",
+                "SLA_STATE": "Overdue",
+                "OWNER": "DBA",
+                "DELIVERY_STATUS": "EMAIL_READY",
+                "EMAIL_TARGET": "",
+            }
+        ])
+        queue = pd.DataFrame([
+            {"STATUS": "New", "CATEGORY": "Reliability", "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD"},
+            {"STATUS": "Fixed", "CATEGORY": "Capacity", "ENTITY_NAME": "WH_ALFA_LOAD"},
+        ])
+        rules = alert_rule_catalog()
+        data = {
+            "alerts": alerts,
+            "action_queue": queue,
+            "delivery_log": pd.DataFrame(),
+            "rules": rules,
+            "issues": pd.DataFrame([{"ISSUE_SOURCE": "Alert History", "SEVERITY": "High"}]),
+            "delivery_error": "OVERWATCH_ALERT_DELIVERY_LOG missing",
+        }
+
+        rows = _alert_center_operability_rows(
+            data,
+            company="ALFA",
+            environment="PROD",
+            days=7,
+            limit=200,
+            loaded_scope=("ALFA", "DEV_ALL", 7, 200),
+        )
+        by_control = {row["CONTROL"]: row for _, row in rows.iterrows()}
+
+        self.assertEqual(by_control["Loaded scope freshness"]["STATE"], "Scope Stale")
+        self.assertEqual(by_control["Alert history source"]["STATE"], "Ready")
+        self.assertIn("1 open", by_control["Alert history source"]["EVIDENCE"])
+        self.assertEqual(by_control["Delivery audit source"]["STATE"], "Needs Setup")
+        self.assertEqual(by_control["Rule catalog source"]["STATE"], "Fallback")
+        self.assertEqual(by_control["Email route"]["STATE"], "Review")
+        self.assertEqual(by_control["Owner route"]["STATE"], "Review")
+        self.assertLess(_alert_center_readiness_score(rows), 100)
+
+    def test_alert_center_operability_rows_score_ready_controls(self):
+        data = {
+            "alerts": pd.DataFrame(),
+            "action_queue": pd.DataFrame(),
+            "delivery_log": pd.DataFrame([{"DELIVERY_TS": "2026-05-31 09:00:00"}]),
+            "rules": normalize_alert_rule_frame(pd.DataFrame([{
+                "RULE_ID": "TASK_FAILURE",
+                "CATEGORY": "Reliability",
+                "ALERT_TYPE": "Task Failure",
+                "DEFAULT_SEVERITY": "High",
+                "SLA_HOURS": 8,
+                "OWNER": "Pipeline Owner",
+                "ROUTE": "Workload Operations",
+                "RUNBOOK": "Review task graph evidence and route to owner.",
+                "IS_ACTIVE": True,
+            }]), source="Database"),
+            "issues": pd.DataFrame(),
+        }
+
+        rows = _alert_center_operability_rows(
+            data,
+            company="ALFA",
+            environment="PROD",
+            days=7,
+            limit=200,
+            loaded_scope=("ALFA", "PROD", 7, 200),
+        )
+
+        self.assertEqual(_alert_center_readiness_score(rows), 100)
+        self.assertEqual(
+            rows.loc[rows["CONTROL"] == "Rule catalog source", "STATE"].iloc[0],
+            "Ready",
+        )
 
     def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")

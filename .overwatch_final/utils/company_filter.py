@@ -44,23 +44,41 @@ def get_environment_cfg(environment: str = None) -> dict:
 
 # ── Cache invalidation ────────────────────────────────────────────────────────
 
-def invalidate_company_cache():
+_METADATA_CACHE_PREFIXES = (
+    "_overwatch_available_columns",
+    "_overwatch_unavailable_column_views",
+    "_overwatch_column_probe",
+    "_overwatch_qh_detail_exprs",
+)
+
+
+def invalidate_company_cache(
+    *,
+    clear_streamlit_cache: bool = False,
+    clear_metadata: bool = False,
+):
     """
     Clear all section data from session_state when the company filter changes.
     Without this, stale Trexis data lingers in ALFA view (and vice versa).
     Preserves settings, theme, navigation, and global filters.
+
+    The query cache already includes active company in its context, so normal
+    company switches only drop loaded panel state. A hard refresh can still
+    purge st.cache_data through utils.display.clear_all_cache().
     """
     keys_to_drop = [
         k for k in list(st.session_state.keys())
         if k not in PRESERVE_STATE_EXACT
         and not any(k.startswith(p) for p in PRESERVE_STATE_PREFIXES)
+        and (clear_metadata or not any(k.startswith(p) for p in _METADATA_CACHE_PREFIXES))
     ]
     for k in keys_to_drop:
         del st.session_state[k]
-    try:
-        st.cache_data.clear()
-    except Exception:
-        pass
+    if clear_streamlit_cache:
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
 
 
 # ── WHERE clause builders ─────────────────────────────────────────────────────

@@ -372,41 +372,43 @@ def _cache_context() -> str:
         str(st.session_state.get("global_user", "")),
         str(st.session_state.get("global_role", "")),
         str(st.session_state.get("global_database", "")),
+        str(st.session_state.get("global_environment", "")),
         str(st.session_state.get("exceptions_only_mode", "")),
+        str(st.session_state.get("_overwatch_current_role", "")),
     ])
 
 
 @st.cache_data(ttl=CACHE_TIERS["live"], show_spinner=False)
-def _cached_live(query_text: str, cache_context: str = "", cache_salt: str = "", query_tag: str = "") -> pd.DataFrame:
+def _cached_live(query_text: str, cache_context: str = "", cache_salt: str = "", _query_tag: str = "") -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, query_tag)
+        return _execute_snowflake_query(query_text, _query_tag)
     except Exception as e:
         _show_query_warning("Live data unavailable", e)
         return pd.DataFrame()
 
 
 @st.cache_data(ttl=CACHE_TIERS["recent"], show_spinner=False)
-def _cached_recent(query_text: str, cache_context: str = "", cache_salt: str = "", query_tag: str = "") -> pd.DataFrame:
+def _cached_recent(query_text: str, cache_context: str = "", cache_salt: str = "", _query_tag: str = "") -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, query_tag)
+        return _execute_snowflake_query(query_text, _query_tag)
     except Exception as e:
         _show_query_warning("Data unavailable", e)
         return pd.DataFrame()
 
 
 @st.cache_data(ttl=CACHE_TIERS["historical"], show_spinner=False)
-def _cached_historical(query_text: str, cache_context: str = "", cache_salt: str = "", query_tag: str = "") -> pd.DataFrame:
+def _cached_historical(query_text: str, cache_context: str = "", cache_salt: str = "", _query_tag: str = "") -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, query_tag)
+        return _execute_snowflake_query(query_text, _query_tag)
     except Exception as e:
         _show_query_warning("Historical data unavailable", e)
         return pd.DataFrame()
 
 
 @st.cache_data(ttl=CACHE_TIERS["metadata"], show_spinner=False)
-def _cached_metadata(query_text: str, cache_context: str = "", cache_salt: str = "", query_tag: str = "") -> pd.DataFrame:
+def _cached_metadata(query_text: str, cache_context: str = "", cache_salt: str = "", _query_tag: str = "") -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, query_tag)
+        return _execute_snowflake_query(query_text, _query_tag)
     except Exception as e:
         _show_query_warning("Metadata unavailable", e)
         return pd.DataFrame()
@@ -414,10 +416,10 @@ def _cached_metadata(query_text: str, cache_context: str = "", cache_salt: str =
 
 # Backward-compatible 5-min cache — for callers that don't pass tier=
 @st.cache_data(ttl=CACHE_TIERS["recent"], show_spinner=False)
-def run_query_cached(query_text: str, cache_context: str = "", cache_salt: str = "", query_tag: str = "") -> pd.DataFrame:
+def run_query_cached(query_text: str, cache_context: str = "", cache_salt: str = "", _query_tag: str = "") -> pd.DataFrame:
     """Backward-compatible runner. Prefer run_query(tier=...) for new code."""
     try:
-        return _execute_snowflake_query(query_text, query_tag)
+        return _execute_snowflake_query(query_text, _query_tag)
     except Exception as e:
         _show_query_warning("Data unavailable", e)
         return pd.DataFrame()

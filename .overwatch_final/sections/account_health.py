@@ -241,10 +241,45 @@ def build_account_health_checklist_history_ddl(
     ROUTE             VARCHAR(120),
     NEXT_ACTION       VARCHAR(4000),
     PROOF_REQUIRED    VARCHAR(2000),
+    ENVIRONMENT_SCOPE VARCHAR(100),
+    DATABASE_CONTEXT  VARCHAR(80),
+    SCOPE_CONFIDENCE  VARCHAR(160),
+    SCOPE_EVIDENCE    VARCHAR(2000),
+    APPROVAL_REQUIRED VARCHAR(20),
+    QUEUE_READINESS   VARCHAR(80),
+    QUEUE_BLOCKERS    VARCHAR(2000),
+    VERIFICATION_QUERY VARCHAR(8000),
+    RECOVERY_SLA_TARGET_HOURS FLOAT,
+    CONTROL_READINESS VARCHAR(100),
+    CONTROL_BLOCKERS  VARCHAR(2000),
+    NEXT_CONTROL_ACTION VARCHAR(4000),
     HEALTH_SCORE      FLOAT,
     DETAIL_SOURCE     VARCHAR(500),
     ACTIONABLE        BOOLEAN
 );"""
+
+
+def build_account_health_checklist_history_migration_sql(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHECKLIST_HISTORY_TABLE,
+) -> list[str]:
+    """Return additive migrations for existing Daily DBA Checklist history tables."""
+    fqn = account_health_checklist_history_fqn(db=db, schema=schema, table=table)
+    return [
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ENVIRONMENT_SCOPE VARCHAR(100)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS DATABASE_CONTEXT VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS SCOPE_CONFIDENCE VARCHAR(160)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS SCOPE_EVIDENCE VARCHAR(2000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS APPROVAL_REQUIRED VARCHAR(20)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS QUEUE_READINESS VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS QUEUE_BLOCKERS VARCHAR(2000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS VERIFICATION_QUERY VARCHAR(8000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS RECOVERY_SLA_TARGET_HOURS FLOAT",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_READINESS VARCHAR(100)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_BLOCKERS VARCHAR(2000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
+    ]
 
 
 def _account_health_owner_entity_type(check: object, route: object = "") -> str:
@@ -467,6 +502,20 @@ def _build_account_health_dba_checklist(
 def _account_health_verification_sql(check: object, evidence: object = "") -> str:
     """Build a read-only source query for a daily DBA checklist action."""
     name = str(check or "").lower()
+    if "refresh source confidence" in name:
+        usage_fqn = f"{safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.OVERWATCH_USAGE_LOG"
+        return f"""
+SELECT
+    LOG_TIME,
+    COMPANY_VIEW,
+    SECTION,
+    EVENT_TYPE,
+    QUERY_DURATION_MS,
+    QUERY_HASH
+FROM {usage_fqn}
+WHERE SECTION = 'Account Health'
+ORDER BY LOG_TIME DESC
+LIMIT 50""".strip()
     if "query failure" in name:
         return """
 SELECT
@@ -669,7 +718,11 @@ def _account_health_readiness_for_row(row: pd.Series | dict) -> dict:
         blockers.append("approver or approval group")
     if not proof:
         blockers.append("proof requirement")
-    if not verification or "SNOWFLAKE.ACCOUNT_USAGE" not in verification.upper():
+    verification_upper = verification.upper()
+    if not verification or not any(
+        token in verification_upper
+        for token in ("SNOWFLAKE.ACCOUNT_USAGE", "INFORMATION_SCHEMA", "OVERWATCH")
+    ):
         blockers.append("source verification SQL")
     if not scope_confidence:
         blockers.append("scope confidence")
@@ -703,6 +756,158 @@ def _annotate_account_health_checklist_readiness(
     for column in ["APPROVAL_REQUIRED", "RECOVERY_SLA_TARGET_HOURS", "VERIFICATION_QUERY", "QUEUE_READINESS", "QUEUE_BLOCKERS"]:
         view[column] = readiness_rows.apply(lambda item, col=column: item.get(col, ""))
     return view
+
+
+def _account_health_control_board(
+    checklist: pd.DataFrame,
+    closure: pd.DataFrame | None = None,
+    access_hygiene: pd.DataFrame | None = None,
+    trend: pd.DataFrame | None = None,
+    environment: str = "ALL",
+) -> pd.DataFrame:
+    """Combine checklist, account hygiene, history, and closure blockers into one DBA operating board."""
+    if checklist is None or checklist.empty:
+        base = pd.DataFrame()
+    else:
+        base = _annotate_account_health_checklist_readiness(checklist, environment=environment)
+
+    closure_view = pd.DataFrame() if closure is None else closure.copy()
+    if not closure_view.empty:
+        closure_view.columns = [str(col).upper() for col in closure_view.columns]
+    trend_view = pd.DataFrame() if trend is None else trend.copy()
+    if not trend_view.empty:
+        trend_view.columns = [str(col).upper() for col in trend_view.columns]
+
+    closure_by_check = {
+        str(row.get("CHECK_NAME") or "").upper(): row
+        for _, row in closure_view.iterrows()
+    } if not closure_view.empty else {}
+    trend_by_check = {
+        str(row.get("CHECK_NAME") or "").upper(): row
+        for _, row in trend_view.iterrows()
+    } if not trend_view.empty else {}
+
+    rows: list[dict] = []
+    if not base.empty:
+        actionable_checks = set(_account_health_actionable_checklist(base).get("CHECK", pd.Series(dtype=str)).astype(str))
+        for _, row in base.iterrows():
+            check = str(row.get("CHECK") or "")
+            check_key = check.upper()
+            close = closure_by_check.get(check_key, {})
+            trend_row = trend_by_check.get(check_key, {})
+            status = str(row.get("STATUS") or "")
+            queue_readiness = str(row.get("QUEUE_READINESS") or "")
+            queue_blockers = str(row.get("QUEUE_BLOCKERS") or "")
+            open_actions = safe_int(close.get("OPEN_ACTIONS", 0))
+            overdue = safe_int(close.get("OVERDUE_OPEN", 0))
+            fixed_without_verification = safe_int(close.get("FIXED_WITHOUT_VERIFICATION", 0))
+            recovery_risk = safe_int(close.get("RECOVERY_RISK_ROWS", 0))
+            verified = safe_int(close.get("VERIFIED_CLOSURES", 0))
+            issue_snapshots = safe_int(trend_row.get("ISSUE_SNAPSHOTS", 0))
+            closure_rank = safe_int(close.get("CLOSURE_RANK", 9))
+
+            if overdue:
+                state, rank = "Closure Overdue", 0
+                next_action = "Escalate owner and due date before accepting the checklist control."
+            elif fixed_without_verification or recovery_risk or closure_rank in {1, 2}:
+                state, rank = "Closure Evidence Blocked", 1
+                next_action = str(close.get("NEXT_ACTION") or "Attach verification and recovery evidence before closure.")
+            elif queue_readiness != "Ready to Queue":
+                state, rank = "Route Metadata Blocked", 2
+                next_action = f"Complete checklist route metadata: {queue_blockers or 'owner, approval, or proof evidence'}."
+            elif check in actionable_checks and open_actions == 0:
+                state, rank = "Queue Required", 3
+                next_action = "Save this checklist issue to the action queue with proof and owner approval context."
+            elif open_actions > 0:
+                state, rank = "Work Open Action", 4
+                next_action = str(close.get("NEXT_ACTION") or row.get("NEXT_ACTION") or "Work open checklist action.")
+            elif issue_snapshots > 1:
+                state, rank = "Recurring Watch", 6
+                next_action = "Review repeated checklist snapshots and create a durable control if the issue recurs."
+            elif verified:
+                state, rank = "Verified Closure", 8
+                next_action = "Retain verified closure evidence for audit trend review."
+            else:
+                state, rank = "Controlled", 9
+                next_action = str(row.get("NEXT_ACTION") or "No action needed for this snapshot.")
+
+            rows.append({
+                "CONTROL_STATE": state,
+                "CONTROL_RANK": rank,
+                "CHECK_NAME": check,
+                "STATUS": status,
+                "SEVERITY": row.get("SEVERITY", ""),
+                "ROUTE": row.get("ROUTE", ""),
+                "OWNER": row.get("OWNER", ""),
+                "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
+                "ENVIRONMENT_SCOPE": row.get("ENVIRONMENT_SCOPE", ""),
+                "DATABASE_CONTEXT": row.get("DATABASE_CONTEXT", ""),
+                "SCOPE_CONFIDENCE": row.get("SCOPE_CONFIDENCE", ""),
+                "QUEUE_READINESS": queue_readiness,
+                "QUEUE_BLOCKERS": queue_blockers,
+                "APPROVAL_REQUIRED": row.get("APPROVAL_REQUIRED", ""),
+                "RECOVERY_SLA_TARGET_HOURS": safe_float(row.get("RECOVERY_SLA_TARGET_HOURS")),
+                "OPEN_ACTIONS": open_actions,
+                "OVERDUE_OPEN": overdue,
+                "FIXED_WITHOUT_VERIFICATION": fixed_without_verification,
+                "RECOVERY_RISK_ROWS": recovery_risk,
+                "VERIFIED_CLOSURES": verified,
+                "ISSUE_SNAPSHOTS": issue_snapshots,
+                "PROOF_REQUIRED": row.get("PROOF_REQUIRED", ""),
+                "NEXT_CONTROL_ACTION": next_action,
+            })
+
+    hygiene = pd.DataFrame() if access_hygiene is None else access_hygiene.copy()
+    if not hygiene.empty:
+        hygiene = _annotate_account_health_access_hygiene(hygiene)
+        severity = hygiene.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+        high = int(severity.eq("HIGH").sum())
+        medium = int(severity.eq("MEDIUM").sum())
+        queue_blocks = int((hygiene.get("QUEUE_READINESS", pd.Series(dtype=str)).astype(str) != "Ready to Queue").sum())
+        approval_blocks = int((hygiene.get("APPROVAL_REQUIRED", pd.Series(dtype=str)).astype(str) == "Yes").sum())
+        if queue_blocks:
+            state, rank = "Access Route Blocked", 1
+            next_action = "Complete owner, approval, and proof metadata for account-level access hygiene rows."
+        elif high:
+            state, rank = "High-Risk Access Review", 2
+            next_action = "Queue high-risk admin, MFA, stale, or failed-login user hygiene items for Security/DBA review."
+        else:
+            state, rank = "Access Hygiene Watch", 6
+            next_action = "Review medium-risk account hygiene rows and retain account-level evidence."
+        rows.append({
+            "CONTROL_STATE": state,
+            "CONTROL_RANK": rank,
+            "CHECK_NAME": "Account access hygiene",
+            "STATUS": "Needs DBA",
+            "SEVERITY": "High" if high else "Medium",
+            "ROUTE": "Security Posture",
+            "OWNER": "DBA / Security",
+            "ESCALATION_TARGET": "Security Lead",
+            "ENVIRONMENT_SCOPE": "No Database Context",
+            "DATABASE_CONTEXT": "No",
+            "SCOPE_CONFIDENCE": "Account-Level Control",
+            "QUEUE_READINESS": "Needs Routing Data" if queue_blocks else "Ready to Queue",
+            "QUEUE_BLOCKERS": f"{queue_blocks:,} route blocker row(s)" if queue_blocks else "None",
+            "APPROVAL_REQUIRED": "Yes" if approval_blocks else "No",
+            "RECOVERY_SLA_TARGET_HOURS": 24 if high else 72,
+            "OPEN_ACTIONS": 0,
+            "OVERDUE_OPEN": 0,
+            "FIXED_WITHOUT_VERIFICATION": 0,
+            "RECOVERY_RISK_ROWS": 0,
+            "VERIFIED_CLOSURES": 0,
+            "ISSUE_SNAPSHOTS": 0,
+            "PROOF_REQUIRED": "user, IAM ticket, admin-role/MFA evidence, owner approval",
+            "NEXT_CONTROL_ACTION": (
+                f"{len(hygiene):,} user hygiene row(s): {high:,} high, {medium:,} medium. {next_action}"
+            ),
+        })
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values(
+        ["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS", "SEVERITY", "CHECK_NAME"],
+        ascending=[True, False, False, False, True, True],
+    ).reset_index(drop=True)
 
 
 def _account_health_access_hygiene_sql(session, days: int, company: str, environment: str = "ALL") -> str:
@@ -906,11 +1111,18 @@ def _account_health_checklist_history_insert_sql(
         company,
         f"{env_value}|{datetime.now().strftime('%Y%m%d%H%M%S')}",
     )
+    checklist = _annotate_account_health_checklist_readiness(checklist, environment=env_value)
+    control_board = _account_health_control_board(checklist, environment=env_value)
+    control_by_check = {
+        str(row.get("CHECK_NAME") or "").upper(): row
+        for _, row in control_board.iterrows()
+    } if not control_board.empty else {}
     selects = []
     actionable = _account_health_actionable_checklist(checklist)
     actionable_checks = set(actionable.get("CHECK", pd.Series(dtype=str)).astype(str).tolist())
     for _, row in checklist.head(100).iterrows():
         check = str(row.get("CHECK") or "")
+        control = control_by_check.get(check.upper(), {})
         selects.append(
             "SELECT "
             f"{sql_literal(snap, 64)} AS SNAPSHOT_ID, "
@@ -927,6 +1139,18 @@ def _account_health_checklist_history_insert_sql(
             f"{sql_literal(row.get('ROUTE', ''), 120)} AS ROUTE, "
             f"{sql_literal(row.get('NEXT_ACTION', ''), 4000)} AS NEXT_ACTION, "
             f"{sql_literal(row.get('PROOF_REQUIRED', ''), 2000)} AS PROOF_REQUIRED, "
+            f"{sql_literal(row.get('ENVIRONMENT_SCOPE', ''), 100)} AS ENVIRONMENT_SCOPE, "
+            f"{sql_literal(row.get('DATABASE_CONTEXT', ''), 80)} AS DATABASE_CONTEXT, "
+            f"{sql_literal(row.get('SCOPE_CONFIDENCE', ''), 160)} AS SCOPE_CONFIDENCE, "
+            f"{sql_literal(row.get('SCOPE_EVIDENCE', ''), 2000)} AS SCOPE_EVIDENCE, "
+            f"{sql_literal(row.get('APPROVAL_REQUIRED', ''), 20)} AS APPROVAL_REQUIRED, "
+            f"{sql_literal(row.get('QUEUE_READINESS', ''), 80)} AS QUEUE_READINESS, "
+            f"{sql_literal(row.get('QUEUE_BLOCKERS', ''), 2000)} AS QUEUE_BLOCKERS, "
+            f"{sql_literal(row.get('VERIFICATION_QUERY', ''), 8000)} AS VERIFICATION_QUERY, "
+            f"{safe_float(row.get('RECOVERY_SLA_TARGET_HOURS'))}::FLOAT AS RECOVERY_SLA_TARGET_HOURS, "
+            f"{sql_literal(control.get('CONTROL_STATE', ''), 100)} AS CONTROL_READINESS, "
+            f"{sql_literal(row.get('QUEUE_BLOCKERS', ''), 2000)} AS CONTROL_BLOCKERS, "
+            f"{sql_literal(control.get('NEXT_CONTROL_ACTION', row.get('NEXT_ACTION', '')), 4000)} AS NEXT_CONTROL_ACTION, "
             f"{safe_float(health_score)}::FLOAT AS HEALTH_SCORE, "
             f"{sql_literal(detail_source, 500)} AS DETAIL_SOURCE, "
             f"{'TRUE' if check in actionable_checks else 'FALSE'} AS ACTIONABLE"
@@ -935,7 +1159,11 @@ def _account_health_checklist_history_insert_sql(
 INSERT INTO {fqn} (
     SNAPSHOT_ID, SNAPSHOT_TS, COMPANY, ENVIRONMENT, CHECK_NAME, STATUS,
     SEVERITY, EVIDENCE, OWNER, ESCALATION_TARGET, OWNER_SOURCE, ROUTE,
-    NEXT_ACTION, PROOF_REQUIRED, HEALTH_SCORE, DETAIL_SOURCE, ACTIONABLE
+    NEXT_ACTION, PROOF_REQUIRED, ENVIRONMENT_SCOPE, DATABASE_CONTEXT,
+    SCOPE_CONFIDENCE, SCOPE_EVIDENCE, APPROVAL_REQUIRED, QUEUE_READINESS,
+    QUEUE_BLOCKERS, VERIFICATION_QUERY, RECOVERY_SLA_TARGET_HOURS,
+    CONTROL_READINESS, CONTROL_BLOCKERS, NEXT_CONTROL_ACTION, HEALTH_SCORE,
+    DETAIL_SOURCE, ACTIONABLE
 )
 {" UNION ALL ".join(selects)}""".strip()
 
@@ -960,11 +1188,18 @@ SELECT
     MAX_BY(OWNER, SNAPSHOT_TS) AS OWNER,
     MAX_BY(ESCALATION_TARGET, SNAPSHOT_TS) AS ESCALATION_TARGET,
     MAX_BY(ROUTE, SNAPSHOT_TS) AS ROUTE,
+    MAX_BY(QUEUE_READINESS, SNAPSHOT_TS) AS QUEUE_READINESS,
+    MAX_BY(QUEUE_BLOCKERS, SNAPSHOT_TS) AS QUEUE_BLOCKERS,
+    MAX_BY(SCOPE_CONFIDENCE, SNAPSHOT_TS) AS SCOPE_CONFIDENCE,
+    MAX_BY(CONTROL_READINESS, SNAPSHOT_TS) AS CONTROL_READINESS,
+    MAX_BY(NEXT_CONTROL_ACTION, SNAPSHOT_TS) AS NEXT_CONTROL_ACTION,
+    COUNT_IF(QUEUE_READINESS <> 'Ready to Queue') AS ROUTE_BLOCKER_SNAPSHOTS,
+    COUNT_IF(CONTROL_READINESS IN ('Closure Overdue', 'Closure Evidence Blocked', 'Route Metadata Blocked', 'Queue Required')) AS CONTROL_BLOCKER_SNAPSHOTS,
     ROUND(AVG(HEALTH_SCORE), 1) AS AVG_HEALTH_SCORE
 FROM {fqn}
 WHERE {where_clause}
 GROUP BY CHECK_NAME
-ORDER BY ISSUE_SNAPSHOTS DESC, LAST_SNAPSHOT_TS DESC, CHECK_NAME
+ORDER BY CONTROL_BLOCKER_SNAPSHOTS DESC, ISSUE_SNAPSHOTS DESC, LAST_SNAPSHOT_TS DESC, CHECK_NAME
 LIMIT 100""".strip()
 
 
@@ -1100,6 +1335,8 @@ def _save_account_health_checklist_snapshot(
 ) -> None:
     try:
         session.sql(build_account_health_checklist_history_ddl()).collect()
+        for migration_sql in build_account_health_checklist_history_migration_sql():
+            session.sql(migration_sql).collect()
         session.sql(_account_health_checklist_history_insert_sql(
             checklist,
             company=company,
@@ -1631,6 +1868,30 @@ def render():
             height=300,
             max_rows=12,
         )
+        account_control_board = _account_health_control_board(
+            checklist,
+            closure=st.session_state.get("account_health_closure_analytics"),
+            access_hygiene=st.session_state.get("account_health_access_hygiene"),
+            trend=st.session_state.get("account_health_checklist_trend"),
+            environment=get_active_environment(),
+        )
+        if not account_control_board.empty:
+            render_priority_dataframe(
+                account_control_board,
+                title="Account Health control board",
+                priority_columns=[
+                    "CONTROL_STATE", "CHECK_NAME", "STATUS", "SEVERITY", "ROUTE",
+                    "OWNER", "ENVIRONMENT_SCOPE", "DATABASE_CONTEXT", "SCOPE_CONFIDENCE",
+                    "QUEUE_READINESS", "QUEUE_BLOCKERS", "OPEN_ACTIONS", "OVERDUE_OPEN",
+                    "FIXED_WITHOUT_VERIFICATION", "RECOVERY_RISK_ROWS", "VERIFIED_CLOSURES",
+                    "ISSUE_SNAPSHOTS", "RECOVERY_SLA_TARGET_HOURS", "NEXT_CONTROL_ACTION",
+                ],
+                sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS"],
+                ascending=[True, False, False, False],
+                raw_label="All Account Health control rows",
+                height=320,
+                max_rows=12,
+            )
         actionable_checklist = _account_health_actionable_checklist(checklist)
         q1, q2, q3 = st.columns([1, 1, 3])
         with q1:
@@ -1700,6 +1961,8 @@ def render():
                     priority_columns=[
                         "CHECK_NAME", "ISSUE_SNAPSHOTS", "SNAPSHOT_ROWS", "LAST_STATUS",
                         "LAST_SEVERITY", "OWNER", "ESCALATION_TARGET", "ROUTE", "AVG_HEALTH_SCORE",
+                        "QUEUE_READINESS", "QUEUE_BLOCKERS", "SCOPE_CONFIDENCE",
+                        "CONTROL_READINESS", "CONTROL_BLOCKER_SNAPSHOTS", "NEXT_CONTROL_ACTION",
                     ],
                     sort_by=["ISSUE_SNAPSHOTS", "LAST_SNAPSHOT_TS"],
                     ascending=[False, False],

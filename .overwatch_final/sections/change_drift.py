@@ -61,6 +61,7 @@ WORKFLOW_DETAILS = {
 }
 
 CHANGE_CONTROL_EVIDENCE_TABLE = "OVERWATCH_CHANGE_CONTROL_EVIDENCE"
+CHANGE_CONTROL_OPERABILITY_FACT_TABLE = "FACT_CHANGE_CONTROL_OPERABILITY_DAILY"
 CHANGE_TICKET_PATTERN = re.compile(
     r"\b(?:CHG|CHANGE|INC|REQ|RFC|JIRA)[-_]?\d+\b|\b[A-Z][A-Z0-9]+-\d+\b",
     re.IGNORECASE,
@@ -108,11 +109,89 @@ def build_change_control_evidence_ddl(
     APPROVAL_REQUIRED        VARCHAR(20),
     TICKET_REQUIRED          VARCHAR(20),
     BLAST_RADIUS_REQUIRED    VARCHAR(20),
+    APPROVAL_ROUTE_READY     VARCHAR(20),
+    CHANGE_EVIDENCE_READINESS VARCHAR(80),
+    EVIDENCE_BLOCKERS        VARCHAR(2000),
+    REVIEW_SLA_HOURS         NUMBER,
+    NEXT_CONTROL_ACTION      VARCHAR(4000),
     PROOF_REQUIRED           VARCHAR(2000),
     VERIFICATION_QUERY       VARCHAR(8000),
     BLAST_RADIUS_QUERY       VARCHAR(8000),
     SOURCE                   VARCHAR(500)
 );"""
+
+
+def build_change_control_evidence_migration_sql(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHANGE_CONTROL_EVIDENCE_TABLE,
+) -> list[str]:
+    """Return additive migrations for previously deployed evidence tables."""
+    fqn = change_control_evidence_fqn(db=db, schema=schema, table=table)
+    return [
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS APPROVAL_ROUTE_READY VARCHAR(20)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CHANGE_EVIDENCE_READINESS VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS EVIDENCE_BLOCKERS VARCHAR(2000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_SLA_HOURS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
+    ]
+
+
+def change_control_operability_fact_fqn(table: str = CHANGE_CONTROL_OPERABILITY_FACT_TABLE) -> str:
+    return mart_object_name(table)
+
+
+def build_change_control_operability_fact_ddl(table: str = CHANGE_CONTROL_OPERABILITY_FACT_TABLE) -> str:
+    fqn = change_control_operability_fact_fqn(table=table)
+    return f"""CREATE TRANSIENT TABLE IF NOT EXISTS {fqn} (
+    SNAPSHOT_DATE              DATE,
+    COMPANY                    VARCHAR(100),
+    ENVIRONMENT                VARCHAR(100),
+    CONTROL_SOURCE             VARCHAR(80),
+    CONTROL_KEY                VARCHAR(500),
+    FINDING_TYPE               VARCHAR(120),
+    ENTITY                     VARCHAR(500),
+    OWNER                      VARCHAR(200),
+    ESCALATION_TARGET          VARCHAR(200),
+    SEVERITY                   VARCHAR(40),
+    EVIDENCE_ROWS              NUMBER,
+    HIGH_RISK_CHANGES          NUMBER,
+    ROUTE_BLOCKED              NUMBER,
+    CLOSURE_BLOCKED            NUMBER,
+    REVIEW_READY               NUMBER,
+    MISSING_TICKET_ROWS        NUMBER,
+    IAC_GAP_ROWS               NUMBER,
+    MISSING_QUERY_ID_ROWS      NUMBER,
+    OPEN_ACTIONS               NUMBER,
+    OVERDUE_OPEN               NUMBER,
+    FIXED_WITHOUT_VERIFICATION NUMBER,
+    VERIFIED_CLOSURES          NUMBER,
+    OWNER_APPROVAL_GAP_ROWS    NUMBER,
+    CONTROL_STATE              VARCHAR(120),
+    CONTROL_RANK               NUMBER,
+    NEXT_CONTROL_ACTION        VARCHAR(4000),
+    LAST_ACTIVITY_TS           TIMESTAMP_NTZ,
+    LOAD_TS                    TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);"""
+
+
+def build_change_control_operability_fact_migration_sql(
+    table: str = CHANGE_CONTROL_OPERABILITY_FACT_TABLE,
+) -> list[str]:
+    fqn = change_control_operability_fact_fqn(table=table)
+    return [
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_SOURCE VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_KEY VARCHAR(500)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS HIGH_RISK_CHANGES NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ROUTE_BLOCKED NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CLOSURE_BLOCKED NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_READY NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS OWNER_APPROVAL_GAP_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_STATE VARCHAR(120)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_RANK NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LAST_ACTIVITY_TS TIMESTAMP_NTZ",
+    ]
 
 
 def _change_ticket_id(row: pd.Series | dict) -> str:
@@ -249,6 +328,71 @@ def _change_execution_audit_state(row: pd.Series | dict) -> str:
     return "Missing query_id proof"
 
 
+def _change_review_sla_hours(severity: object, finding_type: object) -> int:
+    severity_text = str(severity or "").upper()
+    finding = str(finding_type or "").lower()
+    if severity_text == "CRITICAL" or "destructive" in finding or "policy" in finding or "owner" in finding:
+        return 24
+    if severity_text == "HIGH":
+        return 24
+    if severity_text == "MEDIUM" or "grant" in finding or "role" in finding:
+        return 72
+    return 168
+
+
+def _change_control_readiness_for_row(row: pd.Series | dict) -> dict:
+    owner = str(row.get("OWNER") or "").strip()
+    owner_source = str(row.get("OWNER_SOURCE") or "")
+    approver = str(row.get("APPROVER") or row.get("APPROVAL_GROUP") or "").strip()
+    severity = str(row.get("SEVERITY") or "").upper()
+    ticket_state = str(row.get("CHANGE_TICKET_STATE") or "")
+    iac_state = str(row.get("IAC_RECONCILIATION_STATE") or "")
+    execution_state = str(row.get("EXECUTION_AUDIT_STATE") or "")
+    approval_required = str(row.get("APPROVAL_REQUIRED") or "Yes").upper() == "YES" or severity in {"CRITICAL", "HIGH", "MEDIUM"}
+
+    blockers = []
+    generic_owners = {"", "DBA", "UNKNOWN", "N/A", "DBA CHANGE OWNER", "SECURITY OWNER"}
+    owner_route_ready = bool(owner) and owner.upper() not in generic_owners and "OWNER_DIRECTORY" in owner_source.upper()
+    if not owner_route_ready:
+        blockers.append("owner directory evidence")
+    if approval_required and not approver:
+        blockers.append("approver")
+    if ticket_state.lower().startswith("missing"):
+        blockers.append("change ticket evidence")
+    if "required" in iac_state.lower() or "reconcile" in iac_state.lower():
+        blockers.append("source-control/IaC evidence")
+    if execution_state.lower().startswith("missing"):
+        blockers.append("query_id proof")
+
+    route_blockers = {"owner directory evidence", "approver"}
+    closure_blockers = [item for item in blockers if item not in route_blockers]
+    if any(item in route_blockers for item in blockers):
+        readiness = "Route Blocked"
+    elif closure_blockers:
+        readiness = "Closure Blocked"
+    else:
+        readiness = "Review Ready"
+
+    if "change ticket evidence" in blockers:
+        next_action = "Attach the approved change ticket or mark the row as unauthorized drift before closure."
+    elif "source-control/IaC evidence" in blockers:
+        next_action = "Attach deployment/source-control evidence, codify the drift, or revert through approved deployment."
+    elif "query_id proof" in blockers:
+        next_action = "Capture the Snowflake query_id and timestamp before accepting the change."
+    elif readiness == "Route Blocked":
+        next_action = "Assign a named owner and approver before queueing or closing the change."
+    else:
+        next_action = "Review blast radius, retain approval proof, and close only after verification evidence is attached."
+
+    return {
+        "APPROVAL_ROUTE_READY": "Yes" if owner_route_ready and (not approval_required or bool(approver)) else "No",
+        "CHANGE_EVIDENCE_READINESS": readiness,
+        "EVIDENCE_BLOCKERS": "; ".join(blockers) if blockers else "None",
+        "REVIEW_SLA_HOURS": _change_review_sla_hours(severity, row.get("FINDING_TYPE")),
+        "NEXT_CONTROL_ACTION": next_action,
+    }
+
+
 def _enrich_change_control_evidence(readiness: pd.DataFrame) -> pd.DataFrame:
     if readiness is None or readiness.empty:
         return readiness
@@ -287,7 +431,92 @@ def _enrich_change_control_evidence(readiness: pd.DataFrame) -> pd.DataFrame:
     view.loc[missing_ticket, "CONTROL_GAP"] = "Missing change ticket evidence"
     view.loc[missing_iac, "CONTROL_GAP"] = "Missing IaC reconciliation evidence"
     view.loc[missing_query, "CONTROL_GAP"] = "Missing query_id proof"
+    readiness_rows = view.apply(_change_control_readiness_for_row, axis=1)
+    for column in [
+        "APPROVAL_ROUTE_READY",
+        "CHANGE_EVIDENCE_READINESS",
+        "EVIDENCE_BLOCKERS",
+        "REVIEW_SLA_HOURS",
+        "NEXT_CONTROL_ACTION",
+    ]:
+        view[column] = readiness_rows.apply(lambda item, col=column: item.get(col, ""))
     return view
+
+
+def _change_control_readiness_summary(readiness: pd.DataFrame) -> pd.DataFrame:
+    """Summarize change-control blockers by environment, finding, and owner route."""
+    if readiness is None or readiness.empty:
+        return pd.DataFrame()
+    view = _enrich_change_control_evidence(readiness)
+    if view.empty:
+        return pd.DataFrame()
+    severity = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
+    view["_HIGH_RISK"] = severity.isin(["CRITICAL", "HIGH"])
+    view["_MISSING_TICKET"] = view.get("CHANGE_TICKET_STATE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.lower().str.startswith("missing")
+    view["_IAC_GAP"] = view.get("IAC_RECONCILIATION_STATE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.contains("required|reconcile", case=False, na=False)
+    view["_MISSING_QUERY"] = view.get("EXECUTION_AUDIT_STATE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.lower().str.startswith("missing")
+    view["_ACCOUNT_SCOPE"] = ~view.get("DATABASE_CONTEXT", pd.Series([False] * len(view), index=view.index)).astype(bool)
+    view["_ROUTE_BLOCKED"] = view.get("CHANGE_EVIDENCE_READINESS", pd.Series([""] * len(view), index=view.index)).eq("Route Blocked")
+    view["_CLOSURE_BLOCKED"] = view.get("CHANGE_EVIDENCE_READINESS", pd.Series([""] * len(view), index=view.index)).eq("Closure Blocked")
+    view["_READY"] = view.get("CHANGE_EVIDENCE_READINESS", pd.Series([""] * len(view), index=view.index)).eq("Review Ready")
+
+    group_cols = ["ENVIRONMENT", "FINDING_TYPE", "OWNER", "APPROVER"]
+    for column in group_cols:
+        if column not in view.columns:
+            view[column] = ""
+
+    rows = []
+    for keys, group in view.groupby(group_cols, dropna=False):
+        env, finding, owner, approver = keys
+        missing_ticket = int(group["_MISSING_TICKET"].sum())
+        iac_gap = int(group["_IAC_GAP"].sum())
+        missing_query = int(group["_MISSING_QUERY"].sum())
+        route_blocked = int(group["_ROUTE_BLOCKED"].sum())
+        closure_blocked = int(group["_CLOSURE_BLOCKED"].sum())
+        ready = int(group["_READY"].sum())
+        if route_blocked:
+            next_action = "Complete named owner and approver routing before accepting change evidence."
+            readiness_label = "Route Blocked"
+            rank = 0
+        elif closure_blocked:
+            next_action = "Attach missing ticket, query, or source-control evidence before closure."
+            readiness_label = "Closure Blocked"
+            rank = 1
+        elif ready:
+            next_action = "Review blast radius and close only after verification evidence is retained."
+            readiness_label = "Review Ready"
+            rank = 8
+        else:
+            next_action = "Review change-control metadata."
+            readiness_label = "Review Required"
+            rank = 5
+        rows.append({
+            "ENVIRONMENT": env,
+            "FINDING_TYPE": finding,
+            "OWNER": owner,
+            "APPROVER": approver,
+            "READINESS": readiness_label,
+            "READINESS_RANK": rank,
+            "TOTAL_CHANGES": int(len(group)),
+            "HIGH_RISK_CHANGES": int(group["_HIGH_RISK"].sum()),
+            "ROUTE_BLOCKED": route_blocked,
+            "CLOSURE_BLOCKED": closure_blocked,
+            "REVIEW_READY": ready,
+            "MISSING_TICKET_ROWS": missing_ticket,
+            "IAC_GAP_ROWS": iac_gap,
+            "MISSING_QUERY_ID_ROWS": missing_query,
+            "ACCOUNT_SCOPE_ROWS": int(group["_ACCOUNT_SCOPE"].sum()),
+            "OLDEST_LAST_SEEN": group.get("LAST_SEEN", pd.Series(dtype=str)).min() if "LAST_SEEN" in group.columns else "",
+            "REVIEW_SLA_HOURS": int(pd.to_numeric(group.get("REVIEW_SLA_HOURS", pd.Series([168])), errors="coerce").fillna(168).min()),
+            "NEXT_CONTROL_ACTION": next_action,
+        })
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    return result.sort_values(
+        ["READINESS_RANK", "HIGH_RISK_CHANGES", "MISSING_TICKET_ROWS", "IAC_GAP_ROWS", "TOTAL_CHANGES"],
+        ascending=[True, False, False, False, False],
+    ).reset_index(drop=True)
 
 
 def _change_drift_score(
@@ -991,6 +1220,11 @@ def _change_control_evidence_insert_sql(
             f"{sql_literal(row.get('APPROVAL_REQUIRED', ''), 20)} AS APPROVAL_REQUIRED, "
             f"{sql_literal(row.get('TICKET_REQUIRED', ''), 20)} AS TICKET_REQUIRED, "
             f"{sql_literal(row.get('BLAST_RADIUS_REQUIRED', ''), 20)} AS BLAST_RADIUS_REQUIRED, "
+            f"{sql_literal(row.get('APPROVAL_ROUTE_READY', ''), 20)} AS APPROVAL_ROUTE_READY, "
+            f"{sql_literal(row.get('CHANGE_EVIDENCE_READINESS', ''), 80)} AS CHANGE_EVIDENCE_READINESS, "
+            f"{sql_literal(row.get('EVIDENCE_BLOCKERS', ''), 2000)} AS EVIDENCE_BLOCKERS, "
+            f"{safe_int(row.get('REVIEW_SLA_HOURS', 168))}::NUMBER AS REVIEW_SLA_HOURS, "
+            f"{sql_literal(row.get('NEXT_CONTROL_ACTION', ''), 4000)} AS NEXT_CONTROL_ACTION, "
             f"{sql_literal(row.get('PROOF_REQUIRED', ''), 2000)} AS PROOF_REQUIRED, "
             f"{sql_literal(row.get('VERIFICATION_QUERY', ''), 8000)} AS VERIFICATION_QUERY, "
             f"{sql_literal(row.get('BLAST_RADIUS_QUERY', ''), 8000)} AS BLAST_RADIUS_QUERY, "
@@ -1003,8 +1237,9 @@ INSERT INTO {fqn} (
     CHANGE_CONTROL_STATE, CONTROL_GAP, CHANGE_TICKET_ID, CHANGE_TICKET_STATE,
     IAC_RECONCILIATION_STATE, EXECUTION_AUDIT_STATE, OWNER, ESCALATION_TARGET,
     OWNER_SOURCE, APPROVER, OWNER_APPROVAL_STATUS, APPROVAL_REQUIRED,
-    TICKET_REQUIRED, BLAST_RADIUS_REQUIRED, PROOF_REQUIRED, VERIFICATION_QUERY,
-    BLAST_RADIUS_QUERY, SOURCE
+    TICKET_REQUIRED, BLAST_RADIUS_REQUIRED, APPROVAL_ROUTE_READY,
+    CHANGE_EVIDENCE_READINESS, EVIDENCE_BLOCKERS, REVIEW_SLA_HOURS,
+    NEXT_CONTROL_ACTION, PROOF_REQUIRED, VERIFICATION_QUERY, BLAST_RADIUS_QUERY, SOURCE
 )
 {" UNION ALL ".join(selects)}""".strip()
 
@@ -1169,6 +1404,59 @@ ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_
 LIMIT 100""".strip()
 
 
+def _change_control_operability_fact_sql(days: int, company: str, environment: str = "ALL") -> str:
+    """Read pre-aggregated change-control blockers from the mart fact."""
+    table = change_control_operability_fact_fqn()
+    where = [f"SNAPSHOT_DATE >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_DATE())"]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
+    if env_clause:
+        where.append(env_clause)
+    where_clause = " AND ".join(where)
+    return f"""
+SELECT
+    SNAPSHOT_DATE,
+    COMPANY,
+    ENVIRONMENT,
+    CONTROL_SOURCE,
+    CONTROL_KEY,
+    FINDING_TYPE,
+    ENTITY,
+    OWNER,
+    ESCALATION_TARGET,
+    SEVERITY,
+    EVIDENCE_ROWS,
+    HIGH_RISK_CHANGES,
+    ROUTE_BLOCKED,
+    CLOSURE_BLOCKED,
+    REVIEW_READY,
+    MISSING_TICKET_ROWS,
+    IAC_GAP_ROWS,
+    MISSING_QUERY_ID_ROWS,
+    OPEN_ACTIONS,
+    OVERDUE_OPEN,
+    FIXED_WITHOUT_VERIFICATION,
+    VERIFIED_CLOSURES,
+    OWNER_APPROVAL_GAP_ROWS,
+    CONTROL_STATE,
+    CONTROL_RANK,
+    NEXT_CONTROL_ACTION,
+    LAST_ACTIVITY_TS,
+    LOAD_TS
+FROM {table}
+WHERE {where_clause}
+ORDER BY
+    CONTROL_RANK,
+    OVERDUE_OPEN DESC,
+    FIXED_WITHOUT_VERIFICATION DESC,
+    ROUTE_BLOCKED DESC,
+    CLOSURE_BLOCKED DESC,
+    HIGH_RISK_CHANGES DESC,
+    LAST_ACTIVITY_TS DESC
+LIMIT 100""".strip()
+
+
 def _save_change_control_evidence_snapshot(
     session,
     readiness: pd.DataFrame,
@@ -1179,6 +1467,8 @@ def _save_change_control_evidence_snapshot(
 ) -> None:
     try:
         session.sql(build_change_control_evidence_ddl()).collect()
+        for migration_sql in build_change_control_evidence_migration_sql():
+            session.sql(migration_sql).collect()
         session.sql(_change_control_evidence_insert_sql(
             readiness,
             company=company,
@@ -1282,6 +1572,19 @@ def render() -> None:
                 st.session_state["change_drift_summary"] = pd.DataFrame()
                 st.session_state["change_drift_exceptions"] = pd.DataFrame()
                 st.error(f"Unable to load change brief: {format_snowflake_error(live_exc)}")
+        try:
+            operability_sql = _change_control_operability_fact_sql(days, company, environment)
+            st.session_state["change_control_operability_fact_sql"] = operability_sql
+            st.session_state["change_control_operability_fact"] = run_query(
+                operability_sql,
+                ttl_key=f"change_control_operability_fact_{company}_{environment}_{days}",
+                tier="standard",
+                section="Change & Drift",
+            )
+            st.session_state.pop("change_control_operability_fact_error", None)
+        except Exception as fact_exc:
+            st.session_state["change_control_operability_fact"] = pd.DataFrame()
+            st.session_state["change_control_operability_fact_error"] = format_snowflake_error(fact_exc)
 
     summary = st.session_state.get("change_drift_summary")
     exceptions = st.session_state.get("change_drift_exceptions")
@@ -1316,6 +1619,42 @@ def render() -> None:
             st.success("Change control looks clean for the selected window.")
         st.caption(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
+        operability_fact = st.session_state.get("change_control_operability_fact")
+        if operability_fact is not None and not operability_fact.empty:
+            st.subheader("Change Control Operability Mart")
+            f1, f2, f3, f4 = st.columns(4)
+            f1.metric("Fact Rows", f"{len(operability_fact):,}")
+            f2.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+            f3.metric(
+                "Route / Closure Blocks",
+                f"{int(operability_fact.get('ROUTE_BLOCKED', pd.Series(dtype=int)).sum() + operability_fact.get('CLOSURE_BLOCKED', pd.Series(dtype=int)).sum()):,}",
+                delta_color="inverse",
+            )
+            f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+            render_priority_dataframe(
+                operability_fact,
+                title="Pre-aggregated change-control blockers",
+                priority_columns=[
+                    "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "ENVIRONMENT",
+                    "FINDING_TYPE", "ENTITY", "OWNER", "SEVERITY", "HIGH_RISK_CHANGES",
+                    "ROUTE_BLOCKED", "CLOSURE_BLOCKED", "MISSING_TICKET_ROWS",
+                    "IAC_GAP_ROWS", "MISSING_QUERY_ID_ROWS", "OPEN_ACTIONS",
+                    "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "VERIFIED_CLOSURES",
+                    "NEXT_CONTROL_ACTION",
+                ],
+                sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "HIGH_RISK_CHANGES"],
+                ascending=[True, False, False, False],
+                raw_label="All change-control operability facts",
+                height=300,
+            )
+            with st.expander("Operability fact query", expanded=False):
+                st.code(st.session_state.get("change_control_operability_fact_sql", ""), language="sql")
+        elif st.session_state.get("change_control_operability_fact_error"):
+            st.caption(
+                "Change-control operability mart not available yet; deploy or refresh "
+                "`FACT_CHANGE_CONTROL_OPERABILITY_DAILY` to enable the fast blocker surface."
+            )
+
         _render_change_watch_floor(score, exceptions, row)
         st.divider()
 
@@ -1335,6 +1674,39 @@ def render() -> None:
                 raw_label="All change and drift exceptions",
             )
             readiness = _build_change_control_readiness(exceptions)
+            readiness_summary = _change_control_readiness_summary(readiness)
+            if not readiness_summary.empty:
+                r1, r2, r3, r4 = st.columns(4)
+                r1.metric("Change Routes", f"{len(readiness_summary):,}")
+                r2.metric(
+                    "Closure Blocked",
+                    f"{int(readiness_summary['CLOSURE_BLOCKED'].sum()):,}",
+                    delta_color="inverse",
+                )
+                r3.metric(
+                    "Route Blocked",
+                    f"{int(readiness_summary['ROUTE_BLOCKED'].sum()):,}",
+                    delta_color="inverse",
+                )
+                r4.metric(
+                    "Account Scope",
+                    f"{int(readiness_summary['ACCOUNT_SCOPE_ROWS'].sum()):,}",
+                )
+                render_priority_dataframe(
+                    readiness_summary,
+                    title="Change-control blocker board",
+                    priority_columns=[
+                        "READINESS", "ENVIRONMENT", "FINDING_TYPE", "OWNER", "APPROVER",
+                        "TOTAL_CHANGES", "HIGH_RISK_CHANGES", "ROUTE_BLOCKED",
+                        "CLOSURE_BLOCKED", "REVIEW_READY", "MISSING_TICKET_ROWS",
+                        "IAC_GAP_ROWS", "MISSING_QUERY_ID_ROWS", "ACCOUNT_SCOPE_ROWS",
+                        "REVIEW_SLA_HOURS", "NEXT_CONTROL_ACTION",
+                    ],
+                    sort_by=["READINESS_RANK", "HIGH_RISK_CHANGES", "MISSING_TICKET_ROWS", "IAC_GAP_ROWS"],
+                    ascending=[True, False, False, False],
+                    raw_label="All change-control blocker routes",
+                    height=260,
+                )
             render_priority_dataframe(
                 readiness,
                 title="Change-control readiness before queueing",
@@ -1343,7 +1715,9 @@ def render() -> None:
                     "USER_NAME", "QUERY_ID", "APPROVER", "OWNER_APPROVAL_STATUS",
                     "OWNER", "ESCALATION_TARGET", "DATABASE_CONTEXT", "DATABASE_NAME",
                     "ENVIRONMENT", "SCOPE_CONFIDENCE", "CHANGE_TICKET_ID", "CHANGE_TICKET_STATE",
-                    "IAC_RECONCILIATION_STATE", "EXECUTION_AUDIT_STATE", "CONTROL_GAP", "PROOF_REQUIRED",
+                    "IAC_RECONCILIATION_STATE", "EXECUTION_AUDIT_STATE", "APPROVAL_ROUTE_READY",
+                    "CHANGE_EVIDENCE_READINESS", "EVIDENCE_BLOCKERS", "REVIEW_SLA_HOURS",
+                    "CONTROL_GAP", "NEXT_CONTROL_ACTION", "PROOF_REQUIRED",
                 ],
                 sort_by=["SEVERITY", "CHANGE_CONTROL_STATE", "ENTITY"],
                 ascending=[True, True, True],

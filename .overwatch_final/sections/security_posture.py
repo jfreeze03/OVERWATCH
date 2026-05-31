@@ -46,6 +46,7 @@ WORKFLOW_DETAILS = {
 }
 
 SECURITY_ACCESS_REVIEW_TABLE = "OVERWATCH_SECURITY_ACCESS_REVIEW"
+SECURITY_OPERABILITY_FACT_TABLE = "FACT_SECURITY_OPERABILITY_DAILY"
 
 
 def security_access_review_fqn(
@@ -86,10 +87,97 @@ def build_security_access_review_ddl(
     REVIEW_BY_REQUIRED      VARCHAR(20),
     PROOF_REQUIRED          VARCHAR(2000),
     VERIFICATION_QUERY      VARCHAR(8000),
+    ACCESS_TICKET_ID        VARCHAR(200),
+    REVIEW_BY_DATE          VARCHAR(100),
+    IAM_APPROVAL_STATE      VARCHAR(120),
+    REVIEW_READINESS        VARCHAR(100),
+    REVIEW_BLOCKERS         VARCHAR(2000),
+    REVIEW_SLA_HOURS        NUMBER,
+    VERIFICATION_STATUS     VARCHAR(80),
+    VERIFICATION_RESULT     VARCHAR(4000),
+    CONTROL_READINESS       VARCHAR(100),
+    CONTROL_BLOCKERS        VARCHAR(2000),
+    NEXT_CONTROL_ACTION     VARCHAR(4000),
     NEXT_ACTION             VARCHAR(4000),
     PROOF_QUERY             VARCHAR(4000),
     SOURCE                  VARCHAR(500)
 );"""
+
+
+def build_security_access_review_migration_sql(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = SECURITY_ACCESS_REVIEW_TABLE,
+) -> list[str]:
+    fqn = security_access_review_fqn(db=db, schema=schema, table=table)
+    return [
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ACCESS_TICKET_ID VARCHAR(200)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_BY_DATE VARCHAR(100)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS IAM_APPROVAL_STATE VARCHAR(120)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_READINESS VARCHAR(100)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_BLOCKERS VARCHAR(2000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_SLA_HOURS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS VERIFICATION_STATUS VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS VERIFICATION_RESULT VARCHAR(4000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_READINESS VARCHAR(100)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_BLOCKERS VARCHAR(2000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
+    ]
+
+
+def security_operability_fact_fqn(table: str = SECURITY_OPERABILITY_FACT_TABLE) -> str:
+    return mart_object_name(table)
+
+
+def build_security_operability_fact_ddl(table: str = SECURITY_OPERABILITY_FACT_TABLE) -> str:
+    fqn = security_operability_fact_fqn(table=table)
+    return f"""CREATE TRANSIENT TABLE IF NOT EXISTS {fqn} (
+    SNAPSHOT_DATE                   DATE,
+    COMPANY                         VARCHAR(100),
+    ENVIRONMENT                     VARCHAR(100),
+    CONTROL_SOURCE                  VARCHAR(80),
+    FINDING_TYPE                    VARCHAR(120),
+    ENTITY                          VARCHAR(500),
+    ENTITY_TYPE                     VARCHAR(120),
+    SEVERITY                        VARCHAR(40),
+    CONTROL_STATE                   VARCHAR(120),
+    CONTROL_RANK                    NUMBER,
+    EVENT_ROWS                      NUMBER,
+    REVIEW_ROWS                     NUMBER,
+    REVIEW_BLOCKER_ROWS             NUMBER,
+    TICKET_REQUIRED_ROWS            NUMBER,
+    REVIEW_BY_REQUIRED_ROWS         NUMBER,
+    CAPABILITY_PROOF_ROWS           NUMBER,
+    NO_DATABASE_CONTEXT_ROWS        NUMBER,
+    OPEN_ACTIONS                    NUMBER,
+    OVERDUE_OPEN                    NUMBER,
+    FIXED_WITHOUT_VERIFICATION      NUMBER,
+    VERIFIED_CLOSURES               NUMBER,
+    OWNER_APPROVAL_GAP_ROWS         NUMBER,
+    NEXT_CONTROL_ACTION             VARCHAR(4000),
+    LAST_ACTIVITY_TS                TIMESTAMP_NTZ,
+    LOAD_TS                         TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);"""
+
+
+def build_security_operability_fact_migration_sql(
+    table: str = SECURITY_OPERABILITY_FACT_TABLE,
+) -> list[str]:
+    fqn = security_operability_fact_fqn(table=table)
+    return [
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_SOURCE VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_STATE VARCHAR(120)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_RANK NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS EVENT_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_BLOCKER_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS TICKET_REQUIRED_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_BY_REQUIRED_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CAPABILITY_PROOF_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NO_DATABASE_CONTEXT_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS OWNER_APPROVAL_GAP_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LAST_ACTIVITY_TS TIMESTAMP_NTZ",
+    ]
 
 
 def _security_score(
@@ -366,6 +454,100 @@ SELECT
 LIMIT 50""".strip()
 
 
+def _security_access_review_sla_hours(severity: str) -> int:
+    value = str(severity or "").upper()
+    if value == "CRITICAL":
+        return 8
+    if value == "HIGH":
+        return 24
+    if value == "MEDIUM":
+        return 72
+    return 168
+
+
+def _security_access_review_readiness_for_row(row: pd.Series | dict) -> dict:
+    """Return ticket, approval, verification, and blocker state for a security finding."""
+    owner = str(row.get("OWNER") or "").strip()
+    owner_source = str(row.get("OWNER_SOURCE") or "").strip()
+    owner_email = str(row.get("OWNER_EMAIL") or "").strip()
+    oncall = str(row.get("ONCALL_PRIMARY") or "").strip()
+    approval_group = str(row.get("APPROVAL_GROUP") or row.get("ESCALATION_TARGET") or "").strip()
+    owner_upper = owner.upper()
+    route_ready = bool(owner) and owner_upper not in {"UNKNOWN", "N/A", "NONE"} and bool(
+        owner_email
+        or oncall
+        or approval_group
+        or "OWNER_DIRECTORY" in owner_source.upper()
+        or "SECURITY" in owner_upper
+        or "IAM" in owner_upper
+    )
+
+    ticket_id = str(row.get("ACCESS_TICKET_ID") or row.get("TICKET_ID") or "").strip()
+    review_by = str(row.get("REVIEW_BY_DATE") or row.get("REVIEW_BY") or row.get("REVIEW_DATE") or "").strip()
+    approval_state = str(row.get("IAM_APPROVAL_STATE") or row.get("OWNER_APPROVAL_STATUS") or "Requested").strip()
+    verification_status = str(row.get("VERIFICATION_STATUS") or "Pending").strip()
+    verification_result = str(row.get("VERIFICATION_RESULT") or "").strip()
+    verification_query = str(row.get("VERIFICATION_QUERY") or "").strip()
+    ticket_required = str(row.get("TICKET_REQUIRED") or "Yes").strip().upper() == "YES"
+    review_required = str(row.get("REVIEW_BY_REQUIRED") or "Yes").strip().upper() == "YES"
+
+    blockers: list[str] = []
+    if not route_ready:
+        blockers.append("owner/on-call route")
+    if ticket_required and not ticket_id:
+        blockers.append("access ticket")
+    if review_required and not review_by:
+        blockers.append("review/expiry date")
+    if approval_state.upper() in {"", "PENDING", "REQUESTED", "REQUIRED", "NEEDED"}:
+        blockers.append("IAM/security approval")
+    if not verification_query:
+        blockers.append("verification query")
+
+    verified = (
+        verification_status.upper() == "VERIFIED"
+        and len(verification_result) >= 15
+    )
+    if verified and not blockers:
+        readiness = "Verified"
+        rank = 8
+        next_action = "Retain IAM/Snowflake verification evidence with the access-review snapshot."
+    elif "owner/on-call route" in blockers:
+        readiness = "Owner Route Blocked"
+        rank = 0
+        next_action = "Assign a named owner, on-call route, or owner-directory mapping before queueing closure."
+    elif "access ticket" in blockers or "review/expiry date" in blockers:
+        readiness = "Ticket / Review Date Blocked"
+        rank = 1
+        next_action = "Attach the access ticket and review/expiry date before treating this finding as controlled."
+    elif "IAM/security approval" in blockers:
+        readiness = "Approval Blocked"
+        rank = 2
+        next_action = "Record IAM/security owner approval before remediation or closure."
+    elif "verification query" in blockers:
+        readiness = "Verification Blocked"
+        rank = 3
+        next_action = "Attach a read-only Snowflake verification query before queueing the action."
+    else:
+        readiness = "Ready for Action Queue"
+        rank = 4
+        next_action = "Queue or work the security action, then attach verification result before closure."
+
+    return {
+        "ACCESS_TICKET_ID": ticket_id,
+        "REVIEW_BY_DATE": review_by,
+        "IAM_APPROVAL_STATE": approval_state or "Requested",
+        "REVIEW_READINESS": readiness,
+        "REVIEW_RANK": rank,
+        "REVIEW_BLOCKERS": "; ".join(blockers) if blockers else "None",
+        "REVIEW_SLA_HOURS": _security_access_review_sla_hours(str(row.get("SEVERITY") or "")),
+        "VERIFICATION_STATUS": verification_status or "Pending",
+        "VERIFICATION_RESULT": verification_result,
+        "CONTROL_READINESS": readiness,
+        "CONTROL_BLOCKERS": "; ".join(blockers) if blockers else "None",
+        "NEXT_CONTROL_ACTION": next_action,
+    }
+
+
 def _build_security_access_review(exceptions: pd.DataFrame, environment: str = "ALL") -> pd.DataFrame:
     if exceptions is None or exceptions.empty:
         return pd.DataFrame()
@@ -400,6 +582,22 @@ def _build_security_access_review(exceptions: pd.DataFrame, environment: str = "
         ),
         axis=1,
     )
+    readiness_contexts = view.apply(_security_access_review_readiness_for_row, axis=1)
+    for column in [
+        "ACCESS_TICKET_ID",
+        "REVIEW_BY_DATE",
+        "IAM_APPROVAL_STATE",
+        "REVIEW_READINESS",
+        "REVIEW_RANK",
+        "REVIEW_BLOCKERS",
+        "REVIEW_SLA_HOURS",
+        "VERIFICATION_STATUS",
+        "VERIFICATION_RESULT",
+        "CONTROL_READINESS",
+        "CONTROL_BLOCKERS",
+        "NEXT_CONTROL_ACTION",
+    ]:
+        view[column] = readiness_contexts.apply(lambda item, col=column: item.get(col, ""))
     return view
 
 
@@ -1085,7 +1283,11 @@ def _security_access_review_insert_sql(
 ) -> str:
     if review is None or review.empty:
         raise ValueError("Security access review snapshot has no rows to save.")
-    view = _build_security_access_review(review, environment) if "ACCESS_REVIEW_STATE" not in review.columns else review.copy()
+    view = (
+        _build_security_access_review(review, environment)
+        if "ACCESS_REVIEW_STATE" not in review.columns or "REVIEW_READINESS" not in review.columns
+        else review.copy()
+    )
     fqn = security_access_review_fqn()
     snap = snapshot_id or make_action_id(
         "Security Access Review Snapshot",
@@ -1119,6 +1321,17 @@ def _security_access_review_insert_sql(
             f"{sql_literal(row.get('REVIEW_BY_REQUIRED', ''), 20)} AS REVIEW_BY_REQUIRED, "
             f"{sql_literal(row.get('PROOF_REQUIRED', ''), 2000)} AS PROOF_REQUIRED, "
             f"{sql_literal(row.get('VERIFICATION_QUERY', ''), 8000)} AS VERIFICATION_QUERY, "
+            f"{sql_literal(row.get('ACCESS_TICKET_ID', ''), 200)} AS ACCESS_TICKET_ID, "
+            f"{sql_literal(row.get('REVIEW_BY_DATE', ''), 100)} AS REVIEW_BY_DATE, "
+            f"{sql_literal(row.get('IAM_APPROVAL_STATE', row.get('OWNER_APPROVAL_STATUS', 'Requested')), 120)} AS IAM_APPROVAL_STATE, "
+            f"{sql_literal(row.get('REVIEW_READINESS', ''), 100)} AS REVIEW_READINESS, "
+            f"{sql_literal(row.get('REVIEW_BLOCKERS', ''), 2000)} AS REVIEW_BLOCKERS, "
+            f"{safe_int(row.get('REVIEW_SLA_HOURS'))}::NUMBER AS REVIEW_SLA_HOURS, "
+            f"{sql_literal(row.get('VERIFICATION_STATUS', 'Pending'), 80)} AS VERIFICATION_STATUS, "
+            f"{sql_literal(row.get('VERIFICATION_RESULT', ''), 4000)} AS VERIFICATION_RESULT, "
+            f"{sql_literal(row.get('CONTROL_READINESS', row.get('REVIEW_READINESS', '')), 100)} AS CONTROL_READINESS, "
+            f"{sql_literal(row.get('CONTROL_BLOCKERS', row.get('REVIEW_BLOCKERS', '')), 2000)} AS CONTROL_BLOCKERS, "
+            f"{sql_literal(row.get('NEXT_CONTROL_ACTION', ''), 4000)} AS NEXT_CONTROL_ACTION, "
             f"{sql_literal(row.get('NEXT_ACTION', ''), 4000)} AS NEXT_ACTION, "
             f"{sql_literal(row.get('PROOF_QUERY', ''), 4000)} AS PROOF_QUERY, "
             f"{sql_literal(source, 500)} AS SOURCE"
@@ -1130,6 +1343,9 @@ INSERT INTO {fqn} (
     LAST_SEEN, OWNER, ESCALATION_TARGET, OWNER_SOURCE, APPROVER,
     OWNER_APPROVAL_STATUS, ACCESS_REVIEW_STATE, ROLE_CAPABILITY_STATE,
     TICKET_REQUIRED, REVIEW_BY_REQUIRED, PROOF_REQUIRED, VERIFICATION_QUERY,
+    ACCESS_TICKET_ID, REVIEW_BY_DATE, IAM_APPROVAL_STATE, REVIEW_READINESS,
+    REVIEW_BLOCKERS, REVIEW_SLA_HOURS, VERIFICATION_STATUS, VERIFICATION_RESULT,
+    CONTROL_READINESS, CONTROL_BLOCKERS, NEXT_CONTROL_ACTION,
     NEXT_ACTION, PROOF_QUERY, SOURCE
 )
 {" UNION ALL ".join(selects)}""".strip()
@@ -1157,14 +1373,20 @@ SELECT
     COUNT_IF(REVIEW_BY_REQUIRED = 'Yes') AS REVIEW_BY_REQUIRED_ROWS,
     COUNT_IF(ROLE_CAPABILITY_STATE ILIKE '%required%') AS CAPABILITY_PROOF_ROWS,
     COUNT_IF(DATABASE_CONTEXT = FALSE) AS NO_DATABASE_CONTEXT_ROWS,
+    COUNT_IF(REVIEW_READINESS ILIKE '%Blocked%') AS REVIEW_BLOCKER_ROWS,
+    COUNT_IF(VERIFICATION_STATUS = 'Verified' AND LENGTH(TRIM(VERIFICATION_RESULT)) >= 15) AS VERIFIED_REVIEW_ROWS,
     MAX(SNAPSHOT_TS) AS LAST_SNAPSHOT_TS,
     MAX_BY(ACCESS_REVIEW_STATE, SNAPSHOT_TS) AS LAST_ACCESS_REVIEW_STATE,
+    MAX_BY(REVIEW_READINESS, SNAPSHOT_TS) AS LAST_REVIEW_READINESS,
+    MAX_BY(CONTROL_READINESS, SNAPSHOT_TS) AS LAST_CONTROL_READINESS,
     MAX_BY(ROLE_CAPABILITY_STATE, SNAPSHOT_TS) AS LAST_ROLE_CAPABILITY_STATE,
-    MAX_BY(PROOF_REQUIRED, SNAPSHOT_TS) AS LAST_PROOF_REQUIRED
+    MAX_BY(PROOF_REQUIRED, SNAPSHOT_TS) AS LAST_PROOF_REQUIRED,
+    MAX_BY(NEXT_CONTROL_ACTION, SNAPSHOT_TS) AS NEXT_CONTROL_ACTION
 FROM {fqn}
 WHERE {where_clause}
 GROUP BY FINDING_TYPE, SEVERITY, OWNER, ESCALATION_TARGET
 ORDER BY
+    REVIEW_BLOCKER_ROWS DESC,
     TICKET_REQUIRED_ROWS DESC,
     CAPABILITY_PROOF_ROWS DESC,
     TOTAL_EVENTS DESC,
@@ -1299,6 +1521,181 @@ ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_
 LIMIT 100""".strip()
 
 
+def _security_operability_fact_sql(days: int, company: str, environment: str = "ALL") -> str:
+    """Read pre-aggregated security review and action-queue control blockers."""
+    table = security_operability_fact_fqn()
+    where = [f"SNAPSHOT_DATE >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_DATE())"]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
+    if env_clause:
+        where.append(env_clause)
+    where_clause = " AND ".join(where)
+    return f"""
+SELECT
+    SNAPSHOT_DATE,
+    COMPANY,
+    ENVIRONMENT,
+    CONTROL_SOURCE,
+    FINDING_TYPE,
+    ENTITY,
+    ENTITY_TYPE,
+    SEVERITY,
+    CONTROL_STATE,
+    CONTROL_RANK,
+    EVENT_ROWS,
+    REVIEW_ROWS,
+    REVIEW_BLOCKER_ROWS,
+    TICKET_REQUIRED_ROWS,
+    REVIEW_BY_REQUIRED_ROWS,
+    CAPABILITY_PROOF_ROWS,
+    NO_DATABASE_CONTEXT_ROWS,
+    OPEN_ACTIONS,
+    OVERDUE_OPEN,
+    FIXED_WITHOUT_VERIFICATION,
+    VERIFIED_CLOSURES,
+    OWNER_APPROVAL_GAP_ROWS,
+    NEXT_CONTROL_ACTION,
+    LAST_ACTIVITY_TS,
+    LOAD_TS
+FROM {table}
+WHERE {where_clause}
+ORDER BY
+    CONTROL_RANK,
+    OVERDUE_OPEN DESC,
+    FIXED_WITHOUT_VERIFICATION DESC,
+    REVIEW_BLOCKER_ROWS DESC,
+    EVENT_ROWS DESC,
+    LAST_ACTIVITY_TS DESC
+LIMIT 100""".strip()
+
+
+def _security_control_board(
+    access_review: pd.DataFrame,
+    closure: pd.DataFrame | None = None,
+    trend: pd.DataFrame | None = None,
+    environment: str = "ALL",
+) -> pd.DataFrame:
+    """Combine current findings, closure state, and snapshot trend into one DBA control board."""
+    if access_review is None or access_review.empty:
+        return pd.DataFrame()
+
+    base = (
+        _build_security_access_review(access_review, environment)
+        if "REVIEW_READINESS" not in access_review.columns
+        else access_review.copy()
+    )
+    base.columns = [str(col).upper() for col in base.columns]
+
+    closure_view = pd.DataFrame() if closure is None else closure.copy()
+    if not closure_view.empty:
+        closure_view.columns = [str(col).upper() for col in closure_view.columns]
+    trend_view = pd.DataFrame() if trend is None else trend.copy()
+    if not trend_view.empty:
+        trend_view.columns = [str(col).upper() for col in trend_view.columns]
+
+    closure_by_entity = {
+        str(row.get("ENTITY") or "").upper(): row
+        for _, row in closure_view.iterrows()
+    } if not closure_view.empty else {}
+    trend_by_finding = {
+        str(row.get("FINDING_TYPE") or "").upper(): row
+        for _, row in trend_view.iterrows()
+    } if not trend_view.empty else {}
+
+    rows: list[dict] = []
+    for _, row in base.iterrows():
+        entity = str(row.get("ENTITY") or "")
+        finding_type = str(row.get("FINDING_TYPE") or "")
+        close = closure_by_entity.get(entity.upper(), {})
+        trend_row = trend_by_finding.get(finding_type.upper(), {})
+        review_readiness = str(row.get("REVIEW_READINESS") or row.get("CONTROL_READINESS") or "")
+        review_rank = safe_int(row.get("REVIEW_RANK", 4))
+        open_actions = safe_int(close.get("OPEN_ACTIONS", 0))
+        overdue = safe_int(close.get("OVERDUE_OPEN", 0))
+        fixed_without_verification = safe_int(close.get("FIXED_WITHOUT_VERIFICATION", 0))
+        recovery_risk = safe_int(close.get("RECOVERY_RISK_ROWS", 0))
+        verified = safe_int(close.get("VERIFIED_CLOSURES", 0))
+        closure_rank = safe_int(close.get("CLOSURE_RANK", 9))
+        review_rows = safe_int(trend_row.get("REVIEW_ROWS", 0))
+        blocker_rows = safe_int(trend_row.get("REVIEW_BLOCKER_ROWS", 0))
+        severity = str(row.get("SEVERITY") or "Medium")
+
+        if overdue:
+            state, rank = "Closure Overdue", 0
+            blockers = str(close.get("CLOSURE_READINESS") or "overdue action")
+            next_action = str(close.get("NEXT_ACTION") or "Escalate owner and ticket before accepting the security control.")
+        elif fixed_without_verification or recovery_risk or closure_rank in {1, 2}:
+            state, rank = "Closure Evidence Blocked", 1
+            blockers = str(close.get("CLOSURE_READINESS") or "closure evidence gap")
+            next_action = str(close.get("NEXT_ACTION") or "Attach verification result or reopen the security action.")
+        elif "BLOCKED" in review_readiness.upper():
+            state, rank = review_readiness, min(review_rank, 3)
+            blockers = str(row.get("REVIEW_BLOCKERS") or row.get("CONTROL_BLOCKERS") or "review metadata gap")
+            next_action = str(row.get("NEXT_CONTROL_ACTION") or "Complete review metadata before queueing closure.")
+        elif open_actions > 0:
+            state, rank = "Work Open Action", 4
+            blockers = "Open action queue item"
+            next_action = str(close.get("NEXT_ACTION") or "Work open security action and retain IAM/Snowflake evidence.")
+        elif severity.upper() in {"CRITICAL", "HIGH"} and not open_actions and not verified:
+            state, rank = "Queue Required", 5
+            blockers = "High-risk finding is not represented by an open action"
+            next_action = "Save this security finding to the Action Queue with owner, approval, ticket, and verification context."
+        elif blocker_rows or review_rows > 1:
+            state, rank = "Recurring Access Watch", 6
+            blockers = f"{review_rows:,} snapshot row(s), {blocker_rows:,} blocker row(s)"
+            next_action = "Review repeated security snapshots and convert recurring access risk into a durable control."
+        elif verified:
+            state, rank = "Verified Closure", 8
+            blockers = "None"
+            next_action = "Retain verified closure evidence for audit review."
+        else:
+            state, rank = "Controlled", 9
+            blockers = str(row.get("CONTROL_BLOCKERS") or "None")
+            next_action = str(row.get("NEXT_CONTROL_ACTION") or "No immediate DBA action for this finding.")
+
+        rows.append({
+            "CONTROL_STATE": state,
+            "CONTROL_RANK": rank,
+            "SEVERITY": severity,
+            "FINDING_TYPE": finding_type,
+            "ENTITY": entity,
+            "ENTITY_TYPE": row.get("ENTITY_TYPE", ""),
+            "ENVIRONMENT": row.get("ENVIRONMENT", ""),
+            "DATABASE_CONTEXT": bool(row.get("DATABASE_CONTEXT")),
+            "SCOPE_CONFIDENCE": row.get("SCOPE_CONFIDENCE", ""),
+            "OWNER": row.get("OWNER", close.get("OWNER", "")),
+            "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
+            "APPROVER": row.get("APPROVER", close.get("APPROVER", "")),
+            "REVIEW_READINESS": review_readiness,
+            "REVIEW_BLOCKERS": row.get("REVIEW_BLOCKERS", ""),
+            "ACCESS_TICKET_ID": row.get("ACCESS_TICKET_ID", ""),
+            "REVIEW_BY_DATE": row.get("REVIEW_BY_DATE", ""),
+            "IAM_APPROVAL_STATE": row.get("IAM_APPROVAL_STATE", ""),
+            "REVIEW_SLA_HOURS": safe_int(row.get("REVIEW_SLA_HOURS", 0)),
+            "OPEN_ACTIONS": open_actions,
+            "OVERDUE_OPEN": overdue,
+            "FIXED_WITHOUT_VERIFICATION": fixed_without_verification,
+            "VERIFIED_CLOSURES": verified,
+            "REVIEW_SNAPSHOTS": review_rows,
+            "CONTROL_BLOCKERS": blockers,
+            "NEXT_CONTROL_ACTION": next_action,
+        })
+
+    return pd.DataFrame(rows).sort_values(
+        [
+            "CONTROL_RANK",
+            "OVERDUE_OPEN",
+            "FIXED_WITHOUT_VERIFICATION",
+            "OPEN_ACTIONS",
+            "SEVERITY",
+            "FINDING_TYPE",
+            "ENTITY",
+        ],
+        ascending=[True, False, False, False, True, True, True],
+    ).reset_index(drop=True)
+
+
 def _save_security_access_review_snapshot(
     session,
     review: pd.DataFrame,
@@ -1309,6 +1706,8 @@ def _save_security_access_review_snapshot(
 ) -> None:
     try:
         session.sql(build_security_access_review_ddl()).collect()
+        for migration_sql in build_security_access_review_migration_sql():
+            session.sql(migration_sql).collect()
         session.sql(_security_access_review_insert_sql(
             review,
             company=company,
@@ -1367,19 +1766,22 @@ def _queue_security_exceptions(session, exceptions: pd.DataFrame) -> None:
             ]),
             "Proof Query": verification_query,
             "Verification Query": verification_query,
-            "Verification Status": "Pending",
+            "Verification Status": row.get("VERIFICATION_STATUS", "Pending"),
+            "Ticket ID": row.get("ACCESS_TICKET_ID", ""),
             "Approver": row.get("APPROVER", "Security Owner"),
-            "Owner Approval Status": row.get("OWNER_APPROVAL_STATUS", "Requested"),
+            "Owner Approval Status": row.get("IAM_APPROVAL_STATE", row.get("OWNER_APPROVAL_STATUS", "Requested")),
             "Owner Approval Note": (
-                f"{row.get('ACCESS_REVIEW_STATE', '')}; escalation={row.get('ESCALATION_TARGET', 'DBA Lead')}; "
+                f"{row.get('ACCESS_REVIEW_STATE', '')}; readiness={row.get('REVIEW_READINESS', '')}; "
+                f"blockers={row.get('REVIEW_BLOCKERS', '')}; escalation={row.get('ESCALATION_TARGET', 'DBA Lead')}; "
                 f"ticket required={row.get('TICKET_REQUIRED', 'Yes')}; review-by required={row.get('REVIEW_BY_REQUIRED', 'Yes')}."
             ),
             "Recovery Evidence": (
                 f"Proof required: {row.get('PROOF_REQUIRED', '')}. "
-                f"Role capability: {row.get('ROLE_CAPABILITY_STATE', '')}."
+                f"Role capability: {row.get('ROLE_CAPABILITY_STATE', '')}. "
+                f"Review SLA hours: {safe_int(row.get('REVIEW_SLA_HOURS', 0))}."
             ),
-            "Recovery Audit State": "Security Review Verification Pending",
-            "Recovery SLA Target Hours": 24 if severity.upper() in {"CRITICAL", "HIGH"} else 72,
+            "Recovery Audit State": row.get("CONTROL_READINESS", "Security Review Verification Pending"),
+            "Recovery SLA Target Hours": safe_int(row.get("REVIEW_SLA_HOURS", 24 if severity.upper() in {"CRITICAL", "HIGH"} else 72)),
             "Company": company,
             "Environment": row.get("ENVIRONMENT", _security_exception_environment(row, environment)),
         })
@@ -1546,6 +1948,25 @@ def render() -> None:
                 st.session_state["security_posture_summary"] = pd.DataFrame()
                 st.session_state["security_posture_exceptions"] = pd.DataFrame()
                 st.error(f"Unable to load security brief: {format_snowflake_error(live_exc)}")
+        fact_meta = st.session_state.get("security_posture_meta", {})
+        if (
+            fact_meta.get("company") == company
+            and fact_meta.get("environment") == environment
+            and fact_meta.get("days") == days
+        ):
+            try:
+                operability_sql = _security_operability_fact_sql(days, company, environment)
+                st.session_state["security_operability_fact_sql"] = operability_sql
+                st.session_state["security_operability_fact"] = run_query(
+                    operability_sql,
+                    ttl_key=f"security_operability_fact_{company}_{environment}_{days}",
+                    tier="standard",
+                    section="Security Posture",
+                )
+                st.session_state.pop("security_operability_fact_error", None)
+            except Exception as fact_exc:
+                st.session_state["security_operability_fact"] = pd.DataFrame()
+                st.session_state["security_operability_fact_error"] = format_snowflake_error(fact_exc)
 
     summary = st.session_state.get("security_posture_summary")
     exceptions = st.session_state.get("security_posture_exceptions")
@@ -1587,6 +2008,41 @@ def render() -> None:
         st.caption(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE"))
         _render_security_watch_floor(score, exceptions, row)
         st.divider()
+        operability_fact = st.session_state.get("security_operability_fact")
+        if operability_fact is not None and not operability_fact.empty:
+            st.subheader("Security Operability Mart")
+            f1, f2, f3, f4 = st.columns(4)
+            blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
+                "Blocked|Overdue|Required", case=False, na=False
+            )
+            f1.metric("Fact Rows", f"{len(operability_fact):,}")
+            f2.metric("Blocked / Required", f"{int(blocked_states.sum()):,}", delta_color="inverse")
+            f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+            f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+            render_priority_dataframe(
+                operability_fact,
+                title="Pre-aggregated security blockers",
+                priority_columns=[
+                    "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "SEVERITY",
+                    "FINDING_TYPE", "ENTITY", "ENTITY_TYPE", "ENVIRONMENT",
+                    "EVENT_ROWS", "REVIEW_ROWS", "REVIEW_BLOCKER_ROWS",
+                    "TICKET_REQUIRED_ROWS", "REVIEW_BY_REQUIRED_ROWS",
+                    "CAPABILITY_PROOF_ROWS", "NO_DATABASE_CONTEXT_ROWS",
+                    "OPEN_ACTIONS", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION",
+                    "VERIFIED_CLOSURES", "OWNER_APPROVAL_GAP_ROWS", "NEXT_CONTROL_ACTION",
+                ],
+                sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "REVIEW_BLOCKER_ROWS"],
+                ascending=[True, False, False, False],
+                raw_label="All security operability facts",
+                height=320,
+            )
+            with st.expander("Security operability fact query", expanded=False):
+                st.code(st.session_state.get("security_operability_fact_sql", ""), language="sql")
+        elif st.session_state.get("security_operability_fact_error"):
+            st.caption(
+                "Security operability mart not available yet; deploy or refresh "
+                "`FACT_SECURITY_OPERABILITY_DAILY` to enable the fast blocker surface."
+            )
         if exceptions is not None and not exceptions.empty:
             st.subheader("Security Exceptions")
             priority_exceptions = _security_priority_view(exceptions)
@@ -1604,18 +2060,49 @@ def render() -> None:
             )
 
             access_review = _build_security_access_review(exceptions, environment)
+            security_board = _security_control_board(
+                access_review,
+                closure=st.session_state.get("security_action_closure"),
+                trend=st.session_state.get("security_access_review_trend"),
+                environment=environment,
+            )
+            if not security_board.empty:
+                st.subheader("Security Control Board")
+                b1, b2, b3, b4 = st.columns(4)
+                blocked_states = security_board["CONTROL_STATE"].astype(str).str.contains("Blocked|Overdue|Required", case=False, na=False)
+                b1.metric("Control Rows", f"{len(security_board):,}")
+                b2.metric("Blocked / Required", f"{int(blocked_states.sum()):,}", delta_color="inverse")
+                b3.metric("Overdue", f"{int(security_board.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+                b4.metric("Verified Closures", f"{int(security_board.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+                render_priority_dataframe(
+                    security_board,
+                    title="Security issues blocking DBA closure",
+                    priority_columns=[
+                        "CONTROL_STATE", "SEVERITY", "FINDING_TYPE", "ENTITY",
+                        "ENVIRONMENT", "DATABASE_CONTEXT", "OWNER", "APPROVER",
+                        "REVIEW_READINESS", "REVIEW_BLOCKERS", "ACCESS_TICKET_ID",
+                        "REVIEW_BY_DATE", "IAM_APPROVAL_STATE", "REVIEW_SLA_HOURS",
+                        "OPEN_ACTIONS", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION",
+                        "VERIFIED_CLOSURES", "CONTROL_BLOCKERS", "NEXT_CONTROL_ACTION",
+                    ],
+                    sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS"],
+                    ascending=[True, False, False, False],
+                    raw_label="All security control rows",
+                    height=340,
+                )
             render_priority_dataframe(
                 access_review,
                 title="Security access-review readiness before queueing",
                 priority_columns=[
-                    "SEVERITY", "ACCESS_REVIEW_STATE", "FINDING_TYPE", "ENTITY",
+                    "SEVERITY", "REVIEW_READINESS", "ACCESS_REVIEW_STATE", "FINDING_TYPE", "ENTITY",
                     "OWNER", "ESCALATION_TARGET", "APPROVER", "ROLE_CAPABILITY_STATE",
-                    "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "DATABASE_CONTEXT",
+                    "ACCESS_TICKET_ID", "REVIEW_BY_DATE", "IAM_APPROVAL_STATE",
+                    "REVIEW_BLOCKERS", "REVIEW_SLA_HOURS", "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "DATABASE_CONTEXT",
                     "DATABASE_NAME", "ENVIRONMENT", "SCOPE_CONFIDENCE", "SCOPE_EVIDENCE",
-                    "PROOF_REQUIRED",
+                    "PROOF_REQUIRED", "NEXT_CONTROL_ACTION",
                 ],
-                sort_by=["SEVERITY", "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "ENTITY"],
-                ascending=[True, False, False, True],
+                sort_by=["REVIEW_RANK", "SEVERITY", "ENTITY"],
+                ascending=[True, True, True],
                 raw_label="Full security access review",
             )
 
@@ -1664,11 +2151,13 @@ def render() -> None:
                             "FINDING_TYPE", "SEVERITY", "OWNER", "ESCALATION_TARGET",
                             "REVIEW_ROWS", "TOTAL_EVENTS", "TICKET_REQUIRED_ROWS",
                             "REVIEW_BY_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS",
+                            "REVIEW_BLOCKER_ROWS", "VERIFIED_REVIEW_ROWS",
                             "NO_DATABASE_CONTEXT_ROWS", "LAST_ACCESS_REVIEW_STATE",
-                            "LAST_ROLE_CAPABILITY_STATE",
+                            "LAST_REVIEW_READINESS", "LAST_CONTROL_READINESS",
+                            "LAST_ROLE_CAPABILITY_STATE", "NEXT_CONTROL_ACTION",
                         ],
-                        sort_by=["TICKET_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS", "TOTAL_EVENTS"],
-                        ascending=[False, False, False],
+                        sort_by=["REVIEW_BLOCKER_ROWS", "TICKET_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS", "TOTAL_EVENTS"],
+                        ascending=[False, False, False, False],
                         raw_label="Access review history",
                     )
                     with st.expander("Trend Query", expanded=False):

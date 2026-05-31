@@ -1697,6 +1697,104 @@ def _command_queue_route_readiness(queue: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _dba_section_operability_board(
+    section_rows: pd.DataFrame | None = None,
+    command_queue: pd.DataFrame | None = None,
+    closure_rollup: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Join static 95-readiness with live command/closure blockers by DBA route."""
+    sections = section_rows.copy() if section_rows is not None and not section_rows.empty else pd.DataFrame(dba_control_plane_section_scorecards())
+    if sections.empty:
+        return _empty_df()
+
+    route_readiness = _command_queue_route_readiness(command_queue) if command_queue is not None and not command_queue.empty else _empty_df()
+    closure = closure_rollup.copy() if closure_rollup is not None and not closure_rollup.empty else _empty_df()
+    route_by_name = {
+        str(row.get("ROUTE") or ""): row
+        for _, row in route_readiness.iterrows()
+    } if not route_readiness.empty else {}
+    closure_by_name = {
+        str(row.get("ROUTE") or ""): row
+        for _, row in closure.iterrows()
+    } if not closure.empty else {}
+
+    rows: list[dict] = []
+    for _, section in sections.iterrows():
+        name = str(section.get("SECTION") or "")
+        route = route_by_name.get(name, {})
+        close = closure_by_name.get(name, {})
+        score = safe_float(section.get("SCORE", 0))
+        open_actions = safe_int(route.get("OPEN_ACTIONS", 0))
+        overdue = max(safe_int(route.get("OVERDUE", 0)), safe_int(close.get("OVERDUE_OPEN", 0)))
+        metadata_blocks = safe_int(route.get("METADATA_BLOCKS", 0))
+        approval_blocks = safe_int(route.get("APPROVAL_BLOCKS", 0))
+        execution_ready = safe_int(route.get("EXECUTION_READY", 0))
+        closure_rank = safe_int(close.get("CLOSURE_RANK", 9))
+        closure_blockers = safe_int(close.get("CLOSURE_BLOCKER_ROWS", 0))
+        fixed_without_verification = safe_int(close.get("FIXED_WITHOUT_VERIFICATION", 0))
+        recovery_risk = safe_int(close.get("RECOVERY_RISK_ROWS", 0))
+        verified_closures = safe_int(close.get("VERIFIED_CLOSURES", 0))
+
+        if overdue:
+            state, rank = "Escalate Now", 0
+            next_action = "Escalate overdue route work and attach owner, ticket, and verification evidence."
+        elif fixed_without_verification or recovery_risk or closure_rank in {1, 2}:
+            state, rank = "Closure Evidence Blocked", 1
+            next_action = "Attach verification or recovery evidence before accepting the section as controlled."
+        elif metadata_blocks:
+            state, rank = "Route Metadata Blocked", 2
+            next_action = "Complete owner, ticket, approver, and verification metadata for open work."
+        elif approval_blocks:
+            state, rank = "Approval Blocked", 3
+            next_action = "Collect owner approval before DBA execution."
+        elif open_actions:
+            state, rank = "Work Open Actions", 4
+            next_action = "Work ready actions, then retain proof for closure."
+        elif score < 95:
+            state, rank = "Build Toward 95", 6
+            next_action = str(section.get("NEXT_95_MOVE") or "Raise weak control-plane components.")
+        else:
+            state, rank = "95 Target", 8
+            next_action = "Maintain verified closure evidence and owner routing."
+
+        rows.append({
+            "SECTION": name,
+            "SCORE": score,
+            "LABEL": section.get("LABEL", ""),
+            "OPERABILITY_STATE": state,
+            "OPERABILITY_RANK": rank,
+            "OPEN_ACTIONS": open_actions,
+            "OVERDUE": overdue,
+            "EXECUTION_READY": execution_ready,
+            "METADATA_BLOCKS": metadata_blocks,
+            "APPROVAL_BLOCKS": approval_blocks,
+            "CLOSURE_READINESS": close.get("CLOSURE_READINESS", "No recent action"),
+            "CLOSURE_BLOCKERS": closure_blockers,
+            "FIXED_WITHOUT_VERIFICATION": fixed_without_verification,
+            "RECOVERY_RISK_ROWS": recovery_risk,
+            "VERIFIED_CLOSURES": verified_closures,
+            "LOWEST_COMPONENT": section.get("LOWEST_COMPONENT", ""),
+            "LOWEST_SCORE": safe_float(section.get("LOWEST_SCORE", 0)),
+            "CAP_DRIVERS": section.get("CAP_DRIVERS", ""),
+            "NEXT_CONTROL_ACTION": next_action,
+            "NEXT_95_MOVE": section.get("NEXT_95_MOVE", ""),
+        })
+
+    if not rows:
+        return _empty_df()
+    return pd.DataFrame(rows).sort_values(
+        [
+            "OPERABILITY_RANK",
+            "OVERDUE",
+            "CLOSURE_BLOCKERS",
+            "METADATA_BLOCKS",
+            "APPROVAL_BLOCKS",
+            "SCORE",
+        ],
+        ascending=[True, False, False, False, False, True],
+    ).reset_index(drop=True)
+
+
 def _render_command_queue_control(queue: pd.DataFrame, raw_queue: pd.DataFrame | None = None) -> None:
     summary = _command_queue_summary(queue)
     closure_rollup = _command_queue_closure_readiness(raw_queue if raw_queue is not None else queue)
@@ -1720,6 +1818,32 @@ def _render_command_queue_control(queue: pd.DataFrame, raw_queue: pd.DataFrame |
     c6.metric("Route Ready", f"{summary['route_ready']:,}")
     c7.metric("High Risk", f"{summary['high_risk']:,}", delta_color="inverse")
     c8.metric("Closure Blocks", f"{closure_blockers:,}", delta_color="inverse")
+
+    section_board = _dba_section_operability_board(
+        command_queue=queue,
+        closure_rollup=closure_rollup,
+    )
+    if not section_board.empty:
+        render_priority_dataframe(
+            section_board,
+            title="DBA control-plane operating board",
+            priority_columns=[
+                "OPERABILITY_STATE", "SECTION", "SCORE", "LABEL", "OPEN_ACTIONS",
+                "OVERDUE", "EXECUTION_READY", "METADATA_BLOCKS", "APPROVAL_BLOCKS",
+                "CLOSURE_READINESS", "CLOSURE_BLOCKERS", "FIXED_WITHOUT_VERIFICATION",
+                "RECOVERY_RISK_ROWS", "LOWEST_COMPONENT", "LOWEST_SCORE",
+                "NEXT_CONTROL_ACTION",
+            ],
+            sort_by=["OPERABILITY_RANK", "SCORE"],
+            ascending=[True, True],
+            raw_label="All DBA control-plane operating rows",
+            height=280,
+            max_rows=12,
+            column_config={
+                "SCORE": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
+                "LOWEST_SCORE": st.column_config.ProgressColumn("Lowest", min_value=0, max_value=100, format="%.1f"),
+            },
+        )
 
     if queue.empty and closure_rollup.empty:
         st.success("No open action queue items or closure evidence blockers for the current company/environment scope.")

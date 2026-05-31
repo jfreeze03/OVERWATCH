@@ -22,9 +22,11 @@ from sections.account_health import (  # noqa: E402
     _account_health_checklist_history_insert_sql,
     _account_health_checklist_history_sql,
     _account_health_closure_analytics_sql,
+    _account_health_control_board,
     _build_account_health_dba_checklist,
     _enrich_account_health_checklist_owners,
     build_account_health_checklist_history_ddl,
+    build_account_health_checklist_history_migration_sql,
     _live_query_status_sql,
 )
 from sections.adoption_analytics import (  # noqa: E402
@@ -51,6 +53,7 @@ from sections.dba_control_room import (  # noqa: E402
     _command_queue_closure_readiness,
     _command_queue_summary,
     _command_queue_route_readiness,
+    _dba_section_operability_board,
     _build_release_compare_report,
     _compare_release_windows,
     _control_room_snapshot_to_data,
@@ -68,6 +71,7 @@ from sections.change_drift import (  # noqa: E402
     _change_blast_radius_sql,
     _change_action_queue_closure_sql,
     _build_change_control_readiness,
+    _change_control_readiness_summary,
     _build_change_drift_markdown,
     _build_change_drift_sql,
     _build_mart_change_drift_sql,
@@ -77,9 +81,13 @@ from sections.change_drift import (  # noqa: E402
     _change_control_evidence_insert_sql,
     _change_drift_rating,
     _change_drift_score,
+    _change_control_operability_fact_sql,
     _change_verification_sql,
     _enrich_change_control_evidence,
     build_change_control_evidence_ddl,
+    build_change_control_evidence_migration_sql,
+    build_change_control_operability_fact_ddl,
+    build_change_control_operability_fact_migration_sql,
 )
 from sections.query_workbench import (  # noqa: E402
     _build_mart_root_cause_sql,
@@ -97,12 +105,15 @@ from sections.recommendations import (  # noqa: E402
 from sections.service_health import _value as service_value  # noqa: E402
 from sections.security_posture import (  # noqa: E402
     _security_action_queue_closure_sql,
+    _security_access_review_readiness_for_row,
     _annotate_security_privileged_grant_readiness,
     _build_security_access_review,
     _build_security_brief_markdown,
     _build_security_mart_brief_sql,
     _build_security_summary_sql,
+    _security_control_board,
     _security_privileged_grant_review_sql,
+    _security_operability_fact_sql,
     _security_access_review_history_sql,
     _security_access_review_insert_sql,
     _security_action_for,
@@ -110,6 +121,9 @@ from sections.security_posture import (  # noqa: E402
     _security_rating,
     _security_score,
     build_security_access_review_ddl,
+    build_security_access_review_migration_sql,
+    build_security_operability_fact_ddl,
+    build_security_operability_fact_migration_sql,
 )
 from sections.stored_proc_tracker import (  # noqa: E402
     _build_procedure_reliability_action,
@@ -145,6 +159,9 @@ from sections.warehouse_health import (  # noqa: E402
     _annotate_warehouse_admin_readiness,
     _annotate_warehouse_owner_inventory,
     _warehouse_action_queue_closure_sql,
+    _warehouse_setting_audit_readiness_for_row,
+    _warehouse_setting_control_board,
+    _warehouse_setting_execution_audit_sql,
     _build_warehouse_capacity_markdown,
     _queue_efficiency_findings,
     _queue_capacity_findings,
@@ -153,9 +170,13 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_capacity_score,
     _warehouse_capacity_verification_sql,
     _warehouse_owner_inventory_sql,
+    _warehouse_operability_fact_sql,
     _warehouse_setting_review_history_sql,
     _warehouse_setting_review_insert_sql,
+    build_warehouse_operability_fact_ddl,
+    build_warehouse_operability_fact_migration_sql,
     build_warehouse_setting_review_ddl,
+    build_warehouse_setting_review_migration_sql,
 )
 from utils.cost import build_metered_credit_cte  # noqa: E402
 from utils.company_filter import (  # noqa: E402
@@ -377,6 +398,95 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("MAX_BY(STATUS", trend_sql)
         self.assertIn("COMPANY = 'ALFA'", trend_sql)
         self.assertIn("ENVIRONMENT = 'DEV_ALL'", trend_sql)
+        self.assertIn("QUEUE_READINESS", insert_sql)
+        self.assertIn("VERIFICATION_QUERY", insert_sql)
+        self.assertIn("CONTROL_READINESS", insert_sql)
+        self.assertIn("CONTROL_BLOCKER_SNAPSHOTS", trend_sql)
+        self.assertIn("NEXT_CONTROL_ACTION", trend_sql)
+
+    def test_account_health_checklist_history_schema_has_control_board_fields(self):
+        ddl = build_account_health_checklist_history_ddl().upper()
+        migrations = "\n".join(build_account_health_checklist_history_migration_sql()).upper()
+
+        for column in [
+            "ENVIRONMENT_SCOPE",
+            "DATABASE_CONTEXT",
+            "SCOPE_CONFIDENCE",
+            "APPROVAL_REQUIRED",
+            "QUEUE_READINESS",
+            "QUEUE_BLOCKERS",
+            "VERIFICATION_QUERY",
+            "RECOVERY_SLA_TARGET_HOURS",
+            "CONTROL_READINESS",
+            "CONTROL_BLOCKERS",
+            "NEXT_CONTROL_ACTION",
+        ]:
+            self.assertIn(column, ddl)
+            self.assertIn(f"ADD COLUMN IF NOT EXISTS {column}", migrations)
+
+    def test_account_health_control_board_prioritizes_closure_route_and_hygiene_blocks(self):
+        checklist = _build_account_health_dba_checklist(
+            health_score=68,
+            score_label="Degraded",
+            err_count=14,
+            queued=7,
+            pct_delta=45.0,
+            last24=120.0,
+            stor_tb=4.2,
+            failed_tasks=2,
+            object_changes=3,
+            control_mart_used=False,
+            detail_source="Live fallback: ACCOUNT_USAGE",
+        )
+        closure = pd.DataFrame(
+            {
+                "CHECK_NAME": ["Query failure review", "Cost spike review"],
+                "CLOSURE_READINESS": ["Overdue closure", "Fixed without verification"],
+                "CLOSURE_RANK": [0, 1],
+                "OPEN_ACTIONS": [1, 0],
+                "OVERDUE_OPEN": [1, 0],
+                "FIXED_WITHOUT_VERIFICATION": [0, 1],
+                "RECOVERY_RISK_ROWS": [0, 1],
+                "VERIFIED_CLOSURES": [0, 0],
+                "NEXT_ACTION": ["Escalate query failure owner.", "Attach cost verification."],
+            }
+        )
+        hygiene = pd.DataFrame(
+            [
+                {
+                    "USER_NAME": "ALFA_ADMIN",
+                    "SEVERITY": "High",
+                    "POSTURE_FINDINGS": "privileged role grant; MFA signal missing",
+                    "FAILED_LOGINS": 2,
+                    "FAILED_IPS": 1,
+                    "ADMIN_ROLE_COUNT": 1,
+                    "ADMIN_ROLES": "ACCOUNTADMIN",
+                    "MFA_SIGNAL": "false",
+                    "DAYS_SINCE_SEEN": 4,
+                    "DATABASE_CONTEXT": "No Database Context",
+                    "ENVIRONMENT_SCOPE": "No Database Context",
+                    "SCOPE_CONFIDENCE": "Account-Level Control",
+                    "SCOPE_EVIDENCE": "USERS and LOGIN_HISTORY do not expose database context.",
+                    "NEXT_ACTION": "Confirm IAM owner and admin-role business need.",
+                    "PROOF_REQUIRED": "user, IAM ticket, admin-role evidence, owner approval",
+                }
+            ]
+        )
+
+        board = _account_health_control_board(
+            checklist,
+            closure=closure,
+            access_hygiene=hygiene,
+            environment="PROD",
+        )
+        by_check = {row["CHECK_NAME"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_check["Query failure review"]["CONTROL_STATE"], "Closure Overdue")
+        self.assertEqual(by_check["Cost spike review"]["CONTROL_STATE"], "Closure Evidence Blocked")
+        self.assertEqual(by_check["Refresh source confidence"]["CONTROL_STATE"], "Queue Required")
+        self.assertEqual(by_check["Account access hygiene"]["CONTROL_STATE"], "High-Risk Access Review")
+        self.assertEqual(by_check["Account access hygiene"]["DATABASE_CONTEXT"], "No")
+        self.assertIn("user hygiene", by_check["Account access hygiene"]["NEXT_CONTROL_ACTION"])
 
     def test_account_health_closure_analytics_sql_scores_action_queue_evidence(self):
         sql = _account_health_closure_analytics_sql(45, "ALFA", "PROD").upper()
@@ -792,6 +902,83 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_route["Warehouse Health"]["VERIFIED_CLOSURES"], 1)
         self.assertIn("Attach verification", by_route["Account Health"]["NEXT_CONTROL_ACTION"])
 
+    def test_dba_control_room_operability_board_joins_scores_with_live_blockers(self):
+        queue = pd.DataFrame([
+            {
+                "ACTION_ID": "W1",
+                "CATEGORY": "Warehouse Health",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "WH_LOAD",
+                "OWNER": "DBA",
+                "STATUS": "New",
+                "DUE_DATE": "2026-05-29",
+                "TICKET_ID": "",
+                "APPROVER": "",
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "VERIFICATION_QUERY": "",
+                "RECOVERY_SLA_STATE": "Open Failure",
+                "RECOVERY_EVIDENCE": "",
+            },
+            {
+                "ACTION_ID": "C1",
+                "CATEGORY": "Cost Control",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "WH_BI",
+                "OWNER": "BI_PLATFORM_OWNER",
+                "STATUS": "In Progress",
+                "DUE_DATE": "2026-06-02",
+                "TICKET_ID": "CHG-101",
+                "APPROVER": "FinOps Lead",
+                "OWNER_APPROVAL_STATUS": "Approved",
+                "VERIFICATION_QUERY": "SELECT 1",
+                "BASELINE_VALUE": 100,
+                "CURRENT_VALUE": 80,
+            },
+        ])
+        command_queue = _build_command_queue(queue, today="2026-05-31")
+        closure = _command_queue_closure_readiness(queue, today="2026-05-31")
+        section_rows = pd.DataFrame([
+            {
+                "SECTION": "Warehouse Health",
+                "SCORE": 91.9,
+                "LABEL": "Near Target",
+                "LOWEST_COMPONENT": "Performance & Mart Strategy",
+                "LOWEST_SCORE": 86,
+                "CAP_DRIVERS": "none",
+                "NEXT_95_MOVE": "Persist warehouse settings change audit.",
+            },
+            {
+                "SECTION": "Cost & Contract",
+                "SCORE": 96.2,
+                "LABEL": "95 Target",
+                "LOWEST_COMPONENT": "Performance & Mart Strategy",
+                "LOWEST_SCORE": 94,
+                "CAP_DRIVERS": "none",
+                "NEXT_95_MOVE": "Maintain evidence.",
+            },
+            {
+                "SECTION": "Security Posture",
+                "SCORE": 92.6,
+                "LABEL": "Near Target",
+                "LOWEST_COMPONENT": "Performance & Mart Strategy",
+                "LOWEST_SCORE": 85,
+                "CAP_DRIVERS": "none",
+                "NEXT_95_MOVE": "Connect IAM approvals.",
+            },
+        ])
+
+        board = _dba_section_operability_board(section_rows, command_queue, closure)
+        by_section = {row["SECTION"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_section["Warehouse Health"]["OPERABILITY_STATE"], "Escalate Now")
+        self.assertEqual(by_section["Warehouse Health"]["OVERDUE"], 1)
+        self.assertGreaterEqual(by_section["Warehouse Health"]["CLOSURE_BLOCKERS"], 1)
+        self.assertIn("Escalate overdue", by_section["Warehouse Health"]["NEXT_CONTROL_ACTION"])
+        self.assertEqual(by_section["Cost & Contract"]["OPERABILITY_STATE"], "Work Open Actions")
+        self.assertEqual(by_section["Cost & Contract"]["EXECUTION_READY"], 1)
+        self.assertEqual(by_section["Security Posture"]["OPERABILITY_STATE"], "Build Toward 95")
+        self.assertIn("Connect IAM", by_section["Security Posture"]["NEXT_CONTROL_ACTION"])
+
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []
         for path in _python_sources():
@@ -1186,6 +1373,41 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertEqual(verification_query_safety_issues(row["VERIFICATION_QUERY"]), [])
             self.assertEqual(verification_query_safety_issues(_security_exception_verification_sql(row)), [])
 
+    def test_security_access_review_readiness_tracks_ticket_approval_and_verification(self):
+        exceptions = pd.DataFrame(
+            {
+                "SEVERITY": ["High", "Medium"],
+                "FINDING_TYPE": ["Failed Login", "Object Grant"],
+                "ENTITY": ["ALFA_USER", "ALFA_EDW_DEV.PUBLIC.POLICY"],
+                "DATABASE_NAME": ["", "ALFA_EDW_DEV"],
+                "EVENT_COUNT": [12, 3],
+                "DISTINCT_SOURCES": [2, 1],
+                "LAST_SEEN": ["2026-05-01", "2026-05-02"],
+                "PROOF_QUERY": ["LOGIN_HISTORY", "ACCOUNT_USAGE.GRANTS_TO_ROLES"],
+            }
+        )
+
+        review = _build_security_access_review(exceptions, "DEV_ALL")
+        by_type = {row["FINDING_TYPE"]: row for _, row in review.iterrows()}
+
+        self.assertEqual(by_type["Failed Login"]["REVIEW_READINESS"], "Ticket / Review Date Blocked")
+        self.assertEqual(by_type["Failed Login"]["REVIEW_SLA_HOURS"], 24)
+        self.assertIn("access ticket", by_type["Failed Login"]["REVIEW_BLOCKERS"])
+        self.assertIn("IAM/security approval", by_type["Failed Login"]["REVIEW_BLOCKERS"])
+        self.assertEqual(by_type["Object Grant"]["CONTROL_READINESS"], by_type["Object Grant"]["REVIEW_READINESS"])
+
+        ready = _security_access_review_readiness_for_row({
+            "SEVERITY": "High",
+            "OWNER": "Security Owner",
+            "OWNER_SOURCE": "OWNER_DIRECTORY exact",
+            "ACCESS_TICKET_ID": "SEC-123",
+            "REVIEW_BY_DATE": "2026-06-30",
+            "OWNER_APPROVAL_STATUS": "Approved",
+            "VERIFICATION_QUERY": "SELECT 1",
+        })
+        self.assertEqual(ready["REVIEW_READINESS"], "Ready for Action Queue")
+        self.assertEqual(ready["REVIEW_BLOCKERS"], "None")
+
     def test_security_sql_adds_database_scoped_object_grants(self):
         import streamlit as st
 
@@ -1289,13 +1511,75 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_SECURITY_ACCESS_REVIEW", ddl)
         self.assertIn("DATABASE_CONTEXT", ddl)
         self.assertIn("ROLE_CAPABILITY_STATE", ddl)
+        self.assertIn("REVIEW_READINESS", ddl)
+        self.assertIn("NEXT_CONTROL_ACTION", ddl)
         self.assertIn("INSERT INTO", insert_sql)
         self.assertIn("'SECURITYSNAP1'", insert_sql)
         self.assertIn("'NO DATABASE CONTEXT'", insert_sql)
         self.assertIn("IAM / SECURITY OWNER", insert_sql)
         self.assertIn("LOGIN_HISTORY", insert_sql)
+        self.assertIn("REVIEW_READINESS", insert_sql)
+        self.assertIn("ACCESS_TICKET_ID", insert_sql)
         self.assertIn("ENVIRONMENT = 'PROD'", history_sql)
         self.assertIn("DATABASE_CONTEXT = FALSE", history_sql)
+        self.assertIn("REVIEW_BLOCKER_ROWS", history_sql)
+        self.assertIn("LAST_CONTROL_READINESS", history_sql)
+
+        migration_sql = "\n".join(build_security_access_review_migration_sql()).upper()
+        for column in [
+            "ACCESS_TICKET_ID",
+            "REVIEW_BY_DATE",
+            "IAM_APPROVAL_STATE",
+            "REVIEW_READINESS",
+            "REVIEW_BLOCKERS",
+            "REVIEW_SLA_HOURS",
+            "VERIFICATION_STATUS",
+            "VERIFICATION_RESULT",
+            "CONTROL_READINESS",
+            "CONTROL_BLOCKERS",
+            "NEXT_CONTROL_ACTION",
+        ]:
+            self.assertIn(f"ADD COLUMN IF NOT EXISTS {column}", migration_sql)
+
+    def test_security_control_board_prioritizes_closure_and_review_blockers(self):
+        review = _build_security_access_review(
+            pd.DataFrame(
+                {
+                    "SEVERITY": ["High", "High"],
+                    "FINDING_TYPE": ["Failed Login", "Shared Database Exposure"],
+                    "ENTITY": ["ALFA_USER", "ALFA_EDW_PROD"],
+                    "DATABASE_NAME": ["", "ALFA_EDW_PROD"],
+                    "EVENT_COUNT": [12, 1],
+                    "DISTINCT_SOURCES": [3, 0],
+                    "LAST_SEEN": ["2026-05-01", "2026-05-04"],
+                    "PROOF_QUERY": ["LOGIN_HISTORY", "ACCOUNT_USAGE.DATABASES"],
+                }
+            ),
+            "PROD",
+        )
+        closure = pd.DataFrame(
+            [
+                {
+                    "ENTITY": "ALFA_USER",
+                    "CLOSURE_READINESS": "Overdue closure",
+                    "CLOSURE_RANK": 0,
+                    "OPEN_ACTIONS": 1,
+                    "OVERDUE_OPEN": 1,
+                    "FIXED_WITHOUT_VERIFICATION": 0,
+                    "RECOVERY_RISK_ROWS": 0,
+                    "VERIFIED_CLOSURES": 0,
+                    "NEXT_ACTION": "Escalate IAM owner.",
+                }
+            ]
+        )
+
+        board = _security_control_board(review, closure=closure, environment="PROD")
+        by_entity = {row["ENTITY"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_entity["ALFA_USER"]["CONTROL_STATE"], "Closure Overdue")
+        self.assertEqual(by_entity["ALFA_USER"]["CONTROL_RANK"], 0)
+        self.assertEqual(by_entity["ALFA_EDW_PROD"]["CONTROL_STATE"], "Ticket / Review Date Blocked")
+        self.assertIn("access ticket", by_entity["ALFA_EDW_PROD"]["CONTROL_BLOCKERS"])
 
     def test_security_action_queue_closure_sql_scores_evidence_gaps(self):
         sql = _security_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()
@@ -1310,6 +1594,28 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CLOSURE_READINESS", sql)
         self.assertIn("SECURITY OWNER AND TICKET", sql)
         self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_security_operability_fact_is_fast_and_keeps_account_scope_rows(self):
+        ddl = build_security_operability_fact_ddl().upper()
+        migrations = "\n".join(build_security_operability_fact_migration_sql()).upper()
+        fact_sql = _security_operability_fact_sql(30, "ALFA", "DEV_ALL").upper()
+
+        self.assertIn("FACT_SECURITY_OPERABILITY_DAILY", ddl)
+        self.assertIn("CONTROL_SOURCE", ddl)
+        self.assertIn("CONTROL_RANK", ddl)
+        self.assertIn("REVIEW_BLOCKER_ROWS", ddl)
+        self.assertIn("OWNER_APPROVAL_GAP_ROWS", ddl)
+        self.assertIn("ADD COLUMN IF NOT EXISTS CONTROL_SOURCE", migrations)
+        self.assertIn("ADD COLUMN IF NOT EXISTS CONTROL_RANK", migrations)
+        self.assertIn("ADD COLUMN IF NOT EXISTS REVIEW_BLOCKER_ROWS", migrations)
+        self.assertIn("FACT_SECURITY_OPERABILITY_DAILY", fact_sql)
+        self.assertIn("SNAPSHOT_DATE >= DATEADD('DAY', -30", fact_sql)
+        self.assertIn("COMPANY = 'ALFA'", fact_sql)
+        self.assertIn("NO DATABASE CONTEXT", fact_sql)
+        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+            self.assertIn(db_name, fact_sql)
+        self.assertNotIn("ACCOUNT_USAGE", fact_sql)
+        self.assertNotIn("OVERWATCH_ACTION_QUEUE", fact_sql)
 
     def test_change_drift_score_weights_destructive_and_policy_changes(self):
         clean = _change_drift_score(
@@ -1389,11 +1695,52 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(row["OWNER"], "Security Owner")
         self.assertEqual(row["ONCALL_PRIMARY"], "DBA On-Call")
         self.assertIn("OWNER_DIRECTORY", row["OWNER_SOURCE"])
+        self.assertEqual(row["APPROVAL_ROUTE_READY"], "No")
+        self.assertEqual(row["CHANGE_EVIDENCE_READINESS"], "Route Blocked")
+        self.assertIn("owner directory evidence", row["EVIDENCE_BLOCKERS"])
+        self.assertEqual(row["REVIEW_SLA_HOURS"], 72)
+        self.assertIn("Attach the approved change ticket", row["NEXT_CONTROL_ACTION"])
         self.assertIn("Review source-control", row["IAC_RECONCILIATION_STATE"])
         self.assertIn("Query ID", row["EXECUTION_AUDIT_STATE"])
         self.assertIn("change ticket", row["PROOF_REQUIRED"])
         self.assertEqual(verification_query_safety_issues(row["VERIFICATION_QUERY"]), [])
         self.assertEqual(verification_query_safety_issues(row["BLAST_RADIUS_QUERY"]), [])
+
+    def test_change_control_readiness_summary_groups_blockers_and_account_scope(self):
+        exceptions = pd.DataFrame([
+            {
+                "FINDING_TYPE": "Policy or Tag Change",
+                "SEVERITY": "High",
+                "ENTITY": "ALFA_EDW_PROD.SECURE.CUSTOMER",
+                "USER_NAME": "DEPLOY_USER",
+                "ROLE_NAME": "SECURITYADMIN",
+                "QUERY_ID": "01policy",
+                "QUERY_TAG": "CHG-12345 terraform release",
+                "LAST_SEEN": "2026-05-31 10:00:00",
+            },
+            {
+                "FINDING_TYPE": "Grant or Role Change",
+                "SEVERITY": "Medium",
+                "ENTITY": "ACCOUNTADMIN",
+                "USER_NAME": "SECURITY_ADMIN",
+                "ROLE_NAME": "SECURITYADMIN",
+                "QUERY_ID": "01grant",
+                "QUERY_TAG": "manual-console-change",
+                "LAST_SEEN": "2026-05-31 11:00:00",
+            },
+        ])
+
+        readiness = _build_change_control_readiness(exceptions)
+        summary = _change_control_readiness_summary(readiness)
+
+        self.assertFalse(summary.empty)
+        self.assertIn("READINESS", summary.columns)
+        self.assertEqual(int(summary["TOTAL_CHANGES"].sum()), 2)
+        self.assertEqual(int(summary["HIGH_RISK_CHANGES"].sum()), 1)
+        self.assertEqual(int(summary["MISSING_TICKET_ROWS"].sum()), 1)
+        self.assertGreaterEqual(int(summary["ACCOUNT_SCOPE_ROWS"].sum()), 1)
+        self.assertIn("Route Blocked", set(summary["READINESS"]))
+        self.assertIn("Complete named owner", " ".join(summary["NEXT_CONTROL_ACTION"].astype(str)))
 
     def test_change_control_evidence_snapshot_sql_is_scoped_and_auditable(self):
         readiness = _enrich_change_control_evidence(pd.DataFrame([
@@ -1427,19 +1774,46 @@ class FormulaRegressionTests(unittest.TestCase):
             snapshot_id="snap1",
         ).upper()
         trend_sql = _change_control_evidence_history_sql(30, "ALFA", "PROD").upper()
+        migration_sql = "\n".join(build_change_control_evidence_migration_sql()).upper()
 
         self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
         self.assertIn("OVERWATCH_CHANGE_CONTROL_EVIDENCE", ddl)
         self.assertIn("CHANGE_TICKET_ID", ddl)
         self.assertIn("IAC_RECONCILIATION_STATE", ddl)
+        self.assertIn("CHANGE_EVIDENCE_READINESS", ddl)
+        self.assertIn("NEXT_CONTROL_ACTION", ddl)
+        self.assertIn("ALTER TABLE", migration_sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS CHANGE_EVIDENCE_READINESS", migration_sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION", migration_sql)
         self.assertIn("INSERT INTO", insert_sql)
         self.assertIn("'RFC98765'", insert_sql)
         self.assertIn("'PROD'", insert_sql)
         self.assertIn("CODIFIED / DEPLOYMENT-TAGGED", insert_sql)
+        self.assertIn("REVIEW READY", insert_sql)
         self.assertIn("SNAPSHOT_TS >= DATEADD('DAY', -30", trend_sql)
         self.assertIn("COMPANY = 'ALFA'", trend_sql)
         self.assertIn("ENVIRONMENT = 'PROD'", trend_sql)
         self.assertIn("MISSING_TICKET_ROWS", trend_sql)
+
+    def test_change_control_operability_fact_is_fast_and_environment_scoped(self):
+        ddl = build_change_control_operability_fact_ddl().upper()
+        migration_sql = "\n".join(build_change_control_operability_fact_migration_sql()).upper()
+        fact_sql = _change_control_operability_fact_sql(30, "ALFA", "DEV_ALL").upper()
+
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS", ddl)
+        self.assertIn("FACT_CHANGE_CONTROL_OPERABILITY_DAILY", ddl)
+        self.assertIn("CONTROL_SOURCE", ddl)
+        self.assertIn("CONTROL_RANK", ddl)
+        self.assertIn("NEXT_CONTROL_ACTION", ddl)
+        self.assertIn("ADD COLUMN IF NOT EXISTS CONTROL_SOURCE", migration_sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS CONTROL_RANK", migration_sql)
+        self.assertIn("FACT_CHANGE_CONTROL_OPERABILITY_DAILY", fact_sql)
+        self.assertIn("SNAPSHOT_DATE >= DATEADD('DAY', -30", fact_sql)
+        self.assertIn("COMPANY = 'ALFA'", fact_sql)
+        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+            self.assertIn(db_name, fact_sql)
+        self.assertNotIn("ACCOUNT_USAGE.QUERY_HISTORY", fact_sql)
+        self.assertNotIn("OVERWATCH_ACTION_QUEUE", fact_sql)
 
     def test_change_action_queue_closure_sql_scores_evidence_gaps(self):
         sql = _change_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()
@@ -1762,6 +2136,155 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("COMPANY = 'ALFA'", trend_sql)
         self.assertIn("ENVIRONMENT = 'PROD'", trend_sql)
         self.assertIn("SAVINGS_VERIFICATION_ROWS", trend_sql)
+
+    def test_warehouse_setting_review_schema_tracks_execution_audit_fields(self):
+        ddl = build_warehouse_setting_review_ddl().upper()
+        migrations = "\n".join(build_warehouse_setting_review_migration_sql()).upper()
+
+        for column in [
+            "APPROVAL_STATE",
+            "CHANGE_TICKET_ID",
+            "ROLLBACK_SQL",
+            "EXECUTED_SQL_HASH",
+            "POST_CHANGE_VERIFICATION_STATUS",
+            "VERIFIED_MONTHLY_SAVINGS",
+            "AUDIT_READINESS",
+            "AUDIT_BLOCKERS",
+            "NEXT_CONTROL_ACTION",
+        ]:
+            self.assertIn(column, ddl)
+            self.assertIn(f"ADD COLUMN IF NOT EXISTS {column}", migrations)
+
+    def test_warehouse_setting_audit_readiness_requires_ticket_rollback_and_verification(self):
+        blocked = _warehouse_setting_audit_readiness_for_row(
+            {
+                "OWNER": "BI Platform Owner",
+                "OWNER_SOURCE": "WAREHOUSE_TAG",
+                "APPROVER": "BI Platform Owner / DBA Lead",
+                "APPROVAL_REQUIRED": "Yes",
+                "APPROVAL_STATE": "Requested",
+                "ROLLBACK_REQUIRED": "Yes",
+                "SAVINGS_VERIFICATION_REQUIRED": "Yes",
+                "EXECUTION_STATUS": "Not Executed",
+            }
+        )
+        verified = _warehouse_setting_audit_readiness_for_row(
+            {
+                "OWNER": "BI Platform Owner",
+                "OWNER_SOURCE": "WAREHOUSE_TAG",
+                "APPROVER": "BI Platform Owner / DBA Lead",
+                "APPROVAL_REQUIRED": "Yes",
+                "APPROVAL_STATE": "Approved",
+                "CHANGE_TICKET_ID": "CHG12345",
+                "ROLLBACK_REQUIRED": "Yes",
+                "ROLLBACK_SQL": "ALTER WAREHOUSE BI_COMPUTE_WH SET AUTO_SUSPEND = 300;",
+                "SAVINGS_VERIFICATION_REQUIRED": "Yes",
+                "EXECUTION_STATUS": "Success",
+                "EXECUTED_SQL_HASH": "abc123",
+                "POST_CHANGE_VERIFICATION_STATUS": "Verified",
+                "POST_CHANGE_VERIFICATION_RESULT": "Queue/spill/credit metrics improved over the post-change window.",
+                "VERIFIED_MONTHLY_SAVINGS": 250.0,
+            }
+        )
+
+        self.assertEqual(blocked["AUDIT_READINESS"], "Pre-Change Blocked")
+        self.assertIn("owner approval", blocked["AUDIT_BLOCKERS"])
+        self.assertIn("change ticket", blocked["AUDIT_BLOCKERS"])
+        self.assertIn("rollback SQL", blocked["AUDIT_BLOCKERS"])
+        self.assertEqual(verified["AUDIT_READINESS"], "Verified Change Audit")
+        self.assertEqual(verified["AUDIT_BLOCKERS"], "None")
+
+    def test_warehouse_setting_execution_audit_sql_joins_review_and_admin_audit(self):
+        sql = _warehouse_setting_execution_audit_sql(45, "ALFA", "DEV_ALL")
+        sql_upper = sql.upper()
+
+        self.assertIn("OVERWATCH_WAREHOUSE_SETTING_REVIEW", sql_upper)
+        self.assertIn("OVERWATCH_ADMIN_ACTION_AUDIT", sql_upper)
+        self.assertIn("ALTER WAREHOUSE", sql_upper)
+        self.assertIn("LAST_SQL_HASH", sql_upper)
+        self.assertIn("LAST_EXECUTED_BY", sql_upper)
+        self.assertIn("EXECUTION_AUDIT_READINESS", sql_upper)
+        self.assertIn("COMPANY = 'ALFA'", sql_upper)
+        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+            self.assertIn(db_name, sql_upper)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_warehouse_operability_fact_is_fast_estimated_and_environment_scoped(self):
+        ddl = build_warehouse_operability_fact_ddl().upper()
+        migrations = "\n".join(build_warehouse_operability_fact_migration_sql()).upper()
+        fact_sql = _warehouse_operability_fact_sql(30, "ALFA", "DEV_ALL").upper()
+
+        self.assertIn("FACT_WAREHOUSE_OPERABILITY_DAILY", ddl)
+        self.assertIn("CONTROL_SOURCE", ddl)
+        self.assertIn("CONTROL_RANK", ddl)
+        self.assertIn("CREDIT_ALLOCATION_METHOD", ddl)
+        self.assertIn("NEXT_CONTROL_ACTION", ddl)
+        self.assertIn("ADD COLUMN IF NOT EXISTS CONTROL_SOURCE", migrations)
+        self.assertIn("ADD COLUMN IF NOT EXISTS CONTROL_RANK", migrations)
+        self.assertIn("ADD COLUMN IF NOT EXISTS CREDIT_ALLOCATION_METHOD", migrations)
+        self.assertIn("FACT_WAREHOUSE_OPERABILITY_DAILY", fact_sql)
+        self.assertIn("SNAPSHOT_DATE >= DATEADD('DAY', -30", fact_sql)
+        self.assertIn("COMPANY = 'ALFA'", fact_sql)
+        self.assertIn("CREDIT_ALLOCATION_METHOD", fact_sql)
+        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
+            self.assertIn(db_name, fact_sql)
+        self.assertNotIn("ACCOUNT_USAGE", fact_sql)
+        self.assertNotIn("OVERWATCH_ACTION_QUEUE", fact_sql)
+
+    def test_warehouse_setting_control_board_prioritizes_closure_owner_and_audit_blocks(self):
+        exceptions = pd.DataFrame(
+            {
+                "SEVERITY": ["Critical", "High", "High"],
+                "SIGNAL": ["Queue Pressure", "Credit Spike", "Memory Spill"],
+                "WAREHOUSE_NAME": ["BI_COMPUTE_WH", "LOAD_TASK_WH", "DEV_WH"],
+                "CAPACITY_SCORE": [48.0, 66.0, 70.0],
+                "METERED_CREDITS": [120.0, 90.0, 10.0],
+                "QUEUED_QUERIES": [80, 2, 0],
+                "SPILL_QUERIES": [4, 1, 20],
+                "HIGH_LATENCY_QUERIES": [12, 4, 9],
+                "CREDIT_SPIKE_PCT": [10.0, 75.0, 0.0],
+            }
+        )
+        owner_inventory = pd.DataFrame(
+            {
+                "WAREHOUSE_NAME": ["BI_COMPUTE_WH", "LOAD_TASK_WH", "DEV_WH"],
+                "WAREHOUSE_SIZE": ["Medium", "Large", "Small"],
+                "QUERY_COUNT": [500, 300, 50],
+                "DATABASE_COUNT": [2, 1, 1],
+                "OWNER_TAG": ["BI Product Owner", "", ""],
+                "COST_CENTER_TAG": ["BI", "", ""],
+                "ENVIRONMENT_TAG": ["PROD", "", ""],
+            }
+        )
+        closure = pd.DataFrame(
+            {
+                "WAREHOUSE_NAME": ["BI_COMPUTE_WH"],
+                "CLOSURE_READINESS": ["Overdue closure"],
+                "CLOSURE_RANK": [0],
+                "OVERDUE_OPEN": [1],
+                "FIXED_WITHOUT_VERIFICATION": [0],
+                "NEXT_ACTION": ["Escalate owner and due date."],
+            }
+        )
+        audit = pd.DataFrame(
+            {
+                "WAREHOUSE_NAME": ["LOAD_TASK_WH"],
+                "AUDIT_ROWS": [1],
+                "SUCCESSFUL_CHANGES": [0],
+                "FAILED_CHANGES": [1],
+                "LAST_EXECUTION_STATUS": ["Failed"],
+                "LAST_SQL_HASH": ["abc123"],
+                "LAST_EXECUTED_AT": ["2026-05-31 10:00:00"],
+            }
+        )
+
+        board = _warehouse_setting_control_board(exceptions, owner_inventory, closure, audit)
+        by_wh = {row["WAREHOUSE_NAME"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["CONTROL_STATE"], "Closure Overdue")
+        self.assertEqual(by_wh["LOAD_TASK_WH"]["CONTROL_STATE"], "Execution Failed")
+        self.assertEqual(by_wh["DEV_WH"]["CONTROL_STATE"], "Pre-Change Blocked")
+        self.assertIn("rollback", by_wh["DEV_WH"]["AUDIT_BLOCKERS"].lower())
 
     def test_warehouse_action_queue_closure_sql_scores_evidence_gaps(self):
         sql = _warehouse_action_queue_closure_sql(45, "ALFA", "DEV_ALL").upper()

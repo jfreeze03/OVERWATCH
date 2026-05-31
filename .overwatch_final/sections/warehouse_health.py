@@ -12,9 +12,10 @@ from utils import (
     build_metered_credit_cte, make_action_id, upsert_actions,
     run_query, format_snowflake_error, filter_existing_columns, render_optimization_advisor,
     build_mart_warehouse_overview_sql, build_mart_warehouse_scaling_sql,
-    resolve_owner_context, safe_float, safe_identifier, safe_int, sql_literal,
+    mart_object_name, resolve_owner_context, safe_float, safe_identifier, safe_int, sql_literal,
     action_queue_environment_clause,
 )
+from utils.admin import ADMIN_AUDIT_FQN
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, THRESHOLDS
 
 
@@ -35,6 +36,7 @@ WAREHOUSE_HEALTH_DETAILS = {
 }
 
 WAREHOUSE_SETTING_REVIEW_TABLE = "OVERWATCH_WAREHOUSE_SETTING_REVIEW"
+WAREHOUSE_OPERABILITY_FACT_TABLE = "FACT_WAREHOUSE_OPERABILITY_DAILY"
 
 
 def warehouse_setting_review_fqn(
@@ -79,8 +81,109 @@ def build_warehouse_setting_review_ddl(
     VERIFICATION_QUERY           VARCHAR(8000),
     GENERATED_REVIEW_SQL         VARCHAR(8000),
     SAVINGS_VERIFICATION_REQUIRED VARCHAR(20),
+    APPROVAL_STATE               VARCHAR(80),
+    CHANGE_TICKET_ID             VARCHAR(200),
+    CURRENT_SETTINGS_JSON        VARCHAR(8000),
+    PROPOSED_SETTINGS_JSON       VARCHAR(8000),
+    ROLLBACK_SQL                 VARCHAR(8000),
+    EXECUTED_SQL_HASH            VARCHAR(80),
+    EXECUTION_STATUS             VARCHAR(80),
+    EXECUTED_BY                  VARCHAR(200),
+    EXECUTED_AT                  TIMESTAMP_NTZ,
+    POST_CHANGE_VERIFICATION_STATUS VARCHAR(80),
+    POST_CHANGE_VERIFICATION_RESULT VARCHAR(4000),
+    VERIFIED_MONTHLY_SAVINGS    FLOAT,
+    AUDIT_READINESS              VARCHAR(100),
+    AUDIT_BLOCKERS               VARCHAR(2000),
+    NEXT_CONTROL_ACTION          VARCHAR(4000),
     SOURCE                       VARCHAR(500)
 );"""
+
+
+def build_warehouse_setting_review_migration_sql(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = WAREHOUSE_SETTING_REVIEW_TABLE,
+) -> list[str]:
+    """Return additive migrations for deployed warehouse setting review tables."""
+    fqn = warehouse_setting_review_fqn(db=db, schema=schema, table=table)
+    return [
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS APPROVAL_STATE VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CHANGE_TICKET_ID VARCHAR(200)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CURRENT_SETTINGS_JSON VARCHAR(8000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS PROPOSED_SETTINGS_JSON VARCHAR(8000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ROLLBACK_SQL VARCHAR(8000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS EXECUTED_SQL_HASH VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS EXECUTION_STATUS VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS EXECUTED_BY VARCHAR(200)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS EXECUTED_AT TIMESTAMP_NTZ",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS POST_CHANGE_VERIFICATION_STATUS VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS POST_CHANGE_VERIFICATION_RESULT VARCHAR(4000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS VERIFIED_MONTHLY_SAVINGS FLOAT",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS AUDIT_READINESS VARCHAR(100)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS AUDIT_BLOCKERS VARCHAR(2000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
+    ]
+
+
+def warehouse_operability_fact_fqn(table: str = WAREHOUSE_OPERABILITY_FACT_TABLE) -> str:
+    return mart_object_name(table)
+
+
+def build_warehouse_operability_fact_ddl(table: str = WAREHOUSE_OPERABILITY_FACT_TABLE) -> str:
+    fqn = warehouse_operability_fact_fqn(table=table)
+    return f"""CREATE TRANSIENT TABLE IF NOT EXISTS {fqn} (
+    SNAPSHOT_DATE              DATE,
+    COMPANY                    VARCHAR(100),
+    ENVIRONMENT                VARCHAR(100),
+    WAREHOUSE_NAME             VARCHAR(300),
+    CONTROL_SOURCE             VARCHAR(80),
+    SEVERITY                   VARCHAR(40),
+    SIGNAL                     VARCHAR(120),
+    CONTROL_STATE              VARCHAR(120),
+    CONTROL_RANK               NUMBER,
+    CAPACITY_SCORE             FLOAT,
+    QUERY_ROWS                 NUMBER,
+    QUEUE_PRESSURE_ROWS        NUMBER,
+    SPILL_PRESSURE_ROWS        NUMBER,
+    HIGH_LATENCY_ROWS          NUMBER,
+    METERED_CREDITS            FLOAT,
+    CREDIT_ALLOCATION_METHOD   VARCHAR(160),
+    REVIEW_ROWS                NUMBER,
+    APPROVAL_REQUIRED_ROWS     NUMBER,
+    ROLLBACK_REQUIRED_ROWS     NUMBER,
+    SAVINGS_VERIFICATION_ROWS  NUMBER,
+    OPEN_ACTIONS               NUMBER,
+    OVERDUE_OPEN               NUMBER,
+    FIXED_WITHOUT_VERIFICATION NUMBER,
+    VERIFIED_CLOSURES          NUMBER,
+    OWNER_APPROVAL_GAP_ROWS    NUMBER,
+    NEXT_CONTROL_ACTION        VARCHAR(4000),
+    LAST_ACTIVITY_TS           TIMESTAMP_NTZ,
+    LOAD_TS                    TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);"""
+
+
+def build_warehouse_operability_fact_migration_sql(
+    table: str = WAREHOUSE_OPERABILITY_FACT_TABLE,
+) -> list[str]:
+    fqn = warehouse_operability_fact_fqn(table=table)
+    return [
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_SOURCE VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS SIGNAL VARCHAR(120)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_STATE VARCHAR(120)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CONTROL_RANK NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CAPACITY_SCORE FLOAT",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS QUERY_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS QUEUE_PRESSURE_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS SPILL_PRESSURE_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS HIGH_LATENCY_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS CREDIT_ALLOCATION_METHOD VARCHAR(160)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS REVIEW_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS OWNER_APPROVAL_GAP_ROWS NUMBER",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS NEXT_CONTROL_ACTION VARCHAR(4000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LAST_ACTIVITY_TS TIMESTAMP_NTZ",
+    ]
 
 
 def _warehouse_capacity_score(
@@ -478,6 +581,225 @@ def _annotate_warehouse_admin_readiness(exceptions: pd.DataFrame) -> pd.DataFram
     return annotated
 
 
+def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
+    """Score whether a warehouse setting change has approval, execution, and verification proof."""
+    owner = str(row.get("OWNER") or "").strip()
+    owner_source = str(row.get("OWNER_SOURCE") or "").upper()
+    approver = str(row.get("APPROVER") or row.get("APPROVAL_GROUP") or "").strip()
+    approval_required = str(row.get("APPROVAL_REQUIRED") or "Yes").upper() == "YES"
+    rollback_required = str(row.get("ROLLBACK_REQUIRED") or "Yes").upper() == "YES"
+    savings_required = str(row.get("SAVINGS_VERIFICATION_REQUIRED") or "No").upper() == "YES"
+    approval_state = str(row.get("APPROVAL_STATE") or row.get("OWNER_APPROVAL_STATUS") or "").upper()
+    ticket_id = str(row.get("CHANGE_TICKET_ID") or row.get("TICKET_ID") or "").strip()
+    rollback_sql = str(row.get("ROLLBACK_SQL") or "").strip()
+    execution_status = str(row.get("EXECUTION_STATUS") or "Not Executed").upper()
+    sql_hash = str(row.get("EXECUTED_SQL_HASH") or row.get("SQL_HASH") or "").strip()
+    verification_status = str(
+        row.get("POST_CHANGE_VERIFICATION_STATUS")
+        or row.get("VERIFICATION_STATUS")
+        or ""
+    ).upper()
+    verification_result = str(
+        row.get("POST_CHANGE_VERIFICATION_RESULT")
+        or row.get("VERIFICATION_RESULT")
+        or ""
+    ).strip()
+    verified_savings = safe_float(row.get("VERIFIED_MONTHLY_SAVINGS"))
+
+    blockers: list[str] = []
+    generic_owners = {"", "DBA", "UNKNOWN", "N/A"}
+    owner_route_ready = bool(owner) and owner.upper() not in generic_owners and bool(owner_source or approver)
+    if not owner_route_ready:
+        blockers.append("named owner route")
+    if approval_required and approval_state not in {"APPROVED", "APPROVAL NOT REQUIRED", "NOT REQUIRED"}:
+        blockers.append("owner approval")
+    if not ticket_id:
+        blockers.append("change ticket")
+    if rollback_required and not rollback_sql:
+        blockers.append("rollback SQL")
+
+    executed = execution_status in {"SUCCESS", "EXECUTED", "COMPLETED"}
+    failed = execution_status in {"FAILED", "ERROR"}
+    if executed and not sql_hash:
+        blockers.append("admin execution hash")
+    if executed and (verification_status != "VERIFIED" or len(verification_result) < 15):
+        blockers.append("post-change verification")
+    if executed and savings_required and verified_savings <= 0:
+        blockers.append("verified savings")
+
+    route_blockers = {"named owner route"}
+    pre_change_blockers = {"owner approval", "change ticket", "rollback SQL"}
+    verification_blockers = {"admin execution hash", "post-change verification", "verified savings"}
+
+    if failed:
+        readiness = "Execution Failed"
+        rank = 0
+    elif any(item in route_blockers for item in blockers):
+        readiness = "Owner Route Blocked"
+        rank = 1
+    elif any(item in pre_change_blockers for item in blockers):
+        readiness = "Pre-Change Blocked"
+        rank = 2
+    elif any(item in verification_blockers for item in blockers):
+        readiness = "Verification Blocked"
+        rank = 3
+    elif executed:
+        readiness = "Verified Change Audit"
+        rank = 8
+    else:
+        readiness = "Ready for Controlled Change"
+        rank = 6
+
+    if failed:
+        next_action = "Open the failed admin audit row, correct the setting plan, and keep rollback evidence with the ticket."
+    elif "named owner route" in blockers:
+        next_action = "Assign a named warehouse owner route before approving or executing setting changes."
+    elif "owner approval" in blockers:
+        next_action = "Capture owner approval before running ALTER WAREHOUSE."
+    elif "change ticket" in blockers:
+        next_action = "Attach the approved change ticket to the warehouse setting review."
+    elif "rollback SQL" in blockers:
+        next_action = "Generate and retain rollback SQL from DBA Tools before execution."
+    elif "post-change verification" in blockers:
+        next_action = "Run queue/spill/credit verification and attach the result before closure."
+    elif "verified savings" in blockers:
+        next_action = "Attach measured savings evidence before closing the credit-control change."
+    elif executed:
+        next_action = "Retain verified execution, rollback, and post-change evidence for audit."
+    else:
+        next_action = "Route through DBA Tools > Warehouse Settings Manager for changed-only SQL and audit logging."
+
+    return {
+        "AUDIT_READINESS": readiness,
+        "AUDIT_RANK": rank,
+        "AUDIT_BLOCKERS": "; ".join(blockers) if blockers else "None",
+        "OWNER_ROUTE_READY": "Yes" if owner_route_ready else "No",
+        "NEXT_CONTROL_ACTION": next_action,
+    }
+
+
+def _warehouse_setting_control_board(
+    exceptions: pd.DataFrame,
+    owner_inventory: pd.DataFrame | None = None,
+    closure: pd.DataFrame | None = None,
+    execution_audit: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Combine capacity findings, ownership, closure, and execution audit into one DBA board."""
+    if exceptions is None or exceptions.empty:
+        return pd.DataFrame()
+
+    findings = _warehouse_capacity_priority_view(exceptions)
+    if findings.empty:
+        return pd.DataFrame()
+
+    owners = pd.DataFrame() if owner_inventory is None else owner_inventory.copy()
+    if not owners.empty:
+        owners.columns = [str(col).upper() for col in owners.columns]
+        if "GOVERNANCE_READINESS" not in owners.columns:
+            owners = _annotate_warehouse_owner_inventory(owners)
+    closure_view = pd.DataFrame() if closure is None else closure.copy()
+    if not closure_view.empty:
+        closure_view.columns = [str(col).upper() for col in closure_view.columns]
+    audit_view = pd.DataFrame() if execution_audit is None else execution_audit.copy()
+    if not audit_view.empty:
+        audit_view.columns = [str(col).upper() for col in audit_view.columns]
+
+    owner_by_wh = {
+        str(row.get("WAREHOUSE_NAME") or "").upper(): row
+        for _, row in owners.iterrows()
+    } if not owners.empty else {}
+    closure_by_wh = {
+        str(row.get("WAREHOUSE_NAME") or "").upper(): row
+        for _, row in closure_view.iterrows()
+    } if not closure_view.empty else {}
+    audit_by_wh = {
+        str(row.get("WAREHOUSE_NAME") or "").upper(): row
+        for _, row in audit_view.iterrows()
+    } if not audit_view.empty else {}
+
+    rows: list[dict] = []
+    for _, row in findings.iterrows():
+        wh = str(row.get("WAREHOUSE_NAME") or "")
+        wh_key = wh.upper()
+        owner_row = owner_by_wh.get(wh_key, {})
+        closure_row = closure_by_wh.get(wh_key, {})
+        audit_row = audit_by_wh.get(wh_key, {})
+
+        audit_readiness = _warehouse_setting_audit_readiness_for_row({
+            **row.to_dict(),
+            "APPROVAL_STATE": audit_row.get("APPROVAL_STATE", "Requested") if len(audit_row) else "Requested",
+            "CHANGE_TICKET_ID": audit_row.get("CHANGE_TICKET_ID", ""),
+            "ROLLBACK_SQL": audit_row.get("ROLLBACK_SQL", ""),
+            "EXECUTION_STATUS": audit_row.get("LAST_EXECUTION_STATUS", audit_row.get("EXECUTION_STATUS", "Not Executed")),
+            "EXECUTED_SQL_HASH": audit_row.get("LAST_SQL_HASH", audit_row.get("EXECUTED_SQL_HASH", "")),
+            "POST_CHANGE_VERIFICATION_STATUS": audit_row.get("POST_CHANGE_VERIFICATION_STATUS", ""),
+            "POST_CHANGE_VERIFICATION_RESULT": audit_row.get("POST_CHANGE_VERIFICATION_RESULT", ""),
+            "VERIFIED_MONTHLY_SAVINGS": audit_row.get("VERIFIED_MONTHLY_SAVINGS", 0),
+        })
+
+        governance_readiness = str(owner_row.get("GOVERNANCE_READINESS") or "Not Loaded")
+        closure_readiness = str(closure_row.get("CLOSURE_READINESS") or "Not Loaded")
+        closure_rank = safe_int(closure_row.get("CLOSURE_RANK", 9))
+        overdue = safe_int(closure_row.get("OVERDUE_OPEN", 0))
+        fixed_without_verification = safe_int(closure_row.get("FIXED_WITHOUT_VERIFICATION", 0))
+        failed_changes = safe_int(audit_row.get("FAILED_CHANGES", 0))
+        audit_rows = safe_int(audit_row.get("AUDIT_ROWS", 0))
+
+        if overdue:
+            state, rank = "Closure Overdue", 0
+            next_action = "Escalate overdue Warehouse Health action before approving more setting changes."
+        elif fixed_without_verification or closure_rank in {1, 2}:
+            state, rank = "Closure Evidence Blocked", 1
+            next_action = str(closure_row.get("NEXT_ACTION") or "Attach verification proof before closing warehouse work.")
+        elif governance_readiness == "Owner Route Blocked" or audit_readiness["AUDIT_READINESS"] == "Owner Route Blocked":
+            state, rank = "Owner Route Blocked", 2
+            next_action = str(owner_row.get("NEXT_OWNER_ACTION") or audit_readiness["NEXT_CONTROL_ACTION"])
+        elif failed_changes:
+            state, rank = "Execution Failed", 3
+            next_action = "Review failed ALTER WAREHOUSE audit rows and verify rollback or no-op state."
+        elif audit_readiness["AUDIT_READINESS"] in {"Pre-Change Blocked", "Verification Blocked"}:
+            state, rank = audit_readiness["AUDIT_READINESS"], audit_readiness["AUDIT_RANK"]
+            next_action = audit_readiness["NEXT_CONTROL_ACTION"]
+        elif audit_rows:
+            state, rank = "Execution Audit Linked", 7
+            next_action = "Confirm post-change queue, spill, credit, and savings evidence remains attached."
+        else:
+            state, rank = "Ready for Controlled Change", 6
+            next_action = "Open DBA Tools > Warehouse Settings Manager, generate changed-only SQL, and capture rollback proof."
+
+        rows.append({
+            "CONTROL_STATE": state,
+            "CONTROL_RANK": rank,
+            "WAREHOUSE_NAME": wh,
+            "SEVERITY": row.get("SEVERITY", ""),
+            "SIGNAL": row.get("SIGNAL", ""),
+            "CAPACITY_SCORE": safe_float(row.get("CAPACITY_SCORE")),
+            "METERED_CREDITS": safe_float(row.get("METERED_CREDITS")),
+            "OWNER": row.get("OWNER", ""),
+            "GOVERNANCE_READINESS": governance_readiness,
+            "AUDIT_READINESS": audit_readiness["AUDIT_READINESS"],
+            "AUDIT_BLOCKERS": audit_readiness["AUDIT_BLOCKERS"],
+            "CLOSURE_READINESS": closure_readiness,
+            "OVERDUE_OPEN": overdue,
+            "FIXED_WITHOUT_VERIFICATION": fixed_without_verification,
+            "AUDIT_ROWS": audit_rows,
+            "SUCCESSFUL_CHANGES": safe_int(audit_row.get("SUCCESSFUL_CHANGES", 0)),
+            "FAILED_CHANGES": failed_changes,
+            "LAST_EXECUTION_STATUS": audit_row.get("LAST_EXECUTION_STATUS", "Not Loaded"),
+            "LAST_EXECUTED_AT": audit_row.get("LAST_EXECUTED_AT", ""),
+            "APPROVAL_REQUIRED": row.get("APPROVAL_REQUIRED", "Yes"),
+            "ROLLBACK_REQUIRED": row.get("ROLLBACK_REQUIRED", "Yes"),
+            "SAVINGS_VERIFICATION_REQUIRED": row.get("SAVINGS_VERIFICATION_REQUIRED", "No"),
+            "SETTING_CHANGE_CANDIDATE": row.get("SETTING_CHANGE_CANDIDATE", ""),
+            "NEXT_CONTROL_ACTION": next_action,
+        })
+
+    return pd.DataFrame(rows).sort_values(
+        ["CONTROL_RANK", "OVERDUE_OPEN", "FAILED_CHANGES", "CAPACITY_SCORE", "METERED_CREDITS"],
+        ascending=[True, False, False, True, False],
+    ).reset_index(drop=True)
+
+
 def _warehouse_capacity_review_sql(row: pd.Series) -> str:
     candidate = row.get("SETTING_CHANGE_CANDIDATE") or _warehouse_setting_candidate_for(row)["SETTING_CHANGE_CANDIDATE"]
     safe_path = row.get("SAFE_CHANGE_PATH") or _warehouse_setting_candidate_for(row)["SAFE_CHANGE_PATH"]
@@ -520,6 +842,21 @@ def _warehouse_setting_review_insert_sql(
             company=company,
         )
         review_sql = _warehouse_capacity_review_sql(row)
+        approval_required = str(row.get("APPROVAL_REQUIRED", "Yes")).upper() == "YES"
+        approval_state = str(row.get("APPROVAL_STATE") or ("Requested" if approval_required else "Not Required"))
+        audit_fields = _warehouse_setting_audit_readiness_for_row({
+            **row.to_dict(),
+            "APPROVAL_STATE": approval_state,
+            "CHANGE_TICKET_ID": row.get("CHANGE_TICKET_ID", ""),
+            "CURRENT_SETTINGS_JSON": row.get("CURRENT_SETTINGS_JSON", ""),
+            "PROPOSED_SETTINGS_JSON": row.get("PROPOSED_SETTINGS_JSON", row.get("SETTING_CHANGE_CANDIDATE", "")),
+            "ROLLBACK_SQL": row.get("ROLLBACK_SQL", ""),
+            "EXECUTED_SQL_HASH": row.get("EXECUTED_SQL_HASH", ""),
+            "EXECUTION_STATUS": row.get("EXECUTION_STATUS", "Not Executed"),
+            "POST_CHANGE_VERIFICATION_STATUS": row.get("POST_CHANGE_VERIFICATION_STATUS", "Pending"),
+            "POST_CHANGE_VERIFICATION_RESULT": row.get("POST_CHANGE_VERIFICATION_RESULT", ""),
+            "VERIFIED_MONTHLY_SAVINGS": row.get("VERIFIED_MONTHLY_SAVINGS", 0),
+        })
         selects.append(
             "SELECT "
             f"{sql_literal(snap, 64)} AS SNAPSHOT_ID, "
@@ -549,6 +886,21 @@ def _warehouse_setting_review_insert_sql(
             f"{sql_literal(verification_sql, 8000)} AS VERIFICATION_QUERY, "
             f"{sql_literal(review_sql, 8000)} AS GENERATED_REVIEW_SQL, "
             f"{sql_literal(row.get('SAVINGS_VERIFICATION_REQUIRED', ''), 20)} AS SAVINGS_VERIFICATION_REQUIRED, "
+            f"{sql_literal(approval_state, 80)} AS APPROVAL_STATE, "
+            f"{sql_literal(row.get('CHANGE_TICKET_ID', ''), 200)} AS CHANGE_TICKET_ID, "
+            f"{sql_literal(row.get('CURRENT_SETTINGS_JSON', ''), 8000)} AS CURRENT_SETTINGS_JSON, "
+            f"{sql_literal(row.get('PROPOSED_SETTINGS_JSON', row.get('SETTING_CHANGE_CANDIDATE', '')), 8000)} AS PROPOSED_SETTINGS_JSON, "
+            f"{sql_literal(row.get('ROLLBACK_SQL', ''), 8000)} AS ROLLBACK_SQL, "
+            f"{sql_literal(row.get('EXECUTED_SQL_HASH', ''), 80)} AS EXECUTED_SQL_HASH, "
+            f"{sql_literal(row.get('EXECUTION_STATUS', 'Not Executed'), 80)} AS EXECUTION_STATUS, "
+            f"{sql_literal(row.get('EXECUTED_BY', ''), 200)} AS EXECUTED_BY, "
+            "NULL::TIMESTAMP_NTZ AS EXECUTED_AT, "
+            f"{sql_literal(row.get('POST_CHANGE_VERIFICATION_STATUS', 'Pending'), 80)} AS POST_CHANGE_VERIFICATION_STATUS, "
+            f"{sql_literal(row.get('POST_CHANGE_VERIFICATION_RESULT', ''), 4000)} AS POST_CHANGE_VERIFICATION_RESULT, "
+            f"{safe_float(row.get('VERIFIED_MONTHLY_SAVINGS'))}::FLOAT AS VERIFIED_MONTHLY_SAVINGS, "
+            f"{sql_literal(audit_fields.get('AUDIT_READINESS', ''), 100)} AS AUDIT_READINESS, "
+            f"{sql_literal(audit_fields.get('AUDIT_BLOCKERS', ''), 2000)} AS AUDIT_BLOCKERS, "
+            f"{sql_literal(audit_fields.get('NEXT_CONTROL_ACTION', ''), 4000)} AS NEXT_CONTROL_ACTION, "
             f"{sql_literal(source, 500)} AS SOURCE"
         )
     return f"""
@@ -559,7 +911,12 @@ INSERT INTO {fqn} (
     POST_CHANGE_VERIFICATION, PRESSURE_EVIDENCE, BASELINE_CAPACITY_SCORE,
     BASELINE_QUEUED_QUERIES, BASELINE_SPILL_QUERIES, BASELINE_HIGH_LATENCY_QUERIES,
     BASELINE_P95_ELAPSED_SEC, BASELINE_METERED_CREDITS, VERIFICATION_QUERY,
-    GENERATED_REVIEW_SQL, SAVINGS_VERIFICATION_REQUIRED, SOURCE
+    GENERATED_REVIEW_SQL, SAVINGS_VERIFICATION_REQUIRED, APPROVAL_STATE,
+    CHANGE_TICKET_ID, CURRENT_SETTINGS_JSON, PROPOSED_SETTINGS_JSON, ROLLBACK_SQL,
+    EXECUTED_SQL_HASH, EXECUTION_STATUS, EXECUTED_BY, EXECUTED_AT,
+    POST_CHANGE_VERIFICATION_STATUS, POST_CHANGE_VERIFICATION_RESULT,
+    VERIFIED_MONTHLY_SAVINGS, AUDIT_READINESS, AUDIT_BLOCKERS, NEXT_CONTROL_ACTION,
+    SOURCE
 )
 {" UNION ALL ".join(selects)}""".strip()
 
@@ -596,6 +953,125 @@ ORDER BY
     WORST_BASELINE_CAPACITY_SCORE ASC,
     APPROVAL_REQUIRED_ROWS DESC,
     LAST_SNAPSHOT_TS DESC
+LIMIT 100""".strip()
+
+
+def _warehouse_setting_execution_audit_sql(days: int, company: str, environment: str = "ALL") -> str:
+    """Join persisted setting reviews to DBA Tools ALTER WAREHOUSE audit evidence."""
+    review_fqn = warehouse_setting_review_fqn()
+    days = max(1, min(int(days or 30), 180))
+    review_where = [f"SNAPSHOT_TS >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())"]
+    audit_where = [
+        f"ACTION_TS >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())",
+        "UPPER(ACTION_TYPE) = 'ALTER WAREHOUSE'",
+    ]
+    if str(company or "").upper() != "ALL":
+        company_sql = sql_literal(company, 100)
+        review_where.append(f"COMPANY = {company_sql}")
+        audit_where.append(f"COMPANY = {company_sql}")
+    env_clause_review = action_queue_environment_clause("ENVIRONMENT", environment)
+    if env_clause_review:
+        review_where.append(env_clause_review)
+        audit_where.append(env_clause_review)
+    return f"""
+WITH review_rows AS (
+    SELECT
+        WAREHOUSE_NAME,
+        MAX_BY(OWNER, SNAPSHOT_TS) AS OWNER,
+        MAX_BY(APPROVER, SNAPSHOT_TS) AS APPROVER,
+        MAX_BY(APPROVAL_STATE, SNAPSHOT_TS) AS APPROVAL_STATE,
+        MAX_BY(CHANGE_TICKET_ID, SNAPSHOT_TS) AS CHANGE_TICKET_ID,
+        MAX_BY(ROLLBACK_SQL, SNAPSHOT_TS) AS ROLLBACK_SQL,
+        MAX_BY(POST_CHANGE_VERIFICATION_STATUS, SNAPSHOT_TS) AS POST_CHANGE_VERIFICATION_STATUS,
+        MAX_BY(POST_CHANGE_VERIFICATION_RESULT, SNAPSHOT_TS) AS POST_CHANGE_VERIFICATION_RESULT,
+        MAX_BY(AUDIT_READINESS, SNAPSHOT_TS) AS LAST_REVIEW_AUDIT_READINESS,
+        MAX_BY(AUDIT_BLOCKERS, SNAPSHOT_TS) AS LAST_REVIEW_AUDIT_BLOCKERS,
+        COUNT(*) AS REVIEW_ROWS,
+        COUNT_IF(APPROVAL_REQUIRED = 'Yes') AS APPROVAL_REQUIRED_ROWS,
+        COUNT_IF(ROLLBACK_REQUIRED = 'Yes') AS ROLLBACK_REQUIRED_ROWS,
+        COUNT_IF(SAVINGS_VERIFICATION_REQUIRED = 'Yes') AS SAVINGS_VERIFICATION_REQUIRED_ROWS,
+        MAX(SNAPSHOT_TS) AS LAST_REVIEW_TS
+    FROM {review_fqn}
+    WHERE {" AND ".join(review_where)}
+    GROUP BY WAREHOUSE_NAME
+),
+audit_rows AS (
+    SELECT
+        TARGET_OBJECT AS WAREHOUSE_NAME,
+        COUNT(*) AS AUDIT_ROWS,
+        COUNT_IF(UPPER(RESULT_STATUS) = 'SUCCESS') AS SUCCESSFUL_CHANGES,
+        COUNT_IF(UPPER(RESULT_STATUS) = 'FAILED') AS FAILED_CHANGES,
+        MAX_BY(SQL_HASH, ACTION_TS) AS LAST_SQL_HASH,
+        MAX_BY(SNOWFLAKE_USER, ACTION_TS) AS LAST_EXECUTED_BY,
+        MAX_BY(SNOWFLAKE_ROLE, ACTION_TS) AS LAST_EXECUTED_ROLE,
+        MAX_BY(RESULT_STATUS, ACTION_TS) AS LAST_EXECUTION_STATUS,
+        MAX_BY(RESULT_MESSAGE, ACTION_TS) AS LAST_EXECUTION_MESSAGE,
+        MAX_BY(CONTROL_CONTEXT, ACTION_TS) AS LAST_CONTROL_CONTEXT,
+        MAX(ACTION_TS) AS LAST_EXECUTED_AT
+    FROM {ADMIN_AUDIT_FQN}
+    WHERE {" AND ".join(audit_where)}
+    GROUP BY TARGET_OBJECT
+)
+SELECT
+    COALESCE(r.WAREHOUSE_NAME, a.WAREHOUSE_NAME) AS WAREHOUSE_NAME,
+    COALESCE(r.OWNER, '') AS OWNER,
+    COALESCE(r.APPROVER, '') AS APPROVER,
+    COALESCE(r.APPROVAL_STATE, '') AS APPROVAL_STATE,
+    COALESCE(r.CHANGE_TICKET_ID, '') AS CHANGE_TICKET_ID,
+    COALESCE(r.ROLLBACK_SQL, '') AS ROLLBACK_SQL,
+    COALESCE(r.POST_CHANGE_VERIFICATION_STATUS, '') AS POST_CHANGE_VERIFICATION_STATUS,
+    COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, '') AS POST_CHANGE_VERIFICATION_RESULT,
+    COALESCE(r.LAST_REVIEW_AUDIT_READINESS, '') AS LAST_REVIEW_AUDIT_READINESS,
+    COALESCE(r.LAST_REVIEW_AUDIT_BLOCKERS, '') AS LAST_REVIEW_AUDIT_BLOCKERS,
+    COALESCE(r.REVIEW_ROWS, 0) AS REVIEW_ROWS,
+    COALESCE(r.APPROVAL_REQUIRED_ROWS, 0) AS APPROVAL_REQUIRED_ROWS,
+    COALESCE(r.ROLLBACK_REQUIRED_ROWS, 0) AS ROLLBACK_REQUIRED_ROWS,
+    COALESCE(r.SAVINGS_VERIFICATION_REQUIRED_ROWS, 0) AS SAVINGS_VERIFICATION_REQUIRED_ROWS,
+    r.LAST_REVIEW_TS,
+    COALESCE(a.AUDIT_ROWS, 0) AS AUDIT_ROWS,
+    COALESCE(a.SUCCESSFUL_CHANGES, 0) AS SUCCESSFUL_CHANGES,
+    COALESCE(a.FAILED_CHANGES, 0) AS FAILED_CHANGES,
+    COALESCE(a.LAST_SQL_HASH, '') AS LAST_SQL_HASH,
+    COALESCE(a.LAST_EXECUTED_BY, '') AS LAST_EXECUTED_BY,
+    COALESCE(a.LAST_EXECUTED_ROLE, '') AS LAST_EXECUTED_ROLE,
+    COALESCE(a.LAST_EXECUTION_STATUS, 'Not Executed') AS LAST_EXECUTION_STATUS,
+    COALESCE(a.LAST_EXECUTION_MESSAGE, '') AS LAST_EXECUTION_MESSAGE,
+    COALESCE(a.LAST_CONTROL_CONTEXT, '') AS LAST_CONTROL_CONTEXT,
+    a.LAST_EXECUTED_AT,
+    CASE
+        WHEN COALESCE(a.FAILED_CHANGES, 0) > 0 THEN 'Execution failed'
+        WHEN COALESCE(r.REVIEW_ROWS, 0) > 0 AND COALESCE(a.AUDIT_ROWS, 0) = 0 THEN 'Reviewed but not executed'
+        WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0
+             AND UPPER(COALESCE(r.POST_CHANGE_VERIFICATION_STATUS, '')) <> 'VERIFIED' THEN 'Executed - verification pending'
+        WHEN COALESCE(r.SAVINGS_VERIFICATION_REQUIRED_ROWS, 0) > 0
+             AND LENGTH(TRIM(COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, ''))) < 15 THEN 'Savings proof pending'
+        WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0 THEN 'Executed and audit linked'
+        ELSE 'No setting review'
+    END AS EXECUTION_AUDIT_READINESS,
+    CASE
+        WHEN COALESCE(a.FAILED_CHANGES, 0) > 0 THEN 'Open failed admin audit row and verify rollback/no-op state.'
+        WHEN COALESCE(r.REVIEW_ROWS, 0) > 0 AND COALESCE(a.AUDIT_ROWS, 0) = 0 THEN 'Execute only through DBA Tools after approval, ticket, and rollback SQL are attached.'
+        WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0
+             AND UPPER(COALESCE(r.POST_CHANGE_VERIFICATION_STATUS, '')) <> 'VERIFIED' THEN 'Run post-change verification and attach result before closure.'
+        WHEN COALESCE(r.SAVINGS_VERIFICATION_REQUIRED_ROWS, 0) > 0
+             AND LENGTH(TRIM(COALESCE(r.POST_CHANGE_VERIFICATION_RESULT, ''))) < 15 THEN 'Attach measured savings evidence for credit-control change.'
+        WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0 THEN 'Retain SQL hash, executor, role, rollback, and verification evidence.'
+        ELSE 'Create a setting review snapshot before changing this warehouse.'
+    END AS NEXT_CONTROL_ACTION
+FROM review_rows r
+FULL OUTER JOIN audit_rows a
+  ON UPPER(r.WAREHOUSE_NAME) = UPPER(a.WAREHOUSE_NAME)
+ORDER BY
+    CASE EXECUTION_AUDIT_READINESS
+        WHEN 'Execution failed' THEN 1
+        WHEN 'Executed - verification pending' THEN 2
+        WHEN 'Savings proof pending' THEN 3
+        WHEN 'Reviewed but not executed' THEN 4
+        WHEN 'No setting review' THEN 8
+        ELSE 9
+    END,
+    LAST_EXECUTED_AT DESC NULLS LAST,
+    LAST_REVIEW_TS DESC NULLS LAST
 LIMIT 100""".strip()
 
 
@@ -723,6 +1199,59 @@ ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_
 LIMIT 100""".strip()
 
 
+def _warehouse_operability_fact_sql(days: int, company: str, environment: str = "ALL") -> str:
+    """Read pre-aggregated warehouse capacity, setting-review, and closure blockers."""
+    table = warehouse_operability_fact_fqn()
+    where = [f"SNAPSHOT_DATE >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_DATE())"]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
+    if env_clause:
+        where.append(env_clause)
+    where_clause = " AND ".join(where)
+    return f"""
+SELECT
+    SNAPSHOT_DATE,
+    COMPANY,
+    ENVIRONMENT,
+    WAREHOUSE_NAME,
+    CONTROL_SOURCE,
+    SEVERITY,
+    SIGNAL,
+    CONTROL_STATE,
+    CONTROL_RANK,
+    CAPACITY_SCORE,
+    QUERY_ROWS,
+    QUEUE_PRESSURE_ROWS,
+    SPILL_PRESSURE_ROWS,
+    HIGH_LATENCY_ROWS,
+    METERED_CREDITS,
+    CREDIT_ALLOCATION_METHOD,
+    REVIEW_ROWS,
+    APPROVAL_REQUIRED_ROWS,
+    ROLLBACK_REQUIRED_ROWS,
+    SAVINGS_VERIFICATION_ROWS,
+    OPEN_ACTIONS,
+    OVERDUE_OPEN,
+    FIXED_WITHOUT_VERIFICATION,
+    VERIFIED_CLOSURES,
+    OWNER_APPROVAL_GAP_ROWS,
+    NEXT_CONTROL_ACTION,
+    LAST_ACTIVITY_TS,
+    LOAD_TS
+FROM {table}
+WHERE {where_clause}
+ORDER BY
+    CONTROL_RANK,
+    OVERDUE_OPEN DESC,
+    FIXED_WITHOUT_VERIFICATION DESC,
+    QUEUE_PRESSURE_ROWS DESC,
+    SPILL_PRESSURE_ROWS DESC,
+    METERED_CREDITS DESC,
+    LAST_ACTIVITY_TS DESC
+LIMIT 100""".strip()
+
+
 def _save_warehouse_setting_review_snapshot(
     session,
     findings: pd.DataFrame,
@@ -733,6 +1262,8 @@ def _save_warehouse_setting_review_snapshot(
 ) -> None:
     try:
         session.sql(build_warehouse_setting_review_ddl()).collect()
+        for migration_sql in build_warehouse_setting_review_migration_sql():
+            session.sql(migration_sql).collect()
         session.sql(_warehouse_setting_review_insert_sql(
             findings,
             company=company,
@@ -1168,6 +1699,19 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                         "environment": environment,
                         "days": int(days),
                     }
+                    try:
+                        operability_sql = _warehouse_operability_fact_sql(days, company, environment)
+                        st.session_state["wh_operability_fact_sql"] = operability_sql
+                        st.session_state["wh_operability_fact"] = run_query(
+                            operability_sql,
+                            ttl_key=f"wh_operability_fact_{company}_{environment}_{days}",
+                            tier="standard",
+                            section="Warehouse Health",
+                        )
+                        st.session_state.pop("wh_operability_fact_error", None)
+                    except Exception as fact_exc:
+                        st.session_state["wh_operability_fact"] = pd.DataFrame()
+                        st.session_state["wh_operability_fact_error"] = format_snowflake_error(fact_exc)
                 except Exception as e:
                     st.warning(f"Capacity brief unavailable in this role/context: {format_snowflake_error(e)}")
 
@@ -1206,7 +1750,94 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
         else:
             st.success("Healthy: no major warehouse pressure signal in this scope.")
 
+        operability_fact = st.session_state.get("wh_operability_fact")
+        if operability_fact is not None and not operability_fact.empty:
+            st.subheader("Warehouse Operability Mart")
+            f1, f2, f3, f4 = st.columns(4)
+            f1.metric("Fact Rows", f"{len(operability_fact):,}")
+            f2.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+            f3.metric(
+                "Pressure Signals",
+                f"{int(operability_fact.get('QUEUE_PRESSURE_ROWS', pd.Series(dtype=int)).sum() + operability_fact.get('SPILL_PRESSURE_ROWS', pd.Series(dtype=int)).sum()):,}",
+                delta_color="inverse",
+            )
+            f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+            render_priority_dataframe(
+                operability_fact,
+                title="Pre-aggregated warehouse blockers",
+                priority_columns=[
+                    "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "ENVIRONMENT",
+                    "WAREHOUSE_NAME", "SEVERITY", "SIGNAL", "CAPACITY_SCORE",
+                    "QUERY_ROWS", "QUEUE_PRESSURE_ROWS", "SPILL_PRESSURE_ROWS",
+                    "HIGH_LATENCY_ROWS", "METERED_CREDITS", "CREDIT_ALLOCATION_METHOD", "REVIEW_ROWS",
+                    "APPROVAL_REQUIRED_ROWS", "ROLLBACK_REQUIRED_ROWS",
+                    "SAVINGS_VERIFICATION_ROWS", "OPEN_ACTIONS", "OVERDUE_OPEN",
+                    "FIXED_WITHOUT_VERIFICATION", "VERIFIED_CLOSURES", "NEXT_CONTROL_ACTION",
+                ],
+                sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "CAPACITY_SCORE"],
+                ascending=[True, False, False, True],
+                raw_label="All warehouse operability facts",
+                height=300,
+            )
+            with st.expander("Warehouse operability fact query", expanded=False):
+                st.code(st.session_state.get("wh_operability_fact_sql", ""), language="sql")
+        elif st.session_state.get("wh_operability_fact_error"):
+            st.caption(
+                "Warehouse operability mart not available yet; deploy or refresh "
+                "`FACT_WAREHOUSE_OPERABILITY_DAILY` to enable the fast blocker surface."
+            )
+
         _render_warehouse_watch_floor(score, exceptions, row)
+        if exceptions is not None and not exceptions.empty:
+            audit_col, audit_hint_col = st.columns([1, 3])
+            with audit_col:
+                if st.button("Load Execution Audit", key="wh_setting_execution_audit_load", use_container_width=True):
+                    try:
+                        audit_sql = _warehouse_setting_execution_audit_sql(30, company, environment)
+                        audit = run_query(
+                            audit_sql,
+                            ttl_key=f"wh_setting_execution_audit_{company}_{environment}_30",
+                            tier="standard",
+                            section="Warehouse Health",
+                        )
+                        st.session_state["wh_setting_execution_audit"] = audit
+                        st.session_state["wh_setting_execution_audit_sql"] = audit_sql
+                    except Exception as exc:
+                        st.session_state["wh_setting_execution_audit"] = pd.DataFrame()
+                        st.warning(f"Warehouse execution audit unavailable: {format_snowflake_error(exc)}")
+            with audit_hint_col:
+                st.caption(
+                    "Joins setting-review snapshots to DBA Tools ALTER WAREHOUSE audit rows so changes have "
+                    "approval, rollback, SQL hash, executor, and verification evidence."
+                )
+
+            control_board = _warehouse_setting_control_board(
+                exceptions,
+                owner_inventory=st.session_state.get("wh_owner_inventory"),
+                closure=st.session_state.get("wh_action_closure"),
+                execution_audit=st.session_state.get("wh_setting_execution_audit"),
+            )
+            if not control_board.empty:
+                render_priority_dataframe(
+                    control_board,
+                    title="Warehouse setting control board",
+                    priority_columns=[
+                        "CONTROL_STATE", "WAREHOUSE_NAME", "SEVERITY", "SIGNAL",
+                        "CAPACITY_SCORE", "METERED_CREDITS", "GOVERNANCE_READINESS",
+                        "AUDIT_READINESS", "AUDIT_BLOCKERS", "CLOSURE_READINESS",
+                        "AUDIT_ROWS", "SUCCESSFUL_CHANGES", "FAILED_CHANGES",
+                        "LAST_EXECUTION_STATUS", "APPROVAL_REQUIRED", "ROLLBACK_REQUIRED",
+                        "SAVINGS_VERIFICATION_REQUIRED", "NEXT_CONTROL_ACTION",
+                    ],
+                    sort_by=["CONTROL_RANK", "CAPACITY_SCORE", "METERED_CREDITS"],
+                    ascending=[True, True, False],
+                    raw_label="All warehouse setting control rows",
+                    height=300,
+                    max_rows=12,
+                    column_config={
+                        "CAPACITY_SCORE": st.column_config.ProgressColumn("Capacity", min_value=0, max_value=100, format="%.1f"),
+                    },
+                )
         st.divider()
 
         if exceptions is not None and not exceptions.empty:
@@ -1314,6 +1945,33 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                         st.code(st.session_state.get("wh_action_closure_sql", ""), language="sql")
                 elif closure is not None:
                     st.info("No Warehouse Health action-queue rows found for the selected scope.")
+            with st.expander("Warehouse Execution Audit Evidence", expanded=False):
+                audit = st.session_state.get("wh_setting_execution_audit")
+                if audit is not None and not audit.empty:
+                    render_priority_dataframe(
+                        audit,
+                        title="Warehouse setting execution audit",
+                        priority_columns=[
+                            "WAREHOUSE_NAME", "EXECUTION_AUDIT_READINESS", "OWNER", "APPROVER",
+                            "APPROVAL_STATE", "CHANGE_TICKET_ID", "REVIEW_ROWS", "AUDIT_ROWS",
+                            "SUCCESSFUL_CHANGES", "FAILED_CHANGES", "LAST_SQL_HASH",
+                            "LAST_EXECUTED_BY", "LAST_EXECUTED_ROLE", "LAST_EXECUTION_STATUS",
+                            "LAST_EXECUTED_AT", "POST_CHANGE_VERIFICATION_STATUS",
+                            "NEXT_CONTROL_ACTION",
+                        ],
+                        sort_by=["FAILED_CHANGES", "AUDIT_ROWS", "LAST_EXECUTED_AT"],
+                        ascending=[False, False, False],
+                        raw_label="All warehouse execution audit rows",
+                        height=300,
+                    )
+                elif audit is not None:
+                    st.info("No warehouse setting review or ALTER WAREHOUSE audit rows found for the selected scope.")
+                st.caption("Warehouse execution audit query")
+                st.code(
+                    st.session_state.get("wh_setting_execution_audit_sql")
+                    or _warehouse_setting_execution_audit_sql(30, company, environment),
+                    language="sql",
+                )
             if st.button("Save Capacity Findings to Action Queue", key="wh_capacity_queue"):
                 try:
                     saved = _queue_capacity_findings(session, exceptions)

@@ -362,19 +362,24 @@ def get_environment_filter_clause(
     patterns = get_environment_cfg(environment).get("db_patterns", [])
     if not patterns:
         return ""
-    parts = [f"{column} ILIKE {sql_literal(pattern, 300)}" for pattern in patterns]
+    parts = [
+        f"{column} ILIKE {sql_literal(pattern, 300)}"
+        if "%" in str(pattern)
+        else f"UPPER({column}) = {sql_literal(str(pattern).upper(), 300)}"
+        for pattern in patterns
+    ]
     return "AND (" + " OR ".join(parts) + ")"
 
 
 def get_environment_case_expr(db_col: str = "database_name") -> str:
     """Classify ALFA databases into PROD, individual DEV/SAN/SIT/etc, or Other."""
     return f"""CASE
-        WHEN {db_col} ILIKE 'ALFA_EDW_PROD' THEN 'PROD'
-        WHEN {db_col} ILIKE 'ALFA_EDW_DEV' THEN 'ALFA_EDW_DEV'
-        WHEN {db_col} ILIKE 'ALFA_EDW_SAN' THEN 'ALFA_EDW_SAN'
-        WHEN {db_col} ILIKE 'ALFA_EDW_PHX' THEN 'ALFA_EDW_PHX'
-        WHEN {db_col} ILIKE 'ALFA_EDW_SEA' THEN 'ALFA_EDW_SEA'
-        WHEN {db_col} ILIKE 'ALFA_EDW_SIT' THEN 'ALFA_EDW_SIT'
+        WHEN UPPER({db_col}) = 'ALFA_EDW_PROD' THEN 'PROD'
+        WHEN UPPER({db_col}) = 'ALFA_EDW_DEV' THEN 'ALFA_EDW_DEV'
+        WHEN UPPER({db_col}) = 'ALFA_EDW_SAN' THEN 'ALFA_EDW_SAN'
+        WHEN UPPER({db_col}) = 'ALFA_EDW_PHX' THEN 'ALFA_EDW_PHX'
+        WHEN UPPER({db_col}) = 'ALFA_EDW_SEA' THEN 'ALFA_EDW_SEA'
+        WHEN UPPER({db_col}) = 'ALFA_EDW_SIT' THEN 'ALFA_EDW_SIT'
         WHEN {db_col} ILIKE 'ALFA_EDW_%' THEN 'Other ALFA Non-Prod'
         WHEN {db_col} IS NULL THEN 'No Database Context'
         ELSE 'Other / Shared'

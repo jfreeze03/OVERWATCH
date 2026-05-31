@@ -58,7 +58,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             st.session_state["global_environment"] = "PROD"
 
             clause = get_db_filter_clause("database_name", company="ALFA").upper()
-            self.assertIn("DATABASE_NAME ILIKE 'ALFA_EDW_PROD'", clause)
+            self.assertIn("UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD'", clause)
             self.assertTrue(environment_value_allowed("ALFA_EDW_PROD", company="ALFA"))
             self.assertFalse(environment_value_allowed("ALFA_EDW_DEV", company="ALFA"))
 

@@ -114,6 +114,7 @@ from utils.mart import (  # noqa: E402
     build_mart_control_room_cost_drivers_sql,
     build_mart_control_room_summary_sql,
     build_mart_control_room_task_failures_sql,
+    build_mart_procedure_calls_sql,
     build_mart_procedure_inventory_sql,
     build_mart_procedure_sla_sql,
     build_mart_pipeline_load_failures_sql,
@@ -383,7 +384,7 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state["active_company"] = "ALFA"
             prod_clause = get_environment_filter_clause("q.database_name", "PROD").upper()
-            self.assertIn("Q.DATABASE_NAME ILIKE 'ALFA_EDW_PROD'", prod_clause)
+            self.assertIn("UPPER(Q.DATABASE_NAME) = 'ALFA_EDW_PROD'", prod_clause)
 
             dev_clause = get_environment_filter_clause("q.database_name", "DEV_ALL").upper()
             for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
@@ -415,7 +416,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 role_col="q.role_name",
                 db_col="q.database_name",
             ).upper()
-            self.assertIn("Q.DATABASE_NAME ILIKE 'ALFA_EDW_PROD'", clause)
+            self.assertIn("UPPER(Q.DATABASE_NAME) = 'ALFA_EDW_PROD'", clause)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -431,12 +432,77 @@ class FormulaRegressionTests(unittest.TestCase):
 
             db_sql = build_mart_adoption_users_db_sql(30, "ALFA").upper()
             for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
-                self.assertIn(db_name, db_sql)
+                self.assertIn(f"ENVIRONMENT = '{db_name}'", db_sql)
             self.assertNotIn("ALFA_EDW_PROD", db_sql)
 
             login_sql = build_mart_control_room_failed_logins_sql(24, "ALFA").upper()
             self.assertNotIn("ALFA_EDW_DEV", login_sql)
             self.assertNotIn("DATABASE_NAME", login_sql)
+            self.assertNotIn("ENVIRONMENT =", login_sql)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_mart_setup_adds_explicit_environment_dimensions(self):
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        self.assertIn("CREATE OR REPLACE FUNCTION OVERWATCH_DATABASE_ENVIRONMENT", setup_sql)
+        self.assertIn("UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD'", setup_sql)
+        self.assertIn("'ALFA_EDW_PROD',         'EQUALS',    'PROD'", setup_sql)
+
+        env_tables = [
+            "FACT_QUERY_HOURLY",
+            "FACT_QUERY_DETAIL_RECENT",
+            "FACT_TASK_RUN",
+            "DIM_TASK_SNAPSHOT",
+            "DIM_PROCEDURE_SNAPSHOT",
+            "FACT_PROCEDURE_RUN",
+            "FACT_OBJECT_CHANGE",
+            "FACT_STORAGE_DAILY",
+            "DIM_TABLE_SNAPSHOT",
+            "FACT_COPY_LOAD_DAILY",
+        ]
+        for table_name in env_tables:
+            ddl_start = setup_sql.index(f"CREATE TRANSIENT TABLE IF NOT EXISTS {table_name}")
+            ddl_end = setup_sql.index(");", ddl_start)
+            ddl_block = setup_sql[ddl_start:ddl_end]
+            self.assertIn("ENVIRONMENT", ddl_block, table_name)
+
+            alter_stmt = f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS ENVIRONMENT"
+            self.assertIn(alter_stmt, setup_sql, table_name)
+
+        proc_start = setup_sql.index("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_PROCEDURE_RUN")
+        proc_end = setup_sql.index(");", proc_start)
+        self.assertIn("DATABASE_NAME", setup_sql[proc_start:proc_end])
+
+        expected_loads = [
+            "OVERWATCH_DATABASE_ENVIRONMENT(DATABASE_NAME) AS ENVIRONMENT",
+            "OVERWATCH_DATABASE_ENVIRONMENT(TASK_DATABASE) AS ENVIRONMENT",
+            "OVERWATCH_DATABASE_ENVIRONMENT(P.PROCEDURE_CATALOG) AS ENVIRONMENT",
+            "OVERWATCH_DATABASE_ENVIRONMENT(H.DATABASE_NAME) AS ENVIRONMENT",
+            "OVERWATCH_DATABASE_ENVIRONMENT(Q.DATABASE_NAME) AS ENVIRONMENT",
+            "OVERWATCH_DATABASE_ENVIRONMENT(TABLE_CATALOG) AS ENVIRONMENT",
+            "OVERWATCH_DATABASE_ENVIRONMENT(TABLE_CATALOG_NAME) AS ENVIRONMENT",
+        ]
+        for expected in expected_loads:
+            self.assertIn(expected, setup_sql)
+
+    def test_mart_procedure_runs_filter_by_environment(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_company"] = "ALFA"
+            st.session_state["global_environment"] = "PROD"
+
+            calls_sql = build_mart_procedure_calls_sql(7, "ALFA").upper()
+            self.assertIn("FACT_PROCEDURE_RUN", calls_sql)
+            self.assertIn("ENVIRONMENT = 'PROD'", calls_sql)
+
+            sla_sql = build_mart_procedure_sla_sql(7, "ALFA").upper()
+            self.assertIn("FACT_PROCEDURE_RUN", sla_sql)
+            self.assertIn("DATABASE_NAME", sla_sql)
+            self.assertIn("ENVIRONMENT = 'PROD'", sla_sql)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)

@@ -761,16 +761,33 @@ def _active_environment() -> str:
     return env if env in ENVIRONMENT_CONFIG else DEFAULT_ENVIRONMENT
 
 
-def _mart_environment_filter(column: str = "DATABASE_NAME", company: str = "ALFA") -> str:
+def _mart_environment_column(column: str = "ENVIRONMENT") -> str:
+    """Return the environment column matching a mart database column or alias."""
+    raw = str(column or "ENVIRONMENT").strip()
+    if not raw:
+        return "ENVIRONMENT"
+    parts = raw.split(".")
+    leaf = parts[-1].strip('"').upper()
+    if leaf in {"DATABASE_NAME", "PROCEDURE_CATALOG", "TABLE_CATALOG", "TABLE_CATALOG_NAME"}:
+        return ".".join(parts[:-1] + ["environment"]) if len(parts) > 1 else "ENVIRONMENT"
+    return raw
+
+
+def _mart_environment_filter(column: str = "ENVIRONMENT", company: str = "ALFA") -> str:
     if str(company or "").upper() == "TREXIS":
         return ""
     environment = _active_environment()
     if environment.upper() == "ALL":
         return ""
-    patterns = ENVIRONMENT_CONFIG.get(environment, ENVIRONMENT_CONFIG[DEFAULT_ENVIRONMENT]).get("db_patterns", [])
-    if not patterns:
+    env_col = _mart_environment_column(column)
+    if environment == "DEV_ALL":
+        values = ENVIRONMENT_CONFIG.get(environment, {}).get("db_patterns", [])
+    else:
+        cfg = ENVIRONMENT_CONFIG.get(environment, ENVIRONMENT_CONFIG[DEFAULT_ENVIRONMENT])
+        values = [environment] if environment == "PROD" else cfg.get("db_patterns", [])
+    if not values:
         return ""
-    parts = [f"{column} ILIKE {sql_literal(pattern, 300)}" for pattern in patterns]
+    parts = [f"{env_col} = {sql_literal(value, 300)}" for value in values]
     return "AND (" + " OR ".join(parts) + ")"
 
 
@@ -1778,6 +1795,7 @@ def build_mart_procedure_calls_sql(
     """Build procedure call summary from FACT_PROCEDURE_RUN."""
     table = mart_object_name("FACT_PROCEDURE_RUN")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("ENVIRONMENT", company)
     return f"""
         SELECT
             procedure_name,
@@ -1790,6 +1808,7 @@ def build_mart_procedure_calls_sql(
         FROM {table}
         WHERE start_time >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
           {company_filter}
+          {env_filter}
         GROUP BY procedure_name
         ORDER BY call_count DESC
         LIMIT 500
@@ -1803,9 +1822,11 @@ def build_mart_procedure_sla_sql(
     """Build procedure run detail for SLA/cost regression from FACT_PROCEDURE_RUN."""
     table = mart_object_name("FACT_PROCEDURE_RUN")
     company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("ENVIRONMENT", company)
     return f"""
         SELECT
             procedure_name,
+            database_name,
             root_query_id,
             NULL::VARCHAR AS user_name,
             NULL::VARCHAR AS role_name,
@@ -1822,6 +1843,7 @@ def build_mart_procedure_sla_sql(
         FROM {table}
         WHERE start_time >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
           {company_filter}
+          {env_filter}
         ORDER BY start_time DESC
         LIMIT 1000
     """

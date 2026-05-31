@@ -16,6 +16,8 @@ from .cost import (
 from .scorecards import (
     clamp_score, score_label, bad_ratio_score, trend_score, weighted_score,
     burn_trend_label, executive_health_score, service_health_scorecard,
+    dba_control_plane_readiness_score, dba_control_plane_section_scorecards,
+    dba_control_plane_component_rows,
 )
 from .display import (
     download_csv, show_loaded_time, mark_loaded, clear_all_cache,
@@ -42,6 +44,7 @@ from .logging import (
 from .admin import (
     admin_actions_enabled, admin_button_disabled, admin_disabled_reason,
     render_admin_mode_control, require_admin_enabled,
+    build_admin_audit_insert_sql, log_admin_action,
 )
 from .metadata import (
     show_to_df, first_existing_column, ensure_column_alias,
@@ -90,6 +93,8 @@ from .bookmarks import (
 from .action_queue import (
     make_action_id, upsert_actions,
     load_action_queue, update_action_status,
+    action_queue_environment_clause, action_queue_environment_values,
+    action_queue_fixed_missing_fields, update_action_status_with_evidence,
 )
 from .workflows import (
     coerce_workflow_state, render_workflow_selector, render_workflow_guide,
@@ -115,6 +120,8 @@ __all__ = [
     "freshness_note", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
     "clamp_score", "score_label", "bad_ratio_score", "trend_score", "weighted_score",
     "burn_trend_label", "executive_health_score", "service_health_scorecard",
+    "dba_control_plane_readiness_score", "dba_control_plane_section_scorecards",
+    "dba_control_plane_component_rows",
     "download_csv", "show_loaded_time", "mark_loaded", "clear_all_cache",
     "render_query_drilldown", "render_warehouse_drilldown",
     "render_drillable_bar_chart", "render_entity_query_drilldown",
@@ -134,6 +141,7 @@ __all__ = [
     "set_query_logging_enabled", "SectionTimer",
     "admin_actions_enabled", "admin_button_disabled", "admin_disabled_reason",
     "render_admin_mode_control", "require_admin_enabled",
+    "build_admin_audit_insert_sql", "log_admin_action",
     "show_to_df", "first_existing_column", "ensure_column_alias",
     "scope_warehouse_names", "scope_metadata_df", "load_task_inventory",
     "load_warehouse_inventory", "build_unclassified_assets_sql",
@@ -174,6 +182,8 @@ __all__ = [
     "apply_bookmark", "delete_bookmark",
     "make_action_id", "upsert_actions",
     "load_action_queue", "update_action_status",
+    "action_queue_environment_clause", "action_queue_environment_values",
+    "action_queue_fixed_missing_fields", "update_action_status_with_evidence",
     "coerce_workflow_state", "render_workflow_selector", "render_workflow_guide",
     "render_signal_confidence", "add_signal_routes", "render_priority_dataframe",
     "run_compatibility_checks", "get_available_columns", "view_supports_columns",

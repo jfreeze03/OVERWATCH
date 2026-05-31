@@ -2,9 +2,9 @@
 
 ## Target
 
-OVERWATCH is a DBA command center and executive evidence engine. Executives do not use the app directly. DBAs use it to triage Snowflake operations, investigate root cause, control cost, validate security/governance posture, and produce report-ready leadership summaries.
+OVERWATCH is a DBA administration control plane and leadership evidence generator. Executives do not use the app directly. DBAs use it to triage Snowflake operations, investigate root cause, control cost, validate security/governance posture, manage access, watch task and stored procedure reliability, change warehouse settings, and produce report-ready leadership summaries.
 
-The red-team target is 95+ across DBA usefulness, Snowflake engineering depth, operational readiness, executive reporting support, UX for working DBAs, and risk/control maturity.
+The 95+ target is governed by the fixed DBA Control Plane Scorecard. Feature depth alone cannot earn 95; data correctness, admin safety, auditability, ownership, and tests can cap a section below target.
 
 ## Operating Model
 
@@ -16,6 +16,21 @@ The app should route work by DBA workflow:
 - Security and audit: logins, grants, MFA, object changes, data sharing, and proof queries.
 - Admin actions: controlled warehouse, task, and query operations with confirmation and audit logging.
 - Executive evidence: concise summaries that quantify impact, risk, owner, and recommended action.
+
+The operating loop is:
+
+1. Observe the exception.
+2. Diagnose source, blast radius, owner, and confidence.
+3. Act through a controlled DBA workflow.
+4. Audit the decision, command, before/after state, and approval context.
+5. Verify the result and close the loop.
+
+The four primary DBA control domains are:
+
+- Cost Control.
+- Access Control.
+- Task & Procedure Reliability.
+- Warehouse Administration.
 
 ## Current High-Value Foundation
 
@@ -78,3 +93,7 @@ The app should route work by DBA workflow:
 - No cost number without confidence.
 - No live query where a pre-aggregated mart can answer the question.
 - No executive report without proof data behind it.
+- No 95 score without admin safety, auditability, data correctness, and accountable ownership.
+
+For the strict readiness rubric, caps, and current baseline, see
+[DBA_CONTROL_PLANE_SCORECARD.md](DBA_CONTROL_PLANE_SCORECARD.md).

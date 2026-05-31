@@ -1,5 +1,142 @@
-# utils/scorecards.py - shared executive and service scoring formulas
+# utils/scorecards.py - shared service and control-plane scoring formulas
 from __future__ import annotations
+
+
+DBA_CONTROL_PLANE_RUBRIC = (
+    {
+        "key": "domain_coverage",
+        "label": "DBA Domain Coverage",
+        "weight": 20,
+        "definition": "Covers the section's assigned DBA work: cost, access, task/procedure reliability, or warehouse administration.",
+    },
+    {
+        "key": "data_correctness",
+        "label": "Data Correctness & Scope",
+        "weight": 15,
+        "definition": "Uses the right Snowflake sources, company/environment scope, freshness/confidence labels, and defensible formulas.",
+    },
+    {
+        "key": "actionability",
+        "label": "Actionability",
+        "weight": 15,
+        "definition": "Turns findings into clear DBA next actions with severity, owner path, proof, and generated or suggested remediation.",
+    },
+    {
+        "key": "admin_safety_audit",
+        "label": "Admin Safety & Audit",
+        "weight": 15,
+        "definition": "State-changing actions require guardrails, confirmation, before/after context, immutable audit, and rollback guidance.",
+    },
+    {
+        "key": "performance_mart",
+        "label": "Performance & Mart Strategy",
+        "weight": 10,
+        "definition": "Prefers compact mart facts, avoids surprise live scans, caches appropriately, and exposes source health.",
+    },
+    {
+        "key": "workflow_ux",
+        "label": "DBA Workflow UX",
+        "weight": 10,
+        "definition": "Organizes dense DBA evidence around observe, diagnose, act, audit, and verify without burying the first move.",
+    },
+    {
+        "key": "governance_ownership",
+        "label": "Governance & Ownership",
+        "weight": 10,
+        "definition": "Connects objects, warehouses, roles, users, tasks, procedures, and findings to owners and approval context.",
+    },
+    {
+        "key": "tests_operability",
+        "label": "Tests & Operability",
+        "weight": 5,
+        "definition": "Has regression coverage, deployment checks, role capability checks, and clear fallback behavior.",
+    },
+)
+
+DBA_CONTROL_PLANE_COMPONENTS = tuple(item["key"] for item in DBA_CONTROL_PLANE_RUBRIC)
+
+DBA_CONTROL_PLANE_SECTION_BASELINE = {
+    "DBA Control Room": {
+        "domain_coverage": 90,
+        "data_correctness": 88,
+        "actionability": 88,
+        "admin_safety_audit": 74,
+        "performance_mart": 90,
+        "workflow_ux": 86,
+        "governance_ownership": 72,
+        "tests_operability": 86,
+    },
+    "Workload Operations": {
+        "domain_coverage": 90,
+        "data_correctness": 86,
+        "actionability": 90,
+        "admin_safety_audit": 85,
+        "performance_mart": 84,
+        "workflow_ux": 86,
+        "governance_ownership": 84,
+        "tests_operability": 90,
+    },
+    "Warehouse Health": {
+        "domain_coverage": 88,
+        "data_correctness": 84,
+        "actionability": 82,
+        "admin_safety_audit": 74,
+        "performance_mart": 82,
+        "workflow_ux": 80,
+        "governance_ownership": 62,
+        "tests_operability": 78,
+    },
+    "Cost & Contract": {
+        "domain_coverage": 90,
+        "data_correctness": 84,
+        "actionability": 90,
+        "admin_safety_audit": 80,
+        "performance_mart": 86,
+        "workflow_ux": 84,
+        "governance_ownership": 84,
+        "tests_operability": 90,
+    },
+    "Security Posture": {
+        "domain_coverage": 86,
+        "data_correctness": 78,
+        "actionability": 84,
+        "admin_safety_audit": 78,
+        "performance_mart": 78,
+        "workflow_ux": 80,
+        "governance_ownership": 72,
+        "tests_operability": 82,
+    },
+    "Change & Drift": {
+        "domain_coverage": 84,
+        "data_correctness": 78,
+        "actionability": 78,
+        "admin_safety_audit": 70,
+        "performance_mart": 80,
+        "workflow_ux": 76,
+        "governance_ownership": 60,
+        "tests_operability": 76,
+    },
+    "Account Health": {
+        "domain_coverage": 72,
+        "data_correctness": 80,
+        "actionability": 68,
+        "admin_safety_audit": 55,
+        "performance_mart": 82,
+        "workflow_ux": 70,
+        "governance_ownership": 52,
+        "tests_operability": 74,
+    },
+}
+
+DBA_CONTROL_PLANE_SECTION_NEXT_MOVES = {
+    "DBA Control Room": "Add owner/status/proof enforcement and use it as the command queue for DBA work.",
+    "Workload Operations": "Tighten task/procedure SLA evidence, failure lineage, recovery action, and verification.",
+    "Warehouse Health": "Add controlled warehouse settings with before/after diff, audit entry, and rollback SQL.",
+    "Cost & Contract": "Finish environment chargeback with allocated/estimated labels, owners, and savings verification.",
+    "Security Posture": "Add owner/approver inventory, access request workflow, role capability checks, and post-change verification evidence.",
+    "Change & Drift": "Separate safe observability from state-changing controls and make every command auditable.",
+    "Account Health": "Demote or re-scope as a Daily DBA Checklist that routes to owned actions.",
+}
 
 
 def clamp_score(value: float) -> float:
@@ -20,6 +157,20 @@ def score_label(score: float) -> str:
     if score >= 60:
         return "At Risk"
     return "Critical"
+
+
+def dba_readiness_label(score: float) -> str:
+    """Strict readiness band for DBA control-plane section scoring."""
+    score = float(score or 0)
+    if score >= 95:
+        return "95 Target"
+    if score >= 90:
+        return "Near Target"
+    if score >= 80:
+        return "Operational"
+    if score >= 70:
+        return "Pilot"
+    return "Not Ready"
 
 
 def bad_ratio_score(total: float, bad: float, penalty: float = 100.0) -> float:
@@ -55,6 +206,133 @@ def weighted_score(components: list[dict]) -> float:
         return 100.0
     score = sum(float(c.get("SCORE", 100) or 0) * float(c.get("WEIGHT", 0) or 0) for c in components)
     return clamp_score(score / total_weight)
+
+
+def dba_control_plane_readiness_score(component_scores: dict) -> dict:
+    """Score a DBA section against the fixed control-plane rubric.
+
+    This is intentionally stricter than a feature-completeness score. A section
+    cannot reach 95 if critical control-plane dimensions are weak, even when the
+    weighted average looks high.
+    """
+    components = []
+    by_key = {}
+    for item in DBA_CONTROL_PLANE_RUBRIC:
+        key = item["key"]
+        score = clamp_score(component_scores.get(key, 0))
+        row = {
+            "COMPONENT": item["label"],
+            "KEY": key,
+            "SCORE": score,
+            "WEIGHT": item["weight"],
+            "DEFINITION": item["definition"],
+        }
+        components.append(row)
+        by_key[key] = score
+
+    raw_score = weighted_score(components)
+    caps = []
+    if any(by_key[key] < 70 for key in DBA_CONTROL_PLANE_COMPONENTS):
+        caps.append({
+            "CAP": 84.0,
+            "REASON": "At least one rubric component is below 70; the section is not a reliable DBA operating surface.",
+        })
+    if by_key["data_correctness"] < 85:
+        caps.append({
+            "CAP": 89.0,
+            "REASON": "Data correctness/scope is below 85; the section cannot be scored as production-ready.",
+        })
+    if by_key["admin_safety_audit"] < 85:
+        caps.append({
+            "CAP": 89.0,
+            "REASON": "Admin safety/audit is below 85; the section cannot be trusted as a control plane.",
+        })
+    if by_key["governance_ownership"] < 80:
+        caps.append({
+            "CAP": 92.0,
+            "REASON": "Governance/ownership is below 80; findings are not consistently accountable.",
+        })
+    if raw_score >= 95 and any(by_key[key] < 90 for key in DBA_CONTROL_PLANE_COMPONENTS):
+        caps.append({
+            "CAP": 94.0,
+            "REASON": "A 95+ score requires every rubric component to be at least 90.",
+        })
+    if raw_score >= 95 and any(
+        by_key[key] < 95 for key in ("data_correctness", "admin_safety_audit", "governance_ownership")
+    ):
+        caps.append({
+            "CAP": 94.0,
+            "REASON": "A 95+ score requires data correctness, admin safety/audit, and governance/ownership to be at least 95.",
+        })
+
+    cap_value = min((cap["CAP"] for cap in caps), default=100.0)
+    final_score = clamp_score(min(raw_score, cap_value))
+    return {
+        "score": final_score,
+        "raw_score": raw_score,
+        "label": dba_readiness_label(final_score),
+        "components": components,
+        "caps": caps,
+    }
+
+
+def _cap_driver_label(reason: str) -> str:
+    reason_lower = str(reason or "").lower()
+    if "below 70" in reason_lower:
+        return "weak component"
+    if "data correctness" in reason_lower:
+        return "data correctness/scope"
+    if "admin safety" in reason_lower:
+        return "admin safety/audit"
+    if "governance" in reason_lower:
+        return "governance/ownership"
+    if "every rubric component" in reason_lower:
+        return "all components >=90"
+    if "critical control-plane" in reason_lower:
+        return "critical controls >=95"
+    return str(reason or "score cap")
+
+
+def dba_control_plane_section_scorecards(section_scores: dict | None = None) -> list[dict]:
+    """Return strict readiness rows for the DBA workflow sections."""
+    section_scores = section_scores or DBA_CONTROL_PLANE_SECTION_BASELINE
+    rows = []
+    for section, scores in section_scores.items():
+        result = dba_control_plane_readiness_score(scores)
+        lowest = min(result["components"], key=lambda row: row["SCORE"])
+        cap_drivers = []
+        for cap in result["caps"]:
+            label = _cap_driver_label(cap.get("REASON", ""))
+            if label not in cap_drivers:
+                cap_drivers.append(label)
+        rows.append({
+            "SECTION": section,
+            "SCORE": result["score"],
+            "RAW_SCORE": result["raw_score"],
+            "LABEL": result["label"],
+            "LOWEST_COMPONENT": lowest["COMPONENT"],
+            "LOWEST_SCORE": lowest["SCORE"],
+            "CAP_DRIVERS": ", ".join(cap_drivers) if cap_drivers else "none",
+            "NEXT_95_MOVE": DBA_CONTROL_PLANE_SECTION_NEXT_MOVES.get(section, "Raise weak control-plane components."),
+        })
+    return rows
+
+
+def dba_control_plane_component_rows(section_scores: dict | None = None) -> list[dict]:
+    """Return component-level readiness rows for section diagnostics."""
+    section_scores = section_scores or DBA_CONTROL_PLANE_SECTION_BASELINE
+    rows = []
+    for section, scores in section_scores.items():
+        result = dba_control_plane_readiness_score(scores)
+        for component in result["components"]:
+            rows.append({
+                "SECTION": section,
+                "COMPONENT": component["COMPONENT"],
+                "SCORE": component["SCORE"],
+                "WEIGHT": component["WEIGHT"],
+                "DEFINITION": component["DEFINITION"],
+            })
+    return rows
 
 
 def burn_trend_label(short_avg: float, long_avg: float, tolerance: float = 0.15) -> str:

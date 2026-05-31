@@ -62,3 +62,6 @@ For the low-cost Snowflake mart design, table inventory, and task load flow, see
 
 For the workflow roadmap and 95+ red-team target, see
 [DBA_CONTROL_ROOM_ROADMAP.md](DBA_CONTROL_ROOM_ROADMAP.md).
+
+For the strict DBA control-plane scoring rubric, hard caps, and current section
+baseline, see [DBA_CONTROL_PLANE_SCORECARD.md](DBA_CONTROL_PLANE_SCORECARD.md).

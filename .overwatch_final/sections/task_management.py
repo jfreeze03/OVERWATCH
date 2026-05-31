@@ -9,9 +9,11 @@ from utils import (
     download_csv,
     format_snowflake_error,
     get_active_company,
+    get_active_environment,
     get_session,
     admin_actions_enabled,
     admin_button_disabled,
+    log_admin_action,
     CREDIT_RATES,
     filter_existing_columns,
     load_task_inventory,
@@ -56,6 +58,8 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
     company = st.session_state.get("active_company", "ALFA")
     actions = []
     for _, row in df.head(200).iterrows():
+        active_env = get_active_environment()
+        action_env = str(row.get("ENVIRONMENT") or (active_env if active_env != "ALL" else "") or "")
         name = str(row.get("NAME") or row.get("PIPELINE_NAME") or "Unknown task")
         err = str(row.get("ERROR_MESSAGE") or "")[:1000]
         state = str(row.get("STATE") or row.get("STATUS") or "FAILED")
@@ -76,6 +80,9 @@ def _queue_task_findings(session, df: pd.DataFrame, source: str) -> None:
             "Generated SQL Fix": f"-- Review task or pipeline: {name}\n-- EXECUTE TASK <database>.<schema>.{safe_identifier(name)};",
             "Proof Query": "TASK_HISTORY or ETL audit failure row.",
             "Company": company,
+            "Environment": action_env,
+            "Verification Status": "Pending",
+            "Verification Query": "TASK_HISTORY or ETL audit failure row.",
         })
     try:
         saved = upsert_actions(session, actions)
@@ -650,26 +657,137 @@ def _queue_failure_findings(session, failures: pd.DataFrame) -> int:
     if failures is None or failures.empty:
         return 0
     company = get_active_company()
-    actions = []
-    for _, row in failures.head(100).iterrows():
-        task = str(row.get("TASK_FQN") or row.get("TASK_NAME") or "Unknown task")
-        finding = f"{row.get('FAILURE_CATEGORY')}: {task}. {row.get('ERROR_SIGNATURE')}"
-        actions.append({
-            "Action ID": make_action_id("Failure Console", task, finding),
-            "Source": "Task Management - Failure Console",
-            "Severity": "High" if row.get("FAILURE_CATEGORY") != "Unclassified Failure" else "Medium",
-            "Category": "Task Failure Diagnosis",
-            "Entity Type": "Task/Procedure",
-            "Entity": task,
-            "Owner": "DBA / Data Engineering",
-            "Finding": finding,
-            "Action": str(row.get("RECOMMENDED_ACTION") or "Review task failure and query history."),
-            "Estimated Monthly Savings": 0.0,
-            "Generated SQL Fix": str(row.get("RETRY_SQL") or "-- Retry SQL unavailable."),
-            "Proof Query": "Review TASK_HISTORY joined to QUERY_HISTORY by QUERY_ID.",
-            "Company": company,
-        })
+    actions = [
+        _build_task_reliability_action(row, company, "Task Management - Failure Console")
+        for _, row in failures.head(100).iterrows()
+    ]
     return upsert_actions(session, actions)
+
+
+def _task_owner(row: pd.Series) -> str:
+    return str(
+        row.get("OWNER")
+        or row.get("OWNER_ROLE")
+        or row.get("PROCEDURE_OWNER")
+        or row.get("ROLE_NAME")
+        or row.get("USER_NAME")
+        or "DBA / Data Engineering"
+    )
+
+
+def _task_environment(row: pd.Series) -> str:
+    active_env = get_active_environment()
+    return str(row.get("ENVIRONMENT") or (active_env if active_env != "ALL" else "") or "")
+
+
+def _task_reliability_verification_sql(row: pd.Series, lookback_days: int = 7) -> str:
+    task_name = str(row.get("TASK_NAME") or row.get("NAME") or "").strip()
+    task_fqn = str(row.get("TASK_FQN") or "").strip()
+    query_id = str(row.get("QUERY_ID") or "").strip()
+    name_filter = ""
+    if task_name:
+        name_filter = f"AND name = {sql_literal(task_name, 500)}"
+    query_block = (
+        f"""
+
+SELECT query_id,
+       execution_status,
+       start_time,
+       end_time,
+       total_elapsed_time / 1000 AS elapsed_sec,
+       error_code,
+       error_message,
+       SUBSTR(query_text, 1, 4000) AS query_text
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE query_id = {sql_literal(query_id, 200)};"""
+        if query_id else ""
+    )
+    return f"""-- Task reliability proof and post-fix verification
+-- Task FQN: {task_fqn or task_name or 'UNKNOWN'}
+SELECT name,
+       database_name,
+       schema_name,
+       state,
+       scheduled_time,
+       completed_time,
+       query_id,
+       error_code,
+       error_message
+FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+WHERE scheduled_time >= DATEADD('day', -{max(1, int(lookback_days or 7))}, CURRENT_TIMESTAMP())
+  {name_filter}
+ORDER BY scheduled_time DESC
+LIMIT 50;{query_block}
+
+-- Verification rule: latest run should be SUCCEEDED and runtime/credits should return inside the selected SLA baseline.
+"""
+
+
+def _task_reliability_generated_sql(row: pd.Series) -> str:
+    retry_sql = str(row.get("RETRY_SQL") or "").strip()
+    task_fqn = str(row.get("TASK_FQN") or row.get("TASK_NAME") or "UNKNOWN_TASK")
+    if retry_sql and not retry_sql.startswith("--"):
+        retry_line = retry_sql
+    else:
+        retry_line = f"-- EXECUTE TASK {task_fqn};"
+    return (
+        "-- Reviewed recovery plan. Do not execute until root cause is fixed.\n"
+        f"-- Task: {task_fqn}\n"
+        f"-- Linked procedure: {row.get('PROCEDURE_NAME', '')}\n"
+        f"-- Impact objects: {row.get('IMPACT_OBJECTS', '')}\n"
+        f"{retry_line}\n"
+        "-- After retry, run the verification query and attach evidence to the action queue."
+    )
+
+
+def _task_metric(row: pd.Series, *columns: str):
+    for column in columns:
+        if column in row and row.get(column) not in (None, ""):
+            return safe_float(row.get(column))
+    return None
+
+
+def _build_task_reliability_action(row: pd.Series, company: str, source: str) -> dict:
+    signal = str(row.get("SIGNAL") or row.get("FAILURE_CATEGORY") or row.get("BREACH_REASON") or "Task Reliability")
+    task = str(row.get("TASK_FQN") or row.get("TASK_NAME") or row.get("NAME") or "Unknown task")
+    category = str(row.get("FAILURE_CATEGORY") or signal)
+    detail = str(row.get("DETAIL") or row.get("ERROR_SIGNATURE") or row.get("ERROR_MESSAGE") or "")[:700]
+    action_text, _ = _task_action_for(signal)
+    if row.get("RECOMMENDED_ACTION"):
+        action_text = str(row.get("RECOMMENDED_ACTION"))
+    if "verify" not in action_text.lower():
+        action_text += " Verify the next successful run and attach TASK_HISTORY evidence before closing."
+    severity = str(row.get("SEVERITY") or ("High" if category != "Unclassified Failure" else "Medium"))
+    finding = f"{signal}: {task}. {detail}".strip()
+    verification_query = _task_reliability_verification_sql(row)[:8000]
+    baseline_value = _task_metric(row, "AVG_DURATION_SEC", "AVG_EXECUTION_SECONDS", "BASELINE_SECONDS")
+    current_value = _task_metric(row, "DURATION_SEC", "ELAPSED_SEC", "LATEST_DURATION_SEC", "EXECUTION_SECONDS")
+    measured_delta = (
+        round(current_value - baseline_value, 4)
+        if current_value is not None and baseline_value is not None
+        else None
+    )
+    return {
+        "Action ID": make_action_id("Task Reliability", task, finding),
+        "Source": source,
+        "Severity": severity,
+        "Category": "Task & Procedure Reliability",
+        "Entity Type": "Task/Procedure",
+        "Entity": task,
+        "Owner": _task_owner(row),
+        "Finding": finding,
+        "Action": action_text,
+        "Estimated Monthly Savings": 0.0,
+        "Generated SQL Fix": _task_reliability_generated_sql(row)[:8000],
+        "Proof Query": verification_query,
+        "Company": company,
+        "Environment": _task_environment(row),
+        "Verification Status": "Pending",
+        "Verification Query": verification_query,
+        "Baseline Value": baseline_value,
+        "Current Value": current_value,
+        "Measured Delta": measured_delta,
+    }
 
 
 def _build_task_ops_markdown(
@@ -769,40 +887,18 @@ def _log_admin_action(
     confirmation_text: str = "",
     control_context: str = "",
 ) -> None:
-    try:
-        company = get_active_company()
-        env = str(st.session_state.get("active_environment", "") or "")
-        app_user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
-        exec_context = _current_execution_context(session)
-        sql_hash = make_action_id("SQL", sql_text, "")[:64]
-        action_id = make_action_id(action_type, object_name, sql_text + status + message)
-        session.sql(f"""
-            INSERT INTO {ADMIN_AUDIT_FQN} (
-                ACTION_ID, APP_USER, COMPANY, ENVIRONMENT, ACTION_TYPE,
-                SNOWFLAKE_USER, SNOWFLAKE_ROLE, SNOWFLAKE_WAREHOUSE,
-                OBJECT_NAME, SQL_TEXT, SQL_HASH, CONFIRMATION_TEXT,
-                CONTROL_CONTEXT, RESULT_STATUS, RESULT_MESSAGE
-            )
-            VALUES (
-                {sql_literal(action_id, 64)},
-                {sql_literal(app_user, 200)},
-                {sql_literal(company, 100)},
-                {sql_literal(env, 100)},
-                {sql_literal(action_type, 100)},
-                {sql_literal(exec_context.get("snowflake_user", ""), 200)},
-                {sql_literal(exec_context.get("snowflake_role", ""), 200)},
-                {sql_literal(exec_context.get("snowflake_warehouse", ""), 200)},
-                {sql_literal(object_name, 1000)},
-                {sql_literal(sql_text, 8000)},
-                {sql_literal(sql_hash, 80)},
-                {sql_literal(confirmation_text, 1000)},
-                {sql_literal(control_context, 4000)},
-                {sql_literal(status, 40)},
-                {sql_literal(message, 4000)}
-            )
-        """).collect()
-    except Exception:
-        pass
+    log_admin_action(
+        session,
+        action_type=action_type,
+        target_object=object_name,
+        sql_text=sql_text,
+        result_status=status,
+        result_message=message,
+        confirmation_text=confirmation_text,
+        control_context=control_context,
+        company=get_active_company(),
+        environment=str(st.session_state.get("active_environment", "") or ""),
+    )
 
 
 def _build_task_ops_frames(
@@ -961,27 +1057,10 @@ def _queue_task_ops_findings(session, exceptions: pd.DataFrame) -> int:
     if exceptions is None or exceptions.empty:
         return 0
     company = get_active_company()
-    actions = []
-    for _, row in exceptions.head(100).iterrows():
-        signal = str(row.get("SIGNAL", "Task Exception"))
-        task = str(row.get("TASK_FQN") or row.get("TASK_NAME") or "Unknown task")
-        action_text, generated_sql = _task_action_for(signal)
-        finding = f"{signal}: {task}. {str(row.get('DETAIL') or '')[:500]}"
-        actions.append({
-            "Action ID": make_action_id("Task Graph Ops", task, finding),
-            "Source": "Task Management - Operations Brief",
-            "Category": "Task Graph Operations",
-            "Severity": row.get("SEVERITY", "High"),
-            "Entity Type": "Task Graph",
-            "Entity": task,
-            "Owner": "DBA / Data Engineering",
-            "Finding": finding,
-            "Action": action_text,
-            "Estimated Monthly Savings": 0,
-            "Generated SQL Fix": generated_sql,
-            "Proof Query": "Review TASK_HISTORY, SHOW TASKS, and linked QUERY_ID/procedure details.",
-            "Company": company,
-        })
+    actions = [
+        _build_task_reliability_action(row, company, "Task Management - Operations Brief")
+        for _, row in exceptions.head(100).iterrows()
+    ]
     return upsert_actions(session, actions)
 
 

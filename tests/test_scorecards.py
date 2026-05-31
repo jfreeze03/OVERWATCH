@@ -83,6 +83,56 @@ class ScorecardTests(unittest.TestCase):
         })
         self.assertGreater(login_only["score"], task_query["score"])
 
+    def test_dba_readiness_requires_all_components_for_95(self):
+        near_perfect = {
+            key: 100
+            for key in scorecards.DBA_CONTROL_PLANE_COMPONENTS
+        }
+        near_perfect["governance_ownership"] = 89
+
+        result = scorecards.dba_control_plane_readiness_score(near_perfect)
+
+        self.assertLess(result["score"], 95)
+        self.assertEqual(result["label"], "Near Target")
+        self.assertTrue(result["caps"])
+
+    def test_dba_readiness_caps_weak_admin_safety(self):
+        feature_rich_but_unsafe = {
+            key: 96
+            for key in scorecards.DBA_CONTROL_PLANE_COMPONENTS
+        }
+        feature_rich_but_unsafe["admin_safety_audit"] = 70
+
+        result = scorecards.dba_control_plane_readiness_score(feature_rich_but_unsafe)
+
+        self.assertLessEqual(result["score"], 89)
+        self.assertIn("Admin Safety & Audit", [row["COMPONENT"] for row in result["components"]])
+
+    def test_dba_readiness_allows_95_only_when_control_dimensions_are_high(self):
+        production_ready = {
+            key: 95
+            for key in scorecards.DBA_CONTROL_PLANE_COMPONENTS
+        }
+
+        result = scorecards.dba_control_plane_readiness_score(production_ready)
+
+        self.assertEqual(result["score"], 95.0)
+        self.assertEqual(result["label"], "95 Target")
+        self.assertEqual(result["caps"], [])
+
+    def test_dba_section_baseline_is_strict_and_repeatable(self):
+        rows = scorecards.dba_control_plane_section_scorecards()
+        by_section = {row["SECTION"]: row for row in rows}
+
+        self.assertEqual(by_section["DBA Control Room"]["SCORE"], 84.6)
+        self.assertEqual(by_section["Warehouse Health"]["SCORE"], 79.9)
+        self.assertEqual(by_section["Workload Operations"]["SCORE"], 87.0)
+        self.assertEqual(by_section["Cost & Contract"]["SCORE"], 86.0)
+        self.assertEqual(by_section["Security Posture"]["SCORE"], 80.3)
+        self.assertEqual(by_section["Account Health"]["LABEL"], "Not Ready")
+        self.assertLess(max(row["SCORE"] for row in rows), 95)
+        self.assertIn("admin safety/audit", by_section["DBA Control Room"]["CAP_DRIVERS"])
+
 
 if __name__ == "__main__":
     unittest.main()

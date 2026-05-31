@@ -20,6 +20,7 @@ from utils import (
     run_compatibility_checks, build_smoke_test_checklist,
     build_cost_formula_audit, filter_existing_columns, build_task_history_sql,
     admin_actions_enabled, admin_button_disabled,
+    log_admin_action,
     show_to_df, first_existing_column, ensure_column_alias,
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
     load_warehouse_inventory, build_unclassified_assets_sql,
@@ -102,6 +103,183 @@ def _as_int(value, default: int) -> int:
         return int(float(value))
     except Exception:
         return default
+
+
+def _is_unknown_setting(value) -> bool:
+    return value is None or str(value).strip().lower() in ("", "nan", "none", "null")
+
+
+def _warehouse_size_sql(value) -> str:
+    text = str(value or "").strip()
+    if text in _SIZE_SQL:
+        return _SIZE_SQL[text]
+    compact = text.upper().replace("-", "").replace("_", "").replace(" ", "")
+    aliases = {
+        "XSMALL": "XSMALL",
+        "SMALL": "SMALL",
+        "MEDIUM": "MEDIUM",
+        "LARGE": "LARGE",
+        "XLARGE": "XLARGE",
+        "XXLARGE": "XXLARGE",
+        "2XLARGE": "XXLARGE",
+        "XXXLARGE": "XXXLARGE",
+        "3XLARGE": "XXXLARGE",
+        "X4LARGE": "X4LARGE",
+        "4XLARGE": "X4LARGE",
+        "X5LARGE": "X5LARGE",
+        "5XLARGE": "X5LARGE",
+        "X6LARGE": "X6LARGE",
+        "6XLARGE": "X6LARGE",
+    }
+    return aliases.get(compact, compact or "XSMALL")
+
+
+def _normalize_warehouse_setting(param: str, value) -> str:
+    param = str(param or "").upper()
+    if param == "WAREHOUSE_SIZE":
+        return _warehouse_size_sql(value)
+    if param in {"AUTO_RESUME", "ENABLE_QUERY_ACCELERATION"}:
+        return "TRUE" if _as_bool(value) else "FALSE"
+    if param == "SCALING_POLICY":
+        return str(value or "STANDARD").upper()
+    return str(_as_int(value, 0))
+
+
+def _warehouse_setting_risk(param: str, current_sql: str, requested_sql: str) -> str:
+    param = str(param or "").upper()
+    if param == "WAREHOUSE_SIZE":
+        return "Validate queue, spill, p95 runtime, and cost drivers before resizing."
+    if param == "AUTO_SUSPEND" and requested_sql == "0":
+        return "High cost risk: warehouse will never auto-suspend."
+    if param == "AUTO_SUSPEND" and _as_int(requested_sql, 0) > 600:
+        return "Cost risk: auto-suspend is above the 10-minute DBA guardrail."
+    if param == "AUTO_RESUME" and requested_sql == "FALSE":
+        return "Availability risk: users may see failures until the warehouse is resumed manually."
+    if param == "MIN_CLUSTER_COUNT" and _as_int(requested_sql, 1) > 1:
+        return "High cost risk: extra clusters can run continuously."
+    if param == "MAX_CLUSTER_COUNT" and _as_int(requested_sql, 1) > 1:
+        return "Burst cost risk: multi-cluster scaling can multiply credit burn."
+    if param == "ENABLE_QUERY_ACCELERATION" and requested_sql == "TRUE":
+        return "Serverless cost risk: QAS can add spend outside warehouse metering."
+    if param == "QUERY_ACCELERATION_MAX_SCALE_FACTOR" and _as_int(requested_sql, 0) == 0:
+        return "Serverless cost risk: QAS scale factor is unlimited."
+    if param == "STATEMENT_TIMEOUT_IN_SECONDS" and requested_sql == "0":
+        return "Runaway query risk: statements have no warehouse-level timeout."
+    if param == "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS" and requested_sql == "0":
+        return "Queue risk: statements can wait indefinitely."
+    if param == "MAX_CONCURRENCY_LEVEL" and _as_int(requested_sql, 8) > 8:
+        return "Pressure risk: higher concurrency can increase spill and p95 runtime."
+    return "Review workload impact and owner approval before applying."
+
+
+def _warehouse_settings_preflight_sql(warehouse_name: str) -> str:
+    safe_wh = _quote_identifier(warehouse_name)
+    wh_lit = sql_literal(warehouse_name, 300)
+    return f"""-- Read-only pre-flight before ALTER WAREHOUSE
+SELECT CURRENT_USER() AS current_user,
+       CURRENT_ROLE() AS current_role,
+       CURRENT_WAREHOUSE() AS current_warehouse;
+
+SHOW GRANTS ON WAREHOUSE {safe_wh};
+
+SHOW WAREHOUSES LIKE {wh_lit};
+
+SELECT warehouse_name,
+       SUM(credits_used) AS credits_7d,
+       SUM(credits_used_compute) AS compute_credits_7d,
+       SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits_7d
+FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+WHERE start_time >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+  AND warehouse_name = {wh_lit}
+GROUP BY warehouse_name;
+
+SELECT warehouse_name,
+       COUNT(*) AS queries_24h,
+       SUM(IFF(execution_status = 'FAILED', 1, 0)) AS failed_queries_24h,
+       AVG(total_elapsed_time) / 1000 AS avg_elapsed_sec_24h,
+       APPROX_PERCENTILE(total_elapsed_time / 1000, 0.95) AS p95_elapsed_sec_24h
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+  AND warehouse_name = {wh_lit}
+GROUP BY warehouse_name;
+
+-- Confirm MODIFY privilege, owner approval, workload impact, and rollback plan before applying.
+"""
+
+
+def _build_warehouse_setting_plan(
+    warehouse_name: str,
+    current_row: pd.Series,
+    requested_settings: dict,
+) -> dict:
+    """Build a reviewed ALTER WAREHOUSE plan with rollback and audit context."""
+    specs = [
+        ("WAREHOUSE_SIZE", "size"),
+        ("AUTO_SUSPEND", "auto_suspend"),
+        ("AUTO_RESUME", "auto_resume"),
+        ("STATEMENT_TIMEOUT_IN_SECONDS", "statement_timeout_in_seconds"),
+        ("STATEMENT_QUEUED_TIMEOUT_IN_SECONDS", "statement_queued_timeout_in_seconds"),
+        ("MAX_CONCURRENCY_LEVEL", "max_concurrency_level"),
+        ("SCALING_POLICY", "scaling_policy"),
+        ("MIN_CLUSTER_COUNT", "min_cluster_count"),
+        ("MAX_CLUSTER_COUNT", "max_cluster_count"),
+        ("ENABLE_QUERY_ACCELERATION", "enable_query_acceleration"),
+        ("QUERY_ACCELERATION_MAX_SCALE_FACTOR", "query_acceleration_max_scale_factor"),
+    ]
+    changes = []
+    skipped = []
+    for param, column in specs:
+        if param not in requested_settings:
+            continue
+        current_raw = current_row.get(column, None)
+        if _is_unknown_setting(current_raw):
+            skipped.append({
+                "PARAMETER": param,
+                "REASON": "Current value unavailable from SHOW WAREHOUSES; refresh metadata before changing this setting.",
+            })
+            continue
+        current_sql = _normalize_warehouse_setting(param, current_raw)
+        requested_sql = _normalize_warehouse_setting(param, requested_settings.get(param))
+        if current_sql != requested_sql:
+            changes.append({
+                "PARAMETER": param,
+                "CURRENT": current_sql,
+                "REQUESTED": requested_sql,
+                "RISK": _warehouse_setting_risk(param, current_sql, requested_sql),
+            })
+
+    safe_wh = _quote_identifier(warehouse_name)
+    assignments = [f"{row['PARAMETER']} = {row['REQUESTED']}" for row in changes]
+    rollback_assignments = [f"{row['PARAMETER']} = {row['CURRENT']}" for row in changes]
+    alter_sql = ""
+    rollback_sql = ""
+    if assignments:
+        alter_sql = f"ALTER WAREHOUSE {safe_wh} SET\n    " + "\n    ".join(assignments) + ";"
+        rollback_sql = f"ALTER WAREHOUSE {safe_wh} SET\n    " + "\n    ".join(rollback_assignments) + ";"
+
+    context_lines = [
+        f"Warehouse: {warehouse_name}",
+        "Change count: " + str(len(changes)),
+    ]
+    for row in changes:
+        context_lines.append(
+            f"{row['PARAMETER']}: {row['CURRENT']} -> {row['REQUESTED']} | {row['RISK']}"
+        )
+    if rollback_sql:
+        context_lines.append("Rollback SQL: " + rollback_sql.replace("\n", " "))
+
+    return {
+        "warehouse": warehouse_name,
+        "changes": changes,
+        "skipped": skipped,
+        "changes_df": pd.DataFrame(changes),
+        "skipped_df": pd.DataFrame(skipped),
+        "alter_sql": alter_sql,
+        "rollback_sql": rollback_sql,
+        "preflight_sql": _warehouse_settings_preflight_sql(warehouse_name),
+        "confirmation_text": f"ALTER {warehouse_name}",
+        "control_context": "\n".join(context_lines)[:4000],
+    }
 
 
 def _table_exists(session, db: str, schema: str, table: str):
@@ -772,6 +950,23 @@ def render():
 
                     apply = st.form_submit_button("📋 Preview & Apply Changes", type="primary")
 
+                plan_key = f"wh_change_plan_{sel_wh}"
+                if apply:
+                    requested = {
+                        "WAREHOUSE_SIZE": new_size,
+                        "AUTO_SUSPEND": int(new_auto_suspend),
+                        "AUTO_RESUME": bool(new_auto_resume),
+                        "STATEMENT_TIMEOUT_IN_SECONDS": int(new_stmt_timeout),
+                        "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS": int(new_queue_timeout),
+                        "MAX_CONCURRENCY_LEVEL": int(new_concurrency),
+                        "SCALING_POLICY": new_scaling,
+                        "MIN_CLUSTER_COUNT": int(new_min_clusters),
+                        "MAX_CLUSTER_COUNT": int(new_max_clusters),
+                        "ENABLE_QUERY_ACCELERATION": bool(new_qas),
+                        "QUERY_ACCELERATION_MAX_SCALE_FACTOR": int(new_qas_sf),
+                    }
+                    st.session_state[plan_key] = _build_warehouse_setting_plan(sel_wh, wh_row, requested)
+
                 if apply:
                     # Build ALTER WAREHOUSE statement from changed params
                     safe_wh = _quote_identifier(sel_wh)
@@ -791,7 +986,8 @@ def render():
                     ]
                     alter_sql = f"ALTER WAREHOUSE {safe_wh} SET\n    " + "\n    ".join(params) + ";"
 
-                    st.subheader("📋 SQL Preview")
+                    st.subheader("Legacy SQL Preview - disabled")
+                    st.caption("Use the reviewed change plan below. The legacy apply button is intentionally disabled.")
                     st.code(alter_sql, language="sql")
 
                     col_apply, col_cancel = st.columns([1, 3])
@@ -805,7 +1001,7 @@ def render():
                             "✅ Apply Now",
                             type="primary",
                             key=f"wh_apply_{sel_wh}",
-                            disabled=admin_button_disabled(not wh_confirmed),
+                            disabled=True,
                         ):
                             # CALLER MODE: ALTER WAREHOUSE needs MODIFY on the warehouse.
                             # SNOW_ACCOUNTADMIN and SNOW_SYSADMIN both have this.
@@ -832,6 +1028,125 @@ def render():
                                     st.error(f"ALTER failed: {format_snowflake_error(e)}")
 
     # ── TAB 2: DATA LOADING ───────────────────────────────────────────────────
+                plan = st.session_state.get(plan_key)
+                if plan:
+                    st.subheader("Reviewed Warehouse Change Plan")
+                    changes_df = plan.get("changes_df", pd.DataFrame())
+                    skipped_df = plan.get("skipped_df", pd.DataFrame())
+                    if changes_df.empty:
+                        st.success("No warehouse settings changed from the loaded before-state.")
+                    else:
+                        render_priority_dataframe(
+                            changes_df,
+                            title="Before/after settings requiring review",
+                            priority_columns=["PARAMETER", "CURRENT", "REQUESTED", "RISK"],
+                            sort_by=["PARAMETER"],
+                            ascending=True,
+                            raw_label="All proposed warehouse changes",
+                            height=240,
+                        )
+                        st.caption(
+                            "Only changed parameters are included in the ALTER statement. "
+                            "Run the pre-flight checks and keep the rollback SQL with the change ticket."
+                        )
+                        with st.expander("Read-only pre-flight SQL", expanded=True):
+                            st.code(plan["preflight_sql"], language="sql")
+                        with st.expander("ALTER SQL to apply", expanded=True):
+                            st.code(plan["alter_sql"], language="sql")
+                        with st.expander("Rollback SQL", expanded=False):
+                            st.code(plan["rollback_sql"], language="sql")
+
+                    if not skipped_df.empty:
+                        st.warning("Some settings were not included because their current values were unavailable.")
+                        render_priority_dataframe(
+                            skipped_df,
+                            title="Skipped settings",
+                            priority_columns=["PARAMETER", "REASON"],
+                            sort_by=["PARAMETER"],
+                            ascending=True,
+                            raw_label="All skipped settings",
+                            height=160,
+                        )
+
+                    if not changes_df.empty:
+                        col_apply, col_audit = st.columns([1, 3])
+                        with col_apply:
+                            wh_confirmed = _typed_confirmation(
+                                f"Type {plan['confirmation_text']} to apply this warehouse change",
+                                plan["confirmation_text"],
+                                f"wh_confirm_reviewed_{sel_wh}",
+                            )
+                            if st.button(
+                                "Apply Warehouse Change",
+                                type="primary",
+                                key=f"wh_apply_reviewed_{sel_wh}",
+                                disabled=admin_button_disabled(not wh_confirmed),
+                            ):
+                                try:
+                                    log_admin_action(
+                                        session,
+                                        action_type="ALTER WAREHOUSE",
+                                        target_object=sel_wh,
+                                        sql_text=plan["alter_sql"],
+                                        result_status="STARTED",
+                                        result_message="Warehouse change submitted from OVERWATCH.",
+                                        confirmation_text=plan["confirmation_text"],
+                                        control_context=plan["control_context"],
+                                        company=active_company,
+                                        environment=str(st.session_state.get("active_environment", "") or ""),
+                                    )
+                                    session.sql(plan["alter_sql"]).collect()
+                                    audited = log_admin_action(
+                                        session,
+                                        action_type="ALTER WAREHOUSE",
+                                        target_object=sel_wh,
+                                        sql_text=plan["alter_sql"],
+                                        result_status="SUCCESS",
+                                        result_message="Warehouse change completed.",
+                                        confirmation_text=plan["confirmation_text"],
+                                        control_context=plan["control_context"],
+                                        company=active_company,
+                                        environment=str(st.session_state.get("active_environment", "") or ""),
+                                    )
+                                    st.success(f"Warehouse `{sel_wh}` updated successfully.")
+                                    if not audited:
+                                        st.warning("The change completed, but the admin audit table was unavailable or not writable.")
+                                    st.session_state.pop("dba_df_wh_cfg", None)
+                                    st.session_state.pop(plan_key, None)
+                                    st.rerun()
+                                except Exception as e:
+                                    err = format_snowflake_error(e)
+                                    log_admin_action(
+                                        session,
+                                        action_type="ALTER WAREHOUSE",
+                                        target_object=sel_wh,
+                                        sql_text=plan["alter_sql"],
+                                        result_status="FAILED",
+                                        result_message=err,
+                                        confirmation_text=plan["confirmation_text"],
+                                        control_context=plan["control_context"],
+                                        company=active_company,
+                                        environment=str(st.session_state.get("active_environment", "") or ""),
+                                    )
+                                    err_str = str(e).lower()
+                                    if "insufficient privilege" in err_str or "not authorized" in err_str:
+                                        st.error(
+                                            f"Permission denied on `{sel_wh}`. "
+                                            f"ALTER WAREHOUSE requires MODIFY privilege."
+                                        )
+                                    elif "enterprise" in err_str or "not supported" in err_str:
+                                        st.error(
+                                            "Feature not available in your Snowflake edition. "
+                                            "Multi-cluster and QAS require Enterprise or higher."
+                                        )
+                                    else:
+                                        st.error(f"ALTER failed: {err}")
+                        with col_audit:
+                            st.caption(
+                                "Audit path: OVERWATCH_ADMIN_ACTION_AUDIT captures company, environment, "
+                                "Snowflake role/user, SQL hash, confirmation text, control context, and result."
+                            )
+
     if selected_tool == "Data Loading":
         st.header("📦 Data Loading Monitor")
         load_days = st.slider("Lookback (days)", 1, 30, 7, key="dl_days")

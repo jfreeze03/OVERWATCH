@@ -22,6 +22,7 @@ from sections.cost_center import (  # noqa: E402
     _bill_driver_summary,
     _build_bill_waterfall,
     _build_finance_movement_summary,
+    _warehouse_cost_control_action,
     _service_cost_category,
 )
 from sections.dba_control_room import (  # noqa: E402
@@ -61,6 +62,7 @@ from sections.security_posture import (  # noqa: E402
     _security_score,
 )
 from sections.stored_proc_tracker import (  # noqa: E402
+    _build_procedure_reliability_action,
     _build_procedure_sla_frames,
     _build_procedure_ops_frames,
     _procedure_from_task_definition,
@@ -71,6 +73,7 @@ from sections.task_management import (  # noqa: E402
     _admin_sql_for_task,
     _build_failure_console_frames,
     _build_failure_runbook_markdown,
+    _build_task_reliability_action,
     _build_task_graph_dot,
     _build_task_ops_frames,
     _build_task_ops_markdown,
@@ -1372,6 +1375,84 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("AS AVG_ELAPSED_SEC", explain_block)
         self.assertIn('"TOTAL_CREDITS"', explain_block)
         self.assertIn('"AVG_EXECUTION_SECONDS"', explain_block)
+
+    def test_cost_control_action_requires_verification_evidence(self):
+        action = _warehouse_cost_control_action(
+            pd.Series({
+                "WAREHOUSE_NAME": "WH_ALFA_BI",
+                "CREDIT_DELTA": 250,
+                "CURRENT_CREDITS": 500,
+                "PRIOR_CREDITS": 250,
+                "OWNER_ROLE": "BI_PLATFORM_OWNER",
+            }),
+            credit_price=3.0,
+            period_label="last 7 complete days",
+            company="ALFA",
+        )
+
+        self.assertEqual(action["Owner"], "BI_PLATFORM_OWNER")
+        self.assertEqual(action["Category"], "Cost Control")
+        self.assertEqual(action["Environment"], "")
+        self.assertEqual(action["Verification Status"], "Pending")
+        self.assertEqual(action["Baseline Value"], 250)
+        self.assertEqual(action["Current Value"], 500)
+        self.assertEqual(action["Measured Delta"], 250)
+        self.assertIn("Exact warehouse metering", action["Action"])
+        self.assertIn("WAREHOUSE_METERING_HISTORY", action["Proof Query"])
+        self.assertIn("post-fix verification", action["Proof Query"].lower())
+        self.assertIn("Warehouse Settings Manager", action["Action"])
+
+    def test_task_reliability_action_includes_retry_guard_and_verification(self):
+        action = _build_task_reliability_action(
+            pd.Series({
+                "SIGNAL": "Failed Task Run",
+                "TASK_NAME": "LOAD_POLICY",
+                "TASK_FQN": '"ALFA_EDW_PROD"."PUBLIC"."LOAD_POLICY"',
+                "PROCEDURE_NAME": "SP_LOAD_POLICY",
+                "QUERY_ID": "01abc",
+                "FAILURE_CATEGORY": "Object Dependency / Drift",
+                "ERROR_SIGNATURE": "table does not exist",
+                "RETRY_SQL": 'EXECUTE TASK "ALFA_EDW_PROD"."PUBLIC"."LOAD_POLICY";',
+                "ROLE_NAME": "TASK_OWNER_ROLE",
+            }),
+            "ALFA",
+            "Task Management - Failure Console",
+        )
+
+        self.assertEqual(action["Owner"], "TASK_OWNER_ROLE")
+        self.assertEqual(action["Category"], "Task & Procedure Reliability")
+        self.assertIn("Environment", action)
+        self.assertEqual(action["Verification Status"], "Pending")
+        self.assertIn("TASK_HISTORY", action["Verification Query"])
+        self.assertIn("Do not execute until root cause is fixed", action["Generated SQL Fix"])
+        self.assertIn("TASK_HISTORY", action["Proof Query"])
+        self.assertIn("QUERY_HISTORY", action["Proof Query"])
+        self.assertIn("Verify", action["Action"])
+
+    def test_procedure_reliability_action_includes_owner_and_baseline_verification(self):
+        action = _build_procedure_reliability_action(
+            pd.Series({
+                "SIGNAL": "Procedure Cost Regression",
+                "PROCEDURE_NAME": "ALFA_EDW_PROD.PUBLIC.SP_LOAD_POLICY",
+                "ROOT_QUERY_ID": "01root",
+                "RUNTIME_CHANGE_PCT": 25,
+                "COST_CHANGE_PCT": 180,
+                "PROCEDURE_OWNER": "PROC_OWNER_ROLE",
+                "RECOMMENDED_ACTION": "Review child-query scan volume.",
+            }),
+            "ALFA",
+            "Stored Procedures - SLA & Cost Watch",
+        )
+
+        self.assertEqual(action["Owner"], "PROC_OWNER_ROLE")
+        self.assertEqual(action["Entity Type"], "Stored Procedure")
+        self.assertIn("Environment", action)
+        self.assertEqual(action["Verification Status"], "Pending")
+        self.assertIn("QUERY_HISTORY", action["Verification Query"])
+        self.assertIn("Procedure Cost Regression", action["Finding"])
+        self.assertIn("QUERY_HISTORY", action["Proof Query"])
+        self.assertIn("next procedure run", action["Proof Query"])
+        self.assertIn("Verify", action["Action"])
 
     def test_cost_center_chargeback_exposes_environment_and_database(self):
         cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()

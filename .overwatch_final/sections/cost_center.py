@@ -63,6 +63,8 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
     baseline = safe_float(df["TOTAL_CREDITS"].median()) if "TOTAL_CREDITS" in df.columns else 0
     candidates = df.sort_values("TOTAL_CREDITS", ascending=False).head(20)
     for _, row in candidates.iterrows():
+        active_env = get_active_environment()
+        action_env = str(row.get("ENVIRONMENT") or (active_env if active_env != "ALL" else "") or "")
         user = str(row.get("USER_NAME") or "Unknown user")
         wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
         credits = safe_float(row.get("TOTAL_CREDITS", 0))
@@ -86,6 +88,10 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             "Generated SQL Fix": "-- Use Cost & Contract drilldown to identify top query patterns before applying warehouse/query changes.",
             "Proof Query": "Cost & Contract metered credit attribution query.",
             "Company": company,
+            "Environment": action_env,
+            "Verification Status": "Pending",
+            "Verification Query": "Cost & Contract metered credit attribution query.",
+            "Current Value": round(credits, 4),
         })
     if not actions:
         st.success("No cost outliers crossed the queue threshold.")
@@ -185,6 +191,102 @@ def _fmt_delta(value) -> str:
     if value is None:
         return "new/no baseline"
     return f"{value:+.1f}%"
+
+
+def _warehouse_cost_verification_sql(warehouse_name: str, lookback_days: int = 7) -> str:
+    wh = sql_literal(warehouse_name, 300)
+    days = max(1, int(lookback_days or 7))
+    return f"""-- Exact warehouse-metering proof and post-fix verification
+WITH daily AS (
+    SELECT TO_DATE(start_time) AS usage_date,
+           warehouse_name,
+           SUM(COALESCE(credits_used, 0)) AS credits_used,
+           SUM(COALESCE(credits_used_compute, 0)) AS compute_credits,
+           SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits
+    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+    WHERE warehouse_name = {wh}
+      AND start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
+    GROUP BY usage_date, warehouse_name
+)
+SELECT CASE WHEN usage_date >= DATEADD('day', -{days}, CURRENT_DATE()) THEN 'CURRENT' ELSE 'PRIOR' END AS period,
+       warehouse_name,
+       SUM(credits_used) AS credits_used,
+       SUM(compute_credits) AS compute_credits,
+       SUM(cloud_services_credits) AS cloud_services_credits
+FROM daily
+GROUP BY period, warehouse_name
+ORDER BY period;
+
+-- After remediation, rerun this query for the next complete period and attach the delta to the action queue.
+"""
+
+
+def _warehouse_cost_control_action(
+    row: pd.Series,
+    *,
+    credit_price: float,
+    period_label: str,
+    company: str,
+) -> dict:
+    wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
+    delta = safe_float(row.get("CREDIT_DELTA", 0))
+    current = safe_float(row.get("CURRENT_CREDITS", row.get("TOTAL_CREDITS", 0)))
+    prior = safe_float(row.get("PRIOR_CREDITS", 0))
+    est_delta_cost = credits_to_dollars(delta, credit_price)
+    owner = str(
+        row.get("OWNER")
+        or row.get("WAREHOUSE_OWNER")
+        or row.get("OWNER_ROLE")
+        or "DBA / FinOps"
+    )
+    confidence = "Exact warehouse metering"
+    if delta < 0:
+        severity = "Low"
+    elif est_delta_cost >= 5000 or delta >= 1000:
+        severity = "Critical"
+    elif est_delta_cost >= 1000 or delta >= 100:
+        severity = "High"
+    else:
+        severity = "Medium"
+    finding = (
+        f"{wh} increased by {delta:,.2f} exact metered credits "
+        f"(${est_delta_cost:,.2f}) during {period_label}."
+    )
+    action = (
+        f"Assign/confirm owner ({owner}), separate workload growth from idle/overhead, "
+        "review top users/query types, and use the Warehouse Settings Manager for any ALTER WAREHOUSE change. "
+        "Verify savings in the next complete period before marking fixed."
+    )
+    generated_sql = (
+        "-- Cost-control plan, not an automatic fix.\n"
+        f"-- Warehouse: {wh}\n"
+        f"-- Current credits: {current:,.4f}; prior credits: {prior:,.4f}; delta credits: {delta:,.4f}\n"
+        "-- If idle dominates: review auto-suspend and query schedule.\n"
+        "-- If queue/spill dominates: use Warehouse Health and reviewed Warehouse Settings Manager before changing size/scaling.\n"
+        "-- If workload growth dominates: route to query/procedure owner for tuning."
+    )
+    proof = _warehouse_cost_verification_sql(wh)
+    return {
+        "Action ID": make_action_id("Bill Increase", wh, finding),
+        "Source": "Cost & Contract - Explain This Bill",
+        "Severity": severity,
+        "Category": "Cost Control",
+        "Entity Type": "Warehouse",
+        "Entity": wh,
+        "Owner": owner,
+        "Finding": finding,
+        "Action": f"{confidence}. {action}",
+        "Estimated Monthly Savings": round(max(0.0, est_delta_cost * 0.25), 2),
+        "Generated SQL Fix": generated_sql[:8000],
+        "Proof Query": proof[:8000],
+        "Company": company,
+        "Environment": str(row.get("ENVIRONMENT") or ""),
+        "Verification Status": "Pending",
+        "Verification Query": proof[:8000],
+        "Baseline Value": round(prior, 4),
+        "Current Value": round(current, 4),
+        "Measured Delta": round(delta, 4),
+    }
 
 
 def _first_value(df: pd.DataFrame, column: str, default=0.0):
@@ -522,22 +624,12 @@ def _queue_bill_exceptions(
         est_delta_cost = credits_to_dollars(delta, credit_price)
         if delta < 5 and est_delta_cost < 100:
             continue
-        finding = f"{wh} increased by {delta:,.2f} credits (${est_delta_cost:,.2f}) during {period_label}"
-        actions.append({
-            "Action ID": make_action_id("Bill Increase", wh, finding),
-            "Source": "Cost & Contract - Explain This Bill",
-            "Severity": "Medium" if est_delta_cost < 1000 else "High",
-            "Category": "Cost",
-            "Entity Type": "Warehouse",
-            "Entity": wh,
-            "Owner": "DBA",
-            "Finding": finding,
-            "Action": "Use Cost & Contract and Query Workbench drilldowns to confirm whether the increase is workload growth, idle time, warehouse sizing, or a one-time event.",
-            "Estimated Monthly Savings": round(max(0.0, est_delta_cost * 0.25), 2),
-            "Generated SQL Fix": "-- Review warehouse auto-suspend, scaling policy, and top query drivers before making changes.",
-            "Proof Query": "Cost & Contract Explain This Bill warehouse-delta query.",
-            "Company": company,
-        })
+        actions.append(_warehouse_cost_control_action(
+            row,
+            credit_price=credit_price,
+            period_label=period_label,
+            company=company,
+        ))
     if not actions:
         st.success("No warehouse increases crossed the exception threshold.")
         return

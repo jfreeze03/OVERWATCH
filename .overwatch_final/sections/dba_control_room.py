@@ -18,6 +18,8 @@ from utils import (
     build_task_failure_summary_sql,
     build_task_history_sql,
     credits_to_dollars,
+    dba_control_plane_component_rows,
+    dba_control_plane_section_scorecards,
     download_csv,
     format_credits,
     format_snowflake_error,
@@ -1292,6 +1294,75 @@ def _render_watch_floor(
                 _jump(route, workflow=workflow)
 
 
+def _render_admin_readiness_panel() -> None:
+    section_rows = pd.DataFrame(dba_control_plane_section_scorecards())
+    component_rows = pd.DataFrame(dba_control_plane_component_rows())
+    if section_rows.empty:
+        return
+
+    section_rows = section_rows.sort_values(["SCORE", "SECTION"], ascending=[True, True])
+    low_rows = section_rows[section_rows["SCORE"] < 95]
+    worst = section_rows.iloc[0]
+    near_target = int((section_rows["SCORE"] >= 90).sum())
+    avg_score = safe_float(section_rows["SCORE"].mean())
+
+    with st.expander("Admin Readiness to 95", expanded=False):
+        st.caption(
+            "Strict DBA control-plane readiness baseline. Scores are capped by missing data correctness, "
+            "admin safety/audit, governance/ownership, and operability evidence."
+        )
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Average Readiness", f"{avg_score:.1f}/100")
+        r2.metric("Sections At 95", f"{safe_int((section_rows['SCORE'] >= 95).sum())}/{len(section_rows)}")
+        r3.metric("Near Target", f"{near_target}/{len(section_rows)}")
+        r4.metric("Lowest Section", str(worst["SECTION"]), f"{safe_float(worst['SCORE']):.1f}/100", delta_color="inverse")
+
+        render_priority_dataframe(
+            section_rows,
+            title="Section readiness and score cap drivers",
+            priority_columns=[
+                "SECTION", "SCORE", "RAW_SCORE", "LABEL", "LOWEST_COMPONENT",
+                "LOWEST_SCORE", "CAP_DRIVERS", "NEXT_95_MOVE",
+            ],
+            sort_by=["SCORE", "LOWEST_SCORE"],
+            ascending=[True, True],
+            raw_label="All section readiness rows",
+            height=320,
+            max_rows=20,
+            column_config={
+                "SCORE": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
+                "RAW_SCORE": st.column_config.NumberColumn("Raw", format="%.1f"),
+                "LOWEST_SCORE": st.column_config.ProgressColumn("Lowest", min_value=0, max_value=100, format="%.1f"),
+            },
+        )
+
+        if not component_rows.empty:
+            weak_components = component_rows[component_rows["SCORE"] < 90].sort_values(
+                ["SCORE", "SECTION", "COMPONENT"],
+                ascending=[True, True, True],
+            )
+            render_priority_dataframe(
+                weak_components,
+                title="Components blocking 95",
+                priority_columns=["SECTION", "COMPONENT", "SCORE", "WEIGHT", "DEFINITION"],
+                sort_by=["SCORE", "WEIGHT"],
+                ascending=[True, False],
+                raw_label="All weak component rows",
+                height=320,
+                max_rows=20,
+                column_config={
+                    "SCORE": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
+                    "WEIGHT": st.column_config.NumberColumn("Weight", format="%d"),
+                },
+            )
+
+        if not low_rows.empty:
+            st.warning(
+                "No section should be called 95 until every component is at least 90, "
+                "and data correctness, admin safety/audit, and governance/ownership are each at least 95."
+            )
+
+
 def _render_route_buttons(exceptions: pd.DataFrame) -> None:
     if exceptions.empty or "Route" not in exceptions.columns:
         return
@@ -1410,6 +1481,7 @@ def render() -> None:
         ],
         columns=4,
     )
+    _render_admin_readiness_panel()
     if st.session_state.get("exceptions_only_mode"):
         st.info(
             "Exceptions-only mode is on. This page is prioritizing actionable issues and report-ready evidence "

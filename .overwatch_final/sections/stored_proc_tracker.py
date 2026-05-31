@@ -19,6 +19,7 @@ from utils import (
     sql_literal,
     get_global_filter_clause,
     get_active_company,
+    get_active_environment,
     get_db_filter_clause,
     load_task_inventory,
     build_mart_procedure_inventory_sql,
@@ -28,6 +29,8 @@ from utils import (
     safe_int,
     CREDIT_RATES,
     add_signal_routes,
+    make_action_id,
+    upsert_actions,
 )
 
 
@@ -377,6 +380,129 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
     return summary, exception_df, latest
 
 
+def _procedure_owner(row: pd.Series) -> str:
+    return str(
+        row.get("PROCEDURE_OWNER")
+        or row.get("OWNER_ROLE")
+        or row.get("ROLE_NAME")
+        or row.get("USER_NAME")
+        or "DBA / Data Engineering"
+    )
+
+
+def _procedure_environment(row: pd.Series) -> str:
+    active_env = get_active_environment()
+    return str(row.get("ENVIRONMENT") or (active_env if active_env != "ALL" else "") or "")
+
+
+def _procedure_verification_sql(row: pd.Series, lookback_days: int = 7) -> str:
+    proc = str(row.get("PROCEDURE_NAME") or row.get("PROCEDURE") or "").strip()
+    root_query_id = str(row.get("ROOT_QUERY_ID") or "").strip()
+    proc_filter = f"AND query_text ILIKE {sql_literal('%' + proc + '%', 600)}" if proc else ""
+    root_filter = f"OR root_query_id = {sql_literal(root_query_id, 200)}" if root_query_id else ""
+    return f"""-- Stored procedure reliability proof and post-fix verification
+SELECT query_id,
+       root_query_id,
+       user_name,
+       role_name,
+       warehouse_name,
+       start_time,
+       execution_status,
+       total_elapsed_time / 1000 AS elapsed_sec,
+       credits_used_cloud_services,
+       error_code,
+       error_message,
+       SUBSTR(query_text, 1, 4000) AS query_text
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('day', -{max(1, int(lookback_days or 7))}, CURRENT_TIMESTAMP())
+  AND (
+        query_type = 'CALL'
+        {proc_filter}
+        {root_filter}
+      )
+ORDER BY start_time DESC
+LIMIT 50;
+
+-- Verification rule: next procedure run should return within runtime and estimated-credit baseline.
+"""
+
+
+def _procedure_metric(row: pd.Series, *columns: str):
+    for column in columns:
+        if column in row and row.get(column) not in (None, ""):
+            return safe_float(row.get(column))
+    return None
+
+
+def _build_procedure_reliability_action(row: pd.Series, company: str, source: str) -> dict:
+    signal = str(row.get("SIGNAL") or "Procedure Reliability")
+    proc = str(row.get("PROCEDURE_NAME") or row.get("PROCEDURE") or "Unknown procedure")
+    severity = str(row.get("SEVERITY") or "Medium")
+    runtime_pct = safe_float(row.get("RUNTIME_CHANGE_PCT"))
+    cost_pct = safe_float(row.get("COST_CHANGE_PCT"))
+    detail = (
+        f"runtime change={runtime_pct:,.1f}%, cost change={cost_pct:,.1f}%, "
+        f"root_query_id={row.get('ROOT_QUERY_ID', '')}"
+    )
+    action = str(row.get("RECOMMENDED_ACTION") or "Review procedure regression and linked task graph.")
+    if "verify" not in action.lower():
+        action += " Verify the next run against the baseline and attach QUERY_HISTORY evidence before closing."
+    generated_sql = (
+        "-- Reviewed procedure reliability plan. Do not redeploy or retry blindly.\n"
+        f"-- Procedure: {proc}\n"
+        f"-- Signal: {signal}\n"
+        f"-- Root query: {row.get('ROOT_QUERY_ID', '')}\n"
+        "-- Inspect child queries, recent procedure changes, warehouse size, and task graph schedule.\n"
+        "-- If code changed, redeploy through the approved release path; if runtime capacity changed, use Warehouse Health first."
+    )
+    finding = f"{signal}: {proc}. {detail}"
+    verification_query = _procedure_verification_sql(row)[:8000]
+    baseline_value = _procedure_metric(row, "AVG_EXECUTION_SECONDS", "AVG_DURATION_SEC", "BASELINE_SECONDS")
+    current_value = _procedure_metric(row, "EXECUTION_SECONDS", "ELAPSED_SEC", "LATEST_DURATION_SEC")
+    measured_delta = (
+        round(current_value - baseline_value, 4)
+        if current_value is not None and baseline_value is not None
+        else None
+    )
+    return {
+        "Action ID": make_action_id("Procedure Reliability", proc, finding),
+        "Source": source,
+        "Severity": severity,
+        "Category": "Task & Procedure Reliability",
+        "Entity Type": "Stored Procedure",
+        "Entity": proc,
+        "Owner": _procedure_owner(row),
+        "Finding": finding,
+        "Action": action,
+        "Estimated Monthly Savings": 0.0,
+        "Generated SQL Fix": generated_sql[:8000],
+        "Proof Query": verification_query,
+        "Company": company,
+        "Environment": _procedure_environment(row),
+        "Verification Status": "Pending",
+        "Verification Query": verification_query,
+        "Baseline Value": baseline_value,
+        "Current Value": current_value,
+        "Measured Delta": measured_delta,
+    }
+
+
+def _queue_procedure_reliability_findings(
+    session,
+    exceptions: pd.DataFrame,
+    *,
+    company: str,
+    source: str,
+) -> int:
+    if exceptions is None or exceptions.empty:
+        return 0
+    actions = [
+        _build_procedure_reliability_action(row, company, source)
+        for _, row in exceptions.head(100).iterrows()
+    ]
+    return upsert_actions(session, actions)
+
+
 def _query_history_has_root_query_id(session) -> bool:
     return bool(filter_existing_columns(
         session,
@@ -498,6 +624,17 @@ def render():
                     ascending=[True, False],
                     raw_label="All procedure operation exceptions",
                 )
+                if st.button("Save Procedure Operations Findings to Action Queue", key="sp_ops_queue"):
+                    try:
+                        saved = _queue_procedure_reliability_findings(
+                            session,
+                            exceptions,
+                            company=company,
+                            source="Stored Procedures - Operations Brief",
+                        )
+                        st.success(f"Saved {saved} procedure operation finding(s) to the action queue.")
+                    except Exception as e:
+                        st.error(f"Could not save procedure operation findings: {format_snowflake_error(e)}")
             else:
                 st.success("No procedure/task linkage exceptions found in the selected scope.")
             if not joined.empty:
@@ -592,6 +729,17 @@ def render():
                     raw_label="All procedure SLA/cost exceptions",
                 )
                 download_csv(exceptions, "procedure_sla_cost_exceptions.csv")
+                if st.button("Save Procedure SLA/Cost Findings to Action Queue", key="sp_sla_queue"):
+                    try:
+                        saved = _queue_procedure_reliability_findings(
+                            session,
+                            exceptions,
+                            company=company,
+                            source="Stored Procedures - SLA & Cost Watch",
+                        )
+                        st.success(f"Saved {saved} procedure SLA/cost finding(s) to the action queue.")
+                    except Exception as e:
+                        st.error(f"Could not save procedure SLA/cost findings: {format_snowflake_error(e)}")
             if not latest.empty and not st.session_state.get("exceptions_only_mode"):
                 latest_cols = [
                     col for col in [

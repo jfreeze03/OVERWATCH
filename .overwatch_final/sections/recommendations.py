@@ -27,7 +27,7 @@ from utils import (
     safe_float,
     safe_identifier,
     sql_literal,
-    update_action_status,
+    update_action_status_with_evidence,
     upsert_actions,
 )
 from utils.workflows import render_priority_dataframe
@@ -51,6 +51,23 @@ def _recommendation_frame(recs: list[dict]) -> pd.DataFrame:
     return df.sort_values(["_sort", "Estimated Monthly Savings"], ascending=[True, False]).drop(columns=["_sort"])
 
 
+def _row_text(row, column: str, default: str = "") -> str:
+    value = row.get(column, default)
+    if value is None:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except Exception:
+        pass
+    return str(value)
+
+
+def _float_text_or_none(value: str):
+    text = str(value or "").strip()
+    return None if not text else safe_float(text)
+
+
 def _render_queue(session):
     st.header("Persistent Action Queue")
     st.caption("Owner, status, savings, generated SQL, and proof query for every actionable finding.")
@@ -72,11 +89,20 @@ def _render_queue(session):
 
     open_mask = ~df_queue["STATUS"].isin(["Fixed", "Ignored"])
     high_mask = df_queue["SEVERITY"].isin(["Critical", "High"]) & open_mask
-    q1, q2, q3, q4 = st.columns(4)
+    verification_status = (
+        df_queue["VERIFICATION_STATUS"].fillna("").astype(str)
+        if "VERIFICATION_STATUS" in df_queue.columns
+        else pd.Series([""] * len(df_queue), index=df_queue.index)
+    )
+    fixed_mask = df_queue["STATUS"] == "Fixed"
+    verified_fixed_mask = fixed_mask & (verification_status == "Verified")
+    soft_fixed_mask = fixed_mask & (verification_status != "Verified")
+    q1, q2, q3, q4, q5 = st.columns(5)
     q1.metric("Open", int(open_mask.sum()))
     q2.metric("High/Critical", int(high_mask.sum()))
     q3.metric("Monthly Savings", f"${float(df_queue['EST_MONTHLY_SAVINGS'].fillna(0).sum()):,.0f}")
-    q4.metric("Fixed", int((df_queue["STATUS"] == "Fixed").sum()))
+    q4.metric("Verified Fixed", int(verified_fixed_mask.sum()))
+    q5.metric("Soft Fixed", int(soft_fixed_mask.sum()), delta_color="inverse")
 
     status_filter = st.selectbox(
         "Status filter",
@@ -84,12 +110,17 @@ def _render_queue(session):
         key="queue_status_filter",
     )
     show_df = df_queue if status_filter == "All" else df_queue[df_queue["STATUS"] == status_filter]
+    category_options = ["All"] + sorted(show_df["CATEGORY"].dropna().astype(str).unique().tolist())
+    category_filter = st.selectbox("Category filter", category_options, key="queue_category_filter")
+    if category_filter != "All":
+        show_df = show_df[show_df["CATEGORY"].astype(str) == category_filter]
     render_priority_dataframe(
         show_df,
         title="Action queue items to work first",
         priority_columns=[
-            "SEVERITY", "STATUS", "CATEGORY", "ENTITY_NAME", "FINDING",
-            "OWNER", "EST_MONTHLY_SAVINGS", "UPDATED_AT", "NEXT_ACTION",
+            "SEVERITY", "STATUS", "VERIFICATION_STATUS", "CATEGORY", "ENVIRONMENT",
+            "ENTITY_NAME", "FINDING", "OWNER", "TICKET_ID", "APPROVER",
+            "EST_MONTHLY_SAVINGS", "MEASURED_DELTA", "UPDATED_AT", "NEXT_ACTION",
         ],
         sort_by=["SEVERITY", "EST_MONTHLY_SAVINGS", "UPDATED_AT"],
         ascending=[True, False, False],
@@ -107,20 +138,93 @@ def _render_queue(session):
     st.code(str(row.get("GENERATED_SQL_FIX", "")), language="sql")
     st.caption(str(row.get("PROOF_QUERY", "")))
 
-    c_status, c_reason = st.columns([1, 2])
-    with c_status:
-        new_status = st.selectbox(
-            "New status",
-            ["Acknowledged", "In Progress", "Fixed", "Ignored", "New"],
-            key="queue_new_status",
+    st.subheader("Closure Evidence")
+    st.caption("Fixed items require verification notes and before/after evidence. Use the proof query as the starting point.")
+    with st.form("queue_status_evidence_form"):
+        c_status, c_meta = st.columns([1, 2])
+        with c_status:
+            new_status = st.selectbox(
+                "New status",
+                ["Acknowledged", "In Progress", "Fixed", "Ignored", "New"],
+                key="queue_new_status",
+            )
+        with c_meta:
+            reason = st.text_input(
+                "Reason / note",
+                value=_row_text(row, "IGNORED_REASON"),
+                key="queue_status_reason",
+            )
+        c_ticket, c_approver = st.columns(2)
+        with c_ticket:
+            ticket_id = st.text_input("Ticket / change ID", value=_row_text(row, "TICKET_ID"), key="queue_ticket_id")
+        with c_approver:
+            approver = st.text_input("Approver / reviewer", value=_row_text(row, "APPROVER"), key="queue_approver")
+
+        default_query = _row_text(row, "VERIFICATION_QUERY") or _row_text(row, "PROOF_QUERY")
+        verification_query = st.text_area(
+            "Verification query",
+            value=default_query,
+            key="queue_verification_query",
+            height=150,
         )
-    with c_reason:
-        reason = st.text_input("Reason / note", key="queue_status_reason")
-    if st.button("Update status", key="queue_update_status", type="primary"):
-        update_action_status(session, selected, new_status, reason)
-        st.success("Action updated.")
-        st.session_state["rec_action_queue"] = load_action_queue(session)
-        st.rerun()
+        verification_result = st.text_area(
+            "Verification result",
+            value=_row_text(row, "VERIFICATION_RESULT"),
+            key="queue_verification_result",
+            placeholder="Paste summarized query result, runtime/cost delta, or task/procedure success evidence.",
+            height=120,
+        )
+        verification_notes = st.text_area(
+            "Verification notes",
+            value=_row_text(row, "VERIFICATION_NOTES"),
+            key="queue_verification_notes",
+            placeholder="What changed, who approved it, and why the finding can be closed.",
+            height=90,
+        )
+        c_base, c_current, c_delta = st.columns(3)
+        with c_base:
+            baseline_value = st.text_input(
+                "Baseline value",
+                value=_row_text(row, "BASELINE_VALUE"),
+                key="queue_baseline_value",
+            )
+        with c_current:
+            current_value = st.text_input(
+                "Current value",
+                value=_row_text(row, "CURRENT_VALUE"),
+                key="queue_current_value",
+            )
+        with c_delta:
+            measured_delta = st.text_input(
+                "Measured delta",
+                value=_row_text(row, "MEASURED_DELTA"),
+                key="queue_measured_delta",
+            )
+        submitted = st.form_submit_button("Update action with evidence", type="primary")
+
+    if submitted:
+        try:
+            update_action_status_with_evidence(
+                session,
+                selected,
+                new_status,
+                reason=reason,
+                verification_notes=verification_notes,
+                verification_result=verification_result,
+                verification_query=verification_query,
+                ticket_id=ticket_id,
+                approver=approver,
+                baseline_value=_float_text_or_none(baseline_value),
+                current_value=_float_text_or_none(current_value),
+                measured_delta=_float_text_or_none(measured_delta),
+            )
+            st.success("Action updated with closure evidence.")
+            st.session_state["rec_action_queue"] = load_action_queue(session)
+            st.rerun()
+        except ValueError as e:
+            st.warning(str(e))
+        except Exception as e:
+            st.error(f"Could not update action: {format_snowflake_error(e)}")
 
     if row.get("STATUS") == "Fixed" and safe_float(row.get("EST_MONTHLY_SAVINGS")) > 0:
         st.divider()

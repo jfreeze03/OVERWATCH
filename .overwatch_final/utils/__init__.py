@@ -140,7 +140,8 @@ from .action_queue import (
     action_queue_fixed_missing_fields, update_action_status_with_evidence,
     action_queue_default_due_days, enrich_action_queue_view,
     build_safe_verification_query, summarize_verification_frame,
-    verification_query_safety_issues,
+    verification_query_safety_issues, build_cost_savings_verification_sql,
+    build_cost_savings_verification_health_sql,
 )
 from .workflows import (
     coerce_workflow_state, render_workflow_selector, render_workflow_guide,
@@ -246,7 +247,8 @@ __all__ = [
     "action_queue_fixed_missing_fields", "update_action_status_with_evidence",
     "action_queue_default_due_days", "enrich_action_queue_view",
     "build_safe_verification_query", "summarize_verification_frame",
-    "verification_query_safety_issues",
+    "verification_query_safety_issues", "build_cost_savings_verification_sql",
+    "build_cost_savings_verification_health_sql",
     "coerce_workflow_state", "render_workflow_selector", "render_workflow_guide",
     "render_signal_confidence", "add_signal_routes", "render_priority_dataframe",
     "run_compatibility_checks", "get_available_columns", "view_supports_columns",

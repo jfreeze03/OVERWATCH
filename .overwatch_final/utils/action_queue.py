@@ -119,6 +119,288 @@ CREATE TABLE IF NOT EXISTS {fqn} (
 );"""
 
 
+def build_cost_savings_verification_sql(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    warehouse: str = "OVERWATCH_WH",
+) -> str:
+    """Return Snowflake objects for scheduled cost-action savings verification."""
+    db_safe = safe_identifier(db)
+    schema_safe = safe_identifier(schema)
+    wh_safe = safe_identifier(warehouse)
+    queue_fqn = f"{db_safe}.{schema_safe}.{safe_identifier(ACTION_QUEUE_TABLE)}"
+    run_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_COST_SAVINGS_VERIFICATION_RUN"
+    view_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_COST_SAVINGS_VERIFICATION_V"
+    health_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V"
+    proc_fqn = f"{db_safe}.{schema_safe}.SP_OVERWATCH_VERIFY_COST_SAVINGS"
+    task_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_COST_SAVINGS_VERIFY"
+    return f"""-- OVERWATCH scheduled post-period cost savings verification.
+-- This verifies warehouse cost-control actions from exact WAREHOUSE_METERING_HISTORY.
+-- Chargeback/database/user actions remain evidence-required until owner/tag proof is attached.
+CREATE TABLE IF NOT EXISTS {run_fqn} (
+  RUN_ID                    NUMBER AUTOINCREMENT PRIMARY KEY,
+  RUN_TS                    TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  ACTION_ID                 VARCHAR(64),
+  COMPANY                   VARCHAR(100),
+  ENVIRONMENT               VARCHAR(100),
+  CATEGORY                  VARCHAR(100),
+  ENTITY_TYPE               VARCHAR(100),
+  ENTITY_NAME               VARCHAR(500),
+  OWNER                     VARCHAR(200),
+  OWNER_APPROVAL_STATUS     VARCHAR(40),
+  STATUS_BEFORE             VARCHAR(40),
+  BASELINE_VALUE            FLOAT,
+  DETECTION_CURRENT_VALUE   FLOAT,
+  POST_PERIOD_VALUE         FLOAT,
+  MEASURED_DELTA            FLOAT,
+  EST_MONTHLY_SAVINGS       FLOAT,
+  VERIFICATION_OUTCOME      VARCHAR(100),
+  VERIFICATION_RESULT       VARCHAR(8000),
+  SOURCE_QUERY              VARCHAR(8000)
+);
+
+CREATE OR REPLACE PROCEDURE {proc_fqn}()
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+$$
+DECLARE
+  candidate_count NUMBER DEFAULT 0;
+  verified_count NUMBER DEFAULT 0;
+  evidence_required_count NUMBER DEFAULT 0;
+BEGIN
+  CREATE OR REPLACE TEMPORARY TABLE TMP_OVERWATCH_COST_SAVINGS_VERIFY AS
+  WITH candidates AS (
+    SELECT
+      ACTION_ID,
+      COMPANY,
+      ENVIRONMENT,
+      CATEGORY,
+      ENTITY_TYPE,
+      ENTITY_NAME,
+      OWNER,
+      OWNER_APPROVAL_STATUS,
+      STATUS,
+      BASELINE_VALUE,
+      CURRENT_VALUE,
+      EST_MONTHLY_SAVINGS,
+      VERIFICATION_QUERY,
+      REGEXP_REPLACE(ENTITY_NAME, '^\"|\"$', '') AS WAREHOUSE_NAME
+    FROM {queue_fqn}
+    WHERE UPPER(COALESCE(STATUS, '')) NOT IN ('IGNORED')
+      AND (
+        UPPER(COALESCE(CATEGORY, '')) IN ('COST', 'COST CONTROL')
+        OR UPPER(COALESCE(SOURCE, '')) LIKE 'COST & CONTRACT%'
+      )
+      AND UPPER(COALESCE(ENTITY_TYPE, '')) = 'WAREHOUSE'
+      AND COALESCE(EST_MONTHLY_SAVINGS, 0) > 0
+      AND UPPER(COALESCE(VERIFICATION_STATUS, 'PENDING')) IN ('', 'PENDING', 'EVIDENCE REQUIRED')
+  ),
+  post_period AS (
+    SELECT
+      WAREHOUSE_NAME,
+      SUM(COALESCE(CREDITS_USED, 0)) AS POST_PERIOD_CREDITS
+    FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+    WHERE START_TIME >= DATEADD('DAY', -7, CURRENT_DATE())
+      AND START_TIME < CURRENT_DATE()
+    GROUP BY WAREHOUSE_NAME
+  ),
+  scored AS (
+    SELECT
+      c.*,
+      p.POST_PERIOD_CREDITS,
+      p.POST_PERIOD_CREDITS - c.CURRENT_VALUE AS MEASURED_DELTA,
+      CASE
+        WHEN UPPER(COALESCE(c.OWNER_APPROVAL_STATUS, '')) NOT IN ('APPROVED', 'NOT REQUIRED')
+          THEN 'Approval Required'
+        WHEN p.POST_PERIOD_CREDITS IS NULL
+          THEN 'No Metering Evidence'
+        WHEN c.BASELINE_VALUE IS NULL OR c.CURRENT_VALUE IS NULL
+          THEN 'Baseline Required'
+        WHEN p.POST_PERIOD_CREDITS <= c.BASELINE_VALUE
+          THEN 'Verified Savings'
+        WHEN p.POST_PERIOD_CREDITS < c.CURRENT_VALUE
+          THEN 'Improvement Needs Review'
+        ELSE 'No Savings Yet'
+      END AS VERIFICATION_OUTCOME
+    FROM candidates c
+    LEFT JOIN post_period p
+      ON UPPER(p.WAREHOUSE_NAME) = UPPER(c.WAREHOUSE_NAME)
+  )
+  SELECT
+    ACTION_ID,
+    COMPANY,
+    ENVIRONMENT,
+    CATEGORY,
+    ENTITY_TYPE,
+    ENTITY_NAME,
+    OWNER,
+    OWNER_APPROVAL_STATUS,
+    STATUS AS STATUS_BEFORE,
+    BASELINE_VALUE,
+    CURRENT_VALUE AS DETECTION_CURRENT_VALUE,
+    POST_PERIOD_CREDITS AS POST_PERIOD_VALUE,
+    MEASURED_DELTA,
+    EST_MONTHLY_SAVINGS,
+    VERIFICATION_OUTCOME,
+    'Automated post-period verification: last 7 complete days for ' || ENTITY_NAME ||
+      '. Baseline=' || COALESCE(TO_VARCHAR(BASELINE_VALUE), 'missing') ||
+      '; detection current=' || COALESCE(TO_VARCHAR(CURRENT_VALUE), 'missing') ||
+      '; post-period=' || COALESCE(TO_VARCHAR(POST_PERIOD_CREDITS), 'missing') ||
+      '; outcome=' || VERIFICATION_OUTCOME AS VERIFICATION_RESULT,
+    'SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY last 7 complete days by warehouse' AS SOURCE_QUERY
+  FROM scored;
+
+  SELECT COUNT(*) INTO :candidate_count FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
+  SELECT COUNT_IF(VERIFICATION_OUTCOME = 'Verified Savings') INTO :verified_count
+  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
+  SELECT COUNT_IF(VERIFICATION_OUTCOME <> 'Verified Savings') INTO :evidence_required_count
+  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
+
+  INSERT INTO {run_fqn} (
+    ACTION_ID, COMPANY, ENVIRONMENT, CATEGORY, ENTITY_TYPE, ENTITY_NAME,
+    OWNER, OWNER_APPROVAL_STATUS, STATUS_BEFORE, BASELINE_VALUE,
+    DETECTION_CURRENT_VALUE, POST_PERIOD_VALUE, MEASURED_DELTA,
+    EST_MONTHLY_SAVINGS, VERIFICATION_OUTCOME, VERIFICATION_RESULT, SOURCE_QUERY
+  )
+  SELECT
+    ACTION_ID, COMPANY, ENVIRONMENT, CATEGORY, ENTITY_TYPE, ENTITY_NAME,
+    OWNER, OWNER_APPROVAL_STATUS, STATUS_BEFORE, BASELINE_VALUE,
+    DETECTION_CURRENT_VALUE, POST_PERIOD_VALUE, MEASURED_DELTA,
+    EST_MONTHLY_SAVINGS, VERIFICATION_OUTCOME, VERIFICATION_RESULT, SOURCE_QUERY
+  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
+
+  UPDATE {queue_fqn} q
+  SET
+    UPDATED_AT = CURRENT_TIMESTAMP(),
+    CURRENT_VALUE = v.POST_PERIOD_VALUE,
+    MEASURED_DELTA = v.MEASURED_DELTA,
+    VERIFICATION_STATUS = IFF(v.VERIFICATION_OUTCOME = 'Verified Savings', 'Verified', 'Evidence Required'),
+    VERIFICATION_RESULT = v.VERIFICATION_RESULT,
+    VERIFIED_BY = IFF(v.VERIFICATION_OUTCOME = 'Verified Savings', 'SP_OVERWATCH_VERIFY_COST_SAVINGS', q.VERIFIED_BY),
+    VERIFIED_AT = IFF(v.VERIFICATION_OUTCOME = 'Verified Savings', CURRENT_TIMESTAMP(), q.VERIFIED_AT),
+    RECOVERY_SLA_STATE = CASE
+      WHEN v.VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Savings Verified'
+      WHEN v.VERIFICATION_OUTCOME = 'Improvement Needs Review' THEN 'Savings Improvement Needs Review'
+      ELSE 'Savings Evidence Required'
+    END,
+    RECOVERY_EVIDENCE = IFF(v.VERIFICATION_OUTCOME = 'Verified Savings', v.VERIFICATION_RESULT, q.RECOVERY_EVIDENCE)
+  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY v
+  WHERE q.ACTION_ID = v.ACTION_ID;
+
+  RETURN 'OVERWATCH cost savings verification complete. candidates=' || candidate_count ||
+         ', verified=' || verified_count ||
+         ', evidence_required=' || evidence_required_count;
+END;
+$$;
+
+CREATE OR REPLACE VIEW {view_fqn} AS
+SELECT *
+FROM {run_fqn}
+QUALIFY ROW_NUMBER() OVER (PARTITION BY ACTION_ID ORDER BY RUN_TS DESC, RUN_ID DESC) = 1;
+
+CREATE OR REPLACE VIEW {health_fqn} AS
+WITH latest_task AS (
+  SELECT
+    MAX(SCHEDULED_TIME) AS LAST_TASK_SCHEDULED_AT,
+    MAX(COMPLETED_TIME) AS LAST_TASK_COMPLETED_AT,
+    MAX_BY(STATE, SCHEDULED_TIME) AS LAST_TASK_STATE,
+    MAX_BY(ERROR_MESSAGE, SCHEDULED_TIME) AS LAST_TASK_ERROR,
+    COUNT_IF(UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED')) AS FAILED_RUNS_7D
+  FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+  WHERE UPPER(NAME) = 'OVERWATCH_COST_SAVINGS_VERIFY'
+    AND SCHEDULED_TIME >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
+),
+latest_run AS (
+  SELECT
+    MAX(RUN_TS) AS LAST_VERIFICATION_RUN_AT,
+    COUNT_IF(RUN_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())) AS LEDGER_RUN_ROWS_7D
+  FROM {run_fqn}
+),
+latest_outcome AS (
+  SELECT
+    RUN_TS,
+    COUNT(*) AS CANDIDATES_LAST_RUN,
+    COUNT_IF(VERIFICATION_OUTCOME = 'Verified Savings') AS VERIFIED_LAST_RUN,
+    COUNT_IF(VERIFICATION_OUTCOME <> 'Verified Savings') AS EVIDENCE_REQUIRED_LAST_RUN
+  FROM {run_fqn}
+  WHERE RUN_TS = (SELECT MAX(RUN_TS) FROM {run_fqn})
+  GROUP BY RUN_TS
+)
+SELECT
+  'Cost & Contract Savings Verification' AS CONTROL_NAME,
+  'OVERWATCH_COST_SAVINGS_VERIFY' AS TASK_NAME,
+  CASE
+    WHEN latest_task.LAST_TASK_SCHEDULED_AT IS NULL THEN 'Task Not Seen'
+    WHEN UPPER(COALESCE(latest_task.LAST_TASK_STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED') THEN 'Task Failed'
+    WHEN latest_task.LAST_TASK_SCHEDULED_AT < DATEADD('HOUR', -36, CURRENT_TIMESTAMP()) THEN 'Task Stale'
+    WHEN latest_run.LAST_VERIFICATION_RUN_AT IS NULL THEN 'No Verification Ledger'
+    ELSE 'Healthy'
+  END AS TASK_HEALTH_STATE,
+  latest_task.LAST_TASK_STATE,
+  latest_task.LAST_TASK_SCHEDULED_AT,
+  latest_task.LAST_TASK_COMPLETED_AT,
+  latest_task.LAST_TASK_ERROR,
+  latest_task.FAILED_RUNS_7D,
+  latest_run.LAST_VERIFICATION_RUN_AT,
+  latest_run.LEDGER_RUN_ROWS_7D,
+  COALESCE(latest_outcome.CANDIDATES_LAST_RUN, 0) AS CANDIDATES_LAST_RUN,
+  COALESCE(latest_outcome.VERIFIED_LAST_RUN, 0) AS VERIFIED_LAST_RUN,
+  COALESCE(latest_outcome.EVIDENCE_REQUIRED_LAST_RUN, 0) AS EVIDENCE_REQUIRED_LAST_RUN,
+  CASE
+    WHEN latest_task.LAST_TASK_SCHEDULED_AT IS NULL THEN 'Deploy and resume OVERWATCH_COST_SAVINGS_VERIFY after review.'
+    WHEN UPPER(COALESCE(latest_task.LAST_TASK_STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED') THEN 'Open Workload Operations, inspect TASK_HISTORY error, and fix the verification task.'
+    WHEN latest_task.LAST_TASK_SCHEDULED_AT < DATEADD('HOUR', -36, CURRENT_TIMESTAMP()) THEN 'Resume or investigate the stale verification task schedule.'
+    WHEN latest_run.LAST_VERIFICATION_RUN_AT IS NULL THEN 'Task has run but no ledger rows exist; confirm privileges and candidate query scope.'
+    ELSE 'Review evidence-required cost actions and close verified savings only with owner approval.'
+  END AS NEXT_ACTION
+FROM latest_task
+CROSS JOIN latest_run
+LEFT JOIN latest_outcome
+  ON latest_outcome.RUN_TS = latest_run.LAST_VERIFICATION_RUN_AT;
+
+CREATE OR REPLACE TASK {task_fqn}
+  WAREHOUSE = {wh_safe}
+  SCHEDULE = 'USING CRON 20 7 * * * America/Chicago'
+AS
+  CALL {proc_fqn}();
+
+-- Review first, then enable when ready:
+-- ALTER TASK {task_fqn} RESUME;
+"""
+
+
+def build_cost_savings_verification_health_sql(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+) -> str:
+    """Return the query used by Cost & Contract to monitor the savings verifier."""
+    fqn = (
+        f"{safe_identifier(db)}."
+        f"{safe_identifier(schema)}."
+        "OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V"
+    )
+    return f"""
+    SELECT
+      CONTROL_NAME,
+      TASK_NAME,
+      TASK_HEALTH_STATE,
+      LAST_TASK_STATE,
+      LAST_TASK_SCHEDULED_AT,
+      LAST_TASK_COMPLETED_AT,
+      LAST_TASK_ERROR,
+      FAILED_RUNS_7D,
+      LAST_VERIFICATION_RUN_AT,
+      LEDGER_RUN_ROWS_7D,
+      CANDIDATES_LAST_RUN,
+      VERIFIED_LAST_RUN,
+      EVIDENCE_REQUIRED_LAST_RUN,
+      NEXT_ACTION
+    FROM {fqn}
+    """
+
+
 def _action_queue_has_column(session, column: str) -> bool:
     """Return whether the deployed action queue has an optional column."""
     column = str(column or "").upper()
@@ -208,6 +490,15 @@ def _generic_owner(value: object) -> bool:
     }
 
 
+def _cost_control_category(category: object) -> bool:
+    value = str(category or "").strip().upper()
+    return value in {"COST", "COST CONTROL", "CHARGEBACK REVIEW"} or "COST" in value or "CHARGEBACK" in value
+
+
+def _task_reliability_category(category: object) -> bool:
+    return str(category or "").strip().upper() == "TASK & PROCEDURE RELIABILITY"
+
+
 def _row_evidence_gap(row: pd.Series) -> str:
     status = str(row.get("STATUS") or "").strip()
     status_upper = status.upper()
@@ -234,10 +525,18 @@ def _row_evidence_gap(row: pd.Series) -> str:
         gaps.append("verification query not runnable")
 
     category = str(row.get("CATEGORY") or "").upper()
-    if category in {"COST CONTROL", "TASK & PROCEDURE RELIABILITY"}:
+    is_cost_control = _cost_control_category(category)
+    is_task_reliability = _task_reliability_category(category)
+    if is_cost_control or is_task_reliability:
         if not _text_present(row.get("BASELINE_VALUE")) or not _text_present(row.get("CURRENT_VALUE")):
             gaps.append("missing baseline/current value")
-    if category == "TASK & PROCEDURE RELIABILITY":
+    if is_cost_control:
+        approval_status = str(row.get("OWNER_APPROVAL_STATUS") or "").strip().upper()
+        if approval_status in {"", "PENDING", "REQUESTED", "REQUIRED"}:
+            gaps.append("missing owner approval")
+        if not _text_present(row.get("RECOVERY_SLA_STATE")):
+            gaps.append("missing savings/chargeback closure state")
+    if is_task_reliability:
         approval_status = str(row.get("OWNER_APPROVAL_STATUS") or "").strip().upper()
         recovery_state = str(row.get("RECOVERY_SLA_STATE") or "").strip().upper()
         if approval_status in {"", "PENDING", "REQUESTED", "REQUIRED"}:
@@ -264,9 +563,9 @@ def _row_next_action(row: pd.Series) -> str:
         return "Escalate owner/ticket, validate proof, and move this before lower-risk work."
     if evidence_gap and evidence_gap != "Ready to work":
         return f"Complete control metadata first: {evidence_gap}."
-    if category == "Cost Control":
+    if _cost_control_category(category):
         return "Explain the driver, approve any warehouse change, then verify next-period credits."
-    if category == "Task & Procedure Reliability":
+    if _task_reliability_category(category):
         return "Fix root cause, retry only after owner approval, then verify the next run."
     return "Acknowledge, assign ownership, perform the recommended action, and attach proof."
 

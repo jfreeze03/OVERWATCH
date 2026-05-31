@@ -471,6 +471,19 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             )
         if owner_evidence:
             action_text = f"{action_text} Owner evidence: {owner_evidence[:300]}"
+        action_owner = _chargeback_action_owner(row) if is_chargeback else (user if user != "Unknown user" else "DBA")
+        approver = (
+            "FinOps Lead / Cost Owner"
+            if is_chargeback
+            else "FinOps Lead / Workload Owner"
+        )
+        owner_approval_note = (
+            "Allocated/estimated chargeback requires owner/tag evidence approval before billing. "
+            "Close only after the next complete period verification confirms the billable driver or documents shared/unallocated treatment."
+            if is_chargeback
+            else "Cost remediation requires workload-owner approval before scheduling or warehouse-setting changes. "
+            "Close only after the next complete period verification confirms the measured credit delta."
+        )
         actions.append({
             "Action ID": make_action_id("Cost Outlier", entity, finding),
             "Source": source,
@@ -478,7 +491,8 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             "Category": "Chargeback Review" if is_chargeback else "Cost",
             "Entity Type": "Database/User/Warehouse" if is_chargeback else "User/Warehouse",
             "Entity": entity,
-            "Owner": _chargeback_action_owner(row) if is_chargeback else (user if user != "Unknown user" else "DBA"),
+            "Owner": action_owner,
+            "Approver": approver,
             "Finding": finding,
             "Action": action_text,
             "Estimated Monthly Savings": round(monthly_savings, 2),
@@ -491,6 +505,10 @@ def _queue_cost_outliers(session, df: pd.DataFrame, credit_price: float, source:
             "Baseline Value": 0,
             "Current Value": round(credits, 4),
             "Measured Delta": round(credits, 4),
+            "Owner Approval Status": "Requested",
+            "Owner Approval Note": owner_approval_note,
+            "Recovery SLA State": "Chargeback Evidence Pending" if is_chargeback else "Savings Verification Pending",
+            "Recovery SLA Target Hours": 168.0,
         })
     if not actions:
         st.success("No cost outliers crossed the queue threshold.")
@@ -656,6 +674,16 @@ def _warehouse_cost_control_action(
         "review top users/query types, and use the Warehouse Settings Manager for any ALTER WAREHOUSE change. "
         "Verify savings in the next complete period before marking fixed."
     )
+    approver = (
+        f"{owner} / FinOps Lead"
+        if owner and owner.upper() not in {"DBA", "DBA / FINOPS", "UNKNOWN"}
+        else "FinOps Lead / Warehouse Owner"
+    )
+    owner_approval_note = (
+        f"Exact warehouse metering for {period_label}. Approval is required before any warehouse "
+        "setting change; close only after the next complete period verification query proves the "
+        "approved change reduced or justified the delta."
+    )
     generated_sql = (
         "-- Cost-control plan, not an automatic fix.\n"
         f"-- Warehouse: {wh}\n"
@@ -673,6 +701,7 @@ def _warehouse_cost_control_action(
         "Entity Type": "Warehouse",
         "Entity": wh,
         "Owner": owner,
+        "Approver": approver,
         "Finding": finding,
         "Action": f"{confidence}. {action}",
         "Estimated Monthly Savings": round(max(0.0, est_delta_cost * 0.25), 2),
@@ -685,6 +714,10 @@ def _warehouse_cost_control_action(
         "Baseline Value": round(prior, 4),
         "Current Value": round(current, 4),
         "Measured Delta": round(delta, 4),
+        "Owner Approval Status": "Requested",
+        "Owner Approval Note": owner_approval_note,
+        "Recovery SLA State": "Savings Verification Pending",
+        "Recovery SLA Target Hours": 168.0,
     }
 
 

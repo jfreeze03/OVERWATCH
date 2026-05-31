@@ -12,6 +12,8 @@ from sections import (
     spcs_tracker,
 )
 from utils import (
+    build_cost_savings_verification_health_sql,
+    build_cost_savings_verification_sql,
     build_mart_cost_cockpit_sql,
     credits_to_dollars,
     format_snowflake_error,
@@ -25,6 +27,7 @@ from utils import (
 )
 from utils.workflows import (
     render_operator_briefing,
+    render_priority_dataframe,
     render_signal_confidence,
     render_workflow_guide,
     render_workflow_selector,
@@ -121,6 +124,313 @@ def _loaded_cortex_state() -> tuple[float, int]:
     return projected, exception_count
 
 
+def _queue_series(df: pd.DataFrame, column: str, default: object = "") -> pd.Series:
+    if column in df.columns:
+        return df[column]
+    return pd.Series([default] * len(df), index=df.index)
+
+
+def _text_present(value: object) -> bool:
+    text = str(value or "").strip()
+    return bool(text and text.upper() not in {"N/A", "NONE", "NULL", "NAN", "<NA>"})
+
+
+def _cost_action_mask(queue: pd.DataFrame) -> pd.Series:
+    category = _queue_series(queue, "CATEGORY").fillna("").astype(str).str.upper()
+    source = _queue_series(queue, "SOURCE").fillna("").astype(str).str.upper()
+    return (
+        category.str.contains("COST", na=False)
+        | category.str.contains("CHARGEBACK", na=False)
+        | source.str.contains("COST & CONTRACT", na=False)
+    )
+
+
+def _build_cost_closure_analytics(queue: pd.DataFrame, credit_price: float) -> tuple[dict, pd.DataFrame]:
+    """Summarize whether queued cost actions have real closure evidence."""
+    empty_summary = {
+        "cost_actions": 0,
+        "open_actions": 0,
+        "approval_pending_actions": 0,
+        "post_period_pending_actions": 0,
+        "fixed_without_verification": 0,
+        "verified_savings_actions": 0,
+        "open_estimated_monthly_savings": 0.0,
+        "blocked_estimated_monthly_savings": 0.0,
+        "verified_estimated_monthly_savings": 0.0,
+        "verified_period_delta_dollars": 0.0,
+        "audit_ready_pct": 0.0,
+    }
+    if queue is None or queue.empty:
+        return empty_summary, pd.DataFrame()
+
+    view = queue.loc[_cost_action_mask(queue)].copy()
+    if view.empty:
+        return empty_summary, pd.DataFrame()
+
+    status = _queue_series(view, "STATUS").fillna("").astype(str).str.upper()
+    category = _queue_series(view, "CATEGORY").fillna("").astype(str).str.upper()
+    approval = _queue_series(view, "OWNER_APPROVAL_STATUS").fillna("").astype(str).str.upper()
+    verification = _queue_series(view, "VERIFICATION_STATUS").fillna("").astype(str).str.upper()
+    recovery = _queue_series(view, "RECOVERY_SLA_STATE").fillna("").astype(str).str.upper()
+    verification_result = _queue_series(view, "VERIFICATION_RESULT").apply(_text_present)
+    baseline = pd.to_numeric(_queue_series(view, "BASELINE_VALUE", 0), errors="coerce")
+    current = pd.to_numeric(_queue_series(view, "CURRENT_VALUE", 0), errors="coerce")
+    measured_delta = pd.to_numeric(_queue_series(view, "MEASURED_DELTA", 0), errors="coerce")
+    estimated_savings = pd.to_numeric(_queue_series(view, "EST_MONTHLY_SAVINGS", 0), errors="coerce").fillna(0)
+
+    fixed = status.eq("FIXED")
+    ignored = status.eq("IGNORED")
+    open_mask = ~fixed & ~ignored
+    approved = approval.isin(["APPROVED", "NOT REQUIRED"])
+    approval_pending = ~approved & ~ignored
+    verified = verification.eq("VERIFIED") & verification_result
+    improved = measured_delta.lt(0) | (current.notna() & baseline.notna() & current.lt(baseline))
+    verified_savings = fixed & verified & approved & improved
+    fixed_without_verification = fixed & ~verified_savings
+    post_period_pending = open_mask & recovery.str.contains("SAVINGS VERIFICATION PENDING|POST-PERIOD", na=False)
+    chargeback_pending = open_mask & (
+        category.str.contains("CHARGEBACK", na=False)
+        | recovery.str.contains("CHARGEBACK EVIDENCE PENDING", na=False)
+    )
+
+    closure_states = []
+    evidence_notes = []
+    verified_period_values = []
+    for idx in view.index:
+        if bool(verified_savings.loc[idx]):
+            closure_states.append("Verified savings")
+            evidence_notes.append("Fixed, verified, approved, and measured lower than baseline.")
+            verified_period_values.append(round(credits_to_dollars(abs(safe_float(measured_delta.loc[idx])), credit_price), 2))
+        elif bool(fixed_without_verification.loc[idx]):
+            closure_states.append("Fixed without verified savings")
+            evidence_notes.append("Do not count savings until verification result, approval, and lower post-period usage are attached.")
+            verified_period_values.append(0.0)
+        elif bool(chargeback_pending.loc[idx]):
+            closure_states.append("Chargeback evidence pending")
+            evidence_notes.append("Owner/tag proof or shared-cost classification is still required before billing.")
+            verified_period_values.append(0.0)
+        elif bool(approval_pending.loc[idx]):
+            closure_states.append("Approval pending")
+            evidence_notes.append("Owner approval is required before action or savings closure.")
+            verified_period_values.append(0.0)
+        elif bool(post_period_pending.loc[idx]):
+            closure_states.append("Post-period measurement pending")
+            evidence_notes.append("Run the stored verification query after the next complete period.")
+            verified_period_values.append(0.0)
+        elif bool(open_mask.loc[idx]):
+            closure_states.append("Open cost action")
+            evidence_notes.append("Action is not closed; keep proof query and baseline/current values current.")
+            verified_period_values.append(0.0)
+        else:
+            closure_states.append("Ignored / not claimed")
+            evidence_notes.append("Ignored rows are excluded from savings claims.")
+            verified_period_values.append(0.0)
+
+    view["CLOSURE_STATE"] = closure_states
+    view["SAVINGS_EVIDENCE"] = evidence_notes
+    view["VERIFIED_PERIOD_DELTA_DOLLARS"] = verified_period_values
+    blocked = open_mask & (approval_pending | post_period_pending | chargeback_pending)
+    fixed_count = int(fixed.sum())
+    audit_ready = int(verified_savings.sum())
+    summary = {
+        "cost_actions": int(len(view)),
+        "open_actions": int(open_mask.sum()),
+        "approval_pending_actions": int(approval_pending.sum()),
+        "post_period_pending_actions": int(post_period_pending.sum()),
+        "fixed_without_verification": int(fixed_without_verification.sum()),
+        "verified_savings_actions": audit_ready,
+        "open_estimated_monthly_savings": round(safe_float(estimated_savings[open_mask].sum()), 2),
+        "blocked_estimated_monthly_savings": round(safe_float(estimated_savings[blocked].sum()), 2),
+        "verified_estimated_monthly_savings": round(safe_float(estimated_savings[verified_savings].sum()), 2),
+        "verified_period_delta_dollars": round(safe_float(sum(verified_period_values)), 2),
+        "audit_ready_pct": round((audit_ready / fixed_count) * 100, 1) if fixed_count else 0.0,
+    }
+    return summary, view
+
+
+def _compact_time(value: object, default: str = "Not seen") -> str:
+    text = str(value or "").strip()
+    if not text or text.upper() in {"NAT", "NAN", "NONE", "NULL", "<NA>"}:
+        return default
+    return text[:19]
+
+
+def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tuple[dict, pd.DataFrame]:
+    """Summarize the Snowflake task that verifies cost savings into closure evidence."""
+    empty_summary = {
+        "loaded": False,
+        "health_state": "Not Loaded",
+        "task_state": "Not seen",
+        "last_run": "Not seen",
+        "failed_runs_7d": 0,
+        "ledger_rows_7d": 0,
+        "candidates_last_run": 0,
+        "verified_last_run": 0,
+        "evidence_required_last_run": 0,
+        "issue_count": 1,
+        "issue_severity": "High",
+        "next_action": "Deploy the latest OVERWATCH mart setup, then resume the savings verification task.",
+    }
+    if health is None or getattr(health, "empty", True):
+        return empty_summary, pd.DataFrame()
+
+    view = health.copy()
+    expected_defaults = {
+        "CONTROL_NAME": "Cost & Contract Savings Verification",
+        "TASK_NAME": "OVERWATCH_COST_SAVINGS_VERIFY",
+        "TASK_HEALTH_STATE": "Unknown",
+        "LAST_TASK_STATE": "",
+        "LAST_TASK_SCHEDULED_AT": "",
+        "LAST_TASK_COMPLETED_AT": "",
+        "LAST_TASK_ERROR": "",
+        "FAILED_RUNS_7D": 0,
+        "LAST_VERIFICATION_RUN_AT": "",
+        "LEDGER_RUN_ROWS_7D": 0,
+        "CANDIDATES_LAST_RUN": 0,
+        "VERIFIED_LAST_RUN": 0,
+        "EVIDENCE_REQUIRED_LAST_RUN": 0,
+        "NEXT_ACTION": "Review the verifier health row and cost action evidence.",
+    }
+    for column, default in expected_defaults.items():
+        if column not in view.columns:
+            view[column] = default
+
+    row = view.iloc[0]
+    health_state = str(row.get("TASK_HEALTH_STATE") or "Unknown").strip() or "Unknown"
+    task_state = str(row.get("LAST_TASK_STATE") or "Not seen").strip() or "Not seen"
+    failed_runs = safe_int(row.get("FAILED_RUNS_7D"))
+    ledger_rows = safe_int(row.get("LEDGER_RUN_ROWS_7D"))
+    candidates = safe_int(row.get("CANDIDATES_LAST_RUN"))
+    verified = safe_int(row.get("VERIFIED_LAST_RUN"))
+    evidence_required = safe_int(row.get("EVIDENCE_REQUIRED_LAST_RUN"))
+    next_action = str(row.get("NEXT_ACTION") or "Review the verifier health row and cost action evidence.").strip()
+
+    issue_count = 0
+    if health_state.upper() != "HEALTHY":
+        issue_count += 1
+    if failed_runs > 0:
+        issue_count += failed_runs
+    if evidence_required > 0:
+        issue_count += evidence_required
+
+    if health_state.upper() in {"TASK FAILED", "TASK STALE", "TASK NOT SEEN"} or failed_runs > 0:
+        issue_severity = "Critical"
+    elif health_state.upper() == "NO VERIFICATION LEDGER":
+        issue_severity = "High"
+    elif evidence_required > 0:
+        issue_severity = "Medium"
+    else:
+        issue_severity = "Info"
+
+    view["ISSUE_SEVERITY"] = issue_severity
+    view["ISSUE_COUNT"] = issue_count
+    view["ISSUE_DETAIL"] = next_action
+    summary = {
+        "loaded": True,
+        "health_state": health_state,
+        "task_state": task_state,
+        "last_run": _compact_time(row.get("LAST_VERIFICATION_RUN_AT")),
+        "failed_runs_7d": failed_runs,
+        "ledger_rows_7d": ledger_rows,
+        "candidates_last_run": candidates,
+        "verified_last_run": verified,
+        "evidence_required_last_run": evidence_required,
+        "issue_count": issue_count,
+        "issue_severity": issue_severity,
+        "next_action": next_action,
+    }
+    return summary, view
+
+
+def _render_savings_verification_task_health(health: pd.DataFrame | None, error: str = "") -> None:
+    summary, detail = _build_savings_verification_task_summary(health)
+    st.markdown("**Savings Verification Task Health**")
+    st.caption(
+        "Monitors the scheduled Snowflake verifier that converts estimated cost actions into ledger-backed savings evidence."
+    )
+    h1, h2, h3, h4, h5 = st.columns(5)
+    h1.metric("Task Health", summary["health_state"])
+    h2.metric("Failed Runs 7d", f"{summary['failed_runs_7d']:,}", delta_color="inverse")
+    h3.metric("Evidence Required", f"{summary['evidence_required_last_run']:,}", delta_color="inverse")
+    h4.metric("Ledger Rows 7d", f"{summary['ledger_rows_7d']:,}")
+    h5.metric("Last Ledger Run", summary["last_run"])
+
+    if error:
+        st.warning(f"Verification task health view unavailable: {error}")
+        st.caption("Deploy the latest OVERWATCH mart setup SQL to create OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V.")
+        return
+    if detail.empty:
+        st.info("Load the cockpit after deploying the verifier health view to monitor savings task failures and stale runs.")
+        return
+
+    if summary["issue_severity"] in {"Critical", "High"}:
+        st.warning(summary["next_action"])
+    elif summary["issue_count"] > 0:
+        st.info(summary["next_action"])
+
+    render_priority_dataframe(
+        detail,
+        title="Verifier health evidence",
+        priority_columns=[
+            "ISSUE_SEVERITY", "TASK_HEALTH_STATE", "LAST_TASK_STATE",
+            "LAST_TASK_SCHEDULED_AT", "LAST_TASK_COMPLETED_AT", "FAILED_RUNS_7D",
+            "LAST_VERIFICATION_RUN_AT", "LEDGER_RUN_ROWS_7D",
+            "CANDIDATES_LAST_RUN", "VERIFIED_LAST_RUN", "EVIDENCE_REQUIRED_LAST_RUN",
+            "LAST_TASK_ERROR", "ISSUE_DETAIL",
+        ],
+        sort_by=["FAILED_RUNS_7D", "EVIDENCE_REQUIRED_LAST_RUN"],
+        ascending=[False, False],
+        raw_label="Full verifier health row",
+        height=190,
+        max_rows=5,
+    )
+
+
+def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) -> None:
+    summary, detail = _build_cost_closure_analytics(queue, credit_price)
+    st.markdown("**Savings Closure Control**")
+    st.caption(
+        "Potential savings stay estimated until the action is fixed, owner-approved, verified, "
+        "and the measured post-period usage is lower than the stored baseline."
+    )
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Cost Actions", f"{summary['cost_actions']:,}")
+    c2.metric("Open Est. Savings", f"${summary['open_estimated_monthly_savings']:,.0f}/mo")
+    c3.metric("Blocked Est. Savings", f"${summary['blocked_estimated_monthly_savings']:,.0f}/mo", delta_color="inverse")
+    c4.metric("Verified Period Value", f"${summary['verified_period_delta_dollars']:,.0f}")
+    c5.metric("Fixed Audit Ready", f"{summary['audit_ready_pct']:,.1f}%")
+
+    if detail.empty:
+        st.info("No cost-control or chargeback actions are currently visible in the loaded action queue scope.")
+        with st.expander("Deploy scheduled savings verification", expanded=False):
+            st.caption("Install this once in the OVERWATCH mart schema, review the task, then resume it.")
+            st.code(build_cost_savings_verification_sql(), language="sql")
+        return
+
+    render_priority_dataframe(
+        detail,
+        title="Cost actions that still need approval, measurement, or closure evidence",
+        priority_columns=[
+            "SEVERITY", "CLOSURE_STATE", "CATEGORY", "ENTITY_NAME", "OWNER",
+            "STATUS", "OWNER_APPROVAL_STATUS", "VERIFICATION_STATUS",
+            "BASELINE_VALUE", "CURRENT_VALUE", "MEASURED_DELTA",
+            "VERIFIED_PERIOD_DELTA_DOLLARS", "RECOVERY_SLA_STATE",
+            "SAVINGS_EVIDENCE", "TICKET_ID", "APPROVER",
+        ],
+        sort_by=["QUEUE_PRIORITY", "SEVERITY"],
+        ascending=[True, True],
+        raw_label="All loaded cost closure rows",
+        height=260,
+        max_rows=10,
+    )
+    with st.expander("Deploy scheduled savings verification", expanded=False):
+        st.caption(
+            "This Snowflake procedure/task verifies warehouse cost-control actions from exact metering. "
+            "Chargeback and database/user allocations still require owner evidence."
+        )
+        st.code(build_cost_savings_verification_sql(), language="sql")
+
+
 def _render_cost_watch_floor(session, company: str, credit_price: float) -> None:
     st.subheader("Cost Control Cockpit")
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -164,6 +474,17 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
             except Exception as exc:
                 st.session_state["cost_contract_queue"] = pd.DataFrame()
                 st.session_state["cost_contract_queue_error"] = format_snowflake_error(exc)
+            try:
+                st.session_state["cost_contract_verification_health"] = run_query(
+                    build_cost_savings_verification_health_sql(),
+                    ttl_key="cost_contract_verification_health",
+                    tier="recent",
+                    section="Cost & Contract",
+                )
+                st.session_state["cost_contract_verification_health_error"] = ""
+            except Exception as exc:
+                st.session_state["cost_contract_verification_health"] = pd.DataFrame()
+                st.session_state["cost_contract_verification_health_error"] = format_snowflake_error(exc)
     with c3:
         st.info("Use this cockpit to decide whether to explain the bill, work the action queue, inspect Cortex spend, or log verified savings.")
 
@@ -207,6 +528,12 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
     k3.metric("Open Actions", f"{open_actions:,}", f"{high_actions:,} high", delta_color="inverse")
     k4.metric("Savings Queue", f"${total_savings:,.0f}/mo")
     k5.metric("Cortex Projection", f"${cortex_projected:,.0f}/30d", f"{cortex_exception_count:,} exceptions", delta_color="inverse")
+
+    _render_savings_verification_task_health(
+        st.session_state.get("cost_contract_verification_health", pd.DataFrame()),
+        st.session_state.get("cost_contract_verification_health_error", ""),
+    )
+    _render_savings_closure_control(queue, credit_price)
 
     moves = []
     if delta_pct >= 20 or safe_float(row.get("TOP_INCREASE_CREDITS", 0)) > 0:

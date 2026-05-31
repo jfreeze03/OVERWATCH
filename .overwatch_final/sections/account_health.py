@@ -3,7 +3,7 @@ import html
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from config import ALERT_DB, ALERT_SCHEMA
+from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
 from utils import (
     get_session, run_query, run_query_or_raise, format_credits,
     credits_to_dollars, download_csv, mark_loaded, show_loaded_time,
@@ -23,11 +23,12 @@ from utils import (
     build_mart_account_health_top_driver_sql, build_mart_account_health_queued_sql,
     build_mart_account_health_ytd_credits_sql,
     format_snowflake_error, filter_existing_columns, make_action_id, safe_float, safe_identifier, safe_int,
-    sql_literal, upsert_actions,
+    sql_literal, upsert_actions, action_queue_environment_clause,
 )
 from utils.workflows import render_operator_briefing, render_priority_dataframe
 
 CHECKLIST_HISTORY_TABLE = "OVERWATCH_DBA_CHECKLIST_HISTORY"
+ACCOUNT_HEALTH_ACTION_SOURCE = "Account Health - Daily DBA Checklist"
 
 
 def _drill_to(
@@ -207,6 +208,14 @@ def account_health_checklist_history_fqn(
     db: str = ALERT_DB,
     schema: str = ALERT_SCHEMA,
     table: str = CHECKLIST_HISTORY_TABLE,
+) -> str:
+    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
+
+
+def account_health_action_queue_fqn(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = ACTION_QUEUE_TABLE,
 ) -> str:
     return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
 
@@ -616,6 +625,127 @@ ORDER BY ISSUE_SNAPSHOTS DESC, LAST_SNAPSHOT_TS DESC, CHECK_NAME
 LIMIT 100""".strip()
 
 
+def _account_health_closure_analytics_sql(days: int, company: str, environment: str = "ALL") -> str:
+    fqn = account_health_action_queue_fqn()
+    where = [
+        f"SOURCE = {sql_literal(ACCOUNT_HEALTH_ACTION_SOURCE, 100)}",
+        f"COALESCE(UPDATED_AT, CREATED_AT) >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_TIMESTAMP())",
+    ]
+    if str(company or "").upper() != "ALL":
+        where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
+    if env_clause:
+        where.append(env_clause)
+    where_clause = " AND ".join(where)
+    return f"""
+WITH scoped_actions AS (
+    SELECT
+        COALESCE(ENTITY_NAME, 'Daily DBA checklist') AS CHECK_NAME,
+        COALESCE(OWNER, '') AS OWNER,
+        COALESCE(APPROVER, '') AS APPROVER,
+        COALESCE(STATUS, 'New') AS STATUS,
+        COALESCE(SEVERITY, 'Medium') AS SEVERITY,
+        COALESCE(TICKET_ID, '') AS TICKET_ID,
+        DUE_DATE,
+        COALESCE(VERIFICATION_STATUS, '') AS VERIFICATION_STATUS,
+        COALESCE(VERIFICATION_QUERY, PROOF_QUERY, '') AS VERIFICATION_QUERY,
+        COALESCE(VERIFICATION_RESULT, '') AS VERIFICATION_RESULT,
+        COALESCE(OWNER_APPROVAL_STATUS, '') AS OWNER_APPROVAL_STATUS,
+        COALESCE(RECOVERY_SLA_STATE, '') AS RECOVERY_SLA_STATE,
+        COALESCE(RECOVERY_EVIDENCE, '') AS RECOVERY_EVIDENCE,
+        COALESCE(UPDATED_AT, CREATED_AT) AS LAST_ACTIVITY_TS
+    FROM {fqn}
+    WHERE {where_clause}
+),
+rollup AS (
+    SELECT
+        CHECK_NAME,
+        MAX_BY(OWNER, LAST_ACTIVITY_TS) AS OWNER,
+        MAX_BY(APPROVER, LAST_ACTIVITY_TS) AS APPROVER,
+        COUNT(*) AS TOTAL_ACTIONS,
+        COUNT_IF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED')) AS OPEN_ACTIONS,
+        COUNT_IF(UPPER(STATUS) = 'FIXED') AS FIXED_ACTIONS,
+        COUNT_IF(
+            UPPER(STATUS) = 'FIXED'
+            AND UPPER(VERIFICATION_STATUS) = 'VERIFIED'
+            AND LENGTH(TRIM(VERIFICATION_RESULT)) >= 15
+        ) AS VERIFIED_CLOSURES,
+        COUNT_IF(
+            UPPER(STATUS) = 'FIXED'
+            AND (
+                UPPER(VERIFICATION_STATUS) <> 'VERIFIED'
+                OR LENGTH(TRIM(VERIFICATION_RESULT)) < 15
+            )
+        ) AS FIXED_WITHOUT_VERIFICATION,
+        COUNT_IF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED') AND DUE_DATE < CURRENT_DATE()) AS OVERDUE_OPEN,
+        COUNT_IF(UPPER(OWNER) IN ('', 'DBA', 'UNKNOWN', 'N/A', 'DBA / FINOPS', 'DBA / DATA ENGINEERING')) AS OWNER_GAP_ROWS,
+        COUNT_IF(LENGTH(TRIM(TICKET_ID)) = 0) AS TICKET_GAP_ROWS,
+        COUNT_IF(LENGTH(TRIM(APPROVER)) = 0) AS APPROVER_GAP_ROWS,
+        COUNT_IF(LENGTH(TRIM(VERIFICATION_QUERY)) = 0) AS VERIFICATION_QUERY_GAP_ROWS,
+        COUNT_IF(UPPER(OWNER_APPROVAL_STATUS) IN ('', 'PENDING', 'REQUESTED', 'REQUIRED')) AS OWNER_APPROVAL_GAP_ROWS,
+        COUNT_IF(
+            UPPER(RECOVERY_SLA_STATE) ILIKE '%BREACH%'
+            OR UPPER(RECOVERY_SLA_STATE) ILIKE '%LATE%'
+            OR (
+                UPPER(RECOVERY_SLA_STATE) IN ('OPEN FAILURE', 'RECOVERY SLA BREACH')
+                AND LENGTH(TRIM(RECOVERY_EVIDENCE)) = 0
+            )
+        ) AS RECOVERY_RISK_ROWS,
+        MIN(IFF(UPPER(STATUS) NOT IN ('FIXED', 'IGNORED'), DUE_DATE, NULL)) AS NEXT_DUE_DATE,
+        MAX(LAST_ACTIVITY_TS) AS LAST_ACTIVITY_TS,
+        MAX_BY(STATUS, LAST_ACTIVITY_TS) AS LAST_STATUS,
+        MAX_BY(SEVERITY, LAST_ACTIVITY_TS) AS LAST_SEVERITY
+    FROM scoped_actions
+    GROUP BY CHECK_NAME
+)
+SELECT
+    CHECK_NAME,
+    CASE
+        WHEN OVERDUE_OPEN > 0 THEN 'Overdue closure'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Fixed without verification'
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Control metadata gap'
+        WHEN OPEN_ACTIONS > 0 THEN 'Open'
+        WHEN VERIFIED_CLOSURES > 0 THEN 'Verified closure'
+        ELSE 'No recent action'
+    END AS CLOSURE_READINESS,
+    CASE
+        WHEN OVERDUE_OPEN > 0 THEN 0
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 1
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 2
+        WHEN OPEN_ACTIONS > 0 THEN 3
+        WHEN VERIFIED_CLOSURES > 0 THEN 8
+        ELSE 9
+    END AS CLOSURE_RANK,
+    OWNER,
+    APPROVER,
+    TOTAL_ACTIONS,
+    OPEN_ACTIONS,
+    FIXED_ACTIONS,
+    VERIFIED_CLOSURES,
+    FIXED_WITHOUT_VERIFICATION,
+    OVERDUE_OPEN,
+    OWNER_GAP_ROWS,
+    TICKET_GAP_ROWS,
+    APPROVER_GAP_ROWS,
+    VERIFICATION_QUERY_GAP_ROWS,
+    OWNER_APPROVAL_GAP_ROWS,
+    RECOVERY_RISK_ROWS,
+    NEXT_DUE_DATE,
+    LAST_STATUS,
+    LAST_SEVERITY,
+    LAST_ACTIVITY_TS,
+    CASE
+        WHEN OVERDUE_OPEN > 0 THEN 'Escalate owner and due date before lower-risk checklist work.'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Attach verification notes/result or reopen the checklist action.'
+        WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete owner, ticket, approver, and verification metadata.'
+        WHEN OPEN_ACTIONS > 0 THEN 'Work the open checklist action and attach proof before closing.'
+        ELSE 'Retain verified closure evidence for audit trend review.'
+    END AS NEXT_ACTION
+FROM rollup
+ORDER BY CLOSURE_RANK, OVERDUE_OPEN DESC, FIXED_WITHOUT_VERIFICATION DESC, OPEN_ACTIONS DESC, LAST_ACTIVITY_TS DESC
+LIMIT 100""".strip()
+
+
 def _save_account_health_checklist_snapshot(
     session,
     checklist: pd.DataFrame,
@@ -655,7 +785,7 @@ def _account_health_checklist_action_payload(row: pd.Series | dict, company: str
         env_value = "No Database Context"
     return {
         "Action ID": make_action_id("Account Health Checklist", check, f"{company}|{evidence}"),
-        "Source": "Account Health - Daily DBA Checklist",
+        "Source": ACCOUNT_HEALTH_ACTION_SOURCE,
         "Severity": "Low" if severity.upper() == "INFO" else severity,
         "Category": "Daily DBA Checklist",
         "Entity Type": "DBA Checklist",
@@ -1140,6 +1270,52 @@ def render():
                 st.info("No checklist history rows found for the selected scope.")
             with st.expander("Checklist history setup SQL", expanded=False):
                 st.code(build_account_health_checklist_history_ddl(), language="sql")
+        with st.expander("Daily DBA Closure Analytics", expanded=False):
+            st.caption(
+                "Uses Account Health action-queue rows to show whether checklist issues are still open, "
+                "overdue, or closed without verification evidence."
+            )
+            closure_days = st.slider("Closure analytics days", 7, 120, 30, key="account_health_closure_days")
+            if st.button("Load Closure Analytics", key="account_health_load_closure_analytics"):
+                try:
+                    closure_sql = _account_health_closure_analytics_sql(
+                        closure_days,
+                        company=company,
+                        environment=get_active_environment(),
+                    )
+                    st.session_state["account_health_closure_analytics_sql"] = closure_sql
+                    st.session_state["account_health_closure_analytics"] = run_query(
+                        closure_sql,
+                        ttl_key=f"account_health_closure_analytics_{company}_{get_active_environment()}_{closure_days}",
+                        tier="standard",
+                        section="Account Health",
+                    )
+                except Exception as exc:
+                    st.session_state["account_health_closure_analytics"] = pd.DataFrame()
+                    st.warning(f"Closure analytics unavailable: {format_snowflake_error(exc)}")
+                    st.info("Deploy the latest Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry.")
+            closure = st.session_state.get("account_health_closure_analytics")
+            if closure is not None and not closure.empty:
+                render_priority_dataframe(
+                    closure,
+                    title="Checklist closure evidence gaps",
+                    priority_columns=[
+                        "CHECK_NAME", "CLOSURE_READINESS", "OWNER", "APPROVER",
+                        "TOTAL_ACTIONS", "OPEN_ACTIONS", "OVERDUE_OPEN",
+                        "VERIFIED_CLOSURES", "FIXED_WITHOUT_VERIFICATION",
+                        "OWNER_GAP_ROWS", "TICKET_GAP_ROWS", "APPROVER_GAP_ROWS",
+                        "OWNER_APPROVAL_GAP_ROWS", "VERIFICATION_QUERY_GAP_ROWS",
+                        "RECOVERY_RISK_ROWS", "NEXT_DUE_DATE", "LAST_STATUS", "NEXT_ACTION",
+                    ],
+                    sort_by=["CLOSURE_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS"],
+                    ascending=[True, False, False, False],
+                    raw_label="All closure analytics rows",
+                    height=300,
+                )
+                with st.expander("Closure Analytics Query", expanded=False):
+                    st.code(st.session_state.get("account_health_closure_analytics_sql", ""), language="sql")
+            elif closure is not None:
+                st.info("No Account Health checklist action-queue rows found for the selected scope.")
         with st.expander("Health score contributors", expanded=False):
             render_priority_dataframe(
                 health_components,

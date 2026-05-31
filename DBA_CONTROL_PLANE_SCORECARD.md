@@ -46,14 +46,14 @@ scores should not be inflated until the missing control-plane evidence exists.
 
 | Section | Score | Raw Score | Label | Main Score Cap Drivers |
 | --- | ---: | ---: | --- | --- |
-| DBA Control Room | 86.9 | 86.9 | Operational | Admin safety/audit, governance/ownership |
+| DBA Control Room | 88.3 | 88.3 | Operational | Admin safety/audit |
 | Alert Center | 91.8 | 91.8 | Near Target | Still below 95 on approved Snowflake email integration, owner on-call mapping, and delivery evidence replay |
 | Workload Operations | 93.2 | 93.2 | Near Target | None below hard-cap threshold; still below 95 on owner/on-call enrichment and approved recovery execution audit |
 | Warehouse Health | 85.3 | 85.3 | Operational | Admin safety/audit |
-| Cost & Contract | 91.2 | 91.2 | Near Target | Still below 95 on verified savings closure and optional CMDB owner enrichment |
+| Cost & Contract | 94.3 | 94.3 | Near Target | Still below 95 on CMDB/on-call owner enrichment for real named accountable owners |
 | Security Posture | 85.0 | 85.0 | Operational | Data correctness/scope, admin safety/audit |
 | Change & Drift | 85.2 | 85.2 | Operational | Data correctness, admin safety/audit, governance/ownership |
-| Account Health | 80.4 | 80.4 | Operational | Data correctness, admin safety/audit, governance/ownership |
+| Account Health | 84.0 | 84.0 | Operational | Data correctness/scope, admin safety/audit |
 
 ## What 95 Requires
 
@@ -77,7 +77,34 @@ scores should not be inflated until the missing control-plane evidence exists.
 2. Live IAM/access-owner inventory, ticket integration, and automated security closure evidence.
 3. Live change-ticket ingestion, source-control comparison, and approval closure automation for Change & Drift.
 4. Named owner/on-call enrichment across action queue rows.
-5. Live service/on-call owner integration and automated closure analytics.
+5. Live service/on-call owner integration and automated closure execution from verification outcomes.
+
+## Latest Control-Plane Improvements
+
+DBA Control Room now grades every open action-queue row with an execution gate:
+blocked metadata, blocked owner approval, overdue escalation, ready standard,
+or ready high risk. The command queue also exposes owner readiness, audit
+readiness, and the exact evidence required before a DBA should execute from the
+row. This improves operational discipline, but it still lacks live ticket
+integration and immutable execution audit writes, so it remains below 95.
+
+Cost & Contract now queues warehouse cost increases and chargeback outliers with
+approver, owner-approval status, approval notes, recovery SLA state, and a
+seven-day post-period verification expectation. Cost claims are now closer to
+auditable savings actions rather than vanity savings estimates. The Cost &
+Contract cockpit reads cost actions back into a savings closure control so open
+estimated savings, blocked savings, fixed-without-verification rows, and
+verified period value are visible before DBAs claim a win. The mart setup now
+also includes a scheduled Snowflake procedure/task scaffold that verifies
+warehouse cost-control actions from exact WAREHOUSE_METERING_HISTORY and writes
+a verification run ledger. Cost & Contract also monitors the verifier task as a
+first-class control, surfacing stale runs, failed task history, missing ledger
+rows, evidence-required outcomes, and the next DBA action. Verifier failures now
+route into the consolidated Alert Center as email-ready Cost Control alerts and
+become governed action-queue work that requires owner approval and read-only
+TASK_HISTORY proof before savings are claimed. It remains below 95 because owner
+enrichment is still limited to Snowflake tags/free-text owners rather than a live
+CMDB/on-call accountability source.
 
 ## Scope Correction
 
@@ -85,8 +112,11 @@ Account Health is being re-scoped as a Daily DBA Checklist. It remains below
 95 because broad health and briefing panels are not enough for DBA operation.
 Failed checks now route to owned action-queue items with proof, urgency,
 approval state, verification SQL, owner/escalation hints, and persisted trend
-history. It still needs live service/on-call owner integration and automated
-closure analytics before it can score as a mature DBA operating surface.
+history. Account Health now also reads its action-queue rows back into closure
+analytics so overdue items, fixed-without-verification rows, owner/ticket gaps,
+and approval gaps are visible from the morning checklist. It still needs live
+service/on-call owner integration and automated closure execution from
+verification outcomes before it can score as a mature DBA operating surface.
 
 Change & Drift now stores change-control evidence snapshots with ticket,
 IaC/source-control, execution-audit, owner, escalation, approver, query-id,

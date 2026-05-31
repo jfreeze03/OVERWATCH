@@ -22,6 +22,8 @@ from utils.action_queue import (  # noqa: E402
     action_queue_default_due_days,
     build_safe_verification_query,
     build_action_queue_ddl,
+    build_cost_savings_verification_health_sql,
+    build_cost_savings_verification_sql,
     enrich_action_queue_view,
     summarize_verification_frame,
     update_action_status_with_evidence,
@@ -230,6 +232,15 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS OWNER_APPROVAL_STATUS", setup_sql)
         self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS RECOVERY_EVIDENCE", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_DBA_CHECKLIST_HISTORY", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", setup_sql)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_VERIFY_COST_SAVINGS", setup_sql)
+        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", setup_sql)
+        self.assertIn("CREATE OR REPLACE TASK OVERWATCH_COST_SAVINGS_VERIFY", setup_sql)
+        self.assertIn("WAREHOUSE_METERING_HISTORY", setup_sql)
+        self.assertIn("SAVINGS VERIFIED", setup_sql)
+        self.assertIn("TASK_HEALTH_STATE", setup_sql)
+        self.assertIn("FAILED_RUNS_7D", setup_sql)
+        self.assertIn("TASK STALE", setup_sql)
         self.assertIn("ESCALATION_TARGET", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_CHANGE_CONTROL_EVIDENCE", setup_sql)
         self.assertIn("CHANGE_TICKET_ID", setup_sql)
@@ -279,8 +290,27 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_ANOMALY_CHECK", setup_sql)
         self.assertIn("TASK FAILURE", setup_sql)
         self.assertIn("STORED PROCEDURE", setup_sql)
+        self.assertIn("COST SAVINGS VERIFICATION FAILURE", setup_sql)
+        self.assertIn("COST_SAVINGS_VERIFIER_FAILURE", setup_sql)
+        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY", setup_sql)
         self.assertIn("GRANT/REVOKE ACTIVITY", setup_sql)
         self.assertIn("WAREHOUSE SETTING CHANGE", setup_sql)
+
+        savings_verification_sql = build_cost_savings_verification_sql().upper()
+        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", savings_verification_sql)
+        self.assertIn("SP_OVERWATCH_VERIFY_COST_SAVINGS", savings_verification_sql)
+        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY", savings_verification_sql)
+        self.assertIn("CURRENT_VALUE = V.POST_PERIOD_VALUE", savings_verification_sql)
+        self.assertIn("VERIFICATION_STATUS = IFF", savings_verification_sql)
+        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", savings_verification_sql)
+        self.assertIn("TASK_HEALTH_STATE", savings_verification_sql)
+        self.assertIn("FAILED_RUNS_7D", savings_verification_sql)
+        self.assertIn("ALTER TASK", savings_verification_sql)
+
+        savings_health_sql = build_cost_savings_verification_health_sql().upper()
+        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", savings_health_sql)
+        self.assertIn("EVIDENCE_REQUIRED_LAST_RUN", savings_health_sql)
+        self.assertIn("NEXT_ACTION", savings_health_sql)
 
         dev_values = action_queue_environment_values("DEV_ALL")
         self.assertIn("DEV_ALL", dev_values)

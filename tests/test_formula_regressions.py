@@ -18,6 +18,7 @@ from sections.account_health import (  # noqa: E402
     _account_health_checklist_action_payload,
     _account_health_checklist_history_insert_sql,
     _account_health_checklist_history_sql,
+    _account_health_closure_analytics_sql,
     _build_account_health_dba_checklist,
     _enrich_account_health_checklist_owners,
     build_account_health_checklist_history_ddl,
@@ -36,6 +37,10 @@ from sections.cost_center import (  # noqa: E402
     _warehouse_cost_control_action,
     _service_cost_category,
     _warehouse_cost_verification_sql,
+)
+from sections.cost_contract import (  # noqa: E402
+    _build_cost_closure_analytics,
+    _build_savings_verification_task_summary,
 )
 from sections.dba_control_room import (  # noqa: E402
     _build_report as _build_dba_control_report,
@@ -327,6 +332,21 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("COMPANY = 'ALFA'", trend_sql)
         self.assertIn("ENVIRONMENT = 'DEV_ALL'", trend_sql)
 
+    def test_account_health_closure_analytics_sql_scores_action_queue_evidence(self):
+        sql = _account_health_closure_analytics_sql(45, "ALFA", "PROD").upper()
+
+        self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
+        self.assertIn("ACCOUNT HEALTH - DAILY DBA CHECKLIST", sql)
+        self.assertIn("COMPANY = 'ALFA'", sql)
+        self.assertIn("NO DATABASE CONTEXT", sql)
+        self.assertIn("ENVIRONMENT", sql)
+        self.assertIn("FIXED_WITHOUT_VERIFICATION", sql)
+        self.assertIn("VERIFIED_CLOSURES", sql)
+        self.assertIn("OVERDUE_OPEN", sql)
+        self.assertIn("OWNER_APPROVAL_GAP_ROWS", sql)
+        self.assertIn("CLOSURE_READINESS", sql)
+        self.assertEqual(verification_query_safety_issues(sql), [])
+
     def test_cortex_ai_functions_sql_is_optional_and_live(self):
         sql = _build_cortex_ai_functions_daily_sql(
             30,
@@ -541,10 +561,61 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(len(command_queue), 1)
         self.assertEqual(command_queue.iloc[0]["ROUTE"], "Workload Operations")
         self.assertEqual(command_queue.iloc[0]["COMMAND_STATE"], "Escalate Overdue")
+        self.assertEqual(command_queue.iloc[0]["COMMAND_EXECUTION_GATE"], "Escalate - Overdue")
+        self.assertEqual(command_queue.iloc[0]["COMMAND_AUDIT_READINESS"], "Audit Gaps")
         self.assertEqual(summary["open"], 1)
         self.assertEqual(summary["overdue"], 1)
         self.assertEqual(summary["owner_gaps"], 1)
         self.assertGreater(summary["control_gaps"], 0)
+        self.assertEqual(summary["audit_ready"], 0)
+
+    def test_dba_control_room_command_queue_exposes_execution_gates(self):
+        queue = pd.DataFrame([
+            {
+                "ACTION_ID": "C1",
+                "CATEGORY": "Cost Control",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "WH_ALFA_BI",
+                "OWNER": "BI_PLATFORM_OWNER",
+                "STATUS": "In Progress",
+                "DUE_DATE": "2026-06-02",
+                "VERIFICATION_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+                "TICKET_ID": "CHG-101",
+                "APPROVER": "FinOps Lead",
+                "BASELINE_VALUE": 100,
+                "CURRENT_VALUE": 180,
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "RECOVERY_SLA_STATE": "Savings Verification Pending",
+            },
+            {
+                "ACTION_ID": "C2",
+                "CATEGORY": "Cost Control",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "WH_ALFA_LOAD",
+                "OWNER": "LOAD_PLATFORM_OWNER",
+                "STATUS": "Acknowledged",
+                "DUE_DATE": "2026-06-02",
+                "VERIFICATION_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+                "TICKET_ID": "CHG-102",
+                "APPROVER": "FinOps Lead",
+                "BASELINE_VALUE": 200,
+                "CURRENT_VALUE": 260,
+                "OWNER_APPROVAL_STATUS": "Approved",
+                "RECOVERY_SLA_STATE": "Savings Verification Pending",
+            },
+        ])
+
+        command_queue = _build_command_queue(queue, today="2026-05-31")
+        summary = _command_queue_summary(command_queue)
+        by_id = {row["ACTION_ID"]: row for _, row in command_queue.iterrows()}
+
+        self.assertEqual(by_id["C1"]["COMMAND_EXECUTION_GATE"], "Blocked - Owner Approval")
+        self.assertEqual(by_id["C1"]["COMMAND_EVIDENCE_REQUIRED"], "Owner approval")
+        self.assertEqual(by_id["C2"]["COMMAND_EXECUTION_GATE"], "Ready - High Risk")
+        self.assertEqual(by_id["C2"]["COMMAND_AUDIT_READINESS"], "Audit Ready")
+        self.assertEqual(summary["approval_blocks"], 1)
+        self.assertEqual(summary["execution_ready"], 1)
+        self.assertEqual(summary["audit_ready"], 1)
 
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []
@@ -2054,10 +2125,15 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(action["Owner"], "BI_PLATFORM_OWNER")
         self.assertEqual(action["Category"], "Cost Control")
         self.assertEqual(action["Environment"], "")
+        self.assertEqual(action["Approver"], "BI_PLATFORM_OWNER / FinOps Lead")
         self.assertEqual(action["Verification Status"], "Pending")
         self.assertEqual(action["Baseline Value"], 250)
         self.assertEqual(action["Current Value"], 500)
         self.assertEqual(action["Measured Delta"], 250)
+        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertEqual(action["Recovery SLA State"], "Savings Verification Pending")
+        self.assertEqual(action["Recovery SLA Target Hours"], 168.0)
+        self.assertIn("next complete period", action["Owner Approval Note"])
         self.assertIn("Exact warehouse metering", action["Action"])
         self.assertIn("WAREHOUSE_METERING_HISTORY", action["Proof Query"])
         self.assertIn("post-fix verification", action["Proof Query"].lower())
@@ -2127,11 +2203,156 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(action["Category"], "Chargeback Review")
         self.assertEqual(action["Owner"], "DBA / FinOps")
         self.assertEqual(action["Environment"], "No Database Context")
+        self.assertEqual(action["Approver"], "FinOps Lead / Cost Owner")
         self.assertEqual(action["Verification Status"], "Pending")
+        self.assertEqual(action["Owner Approval Status"], "Requested")
+        self.assertEqual(action["Recovery SLA State"], "Chargeback Evidence Pending")
+        self.assertEqual(action["Recovery SLA Target Hours"], 168.0)
+        self.assertIn("owner/tag evidence approval", action["Owner Approval Note"])
         self.assertIn("not cleanly chargeback-ready", action["Action"])
         self.assertIn("Chargeback readiness: No", action["Generated SQL Fix"])
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
+
+    def test_cost_contract_closure_analytics_separates_verified_and_estimated_savings(self):
+        queue = pd.DataFrame([
+            {
+                "ACTION_ID": "COST_VERIFIED",
+                "SOURCE": "Cost & Contract - Explain This Bill",
+                "CATEGORY": "Cost Control",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "WH_ALFA_BI",
+                "OWNER": "BI_PLATFORM_OWNER",
+                "STATUS": "Fixed",
+                "EST_MONTHLY_SAVINGS": 600,
+                "OWNER_APPROVAL_STATUS": "Approved",
+                "VERIFICATION_STATUS": "Verified",
+                "VERIFICATION_RESULT": "Post-period metering dropped below baseline.",
+                "BASELINE_VALUE": 200,
+                "CURRENT_VALUE": 150,
+                "MEASURED_DELTA": -50,
+                "RECOVERY_SLA_STATE": "Savings Verified",
+                "QUEUE_PRIORITY": 1,
+            },
+            {
+                "ACTION_ID": "COST_FIXED_GAP",
+                "SOURCE": "Cost & Contract - Explain This Bill",
+                "CATEGORY": "Cost Control",
+                "SEVERITY": "Medium",
+                "ENTITY_NAME": "WH_ALFA_ETL",
+                "OWNER": "ETL_OWNER",
+                "STATUS": "Fixed",
+                "EST_MONTHLY_SAVINGS": 200,
+                "OWNER_APPROVAL_STATUS": "Approved",
+                "VERIFICATION_STATUS": "Pending",
+                "VERIFICATION_RESULT": "",
+                "BASELINE_VALUE": 100,
+                "CURRENT_VALUE": 80,
+                "MEASURED_DELTA": -20,
+                "RECOVERY_SLA_STATE": "Savings Verification Pending",
+                "QUEUE_PRIORITY": 2,
+            },
+            {
+                "ACTION_ID": "COST_OPEN",
+                "SOURCE": "Cost & Contract - User Leaderboard",
+                "CATEGORY": "Cost",
+                "SEVERITY": "Medium",
+                "ENTITY_NAME": "ANALYST on WH_ALFA_BI",
+                "OWNER": "ANALYTICS_OWNER",
+                "STATUS": "New",
+                "EST_MONTHLY_SAVINGS": 300,
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "VERIFICATION_STATUS": "Pending",
+                "BASELINE_VALUE": 100,
+                "CURRENT_VALUE": 180,
+                "MEASURED_DELTA": 80,
+                "RECOVERY_SLA_STATE": "Savings Verification Pending",
+                "QUEUE_PRIORITY": 3,
+            },
+            {
+                "ACTION_ID": "CHARGEBACK_OPEN",
+                "SOURCE": "Cost & Contract - Chargeback",
+                "CATEGORY": "Chargeback Review",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "NO_DATABASE_CONTEXT / Unknown user on BI_COMPUTE_WH",
+                "OWNER": "DBA / FinOps",
+                "STATUS": "In Progress",
+                "EST_MONTHLY_SAVINGS": 400,
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "VERIFICATION_STATUS": "Pending",
+                "BASELINE_VALUE": 0,
+                "CURRENT_VALUE": 400,
+                "MEASURED_DELTA": 400,
+                "RECOVERY_SLA_STATE": "Chargeback Evidence Pending",
+                "QUEUE_PRIORITY": 4,
+            },
+        ])
+
+        summary, detail = _build_cost_closure_analytics(queue, 3.0)
+        by_id = {row["ACTION_ID"]: row for _, row in detail.iterrows()}
+
+        self.assertEqual(summary["cost_actions"], 4)
+        self.assertEqual(summary["open_actions"], 2)
+        self.assertEqual(summary["verified_savings_actions"], 1)
+        self.assertEqual(summary["fixed_without_verification"], 1)
+        self.assertEqual(summary["approval_pending_actions"], 2)
+        self.assertEqual(summary["open_estimated_monthly_savings"], 700)
+        self.assertEqual(summary["blocked_estimated_monthly_savings"], 700)
+        self.assertEqual(summary["verified_estimated_monthly_savings"], 600)
+        self.assertEqual(summary["verified_period_delta_dollars"], 150)
+        self.assertEqual(by_id["COST_VERIFIED"]["CLOSURE_STATE"], "Verified savings")
+        self.assertEqual(by_id["COST_FIXED_GAP"]["CLOSURE_STATE"], "Fixed without verified savings")
+        self.assertEqual(by_id["COST_OPEN"]["CLOSURE_STATE"], "Approval pending")
+        self.assertEqual(by_id["CHARGEBACK_OPEN"]["CLOSURE_STATE"], "Chargeback evidence pending")
+
+    def test_cost_contract_verification_health_surfaces_task_and_evidence_issues(self):
+        health = pd.DataFrame([
+            {
+                "CONTROL_NAME": "Cost & Contract Savings Verification",
+                "TASK_NAME": "OVERWATCH_COST_SAVINGS_VERIFY",
+                "TASK_HEALTH_STATE": "Healthy",
+                "LAST_TASK_STATE": "SUCCEEDED",
+                "FAILED_RUNS_7D": 0,
+                "LAST_VERIFICATION_RUN_AT": "2026-05-31 07:20:00",
+                "LEDGER_RUN_ROWS_7D": 12,
+                "CANDIDATES_LAST_RUN": 4,
+                "VERIFIED_LAST_RUN": 1,
+                "EVIDENCE_REQUIRED_LAST_RUN": 3,
+                "NEXT_ACTION": "Review evidence-required cost actions.",
+            }
+        ])
+
+        summary, detail = _build_savings_verification_task_summary(health)
+
+        self.assertTrue(summary["loaded"])
+        self.assertEqual(summary["health_state"], "Healthy")
+        self.assertEqual(summary["issue_severity"], "Medium")
+        self.assertEqual(summary["issue_count"], 3)
+        self.assertEqual(summary["ledger_rows_7d"], 12)
+        self.assertEqual(summary["verified_last_run"], 1)
+        self.assertEqual(summary["evidence_required_last_run"], 3)
+        self.assertEqual(detail.iloc[0]["ISSUE_SEVERITY"], "Medium")
+        self.assertIn("Review evidence-required", detail.iloc[0]["ISSUE_DETAIL"])
+
+    def test_cost_contract_verification_health_prioritizes_task_failures(self):
+        health = pd.DataFrame([
+            {
+                "TASK_HEALTH_STATE": "Task Failed",
+                "LAST_TASK_STATE": "FAILED",
+                "FAILED_RUNS_7D": 2,
+                "LEDGER_RUN_ROWS_7D": 0,
+                "EVIDENCE_REQUIRED_LAST_RUN": 0,
+                "NEXT_ACTION": "Inspect TASK_HISTORY error.",
+            }
+        ])
+
+        summary, detail = _build_savings_verification_task_summary(health)
+
+        self.assertEqual(summary["issue_severity"], "Critical")
+        self.assertEqual(summary["issue_count"], 3)
+        self.assertEqual(summary["failed_runs_7d"], 2)
+        self.assertEqual(detail.iloc[0]["ISSUE_COUNT"], 3)
+        self.assertIn("TASK_HISTORY", summary["next_action"])
 
     def test_recommendation_actions_have_runnable_verification_sql(self):
         queries = [
@@ -2254,6 +2475,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("EMAIL_READY", sql)
         self.assertIn("TASK FAILURE", sql)
         self.assertIn("STORED PROCEDURE", sql)
+        self.assertIn("COST SAVINGS VERIFICATION FAILURE", sql)
+        self.assertIn("COST_SAVINGS_VERIFIER_FAILURE", sql)
+        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY", sql)
         self.assertIn("GRANT/REVOKE ACTIVITY", sql)
         self.assertIn("WAREHOUSE SETTING CHANGE", sql)
         self.assertIn("OVERWATCH_ALERT_RULES", sql)
@@ -2436,6 +2660,25 @@ class FormulaRegressionTests(unittest.TestCase):
                 "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY LIMIT 10",
                 "OWNER": "DBA / FinOps",
             },
+            {
+                "ALERT_ID": 33,
+                "ALERT_TS": "2026-05-31 10:20:00",
+                "COMPANY": "ALFA",
+                "ENVIRONMENT": "No Database Context",
+                "CATEGORY": "Cost Control",
+                "ALERT_TYPE": "Cost Savings Verification Failure",
+                "SEVERITY": "High",
+                "STATUS": "New",
+                "ENTITY_NAME": "OVERWATCH_DB.OVERWATCH.OVERWATCH_COST_SAVINGS_VERIFY",
+                "MESSAGE": "2 failed savings verification task run(s) in the last 24 hours.",
+                "SUGGESTED_ACTION": "Open Cost & Contract verifier health.",
+                "PROOF_QUERY": "SELECT DATABASE_NAME, SCHEMA_NAME, NAME, STATE FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY WHERE UPPER(NAME) = 'OVERWATCH_COST_SAVINGS_VERIFY'",
+                "OWNER": "DBA / FinOps",
+                "ESCALATION_TARGET": "FinOps Lead",
+                "SLA_TARGET_HOURS": 8,
+                "ALERT_AGE_HOURS": 9,
+                "SLA_STATE": "Overdue",
+            },
         ])
 
         actions = alert_history_to_actions(alerts, company="ALFA")
@@ -2443,6 +2686,7 @@ class FormulaRegressionTests(unittest.TestCase):
         task = by_entity["ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY"]
         proc = by_entity["ALFA_EDW_DEV.PUBLIC.SP_LOAD_POLICY"]
         cost = by_entity["WH_ALFA_LOAD"]
+        verifier = by_entity["OVERWATCH_DB.OVERWATCH.OVERWATCH_COST_SAVINGS_VERIFY"]
 
         self.assertEqual(task["Category"], "Task & Procedure Reliability")
         self.assertEqual(task["Entity Type"], "Task")
@@ -2470,6 +2714,21 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(cost["Category"], "Cost Control")
         self.assertNotIn("Owner Approval Status", cost)
         self.assertEqual(verification_query_safety_issues(cost["Verification Query"]), [])
+
+        self.assertEqual(verifier["Category"], "Cost Control")
+        self.assertEqual(verifier["Entity Type"], "Cost Verification Task")
+        self.assertEqual(verifier["Owner Approval Status"], "Requested")
+        self.assertEqual(verifier["Approver"], "FinOps Lead")
+        self.assertEqual(verifier["Recovery SLA State"], "Recovery SLA Breach")
+        self.assertEqual(verifier["Recovery SLA Target Hours"], 8.0)
+        self.assertEqual(verifier["Recovery SLA Hours"], 9.0)
+        self.assertEqual(verifier["Baseline Value"], 0.0)
+        self.assertEqual(verifier["Current Value"], 2.0)
+        self.assertIn("TASK_HISTORY", verifier["Verification Query"])
+        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY", verifier["Verification Query"])
+        self.assertNotIn("ALTER TASK", verifier["Generated SQL Fix"].upper())
+        self.assertIn("clean run ledger", verifier["Action"])
+        self.assertEqual(verification_query_safety_issues(verifier["Verification Query"]), [])
 
     def test_alert_triage_view_sql_exposes_auditable_sla_state(self):
         sql = build_alert_triage_view_sql().upper()

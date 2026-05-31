@@ -1228,6 +1228,105 @@ def _command_queue_route(category: object) -> str:
     return "Alert Center"
 
 
+def _command_value_present(row: pd.Series, *columns: str) -> bool:
+    """Return whether any queue metadata column has a non-placeholder value."""
+    for column in columns:
+        value = row.get(column)
+        if value is None:
+            continue
+        try:
+            if pd.isna(value):
+                continue
+        except Exception:
+            pass
+        text = str(value).strip()
+        if text and text.upper() not in {"N/A", "NONE", "NULL", "NAN", "<NA>", "UNKNOWN"}:
+            return True
+    return False
+
+
+def _command_named_owner(row: pd.Series) -> bool:
+    owner = str(row.get("OWNER") or "").strip().upper()
+    return bool(owner and owner not in {
+        "N/A",
+        "NONE",
+        "NULL",
+        "UNKNOWN",
+        "UNKNOWN USER",
+        "UNKNOWN WAREHOUSE",
+        "DBA",
+        "DBA / FINOPS",
+        "DBA / DATA ENGINEERING",
+    })
+
+
+def _command_requires_approval(row: pd.Series) -> bool:
+    category = str(row.get("CATEGORY") or "").upper()
+    severity = str(row.get("SEVERITY") or "").upper()
+    source = str(row.get("SOURCE") or "").upper()
+    controlled_domains = (
+        "COST",
+        "WAREHOUSE",
+        "SECURITY",
+        "ACCESS",
+        "GRANT",
+        "CHANGE",
+        "DRIFT",
+        "TASK",
+        "PROCEDURE",
+        "RELIABILITY",
+    )
+    return severity in {"CRITICAL", "HIGH"} or any(token in category or token in source for token in controlled_domains)
+
+
+def _command_execution_metadata(row: pd.Series) -> dict:
+    """Classify whether a queue row is safe to execute from the Control Room."""
+    category = str(row.get("CATEGORY") or "").upper()
+    severity = str(row.get("SEVERITY") or "").upper()
+    due_state = str(row.get("DUE_STATE") or "")
+    approval_status = str(row.get("OWNER_APPROVAL_STATUS") or "").strip().upper()
+    requires_approval = _command_requires_approval(row)
+
+    gaps: list[str] = []
+    if not _command_named_owner(row):
+        gaps.append("Named owner")
+    if not _command_value_present(row, "TICKET_ID"):
+        gaps.append("Ticket/change ID")
+    if not _command_value_present(row, "APPROVER"):
+        gaps.append("Approver")
+    if not _command_value_present(row, "VERIFICATION_QUERY", "PROOF_QUERY"):
+        gaps.append("Verification query")
+    if ("COST" in category or "CHARGEBACK" in category or "TASK" in category or "PROCEDURE" in category) and (
+        not _command_value_present(row, "BASELINE_VALUE")
+        or not _command_value_present(row, "CURRENT_VALUE")
+    ):
+        gaps.append("Baseline/current values")
+
+    approval_blocked = requires_approval and approval_status in {"", "PENDING", "REQUESTED", "REQUIRED"}
+    if approval_blocked:
+        gaps.append("Owner approval")
+
+    metadata_missing = any(item != "Owner approval" for item in gaps)
+    if due_state == "Overdue":
+        gate = "Escalate - Overdue"
+    elif metadata_missing:
+        gate = "Blocked - Metadata"
+    elif approval_blocked:
+        gate = "Blocked - Owner Approval"
+    elif severity in {"CRITICAL", "HIGH"}:
+        gate = "Ready - High Risk"
+    else:
+        gate = "Ready - Standard"
+
+    audit_ready = gate.startswith("Ready")
+    return {
+        "COMMAND_OWNER_READINESS": "Named Owner" if _command_named_owner(row) else "Owner Needed",
+        "COMMAND_AUDIT_READINESS": "Audit Ready" if audit_ready else "Audit Gaps",
+        "COMMAND_EXECUTION_GATE": gate,
+        "COMMAND_EVIDENCE_REQUIRED": "; ".join(dict.fromkeys(gaps)) if gaps else "Ready for controlled execution",
+    }
+
+
 def _build_command_queue(queue: pd.DataFrame, today: str | pd.Timestamp | None = None) -> pd.DataFrame:
     """Return open action-queue rows as a DBA command queue with control gaps."""
     if queue is None or queue.empty:
@@ -1247,7 +1346,10 @@ def _build_command_queue(queue: pd.DataFrame, today: str | pd.Timestamp | None =
 
     view["ROUTE"] = view.get("CATEGORY", pd.Series([""] * len(view), index=view.index)).apply(_command_queue_route)
     view["CONTROL_GAP"] = evidence.where(evidence.ne("Ready to work"), "")
-    view["PROOF_READY"] = evidence.isin(["Ready to work", "Verified closure"]).map({True: "Yes", False: "No"})
+    command_metadata = view.apply(_command_execution_metadata, axis=1, result_type="expand")
+    for column in command_metadata.columns:
+        view[column] = command_metadata[column]
+    view["PROOF_READY"] = view["COMMAND_EXECUTION_GATE"].astype(str).str.startswith("Ready").map({True: "Yes", False: "No"})
     view["COMMAND_STATE"] = "Work Ready"
     view.loc[evidence.ne("Ready to work"), "COMMAND_STATE"] = "Complete Control Metadata"
     view.loc[due_state.eq("Overdue"), "COMMAND_STATE"] = "Escalate Overdue"
@@ -1275,31 +1377,42 @@ def _command_queue_summary(queue: pd.DataFrame) -> dict:
             "approval_gaps": 0,
             "ticket_gaps": 0,
             "high_risk": 0,
+            "execution_ready": 0,
+            "audit_ready": 0,
+            "metadata_blocks": 0,
+            "approval_blocks": 0,
         }
     evidence = queue.get("EVIDENCE_GAP", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str)
     severity = queue.get("SEVERITY", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str).str.upper()
     due_state = queue.get("DUE_STATE", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str)
+    gate = queue.get("COMMAND_EXECUTION_GATE", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str)
+    audit = queue.get("COMMAND_AUDIT_READINESS", pd.Series([""] * len(queue), index=queue.index)).fillna("").astype(str)
     return {
         "open": int(len(queue)),
         "overdue": int(due_state.eq("Overdue").sum()),
-        "ready": int(evidence.eq("Ready to work").sum()),
+        "ready": int(gate.str.startswith("Ready").sum()) if "COMMAND_EXECUTION_GATE" in queue.columns else int(evidence.eq("Ready to work").sum()),
         "control_gaps": int(evidence.ne("Ready to work").sum()),
         "owner_gaps": int(evidence.str.contains("named owner", case=False, na=False).sum()),
         "approval_gaps": int(evidence.str.contains("approver|owner approval", case=False, na=False).sum()),
         "ticket_gaps": int(evidence.str.contains("ticket|change ID", case=False, na=False).sum()),
         "high_risk": int(severity.isin(["CRITICAL", "HIGH"]).sum()),
+        "execution_ready": int(gate.str.startswith("Ready").sum()),
+        "audit_ready": int(audit.eq("Audit Ready").sum()),
+        "metadata_blocks": int(gate.eq("Blocked - Metadata").sum()),
+        "approval_blocks": int(gate.eq("Blocked - Owner Approval").sum()),
     }
 
 
 def _render_command_queue_control(queue: pd.DataFrame) -> None:
     summary = _command_queue_summary(queue)
     st.markdown("**DBA Command Queue Control**")
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Open DBA Actions", f"{summary['open']:,}", delta_color="inverse")
     c2.metric("Overdue", f"{summary['overdue']:,}", delta_color="inverse")
-    c3.metric("Work Ready", f"{summary['ready']:,}")
-    c4.metric("Control Gaps", f"{summary['control_gaps']:,}", delta_color="inverse")
-    c5.metric("High Risk", f"{summary['high_risk']:,}", delta_color="inverse")
+    c3.metric("Execution Ready", f"{summary['execution_ready']:,}")
+    c4.metric("Audit Ready", f"{summary['audit_ready']:,}")
+    c5.metric("Approval Blocks", f"{summary['approval_blocks']:,}", delta_color="inverse")
+    c6.metric("High Risk", f"{summary['high_risk']:,}", delta_color="inverse")
 
     if queue.empty:
         st.success("No open action queue items for the current company/environment scope.")
@@ -1309,8 +1422,9 @@ def _render_command_queue_control(queue: pd.DataFrame) -> None:
         queue,
         title="Open queue items to assign, approve, verify, or escalate",
         priority_columns=[
-            "SEVERITY", "DUE_STATE", "COMMAND_STATE", "CATEGORY", "ENTITY_NAME",
-            "OWNER", "STATUS", "CONTROL_GAP", "NEXT_ACTION", "TICKET_ID",
+            "SEVERITY", "DUE_STATE", "COMMAND_STATE", "COMMAND_EXECUTION_GATE",
+            "COMMAND_AUDIT_READINESS", "CATEGORY", "ENTITY_NAME", "OWNER",
+            "STATUS", "COMMAND_EVIDENCE_REQUIRED", "NEXT_ACTION", "TICKET_ID",
             "APPROVER", "ROUTE",
         ],
         sort_by=["QUEUE_PRIORITY", "SEVERITY"],

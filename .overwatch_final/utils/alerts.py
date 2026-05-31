@@ -67,6 +67,16 @@ DEFAULT_ALERT_RULES = [
         "RUNBOOK": "Explain the bill movement, identify owner-backed drivers, and route savings actions.",
     },
     {
+        "RULE_ID": "COST_SAVINGS_VERIFIER_FAILURE",
+        "CATEGORY": "Cost Control",
+        "ALERT_TYPE": "Cost Savings Verification Failure",
+        "DEFAULT_SEVERITY": "High",
+        "SLA_HOURS": 8,
+        "OWNER": "DBA / FinOps",
+        "ROUTE": "Cost & Contract",
+        "RUNBOOK": "Inspect the savings verifier task, keep savings estimated, and restore ledger-backed verification before claiming value.",
+    },
+    {
         "RULE_ID": "QUERY_HIGH_ERROR_RATE",
         "CATEGORY": "Reliability",
         "ALERT_TYPE": "High Query Error Rate",
@@ -1208,6 +1218,16 @@ def _alert_reliability_kind(row: pd.Series | dict) -> str:
     return ""
 
 
+def _alert_is_cost_verifier(row: pd.Series | dict) -> bool:
+    signal = " ".join([
+        _row_value(row, "CATEGORY", default=""),
+        _row_value(row, "ALERT_TYPE", default=""),
+        _row_value(row, "ENTITY_NAME", "ENTITY", default=""),
+        _row_value(row, "MESSAGE", "DETAIL", default=""),
+    ]).upper()
+    return "COST SAVINGS VERIFICATION" in signal or "OVERWATCH_COST_SAVINGS_VERIFY" in signal
+
+
 def _object_leaf_name(value: object) -> str:
     text = str(value or "").strip().strip('"')
     if not text:
@@ -1288,6 +1308,16 @@ LIMIT 50
 """.strip()
 
 
+def _cost_verifier_verification_query() -> str:
+    return """
+SELECT DATABASE_NAME, SCHEMA_NAME, NAME, STATE, SCHEDULED_TIME, COMPLETED_TIME, QUERY_ID, ERROR_MESSAGE
+FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+WHERE UPPER(NAME) = 'OVERWATCH_COST_SAVINGS_VERIFY'
+ORDER BY SCHEDULED_TIME DESC
+LIMIT 50
+""".strip()
+
+
 def _alert_recovery_verification_query(row: pd.Series | dict, reliability_kind: str) -> str:
     from .action_queue import verification_query_safety_issues
 
@@ -1360,6 +1390,18 @@ def _alert_recovery_sql_guidance(row: pd.Series | dict, reliability_kind: str) -
     ])
 
 
+def _alert_cost_verifier_sql_guidance(row: pd.Series | dict) -> str:
+    entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="OVERWATCH_COST_SAVINGS_VERIFY")
+    owner = _row_value(row, "OWNER", "ESCALATION_TARGET", default="DBA / FinOps")
+    return "\n".join([
+        f"-- Governed cost savings verifier recovery for {entity}",
+        "-- Do not claim cost savings while the verifier task is failing.",
+        f"-- Assign owner/approver: {owner}",
+        "-- Required order: inspect TASK_HISTORY, fix verifier privileges/schedule/procedure errors, document the ticket, then verify a clean ledger run.",
+        "-- If task recovery requires schedule, resume, or procedure changes, execute from the approved Workload Operations/Admin workflow with audit evidence.",
+    ])
+
+
 def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> list[dict]:
     if df_alerts is None or df_alerts.empty:
         return []
@@ -1374,14 +1416,21 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
         entity = _row_value(row, "ENTITY_NAME", "ENTITY", default="Snowflake account")
         message = _row_value(row, "MESSAGE", "DETAIL")
         reliability_kind = _alert_reliability_kind(row)
+        is_cost_verifier = _alert_is_cost_verifier(row)
         is_recovery = reliability_kind in {"task", "procedure"}
-        action_category = "Task & Procedure Reliability" if is_recovery else category
-        entity_type = {
+        governed_recovery = is_recovery or is_cost_verifier
+        action_category = "Task & Procedure Reliability" if is_recovery else "Cost Control" if is_cost_verifier else category
+        entity_type = "Cost Verification Task" if is_cost_verifier else {
             "task": "Task",
             "procedure": "Stored Procedure",
         }.get(reliability_kind, "Alert Entity")
         proof_query = _safe_alert_proof_query(row)
-        verification_query = _alert_recovery_verification_query(row, reliability_kind) if is_recovery else proof_query
+        if is_cost_verifier:
+            verification_query = _cost_verifier_verification_query()
+        elif is_recovery:
+            verification_query = _alert_recovery_verification_query(row, reliability_kind)
+        else:
+            verification_query = proof_query
         owner = _row_value(row, "OWNER", default="DBA")
         escalation_target = _row_value(row, "ESCALATION_TARGET", default="")
         sla_target_hours = _alert_numeric_value(row, "SLA_TARGET_HOURS")
@@ -1389,7 +1438,17 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             sla_target_hours = float(ALERT_SLA_HOURS.get(normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium")), 24))
         alert_age_hours = _alert_numeric_value(row, "ALERT_AGE_HOURS")
         suggested_action = _row_value(row, "SUGGESTED_ACTION", default="Review the Alert Center issue and route it through the DBA action queue.")
-        if is_recovery:
+        if is_cost_verifier:
+            suggested_action = (
+                f"{suggested_action} Keep savings estimated until the verifier task has a clean run ledger, "
+                "then re-run closure review in Cost & Contract."
+            )
+            sql_fix = _alert_cost_verifier_sql_guidance(row)
+            recovery_evidence = (
+                "Required closure evidence: TASK_HISTORY error/root cause, owner approval, successful verifier task run, "
+                f"and refreshed savings verification ledger for {entity}. Alert detail: {message}"
+            )
+        elif is_recovery:
             suggested_action = (
                 f"{suggested_action} Govern recovery through the action queue: assign owner/ticket, prove root cause, "
                 "obtain owner approval before manual recovery, and verify the next run."
@@ -1403,7 +1462,7 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             sql_fix = "-- Review alert evidence before applying a fix."
             recovery_evidence = ""
         action = {
-            "Action ID": make_action_id(action_category if is_recovery else "Alert", entity, f"{alert_type}|{message}|{alert_id}"),
+            "Action ID": make_action_id(action_category if governed_recovery else "Alert", entity, f"{alert_type}|{message}|{alert_id}"),
             "Source": "Alert Center",
             "Severity": normalize_alert_severity(_row_value(row, "SEVERITY", default="Medium")),
             "Category": action_category,
@@ -1420,13 +1479,13 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             "Company": _row_value(row, "COMPANY", default=company),
             "Environment": _row_value(row, "ENVIRONMENT", default="No Database Context"),
         }
-        if is_recovery:
+        if governed_recovery:
             action.update({
                 "Approver": escalation_target or owner,
                 "Owner Approval Status": "Requested",
                 "Owner Approval Note": (
-                    "Alert routed from Alert Center; retry or recovery requires root-cause owner approval and "
-                    "post-recovery verification."
+                    "Alert routed from Alert Center; retry, recovery, or claimed savings closure requires root-cause "
+                    "owner approval and post-recovery verification."
                 ),
                 "Recovery SLA State": _alert_recovery_sla_state(row),
                 "Recovery SLA Target Hours": float(sla_target_hours),
@@ -1434,7 +1493,7 @@ def alert_history_to_actions(df_alerts: pd.DataFrame, company: str = "ALFA") -> 
             })
             if alert_age_hours is not None:
                 action["Recovery SLA Hours"] = float(alert_age_hours)
-            action.update(_alert_recovery_metrics(row, reliability_kind))
+            action.update(_alert_recovery_metrics(row, "task" if is_cost_verifier else reliability_kind))
         actions.append(action)
     return actions
 
@@ -2065,6 +2124,7 @@ MERGE INTO {db}.{schema}.OVERWATCH_ALERT_RULES tgt
 USING (
     SELECT * FROM VALUES
         ('COST_CREDIT_SPIKE', 'Cost Control', 'Credit Spike', 'Medium', 24, 'DBA / FinOps', 'Cost & Contract', 'Explain the bill movement, identify owner-backed drivers, and route savings actions.'),
+        ('COST_SAVINGS_VERIFIER_FAILURE', 'Cost Control', 'Cost Savings Verification Failure', 'High', 8, 'DBA / FinOps', 'Cost & Contract', 'Inspect the savings verifier task, keep savings estimated, and restore ledger-backed verification before claiming value.'),
         ('QUERY_HIGH_ERROR_RATE', 'Reliability', 'High Query Error Rate', 'High', 8, 'DBA / Workload Owner', 'Workload Operations', 'Group failures by error code/query text and assign the owning team.'),
         ('TASK_FAILURE', 'Reliability', 'Task Failure', 'High', 8, 'DBA / Pipeline Owner', 'Workload Operations', 'Review task graph impact, retry only after root cause, and verify the next run.'),
         ('PROCEDURE_FAILURE_OR_SPIKE', 'Reliability', 'Stored Procedure Failure / Runtime Spike', 'High', 8, 'DBA / Procedure Owner', 'Workload Operations', 'Compare release windows, inspect child queries, and verify runtime/cost return to baseline.'),
@@ -2185,6 +2245,22 @@ task_failures AS (
     FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
     WHERE scheduled_time >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
       AND UPPER(state) = 'FAILED'
+      AND UPPER(name) <> 'OVERWATCH_COST_SAVINGS_VERIFY'
+    GROUP BY database_name, schema_name, name
+),
+cost_savings_verifier_failures AS (
+    SELECT
+        database_name,
+        schema_name,
+        name AS task_name,
+        COUNT(*) AS failures,
+        MAX(state) AS latest_state,
+        MAX(scheduled_time) AS latest_scheduled_time,
+        MAX(LEFT(error_message, 500)) AS sample_error
+    FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+    WHERE scheduled_time >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
+      AND UPPER(name) = 'OVERWATCH_COST_SAVINGS_VERIFY'
+      AND UPPER(COALESCE(state, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED')
     GROUP BY database_name, schema_name, name
 ),
 proc_recent AS (
@@ -2323,6 +2399,26 @@ candidates AS (
         'SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY WHERE DATABASE_NAME = ''' || database_name || ''' AND SCHEMA_NAME = ''' || schema_name || ''' AND NAME = ''' || task_name || ''' ORDER BY SCHEDULED_TIME DESC LIMIT 100;',
         'DBA'
     FROM task_failures
+
+    UNION ALL
+
+    SELECT
+        'ALFA',
+        'No Database Context',
+        database_name,
+        schema_name,
+        NULL,
+        'Cost Control',
+        'Cost Savings Verification Failure',
+        CASE WHEN failures >= 2 THEN 'Critical' ELSE 'High' END,
+        COALESCE(database_name || '.' || schema_name || '.', '') || task_name,
+        COALESCE(database_name || '.' || schema_name || '.', '') || task_name,
+        failures || ' failed savings verification task run(s) in the last 24 hours. Latest state: ' || COALESCE(latest_state, 'unknown') || '. Sample: ' || COALESCE(sample_error, 'No sample error captured.'),
+        failures || ' failed savings verification task run(s) in the last 24 hours. Latest state: ' || COALESCE(latest_state, 'unknown') || '. Sample: ' || COALESCE(sample_error, 'No sample error captured.'),
+        'Open Cost & Contract verifier health, inspect TASK_HISTORY, keep savings estimated, and restore scheduled verification before claiming value.',
+        'SELECT DATABASE_NAME, SCHEMA_NAME, NAME, STATE, SCHEDULED_TIME, COMPLETED_TIME, QUERY_ID, ERROR_MESSAGE FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY WHERE UPPER(NAME) = ''OVERWATCH_COST_SAVINGS_VERIFY'' ORDER BY SCHEDULED_TIME DESC LIMIT 100;',
+        'DBA / FinOps'
+    FROM cost_savings_verifier_failures
 
     UNION ALL
 

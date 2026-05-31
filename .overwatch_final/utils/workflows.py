@@ -1,6 +1,7 @@
 # utils/workflows.py - helpers for DBA workflow hub navigation
 from __future__ import annotations
 
+import html
 from collections.abc import Mapping, Sequence
 
 import streamlit as st
@@ -69,15 +70,27 @@ def render_operator_briefing(
     """Render a visible, low-cost operating brief for workflow hubs."""
     if not rows:
         return
-    st.markdown(f"**{title}**")
     columns = max(1, min(int(columns or 4), 4))
     items = list(rows)
-    for start in range(0, len(items), columns):
-        cols = st.columns(len(items[start:start + columns]))
-        for col, (label, detail) in zip(cols, items[start:start + columns]):
-            with col:
-                st.caption(label)
-                st.markdown(f"**{detail}**")
+    cells = []
+    for label, detail in items:
+        cells.append(
+            "<div class=\"ow-brief-item\">"
+            f"<div class=\"ow-brief-label\">{html.escape(str(label))}</div>"
+            f"<div class=\"ow-brief-detail\">{html.escape(str(detail))}</div>"
+            "</div>"
+        )
+    st.markdown(
+        f"""
+        <div class="ow-brief-strip">
+            <div class="ow-brief-title">{html.escape(str(title))}</div>
+            <div class="ow-brief-grid" style="grid-template-columns: repeat({columns}, minmax(0, 1fr));">
+                {''.join(cells)}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def add_signal_routes(
@@ -160,7 +173,16 @@ def render_priority_dataframe(
         if columns:
             view = view[columns]
 
-    st.markdown(f"**{title}**")
+    visible_rows = min(len(view), int(max_rows or 25))
+    st.markdown(
+        f"""
+        <div class="ow-table-heading">
+            <span>{html.escape(str(title))}</span>
+            <span>Showing {visible_rows:,} of {len(df):,}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     dataframe_kwargs = {
         "use_container_width": True,
         "hide_index": True,

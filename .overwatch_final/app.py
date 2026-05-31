@@ -7,7 +7,9 @@
 #   - Saved Views / Bookmarks sidebar panel
 # -----------------------------------------------------------------------------
 import streamlit as st
+import html
 from datetime import datetime, timedelta
+from streamlit.runtime.scriptrunner import StopException
 
 st.set_page_config(
     page_title="OVERWATCH - Snowflake DBA Monitor",
@@ -21,6 +23,7 @@ from config import (
     ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
     DEFAULT_COMPANY, ROLE_SECTIONS, SECTION_ALIASES,
     SECTION_BY_TITLE, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
+    SECTION_ICONS,
 )
 from utils.display import clear_all_cache
 from utils.session import get_session
@@ -87,6 +90,154 @@ def _metric_settings_signature() -> tuple:
     )
 
 
+def _probe_snowflake_available(force: bool = False) -> bool:
+    """Return whether the app appears to have a Snowflake connection path."""
+    if not force and "_overwatch_connection_available" in st.session_state:
+        return bool(st.session_state.get("_overwatch_connection_available"))
+
+    available = False
+    try:
+        connections = st.secrets.get("connections", {})
+        snowflake_cfg = connections.get("snowflake", {}) if connections else {}
+        available = bool(snowflake_cfg)
+    except Exception:
+        available = False
+
+    if not available:
+        try:
+            from snowflake.snowpark.context import get_active_session
+
+            get_active_session()
+            available = True
+        except Exception:
+            available = False
+
+    st.session_state["_overwatch_connection_available"] = available
+    st.session_state["_overwatch_connection_unavailable"] = not available
+    return available
+
+
+SECTION_SUBTITLES = {
+    "DBA Control Room": "Morning triage, route readiness, source health, and release risk.",
+    "Alert Center": "Consolidated incidents, email digests, annotation history, and alert setup.",
+    "Account Health": "Daily DBA checklist, source confidence, user hygiene, and account posture.",
+    "Workload Operations": "Query history, task graphs, stored procedures, pipeline health, and runbooks.",
+    "Warehouse Health": "Warehouse pressure, capacity controls, setting review, and efficiency evidence.",
+    "Cost & Contract": "Spend attribution, contract utilization, chargeback, savings, and action queue.",
+    "Security Posture": "Access posture, privileged grants, data sharing, and governance evidence.",
+    "Change & Drift": "Object changes, access changes, drift, approvals, and deployment evidence.",
+}
+
+
+def _section_subtitle(section: str) -> str:
+    return SECTION_SUBTITLES.get(section, "Snowflake DBA operating surface.")
+
+
+def _chip(label: str, value: object, *, muted: bool = False) -> str:
+    safe_label = html.escape(str(label))
+    safe_value = html.escape(str(value if value not in (None, "") else "All"))
+    cls = "ow-scope-chip ow-muted-chip" if muted else "ow-scope-chip"
+    return f'<span class="{cls}"><span>{safe_label}</span><strong>{safe_value}</strong></span>'
+
+
+def _active_scope_chips(company: str) -> str:
+    env_key = st.session_state.get("global_environment", DEFAULT_ENVIRONMENT)
+    env_label = ENVIRONMENT_CONFIG.get(env_key, ENVIRONMENT_CONFIG[DEFAULT_ENVIRONMENT])["label"]
+    chips = [
+        _chip("Company", company),
+        _chip("Environment", env_label),
+    ]
+    start = st.session_state.get("global_start_date")
+    end = st.session_state.get("global_end_date")
+    if start and end:
+        chips.append(_chip("Window", f"{start} to {end}", muted=True))
+    for label, key in [
+        ("Warehouse", "global_warehouse"),
+        ("User", "global_user"),
+        ("Role", "global_role"),
+        ("Database", "global_database"),
+    ]:
+        value = st.session_state.get(key)
+        if value:
+            chips.append(_chip(label, value, muted=True))
+    if st.session_state.get("exceptions_only_mode"):
+        chips.append(_chip("Mode", "Exceptions only"))
+    return "".join(chips)
+
+
+def _render_app_header(section: str, company: str, credit_price: float, role: str) -> None:
+    section = _normalize_nav_section(section)
+    icon = SECTION_ICONS.get(section, "target")
+    now_label = datetime.now().strftime("%Y-%m-%d %H:%M")
+    safe_section = html.escape(section)
+    safe_subtitle = html.escape(_section_subtitle(section))
+    safe_role = html.escape(role[:24] or "DBA")
+    safe_icon = html.escape(str(icon).upper())
+    scope_chips = _active_scope_chips(company)
+    left, right = st.columns([5.4, 1.6])
+    with left:
+        st.markdown(
+            f"""
+            <div class="ow-topbar">
+                <div class="ow-section-kicker">OVERWATCH DBA COMMAND CENTER</div>
+                <div class="ow-section-row">
+                    <span class="ow-section-icon">{safe_icon}</span>
+                    <div>
+                        <div class="ow-section-title">{safe_section}</div>
+                        <div class="ow-section-subtitle">{safe_subtitle}</div>
+                    </div>
+                </div>
+                <div class="ow-scope-row">{scope_chips}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with right:
+        st.markdown(
+            f"""
+            <div class="ow-run-context">
+                <div>{html.escape(now_label)}</div>
+                <div>{safe_role}</div>
+                <div>${float(credit_price):.2f}/credit</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Refresh", key="global_refresh", use_container_width=True):
+            clear_all_cache()
+            st.rerun()
+
+
+def _render_connection_empty_state(section: str) -> None:
+    st.markdown(
+        f"""
+        <div class="ow-empty-state">
+            <div class="ow-empty-title">Connect Snowflake to load {html.escape(section)}</div>
+            <div class="ow-empty-copy">
+                The OVERWATCH shell is loaded. Live DBA evidence, saved views, alerts, and action queues
+                require a Snowflake Streamlit session or a configured Streamlit Snowflake connection.
+            </div>
+            <div class="ow-empty-list">
+                <span>Deploy inside Snowflake Streamlit</span>
+                <span>or configure <code>connections.snowflake</code></span>
+                <span>then retry the connection</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("Retry Snowflake connection", key="retry_snowflake_connection"):
+        st.session_state.pop("_overwatch_connection_unavailable", None)
+        st.session_state.pop("_overwatch_connection_available", None)
+        st.session_state.pop("_overwatch_current_role", None)
+        st.session_state.pop("sf_session", None)
+        st.session_state.pop("_sf_session_created_at", None)
+        st.rerun()
+
+
+connection_available = _probe_snowflake_available()
+
+
 # Sidebar.
 with st.sidebar:
     st.markdown("""
@@ -100,10 +251,7 @@ with st.sidebar:
     st.divider()
 
     if "_overwatch_current_role" not in st.session_state:
-        try:
-            get_session()
-        except Exception:
-            st.session_state.setdefault("_overwatch_current_role", "")
+        st.session_state.setdefault("_overwatch_current_role", "")
 
     # Company filter.
     _prev_company = st.session_state.get("_prev_active_company", DEFAULT_COMPANY)
@@ -233,14 +381,28 @@ with st.sidebar:
 
     # Saved views / bookmarks.
     with st.expander("Saved Views", expanded=False):
-        try:
-            _session = get_session()
-        except Exception as e:
-            _session = None
-            st.caption(f"Saved views unavailable until Snowflake is connected. {format_snowflake_error(e)}")
+        _session = st.session_state.get("sf_session")
+        if not _session and st.button(
+            "Load Saved Views",
+            key="bm_load_saved_views",
+            use_container_width=True,
+            disabled=not connection_available,
+        ):
+            try:
+                _session = get_session()
+                st.session_state.pop("_overwatch_connection_unavailable", None)
+            except StopException:
+                _session = None
+                st.session_state["_overwatch_connection_unavailable"] = True
+            except Exception as e:
+                _session = None
+                st.session_state["_overwatch_connection_unavailable"] = True
+                st.caption(f"Saved views unavailable until Snowflake is connected. {format_snowflake_error(e)}")
         bookmarks = load_bookmarks(_session) if _session else []
 
-        if bookmarks:
+        if not _session:
+            st.caption("Saved views load on demand after Snowflake is connected.")
+        elif bookmarks:
             st.caption("Click a bookmark to jump directly to that view.")
             for bm in bookmarks:
                 shared_badge = " Shared" if bm["shared"] else ""
@@ -258,7 +420,7 @@ with st.sidebar:
                     if st.button("Delete", key=f"bm_del_{bm['id']}", help="Delete bookmark"):
                         if delete_bookmark(_session, bm["id"]):
                             st.rerun()
-        else:
+        elif _session:
             st.caption("No saved views yet.")
 
         st.divider()
@@ -279,7 +441,8 @@ with st.sidebar:
                 st.session_state.pop("bm_name_input", None)
                 st.rerun()
 
-        st.caption("Saved View table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
+        if _session:
+            st.caption("Saved View table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
 
     st.divider()
 
@@ -431,29 +594,13 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))
+if active_section not in visible_sections:
+    active_section = visible_sections[0]
+    st.session_state["nav_section"] = active_section
 
 # Main header.
-h1, h2, h3 = st.columns([3, 2, 1])
-with h1:
-    company_color = COMPANY_CONFIG.get(active_company, {}).get("color", "#38bdf8")
-    st.markdown(f"""
-    <div class="ow-main-brand">
-        <div class="ow-main-title"><span class="ow-brand-dot"></span><span>OVERWATCH</span></div>
-        <span class="ow-company-pill" style="border-color:{company_color}66;color:{company_color};">{active_company}</span>
-    </div>
-    """, unsafe_allow_html=True)
-with h2:
-    st.markdown(f"""
-    <div style="text-align:right;padding-top:12px;">
-        <span style="color:#64748b;font-size:0.75rem;">
-            {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - ${credit_price:.2f}/cr
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-with h3:
-    if st.button("Refresh All", key="global_refresh"):
-        clear_all_cache()
-        st.rerun()
+_render_app_header(active_section, active_company, credit_price, current_role)
 
 # Ask OVERWATCH
 with st.expander("Ask OVERWATCH (Cortex AI)", expanded=False):
@@ -463,7 +610,7 @@ with st.expander("Ask OVERWATCH (Cortex AI)", expanded=False):
         key="ask_overwatch_input",
         max_chars=500,
     )
-    if ask_q and st.button("Ask", key="ask_overwatch_btn"):
+    if ask_q and st.button("Ask", key="ask_overwatch_btn", disabled=not connection_available):
         with st.spinner("Thinking with Cortex..."):
             try:
                 safe_q      = safe_sql(ask_q.strip()[:500])
@@ -479,10 +626,11 @@ with st.expander("Ask OVERWATCH (Cortex AI)", expanded=False):
                     f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', {sql_literal(prompt)}) AS answer"
                 ).collect()
                 st.markdown(result[0]["ANSWER"])
+            except StopException:
+                st.session_state["_overwatch_connection_unavailable"] = True
+                st.info("Cortex AI is available after Snowflake is connected.")
             except Exception as e:
                 st.info(f"Cortex AI unavailable. {format_snowflake_error(e)}")
-
-st.markdown("---")
 
 # Section dispatch.
 active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))
@@ -490,12 +638,18 @@ if active_section not in visible_sections:
     active_section = visible_sections[0]
     st.session_state["nav_section"] = active_section
 
-try:
-    sections.dispatch(active_section)
-except Exception as e:
-    st.error(f"{active_section} could not finish rendering.")
-    st.caption(format_snowflake_error(e))
-    st.info(
-        "The Snowflake connection may still be healthy. This usually means one panel hit a metadata, "
-        "permission, or empty-data edge case. Try another section or refresh after the source view is available."
-    )
+if not connection_available or st.session_state.get("_overwatch_connection_unavailable"):
+    _render_connection_empty_state(active_section)
+else:
+    try:
+        sections.dispatch(active_section)
+    except StopException:
+        st.session_state["_overwatch_connection_unavailable"] = True
+        _render_connection_empty_state(active_section)
+    except Exception as e:
+        st.error(f"{active_section} could not finish rendering.")
+        st.caption(format_snowflake_error(e))
+        st.info(
+            "The Snowflake connection may still be healthy. This usually means one panel hit a metadata, "
+            "permission, or empty-data edge case. Try another section or refresh after the source view is available."
+        )

@@ -4,7 +4,7 @@
 #   1. midnight   — Original dark glassmorphism (cyan/indigo/purple)
 #   2. corporate  — Traditional light: white cards, navy sidebar, ALFA blue
 #   3. terminal   — Snowflake White: classic white with Snowflake blue
-#   4. aurora     — Dark with shifting teal-to-emerald gradient accents
+#   4. black_ice  — Dark high-contrast lime/cyan accents
 #   5. carbon     — Snowflake Dark: classic dark with Snowflake blue
 #
 # Architecture: All structural styles reference CSS custom properties.
@@ -21,43 +21,36 @@
 import streamlit as st
 
 _DEFAULT_THEME = "midnight"
+_THEME_ALIASES = {
+    "aurora": "black_ice",
+}
 
 # ── Theme metadata (used for the picker UI) ───────────────────────────────────
 THEMES = {
     "midnight": {
-        "label":    "Midnight",
-        "emoji":    "🌌",
+        "label":    "Henson Basic",
         "swatch":   "#38bdf8",
         "bg":       "#0a0e1a",
-        "desc":     "Dark glassmorphism · cyan accent",
     },
     "corporate": {
-        "label":    "ALFA Light",
-        "emoji":    "🔴",
+        "label":    "ALFA",
         "swatch":   "#b00020",
         "bg":       "#ffffff",
-        "desc":     "Bright ALFA red, slate & teal",
     },
     "terminal": {
         "label":    "Snowflake White",
-        "emoji":    "❄️",
         "swatch":   "#29B5E8",
         "bg":       "#ffffff",
-        "desc":     "Classic white · Snowflake blue",
     },
-    "aurora": {
-        "label":    "Aurora",
-        "emoji":    "🌌",
-        "swatch":   "#2dd4bf",
-        "bg":       "#0d1117",
-        "desc":     "Dark · teal-to-emerald gradients",
+    "black_ice": {
+        "label":    "Black Ice",
+        "swatch":   "#a3e635",
+        "bg":       "#05070b",
     },
     "carbon": {
         "label":    "Snowflake Dark",
-        "emoji":    "🌙",
         "swatch":   "#29B5E8",
         "bg":       "#0B1117",
-        "desc":     "Classic dark · Snowflake blue",
     },
 }
 
@@ -206,49 +199,49 @@ _VARS = {
 }
 """,
 
-# ─── 4. AURORA — dark midnight with shifting teal-emerald-cyan accents ────────
-"aurora": """
+# ─── 4. BLACK ICE — high-contrast dark with lime/cyan accents ────────
+"black_ice": """
 :root {
-    --bg-app:          linear-gradient(160deg, #0d1117 0%, #0d1f2d 40%, #0d1a0f 100%);
-    --bg-sidebar:      linear-gradient(180deg, #0d1117 0%, #0d1f1c 100%);
-    --bg-card:         rgba(13, 31, 29, 0.65);
-    --bg-card-hover:   rgba(13, 31, 29, 0.90);
-    --bg-input:        rgba(13, 31, 29, 0.80);
-    --bg-tab-list:     rgba(13, 31, 29, 0.45);
-    --bg-expander:     rgba(13, 31, 29, 0.45);
+    --bg-app:          linear-gradient(160deg, #05070b 0%, #0b1220 48%, #111827 100%);
+    --bg-sidebar:      linear-gradient(180deg, #05070b 0%, #0b1220 58%, #111827 100%);
+    --bg-card:         rgba(8, 13, 24, 0.78);
+    --bg-card-hover:   rgba(12, 20, 35, 0.94);
+    --bg-input:        rgba(5, 8, 15, 0.92);
+    --bg-tab-list:     rgba(10, 16, 28, 0.66);
+    --bg-expander:     rgba(8, 13, 24, 0.76);
 
-    --border-subtle:   rgba(45, 212, 191, 0.12);
-    --border-normal:   rgba(45, 212, 191, 0.25);
-    --border-strong:   rgba(45, 212, 191, 0.50);
-    --border-sidebar:  rgba(45, 212, 191, 0.12);
+    --border-subtle:   rgba(163, 230, 53, 0.12);
+    --border-normal:   rgba(163, 230, 53, 0.26);
+    --border-strong:   rgba(34, 211, 238, 0.62);
+    --border-sidebar:  rgba(163, 230, 53, 0.16);
 
-    --text-primary:    #ecfdf5;
-    --text-secondary:  #6ee7b7;
-    --text-muted:      #8fb8aa;
-    --text-input:      #ecfdf5;
+    --text-primary:    #f8fafc;
+    --text-secondary:  #d9f99d;
+    --text-muted:      #94a3b8;
+    --text-input:      #f8fafc;
     --text-heading:    transparent;
 
-    --accent:          #2dd4bf;
-    --accent-rgb:      45, 212, 191;
-    --accent2:         #34d399;
-    --accent3:         #6ee7b7;
-    --h1-gradient:     linear-gradient(90deg, #2dd4bf, #34d399, #059669);
+    --accent:          #a3e635;
+    --accent-rgb:      163, 230, 53;
+    --accent2:         #22d3ee;
+    --accent3:         #38bdf8;
+    --h1-gradient:     linear-gradient(90deg, #f8fafc, #a3e635, #22d3ee);
 
-    --metric-shadow:        0 4px 24px rgba(0,0,0,0.40), inset 0 1px 0 rgba(45,212,191,0.08);
-    --metric-hover-shadow:  0 8px 32px rgba(45,212,191,0.15), inset 0 1px 0 rgba(45,212,191,0.12);
-    --btn-bg:          linear-gradient(135deg, rgba(45,212,191,0.12), rgba(52,211,153,0.12));
-    --btn-bg-hover:    linear-gradient(135deg, rgba(45,212,191,0.28), rgba(52,211,153,0.28));
-    --btn-border:      rgba(45, 212, 191, 0.30);
-    --btn-hover-shadow: 0 0 20px rgba(45,212,191,0.22);
-    --slider-track:    linear-gradient(90deg, #059669, #2dd4bf);
-    --tab-active-bg:   rgba(45, 212, 191, 0.14);
-    --tab-active-col:  #2dd4bf;
-    --hr-bg:           linear-gradient(90deg, transparent, rgba(45,212,191,0.30), transparent);
-    --scrollbar-track: rgba(13, 31, 29, 0.50);
-    --scrollbar-thumb: rgba(45, 212, 191, 0.28);
-    --scrollbar-hover: rgba(45, 212, 191, 0.55);
+    --metric-shadow:        0 4px 24px rgba(0,0,0,0.50), inset 0 1px 0 rgba(163,230,53,0.08);
+    --metric-hover-shadow:  0 8px 32px rgba(163,230,53,0.16), inset 0 1px 0 rgba(34,211,238,0.12);
+    --btn-bg:          linear-gradient(135deg, rgba(163,230,53,0.12), rgba(34,211,238,0.10));
+    --btn-bg-hover:    linear-gradient(135deg, rgba(163,230,53,0.25), rgba(34,211,238,0.20));
+    --btn-border:      rgba(163, 230, 53, 0.34);
+    --btn-hover-shadow: 0 0 20px rgba(163,230,53,0.24);
+    --slider-track:    linear-gradient(90deg, #a3e635, #22d3ee);
+    --tab-active-bg:   rgba(163, 230, 53, 0.14);
+    --tab-active-col:  #d9f99d;
+    --hr-bg:           linear-gradient(90deg, transparent, rgba(163,230,53,0.28), transparent);
+    --scrollbar-track: rgba(5, 8, 15, 0.72);
+    --scrollbar-thumb: rgba(163, 230, 53, 0.32);
+    --scrollbar-hover: rgba(34, 211, 238, 0.56);
     --font-body:       'Inter', system-ui, sans-serif;
-    --font-mono:       'JetBrains Mono', 'Fira Code', monospace;
+    --font-mono:       'JetBrains Mono', 'Cascadia Mono', monospace;
     --extra-css:       '';
 }
 """,
@@ -313,6 +306,18 @@ _STRUCTURAL_CSS = """
     background: var(--bg-app) !important;
     font-family: var(--font-body) !important;
 }
+.block-container {
+    padding-top: 1rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 1500px !important;
+}
+[data-testid="stHeader"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+#MainMenu,
+footer {
+    display: none !important;
+}
 
 /* ── Sidebar ── */
 [data-testid="stSidebar"] {
@@ -363,27 +368,26 @@ _STRUCTURAL_CSS = """
     background: var(--bg-card) !important;
     backdrop-filter: blur(12px);
     border: 1px solid var(--border-subtle) !important;
-    border-radius: 12px !important;
-    padding: 16px 20px !important;
+    border-radius: 8px !important;
+    padding: 12px 14px !important;
     box-shadow: var(--metric-shadow) !important;
-    transition: all 0.25s ease;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 [data-testid="stMetric"]:hover {
     border-color: var(--border-strong) !important;
     box-shadow: var(--metric-hover-shadow) !important;
-    transform: translateY(-2px);
 }
 [data-testid="stMetricLabel"] {
     color: var(--text-muted) !important;
     font-size: 0.72rem !important;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0;
     font-family: var(--font-body) !important;
 }
 [data-testid="stMetricValue"] {
     color: var(--text-primary) !important;
     font-weight: 700 !important;
-    font-size: 1.5rem !important;
+    font-size: 1.35rem !important;
     font-family: var(--font-body) !important;
 }
 
@@ -394,13 +398,14 @@ h1 {
     -webkit-text-fill-color: transparent !important;
     background-clip: text !important;
     font-weight: 800 !important;
-    letter-spacing: -0.5px;
+    letter-spacing: 0;
     font-family: var(--font-body) !important;
 }
 h2, h3 {
     color: var(--text-primary) !important;
-    border-bottom: 1px solid var(--border-subtle);
-    padding-bottom: 8px;
+    border-bottom: 0;
+    padding-bottom: 2px;
+    margin-top: 0.55rem !important;
     font-family: var(--font-body) !important;
 }
 p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
@@ -413,7 +418,7 @@ p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
 /* ── DataFrames ── */
 [data-testid="stDataFrame"] {
     border: 1px solid var(--border-subtle) !important;
-    border-radius: 10px;
+    border-radius: 8px;
     overflow: hidden;
 }
 
@@ -422,23 +427,29 @@ p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
     background: var(--btn-bg) !important;
     border: 1px solid var(--btn-border) !important;
     color: var(--text-primary) !important;
-    border-radius: 8px !important;
+    border-radius: 7px !important;
     font-weight: 600;
     font-family: var(--font-body) !important;
-    transition: all 0.25s ease;
+    transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
     backdrop-filter: blur(8px);
+}
+.stButton > button p {
+    color: inherit !important;
+    white-space: nowrap !important;
 }
 .stButton > button:hover {
     background: var(--btn-bg-hover) !important;
     border-color: var(--border-strong) !important;
     box-shadow: var(--btn-hover-shadow) !important;
-    transform: translateY(-1px);
 }
 .stButton > button[kind="primary"] {
     background: linear-gradient(135deg, var(--accent), var(--accent2)) !important;
     border: none !important;
     color: #ffffff !important;
     box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.35) !important;
+}
+.stButton > button[kind="primary"] p {
+    color: #ffffff !important;
 }
 .stButton > button[kind="primary"]:hover {
     box-shadow: 0 6px 24px rgba(var(--accent-rgb), 0.55) !important;
@@ -448,7 +459,7 @@ p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
 [data-testid="stExpander"] {
     background: var(--bg-expander) !important;
     border: 1px solid var(--border-subtle) !important;
-    border-radius: 10px;
+    border-radius: 8px;
     backdrop-filter: blur(8px);
 }
 
@@ -457,7 +468,7 @@ hr {
     border: none !important;
     height: 1px;
     background: var(--hr-bg) !important;
-    margin: 24px 0;
+    margin: 16px 0;
 }
 
 /* ── Charts ── */
@@ -495,14 +506,14 @@ hr {
     gap: 4px;
     row-gap: 6px;
     background: var(--bg-tab-list);
-    border-radius: 10px;
+    border-radius: 8px;
     padding: 4px;
     overflow-x: auto;
     flex-wrap: wrap;
     scrollbar-width: thin;
 }
 .stTabs [data-baseweb="tab"] {
-    border-radius: 8px;
+    border-radius: 6px;
     color: var(--text-secondary) !important;
     font-weight: 700;
     font-family: var(--font-body) !important;
@@ -540,7 +551,7 @@ code, pre, .stCodeBlock {
 
 /* ── Animations ── */
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-@keyframes aurora-shift {
+@keyframes black-ice-shift {
     0%   { background-position: 0% 50%; }
     50%  { background-position: 100% 50%; }
     100% { background-position: 0% 50%; }
@@ -549,7 +560,7 @@ code, pre, .stCodeBlock {
 
 /* Mission Control shell */
 .ow-sidebar-brand {
-    padding: 14px 6px 10px;
+    padding: 8px 4px 6px;
     text-align: center;
 }
 .ow-brand-row,
@@ -563,34 +574,23 @@ code, pre, .stCodeBlock {
 }
 .ow-brand-row {
     justify-content: center;
-    font-size: 1.24rem;
-}
-.ow-main-brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-height: 42px;
-    margin-bottom: 10px;
-}
-.ow-main-title {
-    font-size: 2rem;
-    line-height: 1;
+    font-size: 1.06rem;
 }
 .ow-brand-dot {
-    width: 30px;
-    height: 18px;
+    width: 24px;
+    height: 14px;
     display: inline-block;
     border-radius: 50%;
     background: var(--accent);
-    box-shadow: 0 0 22px rgba(var(--accent-rgb), 0.42);
+    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.32);
     flex: 0 0 auto;
 }
 .ow-sidebar-subtitle {
     margin-top: 5px;
     color: var(--text-muted);
-    font-size: 0.68rem;
+    font-size: 0.62rem;
     font-weight: 800;
-    letter-spacing: 0.13em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
 }
 .ow-live-pill,
@@ -609,7 +609,7 @@ code, pre, .stCodeBlock {
     text-transform: uppercase;
 }
 .ow-live-pill {
-    margin: 10px auto 0;
+    margin: 8px auto 0;
 }
 [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
     gap: 0.45rem;
@@ -636,6 +636,19 @@ code, pre, .stCodeBlock {
     color: var(--accent) !important;
     box-shadow: inset 3px 0 0 var(--accent) !important;
 }
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+    color: var(--accent) !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-brand-row,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-brand-row span:last-child {
+    color: var(--text-primary) !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-sidebar-subtitle {
+    color: var(--text-muted) !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
+    color: var(--accent) !important;
+}
 [data-testid="stSidebar"] .stExpander {
     border-radius: 8px !important;
 }
@@ -653,11 +666,211 @@ code, pre, .stCodeBlock {
 .metric-card {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
-    border-radius: 16px; padding: 24px; margin: 8px 0;
+    border-radius: 8px; padding: 16px; margin: 8px 0;
     backdrop-filter: blur(12px);
 }
 .glow-text { text-shadow: 0 0 10px rgba(var(--accent-rgb), 0.5); }
 .stAlert { border-radius: 10px; backdrop-filter: blur(8px); }
+
+/* Clean DBA shell */
+.ow-topbar {
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 0.2rem 0 0.85rem;
+    margin-bottom: 0.75rem;
+}
+.ow-section-kicker {
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.35rem;
+}
+.ow-section-row {
+    display: flex;
+    gap: 0.72rem;
+    align-items: flex-start;
+}
+.ow-section-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.25rem;
+    height: 1.65rem;
+    border-radius: 7px;
+    border: 1px solid var(--border-normal);
+    background: rgba(var(--accent-rgb), 0.08);
+    color: var(--accent);
+    font-size: 0.62rem;
+    font-weight: 900;
+    letter-spacing: 0;
+}
+.ow-section-title {
+    color: var(--text-primary);
+    font-size: clamp(1.45rem, 2vw, 2rem);
+    font-weight: 850;
+    line-height: 1.05;
+    letter-spacing: 0;
+}
+.ow-section-subtitle {
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+    margin-top: 0.3rem;
+}
+.ow-scope-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.7rem;
+}
+.ow-scope-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    padding: 0.22rem 0.55rem;
+    background: rgba(var(--accent-rgb), 0.05);
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+.ow-scope-chip span {
+    color: var(--text-muted);
+    font-weight: 700;
+}
+.ow-scope-chip strong {
+    color: var(--text-primary);
+    font-weight: 750;
+}
+.ow-muted-chip {
+    background: transparent;
+}
+.ow-run-context {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    text-align: right;
+    line-height: 1.55;
+    padding-top: 0.45rem;
+    margin-bottom: 0.5rem;
+}
+.ow-empty-state {
+    max-width: 780px;
+    margin: 2.25rem 0;
+    padding: 1.25rem 0;
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+}
+.ow-empty-title {
+    color: var(--text-primary);
+    font-size: 1.2rem;
+    font-weight: 800;
+    margin-bottom: 0.45rem;
+}
+.ow-empty-copy {
+    color: var(--text-secondary);
+    line-height: 1.55;
+    max-width: 680px;
+}
+.ow-empty-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.85rem;
+}
+.ow-empty-list span {
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    padding: 0.25rem 0.6rem;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+.ow-brief-strip {
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    margin: 0.85rem 0 1rem;
+    padding: 0.65rem 0;
+}
+.ow-brief-title,
+.ow-table-heading span:first-child {
+    color: var(--text-primary);
+    font-size: 0.83rem;
+    font-weight: 850;
+}
+.ow-brief-grid {
+    display: grid;
+    gap: 0.55rem 1rem;
+    margin-top: 0.45rem;
+}
+.ow-brief-item {
+    min-width: 0;
+}
+.ow-brief-label {
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    font-weight: 850;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.ow-brief-detail {
+    color: var(--text-secondary);
+    font-size: 0.83rem;
+    line-height: 1.35;
+    margin-top: 0.12rem;
+}
+.ow-table-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    margin: 0.75rem 0 0.35rem;
+}
+.ow-table-heading span:last-child {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+}
+[data-testid="stMarkdownContainer"] .ow-section-title,
+[data-testid="stMarkdownContainer"] .ow-empty-title,
+[data-testid="stMarkdownContainer"] .ow-brief-title,
+[data-testid="stMarkdownContainer"] .ow-table-heading span:first-child,
+[data-testid="stMarkdownContainer"] .ow-scope-chip strong {
+    color: var(--text-primary) !important;
+}
+[data-testid="stMarkdownContainer"] .ow-section-subtitle,
+[data-testid="stMarkdownContainer"] .ow-scope-chip,
+[data-testid="stMarkdownContainer"] .ow-empty-copy,
+[data-testid="stMarkdownContainer"] .ow-empty-list span,
+[data-testid="stMarkdownContainer"] .ow-brief-detail {
+    color: var(--text-secondary) !important;
+}
+[data-testid="stMarkdownContainer"] .ow-section-kicker,
+[data-testid="stMarkdownContainer"] .ow-scope-chip span,
+[data-testid="stMarkdownContainer"] .ow-run-context,
+[data-testid="stMarkdownContainer"] .ow-brief-label,
+[data-testid="stMarkdownContainer"] .ow-table-heading span:last-child {
+    color: var(--text-muted) !important;
+}
+[data-testid="stMarkdownContainer"] .ow-section-icon {
+    color: var(--accent) !important;
+}
+@media (max-width: 900px) {
+    .ow-brief-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+    .ow-run-context {
+        text-align: left;
+    }
+}
+@media (max-width: 620px) {
+    .ow-section-row,
+    .ow-table-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+    .ow-brief-grid {
+        grid-template-columns: 1fr !important;
+    }
+}
 
 /* ═══════════════════ SNOWFLAKE WHITE theme extras ═══════════════════ */
 .terminal-extra [data-testid="stMetric"] {
@@ -736,6 +949,9 @@ _THEME_EXTRAS = {
     border-color: #d7e2ea !important;
     box-shadow: none !important;
 }
+[data-testid="stSidebar"] .stButton > button p {
+    color: inherit !important;
+}
 [data-testid="stSidebar"] .stButton > button:hover {
     color: #b00020 !important;
     background: rgba(176,0,32,0.06) !important;
@@ -749,6 +965,13 @@ _THEME_EXTRAS = {
     color: #b00020 !important;
     background: rgba(176,0,32,0.10);
     border-left: 3px solid #b00020;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+    color: #b00020 !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
+    color: #b00020 !important;
 }
 [data-testid="stMetric"] {
     border-top: 3px solid rgba(176,0,32,0.72) !important;
@@ -808,6 +1031,9 @@ _THEME_EXTRAS = {
     border-color: #b8d8e5 !important;
     box-shadow: none !important;
 }
+[data-testid="stSidebar"] .stButton > button p {
+    color: inherit !important;
+}
 [data-testid="stSidebar"] .stButton > button:hover {
     color: #11567F !important;
     background: #eef7fb !important;
@@ -821,6 +1047,13 @@ _THEME_EXTRAS = {
     color: #11567F !important;
     background: rgba(41,181,232,0.13);
     border-left: 3px solid #29B5E8;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+    color: #11567F !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
+    color: #11567F !important;
 }
 [data-testid="stMetric"] {
     border-top: 3px solid rgba(41,181,232,0.75) !important;
@@ -840,27 +1073,6 @@ _THEME_EXTRAS = {
 </style>
 """,
 }
-
-_PICKER_CSS = """
-<style>
-.theme-picker { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
-.theme-btn {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 12px; border-radius: 8px; cursor: pointer;
-    border: 1.5px solid transparent;
-    transition: all 0.18s ease;
-    font-size: 0.78rem; font-weight: 500;
-}
-.theme-btn:hover { filter: brightness(1.15); transform: translateX(2px); }
-.theme-btn.active { border-color: var(--accent) !important; }
-.theme-swatch {
-    width: 18px; height: 18px; border-radius: 50%;
-    flex-shrink: 0; border: 2px solid rgba(255,255,255,0.15);
-}
-.theme-name { color: var(--text-primary); font-weight: 600; font-size: 0.75rem; }
-.theme-desc { color: var(--text-muted); font-size: 0.65rem; margin-top: 1px; }
-</style>
-"""
 
 _STREAMLIT_ICON_FIX = """
 <style>
@@ -906,8 +1118,17 @@ details summary span[translate="no"] {
 """
 
 
+def _normalize_theme_key(theme_key: str | None) -> str:
+    theme_key = str(theme_key or _DEFAULT_THEME)
+    theme_key = _THEME_ALIASES.get(theme_key, theme_key)
+    return theme_key if theme_key in THEMES else _DEFAULT_THEME
+
+
 def _get_theme() -> str:
-    return st.session_state.get("active_theme", _DEFAULT_THEME)
+    theme_key = _normalize_theme_key(st.session_state.get("active_theme", _DEFAULT_THEME))
+    if st.session_state.get("active_theme") != theme_key:
+        st.session_state["active_theme"] = theme_key
+    return theme_key
 
 
 def inject_theme() -> None:
@@ -933,7 +1154,7 @@ def render_theme_picker(persist: bool = False) -> None:
     Render the 5-theme picker as clickable swatch buttons.
     Place this inside the sidebar Settings expander in app.py.
 
-    Each button shows: colored swatch circle + theme name + one-line description.
+    Each option shows only the theme name.
     The active theme gets a highlight border.
 
     Args:
@@ -946,7 +1167,7 @@ def render_theme_picker(persist: bool = False) -> None:
         "Theme",
         options,
         index=index,
-        format_func=lambda key: f"{THEMES[key]['emoji']} {THEMES[key]['label']} - {THEMES[key]['desc']}",
+        format_func=lambda key: THEMES[key]["label"],
         key="theme_picker_radio",
     )
     if selected != current:
@@ -983,9 +1204,9 @@ def restore_theme_preference() -> None:
         if rows:
             import json
             state = json.loads(rows[0]["STATE_JSON"] or "{}")
-            saved = state.get("active_theme", _DEFAULT_THEME)
-            if saved in THEMES:
-                st.session_state["active_theme"] = saved
+            st.session_state["active_theme"] = _normalize_theme_key(
+                state.get("active_theme", _DEFAULT_THEME)
+            )
     except Exception:
         pass
 

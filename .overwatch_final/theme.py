@@ -877,6 +877,67 @@ code, pre, .stCodeBlock {
     line-height: 1.35;
     margin-top: 0.12rem;
 }
+.ow-section-guide {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.65rem;
+    margin: 0.2rem 0 0.85rem;
+}
+.ow-section-guide-card {
+    min-width: 0;
+    border-top: 1px solid var(--border-subtle);
+    padding: 0.55rem 0.05rem 0;
+}
+.ow-section-guide-label {
+    color: var(--text-muted);
+    font-size: 0.64rem;
+    font-weight: 850;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.ow-section-guide-detail {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    margin-top: 0.18rem;
+}
+.ow-evidence-contract {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.7rem;
+    margin: 0.15rem 0 0.35rem;
+}
+.ow-evidence-contract-card {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 0.75rem 0.8rem;
+    background: var(--bg-expander);
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+.ow-evidence-contract-card div {
+    margin-top: 0.38rem;
+}
+.ow-evidence-contract-card div:first-child {
+    margin-top: 0;
+}
+.ow-evidence-contract-card span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.62rem;
+    font-weight: 850;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 0.08rem;
+}
+.ow-evidence-contract-source {
+    color: var(--text-primary);
+    font-weight: 850;
+    font-size: 0.82rem;
+}
 .ow-table-heading {
     display: flex;
     justify-content: space-between;
@@ -899,15 +960,22 @@ code, pre, .stCodeBlock {
 [data-testid="stMarkdownContainer"] .ow-scope-chip,
 [data-testid="stMarkdownContainer"] .ow-empty-copy,
 [data-testid="stMarkdownContainer"] .ow-empty-list span,
+[data-testid="stMarkdownContainer"] .ow-section-guide-detail,
+[data-testid="stMarkdownContainer"] .ow-evidence-contract-card,
 [data-testid="stMarkdownContainer"] .ow-brief-detail {
     color: var(--text-secondary) !important;
 }
 [data-testid="stMarkdownContainer"] .ow-section-kicker,
 [data-testid="stMarkdownContainer"] .ow-scope-chip span,
 [data-testid="stMarkdownContainer"] .ow-run-context,
+[data-testid="stMarkdownContainer"] .ow-section-guide-label,
+[data-testid="stMarkdownContainer"] .ow-evidence-contract-card span,
 [data-testid="stMarkdownContainer"] .ow-brief-label,
 [data-testid="stMarkdownContainer"] .ow-table-heading span:last-child {
     color: var(--text-muted) !important;
+}
+[data-testid="stMarkdownContainer"] .ow-evidence-contract-source {
+    color: var(--text-primary) !important;
 }
 [data-testid="stMarkdownContainer"] .ow-section-icon {
     color: var(--accent) !important;
@@ -915,6 +983,12 @@ code, pre, .stCodeBlock {
 @media (max-width: 900px) {
     .ow-brief-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+    .ow-section-guide {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .ow-evidence-contract {
+        grid-template-columns: 1fr;
     }
     .ow-run-context {
         text-align: left;
@@ -925,6 +999,9 @@ code, pre, .stCodeBlock {
     .ow-table-heading {
         align-items: flex-start;
         flex-direction: column;
+    }
+    .ow-section-guide {
+        grid-template-columns: 1fr;
     }
     .ow-brief-grid {
         grid-template-columns: 1fr !important;

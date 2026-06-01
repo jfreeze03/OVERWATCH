@@ -8,6 +8,7 @@
 # -----------------------------------------------------------------------------
 import streamlit as st
 import html
+import importlib
 from datetime import datetime, timedelta
 from streamlit.runtime.scriptrunner import StopException
 
@@ -34,11 +35,15 @@ from utils.query import (
 from utils.ask_overwatch import answer_ask_overwatch
 from utils.company_filter import invalidate_company_cache
 from utils.admin import render_admin_mode_control
+import utils.section_guidance as section_guidance
 from utils.bookmarks import (
     save_bookmark, load_bookmarks,
     apply_bookmark, delete_bookmark,
 )
 import sections
+
+if not hasattr(section_guidance, "render_section_evidence_contract"):
+    section_guidance = importlib.reload(section_guidance)
 
 inject_theme()
 
@@ -693,6 +698,8 @@ if active_section not in visible_sections:
 
 # Main header.
 _render_app_header(active_section, active_company, credit_price, current_role)
+section_guidance.render_section_operating_guide(active_section)
+section_guidance.render_section_evidence_contract(active_section)
 
 # Ask OVERWATCH
 with st.expander("Ask OVERWATCH (Evidence Mode)", expanded=False):

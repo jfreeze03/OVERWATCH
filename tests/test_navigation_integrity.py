@@ -18,6 +18,7 @@ from config import (  # noqa: E402
     SECTION_DEFINITIONS,
     SECTION_MODULES,
 )
+from utils.section_guidance import SECTION_EVIDENCE_CONTRACT, SECTION_OPERATING_GUIDE  # noqa: E402
 from utils.scorecards import DBA_CONTROL_PLANE_SECTION_BASELINE  # noqa: E402
 
 
@@ -194,6 +195,50 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("transition_slot.empty()", app_text)
         self.assertIn(".ow-section-transition", theme_text)
         self.assertIn("position: fixed", theme_text)
+
+    def test_current_sections_have_operating_guides(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+
+        self.assertIn("render_section_operating_guide(active_section)", app_text)
+        self.assertEqual(set(ALL_SECTIONS), set(SECTION_OPERATING_GUIDE))
+        for section, guide in SECTION_OPERATING_GUIDE.items():
+            with self.subTest(section=section):
+                self.assertEqual(
+                    set(guide),
+                    {"first_move", "evidence", "closure", "guardrail"},
+                )
+                for value in guide.values():
+                    self.assertGreaterEqual(len(str(value).split()), 7)
+                self.assertNotIn("best practice", " ".join(guide.values()).lower())
+        self.assertIn("Database-attributed cost is Allocated/Estimated", SECTION_OPERATING_GUIDE["Cost & Contract"]["guardrail"])
+        self.assertIn("Email is the active channel", SECTION_OPERATING_GUIDE["Alert Center"]["guardrail"])
+        self.assertIn("Login-only findings have no database context", SECTION_OPERATING_GUIDE["Account Health"]["guardrail"])
+        self.assertIn(".ow-section-guide", theme_text)
+
+    def test_current_sections_have_evidence_contracts(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+
+        self.assertIn("render_section_evidence_contract(active_section)", app_text)
+        self.assertEqual(set(ALL_SECTIONS), set(SECTION_EVIDENCE_CONTRACT))
+        for section, rows in SECTION_EVIDENCE_CONTRACT.items():
+            with self.subTest(section=section):
+                self.assertGreaterEqual(len(rows), 2)
+                for row in rows:
+                    self.assertEqual(
+                        set(row),
+                        {"source", "confidence", "decision_use", "invalid_use", "proof"},
+                    )
+                    self.assertTrue(str(row["source"]).strip())
+                    self.assertTrue(str(row["confidence"]).strip())
+                    for key in ("decision_use", "invalid_use", "proof"):
+                        self.assertGreaterEqual(len(str(row[key]).split()), 3)
+        self.assertIn("Allocated/Estimated", SECTION_EVIDENCE_CONTRACT["Cost & Contract"][1]["confidence"])
+        self.assertIn("Email-first", SECTION_EVIDENCE_CONTRACT["Alert Center"][1]["confidence"])
+        self.assertIn("Do not apply environment filters", SECTION_EVIDENCE_CONTRACT["Account Health"][0]["invalid_use"])
+        self.assertIn("Do not split exact spend by database", SECTION_EVIDENCE_CONTRACT["Warehouse Health"][0]["invalid_use"])
+        self.assertIn(".ow-evidence-contract", theme_text)
 
     def test_priority_tables_defer_full_raw_detail_rendering(self):
         workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")

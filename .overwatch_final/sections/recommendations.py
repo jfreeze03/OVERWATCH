@@ -33,6 +33,7 @@ from utils import (
     summarize_verification_frame,
     verification_query_safety_issues,
 )
+from utils.recommendation_intelligence import harden_recommendation
 from utils.workflows import render_priority_dataframe
 
 
@@ -43,7 +44,7 @@ def _active_company() -> str:
 def _recommendation_frame(recs: list[dict]) -> pd.DataFrame:
     if not recs:
         return pd.DataFrame()
-    df = pd.DataFrame(recs)
+    df = pd.DataFrame([harden_recommendation(rec) for rec in recs])
     df["Action ID"] = df.apply(
         lambda r: make_action_id(r["Category"], r["Entity"], r["Finding"]),
         axis=1,
@@ -511,6 +512,7 @@ def render():
                         "Owner": "DBA",
                         "Finding": f"{wh_name} idle {int(row['IDLE_HOURS'])}h, wasting {format_credits(row['IDLE_CREDITS'])}",
                         "Action": f"Reduce AUTO_SUSPEND to <= {THRESHOLDS['idle_warehouse_minutes']} minutes",
+                        "Idle Hours": int(row["IDLE_HOURS"]),
                         "Estimated Monthly Savings": round(monthly_savings, 2),
                         "Generated SQL Fix": f"ALTER WAREHOUSE {wh_ident} SET AUTO_SUSPEND = {THRESHOLDS['idle_warehouse_minutes'] * 60};",
                         "Proof Query": verification_sql,
@@ -569,6 +571,7 @@ def render():
                         "Owner": "DBA",
                         "Finding": f"{wh_name} ({row['WAREHOUSE_SIZE']}): {row['REMOTE_GB']:.1f} GB remote spill",
                         "Action": "Review query profile; upsize or split workload if spill persists.",
+                        "Remote Spill GB": round(safe_float(row.get("REMOTE_GB")), 4),
                         "Estimated Monthly Savings": 0.0,
                         "Generated SQL Fix": f"-- Review memory pressure on {wh_name}; consider ALTER WAREHOUSE {safe_identifier(wh_name)} SET WAREHOUSE_SIZE = '<NEXT_SIZE>';",
                         "Proof Query": verification_sql,
@@ -613,6 +616,7 @@ def render():
                         "Owner": "Data Engineering",
                         "Finding": f"Task {task_name} failed {int(row['FAILURES'])} times in 7 days",
                         "Action": "Review task error logs in Task Management and fix root cause.",
+                        "Failures": int(row["FAILURES"]),
                         "Estimated Monthly Savings": 0.0,
                         "Generated SQL Fix": f"-- Inspect task: {task_name}\n-- EXECUTE TASK <database>.<schema>.{safe_identifier(task_name)};",
                         "Proof Query": verification_sql,
@@ -662,6 +666,7 @@ def render():
                         "Owner": "DBA",
                         "Finding": f"{wh_name}: {int(row['FAILURES'])} failed queries in 7 days",
                         "Action": "Investigate error codes in Query Analysis.",
+                        "Failures": int(row["FAILURES"]),
                         "Estimated Monthly Savings": 0.0,
                         "Generated SQL Fix": "-- No safe automatic SQL fix. Review failed query texts and owners.",
                         "Proof Query": verification_sql,
@@ -688,6 +693,11 @@ def render():
                 f"{metric_confidence_label('estimated')} | {freshness_note('ACCOUNT_USAGE')} | "
                 "Savings are directional until the action is fixed and logged to Snowflake Value."
             )
+            top_rec = df_recs.iloc[0]
+            st.warning(
+                f"Work first: {top_rec['Decision']} for {top_rec['Entity']}. "
+                f"{top_rec['Evidence Packet']} Next: {top_rec['Safe Next Action']}"
+            )
             source_notes = st.session_state.get("rec_recommendation_sources", [])
             if source_notes:
                 st.caption("Recommendation sources: " + "; ".join(source_notes))
@@ -695,18 +705,21 @@ def render():
                 df_recs,
                 title="Recommendations to work first",
                 priority_columns=[
-                    "Severity", "Category", "Entity Type", "Entity", "Finding",
-                    "Action", "Estimated Monthly Savings", "Owner", "Status",
+                    "Severity", "Decision Gate", "Decision", "Category", "Entity",
+                    "Evidence Packet", "Safe Next Action", "Proof Required",
+                    "Do Not Do", "Estimated Monthly Savings", "Owner Route", "Status",
                 ],
-                sort_by=["Estimated Monthly Savings"],
-                ascending=False,
+                sort_by=["Severity", "Estimated Monthly Savings"],
+                ascending=[True, False],
                 raw_label="All recommendation rows",
+                height=420,
             )
             download_csv(df_recs, "recommendations.csv")
 
             with st.expander("Generated SQL fixes and proof queries"):
                 for _, rec in df_recs.iterrows():
-                    st.markdown(f"**{rec['Severity']} - {rec['Entity']}**")
+                    st.markdown(f"**{rec['Severity']} - {rec['Decision']} - {rec['Entity']}**")
+                    st.caption(f"{rec['Evidence Packet']} | {rec['Do Not Do']}")
                     st.code(rec["Generated SQL Fix"], language="sql")
                     st.caption(rec["Proof Query"])
 

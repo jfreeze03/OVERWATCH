@@ -211,12 +211,17 @@ from utils.cost import (  # noqa: E402
     credits_to_dollars,
     query_attribution_supported,
 )
+from utils.ask_overwatch import answer_ask_overwatch, build_grounded_cortex_prompt  # noqa: E402
 from utils.company_filter import (  # noqa: E402
     environment_label_for_database,
     get_environment_case_expr,
     get_environment_filter_clause,
     get_environment_filter_or_no_database_clause,
     get_global_filter_clause,
+)
+from utils.recommendation_intelligence import (  # noqa: E402
+    harden_recommendation,
+    warehouse_sizing_decision,
 )
 from utils.action_queue import verification_query_safety_issues  # noqa: E402
 from utils.alerts import (  # noqa: E402
@@ -4035,6 +4040,106 @@ class FormulaRegressionTests(unittest.TestCase):
 
         for sql in queries:
             self.assertEqual(verification_query_safety_issues(sql), [])
+
+    def test_recommendations_are_decisive_and_evidence_backed(self):
+        rec = harden_recommendation({
+            "Source": "Idle warehouse detector",
+            "Severity": "High",
+            "Category": "Cost Control",
+            "Entity Type": "Warehouse",
+            "Entity": "COMPUTE_WH",
+            "Finding": "COMPUTE_WH idle 12h, wasting 4.5 credits",
+            "Action": "Reduce AUTO_SUSPEND",
+            "Idle Hours": 12,
+            "Estimated Monthly Savings": 72.5,
+            "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+            "Baseline Value": 4.5,
+        })
+
+        self.assertEqual(rec["Decision"], "Implement suspend control")
+        self.assertIn("COMPUTE_WH", rec["Evidence Packet"])
+        self.assertIn("12 idle hour", rec["Evidence Packet"])
+        self.assertIn("AUTO_SUSPEND", rec["Safe Next Action"])
+        self.assertIn("Proof query is attached", rec["Proof Required"])
+        self.assertIn("Do not disable", rec["Do Not Do"])
+
+    def test_warehouse_sizing_decision_blocks_blind_upsize(self):
+        decision = warehouse_sizing_decision(pd.Series({
+            "WAREHOUSE_NAME": "ALFA_WH",
+            "WAREHOUSE_SIZE": "Medium",
+            "TOTAL_QUERIES": 250,
+            "TOTAL_CREDITS": 92.5,
+            "AVG_QUEUE_SEC": 0.5,
+            "REMOTE_SPILL_GB": 14.2,
+            "AVG_CACHE_PCT": 20,
+        }))
+
+        self.assertEqual(decision["DECISION"], "Memory pressure: tune query shape first")
+        self.assertIn("ALFA_WH", decision["EVIDENCE_PACKET"])
+        self.assertIn("query profiles", decision["SAFE_NEXT_ACTION"])
+        self.assertIn("Do not upsize blindly", decision["DO_NOT_DO"])
+
+    def test_ask_overwatch_refuses_when_no_loaded_evidence(self):
+        result = answer_ask_overwatch(
+            "What should I do first?",
+            {},
+            active_section="DBA Control Room",
+            company="ALFA",
+            environment="PROD",
+            role="ACCOUNTADMIN",
+        )
+
+        self.assertEqual(result["confidence"], "No loaded evidence")
+        self.assertIn("not have enough loaded OVERWATCH evidence", result["answer"])
+        self.assertIn("will not invent best-practice advice", result["answer"])
+
+    def test_ask_overwatch_answers_from_specific_recommendation_evidence(self):
+        result = answer_ask_overwatch(
+            "What should I do first for cost?",
+            {
+                "rec_recommendations": [{
+                    "Source": "Idle warehouse detector",
+                    "Severity": "High",
+                    "Category": "Cost Control",
+                    "Entity Type": "Warehouse",
+                    "Entity": "COMPUTE_WH",
+                    "Finding": "COMPUTE_WH idle 12h, wasting 4.5 credits",
+                    "Action": "Reduce AUTO_SUSPEND",
+                    "Idle Hours": 12,
+                    "Estimated Monthly Savings": 72.5,
+                    "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+                    "Baseline Value": 4.5,
+                }]
+            },
+            active_section="Cost & Contract",
+            company="ALFA",
+            environment="PROD",
+            role="SYSADMIN",
+        )
+
+        self.assertEqual(result["confidence"], "Evidence-grounded")
+        self.assertIn("COMPUTE_WH", result["answer"])
+        self.assertIn("AUTO_SUSPEND", result["answer"])
+        self.assertIn("Proof before closure", result["answer"])
+        self.assertIn("Do not disable", result["answer"])
+
+    def test_grounded_cortex_prompt_for_future_use_is_strict(self):
+        prompt = build_grounded_cortex_prompt(
+            "What should I do?",
+            [{
+                "surface": "Recommendations",
+                "severity": "High",
+                "entity": "COMPUTE_WH",
+                "evidence": "12 idle hours",
+                "next_action": "Set AUTO_SUSPEND",
+                "proof": "Rerun idle proof query",
+                "do_not": "Do not disable warehouse",
+            }],
+        )
+
+        self.assertIn("Answer only from the evidence", prompt)
+        self.assertIn("Do not give generic Snowflake best practices", prompt)
+        self.assertIn("Proof before closure", prompt)
 
     def test_task_reliability_action_includes_retry_guard_and_verification(self):
         action = _build_task_reliability_action(

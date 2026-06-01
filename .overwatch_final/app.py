@@ -28,9 +28,10 @@ from config import (
 from utils.cache import clear_all_cache
 from utils.session import get_session
 from utils.query import (
-    sql_literal, get_query_telemetry, get_query_budget_summary,
-    clear_query_telemetry, format_snowflake_error, safe_sql,
+    get_query_telemetry, get_query_budget_summary,
+    clear_query_telemetry, format_snowflake_error,
 )
+from utils.ask_overwatch import answer_ask_overwatch
 from utils.company_filter import invalidate_company_cache
 from utils.admin import render_admin_mode_control
 from utils.bookmarks import (
@@ -639,34 +640,37 @@ if active_section not in visible_sections:
 _render_app_header(active_section, active_company, credit_price, current_role)
 
 # Ask OVERWATCH
-with st.expander("Ask OVERWATCH (Cortex AI)", expanded=False):
-    ask_q = st.text_input(
-        "Ask a question about your Snowflake usage...",
-        placeholder="e.g. Who spent the most credits last week?",
-        key="ask_overwatch_input",
-        max_chars=500,
+with st.expander("Ask OVERWATCH (Evidence Mode)", expanded=False):
+    st.caption(
+        "Answers use only evidence already loaded in OVERWATCH. Load DBA Control Room, Alert Center, "
+        "Cost & Contract, or Warehouse Health first for sharper answers."
     )
-    if ask_q and st.button("Ask", key="ask_overwatch_btn", disabled=not connection_available):
-        with st.spinner("Thinking with Cortex..."):
-            try:
-                safe_q      = safe_sql(ask_q.strip()[:500])
-                prompt      = (
-                    "You are OVERWATCH, a Snowflake monitoring assistant for ALFA Insurance. "
-                    f"Current company filter: {active_company}. "
-                    f"User role: {current_role or 'unknown'}. "
-                    f'The user asked: "{safe_q}" '
-                    "Respond with: 1) a concise answer, 2) which OVERWATCH section to navigate to, "
-                    "3) recommended filters. Be brief and technical."
-                )
-                result = get_session().sql(
-                    f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', {sql_literal(prompt)}) AS answer"
-                ).collect()
-                st.markdown(result[0]["ANSWER"])
-            except StopException:
-                st.session_state["_overwatch_connection_unavailable"] = True
-                st.info("Cortex AI is available after Snowflake is connected.")
-            except Exception as e:
-                st.info(f"Cortex AI unavailable. {format_snowflake_error(e)}")
+    with st.form("ask_overwatch_form", clear_on_submit=False):
+        ask_q = st.text_input(
+            "Ask a specific DBA operating question...",
+            placeholder="e.g. What should I work first for cost or task reliability?",
+            key="ask_overwatch_input",
+            max_chars=500,
+        )
+        ask_submitted = st.form_submit_button("Ask")
+    if ask_submitted:
+        ask_text = str(st.session_state.get("ask_overwatch_input") or ask_q or "").strip()
+        if not ask_text:
+            st.info("Type a specific DBA operating question first.")
+        else:
+            result = answer_ask_overwatch(
+                ask_text[:500],
+                dict(st.session_state),
+                active_section=active_section,
+                company=active_company,
+                environment=st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
+                role=current_role or "",
+            )
+            st.markdown(result["answer"])
+            cards = result.get("cards") or []
+            if cards:
+                with st.expander("Evidence used", expanded=False):
+                    st.dataframe(cards, use_container_width=True, hide_index=True, height=260)
 
 # Section dispatch.
 active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))

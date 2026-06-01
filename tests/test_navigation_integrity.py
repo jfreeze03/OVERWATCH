@@ -86,10 +86,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         duplicates = sorted({key for key in literal_keys if literal_keys.count(key) > 1})
         self.assertEqual(duplicates, [])
 
-    def test_cortex_prompt_input_is_sql_escaped(self):
+    def test_ask_overwatch_is_evidence_grounded_without_raw_cortex_call(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        self.assertIn("safe_q      = safe_sql(ask_q.strip()[:500])", app_text)
-        self.assertNotIn("safe_q      = ask_q.strip()[:500]", app_text)
+        self.assertIn("Ask OVERWATCH (Evidence Mode)", app_text)
+        self.assertIn("answer_ask_overwatch(", app_text)
+        self.assertNotIn("SNOWFLAKE.CORTEX.COMPLETE", app_text)
 
     def test_workflow_hubs_replace_scattered_operational_pages(self):
         visible_titles = {section.title for section in SECTION_DEFINITIONS}

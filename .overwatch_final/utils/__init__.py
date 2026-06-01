@@ -172,6 +172,14 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "optimization_advisor": (
         "render_optimization_advisor",
     ),
+    "recommendation_intelligence": (
+        "duplicate_query_decision", "harden_recommendation",
+        "harden_recommendation_rows", "warehouse_sizing_decision",
+    ),
+    "ask_overwatch": (
+        "answer_ask_overwatch", "build_ask_overwatch_context",
+        "build_grounded_cortex_prompt",
+    ),
 }
 
 _EXPORT_MODULES = {

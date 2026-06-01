@@ -3200,6 +3200,7 @@ def render() -> None:
         lookback_hours=int(lookback_hours),
         source_mode=source_mode,
     )
+    st.session_state["dba_control_room_incident_board"] = incident_board
     _render_incident_board_panel(
         incident_board,
         incident_md,
@@ -3219,6 +3220,7 @@ def render() -> None:
         lookback_hours=int(lookback_hours),
         source_mode=source_mode,
     )
+    st.session_state["dba_control_room_handoff"] = handoff_rows
     _render_shift_handoff_panel(
         handoff_rows,
         handoff_md,

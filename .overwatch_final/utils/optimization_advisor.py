@@ -1,4 +1,5 @@
 # utils/optimization_advisor.py - Warehouse Health optimization advisor UI helper
+import pandas as pd
 import streamlit as st
 
 from config import THRESHOLDS
@@ -13,6 +14,7 @@ from .cost import (
 )
 from .display import download_csv, render_drillable_bar_chart
 from .helpers import safe_float
+from .recommendation_intelligence import duplicate_query_decision, warehouse_sizing_decision
 from .query import format_snowflake_error, run_query
 from .session import get_session
 from .workflows import render_priority_dataframe
@@ -122,10 +124,15 @@ def render_optimization_advisor():
                 lookback_hours=idle_days * 24,
             )
             for _, row in df_i.iterrows():
+                idle_decision = (
+                    "Set AUTO_SUSPEND after confirming the warehouse is not an approved always-on service."
+                    if safe_float(row.get("IDLE_CREDITS", 0)) > 0
+                    else "No suspend change needed from this row."
+                )
                 st.warning(
                     f"**{row['WAREHOUSE_NAME']}**: {int(row['IDLE_HOURS'])} idle hours, "
                     f"{format_credits(row['IDLE_CREDITS'])} wasted - "
-                    f"reduce AUTO_SUSPEND to <= {THRESHOLDS['idle_warehouse_minutes']} min"
+                    f"{idle_decision}"
                 )
             download_csv(df_i, "idle_warehouses.csv")
         elif st.session_state.get("opt_df_idle") is not None:
@@ -164,15 +171,18 @@ def render_optimization_advisor():
 
         if st.session_state.get("opt_df_dup") is not None and not st.session_state["opt_df_dup"].empty:
             df_d = st.session_state["opt_df_dup"]
+            decision_rows = [duplicate_query_decision(row) for _, row in df_d.iterrows()]
+            df_d = pd.concat([df_d.reset_index(drop=True), pd.DataFrame(decision_rows)], axis=1)
             st.metric("Duplicate Query Patterns", len(df_d))
-            st.info(
-                "Enable result caching (`USE_CACHED_RESULT = TRUE`) or create a "
-                "materialized view for the top patterns."
-            )
             render_priority_dataframe(
                 df_d,
                 title="Duplicate query candidates",
                 priority_columns=[
+                    "DECISION",
+                    "EVIDENCE_PACKET",
+                    "SAFE_NEXT_ACTION",
+                    "PROOF_REQUIRED",
+                    "DO_NOT_DO",
                     "QUERY_SIG",
                     "EXECUTION_COUNT",
                     "USER_COUNT",
@@ -236,12 +246,19 @@ def render_optimization_advisor():
                 st.warning(f"Warehouse recommendation scan unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("opt_df_sz") is not None and not st.session_state["opt_df_sz"].empty:
-            df_s = st.session_state["opt_df_sz"]
+            df_s = st.session_state["opt_df_sz"].copy()
+            decision_rows = [warehouse_sizing_decision(row) for _, row in df_s.iterrows()]
+            df_s = pd.concat([df_s.reset_index(drop=True), pd.DataFrame(decision_rows)], axis=1)
             st.caption(metric_confidence_label("exact"))
             render_priority_dataframe(
                 df_s,
                 title="Right-sizing candidates",
                 priority_columns=[
+                    "DECISION",
+                    "EVIDENCE_PACKET",
+                    "SAFE_NEXT_ACTION",
+                    "PROOF_REQUIRED",
+                    "DO_NOT_DO",
                     "WAREHOUSE_NAME",
                     "WAREHOUSE_SIZE",
                     "TOTAL_CREDITS",
@@ -257,19 +274,18 @@ def render_optimization_advisor():
 
             st.subheader("Recommendations")
             for _, row in df_s.iterrows():
-                wh = row.get("WAREHOUSE_NAME", "")
-                sz = row.get("WAREHOUSE_SIZE", "")
-                spill = safe_float(row.get("REMOTE_SPILL_GB", 0))
-                queue_sec = safe_float(row.get("AVG_QUEUE_SEC", 0))
-                cred = safe_float(row.get("TOTAL_CREDITS", 0))
-
-                if spill > THRESHOLDS["spill_warning_gb"] and queue_sec > 5:
-                    st.error(f"**{wh}** ({sz}): spilling + heavy queue - upsize and consider multi-cluster")
-                elif spill > THRESHOLDS["spill_warning_gb"]:
-                    st.warning(f"**{wh}** ({sz}): {spill:.1f} GB remote spill - upsize to reduce memory pressure")
-                elif queue_sec > 5:
-                    st.warning(f"**{wh}** ({sz}): avg queue {queue_sec:.1f}s - enable multi-cluster or upsize")
-                elif cred < 1 and sz not in ("", "X-Small"):
-                    st.info(f"**{wh}** ({sz}): very low credit usage ({cred:.2f}) - consider downsizing to X-Small")
+                decision = str(row.get("DECISION", ""))
+                if decision == "No sizing change from this evidence":
+                    continue
+                message = (
+                    f"**{row.get('WAREHOUSE_NAME', '')}**: {decision}. "
+                    f"{row.get('SAFE_NEXT_ACTION', '')} Proof: {row.get('PROOF_REQUIRED', '')}"
+                )
+                if "incident" in decision.lower():
+                    st.error(message)
+                elif "candidate" in decision.lower():
+                    st.info(message)
+                else:
+                    st.warning(message)
 
             download_csv(df_s, "right_sizing.csv")

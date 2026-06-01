@@ -18,6 +18,15 @@ from utils import (
 from utils.workflows import render_priority_dataframe
 
 
+PLATFORM_TOPOLOGY_PANES = (
+    "Warehouse To User",
+    "Database To Schema",
+    "Roles",
+    "Application Flows",
+    "Report Pack",
+)
+
+
 def _altair():
     """Import Altair only after topology chart data is loaded."""
     import altair as alt
@@ -221,11 +230,15 @@ def render():
     c3.metric("Active Role Grants", f"{len(role_users):,}")
     c4.metric("Application Flows", f"{len(app_flow):,}")
 
-    tab_wh, tab_db, tab_roles, tab_apps, tab_report = st.tabs([
-        "Warehouse To User", "Database To Schema", "Roles", "Application Flows", "Report Pack"
-    ])
+    active_view = st.radio(
+        "Platform topology view",
+        PLATFORM_TOPOLOGY_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="platform_topology_active_view",
+    )
 
-    with tab_wh:
+    if active_view == "Warehouse To User":
         if not wh_user.empty:
             wh_summary = wh_user.groupby("WAREHOUSE_NAME", as_index=False).agg({
                 "QUERY_COUNT": "sum",
@@ -258,7 +271,7 @@ def render():
         else:
             st.info("No warehouse/user relationships found.")
 
-    with tab_db:
+    elif active_view == "Database To Schema":
         if not db_schema.empty:
             alt = _altair()
             chart = alt.Chart(db_schema.head(50)).mark_rect().encode(
@@ -284,7 +297,7 @@ def render():
         else:
             st.info("No database/schema relationships found.")
 
-    with tab_roles:
+    elif active_view == "Roles":
         if not role_users.empty:
             role_summary = role_users.groupby("ROLE", as_index=False)["USER_NAME"].nunique().rename(columns={"USER_NAME": "USERS"})
             render_ranked_bar_chart(role_summary, "ROLE", "USERS", title="Users Per Role", top_n=25)
@@ -301,7 +314,7 @@ def render():
         else:
             st.info("No active role grants found.")
 
-    with tab_apps:
+    elif active_view == "Application Flows":
         if not app_flow.empty:
             app_summary = app_flow.groupby("CLIENT_APPLICATION", as_index=False).agg({
                 "QUERY_COUNT": "sum",
@@ -332,7 +345,7 @@ def render():
         else:
             st.info("No application flows found.")
 
-    with tab_report:
+    elif active_view == "Report Pack":
         st.subheader("Topology Report Pack")
         st.caption("Use these exports for architecture reviews, access cleanups, and cost ownership conversations.")
         download_csv(wh_user, "topology_report_warehouse_user.csv", "Export Warehouse/User Map")

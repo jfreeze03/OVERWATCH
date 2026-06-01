@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
-from config import DEFAULTS  # noqa: E402
+from config import DEFAULTS, FORWARD_PLATFORM_CONTROLS  # noqa: E402
 from sections.account_health import (  # noqa: E402
     _account_health_actionable_checklist,
     _account_health_access_hygiene_action_payload,
@@ -44,6 +44,12 @@ from sections.alert_center import (  # noqa: E402
     _alert_center_operability_rows,
     _alert_center_readiness_score,
 )
+from sections.architecture_readiness import (  # noqa: E402
+    _architecture_objectives_frame,
+    _architecture_scope_meta,
+    _architecture_source_health_rows,
+    _enrich_architecture_context,
+)
 from sections.cost_center import (  # noqa: E402
     _bill_driver_summary,
     _build_bill_waterfall,
@@ -56,6 +62,7 @@ from sections.cost_center import (  # noqa: E402
 )
 from sections.cost_contract import (  # noqa: E402
     _build_cost_closure_analytics,
+    _build_cost_run_rate_sql,
     _build_savings_verification_task_summary,
 )
 from sections.dba_control_room import (  # noqa: E402
@@ -216,6 +223,15 @@ from utils.ask_overwatch import (  # noqa: E402
     build_grounded_cortex_prompt,
     snapshot_ask_overwatch_state,
 )
+from utils.futures_governance import (  # noqa: E402
+    build_forward_platform_control_register,
+    build_platform_futures_evidence_ddl,
+    build_horizon_semantic_readiness_from_availability,
+    build_platform_futures_board,
+    classify_agent_mcp_inventory,
+    classify_ai_usage_guardrails,
+    classify_openflow_operations,
+)
 from utils.company_filter import (  # noqa: E402
     environment_label_for_database,
     get_environment_case_expr,
@@ -224,6 +240,7 @@ from utils.company_filter import (  # noqa: E402
     get_global_filter_clause,
 )
 from utils.recommendation_intelligence import (  # noqa: E402
+    build_automation_readiness_board,
     harden_recommendation,
     warehouse_sizing_decision,
 )
@@ -273,6 +290,7 @@ from utils.mart import (  # noqa: E402
     build_mart_adoption_users_db_sql,
     build_mart_adoption_role_type_sql,
     build_mart_chargeback_sql,
+    build_mart_cost_run_rate_sql,
     build_mart_control_room_failed_logins_sql,
     build_mart_control_room_cost_drivers_sql,
     build_mart_control_room_summary_sql,
@@ -914,6 +932,26 @@ class FormulaRegressionTests(unittest.TestCase):
         ytd_sql = build_mart_account_health_ytd_credits_sql("ALFA").upper()
         self.assertIn("YTD_CREDITS", ytd_sql)
         self.assertIn("DATE_TRUNC('YEAR'", ytd_sql)
+
+    def test_cost_contract_run_rate_sql_uses_complete_day_mart_and_yoy(self):
+        mart_sql = build_mart_cost_run_rate_sql("ALFA").upper()
+        live_sql = _build_cost_run_rate_sql("ALFA").upper()
+
+        for sql in (mart_sql, live_sql):
+            self.assertIn("DATE_TRUNC('DAY', CURRENT_TIMESTAMP())", sql)
+            self.assertIn("DATEADD('DAY', -7", sql)
+            self.assertIn("DATEADD('DAY', -30", sql)
+            self.assertIn("DATEADD('YEAR', -1", sql)
+            self.assertIn("AVG_DAILY_7D", sql)
+            self.assertIn("AVG_DAILY_30D", sql)
+            self.assertIn("PROJECTED_30D_FROM_7D", sql)
+            self.assertIn("YOY_7D_PCT", sql)
+            self.assertIn("YOY_30D_PCT", sql)
+            self.assertIn("TOP_YOY_INCREASE_WAREHOUSE", sql)
+
+        self.assertIn("FACT_WAREHOUSE_HOURLY", mart_sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", mart_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", live_sql)
 
     def test_control_room_snapshot_maps_to_watch_floor_shape(self):
         snapshot = pd.DataFrame([
@@ -4137,6 +4175,67 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("query profiles", decision["SAFE_NEXT_ACTION"])
         self.assertIn("Do not upsize blindly", decision["DO_NOT_DO"])
 
+    def test_automation_readiness_identifies_guided_warehouse_change(self):
+        board = build_automation_readiness_board([{
+            "Source": "Idle warehouse detector",
+            "Severity": "High",
+            "Category": "Cost Control",
+            "Entity Type": "Warehouse",
+            "Entity": "COMPUTE_WH",
+            "Owner": "OVERWATCH Platform Owner",
+            "Approver": "DBA Lead",
+            "Owner Approval Status": "Approved",
+            "Finding": "COMPUTE_WH idle 12h, wasting 4.5 credits",
+            "Action": "Reduce AUTO_SUSPEND",
+            "Idle Hours": 12,
+            "Estimated Monthly Savings": 72.5,
+            "Generated SQL Fix": "ALTER WAREHOUSE COMPUTE_WH SET AUTO_SUSPEND = 600;",
+            "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+            "Verification Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+            "Baseline Value": 4.5,
+        }])
+        row = board.iloc[0]
+
+        self.assertEqual(row["AUTOMATION_LANE"], "Ready for Guided Execution")
+        self.assertEqual(row["SAFE_GUIDED_SQL"], "Yes")
+        self.assertEqual(row["STATE_CHANGING_SQL"], "Yes")
+        self.assertEqual(row["BLOCKERS"], "none")
+        self.assertGreaterEqual(row["AUTOMATION_SCORE"], 90)
+
+    def test_automation_readiness_blocks_unapproved_and_manual_actions(self):
+        board = build_automation_readiness_board([
+            {
+                "Source": "Idle warehouse detector",
+                "Severity": "High",
+                "Category": "Cost Control",
+                "Entity Type": "Warehouse",
+                "Entity": "COMPUTE_WH",
+                "Owner": "OVERWATCH Platform Owner",
+                "Finding": "COMPUTE_WH idle 12h",
+                "Generated SQL Fix": "ALTER WAREHOUSE COMPUTE_WH SET AUTO_SUSPEND = 600;",
+                "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+            },
+            {
+                "Source": "Task failure detector",
+                "Severity": "High",
+                "Category": "Task & Procedure Reliability",
+                "Entity Type": "Task",
+                "Entity": "LOAD_POLICY",
+                "Owner": "Data Engineering",
+                "Approver": "Pipeline Owner",
+                "Owner Approval Status": "Approved",
+                "Finding": "Task failed repeatedly",
+                "Generated SQL Fix": "EXECUTE TASK ALFA_EDW_PROD.PUBLIC.LOAD_POLICY;",
+                "Proof Query": _task_failure_verification_sql("LOAD_POLICY"),
+            },
+        ])
+        by_entity = {row["ENTITY"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_entity["COMPUTE_WH"]["AUTOMATION_LANE"], "Approval Required")
+        self.assertIn("owner approval", by_entity["COMPUTE_WH"]["BLOCKERS"])
+        self.assertEqual(by_entity["LOAD_POLICY"]["AUTOMATION_LANE"], "Manual Only")
+        self.assertIn("manual DBA review", by_entity["LOAD_POLICY"]["BLOCKERS"])
+
     def test_ask_overwatch_refuses_when_no_loaded_evidence(self):
         result = answer_ask_overwatch(
             "What should I do first?",
@@ -4181,11 +4280,40 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Proof before closure", result["answer"])
         self.assertIn("Do not disable", result["answer"])
 
+    def test_ask_overwatch_answers_from_automation_board(self):
+        board = build_automation_readiness_board([{
+            "Source": "Idle warehouse detector",
+            "Severity": "High",
+            "Category": "Cost Control",
+            "Entity Type": "Warehouse",
+            "Entity": "COMPUTE_WH",
+            "Owner": "OVERWATCH Platform Owner",
+            "Approver": "DBA Lead",
+            "Owner Approval Status": "Approved",
+            "Finding": "COMPUTE_WH idle 12h",
+            "Generated SQL Fix": "ALTER WAREHOUSE COMPUTE_WH SET AUTO_SUSPEND = 600;",
+            "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+        }])
+        result = answer_ask_overwatch(
+            "What can we automate?",
+            {"rec_automation_board": board},
+            active_section="Cost & Contract",
+            company="ALFA",
+            environment="ALL",
+            role="SYSADMIN",
+        )
+
+        self.assertEqual(result["confidence"], "Evidence-grounded")
+        self.assertIn("COMPUTE_WH", result["answer"])
+        self.assertIn("Ready for Guided Execution", result["answer"])
+        self.assertIn("Guided Execution", result["cards"][0]["signal"])
+
     def test_ask_overwatch_uses_whitelisted_state_snapshot(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         huge_frame = pd.DataFrame({"VALUE": list(range(100))})
         state = {
             "rec_recommendations": [{"Entity": "COMPUTE_WH", "Finding": "Idle warehouse"}],
+            "rec_automation_board": pd.DataFrame([{"ENTITY": "COMPUTE_WH"}]),
             "unrelated_large_frame": huge_frame,
             "dba_control_room_data": {"summary": pd.DataFrame()},
         }
@@ -4194,6 +4322,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("_snapshot_ask_overwatch_state(st.session_state)", app_text)
         self.assertNotIn("dict(st.session_state),", app_text)
         self.assertIn("rec_recommendations", snapshot)
+        self.assertIn("rec_automation_board", snapshot)
         self.assertIn("dba_control_room_data", snapshot)
         self.assertNotIn("unrelated_large_frame", snapshot)
 
@@ -4358,9 +4487,252 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(enriched.iloc[0]["APPROVAL_GROUP"], "Platform DBA Lead")
         self.assertIn("CHANGE_CONTROL_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("ACCOUNT_HEALTH_DEFAULT", set(directory["OWNER_KEY"]))
+        self.assertIn("AI_AGENT_DEFAULT", set(directory["OWNER_KEY"]))
+        self.assertIn("MCP_SERVER_DEFAULT", set(directory["OWNER_KEY"]))
+        self.assertIn("OPENFLOW_DEFAULT", set(directory["OWNER_KEY"]))
+        self.assertIn("HORIZON_GOVERNANCE_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
         self.assertIn("OVERWATCH_OWNER_DIRECTORY", ddl)
         self.assertIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", ddl)
+
+    def test_architecture_objectives_enrich_database_findings_with_owner_and_rpo(self):
+        objectives = _architecture_objectives_frame("ALFA")
+        finding = pd.DataFrame([{
+            "DATABASE_NAME": "ALFA_EDW_PROD",
+            "WAREHOUSE_NAME": "WH_ALFA_PROD_ETL",
+            "SEVERITY": "High",
+            "FINDING": "warehouse serves many databases",
+            "DBA_ACTION": "Move this workload to a dedicated route.",
+        }])
+
+        enriched = _enrich_architecture_context(
+            finding,
+            entity_col="DATABASE_NAME",
+            entity_type="DATABASE",
+            category="Workload Isolation",
+            company="ALFA",
+            environment="PROD",
+            directory=default_owner_directory(),
+            objectives=objectives,
+            days=14,
+        )
+        row = enriched.iloc[0]
+
+        self.assertEqual(row["SERVICE_TIER"], "Tier 0")
+        self.assertEqual(row["EXPECTED_ENVIRONMENT"], "PROD")
+        self.assertEqual(row["RPO_MINUTES"], 120)
+        self.assertEqual(row["RTO_MINUTES"], 240)
+        self.assertEqual(row["OWNER"], "ALFA EDW Data Owner")
+        self.assertEqual(row["APPROVAL_REQUIRED"], "Yes")
+        self.assertEqual(row["QUEUE_READINESS"], "Ready to Queue")
+        self.assertIn("ALFA_EDW_PROD_DATABASE", row["OWNER_SOURCE"])
+        self.assertIn("database_name = 'ALFA_EDW_PROD'", row["VERIFICATION_QUERY"])
+
+    def test_architecture_objectives_keep_compute_wh_as_app_execution_scope(self):
+        objectives = _architecture_objectives_frame("ALFA")
+        finding = pd.DataFrame([{
+            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "SEVERITY": "Medium",
+            "CACHE_DECISION": "Cache-hostile suspend",
+            "FINDING": "cache=5 repeated=60",
+            "DBA_ACTION": "Review app execution and utility compute before changing settings.",
+        }])
+
+        enriched = _enrich_architecture_context(
+            finding,
+            entity_col="WAREHOUSE_NAME",
+            entity_type="WAREHOUSE",
+            category="Cache Optimization",
+            company="ALFA",
+            environment="ALL",
+            directory=default_owner_directory(),
+            objectives=objectives,
+        )
+        row = enriched.iloc[0]
+
+        self.assertEqual(row["WORKLOAD_CLASS"], "OVERWATCH execution and utility compute")
+        self.assertEqual(row["OWNER"], "OVERWATCH Platform Owner")
+        self.assertIn("COMPUTE_WH_EXECUTION", row["OWNER_SOURCE"])
+        self.assertIn("monitor cost separately", row["ISOLATION_POLICY"])
+        self.assertIn("Do not optimize business workload cache", row["CACHE_POLICY"])
+        self.assertIn("warehouse_name = 'COMPUTE_WH'", row["VERIFICATION_QUERY"])
+
+    def test_architecture_source_health_tracks_loaded_scope(self):
+        state = {
+            "arch_iso_days": 7,
+            "arch_iso_limit": 50,
+            "arch_iso_df": pd.DataFrame([{"DATABASE_NAME": "ALFA_EDW_PROD"}]),
+            "arch_iso_meta": _architecture_scope_meta(
+                "ALFA",
+                "PROD",
+                "Workload isolation",
+                days=7,
+                row_limit=50,
+                state={},
+            ),
+            "arch_objectives_df": _architecture_objectives_frame("ALFA"),
+            "arch_objectives_meta": _architecture_scope_meta(
+                "ALFA",
+                "PROD",
+                "Architecture objectives",
+                state={},
+            ),
+        }
+
+        source_health = _architecture_source_health_rows(state, "ALFA", "PROD")
+        by_surface = {row["SURFACE"]: row for _, row in source_health.iterrows()}
+
+        self.assertEqual(by_surface["Workload isolation"]["STATE"], "Loaded")
+        self.assertEqual(by_surface["Architecture objectives"]["STATE"], "Loaded")
+        self.assertEqual(by_surface["Cache optimization"]["STATE"], "Not Loaded")
+        self.assertIn("ACCOUNT_USAGE.QUERY_HISTORY", by_surface["Workload isolation"]["SOURCE"])
+        self.assertIn("objective register", by_surface["Architecture objectives"]["CONFIDENCE"].lower())
+
+    def test_forward_platform_controls_cover_summit_capabilities(self):
+        controls = build_forward_platform_control_register()
+        areas = set(controls["CONTROL_AREA"])
+
+        self.assertEqual(len(controls), len(FORWARD_PLATFORM_CONTROLS))
+        self.assertIn("Agent & MCP Governance", areas)
+        self.assertIn("AI Spend & Token Guardrails", areas)
+        self.assertIn("Openflow Operations", areas)
+        self.assertIn("Horizon Governance Readiness", areas)
+        self.assertIn("Semantic Trust & Verified Query Testing", areas)
+        self.assertIn("BCDR Drill Ledger", areas)
+        self.assertIn("AI Change Governance", areas)
+        self.assertTrue(controls["AUTOMATION_BOUNDARY"].str.contains("Do not|Never|Observe|Alert", case=False).all())
+
+    def test_platform_futures_evidence_ddl_persists_control_coverage(self):
+        ddl = build_platform_futures_evidence_ddl().upper()
+
+        self.assertIn("OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER", ddl)
+        self.assertIn("OVERWATCH_PLATFORM_FUTURES_EVIDENCE", ddl)
+        self.assertIn("OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V", ddl)
+        self.assertIn("OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V", ddl)
+        self.assertIn("AI_AGENT_MCP_GOVERNANCE", ddl)
+        self.assertIn("AI_SPEND_TOKEN_GUARDRAILS", ddl)
+        self.assertIn("OPENFLOW_OPERABILITY", ddl)
+        self.assertIn("HORIZON_GOVERNANCE_READINESS", ddl)
+        self.assertIn("SEMANTIC_TRUST_VALIDATION", ddl)
+        self.assertIn("BCDR_DRILL_LEDGER", ddl)
+        self.assertIn("AI_CHANGE_GOVERNANCE", ddl)
+        self.assertIn("RAW_EVIDENCE         VARIANT", ddl)
+        self.assertIn("COVERAGE_STATE", ddl)
+        self.assertIn("EVIDENCE NOT CAPTURED", ddl)
+        self.assertIn("PROOF NEEDED", ddl)
+
+    def test_agent_mcp_inventory_classifies_tool_scope_risk(self):
+        raw = pd.DataFrame([
+            {
+                "NAME": "CLAIMS_TOOLS",
+                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "SCHEMA_NAME": "AGENTS",
+                "OWNER": "ACCOUNTADMIN",
+                "COMMENT": "",
+            }
+        ])
+
+        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
+            classified = classify_agent_mcp_inventory(
+                raw,
+                source_type="MCP Server",
+                company="ALFA",
+                environment="PROD",
+            )
+        row = classified.iloc[0]
+
+        self.assertEqual(row["SEVERITY"], "Critical")
+        self.assertEqual(row["ENTITY_TYPE"], "MCP_SERVER")
+        self.assertIn("privileged admin role", row["FINDING"])
+        self.assertIn("MCP_SERVER_DEFAULT", row["OWNER_SOURCE"])
+        self.assertIn("SHOW MCP SERVERS", row["VERIFICATION_QUERY"])
+
+    def test_ai_usage_guardrail_routes_privileged_spend_to_finops(self):
+        raw = pd.DataFrame([
+            {
+                "SOURCE_TYPE": "Cortex Agent Usage",
+                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "SCHEMA_NAME": "AGENTS",
+                "ENTITY_NAME": "claims_agent",
+                "USER_NAME": "JDOE",
+                "ROLE_NAME": "ACCOUNTADMIN",
+                "INTERFACE_NAME": "external",
+                "REQUESTS": 25,
+                "TOKEN_CREDITS": 30,
+                "TOKENS": 100000,
+                "AI_FUNCTION_CREDITS": 1.5,
+            }
+        ])
+
+        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
+            classified = classify_ai_usage_guardrails(raw, company="ALFA", environment="PROD")
+        row = classified.iloc[0]
+
+        self.assertEqual(row["SEVERITY"], "Critical")
+        self.assertIn("privileged admin role", row["FINDING"])
+        self.assertIn("AI_COST_DEFAULT", row["OWNER_SOURCE"])
+        self.assertIn("SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY", row["VERIFICATION_QUERY"])
+
+    def test_openflow_and_horizon_readiness_feed_platform_board(self):
+        openflow = pd.DataFrame([
+            {
+                "DATA_PLANE_NAME": "ALFA_BYOC",
+                "DATA_PLANE_TYPE": "BYOC",
+                "RUNTIME_NAME": "claims_runtime",
+                "RUNTIME_TYPE": "RUNTIME",
+                "HOURS_REPORTED": 8,
+                "TOTAL_CREDITS": 31.5,
+            }
+        ])
+        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
+            openflow_classified = classify_openflow_operations(openflow, company="ALFA", environment="ALL")
+        horizon = build_horizon_semantic_readiness_from_availability([
+            {
+                "CONTROL_AREA": "Horizon Governance Readiness",
+                "SURFACE": "Access History",
+                "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY",
+                "MANDATORY": True,
+                "AVAILABLE": False,
+                "COLUMN_COUNT": 0,
+                "DBA_ACTION": "Grant imported privileges or document alternate access evidence.",
+            }
+        ])
+        board = build_platform_futures_board([openflow_classified, horizon])
+        by_entity = {row["ENTITY_NAME"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_entity["ALFA_BYOC / claims_runtime"]["SEVERITY"], "High")
+        self.assertEqual(by_entity["Access History"]["SEVERITY"], "High")
+        self.assertIn("Openflow", by_entity["ALFA_BYOC / claims_runtime"]["CONTROL_AREA"])
+        self.assertIn("governance proof", by_entity["Access History"]["FINDING"])
+
+    def test_ask_overwatch_answers_from_platform_futures_board(self):
+        board = pd.DataFrame([
+            {
+                "CONTROL_AREA": "Agent & MCP Governance",
+                "SEVERITY": "High",
+                "SOURCE_TYPE": "MCP Server",
+                "ENTITY_NAME": "ALFA_EDW_PROD.AGENTS.CLAIMS_TOOLS",
+                "FINDING": "MCP server requires owner, tool-scope, and blast-radius review.",
+                "DBA_ACTION": "Document approved tools, allowed roles, data scope, owner, and rollback path before production use.",
+                "OWNER": "DBA / AI Governance",
+                "APPROVAL_GROUP": "DBA Lead / Security Approver",
+                "PROOF_SQL": "SHOW MCP SERVERS IN ACCOUNT;",
+            }
+        ])
+        state = {"arch_futures_board": board}
+        snapshot = snapshot_ask_overwatch_state(state)
+        result = answer_ask_overwatch(
+            "What should I do about the MCP agent risk?",
+            state,
+            active_section="Architecture Readiness",
+            company="ALFA",
+            environment="PROD",
+        )
+
+        self.assertIn("arch_futures_board", snapshot)
+        self.assertEqual(result["confidence"], "Evidence-grounded")
+        self.assertIn("ALFA_EDW_PROD.AGENTS.CLAIMS_TOOLS", result["answer"])
+        self.assertIn("Do not auto-change agents", result["answer"])
 
     def test_alert_task_is_email_first_and_dba_focused(self):
         sql = build_alert_task_sql(email_target="jdees@alfains.com").upper()

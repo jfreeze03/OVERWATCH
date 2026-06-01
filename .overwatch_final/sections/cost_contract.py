@@ -7,6 +7,7 @@ from utils import (
     build_cost_savings_verification_health_sql,
     build_cost_savings_verification_sql,
     build_mart_cost_cockpit_sql,
+    build_mart_cost_run_rate_sql,
     credits_to_dollars,
     format_snowflake_error,
     get_active_company,
@@ -113,6 +114,104 @@ def _build_cost_cockpit_sql(company: str, days: int) -> str:
         MAX_BY(warehouse_name, credit_delta) AS top_increase_warehouse,
         MAX(credit_delta) AS top_increase_credits
     FROM deltas
+    """
+
+
+def _build_cost_run_rate_sql(company: str) -> str:
+    """Build live fallback SQL for complete-day 7d/30d run-rate and YOY cost trend."""
+    wh_filter = get_wh_filter_clause("warehouse_name", company)
+    return f"""
+    WITH bounds AS (
+        SELECT
+            DATE_TRUNC('DAY', CURRENT_TIMESTAMP()) AS today_start,
+            DATEADD('DAY', -7, DATE_TRUNC('DAY', CURRENT_TIMESTAMP())) AS current_7d_start,
+            DATEADD('DAY', -30, DATE_TRUNC('DAY', CURRENT_TIMESTAMP())) AS current_30d_start,
+            DATEADD('YEAR', -1, DATEADD('DAY', -7, DATE_TRUNC('DAY', CURRENT_TIMESTAMP()))) AS yoy_7d_start,
+            DATEADD('YEAR', -1, DATE_TRUNC('DAY', CURRENT_TIMESTAMP())) AS yoy_7d_end,
+            DATEADD('YEAR', -1, DATEADD('DAY', -30, DATE_TRUNC('DAY', CURRENT_TIMESTAMP()))) AS yoy_30d_start,
+            DATEADD('YEAR', -1, DATE_TRUNC('DAY', CURRENT_TIMESTAMP())) AS yoy_30d_end
+    ),
+    metering AS (
+        SELECT
+            start_time AS usage_ts,
+            warehouse_name,
+            COALESCE(credits_used, 0) AS credits_used
+        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
+        WHERE start_time >= yoy_30d_start
+          AND start_time < today_start
+          {wh_filter}
+    ),
+    aggregate_trend AS (
+        SELECT
+            SUM(IFF(usage_ts >= current_7d_start AND usage_ts < today_start, credits_used, 0)) AS credits_7d,
+            SUM(IFF(usage_ts >= current_30d_start AND usage_ts < today_start, credits_used, 0)) AS credits_30d,
+            SUM(IFF(usage_ts >= yoy_7d_start AND usage_ts < yoy_7d_end, credits_used, 0)) AS yoy_7d_credits,
+            SUM(IFF(usage_ts >= yoy_30d_start AND usage_ts < yoy_30d_end, credits_used, 0)) AS yoy_30d_credits,
+            COUNT(DISTINCT IFF(usage_ts >= current_7d_start AND usage_ts < today_start, TO_DATE(usage_ts), NULL)) AS observed_days_7d,
+            COUNT(DISTINCT IFF(usage_ts >= current_30d_start AND usage_ts < today_start, TO_DATE(usage_ts), NULL)) AS observed_days_30d,
+            COUNT(DISTINCT IFF(usage_ts >= yoy_7d_start AND usage_ts < yoy_7d_end, TO_DATE(usage_ts), NULL)) AS yoy_days_7d,
+            COUNT(DISTINCT IFF(usage_ts >= yoy_30d_start AND usage_ts < yoy_30d_end, TO_DATE(usage_ts), NULL)) AS yoy_days_30d
+        FROM metering, bounds
+    ),
+    warehouse_yoy AS (
+        SELECT
+            warehouse_name,
+            SUM(IFF(usage_ts >= current_7d_start AND usage_ts < today_start, credits_used, 0)) AS current_7d_credits,
+            SUM(IFF(usage_ts >= yoy_7d_start AND usage_ts < yoy_7d_end, credits_used, 0)) AS yoy_7d_credits
+        FROM metering, bounds
+        GROUP BY warehouse_name
+    ),
+    top_yoy AS (
+        SELECT
+            warehouse_name AS top_yoy_increase_warehouse,
+            current_7d_credits - yoy_7d_credits AS top_yoy_increase_credits
+        FROM warehouse_yoy
+        WHERE current_7d_credits > 0 OR yoy_7d_credits > 0
+        QUALIFY ROW_NUMBER() OVER (
+            ORDER BY current_7d_credits - yoy_7d_credits DESC, current_7d_credits DESC
+        ) = 1
+    )
+    SELECT
+        ROUND(COALESCE(a.credits_7d, 0), 4) AS credits_7d,
+        ROUND(COALESCE(a.credits_7d, 0) / 7, 4) AS avg_daily_7d,
+        ROUND(COALESCE(a.credits_30d, 0), 4) AS credits_30d,
+        ROUND(COALESCE(a.credits_30d, 0) / 30, 4) AS avg_daily_30d,
+        ROUND((COALESCE(a.credits_7d, 0) / 7) * 30, 4) AS projected_30d_from_7d,
+        ROUND(COALESCE(a.yoy_7d_credits, 0), 4) AS yoy_7d_credits,
+        ROUND(COALESCE(a.yoy_30d_credits, 0), 4) AS yoy_30d_credits,
+        a.observed_days_7d,
+        a.observed_days_30d,
+        a.yoy_days_7d,
+        a.yoy_days_30d,
+        CASE
+            WHEN COALESCE(a.credits_30d, 0) = 0 THEN NULL
+            ELSE ROUND(((COALESCE(a.credits_7d, 0) / 7) - (a.credits_30d / 30)) / NULLIF(a.credits_30d / 30, 0) * 100, 2)
+        END AS pct_vs_30d_avg,
+        CASE
+            WHEN a.yoy_days_7d < 5 OR COALESCE(a.yoy_7d_credits, 0) = 0 THEN NULL
+            ELSE ROUND((COALESCE(a.credits_7d, 0) - a.yoy_7d_credits) / NULLIF(a.yoy_7d_credits, 0) * 100, 2)
+        END AS yoy_7d_pct,
+        CASE
+            WHEN a.yoy_days_30d < 20 OR COALESCE(a.yoy_30d_credits, 0) = 0 THEN NULL
+            ELSE ROUND((COALESCE(a.credits_30d, 0) - a.yoy_30d_credits) / NULLIF(a.yoy_30d_credits, 0) * 100, 2)
+        END AS yoy_30d_pct,
+        CASE
+            WHEN COALESCE(a.credits_30d, 0) = 0 THEN 'No 30-day baseline'
+            WHEN ((COALESCE(a.credits_7d, 0) / 7) - (a.credits_30d / 30)) / NULLIF(a.credits_30d / 30, 0) >= 0.15 THEN 'Accelerating'
+            WHEN ((COALESCE(a.credits_7d, 0) / 7) - (a.credits_30d / 30)) / NULLIF(a.credits_30d / 30, 0) <= -0.15 THEN 'Cooling'
+            ELSE 'Stable'
+        END AS run_rate_state,
+        CASE
+            WHEN a.yoy_days_7d < 5 THEN 'No prior-year baseline'
+            WHEN COALESCE(a.yoy_7d_credits, 0) = 0 THEN 'No prior-year spend'
+            WHEN (COALESCE(a.credits_7d, 0) - a.yoy_7d_credits) / NULLIF(a.yoy_7d_credits, 0) >= 0.20 THEN 'Above prior year'
+            WHEN (COALESCE(a.credits_7d, 0) - a.yoy_7d_credits) / NULLIF(a.yoy_7d_credits, 0) <= -0.20 THEN 'Below prior year'
+            ELSE 'Near prior year'
+        END AS yoy_state,
+        COALESCE(t.top_yoy_increase_warehouse, 'No warehouse baseline') AS top_yoy_increase_warehouse,
+        ROUND(COALESCE(t.top_yoy_increase_credits, 0), 4) AS top_yoy_increase_credits
+    FROM aggregate_trend a
+    LEFT JOIN top_yoy t ON TRUE
     """
 
 
@@ -434,6 +533,61 @@ def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) ->
         st.code(build_cost_savings_verification_sql(), language="sql")
 
 
+def _nullable_float(row: pd.Series, column: str) -> float | None:
+    value = row.get(column)
+    if value is None or pd.isna(value):
+        return None
+    return safe_float(value)
+
+
+def _format_optional_pct(value: float | None, empty: str = "No baseline") -> str:
+    if value is None:
+        return empty
+    return f"{value:+.1f}%"
+
+
+def _render_cost_run_rate_lens(run_rate: pd.DataFrame | None, credit_price: float, error: str = "") -> None:
+    st.markdown("**Run-Rate and YOY**")
+    if error:
+        st.caption(f"Run-rate trend unavailable: {error}")
+        return
+    if run_rate is None or getattr(run_rate, "empty", True):
+        st.caption("Load the cockpit to show complete-day 7-day averages, 30-day context, and prior-year comparison.")
+        return
+
+    row = run_rate.iloc[0]
+    avg_7d = safe_float(row.get("AVG_DAILY_7D"))
+    avg_30d = safe_float(row.get("AVG_DAILY_30D"))
+    credits_7d = safe_float(row.get("CREDITS_7D"))
+    projected_30d = safe_float(row.get("PROJECTED_30D_FROM_7D"))
+    pct_vs_30d = _nullable_float(row, "PCT_VS_30D_AVG")
+    yoy_7d_pct = _nullable_float(row, "YOY_7D_PCT")
+    yoy_30d_pct = _nullable_float(row, "YOY_30D_PCT")
+    yoy_days_7d = safe_int(row.get("YOY_DAYS_7D"))
+    yoy_days_30d = safe_int(row.get("YOY_DAYS_30D"))
+    run_state = str(row.get("RUN_RATE_STATE") or "Unknown")
+    yoy_state = str(row.get("YOY_STATE") or "Unknown")
+
+    r1, r2, r3, r4, r5 = st.columns(5)
+    r1.metric(
+        "7d Avg",
+        f"{avg_7d:,.1f} cr/day",
+        _format_optional_pct(pct_vs_30d, run_state) + " vs 30d",
+        delta_color="inverse",
+    )
+    r2.metric("7d Cost", f"${credits_to_dollars(credits_7d, credit_price):,.0f}", f"${credits_to_dollars(avg_7d, credit_price):,.0f}/day")
+    r3.metric("30d Run-Rate", f"${credits_to_dollars(projected_30d, credit_price):,.0f}/30d", run_state)
+    r4.metric("7d YOY", _format_optional_pct(yoy_7d_pct), f"{yoy_days_7d}/7 PY days", delta_color="inverse")
+    r5.metric("30d YOY", _format_optional_pct(yoy_30d_pct), f"{yoy_days_30d}/30 PY days", delta_color="inverse")
+
+    top_wh = str(row.get("TOP_YOY_INCREASE_WAREHOUSE") or "No warehouse baseline")
+    top_delta = safe_float(row.get("TOP_YOY_INCREASE_CREDITS"))
+    st.caption(
+        f"{yoy_state}. Top same-week YOY increase: {top_wh} "
+        f"({top_delta:+,.2f} credits). Uses complete days only."
+    )
+
+
 def _render_cost_watch_floor(session, company: str, credit_price: float) -> None:
     st.subheader("Cost Control Cockpit")
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -471,6 +625,34 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
                     )
                     st.session_state["cost_contract_cockpit"] = pd.DataFrame()
                     st.session_state["cost_contract_queue"] = pd.DataFrame()
+            try:
+                st.session_state["cost_contract_run_rate"] = run_query(
+                    build_mart_cost_run_rate_sql(company),
+                    ttl_key=f"cost_contract_run_rate_mart_{company}",
+                    tier="historical",
+                    section="Cost & Contract",
+                )
+                st.session_state["cost_contract_run_rate_source"] = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+                st.session_state["cost_contract_run_rate_error"] = ""
+            except Exception as mart_exc:
+                try:
+                    st.session_state["cost_contract_run_rate"] = run_query(
+                        _build_cost_run_rate_sql(company),
+                        ttl_key=f"cost_contract_run_rate_live_{company}",
+                        tier="historical",
+                        section="Cost & Contract",
+                    )
+                    st.session_state["cost_contract_run_rate_source"] = (
+                        "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+                    )
+                    st.session_state["cost_contract_run_rate_error"] = ""
+                except Exception as exc:
+                    st.session_state["cost_contract_run_rate"] = pd.DataFrame()
+                    st.session_state["cost_contract_run_rate_source"] = ""
+                    st.session_state["cost_contract_run_rate_error"] = (
+                        f"Mart unavailable: {format_snowflake_error(mart_exc)}; "
+                        f"live fallback failed: {format_snowflake_error(exc)}"
+                    )
             try:
                 st.session_state["cost_contract_queue"] = load_action_queue(session)
                 st.session_state["cost_contract_queue_error"] = ""
@@ -543,6 +725,15 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
     k3.metric("Open Actions", f"{open_actions:,}", f"{high_actions:,} high", delta_color="inverse")
     k4.metric("Savings Queue", f"${total_savings:,.0f}/mo")
     k5.metric("Cortex Projection", f"${cortex_projected:,.0f}/30d", f"{cortex_exception_count:,} exceptions", delta_color="inverse")
+
+    run_rate_source = st.session_state.get("cost_contract_run_rate_source", "")
+    if run_rate_source:
+        st.caption(run_rate_source)
+    _render_cost_run_rate_lens(
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        credit_price,
+        st.session_state.get("cost_contract_run_rate_error", ""),
+    )
 
     _render_savings_verification_task_health(
         st.session_state.get("cost_contract_verification_health", pd.DataFrame()),

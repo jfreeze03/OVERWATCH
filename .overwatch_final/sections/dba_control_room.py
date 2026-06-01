@@ -66,6 +66,23 @@ DBA_CONTROL_SCOPE_FILTER_KEYS = (
     "global_start_date",
     "global_end_date",
 )
+DBA_CONTROL_ROOM_PANES = (
+    "Triage",
+    "Drill Routes",
+    "Release Compare",
+    "Executive Evidence",
+    "Source Health",
+)
+DBA_CONTROL_ROOM_DETAIL_PANES = (
+    "Failed Queries",
+    "Task Failures",
+    "Task SLA/Cost",
+    "Procedure SLA/Cost",
+    "Cortex Cost",
+    "Failed Logins",
+    "Object Changes",
+    "Action Queue",
+)
 
 
 def _task_management_helpers():
@@ -3259,11 +3276,15 @@ def render() -> None:
     )
     st.divider()
 
-    tab_triage, tab_routes, tab_release, tab_evidence, tab_sources = st.tabs([
-        "Triage", "Drill Routes", "Release Compare", "Executive Evidence", "Source Health"
-    ])
+    active_view = st.radio(
+        "DBA Control Room view",
+        DBA_CONTROL_ROOM_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="dba_control_room_active_view",
+    )
 
-    with tab_triage:
+    if active_view == "Triage":
         if exceptions.empty:
             st.success("No major exceptions detected by the DBA Control Room rules.")
         else:
@@ -3335,7 +3356,7 @@ def render() -> None:
             else:
                 st.success("No warehouse pressure detected by the control-room thresholds.")
 
-    with tab_routes:
+    elif active_view == "Drill Routes":
         r1, r2, r3 = st.columns(3)
         with r1:
             st.subheader("Reliability")
@@ -3367,72 +3388,66 @@ def render() -> None:
 
         st.divider()
         st.subheader("Exception Detail Samples")
-        detail_tabs = st.tabs([
-            "Failed Queries",
-            "Task Failures",
-            "Task SLA/Cost",
-            "Procedure SLA/Cost",
-            "Cortex Cost",
-            "Failed Logins",
-            "Object Changes",
-            "Action Queue",
-        ])
-        for tab, key in zip(
-            detail_tabs,
-            [
-                "failed_queries",
-                "task_failures",
-                "task_sla_cost",
-                "procedure_sla_cost",
-                "cortex_exceptions",
-                "failed_logins",
-                "object_changes",
-                "action_queue",
-            ],
-        ):
-            with tab:
-                df = data.get(key, _empty_df())
-                if not df.empty:
-                    display_df = _build_command_queue(df) if key == "action_queue" else df
-                    if key == "action_queue":
-                        priority_columns = [
-                            "SEVERITY", "DUE_STATE", "COMMAND_STATE", "COMMAND_EXECUTION_GATE",
-                            "COMMAND_ROUTE_READINESS", "CATEGORY", "ENTITY_NAME",
-                            "OWNER", "OWNER_EMAIL", "ONCALL_PRIMARY", "APPROVAL_GROUP",
-                            "STATUS", "CONTROL_GAP", "NEXT_ACTION", "TICKET_ID",
-                            "APPROVER", "OWNER_SOURCE", "VERIFICATION_STATUS", "ROUTE",
-                        ]
-                        sort_by = ["QUEUE_PRIORITY", "SEVERITY"]
-                        ascending = [True, True]
-                    else:
-                        priority_columns = [
-                            "SEVERITY", "SIGNAL", "ENTITY", "TASK_NAME", "PROCEDURE_NAME",
-                            "QUERY_ID", "WAREHOUSE_NAME", "USER_NAME", "ERROR_MESSAGE",
-                            "ALLOCATED_CREDITS", "EST_TOTAL_CREDITS", "DURATION_SEC",
-                            "START_TIME", "SCHEDULED_TIME", "EVENT_TIMESTAMP",
-                        ]
-                        sort_by = [
-                            "ALLOCATED_CREDITS", "EST_TOTAL_CREDITS", "DURATION_SEC",
-                            "START_TIME", "SCHEDULED_TIME", "EVENT_TIMESTAMP",
-                        ]
-                        ascending = [False, False, False, False, False, False]
-                    render_priority_dataframe(
-                        display_df,
-                        title=f"{key.replace('_', ' ').title()} evidence",
-                        priority_columns=priority_columns,
-                        sort_by=sort_by,
-                        ascending=ascending,
-                        raw_label=f"All {key.replace('_', ' ')} evidence rows",
-                        height=320,
-                    )
-                else:
-                    err = data.get(f"{key}_error", _empty_df())
-                    if not err.empty:
-                        st.warning(str(err["ERROR"].iloc[0]))
-                    else:
-                        st.info("No rows found.")
+        detail_view = st.radio(
+            "Exception detail sample",
+            DBA_CONTROL_ROOM_DETAIL_PANES,
+            horizontal=True,
+            label_visibility="collapsed",
+            key="dba_control_room_detail_view",
+        )
+        detail_keys = {
+            "Failed Queries": "failed_queries",
+            "Task Failures": "task_failures",
+            "Task SLA/Cost": "task_sla_cost",
+            "Procedure SLA/Cost": "procedure_sla_cost",
+            "Cortex Cost": "cortex_exceptions",
+            "Failed Logins": "failed_logins",
+            "Object Changes": "object_changes",
+            "Action Queue": "action_queue",
+        }
+        key = detail_keys[detail_view]
+        df = data.get(key, _empty_df())
+        if not df.empty:
+            display_df = _build_command_queue(df) if key == "action_queue" else df
+            if key == "action_queue":
+                priority_columns = [
+                    "SEVERITY", "DUE_STATE", "COMMAND_STATE", "COMMAND_EXECUTION_GATE",
+                    "COMMAND_ROUTE_READINESS", "CATEGORY", "ENTITY_NAME",
+                    "OWNER", "OWNER_EMAIL", "ONCALL_PRIMARY", "APPROVAL_GROUP",
+                    "STATUS", "CONTROL_GAP", "NEXT_ACTION", "TICKET_ID",
+                    "APPROVER", "OWNER_SOURCE", "VERIFICATION_STATUS", "ROUTE",
+                ]
+                sort_by = ["QUEUE_PRIORITY", "SEVERITY"]
+                ascending = [True, True]
+            else:
+                priority_columns = [
+                    "SEVERITY", "SIGNAL", "ENTITY", "TASK_NAME", "PROCEDURE_NAME",
+                    "QUERY_ID", "WAREHOUSE_NAME", "USER_NAME", "ERROR_MESSAGE",
+                    "ALLOCATED_CREDITS", "EST_TOTAL_CREDITS", "DURATION_SEC",
+                    "START_TIME", "SCHEDULED_TIME", "EVENT_TIMESTAMP",
+                ]
+                sort_by = [
+                    "ALLOCATED_CREDITS", "EST_TOTAL_CREDITS", "DURATION_SEC",
+                    "START_TIME", "SCHEDULED_TIME", "EVENT_TIMESTAMP",
+                ]
+                ascending = [False, False, False, False, False, False]
+            render_priority_dataframe(
+                display_df,
+                title=f"{key.replace('_', ' ').title()} evidence",
+                priority_columns=priority_columns,
+                sort_by=sort_by,
+                ascending=ascending,
+                raw_label=f"All {key.replace('_', ' ')} evidence rows",
+                height=320,
+            )
+        else:
+            err = data.get(f"{key}_error", _empty_df())
+            if not err.empty:
+                st.warning(str(err["ERROR"].iloc[0]))
+            else:
+                st.info("No rows found.")
 
-    with tab_release:
+    elif active_view == "Release Compare":
         st.subheader("Release Compare")
         st.caption(
             "Compare before/after release windows for task graph duration, stored procedure runtime, "
@@ -3624,7 +3639,7 @@ def render() -> None:
         else:
             st.info("Choose release windows and run the comparison when you need post-release evidence.")
 
-    with tab_evidence:
+    elif active_view == "Executive Evidence":
         st.subheader("Report-Ready Brief")
         report = _build_report(data, exceptions, company, credit_price, int(loaded_lookback))
         st.text_area("Brief text", report, height=420)
@@ -3636,7 +3651,7 @@ def render() -> None:
             key="dba_control_room_brief_download",
         )
 
-    with tab_sources:
+    elif active_view == "Source Health":
         st.subheader("Control Room Source Status")
         _render_control_room_source_health(
             data,

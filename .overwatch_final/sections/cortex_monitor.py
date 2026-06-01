@@ -597,6 +597,10 @@ def render():
 
             # Cost column
             df_cc = df_cc.copy()
+            if "FIRST_USAGE" in df_cc.columns:
+                df_cc["FIRST_USAGE"] = safe_strip_tz(df_cc["FIRST_USAGE"])
+            if "LAST_USAGE" in df_cc.columns:
+                df_cc["LAST_USAGE"] = safe_strip_tz(df_cc["LAST_USAGE"])
             df_cc["COST_USD"] = df_cc["TOTAL_CREDITS"].apply(lambda x: round(x * AI_CREDIT_RATE, 4))
             df_cc["COST_PER_REQUEST_USD"] = df_cc.apply(
                 lambda row: round(safe_float(row.get("COST_USD")) / max(safe_int(row.get("TOTAL_REQUESTS")), 1), 6),
@@ -610,13 +614,37 @@ def render():
                 "because query history does not expose Cortex Code cost by query."
             )
             user_agg = (
-                df_cc.groupby("USER_NAME")["COST_USD"]
-                .sum().reset_index()
+                df_cc.groupby("USER_NAME", as_index=False)
+                .agg(
+                    COST_USD=("COST_USD", "sum"),
+                    TOTAL_CREDITS=("TOTAL_CREDITS", "sum"),
+                    TOTAL_REQUESTS=("TOTAL_REQUESTS", "sum"),
+                    FIRST_USAGE=("FIRST_USAGE", "min"),
+                    LAST_USAGE=("LAST_USAGE", "max"),
+                )
                 .sort_values("COST_USD", ascending=False)
                 .head(20)
             )
             if not user_agg.empty:
                 render_ranked_bar_chart(user_agg, "USER_NAME", "COST_USD", top_n=20)
+                render_priority_dataframe(
+                    user_agg,
+                    title="Cortex user cost and recency",
+                    priority_columns=[
+                        "USER_NAME", "COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS",
+                        "FIRST_USAGE", "LAST_USAGE",
+                    ],
+                    sort_by=["COST_USD", "LAST_USAGE"],
+                    ascending=[False, False],
+                    raw_label="All Cortex user cost and recency rows",
+                    height=240,
+                    max_rows=20,
+                    column_config={
+                        "COST_USD": st.column_config.NumberColumn("Cost", format="$%.2f"),
+                        "TOTAL_CREDITS": st.column_config.NumberColumn("AI Credits", format="%.4f"),
+                        "TOTAL_REQUESTS": st.column_config.NumberColumn("Requests", format="%d"),
+                    },
+                )
 
             st.subheader("Full Breakdown")
             render_priority_dataframe(
@@ -629,6 +657,8 @@ def render():
                     "COST_USD",
                     "TOTAL_REQUESTS",
                     "TOTAL_TOKENS",
+                    "FIRST_USAGE",
+                    "LAST_USAGE",
                     "COST_PER_REQUEST_USD",
                 ],
                 sort_by=["COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],

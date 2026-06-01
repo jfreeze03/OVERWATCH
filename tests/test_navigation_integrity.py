@@ -13,6 +13,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 from config import (  # noqa: E402
     ALL_SECTIONS,
+    ARCHITECTURE_OBJECTIVES,
     NAV_GROUPS,
     ROLE_SECTIONS,
     SECTION_ALIASES,
@@ -81,6 +82,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Posture"])
         self.assertEqual(SECTION_ALIASES["DBA Tools"], SECTION_BY_TITLE["Change & Drift"])
         self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Warehouse Health"])
+        self.assertEqual(SECTION_ALIASES["Architecture"], SECTION_BY_TITLE["Architecture Readiness"])
+        self.assertEqual(SECTION_ALIASES["Disaster Recovery"], SECTION_BY_TITLE["Architecture Readiness"])
         self.assertNotIn("LEGACY_SECTION_ALIASES", (APP_ROOT / "config.py").read_text(encoding="utf-8"))
 
     def test_section_alias_literal_has_no_duplicate_keys(self):
@@ -108,6 +111,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         self.assertIn('st.expander("Ask OVERWATCH", expanded=False)', app_text)
         self.assertIn("answer_ask_overwatch(", app_text)
+        self.assertIn('"rec_automation_board"', (APP_ROOT / "utils" / "ask_overwatch.py").read_text(encoding="utf-8"))
+        self.assertIn('"arch_futures_board"', (APP_ROOT / "utils" / "ask_overwatch.py").read_text(encoding="utf-8"))
         self.assertNotIn("Ask OVERWATCH (Evidence Mode)", app_text)
         self.assertNotIn("SNOWFLAKE.CORTEX.COMPLETE", app_text)
 
@@ -118,6 +123,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Cost & Contract", visible_titles)
         self.assertIn("Security Posture", visible_titles)
         self.assertIn("Change & Drift", visible_titles)
+        self.assertIn("Architecture Readiness", visible_titles)
         for retired_title in (
             "Query Workbench",
             "Live Monitor",
@@ -137,6 +143,16 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_visible_sections_have_strict_scorecard_baselines(self):
         self.assertEqual(set(ALL_SECTIONS), set(DBA_CONTROL_PLANE_SECTION_BASELINE))
+
+    def test_architecture_objectives_cover_alfa_prod_dev_and_execution_warehouse(self):
+        objectives = {
+            (row["ENTITY_TYPE"], row["ENTITY_PATTERN"]): row
+            for row in ARCHITECTURE_OBJECTIVES
+        }
+        self.assertEqual(objectives[("DATABASE", "ALFA_EDW_PROD")]["EXPECTED_ENVIRONMENT"], "PROD")
+        self.assertEqual(objectives[("DATABASE", "ALFA_EDW_DEV")]["EXPECTED_ENVIRONMENT"], "DEV_ALL")
+        self.assertEqual(objectives[("WAREHOUSE", "COMPUTE_WH")]["WORKLOAD_CLASS"], "OVERWATCH execution and utility compute")
+        self.assertIn("monitor cost separately", objectives[("WAREHOUSE", "COMPUTE_WH")]["ISOLATION_POLICY"])
 
     def test_workflow_hubs_expose_expected_subworkflows(self):
         from sections import change_drift, cost_contract, security_posture, workload_operations
@@ -220,6 +236,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             '"pipe_"',
             '"qw_"',
             '"sf_value_"',
+            '"arch_"',
             '"change_drift_summary"',
             '"security_posture_summary"',
         ):
@@ -270,6 +287,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Database-attributed cost is Allocated/Estimated", SECTION_OPERATING_GUIDE["Cost & Contract"]["guardrail"])
         self.assertIn("Email is the active channel", SECTION_OPERATING_GUIDE["Alert Center"]["guardrail"])
         self.assertIn("Login-only findings have no database context", SECTION_OPERATING_GUIDE["Account Health"]["guardrail"])
+        self.assertIn("clustering-depth", SECTION_OPERATING_GUIDE["Architecture Readiness"]["guardrail"])
         self.assertIn(".ow-section-guide", theme_text)
 
     def test_current_sections_have_evidence_contracts(self):
@@ -299,6 +317,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Email-first", SECTION_EVIDENCE_CONTRACT["Alert Center"][1]["confidence"])
         self.assertIn("Do not apply environment filters", SECTION_EVIDENCE_CONTRACT["Account Health"][0]["invalid_use"])
         self.assertIn("Do not split exact spend by database", SECTION_EVIDENCE_CONTRACT["Warehouse Health"][0]["invalid_use"])
+        architecture_invalid_uses = " ".join(
+            row["invalid_use"] for row in SECTION_EVIDENCE_CONTRACT["Architecture Readiness"]
+        )
+        self.assertIn("Do not run clustering-depth", architecture_invalid_uses)
+        self.assertIn("Do not auto-change agents", architecture_invalid_uses)
         self.assertIn(".ow-evidence-contract", theme_text)
         self.assertIn(".ow-confidence-gauge-track", theme_text)
         self.assertIn(".ow-confidence-gauge-marker", theme_text)
@@ -393,6 +416,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             "workload_operations.py": 'st.header("Workload Operations")',
             "security_posture.py": 'st.header("Security Posture")',
             "change_drift.py": 'st.header("Change & Drift")',
+            "architecture_readiness.py": 'st.header("Architecture Readiness")',
             "account_health.py": 'st.header("Account Health - Command Center")',
         }
         for filename, marker in duplicate_headers.items():
@@ -409,9 +433,22 @@ class NavigationIntegrityTests(unittest.TestCase):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
         cache_text = (APP_ROOT / "utils" / "cache.py").read_text(encoding="utf-8")
         cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
+        cost_contract_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        cortex_text = (APP_ROOT / "sections" / "cortex_monitor.py").read_text(encoding="utf-8")
         account_health_text = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
         alert_center_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
+        dba_control_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        security_access_text = (APP_ROOT / "sections" / "security_access.py").read_text(encoding="utf-8")
+        recommendations_text = (APP_ROOT / "sections" / "recommendations.py").read_text(encoding="utf-8")
+        live_monitor_text = (APP_ROOT / "sections" / "live_monitor.py").read_text(encoding="utf-8")
+        query_analysis_text = (APP_ROOT / "sections" / "query_analysis.py").read_text(encoding="utf-8")
+        pipeline_health_text = (APP_ROOT / "sections" / "pipeline_health.py").read_text(encoding="utf-8")
+        object_change_text = (APP_ROOT / "sections" / "object_change_monitor.py").read_text(encoding="utf-8")
+        adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8")
+        platform_text = (APP_ROOT / "sections" / "platform_topology.py").read_text(encoding="utf-8")
+        architecture_text = (APP_ROOT / "sections" / "architecture_readiness.py").read_text(encoding="utf-8")
         usage_overview_text = (APP_ROOT / "sections" / "usage_overview.py").read_text(encoding="utf-8")
+        optimization_text = (APP_ROOT / "utils" / "optimization_advisor.py").read_text(encoding="utf-8")
         downloads_text = (APP_ROOT / "utils" / "downloads.py").read_text(encoding="utf-8")
         dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
         task_management_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8")
@@ -476,6 +513,84 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("USAGE_OVERVIEW_PANES", usage_overview_text)
         self.assertIn('st.radio(\n        "Usage detail view"', usage_overview_text)
         self.assertNotIn("st.tabs(", usage_overview_text)
+        for name, text in {
+            "dba_control_room.py": dba_control_text,
+            "security_access.py": security_access_text,
+            "recommendations.py": recommendations_text,
+            "live_monitor.py": live_monitor_text,
+            "query_analysis.py": query_analysis_text,
+            "pipeline_health.py": pipeline_health_text,
+            "object_change_monitor.py": object_change_text,
+            "adoption_analytics.py": adoption_text,
+            "platform_topology.py": platform_text,
+            "architecture_readiness.py": architecture_text,
+            "dba_tools.py": dba_tools_text,
+            "optimization_advisor.py": optimization_text,
+        }.items():
+            with self.subTest(active_view_file=name):
+                self.assertNotIn("st.tabs(", text)
+        self.assertIn("DBA_CONTROL_ROOM_PANES", dba_control_text)
+        self.assertIn("DBA_CONTROL_ROOM_DETAIL_PANES", dba_control_text)
+        self.assertIn("SECURITY_ACCESS_PANES", security_access_text)
+        self.assertIn("_query_history_columns()", security_access_text)
+        self.assertIn("_user_column_exprs()", security_access_text)
+        self.assertIn("Program Failure Rate", security_access_text)
+        self.assertIn("RECOMMENDATION_PANES", recommendations_text)
+        self.assertIn("Proof-Ready", recommendations_text)
+        self.assertIn("Automation Readiness", recommendations_text)
+        self.assertIn("build_automation_readiness_board", recommendations_text)
+        self.assertIn("rec_automation_board", recommendations_text)
+        self.assertIn("LIVE_MONITOR_PANES", live_monitor_text)
+        self.assertIn("Live query polling is paused", live_monitor_text)
+        self.assertIn("QUERY_ANALYSIS_PANES", query_analysis_text)
+        self.assertIn("_query_history_exprs()", query_analysis_text)
+        self.assertIn("PIPELINE_HEALTH_PANES", pipeline_health_text)
+        self.assertIn("OBJECT_CHANGE_PANES", object_change_text)
+        self.assertIn("_query_history_drift_caps()", object_change_text)
+        self.assertIn("ADOPTION_ANALYTICS_PANES", adoption_text)
+        self.assertIn("PLATFORM_TOPOLOGY_PANES", platform_text)
+        self.assertIn("ARCHITECTURE_READINESS_PANES", architecture_text)
+        self.assertIn("Objectives & Owners", architecture_text)
+        self.assertIn("AI & Platform Futures", architecture_text)
+        self.assertIn("ARCHITECTURE_OBJECTIVES", architecture_text)
+        self.assertIn("build_forward_platform_control_register", architecture_text)
+        self.assertIn("build_platform_futures_evidence_ddl", architecture_text)
+        self.assertIn("build_platform_futures_board", architecture_text)
+        self.assertIn("load_agent_mcp_inventory", architecture_text)
+        self.assertIn("load_ai_usage_guardrails", architecture_text)
+        self.assertIn("load_horizon_semantic_readiness", architecture_text)
+        self.assertIn("load_openflow_operations", architecture_text)
+        self.assertIn("_architecture_source_health_rows", architecture_text)
+        self.assertIn("_enrich_architecture_context", architecture_text)
+        self.assertIn('st.button("Load Isolation Matrix"', architecture_text)
+        self.assertIn('st.button("Load Clustering Candidates"', architecture_text)
+        self.assertIn('st.button("Load Cache Evidence"', architecture_text)
+        self.assertIn('st.button("Load DR Readiness"', architecture_text)
+        self.assertIn('st.button("Load Agents and MCP Inventory"', architecture_text)
+        self.assertIn('st.button("Load AI Usage Guardrails"', architecture_text)
+        self.assertIn('st.button("Load Openflow Operations"', architecture_text)
+        self.assertIn('st.button("Load Horizon and Semantic Readiness"', architecture_text)
+        self.assertIn("Platform futures evidence ledger setup SQL", architecture_text)
+        self.assertIn("Run-Rate and YOY", cost_contract_text)
+        self.assertIn("build_mart_cost_run_rate_sql", cost_contract_text)
+        self.assertIn("YOY_7D_PCT", cost_contract_text)
+        self.assertIn("Cortex user cost and recency", cortex_text)
+        self.assertIn('"FIRST_USAGE"', cortex_text)
+        self.assertIn('"LAST_USAGE"', cortex_text)
+        self.assertIn("QUEUE_READINESS", architecture_text)
+        self.assertIn("Owner Approval Status", architecture_text)
+        self.assertIn("RPO_MINUTES", architecture_text)
+        self.assertIn("SYSTEM$CLUSTERING_DEPTH", architecture_text)
+        self.assertIn("SHOW FAILOVER GROUPS", architecture_text)
+        self.assertIn("SHOW AGENTS IN ACCOUNT", architecture_text)
+        self.assertIn("SHOW MCP SERVERS IN ACCOUNT", architecture_text)
+        self.assertIn("Architecture Readiness - Cache", architecture_text)
+        self.assertIn("TASK_GRAPH_CONTROL_PANES", dba_tools_text)
+        self.assertIn("OPTIMIZATION_ADVISOR_PANES", optimization_text)
+        self.assertEqual(
+            sorted((APP_ROOT).rglob("*.py")),
+            sorted(path for path in (APP_ROOT).rglob("*.py") if "st.tabs(" not in path.read_text(encoding="utf-8")),
+        )
 
     def test_utils_re_exports_are_lazy(self):
         utils_text = (APP_ROOT / "utils" / "__init__.py").read_text(encoding="utf-8")
@@ -491,6 +606,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"migrate_legacy_workflow_state"', utils_text)
         self.assertIn('"render_ranked_bar_chart"', utils_text)
         self.assertIn('"rank_chart_frame"', utils_text)
+        self.assertIn('"build_platform_futures_evidence_ddl"', utils_text)
+        self.assertIn('"build_mart_cost_run_rate_sql"', utils_text)
 
     def test_dead_ui_helpers_stay_removed(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")

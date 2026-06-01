@@ -1,4 +1,4 @@
-# app.py - OVERWATCH V3 main entry point
+# app.py - OVERWATCH main entry point
 # -----------------------------------------------------------------------------
 # Includes:
 #   - Role-based section visibility (ROLE_SECTIONS in config.py)
@@ -23,7 +23,7 @@ import theme as theme_module
 from theme import inject_theme, render_theme_picker
 import config as config_module
 
-if getattr(config_module, "CONFIG_VERSION", "") != "2026-06-01-nav-redirects-v1":
+if getattr(config_module, "CONFIG_VERSION", "") != "2026-06-01-platform-futures-v1":
     config_module = importlib.reload(config_module)
 
 from config import (
@@ -56,12 +56,14 @@ import utils.section_guidance as section_guidance
 
 _ASK_OVERWATCH_STATE_KEYS = (
     "rec_recommendations",
+    "rec_automation_board",
     "rec_action_queue",
     "cost_contract_queue",
     "alert_center_data",
     "dba_control_room_data",
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
+    "arch_futures_board",
 )
 
 
@@ -86,7 +88,7 @@ if getattr(theme_module, "THEME_VERSION", "") != "2026-06-01-compact-workflow-ui
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker
 
-if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-06-01-confidence-gauge-v7":
+if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-06-01-platform-futures-v1":
     section_guidance = importlib.reload(section_guidance)
 
 if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-01-compact-workflow-ui-v2":
@@ -215,6 +217,7 @@ SECTION_SUBTITLES = {
     "Account Health": "Daily DBA checklist, source confidence, user hygiene, and account posture.",
     "Workload Operations": "Query history, task graphs, stored procedures, pipeline health, and runbooks.",
     "Warehouse Health": "Warehouse pressure, capacity controls, setting review, and efficiency evidence.",
+    "Architecture Readiness": "Isolation, clustering, cache, DR, and forward Snowflake architecture checks.",
     "Cost & Contract": "Spend attribution, contract utilization, chargeback, savings, and action queue.",
     "Security Posture": "Access posture, privileged grants, data sharing, and governance evidence.",
     "Change & Drift": "Object changes, access changes, drift, approvals, and deployment evidence.",
@@ -449,6 +452,8 @@ with st.sidebar:
             elif "SHARE" in upper or "SHARING" in upper:
                 target = SECTION_BY_TITLE["Security Posture"]
                 st.session_state["security_posture_workflow"] = "Data sharing exposure"
+            elif any(token in upper for token in ("ARCHITECTURE", "CLUSTER", "CACHE", "ISOLATION", "DISASTER", "DR ")):
+                target = SECTION_BY_TITLE["Architecture Readiness"]
             elif "DBA" in upper or "WAREHOUSE SETTING" in upper or "DRIFT" in upper or "CHANGE" in upper:
                 target = SECTION_BY_TITLE["Change & Drift"]
                 st.session_state["change_drift_workflow"] = "Object and access changes"

@@ -35,6 +35,7 @@ def clear_all_cache(
         "stor_", "spt_", "sp_ops_", "sp_sla_", "tm_", "task_ops_", "task_sla_",
         "pipe_", "qw_", "sf_value_",
         "wh_", "uo_", "aa_", "dd_", "svc_",
+        "arch_",
         "contract_", "topology_", "recommendations", "anomalies",
         "health_data", "morning_data", "tg_list", "tg_hist", "cm_base_",
         "change_drift_summary", "change_drift_exceptions", "change_drift_meta",

@@ -159,6 +159,18 @@ USING (
     ('TASK_DEFAULT', 'TASK', '*', 'DBA / Pipeline Owner', 'jdees@alfains.com', 'DBA On-Call', 'Pipeline Owner Backup', 'Pipeline Owner', 'DBA Lead', 'Workload Operations', 'Tier 0', 70, 'Default route for failed or late task graph recovery.'),
     ('PROCEDURE_DEFAULT', 'PROCEDURE', '*', 'DBA / Procedure Owner', 'jdees@alfains.com', 'DBA On-Call', 'Procedure Owner Backup', 'Procedure Owner', 'DBA Lead', 'Workload Operations', 'Tier 1', 70, 'Default route for stored procedure runtime, orchestration, and cost regressions.'),
     ('WAREHOUSE_DEFAULT', 'WAREHOUSE', '*', 'DBA / Platform', 'jdees@alfains.com', 'DBA On-Call', 'Platform DBA Backup', 'Platform DBA Lead', 'DBA Lead', 'Warehouse Health', 'Tier 1', 60, 'Default route for warehouse pressure, capacity, and setting-change controls.'),
+    ('COMPUTE_WH_EXECUTION', 'WAREHOUSE', 'COMPUTE_WH', 'OVERWATCH Platform Owner', 'jdees@alfains.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead / OVERWATCH Platform Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 205, 'Current OVERWATCH app and task execution warehouse; monitor separately from business workload warehouses.'),
+    ('ALFA_EDW_PROD_DATABASE', 'DATABASE', 'ALFA_EDW_PROD', 'ALFA EDW Data Owner', 'jdees@alfains.com', 'DBA On-Call', 'Data Platform Backup', 'DBA Lead / ALFA EDW Data Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 0', 220, 'Owner route for PROD EDW isolation, clustering, cache, and DR architecture decisions.'),
+    ('ALFA_EDW_DEV_DATABASES', 'DATABASE', 'ALFA_EDW_%', 'ALFA Development Data Owner', 'jdees@alfains.com', 'DBA On-Call', 'Development Platform Backup', 'DBA Lead / Development Platform Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 2', 120, 'Fallback route for ALFA DEV/Sandbox EDW database architecture decisions.'),
+    ('ARCHITECTURE_DEFAULT', 'ARCHITECTURE', '*', 'DBA / Platform Architecture', 'jdees@alfains.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 65, 'Fallback route for architecture objective, workload isolation, clustering, cache, and DR findings.'),
+    ('AI_AGENT_DEFAULT', 'AI_AGENT', '*', 'DBA / AI Governance', 'jdees@alfains.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 160, 'Default route for Cortex Agent inventory, Snowflake Intelligence usage, MCP tool exposure, and AI governance actions.'),
+    ('MCP_SERVER_DEFAULT', 'MCP_SERVER', '*', 'DBA / AI Governance', 'jdees@alfains.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 170, 'Default route for MCP server owner, tool-scope, role-scope, and blast-radius review.'),
+    ('AI_COST_DEFAULT', 'AI_USAGE', '*', 'DBA / FinOps', 'jdees@alfains.com', 'DBA On-Call', 'FinOps Backup', 'FinOps Lead / DBA Lead', 'FinOps Lead', 'Cost & Contract', 'Tier 1', 155, 'Default route for AI token-credit spend, Snowflake Intelligence usage, and Cortex Agent cost guardrails.'),
+    ('OPENFLOW_DEFAULT', 'OPENFLOW', '*', 'DBA / Integration Platform', 'jdees@alfains.com', 'DBA On-Call', 'Data Engineering Backup', 'Data Engineering Lead / DBA Lead', 'Data Engineering Lead', 'Architecture Readiness', 'Tier 1', 150, 'Default route for Openflow runtime, data-plane, auth, cost, and recovery evidence.'),
+    ('HORIZON_GOVERNANCE_DEFAULT', 'GOVERNANCE_VIEW', '*', 'DBA / Data Governance', 'jdees@alfains.com', 'DBA On-Call', 'Security Backup', 'Data Governance Lead / Security Approver', 'Data Governance Lead', 'Security Posture', 'Tier 0', 145, 'Default route for Horizon catalog, classification, policy, lineage, access-history, and governance-readiness gaps.'),
+    ('SEMANTIC_TRUST_DEFAULT', 'SEMANTIC_TRUST', '*', 'DBA / Analytics Governance', 'jdees@alfains.com', 'DBA On-Call', 'Analytics Owner Backup', 'Analytics Owner / DBA Lead', 'Analytics Owner', 'Architecture Readiness', 'Tier 1', 140, 'Default route for semantic model ownership, certification, verified query tests, and AI answer trust.'),
+    ('BCDR_DRILL_DEFAULT', 'BCDR_DRILL', '*', 'DBA / Platform Architecture', 'jdees@alfains.com', 'DBA On-Call', 'Infrastructure Backup', 'DBA Lead / Infrastructure Owner', 'Infrastructure Owner', 'Architecture Readiness', 'Tier 0', 135, 'Default route for DR drill ledger, recovery proof, RPO/RTO validation, and failover/replication evidence.'),
+    ('AI_CHANGE_GOVERNANCE_DEFAULT', 'AI_CHANGE_GOVERNANCE', '*', 'DBA Change Owner', 'jdees@alfains.com', 'DBA On-Call', 'Change Advisory Backup', 'Change Advisory / DBA Lead', 'DBA Lead / Change Advisory', 'Change & Drift', 'Tier 0', 130, 'Default route for Cortex Code, AISQL, and AI-assisted admin change governance.'),
     ('SECURITY_DEFAULT', 'SECURITY', '*', 'DBA / Security', 'jdees@alfains.com', 'DBA On-Call', 'Security Backup', 'Security Approver', 'Security Lead', 'Security Posture', 'Tier 0', 60, 'Default route for grant, revoke, role, and rights controls.'),
     ('ALERT_DEFAULT', 'ALERT', '*', 'DBA', 'jdees@alfains.com', 'DBA On-Call', 'DBA Backup', 'DBA Lead', 'DBA Lead', 'Alert Center', 'Tier 1', 10, 'Fallback route for alerts without a more specific owner.')
 ) src(OWNER_KEY, ENTITY_TYPE, ENTITY_PATTERN, OWNER_NAME, OWNER_EMAIL, ONCALL_PRIMARY,
@@ -399,6 +411,133 @@ QUALIFY ROW_NUMBER() OVER (
   PARTITION BY COALESCE(ACTION_ID, ENTITY_NAME), ENTITY_TYPE
   ORDER BY RECOVERY_AUDIT_TS DESC, RECOVERY_AUDIT_ID DESC
 ) = 1;
+
+CREATE TABLE IF NOT EXISTS OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER (
+  CONTROL_ID          VARCHAR(200) PRIMARY KEY,
+  CONTROL_AREA        VARCHAR(200),
+  OWNER               VARCHAR(200),
+  OWNER_KEY           VARCHAR(200),
+  APPROVAL_GROUP      VARCHAR(200),
+  PRIMARY_EVIDENCE    VARCHAR(1000),
+  SOURCE_OBJECTS      VARCHAR(1000),
+  RISK_IF_MISSING     VARCHAR(2000),
+  DBA_DECISION        VARCHAR(2000),
+  AUTOMATION_BOUNDARY VARCHAR(2000),
+  MATCH_PRIORITY      NUMBER DEFAULT 0,
+  IS_ACTIVE           BOOLEAN DEFAULT TRUE,
+  UPDATED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  UPDATED_BY          VARCHAR(200) DEFAULT CURRENT_USER()
+);
+
+MERGE INTO OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER tgt
+USING (
+  SELECT * FROM VALUES
+    ('AI_AGENT_MCP_GOVERNANCE', 'Agent & MCP Governance', 'DBA / AI Governance', 'AI_AGENT_DEFAULT', 'DBA Lead / Security Approver', 'SHOW AGENTS IN ACCOUNT; SHOW MCP SERVERS IN ACCOUNT', 'Cortex Agents, MCP Servers', 'Agents or MCP tool endpoints can be created without owner, tool-scope review, or blast-radius evidence.', 'Require owner, approved tool purpose, role scope, semantic source, and rollback plan before production use.', 'Inventory and queue only. Do not alter or drop agents/MCP servers from dashboard automation.', 240),
+    ('AI_SPEND_TOKEN_GUARDRAILS', 'AI Spend & Token Guardrails', 'DBA / FinOps', 'AI_COST_DEFAULT', 'FinOps Lead / DBA Lead', 'SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY; SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY', 'Cortex Agent usage, Snowflake Intelligence usage', 'AI usage can create token-credit spend with weak user, role, interface, or owner accountability.', 'Route high-credit, external-interface, or privileged-role usage to owners with daily/weekly budget review.', 'Alert and queue only until budget policy and approval workflow exist.', 230),
+    ('OPENFLOW_OPERABILITY', 'Openflow Operations', 'DBA / Integration Platform', 'OPENFLOW_DEFAULT', 'Data Engineering Lead / DBA Lead', 'SNOWFLAKE.ACCOUNT_USAGE.OPENFLOW_USAGE_HISTORY', 'Openflow data planes and runtimes', 'Managed ingestion runtimes can consume credits or move sensitive data without DBA operating evidence.', 'Track runtime credits, data-plane type, owner, secret/auth posture, and recovery playbook before expanding.', 'Observe and queue. Do not stop runtimes or deployments from the dashboard.', 220),
+    ('HORIZON_GOVERNANCE_READINESS', 'Horizon Governance Readiness', 'DBA / Data Governance', 'HORIZON_GOVERNANCE_DEFAULT', 'Data Governance Lead / Security Approver', 'DATA_CLASSIFICATION_LATEST, POLICY_REFERENCES, ACCESS_HISTORY, OBJECT_DEPENDENCIES', 'Classification, policies, lineage, access history', 'The account may not be ready to prove classification, policy coverage, lineage, and access behavior across engines.', 'Make governance observability visible before adopting broader Horizon, Marketplace, or cross-engine access patterns.', 'Readiness only. Do not change policies or tags automatically.', 210),
+    ('SEMANTIC_TRUST_VALIDATION', 'Semantic Trust & Verified Query Testing', 'DBA / Analytics Governance', 'SEMANTIC_TRUST_DEFAULT', 'Analytics Owner / DBA Lead', 'SEMANTIC_VIEWS, SEMANTIC_TABLES, SEMANTIC_METRICS', 'Semantic model metadata', 'Agent or analyst answers can look authoritative while using unowned or untested semantic definitions.', 'Require owner, certified model, test query set, freshness proof, and regression checks before trusted use.', 'Validate and queue only. Do not rewrite semantic models automatically.', 200),
+    ('BCDR_DRILL_LEDGER', 'BCDR Drill Ledger', 'DBA / Platform Architecture', 'BCDR_DRILL_DEFAULT', 'DBA Lead / Infrastructure Owner', 'SHOW FAILOVER GROUPS; SHOW REPLICATION GROUPS; REPLICATION_GROUP_USAGE_HISTORY; BACKUP_OPERATION_HISTORY', 'Failover groups, replication groups, backup operation history', 'DR can be configured but unproven, with no RPO/RTO drill record or recovery owner.', 'Keep a drill ledger with protected scope, target account, last success, failure notes, and next drill date.', 'Never execute failover from dashboard automation.', 190),
+    ('AI_CHANGE_GOVERNANCE', 'AI Change Governance', 'DBA Change Owner', 'AI_CHANGE_GOVERNANCE_DEFAULT', 'Change Advisory / DBA Lead', 'CORTEX_CODE_CLI_USAGE_HISTORY; CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY; CORTEX_AISQL_USAGE_HISTORY', 'Cortex Code, Cortex AISQL, AI-assisted SQL', 'AI-assisted code or SQL can bypass source-control, approval, and deployment evidence.', 'Treat AI-generated DDL/SQL like any other change: ticket, source, reviewer, rollout, rollback, and verification.', 'Observe usage and route to Change & Drift. Do not execute generated changes automatically.', 180)
+) src(CONTROL_ID, CONTROL_AREA, OWNER, OWNER_KEY, APPROVAL_GROUP, PRIMARY_EVIDENCE,
+      SOURCE_OBJECTS, RISK_IF_MISSING, DBA_DECISION, AUTOMATION_BOUNDARY, MATCH_PRIORITY)
+ON UPPER(tgt.CONTROL_ID) = UPPER(src.CONTROL_ID)
+WHEN MATCHED THEN UPDATE SET
+  CONTROL_AREA = src.CONTROL_AREA,
+  OWNER = src.OWNER,
+  OWNER_KEY = src.OWNER_KEY,
+  APPROVAL_GROUP = src.APPROVAL_GROUP,
+  PRIMARY_EVIDENCE = src.PRIMARY_EVIDENCE,
+  SOURCE_OBJECTS = src.SOURCE_OBJECTS,
+  RISK_IF_MISSING = src.RISK_IF_MISSING,
+  DBA_DECISION = src.DBA_DECISION,
+  AUTOMATION_BOUNDARY = src.AUTOMATION_BOUNDARY,
+  MATCH_PRIORITY = src.MATCH_PRIORITY,
+  IS_ACTIVE = TRUE,
+  UPDATED_AT = CURRENT_TIMESTAMP(),
+  UPDATED_BY = CURRENT_USER()
+WHEN NOT MATCHED THEN INSERT
+  (CONTROL_ID, CONTROL_AREA, OWNER, OWNER_KEY, APPROVAL_GROUP, PRIMARY_EVIDENCE,
+   SOURCE_OBJECTS, RISK_IF_MISSING, DBA_DECISION, AUTOMATION_BOUNDARY, MATCH_PRIORITY)
+VALUES
+  (src.CONTROL_ID, src.CONTROL_AREA, src.OWNER, src.OWNER_KEY, src.APPROVAL_GROUP,
+   src.PRIMARY_EVIDENCE, src.SOURCE_OBJECTS, src.RISK_IF_MISSING, src.DBA_DECISION,
+   src.AUTOMATION_BOUNDARY, src.MATCH_PRIORITY);
+
+CREATE TABLE IF NOT EXISTS OVERWATCH_PLATFORM_FUTURES_EVIDENCE (
+  EVIDENCE_ID          NUMBER AUTOINCREMENT PRIMARY KEY,
+  CAPTURED_AT          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  CONTROL_ID           VARCHAR(200),
+  CONTROL_AREA         VARCHAR(200),
+  EVIDENCE_SURFACE     VARCHAR(200),
+  SOURCE_TYPE          VARCHAR(200),
+  ENTITY_TYPE          VARCHAR(200),
+  ENTITY_NAME          VARCHAR(500),
+  COMPANY              VARCHAR(100),
+  ENVIRONMENT          VARCHAR(100),
+  SEVERITY             VARCHAR(40),
+  FINDING              VARCHAR(4000),
+  DBA_ACTION           VARCHAR(4000),
+  OWNER                VARCHAR(200),
+  OWNER_EMAIL          VARCHAR(500),
+  APPROVAL_GROUP       VARCHAR(200),
+  APPROVAL_STATUS      VARCHAR(100),
+  TICKET_ID            VARCHAR(200),
+  SOURCE_OBJECTS       VARCHAR(1000),
+  SOURCE_FRESHNESS     VARCHAR(200),
+  EVIDENCE_CONFIDENCE  VARCHAR(200),
+  VERIFICATION_QUERY   VARCHAR(8000),
+  VERIFICATION_RESULT  VARCHAR(8000),
+  AUTOMATION_BOUNDARY  VARCHAR(2000),
+  ACTION_ID            VARCHAR(64),
+  SOURCE_QUERY_ID      VARCHAR(200),
+  RAW_EVIDENCE         VARIANT,
+  CAPTURED_BY          VARCHAR(200) DEFAULT CURRENT_USER(),
+  NOTES                VARCHAR(4000)
+);
+
+CREATE OR REPLACE VIEW OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V AS
+SELECT *
+FROM OVERWATCH_PLATFORM_FUTURES_EVIDENCE
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY COALESCE(CONTROL_ID, CONTROL_AREA), COALESCE(ENTITY_NAME, EVIDENCE_SURFACE), COALESCE(EVIDENCE_SURFACE, SOURCE_TYPE)
+  ORDER BY CAPTURED_AT DESC, EVIDENCE_ID DESC
+) = 1;
+
+CREATE OR REPLACE VIEW OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V AS
+SELECT
+  r.CONTROL_ID,
+  r.CONTROL_AREA,
+  r.OWNER,
+  r.OWNER_KEY,
+  r.APPROVAL_GROUP,
+  r.PRIMARY_EVIDENCE,
+  r.SOURCE_OBJECTS,
+  r.RISK_IF_MISSING,
+  r.DBA_DECISION,
+  r.AUTOMATION_BOUNDARY,
+  r.MATCH_PRIORITY,
+  e.CAPTURED_AT AS LAST_EVIDENCE_AT,
+  e.EVIDENCE_SURFACE,
+  e.SOURCE_TYPE,
+  e.ENTITY_NAME,
+  e.SEVERITY,
+  e.FINDING,
+  e.APPROVAL_STATUS,
+  e.TICKET_ID,
+  e.VERIFICATION_RESULT,
+  CASE
+    WHEN e.EVIDENCE_ID IS NULL THEN 'Evidence Not Captured'
+    WHEN UPPER(COALESCE(e.SEVERITY, '')) IN ('CRITICAL', 'HIGH')
+     AND UPPER(COALESCE(e.APPROVAL_STATUS, '')) NOT IN ('APPROVED', 'NOT REQUIRED', 'VERIFIED')
+      THEN 'Action Open'
+    WHEN UPPER(COALESCE(e.VERIFICATION_RESULT, '')) = '' THEN 'Proof Needed'
+    ELSE 'Evidence Captured'
+  END AS COVERAGE_STATE
+FROM OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER r
+LEFT JOIN OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V e
+  ON UPPER(COALESCE(e.CONTROL_ID, e.CONTROL_AREA)) IN (UPPER(r.CONTROL_ID), UPPER(r.CONTROL_AREA))
+WHERE COALESCE(r.IS_ACTIVE, TRUE);
 
 CREATE TABLE IF NOT EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_RUN (
   RUN_ID                    NUMBER AUTOINCREMENT PRIMARY KEY,

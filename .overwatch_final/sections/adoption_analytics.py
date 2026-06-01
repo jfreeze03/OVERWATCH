@@ -22,6 +22,14 @@ from utils import (
 from utils.workflows import render_priority_dataframe
 
 
+ADOPTION_ANALYTICS_PANES = (
+    "Trend",
+    "Warehouse Adoption",
+    "Database Adoption",
+    "Role & Workload Mix",
+)
+
+
 def _altair():
     """Import Altair only after adoption charts are requested."""
     import altair as alt
@@ -284,9 +292,15 @@ def render():
     m5.metric("Error Rate", f"{_metric(summary, 'ERROR_RATE'):,.1f}%")
     st.caption(data.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
-    tab_trend, tab_wh, tab_db, tab_role = st.tabs(["Trend", "Warehouse Adoption", "Database Adoption", "Role & Workload Mix"])
+    active_view = st.radio(
+        "Adoption detail view",
+        ADOPTION_ANALYTICS_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="adoption_analytics_active_view",
+    )
 
-    with tab_trend:
+    if active_view == "Trend":
         trend = data["trend"]
         if not trend.empty:
             alt = _altair()
@@ -316,15 +330,15 @@ def render():
                 top_n=12,
             )
 
-    with tab_wh:
+    elif active_view == "Warehouse Adoption":
         render_drillable_bar_chart(data["users_wh"], "WAREHOUSE_NAME", "USERS", "aa_users_wh", "Users Per Warehouse", "warehouse_name", 24 * min(days, 14), 20)
         download_csv(data["users_wh"], "adoption_users_per_warehouse.csv")
 
-    with tab_db:
+    elif active_view == "Database Adoption":
         render_drillable_bar_chart(data["users_db"], "DATABASE_NAME", "USERS", "aa_users_db", "Users Per Database", "database_name", 24 * min(days, 14), 20)
         download_csv(data["users_db"], "adoption_users_per_database.csv")
 
-    with tab_role:
+    elif active_view == "Role & Workload Mix":
         role = data["by_role_type"]
         apps = data["applications"]
         c1, c2 = st.columns(2)

@@ -27,6 +27,17 @@ from utils import (
 from config import THRESHOLDS
 
 
+SECURITY_ACCESS_PANES = (
+    "Login Audit",
+    "Login Posture",
+    "Connected Programs",
+    "Roles & Grants",
+    "MFA Coverage",
+    "Exfiltration Signals",
+    "Data Lineage",
+)
+
+
 def _mart_company_filter(alias: str, company: str) -> str:
     if str(company or "ALL").upper() == "ALL":
         return ""
@@ -1048,35 +1059,52 @@ def render():
         role_col="role_name",
         db_col="database_name",
     )
-    qh_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        ["WAREHOUSE_SIZE", "ROWS_PRODUCED", "BYTES_WRITTEN_TO_RESULT"],
-    ))
-    user_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.USERS",
-        ["LAST_SUCCESS_LOGIN", "HAS_PASSWORD", "EXT_AUTHN_DUO"],
-    ))
-    last_success_login_expr = (
-        "u.last_success_login"
-        if "LAST_SUCCESS_LOGIN" in user_cols else "NULL::TIMESTAMP_NTZ"
-    )
-    has_password_expr = (
-        "u.has_password AS has_password"
-        if "HAS_PASSWORD" in user_cols else "NULL::BOOLEAN AS has_password"
-    )
-    mfa_expr = (
-        "u.ext_authn_duo AS has_mfa"
-        if "EXT_AUTHN_DUO" in user_cols else "NULL::BOOLEAN AS has_mfa"
-    )
+    query_history_cols = None
+    user_cols = None
 
-    tab_login, tab_posture, tab_programs, tab_roles, tab_mfa, tab_exfil, tab_lineage = st.tabs([
-        "Login Audit", "Login Posture", "Connected Programs", "Roles & Grants", "MFA Coverage", "Exfiltration Signals", "Data Lineage"
-    ])
+    def _query_history_columns() -> set[str]:
+        nonlocal query_history_cols
+        if query_history_cols is None:
+            query_history_cols = set(filter_existing_columns(
+                session,
+                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                ["WAREHOUSE_SIZE", "ROWS_PRODUCED", "BYTES_WRITTEN_TO_RESULT"],
+            ))
+        return query_history_cols
+
+    def _user_column_exprs() -> dict[str, str]:
+        nonlocal user_cols
+        if user_cols is None:
+            user_cols = set(filter_existing_columns(
+                session,
+                "SNOWFLAKE.ACCOUNT_USAGE.USERS",
+                ["LAST_SUCCESS_LOGIN", "HAS_PASSWORD", "EXT_AUTHN_DUO"],
+            ))
+        return {
+            "last_success_login_expr": (
+                "u.last_success_login"
+                if "LAST_SUCCESS_LOGIN" in user_cols else "NULL::TIMESTAMP_NTZ"
+            ),
+            "has_password_expr": (
+                "u.has_password AS has_password"
+                if "HAS_PASSWORD" in user_cols else "NULL::BOOLEAN AS has_password"
+            ),
+            "mfa_expr": (
+                "u.ext_authn_duo AS has_mfa"
+                if "EXT_AUTHN_DUO" in user_cols else "NULL::BOOLEAN AS has_mfa"
+            ),
+        }
+
+    active_view = st.radio(
+        "Security Access view",
+        SECURITY_ACCESS_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="security_access_active_view",
+    )
 
     # ── LOGIN AUDIT ───────────────────────────────────────────────────────────
-    with tab_login:
+    if active_view == "Login Audit":
         st.header("🔒 Login Audit")
         sec_days = st.slider("Lookback (days)", 1, 90, 30, key="sec_days")
 
@@ -1160,7 +1188,7 @@ def render():
             st.subheader("Login Trend")
             st.line_chart(pivot)
 
-    with tab_posture:
+    elif active_view == "Login Posture":
         st.header("Login Posture")
         posture_days = st.slider("Posture lookback (days)", 1, 90, 30, key="sec_posture_days")
         if st.button("Load Login Posture", key="sec_posture_load"):
@@ -1318,7 +1346,7 @@ def render():
                 download_csv(errors, "login_posture_error_codes.csv")
 
     # Connected programs
-    with tab_programs:
+    elif active_view == "Connected Programs":
         st.header("Connected Programs")
         program_days = st.slider("Program lookback (days)", 1, 90, 30, key="sec_connected_program_days")
         if st.button("Load Connected Programs", key="sec_connected_programs_load"):
@@ -1354,6 +1382,10 @@ def render():
                 safe_int(query_programs["QUERY_COUNT"].sum())
                 if query_programs is not None and not query_programs.empty and "QUERY_COUNT" in query_programs.columns else 0
             )
+            failed_queries = (
+                safe_int(query_programs["FAILED_QUERIES"].sum())
+                if query_programs is not None and not query_programs.empty and "FAILED_QUERIES" in query_programs.columns else 0
+            )
             total_logins = (
                 safe_int(login_programs["LOGIN_EVENTS"].sum())
                 if login_programs is not None and not login_programs.empty and "LOGIN_EVENTS" in login_programs.columns else 0
@@ -1366,11 +1398,17 @@ def render():
             for df in (session_programs, query_programs, login_programs):
                 if df is not None and not df.empty and "CONTROL_STATUS" in df.columns:
                     unknown_rows += safe_int((df["CONTROL_STATUS"] == "Needs owner").sum())
-            c1, c2, c3, c4 = st.columns(4)
+            governed_pct = (
+                max(0, (distinct_programs - unknown_rows)) / max(distinct_programs, 1) * 100
+                if distinct_programs else 0
+            )
+            failure_rate = failed_queries / max(total_queries, 1) * 100
+            c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("Programs Seen", f"{distinct_programs:,}")
             c2.metric("Open Sessions", f"{open_sessions:,}")
             c3.metric("Query/Login Events", f"{total_queries:,} / {total_logins:,}")
-            c4.metric("Need Owner", f"{unknown_rows:,}", delta_color="inverse")
+            c4.metric("Need Owner", f"{unknown_rows:,}", delta=f"{governed_pct:.0f}% governed", delta_color="inverse")
+            c5.metric("Program Failure Rate", f"{failure_rate:.1f}%", delta=f"{failed_queries:,} failed", delta_color="inverse")
 
         if session_programs is not None and not session_programs.empty:
             st.subheader("Session Program Inventory")
@@ -1456,7 +1494,7 @@ def render():
             st.info("No login client inventory found for this scope.")
 
     # Roles & grants
-    with tab_roles:
+    elif active_view == "Roles & Grants":
         st.header("🛡️ Roles & Grants")
         if st.button("Load Grants", key="grants_load"):
             try:
@@ -1505,6 +1543,8 @@ def render():
         dormant_lookback = min(365, int(dormant_days) + 30)
         if st.button("Find Dormant Users", key="dom_find"):
             try:
+                user_exprs = _user_column_exprs()
+                last_success_login_expr = user_exprs["last_success_login_expr"]
                 df_dom = run_query(f"""
                 WITH last_login AS (
                     SELECT user_name, MAX(event_timestamp) AS last_login_time
@@ -1558,10 +1598,13 @@ def render():
                 _queue_security_findings(session, df_d, "Dormant User", "Medium")
 
     # ── MFA COVERAGE ──────────────────────────────────────────────────────────
-    with tab_mfa:
+    elif active_view == "MFA Coverage":
         st.header("🔐 MFA Coverage Report")
         if st.button("Check MFA", key="mfa_check"):
             try:
+                user_exprs = _user_column_exprs()
+                has_password_expr = user_exprs["has_password_expr"]
+                mfa_expr = user_exprs["mfa_expr"]
                 df_mfa = run_query(f"""
                     SELECT u.name AS user_name, {has_password_expr},
                            {mfa_expr}, u.disabled,
@@ -1605,10 +1648,11 @@ def render():
                 st.success("✅ All active users have MFA enabled.")
 
     # ── EXFILTRATION SIGNALS ──────────────────────────────────────────────────
-    with tab_exfil:
+    elif active_view == "Exfiltration Signals":
         st.header("🚨 Data Exfiltration Signals")
         st.caption("Users with >2σ BYTES_WRITTEN_TO_RESULT vs their 30-day baseline.")
         if st.button("Check Exfiltration", key="exfil_load"):
+            qh_cols = _query_history_columns()
             if "BYTES_WRITTEN_TO_RESULT" not in qh_cols:
                 st.info("Exfiltration byte metrics are not exposed in QUERY_HISTORY for this role/account.")
                 st.session_state["sec_df_exfil"] = pd.DataFrame()
@@ -1680,7 +1724,7 @@ def render():
                 st.success("✅ No unusual data exfiltration patterns detected.")
 
     # ── DATA LINEAGE ──────────────────────────────────────────────────────────
-    with tab_lineage:
+    elif active_view == "Data Lineage":
         st.header("🔗 Data Lineage (ACCESS_HISTORY)")
         st.caption("Object-level access lineage from ACCOUNT_USAGE.ACCESS_HISTORY.")
         lin_days = st.slider("Lookback (days)", 1, 30, 7, key="lin_days")

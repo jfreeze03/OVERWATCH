@@ -31,6 +31,7 @@ from utils.action_queue import (  # noqa: E402
     verification_query_safety_issues,
 )
 from utils.owner_directory import build_owner_directory_ddl  # noqa: E402
+from utils.futures_governance import build_platform_futures_evidence_ddl  # noqa: E402
 from utils.workload_audit import build_workload_recovery_audit_ddl  # noqa: E402
 
 
@@ -254,6 +255,12 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("PRIVILEGED_GRANT_ROWS", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_WORKLOAD_RECOVERY_AUDIT", setup_sql)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_WORKLOAD_RECOVERY_AUDIT_LATEST_V", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_PLATFORM_FUTURES_EVIDENCE", setup_sql)
+        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V", setup_sql)
+        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V", setup_sql)
+        self.assertIn("AI_AGENT_MCP_GOVERNANCE", setup_sql)
+        self.assertIn("COVERAGE_STATE", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", setup_sql)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_VERIFY_COST_SAVINGS", setup_sql)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", setup_sql)
@@ -300,6 +307,10 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_TAG_NAMES", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_DIRECTORY", setup_sql)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", setup_sql)
+        self.assertIn("COMPUTE_WH_EXECUTION", setup_sql)
+        self.assertIn("ALFA_EDW_PROD_DATABASE", setup_sql)
+        self.assertIn("ALFA_EDW_DEV_DATABASES", setup_sql)
+        self.assertIn("ARCHITECTURE_DEFAULT", setup_sql)
         self.assertIn("ONCALL_PRIMARY", setup_sql)
         self.assertIn("APPROVAL_GROUP", setup_sql)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS DIM_COST_OWNER_TAG", setup_sql)
@@ -364,10 +375,19 @@ class AdminControlTests(unittest.TestCase):
         owner_sql = build_owner_directory_ddl().upper()
         self.assertIn("OVERWATCH_OWNER_DIRECTORY", owner_sql)
         self.assertIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", owner_sql)
+        self.assertIn("COMPUTE_WH_EXECUTION", owner_sql)
+        self.assertIn("ALFA_EDW_PROD_DATABASE", owner_sql)
+        self.assertIn("ARCHITECTURE_DEFAULT", owner_sql)
 
         recovery_audit_sql = build_workload_recovery_audit_ddl().upper()
         self.assertIn("OVERWATCH_WORKLOAD_RECOVERY_AUDIT", recovery_audit_sql)
         self.assertIn("VERIFICATION_RESULT", recovery_audit_sql)
+
+        platform_futures_sql = build_platform_futures_evidence_ddl().upper()
+        self.assertIn("OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER", platform_futures_sql)
+        self.assertIn("OVERWATCH_PLATFORM_FUTURES_EVIDENCE", platform_futures_sql)
+        self.assertIn("OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V", platform_futures_sql)
+        self.assertIn("RAW_EVIDENCE         VARIANT", platform_futures_sql)
 
         dev_values = action_queue_environment_values("DEV_ALL")
         self.assertIn("DEV_ALL", dev_values)

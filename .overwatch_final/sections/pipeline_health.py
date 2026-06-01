@@ -20,6 +20,13 @@ from utils import (
 )
 
 
+PIPELINE_HEALTH_PANES = (
+    "Freshness SLA",
+    "Load Failures",
+    "Volume Watch",
+)
+
+
 def _annotate_pipeline_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
     if df is None or df.empty:
         return df
@@ -88,11 +95,15 @@ def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> No
 def render():
     session = get_session()
     company = st.session_state.get("active_company", "ALFA")
-    tab_fresh, tab_loads, tab_volume = st.tabs([
-        "Freshness SLA", "Load Failures", "Volume Watch"
-    ])
+    active_view = st.radio(
+        "Pipeline health view",
+        PIPELINE_HEALTH_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="pipeline_health_active_view",
+    )
 
-    with tab_fresh:
+    if active_view == "Freshness SLA":
         st.header("Pipeline Freshness SLA")
         stale_hours = st.slider("Stale threshold (hours)", 4, 168, 24, key="pipe_stale_hours")
         if st.button("Load Freshness Watchlist", key="pipe_fresh_load"):
@@ -163,7 +174,7 @@ def render():
                 if st.button("Save freshness findings to Action Queue", key="pipe_fresh_queue"):
                     _queue_pipeline_findings(session, df_fresh, "Freshness")
 
-    with tab_loads:
+    elif active_view == "Load Failures":
         st.header("Load Failure Monitor")
         load_days = st.slider("Lookback days", 1, 30, 7, key="pipe_load_days")
         if st.button("Load Copy History Failures", key="pipe_load_failures"):
@@ -224,7 +235,7 @@ def render():
                 if st.button("Save load failures to Action Queue", key="pipe_load_queue"):
                     _queue_pipeline_findings(session, df_loads, "Load Failure")
 
-    with tab_volume:
+    elif active_view == "Volume Watch":
         st.header("Table Volume Watch")
         st.caption("Highlights large and fast-changing tables from ACCOUNT_USAGE.TABLES metadata.")
         min_gb = st.slider("Minimum table size (GB)", 1, 500, 25, key="pipe_min_gb")

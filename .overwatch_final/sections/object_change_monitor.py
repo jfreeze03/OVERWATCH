@@ -15,6 +15,14 @@ from utils import (
 )
 
 
+OBJECT_CHANGE_PANES = (
+    "Objects",
+    "Grants & Roles",
+    "Policies & Tags",
+    "Terraform Drift",
+)
+
+
 def _active_company() -> str:
     return st.session_state.get("active_company", "ALFA")
 
@@ -178,20 +186,29 @@ def _queue_changes(session, df, source: str, category: str, entity_type: str, se
 def render():
     session = get_session()
     company = _active_company()
-    qh_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        ["QUERY_TAG"],
-    ))
-    query_tag_select = "query_tag" if "QUERY_TAG" in qh_cols else "NULL::VARCHAR AS query_tag"
-    drift_case = (
-        "WHEN query_tag ILIKE '%terraform%' THEN 'IaC managed'"
-        if "QUERY_TAG" in qh_cols else ""
-    )
-    drift_exclusion = (
-        "AND NOT (query_tag ILIKE '%terraform%')"
-        if "QUERY_TAG" in qh_cols else ""
-    )
+    qh_caps = None
+
+    def _query_history_drift_caps() -> dict[str, str]:
+        nonlocal qh_caps
+        if qh_caps is not None:
+            return qh_caps
+        qh_cols = set(filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            ["QUERY_TAG"],
+        ))
+        qh_caps = {
+            "query_tag_select": "query_tag" if "QUERY_TAG" in qh_cols else "NULL::VARCHAR AS query_tag",
+            "drift_case": (
+                "WHEN query_tag ILIKE '%terraform%' THEN 'IaC managed'"
+                if "QUERY_TAG" in qh_cols else ""
+            ),
+            "drift_exclusion": (
+                "AND NOT (query_tag ILIKE '%terraform%')"
+                if "QUERY_TAG" in qh_cols else ""
+            ),
+        }
+        return qh_caps
     st.header("Who Changed What?")
     st.caption("DDL, grants, roles, policy changes, owner changes, and Terraform drift indicators.")
 
@@ -209,9 +226,13 @@ def render():
         db_col="database_name",
     )
 
-    tab_ddl, tab_access, tab_policy, tab_drift = st.tabs([
-        "Objects", "Grants & Roles", "Policies & Tags", "Terraform Drift"
-    ])
+    active_view = st.radio(
+        "Object change view",
+        OBJECT_CHANGE_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="object_change_active_view",
+    )
     mart_object_category = """
           AND c.change_category IN ('CREATE', 'ALTER', 'DROP')
           AND (
@@ -245,7 +266,7 @@ def render():
           AND (c.query_tag IS NULL OR c.query_tag NOT ILIKE '%terraform%')
     """
 
-    with tab_ddl:
+    if active_view == "Objects":
         if st.button("Load Object Changes", key="ocm_obj_load"):
             try:
                 df, source = _load_object_change_mart(
@@ -324,7 +345,7 @@ def render():
             if st.button("Save object changes to Action Queue", key="ocm_obj_queue"):
                 _queue_changes(session, df, "Object Change Monitor", "Governance", "Object", "Medium")
 
-    with tab_access:
+    elif active_view == "Grants & Roles":
         if st.button("Load Grant / Role Changes", key="ocm_grant_load"):
             try:
                 df, source = _load_object_change_mart(
@@ -382,7 +403,7 @@ def render():
             if st.button("Save access changes to Action Queue", key="ocm_access_queue"):
                 _queue_changes(session, df, "Access Change Monitor", "Security", "Grant/Role", "High")
 
-    with tab_policy:
+    elif active_view == "Policies & Tags":
         if st.button("Load Masking / Tag Policy Changes", key="ocm_policy_load"):
             try:
                 df, source = _load_object_change_mart(
@@ -437,7 +458,7 @@ def render():
             if st.button("Save policy changes to Action Queue", key="ocm_policy_queue"):
                 _queue_changes(session, df, "Policy Change Monitor", "Security", "Policy/Tag", "High")
 
-    with tab_drift:
+    elif active_view == "Terraform Drift":
         if st.button("Load Drift Indicators", key="ocm_drift_load"):
             try:
                 df, source = _load_object_change_mart(
@@ -452,6 +473,10 @@ def render():
                 st.session_state["ocm_source_drift"] = source
             except Exception as mart_exc:
                 try:
+                    drift_caps = _query_history_drift_caps()
+                    query_tag_select = drift_caps["query_tag_select"]
+                    drift_case = drift_caps["drift_case"]
+                    drift_exclusion = drift_caps["drift_exclusion"]
                     st.session_state["ocm_df_drift"] = run_query(f"""
                 SELECT query_id, user_name, role_name, {query_tag_select},
                        start_time, SUBSTR(query_text, 1, 1500) AS query_text,

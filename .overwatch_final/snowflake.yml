@@ -1,7 +1,7 @@
 definition_version: 1
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OVERWATCH V3 — Streamlit-in-Snowflake (SiS) Deployment Manifest
+# OVERWATCH — Streamlit-in-Snowflake (SiS) Deployment Manifest
 # Account:   ALFA Insurance
 # App:       DBA_MAINT_DB.PUBLIC.OVERWATCHV3
 # Stage:     DBA_MAINT_DB.PUBLIC.OVERWATCH_STAGE

@@ -1,4 +1,4 @@
-# environment.yml — Python package requirements for OVERWATCH V3 (SiS runtime)
+# environment.yml — Python package requirements for OVERWATCH (SiS runtime)
 # ─────────────────────────────────────────────────────────────────────────────
 # Snowflake SiS resolves packages from the Snowflake Conda channel.
 # All packages listed must be available in:

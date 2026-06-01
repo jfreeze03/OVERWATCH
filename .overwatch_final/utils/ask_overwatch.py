@@ -21,12 +21,14 @@ SEVERITY_RANK = {
 
 ASK_OVERWATCH_STATE_KEYS = (
     "rec_recommendations",
+    "rec_automation_board",
     "rec_action_queue",
     "cost_contract_queue",
     "alert_center_data",
     "dba_control_room_data",
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
+    "arch_futures_board",
 )
 
 
@@ -121,6 +123,69 @@ def _cards_from_recommendations(state: Mapping, cards: list[dict]) -> None:
             "route": "Cost & Contract > Recommendations and action queue",
             "category": hardened.get("Category", ""),
             "value": hardened.get("Estimated Monthly Savings", 0),
+        })
+
+
+def _cards_from_automation_board(state: Mapping, cards: list[dict]) -> None:
+    frame = state.get("rec_automation_board")
+    if not _is_df(frame):
+        return
+    view = frame.copy()
+    view.columns = [str(col).upper() for col in view.columns]
+    lane_rank = {
+        "READY FOR GUIDED EXECUTION": 0,
+        "APPROVAL REQUIRED": 1,
+        "EVIDENCE REQUIRED": 2,
+        "AUTO-CLOSE CANDIDATE": 3,
+        "MANUAL ONLY": 4,
+        "OBSERVE ONLY": 5,
+    }
+    view["_LANE_RANK"] = view.get("AUTOMATION_LANE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper().map(lane_rank).fillna(9)
+    view = view.sort_values(["_LANE_RANK", "AUTOMATION_SCORE"], ascending=[True, False]).drop(columns=["_LANE_RANK"])
+    for _, row in view.head(10).iterrows():
+        lane = _text(row, "AUTOMATION_LANE", default="Automation review")
+        blockers = _text(row, "BLOCKERS", default="none")
+        _append_card(cards, {
+            "surface": "Automation Readiness",
+            "severity": _text(row, "SEVERITY", default="Medium"),
+            "signal": lane,
+            "entity": _text(row, "ENTITY", default="automation candidate"),
+            "evidence": (
+                f"lane={lane}; score={_text(row, 'AUTOMATION_SCORE', default='0')}; "
+                f"blockers={blockers}; decision={_text(row, 'DECISION')}"
+            ),
+            "next_action": _text(row, "SAFE_AUTOMATION_STEP", default="Open Automation Readiness and resolve blockers."),
+            "proof": _text(row, "PROOF_REQUIRED", "VERIFICATION_QUERY", default="Attach verification evidence before closure."),
+            "do_not": _text(row, "DO_NOT_DO", default="Do not automate without source evidence and approval."),
+            "route": "Cost & Contract > Automation Readiness",
+            "category": _text(row, "CATEGORY", default="Automation"),
+            "value": _text(row, "AUTOMATION_SCORE", default="0"),
+        })
+
+
+def _cards_from_platform_futures(state: Mapping, cards: list[dict]) -> None:
+    frame = state.get("arch_futures_board")
+    if not _is_df(frame):
+        return
+    view = frame.copy()
+    view.columns = [str(col).upper() for col in view.columns]
+    if "SEVERITY" in view.columns:
+        view["_RANK"] = view["SEVERITY"].apply(_rank)
+        view = view.sort_values(["_RANK", "CONTROL_AREA"], ascending=[True, True]).drop(columns=["_RANK"])
+    for _, row in view.head(10).iterrows():
+        control_area = _text(row, "CONTROL_AREA", default="AI & Platform Futures")
+        _append_card(cards, {
+            "surface": "Architecture Readiness - AI & Platform Futures",
+            "severity": _text(row, "SEVERITY", default="Medium"),
+            "signal": control_area,
+            "entity": _text(row, "ENTITY_NAME", default="platform future control"),
+            "evidence": _text(row, "FINDING", default="Open platform futures finding."),
+            "next_action": _text(row, "DBA_ACTION", default="Assign owner, approval, proof SQL, and verification."),
+            "proof": _text(row, "PROOF_SQL", "VERIFICATION_QUERY", default="Attach source metadata and approval evidence."),
+            "do_not": "Do not auto-change agents, MCP servers, Openflow runtimes, semantic models, or DR controls from dashboard findings.",
+            "route": "Architecture Readiness > AI & Platform Futures",
+            "category": control_area,
+            "owner": _text(row, "OWNER", "OWNER_EMAIL", "APPROVAL_GROUP"),
         })
 
 
@@ -255,6 +320,8 @@ def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[
     """Collect loaded app evidence into cards that can safely answer operator questions."""
     cards: list[dict] = []
     _cards_from_recommendations(state, cards)
+    _cards_from_automation_board(state, cards)
+    _cards_from_platform_futures(state, cards)
     _cards_from_queue(state.get("rec_action_queue"), cards, surface="Recommendations action queue")
     _cards_from_queue(state.get("cost_contract_queue"), cards, surface="Cost & Contract action queue")
     _cards_from_alert_center(state, cards)
@@ -281,6 +348,8 @@ def _domain_filter(question: str, cards: list[dict]) -> list[dict]:
         "alert": ("alert", "incident", "email", "overdue", "issue"),
         "security": ("security", "grant", "role", "login", "mfa", "access"),
         "change": ("change", "drift", "ddl", "owner", "approval"),
+        "automation": ("automation", "automate", "auto", "guided", "approval", "manual only", "blocker"),
+        "ai_platform": ("agent", "mcp", "intelligence", "openflow", "horizon", "semantic", "aisql", "cortex code", "ai"),
     }
     matched_domains = [
         domain for domain, terms in domain_terms.items()

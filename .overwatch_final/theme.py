@@ -1,4 +1,4 @@
-# theme.py — OVERWATCH V3 · 5-theme system
+# theme.py — OVERWATCH 5-theme system
 # ─────────────────────────────────────────────────────────────────────────────
 # THEMES:
 #   1. midnight   — Original dark glassmorphism (cyan/indigo/purple)
@@ -301,7 +301,7 @@ _STRUCTURAL_CSS = """
 <style>
 {vars}
 
-/* ═══════════════════════════════════════════ OVERWATCH V3 THEME ENGINE ═══ */
+/* OVERWATCH THEME ENGINE */
 
 /* ── Base ── */
 .stApp, .stApp > * {

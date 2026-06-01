@@ -118,6 +118,7 @@ def _infer_telemetry_section(section: str = "", ttl_key: str = "") -> str:
         ("storage_", "Cost & Contract"),
         ("pipe_", "Workload Operations"),
         ("value_", "Cost & Contract"),
+        ("arch_", "Architecture Readiness"),
     ]
     for prefix, label in prefix_map:
         if key.startswith(prefix):

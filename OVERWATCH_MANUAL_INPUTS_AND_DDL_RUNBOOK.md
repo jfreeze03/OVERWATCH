@@ -1,6 +1,6 @@
 # OVERWATCH Manual Inputs and DDL Runbook
 
-Last updated: May 31, 2026
+Last updated: June 1, 2026
 
 This document is the maintenance map for every manual input that drives
 OVERWATCH. Use it when adding or changing warehouses, databases, environments,
@@ -12,7 +12,9 @@ roles, costs, alert recipients, owners, or Snowflake DDL.
 |---|---|---|
 | App defaults, thresholds, company scope, environment selector, role navigation | `.overwatch_final/config.py` | Runtime defaults used by Streamlit before or alongside mart settings. |
 | Durable Snowflake setup, settings, seed rows, marts, tasks, procedures | `snowflake/OVERWATCH_MART_SETUP.sql` | Snowflake database/schema, state tables, facts, procedures, task graph, alert objects. |
-| Owner and on-call routing defaults | `.overwatch_final/utils/owner_directory.py` and `OVERWATCH_OWNER_DIRECTORY` | Routes warehouse, task, procedure, cost, alert, security, change, and account-health work. |
+| Owner and on-call routing defaults | `.overwatch_final/utils/owner_directory.py` and `OVERWATCH_OWNER_DIRECTORY` | Routes warehouse, database, architecture, task, procedure, cost, alert, security, change, and account-health work. |
+| Architecture objectives | `.overwatch_final/config.py` under `ARCHITECTURE_OBJECTIVES` | Manual workload class, owner, RPO/RTO, isolation, cache, clustering, and DR expectations for Architecture Readiness. |
+| Forward platform controls | `.overwatch_final/config.py` under `FORWARD_PLATFORM_CONTROLS` | Manual DBA guardrails for Cortex Agents, MCP servers, AI usage, Openflow, Horizon, semantic trust, BCDR drill ledger, and AI-assisted change governance. |
 | Alert rules and email delivery helpers | `.overwatch_final/utils/alerts.py` and `OVERWATCH_ALERT_RULES` | Alert categories, severities, SLA hours, delivery status, email package generation. |
 | Deployment and baseline grants | `OVERWATCH_DOCUMENTATION.md`, `STREAMLIT_CLOUD_DEPLOY.md` | App runtime access grants and deployment notes. |
 | Score expectations and target gaps | `.overwatch_final/utils/scorecards.py` | Manual section readiness scoring and next-move language. |
@@ -54,6 +56,63 @@ in `OVERWATCH_DATABASE_ENVIRONMENT()` in `snowflake/OVERWATCH_MART_SETUP.sql`.
 Login-only data with no database context must not be forced into PROD or DEV.
 Use `No Database Context` for account-level login, security, or warehouse rows
 where Snowflake does not provide a reliable database signal.
+
+### Architecture Objectives
+
+Defined in `.overwatch_final/config.py` under `ARCHITECTURE_OBJECTIVES`.
+These rows are manual control objectives. They tell Architecture Readiness what
+the intended workload class, owner route, RPO/RTO, isolation policy, cache
+policy, clustering guardrail, and DR expectation should be before DBAs act on
+Snowflake telemetry.
+
+| Scope | Current objective |
+|---|---|
+| `ALFA_EDW_PROD` database | Tier 0 production EDW, PROD environment, 120 minute RPO, 240 minute RTO, owner-approved PROD routing required. |
+| `ALFA_EDW_DEV`, `ALFA_EDW_SAN`, `ALFA_EDW_PHX`, `ALFA_EDW_SEA` databases | Tier 2 DEV/Sandbox EDW, DEV_ALL environment, restore/clone posture unless a stricter owner objective is documented. |
+| `ALFA_EDW_SIT` database | Tier 1 SIT EDW, DEV_ALL environment, release-test recovery expectations should be documented. |
+| `COMPUTE_WH` warehouse | Current OVERWATCH app/task execution and utility warehouse. Monitor its cost separately from ALFA/Trexis business workload warehouses. |
+| `BI_COMPUTE_WH` warehouse | BI/reporting compute where repeated dashboard workloads may justify warm-cache tuning. |
+| `WH_ALFA_%` warehouses | ALFA application workload compute; routing and settings should have application owner approval. |
+| `WH_TRXS_%` warehouses | Trexis workload compute; keep Trexis isolation separate from ALFA unless approved. |
+
+When adding a new database family or warehouse class, add an
+`ARCHITECTURE_OBJECTIVES` row and, if it needs a specific owner route, add a
+matching `OVERWATCH_OWNER_DIRECTORY` row. Architecture findings should not be
+closed until the objective, owner, approval group, verification query, and
+RPO/RTO or recovery expectation are visible.
+
+### Forward Platform Controls
+
+Defined in `.overwatch_final/config.py` under `FORWARD_PLATFORM_CONTROLS`.
+These rows tell Architecture Readiness how to govern newly adopted Snowflake
+capabilities before they become operational blind spots.
+
+| Control area | Current owner route | Primary evidence |
+|---|---|---|
+| Agent & MCP Governance | `AI_AGENT_DEFAULT`, `MCP_SERVER_DEFAULT` | `SHOW AGENTS IN ACCOUNT`, `SHOW MCP SERVERS IN ACCOUNT`. |
+| AI Spend & Token Guardrails | `AI_COST_DEFAULT` / FinOps route | `CORTEX_AGENT_USAGE_HISTORY`, `SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY`. |
+| Openflow Operations | `OPENFLOW_DEFAULT` | `OPENFLOW_USAGE_HISTORY`. |
+| Horizon Governance Readiness | `HORIZON_GOVERNANCE_DEFAULT` / governance route | Classification, policy, access-history, object-dependency, Trust Center, and data-quality views. |
+| Semantic Trust & Verified Query Testing | `SEMANTIC_TRUST_DEFAULT` | `SEMANTIC_VIEWS`, `SEMANTIC_TABLES`, `SEMANTIC_METRICS`. |
+| BCDR Drill Ledger | `BCDR_DRILL_DEFAULT` | Failover/replication inventory, replication usage, backup operation history, and drill notes. |
+| AI Change Governance | `AI_CHANGE_GOVERNANCE_DEFAULT` | Cortex Code, Cortex AISQL, ticket/source-control, rollback, and verification evidence. |
+
+When adding a new Snowflake platform capability, add a
+`FORWARD_PLATFORM_CONTROLS` row, add or update the matching
+`OVERWATCH_OWNER_DIRECTORY` seed/default route, and decide whether the app
+should load live evidence through a button, a mart fact, or manual checklist
+evidence. Do not add automatic state-changing behavior until owner approval,
+rollback, and verification evidence are durable.
+
+Durable platform-futures objects are included in
+`snowflake/OVERWATCH_MART_SETUP.sql` and the setup bundle:
+
+| Object | Purpose |
+|---|---|
+| `OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER` | Durable copy of the manual forward-platform control register. |
+| `OVERWATCH_PLATFORM_FUTURES_EVIDENCE` | Immutable evidence ledger for AI/MCP/Openflow/Horizon/Semantic/BCDR/AI-change reviews. |
+| `OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V` | Latest evidence row per control/entity/surface. |
+| `OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V` | Control coverage state: evidence missing, proof needed, action open, or captured. |
 
 ### Cost Defaults
 
@@ -128,16 +187,20 @@ by company scope, Snowflake account-usage history, and mart facts.
    - Set `OWNER_EMAIL`, `ONCALL_PRIMARY`, `APPROVAL_GROUP`,
      `ESCALATION_TARGET`, `DEFAULT_ROUTE`, `SERVICE_TIER`, and
      `MATCH_PRIORITY`.
-5. Add or validate Snowflake tags if you want stronger chargeback.
+5. Add or update an architecture objective.
+   - Add an `ARCHITECTURE_OBJECTIVES` row with `ENTITY_TYPE = 'WAREHOUSE'`.
+   - Set the workload class, service tier, owner, approval group, isolation
+     policy, cache policy, and recovery expectation for Architecture Readiness.
+6. Add or validate Snowflake tags if you want stronger chargeback.
    - Preferred tag names are seeded in `OVERWATCH_OWNER_TAG_NAMES`:
      `COST_OWNER`, `DATA_OWNER`, `APP_OWNER`, `APPLICATION_OWNER`,
      `BUSINESS_OWNER`, `SERVICE_OWNER`.
-6. Validate app-role privileges for admin controls.
+7. Validate app-role privileges for admin controls.
    - Read-only dashboard use needs account usage visibility and mart table DML.
    - Warehouse changes need a role with the required Snowflake privileges for
      the target warehouse, such as monitor/operate/modify or ownership through
      your approved role model.
-7. Update tests if the new pattern changes expected scoping.
+8. Update tests if the new pattern changes expected scoping.
    - Start with `tests/test_company_scope_and_cost.py`.
 
 Example durable scope row:
@@ -173,7 +236,13 @@ database family, or environment selector.
 6. Add owner routing if needed.
    - Use `ENTITY_TYPE = 'DATABASE'`, `SCHEMA`, `TABLE`, `TASK`,
      `PROCEDURE`, or a workflow type depending on the object.
-7. Validate environment behavior.
+7. Add or update an architecture objective.
+   - Add an `ARCHITECTURE_OBJECTIVES` row for the database or database family.
+   - Set `EXPECTED_ENVIRONMENT`, `WORKLOAD_CLASS`, `SERVICE_TIER`,
+     `OWNER`, `APPROVAL_GROUP`, `RPO_MINUTES`, `RTO_MINUTES`,
+     `ISOLATION_POLICY`, `CACHE_POLICY`, `CLUSTERING_POLICY`, and
+     `DR_POLICY`.
+8. Validate environment behavior.
    - Company selector and environment selector should apply anywhere database
      context exists.
    - Do not apply environment filters to login-only data with no database

@@ -62,6 +62,12 @@ _SIZE_SQL = {
     "6X-Large": "X6LARGE",
 }
 _SCALE_OPTS = ["STANDARD","ECONOMY"]
+TASK_GRAPH_CONTROL_PANES = (
+    "Running Task Queries",
+    "Cancel Graph / Task",
+    "Suspend / Resume",
+    "DAG Inspector",
+)
 
 
 def _load_button(label, key):
@@ -1632,15 +1638,16 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             "Requires OPERATE privilege on tasks or ACCOUNTADMIN."
         )
 
-        tg_tab_run, tg_tab_cancel, tg_tab_manage, tg_tab_graph = st.tabs([
-            "Running Task Queries",
-            "Cancel Graph / Task",
-            "Suspend / Resume",
-            "DAG Inspector",
-        ])
+        task_graph_view = st.radio(
+            "Task graph control view",
+            TASK_GRAPH_CONTROL_PANES,
+            horizontal=True,
+            label_visibility="collapsed",
+            key="dba_task_graph_control_view",
+        )
 
         # ── Running task queries ───────────────────────────────────────────────
-        with tg_tab_run:
+        if task_graph_view == "Running Task Queries":
             st.subheader("Queries Currently Running Under a Task")
             st.caption(
                 "Shows recent ACCOUNT_USAGE query activity where QUERY_TAG or query text "
@@ -1708,7 +1715,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     st.success("No task-related queries currently running.")
 
         # ── Cancel graph / task ────────────────────────────────────────────────
-        with tg_tab_cancel:
+        elif task_graph_view == "Cancel Graph / Task":
             st.subheader("Cancel a Running Task Graph or Individual Task Run")
             st.caption(
                 "`SYSTEM$CANCEL_TASK_GRAPH(graph_run_id)` — cancels an entire DAG run in progress. "
@@ -1824,7 +1831,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     )
 
         # ── Suspend / Resume ──────────────────────────────────────────────────
-        with tg_tab_manage:
+        elif task_graph_view == "Suspend / Resume":
             st.subheader("Suspend / Resume Tasks and DAG Trees")
             st.caption(
                 "Suspend or resume individual tasks or entire DAG hierarchies. "
@@ -2010,7 +2017,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 st.rerun()
 
         # ── DAG Inspector ─────────────────────────────────────────────────────
-        with tg_tab_graph:
+        elif task_graph_view == "DAG Inspector":
             st.subheader("DAG Inspector")
             st.caption(
                 "Visualise the task dependency tree for a selected root task. "

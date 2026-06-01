@@ -23,18 +23,29 @@ from utils.workflows import render_priority_dataframe
 from config import THRESHOLDS
 
 
+LIVE_MONITOR_PANES = (
+    "Active Queries",
+    "Timeline",
+    "Sessions",
+)
+
+
 def render():
     session      = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     rt_interval  = st.session_state.get("rt_interval", 30)
     company      = get_active_company()
 
-    tab_active, tab_timeline, tab_sessions = st.tabs([
-        "Active Queries", "Timeline", "Sessions"
-    ])
+    active_view = st.radio(
+        "Live monitor view",
+        LIVE_MONITOR_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="live_monitor_active_view",
+    )
 
     # ── ACTIVE QUERIES ─────────────────────────────────────────────────────────
-    with tab_active:
+    if active_view == "Active Queries":
         st.header("🔴 Live & Recent Queries")
         st.caption(
             "Uses `ACCOUNT_USAGE.QUERY_HISTORY` by default for Streamlit-in-Snowflake compatibility. "
@@ -42,7 +53,8 @@ def render():
         )
 
         c1, c2, c3, c4, c5 = st.columns([1, 1, 1.4, 2, 2])
-        with c1: st.button("🔄 Refresh", key="lm_refresh")
+        with c1:
+            refresh_live = st.button("Load / Refresh", key="lm_refresh")
         with c2:
             auto_refresh = st.checkbox(
                 "Auto-refresh", key="lm_auto",
@@ -243,10 +255,13 @@ def render():
             except Exception as e:
                 st.caption(f"Recent query data unavailable: {format_snowflake_error(e)}")
 
-        _live_panel()
+        if refresh_live or auto_refresh:
+            _live_panel()
+        else:
+            st.info("Live query polling is paused. Refresh once or enable auto-refresh when you need active query evidence.")
 
     # ── TIMELINE ───────────────────────────────────────────────────────────────
-    with tab_timeline:
+    elif active_view == "Timeline":
         st.header("📈 Query Timeline")
         tl_hours = st.slider("Lookback (hours)", 1, 24, 6, key="lm_tl_hours")
         if st.button("Load Timeline", key="lm_tl_load"):
@@ -286,7 +301,7 @@ def render():
             download_csv(df_t, "query_timeline.csv")
 
     # ── SESSIONS ───────────────────────────────────────────────────────────────
-    with tab_sessions:
+    elif active_view == "Sessions":
         st.header("🖥️ Active Sessions")
         s1, s2 = st.columns(2)
 

@@ -33,8 +33,16 @@ from utils import (
     summarize_verification_frame,
     verification_query_safety_issues,
 )
-from utils.recommendation_intelligence import harden_recommendation
+from utils.recommendation_intelligence import build_automation_readiness_board, harden_recommendation
 from utils.workflows import render_priority_dataframe
+
+
+RECOMMENDATION_PANES = (
+    "Recommendations",
+    "Automation Readiness",
+    "Action Queue",
+    "Anomaly Log",
+)
 
 
 def _active_company() -> str:
@@ -160,6 +168,113 @@ GROUP BY warehouse_name, error_code
 ORDER BY failures DESC
 LIMIT 50;
 """
+
+
+def _automation_playbook_frame() -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "AUTOMATION_LANE": "Ready for Guided Execution",
+            "WHAT_IT_MEANS": "Safe SQL shape, owner route, approval, and verification query are present.",
+            "DBA_ACTION": "Execute only through the owning admin workflow, then run verification before closure.",
+        },
+        {
+            "AUTOMATION_LANE": "Approval Required",
+            "WHAT_IT_MEANS": "The action looks automatable, but owner approval or approver metadata is missing.",
+            "DBA_ACTION": "Capture approval first; do not run SQL from the recommendation text alone.",
+        },
+        {
+            "AUTOMATION_LANE": "Evidence Required",
+            "WHAT_IT_MEANS": "The action lacks verification query, owner route, or proof needed for audit.",
+            "DBA_ACTION": "Complete evidence fields, then rerun the automation board.",
+        },
+        {
+            "AUTOMATION_LANE": "Manual Only",
+            "WHAT_IT_MEANS": "The action touches security, task execution, failover, clustering proof, or unsafe SQL.",
+            "DBA_ACTION": "Keep human-controlled and use OVERWATCH only for evidence, routing, and closure tracking.",
+        },
+        {
+            "AUTOMATION_LANE": "Auto-Close Candidate",
+            "WHAT_IT_MEANS": "The action is already fixed and has verified closure evidence.",
+            "DBA_ACTION": "Review owner agreement, then move it out of active work queues.",
+        },
+    ])
+
+
+def _render_automation_readiness(session):
+    st.header("Automation Readiness")
+    st.caption("DBA-safe automation lanes for recommendations and action queue items.")
+    c_load, c_hint = st.columns([1, 3])
+    with c_load:
+        if st.button("Load Action Queue", key="automation_queue_load"):
+            try:
+                st.session_state["rec_action_queue"] = load_action_queue(session)
+            except Exception as e:
+                st.info(f"Action queue table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
+                st.session_state["rec_action_queue"] = pd.DataFrame()
+    with c_hint:
+        st.caption("Generate recommendations and/or load the action queue, then use this board to decide what can be safely packaged.")
+
+    recs = st.session_state.get("rec_recommendations", [])
+    queue = st.session_state.get("rec_action_queue")
+    board = build_automation_readiness_board(recs, queue if isinstance(queue, pd.DataFrame) else None)
+    st.session_state["rec_automation_board"] = board
+
+    if board.empty:
+        st.info("No automation candidates loaded. Generate recommendations or load the action queue first.")
+        render_priority_dataframe(
+            _automation_playbook_frame(),
+            title="Automation lane definitions",
+            priority_columns=["AUTOMATION_LANE", "WHAT_IT_MEANS", "DBA_ACTION"],
+            sort_by=["AUTOMATION_LANE"],
+            ascending=True,
+            raw_label="All automation lane definitions",
+            height=260,
+        )
+        return
+
+    ready = int((board["AUTOMATION_LANE"] == "Ready for Guided Execution").sum())
+    approval = int((board["AUTOMATION_LANE"] == "Approval Required").sum())
+    evidence = int((board["AUTOMATION_LANE"] == "Evidence Required").sum())
+    manual = int((board["AUTOMATION_LANE"] == "Manual Only").sum())
+    auto_close = int((board["AUTOMATION_LANE"] == "Auto-Close Candidate").sum())
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1.metric("Candidates", f"{len(board):,}")
+    m2.metric("Guided Ready", f"{ready:,}")
+    m3.metric("Approval Needed", f"{approval:,}", delta_color="inverse")
+    m4.metric("Evidence Needed", f"{evidence:,}", delta_color="inverse")
+    m5.metric("Manual Only", f"{manual:,}")
+    m6.metric("Auto-Close", f"{auto_close:,}")
+
+    first = board.iloc[0]
+    st.warning(
+        f"Automation first move: {first['AUTOMATION_LANE']} for {first['ENTITY']}. "
+        f"Blockers: {first['BLOCKERS']}. Next: {first['SAFE_AUTOMATION_STEP']}"
+    )
+    render_priority_dataframe(
+        board,
+        title="Automation readiness board",
+        priority_columns=[
+            "AUTOMATION_LANE", "AUTOMATION_SCORE", "SEVERITY", "CATEGORY", "ENTITY",
+            "DECISION", "BLOCKERS", "APPROVAL_STATE", "SAFE_GUIDED_SQL",
+            "STATE_CHANGING_SQL", "SAFE_AUTOMATION_STEP", "PROOF_REQUIRED", "DO_NOT_DO",
+        ],
+        sort_by=["AUTOMATION_LANE", "AUTOMATION_SCORE", "SEVERITY"],
+        ascending=[True, False, True],
+        raw_label="All automation readiness rows",
+        height=440,
+    )
+    download_csv(board, "automation_readiness_board.csv")
+
+    with st.expander("Automation lane definitions", expanded=False):
+        render_priority_dataframe(
+            _automation_playbook_frame(),
+            title="Automation playbook",
+            priority_columns=["AUTOMATION_LANE", "WHAT_IT_MEANS", "DBA_ACTION"],
+            sort_by=["AUTOMATION_LANE"],
+            ascending=True,
+            raw_label="All automation playbook rows",
+            height=260,
+        )
 
 
 def _render_queue(session):
@@ -459,11 +574,15 @@ def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
 
-    tab_recs, tab_queue, tab_anomaly = st.tabs([
-        "Recommendations", "Action Queue", "Anomaly Log"
-    ])
+    active_view = st.radio(
+        "Recommendation view",
+        RECOMMENDATION_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="recommendations_active_view",
+    )
 
-    with tab_recs:
+    if active_view == "Recommendations":
         st.header("Automated Recommendations Feed")
         st.caption("Prioritized findings that can be saved into a persistent owner/status queue.")
 
@@ -685,10 +804,20 @@ def render():
             df_recs = _recommendation_frame(recs)
             high = df_recs[df_recs["Severity"].isin(["Critical", "High"])]
             monthly = float(df_recs["Estimated Monthly Savings"].sum())
-            c1, c2, c3 = st.columns(3)
+            proof_ready = int(df_recs["Proof Query"].astype(str).str.strip().ne("").sum()) if "Proof Query" in df_recs.columns else 0
+            sql_ready = int(
+                df_recs["Generated SQL Fix"].astype(str).str.strip().ne("").sum()
+            ) if "Generated SQL Fix" in df_recs.columns else 0
+            no_auto_fix = int(
+                df_recs["Generated SQL Fix"].astype(str).str.contains("No safe automatic SQL fix", case=False, na=False).sum()
+            ) if "Generated SQL Fix" in df_recs.columns else 0
+            decisive_pct = proof_ready / max(len(df_recs), 1) * 100
+            c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("High/Critical", len(high))
             c2.metric("Open Findings", len(df_recs))
             c3.metric("Est. Monthly Savings", f"${monthly:,.0f}")
+            c4.metric("Proof-Ready", f"{proof_ready:,}", delta=f"{decisive_pct:.0f}%")
+            c5.metric("SQL Fix Candidates", f"{max(sql_ready - no_auto_fix, 0):,}", delta=f"{no_auto_fix:,} manual")
             st.caption(
                 f"{metric_confidence_label('estimated')} | {freshness_note('ACCOUNT_USAGE')} | "
                 "Savings are directional until the action is fixed and logged to Snowflake Value."
@@ -734,10 +863,13 @@ def render():
         elif st.session_state.get("rec_recommendations") == []:
             st.success("No actionable findings. Account looks healthy.")
 
-    with tab_queue:
+    elif active_view == "Automation Readiness":
+        _render_automation_readiness(session)
+
+    elif active_view == "Action Queue":
         _render_queue(session)
 
-    with tab_anomaly:
+    elif active_view == "Anomaly Log":
         st.header("Anomaly Log")
         st.caption("Z-score based credit spike detection per warehouse using a rolling 7-day baseline.")
         anom_days = st.slider("Detection window (days)", 14, 90, 30, key="anom_days")

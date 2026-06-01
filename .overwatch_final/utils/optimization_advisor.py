@@ -20,46 +20,63 @@ from .session import get_session
 from .workflows import render_priority_dataframe
 
 
+OPTIMIZATION_ADVISOR_PANES = (
+    "Idle Warehouse Costs",
+    "Duplicate Queries",
+    "Right-Sizing Advisor",
+)
+
+
 def render_optimization_advisor():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     company = get_active_company()
-    qh_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        [
-            "CREDITS_USED_CLOUD_SERVICES",
-            "QUEUED_OVERLOAD_TIME",
-            "BYTES_SPILLED_TO_REMOTE_STORAGE",
-            "PERCENTAGE_SCANNED_FROM_CACHE",
-            "WAREHOUSE_SIZE",
-        ],
-    ))
-    duplicate_cloud_expr = (
-        "SUM(COALESCE(credits_used_cloud_services, 0))"
-        if "CREDITS_USED_CLOUD_SERVICES" in qh_cols
-        else "0"
-    )
-    sizing_wh_size_expr = (
-        "MAX(warehouse_size)"
-        if "WAREHOUSE_SIZE" in qh_cols
-        else "NULL::VARCHAR"
-    )
-    sizing_queue_expr = (
-        "AVG(queued_overload_time) / 1000"
-        if "QUEUED_OVERLOAD_TIME" in qh_cols
-        else "0"
-    )
-    sizing_spill_expr = (
-        "SUM(bytes_spilled_to_remote_storage) / POWER(1024, 3)"
-        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
-        else "0"
-    )
-    sizing_cache_expr = (
-        "AVG(percentage_scanned_from_cache)"
-        if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols
-        else "0"
-    )
+    qh_caps = None
+
+    def _query_history_capabilities() -> dict[str, str]:
+        nonlocal qh_caps
+        if qh_caps is not None:
+            return qh_caps
+        qh_cols = set(filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            [
+                "CREDITS_USED_CLOUD_SERVICES",
+                "QUEUED_OVERLOAD_TIME",
+                "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                "PERCENTAGE_SCANNED_FROM_CACHE",
+                "WAREHOUSE_SIZE",
+            ],
+        ))
+        qh_caps = {
+            "duplicate_cloud_expr": (
+                "SUM(COALESCE(credits_used_cloud_services, 0))"
+                if "CREDITS_USED_CLOUD_SERVICES" in qh_cols
+                else "0"
+            ),
+            "sizing_wh_size_expr": (
+                "MAX(warehouse_size)"
+                if "WAREHOUSE_SIZE" in qh_cols
+                else "NULL::VARCHAR"
+            ),
+            "sizing_queue_expr": (
+                "AVG(queued_overload_time) / 1000"
+                if "QUEUED_OVERLOAD_TIME" in qh_cols
+                else "0"
+            ),
+            "sizing_spill_expr": (
+                "SUM(bytes_spilled_to_remote_storage) / POWER(1024, 3)"
+                if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+                else "0"
+            ),
+            "sizing_cache_expr": (
+                "AVG(percentage_scanned_from_cache)"
+                if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols
+                else "0"
+            ),
+        }
+        return qh_caps
+
     query_filters = get_global_filter_clause(
         date_col="start_time",
         wh_col="warehouse_name",
@@ -68,11 +85,15 @@ def render_optimization_advisor():
         db_col="database_name",
     )
 
-    tab_idle, tab_dups, tab_sizing = st.tabs([
-        "Idle Warehouse Costs", "Duplicate Queries", "Right-Sizing Advisor"
-    ])
+    active_view = st.radio(
+        "Optimization advisor view",
+        OPTIMIZATION_ADVISOR_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="optimization_advisor_active_view",
+    )
 
-    with tab_idle:
+    if active_view == "Idle Warehouse Costs":
         st.header("Idle Warehouse Cost Detection")
         st.caption("Identifies credit spend during hours with zero query activity.")
         idle_days = st.slider("Lookback (days)", 1, 30, 7, key="idle_days")
@@ -138,7 +159,7 @@ def render_optimization_advisor():
         elif st.session_state.get("opt_df_idle") is not None:
             st.success("No significant idle warehouse credits detected.")
 
-    with tab_dups:
+    elif active_view == "Duplicate Queries":
         st.header("Duplicate & Redundant Query Detection")
         st.caption(
             "Same query text executed multiple times within a time window - "
@@ -148,6 +169,8 @@ def render_optimization_advisor():
 
         if st.button("Find Duplicates", key="dup_load"):
             try:
+                qh = _query_history_capabilities()
+                duplicate_cloud_expr = qh["duplicate_cloud_expr"]
                 df_dup = run_query(f"""
                     SELECT SUBSTR(query_text, 1, 200) AS query_sig,
                            COUNT(DISTINCT user_name) AS user_count,
@@ -196,13 +219,18 @@ def render_optimization_advisor():
             )
             download_csv(df_d, "duplicate_queries.csv")
 
-    with tab_sizing:
+    elif active_view == "Right-Sizing Advisor":
         st.header("Warehouse Right-Sizing Advisor")
         st.caption("Warehouses with low utilization or persistent spill - downsize or upsize candidates.")
         sz_days = st.slider("Lookback (days)", 7, 30, 14, key="sz_days")
 
         if st.button("Analyze Sizing", key="sz_load"):
             try:
+                qh = _query_history_capabilities()
+                sizing_wh_size_expr = qh["sizing_wh_size_expr"]
+                sizing_queue_expr = qh["sizing_queue_expr"]
+                sizing_spill_expr = qh["sizing_spill_expr"]
+                sizing_cache_expr = qh["sizing_cache_expr"]
                 df_sz = run_query(f"""
                     WITH query_stats AS (
                         SELECT

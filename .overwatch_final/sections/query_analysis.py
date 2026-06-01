@@ -12,6 +12,14 @@ from utils import (
 from config import THRESHOLDS
 
 
+QUERY_ANALYSIS_PANES = (
+    "Bottlenecks",
+    "Pattern Degradation",
+    "Plan Steps",
+    "AI Diagnosis",
+)
+
+
 def _annotate_bottleneck_routes(df):
     if df is None or getattr(df, "empty", True):
         return df
@@ -64,42 +72,55 @@ def _annotate_degradation_routes(df):
 def render():
     session = get_session()
     company = get_active_company()
-    try:
-        qh_cols = set(filter_existing_columns(
-            session,
-            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-            [
-                "WAREHOUSE_SIZE",
-                "QUEUED_OVERLOAD_TIME",
-                "BYTES_SCANNED",
-                "BYTES_SPILLED_TO_REMOTE_STORAGE",
-                "PARTITIONS_SCANNED",
-                "PARTITIONS_TOTAL",
-                "ROWS_PRODUCED",
-            ],
-        ))
-    except Exception:
-        qh_cols = set()
-    wh_size_expr = "q.warehouse_size AS warehouse_size" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
-    queued_expr = "q.queued_overload_time/1000 AS queued_sec" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0::FLOAT AS queued_sec"
-    gb_expr = "q.bytes_scanned/POWER(1024,3) AS gb_scanned" if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned"
-    spill_expr = (
-        "q.bytes_spilled_to_remote_storage/POWER(1024,3) AS remote_spill_gb"
-        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols else "0::FLOAT AS remote_spill_gb"
-    )
-    partition_expr = (
-        "q.partitions_scanned * 100.0 / NULLIF(q.partitions_total,0) AS partition_pct"
-        if {"PARTITIONS_SCANNED", "PARTITIONS_TOTAL"}.issubset(qh_cols)
-        else "0::FLOAT AS partition_pct"
-    )
-    rows_expr = "q.rows_produced AS rows_produced" if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
+    qh_exprs = None
 
-    tab_bottleneck, tab_patterns, tab_plansteps, tab_ai = st.tabs([
-        "Bottlenecks", "Pattern Degradation", "Plan Steps", "AI Diagnosis"
-    ])
+    def _query_history_exprs() -> dict[str, str]:
+        nonlocal qh_exprs
+        if qh_exprs is not None:
+            return qh_exprs
+        try:
+            qh_cols = set(filter_existing_columns(
+                session,
+                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                [
+                    "WAREHOUSE_SIZE",
+                    "QUEUED_OVERLOAD_TIME",
+                    "BYTES_SCANNED",
+                    "BYTES_SPILLED_TO_REMOTE_STORAGE",
+                    "PARTITIONS_SCANNED",
+                    "PARTITIONS_TOTAL",
+                    "ROWS_PRODUCED",
+                ],
+            ))
+        except Exception:
+            qh_cols = set()
+        qh_exprs = {
+            "wh_size_expr": "q.warehouse_size AS warehouse_size" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size",
+            "queued_expr": "q.queued_overload_time/1000 AS queued_sec" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0::FLOAT AS queued_sec",
+            "gb_expr": "q.bytes_scanned/POWER(1024,3) AS gb_scanned" if "BYTES_SCANNED" in qh_cols else "0::FLOAT AS gb_scanned",
+            "spill_expr": (
+                "q.bytes_spilled_to_remote_storage/POWER(1024,3) AS remote_spill_gb"
+                if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols else "0::FLOAT AS remote_spill_gb"
+            ),
+            "partition_expr": (
+                "q.partitions_scanned * 100.0 / NULLIF(q.partitions_total,0) AS partition_pct"
+                if {"PARTITIONS_SCANNED", "PARTITIONS_TOTAL"}.issubset(qh_cols)
+                else "0::FLOAT AS partition_pct"
+            ),
+            "rows_expr": "q.rows_produced AS rows_produced" if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced",
+        }
+        return qh_exprs
+
+    active_view = st.radio(
+        "Query analysis view",
+        QUERY_ANALYSIS_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="query_analysis_active_view",
+    )
 
     # ── BOTTLENECKS ───────────────────────────────────────────────────────────
-    with tab_bottleneck:
+    if active_view == "Bottlenecks":
         st.header("🔍 Query Bottleneck Analysis")
         days = st.slider("Lookback (days)", 1, 30, 7, key="qa_days")
         qa_filters = get_global_filter_clause(
@@ -125,6 +146,13 @@ def render():
                     )
                     st.session_state["qa_bottleneck_source"] = "OVERWATCH mart: FACT_QUERY_DETAIL_RECENT"
                 except Exception:
+                    exprs = _query_history_exprs()
+                    wh_size_expr = exprs["wh_size_expr"]
+                    queued_expr = exprs["queued_expr"]
+                    gb_expr = exprs["gb_expr"]
+                    spill_expr = exprs["spill_expr"]
+                    partition_expr = exprs["partition_expr"]
+                    rows_expr = exprs["rows_expr"]
                     df_qa = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=days, include_recent=True)}
                 SELECT
@@ -180,7 +208,7 @@ def render():
             download_csv(df, "bottleneck_queries.csv")
 
     # ── PATTERN DEGRADATION ───────────────────────────────────────────────────
-    with tab_patterns:
+    elif active_view == "Pattern Degradation":
         st.header("📉 Query Pattern Degradation")
         st.caption("Compare query execution time this week vs prior week by query signature.")
 
@@ -257,7 +285,7 @@ def render():
                 st.success("✅ No significant query pattern degradation detected.")
 
     # ── PLAN STEPS ────────────────────────────────────────────────────────────
-    with tab_plansteps:
+    elif active_view == "Plan Steps":
         st.header("🗂️ Query Plan Steps (GET_QUERY_OPERATOR_STATS)")
         st.caption("Enter a Query ID to inspect operator-level statistics.")
 
@@ -283,7 +311,7 @@ def render():
                 st.warning(f"Operator stats unavailable: {format_snowflake_error(e)}")
 
     # ── AI DIAGNOSIS ──────────────────────────────────────────────────────────
-    with tab_ai:
+    elif active_view == "AI Diagnosis":
         st.header("🤖 AI Query Diagnosis (Cortex)")
         st.caption("Paste a slow query to get AI-powered optimization recommendations.")
 

@@ -2,12 +2,23 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 
 import pandas as pd
 
 from config import THRESHOLDS
 
 from .helpers import safe_float, safe_int
+
+
+AUTOMATION_LANE_ORDER = {
+    "Ready for Guided Execution": 0,
+    "Approval Required": 1,
+    "Evidence Required": 2,
+    "Auto-Close Candidate": 3,
+    "Manual Only": 4,
+    "Observe Only": 5,
+}
 
 
 def _row_value(row: Mapping | pd.Series | dict, *keys: str, default: object = "") -> object:
@@ -177,6 +188,193 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
 
 def harden_recommendation_rows(recs: list[dict]) -> list[dict]:
     return [harden_recommendation(rec) for rec in recs or []]
+
+
+def _truthy_text(value: object) -> bool:
+    text = str(value or "").strip()
+    return bool(text) and text.upper() not in {"NAN", "NONE", "NULL", "N/A"}
+
+
+def _upper_blob(*values: object) -> str:
+    return " ".join(str(value or "") for value in values).upper()
+
+
+def _state_changing_sql(sql: str) -> bool:
+    return bool(re.search(
+        r"\b(ALTER|CREATE|DROP|TRUNCATE|DELETE|UPDATE|MERGE|INSERT|GRANT|REVOKE|EXECUTE|CALL|UNDROP)\b",
+        str(sql or ""),
+        flags=re.IGNORECASE,
+    ))
+
+
+def _safe_guided_sql(sql: str) -> bool:
+    text = str(sql or "").strip().upper()
+    if not text or "NO SAFE AUTOMATIC SQL FIX" in text:
+        return False
+    if re.search(r"\b(DROP|TRUNCATE|DELETE|UPDATE|MERGE|INSERT|GRANT|REVOKE|CALL|UNDROP)\b", text):
+        return False
+    if re.search(r"\bALTER\s+WAREHOUSE\b", text) and re.search(r"\bSET\b", text):
+        return True
+    return False
+
+
+def _state_is_closed(row: Mapping | pd.Series | dict) -> bool:
+    return _text(row, "Status", "STATUS").upper() in {"FIXED", "RESOLVED", "CLOSED"}
+
+
+def _verification_is_proved(row: Mapping | pd.Series | dict) -> bool:
+    return _text(row, "Verification Status", "VERIFICATION_STATUS").upper() in {"VERIFIED", "PASSED", "PROVED"}
+
+
+def _approval_state(row: Mapping | pd.Series | dict) -> str:
+    return _text(row, "Owner Approval Status", "OWNER_APPROVAL_STATUS", "APPROVAL_STATE").upper()
+
+
+def _automation_blockers(row: Mapping | pd.Series | dict, hardened: Mapping | dict) -> list[str]:
+    blockers = []
+    proof_query = _text(row, "Proof Query", "PROOF_QUERY", "Verification Query", "VERIFICATION_QUERY") or _text(
+        hardened, "Proof Query", "Verification Query"
+    )
+    generated_sql = _text(row, "Generated SQL Fix", "GENERATED_SQL_FIX") or _text(hardened, "Generated SQL Fix")
+    owner = _text(row, "Owner", "OWNER") or _text(hardened, "Owner Route", "Owner")
+    approver = _text(row, "Approver", "APPROVER", "Approval Group", "APPROVAL_GROUP")
+    approval = _approval_state(row)
+    blob = _upper_blob(
+        _text(row, "Category", "CATEGORY"),
+        _text(row, "Entity Type", "ENTITY_TYPE"),
+        _text(row, "Finding", "FINDING"),
+        _text(hardened, "Decision"),
+        generated_sql,
+    )
+
+    if not _truthy_text(proof_query):
+        blockers.append("verification query")
+    if not _truthy_text(owner) or str(owner).upper() in {"DBA", "UNKNOWN", "UNASSIGNED"}:
+        blockers.append("named owner route")
+    if _state_changing_sql(generated_sql) and approval not in {"APPROVED", "NOT REQUIRED"}:
+        blockers.append("owner approval")
+    if _state_changing_sql(generated_sql) and not _truthy_text(approver):
+        blockers.append("approver")
+    if any(token in blob for token in ("DROP ", "TRUNCATE", "GRANT", "REVOKE", "ALTER ROLE", "ALTER USER", "FAILOVER", "EXECUTE TASK", "CALL ")):
+        blockers.append("manual DBA review")
+    if "CLUSTERING_DEPTH" in blob or "CLUSTERING_INFORMATION" in blob:
+        blockers.append("manual clustering proof")
+    if "NO SAFE AUTOMATIC SQL FIX" in blob:
+        blockers.append("no safe SQL fix")
+    return sorted(set(blockers))
+
+
+def automation_readiness_for_row(row: Mapping | pd.Series | dict, *, source_surface: str = "Recommendations") -> dict:
+    """Classify one recommendation/action row into a DBA automation lane."""
+    hardened = harden_recommendation(row)
+    generated_sql = _text(row, "Generated SQL Fix", "GENERATED_SQL_FIX") or _text(hardened, "Generated SQL Fix")
+    proof_query = _text(row, "Proof Query", "PROOF_QUERY", "Verification Query", "VERIFICATION_QUERY") or _text(
+        hardened, "Proof Query", "Verification Query"
+    )
+    blockers = _automation_blockers(row, hardened)
+    safe_guided = _safe_guided_sql(generated_sql)
+    changes_state = _state_changing_sql(generated_sql)
+    closed_verified = _state_is_closed(row) and _verification_is_proved(row)
+    approval = _approval_state(row)
+    severity = _text(row, "Severity", "SEVERITY", default=_text(hardened, "Severity", default="Medium"))
+    entity = _text(row, "Entity", "ENTITY", "ENTITY_NAME", default=_entity(hardened))
+    category = _text(row, "Category", "CATEGORY", default=_text(hardened, "Category"))
+    decision = _text(hardened, "Decision", default=_text(row, "Decision", "DECISION", default="Review finding"))
+
+    score = 55
+    if _truthy_text(proof_query):
+        score += 15
+    if safe_guided:
+        score += 15
+    if approval in {"APPROVED", "NOT REQUIRED"}:
+        score += 10
+    if _truthy_text(_text(row, "Owner", "OWNER", "Owner Route")):
+        score += 5
+    score -= len(blockers) * 12
+
+    if closed_verified:
+        lane = "Auto-Close Candidate"
+        next_step = "Package closure evidence and move this out of the active queue if business owner agrees."
+        mode = "Workflow closure"
+    elif safe_guided and not blockers:
+        lane = "Ready for Guided Execution"
+        next_step = "Use DBA Tools or the owning workflow to run the reviewed SQL path, then execute the verification query."
+        mode = "Guided action"
+    elif safe_guided and set(blockers) <= {"owner approval", "approver"}:
+        lane = "Approval Required"
+        next_step = "Capture owner approval and approver, then rerun automation readiness before any SQL execution."
+        mode = "Approval-gated"
+    elif "manual DBA review" in blockers or "manual clustering proof" in blockers or "no safe SQL fix" in blockers:
+        lane = "Manual Only"
+        next_step = _text(hardened, "Safe Next Action", default="Open the owning workflow and complete manual DBA review.")
+        mode = "Human-controlled"
+    elif blockers:
+        lane = "Evidence Required"
+        next_step = "Fill the missing blocker fields before routing this to automation or closure."
+        mode = "Evidence-gated"
+    else:
+        lane = "Observe Only"
+        next_step = "Keep monitoring; do not create a change until severity, evidence, or owner route changes."
+        mode = "Observation"
+
+    score = max(0, min(100, score))
+    return {
+        "SOURCE_SURFACE": source_surface,
+        "SEVERITY": severity or "Medium",
+        "CATEGORY": category or "Recommendation",
+        "ENTITY": entity,
+        "DECISION": decision,
+        "AUTOMATION_LANE": lane,
+        "AUTOMATION_MODE": mode,
+        "AUTOMATION_SCORE": round(float(score), 1),
+        "BLOCKERS": ", ".join(blockers) if blockers else "none",
+        "SAFE_AUTOMATION_STEP": next_step,
+        "PROOF_REQUIRED": _text(hardened, "Proof Required", default="Attach verification evidence before closure."),
+        "DO_NOT_DO": _text(hardened, "Do Not Do", default="Do not automate without source evidence."),
+        "APPROVAL_STATE": approval or "Not Captured",
+        "STATE_CHANGING_SQL": "Yes" if changes_state else "No",
+        "SAFE_GUIDED_SQL": "Yes" if safe_guided else "No",
+        "GENERATED_SQL_FIX": generated_sql,
+        "VERIFICATION_QUERY": proof_query,
+    }
+
+
+def _records_from_frame(frame: pd.DataFrame, *, source_surface: str) -> list[tuple[dict, str]]:
+    if frame is None or frame.empty:
+        return []
+    view = frame.copy()
+    return [(row.to_dict(), source_surface) for _, row in view.iterrows()]
+
+
+def build_automation_readiness_board(
+    recommendations: list[dict] | pd.DataFrame | None = None,
+    action_queue: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Build a deterministic automation readiness board from loaded evidence."""
+    records: list[tuple[dict, str]] = []
+    if isinstance(recommendations, pd.DataFrame):
+        records.extend(_records_from_frame(recommendations, source_surface="Recommendations"))
+    else:
+        records.extend((dict(rec), "Recommendations") for rec in (recommendations or []))
+    records.extend(_records_from_frame(action_queue, source_surface="Action Queue"))
+
+    rows = [automation_readiness_for_row(row, source_surface=surface) for row, surface in records]
+    if not rows:
+        return pd.DataFrame(columns=[
+            "SOURCE_SURFACE", "SEVERITY", "CATEGORY", "ENTITY", "DECISION",
+            "AUTOMATION_LANE", "AUTOMATION_MODE", "AUTOMATION_SCORE", "BLOCKERS",
+            "SAFE_AUTOMATION_STEP", "PROOF_REQUIRED", "DO_NOT_DO",
+            "APPROVAL_STATE", "STATE_CHANGING_SQL", "SAFE_GUIDED_SQL",
+            "GENERATED_SQL_FIX", "VERIFICATION_QUERY",
+        ])
+    frame = pd.DataFrame(rows)
+    frame["_LANE_RANK"] = frame["AUTOMATION_LANE"].map(AUTOMATION_LANE_ORDER).fillna(9)
+    severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
+    frame["_SEVERITY_RANK"] = frame["SEVERITY"].map(severity_rank).fillna(5)
+    return frame.sort_values(
+        ["_LANE_RANK", "_SEVERITY_RANK", "AUTOMATION_SCORE", "ENTITY"],
+        ascending=[True, True, False, True],
+    ).drop(columns=["_LANE_RANK", "_SEVERITY_RANK"])
 
 
 def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:

@@ -6,7 +6,7 @@ import html
 import streamlit as st
 
 
-SECTION_GUIDANCE_VERSION = "2026-06-01-confidence-gauge-v7"
+SECTION_GUIDANCE_VERSION = "2026-06-01-platform-futures-v1"
 
 CONFIDENCE_BANDS = (
     ("exact", "Exact", "Source-of-truth or direct operational evidence."),
@@ -47,6 +47,12 @@ SECTION_OPERATING_GUIDE = {
         "evidence": "WAREHOUSE_METERING_HISTORY, QUERY_HISTORY, owner readiness, and before/after baseline.",
         "closure": "Approve only with ticket, rollback SQL, baseline pressure, and post-change verification.",
         "guardrail": "Warehouse cost is exact at warehouse grain; database split is allocated when warehouses are shared.",
+    },
+    "Architecture Readiness": {
+        "first_move": "Review isolation, clustering, cache, DR, AI/MCP, Openflow, and governance-readiness gaps before approving new platform patterns.",
+        "evidence": "QUERY_HISTORY, TABLES, SHOW warehouse/replication/agent/MCP metadata, AI/Openflow usage views, owner route, and proof SQL.",
+        "closure": "Queue findings with proof SQL, owner approval, RPO/RTO or performance baseline, and verification plan.",
+        "guardrail": "Do not run clustering-depth, failover, agent/MCP, Openflow, semantic, or architecture-changing DDL without explicit DBA review.",
     },
     "Cost & Contract": {
         "first_move": "Work contract burn risk and verified savings actions before cosmetic spend breakdowns.",
@@ -259,6 +265,36 @@ SECTION_EVIDENCE_CONTRACT = {
             "decision_use": "Separate queue pressure, spill, latency, and workload shape.",
             "invalid_use": "Do not resize solely from one pressure signal.",
             "proof": "Queue/spill/runtime trend, owner approval, rollback SQL, and verification.",
+        },
+    ],
+    "Architecture Readiness": [
+        {
+            "source": "Architecture objective register",
+            "confidence": "Manual owner and RPO/RTO objective",
+            "decision_use": "Confirm intended workload class, owner route, isolation policy, and recovery target.",
+            "invalid_use": "Do not treat unregistered workloads as approved architecture patterns.",
+            "proof": "Objective row, owner route, approval group, RPO/RTO, and verification query.",
+        },
+        {
+            "source": "QUERY_HISTORY workload, cache, and routing evidence",
+            "confidence": "Delayed Snowflake metadata",
+            "decision_use": "Decide whether to isolate workloads, tune cache behavior, or leave shared routing alone.",
+            "invalid_use": "Do not move database workloads from aggregate rows without owner and app impact review.",
+            "proof": "Database, warehouse, users/roles, queue/spill/cache evidence, and owner approval.",
+        },
+        {
+            "source": "TABLES and replication/failover metadata",
+            "confidence": "Manual validation required",
+            "decision_use": "Rank clustering and DR readiness gaps for DBA review.",
+            "invalid_use": "Do not run clustering-depth, failover, or DDL automatically from dashboard findings.",
+            "proof": "Selected-table clustering proof SQL, failover/replication inventory, RPO/RTO, and drill evidence.",
+        },
+        {
+            "source": "Agent, MCP, Snowflake Intelligence, Openflow, Horizon, semantic, and AI-change readiness evidence",
+            "confidence": "Delayed metadata plus capability visibility",
+            "decision_use": "Decide whether emerging Snowflake capabilities are owner-approved, budgeted, and auditable.",
+            "invalid_use": "Do not auto-change agents, MCP servers, Openflow runtimes, semantic models, DR controls, or AI-generated SQL.",
+            "proof": "SHOW inventory, ACCOUNT_USAGE rows, owner route, budget/approval note, and verification query.",
         },
     ],
     "Cost & Contract": [

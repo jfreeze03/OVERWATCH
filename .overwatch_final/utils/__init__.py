@@ -110,6 +110,14 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "ensure_column_alias", "scope_warehouse_names", "scope_metadata_df",
         "load_task_inventory", "load_warehouse_inventory", "build_unclassified_assets_sql",
     ),
+    "futures_governance": (
+        "PLATFORM_FUTURES_CONTROL_TABLE", "PLATFORM_FUTURES_EVIDENCE_TABLE",
+        "PLATFORM_FUTURES_LATEST_VIEW", "PLATFORM_FUTURES_COVERAGE_VIEW",
+        "build_platform_futures_evidence_ddl",
+        "build_forward_platform_control_register", "build_platform_futures_board",
+        "load_agent_mcp_inventory", "load_ai_usage_guardrails",
+        "load_horizon_semantic_readiness", "load_openflow_operations",
+    ),
     "mart": (
         "MartResult", "mart_object_name", "load_mart_table",
         "load_latest_control_room_mart", "mart_source_caption",
@@ -132,6 +140,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_mart_account_health_ytd_credits_sql",
         "build_mart_bill_summary_sql", "build_mart_bill_warehouse_delta_sql",
         "build_mart_chargeback_sql", "build_mart_cost_cockpit_sql",
+        "build_mart_cost_run_rate_sql",
         "build_mart_warehouse_overview_sql", "build_mart_warehouse_scaling_sql",
         "build_mart_usage_overview_sql", "build_mart_usage_metering_sql",
         "build_mart_usage_pressure_sql", "build_mart_usage_cost_drivers_sql",

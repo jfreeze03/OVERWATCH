@@ -785,6 +785,65 @@ code, pre, .stCodeBlock {
     color: var(--text-secondary);
     font-size: 0.75rem;
 }
+.ow-section-transition {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: grid;
+    place-items: center;
+    padding: 2rem;
+    background:
+        radial-gradient(circle at 50% 42%, rgba(var(--accent-rgb), 0.12), transparent 34rem),
+        var(--bg-app);
+    backdrop-filter: blur(10px);
+}
+.ow-section-transition-card {
+    width: min(620px, calc(100vw - 3rem));
+    border: 1px solid var(--border-normal);
+    border-radius: 8px;
+    padding: 1.15rem 1.25rem;
+    background: var(--bg-card);
+    box-shadow: var(--metric-shadow);
+}
+.ow-section-transition-kicker {
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.ow-section-transition-title {
+    color: var(--text-primary);
+    font-size: 1.05rem;
+    font-weight: 850;
+    margin-top: 0.2rem;
+}
+.ow-section-transition-copy {
+    color: var(--text-secondary);
+    font-size: 0.84rem;
+    line-height: 1.45;
+    margin-top: 0.3rem;
+}
+.ow-section-transition-bar {
+    position: relative;
+    overflow: hidden;
+    height: 3px;
+    border-radius: 999px;
+    margin-top: 0.95rem;
+    background: rgba(var(--accent-rgb), 0.14);
+}
+.ow-section-transition-bar span {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 42%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, transparent, var(--accent), var(--accent2));
+    animation: ow-section-loading 1.1s ease-in-out infinite;
+}
+@keyframes ow-section-loading {
+    0% { transform: translateX(-105%); }
+    100% { transform: translateX(245%); }
+}
 .ow-brief-strip {
     border-top: 1px solid var(--border-subtle);
     border-bottom: 1px solid var(--border-subtle);

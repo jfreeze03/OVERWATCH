@@ -178,6 +178,23 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Saved views are skipped during normal reruns", app_text)
         self.assertNotIn("bookmarks = load_bookmarks(_session) if _session else []", app_text)
 
+    def test_section_switches_clear_stale_body_during_render(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+
+        self.assertIn("def _queue_section_navigation", app_text)
+        self.assertIn("_overwatch_pending_section", app_text)
+        self.assertIn("def _section_render_signature", app_text)
+        self.assertIn("_overwatch_last_section_render_signature", app_text)
+        self.assertIn("transition_slot = st.empty()", app_text)
+        self.assertIn("section_slot = st.empty()", app_text)
+        self.assertIn("_render_section_transition_state(active_section)", app_text)
+        self.assertIn("with section_slot.container():", app_text)
+        self.assertIn("sections.dispatch(active_section)", app_text)
+        self.assertIn("transition_slot.empty()", app_text)
+        self.assertIn(".ow-section-transition", theme_text)
+        self.assertIn("position: fixed", theme_text)
+
     def test_priority_tables_defer_full_raw_detail_rendering(self):
         workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")

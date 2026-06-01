@@ -70,6 +70,16 @@ def _normalize_nav_section(section: str) -> str:
     return SECTION_ALIASES.get(section, section)
 
 
+def _queue_section_navigation(section: str) -> None:
+    """Mark a section switch before the next rerun starts rendering."""
+    target = _normalize_nav_section(section)
+    current = _normalize_nav_section(st.session_state.get("nav_section", ""))
+    if target != current:
+        st.session_state["_overwatch_pending_section"] = target
+        st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
+    st.session_state["nav_section"] = target
+
+
 def _global_filter_signature() -> tuple:
     """Return the operator filter state that makes loaded evidence stale."""
     date_input = st.session_state.get("_global_date_range_input", ())
@@ -93,6 +103,29 @@ def _metric_settings_signature() -> tuple:
         float(st.session_state.get("credit_price", DEFAULTS["credit_price"])),
         float(st.session_state.get("storage_cost_per_tb", DEFAULTS["storage_cost_per_tb"])),
     )
+
+
+def _section_render_signature(section: str, company: str, role: str) -> tuple:
+    """Return the state tuple that determines whether the main body is stale."""
+    return (
+        _normalize_nav_section(section),
+        str(company),
+        str(role or ""),
+        bool(st.session_state.get("exceptions_only_mode")),
+        _global_filter_signature(),
+        _metric_settings_signature(),
+    )
+
+
+def _section_transition_needed(signature: tuple) -> bool:
+    return st.session_state.get("_overwatch_last_section_render_signature") != signature
+
+
+def _mark_section_rendered(section: str, signature: tuple) -> None:
+    st.session_state["_overwatch_last_rendered_section"] = _normalize_nav_section(section)
+    st.session_state["_overwatch_last_section_render_signature"] = signature
+    st.session_state.pop("_overwatch_pending_section", None)
+    st.session_state.pop("_overwatch_section_transition_started_at", None)
 
 
 def _probe_snowflake_available(force: bool = False) -> bool:
@@ -240,6 +273,28 @@ def _render_connection_empty_state(section: str) -> None:
         st.rerun()
 
 
+def _render_section_transition_state(section: str) -> None:
+    """Hide the previous section while the selected section hydrates."""
+    safe_section = html.escape(_normalize_nav_section(section))
+    pending = st.session_state.get("_overwatch_pending_section")
+    safe_pending = html.escape(_normalize_nav_section(str(pending or section)))
+    st.markdown(
+        f"""
+        <div class="ow-section-transition" role="status" aria-live="polite">
+            <div class="ow-section-transition-card">
+                <div class="ow-section-transition-kicker">Switching section</div>
+                <div class="ow-section-transition-title">Loading {safe_section}</div>
+                <div class="ow-section-transition-copy">
+                    Clearing the previous view while {safe_pending} renders fresh DBA evidence.
+                </div>
+                <div class="ow-section-transition-bar"><span></span></div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 connection_available = _probe_snowflake_available()
 
 
@@ -352,7 +407,7 @@ with st.sidebar:
                     if upper in section.upper():
                         target = section
                         break
-            st.session_state["nav_section"] = target if target in visible_sections else visible_sections[0]
+            _queue_section_navigation(target if target in visible_sections else visible_sections[0])
             st.rerun()
 
     st.caption(f"{role_label} - {matched_profile} VIEW")
@@ -364,7 +419,7 @@ with st.sidebar:
         st.session_state["nav_section"] = active_section
 
     def _set_section(section: str) -> None:
-        st.session_state["nav_section"] = section
+        _queue_section_navigation(section)
 
     for group_name, group_all in NAV_GROUPS.items():
         group_visible = [s for s in group_all if s in visible_sections]
@@ -678,18 +733,38 @@ if active_section not in visible_sections:
     active_section = visible_sections[0]
     st.session_state["nav_section"] = active_section
 
-if not connection_available or st.session_state.get("_overwatch_connection_unavailable"):
-    _render_connection_empty_state(active_section)
-else:
-    try:
-        sections.dispatch(active_section)
-    except StopException:
-        st.session_state["_overwatch_connection_unavailable"] = True
-        _render_connection_empty_state(active_section)
-    except Exception as e:
-        st.error(f"{active_section} could not finish rendering.")
-        st.caption(format_snowflake_error(e))
-        st.info(
-            "The Snowflake connection may still be healthy. This usually means one panel hit a metadata, "
-            "permission, or empty-data edge case. Try another section or refresh after the source view is available."
-        )
+section_signature = _section_render_signature(active_section, active_company, current_role)
+transition_slot = st.empty()
+section_slot = st.empty()
+show_transition = _section_transition_needed(section_signature)
+if show_transition:
+    with transition_slot.container():
+        _render_section_transition_state(active_section)
+
+try:
+    if not connection_available or st.session_state.get("_overwatch_connection_unavailable"):
+        with section_slot.container():
+            _render_connection_empty_state(active_section)
+        _mark_section_rendered(active_section, section_signature)
+    else:
+        try:
+            with section_slot.container():
+                sections.dispatch(active_section)
+            _mark_section_rendered(active_section, section_signature)
+        except StopException:
+            st.session_state["_overwatch_connection_unavailable"] = True
+            with section_slot.container():
+                _render_connection_empty_state(active_section)
+            _mark_section_rendered(active_section, section_signature)
+        except Exception as e:
+            with section_slot.container():
+                st.error(f"{active_section} could not finish rendering.")
+                st.caption(format_snowflake_error(e))
+                st.info(
+                    "The Snowflake connection may still be healthy. This usually means one panel hit a metadata, "
+                    "permission, or empty-data edge case. Try another section or refresh after the source view is available."
+                )
+            _mark_section_rendered(active_section, section_signature)
+finally:
+    if show_transition:
+        transition_slot.empty()

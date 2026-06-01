@@ -49,10 +49,10 @@ SECTION_OPERATING_GUIDE = {
         "guardrail": "Warehouse cost is exact at warehouse grain; database split is allocated when warehouses are shared.",
     },
     "Architecture Readiness": {
-        "first_move": "Review isolation, clustering, cache, DR, AI/MCP, Openflow, and governance-readiness gaps before approving new platform patterns.",
-        "evidence": "QUERY_HISTORY, TABLES, SHOW warehouse/replication/agent/MCP metadata, AI/Openflow usage views, owner route, and proof SQL.",
+        "first_move": "Review isolation, clustering, cache, DR, Adaptive Compute, AI/MCP, AI security, Openflow, and governance-readiness gaps before approving new platform patterns.",
+        "evidence": "QUERY_HISTORY, TABLES, WAREHOUSE_METERING_HISTORY, SHOW warehouse/replication/agent/MCP/grant metadata, AI settings, AI/Openflow usage views, owner route, and proof SQL.",
         "closure": "Queue findings with proof SQL, owner approval, RPO/RTO or performance baseline, and verification plan.",
-        "guardrail": "Do not run clustering-depth, failover, agent/MCP, Openflow, semantic, or architecture-changing DDL without explicit DBA review.",
+        "guardrail": "Do not run clustering-depth, failover, adaptive warehouse conversion, AI security grant/parameter changes, agent/MCP, Openflow, semantic, or architecture-changing DDL without explicit DBA review.",
     },
     "Cost & Contract": {
         "first_move": "Work contract burn risk and verified savings actions before cosmetic spend breakdowns.",
@@ -290,10 +290,10 @@ SECTION_EVIDENCE_CONTRACT = {
             "proof": "Selected-table clustering proof SQL, failover/replication inventory, RPO/RTO, and drill evidence.",
         },
         {
-            "source": "Agent, MCP, Snowflake Intelligence, Openflow, Horizon, semantic, and AI-change readiness evidence",
+            "source": "Adaptive Compute, Agent, MCP, Snowflake Intelligence, Openflow, Horizon, semantic, and AI-change readiness evidence",
             "confidence": "Delayed metadata plus capability visibility",
             "decision_use": "Decide whether emerging Snowflake capabilities are owner-approved, budgeted, and auditable.",
-            "invalid_use": "Do not auto-change agents, MCP servers, Openflow runtimes, semantic models, DR controls, or AI-generated SQL.",
+            "invalid_use": "Do not auto-change agents, MCP servers, Openflow runtimes, semantic models, DR controls, or AI-generated SQL. Do not auto-convert warehouses.",
             "proof": "SHOW inventory, ACCOUNT_USAGE rows, owner route, budget/approval note, and verification query.",
         },
     ],

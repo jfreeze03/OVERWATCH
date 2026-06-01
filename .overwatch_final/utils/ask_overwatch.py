@@ -30,6 +30,8 @@ ASK_OVERWATCH_STATE_KEYS = (
     "dba_autopilot_flight_plan",
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
+    "arch_adaptive_compute",
+    "arch_ai_security_guardrails",
     "arch_futures_board",
     "arch_futures_adoption_gate",
 )
@@ -167,6 +169,55 @@ def _cards_from_automation_board(state: Mapping, cards: list[dict]) -> None:
 
 
 def _cards_from_platform_futures(state: Mapping, cards: list[dict]) -> None:
+    adaptive = state.get("arch_adaptive_compute")
+    if _is_df(adaptive):
+        view = adaptive.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        if "READINESS_SCORE" in view.columns:
+            view = view.sort_values(["READINESS_SCORE"], ascending=False)
+        for _, row in view.head(6).iterrows():
+            decision = _text(row, "ADAPTIVE_DECISION", default="Observe")
+            _append_card(cards, {
+                "surface": "Architecture Readiness - Adaptive Compute Advisor",
+                "severity": _text(row, "SEVERITY", default="Medium"),
+                "signal": decision,
+                "entity": _text(row, "WAREHOUSE_NAME", "ENTITY_NAME", default="warehouse"),
+                "evidence": (
+                    f"score={_text(row, 'READINESS_SCORE', default='0')}; "
+                    f"credits={_text(row, 'CREDITS_30D', default='0')}; "
+                    f"queries={_text(row, 'QUERY_COUNT', default='0')}; "
+                    f"queue_sec={_text(row, 'QUEUED_SEC', default='0')}; "
+                    f"spill_gb={_text(row, 'REMOTE_SPILL_GB', default='0')}. "
+                    f"{_text(row, 'FINDING', default='Adaptive Compute decision needs evidence.')}"
+                ),
+                "next_action": _text(row, "DBA_ACTION", default="Open Architecture Readiness and validate owner-approved pilot evidence."),
+                "proof": _text(row, "PROOF_SQL", "VERIFICATION_QUERY", default="Compare QUERY_HISTORY and WAREHOUSE_METERING_HISTORY before and after any pilot."),
+                "do_not": _text(row, "CONVERSION_BOUNDARY", "AUTOMATION_BOUNDARY", default="Do not create or convert adaptive warehouses from dashboard automation."),
+                "route": "Architecture Readiness > AI & Platform Futures > Adaptive Compute",
+                "category": "Adaptive Compute Readiness",
+                "value": _text(row, "READINESS_SCORE", default="0"),
+            })
+    ai_security = state.get("arch_ai_security_guardrails")
+    if _is_df(ai_security):
+        view = ai_security.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        if "SEVERITY" in view.columns:
+            view["_RANK"] = view["SEVERITY"].apply(_rank)
+            view = view.sort_values(["_RANK", "SOURCE_TYPE", "ENTITY_NAME"], ascending=[True, True, True]).drop(columns=["_RANK"])
+        for _, row in view.head(8).iterrows():
+            _append_card(cards, {
+                "surface": "Architecture Readiness - AI Security Guardrails",
+                "severity": _text(row, "SEVERITY", default="Medium"),
+                "signal": _text(row, "SOURCE_TYPE", "CONTROL_AREA", default="AI Security Guardrails"),
+                "entity": _text(row, "ENTITY_NAME", "OBJECT_NAME", default="AI security control"),
+                "evidence": _text(row, "FINDING", default="AI security evidence needs owner review."),
+                "next_action": _text(row, "DBA_ACTION", default="Close AI guardrail, privilege, or sensitive-data report evidence gaps."),
+                "proof": _text(row, "PROOF_SQL", "VERIFICATION_QUERY", default="Attach SHOW parameter/grant output or report visibility proof."),
+                "do_not": _text(row, "AUTOMATION_BOUNDARY", default="Do not change account parameters or grant/revoke AI privileges from dashboard automation."),
+                "route": "Architecture Readiness > AI & Platform Futures > AI Security",
+                "category": "AI Security Guardrails",
+                "owner": _text(row, "OWNER", "OWNER_EMAIL", "APPROVAL_GROUP"),
+            })
     gate = state.get("arch_futures_adoption_gate")
     if _is_df(gate):
         view = gate.copy()

@@ -39,6 +39,9 @@ THRESHOLDS = {
     "ai_token_credit_watch": 25.0,
     "ai_request_watch": 1000,
     "openflow_credit_watch": 25.0,
+    "adaptive_compute_credit_watch": 25.0,
+    "adaptive_compute_query_watch": 500,
+    "adaptive_compute_spill_watch_gb": 5.0,
 }
 
 CREDIT_RATES = {
@@ -329,6 +332,19 @@ ARCHITECTURE_OBJECTIVES = (
 # define DBA ownership and guardrails before broad adoption creates hidden risk.
 FORWARD_PLATFORM_CONTROLS = (
     {
+        "CONTROL_ID": "ADAPTIVE_COMPUTE_READINESS",
+        "CONTROL_AREA": "Adaptive Compute Readiness",
+        "OWNER": "DBA / Platform Architecture",
+        "OWNER_KEY": "ADAPTIVE_COMPUTE_DEFAULT",
+        "APPROVAL_GROUP": "DBA Lead / FinOps Lead",
+        "PRIMARY_EVIDENCE": "SHOW WAREHOUSES; SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY; WAREHOUSE_METERING_HISTORY",
+        "SOURCE_OBJECTS": "Standard warehouse transition candidates",
+        "RISK_IF_MISSING": "Warehouse conversion decisions can be made without workload pressure, cost baseline, owner approval, or rollback evidence.",
+        "DBA_DECISION": "Require owner-approved pilot, preview-limitation screen, before/after p95/queue/spill/cost proof, and rollback path before conversion.",
+        "AUTOMATION_BOUNDARY": "Advisor only. Do not create, convert, or drop adaptive warehouses from dashboard automation.",
+        "MATCH_PRIORITY": 245,
+    },
+    {
         "CONTROL_ID": "AI_AGENT_MCP_GOVERNANCE",
         "CONTROL_AREA": "Agent & MCP Governance",
         "OWNER": "DBA / AI Governance",
@@ -353,6 +369,19 @@ FORWARD_PLATFORM_CONTROLS = (
         "DBA_DECISION": "Route high-credit, external-interface, or privileged-role usage to owners with daily/weekly budget review.",
         "AUTOMATION_BOUNDARY": "Alert and queue only until budget policy and approval workflow exist.",
         "MATCH_PRIORITY": 230,
+    },
+    {
+        "CONTROL_ID": "AI_SECURITY_GUARDRAILS",
+        "CONTROL_AREA": "AI Security Guardrails",
+        "OWNER": "DBA / AI Governance",
+        "OWNER_KEY": "AI_SECURITY_DEFAULT",
+        "APPROVAL_GROUP": "DBA Lead / Security Approver",
+        "PRIMARY_EVIDENCE": "AI_SETTINGS; CORTEX_ENABLED_CROSS_REGION; SHOW GRANTS TO ROLE PUBLIC; SNOWFLAKE.DATA_SECURITY reports",
+        "SOURCE_OBJECTS": "Cortex AI Guardrails, AI function privileges, sensitive-data entitlement/access reports",
+        "RISK_IF_MISSING": "AI workloads can run without prompt-injection guardrails, granular function privileges, or proof of who can access sensitive data.",
+        "DBA_DECISION": "Require account-level AI guardrails, narrow per-function grants, no PUBLIC blanket AI access, and sensitive-data report visibility before production AI expansion.",
+        "AUTOMATION_BOUNDARY": "Readiness and queue only. Do not change account parameters or revoke/grant AI privileges from dashboard automation.",
+        "MATCH_PRIORITY": 225,
     },
     {
         "CONTROL_ID": "OPENFLOW_OPERABILITY",

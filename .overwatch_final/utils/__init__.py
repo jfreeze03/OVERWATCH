@@ -117,7 +117,9 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_platform_futures_evidence_ddl",
         "build_forward_platform_control_register", "build_platform_futures_adoption_gate",
         "build_platform_futures_board",
+        "classify_adaptive_compute_readiness", "load_adaptive_compute_readiness",
         "load_agent_mcp_inventory", "load_ai_usage_guardrails",
+        "classify_ai_security_guardrails", "load_ai_security_guardrails",
         "load_horizon_semantic_readiness", "load_openflow_operations",
     ),
     "mart": (

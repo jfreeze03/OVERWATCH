@@ -14,14 +14,16 @@ from .company_filter import (
 )
 from .compatibility import filter_existing_columns, get_available_columns
 from .helpers import safe_float, safe_int
-from .metadata import show_to_df
+from .metadata import load_warehouse_inventory, show_to_df
 from .owner_directory import load_owner_directory, resolve_owner_context
 from .query import run_query, safe_identifier, sql_literal
 
 
 PLATFORM_FUTURES_AREAS = (
+    "Adaptive Compute Readiness",
     "Agent & MCP Governance",
     "AI Spend & Token Guardrails",
+    "AI Security Guardrails",
     "Openflow Operations",
     "Horizon Governance Readiness",
     "Semantic Trust & Verified Query Testing",
@@ -38,6 +40,10 @@ ADMIN_ROLE_TOKENS = ("ACCOUNTADMIN", "SECURITYADMIN", "ORGADMIN")
 EXTERNAL_INTERFACE_TOKENS = ("EXTERNAL", "MICROSOFT_TEAMS", "TEAMS", "API")
 
 PLATFORM_FUTURES_EXPERT_CRITERIA = {
+    "Adaptive Compute Readiness": {
+        "surfaces": ("Adaptive compute advisor",),
+        "why": "Adaptive Compute can simplify warehouse tuning, but DBAs need owner-approved pilots, preview-limitation screening, and before/after cost-performance proof.",
+    },
     "Agent & MCP Governance": {
         "surfaces": ("AI agent and MCP inventory",),
         "why": "Agentic tools need owner, role scope, tool scope, semantic source, blast-radius proof, and rollback evidence before production use.",
@@ -45,6 +51,10 @@ PLATFORM_FUTURES_EXPERT_CRITERIA = {
     "AI Spend & Token Guardrails": {
         "surfaces": ("AI usage guardrails",),
         "why": "AI usage can create token-credit spend that is hard to defend without user, role, interface, owner, and budget evidence.",
+    },
+    "AI Security Guardrails": {
+        "surfaces": ("AI security guardrails",),
+        "why": "Production AI needs proof of prompt-injection guardrails, scoped Cortex privileges, and sensitive-data access report visibility before broad rollout.",
     },
     "Openflow Operations": {
         "surfaces": ("Openflow operations",),
@@ -159,6 +169,21 @@ HORIZON_SEMANTIC_PROBES = (
         "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.BACKUP_OPERATION_HISTORY",
         "MANDATORY": False,
         "DBA_ACTION": "Use backup operation evidence with failover/replication rows to build a real BCDR drill ledger.",
+    },
+)
+
+AI_SECURITY_REPORT_PROBES = (
+    {
+        "SURFACE": "Sensitive Data Entitlement report",
+        "OBJECT_NAME": "SNOWFLAKE.DATA_SECURITY.ENTITLEMENT_REPORT",
+        "MANDATORY": True,
+        "DBA_ACTION": "Enable and grant report visibility so DBA/security can prove who can access sensitive tables before AI expansion.",
+    },
+    {
+        "SURFACE": "Sensitive Data Access report",
+        "OBJECT_NAME": "SNOWFLAKE.DATA_SECURITY.ACCESS_REPORT",
+        "MANDATORY": True,
+        "DBA_ACTION": "Enable and grant report visibility so DBA/security can prove which users actually accessed sensitive tables.",
     },
 )
 
@@ -379,6 +404,25 @@ def _scope_runtime_frame(frame: pd.DataFrame, company: str, environment: str) ->
     return scoped
 
 
+def _scope_warehouse_runtime_frame(frame: pd.DataFrame, company: str, environment: str) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame() if frame is None else frame
+    scoped = _upper_frame(frame)
+    if "WAREHOUSE_NAME" in scoped.columns:
+        has_wh = scoped["WAREHOUSE_NAME"].fillna("").astype(str).str.strip() != ""
+        allowed = scoped["WAREHOUSE_NAME"].apply(lambda value: company_value_allowed(value, "warehouse", company))
+        scoped = scoped[(~has_wh) | allowed].copy()
+    if "DATABASE_NAME" in scoped.columns:
+        has_db = scoped["DATABASE_NAME"].fillna("").astype(str).str.strip() != ""
+        allowed = scoped["DATABASE_NAME"].apply(lambda value: company_value_allowed(value, "database", company))
+        env_allowed = scoped["DATABASE_NAME"].apply(lambda value: environment_value_allowed(value, environment, company))
+        scoped = scoped[(~has_db) | (allowed & env_allowed)].copy()
+    wh_filter = str(st.session_state.get("global_warehouse", "") or "").strip()
+    if wh_filter and wh_filter.upper() not in {"ALL", "ANY"} and "WAREHOUSE_NAME" in scoped.columns:
+        scoped = scoped[scoped["WAREHOUSE_NAME"].fillna("").astype(str).str.upper() == wh_filter.upper()].copy()
+    return scoped
+
+
 def _severity_rank(value: object) -> int:
     order = {"Critical": 0, "High": 1, "Medium": 2, "Watch": 3, "Low": 4, "Info": 5}
     return order.get(str(value or "Info"), 9)
@@ -387,7 +431,9 @@ def _severity_rank(value: object) -> int:
 def _owner_context(row: Mapping | pd.Series, entity: str, entity_type: str, category: str) -> dict:
     directory = load_owner_directory("Architecture Readiness")
     owner_seed = {
+        "ADAPTIVE_COMPUTE": "DBA / Platform Architecture",
         "AI_AGENT": "DBA / AI Governance",
+        "AI_SECURITY": "DBA / AI Governance",
         "AI_USAGE": "DBA / FinOps",
         "MCP_SERVER": "DBA / AI Governance",
         "OPENFLOW": "DBA / Integration Platform",
@@ -528,6 +574,302 @@ def load_agent_mcp_inventory(session, company: str = "ALL", environment: str = "
     if mcp is not None and not mcp.empty:
         frames.append(mcp)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def _truthy_setting(value: object) -> bool:
+    text = str(value or "").strip().upper()
+    return text in {"TRUE", "YES", "Y", "ON", "1"}
+
+
+def _adaptive_compute_proof_sql(warehouse_name: str, days: int) -> str:
+    wh_sql = sql_literal(warehouse_name, 300)
+    days = max(1, min(int(days or 14), 90))
+    return f"""SHOW WAREHOUSES LIKE {wh_sql};
+SELECT warehouse_name, COUNT(*) AS query_count,
+       ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY total_elapsed_time) / 1000, 2) AS p95_elapsed_sec,
+       ROUND(SUM(COALESCE(queued_overload_time, 0) + COALESCE(queued_provisioning_time, 0) + COALESCE(queued_repair_time, 0)) / 1000, 2) AS queued_sec,
+       ROUND(SUM(COALESCE(bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3), 2) AS remote_spill_gb
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+  AND warehouse_name = {wh_sql}
+GROUP BY warehouse_name;
+SELECT warehouse_name, ROUND(SUM(credits_used), 3) AS credits_used
+FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+  AND warehouse_name = {wh_sql}
+GROUP BY warehouse_name;"""
+
+
+def classify_adaptive_compute_readiness(
+    frame: pd.DataFrame,
+    *,
+    company: str = "ALL",
+    environment: str = "ALL",
+    days: int = 14,
+) -> pd.DataFrame:
+    """Rank standard warehouses for an owner-approved Adaptive Compute pilot."""
+    raw = _scope_warehouse_runtime_frame(frame, company, environment)
+    if raw.empty:
+        return raw
+    credit_watch = safe_float(THRESHOLDS.get("adaptive_compute_credit_watch", 25.0), 25.0)
+    query_watch = safe_int(THRESHOLDS.get("adaptive_compute_query_watch", 500), 500)
+    spill_watch = safe_float(THRESHOLDS.get("adaptive_compute_spill_watch_gb", 5.0), 5.0)
+    queue_watch = safe_float(THRESHOLDS.get("queue_pressure", 5.0), 5.0)
+    rows = []
+    for _, row in raw.iterrows():
+        warehouse = _first_text(row, "WAREHOUSE_NAME", "NAME", default="UNKNOWN_WAREHOUSE")
+        warehouse_upper = warehouse.upper()
+        size = _first_text(row, "WAREHOUSE_SIZE", "SIZE")
+        size_upper = size.upper().replace(" ", "").replace("-", "")
+        warehouse_type = _first_text(row, "WAREHOUSE_TYPE", "TYPE", "RESOURCE_CONSTRAINT")
+        warehouse_type_upper = warehouse_type.upper()
+        query_count = safe_int(row.get("QUERY_COUNT"))
+        users = safe_int(row.get("USERS"))
+        roles = safe_int(row.get("ROLES"))
+        databases = safe_int(row.get("DATABASES"))
+        credits = safe_float(row.get("CREDITS_30D") if "CREDITS_30D" in raw.columns else row.get("CREDITS_USED"))
+        queued_sec = safe_float(row.get("QUEUED_SEC"))
+        remote_spill_gb = safe_float(row.get("REMOTE_SPILL_GB"))
+        p95_elapsed = safe_float(row.get("P95_ELAPSED_SEC"))
+        repeated_queries = safe_int(row.get("REPEATED_QUERIES"))
+        max_cluster = max(1, safe_int(row.get("MAX_CLUSTER_COUNT"), 1))
+        auto_suspend = safe_int(row.get("AUTO_SUSPEND"))
+        qas_enabled = _truthy_setting(row.get("ENABLE_QUERY_ACCELERATION") or row.get("QUERY_ACCELERATION"))
+        pressure = queued_sec >= queue_watch or remote_spill_gb >= spill_watch or p95_elapsed >= 300
+        material_spend = credits >= credit_watch
+        steady_workload = query_count >= query_watch or repeated_queries >= max(50, int(query_watch / 5))
+        manual_tuning_signal = max_cluster > 1 or qas_enabled
+        preview_limited = (
+            "SNOWPARK" in warehouse_type_upper
+            or "INTERACTIVE" in warehouse_type_upper
+            or size_upper in {"5XLARGE", "6XLARGE", "X5LARGE", "X6LARGE"}
+        )
+        app_execution = warehouse_upper == "COMPUTE_WH" or warehouse_upper.startswith("SYSTEM$STREAMLIT")
+        low_signal = query_count < max(25, int(query_watch / 10)) and credits < max(1.0, credit_watch / 10)
+        score = 45
+        score += 18 if material_spend else 0
+        score += 18 if pressure else 0
+        score += 12 if steady_workload else 0
+        score += 10 if manual_tuning_signal else 0
+        score += 5 if users >= 3 or roles >= 3 else 0
+        score -= 38 if preview_limited else 0
+        score -= 32 if app_execution else 0
+        score -= 18 if low_signal else 0
+        readiness_score = max(0, min(100, int(round(score))))
+        if preview_limited:
+            decision = "Hold - Preview Limitation"
+            severity = "High" if material_spend or pressure else "Medium"
+            finding = "Warehouse has preview-limitation signals for Adaptive Compute conversion."
+            action = "Keep this warehouse on its current engine until Snowflake support/region/type limitations are cleared and owner approval is recorded."
+            queue_readiness = "Review Only"
+        elif app_execution:
+            decision = "Hold - App Execution"
+            severity = "Medium"
+            finding = "Warehouse is the OVERWATCH app/utility execution route; do not mix app runtime with business workload conversion tests."
+            action = "Keep COMPUTE_WH as the app execution baseline unless the OVERWATCH owner approves a separate benchmark and rollback window."
+            queue_readiness = "Review Only"
+        elif pressure and material_spend and steady_workload:
+            decision = "Pilot Candidate"
+            severity = "High"
+            finding = "Warehouse has spend, workload volume, and pressure signals that justify an Adaptive Compute pilot review."
+            action = "Open an owner-approved pilot: capture baseline p95, queue, spill, credits, user impact, and rollback plan before conversion."
+            queue_readiness = "Ready to Queue"
+        elif material_spend and (pressure or manual_tuning_signal or steady_workload):
+            decision = "Pilot Candidate"
+            severity = "Medium"
+            finding = "Warehouse has enough spend and tuning signal to evaluate as a controlled Adaptive Compute pilot."
+            action = "Validate workload class, owner, region/support status, and before/after cost-performance proof before any conversion."
+            queue_readiness = "Ready to Queue"
+        elif low_signal:
+            decision = "No Move Yet"
+            severity = "Low"
+            finding = "Warehouse activity is too small to justify an Adaptive Compute pilot."
+            action = "Leave unchanged; revisit when query volume, credit spend, queue, or spill evidence becomes material."
+            queue_readiness = "Observe"
+        else:
+            decision = "Observe"
+            severity = "Low"
+            finding = "Warehouse does not show enough pressure to justify a conversion decision yet."
+            action = "Keep collecting workload, cost, and owner evidence before proposing Adaptive Compute."
+            queue_readiness = "Observe"
+        context = _owner_context(row, warehouse, "ADAPTIVE_COMPUTE", "Adaptive Compute Readiness")
+        proof_sql = _adaptive_compute_proof_sql(warehouse, days)
+        rows.append({
+            **row.to_dict(),
+            "CONTROL_AREA": "Adaptive Compute Readiness",
+            "SOURCE_TYPE": "Warehouse transition advisor",
+            "ENTITY_TYPE": "ADAPTIVE_COMPUTE",
+            "ENTITY_NAME": warehouse,
+            "WAREHOUSE_NAME": warehouse,
+            "QUERY_COUNT": query_count,
+            "USERS": users,
+            "ROLES": roles,
+            "DATABASES": databases,
+            "CREDITS_30D": credits,
+            "QUEUED_SEC": queued_sec,
+            "REMOTE_SPILL_GB": remote_spill_gb,
+            "P95_ELAPSED_SEC": p95_elapsed,
+            "REPEATED_QUERIES": repeated_queries,
+            "SEVERITY": severity,
+            "ADAPTIVE_DECISION": decision,
+            "READINESS_SCORE": readiness_score,
+            "PILOT_RANK": 100 - readiness_score if "Pilot Candidate" in decision else 200 - readiness_score,
+            "FINDING": finding,
+            "DBA_ACTION": action,
+            "APPROVAL_REQUIRED": "Yes" if severity in {"Critical", "High", "Medium"} else "No",
+            "APPROVAL_GROUP": context.get("APPROVAL_GROUP", ""),
+            "OWNER": context.get("OWNER", ""),
+            "OWNER_EMAIL": context.get("OWNER_EMAIL", ""),
+            "ONCALL_PRIMARY": context.get("ONCALL_PRIMARY", ""),
+            "ONCALL_SECONDARY": context.get("ONCALL_SECONDARY", ""),
+            "ESCALATION_TARGET": context.get("ESCALATION_TARGET", ""),
+            "OWNER_SOURCE": context.get("OWNER_SOURCE", ""),
+            "OWNER_EVIDENCE": context.get("OWNER_EVIDENCE", ""),
+            "QUEUE_READINESS": queue_readiness if context.get("OWNER_EMAIL") else "Owner Route Gap",
+            "AUTOMATION_BOUNDARY": "Advisor only. Do not create, convert, or drop adaptive warehouses from dashboard automation.",
+            "PROOF_SQL": proof_sql,
+            "VERIFICATION_QUERY": proof_sql,
+            "CONVERSION_BOUNDARY": "No automatic conversion; require off-peak pilot, owner approval, rollback proof, and before/after cost-performance verification.",
+            "SOURCE_CONFIDENCE": "ACCOUNT_USAGE delayed plus live SHOW WAREHOUSES metadata",
+        })
+    annotated = pd.DataFrame(rows)
+    annotated["_SEVERITY_RANK"] = annotated["SEVERITY"].apply(_severity_rank)
+    return annotated.sort_values(
+        ["_SEVERITY_RANK", "READINESS_SCORE", "CREDITS_30D", "QUERY_COUNT"],
+        ascending=[True, False, False, False],
+    ).drop(columns=["_SEVERITY_RANK"])
+
+
+def load_adaptive_compute_readiness(
+    session,
+    days: int = 14,
+    row_limit: int = 100,
+    company: str = "ALL",
+    environment: str = "ALL",
+) -> pd.DataFrame:
+    """Load bounded warehouse workload evidence for Adaptive Compute pilot review."""
+    object_name = "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+    requested = [
+        "START_TIME",
+        "WAREHOUSE_NAME",
+        "USER_NAME",
+        "ROLE_NAME",
+        "DATABASE_NAME",
+        "TOTAL_ELAPSED_TIME",
+        "QUERY_HASH",
+        "EXECUTION_STATUS",
+        "ERROR_CODE",
+        "QUEUED_OVERLOAD_TIME",
+        "QUEUED_PROVISIONING_TIME",
+        "QUEUED_REPAIR_TIME",
+        "BYTES_SPILLED_TO_REMOTE_STORAGE",
+        "BYTES_SCANNED",
+        "PERCENTAGE_SCANNED_FROM_CACHE",
+    ]
+    cols = set(filter_existing_columns(session, object_name, requested))
+    if "START_TIME" not in cols or "WAREHOUSE_NAME" not in cols or "TOTAL_ELAPSED_TIME" not in cols:
+        return pd.DataFrame()
+    user_expr = "COUNT(DISTINCT q.user_name)" if "USER_NAME" in cols else "0"
+    role_expr = "COUNT(DISTINCT q.role_name)" if "ROLE_NAME" in cols else "0"
+    db_expr = "COUNT(DISTINCT q.database_name)" if "DATABASE_NAME" in cols else "0"
+    if "ERROR_CODE" in cols:
+        failure_expr = "q.error_code IS NOT NULL"
+    elif "EXECUTION_STATUS" in cols:
+        failure_expr = "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'"
+    else:
+        failure_expr = "FALSE"
+    queue_terms = [
+        f"COALESCE(q.{col.lower()}, 0)"
+        for col in ("QUEUED_OVERLOAD_TIME", "QUEUED_PROVISIONING_TIME", "QUEUED_REPAIR_TIME")
+        if col in cols
+    ]
+    queue_expr = "SUM(" + " + ".join(queue_terms) + ") / 1000" if queue_terms else "0::FLOAT"
+    spill_expr = (
+        "SUM(COALESCE(q.bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3)"
+        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in cols else "0::FLOAT"
+    )
+    scanned_expr = "SUM(COALESCE(q.bytes_scanned, 0)) / POWER(1024, 3)" if "BYTES_SCANNED" in cols else "0::FLOAT"
+    cache_expr = (
+        "SUM(COALESCE(q.bytes_scanned, 0) * COALESCE(q.percentage_scanned_from_cache, 0)) / NULLIF(SUM(COALESCE(q.bytes_scanned, 0)), 0)"
+        if {"BYTES_SCANNED", "PERCENTAGE_SCANNED_FROM_CACHE"}.issubset(cols) else "NULL::FLOAT"
+    )
+    repeated_expr = "COUNT(*) - COUNT(DISTINCT q.query_hash)" if "QUERY_HASH" in cols else "0"
+    filters = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name" if "USER_NAME" in cols else "",
+        role_col="q.role_name" if "ROLE_NAME" in cols else "",
+        db_col="q.database_name" if "DATABASE_NAME" in cols else "",
+    )
+    metrics = run_query(f"""
+        WITH qh AS (
+            SELECT
+                q.warehouse_name,
+                COUNT(*) AS query_count,
+                {user_expr} AS users,
+                {role_expr} AS roles,
+                {db_expr} AS databases,
+                SUM(IFF({failure_expr}, 1, 0)) AS failed_queries,
+                ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
+                ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time) / 1000, 2) AS p95_elapsed_sec,
+                ROUND({queue_expr}, 2) AS queued_sec,
+                ROUND({spill_expr}, 2) AS remote_spill_gb,
+                ROUND({scanned_expr}, 2) AS gb_scanned,
+                ROUND({cache_expr}, 3) AS cache_ratio,
+                {repeated_expr} AS repeated_queries,
+                MAX(q.start_time) AS last_seen
+            FROM {object_name} q
+            WHERE q.start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+              AND q.warehouse_name IS NOT NULL
+              {filters}
+            GROUP BY q.warehouse_name
+        ),
+        metering AS (
+            SELECT
+                warehouse_name,
+                ROUND(SUM(credits_used), 3) AS credits_30d
+            FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+            WHERE start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+            GROUP BY warehouse_name
+        )
+        SELECT
+            qh.*,
+            COALESCE(m.credits_30d, 0) AS credits_30d
+        FROM qh
+        LEFT JOIN metering m
+          ON UPPER(m.warehouse_name) = UPPER(qh.warehouse_name)
+        ORDER BY credits_30d DESC, query_count DESC
+        LIMIT {int(row_limit)}
+    """, ttl_key=f"arch_adaptive_compute_{days}_{row_limit}", tier="historical", section="Architecture Readiness")
+    if metrics is None or metrics.empty:
+        return pd.DataFrame()
+    inventory = load_warehouse_inventory(session, company)
+    if inventory is not None and not inventory.empty:
+        inv = _upper_frame(inventory)
+        if "NAME" in inv.columns:
+            inv = inv.rename(columns={"NAME": "WAREHOUSE_NAME"})
+        for col in [
+            "WAREHOUSE_NAME", "WAREHOUSE_SIZE", "STATE", "TYPE", "WAREHOUSE_TYPE",
+            "RESOURCE_CONSTRAINT", "AUTO_SUSPEND", "AUTO_RESUME", "MIN_CLUSTER_COUNT",
+            "MAX_CLUSTER_COUNT", "SCALING_POLICY", "ENABLE_QUERY_ACCELERATION", "COMMENT",
+        ]:
+            if col not in inv.columns:
+                inv[col] = ""
+        metrics = _upper_frame(metrics).merge(
+            inv[[
+                "WAREHOUSE_NAME", "WAREHOUSE_SIZE", "STATE", "TYPE", "WAREHOUSE_TYPE",
+                "RESOURCE_CONSTRAINT", "AUTO_SUSPEND", "AUTO_RESUME", "MIN_CLUSTER_COUNT",
+                "MAX_CLUSTER_COUNT", "SCALING_POLICY", "ENABLE_QUERY_ACCELERATION", "COMMENT",
+            ]],
+            on="WAREHOUSE_NAME",
+            how="left",
+        )
+    return classify_adaptive_compute_readiness(
+        metrics,
+        company=company,
+        environment=environment,
+        days=days,
+    )
 
 
 def _ai_usage_query(
@@ -712,6 +1054,353 @@ def load_ai_usage_guardrails(
             frames.append(df)
     raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     return classify_ai_usage_guardrails(raw, company=company, environment=environment)
+
+
+def _parameter_value(frame: pd.DataFrame | None, parameter_name: str) -> tuple[str, bool]:
+    view = _upper_frame(frame)
+    if view.empty:
+        return "", False
+    target = str(parameter_name or "").upper()
+    for _, row in view.iterrows():
+        key = _first_text(row, "KEY", "NAME", "PARAMETER_NAME")
+        if key.upper() == target:
+            return _first_text(row, "VALUE", "PARAMETER_VALUE", "DEFAULT", default=""), True
+    if len(view) == 1:
+        return _first_text(view.iloc[0], "VALUE", "PARAMETER_VALUE", "DEFAULT", default=""), True
+    return "", False
+
+
+def _ai_settings_guardrails_enabled(value: object) -> bool:
+    text = str(value or "").upper()
+    return "ADVANCED_PROMPT_INJECTION" in text and "ENABLED" in text and "TRUE" in text
+
+
+def _ai_security_proof_sql(surface: str) -> str:
+    surface_upper = str(surface or "").upper()
+    if "AI_SETTINGS" in surface_upper:
+        return "SHOW PARAMETERS LIKE 'AI_SETTINGS' IN ACCOUNT;"
+    if "CORTEX_ENABLED_CROSS_REGION" in surface_upper or "CROSS" in surface_upper:
+        return "SHOW PARAMETERS LIKE 'CORTEX_ENABLED_CROSS_REGION' IN ACCOUNT;"
+    if "PUBLIC" in surface_upper:
+        return "SHOW GRANTS TO ROLE PUBLIC;"
+    if "CORTEX_USER" in surface_upper:
+        return "SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.CORTEX_USER;"
+    if "AI_FUNCTIONS_USER" in surface_upper:
+        return "SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.AI_FUNCTIONS_USER;"
+    if "ENTITLEMENT" in surface_upper:
+        return "SELECT * FROM SNOWFLAKE.DATA_SECURITY.ENTITLEMENT_REPORT LIMIT 0;"
+    if "ACCESS" in surface_upper:
+        return "SELECT * FROM SNOWFLAKE.DATA_SECURITY.ACCESS_REPORT LIMIT 0;"
+    return (
+        "SHOW PARAMETERS LIKE 'AI_SETTINGS' IN ACCOUNT; "
+        "SHOW PARAMETERS LIKE 'CORTEX_ENABLED_CROSS_REGION' IN ACCOUNT; "
+        "SHOW GRANTS TO ROLE PUBLIC;"
+    )
+
+
+def _ai_security_row(
+    *,
+    entity_name: str,
+    source_type: str,
+    severity: str,
+    finding: str,
+    action: str,
+    entity_type: str = "AI_SECURITY",
+    proof_sql: str = "",
+    extra: Mapping | None = None,
+) -> dict:
+    context = _owner_context(extra or {}, entity_name, "AI_SECURITY", "AI Security Guardrails")
+    proof = proof_sql or _ai_security_proof_sql(entity_name)
+    return {
+        **dict(extra or {}),
+        "CONTROL_AREA": "AI Security Guardrails",
+        "SOURCE_TYPE": source_type,
+        "ENTITY_TYPE": entity_type,
+        "ENTITY_NAME": entity_name,
+        "SEVERITY": severity,
+        "FINDING": finding,
+        "DBA_ACTION": action,
+        "APPROVAL_REQUIRED": "Yes" if severity in {"Critical", "High", "Medium"} else "No",
+        "APPROVAL_GROUP": context.get("APPROVAL_GROUP", ""),
+        "OWNER": context.get("OWNER", ""),
+        "OWNER_EMAIL": context.get("OWNER_EMAIL", ""),
+        "ONCALL_PRIMARY": context.get("ONCALL_PRIMARY", ""),
+        "ONCALL_SECONDARY": context.get("ONCALL_SECONDARY", ""),
+        "ESCALATION_TARGET": context.get("ESCALATION_TARGET", ""),
+        "OWNER_SOURCE": context.get("OWNER_SOURCE", ""),
+        "OWNER_EVIDENCE": context.get("OWNER_EVIDENCE", ""),
+        "QUEUE_READINESS": "Ready to Queue" if severity in {"Critical", "High", "Medium"} and context.get("OWNER_EMAIL") else "Observe",
+        "AUTOMATION_BOUNDARY": "Readiness and queue only. Do not change account parameters or revoke/grant AI privileges from dashboard automation.",
+        "PROOF_SQL": proof,
+        "VERIFICATION_QUERY": proof,
+    }
+
+
+def _grant_blob(row: Mapping | pd.Series) -> str:
+    try:
+        values = row.to_dict().values() if isinstance(row, pd.Series) else row.values()
+    except Exception:
+        values = []
+    return " ".join(str(value or "").upper() for value in values)
+
+
+def _ai_public_grant_rows(frame: pd.DataFrame | None) -> list[dict]:
+    view = _upper_frame(frame)
+    if view.empty:
+        return []
+    rows = []
+    ai_terms = ("USE AI FUNCTION", "USE AI FUNCTIONS", "CORTEX_USER", "AI_FUNCTIONS_USER", "CORTEX_EMBED_USER", "COPILOT_USER")
+    for _, row in view.iterrows():
+        blob = _grant_blob(row)
+        if not any(term in blob for term in ai_terms):
+            continue
+        privilege = _first_text(row, "PRIVILEGE", default="AI/Cortex grant")
+        granted_on = _first_text(row, "GRANTED_ON", default="ACCOUNT")
+        grant_name = _first_text(row, "NAME", "GRANTED_NAME", default="")
+        if "USE AI FUNCTIONS" in blob or "CORTEX_USER" in blob or "AI_FUNCTIONS_USER" in blob:
+            severity = "Critical"
+            finding = "PUBLIC has blanket AI/Cortex access visible in grants."
+            action = "Replace PUBLIC AI access with approved DBA/security-owned roles and per-function grants after change approval."
+        else:
+            severity = "High"
+            finding = "PUBLIC has AI-related access that needs explicit owner approval."
+            action = "Validate the business need, scope the function access, and remove PUBLIC exposure through change control if not justified."
+        rows.append(_ai_security_row(
+            entity_name=f"PUBLIC {privilege} {grant_name}".strip(),
+            source_type="PUBLIC AI grant",
+            severity=severity,
+            finding=finding,
+            action=action,
+            proof_sql="SHOW GRANTS TO ROLE PUBLIC;",
+            extra={
+                "GRANTED_ON": granted_on,
+                "PRIVILEGE": privilege,
+                "GRANT_NAME": grant_name,
+                "GRANTEE_NAME": "PUBLIC",
+            },
+        ))
+    return rows
+
+
+def _database_role_public_grant_rows(frame: pd.DataFrame | None, role_name: str) -> list[dict]:
+    view = _upper_frame(frame)
+    if view.empty:
+        return []
+    rows = []
+    for _, row in view.iterrows():
+        blob = _grant_blob(row)
+        if "PUBLIC" not in blob:
+            continue
+        rows.append(_ai_security_row(
+            entity_name=f"SNOWFLAKE.{role_name} -> PUBLIC",
+            source_type="Cortex database role grant",
+            severity="Critical",
+            finding=f"SNOWFLAKE.{role_name} database role is granted to PUBLIC.",
+            action="Move Cortex access to named approved roles with owner, budget, model/function scope, and rollback proof before broad AI rollout.",
+            proof_sql=f"SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.{role_name};",
+            extra={
+                "DATABASE_ROLE": f"SNOWFLAKE.{role_name}",
+                "GRANTEE_NAME": "PUBLIC",
+            },
+        ))
+    return rows
+
+
+def classify_ai_security_guardrails(
+    *,
+    parameters: pd.DataFrame | None = None,
+    public_grants: pd.DataFrame | None = None,
+    cortex_user_grants: pd.DataFrame | None = None,
+    ai_functions_user_grants: pd.DataFrame | None = None,
+    report_records: Iterable[Mapping] | None = None,
+    visibility_records: Iterable[Mapping] | None = None,
+) -> pd.DataFrame:
+    """Classify AI security posture without changing account parameters or grants."""
+    rows = []
+    ai_settings, ai_settings_visible = _parameter_value(parameters, "AI_SETTINGS")
+    if _ai_settings_guardrails_enabled(ai_settings):
+        rows.append(_ai_security_row(
+            entity_name="Account AI_SETTINGS",
+            source_type="Account parameter",
+            severity="Low",
+            finding="Cortex AI Guardrails advanced prompt-injection setting is visible as enabled.",
+            action="Keep guardrail configuration under change control and review guardrail logs for false positives or attack patterns.",
+            proof_sql="SHOW PARAMETERS LIKE 'AI_SETTINGS' IN ACCOUNT;",
+            extra={"PARAMETER_NAME": "AI_SETTINGS", "PARAMETER_VALUE": ai_settings},
+        ))
+    else:
+        severity = "High" if ai_settings_visible else "Medium"
+        finding = (
+            "AI_SETTINGS is visible but advanced prompt-injection guardrails are not enabled."
+            if ai_settings_visible
+            else "AI_SETTINGS is not visible to the active role, so guardrail proof is missing."
+        )
+        rows.append(_ai_security_row(
+            entity_name="Account AI_SETTINGS",
+            source_type="Account parameter",
+            severity=severity,
+            finding=finding,
+            action="Review with ACCOUNTADMIN/security; enable or explicitly document the guardrail exception before production AI expansion.",
+            proof_sql="SHOW PARAMETERS LIKE 'AI_SETTINGS' IN ACCOUNT;",
+            extra={"PARAMETER_NAME": "AI_SETTINGS", "PARAMETER_VALUE": ai_settings},
+        ))
+
+    cross_region, cross_visible = _parameter_value(parameters, "CORTEX_ENABLED_CROSS_REGION")
+    cross_upper = str(cross_region or "").upper()
+    approved_cross = any(token in cross_upper for token in ("ANY_REGION", "AWS_US", "AWS_GLOBAL"))
+    if approved_cross:
+        rows.append(_ai_security_row(
+            entity_name="CORTEX_ENABLED_CROSS_REGION",
+            source_type="Account parameter",
+            severity="Low",
+            finding="Cross-region inference setting is visible in a guardrail-compatible value.",
+            action="Keep the selected routing boundary tied to data-residency approval and AI model availability requirements.",
+            proof_sql="SHOW PARAMETERS LIKE 'CORTEX_ENABLED_CROSS_REGION' IN ACCOUNT;",
+            extra={"PARAMETER_NAME": "CORTEX_ENABLED_CROSS_REGION", "PARAMETER_VALUE": cross_region},
+        ))
+    else:
+        rows.append(_ai_security_row(
+            entity_name="CORTEX_ENABLED_CROSS_REGION",
+            source_type="Account parameter",
+            severity="Medium",
+            finding=(
+                "Cross-region inference is disabled or not in an AI Guardrails-compatible value."
+                if cross_visible
+                else "Cross-region inference setting is not visible to the active role."
+            ),
+            action="Decide whether strict data residency or guardrail/model availability wins for each AI workload; record the approved boundary.",
+            proof_sql="SHOW PARAMETERS LIKE 'CORTEX_ENABLED_CROSS_REGION' IN ACCOUNT;",
+            extra={"PARAMETER_NAME": "CORTEX_ENABLED_CROSS_REGION", "PARAMETER_VALUE": cross_region},
+        ))
+
+    public_rows = _ai_public_grant_rows(public_grants)
+    rows.extend(public_rows)
+    if not public_rows:
+        rows.append(_ai_security_row(
+            entity_name="PUBLIC AI grants",
+            source_type="PUBLIC AI grant",
+            severity="Low",
+            finding="No PUBLIC AI/Cortex grants were visible in SHOW GRANTS TO ROLE PUBLIC.",
+            action="Keep PUBLIC clean and use named approved roles for AI features.",
+            proof_sql="SHOW GRANTS TO ROLE PUBLIC;",
+        ))
+
+    role_rows = []
+    role_rows.extend(_database_role_public_grant_rows(cortex_user_grants, "CORTEX_USER"))
+    role_rows.extend(_database_role_public_grant_rows(ai_functions_user_grants, "AI_FUNCTIONS_USER"))
+    rows.extend(role_rows)
+    if not role_rows:
+        rows.append(_ai_security_row(
+            entity_name="Cortex database role grants",
+            source_type="Cortex database role grant",
+            severity="Low",
+            finding="No PUBLIC grant of SNOWFLAKE.CORTEX_USER or SNOWFLAKE.AI_FUNCTIONS_USER was visible.",
+            action="Keep Cortex access on named DBA/security-approved roles with budget and function scope.",
+            proof_sql="SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.CORTEX_USER; SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.AI_FUNCTIONS_USER;",
+        ))
+
+    for record in report_records or []:
+        available = bool(record.get("AVAILABLE"))
+        mandatory = bool(record.get("MANDATORY"))
+        surface = str(record.get("SURFACE") or record.get("OBJECT_NAME") or "Sensitive data report")
+        object_name = str(record.get("OBJECT_NAME") or "")
+        severity = "Low" if available else ("High" if mandatory else "Medium")
+        state = "Ready" if available else "Not Visible"
+        rows.append(_ai_security_row(
+            entity_name=surface,
+            source_type="Sensitive data report",
+            entity_type="DATA_SECURITY_REPORT",
+            severity=severity,
+            finding=(
+                f"{surface} is visible to the active role."
+                if available
+                else f"{surface} is not visible; AI/security review cannot prove sensitive-data exposure from this app role."
+            ),
+            action=str(record.get("DBA_ACTION") or "Enable report visibility through Snowflake Data Security application roles."),
+            proof_sql=f"SELECT * FROM {object_name} LIMIT 0;" if object_name else "",
+            extra={
+                "STATE": state,
+                "OBJECT_NAME": object_name,
+                "COLUMN_COUNT": safe_int(record.get("COLUMN_COUNT")),
+                "MANDATORY": "Yes" if mandatory else "No",
+            },
+        ))
+
+    for record in visibility_records or []:
+        source = str(record.get("SOURCE_TYPE") or record.get("SQL") or "AI security evidence")
+        rows.append(_ai_security_row(
+            entity_name=source,
+            source_type="Evidence visibility gap",
+            severity="Medium",
+            finding=f"{source} could not be loaded by the active role.",
+            action="Reload with an approved DBA/security role or document alternate evidence before production AI adoption.",
+            proof_sql=str(record.get("SQL") or _ai_security_proof_sql(source)),
+            extra={"ERROR_TEXT": str(record.get("ERROR") or "")[:500]},
+        ))
+
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    frame["_SEVERITY_RANK"] = frame["SEVERITY"].apply(_severity_rank)
+    return frame.sort_values(["_SEVERITY_RANK", "SOURCE_TYPE", "ENTITY_NAME"]).drop(columns=["_SEVERITY_RANK"])
+
+
+def _safe_show(session, sql: str, source_type: str, errors: list[dict]) -> pd.DataFrame:
+    try:
+        return show_to_df(session, sql)
+    except Exception as exc:
+        errors.append({
+            "SOURCE_TYPE": source_type,
+            "SQL": sql,
+            "ERROR": str(exc),
+        })
+        return pd.DataFrame()
+
+
+def load_ai_security_guardrails(session) -> pd.DataFrame:
+    """Load bounded AI security evidence from SHOW metadata and LIMIT 0 report probes."""
+    errors: list[dict] = []
+    parameter_frames = [
+        _safe_show(session, "SHOW PARAMETERS LIKE 'AI_SETTINGS' IN ACCOUNT", "AI_SETTINGS", errors),
+        _safe_show(session, "SHOW PARAMETERS LIKE 'CORTEX_ENABLED_CROSS_REGION' IN ACCOUNT", "CORTEX_ENABLED_CROSS_REGION", errors),
+    ]
+    non_empty_parameters = [frame for frame in parameter_frames if frame is not None and not frame.empty]
+    parameters = pd.concat(non_empty_parameters, ignore_index=True) if non_empty_parameters else pd.DataFrame()
+    public_grants = _safe_show(session, "SHOW GRANTS TO ROLE PUBLIC", "SHOW GRANTS TO ROLE PUBLIC", errors)
+    cortex_user_grants = _safe_show(
+        session,
+        "SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.CORTEX_USER",
+        "SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.CORTEX_USER",
+        errors,
+    )
+    ai_functions_user_grants = _safe_show(
+        session,
+        "SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.AI_FUNCTIONS_USER",
+        "SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.AI_FUNCTIONS_USER",
+        errors,
+    )
+    reports = []
+    for probe in AI_SECURITY_REPORT_PROBES:
+        object_name = probe["OBJECT_NAME"]
+        try:
+            columns = get_available_columns(session, object_name)
+            available = True
+        except Exception:
+            columns = set()
+            available = False
+        reports.append({
+            **probe,
+            "AVAILABLE": available,
+            "COLUMN_COUNT": len(columns),
+        })
+    return classify_ai_security_guardrails(
+        parameters=parameters,
+        public_grants=public_grants,
+        cortex_user_grants=cortex_user_grants,
+        ai_functions_user_grants=ai_functions_user_grants,
+        report_records=reports,
+        visibility_records=errors,
+    )
 
 
 def classify_openflow_operations(

@@ -238,7 +238,9 @@ from utils.futures_governance import (  # noqa: E402
     build_platform_futures_evidence_ddl,
     build_horizon_semantic_readiness_from_availability,
     build_platform_futures_board,
+    classify_adaptive_compute_readiness,
     classify_agent_mcp_inventory,
+    classify_ai_security_guardrails,
     classify_ai_usage_guardrails,
     classify_openflow_operations,
 )
@@ -4722,6 +4724,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ACCOUNT_HEALTH_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("AI_AGENT_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("MCP_SERVER_DEFAULT", set(directory["OWNER_KEY"]))
+        self.assertIn("AI_SECURITY_DEFAULT", set(directory["OWNER_KEY"]))
+        self.assertIn("ADAPTIVE_COMPUTE_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("OPENFLOW_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("HORIZON_GOVERNANCE_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("CREATE TABLE IF NOT EXISTS", ddl)
@@ -4827,7 +4831,9 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(len(controls), len(FORWARD_PLATFORM_CONTROLS))
         self.assertIn("Agent & MCP Governance", areas)
+        self.assertIn("Adaptive Compute Readiness", areas)
         self.assertIn("AI Spend & Token Guardrails", areas)
+        self.assertIn("AI Security Guardrails", areas)
         self.assertIn("Openflow Operations", areas)
         self.assertIn("Horizon Governance Readiness", areas)
         self.assertIn("Semantic Trust & Verified Query Testing", areas)
@@ -4843,7 +4849,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V", ddl)
         self.assertIn("OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V", ddl)
         self.assertIn("AI_AGENT_MCP_GOVERNANCE", ddl)
+        self.assertIn("ADAPTIVE_COMPUTE_READINESS", ddl)
         self.assertIn("AI_SPEND_TOKEN_GUARDRAILS", ddl)
+        self.assertIn("AI_SECURITY_GUARDRAILS", ddl)
         self.assertIn("OPENFLOW_OPERABILITY", ddl)
         self.assertIn("HORIZON_GOVERNANCE_READINESS", ddl)
         self.assertIn("SEMANTIC_TRUST_VALIDATION", ddl)
@@ -4853,6 +4861,74 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("COVERAGE_STATE", ddl)
         self.assertIn("EVIDENCE NOT CAPTURED", ddl)
         self.assertIn("PROOF NEEDED", ddl)
+
+    def test_adaptive_compute_advisor_ranks_candidates_and_holds_risky_routes(self):
+        raw = pd.DataFrame([
+            {
+                "WAREHOUSE_NAME": "BI_COMPUTE_WH",
+                "WAREHOUSE_SIZE": "Medium",
+                "TYPE": "STANDARD",
+                "QUERY_COUNT": 2200,
+                "USERS": 12,
+                "ROLES": 4,
+                "DATABASES": 3,
+                "CREDITS_30D": 84.5,
+                "QUEUED_SEC": 190.0,
+                "REMOTE_SPILL_GB": 12.5,
+                "P95_ELAPSED_SEC": 420.0,
+                "REPEATED_QUERIES": 620,
+                "MAX_CLUSTER_COUNT": 3,
+                "ENABLE_QUERY_ACCELERATION": "true",
+            },
+            {
+                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "WAREHOUSE_SIZE": "Small",
+                "TYPE": "STANDARD",
+                "QUERY_COUNT": 1400,
+                "USERS": 3,
+                "ROLES": 2,
+                "DATABASES": 0,
+                "CREDITS_30D": 32.0,
+                "QUEUED_SEC": 30.0,
+                "REMOTE_SPILL_GB": 0.0,
+                "P95_ELAPSED_SEC": 180.0,
+                "REPEATED_QUERIES": 100,
+                "MAX_CLUSTER_COUNT": 1,
+            },
+            {
+                "WAREHOUSE_NAME": "ML_SNOWPARK_WH",
+                "WAREHOUSE_SIZE": "Large",
+                "TYPE": "SNOWPARK-OPTIMIZED",
+                "QUERY_COUNT": 900,
+                "USERS": 4,
+                "ROLES": 2,
+                "DATABASES": 1,
+                "CREDITS_30D": 44.0,
+                "QUEUED_SEC": 2.0,
+                "REMOTE_SPILL_GB": 0.0,
+                "P95_ELAPSED_SEC": 100.0,
+                "REPEATED_QUERIES": 40,
+                "MAX_CLUSTER_COUNT": 1,
+            },
+        ])
+
+        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
+            advisor = classify_adaptive_compute_readiness(raw, company="ALL", environment="ALL", days=14)
+        by_wh = {row["WAREHOUSE_NAME"]: row for _, row in advisor.iterrows()}
+
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["ADAPTIVE_DECISION"], "Pilot Candidate")
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["SEVERITY"], "High")
+        self.assertIn("owner-approved pilot", by_wh["BI_COMPUTE_WH"]["DBA_ACTION"])
+        self.assertIn("SHOW WAREHOUSES", by_wh["BI_COMPUTE_WH"]["PROOF_SQL"])
+        self.assertIn("WAREHOUSE_METERING_HISTORY", by_wh["BI_COMPUTE_WH"]["VERIFICATION_QUERY"])
+        self.assertIn("No automatic conversion", by_wh["BI_COMPUTE_WH"]["CONVERSION_BOUNDARY"])
+        self.assertEqual(by_wh["COMPUTE_WH"]["ADAPTIVE_DECISION"], "Hold - App Execution")
+        self.assertEqual(by_wh["COMPUTE_WH"]["QUEUE_READINESS"], "Review Only")
+        self.assertEqual(by_wh["ML_SNOWPARK_WH"]["ADAPTIVE_DECISION"], "Hold - Preview Limitation")
+
+        board = build_platform_futures_board([advisor])
+        self.assertIn("Adaptive Compute Readiness", set(board["CONTROL_AREA"]))
+        self.assertIn("BI_COMPUTE_WH", set(board["ENTITY_NAME"]))
 
     def test_agent_mcp_inventory_classifies_tool_scope_risk(self):
         raw = pd.DataFrame([
@@ -4905,6 +4981,66 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("privileged admin role", row["FINDING"])
         self.assertIn("AI_COST_DEFAULT", row["OWNER_SOURCE"])
         self.assertIn("SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY", row["VERIFICATION_QUERY"])
+
+    def test_ai_security_guardrails_classify_public_ai_access_and_reports(self):
+        parameters = pd.DataFrame([
+            {"KEY": "AI_SETTINGS", "VALUE": "ADVANCED_PROMPT_INJECTION_FILTERING = { ENABLED = FALSE }"},
+            {"KEY": "CORTEX_ENABLED_CROSS_REGION", "VALUE": "DISABLED"},
+        ])
+        public_grants = pd.DataFrame([
+            {
+                "PRIVILEGE": "USE AI FUNCTIONS",
+                "GRANTED_ON": "ACCOUNT",
+                "NAME": "ACCOUNT",
+                "GRANTEE_NAME": "PUBLIC",
+            }
+        ])
+        cortex_grants = pd.DataFrame([
+            {
+                "PRIVILEGE": "USAGE",
+                "GRANTED_ON": "DATABASE ROLE",
+                "NAME": "SNOWFLAKE.CORTEX_USER",
+                "GRANTED_TO": "ROLE",
+                "GRANTEE_NAME": "PUBLIC",
+            }
+        ])
+        report_records = [
+            {
+                "SURFACE": "Sensitive Data Entitlement report",
+                "OBJECT_NAME": "SNOWFLAKE.DATA_SECURITY.ENTITLEMENT_REPORT",
+                "MANDATORY": True,
+                "AVAILABLE": False,
+                "COLUMN_COUNT": 0,
+                "DBA_ACTION": "Grant report visibility before AI expansion.",
+            },
+            {
+                "SURFACE": "Sensitive Data Access report",
+                "OBJECT_NAME": "SNOWFLAKE.DATA_SECURITY.ACCESS_REPORT",
+                "MANDATORY": True,
+                "AVAILABLE": True,
+                "COLUMN_COUNT": 8,
+                "DBA_ACTION": "Keep report visibility active.",
+            },
+        ]
+
+        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
+            classified = classify_ai_security_guardrails(
+                parameters=parameters,
+                public_grants=public_grants,
+                cortex_user_grants=cortex_grants,
+                ai_functions_user_grants=pd.DataFrame(),
+                report_records=report_records,
+            )
+        by_entity = {row["ENTITY_NAME"]: row for _, row in classified.iterrows()}
+
+        self.assertEqual(by_entity["PUBLIC USE AI FUNCTIONS ACCOUNT"]["SEVERITY"], "Critical")
+        self.assertIn("PUBLIC", by_entity["PUBLIC USE AI FUNCTIONS ACCOUNT"]["FINDING"])
+        self.assertEqual(by_entity["SNOWFLAKE.CORTEX_USER -> PUBLIC"]["SEVERITY"], "Critical")
+        self.assertIn("AI_SECURITY_DEFAULT", by_entity["SNOWFLAKE.CORTEX_USER -> PUBLIC"]["OWNER_SOURCE"])
+        self.assertEqual(by_entity["Account AI_SETTINGS"]["SEVERITY"], "High")
+        self.assertIn("advanced prompt-injection", by_entity["Account AI_SETTINGS"]["FINDING"])
+        self.assertEqual(by_entity["Sensitive Data Entitlement report"]["SEVERITY"], "High")
+        self.assertIn("SNOWFLAKE.DATA_SECURITY.ENTITLEMENT_REPORT", by_entity["Sensitive Data Entitlement report"]["PROOF_SQL"])
 
     def test_openflow_and_horizon_readiness_feed_platform_board(self):
         openflow = pd.DataFrame([
@@ -5033,6 +5169,54 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(cards[0]["signal"], "Evidence Gaps")
         self.assertIn("readiness=75", cards[0]["evidence"])
         self.assertIn("Load or persist", cards[0]["next_action"])
+
+    def test_ask_overwatch_reads_adaptive_compute_advisor(self):
+        advisor = pd.DataFrame([
+            {
+                "WAREHOUSE_NAME": "BI_COMPUTE_WH",
+                "ENTITY_NAME": "BI_COMPUTE_WH",
+                "SEVERITY": "High",
+                "ADAPTIVE_DECISION": "Pilot Candidate",
+                "READINESS_SCORE": 91,
+                "CREDITS_30D": 84.5,
+                "QUERY_COUNT": 2200,
+                "QUEUED_SEC": 190,
+                "REMOTE_SPILL_GB": 12.5,
+                "FINDING": "Warehouse has spend, workload volume, and pressure signals.",
+                "DBA_ACTION": "Open an owner-approved pilot with before/after proof.",
+                "PROOF_SQL": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY;",
+                "CONVERSION_BOUNDARY": "No automatic conversion; require approval and rollback proof.",
+            }
+        ])
+        cards = build_ask_overwatch_context({"arch_adaptive_compute": advisor})
+
+        self.assertEqual(cards[0]["surface"], "Architecture Readiness - Adaptive Compute Advisor")
+        self.assertEqual(cards[0]["signal"], "Pilot Candidate")
+        self.assertIn("BI_COMPUTE_WH", cards[0]["entity"])
+        self.assertIn("credits=84.5", cards[0]["evidence"])
+        self.assertIn("owner-approved pilot", cards[0]["next_action"])
+        self.assertIn("No automatic conversion", cards[0]["do_not"])
+
+    def test_ask_overwatch_reads_ai_security_guardrails(self):
+        guardrails = pd.DataFrame([
+            {
+                "CONTROL_AREA": "AI Security Guardrails",
+                "SOURCE_TYPE": "PUBLIC AI grant",
+                "ENTITY_NAME": "PUBLIC USE AI FUNCTIONS ACCOUNT",
+                "SEVERITY": "Critical",
+                "FINDING": "PUBLIC has blanket AI/Cortex access visible in grants.",
+                "DBA_ACTION": "Replace PUBLIC AI access with approved DBA/security-owned roles.",
+                "PROOF_SQL": "SHOW GRANTS TO ROLE PUBLIC;",
+                "AUTOMATION_BOUNDARY": "Do not change account parameters or revoke/grant AI privileges from dashboard automation.",
+            }
+        ])
+        cards = build_ask_overwatch_context({"arch_ai_security_guardrails": guardrails})
+
+        self.assertEqual(cards[0]["surface"], "Architecture Readiness - AI Security Guardrails")
+        self.assertEqual(cards[0]["signal"], "PUBLIC AI grant")
+        self.assertIn("PUBLIC USE AI FUNCTIONS", cards[0]["entity"])
+        self.assertIn("blanket AI/Cortex access", cards[0]["evidence"])
+        self.assertIn("Do not change account parameters", cards[0]["do_not"])
 
     def test_ask_overwatch_reads_dba_control_tower_priority(self):
         tower = pd.DataFrame([

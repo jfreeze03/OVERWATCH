@@ -14,7 +14,7 @@ roles, costs, alert recipients, owners, or Snowflake DDL.
 | Durable Snowflake setup, settings, seed rows, marts, tasks, procedures | `snowflake/OVERWATCH_MART_SETUP.sql` | Snowflake database/schema, state tables, facts, procedures, task graph, alert objects. |
 | Owner and on-call routing defaults | `.overwatch_final/utils/owner_directory.py` and `OVERWATCH_OWNER_DIRECTORY` | Routes warehouse, database, architecture, task, procedure, cost, alert, security, change, and account-health work. |
 | Architecture objectives | `.overwatch_final/config.py` under `ARCHITECTURE_OBJECTIVES` | Manual workload class, owner, RPO/RTO, isolation, cache, clustering, and DR expectations for Architecture Readiness. |
-| Forward platform controls | `.overwatch_final/config.py` under `FORWARD_PLATFORM_CONTROLS` | Manual DBA guardrails for Cortex Agents, MCP servers, AI usage, Openflow, Horizon, semantic trust, BCDR drill ledger, and AI-assisted change governance. |
+| Forward platform controls | `.overwatch_final/config.py` under `FORWARD_PLATFORM_CONTROLS` | Manual DBA guardrails for Adaptive Compute, Cortex Agents, MCP servers, AI usage, Openflow, Horizon, semantic trust, BCDR drill ledger, and AI-assisted change governance. |
 | Alert rules and email delivery helpers | `.overwatch_final/utils/alerts.py` and `OVERWATCH_ALERT_RULES` | Alert categories, severities, SLA hours, delivery status, email package generation. |
 | Deployment and baseline grants | `OVERWATCH_DOCUMENTATION.md`, `STREAMLIT_CLOUD_DEPLOY.md` | App runtime access grants and deployment notes. |
 | Score expectations and target gaps | `.overwatch_final/utils/scorecards.py` | Manual section readiness scoring and next-move language. |
@@ -89,8 +89,10 @@ capabilities before they become operational blind spots.
 
 | Control area | Current owner route | Primary evidence |
 |---|---|---|
+| Adaptive Compute Readiness | `ADAPTIVE_COMPUTE_DEFAULT` / DBA-FinOps route | `SHOW WAREHOUSES`, `QUERY_HISTORY`, `WAREHOUSE_METERING_HISTORY`. |
 | Agent & MCP Governance | `AI_AGENT_DEFAULT`, `MCP_SERVER_DEFAULT` | `SHOW AGENTS IN ACCOUNT`, `SHOW MCP SERVERS IN ACCOUNT`. |
 | AI Spend & Token Guardrails | `AI_COST_DEFAULT` / FinOps route | `CORTEX_AGENT_USAGE_HISTORY`, `SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY`. |
+| AI Security Guardrails | `AI_SECURITY_DEFAULT` / security route | `AI_SETTINGS`, `CORTEX_ENABLED_CROSS_REGION`, `SHOW GRANTS TO ROLE PUBLIC`, Cortex database-role grants, `SNOWFLAKE.DATA_SECURITY` report visibility. |
 | Openflow Operations | `OPENFLOW_DEFAULT` | `OPENFLOW_USAGE_HISTORY`. |
 | Horizon Governance Readiness | `HORIZON_GOVERNANCE_DEFAULT` / governance route | Classification, policy, access-history, object-dependency, Trust Center, and data-quality views. |
 | Semantic Trust & Verified Query Testing | `SEMANTIC_TRUST_DEFAULT` | `SEMANTIC_VIEWS`, `SEMANTIC_TABLES`, `SEMANTIC_METRICS`. |
@@ -110,7 +112,7 @@ Durable platform-futures objects are included in
 | Object | Purpose |
 |---|---|
 | `OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER` | Durable copy of the manual forward-platform control register. |
-| `OVERWATCH_PLATFORM_FUTURES_EVIDENCE` | Immutable evidence ledger for AI/MCP/Openflow/Horizon/Semantic/BCDR/AI-change reviews. |
+| `OVERWATCH_PLATFORM_FUTURES_EVIDENCE` | Immutable evidence ledger for Adaptive Compute/AI/MCP/AI-security/Openflow/Horizon/Semantic/BCDR/AI-change reviews. |
 | `OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V` | Latest evidence row per control/entity/surface. |
 | `OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V` | Control coverage state: evidence missing, proof needed, action open, or captured. |
 

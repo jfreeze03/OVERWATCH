@@ -33,7 +33,9 @@ from utils.futures_governance import (
     build_platform_futures_adoption_gate,
     build_platform_futures_evidence_ddl,
     build_platform_futures_board,
+    load_adaptive_compute_readiness,
     load_agent_mcp_inventory,
+    load_ai_security_guardrails,
     load_ai_usage_guardrails,
     load_horizon_semantic_readiness,
     load_openflow_operations,
@@ -414,6 +416,15 @@ def _architecture_source_health_rows(
             "confidence": "Live metadata through cached SHOW statements",
         },
         {
+            "surface": "Adaptive compute advisor",
+            "frame_key": "arch_adaptive_compute",
+            "meta_key": "arch_adaptive_compute_meta",
+            "days_key": "arch_adaptive_compute_days",
+            "limit_key": "arch_adaptive_compute_limit",
+            "source": "SHOW WAREHOUSES plus ACCOUNT_USAGE query and warehouse metering history",
+            "confidence": "Delayed cost/performance metadata plus live warehouse metadata",
+        },
+        {
             "surface": "AI usage guardrails",
             "frame_key": "arch_ai_usage",
             "meta_key": "arch_ai_usage_meta",
@@ -421,6 +432,13 @@ def _architecture_source_health_rows(
             "limit_key": "arch_ai_usage_limit",
             "source": "ACCOUNT_USAGE Cortex Agent and Snowflake Intelligence usage history",
             "confidence": "Delayed Snowflake AI usage metadata",
+        },
+        {
+            "surface": "AI security guardrails",
+            "frame_key": "arch_ai_security_guardrails",
+            "meta_key": "arch_ai_security_guardrails_meta",
+            "source": "AI_SETTINGS, CORTEX_ENABLED_CROSS_REGION, SHOW GRANTS TO ROLE PUBLIC, Cortex database-role grants, Data Security report probes",
+            "confidence": "Live metadata and capability visibility; no report data scanned",
         },
         {
             "surface": "Openflow operations",
@@ -1022,7 +1040,7 @@ def _render_forward_watchlist() -> None:
             "CAPABILITY": "Adaptive Compute / warehouse evolution",
             "WHY_IT_MATTERS": "DBAs will need to distinguish concurrency scaling, single-query acceleration, and auto-managed compute decisions.",
             "OVERWATCH_CONTROL": "Track warehouse pressure, multi-cluster/QAS posture, workload routing, and before/after cost verification.",
-            "NEXT_BUILD": "Add an adaptive-compute readiness flag once account metadata exposes enough signals.",
+            "NEXT_BUILD": "Use the Adaptive Compute advisor to nominate only owner-approved pilot candidates with proof and rollback evidence.",
             "PRIORITY": "High",
         },
         {
@@ -1068,8 +1086,10 @@ def _render_forward_watchlist() -> None:
 
 def _platform_futures_frames() -> list[pd.DataFrame]:
     return [
+        st.session_state.get("arch_adaptive_compute"),
         st.session_state.get("arch_ai_inventory"),
         st.session_state.get("arch_ai_usage"),
+        st.session_state.get("arch_ai_security_guardrails"),
         st.session_state.get("arch_openflow_usage"),
         st.session_state.get("arch_horizon_readiness"),
     ]
@@ -1108,7 +1128,7 @@ def _render_platform_futures_adoption_gate(controls: pd.DataFrame) -> None:
 def _render_platform_futures(session, company: str, environment: str) -> None:
     st.subheader("AI & Platform Futures")
     st.caption(
-        "Forward Snowflake controls for agents, MCP servers, AI spend, Openflow, Horizon governance, semantic trust, DR drills, and AI-assisted change."
+        "Forward Snowflake controls for Adaptive Compute, agents, MCP servers, AI spend, AI security, Openflow, Horizon governance, semantic trust, DR drills, and AI-assisted change."
     )
     controls = build_forward_platform_control_register()
     st.session_state["arch_forward_controls"] = controls
@@ -1122,8 +1142,10 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
         "AI platform futures view",
         (
             "Overview",
+            "Adaptive Compute",
             "Agents & MCP",
             "AI Usage",
+            "AI Security",
             "Openflow",
             "Horizon & Semantic",
             "Control Register",
@@ -1139,7 +1161,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
         c1, c2, c3, c4 = st.columns(4)
         loaded_surfaces = sum(1 for frame in _platform_futures_frames() if isinstance(frame, pd.DataFrame))
         c1.metric("Controls", f"{len(controls):,}")
-        c2.metric("Loaded Surfaces", f"{loaded_surfaces:,}/4")
+        c2.metric("Loaded Surfaces", f"{loaded_surfaces:,}/6")
         c3.metric("Open Futures", f"{len(board):,}" if isinstance(board, pd.DataFrame) else "0")
         high_count = (
             int(board["SEVERITY"].isin(["Critical", "High"]).sum())
@@ -1185,6 +1207,67 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
             raw_label="All forward platform controls",
             height=300,
         )
+
+    elif futures_view == "Adaptive Compute":
+        c1, c2 = st.columns(2)
+        with c1:
+            days = st.slider("Adaptive lookback days", 7, 90, 14, key="arch_adaptive_compute_days")
+        with c2:
+            row_limit = st.slider("Max warehouse rows", 25, 500, 100, step=25, key="arch_adaptive_compute_limit")
+        if st.button("Load Adaptive Compute Advisor", key="arch_adaptive_compute_load"):
+            with st.spinner("Loading Adaptive Compute advisor..."):
+                try:
+                    st.session_state["arch_adaptive_compute"] = load_adaptive_compute_readiness(
+                        session,
+                        days=days,
+                        row_limit=row_limit,
+                        company=company,
+                        environment=environment,
+                    )
+                    st.session_state["arch_adaptive_compute_meta"] = _architecture_scope_meta(
+                        company,
+                        environment,
+                        "Adaptive compute advisor",
+                        days=days,
+                        row_limit=row_limit,
+                    )
+                except Exception as exc:
+                    st.warning(f"Adaptive Compute advisor unavailable: {format_snowflake_error(exc)}")
+        df = st.session_state.get("arch_adaptive_compute")
+        if isinstance(df, pd.DataFrame):
+            _render_loaded_metrics(df, "Adaptive Compute")
+            if df.empty:
+                st.info("No warehouse workload rows are visible for this Adaptive Compute review scope.")
+            else:
+                decisions = df.get("ADAPTIVE_DECISION", pd.Series(dtype=str)).fillna("").astype(str)
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Pilot Candidates", f"{int(decisions.str.contains('Pilot Candidate', case=False, regex=False).sum()):,}")
+                c2.metric("Hold Decisions", f"{int(decisions.str.contains('Hold', case=False, regex=False).sum()):,}")
+                c3.metric("Credits", f"{safe_float(df.get('CREDITS_30D', pd.Series(dtype=float)).sum()):,.1f}")
+                c4.metric("Top Score", f"{safe_int(df.get('READINESS_SCORE', pd.Series(dtype=int)).max()):,}")
+                render_priority_dataframe(
+                    df,
+                    title="Adaptive Compute transition advisor",
+                    priority_columns=[
+                        "SEVERITY", "ADAPTIVE_DECISION", "READINESS_SCORE", "WAREHOUSE_NAME",
+                        "CREDITS_30D", "QUERY_COUNT", "USERS", "DATABASES",
+                        "QUEUED_SEC", "REMOTE_SPILL_GB", "P95_ELAPSED_SEC",
+                        "FINDING", "DBA_ACTION", "QUEUE_READINESS",
+                    ],
+                    sort_by=["SEVERITY", "READINESS_SCORE", "CREDITS_30D"],
+                    ascending=[True, False, False],
+                    raw_label="All Adaptive Compute advisor rows",
+                    height=430,
+                )
+                if st.button("Queue Adaptive Compute Findings", key="arch_adaptive_compute_queue"):
+                    _queue_architecture_findings(
+                        session,
+                        df,
+                        "Architecture Readiness - Adaptive Compute",
+                        "ENTITY_NAME",
+                        "Adaptive Compute Readiness",
+                    )
+                download_csv(df, "architecture_adaptive_compute_advisor.csv")
 
     elif futures_view == "Agents & MCP":
         if st.button("Load Agents and MCP Inventory", key="arch_ai_inventory_load"):
@@ -1280,6 +1363,57 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                         "AI Spend & Token Guardrails",
                     )
                 download_csv(df, "architecture_ai_usage_guardrails.csv")
+
+    elif futures_view == "AI Security":
+        if st.button("Load AI Security Guardrails", key="arch_ai_security_guardrails_load"):
+            with st.spinner("Loading AI security guardrails..."):
+                try:
+                    st.session_state["arch_ai_security_guardrails"] = load_ai_security_guardrails(session)
+                    st.session_state["arch_ai_security_guardrails_meta"] = _architecture_scope_meta(
+                        company,
+                        environment,
+                        "AI security guardrails",
+                    )
+                except Exception as exc:
+                    st.warning(f"AI security guardrails unavailable: {format_snowflake_error(exc)}")
+        df = st.session_state.get("arch_ai_security_guardrails")
+        if isinstance(df, pd.DataFrame):
+            _render_loaded_metrics(df, "AI security")
+            if df.empty:
+                st.info("No AI security guardrail rows were produced for the active role.")
+            else:
+                high_risk = int(df.get("SEVERITY", pd.Series(dtype=str)).isin(["Critical", "High"]).sum())
+                report_ready = (
+                    int(((df.get("SOURCE_TYPE", pd.Series(dtype=str)) == "Sensitive data report") & (df.get("STATE", pd.Series(dtype=str)) == "Ready")).sum())
+                    if {"SOURCE_TYPE", "STATE"}.issubset(df.columns)
+                    else 0
+                )
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Critical/High", f"{high_risk:,}")
+                c2.metric("Report Proofs", f"{report_ready:,}/2")
+                c3.metric("Queue Ready", f"{int((df.get('QUEUE_READINESS', pd.Series(dtype=str)) == 'Ready to Queue').sum()):,}")
+                render_priority_dataframe(
+                    df,
+                    title="AI security guardrails to close first",
+                    priority_columns=[
+                        "SEVERITY", "SOURCE_TYPE", "ENTITY_NAME", "STATE",
+                        "FINDING", "DBA_ACTION", "OWNER", "APPROVAL_GROUP",
+                        "QUEUE_READINESS",
+                    ],
+                    sort_by=["SEVERITY", "SOURCE_TYPE", "ENTITY_NAME"],
+                    ascending=[True, True, True],
+                    raw_label="All AI security guardrail rows",
+                    height=400,
+                )
+                if st.button("Queue AI Security Guardrails", key="arch_ai_security_guardrails_queue"):
+                    _queue_architecture_findings(
+                        session,
+                        df,
+                        "Architecture Readiness - AI Security Guardrails",
+                        "ENTITY_NAME",
+                        "AI Security Guardrails",
+                    )
+                download_csv(df, "architecture_ai_security_guardrails.csv")
 
     elif futures_view == "Openflow":
         c1, c2 = st.columns(2)

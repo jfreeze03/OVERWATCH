@@ -124,7 +124,7 @@ class ScorecardTests(unittest.TestCase):
         rows = scorecards.dba_control_plane_section_scorecards()
         by_section = {row["SECTION"]: row for row in rows}
 
-        self.assertEqual(by_section["DBA Control Room"]["SCORE"], 95.2)
+        self.assertEqual(by_section["DBA Control Room"]["SCORE"], 96.4)
         self.assertEqual(by_section["DBA Control Room"]["LABEL"], "95 Target")
         self.assertEqual(by_section["Alert Center"]["SCORE"], 95.6)
         self.assertEqual(by_section["Alert Center"]["LABEL"], "95 Target")

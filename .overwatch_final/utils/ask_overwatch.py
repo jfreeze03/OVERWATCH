@@ -26,6 +26,8 @@ ASK_OVERWATCH_STATE_KEYS = (
     "cost_contract_queue",
     "alert_center_data",
     "dba_control_room_data",
+    "dba_control_tower_priority_index",
+    "dba_autopilot_flight_plan",
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
     "arch_futures_board",
@@ -321,6 +323,55 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
         queue = data.get("action_queue")
         if _is_df(queue):
             _cards_from_queue(queue, cards, surface="DBA Control Room action queue")
+
+    tower = state.get("dba_control_tower_priority_index")
+    if _is_df(tower):
+        frame = tower.copy()
+        frame.columns = [str(col).upper() for col in frame.columns]
+        if "PRIORITY_SCORE" in frame.columns:
+            frame = frame.sort_values(["PRIORITY_SCORE"], ascending=False)
+        for _, row in frame.head(5).iterrows():
+            _append_card(cards, {
+                "surface": "DBA Control Tower",
+                "severity": "High" if safe_float(_value(row, "PRIORITY_SCORE", default=0)) >= 50 else "Medium",
+                "signal": _text(row, "CONTROL_TOWER_STATE", default="DBA priority route"),
+                "entity": _text(row, "SECTION", default="DBA Control Room"),
+                "evidence": _text(row, "WHY_NOW", default="Control Tower ranked this route from loaded DBA evidence."),
+                "next_action": _text(row, "FIRST_MOVE", default="Open the routed section and attach proof before closure."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Attach owner, ticket, approval, verification, and closure evidence."),
+                "do_not": "Do not execute DBA changes from aggregate priority alone; verify the source row and approval state first.",
+                "route": _text(row, "SECTION", default="DBA Control Room"),
+                "category": "DBA Control Tower",
+                "value": _text(row, "PRIORITY_SCORE", default="0"),
+            })
+
+    autopilot = state.get("dba_autopilot_flight_plan")
+    if _is_df(autopilot):
+        frame = autopilot.copy()
+        frame.columns = [str(col).upper() for col in frame.columns]
+        if "PHASE_RANK" in frame.columns:
+            frame = frame.sort_values("PHASE_RANK")
+        first = frame.iloc[0]
+        section = _text(first, "SECTION", default="DBA Control Room")
+        gates = "; ".join(
+            dict.fromkeys(frame.get("GO_NO_GO_GATE", pd.Series(dtype=str)).dropna().astype(str).head(4).tolist())
+        )
+        moves = " | ".join(
+            dict.fromkeys(frame.get("DBA_MOVE", pd.Series(dtype=str)).dropna().astype(str).head(3).tolist())
+        )
+        _append_card(cards, {
+            "surface": "DBA Autopilot Flight Plan",
+            "severity": "High",
+            "signal": _text(first, "CONTROL_TOWER_STATE", default="Advisory flight plan"),
+            "entity": section,
+            "evidence": f"Mission={_text(first, 'MISSION_ID')}; gates={gates}",
+            "next_action": moves or _text(first, "DBA_MOVE", default="Follow the staged DBA flight plan."),
+            "proof": _text(first, "EVIDENCE_REQUIRED", default="Attach owner, ticket, approval, verification, and rollback evidence."),
+            "do_not": _text(first, "STOP_CONDITION", default="Do not proceed if owner, ticket, approval, rollback, or verification evidence is missing."),
+            "route": section,
+            "category": "DBA Autopilot",
+            "value": _text(first, "PRIORITY_SCORE", default="100"),
+        })
 
     for key, surface in [
         ("dba_control_room_incident_board", "DBA incident board"),

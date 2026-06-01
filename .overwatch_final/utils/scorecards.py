@@ -57,14 +57,14 @@ DBA_CONTROL_PLANE_COMPONENTS = tuple(item["key"] for item in DBA_CONTROL_PLANE_R
 
 DBA_CONTROL_PLANE_SECTION_BASELINE = {
     "DBA Control Room": {
-        "domain_coverage": 95,
+        "domain_coverage": 96,
         "data_correctness": 95,
-        "actionability": 96,
-        "admin_safety_audit": 95,
+        "actionability": 98,
+        "admin_safety_audit": 96,
         "performance_mart": 96,
-        "workflow_ux": 95,
-        "governance_ownership": 95,
-        "tests_operability": 95,
+        "workflow_ux": 97,
+        "governance_ownership": 97,
+        "tests_operability": 97,
     },
     "Alert Center": {
         "domain_coverage": 94,

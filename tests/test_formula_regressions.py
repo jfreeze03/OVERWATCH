@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 import inspect
 import math
 import re
@@ -75,6 +76,9 @@ from sections.dba_control_room import (  # noqa: E402
     _command_queue_closure_readiness,
     _command_queue_summary,
     _command_queue_route_readiness,
+    _build_dba_autopilot_flight_plan_markdown,
+    _dba_autopilot_flight_plan,
+    _dba_control_tower_priority_index,
     _dba_section_operability_board,
     _dba_section_proof_required,
     _dba_incident_board,
@@ -1327,6 +1331,123 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_section["Security Posture"]["OPERABILITY_STATE"], "Build Toward 95")
         self.assertIn("Connect IAM", by_section["Security Posture"]["NEXT_CONTROL_ACTION"])
         self.assertIn("least-privilege", by_section["Security Posture"]["PROOF_REQUIRED"])
+
+    def test_dba_control_tower_priority_index_ranks_hot_route_first(self):
+        raw_queue = pd.DataFrame([
+            {
+                "ACTION_ID": "W1",
+                "CATEGORY": "Warehouse Health",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "BI_COMPUTE_WH",
+                "OWNER": "Warehouse Owner",
+                "STATUS": "New",
+                "DUE_DATE": "2026-05-29",
+                "TICKET_ID": "",
+                "APPROVER": "",
+                "OWNER_APPROVAL_STATUS": "Requested",
+                "VERIFICATION_QUERY": "",
+                "RECOVERY_SLA_STATE": "Open Failure",
+                "RECOVERY_EVIDENCE": "",
+            },
+            {
+                "ACTION_ID": "C1",
+                "CATEGORY": "Cost Control",
+                "SEVERITY": "Medium",
+                "ENTITY_NAME": "WH_BATCH",
+                "OWNER": "FinOps Owner",
+                "STATUS": "In Progress",
+                "DUE_DATE": "2026-06-03",
+                "TICKET_ID": "CHG-101",
+                "APPROVER": "FinOps Lead",
+                "OWNER_APPROVAL_STATUS": "Approved",
+                "VERIFICATION_QUERY": "SELECT 1",
+            },
+        ])
+        exceptions = pd.DataFrame([
+            {
+                "Severity": "High",
+                "Signal": "Queue or warehouse pressure",
+                "Evidence": "80 queued queries; 1 pressured warehouse",
+                "Action": "Check warehouse sizing and concurrency pressure.",
+                "Route": "Warehouse Health",
+                "Workflow": "",
+            }
+        ])
+        command_queue = _build_command_queue(raw_queue, today="2026-05-31")
+        closure = _command_queue_closure_readiness(raw_queue, today="2026-05-31")
+        section_rows = pd.DataFrame([
+            {
+                "SECTION": "Warehouse Health",
+                "SCORE": 95.2,
+                "LABEL": "95 Target",
+                "LOWEST_COMPONENT": "DBA Workflow UX",
+                "LOWEST_SCORE": 94,
+                "CAP_DRIVERS": "none",
+                "NEXT_95_MOVE": "Persist warehouse operating evidence.",
+            },
+            {
+                "SECTION": "Cost & Contract",
+                "SCORE": 97.6,
+                "LABEL": "95 Target",
+                "LOWEST_COMPONENT": "Workflow UX",
+                "LOWEST_SCORE": 97,
+                "CAP_DRIVERS": "none",
+                "NEXT_95_MOVE": "Maintain cost evidence.",
+            },
+        ])
+        section_board = _dba_section_operability_board(section_rows, command_queue, closure)
+        incident_board = _dba_incident_board(exceptions, command_queue, closure, pd.DataFrame())
+
+        tower = _dba_control_tower_priority_index(
+            section_board,
+            incident_board,
+            command_queue,
+            pd.DataFrame(),
+        )
+        top = tower.iloc[0]
+
+        self.assertEqual(top["SECTION"], "Warehouse Health")
+        self.assertEqual(top["CONTROL_TOWER_STATE"], "Contain Now")
+        self.assertGreater(top["PRIORITY_SCORE"], tower.iloc[1]["PRIORITY_SCORE"])
+        self.assertIn("Queue or warehouse pressure", top["WHY_NOW"])
+        self.assertIn("Stabilize", top["FIRST_MOVE"])
+        self.assertIn("rollback SQL", top["PROOF_REQUIRED"])
+
+    def test_dba_autopilot_flight_plan_builds_route_specific_runbook(self):
+        tower = pd.DataFrame([
+            {
+                "SECTION": "Warehouse Health",
+                "CONTROL_TOWER_STATE": "Contain Now",
+                "PRIORITY_SCORE": 88.5,
+                "WHY_NOW": "Queue or warehouse pressure; 1 overdue",
+                "FIRST_MOVE": "Stabilize queue/spill pressure first.",
+                "PROOF_REQUIRED": "capacity evidence, owner approval, rollback SQL",
+            }
+        ])
+
+        plan = _dba_autopilot_flight_plan(
+            tower,
+            company="ALFA",
+            environment="PROD",
+            lookback_hours=24,
+            generated_at=datetime(2026, 6, 1, 17, 30),
+        )
+        markdown = _build_dba_autopilot_flight_plan_markdown(
+            plan,
+            company="ALFA",
+            environment="PROD",
+            lookback_hours=24,
+        )
+
+        self.assertEqual(len(plan), 6)
+        self.assertEqual(plan.iloc[0]["MISSION_ID"], "DBA-AUTO-202606011730")
+        self.assertEqual(plan.iloc[0]["AUTOPILOT_MODE"], "Advisory Only")
+        self.assertIn("Evidence current", plan["GO_NO_GO_GATE"].tolist())
+        self.assertIn("Advisory only", plan["GO_NO_GO_GATE"].tolist())
+        self.assertTrue(plan["PROOF_SQL"].str.contains("WAREHOUSE_METERING_HISTORY|QUERY_HISTORY", regex=True).any())
+        self.assertIn("OVERWATCH DBA Autopilot Flight Plan", markdown)
+        self.assertIn("Mode: Advisory Only", markdown)
+        self.assertIn("Rollback or Escalate", markdown)
 
     def test_dba_section_proof_required_names_section_evidence_contracts(self):
         self.assertIn("source-control/IaC", _dba_section_proof_required("Change & Drift"))
@@ -4912,6 +5033,58 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(cards[0]["signal"], "Evidence Gaps")
         self.assertIn("readiness=75", cards[0]["evidence"])
         self.assertIn("Load or persist", cards[0]["next_action"])
+
+    def test_ask_overwatch_reads_dba_control_tower_priority(self):
+        tower = pd.DataFrame([
+            {
+                "CONTROL_TOWER_STATE": "Contain Now",
+                "PRIORITY_SCORE": 88.5,
+                "SECTION": "Warehouse Health",
+                "WHY_NOW": "Queue or warehouse pressure; 1 overdue",
+                "FIRST_MOVE": "Stabilize queue/spill pressure first.",
+                "PROOF_REQUIRED": "capacity evidence, owner approval, rollback SQL",
+            }
+        ])
+        cards = build_ask_overwatch_context({"dba_control_tower_priority_index": tower})
+
+        self.assertEqual(cards[0]["surface"], "DBA Control Tower")
+        self.assertEqual(cards[0]["entity"], "Warehouse Health")
+        self.assertIn("Queue or warehouse pressure", cards[0]["evidence"])
+        self.assertIn("Stabilize", cards[0]["next_action"])
+
+    def test_ask_overwatch_reads_dba_autopilot_flight_plan(self):
+        plan = pd.DataFrame([
+            {
+                "MISSION_ID": "DBA-AUTO-202606011730",
+                "PHASE_RANK": 1,
+                "FLIGHT_PHASE": "Preflight",
+                "SECTION": "Warehouse Health",
+                "CONTROL_TOWER_STATE": "Contain Now",
+                "PRIORITY_SCORE": 88.5,
+                "GO_NO_GO_GATE": "Evidence current",
+                "DBA_MOVE": "Confirm Control Tower route Warehouse Health.",
+                "EVIDENCE_REQUIRED": "Queue or warehouse pressure; 1 overdue",
+                "STOP_CONDITION": "Stop if source evidence is stale.",
+            },
+            {
+                "MISSION_ID": "DBA-AUTO-202606011730",
+                "PHASE_RANK": 2,
+                "FLIGHT_PHASE": "Containment",
+                "SECTION": "Warehouse Health",
+                "CONTROL_TOWER_STATE": "Contain Now",
+                "PRIORITY_SCORE": 88.5,
+                "GO_NO_GO_GATE": "No irreversible changes",
+                "DBA_MOVE": "Stabilize queue/spill pressure first.",
+                "EVIDENCE_REQUIRED": "Warehouse owner route",
+                "STOP_CONDITION": "Stop if source evidence is stale.",
+            },
+        ])
+        cards = build_ask_overwatch_context({"dba_autopilot_flight_plan": plan})
+
+        self.assertEqual(cards[0]["surface"], "DBA Autopilot Flight Plan")
+        self.assertEqual(cards[0]["entity"], "Warehouse Health")
+        self.assertIn("DBA-AUTO-202606011730", cards[0]["evidence"])
+        self.assertIn("Stabilize", cards[0]["next_action"])
 
     def test_alert_task_is_email_first_and_dba_focused(self):
         sql = build_alert_task_sql(email_target="jdees@alfains.com").upper()

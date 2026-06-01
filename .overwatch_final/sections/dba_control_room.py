@@ -2316,9 +2316,504 @@ def _dba_section_operability_board(
     ).reset_index(drop=True)
 
 
-def _render_command_queue_control(queue: pd.DataFrame, raw_queue: pd.DataFrame | None = None) -> None:
+def _dba_control_tower_state(row: pd.Series | dict) -> tuple[str, str]:
+    """Return a concise operating state and first move for a section priority row."""
+    overdue = safe_int(row.get("OVERDUE", 0))
+    proof_blocks = safe_int(row.get("PROOF_BLOCKS", 0))
+    metadata_blocks = safe_int(row.get("METADATA_BLOCKS", 0))
+    approval_blocks = safe_int(row.get("APPROVAL_BLOCKS", 0))
+    source_issues = safe_int(row.get("SOURCE_ISSUES", 0))
+    execution_ready = safe_int(row.get("EXECUTION_READY", 0))
+    incident_status = str(row.get("WORST_INCIDENT_STATUS") or "")
+    incident_action = str(row.get("INCIDENT_CONTAINMENT") or "").strip()
+    section_action = str(row.get("SECTION_NEXT_ACTION") or "").strip()
+    next_99 = str(row.get("NEXT_99_MOVE") or "").strip()
+    if overdue or "Containment" in incident_status:
+        return "Contain Now", incident_action or "Escalate overdue work and capture owner, ticket, approval, and verification evidence."
+    if proof_blocks or source_issues:
+        return "Restore Control Evidence", incident_action or "Refresh blocked evidence and attach proof before DBA execution."
+    if metadata_blocks:
+        return "Unblock Route Metadata", "Complete owner, ticket, approver, route, and verification metadata."
+    if approval_blocks:
+        return "Approval Required", "Collect owner approval before executing DBA-controlled action."
+    if execution_ready:
+        return "Execute Ready Work", "Work execution-ready items, then attach before/after verification proof."
+    if safe_float(row.get("SCORE", 0)) < 99:
+        return "Raise Toward 99", next_99 or section_action or "Harden the lowest control component and preserve closure evidence."
+    return "Monitor", "Maintain source health, owner route, and verified closure evidence."
+
+
+def _dba_control_tower_priority_index(
+    section_board: pd.DataFrame | None,
+    incident_board: pd.DataFrame | None,
+    command_queue: pd.DataFrame | None,
+    source_health: pd.DataFrame | None,
+    *,
+    max_rows: int = 9,
+) -> pd.DataFrame:
+    """Rank DBA sections by live risk, command blockers, evidence gaps, and 99-target drift."""
+    board = section_board.copy() if section_board is not None and not section_board.empty else _dba_section_operability_board(
+        command_queue=command_queue,
+        closure_rollup=_command_queue_closure_readiness(command_queue),
+    )
+    if board is None or board.empty:
+        return _empty_df()
+    board.columns = [str(col).upper() for col in board.columns]
+
+    incident = incident_board.copy() if incident_board is not None and not incident_board.empty else _empty_df()
+    if not incident.empty:
+        incident.columns = [str(col).upper() for col in incident.columns]
+    source = source_health.copy() if source_health is not None and not source_health.empty else _empty_df()
+    if not source.empty:
+        source.columns = [str(col).upper() for col in source.columns]
+
+    rows: list[dict] = []
+    severity_points = {"CRITICAL": 35, "HIGH": 24, "MEDIUM": 12, "LOW": 4}
+    status_points = {
+        "CONTAINMENT REQUIRED": 18,
+        "EVIDENCE REFRESH REQUIRED": 12,
+        "INVESTIGATE NOW": 10,
+        "TRIAGE": 5,
+        "MONITOR": 0,
+    }
+    for _, item in board.iterrows():
+        section = str(item.get("SECTION") or "DBA Control Room")
+        score = safe_float(item.get("SCORE", 0))
+        matched_incidents = _empty_df()
+        if not incident.empty and "AFFECTED_ROUTES" in incident.columns:
+            route_text = incident["AFFECTED_ROUTES"].fillna("").astype(str)
+            matched_incidents = incident[route_text.eq(section) | route_text.str.contains(section, case=False, regex=False)].copy()
+        source_issue_count = 0
+        if section == "DBA Control Room" and not source.empty and "STATE" in source.columns:
+            source_issue_count = int(source["STATE"].fillna("").astype(str).isin(["Unavailable", "Stale"]).sum())
+        if not matched_incidents.empty:
+            incident_points = int(
+                matched_incidents.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+                .map(severity_points).fillna(0).sum()
+            )
+            incident_points += int(
+                matched_incidents.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+                .map(status_points).fillna(0).sum()
+            )
+            worst = matched_incidents.sort_values(
+                by=["SEVERITY"],
+                key=lambda series: series.fillna("").astype(str).str.upper().map(
+                    {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+                ).fillna(4),
+            ).iloc[0]
+            worst_signal = str(worst.get("SIGNALS") or worst.get("SIGNAL") or "")
+            worst_status = str(worst.get("STATUS") or "")
+            incident_containment = str(worst.get("CONTAINMENT_ACTION") or "")
+        else:
+            incident_points = 0
+            worst_signal = ""
+            worst_status = ""
+            incident_containment = ""
+
+        overdue = safe_int(item.get("OVERDUE"))
+        closure_blockers = safe_int(item.get("CLOSURE_BLOCKERS"))
+        metadata_blocks = safe_int(item.get("METADATA_BLOCKS"))
+        approval_blocks = safe_int(item.get("APPROVAL_BLOCKS"))
+        execution_ready = safe_int(item.get("EXECUTION_READY"))
+        recovery_risk = safe_int(item.get("RECOVERY_RISK_ROWS"))
+        fixed_without_verification = safe_int(item.get("FIXED_WITHOUT_VERIFICATION"))
+        proof_blocks = closure_blockers + recovery_risk + fixed_without_verification
+        target_gap = max(0.0, 99.0 - score)
+        priority_score = min(100, round(
+            (target_gap * 1.7)
+            + incident_points
+            + overdue * 18
+            + proof_blocks * 10
+            + metadata_blocks * 7
+            + approval_blocks * 8
+            + source_issue_count * 8
+            + execution_ready * 2,
+            1,
+        ))
+        reason_bits = []
+        if worst_signal:
+            reason_bits.append(worst_signal)
+        if overdue:
+            reason_bits.append(f"{overdue:,} overdue")
+        if proof_blocks:
+            reason_bits.append(f"{proof_blocks:,} proof/recovery blocker(s)")
+        if metadata_blocks:
+            reason_bits.append(f"{metadata_blocks:,} metadata blocker(s)")
+        if approval_blocks:
+            reason_bits.append(f"{approval_blocks:,} approval blocker(s)")
+        if source_issue_count:
+            reason_bits.append(f"{source_issue_count:,} stale/unavailable source(s)")
+        if not reason_bits and target_gap:
+            reason_bits.append(f"{target_gap:.1f} points from 99 target")
+        row = {
+            "SECTION": section,
+            "PRIORITY_SCORE": priority_score,
+            "SCORE": score,
+            "TARGET_GAP_TO_99": round(target_gap, 1),
+            "WORST_INCIDENT_STATUS": worst_status,
+            "WORST_SIGNAL": worst_signal or str(item.get("OPERABILITY_STATE") or "No live incident"),
+            "OVERDUE": overdue,
+            "EXECUTION_READY": execution_ready,
+            "METADATA_BLOCKS": metadata_blocks,
+            "APPROVAL_BLOCKS": approval_blocks,
+            "PROOF_BLOCKS": proof_blocks,
+            "SOURCE_ISSUES": source_issue_count,
+            "WHY_NOW": "; ".join(reason_bits) or "No active blocker; keep monitoring.",
+            "INCIDENT_CONTAINMENT": incident_containment,
+            "SECTION_NEXT_ACTION": str(item.get("NEXT_CONTROL_ACTION") or ""),
+            "NEXT_99_MOVE": str(item.get("NEXT_95_MOVE") or item.get("NEXT_CONTROL_ACTION") or ""),
+            "PROOF_REQUIRED": str(item.get("PROOF_REQUIRED") or _dba_section_proof_required(section)),
+        }
+        state, first_move = _dba_control_tower_state(row)
+        row["CONTROL_TOWER_STATE"] = state
+        row["FIRST_MOVE"] = first_move
+        rows.append(row)
+
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    return result.sort_values(
+        ["PRIORITY_SCORE", "OVERDUE", "PROOF_BLOCKS", "METADATA_BLOCKS", "APPROVAL_BLOCKS", "TARGET_GAP_TO_99"],
+        ascending=[False, False, False, False, False, False],
+    ).head(max_rows).reset_index(drop=True)
+
+
+def _render_control_tower_priority_index(tower: pd.DataFrame) -> None:
+    if tower is None or tower.empty:
+        return
+    hot = tower.iloc[0]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Control Tower", str(hot.get("CONTROL_TOWER_STATE") or "Monitor"))
+    c2.metric("Top Route", str(hot.get("SECTION") or "DBA Control Room"))
+    c3.metric("Priority", f"{safe_float(hot.get('PRIORITY_SCORE')):.1f}")
+    c4.metric("Gap to 99", f"{safe_float(hot.get('TARGET_GAP_TO_99')):.1f}")
+    render_priority_dataframe(
+        tower,
+        title="DBA Control Tower priority index",
+        priority_columns=[
+            "CONTROL_TOWER_STATE", "PRIORITY_SCORE", "SECTION", "SCORE",
+            "TARGET_GAP_TO_99", "WHY_NOW", "FIRST_MOVE", "PROOF_REQUIRED",
+        ],
+        sort_by=["PRIORITY_SCORE", "TARGET_GAP_TO_99"],
+        ascending=[False, False],
+        raw_label="All DBA Control Tower rows",
+        height=260,
+        max_rows=9,
+        column_config={
+            "PRIORITY_SCORE": st.column_config.ProgressColumn("Priority", min_value=0, max_value=100, format="%.1f"),
+            "SCORE": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
+            "TARGET_GAP_TO_99": st.column_config.ProgressColumn("Gap to 99", min_value=0, max_value=10, format="%.1f"),
+        },
+    )
+    download_csv(tower, "dba_control_tower_priority_index.csv")
+
+
+def _dba_autopilot_route_templates(section: object, lookback_hours: int) -> dict:
+    """Return advisory-only route playbook templates for the top Control Tower lane."""
+    route = str(section or "").upper()
+    hours = max(1, min(safe_int(lookback_hours, 24), 168))
+    if "WAREHOUSE" in route:
+        return {
+            "owner_route": "Warehouse owner / DBA capacity reviewer",
+            "containment": "Use Warehouse Health to isolate the exact warehouse, workload, queue, and spill pattern before any setting change.",
+            "candidate": "Use Warehouse Settings Manager only after owner approval; prefer the smallest targeted setting change with rollback SQL.",
+            "preflight_sql": f"""SELECT warehouse_name, COUNT(*) AS queries,
+       SUM(COALESCE(queued_overload_time, 0)) / 1000 AS queued_sec,
+       SUM(COALESCE(bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3) AS remote_spill_gb,
+       MAX(start_time) AS last_seen
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+GROUP BY warehouse_name
+ORDER BY queued_sec DESC, remote_spill_gb DESC;""",
+            "verification_sql": f"""SELECT warehouse_name, SUM(credits_used) AS credits_used,
+       MAX(end_time) AS last_metered_hour
+FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+WHERE start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+GROUP BY warehouse_name
+ORDER BY credits_used DESC;""",
+            "rollback_sql": "SHOW WAREHOUSES; -- Compare current settings to the approved before-change snapshot and rollback script.",
+        }
+    if "COST" in route:
+        return {
+            "owner_route": "FinOps owner / DBA cost reviewer",
+            "containment": "Freeze savings claims; isolate top company, warehouse, database, role, user, and task driver before action.",
+            "candidate": "Queue only the driver with owner, baseline/current value, finance confidence, and verification query attached.",
+            "preflight_sql": f"""SELECT warehouse_name, SUM(credits_used) AS credits_used,
+       MAX(end_time) AS last_metered_hour
+FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+WHERE start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+GROUP BY warehouse_name
+ORDER BY credits_used DESC;""",
+            "verification_sql": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY ORDER BY start_time DESC LIMIT 100;",
+            "rollback_sql": "SELECT 'Rollback is business-process rollback: restore approved warehouse/task settings and keep finance evidence.' AS rollback_boundary;",
+        }
+    if "WORKLOAD" in route:
+        return {
+            "owner_route": "Workload owner / DBA reliability reviewer",
+            "containment": "Separate failing task, stored procedure, and query path from platform symptoms before retrying anything.",
+            "candidate": "Retry or resume only after root cause, downstream blast radius, and last successful run are captured.",
+            "preflight_sql": f"""SELECT name, state, scheduled_time, completed_time, error_code, error_message
+FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(SCHEDULED_TIME_RANGE_START=>DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())))
+ORDER BY scheduled_time DESC
+LIMIT 100;""",
+            "verification_sql": f"""SELECT query_id, user_name, warehouse_name, execution_status, error_code,
+       total_elapsed_time / 1000 AS elapsed_sec, start_time
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+ORDER BY start_time DESC
+LIMIT 100;""",
+            "rollback_sql": "SHOW TASKS IN ACCOUNT; -- Confirm suspended/resumed state against the approved recovery plan.",
+        }
+    if "SECURITY" in route:
+        return {
+            "owner_route": "Security approver / DBA access reviewer",
+            "containment": "Preserve login/grant evidence and avoid grant changes until requester, approver, and least-privilege proof are clear.",
+            "candidate": "Route grant/revoke work through Security Posture with ticket, owner, approver, and before/after role evidence.",
+            "preflight_sql": f"""SELECT event_timestamp, user_name, client_ip, reported_client_type, error_code, error_message
+FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+WHERE event_timestamp >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+ORDER BY event_timestamp DESC
+LIMIT 100;""",
+            "verification_sql": "SHOW GRANTS TO USERS; SHOW GRANTS TO ROLES;",
+            "rollback_sql": "SELECT 'Rollback requires approved inverse GRANT/REVOKE script and post-change access verification.' AS rollback_boundary;",
+        }
+    if "CHANGE" in route:
+        return {
+            "owner_route": "Change owner / DBA release reviewer",
+            "containment": "Hold closure until DDL query_id, ticket, source-control/IaC, blast radius, and owner approval are attached.",
+            "candidate": "Queue the change with object dependency impact and rollback statement before marking it controlled.",
+            "preflight_sql": f"""SELECT query_id, user_name, role_name, warehouse_name, database_name, schema_name,
+       query_type, start_time, LEFT(query_text, 500) AS query_preview
+FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+WHERE start_time >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
+  AND (query_type ILIKE 'CREATE%' OR query_type ILIKE 'ALTER%' OR query_type ILIKE 'DROP%'
+       OR query_type ILIKE 'GRANT%' OR query_type ILIKE 'REVOKE%')
+ORDER BY start_time DESC
+LIMIT 100;""",
+            "verification_sql": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES LIMIT 100;",
+            "rollback_sql": "SELECT 'Rollback must reference the approved change ticket and inverse DDL/IaC patch.' AS rollback_boundary;",
+        }
+    if "ALERT" in route:
+        return {
+            "owner_route": "Alert owner / DBA on-call",
+            "containment": "Confirm the alert source and route the issue to the action queue before suppressing or closing anything.",
+            "candidate": "Suppress only with owner approval, expiry window, and a linked action queue item.",
+            "preflight_sql": "SELECT CURRENT_TIMESTAMP() AS alert_review_started_at;",
+            "verification_sql": "SELECT CURRENT_TIMESTAMP() AS alert_delivery_or_route_evidence_required;",
+            "rollback_sql": "SELECT 'Rollback suppression by re-enabling the alert rule and documenting the reopened action.' AS rollback_boundary;",
+        }
+    if "ACCOUNT" in route:
+        return {
+            "owner_route": "Account hygiene owner / DBA platform reviewer",
+            "containment": "Prioritize hygiene gaps that affect authentication, ownership, recovery, or admin operability.",
+            "candidate": "Queue account hygiene work with owner, approval, proof query, and closure notes.",
+            "preflight_sql": "SHOW USERS;",
+            "verification_sql": "SHOW USERS; SHOW ROLES;",
+            "rollback_sql": "SELECT 'Rollback account hygiene changes through approved identity/admin process.' AS rollback_boundary;",
+        }
+    if "ARCHITECTURE" in route:
+        return {
+            "owner_route": "Platform architecture owner / DBA lead",
+            "containment": "Keep new platform capability adoption inside the expert adoption gate until evidence and owner approval are clean.",
+            "candidate": "Advance only controlled pilots with source health, owner, approval, rollback boundary, and verification query.",
+            "preflight_sql": "SHOW DATABASES; SHOW WAREHOUSES;",
+            "verification_sql": "SELECT CURRENT_TIMESTAMP() AS architecture_evidence_reviewed_at;",
+            "rollback_sql": "SELECT 'Rollback means revoke pilot expansion and return capability to evidence-gathering state.' AS rollback_boundary;",
+        }
+    return {
+        "owner_route": "On-call DBA / platform owner",
+        "containment": "Assign DBA owner, capture current evidence, and route to the specialist workflow.",
+        "candidate": "Work only the routed action with owner, ticket, approval, verification query, and closure proof.",
+        "preflight_sql": f"SELECT CURRENT_TIMESTAMP() AS preflight_started_at, {hours} AS lookback_hours;",
+        "verification_sql": "SELECT CURRENT_TIMESTAMP() AS verification_required_at;",
+        "rollback_sql": "SELECT 'Rollback boundary must be documented before execution.' AS rollback_boundary;",
+    }
+
+
+def _dba_autopilot_flight_plan(
+    tower: pd.DataFrame | None,
+    *,
+    company: str,
+    environment: str,
+    lookback_hours: int,
+    generated_at: datetime | None = None,
+) -> pd.DataFrame:
+    """Build an advisory DBA flight plan from the hottest Control Tower route."""
+    generated_at = generated_at or datetime.now()
+    if tower is None or tower.empty:
+        section = "DBA Control Room"
+        hot = {
+            "SECTION": section,
+            "CONTROL_TOWER_STATE": "Monitor",
+            "PRIORITY_SCORE": 0,
+            "WHY_NOW": "No active Control Tower priority row.",
+            "FIRST_MOVE": "Keep fast snapshot current and review Alert Center.",
+            "PROOF_REQUIRED": "fresh Control Room load and Alert Center review",
+        }
+    else:
+        ordered = tower.sort_values("PRIORITY_SCORE", ascending=False) if "PRIORITY_SCORE" in tower.columns else tower
+        hot = ordered.iloc[0].to_dict()
+        section = str(hot.get("SECTION") or "DBA Control Room")
+    templates = _dba_autopilot_route_templates(section, lookback_hours)
+    mission_id = f"DBA-AUTO-{generated_at.strftime('%Y%m%d%H%M')}"
+    priority_score = safe_float(hot.get("PRIORITY_SCORE", 0))
+    scope = f"{company} / {environment} / {safe_int(lookback_hours, 24)}h"
+    stop_condition = (
+        "Stop if source evidence is stale, owner/ticket/approval is missing, rollback is unclear, "
+        "or verification cannot prove before/after state."
+    )
+    stages = [
+        (
+            1,
+            "Preflight",
+            "Evidence current",
+            f"Confirm Control Tower route {section}, active scope, source freshness, and impacted entity.",
+            str(hot.get("WHY_NOW") or "Control Tower route selected."),
+            templates["preflight_sql"],
+        ),
+        (
+            2,
+            "Containment",
+            "No irreversible changes",
+            str(hot.get("FIRST_MOVE") or templates["containment"]),
+            templates["containment"],
+            "",
+        ),
+        (
+            3,
+            "Approval Gate",
+            "Owner and ticket attached",
+            "Attach owner, ticket/change ID, approval group, and rollback boundary before controlled execution.",
+            str(hot.get("PROOF_REQUIRED") or _dba_section_proof_required(section)),
+            "",
+        ),
+        (
+            4,
+            "Execution Candidate",
+            "Advisory only",
+            templates["candidate"],
+            "Baseline value, current value, approval status, and exact affected object or warehouse.",
+            "SELECT 'Advisory only - execute through the owning specialist workflow after approval.' AS execution_boundary;",
+        ),
+        (
+            5,
+            "Verification",
+            "Before/after proof required",
+            "Run verification and attach result text before closure or savings/recovery claim.",
+            "Verification result, query_id, before/after metric, and owner acknowledgement.",
+            templates["verification_sql"],
+        ),
+        (
+            6,
+            "Rollback or Escalate",
+            "Rollback path known",
+            "If verification fails, rollback through approved path or escalate as an incident before handoff.",
+            "Rollback statement/path, recovery evidence, reopened action queue item if needed.",
+            templates["rollback_sql"],
+        ),
+    ]
+    rows = []
+    for rank, phase, gate, move, evidence, proof_sql in stages:
+        rows.append({
+            "MISSION_ID": mission_id,
+            "PHASE_RANK": rank,
+            "FLIGHT_PHASE": phase,
+            "SECTION": section,
+            "CONTROL_TOWER_STATE": str(hot.get("CONTROL_TOWER_STATE") or "Monitor"),
+            "PRIORITY_SCORE": priority_score,
+            "SCOPE": scope,
+            "GO_NO_GO_GATE": gate,
+            "DBA_MOVE": move,
+            "EVIDENCE_REQUIRED": evidence,
+            "PROOF_SQL": proof_sql,
+            "STOP_CONDITION": stop_condition,
+            "OWNER_ROUTE": templates["owner_route"],
+            "AUTOPILOT_MODE": "Advisory Only",
+        })
+    return pd.DataFrame(rows)
+
+
+def _build_dba_autopilot_flight_plan_markdown(
+    plan: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    lookback_hours: int,
+) -> str:
+    """Create an exportable operator packet for the Autopilot flight plan."""
+    rows = plan if plan is not None and not plan.empty else _empty_df()
+    mission_id = str(rows.iloc[0].get("MISSION_ID")) if not rows.empty else "DBA-AUTO"
+    section = str(rows.iloc[0].get("SECTION")) if not rows.empty else "DBA Control Room"
+    lines = [
+        "# OVERWATCH DBA Autopilot Flight Plan",
+        f"Mission: {mission_id}",
+        f"Route: {section}",
+        f"Scope: {company} / {environment} / {safe_int(lookback_hours, 24)}h",
+        "Mode: Advisory Only",
+        "",
+    ]
+    if rows.empty:
+        lines.append("No flight-plan stages were available.")
+    else:
+        for _, row in rows.sort_values("PHASE_RANK").iterrows():
+            proof = str(row.get("PROOF_SQL") or "").strip()
+            lines.extend([
+                f"## {safe_int(row.get('PHASE_RANK'))}. {row.get('FLIGHT_PHASE', '')}",
+                f"Gate: {row.get('GO_NO_GO_GATE', '')}",
+                f"Move: {row.get('DBA_MOVE', '')}",
+                f"Evidence: {row.get('EVIDENCE_REQUIRED', '')}",
+                f"Owner route: {row.get('OWNER_ROUTE', '')}",
+                f"Stop: {row.get('STOP_CONDITION', '')}",
+            ])
+            if proof:
+                lines.extend(["", "```sql", proof, "```"])
+            lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _render_dba_autopilot_flight_plan(plan: pd.DataFrame, markdown: str) -> None:
+    if plan is None or plan.empty:
+        return
+    hot = plan.iloc[0]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Autopilot", str(hot.get("AUTOPILOT_MODE") or "Advisory Only"))
+    c2.metric("Mission", str(hot.get("MISSION_ID") or "DBA-AUTO"))
+    c3.metric("Route", str(hot.get("SECTION") or "DBA Control Room"))
+    c4.metric("Stages", f"{len(plan):,}")
+    render_priority_dataframe(
+        plan,
+        title="DBA Autopilot flight plan",
+        priority_columns=[
+            "FLIGHT_PHASE", "GO_NO_GO_GATE", "DBA_MOVE",
+            "EVIDENCE_REQUIRED", "OWNER_ROUTE", "STOP_CONDITION",
+        ],
+        sort_by=["PHASE_RANK"],
+        ascending=[True],
+        raw_label="All Autopilot flight-plan rows",
+        height=300,
+        max_rows=6,
+    )
+    with st.expander("Autopilot packet", expanded=False):
+        st.code(markdown, language="markdown")
+        st.download_button(
+            "Download Autopilot Packet",
+            data=markdown,
+            file_name="dba_autopilot_flight_plan.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+    download_csv(plan, "dba_autopilot_flight_plan.csv")
+
+
+def _render_command_queue_control(
+    queue: pd.DataFrame,
+    raw_queue: pd.DataFrame | None = None,
+    closure_rollup: pd.DataFrame | None = None,
+    section_board: pd.DataFrame | None = None,
+) -> None:
     summary = _command_queue_summary(queue)
-    closure_rollup = _command_queue_closure_readiness(raw_queue if raw_queue is not None else queue)
+    if closure_rollup is None:
+        closure_rollup = _command_queue_closure_readiness(raw_queue if raw_queue is not None else queue)
     closure_blockers = (
         0
         if closure_rollup.empty
@@ -2340,10 +2835,11 @@ def _render_command_queue_control(queue: pd.DataFrame, raw_queue: pd.DataFrame |
     c7.metric("High Risk", f"{summary['high_risk']:,}", delta_color="inverse")
     c8.metric("Closure Blocks", f"{closure_blockers:,}", delta_color="inverse")
 
-    section_board = _dba_section_operability_board(
-        command_queue=queue,
-        closure_rollup=closure_rollup,
-    )
+    if section_board is None:
+        section_board = _dba_section_operability_board(
+            command_queue=queue,
+            closure_rollup=closure_rollup,
+        )
     if not section_board.empty:
         render_priority_dataframe(
             section_board,
@@ -3222,7 +3718,6 @@ def render() -> None:
     )
     action_queue = data.get("action_queue", _empty_df())
     command_queue = _build_command_queue(action_queue)
-    _render_command_queue_control(command_queue, action_queue)
     source_health_for_handoff = _dba_control_source_health_rows(
         data,
         st.session_state,
@@ -3239,6 +3734,39 @@ def render() -> None:
         command_queue,
         closure_rollup_for_handoff,
         source_health_for_handoff,
+    )
+    section_board_for_tower = _dba_section_operability_board(
+        command_queue=command_queue,
+        closure_rollup=closure_rollup_for_handoff,
+    )
+    control_tower = _dba_control_tower_priority_index(
+        section_board_for_tower,
+        incident_board,
+        command_queue,
+        source_health_for_handoff,
+    )
+    st.session_state["dba_control_tower_priority_index"] = control_tower
+    _render_control_tower_priority_index(control_tower)
+    autopilot_plan = _dba_autopilot_flight_plan(
+        control_tower,
+        company=company,
+        environment=environment,
+        lookback_hours=int(lookback_hours),
+    )
+    autopilot_md = _build_dba_autopilot_flight_plan_markdown(
+        autopilot_plan,
+        company=company,
+        environment=environment,
+        lookback_hours=int(lookback_hours),
+    )
+    st.session_state["dba_autopilot_flight_plan"] = autopilot_plan
+    st.session_state["dba_autopilot_flight_plan_markdown"] = autopilot_md
+    _render_dba_autopilot_flight_plan(autopilot_plan, autopilot_md)
+    _render_command_queue_control(
+        command_queue,
+        action_queue,
+        closure_rollup=closure_rollup_for_handoff,
+        section_board=section_board_for_tower,
     )
     incident_md = _build_dba_incident_markdown(
         incident_board,

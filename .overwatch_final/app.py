@@ -19,6 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+import theme as theme_module
 from theme import inject_theme, render_theme_picker
 from config import (
     ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
@@ -42,7 +43,12 @@ from utils.bookmarks import (
 )
 import sections
 
-if not hasattr(section_guidance, "render_section_evidence_contract"):
+if getattr(theme_module, "THEME_VERSION", "") != "2026-05-31-confidence-gauge-v1":
+    theme_module = importlib.reload(theme_module)
+    inject_theme = theme_module.inject_theme
+    render_theme_picker = theme_module.render_theme_picker
+
+if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-05-31-confidence-gauge-v6":
     section_guidance = importlib.reload(section_guidance)
 
 inject_theme()
@@ -255,15 +261,11 @@ def _render_connection_empty_state(section: str) -> None:
     st.markdown(
         f"""
         <div class="ow-empty-state">
-            <div class="ow-empty-title">Connect Snowflake to load {html.escape(section)}</div>
-            <div class="ow-empty-copy">
-                The OVERWATCH shell is loaded. Live DBA evidence, saved views, alerts, and action queues
-                require a Snowflake Streamlit session or a configured Streamlit Snowflake connection.
-            </div>
+            <div class="ow-empty-title">Snowflake connection required for {html.escape(section)}</div>
             <div class="ow-empty-list">
-                <span>Deploy inside Snowflake Streamlit</span>
-                <span>or configure <code>connections.snowflake</code></span>
-                <span>then retry the connection</span>
+                <span>Snowflake Streamlit</span>
+                <span><code>connections.snowflake</code></span>
+                <span>Refresh</span>
             </div>
         </div>
         """,
@@ -698,15 +700,11 @@ if active_section not in visible_sections:
 
 # Main header.
 _render_app_header(active_section, active_company, credit_price, current_role)
-section_guidance.render_section_operating_guide(active_section)
-section_guidance.render_section_evidence_contract(active_section)
+section_guidance.render_section_confidence_meter(active_section, dict(st.session_state))
+section_guidance.render_section_reference(active_section)
 
 # Ask OVERWATCH
-with st.expander("Ask OVERWATCH (Evidence Mode)", expanded=False):
-    st.caption(
-        "Answers use only evidence already loaded in OVERWATCH. Load DBA Control Room, Alert Center, "
-        "Cost & Contract, or Warehouse Health first for sharper answers."
-    )
+with st.expander("Ask OVERWATCH", expanded=False):
     with st.form("ask_overwatch_form", clear_on_submit=False):
         ask_q = st.text_input(
             "Ask a specific DBA operating question...",

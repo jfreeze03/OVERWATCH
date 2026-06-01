@@ -4,6 +4,8 @@ import importlib.util
 import sys
 import unittest
 
+import pandas as pd
+
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
@@ -18,7 +20,12 @@ from config import (  # noqa: E402
     SECTION_DEFINITIONS,
     SECTION_MODULES,
 )
-from utils.section_guidance import SECTION_EVIDENCE_CONTRACT, SECTION_OPERATING_GUIDE  # noqa: E402
+from utils.section_guidance import (  # noqa: E402
+    CONFIDENCE_BANDS,
+    SECTION_EVIDENCE_CONTRACT,
+    SECTION_OPERATING_GUIDE,
+    build_section_confidence_meter,
+)
 from utils.scorecards import DBA_CONTROL_PLANE_SECTION_BASELINE  # noqa: E402
 
 
@@ -89,8 +96,9 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_ask_overwatch_is_evidence_grounded_without_raw_cortex_call(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        self.assertIn("Ask OVERWATCH (Evidence Mode)", app_text)
+        self.assertIn('st.expander("Ask OVERWATCH", expanded=False)', app_text)
         self.assertIn("answer_ask_overwatch(", app_text)
+        self.assertNotIn("Ask OVERWATCH (Evidence Mode)", app_text)
         self.assertNotIn("SNOWFLAKE.CORTEX.COMPLETE", app_text)
 
     def test_workflow_hubs_replace_scattered_operational_pages(self):
@@ -200,7 +208,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
 
-        self.assertIn("render_section_operating_guide(active_section)", app_text)
+        self.assertIn("render_section_reference(active_section)", app_text)
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_OPERATING_GUIDE))
         for section, guide in SECTION_OPERATING_GUIDE.items():
             with self.subTest(section=section):
@@ -219,8 +227,13 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_current_sections_have_evidence_contracts(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        guidance_text = (APP_ROOT / "utils" / "section_guidance.py").read_text(encoding="utf-8")
 
-        self.assertIn("render_section_evidence_contract(active_section)", app_text)
+        self.assertIn("render_section_confidence_meter(active_section", app_text)
+        self.assertIn("render_section_reference(active_section)", app_text)
+        self.assertNotIn("render_section_operating_guide(active_section)", app_text)
+        self.assertNotIn("render_section_evidence_contract(active_section)", app_text)
+        self.assertIn('st.expander("Details", expanded=False)', guidance_text)
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_EVIDENCE_CONTRACT))
         for section, rows in SECTION_EVIDENCE_CONTRACT.items():
             with self.subTest(section=section):
@@ -239,6 +252,51 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Do not apply environment filters", SECTION_EVIDENCE_CONTRACT["Account Health"][0]["invalid_use"])
         self.assertIn("Do not split exact spend by database", SECTION_EVIDENCE_CONTRACT["Warehouse Health"][0]["invalid_use"])
         self.assertIn(".ow-evidence-contract", theme_text)
+        self.assertIn(".ow-confidence-gauge-track", theme_text)
+        self.assertIn(".ow-confidence-gauge-marker", theme_text)
+        self.assertIn(".ow-confidence-mix-item", theme_text)
+        self.assertNotIn("ow-confidence-chip", theme_text)
+        self.assertNotIn("ow-confidence-chip", guidance_text)
+        self.assertNotIn("ow-confidence-card-detail", theme_text)
+        self.assertNotIn("ow-confidence-card-detail", guidance_text)
+        self.assertNotIn("The OVERWATCH shell is loaded", app_text)
+
+    def test_confidence_meter_classifies_contract_and_loaded_source_health(self):
+        band_keys = [key for key, _, _ in CONFIDENCE_BANDS]
+        self.assertEqual(band_keys, ["exact", "allocated", "delayed", "manual", "unavailable"])
+
+        meter = build_section_confidence_meter("Cost & Contract")
+        by_label = {row["label"]: row for row in meter["rows"]}
+        self.assertGreater(by_label["Exact"]["count"], 0)
+        self.assertGreater(by_label["Allocated"]["count"], 0)
+        self.assertEqual(meter["source_health_rows"], 0)
+        self.assertEqual(meter["state"], "Mixed Confidence")
+
+        with_loaded_health = build_section_confidence_meter(
+            "Warehouse Health",
+            {
+                "wh_source_health": pd.DataFrame([
+                    {
+                        "SURFACE": "Overview",
+                        "STATE": "Stale",
+                        "SOURCE": "ACCOUNT_USAGE",
+                        "CONFIDENCE": "Pre-aggregated",
+                        "ROWS": 2,
+                    },
+                    {
+                        "SURFACE": "Capacity brief",
+                        "STATE": "Loaded",
+                        "SOURCE": "WAREHOUSE_METERING_HISTORY",
+                        "CONFIDENCE": "Exact",
+                        "ROWS": 1,
+                    },
+                ])
+            },
+        )
+        loaded_by_label = {row["label"]: row for row in with_loaded_health["rows"]}
+        self.assertGreaterEqual(loaded_by_label["Unavailable"]["count"], 1)
+        self.assertEqual(with_loaded_health["source_health_rows"], 2)
+        self.assertIn(with_loaded_health["state"], {"Use With Caution", "Evidence Gaps"})
 
     def test_priority_tables_defer_full_raw_detail_rendering(self):
         workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")

@@ -6,6 +6,17 @@ import html
 import streamlit as st
 
 
+SECTION_GUIDANCE_VERSION = "2026-05-31-confidence-gauge-v6"
+
+CONFIDENCE_BANDS = (
+    ("exact", "Exact", "Source-of-truth or direct operational evidence."),
+    ("allocated", "Allocated", "Useful for routing and chargeback, not exact ownership cost."),
+    ("delayed", "Delayed", "Snowflake metadata or source-health evidence with latency."),
+    ("manual", "Manual", "Configured, email, owner, approval, ITSM, or directory evidence."),
+    ("unavailable", "Unavailable", "Expected evidence is stale, missing, or not loaded."),
+)
+
+
 SECTION_OPERATING_GUIDE = {
     "DBA Control Room": {
         "first_move": "Work Critical/High incidents first, then stale evidence and unowned action routes.",
@@ -56,6 +67,113 @@ SECTION_OPERATING_GUIDE = {
         "guardrail": "Treat unmatched drift as a control issue until source-control or ITSM evidence explains it.",
     },
 }
+
+
+def _confidence_band(confidence: object) -> str:
+    text = str(confidence or "").lower()
+    if any(token in text for token in ("unavailable", "not loaded", "missing", "stale")):
+        return "unavailable"
+    if any(token in text for token in ("allocated", "estimated", "estimate", "derived", "forecast", "projection")):
+        return "allocated"
+    if any(token in text for token in ("delayed", "freshness", "metadata", "account_usage", "lag")):
+        return "delayed"
+    if "exact" in text or "source-of-truth" in text:
+        return "exact"
+    if any(token in text for token in ("manual", "email", "configured", "directory", "itsm", "approval", "owner")):
+        return "manual"
+    return "manual"
+
+
+def _state_band(state: object) -> str:
+    text = str(state or "").strip().lower()
+    if text in {"loaded", "ready", "verified", "no rows"}:
+        return "exact"
+    if text in {"stale", "scope stale", "deferred", "not loaded", "unavailable"}:
+        return "unavailable"
+    if "blocked" in text or "gap" in text or "failed" in text:
+        return "unavailable"
+    return ""
+
+
+def _source_health_rows(state: dict | None) -> list[dict]:
+    rows: list[dict] = []
+    if not state:
+        return rows
+    for key, value in dict(state).items():
+        columns = getattr(value, "columns", None)
+        if columns is None:
+            continue
+        colset = {str(column).upper() for column in columns}
+        if not {"STATE", "CONFIDENCE"}.issubset(colset):
+            continue
+        if not ({"SURFACE", "SOURCE"} & colset):
+            continue
+        try:
+            for row in value.to_dict("records"):
+                rows.append({
+                    "key": str(key),
+                    "surface": str(row.get("SURFACE") or row.get("SOURCE") or key),
+                    "state": str(row.get("STATE") or ""),
+                    "confidence": str(row.get("CONFIDENCE") or ""),
+                    "rows": row.get("ROWS", ""),
+                })
+        except Exception:
+            continue
+    return rows
+
+
+def build_section_confidence_meter(section: str, state: dict | None = None) -> dict:
+    """Return a compact confidence meter model for the active section."""
+    contract = SECTION_EVIDENCE_CONTRACT.get(str(section), [])
+    band_counts = {key: 0 for key, _, _ in CONFIDENCE_BANDS}
+    details = {key: [] for key, _, _ in CONFIDENCE_BANDS}
+    for row in contract:
+        band = _confidence_band(row.get("confidence"))
+        band_counts[band] += 1
+        details[band].append(str(row.get("source") or "").strip())
+
+    loaded_sources = _source_health_rows(state)
+    for row in loaded_sources:
+        band = _state_band(row.get("state")) or _confidence_band(row.get("confidence"))
+        band_counts[band] += 1
+        details[band].append(str(row.get("surface") or row.get("key") or "").strip())
+
+    total = sum(band_counts.values()) or 1
+    penalty = (
+        band_counts["allocated"] * 6
+        + band_counts["delayed"] * 8
+        + band_counts["manual"] * 10
+        + band_counts["unavailable"] * 18
+    )
+    score = max(0, min(100, round(100 - (penalty / total), 1)))
+    if band_counts["unavailable"] >= 2:
+        state_label = "Evidence Gaps"
+    elif band_counts["unavailable"] == 1 or band_counts["delayed"] >= 2:
+        state_label = "Use With Caution"
+    elif band_counts["allocated"] or band_counts["manual"]:
+        state_label = "Mixed Confidence"
+    else:
+        state_label = "High Confidence"
+
+    rows = []
+    for key, label, description in CONFIDENCE_BANDS:
+        count = int(band_counts[key])
+        rows.append({
+            "key": key,
+            "label": label,
+            "count": count,
+            "pct": round((count / total) * 100, 1),
+            "description": description,
+            "examples": ", ".join(item for item in details[key] if item) or "None in current section contract",
+        })
+    return {
+        "section": str(section),
+        "score": score,
+        "state": state_label,
+        "total": total,
+        "source_health_rows": len(loaded_sources),
+        "rows": rows,
+    }
 
 
 SECTION_EVIDENCE_CONTRACT = {
@@ -195,11 +313,11 @@ def _guide_value(section: str, key: str) -> str:
     return str(guide.get(key, "")).strip()
 
 
-def render_section_operating_guide(section: str) -> None:
-    """Render a compact SOP strip for the active DBA section."""
+def _section_guide_markup(section: str) -> str:
+    """Return the compact SOP markup for the active DBA section."""
     guide = SECTION_OPERATING_GUIDE.get(str(section))
     if not guide:
-        return
+        return ""
 
     items = [
         ("First DBA move", _guide_value(section, "first_move")),
@@ -215,10 +333,70 @@ def render_section_operating_guide(section: str) -> None:
             f"<div class=\"ow-section-guide-detail\">{html.escape(detail)}</div>"
             "</div>"
         )
+    return f"""
+    <div class="ow-section-guide" aria-label="{html.escape(str(section))} operating guide">
+        {''.join(cards)}
+    </div>
+    """
+
+
+def render_section_operating_guide(section: str) -> None:
+    """Render a collapsed SOP strip for the active DBA section."""
+    markup = _section_guide_markup(section)
+    if not markup:
+        return
+    with st.expander("DBA Playbook", expanded=False):
+        st.markdown(markup, unsafe_allow_html=True)
+
+
+def render_section_confidence_meter(section: str, state: dict | None = None) -> None:
+    """Render the section-level trust/confidence meter."""
+    meter = build_section_confidence_meter(section, state)
+    score = meter["score"]
+    state_label = meter["state"]
+    display_state = {
+        "Evidence Gaps": "Gaps",
+        "Use With Caution": "Caution",
+        "Mixed Confidence": "Mixed",
+        "High Confidence": "High",
+    }.get(str(state_label), str(state_label))
+    rows = meter["rows"]
+    total = max(1, int(meter["total"]))
+    mix = []
+    for row in rows:
+        key = row["key"]
+        count = int(row["count"])
+        label = {"allocated": "Alloc", "delayed": "Delay", "unavailable": "Gaps"}.get(key, row["label"])
+        mix.append(
+            f"<span class=\"ow-confidence-mix-item ow-confidence-mix-{html.escape(key)}\">"
+            f"<span class=\"ow-confidence-dot ow-confidence-{html.escape(key)}\"></span>"
+            f"{html.escape(str(label))} {count}"
+            "</span>"
+        )
+    marker_left = max(0.0, min(100.0, float(score)))
+    loaded_note = (
+        f"{meter['source_health_rows']} live source row(s)"
+        if meter["source_health_rows"]
+        else "baseline"
+    )
     st.markdown(
         f"""
-        <div class="ow-section-guide" aria-label="{html.escape(str(section))} operating guide">
-            {''.join(cards)}
+        <div class="ow-confidence-meter" aria-label="{html.escape(str(section))} confidence meter">
+            <div class="ow-confidence-meter-head">
+                <div>
+                    <span class="ow-confidence-meter-kicker">Confidence:</span>
+                    <span class="ow-confidence-meter-title">{html.escape(display_state)}</span>
+                </div>
+                <div class="ow-confidence-score">{score:.1f}<span>/100</span></div>
+            </div>
+            <div class="ow-confidence-gauge" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{score:.1f}">
+                <div class="ow-confidence-gauge-track"></div>
+                <span class="ow-confidence-gauge-marker" style="left:{marker_left:.1f}%"></span>
+            </div>
+            <div class="ow-confidence-foot">
+                <div class="ow-confidence-mix">{' '.join(mix)}</div>
+                <div class="ow-confidence-meta">{total:,} signals | {html.escape(loaded_note)}</div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -227,27 +405,41 @@ def render_section_operating_guide(section: str) -> None:
 
 def render_section_evidence_contract(section: str) -> None:
     """Render the trust boundary for the active DBA section."""
-    rows = SECTION_EVIDENCE_CONTRACT.get(str(section))
-    if not rows:
+    markup = _section_evidence_contract_markup(section)
+    if not markup:
         return
     with st.expander("Evidence Contract", expanded=False):
-        st.caption("Decision confidence, invalid use, and closure proof for this section.")
-        contract_cards = []
-        for row in rows:
-            contract_cards.append(
-                "<div class=\"ow-evidence-contract-card\">"
-                f"<div class=\"ow-evidence-contract-source\">{html.escape(row['source'])}</div>"
-                f"<div><span>Confidence:</span>{html.escape(row['confidence'])}</div>"
-                f"<div><span>Decision use:</span>{html.escape(row['decision_use'])}</div>"
-                f"<div><span>Invalid use:</span>{html.escape(row['invalid_use'])}</div>"
-                f"<div><span>Closure proof:</span>{html.escape(row['proof'])}</div>"
-                "</div>"
-            )
-        st.markdown(
-            f"""
-            <div class="ow-evidence-contract" aria-label="{html.escape(str(section))} evidence contract">
-                {''.join(contract_cards)}
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.markdown(markup, unsafe_allow_html=True)
+
+
+def _section_evidence_contract_markup(section: str) -> str:
+    """Return the evidence contract markup for the active DBA section."""
+    rows = SECTION_EVIDENCE_CONTRACT.get(str(section))
+    if not rows:
+        return ""
+    contract_cards = []
+    for row in rows:
+        contract_cards.append(
+            "<div class=\"ow-evidence-contract-card\">"
+            f"<div class=\"ow-evidence-contract-source\">{html.escape(row['source'])}</div>"
+            f"<div><span>Confidence:</span>{html.escape(row['confidence'])}</div>"
+            f"<div><span>Decision use:</span>{html.escape(row['decision_use'])}</div>"
+            f"<div><span>Invalid use:</span>{html.escape(row['invalid_use'])}</div>"
+            f"<div><span>Closure proof:</span>{html.escape(row['proof'])}</div>"
+            "</div>"
         )
+    return f"""
+    <div class="ow-evidence-contract" aria-label="{html.escape(str(section))} evidence contract">
+        {''.join(contract_cards)}
+    </div>
+    """
+
+
+def render_section_reference(section: str) -> None:
+    """Render the hidden section reference material without adding default page noise."""
+    guide_markup = _section_guide_markup(section)
+    contract_markup = _section_evidence_contract_markup(section)
+    if not guide_markup and not contract_markup:
+        return
+    with st.expander("Details", expanded=False):
+        st.markdown(f"{guide_markup}{contract_markup}", unsafe_allow_html=True)

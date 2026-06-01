@@ -44,7 +44,7 @@ class ThemeRegistryTests(unittest.TestCase):
             theme._STRUCTURAL_CSS,
         )
         self.assertIn(
-            '[data-testid="stMarkdownContainer"] .ow-empty-copy',
+            '[data-testid="stMarkdownContainer"] .ow-empty-list span',
             theme._STRUCTURAL_CSS,
         )
         self.assertIn(

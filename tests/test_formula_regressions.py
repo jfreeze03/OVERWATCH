@@ -224,11 +224,13 @@ from utils.cost import (  # noqa: E402
 )
 from utils.ask_overwatch import (  # noqa: E402
     answer_ask_overwatch,
+    build_ask_overwatch_context,
     build_grounded_cortex_prompt,
     snapshot_ask_overwatch_state,
 )
 from utils.futures_governance import (  # noqa: E402
     build_forward_platform_control_register,
+    build_platform_futures_adoption_gate,
     build_platform_futures_evidence_ddl,
     build_horizon_semantic_readiness_from_availability,
     build_platform_futures_board,
@@ -4815,6 +4817,52 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Openflow", by_entity["ALFA_BYOC / claims_runtime"]["CONTROL_AREA"])
         self.assertIn("governance proof", by_entity["Access History"]["FINDING"])
 
+    def test_platform_futures_adoption_gate_blocks_unproven_capabilities(self):
+        controls = build_forward_platform_control_register()
+        raw_agents = pd.DataFrame([
+            {
+                "NAME": "CLAIMS_TOOLS",
+                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "SCHEMA_NAME": "AGENTS",
+                "OWNER": "ACCOUNTADMIN",
+                "COMMENT": "",
+            }
+        ])
+        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
+            agents = classify_agent_mcp_inventory(
+                raw_agents,
+                source_type="MCP Server",
+                company="ALFA",
+                environment="PROD",
+            )
+        source_health = pd.DataFrame([
+            {
+                "SURFACE": "AI agent and MCP inventory",
+                "STATE": "Loaded",
+                "SOURCE": "SHOW AGENTS IN ACCOUNT + SHOW MCP SERVERS IN ACCOUNT",
+            },
+            {
+                "SURFACE": "AI usage guardrails",
+                "STATE": "Not Loaded",
+                "SOURCE": "ACCOUNT_USAGE AI usage views",
+            },
+        ])
+
+        gate = build_platform_futures_adoption_gate(
+            controls,
+            [agents],
+            source_health=source_health,
+        )
+        by_area = {row["CONTROL_AREA"]: row for _, row in gate.iterrows()}
+
+        self.assertEqual(by_area["Agent & MCP Governance"]["ADOPTION_STATE"], "Blocked")
+        self.assertLess(by_area["Agent & MCP Governance"]["READINESS_SCORE"], 99)
+        self.assertEqual(by_area["Agent & MCP Governance"]["CRITICAL_HIGH_FINDINGS"], 1)
+        self.assertIn("Do not expand", by_area["Agent & MCP Governance"]["NEXT_DBA_MOVE"])
+        self.assertIn("blast-radius proof", by_area["Agent & MCP Governance"]["WHY_EXPERTS_CARE"])
+        self.assertEqual(by_area["AI Spend & Token Guardrails"]["SOURCE_GAPS"], 1)
+        self.assertEqual(by_area["AI Spend & Token Guardrails"]["ADOPTION_STATE"], "Evidence Gaps")
+
     def test_ask_overwatch_answers_from_platform_futures_board(self):
         board = pd.DataFrame([
             {
@@ -4843,6 +4891,27 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(result["confidence"], "Evidence-grounded")
         self.assertIn("ALFA_EDW_PROD.AGENTS.CLAIMS_TOOLS", result["answer"])
         self.assertIn("Do not auto-change agents", result["answer"])
+
+    def test_ask_overwatch_reads_platform_futures_adoption_gate(self):
+        gate = pd.DataFrame([
+            {
+                "CONTROL_AREA": "AI Spend & Token Guardrails",
+                "ADOPTION_STATE": "Evidence Gaps",
+                "READINESS_SCORE": 75,
+                "CRITICAL_HIGH_FINDINGS": 0,
+                "SOURCE_GAPS": 1,
+                "OWNER_ROUTE_GAPS": 0,
+                "NEXT_DBA_MOVE": "Load or persist AI Spend & Token Guardrails evidence before approving pilot or production adoption.",
+                "PRIMARY_EVIDENCE": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY",
+                "AUTOMATION_BOUNDARY": "Alert and queue only until budget policy and approval workflow exist.",
+            }
+        ])
+        cards = build_ask_overwatch_context({"arch_futures_adoption_gate": gate})
+
+        self.assertEqual(cards[0]["surface"], "Architecture Readiness - Expert Adoption Gate")
+        self.assertEqual(cards[0]["signal"], "Evidence Gaps")
+        self.assertIn("readiness=75", cards[0]["evidence"])
+        self.assertIn("Load or persist", cards[0]["next_action"])
 
     def test_alert_task_is_email_first_and_dba_focused(self):
         sql = build_alert_task_sql(email_target="jdees@alfains.com").upper()

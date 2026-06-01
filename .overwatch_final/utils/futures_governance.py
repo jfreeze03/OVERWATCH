@@ -37,6 +37,37 @@ PLATFORM_FUTURES_COVERAGE_VIEW = "OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V"
 ADMIN_ROLE_TOKENS = ("ACCOUNTADMIN", "SECURITYADMIN", "ORGADMIN")
 EXTERNAL_INTERFACE_TOKENS = ("EXTERNAL", "MICROSOFT_TEAMS", "TEAMS", "API")
 
+PLATFORM_FUTURES_EXPERT_CRITERIA = {
+    "Agent & MCP Governance": {
+        "surfaces": ("AI agent and MCP inventory",),
+        "why": "Agentic tools need owner, role scope, tool scope, semantic source, blast-radius proof, and rollback evidence before production use.",
+    },
+    "AI Spend & Token Guardrails": {
+        "surfaces": ("AI usage guardrails",),
+        "why": "AI usage can create token-credit spend that is hard to defend without user, role, interface, owner, and budget evidence.",
+    },
+    "Openflow Operations": {
+        "surfaces": ("Openflow operations",),
+        "why": "Managed data movement needs runtime owner, data-plane, secret/auth, failure, recovery, and cost evidence before expansion.",
+    },
+    "Horizon Governance Readiness": {
+        "surfaces": ("Horizon and semantic trust",),
+        "why": "Governance claims need visible classification, policy, access-history, lineage, Trust Center, and data-quality evidence.",
+    },
+    "Semantic Trust & Verified Query Testing": {
+        "surfaces": ("Horizon and semantic trust",),
+        "why": "Semantic models make answers look authoritative, so owners, certification, freshness, and verified query tests are mandatory.",
+    },
+    "BCDR Drill Ledger": {
+        "surfaces": ("DR readiness", "Horizon and semantic trust"),
+        "why": "DR cannot be trusted from configuration alone; experts expect RPO/RTO drill proof, failure notes, and recovery owner evidence.",
+    },
+    "AI Change Governance": {
+        "surfaces": ("AI usage guardrails", "Horizon and semantic trust"),
+        "why": "AI-assisted SQL and code must still pass ticket, review, rollback, and verification controls before DBA adoption.",
+    },
+}
+
 HORIZON_SEMANTIC_PROBES = (
     {
         "CONTROL_AREA": "Horizon Governance Readiness",
@@ -449,6 +480,7 @@ def classify_agent_mcp_inventory(
         context = _owner_context(row, entity, entity_type, "Agent & MCP Governance")
         rows.append({
             **row.to_dict(),
+            "CONTROL_AREA": "Agent & MCP Governance",
             "SOURCE_TYPE": source_label,
             "ENTITY_TYPE": entity_type,
             "ENTITY_NAME": entity,
@@ -625,6 +657,7 @@ def classify_ai_usage_guardrails(
         )
         rows.append({
             **row.to_dict(),
+            "CONTROL_AREA": "AI Spend & Token Guardrails",
             "ENTITY_TYPE": "AI_USAGE",
             "ENTITY_NAME": entity,
             "SOURCE_TYPE": source,
@@ -720,6 +753,7 @@ def classify_openflow_operations(
         )
         rows.append({
             **row.to_dict(),
+            "CONTROL_AREA": "Openflow Operations",
             "SOURCE_TYPE": "Openflow Usage",
             "ENTITY_TYPE": "OPENFLOW",
             "ENTITY_NAME": entity,
@@ -916,3 +950,162 @@ def build_platform_futures_board(
         return board
     board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_severity_rank)
     return board.sort_values(["_SEVERITY_RANK", "CONTROL_AREA", "ENTITY_NAME"]).drop(columns=["_SEVERITY_RANK"])
+
+
+def _area_rows(frame: pd.DataFrame | None, area: str) -> pd.DataFrame:
+    if frame is None or getattr(frame, "empty", True):
+        return pd.DataFrame()
+    view = _upper_frame(frame)
+    if "CONTROL_AREA" in view.columns:
+        return view[view["CONTROL_AREA"].fillna("").astype(str).str.upper() == area.upper()].copy()
+    return pd.DataFrame()
+
+
+def _count_truthy_gap(frame: pd.DataFrame, *columns: str) -> int:
+    if frame.empty:
+        return 0
+    gap_count = 0
+    for _, row in frame.iterrows():
+        row_has_gap = False
+        for column in columns:
+            if column not in frame.columns:
+                continue
+            value = str(row.get(column) or "").strip().upper()
+            if not value or "GAP" in value or value in {"MISSING", "UNKNOWN", "NOT VISIBLE", "NOT LOADED", "STALE"}:
+                row_has_gap = True
+        if row_has_gap:
+            gap_count += 1
+    return gap_count
+
+
+def _source_health_for_area(source_health: pd.DataFrame | None, area: str) -> tuple[int, str]:
+    if source_health is None or getattr(source_health, "empty", True):
+        return 1, "Source health not loaded"
+    view = _upper_frame(source_health)
+    if not {"SURFACE", "STATE"}.issubset(view.columns):
+        return 1, "Source health unavailable"
+    surfaces = tuple(
+        surface.upper()
+        for surface in PLATFORM_FUTURES_EXPERT_CRITERIA.get(area, {}).get("surfaces", ())
+    )
+    if not surfaces:
+        return 0, "No mapped source surface"
+    scoped = view[view["SURFACE"].fillna("").astype(str).str.upper().isin(surfaces)]
+    if scoped.empty:
+        return 1, "Mapped source surface missing"
+    gap_states = {"NOT LOADED", "STALE"}
+    source_gaps = int(scoped["STATE"].fillna("").astype(str).str.upper().isin(gap_states).sum())
+    summary = "; ".join(
+        f"{row.get('SURFACE')}: {row.get('STATE')}"
+        for _, row in scoped.iterrows()
+    )
+    return source_gaps, summary
+
+
+def _adoption_next_move(
+    area: str,
+    *,
+    state: str,
+    critical_high: int,
+    source_gaps: int,
+    owner_gaps: int,
+    approval_gaps: int,
+    evidence_rows: int,
+) -> str:
+    if state == "Blocked":
+        return (
+            f"Do not expand {area}; close critical/high findings, owner route gaps, "
+            "approval gaps, and source-health blockers first."
+        )
+    if source_gaps or evidence_rows == 0:
+        return f"Load or persist {area} evidence before approving pilot or production adoption."
+    if owner_gaps or approval_gaps:
+        return f"Pilot {area} only after owner route, approval group, proof query, and rollback path are attached."
+    if critical_high:
+        return f"Contain {area} to approved users until the critical/high findings are closed and verified."
+    if state == "Controlled Pilot":
+        return f"Keep {area} in controlled pilot with named owner, budget, rollback, and verification cadence."
+    return f"Proceed with controlled {area} adoption; keep evidence ledger and approval state current."
+
+
+def build_platform_futures_adoption_gate(
+    control_register: pd.DataFrame | None,
+    evidence_frames: Iterable[pd.DataFrame | None] | None = None,
+    *,
+    source_health: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Score forward-platform capabilities as strict DBA adoption gates."""
+    controls = _upper_frame(control_register)
+    frames = list(evidence_frames or [])
+    board = build_platform_futures_board(frames, include_low=True)
+    rows = []
+    for area in PLATFORM_FUTURES_AREAS:
+        control_rows = _area_rows(controls, area)
+        evidence = _area_rows(board, area)
+        severity = (
+            evidence["SEVERITY"].fillna("").astype(str).str.upper()
+            if "SEVERITY" in evidence.columns
+            else pd.Series(dtype=str)
+        )
+        critical_high = int(severity.isin(["CRITICAL", "HIGH"]).sum())
+        medium = int((severity == "MEDIUM").sum())
+        owner_gaps = _count_truthy_gap(evidence, "OWNER_EMAIL", "QUEUE_READINESS")
+        approval_gaps = _count_truthy_gap(evidence, "APPROVAL_GROUP")
+        source_gaps, source_summary = _source_health_for_area(source_health, area)
+        control_count = len(control_rows)
+        evidence_rows = len(evidence)
+        score = 100
+        score -= min(36, critical_high * 12)
+        score -= min(16, medium * 4)
+        score -= min(20, owner_gaps * 10)
+        score -= min(16, approval_gaps * 8)
+        score -= min(30, source_gaps * 10)
+        if evidence_rows == 0:
+            score -= 15 if source_gaps else 5
+        if control_count == 0:
+            score -= 25
+        score = max(0, min(100, int(round(score))))
+        if critical_high > 0 or score < 75:
+            adoption_state = "Blocked"
+        elif source_gaps > 0 or owner_gaps > 0 or approval_gaps > 0 or score < 95:
+            adoption_state = "Evidence Gaps"
+        elif score < 99 or evidence_rows == 0:
+            adoption_state = "Controlled Pilot"
+        else:
+            adoption_state = "Adoption Ready"
+        criteria = PLATFORM_FUTURES_EXPERT_CRITERIA.get(area, {})
+        first_control = control_rows.iloc[0] if not control_rows.empty else {}
+        rows.append({
+            "CONTROL_AREA": area,
+            "ADOPTION_STATE": adoption_state,
+            "READINESS_SCORE": score,
+            "CONTROL_COUNT": control_count,
+            "EVIDENCE_ROWS": evidence_rows,
+            "CRITICAL_HIGH_FINDINGS": critical_high,
+            "MEDIUM_FINDINGS": medium,
+            "OWNER_ROUTE_GAPS": owner_gaps,
+            "APPROVAL_GAPS": approval_gaps,
+            "SOURCE_GAPS": source_gaps,
+            "SOURCE_HEALTH": source_summary,
+            "NEXT_DBA_MOVE": _adoption_next_move(
+                area,
+                state=adoption_state,
+                critical_high=critical_high,
+                source_gaps=source_gaps,
+                owner_gaps=owner_gaps,
+                approval_gaps=approval_gaps,
+                evidence_rows=evidence_rows,
+            ),
+            "WHY_EXPERTS_CARE": criteria.get("why", "Experts expect owner, evidence, approval, rollback, and verification before adoption."),
+            "PRIMARY_EVIDENCE": _first_text(first_control, "PRIMARY_EVIDENCE"),
+            "AUTOMATION_BOUNDARY": _first_text(first_control, "AUTOMATION_BOUNDARY"),
+        })
+    gate = pd.DataFrame(rows)
+    if gate.empty:
+        return gate
+    state_rank = {"Blocked": 0, "Evidence Gaps": 1, "Controlled Pilot": 2, "Adoption Ready": 3}
+    gate["_STATE_RANK"] = gate["ADOPTION_STATE"].map(state_rank).fillna(9)
+    return gate.sort_values(
+        ["_STATE_RANK", "READINESS_SCORE", "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS"],
+        ascending=[True, True, False, False],
+    ).drop(columns=["_STATE_RANK"])

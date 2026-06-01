@@ -30,6 +30,7 @@ from utils import (
 from utils.workflows import render_operator_briefing, render_priority_dataframe
 from utils.futures_governance import (
     build_forward_platform_control_register,
+    build_platform_futures_adoption_gate,
     build_platform_futures_evidence_ddl,
     build_platform_futures_board,
     load_agent_mcp_inventory,
@@ -1074,6 +1075,36 @@ def _platform_futures_frames() -> list[pd.DataFrame]:
     ]
 
 
+def _render_platform_futures_adoption_gate(controls: pd.DataFrame) -> None:
+    gate = build_platform_futures_adoption_gate(
+        controls,
+        _platform_futures_frames(),
+        source_health=st.session_state.get("arch_source_health"),
+    )
+    st.session_state["arch_futures_adoption_gate"] = gate
+    if gate is None or gate.empty:
+        return
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Lowest Readiness", f"{int(gate['READINESS_SCORE'].min()):,}")
+    c2.metric("Blocked Areas", f"{int((gate['ADOPTION_STATE'] == 'Blocked').sum()):,}")
+    c3.metric("Evidence Gaps", f"{int((gate['ADOPTION_STATE'] == 'Evidence Gaps').sum()):,}")
+    c4.metric("Critical/High", f"{int(gate['CRITICAL_HIGH_FINDINGS'].sum()):,}")
+    render_priority_dataframe(
+        gate,
+        title="Expert adoption gate",
+        priority_columns=[
+            "ADOPTION_STATE", "READINESS_SCORE", "CONTROL_AREA",
+            "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS", "OWNER_ROUTE_GAPS",
+            "EVIDENCE_ROWS", "NEXT_DBA_MOVE", "WHY_EXPERTS_CARE",
+        ],
+        sort_by=["READINESS_SCORE", "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS"],
+        ascending=[True, False, False],
+        raw_label="All platform adoption gate rows",
+        height=360,
+    )
+    download_csv(gate, "architecture_platform_futures_adoption_gate.csv")
+
+
 def _render_platform_futures(session, company: str, environment: str) -> None:
     st.subheader("AI & Platform Futures")
     st.caption(
@@ -1116,6 +1147,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
             else 0
         )
         c4.metric("Critical/High", f"{high_count:,}")
+        _render_platform_futures_adoption_gate(controls)
         if board is None or board.empty:
             st.info("Load one of the futures evidence surfaces to build the prioritized board.")
         else:

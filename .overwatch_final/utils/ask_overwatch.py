@@ -29,6 +29,7 @@ ASK_OVERWATCH_STATE_KEYS = (
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
     "arch_futures_board",
+    "arch_futures_adoption_gate",
 )
 
 
@@ -164,6 +165,33 @@ def _cards_from_automation_board(state: Mapping, cards: list[dict]) -> None:
 
 
 def _cards_from_platform_futures(state: Mapping, cards: list[dict]) -> None:
+    gate = state.get("arch_futures_adoption_gate")
+    if _is_df(gate):
+        view = gate.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        if "READINESS_SCORE" in view.columns:
+            view = view.sort_values(["READINESS_SCORE"], ascending=True)
+        for _, row in view.head(7).iterrows():
+            state_label = _text(row, "ADOPTION_STATE", default="Evidence Gaps")
+            score = _text(row, "READINESS_SCORE", default="0")
+            area = _text(row, "CONTROL_AREA", default="AI & Platform Futures")
+            _append_card(cards, {
+                "surface": "Architecture Readiness - Expert Adoption Gate",
+                "severity": "High" if state_label == "Blocked" else "Medium",
+                "signal": state_label,
+                "entity": area,
+                "evidence": (
+                    f"readiness={score}; critical/high={_text(row, 'CRITICAL_HIGH_FINDINGS', default='0')}; "
+                    f"source_gaps={_text(row, 'SOURCE_GAPS', default='0')}; "
+                    f"owner_gaps={_text(row, 'OWNER_ROUTE_GAPS', default='0')}."
+                ),
+                "next_action": _text(row, "NEXT_DBA_MOVE", default="Close evidence, owner, approval, and source-health gaps before adoption."),
+                "proof": _text(row, "PRIMARY_EVIDENCE", default="Attach loaded source evidence and approval state."),
+                "do_not": _text(row, "AUTOMATION_BOUNDARY", default="Do not automate production changes without approval, rollback, and verification."),
+                "route": "Architecture Readiness > AI & Platform Futures",
+                "category": area,
+                "value": score,
+            })
     frame = state.get("arch_futures_board")
     if not _is_df(frame):
         return

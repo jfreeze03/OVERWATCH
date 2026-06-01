@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
-from sections import dba_tools, object_change_monitor, stored_proc_tracker
 from utils import (
     filter_existing_columns,
     format_snowflake_error,
@@ -33,6 +32,7 @@ from utils.workflows import (
     render_operator_briefing,
     render_priority_dataframe,
     render_signal_confidence,
+    render_workflow_module,
     render_workflow_guide,
     render_workflow_selector,
 )
@@ -51,6 +51,14 @@ WORKFLOW_DETAILS = {
     "Schema and object drift": "Schema compare, object inventory, unused objects, and Terraform drift signals.",
     "Data movement and replication": "Replication, dynamic tables, Snowpipe, data loading, and freshness risk.",
     "Controlled DBA actions": "Guarded admin actions, generated SQL, and operational controls.",
+}
+
+WORKFLOW_MODULES = {
+    "Object and access changes": "sections.object_change_monitor",
+    "Stored procedure lineage": "sections.stored_proc_tracker",
+    "Schema and object drift": "sections.dba_tools",
+    "Data movement and replication": "sections.dba_tools",
+    "Controlled DBA actions": "sections.dba_tools",
 }
 
 CHANGE_CONTROL_EVIDENCE_TABLE = "OVERWATCH_CHANGE_CONTROL_EVIDENCE"
@@ -2347,21 +2355,22 @@ def render() -> None:
         "change_drift_workflow",
         WORKFLOWS,
         WORKFLOW_DETAILS,
+        columns=5,
     )
 
     if workflow == "Object and access changes":
-        object_change_monitor.render()
+        render_workflow_module(workflow, WORKFLOW_MODULES)
     elif workflow == "Stored procedure lineage":
-        stored_proc_tracker.render()
+        render_workflow_module(workflow, WORKFLOW_MODULES)
     elif workflow == "Schema and object drift":
         st.session_state["dba_tools_focus"] = "Governance"
         st.info("Focused toolkit: schema compare, recent objects, unused objects, object inventory, and drift checks.")
-        dba_tools.render()
+        render_workflow_module(workflow, WORKFLOW_MODULES)
     elif workflow == "Data movement and replication":
         st.session_state["dba_tools_focus"] = "Data Movement"
         st.info("Focused toolkit: data loading, Snowpipe, dynamic tables, and replication checks.")
-        dba_tools.render()
+        render_workflow_module(workflow, WORKFLOW_MODULES)
     else:
         st.session_state["dba_tools_focus"] = "Controlled Actions"
         st.info("Focused toolkit: query cancellation, warehouse settings, task graph control, setup, and audit evidence.")
-        dba_tools.render()
+        render_workflow_module(workflow, WORKFLOW_MODULES)

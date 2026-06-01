@@ -17,6 +17,7 @@ from utils import (
     format_snowflake_error,
     log_admin_action,
     render_priority_dataframe,
+    render_ranked_bar_chart,
     run_query,
     run_query_or_raise,
     safe_int,
@@ -130,6 +131,232 @@ def _load_login_posture_mart(company: str, days: int) -> dict[str, pd.DataFrame]
             ORDER BY login_events DESC
             LIMIT 50
         """, ttl_key=f"security_mart_login_clients_{company}_{days}", tier="standard", section="Security Access"),
+    }
+
+
+def _connected_program_next_action(row: pd.Series) -> str:
+    program = str(row.get("PROGRAM_NAME", "") or "").upper()
+    source = str(row.get("SOURCE_CONFIDENCE", "") or "").upper()
+    failures = safe_int(row.get("FAILED_QUERIES", row.get("FAILED_EVENTS", 0)))
+    users = safe_int(row.get("USERS", 0))
+    if program in {"", "UNKNOWN", "UNTAGGED"} or "FALLBACK" in source:
+        return "Map this connection to an owner and require query tagging or a registered service account standard."
+    if failures > 0:
+        return "Review failure pattern, driver version, credential health, and recent grants before changing access."
+    if users >= 10:
+        return "Treat as shared tooling: confirm owner, support path, approved roles, and expected warehouse/database scope."
+    return "Register owner, purpose, expected warehouses/databases, and approved role pattern."
+
+
+def _annotate_connected_programs(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    annotated = df.copy()
+    annotated["CONTROL_STATUS"] = annotated.apply(
+        lambda row: (
+            "Needs owner"
+            if str(row.get("PROGRAM_NAME", "") or "").upper() in {"", "UNKNOWN", "UNTAGGED"}
+            or "FALLBACK" in str(row.get("SOURCE_CONFIDENCE", "") or "").upper()
+            else "Review failures"
+            if safe_int(row.get("FAILED_QUERIES", row.get("FAILED_EVENTS", 0))) > 0
+            else "Registered candidate"
+        ),
+        axis=1,
+    )
+    annotated["NEXT_ACTION"] = annotated.apply(_connected_program_next_action, axis=1)
+    return annotated
+
+
+def _load_connected_programs(session, company: str, days: int) -> dict[str, pd.DataFrame]:
+    """Track Snowflake client programs from login events and query-linked authentication events."""
+    days = max(1, min(90, int(days)))
+    query_join_days = min(365, days + 14)
+    user_filter = get_user_filter_clause("l.user_name")
+    query_filters = get_global_filter_clause(
+        date_col="q.start_time",
+        wh_col="q.warehouse_name",
+        user_col="q.user_name",
+        role_col="q.role_name",
+        db_col="q.database_name",
+    )
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        ["SESSION_ID", "AUTHN_EVENT_ID", "ERROR_CODE", "QUERY_TAG", "IS_CLIENT_GENERATED_STATEMENT"],
+    ))
+    login_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY",
+        ["EVENT_ID", "CLIENT_IP", "REPORTED_CLIENT_TYPE", "REPORTED_CLIENT_VERSION"],
+    ))
+    session_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.SESSIONS",
+        [
+            "SESSION_ID", "CREATED_ON", "USER_NAME", "LOGIN_EVENT_ID", "AUTHENTICATION_METHOD",
+            "CLIENT_APPLICATION_ID", "CLIENT_APPLICATION_VERSION", "CLIENT_ENVIRONMENT",
+            "CLIENT_BUILD_ID", "CLIENT_VERSION", "ACCESS_TIME", "IS_OPEN", "CLOSED_REASON",
+        ],
+    ))
+    login_program_expr = (
+        "COALESCE(TO_VARCHAR(l.reported_client_type), 'UNKNOWN')"
+        if "REPORTED_CLIENT_TYPE" in login_cols else "'UNKNOWN'"
+    )
+    login_version_expr = (
+        "COALESCE(TO_VARCHAR(l.reported_client_version), 'UNKNOWN')"
+        if "REPORTED_CLIENT_VERSION" in login_cols else "'UNKNOWN'"
+    )
+    login_ip_count_expr = (
+        "COUNT(DISTINCT l.client_ip)"
+        if "CLIENT_IP" in login_cols else "0::NUMBER"
+    )
+    failed_query_expr = (
+        "SUM(IFF(q.error_code IS NOT NULL, 1, 0))"
+        if "ERROR_CODE" in qh_cols
+        else "SUM(IFF(UPPER(q.execution_status) = 'FAILED_WITH_ERROR', 1, 0))"
+    )
+    client_generated_expr = (
+        "SUM(IFF(q.is_client_generated_statement, 1, 0))"
+        if "IS_CLIENT_GENERATED_STATEMENT" in qh_cols else "NULL::NUMBER"
+    )
+    query_tag_count_expr = (
+        "COUNT(DISTINCT NULLIF(q.query_tag, ''))"
+        if "QUERY_TAG" in qh_cols else "0::NUMBER"
+    )
+    session_program_expr = (
+        "COALESCE(TO_VARCHAR(s.client_application_id), 'UNKNOWN')"
+        if "CLIENT_APPLICATION_ID" in session_cols else "'UNKNOWN'"
+    )
+    session_version_candidates = []
+    if "CLIENT_APPLICATION_VERSION" in session_cols:
+        session_version_candidates.append("TO_VARCHAR(s.client_application_version)")
+    if "CLIENT_VERSION" in session_cols:
+        session_version_candidates.append("TO_VARCHAR(s.client_version)")
+    session_version_expr = (
+        f"COALESCE({', '.join(session_version_candidates)}, 'UNKNOWN')"
+        if session_version_candidates else "'UNKNOWN'"
+    )
+    session_build_expr = (
+        "COALESCE(TO_VARCHAR(s.client_build_id), 'UNKNOWN')"
+        if "CLIENT_BUILD_ID" in session_cols else "'UNKNOWN'"
+    )
+    session_env_count_expr = (
+        "COUNT(DISTINCT s.client_environment)"
+        if "CLIENT_ENVIRONMENT" in session_cols else "0::NUMBER"
+    )
+    open_sessions_expr = (
+        "SUM(IFF(s.is_open, 1, 0))"
+        if "IS_OPEN" in session_cols else "NULL::NUMBER"
+    )
+    access_time_expr = (
+        "MAX(s.access_time)"
+        if "ACCESS_TIME" in session_cols else "MAX(s.created_on)"
+    )
+    auth_method_count_expr = (
+        "COUNT(DISTINCT s.authentication_method)"
+        if "AUTHENTICATION_METHOD" in session_cols else "0::NUMBER"
+    )
+    can_join_sessions = "SESSION_ID" in qh_cols and "SESSION_ID" in session_cols
+    can_join_login = "AUTHN_EVENT_ID" in qh_cols and "EVENT_ID" in login_cols
+    if can_join_sessions:
+        program_expr = session_program_expr
+        version_expr = session_version_expr
+        source_expr = "'QUERY_HISTORY session_id to SESSIONS client metadata'"
+        join_sql = f"""
+            LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.SESSIONS s
+              ON q.session_id = s.session_id
+             AND s.created_on >= DATEADD('day', -{query_join_days}, CURRENT_TIMESTAMP())
+        """
+    elif can_join_login:
+        program_expr = login_program_expr
+        version_expr = login_version_expr
+        source_expr = "'AUTHN_EVENT_ID to LOGIN_HISTORY reported client; client value is reported, not authenticated'"
+        join_sql = f"""
+            LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY l
+              ON q.authn_event_id = l.event_id
+             AND l.event_timestamp >= DATEADD('day', -{query_join_days}, CURRENT_TIMESTAMP())
+        """
+    else:
+        program_expr = (
+            "COALESCE(NULLIF(TO_VARCHAR(q.query_tag), ''), 'UNTAGGED')"
+            if "QUERY_TAG" in qh_cols else "'UNKNOWN'"
+        )
+        version_expr = "'UNKNOWN'"
+        source_expr = "'QUERY_TAG fallback; not exact connected-program identity'"
+        join_sql = ""
+
+    session_inventory = pd.DataFrame()
+    if "CREATED_ON" in session_cols and "USER_NAME" in session_cols:
+        session_user_filter = get_user_filter_clause("s.user_name")
+        session_inventory = run_query(f"""
+            SELECT
+                {session_program_expr} AS program_name,
+                {session_version_expr} AS program_version,
+                {session_build_expr} AS client_build,
+                COUNT(*) AS sessions,
+                {open_sessions_expr} AS open_sessions,
+                COUNT(DISTINCT s.user_name) AS users,
+                {auth_method_count_expr} AS authentication_methods,
+                {session_env_count_expr} AS client_environments,
+                MIN(s.created_on) AS first_seen,
+                {access_time_expr} AS last_seen,
+                'SESSIONS client metadata; open-session status can lag up to 3 hours' AS source_confidence
+            FROM SNOWFLAKE.ACCOUNT_USAGE.SESSIONS s
+            WHERE s.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+              {session_user_filter}
+            GROUP BY program_name, program_version, client_build
+            ORDER BY sessions DESC
+            LIMIT 100
+        """, ttl_key=f"security_connected_sessions_{company}_{days}", tier="standard", section="Security Access")
+
+    login_inventory = run_query(f"""
+        SELECT
+            {login_program_expr} AS program_name,
+            {login_version_expr} AS program_version,
+            COUNT(*) AS login_events,
+            COUNT(DISTINCT l.user_name) AS users,
+            {login_ip_count_expr} AS ips,
+            SUM(IFF(l.is_success = 'YES', 1, 0)) AS success_events,
+            SUM(IFF(l.is_success = 'NO', 1, 0)) AS failed_events,
+            MAX(l.event_timestamp) AS last_seen,
+            'Login-only reported client; no database context' AS source_confidence
+        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY l
+        WHERE l.event_timestamp >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          {user_filter}
+        GROUP BY program_name, program_version
+        ORDER BY login_events DESC
+        LIMIT 100
+    """, ttl_key=f"security_connected_login_programs_{company}_{days}", tier="standard", section="Security Access")
+
+    query_programs = run_query(f"""
+        SELECT
+            {program_expr} AS program_name,
+            {version_expr} AS program_version,
+            q.warehouse_name,
+            COALESCE(q.database_name, 'UNKNOWN') AS database_name,
+            COUNT(*) AS query_count,
+            COUNT(DISTINCT q.user_name) AS users,
+            COUNT(DISTINCT q.role_name) AS roles,
+            {failed_query_expr} AS failed_queries,
+            ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
+            {client_generated_expr} AS client_generated_queries,
+            {query_tag_count_expr} AS query_tags,
+            MAX(q.start_time) AS last_query_time,
+            {source_expr} AS source_confidence
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        {join_sql}
+        WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+          AND q.warehouse_name IS NOT NULL
+          {query_filters}
+        GROUP BY program_name, program_version, q.warehouse_name, database_name, source_confidence
+        ORDER BY query_count DESC
+        LIMIT 200
+    """, ttl_key=f"security_connected_query_programs_{company}_{days}", tier="standard", section="Security Access")
+
+    return {
+        "sec_connected_session_programs": _annotate_connected_programs(session_inventory),
+        "sec_connected_login_programs": _annotate_connected_programs(login_inventory),
+        "sec_connected_query_programs": _annotate_connected_programs(query_programs),
     }
 
 
@@ -844,8 +1071,8 @@ def render():
         if "EXT_AUTHN_DUO" in user_cols else "NULL::BOOLEAN AS has_mfa"
     )
 
-    tab_login, tab_posture, tab_roles, tab_mfa, tab_exfil, tab_lineage = st.tabs([
-        "Login Audit", "Login Posture", "Roles & Grants", "MFA Coverage", "Exfiltration Signals", "Data Lineage"
+    tab_login, tab_posture, tab_programs, tab_roles, tab_mfa, tab_exfil, tab_lineage = st.tabs([
+        "Login Audit", "Login Posture", "Connected Programs", "Roles & Grants", "MFA Coverage", "Exfiltration Signals", "Data Lineage"
     ])
 
     # ── LOGIN AUDIT ───────────────────────────────────────────────────────────
@@ -1014,10 +1241,9 @@ def render():
         c1, c2 = st.columns(2)
         with c1:
             ips = st.session_state.get("sec_login_ips")
-            st.subheader("Top IPs")
             if ips is not None and not ips.empty:
                 st.caption(st.session_state.get("sec_login_posture_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
-                st.bar_chart(ips.set_index("CLIENT_IP")["LOGIN_EVENTS"])
+                render_ranked_bar_chart(ips, "CLIENT_IP", "LOGIN_EVENTS", title="Top IPs", top_n=20)
                 render_priority_dataframe(
                     ips,
                     title="Login IPs to review first",
@@ -1030,10 +1256,15 @@ def render():
                 download_csv(ips, "login_posture_ips.csv")
         with c2:
             clients = st.session_state.get("sec_login_clients")
-            st.subheader("Client Types / Versions")
             if clients is not None and not clients.empty:
                 st.caption(st.session_state.get("sec_login_posture_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
-                st.bar_chart(clients.set_index("REPORTED_CLIENT_TYPE")["LOGIN_EVENTS"])
+                render_ranked_bar_chart(
+                    clients,
+                    "REPORTED_CLIENT_TYPE",
+                    "LOGIN_EVENTS",
+                    title="Client Types / Versions",
+                    top_n=20,
+                )
                 render_priority_dataframe(
                     clients,
                     title="Client types and versions to review",
@@ -1073,9 +1304,8 @@ def render():
                 download_csv(factors, "login_posture_auth_factors.csv")
         with c4:
             errors = st.session_state.get("sec_login_errors")
-            st.subheader("Login Error Codes")
             if errors is not None and not errors.empty:
-                st.bar_chart(errors.set_index("ERROR_CODE")["EVENT_COUNT"])
+                render_ranked_bar_chart(errors, "ERROR_CODE", "EVENT_COUNT", title="Login Error Codes", top_n=20)
                 render_priority_dataframe(
                     errors,
                     title="Login error codes to investigate",
@@ -1087,7 +1317,145 @@ def render():
                 )
                 download_csv(errors, "login_posture_error_codes.csv")
 
-    # ── ROLES & GRANTS ────────────────────────────────────────────────────────
+    # Connected programs
+    with tab_programs:
+        st.header("Connected Programs")
+        program_days = st.slider("Program lookback (days)", 1, 90, 30, key="sec_connected_program_days")
+        if st.button("Load Connected Programs", key="sec_connected_programs_load"):
+            with st.spinner("Tracing connected programs..."):
+                try:
+                    for key, df in _load_connected_programs(session, company, program_days).items():
+                        st.session_state[key] = df
+                    st.session_state["sec_connected_program_source"] = "SESSIONS, LOGIN_HISTORY, and QUERY_HISTORY linkage"
+                except Exception as exc:
+                    st.session_state["sec_connected_program_source"] = "Unavailable"
+                    st.warning(f"Connected-program tracking unavailable: {format_snowflake_error(exc)}")
+                    st.session_state["sec_connected_session_programs"] = pd.DataFrame()
+                    st.session_state["sec_connected_login_programs"] = pd.DataFrame()
+                    st.session_state["sec_connected_query_programs"] = pd.DataFrame()
+
+        session_programs = st.session_state.get("sec_connected_session_programs")
+        query_programs = st.session_state.get("sec_connected_query_programs")
+        login_programs = st.session_state.get("sec_connected_login_programs")
+        if session_programs is not None or query_programs is not None or login_programs is not None:
+            st.caption(st.session_state.get("sec_connected_program_source", "SESSIONS, LOGIN_HISTORY, and QUERY_HISTORY linkage"))
+            combined_programs = []
+            if session_programs is not None and not session_programs.empty and "PROGRAM_NAME" in session_programs.columns:
+                combined_programs.append(session_programs[["PROGRAM_NAME"]])
+            if query_programs is not None and not query_programs.empty and "PROGRAM_NAME" in query_programs.columns:
+                combined_programs.append(query_programs[["PROGRAM_NAME"]])
+            if login_programs is not None and not login_programs.empty and "PROGRAM_NAME" in login_programs.columns:
+                combined_programs.append(login_programs[["PROGRAM_NAME"]])
+            distinct_programs = (
+                pd.concat(combined_programs, ignore_index=True)["PROGRAM_NAME"].nunique()
+                if combined_programs else 0
+            )
+            total_queries = (
+                safe_int(query_programs["QUERY_COUNT"].sum())
+                if query_programs is not None and not query_programs.empty and "QUERY_COUNT" in query_programs.columns else 0
+            )
+            total_logins = (
+                safe_int(login_programs["LOGIN_EVENTS"].sum())
+                if login_programs is not None and not login_programs.empty and "LOGIN_EVENTS" in login_programs.columns else 0
+            )
+            open_sessions = (
+                safe_int(session_programs["OPEN_SESSIONS"].sum())
+                if session_programs is not None and not session_programs.empty and "OPEN_SESSIONS" in session_programs.columns else 0
+            )
+            unknown_rows = 0
+            for df in (session_programs, query_programs, login_programs):
+                if df is not None and not df.empty and "CONTROL_STATUS" in df.columns:
+                    unknown_rows += safe_int((df["CONTROL_STATUS"] == "Needs owner").sum())
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Programs Seen", f"{distinct_programs:,}")
+            c2.metric("Open Sessions", f"{open_sessions:,}")
+            c3.metric("Query/Login Events", f"{total_queries:,} / {total_logins:,}")
+            c4.metric("Need Owner", f"{unknown_rows:,}", delta_color="inverse")
+
+        if session_programs is not None and not session_programs.empty:
+            st.subheader("Session Program Inventory")
+            render_priority_dataframe(
+                session_programs,
+                title="Connected session programs to govern first",
+                priority_columns=[
+                    "PROGRAM_NAME",
+                    "PROGRAM_VERSION",
+                    "CLIENT_BUILD",
+                    "SESSIONS",
+                    "OPEN_SESSIONS",
+                    "USERS",
+                    "AUTHENTICATION_METHODS",
+                    "CLIENT_ENVIRONMENTS",
+                    "LAST_SEEN",
+                    "CONTROL_STATUS",
+                    "NEXT_ACTION",
+                    "SOURCE_CONFIDENCE",
+                ],
+                sort_by=["OPEN_SESSIONS", "SESSIONS", "USERS"],
+                ascending=[False, False, False],
+                raw_label="All session program rows",
+                height=340,
+            )
+            download_csv(session_programs, "connected_program_sessions.csv")
+        elif session_programs is not None:
+            st.info("No session program inventory found for this scope.")
+
+        if query_programs is not None and not query_programs.empty:
+            st.subheader("Program Usage With Warehouse/Database Context")
+            render_priority_dataframe(
+                query_programs,
+                title="Connected programs to govern first",
+                priority_columns=[
+                    "PROGRAM_NAME",
+                    "PROGRAM_VERSION",
+                    "WAREHOUSE_NAME",
+                    "DATABASE_NAME",
+                    "QUERY_COUNT",
+                    "USERS",
+                    "ROLES",
+                    "FAILED_QUERIES",
+                    "CLIENT_GENERATED_QUERIES",
+                    "QUERY_TAGS",
+                    "CONTROL_STATUS",
+                    "NEXT_ACTION",
+                    "SOURCE_CONFIDENCE",
+                ],
+                sort_by=["QUERY_COUNT", "FAILED_QUERIES", "USERS"],
+                ascending=[False, False, False],
+                raw_label="All connected program usage rows",
+                height=360,
+            )
+            download_csv(query_programs, "connected_program_usage.csv")
+        elif query_programs is not None:
+            st.info("No query-linked connected programs found for this scope.")
+
+        if login_programs is not None and not login_programs.empty:
+            st.subheader("Login Client Inventory")
+            render_priority_dataframe(
+                login_programs,
+                title="Login clients to register or review",
+                priority_columns=[
+                    "PROGRAM_NAME",
+                    "PROGRAM_VERSION",
+                    "LOGIN_EVENTS",
+                    "USERS",
+                    "IPS",
+                    "FAILED_EVENTS",
+                    "LAST_SEEN",
+                    "CONTROL_STATUS",
+                    "NEXT_ACTION",
+                    "SOURCE_CONFIDENCE",
+                ],
+                sort_by=["LOGIN_EVENTS", "FAILED_EVENTS", "USERS"],
+                ascending=[False, False, False],
+                raw_label="All login client rows",
+                height=320,
+            )
+            download_csv(login_programs, "connected_program_login_clients.csv")
+        elif login_programs is not None:
+            st.info("No login client inventory found for this scope.")
+
+    # Roles & grants
     with tab_roles:
         st.header("🛡️ Roles & Grants")
         if st.button("Load Grants", key="grants_load"):

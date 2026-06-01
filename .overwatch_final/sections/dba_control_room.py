@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import streamlit as st
 
-from config import SECTION_BY_TITLE
+from config import SECTION_BY_TITLE, normalize_section_name
 from utils import (
     build_metered_credit_cte,
     build_task_failure_summary_sql,
@@ -56,24 +56,6 @@ from utils import (
     sql_literal,
     resolve_owner_context,
 )
-from sections.task_management import (
-    _build_task_ops_frames,
-    _extract_object_candidates,
-    _normalize_query_details,
-    _procedure_from_definition,
-    _query_detail_sql,
-)
-from sections.cortex_monitor import (
-    _build_cortex_control_sql,
-    _cortex_cost_rating,
-    _cortex_cost_score,
-)
-from sections.stored_proc_tracker import (
-    _build_procedure_sla_frames,
-    _build_procedure_sla_sql,
-    _procedure_run_estimated_credits,
-    _query_history_has_root_query_id,
-)
 from utils.workflows import render_operator_briefing, render_priority_dataframe
 
 DBA_CONTROL_SCOPE_FILTER_KEYS = (
@@ -86,10 +68,54 @@ DBA_CONTROL_SCOPE_FILTER_KEYS = (
 )
 
 
+def _task_management_helpers():
+    from sections.task_management import (
+        _build_task_ops_frames,
+        _extract_object_candidates,
+        _normalize_query_details,
+        _procedure_from_definition,
+        _query_detail_sql,
+    )
+
+    return (
+        _build_task_ops_frames,
+        _extract_object_candidates,
+        _normalize_query_details,
+        _procedure_from_definition,
+        _query_detail_sql,
+    )
+
+
+def _cortex_helpers():
+    from sections.cortex_monitor import (
+        _build_cortex_control_sql,
+        _cortex_cost_rating,
+        _cortex_cost_score,
+    )
+
+    return _build_cortex_control_sql, _cortex_cost_rating, _cortex_cost_score
+
+
+def _procedure_helpers():
+    from sections.stored_proc_tracker import (
+        _build_procedure_sla_frames,
+        _build_procedure_sla_sql,
+        _procedure_run_estimated_credits,
+        _query_history_has_root_query_id,
+    )
+
+    return (
+        _build_procedure_sla_frames,
+        _build_procedure_sla_sql,
+        _procedure_run_estimated_credits,
+        _query_history_has_root_query_id,
+    )
+
+
 def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = "") -> None:
     """Navigate to a registered section and carry useful filter context."""
-    target = SECTION_BY_TITLE.get(title)
-    if not target:
+    target = normalize_section_name(SECTION_BY_TITLE.get(title, title))
+    if target not in set(SECTION_BY_TITLE.values()):
         return
     st.session_state["nav_section"] = target
     if workflow:
@@ -549,6 +575,7 @@ def _compare_release_windows(
 
 
 def _prepare_task_release_runs(inventory: pd.DataFrame, history: pd.DataFrame, query_details: pd.DataFrame) -> pd.DataFrame:
+    _, _extract_object_candidates, _normalize_query_details, _procedure_from_definition, _ = _task_management_helpers()
     runs = history.copy() if history is not None else pd.DataFrame()
     if runs.empty:
         return runs
@@ -663,6 +690,8 @@ def _build_procedure_release_sql(session, company: str, start: date, end: date, 
 
 
 def _prepare_procedure_release_runs(runs: pd.DataFrame) -> pd.DataFrame:
+    _, _extract_object_candidates, _, _, _ = _task_management_helpers()
+    _, _, _procedure_run_estimated_credits, _ = _procedure_helpers()
     prepared = runs.copy() if runs is not None else pd.DataFrame()
     if prepared.empty:
         return prepared
@@ -688,6 +717,8 @@ def _load_release_compare(
     credit_pct_threshold: float,
     credit_delta_threshold: float,
 ) -> dict:
+    _, _, _, _, _query_detail_sql = _task_management_helpers()
+    _, _, _, _query_history_has_root_query_id = _procedure_helpers()
     task_inventory = load_task_inventory(session, company, force_refresh=True)
 
     def load_task_window(label: str, start: date, end: date) -> pd.DataFrame:
@@ -841,6 +872,9 @@ def _load_control_room(
     include_deep_evidence: bool = False,
     allow_live_fallback: bool = False,
 ) -> dict:
+    _build_task_ops_frames, _, _, _, _query_detail_sql = _task_management_helpers()
+    _build_procedure_sla_frames, _build_procedure_sla_sql, _, _query_history_has_root_query_id = _procedure_helpers()
+    _build_cortex_control_sql, _, _ = _cortex_helpers()
     wh_q = get_wh_filter_clause("q.warehouse_name", company)
     wh_m = get_wh_filter_clause("warehouse_name", company)
     db_q = get_db_filter_clause("q.database_name", company)
@@ -1232,6 +1266,7 @@ def _load_control_room(
 
 
 def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
+    _, _cortex_cost_rating, _cortex_cost_score = _cortex_helpers()
     summary = data.get("summary", _empty_df())
     credits = data.get("credits", _empty_df())
     wh = data.get("warehouse_pressure", _empty_df())

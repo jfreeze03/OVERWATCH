@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import html
 import inspect
+from importlib import import_module
 from collections.abc import Mapping, Sequence
 
 import streamlit as st
@@ -11,7 +12,7 @@ import streamlit as st
 from .cost import freshness_note, metric_confidence_label
 
 
-WORKFLOWS_VERSION = "2026-05-31-compact-workflow-ui-v1"
+WORKFLOWS_VERSION = "2026-06-01-compact-workflow-ui-v2"
 
 
 def coerce_workflow_state(key: str, workflows: Sequence[str]) -> str:
@@ -31,15 +32,16 @@ def render_workflow_selector(
     workflows: Sequence[str],
     details: Mapping[str, str] | None = None,
     *,
-    columns: int = 3,
+    columns: int = 4,
+    show_label: bool = False,
 ) -> str:
     """Render a compact workflow launcher that honors deep-link state."""
     selected = coerce_workflow_state(key, workflows)
     details = details or {}
-    if label:
+    if label and show_label:
         st.caption(label)
     items = list(workflows)
-    columns = max(1, min(int(columns or 3), 4))
+    columns = max(1, min(int(columns or 4), 5))
     for start in range(0, len(items), columns):
         row = items[start:start + columns]
         cols = st.columns(len(row))
@@ -56,6 +58,37 @@ def render_workflow_selector(
                     st.session_state[key] = workflow
                     st.rerun()
     return str(st.session_state.get(key, selected))
+
+
+def migrate_legacy_workflow_state(
+    legacy_key: str,
+    target_key: str,
+    mapping: Mapping[str, str],
+    *,
+    remove_legacy: bool = True,
+) -> None:
+    """Move one old workflow key into a consolidated workflow state key."""
+    if remove_legacy:
+        legacy_value = st.session_state.pop(legacy_key, None)
+    else:
+        legacy_value = st.session_state.get(legacy_key)
+    mapped = mapping.get(str(legacy_value or ""))
+    if mapped:
+        st.session_state[target_key] = mapped
+
+
+def render_workflow_module(workflow: str, workflow_modules: Mapping[str, str]) -> None:
+    """Import and render only the specialist module selected by a workflow hub."""
+    module_name = workflow_modules.get(str(workflow))
+    if not module_name:
+        st.warning(f"No module registered for workflow: {workflow}")
+        return
+    module = import_module(module_name)
+    render = getattr(module, "render", None)
+    if not callable(render):
+        st.warning(f"Workflow module has no render() function: {module_name}")
+        return
+    render()
 
 
 def render_workflow_guide(summary: str, rows: Sequence[tuple[str, str]]) -> None:

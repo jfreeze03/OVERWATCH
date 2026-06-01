@@ -20,7 +20,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
 
-THEME_VERSION = "2026-05-31-compact-workflow-ui-v2"
+THEME_VERSION = "2026-06-01-compact-workflow-ui-v3"
 
 _DEFAULT_THEME = "midnight"
 _THEME_ALIASES = {
@@ -432,12 +432,17 @@ p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
     border-radius: 7px !important;
     font-weight: 600;
     font-family: var(--font-body) !important;
+    min-height: 2.15rem;
+    padding: 0.32rem 0.58rem;
     transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
     backdrop-filter: blur(8px);
 }
 .stButton > button p {
     color: inherit !important;
-    white-space: nowrap !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    line-height: 1.15 !important;
+    font-size: 0.82rem !important;
 }
 .stButton > button:hover {
     background: var(--btn-bg-hover) !important;
@@ -631,6 +636,11 @@ code, pre, .stCodeBlock {
     font-size: 0.84rem !important;
     font-weight: 760 !important;
     box-shadow: none !important;
+}
+[data-testid="stSidebar"] .stButton > button p {
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    font-size: 0.84rem !important;
 }
 [data-testid="stSidebar"] .stButton > button[kind="primary"] {
     background: rgba(var(--accent-rgb), 0.17) !important;

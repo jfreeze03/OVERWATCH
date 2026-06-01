@@ -15,6 +15,7 @@ from utils import (
     get_session,
     format_snowflake_error,
     render_drillable_bar_chart,
+    render_ranked_bar_chart,
     run_query,
     safe_float,
 )
@@ -54,7 +55,17 @@ def _load_adoption_live(session, days: int) -> dict:
     qh_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        ["WAREHOUSE_SIZE", "ERROR_CODE", "QUERY_TAG"],
+        ["WAREHOUSE_SIZE", "ERROR_CODE", "QUERY_TAG", "SESSION_ID", "AUTHN_EVENT_ID"],
+    ))
+    session_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.SESSIONS",
+        ["SESSION_ID", "CREATED_ON", "CLIENT_APPLICATION_ID", "CLIENT_APPLICATION_VERSION", "CLIENT_VERSION"],
+    ))
+    login_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY",
+        ["EVENT_ID", "REPORTED_CLIENT_TYPE", "REPORTED_CLIENT_VERSION"],
     ))
     warehouse_size_expr = (
         "COALESCE(q.warehouse_size, 'UNKNOWN')"
@@ -65,10 +76,52 @@ def _load_adoption_live(session, days: int) -> dict:
         if "ERROR_CODE" in qh_cols
         else "SUM(IFF(UPPER(q.execution_status) = 'FAILED_WITH_ERROR', 1, 0))"
     )
-    client_application_expr = (
-        "COALESCE(q.query_tag, 'UNTAGGED')"
-        if "QUERY_TAG" in qh_cols else "'UNTAGGED'"
+    session_version_candidates = []
+    if "CLIENT_APPLICATION_VERSION" in session_cols:
+        session_version_candidates.append("TO_VARCHAR(l.client_application_version)")
+    if "CLIENT_VERSION" in session_cols:
+        session_version_candidates.append("TO_VARCHAR(l.client_version)")
+    session_version_expr = (
+        f"COALESCE({', '.join(session_version_candidates)}, 'UNKNOWN')"
+        if session_version_candidates else "'UNKNOWN'"
     )
+    can_join_sessions = "SESSION_ID" in qh_cols and "SESSION_ID" in session_cols
+    can_join_login = "AUTHN_EVENT_ID" in qh_cols and "EVENT_ID" in login_cols
+    if can_join_sessions:
+        client_application_expr = (
+            "COALESCE(TO_VARCHAR(l.client_application_id), 'UNKNOWN')"
+            if "CLIENT_APPLICATION_ID" in session_cols else "'UNKNOWN'"
+        )
+        client_version_expr = session_version_expr
+        client_join = f"""
+            LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.SESSIONS l
+              ON q.session_id = l.session_id
+             AND l.created_on >= DATEADD('day', -{min(365, int(days) + 14)}, CURRENT_TIMESTAMP())
+        """
+        client_source_expr = "'QUERY_HISTORY session_id to SESSIONS client metadata'"
+    elif can_join_login:
+        client_application_expr = (
+            "COALESCE(TO_VARCHAR(l.reported_client_type), 'UNKNOWN')"
+            if "REPORTED_CLIENT_TYPE" in login_cols else "'UNKNOWN'"
+        )
+        client_version_expr = (
+            "COALESCE(TO_VARCHAR(l.reported_client_version), 'UNKNOWN')"
+            if "REPORTED_CLIENT_VERSION" in login_cols else "'UNKNOWN'"
+        )
+        client_join = f"""
+            LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY l
+              ON q.authn_event_id = l.event_id
+             AND l.event_timestamp >= DATEADD('day', -{min(365, int(days) + 14)}, CURRENT_TIMESTAMP())
+        """
+        client_source_expr = "'AUTHN_EVENT_ID to LOGIN_HISTORY reported client'"
+    else:
+        client_application_expr = (
+            "COALESCE(NULLIF(TO_VARCHAR(q.query_tag), ''), 'UNTAGGED')"
+            if "QUERY_TAG" in qh_cols else "'UNKNOWN'"
+        )
+        client_version_expr = "'UNKNOWN'"
+        client_join = ""
+        client_source_expr = "'QUERY_TAG fallback; not exact connected-program identity'"
 
     summary = run_query(f"""
         SELECT
@@ -161,14 +214,17 @@ def _load_adoption_live(session, days: int) -> dict:
     applications = run_query(f"""
         SELECT
             {client_application_expr} AS client_application,
+            {client_version_expr} AS client_version,
             COUNT(*) AS query_count,
             COUNT(DISTINCT q.user_name) AS users,
-            ROUND(100 * {error_count_expr} / NULLIF(COUNT(*), 0), 1) AS error_rate
+            ROUND(100 * {error_count_expr} / NULLIF(COUNT(*), 0), 1) AS error_rate,
+            {client_source_expr} AS source_confidence
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        {client_join}
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
-        GROUP BY client_application
+        GROUP BY client_application, client_version, source_confidence
         ORDER BY query_count DESC
         LIMIT 30
     """, ttl_key=f"aa_applications_{company}_{days}", tier="historical")
@@ -252,8 +308,13 @@ def render():
 
         size_df = data["warehouse_size"]
         if not size_df.empty:
-            st.subheader("Queries By Warehouse Size")
-            st.bar_chart(size_df.set_index("WAREHOUSE_SIZE")["QUERY_COUNT"], use_container_width=True)
+            render_ranked_bar_chart(
+                size_df,
+                "WAREHOUSE_SIZE",
+                "QUERY_COUNT",
+                title="Queries By Warehouse Size",
+                top_n=12,
+            )
 
     with tab_wh:
         render_drillable_bar_chart(data["users_wh"], "WAREHOUSE_NAME", "USERS", "aa_users_wh", "Users Per Warehouse", "warehouse_name", 24 * min(days, 14), 20)
@@ -280,17 +341,17 @@ def render():
             )
             download_csv(role, "adoption_role_query_type.csv")
         with c2:
-            st.subheader("Top Query Tags")
+            st.subheader("Connected Programs")
             if apps is None:
-                st.info("Query-tag adoption is intentionally deferred in mart mode. Use History Search when you need exact query-tag evidence.")
+                st.info("Program adoption is deferred in mart mode. Use Connected Programs in Security Access for full client evidence.")
             elif not apps.empty:
                 alt = _altair()
                 chart = alt.Chart(apps).mark_bar().encode(
                     x=alt.X("QUERY_COUNT:Q", title="Queries"),
                     y=alt.Y("CLIENT_APPLICATION:N", sort="-x", title=None),
-                    tooltip=["CLIENT_APPLICATION", "QUERY_COUNT", "USERS", "ERROR_RATE"],
+                    tooltip=["CLIENT_APPLICATION", "CLIENT_VERSION", "QUERY_COUNT", "USERS", "ERROR_RATE", "SOURCE_CONFIDENCE"],
                     color=alt.value("#c084fc"),
                 ).properties(height=360)
                 st.altair_chart(chart, use_container_width=True)
             if apps is not None:
-                download_csv(apps, "adoption_query_tags.csv")
+                download_csv(apps, "adoption_connected_programs.csv")

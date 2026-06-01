@@ -19,6 +19,7 @@ from utils import (
     build_mart_chargeback_sql, load_mart_table, mart_source_caption,
     filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown, render_priority_dataframe,
+    render_ranked_bar_chart,
     make_action_id, upsert_actions,
     run_query, sql_literal, format_snowflake_error,
     resolve_owner_context,
@@ -2004,7 +2005,19 @@ def render():
                 f"{freshness_note('WAREHOUSE_METERING_HISTORY')}"
             )
             if "RECONCILIATION_STATUS" in df_r.columns:
-                st.bar_chart(df_r["RECONCILIATION_STATUS"].value_counts())
+                status_counts = (
+                    df_r["RECONCILIATION_STATUS"]
+                    .value_counts()
+                    .rename_axis("RECONCILIATION_STATUS")
+                    .reset_index(name="WAREHOUSE_COUNT")
+                )
+                render_ranked_bar_chart(
+                    status_counts,
+                    "RECONCILIATION_STATUS",
+                    "WAREHOUSE_COUNT",
+                    title="Reconciliation Status",
+                    top_n=10,
+                )
             render_priority_dataframe(
                 df_r,
                 title="Reconciliation variances to review",
@@ -2635,5 +2648,11 @@ def render():
                         ascending=[False, False],
                         raw_label="All service-type rows",
                     )
-                    st.bar_chart(df_sv.set_index("SERVICE_TYPE")["TOTAL_CREDITS"])
+                    render_ranked_bar_chart(
+                        df_sv,
+                        "SERVICE_TYPE",
+                        "TOTAL_CREDITS",
+                        title="Contract Consumption By Service",
+                        top_n=12,
+                    )
                     download_csv(df_sv, "contract_by_service_type.csv")

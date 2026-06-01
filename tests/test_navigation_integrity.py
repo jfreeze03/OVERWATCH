@@ -19,6 +19,8 @@ from config import (  # noqa: E402
     SECTION_BY_TITLE,
     SECTION_DEFINITIONS,
     SECTION_MODULES,
+    SECTION_REDIRECTS,
+    normalize_section_name,
 )
 from utils.section_guidance import (  # noqa: E402
     CONFIDENCE_BANDS,
@@ -66,12 +68,20 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertTrue(sections)
                 self.assertLessEqual(set(sections), set(ALL_SECTIONS))
 
+        self.assertEqual(set(SECTION_BY_TITLE), set(ALL_SECTIONS))
         self.assertLessEqual(set(SECTION_ALIASES.values()), set(ALL_SECTIONS))
+        self.assertLessEqual(set(SECTION_REDIRECTS.values()), set(ALL_SECTIONS))
+        for alias, target in SECTION_REDIRECTS.items():
+            with self.subTest(alias=alias):
+                self.assertEqual(SECTION_ALIASES[alias], target)
+                self.assertEqual(normalize_section_name(alias), target)
+                self.assertNotIn(alias, SECTION_BY_TITLE)
         self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Posture"])
         self.assertEqual(SECTION_ALIASES["DBA Tools"], SECTION_BY_TITLE["Change & Drift"])
         self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Warehouse Health"])
+        self.assertNotIn("LEGACY_SECTION_ALIASES", (APP_ROOT / "config.py").read_text(encoding="utf-8"))
 
     def test_section_alias_literal_has_no_duplicate_keys(self):
         config_tree = ast.parse((APP_ROOT / "config.py").read_text(encoding="utf-8"))
@@ -134,13 +144,51 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Query diagnosis", workload_operations.WORKFLOWS)
         self.assertIn("Task graphs", workload_operations.WORKFLOWS)
         self.assertIn("Stored procedures", workload_operations.WORKFLOWS)
+        self.assertEqual(workload_operations.WORKFLOW_MODULES["Task graphs"], "sections.task_management")
         self.assertIn("Recommendations and action queue", cost_contract.WORKFLOWS)
+        self.assertEqual(cost_contract.WORKFLOW_MODULES["AI and Cortex spend"], "sections.cortex_monitor")
         self.assertEqual(SECTION_ALIASES["Alerts"], SECTION_BY_TITLE["Alert Center"])
         self.assertIn("Access posture", security_posture.WORKFLOWS)
+        self.assertEqual(security_posture.WORKFLOW_MODULES["Access posture"], "sections.security_access")
         self.assertIn("Schema and object drift", change_drift.WORKFLOWS)
         self.assertIn("Data movement and replication", change_drift.WORKFLOWS)
         self.assertIn("Controlled DBA actions", change_drift.WORKFLOWS)
+        self.assertEqual(change_drift.WORKFLOW_MODULES["Controlled DBA actions"], "sections.dba_tools")
         self.assertEqual(change_drift.WORKFLOWS[-1], "Controlled DBA actions")
+
+    def test_workflow_hubs_lazy_load_specialist_modules(self):
+        hub_files = {
+            "workload_operations.py": [
+                "from sections import",
+                "live_monitor.render()",
+                "task_management.render()",
+                "query_search.render()",
+            ],
+            "cost_contract.py": [
+                "from sections import",
+                "cost_center.render()",
+                "recommendations.render()",
+                "cortex_monitor.render()",
+            ],
+            "security_posture.py": [
+                "from sections import",
+                "security_access.render()",
+                "data_sharing.render()",
+            ],
+            "change_drift.py": [
+                "from sections import",
+                "object_change_monitor.render()",
+                "stored_proc_tracker.render()",
+                "dba_tools.render()",
+            ],
+        }
+        for file_name, removed_patterns in hub_files.items():
+            text = (APP_ROOT / "sections" / file_name).read_text(encoding="utf-8")
+            with self.subTest(file_name=file_name):
+                self.assertIn("WORKFLOW_MODULES", text)
+                self.assertIn("render_workflow_module(", text)
+                for pattern in removed_patterns:
+                    self.assertNotIn(pattern, text)
 
     def test_navigation_labels_are_plain_titles(self):
         for section in ALL_SECTIONS:
@@ -304,6 +352,20 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Full detail rendering is deferred", workflows_text)
         self.assertIn('st.button("Render full detail"', workflows_text)
         self.assertIn("grid_df = df.head(1000)", display_text)
+        self.assertIn("def render_ranked_bar_chart", display_text)
+        self.assertIn("sort=alt.SortField(field=measure, order=\"descending\")", display_text)
+        self.assertIn("y=alt.Y(", display_text)
+
+    def test_ranked_chart_frame_orders_metrics_descending(self):
+        from utils.display import rank_chart_frame
+
+        df = pd.DataFrame({
+            "NAME": ["Small", "Large", "Small", "Medium"],
+            "VALUE": [2, 9, 3, 5],
+        })
+        ranked = rank_chart_frame(df, "NAME", "VALUE", top_n=3)
+        self.assertEqual(ranked["NAME"].tolist(), ["Large", "Small", "Medium"])
+        self.assertEqual(ranked["VALUE"].tolist(), [9, 5, 5])
 
     def test_workflow_helpers_keep_landing_pages_compact(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -396,6 +458,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("from .mart import", utils_text)
         self.assertIn('"environment_label_for_database"', utils_text)
         self.assertIn('"get_environment_filter_or_no_database_clause"', utils_text)
+        self.assertIn('"render_workflow_module"', utils_text)
+        self.assertIn('"migrate_legacy_workflow_state"', utils_text)
+        self.assertIn('"render_ranked_bar_chart"', utils_text)
+        self.assertIn('"rank_chart_frame"', utils_text)
 
     def test_dead_ui_helpers_stay_removed(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")

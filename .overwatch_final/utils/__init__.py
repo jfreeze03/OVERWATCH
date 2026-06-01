@@ -9,6 +9,9 @@ from __future__ import annotations
 from importlib import import_module
 
 
+UTILS_EXPORT_VERSION = "2026-06-01-ranked-chart-exports-v1"
+
+
 _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "session": (
         "get_session",
@@ -55,6 +58,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "display": (
         "render_query_drilldown", "render_warehouse_drilldown",
         "render_drillable_bar_chart", "render_entity_query_drilldown",
+        "rank_chart_frame", "render_ranked_bar_chart",
     ),
     "company_filter": (
         "get_active_company", "get_db_filter_clause", "get_wh_filter_clause",
@@ -162,6 +166,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "workflows": (
         "coerce_workflow_state", "render_workflow_selector", "render_workflow_guide",
         "render_signal_confidence", "add_signal_routes", "render_priority_dataframe",
+        "migrate_legacy_workflow_state", "render_workflow_module",
     ),
     "compatibility": (
         "run_compatibility_checks", "get_available_columns", "view_supports_columns",
@@ -178,7 +183,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "ask_overwatch": (
         "answer_ask_overwatch", "build_ask_overwatch_context",
-        "build_grounded_cortex_prompt",
+        "build_grounded_cortex_prompt", "snapshot_ask_overwatch_state",
     ),
 }
 

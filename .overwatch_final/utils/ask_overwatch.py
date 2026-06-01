@@ -19,6 +19,28 @@ SEVERITY_RANK = {
     "INFO": 5,
 }
 
+ASK_OVERWATCH_STATE_KEYS = (
+    "rec_recommendations",
+    "rec_action_queue",
+    "cost_contract_queue",
+    "alert_center_data",
+    "dba_control_room_data",
+    "dba_control_room_incident_board",
+    "dba_control_room_handoff",
+)
+
+
+def snapshot_ask_overwatch_state(state: Mapping) -> dict:
+    """Return only the loaded evidence surfaces Ask OVERWATCH reads."""
+    snapshot: dict = {}
+    for key in ASK_OVERWATCH_STATE_KEYS:
+        try:
+            if key in state:
+                snapshot[key] = state.get(key)
+        except Exception:
+            continue
+    return snapshot
+
 
 def _is_df(value: object) -> bool:
     return isinstance(value, pd.DataFrame) and not value.empty

@@ -3,18 +3,11 @@ from __future__ import annotations
 
 import streamlit as st
 
-from sections import (
-    detailed_diagnosis,
-    live_monitor,
-    pipeline_health,
-    query_analysis,
-    query_search,
-    stored_proc_tracker,
-    task_management,
-)
 from utils.workflows import (
+    migrate_legacy_workflow_state,
     render_operator_briefing,
     render_signal_confidence,
+    render_workflow_module,
     render_workflow_guide,
     render_workflow_selector,
 )
@@ -38,21 +31,32 @@ WORKFLOW_DETAILS = {
     "History search": "Find one query, user, warehouse, task, or incident trail.",
 }
 
+WORKFLOW_MODULES = {
+    "Live triage": "sections.live_monitor",
+    "Root cause patterns": "sections.query_analysis",
+    "Detailed diagnosis": "sections.detailed_diagnosis",
+    "Task graphs": "sections.task_management",
+    "Stored procedures": "sections.stored_proc_tracker",
+    "Pipeline health": "sections.pipeline_health",
+    "History search": "sections.query_search",
+}
+
+LEGACY_WORKFLOW_MAP = {
+    "Diagnosis": "Query diagnosis",
+    "History Search": "History search",
+    "Live Triage": "Live triage",
+    "Patterns": "Query diagnosis",
+}
+
 
 def render() -> None:
     if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
         st.session_state["workload_operations_workflow"] = "Live triage"
-
-    # Honor older deep links from the prior Query Workbench shell.
-    legacy = st.session_state.pop("query_workbench_workflow", None)
-    if legacy == "Diagnosis":
-        st.session_state["workload_operations_workflow"] = "Query diagnosis"
-    elif legacy == "History Search":
-        st.session_state["workload_operations_workflow"] = "History search"
-    elif legacy == "Live Triage":
-        st.session_state["workload_operations_workflow"] = "Live triage"
-    elif legacy == "Patterns":
-        st.session_state["workload_operations_workflow"] = "Query diagnosis"
+    migrate_legacy_workflow_state(
+        "query_workbench_workflow",
+        "workload_operations_workflow",
+        LEGACY_WORKFLOW_MAP,
+    )
 
     render_signal_confidence(
         source="ACCOUNT_USAGE",
@@ -87,10 +91,11 @@ def render() -> None:
         "workload_operations_workflow",
         WORKFLOWS,
         WORKFLOW_DETAILS,
+        columns=3,
     )
 
     if workflow == "Live triage":
-        live_monitor.render()
+        render_workflow_module(workflow, WORKFLOW_MODULES)
     elif workflow == "Query diagnosis":
         mode = st.radio(
             "Diagnosis mode",
@@ -100,14 +105,8 @@ def render() -> None:
             key="workload_query_diagnosis_mode",
         )
         if mode == "Root cause patterns":
-            query_analysis.render()
+            render_workflow_module(mode, WORKFLOW_MODULES)
         else:
-            detailed_diagnosis.render()
-    elif workflow == "Task graphs":
-        task_management.render()
-    elif workflow == "Stored procedures":
-        stored_proc_tracker.render()
-    elif workflow == "Pipeline health":
-        pipeline_health.render()
+            render_workflow_module(mode, WORKFLOW_MODULES)
     else:
-        query_search.render()
+        render_workflow_module(workflow, WORKFLOW_MODULES)

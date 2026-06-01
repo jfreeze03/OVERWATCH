@@ -11,6 +11,7 @@ from utils import (
     credits_to_dollars,
     download_csv,
     metric_confidence_label,
+    render_ranked_bar_chart,
     run_query,
     safe_float,
     safe_identifier,
@@ -136,7 +137,13 @@ def render():
                     "Runtime cost uses metered OVERWATCH-tagged queries, Streamlit warehouses, Cortex, and alert-task activity. No fixed 24x7 warehouse fallback is applied.",
                 ])
             )
-            st.bar_chart(df_summary.set_index("CATEGORY")["MONTHLY_DOLLAR_SAVINGS"])
+            render_ranked_bar_chart(
+                df_summary,
+                "CATEGORY",
+                "MONTHLY_DOLLAR_SAVINGS",
+                title="Value By Category",
+                top_n=20,
+            )
             render_priority_dataframe(
                 df_summary,
                 title="Value categories by monthly savings",

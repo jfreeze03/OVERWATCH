@@ -868,7 +868,7 @@ def _mart_database_filter(column: str = "DATABASE_NAME", value: str = "", compan
     )
 
 
-def _mart_window_filter(column: str, days_back: int, start_date: object = None, end_date: object = None) -> str:
+def _mart_window_condition(column: str, days_back: int, start_date: object = None, end_date: object = None) -> str:
     clauses = [f"{column} >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())"]
     if start_date:
         clauses.append(f"{column} >= TO_TIMESTAMP_NTZ({sql_literal(str(start_date) + ' 00:00:00', 40)})")
@@ -876,7 +876,11 @@ def _mart_window_filter(column: str, days_back: int, start_date: object = None, 
         clauses.append(
             f"{column} < DATEADD('DAY', 1, TO_TIMESTAMP_NTZ({sql_literal(str(end_date) + ' 00:00:00', 40)}))"
         )
-    return "AND " + " AND ".join(clauses)
+    return " AND ".join(clauses)
+
+
+def _mart_window_filter(column: str, days_back: int, start_date: object = None, end_date: object = None) -> str:
+    return "AND " + _mart_window_condition(column, days_back, start_date, end_date)
 
 
 def build_mart_warehouse_overview_sql(
@@ -1052,15 +1056,15 @@ def build_mart_usage_metering_sql(
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter = _mart_company_filter(company)
     wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
-    current_window = _mart_window_filter("HOUR_START", days_back, start_date, end_date)
+    current_window = _mart_window_condition("HOUR_START", days_back, start_date, end_date)
     prior_start = f"DATEADD('DAY', -{int(days_back) * 2}, CURRENT_TIMESTAMP())"
     prior_end = f"DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())"
     return f"""
         SELECT
-            ROUND(SUM(IFF({current_window.replace('AND ', '', 1)}, COALESCE(credits_used, 0), 0)), 4) AS total_credits,
+            ROUND(SUM(IFF({current_window}, COALESCE(credits_used, 0), 0)), 4) AS total_credits,
             ROUND(SUM(IFF(HOUR_START >= {prior_start} AND HOUR_START < {prior_end}, COALESCE(credits_used, 0), 0)), 4) AS prior_credits,
-            ROUND(SUM(IFF({current_window.replace('AND ', '', 1)}, COALESCE(credits_used_compute, 0), 0)), 4) AS compute_credits,
-            ROUND(SUM(IFF({current_window.replace('AND ', '', 1)}, COALESCE(credits_used_cloud_services, 0), 0)), 4) AS warehouse_cloud_credits
+            ROUND(SUM(IFF({current_window}, COALESCE(credits_used_compute, 0), 0)), 4) AS compute_credits,
+            ROUND(SUM(IFF({current_window}, COALESCE(credits_used_cloud_services, 0), 0)), 4) AS warehouse_cloud_credits
         FROM {table}
         WHERE HOUR_START >= {prior_start}
           {company_filter}

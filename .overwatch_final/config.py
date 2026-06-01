@@ -8,6 +8,9 @@ cost defaults should stay here instead of being repeated in section modules.
 from dataclasses import dataclass
 
 
+CONFIG_VERSION = "2026-06-01-nav-redirects-v1"
+
+
 DEFAULTS = {
     # Keep aligned with OVERWATCH_SETTINGS.CREDIT_PRICE_USD in the mart setup SQL.
     "credit_price": 3.68,
@@ -146,8 +149,9 @@ class SectionDefinition:
         return self.title
 
 
-# Mission Control navigation: the original individual modules remain importable
-# through aliases/workflow hubs, but the app shell exposes only DBA workflows.
+# Mission Control navigation exposes only the current DBA workflow architecture.
+# Retired standalone pages are handled by redirect aliases below so saved views
+# and old bookmarks keep working without making legacy names first-class routes.
 SECTION_DEFINITIONS = (
     SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room"),
     SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center"),
@@ -165,70 +169,49 @@ for _section in SECTION_DEFINITIONS:
 
 ALL_SECTIONS = [_section.label for _section in SECTION_DEFINITIONS]
 SECTION_MODULES = {_section.label: _section.module for _section in SECTION_DEFINITIONS}
-SECTION_BY_TITLE = {_section.title: _section.label for _section in SECTION_DEFINITIONS}
-SECTION_BY_TITLE.update({
-    "Query Workbench": SECTION_BY_TITLE["Workload Operations"],
-    "Live Monitor": SECTION_BY_TITLE["Workload Operations"],
-    "Detailed Diagnosis": SECTION_BY_TITLE["Workload Operations"],
-    "Query Analysis": SECTION_BY_TITLE["Workload Operations"],
-    "Query Search & History": SECTION_BY_TITLE["Workload Operations"],
-    "Task Management": SECTION_BY_TITLE["Workload Operations"],
-    "Pipeline Health": SECTION_BY_TITLE["Workload Operations"],
-    "Stored Proc Tracker": SECTION_BY_TITLE["Workload Operations"],
-    "Cost Center": SECTION_BY_TITLE["Cost & Contract"],
-    "Credit Contract": SECTION_BY_TITLE["Cost & Contract"],
-    "Recommendations & Anomalies": SECTION_BY_TITLE["Cost & Contract"],
-    "Snowflake Value": SECTION_BY_TITLE["Cost & Contract"],
-    "AI & Cortex Monitor": SECTION_BY_TITLE["Cost & Contract"],
-    "SPCS Tracker": SECTION_BY_TITLE["Cost & Contract"],
-    "Usage Overview": SECTION_BY_TITLE["DBA Control Room"],
-    "Alerts": SECTION_BY_TITLE["Alert Center"],
-    "Alert History": SECTION_BY_TITLE["Alert Center"],
-    "Alert Configuration": SECTION_BY_TITLE["Alert Center"],
-    "Adoption Analytics": SECTION_BY_TITLE["Security Posture"],
-    "Service Health": SECTION_BY_TITLE["DBA Control Room"],
-    "Storage Monitor": SECTION_BY_TITLE["Cost & Contract"],
-    "Platform Topology": SECTION_BY_TITLE["Change & Drift"],
-    "Security & Access": SECTION_BY_TITLE["Security Posture"],
-    "Data Sharing": SECTION_BY_TITLE["Security Posture"],
-    "Who Changed What?": SECTION_BY_TITLE["Change & Drift"],
-    "DBA Tools": SECTION_BY_TITLE["Change & Drift"],
-})
+_CANONICAL_SECTION_BY_TITLE = {_section.title: _section.label for _section in SECTION_DEFINITIONS}
+SECTION_REDIRECTS = {
+    "Query Workbench": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Live Monitor": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Detailed Diagnosis": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Query Analysis": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Query Search & History": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Task Management": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Pipeline Health": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Stored Proc Tracker": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
+    "Cost Center": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Credit Contract": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Recommendations & Anomalies": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Snowflake Value": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "AI & Cortex Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "SPCS Tracker": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Usage Overview": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
+    "Service Health": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
+    "Alerts": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
+    "Alert History": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
+    "Alert Configuration": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
+    "Adoption Analytics": _CANONICAL_SECTION_BY_TITLE["Security Posture"],
+    "Storage Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Platform Topology": _CANONICAL_SECTION_BY_TITLE["Change & Drift"],
+    "Security & Access": _CANONICAL_SECTION_BY_TITLE["Security Posture"],
+    "Data Sharing": _CANONICAL_SECTION_BY_TITLE["Security Posture"],
+    "Who Changed What?": _CANONICAL_SECTION_BY_TITLE["Change & Drift"],
+    "DBA Tools": _CANONICAL_SECTION_BY_TITLE["Change & Drift"],
+    "Command Center": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
+    "Optimization": _CANONICAL_SECTION_BY_TITLE["Warehouse Health"],
+}
+SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)
 SECTION_ICONS = {_section.title: _section.icon for _section in SECTION_DEFINITIONS}
 
 SECTION_ALIASES = {
-    "DBA Control Room": SECTION_BY_TITLE["DBA Control Room"],
-    "Command Center": SECTION_BY_TITLE["DBA Control Room"],
-    "Alert Center": SECTION_BY_TITLE["Alert Center"],
-    "Alerts": SECTION_BY_TITLE["Alert Center"],
-    "Alert History": SECTION_BY_TITLE["Alert Center"],
-    "Alert Configuration": SECTION_BY_TITLE["Alert Center"],
-    "Account Health": SECTION_BY_TITLE["Account Health"],
-    "Query Workbench": SECTION_BY_TITLE["Workload Operations"],
-    "Live Monitor": SECTION_BY_TITLE["Workload Operations"],
-    "Detailed Diagnosis": SECTION_BY_TITLE["Workload Operations"],
-    "Query Analysis": SECTION_BY_TITLE["Workload Operations"],
-    "Query Search & History": SECTION_BY_TITLE["Workload Operations"],
-    "Task Management": SECTION_BY_TITLE["Workload Operations"],
-    "Pipeline Health": SECTION_BY_TITLE["Workload Operations"],
-    "Stored Proc Tracker": SECTION_BY_TITLE["Workload Operations"],
-    "Usage Overview": SECTION_BY_TITLE["DBA Control Room"],
-    "Service Health": SECTION_BY_TITLE["DBA Control Room"],
-    "Adoption Analytics": SECTION_BY_TITLE["Security Posture"],
-    "Cost Center": SECTION_BY_TITLE["Cost & Contract"],
-    "Credit Contract": SECTION_BY_TITLE["Cost & Contract"],
-    "Recommendations & Anomalies": SECTION_BY_TITLE["Cost & Contract"],
-    "Snowflake Value": SECTION_BY_TITLE["Cost & Contract"],
-    "AI & Cortex Monitor": SECTION_BY_TITLE["Cost & Contract"],
-    "SPCS Tracker": SECTION_BY_TITLE["Cost & Contract"],
-    "Storage Monitor": SECTION_BY_TITLE["Cost & Contract"],
-    "Platform Topology": SECTION_BY_TITLE["Change & Drift"],
-    "Security & Access": SECTION_BY_TITLE["Security Posture"],
-    "Data Sharing": SECTION_BY_TITLE["Security Posture"],
-    "Who Changed What?": SECTION_BY_TITLE["Change & Drift"],
-    "DBA Tools": SECTION_BY_TITLE["Change & Drift"],
-    "Optimization": SECTION_BY_TITLE["Warehouse Health"],
+    **_CANONICAL_SECTION_BY_TITLE,
+    **SECTION_REDIRECTS,
 }
+
+
+def normalize_section_name(section: str) -> str:
+    """Return the current canonical section name for a route, bookmark, or alias."""
+    return SECTION_ALIASES.get(str(section or "").strip(), str(section or "").strip())
 
 
 def _sections_by_title(*titles: str) -> list[str]:

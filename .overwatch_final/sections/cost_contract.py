@@ -3,14 +3,6 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
-
-from sections import (
-    cortex_monitor,
-    cost_center,
-    recommendations,
-    snowflake_value,
-    spcs_tracker,
-)
 from utils import (
     build_cost_savings_verification_health_sql,
     build_cost_savings_verification_sql,
@@ -30,6 +22,7 @@ from utils.workflows import (
     render_operator_briefing,
     render_priority_dataframe,
     render_signal_confidence,
+    render_workflow_module,
     render_workflow_guide,
     render_workflow_selector,
 )
@@ -48,6 +41,14 @@ WORKFLOW_DETAILS = {
     "Snowflake value log": "Evidence that DBA changes avoided spend or improved service.",
     "AI and Cortex spend": "Cortex usage, model spend, users, and runaway AI cost signals.",
     "SPCS spend": "Snowpark Container Services usage and service cost exposure.",
+}
+
+WORKFLOW_MODULES = {
+    "Explain bill / attribution / contract": "sections.cost_center",
+    "Recommendations and action queue": "sections.recommendations",
+    "Snowflake value log": "sections.snowflake_value",
+    "AI and Cortex spend": "sections.cortex_monitor",
+    "SPCS spend": "sections.spcs_tracker",
 }
 
 
@@ -627,15 +628,7 @@ def render() -> None:
         "cost_contract_workflow",
         WORKFLOWS,
         WORKFLOW_DETAILS,
+        columns=5,
     )
 
-    if workflow == "Explain bill / attribution / contract":
-        cost_center.render()
-    elif workflow == "Recommendations and action queue":
-        recommendations.render()
-    elif workflow == "Snowflake value log":
-        snowflake_value.render()
-    elif workflow == "AI and Cortex spend":
-        cortex_monitor.render()
-    else:
-        spcs_tracker.render()
+    render_workflow_module(workflow, WORKFLOW_MODULES)

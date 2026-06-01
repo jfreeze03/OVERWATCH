@@ -9,7 +9,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import json
 import streamlit as st
-from config import ALERT_DB, ALERT_SCHEMA
+from config import ALERT_DB, ALERT_SCHEMA, normalize_section_name
 from .query import format_snowflake_error, safe_identifier, sql_literal
 
 BOOKMARK_TABLE = (
@@ -56,14 +56,17 @@ CREATE TABLE IF NOT EXISTS {table} (
 
 def _capture_state() -> dict:
     """Snapshot the current session state into a saveable dict."""
-    return {k: st.session_state.get(k) for k in _CAPTURED_KEYS if st.session_state.get(k) is not None}
+    state = {k: st.session_state.get(k) for k in _CAPTURED_KEYS if st.session_state.get(k) is not None}
+    if state.get("nav_section"):
+        state["nav_section"] = normalize_section_name(state["nav_section"])
+    return state
 
 
 def _restore_state(state: dict) -> None:
     """Write a saved state dict back into session state and rerun."""
     for k, v in state.items():
         if v is not None:
-            st.session_state[k] = v
+            st.session_state[k] = normalize_section_name(v) if k == "nav_section" else v
 
 
 def _safe_actor(session) -> str:
@@ -125,7 +128,7 @@ def load_bookmarks(session, include_shared: bool = True) -> list[dict]:
             result.append({
                 "id":      row["BOOKMARK_ID"],
                 "name":    row["BOOKMARK_NAME"],
-                "section": row["SECTION"],
+                "section": normalize_section_name(row["SECTION"]),
                 "shared":  row["IS_SHARED"],
                 "created": str(row["CREATED_AT"])[:10],
                 "uses":    row["USE_COUNT"],

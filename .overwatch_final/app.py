@@ -21,12 +21,27 @@ st.set_page_config(
 
 import theme as theme_module
 from theme import inject_theme, render_theme_picker
+import config as config_module
+
+if getattr(config_module, "CONFIG_VERSION", "") != "2026-06-01-nav-redirects-v1":
+    config_module = importlib.reload(config_module)
+
 from config import (
     ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
-    DEFAULT_COMPANY, ROLE_SECTIONS, SECTION_ALIASES,
+    DEFAULT_COMPANY, ROLE_SECTIONS,
     SECTION_BY_TITLE, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
-    SECTION_ICONS,
+    SECTION_ICONS, normalize_section_name,
 )
+import utils as utils_package
+
+if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-01-ranked-chart-exports-v1":
+    utils_package = importlib.reload(utils_package)
+
+import utils.display as display_module
+
+if getattr(display_module, "DISPLAY_VERSION", "") != "2026-06-01-ranked-bars-v1":
+    display_module = importlib.reload(display_module)
+
 from utils.cache import clear_all_cache
 from utils.session import get_session
 from utils.query import (
@@ -37,6 +52,28 @@ from utils.ask_overwatch import answer_ask_overwatch
 from utils.company_filter import invalidate_company_cache
 from utils.admin import render_admin_mode_control
 import utils.section_guidance as section_guidance
+
+
+_ASK_OVERWATCH_STATE_KEYS = (
+    "rec_recommendations",
+    "rec_action_queue",
+    "cost_contract_queue",
+    "alert_center_data",
+    "dba_control_room_data",
+    "dba_control_room_incident_board",
+    "dba_control_room_handoff",
+)
+
+
+def _snapshot_ask_overwatch_state(state) -> dict:
+    snapshot = {}
+    for key in _ASK_OVERWATCH_STATE_KEYS:
+        try:
+            if key in state:
+                snapshot[key] = state.get(key)
+        except Exception:
+            continue
+    return snapshot
 import utils.workflows as workflows_module
 from utils.bookmarks import (
     save_bookmark, load_bookmarks,
@@ -44,7 +81,7 @@ from utils.bookmarks import (
 )
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-05-31-compact-workflow-ui-v2":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-06-01-compact-workflow-ui-v3":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker
@@ -52,7 +89,7 @@ if getattr(theme_module, "THEME_VERSION", "") != "2026-05-31-compact-workflow-ui
 if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-05-31-confidence-gauge-v6":
     section_guidance = importlib.reload(section_guidance)
 
-if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-05-31-compact-workflow-ui-v1":
+if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-01-compact-workflow-ui-v2":
     workflows_module = importlib.reload(workflows_module)
     if hasattr(sections, "reload_loaded_sections"):
         sections.reload_loaded_sections()
@@ -84,7 +121,7 @@ def _resolve_visible_sections() -> list[str]:
 
 
 def _normalize_nav_section(section: str) -> str:
-    return SECTION_ALIASES.get(section, section)
+    return normalize_section_name(section)
 
 
 def _queue_section_navigation(section: str) -> None:
@@ -391,7 +428,7 @@ with st.sidebar:
             elif cmd_type == "Database" or (cmd_type == "Auto" and upper.startswith(("DB_", "ALFA", "TRXS"))):
                 st.session_state["global_database"] = value
                 target = SECTION_BY_TITLE["Cost & Contract"]
-                st.session_state["cost_contract_workflow"] = "Storage and service cost"
+                st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
             elif "COST" in upper or "SPEND" in upper:
                 target = SECTION_BY_TITLE["Cost & Contract"]
                 st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
@@ -726,7 +763,7 @@ with st.expander("Ask OVERWATCH", expanded=False):
         else:
             result = answer_ask_overwatch(
                 ask_text[:500],
-                dict(st.session_state),
+                _snapshot_ask_overwatch_state(st.session_state),
                 active_section=active_section,
                 company=active_company,
                 environment=st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),

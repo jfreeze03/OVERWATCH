@@ -211,7 +211,11 @@ from utils.cost import (  # noqa: E402
     credits_to_dollars,
     query_attribution_supported,
 )
-from utils.ask_overwatch import answer_ask_overwatch, build_grounded_cortex_prompt  # noqa: E402
+from utils.ask_overwatch import (  # noqa: E402
+    answer_ask_overwatch,
+    build_grounded_cortex_prompt,
+    snapshot_ask_overwatch_state,
+)
 from utils.company_filter import (  # noqa: E402
     environment_label_for_database,
     get_environment_case_expr,
@@ -276,6 +280,7 @@ from utils.mart import (  # noqa: E402
     build_mart_procedure_calls_sql,
     build_mart_procedure_inventory_sql,
     build_mart_procedure_sla_sql,
+    build_mart_usage_metering_sql,
     build_mart_pipeline_load_failures_sql,
     build_mart_query_bottleneck_sql,
     build_mart_query_degradation_sql,
@@ -3771,6 +3776,59 @@ class FormulaRegressionTests(unittest.TestCase):
             loader_block.index("RETURN RUN_QUERY_OR_RAISE(_LIVE_QUERY_STATUS_SQL"),
         )
 
+    def test_connected_program_tracking_uses_auth_event_before_query_tag_fallback(self):
+        security_text = (APP_ROOT / "sections" / "security_access.py").read_text(encoding="utf-8").upper()
+        topology_text = (APP_ROOT / "sections" / "platform_topology.py").read_text(encoding="utf-8").upper()
+        adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8").upper()
+        compat_text = (APP_ROOT / "utils" / "compatibility.py").read_text(encoding="utf-8").upper()
+
+        self.assertIn("CONNECTED PROGRAMS", security_text)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.SESSIONS", security_text)
+        self.assertIn("SESSIONS CLIENT METADATA", security_text)
+        self.assertIn("AUTHN_EVENT_ID", security_text)
+        self.assertIn("L.EVENT_ID", security_text)
+        self.assertIn("LOGIN-ONLY REPORTED CLIENT; NO DATABASE CONTEXT", security_text)
+        self.assertIn("QUERY_TAG FALLBACK; NOT EXACT CONNECTED-PROGRAM IDENTITY", security_text)
+        self.assertIn("CLIENT VALUE IS REPORTED, NOT AUTHENTICATED", security_text)
+
+        for section_text in (topology_text, adoption_text):
+            self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.SESSIONS", section_text)
+            self.assertIn("SESSION_ID TO SESSIONS CLIENT METADATA", section_text)
+            self.assertIn("AUTHN_EVENT_ID", section_text)
+            self.assertIn("REPORTED_CLIENT_TYPE", section_text)
+            self.assertIn("QUERY_TAG FALLBACK; NOT EXACT CONNECTED-PROGRAM IDENTITY", section_text)
+            self.assertIn("SOURCE_CONFIDENCE", section_text)
+
+        self.assertIn('"AUTHN_EVENT_ID"', compat_text)
+        self.assertIn('"EVENT_ID"', compat_text)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.SESSIONS", compat_text)
+        self.assertIn('"CLIENT_APPLICATION_ID"', compat_text)
+
+    def test_dba_control_room_defers_specialist_section_imports(self):
+        dba_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        top_level = dba_text[:dba_text.index("DBA_CONTROL_SCOPE_FILTER_KEYS")]
+
+        self.assertNotIn("from sections.task_management import", top_level)
+        self.assertNotIn("from sections.cortex_monitor import", top_level)
+        self.assertNotIn("from sections.stored_proc_tracker import", top_level)
+        self.assertIn("def _task_management_helpers", dba_text)
+        self.assertIn("def _cortex_helpers", dba_text)
+        self.assertIn("def _procedure_helpers", dba_text)
+
+    def test_mart_usage_metering_window_condition_is_not_string_spliced(self):
+        mart_text = (APP_ROOT / "utils" / "mart.py").read_text(encoding="utf-8")
+        sql = build_mart_usage_metering_sql(
+            7,
+            "ALFA",
+            start_date="2026-05-01",
+            end_date="2026-05-07",
+        ).upper()
+
+        self.assertNotIn("REPLACE('AND ', '', 1)", mart_text.upper())
+        self.assertNotIn("IFF(AND ", sql)
+        self.assertIn("IFF(HOUR_START >=", sql)
+        self.assertIn("HOUR_START < DATEADD('DAY', 1", sql)
+
     def test_explain_bill_driver_aliases_match_visible_columns(self):
         cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
         explain_block = cost_text[
@@ -4122,6 +4180,22 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("AUTO_SUSPEND", result["answer"])
         self.assertIn("Proof before closure", result["answer"])
         self.assertIn("Do not disable", result["answer"])
+
+    def test_ask_overwatch_uses_whitelisted_state_snapshot(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        huge_frame = pd.DataFrame({"VALUE": list(range(100))})
+        state = {
+            "rec_recommendations": [{"Entity": "COMPUTE_WH", "Finding": "Idle warehouse"}],
+            "unrelated_large_frame": huge_frame,
+            "dba_control_room_data": {"summary": pd.DataFrame()},
+        }
+        snapshot = snapshot_ask_overwatch_state(state)
+
+        self.assertIn("_snapshot_ask_overwatch_state(st.session_state)", app_text)
+        self.assertNotIn("dict(st.session_state),", app_text)
+        self.assertIn("rec_recommendations", snapshot)
+        self.assertIn("dba_control_room_data", snapshot)
+        self.assertNotIn("unrelated_large_frame", snapshot)
 
     def test_grounded_cortex_prompt_for_future_use_is_strict(self):
         prompt = build_grounded_cortex_prompt(

@@ -29,6 +29,7 @@ from utils import (
     safe_identifier,
     safe_float,
     safe_int,
+    render_ranked_bar_chart,
     sql_literal,
     upsert_actions,
 )
@@ -2264,13 +2265,24 @@ def _render_sla_cost_drift_console(session) -> None:
         top_cost = breaches.sort_values("COST_CHANGE_PCT", ascending=False).head(15)
         left, right = st.columns(2)
         with left:
-            st.caption("Top Duration Regressions")
             if "TASK_NAME" in top_duration.columns:
-                st.bar_chart(top_duration.set_index("TASK_NAME")["DURATION_CHANGE_PCT"])
+                render_ranked_bar_chart(
+                    top_duration,
+                    "TASK_NAME",
+                    "DURATION_CHANGE_PCT",
+                    title="Top Duration Regressions",
+                    top_n=15,
+                )
         with right:
-            st.caption("Top Cost Regressions")
             if "TASK_NAME" in top_cost.columns:
-                st.bar_chart(top_cost.set_index("TASK_NAME")["COST_CHANGE_PCT"])
+                render_ranked_bar_chart(
+                    top_cost,
+                    "TASK_NAME",
+                    "COST_CHANGE_PCT",
+                    title="Top Cost Regressions",
+                    top_n=15,
+                    color="#f59e0b",
+                )
         queue_rows = []
         for _, row in breaches.head(100).iterrows():
             signal = "Long Running / SLA Risk" if row.get("SLA_BREACH") else "Cost Drift / Release Regression"

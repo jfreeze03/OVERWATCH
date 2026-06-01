@@ -15,6 +15,7 @@ from utils import (
     get_user_filter_clause,
     filter_existing_columns,
     make_action_id,
+    render_ranked_bar_chart,
     run_query,
     safe_float,
     safe_int,
@@ -615,7 +616,7 @@ def render():
                 .head(20)
             )
             if not user_agg.empty:
-                st.bar_chart(user_agg.set_index("USER_NAME")["COST_USD"], use_container_width=True)
+                render_ranked_bar_chart(user_agg, "USER_NAME", "COST_USD", top_n=20)
 
             st.subheader("Full Breakdown")
             render_priority_dataframe(

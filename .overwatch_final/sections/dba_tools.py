@@ -24,7 +24,7 @@ from utils import (
     show_to_df, first_existing_column, ensure_column_alias,
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
     load_warehouse_inventory, build_unclassified_assets_sql,
-    safe_float, safe_int,
+    safe_float, safe_int, render_ranked_bar_chart,
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
@@ -2155,7 +2155,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             df_ul = st.session_state["dba_df_usage_log"]
             lbl   = st.session_state.get("dba_ul_group_label","SECTION")
             st.metric("Total Loads", f"{int(df_ul['LOAD_COUNT'].sum()):,}")
-            st.bar_chart(df_ul.set_index(lbl)["LOAD_COUNT"])
+            render_ranked_bar_chart(df_ul, lbl, "LOAD_COUNT", title="Usage Log Hotspots", top_n=25)
             render_priority_dataframe(
                 df_ul,
                 title="Usage log hotspots",

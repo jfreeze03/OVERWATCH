@@ -12,6 +12,7 @@ from utils import (
     freshness_note,
     metric_confidence_label,
     render_drillable_bar_chart,
+    render_ranked_bar_chart,
     run_query,
 )
 from utils.workflows import render_priority_dataframe
@@ -29,7 +30,17 @@ def _load_topology(session, days: int, row_limit: int) -> dict:
     qh_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        ["BYTES_SCANNED", "ERROR_CODE", "QUERY_TAG"],
+        ["BYTES_SCANNED", "ERROR_CODE", "QUERY_TAG", "SESSION_ID", "AUTHN_EVENT_ID", "IS_CLIENT_GENERATED_STATEMENT"],
+    ))
+    session_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.SESSIONS",
+        ["SESSION_ID", "CREATED_ON", "CLIENT_APPLICATION_ID", "CLIENT_APPLICATION_VERSION", "CLIENT_VERSION"],
+    ))
+    login_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY",
+        ["EVENT_ID", "REPORTED_CLIENT_TYPE", "REPORTED_CLIENT_VERSION"],
     ))
     gb_scanned_expr = (
         "ROUND(SUM(q.bytes_scanned) / POWER(1024, 3), 2)"
@@ -40,9 +51,55 @@ def _load_topology(session, days: int, row_limit: int) -> dict:
         if "ERROR_CODE" in qh_cols
         else "SUM(IFF(UPPER(q.execution_status) = 'FAILED_WITH_ERROR', 1, 0))"
     )
-    client_expr = (
-        "COALESCE(q.query_tag, 'UNTAGGED')"
-        if "QUERY_TAG" in qh_cols else "'UNTAGGED'"
+    session_version_candidates = []
+    if "CLIENT_APPLICATION_VERSION" in session_cols:
+        session_version_candidates.append("TO_VARCHAR(s.client_application_version)")
+    if "CLIENT_VERSION" in session_cols:
+        session_version_candidates.append("TO_VARCHAR(s.client_version)")
+    session_version_expr = (
+        f"COALESCE({', '.join(session_version_candidates)}, 'UNKNOWN')"
+        if session_version_candidates else "'UNKNOWN'"
+    )
+    can_join_sessions = "SESSION_ID" in qh_cols and "SESSION_ID" in session_cols
+    can_join_login = "AUTHN_EVENT_ID" in qh_cols and "EVENT_ID" in login_cols
+    if can_join_sessions:
+        client_expr = (
+            "COALESCE(TO_VARCHAR(s.client_application_id), 'UNKNOWN')"
+            if "CLIENT_APPLICATION_ID" in session_cols else "'UNKNOWN'"
+        )
+        client_version_expr = session_version_expr
+        app_join = f"""
+            LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.SESSIONS s
+              ON q.session_id = s.session_id
+             AND s.created_on >= DATEADD('day', -{min(365, int(days) + 14)}, CURRENT_TIMESTAMP())
+        """
+        app_source_expr = "'QUERY_HISTORY session_id to SESSIONS client metadata'"
+    elif can_join_login:
+        client_expr = (
+            "COALESCE(TO_VARCHAR(l.reported_client_type), 'UNKNOWN')"
+            if "REPORTED_CLIENT_TYPE" in login_cols else "'UNKNOWN'"
+        )
+        client_version_expr = (
+            "COALESCE(TO_VARCHAR(l.reported_client_version), 'UNKNOWN')"
+            if "REPORTED_CLIENT_VERSION" in login_cols else "'UNKNOWN'"
+        )
+        app_join = f"""
+            LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY l
+              ON q.authn_event_id = l.event_id
+             AND l.event_timestamp >= DATEADD('day', -{min(365, int(days) + 14)}, CURRENT_TIMESTAMP())
+        """
+        app_source_expr = "'AUTHN_EVENT_ID to LOGIN_HISTORY reported client; client value is reported, not authenticated'"
+    else:
+        client_expr = (
+            "COALESCE(NULLIF(TO_VARCHAR(q.query_tag), ''), 'UNTAGGED')"
+            if "QUERY_TAG" in qh_cols else "'UNKNOWN'"
+        )
+        client_version_expr = "'UNKNOWN'"
+        app_join = ""
+        app_source_expr = "'QUERY_TAG fallback; not exact connected-program identity'"
+    client_generated_expr = (
+        "SUM(IFF(q.is_client_generated_statement, 1, 0))"
+        if "IS_CLIENT_GENERATED_STATEMENT" in qh_cols else "NULL::NUMBER"
     )
     filters = get_global_filter_clause(
         date_col="q.start_time",
@@ -104,17 +161,22 @@ def _load_topology(session, days: int, row_limit: int) -> dict:
     app_flow = run_query(f"""
         SELECT
             {client_expr} AS client_application,
+            {client_version_expr} AS client_version,
             q.warehouse_name,
             COALESCE(q.database_name, 'UNKNOWN') AS database_name,
             COUNT(DISTINCT q.user_name) AS users,
             COUNT(*) AS query_count,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec,
-            {failed_expr} AS failed_queries
+            {failed_expr} AS failed_queries,
+            {client_generated_expr} AS client_generated_queries,
+            MAX(q.start_time) AS last_query_time,
+            {app_source_expr} AS source_confidence
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        {app_join}
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
-        GROUP BY client_application, q.warehouse_name, database_name
+        GROUP BY client_application, client_version, q.warehouse_name, database_name, source_confidence
         ORDER BY query_count DESC
         LIMIT {row_limit}
     """, ttl_key=f"topology_app_flow_{company}_{days}_{row_limit}", tier="standard", section="Platform Topology")
@@ -225,8 +287,7 @@ def render():
     with tab_roles:
         if not role_users.empty:
             role_summary = role_users.groupby("ROLE", as_index=False)["USER_NAME"].nunique().rename(columns={"USER_NAME": "USERS"})
-            role_summary = role_summary.sort_values("USERS", ascending=False)
-            st.bar_chart(role_summary.set_index("ROLE")["USERS"])
+            render_ranked_bar_chart(role_summary, "ROLE", "USERS", title="Users Per Role", top_n=25)
             render_priority_dataframe(
                 role_users,
                 title="Role/user assignments",
@@ -247,19 +308,20 @@ def render():
                 "USERS": "sum",
                 "FAILED_QUERIES": "sum",
             }).sort_values("QUERY_COUNT", ascending=False)
-            alt = _altair()
-            chart = alt.Chart(app_summary.head(25)).mark_bar(color="#38bdf8").encode(
-                x=alt.X("QUERY_COUNT:Q", title="Queries"),
-                y=alt.Y("CLIENT_APPLICATION:N", sort="-x", title=None),
-                tooltip=["CLIENT_APPLICATION", "USERS", "QUERY_COUNT", "FAILED_QUERIES"],
-            ).properties(height=420)
-            st.altair_chart(chart, use_container_width=True)
+            render_ranked_bar_chart(
+                app_summary,
+                "CLIENT_APPLICATION",
+                "QUERY_COUNT",
+                title="Top Connected Programs By Queries",
+                top_n=25,
+            )
             render_priority_dataframe(
                 app_flow,
                 title="Application flow drivers",
                 priority_columns=[
-                    "CLIENT_APPLICATION", "WAREHOUSE_NAME", "DATABASE_NAME",
-                    "USERS", "QUERY_COUNT", "FAILED_QUERIES", "LAST_QUERY_TIME",
+                    "CLIENT_APPLICATION", "CLIENT_VERSION", "WAREHOUSE_NAME", "DATABASE_NAME",
+                    "USERS", "QUERY_COUNT", "FAILED_QUERIES", "CLIENT_GENERATED_QUERIES",
+                    "LAST_QUERY_TIME", "SOURCE_CONFIDENCE",
                 ],
                 sort_by=["QUERY_COUNT", "FAILED_QUERIES"],
                 ascending=[False, False],

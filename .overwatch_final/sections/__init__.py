@@ -5,7 +5,7 @@ import importlib
 
 import streamlit as st
 
-from config import SECTION_MODULES
+from config import SECTION_MODULES, normalize_section_name
 from utils.query import format_snowflake_error
 
 
@@ -23,6 +23,7 @@ def reload_loaded_sections() -> None:
 
 def dispatch(active_section: str) -> None:
     """Lazy-load and render the selected OVERWATCH section."""
+    active_section = normalize_section_name(active_section)
     module_path = SECTION_MODULES.get(active_section)
 
     if not module_path:

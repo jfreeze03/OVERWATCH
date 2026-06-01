@@ -10,11 +10,73 @@ from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh
 from .helpers import safe_float
 
 
+DISPLAY_VERSION = "2026-06-01-ranked-bars-v1"
+
+
 def _altair():
     """Import Altair only when a chart path actually needs it."""
     import altair as alt
 
     return alt
+
+
+def rank_chart_frame(
+    df: pd.DataFrame,
+    dimension: str,
+    measure: str,
+    *,
+    top_n: int = 20,
+    ascending: bool = False,
+) -> pd.DataFrame:
+    """Return a metric-ranked chart frame with one row per displayed dimension."""
+    if df is None or df.empty or dimension not in df.columns or measure not in df.columns:
+        return pd.DataFrame(columns=[dimension, measure])
+    chart_df = df[[dimension, measure]].dropna(subset=[dimension]).copy()
+    chart_df[dimension] = chart_df[dimension].astype(str)
+    chart_df[measure] = pd.to_numeric(chart_df[measure], errors="coerce").fillna(0)
+    chart_df = chart_df.groupby(dimension, as_index=False, dropna=False, sort=False)[measure].sum()
+    chart_df = chart_df.sort_values(measure, ascending=ascending, kind="mergesort")
+    return chart_df.head(max(1, int(top_n or 20)))
+
+
+def _ranked_chart_height(row_count: int) -> int:
+    return max(180, min(520, 28 * int(row_count or 1) + 56))
+
+
+def render_ranked_bar_chart(
+    df: pd.DataFrame,
+    dimension: str,
+    measure: str,
+    *,
+    title: str = "",
+    top_n: int = 20,
+    color: str = "#38bdf8",
+) -> pd.DataFrame:
+    """Render a horizontal top-to-bottom ranked bar chart and return plotted rows."""
+    chart_df = rank_chart_frame(df, dimension, measure, top_n=top_n)
+    if chart_df.empty:
+        return chart_df
+    if title:
+        st.subheader(title)
+
+    alt = _altair()
+    chart = (
+        alt.Chart(chart_df)
+        .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3, color=color)
+        .encode(
+            x=alt.X(f"{measure}:Q", title=measure.replace("_", " ").title()),
+            y=alt.Y(
+                f"{dimension}:N",
+                sort=alt.SortField(field=measure, order="descending"),
+                title=None,
+                axis=alt.Axis(labelLimit=260),
+            ),
+            tooltip=[alt.Tooltip(f"{dimension}:N"), alt.Tooltip(f"{measure}:Q", format=",.2f")],
+        )
+        .properties(height=_ranked_chart_height(len(chart_df)))
+    )
+    st.altair_chart(chart, use_container_width=True)
+    return chart_df
 
 
 def _query_history_detail_exprs(prefix: str = "") -> dict:
@@ -299,9 +361,7 @@ def render_drillable_bar_chart(
     if df is None or df.empty or dimension not in df.columns or measure not in df.columns:
         return None
 
-    chart_df = df[[dimension, measure]].dropna().copy()
-    chart_df[measure] = pd.to_numeric(chart_df[measure], errors="coerce").fillna(0)
-    chart_df = chart_df.sort_values(measure, ascending=False).head(top_n)
+    chart_df = rank_chart_frame(df, dimension, measure, top_n=top_n)
     if chart_df.empty:
         return None
 
@@ -314,10 +374,15 @@ def render_drillable_bar_chart(
     selection         = selection_factory(fields=[dimension], name=selection_name, empty=False)
     chart = (
         alt.Chart(chart_df)
-        .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+        .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3)
         .encode(
-            x=alt.X(f"{dimension}:N", sort="-y", title=None),
-            y=alt.Y(f"{measure}:Q", title=measure.replace("_"," ").title()),
+            x=alt.X(f"{measure}:Q", title=measure.replace("_"," ").title()),
+            y=alt.Y(
+                f"{dimension}:N",
+                sort=alt.SortField(field=measure, order="descending"),
+                title=None,
+                axis=alt.Axis(labelLimit=260),
+            ),
             color=alt.condition(selection, alt.value("#38bdf8"), alt.value("#475569")),
             tooltip=[alt.Tooltip(f"{dimension}:N"), alt.Tooltip(f"{measure}:Q", format=",.2f")],
         )
@@ -327,7 +392,7 @@ def render_drillable_bar_chart(
         if hasattr(chart, "add_params")
         else chart.add_selection(selection)
     )
-    chart = chart.properties(height=320)
+    chart = chart.properties(height=_ranked_chart_height(len(chart_df)))
 
     selected = None
     try:

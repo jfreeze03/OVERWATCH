@@ -7,7 +7,6 @@ import pandas as pd
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
-from sections import data_sharing, security_access
 from utils import (
     filter_existing_columns,
     format_snowflake_error,
@@ -34,6 +33,7 @@ from utils.workflows import (
     render_operator_briefing,
     render_priority_dataframe,
     render_signal_confidence,
+    render_workflow_module,
     render_workflow_guide,
     render_workflow_selector,
 )
@@ -43,6 +43,11 @@ WORKFLOWS = ("Access posture", "Data sharing exposure")
 WORKFLOW_DETAILS = {
     "Access posture": "Failed logins, MFA gaps, grants, role risk, and security exceptions.",
     "Data sharing exposure": "Shares, imported databases, exposed datasets, and owner follow-up.",
+}
+
+WORKFLOW_MODULES = {
+    "Access posture": "sections.security_access",
+    "Data sharing exposure": "sections.data_sharing",
 }
 
 SECURITY_ACCESS_REVIEW_TABLE = "OVERWATCH_SECURITY_ACCESS_REVIEW"
@@ -2649,7 +2654,4 @@ def render() -> None:
         columns=2,
     )
 
-    if workflow == "Access posture":
-        security_access.render()
-    else:
-        data_sharing.render()
+    render_workflow_module(workflow, WORKFLOW_MODULES)

@@ -407,7 +407,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertEqual(
             warehouses,
             {
-                "OVERWATCH_COST_SAVINGS_VERIFY": "OVERWATCH_WH",
+                "OVERWATCH_COST_SAVINGS_VERIFY": "COMPUTE_WH",
                 "OVERWATCH_ANOMALY_CHECK": "COMPUTE_WH",
                 "OVERWATCH_LOAD_HOURLY": "COMPUTE_WH",
                 "OVERWATCH_LOAD_CORTEX": "COMPUTE_WH",

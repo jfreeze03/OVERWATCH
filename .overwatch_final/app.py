@@ -39,7 +39,7 @@ if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-01-ranked-char
 
 import utils.display as display_module
 
-if getattr(display_module, "DISPLAY_VERSION", "") != "2026-06-01-ranked-bars-v1":
+if getattr(display_module, "DISPLAY_VERSION", "") != "2026-06-01-explicit-drilldowns-v1":
     display_module = importlib.reload(display_module)
 
 from utils.cache import clear_all_cache
@@ -86,7 +86,7 @@ if getattr(theme_module, "THEME_VERSION", "") != "2026-06-01-compact-workflow-ui
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker
 
-if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-05-31-confidence-gauge-v6":
+if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-06-01-confidence-gauge-v7":
     section_guidance = importlib.reload(section_guidance)
 
 if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-01-compact-workflow-ui-v2":
@@ -743,7 +743,7 @@ if active_section not in visible_sections:
 
 # Main header.
 _render_app_header(active_section, active_company, credit_price, current_role)
-section_guidance.render_section_confidence_meter(active_section, dict(st.session_state))
+section_guidance.render_section_confidence_meter(active_section, st.session_state)
 section_guidance.render_section_reference(active_section)
 
 # Ask OVERWATCH

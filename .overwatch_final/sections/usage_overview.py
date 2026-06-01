@@ -32,6 +32,9 @@ from utils import (
 from utils.workflows import render_priority_dataframe
 
 
+USAGE_OVERVIEW_PANES = ["Cost Drivers", "Query Mix", "Adoption By Database"]
+
+
 def _altair():
     """Import Altair only after a chart panel is requested."""
     import altair as alt
@@ -575,8 +578,14 @@ def render():
     s3.metric("Active Storage", f"{_first_number(storage, 'ACTIVE_STORAGE_TB'):,.2f} TB")
     s4.metric("Failsafe Storage", f"{_first_number(storage, 'FAILSAFE_STORAGE_TB'):,.2f} TB")
 
-    tab_wh, tab_query, tab_db = st.tabs(["Cost Drivers", "Query Mix", "Adoption By Database"])
-    with tab_wh:
+    active_pane = st.radio(
+        "Usage detail view",
+        USAGE_OVERVIEW_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="uo_active_pane",
+    )
+    if active_pane == "Cost Drivers":
         if st.button("Load Cost Driver Chart", key="uo_load_cost_drivers"):
             with st.spinner("Loading warehouse cost drivers..."):
                 st.session_state["uo_top_wh"] = _load_cost_drivers(session, days)
@@ -592,7 +601,7 @@ def render():
         else:
             st.info("No warehouse metering found for the selected filters.")
 
-    with tab_query:
+    elif active_pane == "Query Mix":
         if st.button("Load Query Mix", key="uo_load_query_mix"):
             with st.spinner("Loading query mix..."):
                 st.session_state["uo_query_types"] = _load_query_mix(session, days)
@@ -622,7 +631,7 @@ def render():
         else:
             st.info("No query activity found for the selected filters.")
 
-    with tab_db:
+    elif active_pane == "Adoption By Database":
         if st.button("Load Database Adoption", key="uo_load_database_adoption"):
             with st.spinner("Loading database adoption..."):
                 st.session_state["uo_users_by_db"] = _load_database_adoption(days)

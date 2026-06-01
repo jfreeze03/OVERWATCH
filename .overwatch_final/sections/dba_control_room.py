@@ -2787,7 +2787,7 @@ def _render_control_room_source_health(
 ) -> pd.DataFrame:
     source_health = _dba_control_source_health_rows(
         data,
-        dict(st.session_state),
+        st.session_state,
         company,
         environment,
         lookback_hours,
@@ -3038,7 +3038,7 @@ def render() -> None:
             "Use this as triage, then validate high-impact actions in the drilldown page."
         )
 
-    snapshot_scope_ok = _dba_snapshot_scope_compatible(environment, dict(st.session_state))
+    snapshot_scope_ok = _dba_snapshot_scope_compatible(environment, st.session_state)
     snapshot_result = load_latest_control_room_mart(company, max_age_hours=6) if snapshot_scope_ok else None
     if snapshot_result is not None and snapshot_result.available and not snapshot_result.data.empty:
         snapshot = snapshot_result.data.copy()
@@ -3208,7 +3208,7 @@ def render() -> None:
     _render_command_queue_control(command_queue, action_queue)
     source_health_for_handoff = _dba_control_source_health_rows(
         data,
-        dict(st.session_state),
+        st.session_state,
         company,
         environment,
         int(lookback_hours),

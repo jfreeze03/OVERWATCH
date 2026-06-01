@@ -2209,7 +2209,7 @@ def _render_privileged_grant_readiness(session, company: str, environment: str, 
 
 
 def _render_security_source_health(company: str, environment: str) -> None:
-    source_health = _security_source_health_rows(dict(st.session_state), company, environment)
+    source_health = _security_source_health_rows(st.session_state, company, environment)
     if source_health.empty:
         return
     with st.expander("Security Source Health", expanded=False):

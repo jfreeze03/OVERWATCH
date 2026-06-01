@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS {fqn} (
 def build_cost_savings_verification_sql(
     db: str = ALERT_DB,
     schema: str = ALERT_SCHEMA,
-    warehouse: str = "OVERWATCH_WH",
+    warehouse: str = "COMPUTE_WH",
 ) -> str:
     """Return Snowflake objects for scheduled cost-action savings verification."""
     db_safe = safe_identifier(db)

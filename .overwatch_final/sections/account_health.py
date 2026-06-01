@@ -32,6 +32,12 @@ CHECKLIST_HISTORY_TABLE = "OVERWATCH_DBA_CHECKLIST_HISTORY"
 ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE = "FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY"
 ACCOUNT_HEALTH_ACTION_SOURCE = "Account Health - Daily DBA Checklist"
 ACCOUNT_HEALTH_ACCESS_HYGIENE_SOURCE = "Account Health - Account Access Hygiene"
+ACCOUNT_HEALTH_PANES = (
+    "Overview",
+    "Resource Monitors",
+    "Morning Report",
+    "Executive Briefing",
+)
 ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (
     "global_start_date",
     "global_end_date",
@@ -2038,7 +2044,7 @@ def _render_account_health_access_hygiene(session, company: str, environment: st
 
 
 def _render_account_health_source_health(company: str, environment: str) -> None:
-    source_health = _account_health_source_health_rows(dict(st.session_state), company, environment)
+    source_health = _account_health_source_health_rows(st.session_state, company, environment)
     if source_health.empty:
         return
     with st.expander("Account Health Source Health", expanded=False):
@@ -2085,67 +2091,68 @@ def render():
     global_filter_q = get_global_filter_clause(
         "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
     )
-    qh_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        [
-            "WAREHOUSE_SIZE",
-            "BYTES_SCANNED",
-            "ERROR_CODE",
-            "QUEUED_OVERLOAD_TIME",
-            "QUEUED_PROVISIONING_TIME",
-            "QUEUED_REPAIR_TIME",
-        ],
-    ))
-    cost_wh_size_expr = (
-        "MAX(q.warehouse_size)"
-        if "WAREHOUSE_SIZE" in qh_cols
-        else "NULL::VARCHAR"
-    )
-    cost_bytes_scanned_expr = (
-        "SUM(q.bytes_scanned)"
-        if "BYTES_SCANNED" in qh_cols
-        else "0"
-    )
-    failed_pred_q = (
-        "q.error_code IS NOT NULL"
-        if "ERROR_CODE" in qh_cols
-        else "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'"
-    )
-    failed_pred_plain = (
-        "error_code IS NOT NULL"
-        if "ERROR_CODE" in qh_cols
-        else "UPPER(execution_status) = 'FAILED_WITH_ERROR'"
-    )
-    queue_cols = [
-        col.lower()
-        for col in ["QUEUED_OVERLOAD_TIME", "QUEUED_PROVISIONING_TIME", "QUEUED_REPAIR_TIME"]
-        if col in qh_cols
-    ]
-    queue_time_q = " + ".join([f"COALESCE(q.{col}, 0)" for col in queue_cols])
-    queue_time_plain = " + ".join([f"COALESCE({col}, 0)" for col in queue_cols])
-    queued_count_expr_q = (
-        f"SUM(CASE WHEN {queue_time_q} > 0 OR q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-        if queue_cols
-        else "SUM(CASE WHEN q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-    )
-    queued_count_expr_plain = (
-        f"SUM(CASE WHEN {queue_time_plain} > 0 OR execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-        if queue_cols
-        else "SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-    )
-    pressure_wh_size_expr = (
-        "MAX(warehouse_size)"
-        if "WAREHOUSE_SIZE" in qh_cols
-        else "NULL::VARCHAR"
-    )
+    query_history_caps = None
 
-    tab_overview, tab_resmon, tab_morning, tab_briefing = st.tabs([
-        "Overview", "Resource Monitors", "Morning Report", "Executive Briefing"
-    ])
+    def _query_history_capabilities() -> dict:
+        nonlocal query_history_caps
+        if query_history_caps is not None:
+            return query_history_caps
+        qh_cols = set(filter_existing_columns(
+            session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            [
+                "WAREHOUSE_SIZE",
+                "BYTES_SCANNED",
+                "ERROR_CODE",
+                "QUEUED_OVERLOAD_TIME",
+                "QUEUED_PROVISIONING_TIME",
+                "QUEUED_REPAIR_TIME",
+            ],
+        ))
+        queue_cols = [
+            col.lower()
+            for col in ["QUEUED_OVERLOAD_TIME", "QUEUED_PROVISIONING_TIME", "QUEUED_REPAIR_TIME"]
+            if col in qh_cols
+        ]
+        queue_time_q = " + ".join([f"COALESCE(q.{col}, 0)" for col in queue_cols])
+        queue_time_plain = " + ".join([f"COALESCE({col}, 0)" for col in queue_cols])
+        query_history_caps = {
+            "cost_wh_size_expr": "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
+            "cost_bytes_scanned_expr": "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0",
+            "failed_pred_q": (
+                "q.error_code IS NOT NULL"
+                if "ERROR_CODE" in qh_cols
+                else "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'"
+            ),
+            "failed_pred_plain": (
+                "error_code IS NOT NULL"
+                if "ERROR_CODE" in qh_cols
+                else "UPPER(execution_status) = 'FAILED_WITH_ERROR'"
+            ),
+            "queued_count_expr_q": (
+                f"SUM(CASE WHEN {queue_time_q} > 0 OR q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+                if queue_cols
+                else "SUM(CASE WHEN q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+            ),
+            "queued_count_expr_plain": (
+                f"SUM(CASE WHEN {queue_time_plain} > 0 OR execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+                if queue_cols
+                else "SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+            ),
+            "pressure_wh_size_expr": "MAX(warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
+        }
+        return query_history_caps
+
+    active_view = st.radio(
+        "Account Health view",
+        ACCOUNT_HEALTH_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="account_health_active_view",
+    )
 
     # ── OVERVIEW ──────────────────────────────────────────────────────────────
-    with tab_overview:
+    if active_view == "Overview":
         render_operator_briefing(
             [
                 ("First move", "Refresh the health snapshot and read the exception signals."),
@@ -2174,13 +2181,17 @@ def render():
         if last_ts:
             cache_age = (datetime.now() - datetime.fromisoformat(last_ts)).total_seconds()
 
-        refresh_health = st.button("Refresh Health", key="health_refresh")
-        if (
-            refresh_health
-            or cache_age > 300
-            or "health_data" not in st.session_state
-            or st.session_state.get("_health_filter_sig") != filter_sig
-        ):
+        health_loaded = isinstance(st.session_state.get("health_data"), dict) and bool(st.session_state.get("health_data"))
+        stale_scope = health_loaded and st.session_state.get("_health_filter_sig") != filter_sig
+        refresh_health = st.button("Load / Refresh Health", key="health_refresh")
+        if not health_loaded:
+            st.info("Health snapshot is not loaded. Load it when you need current Account Health evidence.")
+        elif stale_scope:
+            st.warning("Loaded health snapshot is stale for the active filters. Refresh before acting.")
+        elif cache_age > 300:
+            st.caption(f"Loaded health snapshot is {cache_age / 60:.1f} minutes old. Refresh when current evidence matters.")
+
+        if refresh_health:
             hd = {}
             mart_ok, mart_reason = _can_use_control_room_mart(company)
             control_mart = load_latest_control_room_mart(company) if mart_ok else None
@@ -2209,6 +2220,11 @@ def render():
                 ]
                 hd["_account_health_detail_source"] = "OVERWATCH mart facts"
             else:
+                qh = _query_history_capabilities()
+                cost_wh_size_expr = qh["cost_wh_size_expr"]
+                cost_bytes_scanned_expr = qh["cost_bytes_scanned_expr"]
+                failed_pred_q = qh["failed_pred_q"]
+                queued_count_expr_q = qh["queued_count_expr_q"]
                 query_plan = [
                     ("storage", f"""
                     SELECT COALESCE(
@@ -2346,6 +2362,8 @@ def render():
             mark_loaded("account_health")
 
         hd = st.session_state.get("health_data", {})
+        if not isinstance(hd, dict) or not hd:
+            return
 
         live_df    = hd.get("live",    pd.DataFrame())
         live_source = hd.get("_live_source", "ACCOUNT_USAGE")
@@ -2441,22 +2459,23 @@ def render():
             checklist,
             environment=get_active_environment(),
         )
-        try:
-            operability_sql = _account_health_operability_fact_sql(30, company, get_active_environment())
-            st.session_state["account_health_operability_fact_sql"] = operability_sql
-            st.session_state["account_health_operability_fact"] = run_query(
-                operability_sql,
-                ttl_key=f"account_health_operability_fact_{company}_{get_active_environment()}_30",
-                tier="standard",
-                section="Account Health",
-            )
-            st.session_state["account_health_operability_fact_meta"] = _account_health_scope_meta(
-                company, environment, window="30d"
-            )
-            st.session_state.pop("account_health_operability_fact_error", None)
-        except Exception as fact_exc:
-            st.session_state["account_health_operability_fact"] = pd.DataFrame()
-            st.session_state["account_health_operability_fact_error"] = format_snowflake_error(fact_exc)
+        if st.button("Load Operability Mart", key="account_health_load_operability_fact"):
+            try:
+                operability_sql = _account_health_operability_fact_sql(30, company, get_active_environment())
+                st.session_state["account_health_operability_fact_sql"] = operability_sql
+                st.session_state["account_health_operability_fact"] = run_query(
+                    operability_sql,
+                    ttl_key=f"account_health_operability_fact_{company}_{get_active_environment()}_30",
+                    tier="standard",
+                    section="Account Health",
+                )
+                st.session_state["account_health_operability_fact_meta"] = _account_health_scope_meta(
+                    company, environment, window="30d"
+                )
+                st.session_state.pop("account_health_operability_fact_error", None)
+            except Exception as fact_exc:
+                st.session_state["account_health_operability_fact"] = pd.DataFrame()
+                st.session_state["account_health_operability_fact_error"] = format_snowflake_error(fact_exc)
         render_priority_dataframe(
             checklist,
             title="Daily DBA checklist",
@@ -2474,7 +2493,15 @@ def render():
             max_rows=12,
         )
         operability_fact = st.session_state.get("account_health_operability_fact")
-        if operability_fact is not None and not operability_fact.empty:
+        if (
+            operability_fact is not None
+            and not _account_health_meta_matches(
+                st.session_state.get("account_health_operability_fact_meta"),
+                _account_health_scope_meta(company, environment, window="30d"),
+            )
+        ):
+            st.info("Loaded Account Health operability mart is stale for the active scope. Reload before acting.")
+        elif operability_fact is not None and not operability_fact.empty:
             st.subheader("Account Health Operability Mart")
             f1, f2, f3, f4 = st.columns(4)
             blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
@@ -2858,6 +2885,9 @@ def render():
                         "QUEUED_QUERIES": "QUEUED",
                     })
             else:
+                qh = _query_history_capabilities()
+                pressure_wh_size_expr = qh["pressure_wh_size_expr"]
+                queued_count_expr_plain = qh["queued_count_expr_plain"]
                 df_wp = run_query_or_raise(f"""
                     SELECT warehouse_name, {pressure_wh_size_expr} AS warehouse_size, COUNT(*) AS queries,
                            {queued_count_expr_plain} AS queued
@@ -2891,7 +2921,7 @@ def render():
             st.caption(f"Warehouse pressure unavailable: {format_snowflake_error(e)}")
 
     # ── RESOURCE MONITORS ─────────────────────────────────────────────────────
-    with tab_resmon:
+    elif active_view == "Resource Monitors":
         st.header("Resource Monitor Dashboard")
         st.caption("Credit quota vs. consumed — with suspend threshold validation.")
 
@@ -2974,7 +3004,7 @@ def render():
             download_csv(df_rm, "resource_monitors.csv")
 
     # ── MORNING REPORT ────────────────────────────────────────────────────────
-    with tab_morning:
+    elif active_view == "Morning Report":
         st.header("Morning Health Report")
         st.caption("Overnight summary: failures, cost spikes, longest queries (last 12h).")
 
@@ -2982,6 +3012,8 @@ def render():
             with st.spinner("Generating overnight report..."):
                 md = {}
                 morning_mart_ok, morning_mart_reason = _can_use_control_room_mart(company)
+                qh = _query_history_capabilities()
+                failed_pred_plain = qh["failed_pred_plain"]
                 morning_live_queries = {
                     "failures": f"""
                         SELECT query_type, COUNT(*) AS fail_count,
@@ -3102,7 +3134,7 @@ def render():
             )
 
     # ── EXECUTIVE BRIEFING (NEW) ───────────────────────────────────────────────
-    with tab_briefing:
+    elif active_view == "Executive Briefing":
         st.header("Executive Briefing")
         st.caption(
             "Plain-English summary generated by Cortex AI from live OVERWATCH data. "
@@ -3124,6 +3156,9 @@ def render():
 
                 # ── Collect metrics ────────────────────────────────────────────
                 briefing_mart_ok, briefing_mart_reason = _can_use_control_room_mart(company)
+                qh = _query_history_capabilities()
+                failed_pred_plain = qh["failed_pred_plain"]
+                queued_count_expr_q = qh["queued_count_expr_q"]
                 metric_queries = {
                     "credits": f"""
                         SELECT SUM(CASE WHEN start_time >= DATEADD('hours',-{br_hours},CURRENT_TIMESTAMP())

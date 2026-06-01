@@ -41,6 +41,35 @@ from utils.alerts import ANNOTATION_TABLE
 from utils.workflows import render_operator_briefing, render_priority_dataframe
 
 
+ALERT_CENTER_PANES = [
+    "Control Health",
+    "Issue Inbox",
+    "Triage Digest",
+    "Alert History",
+    "Email Delivery",
+    "Action Queue Routing",
+    "Rules & SLAs",
+    "Suppression Windows",
+    "Setup SQL",
+]
+
+ALERT_CENTER_SOURCES_BY_PANE = {
+    "Control Health": {"alerts", "action_queue", "delivery_log", "rules", "rule_audit"},
+    "Issue Inbox": {"alerts", "action_queue"},
+    "Triage Digest": {"alerts"},
+    "Alert History": {"alerts"},
+    "Email Delivery": {"alerts", "delivery_log"},
+    "Action Queue Routing": {"alerts", "action_queue"},
+    "Rules & SLAs": {"alerts", "rules", "rule_audit"},
+    "Suppression Windows": set(),
+    "Setup SQL": set(),
+}
+
+
+def _alert_center_sources_for_view(view: str) -> set[str]:
+    return set(ALERT_CENTER_SOURCES_BY_PANE.get(view, {"alerts"}))
+
+
 def _status_key(value) -> str:
     return str(value or "New").strip().upper().replace(" ", "_")
 
@@ -55,8 +84,16 @@ def _alert_actor() -> str:
     return str(st.session_state.get("_overwatch_actor") or "OVERWATCH").strip() or "OVERWATCH"
 
 
-def _load_center_data(session, company: str, environment: str, days: int, limit: int) -> dict:
-    data: dict[str, pd.DataFrame | str] = {
+def _load_center_data(
+    session,
+    company: str,
+    environment: str,
+    days: int,
+    limit: int,
+    sources: set[str] | None = None,
+) -> dict:
+    sources = set(sources or ALERT_CENTER_SOURCES_BY_PANE["Control Health"])
+    data: dict[str, object] = {
         "alerts": pd.DataFrame(),
         "action_queue": pd.DataFrame(),
         "issues": pd.DataFrame(),
@@ -69,34 +106,40 @@ def _load_center_data(session, company: str, environment: str, days: int, limit:
         "rule_error": "",
         "rule_audit_error": "",
         "loaded_at": datetime.now().isoformat(timespec="seconds"),
+        "_loaded_sources": sorted(sources),
     }
-    try:
-        data["alerts"] = load_alert_history(
-            session,
-            company=company,
-            environment=environment,
-            days=days,
-            limit=limit,
-            section="Alert Center",
-        )
-    except Exception as exc:
-        data["alerts_error"] = format_snowflake_error(exc)
-    try:
-        data["action_queue"] = load_action_queue(session, limit=max(200, limit))
-    except Exception as exc:
-        data["queue_error"] = format_snowflake_error(exc)
-    try:
-        data["delivery_log"] = load_alert_delivery_log(days=max(days, 14), limit=100, section="Alert Center")
-    except Exception as exc:
-        data["delivery_error"] = format_snowflake_error(exc)
-    try:
-        data["rules"] = load_alert_rule_catalog(section="Alert Center")
-    except Exception as exc:
-        data["rule_error"] = format_snowflake_error(exc)
-    try:
-        data["rule_audit"] = load_alert_rule_audit(section="Alert Center", limit=50)
-    except Exception as exc:
-        data["rule_audit_error"] = format_snowflake_error(exc)
+    if "alerts" in sources:
+        try:
+            data["alerts"] = load_alert_history(
+                session,
+                company=company,
+                environment=environment,
+                days=days,
+                limit=limit,
+                section="Alert Center",
+            )
+        except Exception as exc:
+            data["alerts_error"] = format_snowflake_error(exc)
+    if "action_queue" in sources:
+        try:
+            data["action_queue"] = load_action_queue(session, limit=max(200, limit))
+        except Exception as exc:
+            data["queue_error"] = format_snowflake_error(exc)
+    if "delivery_log" in sources:
+        try:
+            data["delivery_log"] = load_alert_delivery_log(days=max(days, 14), limit=100, section="Alert Center")
+        except Exception as exc:
+            data["delivery_error"] = format_snowflake_error(exc)
+    if "rules" in sources:
+        try:
+            data["rules"] = load_alert_rule_catalog(section="Alert Center")
+        except Exception as exc:
+            data["rule_error"] = format_snowflake_error(exc)
+    if "rule_audit" in sources:
+        try:
+            data["rule_audit"] = load_alert_rule_audit(section="Alert Center", limit=50)
+        except Exception as exc:
+            data["rule_audit_error"] = format_snowflake_error(exc)
     data["issues"] = build_dashboard_issue_rows(
         alerts=data["alerts"] if isinstance(data["alerts"], pd.DataFrame) else pd.DataFrame(),
         queue=data["action_queue"] if isinstance(data["action_queue"], pd.DataFrame) else pd.DataFrame(),
@@ -478,24 +521,55 @@ def render() -> None:
         columns=4,
     )
 
+    active_view = st.radio(
+        "Alert Center view",
+        ALERT_CENTER_PANES,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="alert_center_active_view",
+    )
+    required_sources = _alert_center_sources_for_view(active_view)
+
+    if active_view == "Setup SQL":
+        st.subheader("Alert Framework Setup SQL")
+        st.caption("Deploy this through controlled Snowflake change management. It creates/updates alerts, owner routing, delivery audit, optional email replay, and the hourly email-ready alert task.")
+        st.code(build_alert_task_sql(email_target=DEFAULT_ALERT_EMAIL), language="sql")
+        return
+    if active_view == "Suppression Windows":
+        _render_annotations(session)
+        return
+
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
         days = st.selectbox("Alert window", [1, 3, 7, 14, 30], index=2, format_func=lambda value: f"{value} days")
     with c2:
         limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
     with c3:
-        if st.button("Load Alert Center", key="alert_center_load", type="primary"):
-            st.session_state["alert_center_data"] = _load_center_data(session, company, environment, int(days), int(limit))
+        load_label = "Load Full Control Health" if active_view == "Control Health" else f"Load {active_view}"
+        if st.button(load_label, key="alert_center_load", type="primary"):
+            st.session_state["alert_center_data"] = _load_center_data(
+                session,
+                company,
+                environment,
+                int(days),
+                int(limit),
+                sources=required_sources,
+            )
             st.session_state["alert_center_scope"] = (company, environment, int(days), int(limit))
 
     data = st.session_state.get("alert_center_data")
     if not isinstance(data, dict):
-        st.info("Load the Alert Center to see active issues, queued email messages, and action queue items.")
+        st.info(f"Load {active_view} to fetch only the source tables needed for this view.")
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
     if loaded_scope != (company, environment, int(days), int(limit)):
         st.warning("Company, environment, or window changed after this load. Reload before triaging alerts.")
+    loaded_sources = set(data.get("_loaded_sources") or [])
+    missing_sources = sorted(required_sources - loaded_sources)
+    if missing_sources:
+        st.info(f"Load {active_view} to fetch required source(s): {', '.join(missing_sources)}.")
+        return
 
     alerts = data.get("alerts") if isinstance(data.get("alerts"), pd.DataFrame) else pd.DataFrame()
     queue = data.get("action_queue") if isinstance(data.get("action_queue"), pd.DataFrame) else pd.DataFrame()
@@ -541,29 +615,20 @@ def render() -> None:
     m6.metric("Delivery Logged", f"{int(email_logged.sum()) if len(email_logged) else 0:,}")
     m7.metric("Open Queue", f"{int(open_queue.sum()) if len(open_queue) else 0:,}")
 
-    readiness_rows = _alert_center_operability_rows(
-        data,
-        company=company,
-        environment=environment,
-        days=int(days),
-        limit=int(limit),
-        loaded_scope=loaded_scope,
-    )
-    readiness_score = _alert_center_readiness_score(readiness_rows)
+    readiness_rows = pd.DataFrame()
+    readiness_score = 0
+    if active_view == "Control Health":
+        readiness_rows = _alert_center_operability_rows(
+            data,
+            company=company,
+            environment=environment,
+            days=int(days),
+            limit=int(limit),
+            loaded_scope=loaded_scope,
+        )
+        readiness_score = _alert_center_readiness_score(readiness_rows)
 
-    tab_health, tab_issues, tab_digest, tab_alerts, tab_email, tab_queue, tab_rules, tab_annotations, tab_setup = st.tabs([
-        "Control Health",
-        "Issue Inbox",
-        "Triage Digest",
-        "Alert History",
-        "Email Delivery",
-        "Action Queue Routing",
-        "Rules & SLAs",
-        "Suppression Windows",
-        "Setup SQL",
-    ])
-
-    with tab_health:
+    if active_view == "Control Health":
         st.subheader("Alert Control Health")
         st.caption("Uses only the data loaded by the explicit Alert Center refresh. No hidden tab scans are required to review source readiness.")
         h1, h2, h3, h4 = st.columns(4)
@@ -586,7 +651,7 @@ def render() -> None:
             height=360,
         )
 
-    with tab_issues:
+    elif active_view == "Issue Inbox":
         st.subheader("All Active DBA Issues")
         visible = _filtered_issues(issues)
         if visible.empty:
@@ -607,7 +672,7 @@ def render() -> None:
             )
             download_csv(visible, "overwatch_alert_center_issues.csv")
 
-    with tab_digest:
+    elif active_view == "Triage Digest":
         st.subheader("DBA Triage Digest")
         if alerts.empty:
             st.info("Load alert history before building the operator digest.")
@@ -705,7 +770,7 @@ def render() -> None:
                         height=220,
                     )
 
-    with tab_alerts:
+    elif active_view == "Alert History":
         st.subheader("Alert History")
         if alerts.empty:
             st.info("No alert history rows found for this scope.")
@@ -783,7 +848,7 @@ def render() -> None:
                             except Exception as exc:
                                 st.error(f"Could not acknowledge escalation: {format_snowflake_error(exc)}")
 
-    with tab_email:
+    elif active_view == "Email Delivery":
         st.subheader("Email Delivery Queue")
         st.caption("Rows are email-ready by default; the setup SQL also includes a dry-run governed SYSTEM$SEND_EMAIL procedure for an approved Snowflake email integration.")
         if alerts.empty:
@@ -823,7 +888,7 @@ def render() -> None:
                 height=260,
             )
 
-    with tab_queue:
+    elif active_view == "Action Queue Routing":
         st.subheader("Route Alerts To Action Queue")
         if alerts.empty:
             st.info("Load alert history before routing alerts to the action queue.")
@@ -874,7 +939,7 @@ def render() -> None:
                 height=320,
             )
 
-    with tab_rules:
+    elif active_view == "Rules & SLAs":
         st.subheader("Alert Rules And SLAs")
         render_priority_dataframe(
             rules,
@@ -986,11 +1051,3 @@ def render() -> None:
                 raw_label="All SLA mix rows",
                 height=220,
             )
-
-    with tab_annotations:
-        _render_annotations(session)
-
-    with tab_setup:
-        st.subheader("Alert Framework Setup SQL")
-        st.caption("Deploy this through controlled Snowflake change management. It creates/updates alerts, owner routing, delivery audit, optional email replay, and the hourly email-ready alert task.")
-        st.code(build_alert_task_sql(email_target=DEFAULT_ALERT_EMAIL), language="sql")

@@ -6,7 +6,7 @@ import html
 import streamlit as st
 
 
-SECTION_GUIDANCE_VERSION = "2026-05-31-confidence-gauge-v6"
+SECTION_GUIDANCE_VERSION = "2026-06-01-confidence-gauge-v7"
 
 CONFIDENCE_BANDS = (
     ("exact", "Exact", "Source-of-truth or direct operational evidence."),
@@ -99,7 +99,11 @@ def _source_health_rows(state: dict | None) -> list[dict]:
     rows: list[dict] = []
     if not state:
         return rows
-    for key, value in dict(state).items():
+    try:
+        state_items = state.items()
+    except Exception:
+        state_items = []
+    for key, value in state_items:
         columns = getattr(value, "columns", None)
         if columns is None:
             continue

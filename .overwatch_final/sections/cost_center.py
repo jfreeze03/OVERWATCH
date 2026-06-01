@@ -1889,12 +1889,23 @@ def render():
             st.divider()
             st.subheader("User Profile Drill-Down")
             if "USER_NAME" in df_l.columns:
-                sel_user = st.selectbox(
-                    "Select user for full query breakdown",
-                    df_l["USER_NAME"].dropna().unique().tolist(),
-                    key="cc_user_profile_sel",
-                )
-                if sel_user:
+                user_options = [""] + df_l["USER_NAME"].dropna().astype(str).unique().tolist()
+                user_col, load_col = st.columns([4, 1])
+                with user_col:
+                    sel_user = st.selectbox(
+                        "Select user for full query breakdown",
+                        user_options,
+                        key="cc_user_profile_sel",
+                        format_func=lambda value: "(select user)" if not value else str(value),
+                    )
+                with load_col:
+                    st.write("")
+                    if st.button("Load", key="cc_user_profile_load", use_container_width=True, disabled=not bool(sel_user)):
+                        st.session_state["cc_user_profile_requested"] = sel_user
+                if (
+                    sel_user
+                    and st.session_state.get("cc_user_profile_requested") == sel_user
+                ):
                     render_entity_query_drilldown(
                         sel_user, key="cc_user_profile",
                         entity_column="user_name", lookback_hours=days * 24,

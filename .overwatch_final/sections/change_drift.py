@@ -1889,7 +1889,7 @@ def _save_change_control_evidence_snapshot(
 
 
 def _render_change_source_health(company: str, environment: str) -> None:
-    source_health = _change_source_health_rows(dict(st.session_state), company, environment)
+    source_health = _change_source_health_rows(st.session_state, company, environment)
     if source_health.empty:
         return
     with st.expander("Change Source Health", expanded=False):

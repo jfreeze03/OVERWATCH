@@ -2596,7 +2596,7 @@ def _render_warehouse_ownership_panel(session, company: str, environment: str) -
 
 
 def _render_warehouse_source_health(company: str, environment: str) -> None:
-    source_health = _warehouse_source_health_rows(dict(st.session_state), company, environment)
+    source_health = _warehouse_source_health_rows(st.session_state, company, environment)
     if source_health.empty:
         return
     with st.expander("Warehouse Source Health", expanded=False):

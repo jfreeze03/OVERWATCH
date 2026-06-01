@@ -10,7 +10,7 @@ from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh
 from .helpers import safe_float
 
 
-DISPLAY_VERSION = "2026-06-01-ranked-bars-v1"
+DISPLAY_VERSION = "2026-06-01-explicit-drilldowns-v1"
 
 
 def _altair():
@@ -406,13 +406,31 @@ def render_drillable_bar_chart(
     default_index = (
         options.index(str(selected)) if selected and str(selected) in options else 0
     )
-    selected = st.selectbox("Drill into", options, index=default_index,
-                            key=f"{key}_drill_select")
+    select_col, load_col = st.columns([4, 1])
+    with select_col:
+        selected = st.selectbox(
+            "Drill into",
+            options,
+            index=default_index,
+            key=f"{key}_drill_select",
+        )
+    requested_key = f"{key}_drill_requested"
+    with load_col:
+        st.write("")
+        if st.button("Load", key=f"{key}_drill_load", use_container_width=True):
+            st.session_state[requested_key] = selected
+
+    requested = st.session_state.get(requested_key)
+    if requested not in options:
+        st.session_state.pop(requested_key, None)
+        requested = None
+    if requested != selected:
+        return selected
 
     drill_col = drilldown_column or dimension.lower()
     if drill_col.lower() == "warehouse_name":
-        render_warehouse_drilldown(selected, key=key, lookback_hours=lookback_hours)
+        render_warehouse_drilldown(requested, key=key, lookback_hours=lookback_hours)
     else:
-        render_entity_query_drilldown(selected, key=key,
+        render_entity_query_drilldown(requested, key=key,
                                       entity_column=drill_col, lookback_hours=lookback_hours)
     return selected

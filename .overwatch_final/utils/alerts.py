@@ -2181,7 +2181,7 @@ def build_alert_task_sql(
     db: str = ALERT_DB,
     schema: str = ALERT_SCHEMA,
     table: str = ALERT_TABLE,
-    warehouse: str = "OVERWATCH_WH",
+    warehouse: str = "COMPUTE_WH",
     schedule: str = "USING CRON 5 * * * * America/Chicago",
     email_target: str = DEFAULT_ALERT_RECIPIENT,
 ) -> str:

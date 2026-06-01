@@ -10,6 +10,8 @@ from .query import safe_identifier, sql_literal
 
 
 ADMIN_ACTIONS_KEY = "admin_actions_enabled"
+ADMIN_ACTIONS_DEFAULT_ROLE_KEY = "_admin_actions_default_role"
+ADMIN_ACTIONS_DEFAULT_VALUE_KEY = "_admin_actions_default_value"
 ADMIN_AUDIT_TABLE = "OVERWATCH_ADMIN_ACTION_AUDIT"
 ADMIN_AUDIT_FQN = (
     f"{safe_identifier(ALERT_DB)}."
@@ -17,9 +19,54 @@ ADMIN_AUDIT_FQN = (
     f"{safe_identifier(ADMIN_AUDIT_TABLE)}"
 )
 
+ADMIN_ACTION_DEFAULT_ROLES = {
+    "ACCOUNTADMIN",
+    "SYSADMIN",
+    "SNOW_ACCOUNTADMIN",
+    "SNOW_ACCOUNTADMINS",
+    "SNOW_SYSADMIN",
+    "SNOW_SYSADMINS",
+}
+
+
+def _normalized_current_role() -> str:
+    return str(st.session_state.get("_overwatch_current_role", "") or "").strip().upper()
+
+
+def admin_actions_default_enabled() -> bool:
+    """Return whether Admin actions should default on for the active role."""
+    return _normalized_current_role() in ADMIN_ACTION_DEFAULT_ROLES
+
+
+def initialize_admin_actions_default() -> None:
+    """Initialize the Admin actions toggle without overriding an operator choice."""
+    role = _normalized_current_role()
+    default_enabled = admin_actions_default_enabled()
+    if ADMIN_ACTIONS_KEY not in st.session_state:
+        st.session_state[ADMIN_ACTIONS_KEY] = default_enabled
+        st.session_state[ADMIN_ACTIONS_DEFAULT_ROLE_KEY] = role
+        st.session_state[ADMIN_ACTIONS_DEFAULT_VALUE_KEY] = default_enabled
+        return
+    if (
+        ADMIN_ACTIONS_DEFAULT_ROLE_KEY not in st.session_state
+        or ADMIN_ACTIONS_DEFAULT_VALUE_KEY not in st.session_state
+    ):
+        st.session_state[ADMIN_ACTIONS_DEFAULT_ROLE_KEY] = role
+        st.session_state[ADMIN_ACTIONS_DEFAULT_VALUE_KEY] = bool(st.session_state.get(ADMIN_ACTIONS_KEY, False))
+        return
+
+    prior_role = str(st.session_state.get(ADMIN_ACTIONS_DEFAULT_ROLE_KEY, "") or "")
+    prior_default = bool(st.session_state.get(ADMIN_ACTIONS_DEFAULT_VALUE_KEY, False))
+    current_value = bool(st.session_state.get(ADMIN_ACTIONS_KEY, False))
+    if role != prior_role and current_value == prior_default:
+        st.session_state[ADMIN_ACTIONS_KEY] = default_enabled
+        st.session_state[ADMIN_ACTIONS_DEFAULT_ROLE_KEY] = role
+        st.session_state[ADMIN_ACTIONS_DEFAULT_VALUE_KEY] = default_enabled
+
 
 def admin_actions_enabled() -> bool:
     """Return whether live account-changing controls are enabled."""
+    initialize_admin_actions_default()
     return bool(st.session_state.get(ADMIN_ACTIONS_KEY, False))
 
 
@@ -42,12 +89,19 @@ def require_admin_enabled(action: str = "this action") -> bool:
 
 def render_admin_mode_control() -> None:
     """Render the global live-action toggle."""
+    initialize_admin_actions_default()
+    default_note = (
+        " Defaults on for ACCOUNTADMIN/SYSADMIN deployment roles."
+        if admin_actions_default_enabled()
+        else " Defaults off for the current role."
+    )
     st.toggle(
         "Enable Admin actions",
         key=ADMIN_ACTIONS_KEY,
         help=(
             "Allows live ALTER, EXECUTE, RESUME, SUSPEND, and CANCEL operations. "
             "Keep off for read-only demos and leadership reviews."
+            f"{default_note}"
         ),
     )
 

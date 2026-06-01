@@ -495,6 +495,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("render_section_confidence_meter(active_section, dict(st.session_state))", app_text)
         self.assertNotIn("dict(state).items()", (APP_ROOT / "utils" / "section_guidance.py").read_text(encoding="utf-8"))
         self.assertIn("cc_user_profile_requested", cost_center_text)
+        self.assertIn('"Cost Explorer"', cost_center_text)
+        self.assertIn("COST_EXPLORER_LENSES", cost_center_text)
+        self.assertIn("build_mart_cost_explorer_sql", cost_center_text)
+        self.assertIn("FACT_CHARGEBACK_DAILY", cost_center_text)
+        self.assertIn("Cost attribution gaps", cost_center_text)
+        self.assertIn("Save cost explorer outliers to Action Queue", cost_center_text)
         self.assertIn('st.button("Load"', cost_center_text)
         self.assertIn("ACCOUNT_HEALTH_PANES", account_health_text)
         self.assertIn('st.radio(\n        "Account Health view"', account_health_text)
@@ -608,6 +614,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"rank_chart_frame"', utils_text)
         self.assertIn('"build_platform_futures_evidence_ddl"', utils_text)
         self.assertIn('"build_mart_cost_run_rate_sql"', utils_text)
+        self.assertIn('"build_mart_cost_explorer_sql"', utils_text)
 
     def test_dead_ui_helpers_stay_removed(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")

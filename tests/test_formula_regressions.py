@@ -55,7 +55,11 @@ from sections.cost_center import (  # noqa: E402
     _build_bill_waterfall,
     _build_finance_movement_summary,
     _chargeback_cost_verification_sql,
+    _cost_explorer_gap_board,
+    _cost_explorer_live_sql,
+    _cost_explorer_summary,
     _queue_cost_outliers,
+    _normalize_cost_explorer_detail,
     _warehouse_cost_control_action,
     _service_cost_category,
     _warehouse_cost_verification_sql,
@@ -290,6 +294,7 @@ from utils.mart import (  # noqa: E402
     build_mart_adoption_users_db_sql,
     build_mart_adoption_role_type_sql,
     build_mart_chargeback_sql,
+    build_mart_cost_explorer_sql,
     build_mart_cost_run_rate_sql,
     build_mart_control_room_failed_logins_sql,
     build_mart_control_room_cost_drivers_sql,
@@ -1684,6 +1689,111 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ROLE_NAME ILIKE", sql)
         self.assertIn("DATABASE_NAME ILIKE", sql)
         self.assertIn("ENVIRONMENT_ROLLUP", sql)
+
+    def test_cost_explorer_mart_sql_exposes_finops_dimensions(self):
+        sql = build_mart_cost_explorer_sql(
+            45,
+            "ALL",
+            warehouse_contains="BI",
+            user_contains="ETL",
+            role_contains="REPORTING",
+            database_contains="EDW",
+            department_contains="Claims",
+        ).upper()
+
+        self.assertIn("FACT_CHARGEBACK_DAILY", sql)
+        self.assertNotIn("ACCOUNT_USAGE", sql)
+        for expected in (
+            "COMPANY",
+            "ENVIRONMENT_ROLLUP",
+            "DATABASE_NAME",
+            "USER_NAME",
+            "ROLE_NAME",
+            "WAREHOUSE_NAME",
+            "WAREHOUSE_SIZE",
+            "COST_OWNER",
+            "OWNER_SOURCE",
+            "OWNER_EVIDENCE",
+            "ALLOCATION_CONFIDENCE",
+            "CHARGEBACK_READY",
+            "COUNT(DISTINCT USAGE_DATE) AS ACTIVE_DAYS",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, sql)
+        self.assertIn("WAREHOUSE_NAME ILIKE", sql)
+        self.assertIn("USER_NAME ILIKE", sql)
+        self.assertIn("ROLE_NAME ILIKE", sql)
+        self.assertIn("DATABASE_NAME ILIKE", sql)
+        self.assertIn("COALESCE(COST_OWNER, 'UNASSIGNED') ILIKE", sql)
+
+    def test_cost_explorer_live_sql_uses_owner_tags_without_over_grouping_warehouse_size(self):
+        sql = _cost_explorer_live_sql(14, "ALFA", "MAX(q.warehouse_size)", "Claims").upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES", sql)
+        self.assertIn("COST_CENTER", sql)
+        self.assertIn("DEPARTMENT", sql)
+        self.assertIn("BUSINESS_OWNER", sql)
+        self.assertIn("COUNT(DISTINCT Q.START_TIME::DATE) AS ACTIVE_DAYS", sql)
+        self.assertIn("COALESCE(T.COST_CENTER_TAG, T.OWNER_TAG, '') ILIKE", sql)
+        compact_sql = sql.replace(" ", "")
+        self.assertIn("GROUPBY1,2,3,4,5,6,8,9,10,11", compact_sql)
+        self.assertNotIn("GROUPBY1,2,3,4,5,6,7,8,9,10,11", compact_sql)
+
+    def test_cost_explorer_summary_surfaces_chargeback_gaps(self):
+        raw = pd.DataFrame([
+            {
+                "COMPANY": "ALFA",
+                "ENVIRONMENT": "PROD",
+                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "USER_NAME": "ANALYST_1",
+                "ROLE_NAME": "REPORTING_ROLE",
+                "WAREHOUSE_NAME": "WH_ALFA_BI",
+                "WAREHOUSE_SIZE": "MEDIUM",
+                "COST_OWNER": "Claims",
+                "OWNER_SOURCE": "WAREHOUSE_TAG",
+                "OWNER_EVIDENCE": "COST_CENTER=Claims",
+                "ALLOCATION_CONFIDENCE": "Allocated / Estimated",
+                "CHARGEBACK_READY": "Ready",
+                "QUERY_COUNT": 20,
+                "TOTAL_CREDITS": 100.0,
+                "FIRST_USAGE_DATE": "2026-05-01",
+                "LAST_USAGE_DATE": "2026-05-07",
+                "ACTIVE_DAYS": 7,
+            },
+            {
+                "COMPANY": "Trexis",
+                "ENVIRONMENT": "No Database Context",
+                "DATABASE_NAME": "NO_DATABASE_CONTEXT",
+                "USER_NAME": "UNKNOWN_USER",
+                "ROLE_NAME": "SYSADMIN",
+                "WAREHOUSE_NAME": "SHARED_ETL_WH",
+                "WAREHOUSE_SIZE": "LARGE",
+                "COST_OWNER": "",
+                "OWNER_SOURCE": "QUERY_USER",
+                "OWNER_EVIDENCE": "Query user only",
+                "ALLOCATION_CONFIDENCE": "Shared / Low Confidence",
+                "CHARGEBACK_READY": "No",
+                "QUERY_COUNT": 5,
+                "TOTAL_CREDITS": 50.0,
+            },
+        ])
+
+        detail = _normalize_cost_explorer_detail(raw, 3.0)
+        self.assertIn("PROD", set(detail["ENVIRONMENT_ROLLUP"]))
+        self.assertIn("No Database Context", set(detail["ENVIRONMENT_ROLLUP"]))
+        summary = _cost_explorer_summary(detail, "Department / Cost Center")
+        by_dimension = {row["DIMENSION"]: row for _, row in summary.iterrows()}
+        self.assertAlmostEqual(by_dimension["Claims"]["EST_COST"], 300.0)
+        self.assertEqual(by_dimension["Claims"]["OWNER_PROOF"], "Tag Proof")
+        self.assertEqual(by_dimension["Unassigned"]["CHARGEBACK_READY"], "Review Required")
+
+        gaps = _cost_explorer_gap_board(detail, summary)
+        by_gap = {row["GAP"]: row for _, row in gaps.iterrows()}
+        self.assertEqual(by_gap["Missing department / cost-center proof"]["STATE"], "Action Needed")
+        self.assertEqual(by_gap["No database context"]["STATE"], "Action Needed")
+        self.assertEqual(by_gap["Not chargeback ready"]["STATE"], "Action Needed")
+        self.assertGreater(by_gap["Cost concentration"]["EST_COST"], 0)
 
     def test_mart_procedure_runs_filter_by_environment(self):
         import streamlit as st

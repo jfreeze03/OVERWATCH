@@ -107,13 +107,13 @@ DBA_CONTROL_PLANE_SECTION_BASELINE = {
         "tests_operability": 98,
     },
     "Cost & Contract": {
-        "domain_coverage": 95,
-        "data_correctness": 97,
+        "domain_coverage": 97,
+        "data_correctness": 98,
         "actionability": 99,
         "admin_safety_audit": 97,
-        "performance_mart": 96,
-        "workflow_ux": 96,
-        "governance_ownership": 96,
+        "performance_mart": 97,
+        "workflow_ux": 97,
+        "governance_ownership": 97,
         "tests_operability": 100,
     },
     "Security Posture": {

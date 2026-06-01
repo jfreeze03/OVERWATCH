@@ -4,6 +4,7 @@ import sys
 import unittest
 
 import pandas as pd
+import streamlit as st
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,7 +16,13 @@ from sections.security_access import (  # noqa: E402
     _build_access_action_queue_record,
     _build_role_grant_change_plan,
 )
-from utils.admin import build_admin_audit_insert_sql  # noqa: E402
+from utils.admin import (  # noqa: E402
+    ADMIN_ACTIONS_KEY,
+    admin_actions_default_enabled,
+    admin_actions_enabled,
+    build_admin_audit_insert_sql,
+    initialize_admin_actions_default,
+)
 from utils.action_queue import (  # noqa: E402
     action_queue_environment_clause,
     action_queue_environment_values,
@@ -36,6 +43,50 @@ from utils.workload_audit import build_workload_recovery_audit_ddl  # noqa: E402
 
 
 class AdminControlTests(unittest.TestCase):
+    def test_admin_actions_default_on_for_full_privilege_roles(self):
+        previous = dict(st.session_state)
+        try:
+            for role in ("ACCOUNTADMIN", "SYSADMIN", "SNOW_ACCOUNTADMIN", "SNOW_ACCOUNTADMINS", "SNOW_SYSADMIN"):
+                with self.subTest(role=role):
+                    st.session_state.clear()
+                    st.session_state["_overwatch_current_role"] = role
+
+                    self.assertTrue(admin_actions_default_enabled())
+                    initialize_admin_actions_default()
+                    self.assertTrue(st.session_state[ADMIN_ACTIONS_KEY])
+                    self.assertTrue(admin_actions_enabled())
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_admin_actions_default_off_for_non_admin_roles_and_manual_choice_sticks(self):
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["_overwatch_current_role"] = "APP_READONLY"
+            self.assertFalse(admin_actions_default_enabled())
+            initialize_admin_actions_default()
+            self.assertFalse(st.session_state[ADMIN_ACTIONS_KEY])
+
+            st.session_state["_overwatch_current_role"] = "SNOW_ACCOUNTADMINS"
+            initialize_admin_actions_default()
+            self.assertTrue(st.session_state[ADMIN_ACTIONS_KEY])
+
+            st.session_state.clear()
+            st.session_state["_overwatch_current_role"] = "ACCOUNTADMIN"
+            st.session_state[ADMIN_ACTIONS_KEY] = False
+            initialize_admin_actions_default()
+            self.assertFalse(st.session_state[ADMIN_ACTIONS_KEY])
+
+            st.session_state.clear()
+            st.session_state["_overwatch_current_role"] = "APP_READONLY"
+            st.session_state[ADMIN_ACTIONS_KEY] = True
+            initialize_admin_actions_default()
+            self.assertTrue(st.session_state[ADMIN_ACTIONS_KEY])
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
     def test_warehouse_setting_plan_only_alters_changed_values(self):
         current = pd.Series({
             "name": "WH_ALFA_BI",

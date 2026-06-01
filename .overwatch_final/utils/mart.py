@@ -757,6 +757,79 @@ def build_mart_chargeback_sql(
     """
 
 
+def build_mart_cost_explorer_sql(
+    days_back: int = 30,
+    company: str = "ALFA",
+    warehouse_contains: str = "",
+    user_contains: str = "",
+    role_contains: str = "",
+    database_contains: str = "",
+    department_contains: str = "",
+) -> str:
+    """Build a multi-dimension Cost Explorer detail query from chargeback facts."""
+    table = mart_object_name("FACT_CHARGEBACK_DAILY")
+    company_filter = _mart_company_filter(company)
+    env_filter = _mart_environment_filter("ENVIRONMENT", company)
+    wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
+    user_filter = _mart_text_filter("USER_NAME", user_contains)
+    role_filter = _mart_text_filter("ROLE_NAME", role_contains)
+    db_filter = _mart_text_filter("DATABASE_NAME", database_contains)
+    dept_filter = _mart_text_filter("COALESCE(COST_OWNER, 'Unassigned')", department_contains)
+    return f"""
+        SELECT
+            COMPANY,
+            ENVIRONMENT,
+            ENVIRONMENT_ROLLUP,
+            DATABASE_NAME,
+            USER_NAME,
+            ROLE_NAME,
+            WAREHOUSE_NAME,
+            WAREHOUSE_SIZE,
+            COALESCE(NULLIF(COST_OWNER, ''), 'Unassigned') AS DEPARTMENT,
+            COST_OWNER,
+            OWNER_SOURCE,
+            OWNER_EVIDENCE,
+            ALLOCATION_CONFIDENCE,
+            ALLOCATION_BASIS,
+            CHARGEBACK_READY,
+            SCOPE_REVIEW,
+            SUM(QUERY_COUNT) AS QUERY_COUNT,
+            ROUND(SUM(ALLOCATED_CREDITS), 4) AS TOTAL_CREDITS,
+            ROUND(SUM(EST_COST_USD), 2) AS EST_COST,
+            MIN(USAGE_DATE) AS FIRST_USAGE_DATE,
+            MAX(USAGE_DATE) AS LAST_USAGE_DATE,
+            COUNT(DISTINCT USAGE_DATE) AS ACTIVE_DAYS,
+            MAX(LOAD_TS) AS MART_LOAD_TS
+        FROM {table}
+        WHERE USAGE_DATE >= DATEADD('DAY', -{int(days_back)}, CURRENT_DATE())
+          {company_filter}
+          {env_filter}
+          {wh_filter}
+          {user_filter}
+          {role_filter}
+          {db_filter}
+          {dept_filter}
+        GROUP BY
+            COMPANY,
+            ENVIRONMENT,
+            ENVIRONMENT_ROLLUP,
+            DATABASE_NAME,
+            USER_NAME,
+            ROLE_NAME,
+            WAREHOUSE_NAME,
+            WAREHOUSE_SIZE,
+            COALESCE(NULLIF(COST_OWNER, ''), 'Unassigned'),
+            COST_OWNER,
+            OWNER_SOURCE,
+            OWNER_EVIDENCE,
+            ALLOCATION_CONFIDENCE,
+            ALLOCATION_BASIS,
+            CHARGEBACK_READY,
+            SCOPE_REVIEW
+        ORDER BY TOTAL_CREDITS DESC, QUERY_COUNT DESC
+    """
+
+
 def build_mart_cost_cockpit_sql(company: str = "ALFA", days: int = 7) -> str:
     """Build the Cost & Contract landing cockpit from hourly warehouse facts."""
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")

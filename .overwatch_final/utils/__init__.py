@@ -101,8 +101,9 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "SectionTimer",
     ),
     "admin": (
-        "admin_actions_enabled", "admin_button_disabled", "admin_disabled_reason",
-        "render_admin_mode_control", "require_admin_enabled",
+        "admin_actions_default_enabled", "admin_actions_enabled",
+        "admin_button_disabled", "admin_disabled_reason",
+        "initialize_admin_actions_default", "render_admin_mode_control", "require_admin_enabled",
         "build_admin_audit_insert_sql", "log_admin_action",
     ),
     "metadata": (
@@ -139,7 +140,8 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_mart_account_health_queued_sql",
         "build_mart_account_health_ytd_credits_sql",
         "build_mart_bill_summary_sql", "build_mart_bill_warehouse_delta_sql",
-        "build_mart_chargeback_sql", "build_mart_cost_cockpit_sql",
+        "build_mart_chargeback_sql", "build_mart_cost_explorer_sql",
+        "build_mart_cost_cockpit_sql",
         "build_mart_cost_run_rate_sql",
         "build_mart_warehouse_overview_sql", "build_mart_warehouse_scaling_sql",
         "build_mart_usage_overview_sql", "build_mart_usage_metering_sql",

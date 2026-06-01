@@ -16,7 +16,7 @@ from utils import (
     get_global_filter_clause, get_company_case_expr,
     get_active_environment, get_environment_case_expr, get_environment_filter_clause,
     build_mart_bill_summary_sql, build_mart_bill_warehouse_delta_sql,
-    build_mart_chargeback_sql, load_mart_table, mart_source_caption,
+    build_mart_chargeback_sql, build_mart_cost_explorer_sql, load_mart_table, mart_source_caption,
     filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown, render_priority_dataframe,
     render_ranked_bar_chart,
@@ -28,6 +28,7 @@ from utils import (
 
 
 COST_CENTER_VIEWS = (
+    "Cost Explorer",
     "Explain This Bill",
     "User Leaderboard",
     "Burn Rate",
@@ -40,6 +41,7 @@ COST_CENTER_VIEWS = (
 )
 
 COST_CENTER_VIEW_DETAILS = {
+    "Cost Explorer": "Pivot one loaded attribution set by company, department, warehouse, database, role, and user.",
     "Explain This Bill": "Narrative answer for why spend changed.",
     "User Leaderboard": "Top users and warehouses by allocated credits.",
     "Burn Rate": "Daily metered credit trend by warehouse.",
@@ -66,6 +68,32 @@ NO_DATABASE_CONTEXT_VALUES = {
     "NAN",
     "NO_DATABASE_CONTEXT",
     "NO DATABASE CONTEXT",
+}
+
+COST_EXPLORER_LENSES = (
+    "Company",
+    "Department / Cost Center",
+    "Warehouse",
+    "Database",
+    "Role",
+    "User",
+    "Environment",
+    "Company x Warehouse",
+    "Database x Role",
+    "Department x Warehouse",
+)
+
+COST_EXPLORER_LENS_COLUMNS = {
+    "Company": ["COMPANY"],
+    "Department / Cost Center": ["DEPARTMENT"],
+    "Warehouse": ["WAREHOUSE_NAME"],
+    "Database": ["DATABASE_NAME"],
+    "Role": ["ROLE_NAME"],
+    "User": ["USER_NAME"],
+    "Environment": ["ENVIRONMENT_ROLLUP"],
+    "Company x Warehouse": ["COMPANY", "WAREHOUSE_NAME"],
+    "Database x Role": ["DATABASE_NAME", "ROLE_NAME"],
+    "Department x Warehouse": ["DEPARTMENT", "WAREHOUSE_NAME"],
 }
 
 
@@ -237,6 +265,274 @@ def _owner_proof_label(values) -> str:
     if "MISSING_OWNER" in cleaned:
         return "Missing"
     return "Mixed"
+
+
+def _cost_explorer_dimension_columns(lens: str) -> list[str]:
+    return COST_EXPLORER_LENS_COLUMNS.get(str(lens or ""), ["WAREHOUSE_NAME"])
+
+
+def _cost_explorer_dimension_label(row, columns: list[str]) -> str:
+    parts = []
+    for column in columns:
+        value = _row_text(row, column)
+        parts.append(value if value else "Unassigned")
+    return " / ".join(parts)
+
+
+def _normalize_cost_explorer_detail(df: pd.DataFrame, credit_price: float) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    detail = df.copy()
+    detail.columns = [str(col).upper() for col in detail.columns]
+    env_rollup_missing = "ENVIRONMENT_ROLLUP" not in detail.columns
+    defaults = {
+        "COMPANY": "Unassigned",
+        "ENVIRONMENT": "No Database Context",
+        "ENVIRONMENT_ROLLUP": "No Database Context",
+        "DATABASE_NAME": "NO_DATABASE_CONTEXT",
+        "USER_NAME": "Unknown user",
+        "ROLE_NAME": "Unknown role",
+        "WAREHOUSE_NAME": "Unknown warehouse",
+        "WAREHOUSE_SIZE": "",
+        "DEPARTMENT": "",
+        "COST_OWNER": "",
+        "OWNER_SOURCE": "",
+        "OWNER_EVIDENCE": "",
+        "ALLOCATION_CONFIDENCE": "",
+        "ALLOCATION_BASIS": "",
+        "CHARGEBACK_READY": "",
+        "SCOPE_REVIEW": "",
+        "QUERY_COUNT": 0,
+        "TOTAL_CREDITS": 0.0,
+        "EST_COST": 0.0,
+    }
+    for column, default in defaults.items():
+        if column not in detail.columns:
+            detail[column] = default
+    detail["TOTAL_CREDITS"] = pd.to_numeric(detail["TOTAL_CREDITS"], errors="coerce").fillna(0.0)
+    if "EST_COST" not in detail.columns or pd.to_numeric(detail["EST_COST"], errors="coerce").fillna(0).sum() == 0:
+        detail["EST_COST"] = detail["TOTAL_CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
+    else:
+        detail["EST_COST"] = pd.to_numeric(detail["EST_COST"], errors="coerce").fillna(0.0)
+    detail["QUERY_COUNT"] = pd.to_numeric(detail["QUERY_COUNT"], errors="coerce").fillna(0).astype(int)
+    detail["ACTIVE_DAYS"] = pd.to_numeric(detail["ACTIVE_DAYS"], errors="coerce").fillna(0).astype(int)
+    detail["DEPARTMENT"] = detail.apply(
+        lambda row: (
+            _row_text(row, "DEPARTMENT")
+            or _row_text(row, "COST_OWNER")
+            or "Unassigned"
+        ),
+        axis=1,
+    )
+    if env_rollup_missing:
+        detail["ENVIRONMENT_ROLLUP"] = detail.apply(_environment_rollup_for_cost, axis=1)
+    else:
+        detail["ENVIRONMENT_ROLLUP"] = detail.apply(
+            lambda row: _row_text(row, "ENVIRONMENT_ROLLUP") or _environment_rollup_for_cost(row),
+            axis=1,
+        )
+    detail = _annotate_allocation_quality(detail)
+    return detail
+
+
+def _cost_explorer_summary(detail: pd.DataFrame, lens: str) -> pd.DataFrame:
+    if detail is None or detail.empty:
+        return pd.DataFrame()
+    columns = _cost_explorer_dimension_columns(lens)
+    for column in columns:
+        if column not in detail.columns:
+            detail[column] = "Unassigned"
+    for column in ("FIRST_USAGE_DATE", "LAST_USAGE_DATE"):
+        if column not in detail.columns:
+            detail[column] = ""
+    if "ACTIVE_DAYS" not in detail.columns:
+        detail["ACTIVE_DAYS"] = 0
+    summary = (
+        detail.groupby(columns, dropna=False)
+        .agg(
+            TOTAL_CREDITS=("TOTAL_CREDITS", "sum"),
+            EST_COST=("EST_COST", "sum"),
+            QUERY_COUNT=("QUERY_COUNT", "sum"),
+            ACTIVE_DAYS=("ACTIVE_DAYS", "max"),
+            USERS=("USER_NAME", "nunique"),
+            ROLES=("ROLE_NAME", "nunique"),
+            WAREHOUSES=("WAREHOUSE_NAME", "nunique"),
+            DATABASES=("DATABASE_NAME", "nunique"),
+            ENVIRONMENTS=("ENVIRONMENT_ROLLUP", "nunique"),
+            ALLOCATION_CONFIDENCE=("ALLOCATION_CONFIDENCE", _mixed_label),
+            CHARGEBACK_READY=("CHARGEBACK_READY", _chargeback_readiness_label),
+            OWNER_PROOF=("OWNER_SOURCE", _owner_proof_label),
+            FIRST_USAGE_DATE=("FIRST_USAGE_DATE", "min"),
+            LAST_USAGE_DATE=("LAST_USAGE_DATE", "max"),
+        )
+        .reset_index()
+    )
+    total_cost = max(float(summary["EST_COST"].sum()), 0.01)
+    summary["PCT_OF_COST"] = (summary["EST_COST"] / total_cost * 100).round(1)
+    summary["DIMENSION"] = summary.apply(lambda row: _cost_explorer_dimension_label(row, columns), axis=1)
+    summary["EST_COST"] = summary["EST_COST"].round(2)
+    summary["TOTAL_CREDITS"] = summary["TOTAL_CREDITS"].round(4)
+    return summary.sort_values(["EST_COST", "TOTAL_CREDITS", "QUERY_COUNT"], ascending=[False, False, False])
+
+
+def _cost_explorer_gap_board(detail: pd.DataFrame, lens_summary: pd.DataFrame) -> pd.DataFrame:
+    if detail is None or detail.empty:
+        return pd.DataFrame()
+
+    def _gap_row(gap: str, mask: pd.Series, action: str) -> dict:
+        scoped = detail[mask].copy()
+        if scoped.empty:
+            return {
+                "GAP": gap,
+                "STATE": "Clear",
+                "ROWS": 0,
+                "EST_COST": 0.0,
+                "TOP_DRIVER": "None",
+                "ACTION": "No action needed for the loaded scope.",
+            }
+        top = scoped.sort_values("EST_COST", ascending=False).iloc[0]
+        top_driver = (
+            _row_text(top, "WAREHOUSE_NAME")
+            or _row_text(top, "DATABASE_NAME")
+            or _row_text(top, "USER_NAME")
+            or "Unknown"
+        )
+        return {
+            "GAP": gap,
+            "STATE": "Action Needed",
+            "ROWS": len(scoped),
+            "EST_COST": round(float(scoped["EST_COST"].sum()), 2),
+            "TOP_DRIVER": top_driver,
+            "ACTION": action,
+        }
+
+    dept = detail["DEPARTMENT"].fillna("").astype(str).str.upper()
+    owner_source = detail["OWNER_SOURCE"].fillna("").astype(str).str.upper()
+    readiness = detail["CHARGEBACK_READY"].fillna("").astype(str).str.upper()
+    confidence = detail["ALLOCATION_CONFIDENCE"].fillna("").astype(str).str.upper()
+    database = detail["DATABASE_NAME"].fillna("").astype(str).str.upper()
+    no_context = database.isin(NO_DATABASE_CONTEXT_VALUES) | detail["ENVIRONMENT_ROLLUP"].fillna("").astype(str).str.upper().eq("NO DATABASE CONTEXT")
+    rows = [
+        _gap_row(
+            "Missing department / cost-center proof",
+            dept.isin({"", "UNASSIGNED", "UNKNOWN", "NONE", "NULL"}) | ~owner_source.str.contains("TAG", na=False),
+            "Tag warehouses with COST_CENTER or DEPARTMENT and keep owner-directory fallback current.",
+        ),
+        _gap_row(
+            "No database context",
+            no_context,
+            "Do not split PROD/DEV or bill a database owner until query tag, session lineage, or owner proof exists.",
+        ),
+        _gap_row(
+            "Not chargeback ready",
+            readiness.isin({"NO", "REVIEW", "DIRECTIONAL", "MIXED", ""}),
+            "Resolve owner proof, shared warehouse basis, and allocation confidence before sending chargeback.",
+        ),
+        _gap_row(
+            "Shared / low-confidence allocation",
+            confidence.str.contains("SHARED|ACCOUNT-WIDE|NEEDS OWNER", na=False),
+            "Keep these rows in estimated review and attach service-specific lineage before charging a team.",
+        ),
+    ]
+    if lens_summary is not None and not lens_summary.empty:
+        top = lens_summary.iloc[0]
+        rows.append({
+            "GAP": "Cost concentration",
+            "STATE": "Action Needed" if safe_float(top.get("PCT_OF_COST")) >= 35 else "Watch",
+            "ROWS": 1,
+            "EST_COST": safe_float(top.get("EST_COST")),
+            "TOP_DRIVER": str(top.get("DIMENSION") or "Unknown"),
+            "ACTION": "If one driver owns 35%+ of cost, validate budget owner, workload isolation, and warehouse settings.",
+        })
+    return pd.DataFrame(rows)
+
+
+def _cost_explorer_live_sql(
+    days: int,
+    company: str,
+    warehouse_size_expr: str,
+    department_contains: str = "",
+) -> str:
+    company_expr = get_company_case_expr("q.warehouse_name", "q.database_name", "q.user_name")
+    environment_expr = get_environment_case_expr("q.database_name")
+    scope = get_global_filter_clause(
+        "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+    )
+    dept_filter = (
+        f"AND COALESCE(t.cost_center_tag, t.owner_tag, '') ILIKE '%' || {sql_literal(department_contains, 300)} || '%'"
+        if str(department_contains or "").strip()
+        else ""
+    )
+    return f"""
+    WITH {build_metered_credit_cte(days_back=days)},
+    warehouse_tags AS (
+        SELECT
+            object_name AS warehouse_name,
+            MAX(IFF(
+                UPPER(tag_name) IN ('COST_CENTER', 'COSTCENTER', 'DEPARTMENT', 'BILLING_OWNER'),
+                tag_value,
+                NULL
+            )) AS cost_center_tag,
+            MAX(IFF(
+                UPPER(tag_name) IN ('OWNER', 'BUSINESS_OWNER', 'SERVICE_OWNER', 'DATA_OWNER', 'APPLICATION_OWNER'),
+                tag_value,
+                NULL
+            )) AS owner_tag
+        FROM SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES
+        WHERE UPPER(COALESCE(domain, '')) = 'WAREHOUSE'
+        GROUP BY object_name
+    ),
+    query_costs AS (
+        SELECT
+            {company_expr} AS company,
+            {environment_expr} AS environment,
+            COALESCE(q.database_name, 'NO_DATABASE_CONTEXT') AS database_name,
+            COALESCE(q.user_name, 'Unknown user') AS user_name,
+            COALESCE(q.role_name, 'Unknown role') AS role_name,
+            COALESCE(q.warehouse_name, 'Unknown warehouse') AS warehouse_name,
+            {warehouse_size_expr} AS warehouse_size,
+            COALESCE(NULLIF(t.cost_center_tag, ''), NULLIF(t.owner_tag, ''), 'Unassigned') AS department,
+            COALESCE(NULLIF(t.cost_center_tag, ''), NULLIF(t.owner_tag, ''), 'Unassigned') AS cost_owner,
+            IFF(COALESCE(t.cost_center_tag, t.owner_tag, '') <> '', 'WAREHOUSE_TAG', 'QUERY_USER') AS owner_source,
+            IFF(COALESCE(t.cost_center_tag, t.owner_tag, '') <> '',
+                'Warehouse tag evidence from TAG_REFERENCES.',
+                'Query user only; validate owner or department before billing.'
+            ) AS owner_evidence,
+            COUNT(*) AS query_count,
+            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS total_credits,
+            MIN(q.start_time::DATE) AS first_usage_date,
+            MAX(q.start_time::DATE) AS last_usage_date,
+            COUNT(DISTINCT q.start_time::DATE) AS active_days
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
+        LEFT JOIN warehouse_tags t ON UPPER(t.warehouse_name) = UPPER(q.warehouse_name)
+        WHERE q.start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+          AND q.warehouse_name IS NOT NULL
+          {scope}
+          {dept_filter}
+        GROUP BY 1,2,3,4,5,6,8,9,10,11
+    )
+    SELECT
+        company,
+        environment,
+        database_name,
+        user_name,
+        role_name,
+        warehouse_name,
+        warehouse_size,
+        department,
+        cost_owner,
+        owner_source,
+        owner_evidence,
+        query_count,
+        total_credits,
+        first_usage_date,
+        last_usage_date,
+        active_days
+    FROM query_costs
+    ORDER BY total_credits DESC, query_count DESC
+    LIMIT 10000
+    """
 
 
 def _chargeback_cost_verification_sql(
@@ -1146,7 +1442,197 @@ def render():
     )
 
     # ── USER LEADERBOARD ──────────────────────────────────────────────────────
-    if cost_view == "Explain This Bill":
+    if cost_view == "Cost Explorer":
+        st.header("Cost Explorer")
+        st.caption(
+            "Allocated / Estimated cost drilldown by company, department, warehouse, database, role, and user."
+        )
+
+        c1, c2, c3, c4 = st.columns([1, 1.35, 1, 1.2])
+        with c1:
+            explorer_days = st.slider("Lookback", 1, 90, 30, key="cc_explorer_days")
+        with c2:
+            explorer_lens = st.selectbox("Break down by", COST_EXPLORER_LENSES, key="cc_explorer_lens")
+        with c3:
+            min_est_cost = st.number_input(
+                "Min cost",
+                min_value=0.0,
+                value=0.0,
+                step=50.0,
+                key="cc_explorer_min_cost",
+            )
+        with c4:
+            department_contains = st.text_input(
+                "Department contains",
+                value="",
+                key="cc_explorer_department_contains",
+            )
+
+        if st.button("Load Cost Explorer", key="cc_explorer_load", type="primary"):
+            try:
+                mart_sql = build_mart_cost_explorer_sql(
+                    explorer_days,
+                    company=company,
+                    warehouse_contains=st.session_state.get("global_warehouse", ""),
+                    user_contains=st.session_state.get("global_user", ""),
+                    role_contains=st.session_state.get("global_role", ""),
+                    database_contains=st.session_state.get("global_database", ""),
+                    department_contains=department_contains,
+                )
+                mart_result = load_mart_table(
+                    "FACT_CHARGEBACK_DAILY",
+                    mart_sql,
+                    source_label="FACT_CHARGEBACK_DAILY",
+                )
+                if mart_result.available and not mart_result.data.empty:
+                    explorer_detail = mart_result.data
+                    explorer_source = mart_source_caption(mart_result)
+                else:
+                    live_sql = _cost_explorer_live_sql(
+                        explorer_days,
+                        company,
+                        max_wh_size_expr,
+                        department_contains=department_contains,
+                    )
+                    explorer_detail = run_query(
+                        live_sql,
+                        ttl_key=(
+                            f"cc_cost_explorer_{company}_{get_active_environment()}_"
+                            f"{explorer_days}_{st.session_state.get('global_warehouse', '')}_"
+                            f"{st.session_state.get('global_user', '')}_"
+                            f"{st.session_state.get('global_role', '')}_"
+                            f"{st.session_state.get('global_database', '')}_{department_contains}"
+                        ),
+                        tier="standard",
+                    )
+                    fallback_note = ""
+                    if mart_result.message:
+                        fallback_note = f" Mart unavailable: {mart_result.message[:160]}"
+                    elif mart_result.available:
+                        fallback_note = " Mart returned no rows for the selected scope."
+                    explorer_source = (
+                        "Live fallback: ACCOUNT_USAGE query allocation. "
+                        "Use this for DBA triage; exact chargeback still needs warehouse metering reconciliation."
+                        f"{fallback_note}"
+                    )
+                st.session_state["df_cost_explorer_detail"] = _normalize_cost_explorer_detail(
+                    explorer_detail,
+                    credit_price,
+                )
+                st.session_state["df_cost_explorer_source"] = explorer_source
+            except Exception as e:
+                st.warning(f"Cost Explorer unavailable in this role/context: {format_snowflake_error(e)}")
+
+        detail = st.session_state.get("df_cost_explorer_detail")
+        if detail is not None and not detail.empty:
+            detail = _normalize_cost_explorer_detail(detail, credit_price)
+            if min_est_cost > 0 and "EST_COST" in detail.columns:
+                detail = detail[detail["EST_COST"] >= float(min_est_cost)].copy()
+            if detail.empty:
+                st.info("No cost rows match the current minimum-cost threshold.")
+            else:
+                summary = _cost_explorer_summary(detail, explorer_lens)
+                gap_board = _cost_explorer_gap_board(detail, summary)
+                total_cost = safe_float(detail["EST_COST"].sum())
+                total_credits = safe_float(detail["TOTAL_CREDITS"].sum())
+                denominator = max(total_cost, 0.01)
+                readiness = detail["CHARGEBACK_READY"].fillna("").astype(str).str.upper()
+                owner_source = detail["OWNER_SOURCE"].fillna("").astype(str).str.upper()
+                database = detail["DATABASE_NAME"].fillna("").astype(str).str.upper()
+                no_context = database.isin(NO_DATABASE_CONTEXT_VALUES) | detail["ENVIRONMENT_ROLLUP"].fillna("").astype(str).str.upper().eq("NO DATABASE CONTEXT")
+                ready_cost = safe_float(detail.loc[readiness.eq("READY"), "EST_COST"].sum())
+                tag_cost = safe_float(detail.loc[owner_source.str.contains("TAG", na=False), "EST_COST"].sum())
+                no_context_cost = safe_float(detail.loc[no_context, "EST_COST"].sum())
+                top_share = safe_float(summary.iloc[0].get("PCT_OF_COST")) if not summary.empty else 0.0
+
+                m1, m2, m3, m4, m5, m6 = st.columns(6)
+                m1.metric("Estimated spend", f"${total_cost:,.0f}")
+                m2.metric("Allocated credits", format_credits(total_credits))
+                m3.metric("Ready cost", f"{ready_cost / denominator * 100:.0f}%")
+                m4.metric("Tag proof", f"{tag_cost / denominator * 100:.0f}%")
+                m5.metric("No DB context", f"${no_context_cost:,.0f}")
+                m6.metric("Top driver", f"{top_share:.0f}%")
+                st.caption(st.session_state.get(
+                    "df_cost_explorer_source",
+                    "Cost Explorer source: not loaded",
+                ))
+
+                chart_rows = render_ranked_bar_chart(
+                    summary,
+                    "DIMENSION",
+                    "EST_COST",
+                    title=f"Top {explorer_lens} cost drivers",
+                    top_n=20,
+                    color="#0ea5e9",
+                )
+                if not chart_rows.empty:
+                    st.caption("Bars are sorted highest to lowest by estimated cost.")
+
+                render_priority_dataframe(
+                    summary,
+                    title=f"Cost drilldown: {explorer_lens}",
+                    priority_columns=[
+                        "DIMENSION",
+                        "EST_COST",
+                        "PCT_OF_COST",
+                        "TOTAL_CREDITS",
+                        "QUERY_COUNT",
+                        "ACTIVE_DAYS",
+                        "USERS",
+                        "ROLES",
+                        "WAREHOUSES",
+                        "DATABASES",
+                        "ENVIRONMENTS",
+                        "CHARGEBACK_READY",
+                        "OWNER_PROOF",
+                        "ALLOCATION_CONFIDENCE",
+                        "FIRST_USAGE_DATE",
+                        "LAST_USAGE_DATE",
+                    ],
+                    sort_by=["EST_COST", "TOTAL_CREDITS", "QUERY_COUNT"],
+                    ascending=[False, False, False],
+                    max_rows=30,
+                    raw_label="All cost-drilldown rows",
+                )
+                render_priority_dataframe(
+                    gap_board,
+                    title="Cost attribution gaps",
+                    priority_columns=["GAP", "STATE", "EST_COST", "ROWS", "TOP_DRIVER", "ACTION"],
+                    sort_by=["STATE", "EST_COST"],
+                    ascending=[True, False],
+                    max_rows=8,
+                    raw_label="All cost-attribution gaps",
+                )
+                render_priority_dataframe(
+                    detail,
+                    title="Cost explorer detail",
+                    priority_columns=[
+                        "COMPANY",
+                        "ENVIRONMENT_ROLLUP",
+                        "DATABASE_NAME",
+                        "DEPARTMENT",
+                        "WAREHOUSE_NAME",
+                        "USER_NAME",
+                        "ROLE_NAME",
+                        "TOTAL_CREDITS",
+                        "EST_COST",
+                        "QUERY_COUNT",
+                        "ALLOCATION_CONFIDENCE",
+                        "CHARGEBACK_READY",
+                        "OWNER_SOURCE",
+                        "FIRST_USAGE_DATE",
+                        "LAST_USAGE_DATE",
+                    ],
+                    sort_by=["EST_COST", "TOTAL_CREDITS", "QUERY_COUNT"],
+                    ascending=[False, False, False],
+                    max_rows=40,
+                    raw_label="Raw Cost Explorer detail",
+                )
+                download_csv(detail, "cost_explorer_detail.csv")
+                if st.button("Save cost explorer outliers to Action Queue", key="cc_explorer_queue"):
+                    _queue_cost_outliers(session, detail, credit_price, "Cost & Contract - Cost Explorer")
+
+    elif cost_view == "Explain This Bill":
         st.header("Explain This Bill")
         st.caption(
             "Start here when someone asks why Snowflake spend moved. "

@@ -468,10 +468,6 @@ def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
 
-    st.header("Alert Center")
-    st.caption(
-        "Single operational inbox for Snowflake DBA alerts, email-ready messages, action queue routing, and suppression windows."
-    )
     render_operator_briefing(
         [
             ("Source of truth", "Alert history and queued actions live here, not scattered across specialist pages."),

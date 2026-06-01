@@ -2146,7 +2146,6 @@ def render():
 
     # ── OVERVIEW ──────────────────────────────────────────────────────────────
     with tab_overview:
-        st.header("Account Health - Command Center")
         render_operator_briefing(
             [
                 ("First move", "Refresh the health snapshot and read the exception signals."),

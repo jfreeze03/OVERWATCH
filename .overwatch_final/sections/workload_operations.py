@@ -54,11 +54,6 @@ def render() -> None:
     elif legacy == "Patterns":
         st.session_state["workload_operations_workflow"] = "Query diagnosis"
 
-    st.header("Workload Operations")
-    st.caption(
-        "One DBA operating console for live queries, query diagnosis, task graphs, stored procedures, "
-        "pipeline health, and query history. This replaces the scattered monitor/search/task pages."
-    )
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="allocated",

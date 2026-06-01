@@ -1922,11 +1922,6 @@ def render() -> None:
     environment = get_active_environment()
     if st.session_state.get("exceptions_only_mode") and "change_drift_workflow" not in st.session_state:
         st.session_state["change_drift_workflow"] = "Object and access changes"
-    st.header("Change & Drift")
-    st.caption(
-        "One workflow for who-changed-what investigations, stored procedure lineage, "
-        "schema/object drift, dynamic tables, replication, and controlled DBA maintenance."
-    )
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="estimated",

@@ -37,19 +37,25 @@ from utils.ask_overwatch import answer_ask_overwatch
 from utils.company_filter import invalidate_company_cache
 from utils.admin import render_admin_mode_control
 import utils.section_guidance as section_guidance
+import utils.workflows as workflows_module
 from utils.bookmarks import (
     save_bookmark, load_bookmarks,
     apply_bookmark, delete_bookmark,
 )
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-05-31-confidence-gauge-v1":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-05-31-compact-workflow-ui-v2":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker
 
 if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-05-31-confidence-gauge-v6":
     section_guidance = importlib.reload(section_guidance)
+
+if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-05-31-compact-workflow-ui-v1":
+    workflows_module = importlib.reload(workflows_module)
+    if hasattr(sections, "reload_loaded_sections"):
+        sections.reload_loaded_sections()
 
 inject_theme()
 

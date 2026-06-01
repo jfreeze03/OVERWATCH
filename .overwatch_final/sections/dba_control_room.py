@@ -2967,11 +2967,6 @@ def render() -> None:
     environment = get_active_environment()
     credit_price = safe_float(get_credit_price()) or 3.68
 
-    st.header("DBA Control Room")
-    st.caption(
-        "One place to triage Snowflake cost, reliability, security, task, warehouse, and change exceptions. "
-        "Use this page first, then drill into specialist tools only when the signal deserves it."
-    )
     render_operator_briefing(
         [
             ("First move", "Use the fast snapshot for cheap triage."),

@@ -11,6 +11,9 @@ import streamlit as st
 from .cost import freshness_note, metric_confidence_label
 
 
+WORKFLOWS_VERSION = "2026-05-31-compact-workflow-ui-v1"
+
+
 def coerce_workflow_state(key: str, workflows: Sequence[str]) -> str:
     """Return a valid workflow selection for a session-state key."""
     if not workflows:
@@ -33,7 +36,8 @@ def render_workflow_selector(
     """Render a compact workflow launcher that honors deep-link state."""
     selected = coerce_workflow_state(key, workflows)
     details = details or {}
-    st.caption(label)
+    if label:
+        st.caption(label)
     items = list(workflows)
     columns = max(1, min(int(columns or 3), 4))
     for start in range(0, len(items), columns):
@@ -47,11 +51,10 @@ def render_workflow_selector(
                     key=f"{key}_{start}_{workflow}",
                     type="primary" if is_selected else "secondary",
                     use_container_width=True,
+                    help=details.get(workflow) or None,
                 ):
                     st.session_state[key] = workflow
                     st.rerun()
-                if details.get(workflow):
-                    st.caption(details[workflow])
     return str(st.session_state.get(key, selected))
 
 
@@ -69,7 +72,7 @@ def render_operator_briefing(
     title: str = "Operator briefing",
     columns: int = 4,
 ) -> None:
-    """Render a visible, low-cost operating brief for workflow hubs."""
+    """Render a collapsed operating brief for workflow hubs."""
     if not rows:
         return
     columns = max(1, min(int(columns or 4), 4))
@@ -82,17 +85,17 @@ def render_operator_briefing(
             f"<div class=\"ow-brief-detail\">{html.escape(str(detail))}</div>"
             "</div>"
         )
-    st.markdown(
-        f"""
-        <div class="ow-brief-strip">
-            <div class="ow-brief-title">{html.escape(str(title))}</div>
-            <div class="ow-brief-grid" style="grid-template-columns: repeat({columns}, minmax(0, 1fr));">
-                {''.join(cells)}
+    with st.expander(str(title), expanded=False):
+        st.markdown(
+            f"""
+            <div class="ow-brief-strip ow-brief-strip-collapsed">
+                <div class="ow-brief-grid" style="grid-template-columns: repeat({columns}, minmax(0, 1fr));">
+                    {''.join(cells)}
+                </div>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def add_signal_routes(

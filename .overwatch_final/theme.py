@@ -20,7 +20,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
 
-THEME_VERSION = "2026-05-31-confidence-gauge-v1"
+THEME_VERSION = "2026-05-31-compact-workflow-ui-v2"
 
 _DEFAULT_THEME = "midnight"
 _THEME_ALIASES = {
@@ -847,7 +847,6 @@ code, pre, .stCodeBlock {
     margin: 0.85rem 0 1rem;
     padding: 0.65rem 0;
 }
-.ow-brief-title,
 .ow-table-heading span:first-child {
     color: var(--text-primary);
     font-size: 0.83rem;
@@ -1077,7 +1076,6 @@ code, pre, .stCodeBlock {
 }
 [data-testid="stMarkdownContainer"] .ow-section-title,
 [data-testid="stMarkdownContainer"] .ow-empty-title,
-[data-testid="stMarkdownContainer"] .ow-brief-title,
 [data-testid="stMarkdownContainer"] .ow-table-heading span:first-child,
 [data-testid="stMarkdownContainer"] .ow-confidence-meter-title,
 [data-testid="stMarkdownContainer"] .ow-confidence-score,

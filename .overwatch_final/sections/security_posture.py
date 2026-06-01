@@ -2245,11 +2245,6 @@ def render() -> None:
     environment = get_active_environment()
     if st.session_state.get("exceptions_only_mode") and "security_posture_workflow" not in st.session_state:
         st.session_state["security_posture_workflow"] = "Access posture"
-    st.header("Security Posture")
-    st.caption(
-        "One DBA workflow for login posture, MFA, grants, exfiltration signals, "
-        "data lineage, and shared-data exposure."
-    )
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="exact",

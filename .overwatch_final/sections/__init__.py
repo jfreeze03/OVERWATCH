@@ -12,6 +12,15 @@ from utils.query import format_snowflake_error
 _loaded: dict[str, object] = {}
 
 
+def reload_loaded_sections() -> None:
+    """Reload lazy-loaded section modules after shared UI/helper changes."""
+    for module_path, module in list(_loaded.items()):
+        try:
+            _loaded[module_path] = importlib.reload(module)
+        except Exception:
+            _loaded.pop(module_path, None)
+
+
 def dispatch(active_section: str) -> None:
     """Lazy-load and render the selected OVERWATCH section."""
     module_path = SECTION_MODULES.get(active_section)

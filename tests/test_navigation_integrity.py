@@ -305,6 +305,36 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.button("Render full detail"', workflows_text)
         self.assertIn("grid_df = df.head(1000)", display_text)
 
+    def test_workflow_helpers_keep_landing_pages_compact(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        sections_text = (APP_ROOT / "sections" / "__init__.py").read_text(encoding="utf-8")
+        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
+
+        self.assertIn("WORKFLOWS_VERSION", workflows_text)
+        self.assertIn("WORKFLOWS_VERSION", app_text)
+        self.assertIn("reload_loaded_sections()", app_text)
+        self.assertIn("def reload_loaded_sections()", sections_text)
+        self.assertIn("help=details.get(workflow) or None", workflows_text)
+        self.assertNotIn("st.caption(details[workflow])", workflows_text)
+        self.assertIn("with st.expander(str(title), expanded=False)", workflows_text)
+        self.assertIn("ow-brief-strip-collapsed", workflows_text)
+        self.assertNotIn("ow-brief-title", workflows_text)
+        self.assertNotIn("ow-brief-title", theme_text)
+        duplicate_headers = {
+            "dba_control_room.py": 'st.header("DBA Control Room")',
+            "alert_center.py": 'st.header("Alert Center")',
+            "cost_contract.py": 'st.header("Cost & Contract")',
+            "workload_operations.py": 'st.header("Workload Operations")',
+            "security_posture.py": 'st.header("Security Posture")',
+            "change_drift.py": 'st.header("Change & Drift")',
+            "account_health.py": 'st.header("Account Health - Command Center")',
+        }
+        for filename, marker in duplicate_headers.items():
+            with self.subTest(filename=filename):
+                section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
+                self.assertNotIn(marker, section_text)
+
     def test_app_performance_hot_paths_are_deferred_or_cached(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         query_text = (APP_ROOT / "utils" / "query.py").read_text(encoding="utf-8")

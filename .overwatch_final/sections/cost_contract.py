@@ -593,11 +593,6 @@ def render() -> None:
     credit_price = safe_float(get_credit_price()) or 3.68
     if st.session_state.get("exceptions_only_mode") and "cost_contract_workflow" not in st.session_state:
         st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
-    st.header("Cost & Contract")
-    st.caption(
-        "One operating workflow for bill explanation, cost attribution, contract pacing, "
-        "optimization actions, AI/Cortex usage, and Snowpark Container Services spend."
-    )
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="allocated",

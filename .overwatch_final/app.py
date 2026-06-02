@@ -229,6 +229,28 @@ def _section_transition_needed(signature: tuple) -> bool:
     return st.session_state.get("_overwatch_last_section_render_signature") != signature
 
 
+def _current_visible_sections() -> list[str]:
+    """Return visible sections for the current role without importing section modules."""
+    return _resolve_visible_sections()
+
+
+def _current_active_section(visible_sections: list[str]) -> str:
+    """Normalize the active section and keep the nav state valid."""
+    fallback = visible_sections[0]
+    active = _normalize_nav_section(st.session_state.get("nav_section", fallback))
+    if active not in visible_sections:
+        active = fallback
+        st.session_state["nav_section"] = active
+    return active
+
+
+def _current_credit_price() -> float:
+    """Read the latest sidebar credit-rate state before the settings widget renders."""
+    if "_credit_price_input" in st.session_state:
+        st.session_state["credit_price"] = st.session_state["_credit_price_input"]
+    return float(st.session_state.get("credit_price", DEFAULTS["credit_price"]))
+
+
 def _mark_section_rendered(section: str, signature: tuple) -> None:
     st.session_state["_overwatch_last_rendered_section"] = _normalize_nav_section(section)
     st.session_state["_overwatch_last_section_render_signature"] = signature
@@ -400,6 +422,16 @@ def _render_section_transition_state(section: str) -> None:
     )
 
 
+current_role = _get_current_role()
+visible_sections = _current_visible_sections()
+active_section = _current_active_section(visible_sections)
+active_company = str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+credit_price = _current_credit_price()
+
+# Paint the main app shell before the sidebar and selected section hydrate. During
+# high-concurrency startup this gives users an immediate, stable command-center frame.
+_render_app_header(active_section, active_company, credit_price, current_role)
+
 connection_available = _probe_snowflake_available()
 
 
@@ -441,7 +473,7 @@ with st.sidebar:
     st.divider()
 
     # Navigation.
-    visible_sections = _resolve_visible_sections()
+    visible_sections = _current_visible_sections()
     current_role     = _get_current_role()
     matched_profile  = next((k for k in ROLE_SECTIONS if k in current_role), "DBA")
     profile_color    = {
@@ -520,10 +552,7 @@ with st.sidebar:
     st.caption(f"{role_label} - {matched_profile} VIEW")
     st.caption("NAVIGATE")
 
-    active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))
-    if active_section not in visible_sections:
-        active_section = visible_sections[0]
-        st.session_state["nav_section"] = active_section
+    active_section = _current_active_section(visible_sections)
 
     def _set_section(section: str) -> None:
         _queue_section_navigation(section)
@@ -838,13 +867,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))
-if active_section not in visible_sections:
-    active_section = visible_sections[0]
-    st.session_state["nav_section"] = active_section
-
-# Main header.
-_render_app_header(active_section, active_company, credit_price, current_role)
+active_section = _current_active_section(visible_sections)
 section_guidance.render_section_confidence_meter(active_section, st.session_state)
 section_guidance.render_section_reference(active_section)
 
@@ -880,10 +903,7 @@ with st.expander("Ask OVERWATCH", expanded=False):
                     st.dataframe(cards, use_container_width=True, hide_index=True, height=260)
 
 # Section dispatch.
-active_section = _normalize_nav_section(st.session_state.get("nav_section", visible_sections[0]))
-if active_section not in visible_sections:
-    active_section = visible_sections[0]
-    st.session_state["nav_section"] = active_section
+active_section = _current_active_section(visible_sections)
 
 section_signature = _section_render_signature(active_section, active_company, current_role)
 transition_slot = st.empty()

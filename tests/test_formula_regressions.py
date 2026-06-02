@@ -3486,16 +3486,42 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state["active_company"] = "ALFA"
             st.session_state["global_environment"] = "PROD"
+            st.session_state["global_warehouse"] = "BI_COMPUTE_WH"
 
             live_summary, live_exceptions = _build_change_drift_sql(None, 14, "ALFA")
             mart_summary, mart_exceptions = _build_mart_change_drift_sql(14, "ALFA")
             combined = "\n".join([live_summary, live_exceptions, mart_summary, mart_exceptions]).upper()
+            mart_combined = "\n".join([mart_summary, mart_exceptions]).upper()
 
             self.assertIn("DATABASE_NAME IS NULL", combined)
             self.assertIn("UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD'", combined)
             self.assertIn("AS DATABASE_CONTEXT", combined)
             self.assertIn("AS SCOPE_CONFIDENCE", combined)
             self.assertIn("ACCOUNT_SCOPE_CHANGES", combined)
+            self.assertNotIn("WAREHOUSE_NAME", mart_combined)
+            self.assertNotIn("BI_COMPUTE_WH", mart_combined)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
+    def test_source_health_helpers_do_not_read_empty_session_keys(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            helpers = [
+                ("Account Health", _account_health_source_health_rows),
+                ("Warehouse Health", _warehouse_source_health_rows),
+                ("Security Posture", _security_source_health_rows),
+                ("Change & Drift", _change_source_health_rows),
+            ]
+
+            for label, helper in helpers:
+                with self.subTest(section=label):
+                    rows = helper(st.session_state, company="ALFA", environment="PROD")
+                    self.assertFalse(rows.empty)
+                    self.assertIn("SURFACE", rows.columns)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)

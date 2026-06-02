@@ -231,9 +231,10 @@ def _account_health_source_health_rows(
     for item in definitions:
         raw_window = item.get("window")
         if raw_window is None:
-            raw_window = state.get(item.get("window_key"), item.get("default_window", ""))
+            window_key = item.get("window_key")
+            raw_window = state.get(window_key, item.get("default_window", "")) if window_key else item.get("default_window", "")
             raw_window_text = _account_health_scope_value(raw_window)
-            if item.get("window_key") and raw_window_text.isdigit():
+            if window_key and raw_window_text.isdigit():
                 raw_window = f"{int(raw_window_text)}d"
         window = _account_health_scope_value(raw_window)
         expected_meta = _account_health_scope_meta(company, environment, window=window, state=state)
@@ -247,7 +248,8 @@ def _account_health_source_health_rows(
                 filter_keys=item.get("filter_keys"),
             )
         value = item.get("value")
-        error = state.get(item.get("error_key", ""))
+        error_key = item.get("error_key")
+        error = state.get(error_key) if error_key else None
         if error:
             status = "Unavailable"
         elif not _account_health_loaded(value):

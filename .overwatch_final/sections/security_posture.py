@@ -281,10 +281,13 @@ def _security_source_health_rows(
     ]
     rows = []
     for item in definitions:
-        source = str(state.get(item.get("source_key", ""), item["source"]) or item["source"])
+        source_key = item.get("source_key")
+        source = str((state.get(source_key, item["source"]) if source_key else item["source"]) or item["source"])
         frame = state.get(item["frame_key"])
-        error = state.get(item.get("error_key", ""))
-        days = state.get(item.get("days_key"), item.get("default_days"))
+        error_key = item.get("error_key")
+        error = state.get(error_key) if error_key else None
+        days_key = item.get("days_key")
+        days = state.get(days_key, item.get("default_days")) if days_key else item.get("default_days")
         expected_meta = _security_scope_meta(company, environment, days=days, state=state)
         loaded = isinstance(frame, pd.DataFrame)
         if error:

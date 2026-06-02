@@ -145,6 +145,15 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_visible_sections_have_strict_scorecard_baselines(self):
         self.assertEqual(set(ALL_SECTIONS), set(DBA_CONTROL_PLANE_SECTION_BASELINE))
 
+    def test_dba_control_room_does_not_render_admin_readiness_panel(self):
+        dba_control_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("_render_admin_readiness_panel", dba_control_text)
+        self.assertNotIn("Admin Readiness to 95", dba_control_text)
+        self.assertNotIn("Average Readiness", dba_control_text)
+        self.assertNotIn("Sections At 95", dba_control_text)
+        self.assertNotIn("dba_control_plane_component_rows", dba_control_text)
+
     def test_architecture_objectives_cover_alfa_prod_dev_and_execution_warehouse(self):
         objectives = {
             (row["ENTITY_TYPE"], row["ENTITY_PATTERN"]): row
@@ -275,6 +284,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("transition_slot.empty()", app_text)
         self.assertIn(".ow-section-transition", theme_text)
         self.assertIn("position: fixed", theme_text)
+
+    def test_app_shell_header_renders_before_sidebar_hydration(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+
+        header_index = app_text.index("_render_app_header(active_section, active_company, credit_price, current_role)")
+        sidebar_index = app_text.index("with st.sidebar:")
+        self.assertLess(header_index, sidebar_index)
+        self.assertIn("def _current_active_section", app_text)
+        self.assertIn("def _current_credit_price", app_text)
 
     def test_current_sections_have_operating_guides(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")

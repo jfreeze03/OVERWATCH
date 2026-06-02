@@ -1128,7 +1128,7 @@ def _render_platform_futures_adoption_gate(controls: pd.DataFrame) -> None:
 def _render_platform_futures(session, company: str, environment: str) -> None:
     st.subheader("AI & Platform Futures")
     st.caption(
-        "Forward Snowflake controls for Adaptive Compute, agents, MCP servers, AI spend, AI security, Openflow, Horizon governance, semantic trust, DR drills, and AI-assisted change."
+        "Forward Snowflake controls for Adaptive Compute, CoWork Artifacts, Cortex Sense, agents, MCP servers, AI spend, AI security, Openflow, Horizon governance, semantic trust, DR drills, and AI-assisted change."
     )
     controls = build_forward_platform_control_register()
     st.session_state["arch_forward_controls"] = controls

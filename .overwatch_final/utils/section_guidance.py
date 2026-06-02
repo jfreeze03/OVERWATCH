@@ -329,7 +329,7 @@ SECTION_EVIDENCE_CONTRACT = {
             "proof": "Selected-table clustering proof SQL, failover/replication inventory, RPO/RTO, and drill evidence.",
         },
         {
-            "source": "Adaptive Compute, Agent, MCP, Snowflake Intelligence, Openflow, Horizon, semantic, and AI-change readiness evidence",
+            "source": "Adaptive Compute, CoWork Artifact, Cortex Sense, Agent, MCP, Snowflake Intelligence, Openflow, Horizon, semantic, and AI-change readiness evidence",
             "confidence": "Delayed metadata plus capability visibility",
             "decision_use": "Decide whether emerging Snowflake capabilities are owner-approved, budgeted, and auditable.",
             "invalid_use": "Do not auto-change agents, MCP servers, Openflow runtimes, semantic models, DR controls, or AI-generated SQL. Do not auto-convert warehouses.",

@@ -327,8 +327,8 @@ ARCHITECTURE_OBJECTIVES = (
 )
 
 # Manual forward-platform controls for Snowflake capabilities that are emerging
-# quickly: Cortex Agents, MCP servers, Snowflake Intelligence, Openflow, Horizon,
-# semantic models, and AI-assisted change workflows. These rows intentionally
+# quickly: CoWork, Cortex Sense, Cortex Agents, MCP servers, Snowflake Intelligence,
+# Openflow, Horizon, semantic models, and AI-assisted change workflows. These rows intentionally
 # define DBA ownership and guardrails before broad adoption creates hidden risk.
 FORWARD_PLATFORM_CONTROLS = (
     {
@@ -356,6 +356,32 @@ FORWARD_PLATFORM_CONTROLS = (
         "DBA_DECISION": "Require owner, approved tool purpose, role scope, semantic source, and rollback plan before production use.",
         "AUTOMATION_BOUNDARY": "Inventory and queue only. Do not alter or drop agents/MCP servers from dashboard automation.",
         "MATCH_PRIORITY": 240,
+    },
+    {
+        "CONTROL_ID": "CORTEX_SENSE_CONTEXT_GOVERNANCE",
+        "CONTROL_AREA": "Cortex Sense Context Governance",
+        "OWNER": "DBA / AI Governance",
+        "OWNER_KEY": "CORTEX_SENSE_DEFAULT",
+        "APPROVAL_GROUP": "DBA Lead / Data Governance Lead",
+        "PRIMARY_EVIDENCE": "Cortex Sense context inventory when available; SEMANTIC_VIEWS; SEMANTIC_TABLES; SEMANTIC_METRICS; MCP server inventory; policy/access history",
+        "SOURCE_OBJECTS": "Cortex Sense shared context, business definitions, semantic sources, MCP connectors, agent skills",
+        "RISK_IF_MISSING": "Agents can appear trustworthy while using stale definitions, unowned semantic sources, or unapproved connector/tool context.",
+        "DBA_DECISION": "Require context owner, semantic source certification, connector/tool approval, data classification proof, citation policy, and regression test set before production adoption.",
+        "AUTOMATION_BOUNDARY": "Readiness and queue only. Do not publish or mutate Cortex Sense context, skills, semantic models, or MCP connectors from dashboard automation.",
+        "MATCH_PRIORITY": 238,
+    },
+    {
+        "CONTROL_ID": "COWORK_ARTIFACT_GOVERNANCE",
+        "CONTROL_AREA": "CoWork Artifact Governance",
+        "OWNER": "DBA / Analytics Governance",
+        "OWNER_KEY": "COWORK_ARTIFACT_DEFAULT",
+        "APPROVAL_GROUP": "Analytics Owner / DBA Lead",
+        "PRIMARY_EVIDENCE": "CoWork Artifact inventory when available; Snowflake Intelligence usage; semantic view ownership; dashboard/share/access policy evidence",
+        "SOURCE_OBJECTS": "CoWork Artifacts, publishable dashboards, saved/shared AI outputs, governed live-data views",
+        "RISK_IF_MISSING": "Knowledge workers can create shared dashboards or artifacts that look official while bypassing certified metrics, data owner approval, or access-review evidence.",
+        "DBA_DECISION": "Require owner, certified data source, semantic test set, sensitivity classification, sharing scope, freshness SLA, and retirement plan before publishing artifacts broadly.",
+        "AUTOMATION_BOUNDARY": "Inventory, readiness, and queue only. Do not publish, share, delete, or alter CoWork Artifacts from dashboard automation.",
+        "MATCH_PRIORITY": 236,
     },
     {
         "CONTROL_ID": "AI_SPEND_TOKEN_GUARDRAILS",

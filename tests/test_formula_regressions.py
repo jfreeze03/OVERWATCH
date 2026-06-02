@@ -260,6 +260,8 @@ from utils.ask_overwatch import (  # noqa: E402
     snapshot_ask_overwatch_state,
 )
 from utils.futures_governance import (  # noqa: E402
+    HORIZON_SEMANTIC_PROBES,
+    PLATFORM_FUTURES_EXPERT_CRITERIA,
     build_forward_platform_control_register,
     build_platform_futures_adoption_gate,
     build_platform_futures_evidence_ddl,
@@ -5060,6 +5062,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ACCOUNT_HEALTH_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("AI_AGENT_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("MCP_SERVER_DEFAULT", set(directory["OWNER_KEY"]))
+        self.assertIn("CORTEX_SENSE_DEFAULT", set(directory["OWNER_KEY"]))
+        self.assertIn("COWORK_ARTIFACT_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("AI_SECURITY_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("ADAPTIVE_COMPUTE_DEFAULT", set(directory["OWNER_KEY"]))
         self.assertIn("OPENFLOW_DEFAULT", set(directory["OWNER_KEY"]))
@@ -5182,12 +5186,43 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Adaptive Compute Readiness", areas)
         self.assertIn("AI Spend & Token Guardrails", areas)
         self.assertIn("AI Security Guardrails", areas)
+        self.assertIn("Cortex Sense Context Governance", areas)
+        self.assertIn("CoWork Artifact Governance", areas)
         self.assertIn("Openflow Operations", areas)
         self.assertIn("Horizon Governance Readiness", areas)
         self.assertIn("Semantic Trust & Verified Query Testing", areas)
         self.assertIn("BCDR Drill Ledger", areas)
         self.assertIn("AI Change Governance", areas)
+        self.assertIn("Cortex Sense Context Governance", PLATFORM_FUTURES_EXPERT_CRITERIA)
+        self.assertIn("CoWork Artifact Governance", PLATFORM_FUTURES_EXPERT_CRITERIA)
         self.assertTrue(controls["AUTOMATION_BOUNDARY"].str.contains("Do not|Never|Observe|Alert", case=False).all())
+
+    def test_cowork_and_cortex_sense_readiness_probes_are_strict(self):
+        probe_surfaces = {probe["SURFACE"]: probe for probe in HORIZON_SEMANTIC_PROBES}
+        self.assertIn("Cortex Sense Context Inventory", probe_surfaces)
+        self.assertIn("CoWork Artifact Inventory", probe_surfaces)
+        self.assertEqual(probe_surfaces["Cortex Sense Context Inventory"]["CONTROL_AREA"], "Cortex Sense Context Governance")
+        self.assertEqual(probe_surfaces["CoWork Artifact Inventory"]["CONTROL_AREA"], "CoWork Artifact Governance")
+
+        readiness = build_horizon_semantic_readiness_from_availability([
+            {
+                **probe_surfaces["Cortex Sense Context Inventory"],
+                "AVAILABLE": False,
+                "COLUMN_COUNT": 0,
+            },
+            {
+                **probe_surfaces["CoWork Artifact Inventory"],
+                "AVAILABLE": False,
+                "COLUMN_COUNT": 0,
+            },
+        ])
+        by_entity = {row["ENTITY_NAME"]: row for _, row in readiness.iterrows()}
+        self.assertEqual(by_entity["Cortex Sense Context Inventory"]["STATE"], "Not Visible")
+        self.assertEqual(by_entity["Cortex Sense Context Inventory"]["SEVERITY"], "Medium")
+        self.assertEqual(by_entity["Cortex Sense Context Inventory"]["OWNER"], "DBA / AI Governance")
+        self.assertIn("certified business definitions", by_entity["Cortex Sense Context Inventory"]["DBA_ACTION"])
+        self.assertEqual(by_entity["CoWork Artifact Inventory"]["OWNER"], "DBA / Analytics Governance")
+        self.assertIn("publisher", by_entity["CoWork Artifact Inventory"]["DBA_ACTION"])
 
     def test_platform_futures_evidence_ddl_persists_control_coverage(self):
         ddl = build_platform_futures_evidence_ddl().upper()
@@ -5197,6 +5232,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V", ddl)
         self.assertIn("OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V", ddl)
         self.assertIn("AI_AGENT_MCP_GOVERNANCE", ddl)
+        self.assertIn("CORTEX_SENSE_CONTEXT_GOVERNANCE", ddl)
+        self.assertIn("COWORK_ARTIFACT_GOVERNANCE", ddl)
         self.assertIn("ADAPTIVE_COMPUTE_READINESS", ddl)
         self.assertIn("AI_SPEND_TOKEN_GUARDRAILS", ddl)
         self.assertIn("AI_SECURITY_GUARDRAILS", ddl)

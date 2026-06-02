@@ -22,6 +22,8 @@ from .query import run_query, safe_identifier, sql_literal
 PLATFORM_FUTURES_AREAS = (
     "Adaptive Compute Readiness",
     "Agent & MCP Governance",
+    "Cortex Sense Context Governance",
+    "CoWork Artifact Governance",
     "AI Spend & Token Guardrails",
     "AI Security Guardrails",
     "Openflow Operations",
@@ -47,6 +49,14 @@ PLATFORM_FUTURES_EXPERT_CRITERIA = {
     "Agent & MCP Governance": {
         "surfaces": ("AI agent and MCP inventory",),
         "why": "Agentic tools need owner, role scope, tool scope, semantic source, blast-radius proof, and rollback evidence before production use.",
+    },
+    "Cortex Sense Context Governance": {
+        "surfaces": ("Horizon and semantic trust", "AI agent and MCP inventory"),
+        "why": "Cortex Sense can make agents more useful by sharing business context, but experts will expect owner, semantic certification, connector approval, citation policy, and regression-test proof before broad trust.",
+    },
+    "CoWork Artifact Governance": {
+        "surfaces": ("AI usage guardrails", "Horizon and semantic trust"),
+        "why": "CoWork Artifacts turn AI outputs into reusable shared dashboards and knowledge, so DBA teams must prove certified data sources, sharing scope, access policy, freshness, and retirement controls.",
     },
     "AI Spend & Token Guardrails": {
         "surfaces": ("AI usage guardrails",),
@@ -127,6 +137,27 @@ HORIZON_SEMANTIC_PROBES = (
         "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.SEMANTIC_METRICS",
         "MANDATORY": False,
         "DBA_ACTION": "Treat metric definitions as governed assets with owner, test, and change evidence.",
+    },
+    {
+        "CONTROL_AREA": "Cortex Sense Context Governance",
+        "SURFACE": "Cortex Sense Context Inventory",
+        "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SENSE_CONTEXTS",
+        "MANDATORY": False,
+        "DBA_ACTION": "If Cortex Sense is enabled, require owner, certified business definitions, approved MCP connectors, citation policy, and regression tests before production agent use.",
+    },
+    {
+        "CONTROL_AREA": "CoWork Artifact Governance",
+        "SURFACE": "CoWork Artifact Inventory",
+        "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.COWORK_ARTIFACTS",
+        "MANDATORY": False,
+        "DBA_ACTION": "If CoWork Artifacts are enabled, require publisher, certified source, sharing scope, freshness SLA, sensitivity review, and retirement owner.",
+    },
+    {
+        "CONTROL_AREA": "CoWork Artifact Governance",
+        "SURFACE": "Snowflake Intelligence Usage",
+        "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY",
+        "MANDATORY": False,
+        "DBA_ACTION": "Use Snowflake Intelligence usage as early evidence for who is creating or consuming CoWork outputs before artifact metadata is generally visible.",
     },
     {
         "CONTROL_AREA": "AI Change Governance",
@@ -438,6 +469,8 @@ def _owner_context(row: Mapping | pd.Series, entity: str, entity_type: str, cate
         "MCP_SERVER": "DBA / AI Governance",
         "OPENFLOW": "DBA / Integration Platform",
         "SEMANTIC_TRUST": "DBA / Analytics Governance",
+        "CORTEX_SENSE": "DBA / AI Governance",
+        "COWORK_ARTIFACT": "DBA / Analytics Governance",
     }.get(entity_type, "DBA / Platform Architecture")
     return resolve_owner_context(
         row,
@@ -1542,7 +1575,13 @@ def build_horizon_semantic_readiness_from_availability(records: Iterable[Mapping
             severity = "Medium"
             state = "Not Visible"
             finding = f"{surface} is not visible; track as an adoption/readiness gap if the capability is used."
-        if "Semantic Trust" in control_area:
+        if "Cortex Sense" in control_area:
+            owner = "DBA / AI Governance"
+            approval_group = "DBA Lead / Data Governance Lead"
+        elif "CoWork Artifact" in control_area:
+            owner = "DBA / Analytics Governance"
+            approval_group = "Analytics Owner / DBA Lead"
+        elif "Semantic Trust" in control_area:
             owner = "DBA / Analytics Governance"
             approval_group = "Analytics Owner / DBA Lead"
         elif "AI Change" in control_area:

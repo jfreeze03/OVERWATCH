@@ -14,7 +14,7 @@ import pandas as pd
 from utils import (
     get_session, safe_sql, format_credits, download_csv,
     get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
-    get_active_company, company_value_allowed,
+    get_active_company, get_active_environment, company_value_allowed,
     run_query, run_query_or_raise, sql_literal, safe_identifier,
     format_snowflake_error,
     run_compatibility_checks, build_smoke_test_checklist,
@@ -887,7 +887,7 @@ def render():
                                         confirmation_text=plan["confirmation_text"],
                                         control_context=plan["control_context"],
                                         company=active_company,
-                                        environment=str(st.session_state.get("active_environment", "") or ""),
+                                        environment=get_active_environment(),
                                     )
                                     session.sql(plan["alter_sql"]).collect()
                                     audited = log_admin_action(
@@ -900,7 +900,7 @@ def render():
                                         confirmation_text=plan["confirmation_text"],
                                         control_context=plan["control_context"],
                                         company=active_company,
-                                        environment=str(st.session_state.get("active_environment", "") or ""),
+                                        environment=get_active_environment(),
                                     )
                                     st.success(f"Warehouse `{sel_wh}` updated successfully.")
                                     if not audited:
@@ -920,7 +920,7 @@ def render():
                                         confirmation_text=plan["confirmation_text"],
                                         control_context=plan["control_context"],
                                         company=active_company,
-                                        environment=str(st.session_state.get("active_environment", "") or ""),
+                                        environment=get_active_environment(),
                                     )
                                     err_str = str(e).lower()
                                     if "insufficient privilege" in err_str or "not authorized" in err_str:

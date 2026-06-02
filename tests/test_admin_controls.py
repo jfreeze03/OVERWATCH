@@ -23,6 +23,7 @@ from utils.admin import (  # noqa: E402
     admin_actions_enabled,
     build_admin_audit_insert_sql,
     initialize_admin_actions_default,
+    log_admin_action,
 )
 from utils.action_queue import (  # noqa: E402
     action_queue_environment_clause,
@@ -173,6 +174,46 @@ class AdminControlTests(unittest.TestCase):
         self.assertNotIn("SNOWFLAKE_WAREHOUSE", sql)
         self.assertNotIn("ACTION_ID,", sql)
 
+    def test_admin_audit_defaults_to_global_environment_scope(self):
+        class FakeStatement:
+            def __init__(self, session, sql):
+                self.session = session
+                self.sql = sql
+
+            def collect(self):
+                self.session.sql_texts.append(self.sql)
+                return []
+
+        class FakeSession:
+            def __init__(self):
+                self.sql_texts = []
+
+            def sql(self, sql):
+                return FakeStatement(self, sql)
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["active_company"] = "ALFA"
+            st.session_state["global_environment"] = "PROD"
+            session = FakeSession()
+
+            saved = log_admin_action(
+                session,
+                action_type="ALTER WAREHOUSE",
+                target_object="WH_ALFA_BI",
+                sql_text='ALTER WAREHOUSE "WH_ALFA_BI" SET AUTO_SUSPEND = 60;',
+                result_status="SUCCESS",
+                result_message="Warehouse change completed.",
+            )
+
+            self.assertTrue(saved)
+            self.assertTrue(session.sql_texts)
+            self.assertIn("'PROD'", session.sql_texts[-1])
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
     def test_role_grant_plan_builds_sql_rollback_and_preflight(self):
         plan = _build_role_grant_change_plan(
             "grant",
@@ -308,15 +349,18 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("OWNER_SOURCE", ddl)
         self.assertIn("RECOVERY_AUDIT_STATE", ddl)
         self.assertIn("COMPANY", ddl)
-        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS VERIFICATION_STATUS", setup_sql)
-        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS VERIFIED_AT", setup_sql)
-        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS OWNER_APPROVAL_STATUS", setup_sql)
-        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS RECOVERY_EVIDENCE", setup_sql)
-        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS OWNER_EMAIL", setup_sql)
-        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS ONCALL_PRIMARY", setup_sql)
-        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS APPROVAL_GROUP", setup_sql)
-        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS OWNER_SOURCE", setup_sql)
-        self.assertIn("ALTER TABLE OVERWATCH_ACTION_QUEUE ADD COLUMN IF NOT EXISTS RECOVERY_AUDIT_STATE", setup_sql)
+        queue_start = setup_sql.index("CREATE TABLE IF NOT EXISTS OVERWATCH_ACTION_QUEUE")
+        queue_end = setup_sql.index(");", queue_start)
+        queue_block = setup_sql[queue_start:queue_end]
+        self.assertIn("VERIFICATION_STATUS", queue_block)
+        self.assertIn("VERIFIED_AT", queue_block)
+        self.assertIn("OWNER_APPROVAL_STATUS", queue_block)
+        self.assertIn("RECOVERY_EVIDENCE", queue_block)
+        self.assertIn("OWNER_EMAIL", queue_block)
+        self.assertIn("ONCALL_PRIMARY", queue_block)
+        self.assertIn("APPROVAL_GROUP", queue_block)
+        self.assertIn("OWNER_SOURCE", queue_block)
+        self.assertIn("RECOVERY_AUDIT_STATE", queue_block)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_DBA_CHECKLIST_HISTORY", setup_sql)
         self.assertIn("QUEUE_READINESS", setup_sql)
         self.assertIn("CONTROL_READINESS", setup_sql)
@@ -498,6 +542,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_LOAD_HOURLY",
                 "OVERWATCH_LOAD_CORTEX",
                 "OVERWATCH_REFRESH_CONTROL_ROOM",
+                "OVERWATCH_COST_GOVERNANCE_REFRESH",
                 "OVERWATCH_LOAD_DAILY",
             },
         )
@@ -509,6 +554,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_LOAD_HOURLY": "COMPUTE_WH",
                 "OVERWATCH_LOAD_CORTEX": "COMPUTE_WH",
                 "OVERWATCH_REFRESH_CONTROL_ROOM": "COMPUTE_WH",
+                "OVERWATCH_COST_GOVERNANCE_REFRESH": "COMPUTE_WH",
                 "OVERWATCH_LOAD_DAILY": "COMPUTE_WH",
             },
         )

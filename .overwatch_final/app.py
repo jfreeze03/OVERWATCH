@@ -35,7 +35,7 @@ from config import (
 )
 import utils as utils_package
 
-if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-01-ranked-chart-exports-v1":
+if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-02-guardrails-v1":
     utils_package = importlib.reload(utils_package)
 
 from utils.cache import clear_all_cache
@@ -46,7 +46,7 @@ from utils.query import (
 )
 from utils.logging import log_section_load
 from utils.company_filter import invalidate_company_cache
-from utils.admin import render_admin_mode_control
+from utils.admin import clamp_global_date_range, render_admin_mode_control
 import utils.section_guidance as section_guidance
 
 
@@ -63,6 +63,12 @@ _ASK_OVERWATCH_STATE_KEYS = (
     "cost_contract_spike_root_cause",
     "cost_contract_change_cost_summary",
     "cost_contract_change_cost_correlation",
+    "cost_contract_governance_alert_summary",
+    "cost_contract_governance_alerts",
+    "cost_contract_incident_timeline_summary",
+    "cost_contract_incident_timeline",
+    "cost_contract_mart_operability_summary",
+    "cost_contract_mart_operability",
     "alert_center_data",
     "dba_control_room_data",
     "dba_control_room_incident_board",
@@ -648,8 +654,19 @@ with st.sidebar:
             key="_global_date_range_input",
         )
         if isinstance(date_range, tuple) and len(date_range) == 2:
-            st.session_state["global_start_date"] = date_range[0]
-            st.session_state["global_end_date"] = date_range[1]
+            clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(date_range[0], date_range[1])
+            st.session_state["global_start_date"] = clamped_start
+            st.session_state["global_end_date"] = clamped_end
+            st.session_state["_global_date_range_input"] = (clamped_start, clamped_end)
+            if was_clamped:
+                clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
+                if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
+                    st.warning(
+                        f"Global date range was clamped to the most recent {max_days} days to keep dashboard scans bounded."
+                    )
+                    st.session_state["_global_date_clamp_notice_key"] = clamp_key
+            else:
+                st.session_state.pop("_global_date_clamp_notice_key", None)
         st.text_input("Warehouse contains", key="global_warehouse")
         st.text_input("User contains", key="global_user")
         st.text_input("Role contains", key="global_role")
@@ -683,6 +700,7 @@ with st.sidebar:
                 "global_start_date", "global_end_date", "global_warehouse",
                 "global_user", "global_role", "global_database", "global_environment",
                 "_global_date_range_input",
+                "_global_date_clamp_notice_key",
             ]:
                 st.session_state.pop(_k, None)
             clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)

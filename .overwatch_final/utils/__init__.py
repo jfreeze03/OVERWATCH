@@ -9,7 +9,7 @@ from __future__ import annotations
 from importlib import import_module
 
 
-UTILS_EXPORT_VERSION = "2026-06-01-ranked-chart-exports-v1"
+UTILS_EXPORT_VERSION = "2026-06-02-guardrails-v1"
 
 
 _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
@@ -104,6 +104,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "admin_actions_default_enabled", "admin_actions_enabled",
         "admin_button_disabled", "admin_disabled_reason",
         "initialize_admin_actions_default", "render_admin_mode_control", "require_admin_enabled",
+        "clamp_global_date_range",
         "build_admin_audit_insert_sql", "log_admin_action",
     ),
     "metadata": (
@@ -151,11 +152,13 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_mart_warehouse_overview_sql", "build_mart_warehouse_scaling_sql",
         "build_mart_usage_overview_sql", "build_mart_usage_metering_sql",
         "build_mart_usage_pressure_sql", "build_mart_usage_cost_drivers_sql",
+        "build_mart_usage_storage_sql",
         "build_mart_usage_query_mix_sql", "build_mart_usage_database_adoption_sql",
         "build_mart_adoption_summary_sql", "build_mart_adoption_warehouse_size_sql",
         "build_mart_adoption_trend_sql", "build_mart_adoption_users_wh_sql",
         "build_mart_adoption_users_db_sql", "build_mart_adoption_role_type_sql",
         "build_mart_storage_trend_sql", "build_mart_storage_db_detail_sql",
+        "build_mart_warehouse_heatmap_sql",
         "build_mart_pipeline_freshness_sql", "build_mart_pipeline_load_failures_sql",
         "build_mart_pipeline_volume_sql", "build_mart_recommendation_idle_sql",
         "build_mart_recommendation_spill_sql", "build_mart_recommendation_failed_tasks_sql",

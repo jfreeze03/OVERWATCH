@@ -1,9 +1,11 @@
 # sections/cost_contract.py - Consolidated cost and contract workflow
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
-from config import DEFAULT_ALERT_EMAIL
+from config import DEFAULT_ALERT_EMAIL, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
 from utils import (
     build_cost_savings_verification_health_sql,
     build_cost_savings_verification_sql,
@@ -2135,6 +2137,461 @@ def _build_change_cost_correlation_board(
     }, board.drop(columns=["_SEVERITY_RANK", "_RANK"], errors="ignore").reset_index(drop=True)
 
 
+def _cost_alert_message(row: pd.Series, *keys: str, default: str = "") -> str:
+    for key in keys:
+        if key in row.index:
+            value = row.get(key)
+            try:
+                if pd.isna(value):
+                    continue
+            except Exception:
+                pass
+            text = str(value or "").strip()
+            if text:
+                return text
+    return default
+
+
+def _build_cost_governance_alert_rows(
+    *,
+    budget_board: pd.DataFrame | None = None,
+    root_cause: pd.DataFrame | None = None,
+    correlation: pd.DataFrame | None = None,
+    email_target: str = DEFAULT_ALERT_EMAIL,
+) -> tuple[dict, pd.DataFrame]:
+    """Create Alert Center-ready rows from loaded Cost & Contract governance evidence."""
+    rows: list[dict] = []
+
+    def add(
+        *,
+        severity: str,
+        alert_type: str,
+        entity: str,
+        message: str,
+        suggested_action: str,
+        proof_query: str,
+        route: str,
+        owner: str,
+        value_at_risk: float = 0.0,
+        source_surface: str,
+    ) -> None:
+        severity = str(severity or "Medium").title()
+        if severity not in {"Critical", "High", "Medium", "Watch", "Info"}:
+            severity = "Medium"
+        entity = str(entity or "Cost governance").strip()
+        rows.append({
+            "SEVERITY": severity,
+            "CATEGORY": "Cost Control",
+            "ALERT_TYPE": alert_type,
+            "ENTITY_NAME": entity,
+            "MESSAGE": message,
+            "SUGGESTED_ACTION": suggested_action,
+            "PROOF_QUERY": proof_query,
+            "ROUTE": route or "Cost & Contract",
+            "OWNER": owner or "DBA / FinOps",
+            "EMAIL_TARGET": email_target or DEFAULT_ALERT_EMAIL,
+            "STATUS": "New",
+            "VALUE_AT_RISK_USD": round(safe_float(value_at_risk), 2),
+            "SOURCE_SURFACE": source_surface,
+        })
+
+    if isinstance(budget_board, pd.DataFrame) and not budget_board.empty:
+        view = budget_board.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        high = view[view.get("SEVERITY", pd.Series(index=view.index, dtype=str)).fillna("").astype(str).str.title().isin(["Critical", "High"])]
+        if "VALUE_AT_RISK_USD" in high.columns:
+            high = high.sort_values("VALUE_AT_RISK_USD", ascending=False)
+        for _, row in high.head(6).iterrows():
+            lane = _cost_alert_message(row, "LANE", default="Cost governance")
+            add(
+                severity=_cost_alert_message(row, "SEVERITY", default="High"),
+                alert_type=_cost_alert_message(row, "SIGNAL", default="Cost Governance Signal"),
+                entity=lane,
+                message=_cost_alert_message(row, "EVIDENCE", default="Cost governance signal requires review."),
+                suggested_action=_cost_alert_message(row, "NEXT_ACTION", "DBA_DECISION", default="Open Cost & Contract and work the cost governance lane."),
+                proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Attach Cost & Contract budget/anomaly evidence."),
+                route=_cost_alert_message(row, "ROUTE", default="Cost & Contract"),
+                owner="DBA / FinOps",
+                value_at_risk=safe_float(row.get("VALUE_AT_RISK_USD", 0)),
+                source_surface="Budget & Anomaly Command Center",
+            )
+
+    if isinstance(root_cause, pd.DataFrame) and not root_cause.empty:
+        view = root_cause.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        high = view[view.get("SEVERITY", pd.Series(index=view.index, dtype=str)).fillna("").astype(str).str.title().isin(["Critical", "High"])]
+        if "VALUE_AT_RISK_USD" in high.columns:
+            high = high.sort_values("VALUE_AT_RISK_USD", ascending=False)
+        for _, row in high.head(6).iterrows():
+            add(
+                severity=_cost_alert_message(row, "SEVERITY", default="High"),
+                alert_type="Cost Root Cause Candidate",
+                entity=_cost_alert_message(row, "ENTITY", "DRIVER", default="Cost root cause"),
+                message=_cost_alert_message(row, "EVIDENCE", default="Cost root-cause candidate requires review."),
+                suggested_action=_cost_alert_message(row, "NEXT_ACTION", default="Open Cost & Contract root-cause drilldown."),
+                proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Attach warehouse metering, run-rate, owner, and change evidence."),
+                route=_cost_alert_message(row, "ROUTE", default="Cost & Contract"),
+                owner="DBA / FinOps",
+                value_at_risk=safe_float(row.get("VALUE_AT_RISK_USD", 0)),
+                source_surface="Cost Spike Root Cause",
+            )
+
+    if isinstance(correlation, pd.DataFrame) and not correlation.empty:
+        view = correlation.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        high = view[view.get("SEVERITY", pd.Series(index=view.index, dtype=str)).fillna("").astype(str).str.title().isin(["Critical", "High"])]
+        for _, row in high.head(5).iterrows():
+            add(
+                severity=_cost_alert_message(row, "SEVERITY", default="High"),
+                alert_type="Change Cost Correlation",
+                entity=_cost_alert_message(row, "ENTITY", "CORRELATION", default="Change/cost correlation"),
+                message=_cost_alert_message(row, "EVIDENCE", default="A recent change may explain cost movement."),
+                suggested_action=_cost_alert_message(row, "NEXT_ACTION", default="Compare change evidence to cost movement before tuning."),
+                proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Attach change query_id, actor, ticket, and cost proof."),
+                route=_cost_alert_message(row, "ROUTE", default="Change & Drift"),
+                owner="DBA / FinOps",
+                value_at_risk=0.0,
+                source_surface="Change + Cost Correlation",
+            )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {
+            "alert_count": 0,
+            "critical_high": 0,
+            "email_target": email_target or DEFAULT_ALERT_EMAIL,
+            "top_alert": "No loaded Cost & Contract alert candidates",
+        }, board
+    board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_cost_command_severity_rank)
+    board = board.sort_values(["_SEVERITY_RANK", "VALUE_AT_RISK_USD"], ascending=[True, False])
+    board = board.drop_duplicates(subset=["ALERT_TYPE", "ENTITY_NAME", "MESSAGE"], keep="first")
+    top = board.iloc[0]
+    summary = {
+        "alert_count": int(len(board)),
+        "critical_high": int(board["SEVERITY"].isin(["Critical", "High"]).sum()),
+        "email_target": email_target or DEFAULT_ALERT_EMAIL,
+        "top_alert": f"{top.get('ALERT_TYPE')} - {top.get('ENTITY_NAME')}",
+    }
+    return summary, board.drop(columns=["_SEVERITY_RANK"], errors="ignore").reset_index(drop=True)
+
+
+def _build_cost_incident_timeline(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    alert_rows: pd.DataFrame | None = None,
+    state: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Build a compact incident narrative from cost movement to alert/action/verification."""
+    state = state or st.session_state
+    root_cause = _state_frame(state, "cost_contract_spike_root_cause")
+    correlation = _state_frame(state, "cost_contract_change_cost_correlation")
+    current_credits = safe_float(_first_frame_value(cockpit, "CURRENT_CREDITS", 0))
+    prior_credits = safe_float(_first_frame_value(cockpit, "PRIOR_CREDITS", 0))
+    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "Cost scope") or "Cost scope")
+    top_delta = safe_float(_first_frame_value(cockpit, "TOP_INCREASE_CREDITS", 0))
+    pct_vs_30d = _first_frame_value(run_rate, "PCT_VS_30D_AVG", None)
+    pct_vs_30d_float = safe_float(pct_vs_30d) if pct_vs_30d is not None and not pd.isna(pct_vs_30d) else 0.0
+    open_cost_queue = _open_cost_action_frame(queue)
+
+    rows: list[dict] = []
+
+    def add(order: int, severity: str, step: str, entity: str, evidence: str, next_action: str, proof: str, route: str) -> None:
+        rows.append({
+            "EVENT_ORDER": int(order),
+            "SEVERITY": severity,
+            "INCIDENT_STEP": step,
+            "ENTITY": entity,
+            "EVIDENCE": evidence,
+            "NEXT_ACTION": next_action,
+            "PROOF_REQUIRED": proof,
+            "ROUTE": route,
+        })
+
+    movement_severity = "Critical" if top_delta > 0 and pct_vs_30d_float >= 25 else "High" if top_delta > 0 else "Info"
+    add(
+        1,
+        movement_severity,
+        "Cost movement detected",
+        top_wh,
+        f"{top_wh}: {top_delta:+,.2f} credit delta; current {current_credits:,.2f} vs prior {prior_credits:,.2f}; 7d vs 30d {pct_vs_30d_float:+.1f}%.",
+        "Explain the top cost mover before changing warehouse settings, budgets, or quotas.",
+        "Complete-day run-rate plus FACT_WAREHOUSE_HOURLY current/prior warehouse metering.",
+        "Cost & Contract > Explain bill / attribution / contract",
+    )
+
+    if isinstance(root_cause, pd.DataFrame) and not root_cause.empty:
+        root_view = root_cause.copy()
+        root_view["_RANK"] = root_view.get("SEVERITY", pd.Series(index=root_view.index, dtype=str)).apply(_cost_command_severity_rank)
+        root_view = root_view.sort_values(["_RANK"], ascending=True)
+        root = root_view.iloc[0]
+        add(
+            2,
+            _cost_alert_message(root, "SEVERITY", default="Medium"),
+            "Root cause candidate",
+            _cost_alert_message(root, "ENTITY", "DRIVER", default=top_wh),
+            _cost_alert_message(root, "EVIDENCE", default="Root cause candidate loaded."),
+            _cost_alert_message(root, "NEXT_ACTION", default="Confirm owner demand, workload mix, and setting changes before tuning."),
+            _cost_alert_message(root, "PROOF_REQUIRED", default="Attach Cost & Contract root-cause evidence."),
+            _cost_alert_message(root, "ROUTE", default="Cost & Contract"),
+        )
+    else:
+        add(
+            2,
+            "Medium",
+            "Root cause candidate",
+            top_wh,
+            "Root-cause board has not been loaded for this incident window.",
+            "Load Cost Cockpit root-cause evidence before assigning savings or tuning work.",
+            "Cost Spike Root Cause board.",
+            "Cost & Contract",
+        )
+
+    if isinstance(correlation, pd.DataFrame) and not correlation.empty:
+        corr_view = correlation.copy()
+        corr_view["_RANK"] = corr_view.get("SEVERITY", pd.Series(index=corr_view.index, dtype=str)).apply(_cost_command_severity_rank)
+        corr_view = corr_view.sort_values(["_RANK"], ascending=True)
+        corr = corr_view.iloc[0]
+        add(
+            3,
+            _cost_alert_message(corr, "SEVERITY", default="Medium"),
+            "Change correlation checked",
+            _cost_alert_message(corr, "ENTITY", "CORRELATION", default=top_wh),
+            _cost_alert_message(corr, "EVIDENCE", default="Change/cost correlation evidence loaded."),
+            _cost_alert_message(corr, "NEXT_ACTION", default="Compare change evidence to the cost window before closure."),
+            _cost_alert_message(corr, "PROOF_REQUIRED", default="Attach change query_id, actor, ticket, and cost proof."),
+            _cost_alert_message(corr, "ROUTE", default="Change & Drift"),
+        )
+    else:
+        add(
+            3,
+            "Medium",
+            "Change correlation checked",
+            top_wh,
+            "Change & Drift evidence is not loaded for this cost movement.",
+            "Load Change & Drift for the same company/environment before closing the incident as workload-only.",
+            "FACT_OBJECT_CHANGE or Change & Drift exception rows.",
+            "Change & Drift",
+        )
+
+    if isinstance(alert_rows, pd.DataFrame) and not alert_rows.empty:
+        alert_view = alert_rows.copy()
+        alert_view["_RANK"] = alert_view.get("SEVERITY", pd.Series(index=alert_view.index, dtype=str)).apply(_cost_command_severity_rank)
+        alert_view = alert_view.sort_values(["_RANK", "VALUE_AT_RISK_USD"], ascending=[True, False])
+        alert = alert_view.iloc[0]
+        add(
+            4,
+            _cost_alert_message(alert, "SEVERITY", default="High"),
+            "Alert routed",
+            _cost_alert_message(alert, "ENTITY_NAME", default=top_wh),
+            _cost_alert_message(alert, "MESSAGE", default="Cost governance alert candidate is ready for Alert Center."),
+            _cost_alert_message(alert, "SUGGESTED_ACTION", default="Route the alert to DBA / FinOps email triage."),
+            _cost_alert_message(alert, "PROOF_QUERY", default="Attach the alert proof query."),
+            "Alert Center",
+        )
+    else:
+        add(
+            4,
+            "Info",
+            "Alert routed",
+            top_wh,
+            "No Critical/High Cost & Contract alert candidate is loaded.",
+            "Keep monitoring; only route actionable Cost & Contract rows with proof.",
+            "Cost governance alert board.",
+            "Alert Center",
+        )
+
+    add(
+        5,
+        "High" if not open_cost_queue.empty else "Info",
+        "DBA action and verification",
+        f"{len(open_cost_queue):,} open cost action(s)",
+        f"{len(open_cost_queue):,} open Cost & Contract action queue row(s) need owner, approval, baseline/current values, and verification proof.",
+        "Work owner-approved actions first; keep savings estimated until post-period proof verifies the change.",
+        "OVERWATCH_ACTION_QUEUE owner approval, verification query, baseline/current, measured delta, and closure status.",
+        "Cost & Contract > Recommendations and action queue",
+    )
+
+    board = pd.DataFrame(rows).sort_values("EVENT_ORDER").reset_index(drop=True)
+    summary = {
+        "event_count": int(len(board)),
+        "critical_high": int(board["SEVERITY"].isin(["Critical", "High"]).sum()) if not board.empty else 0,
+        "top_step": str(board.iloc[0].get("INCIDENT_STEP") if not board.empty else "No incident timeline"),
+        "next_action": str(board.iloc[0].get("NEXT_ACTION") if not board.empty else "Load Cost Cockpit."),
+    }
+    return summary, board
+
+
+def _extract_setup_sql_block(setup_sql: str, start_token: str, end_token: str) -> str:
+    start_idx = setup_sql.upper().find(start_token.upper())
+    if start_idx < 0:
+        return ""
+    end_idx = setup_sql.upper().find(end_token.upper(), start_idx + len(start_token))
+    if end_idx < 0:
+        return setup_sql[start_idx:].strip()
+    return setup_sql[start_idx:end_idx].strip()
+
+
+def build_cost_governance_mart_sql(
+    *,
+    db: str = ETL_AUDIT_DB,
+    schema: str = ETL_AUDIT_SCHEMA,
+    warehouse: str = "COMPUTE_WH",
+    email_target: str = DEFAULT_ALERT_EMAIL,
+) -> str:
+    """Return the Cost Governance deployment excerpt from OVERWATCH_MART_SETUP.sql."""
+    setup_path = Path(__file__).resolve().parents[2] / "snowflake" / "OVERWATCH_MART_SETUP.sql"
+    try:
+        setup_sql = setup_path.read_text(encoding="utf-8")
+    except Exception:
+        return """-- Source of truth: snowflake/OVERWATCH_MART_SETUP.sql
+-- Expected objects:
+--   FACT_COST_GOVERNANCE_SIGNAL
+--   FACT_COST_INCIDENT_TIMELINE
+--   SP_OVERWATCH_REFRESH_COST_GOVERNANCE
+--   OVERWATCH_COST_GOVERNANCE_REFRESH
+--   OVERWATCH_ALERTS bridge
+-- Defaults: warehouse COMPUTE_WH, email jdees@alfains.com.
+"""
+
+    table_block = _extract_setup_sql_block(
+        setup_sql,
+        "CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_GOVERNANCE_SIGNAL",
+        "CREATE TRANSIENT TABLE IF NOT EXISTS MART_DBA_CONTROL_ROOM",
+    )
+    procedure_block = _extract_setup_sql_block(
+        setup_sql,
+        "CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_GOVERNANCE",
+        "-- -----------------------------------------------------------------------------\n-- 5. Alert framework",
+    )
+    task_block = _extract_setup_sql_block(
+        setup_sql,
+        "CREATE OR REPLACE TASK OVERWATCH_COST_GOVERNANCE_REFRESH",
+        "CREATE OR REPLACE TASK OVERWATCH_LOAD_DAILY",
+    )
+    resume_block = "ALTER TASK OVERWATCH_COST_GOVERNANCE_REFRESH RESUME;"
+    smoke_block = """SELECT 'FACT_COST_GOVERNANCE_SIGNAL' AS TABLE_NAME, COUNT(*) AS ROWS_LOADED FROM FACT_COST_GOVERNANCE_SIGNAL
+UNION ALL
+SELECT 'FACT_COST_INCIDENT_TIMELINE', COUNT(*) FROM FACT_COST_INCIDENT_TIMELINE;
+
+CALL SP_OVERWATCH_REFRESH_COST_GOVERNANCE();"""
+    header = (
+        "-- Source of truth: snowflake/OVERWATCH_MART_SETUP.sql\n"
+        "-- This preview extracts the clean deploy blocks; edit the setup file, not app code, for DDL changes.\n"
+        f"-- Default deployment context: {safe_identifier(db)}.{safe_identifier(schema)} on warehouse {safe_identifier(warehouse)}; alert email {sql_literal(email_target or DEFAULT_ALERT_EMAIL, 500)}.\n"
+    )
+    return "\n\n".join(part for part in [header, table_block, procedure_block, task_block, resume_block, smoke_block] if part).strip() + "\n"
+
+
+def _build_cost_governance_mart_operability(sql_text: str) -> tuple[dict, pd.DataFrame]:
+    rows = [
+        {
+            "COMPONENT": "FACT_COST_GOVERNANCE_SIGNAL",
+            "STATE": "Install Ready",
+            "DBA_USE": "Persists cost movement, Cortex budget/quota, and change/cost signals.",
+            "PROOF": "DDL plus SP_OVERWATCH_REFRESH_COST_GOVERNANCE insert paths.",
+        },
+        {
+            "COMPONENT": "FACT_COST_INCIDENT_TIMELINE",
+            "STATE": "Install Ready",
+            "DBA_USE": "Turns cost spikes into ordered incident events for root cause, alerting, and verification.",
+            "PROOF": "Timeline insert from governance signals.",
+        },
+        {
+            "COMPONENT": "OVERWATCH_COST_GOVERNANCE_REFRESH",
+            "STATE": "Scheduled",
+            "DBA_USE": "Runs after the control room mart so Alert Center can consume compact facts.",
+            "PROOF": "Task uses COMPUTE_WH and depends on OVERWATCH_REFRESH_CONTROL_ROOM.",
+        },
+        {
+            "COMPONENT": "OVERWATCH_ALERTS bridge",
+            "STATE": "Email Ready",
+            "DBA_USE": "Routes Critical/High cost governance signals to the consolidated Alert Center.",
+            "PROOF": f"Default target {DEFAULT_ALERT_EMAIL}; dedupes open alerts for 24 hours.",
+        },
+    ]
+    board = pd.DataFrame(rows)
+    summary = {
+        "components": int(len(board)),
+        "sql_chars": int(len(sql_text or "")),
+        "scheduled_components": int(board["STATE"].isin(["Scheduled", "Email Ready"]).sum()),
+        "top_component": "OVERWATCH_COST_GOVERNANCE_REFRESH",
+    }
+    return summary, board
+
+
+def _render_cost_governance_mart_and_incident_timeline(
+    *,
+    company: str,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+) -> None:
+    budget_board = st.session_state.get("cost_contract_budget_command_center", pd.DataFrame())
+    root_cause = st.session_state.get("cost_contract_spike_root_cause", pd.DataFrame())
+    correlation = st.session_state.get("cost_contract_change_cost_correlation", pd.DataFrame())
+    alert_summary, alert_board = _build_cost_governance_alert_rows(
+        budget_board=budget_board,
+        root_cause=root_cause,
+        correlation=correlation,
+        email_target=DEFAULT_ALERT_EMAIL,
+    )
+    st.session_state["cost_contract_governance_alert_summary"] = alert_summary
+    st.session_state["cost_contract_governance_alerts"] = alert_board
+    timeline_summary, timeline = _build_cost_incident_timeline(
+        cockpit=cockpit,
+        run_rate=run_rate,
+        queue=queue,
+        alert_rows=alert_board,
+    )
+    st.session_state["cost_contract_incident_timeline_summary"] = timeline_summary
+    st.session_state["cost_contract_incident_timeline"] = timeline
+    sql_text = build_cost_governance_mart_sql(email_target=DEFAULT_ALERT_EMAIL)
+    mart_summary, mart_board = _build_cost_governance_mart_operability(sql_text)
+    st.session_state["cost_contract_mart_operability_summary"] = mart_summary
+    st.session_state["cost_contract_mart_operability"] = mart_board
+
+    st.markdown("**Cost Governance Alerts & Timeline**")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Alert Candidates", f"{alert_summary['alert_count']:,}")
+    c2.metric("Critical/High", f"{alert_summary['critical_high']:,}", delta_color="inverse")
+    c3.metric("Timeline Events", f"{timeline_summary['event_count']:,}")
+    c4.metric("Mart Components", f"{mart_summary['components']:,}")
+
+    if not alert_board.empty:
+        render_priority_dataframe(
+            alert_board,
+            title="Alert Center-ready cost issues",
+            priority_columns=[
+                "SEVERITY", "ALERT_TYPE", "ENTITY_NAME", "VALUE_AT_RISK_USD",
+                "MESSAGE", "SUGGESTED_ACTION", "PROOF_QUERY", "ROUTE", "EMAIL_TARGET",
+            ],
+            sort_by=["SEVERITY", "VALUE_AT_RISK_USD"],
+            ascending=[True, False],
+            raw_label="All Cost & Contract alert candidates",
+            height=280,
+            max_rows=8,
+        )
+
+    render_priority_dataframe(
+        timeline,
+        title="Cost incident timeline",
+        priority_columns=[
+            "EVENT_ORDER", "SEVERITY", "INCIDENT_STEP", "ENTITY",
+            "EVIDENCE", "NEXT_ACTION", "PROOF_REQUIRED", "ROUTE",
+        ],
+        sort_by=["EVENT_ORDER"],
+        ascending=[True],
+        raw_label="All cost incident timeline rows",
+        height=280,
+        max_rows=6,
+    )
+    with st.expander("Cost Governance Mart SQL", expanded=False):
+        st.dataframe(mart_board, hide_index=True, use_container_width=True)
+        st.code(sql_text, language="sql")
+
+
 def _render_native_cost_control_inventory(
     cockpit: pd.DataFrame,
     run_rate: pd.DataFrame,
@@ -2482,6 +2939,12 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     _render_change_cost_correlation_board(
         data,
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+    )
+    _render_cost_governance_mart_and_incident_timeline(
+        company=company,
+        cockpit=data,
+        run_rate=st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        queue=queue,
     )
     _render_governed_admin_action_pack(
         company,

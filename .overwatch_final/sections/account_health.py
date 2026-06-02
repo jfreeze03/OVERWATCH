@@ -2674,10 +2674,12 @@ def render():
                 )),
                 ] + query_plan
             for key, sql in query_plan:
-                try:
-                    hd[key] = run_query_or_raise(sql)
-                except Exception:
-                    hd[key] = pd.DataFrame()
+                hd[key] = run_query(
+                    sql,
+                    ttl_key=f"account_health_live_{company}_{key}",
+                    tier="recent",
+                    section="Account Health",
+                )
 
             st.session_state["health_data"] = hd
             st.session_state["_health_ts"]  = datetime.now().isoformat()
@@ -3256,7 +3258,12 @@ def render():
         st.markdown("**🏭 Warehouse Pressure (last 1h)**")
         try:
             if control_mart_used:
-                df_wp = run_query_or_raise(build_mart_control_room_warehouse_pressure_sql(1, company))
+                df_wp = run_query(
+                    build_mart_control_room_warehouse_pressure_sql(1, company),
+                    ttl_key=f"account_health_wh_pressure_mart_{company}",
+                    tier="historical",
+                    section="Account Health",
+                )
                 if df_wp is not None and not df_wp.empty:
                     df_wp = df_wp.rename(columns={
                         "TOTAL_QUERIES": "QUERIES",
@@ -3266,7 +3273,7 @@ def render():
                 qh = _query_history_capabilities()
                 pressure_wh_size_expr = qh["pressure_wh_size_expr"]
                 queued_count_expr_plain = qh["queued_count_expr_plain"]
-                df_wp = run_query_or_raise(f"""
+                df_wp = run_query(f"""
                     SELECT warehouse_name, {pressure_wh_size_expr} AS warehouse_size, COUNT(*) AS queries,
                            {queued_count_expr_plain} AS queued
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
@@ -3274,7 +3281,7 @@ def render():
                       AND warehouse_name IS NOT NULL
                       {wh_filter_m}
                     GROUP BY warehouse_name ORDER BY queries DESC LIMIT 8
-                """)
+                """, ttl_key=f"account_health_wh_pressure_live_{company}", tier="recent", section="Account Health")
             if not df_wp.empty:
                 top_wh = df_wp.sort_values(["QUEUED","QUERIES"], ascending=False).iloc[0]
                 st.metric(

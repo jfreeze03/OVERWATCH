@@ -22,6 +22,7 @@ from utils import (
     build_mart_usage_metering_sql,
     build_mart_usage_pressure_sql,
     build_mart_usage_cost_drivers_sql,
+    build_mart_usage_storage_sql,
     build_mart_usage_query_mix_sql,
     build_mart_usage_database_adoption_sql,
     run_query,
@@ -180,34 +181,46 @@ def _load_overview(session, days: int) -> dict:
         metering = run_query(live_metering_sql, ttl_key=f"uo_metering_live_{company}_{days}", tier="historical")
         metering_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
 
-    storage = run_query(f"""
-        WITH scoped AS (
-            SELECT database_name, average_database_bytes, average_failsafe_bytes, usage_date
-            FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-            WHERE usage_date >= DATEADD('day', -{max(days * 2, 14)}, CURRENT_DATE())
-              {db_filter}
+    storage = run_query(
+        build_mart_usage_storage_sql(
+            days,
+            company=company,
+            database_contains=global_database,
         ),
-        current_latest AS (
-            SELECT database_name, average_database_bytes, average_failsafe_bytes,
-                   ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
-            FROM scoped
-        ),
-        prior_latest AS (
-            SELECT database_name, average_database_bytes,
-                   ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
-            FROM scoped
-            WHERE usage_date <= DATEADD('day', -{days}, CURRENT_DATE())
-        )
-        SELECT
-            ROUND(SUM(COALESCE(c.average_database_bytes, 0)) / POWER(1024, 4), 3) AS active_storage_tb,
-            ROUND(SUM(COALESCE(c.average_failsafe_bytes, 0)) / POWER(1024, 4), 3) AS failsafe_storage_tb,
-            ROUND(SUM(COALESCE(p.average_database_bytes, 0)) / POWER(1024, 4), 3) AS prior_active_storage_tb
-        FROM current_latest c
-        LEFT JOIN prior_latest p
-          ON c.database_name = p.database_name
-         AND p.rn = 1
-        WHERE c.rn = 1
-    """, ttl_key=f"uo_storage_{company}_{days}", tier="historical")
+        ttl_key=f"uo_storage_mart_{company}_{days}",
+        tier="historical",
+    )
+    storage_source = "OVERWATCH mart: FACT_STORAGE_DAILY"
+    if storage.empty:
+        storage = run_query(f"""
+            WITH scoped AS (
+                SELECT database_name, average_database_bytes, average_failsafe_bytes, usage_date
+                FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
+                WHERE usage_date >= DATEADD('day', -{max(days * 2, 14)}, CURRENT_DATE())
+                  {db_filter}
+            ),
+            current_latest AS (
+                SELECT database_name, average_database_bytes, average_failsafe_bytes,
+                       ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
+                FROM scoped
+            ),
+            prior_latest AS (
+                SELECT database_name, average_database_bytes,
+                       ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY usage_date DESC) AS rn
+                FROM scoped
+                WHERE usage_date <= DATEADD('day', -{days}, CURRENT_DATE())
+            )
+            SELECT
+                ROUND(SUM(COALESCE(c.average_database_bytes, 0)) / POWER(1024, 4), 3) AS active_storage_tb,
+                ROUND(SUM(COALESCE(c.average_failsafe_bytes, 0)) / POWER(1024, 4), 3) AS failsafe_storage_tb,
+                ROUND(SUM(COALESCE(p.average_database_bytes, 0)) / POWER(1024, 4), 3) AS prior_active_storage_tb
+            FROM current_latest c
+            LEFT JOIN prior_latest p
+              ON c.database_name = p.database_name
+             AND p.rn = 1
+            WHERE c.rn = 1
+        """, ttl_key=f"uo_storage_{company}_{days}", tier="historical")
+        storage_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY"
 
     try:
         task_health = run_query(
@@ -282,7 +295,7 @@ def _load_overview(session, days: int) -> dict:
             "overview": overview_source,
             "metering": metering_source,
             "warehouse_pressure": pressure_source,
-            "storage": "Live: SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY",
+            "storage": storage_source,
             "task_health": "Live: task history metadata",
         },
     }

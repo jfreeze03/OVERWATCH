@@ -12,9 +12,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT
-from .data import normalize_df
-from .query import safe_identifier, sql_literal
-from .session import get_session
+from .query import run_query, safe_identifier, sql_literal
 
 
 @dataclass(frozen=True)
@@ -41,7 +39,14 @@ def load_mart_table(
     """Run a mart query and return a fallback-friendly result object."""
     source = source_label or mart_object_name(table_name)
     try:
-        df = normalize_df(get_session().sql(sql).to_pandas())
+        df = run_query(
+            sql,
+            ttl_key=f"mart_{str(table_name).lower()}",
+            tier="historical",
+            section="Mart",
+        )
+        if df.empty:
+            return MartResult(data=df, available=False, source=source, message="No mart rows returned.")
         return MartResult(data=df, available=True, source=source)
     except Exception as exc:
         return MartResult(data=pd.DataFrame(), available=False, source=source, message=str(exc))
@@ -1136,6 +1141,47 @@ def build_mart_warehouse_overview_sql(
     """
 
 
+def build_mart_warehouse_heatmap_sql(
+    days_back: int,
+    company: str = "ALFA",
+    warehouse_contains: str = "",
+    user_contains: str = "",
+    role_contains: str = "",
+    database_contains: str = "",
+    start_date: object = None,
+    end_date: object = None,
+) -> str:
+    """Build a warehouse heatmap from the hourly query mart."""
+    table = mart_object_name("FACT_QUERY_HOURLY")
+    company_filter = _mart_company_filter(company)
+    window_filter = _mart_window_filter("HOUR_START", days_back, start_date, end_date)
+    wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
+    user_filter = _mart_text_filter("USER_NAME", user_contains)
+    role_filter = _mart_text_filter("ROLE_NAME", role_contains)
+    db_filter = _mart_database_filter("DATABASE_NAME", database_contains, company)
+    return f"""
+        SELECT
+            warehouse_name,
+            DAYOFWEEK(HOUR_START) AS day_of_week,
+            HOUR(HOUR_START) AS hour_of_day,
+            SUM(query_count) AS query_count,
+            ROUND(
+                COALESCE(SUM(total_elapsed_ms), 0) / NULLIF(COALESCE(SUM(query_count), 0), 0) / 1000,
+                2
+            ) AS avg_elapsed_sec
+        FROM {table}
+        WHERE warehouse_name IS NOT NULL
+          {company_filter}
+          {window_filter}
+          {wh_filter}
+          {user_filter}
+          {role_filter}
+          {db_filter}
+        GROUP BY warehouse_name, day_of_week, hour_of_day
+        ORDER BY warehouse_name, day_of_week, hour_of_day
+    """
+
+
 def build_mart_warehouse_scaling_sql(
     days_back: int,
     company: str = "ALFA",
@@ -1241,6 +1287,52 @@ def build_mart_usage_metering_sql(
         WHERE HOUR_START >= {prior_start}
           {company_filter}
           {wh_filter}
+    """
+
+
+def build_mart_usage_storage_sql(
+    days_back: int,
+    company: str = "ALFA",
+    database_contains: str = "",
+) -> str:
+    """Build Usage Overview storage KPIs from daily storage facts."""
+    table = mart_object_name("FACT_STORAGE_DAILY")
+    company_filter = _mart_company_filter(company)
+    db_filter = _mart_database_filter("DATABASE_NAME", database_contains, company)
+    span_days = max(14, int(days_back) * 2)
+    return f"""
+        WITH scoped AS (
+            SELECT database_name, active_bytes, failsafe_bytes, snapshot_date
+            FROM {table}
+            WHERE snapshot_date >= DATEADD('DAY', -{span_days}, CURRENT_DATE())
+              {company_filter}
+              {db_filter}
+        ),
+        current_latest AS (
+            SELECT
+                database_name,
+                active_bytes,
+                failsafe_bytes,
+                ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY snapshot_date DESC) AS rn
+            FROM scoped
+        ),
+        prior_latest AS (
+            SELECT
+                database_name,
+                active_bytes,
+                ROW_NUMBER() OVER (PARTITION BY database_name ORDER BY snapshot_date DESC) AS rn
+            FROM scoped
+            WHERE snapshot_date <= DATEADD('DAY', -{int(days_back)}, CURRENT_DATE())
+        )
+        SELECT
+            ROUND(SUM(COALESCE(c.active_bytes, 0)) / POWER(1024, 4), 3) AS active_storage_tb,
+            ROUND(SUM(COALESCE(c.failsafe_bytes, 0)) / POWER(1024, 4), 3) AS failsafe_storage_tb,
+            ROUND(SUM(COALESCE(p.active_bytes, 0)) / POWER(1024, 4), 3) AS prior_active_storage_tb
+        FROM current_latest c
+        LEFT JOIN prior_latest p
+          ON c.database_name = p.database_name
+         AND p.rn = 1
+        WHERE c.rn = 1
     """
 
 

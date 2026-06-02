@@ -2310,7 +2310,10 @@ USING (
         ('PROCEDURE_FAILURE_OR_SPIKE', 'Reliability', 'Stored Procedure Failure / Runtime Spike', 'High', 8, 'DBA / Procedure Owner', 'Workload Operations', 'Compare release windows, inspect child queries, and verify runtime/cost return to baseline.'),
         ('WAREHOUSE_PRESSURE', 'Capacity', 'Warehouse Pressure', 'Medium', 24, 'DBA / Platform', 'Warehouse Health', 'Inspect queue/spill evidence and route changed-only warehouse setting recommendations.'),
         ('GRANT_REVOKE_ACTIVITY', 'Change Control', 'Grant/Revoke Activity', 'Medium', 24, 'DBA / Security', 'Security Posture', 'Verify least-privilege approval, owner, ticket, approver, and review date.'),
-        ('WAREHOUSE_SETTING_CHANGE', 'Change Control', 'Warehouse Setting Change', 'Medium', 24, 'DBA / Platform', 'Change & Drift', 'Verify changed-only SQL, approval, rollback SQL, and post-change evidence.')
+        ('WAREHOUSE_SETTING_CHANGE', 'Change Control', 'Warehouse Setting Change', 'Medium', 24, 'DBA / Platform', 'Change & Drift', 'Verify changed-only SQL, approval, rollback SQL, and post-change evidence.'),
+        ('WAREHOUSE_COST_MOVEMENT', 'Cost Control', 'WAREHOUSE_COST_MOVEMENT', 'High', 8, 'DBA / FinOps', 'Cost & Contract', 'Explain the 7d warehouse cost movement, assign the owner, and route verified action only after proof.'),
+        ('CORTEX_BUDGET_AND_QUOTA', 'Cost Control', 'CORTEX_BUDGET_AND_QUOTA', 'Medium', 24, 'DBA / AI FinOps', 'Cost & Contract', 'Review shared AI budget, per-user quota, first/last usage, and access expansion before enforcing controls.'),
+        ('CHANGE_COST_CORRELATION', 'Cost Control', 'CHANGE_COST_CORRELATION', 'High', 8, 'DBA / FinOps', 'Change & Drift', 'Compare warehouse change query_id, actor, ticket, rollback evidence, and cost movement before tuning.')
 ) src(RULE_ID, CATEGORY, ALERT_TYPE, DEFAULT_SEVERITY, SLA_HOURS, OWNER, ROUTE, RUNBOOK)
 ON tgt.RULE_ID = src.RULE_ID
 WHEN MATCHED THEN UPDATE SET

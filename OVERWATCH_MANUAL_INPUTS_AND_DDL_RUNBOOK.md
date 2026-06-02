@@ -149,18 +149,19 @@ the delivery procedure supports dry-run packaging.
 | Alert table | `OVERWATCH_ALERTS` | `config.ALERT_TABLE`, setup SQL |
 | Action queue table | `OVERWATCH_ACTION_QUEUE` | `config.ACTION_QUEUE_TABLE`, setup SQL |
 | ETL audit table | `ETL_RUN_AUDIT` | `config.ETL_AUDIT_TABLE` |
-| Support warehouse created by setup | `OVERWATCH_WH` | setup SQL |
+| Future isolation warehouse created by setup | `OVERWATCH_WH` | setup SQL |
 | Current main load/anomaly task warehouse | `COMPUTE_WH` | setup SQL task definitions |
-| Current cost-savings verifier task warehouse | `OVERWATCH_WH` | setup SQL task definitions |
+| Current cost-savings verifier task warehouse | `COMPUTE_WH` | setup SQL task definitions |
 
 Task warehouses are app execution inputs, not monitoring scope inputs. Today the
-main load and anomaly tasks run on `COMPUTE_WH`, while
-`OVERWATCH_COST_SAVINGS_VERIFY` runs on `OVERWATCH_WH`. OVERWATCH still monitors
-ALFA and Trexis warehouses through `COMPANY_CONFIG`, `OVERWATCH_COMPANY_SCOPE`,
-`WAREHOUSE_METERING_HISTORY`, `QUERY_HISTORY`, task history, and the mart facts.
-If the app execution warehouse changes later, update the setup SQL task clauses,
-monitoring-cost logic, documentation, and task-warehouse regression test in the
-same release. Do not add monitored warehouses by changing the task warehouse.
+main load, anomaly, and cost-savings verifier tasks run on `COMPUTE_WH` for
+now. `OVERWATCH_WH` remains reserved as a future isolation option. OVERWATCH
+still monitors ALFA and Trexis warehouses through `COMPANY_CONFIG`,
+`OVERWATCH_COMPANY_SCOPE`, `WAREHOUSE_METERING_HISTORY`, `QUERY_HISTORY`, task
+history, and the mart facts. If the app execution warehouse changes later,
+update the setup SQL task clauses, monitoring-cost logic, documentation, and
+task-warehouse regression test in the same release. Do not add monitored
+warehouses by changing the task warehouse.
 
 ## Adding A Warehouse
 
@@ -169,8 +170,10 @@ ownership, cost controls, or admin actions.
 
 Adding a monitored warehouse is separate from changing the warehouse that runs
 the app or mart tasks. `COMPUTE_WH` is the current execution warehouse for the
-main OVERWATCH load/anomaly task graph. The monitored warehouse list is driven
-by company scope, Snowflake account-usage history, and mart facts.
+main OVERWATCH load/anomaly task graph. `OVERWATCH_WH` is the documented future
+isolation candidate if we later split app runtime from shared compute. The
+monitored warehouse list is driven by company scope, Snowflake account-usage
+history, and mart facts.
 
 1. Decide the owning company.
    - ALFA warehouse names should either match an existing ALFA pattern or be
@@ -478,7 +481,7 @@ All production DDL currently lives in `snowflake/OVERWATCH_MART_SETUP.sql`.
 
 - Database: `DBA_MAINT_DB`
 - Schema: `DBA_MAINT_DB.OVERWATCH`
-- Warehouse: `OVERWATCH_WH`
+- Warehouse: `OVERWATCH_WH` (future isolation option; current app/task runtime remains `COMPUTE_WH`)
 
 ### Permanent Configuration, Audit, And Workflow Tables
 

@@ -44,6 +44,12 @@ ASK_OVERWATCH_STATE_KEYS = (
     "cost_contract_spike_root_cause",
     "cost_contract_change_cost_summary",
     "cost_contract_change_cost_correlation",
+    "cost_contract_governance_alert_summary",
+    "cost_contract_governance_alerts",
+    "cost_contract_incident_timeline_summary",
+    "cost_contract_incident_timeline",
+    "cost_contract_mart_operability_summary",
+    "cost_contract_mart_operability",
 )
 
 
@@ -297,6 +303,72 @@ def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> No
                 "route": _text(row, "ROUTE", default="Change & Drift"),
                 "category": "Change/Cost Correlation",
                 "value": _text(row, "SEVERITY", default="Medium"),
+            })
+
+    alerts = state.get("cost_contract_governance_alerts")
+    if _is_df(alerts):
+        view = alerts.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        view["_RANK"] = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).apply(_rank)
+        if "VALUE_AT_RISK_USD" not in view.columns:
+            view["VALUE_AT_RISK_USD"] = 0
+        view = view.sort_values(["_RANK", "VALUE_AT_RISK_USD"], ascending=[True, False]).drop(columns=["_RANK"])
+        for _, row in view.head(6).iterrows():
+            _append_card(cards, {
+                "surface": "Cost & Contract - Governance Alert Candidate",
+                "severity": _text(row, "SEVERITY", default="High"),
+                "signal": _text(row, "ALERT_TYPE", default="Cost governance alert"),
+                "entity": _text(row, "ENTITY_NAME", default="Cost governance"),
+                "evidence": (
+                    f"value_at_risk=${_text(row, 'VALUE_AT_RISK_USD', default='0')}; "
+                    f"email_target={_text(row, 'EMAIL_TARGET')}. {_text(row, 'MESSAGE')}"
+                ),
+                "next_action": _text(row, "SUGGESTED_ACTION", default="Open Alert Center and route the cost governance issue."),
+                "proof": _text(row, "PROOF_QUERY", default="Attach Cost & Contract proof query before closure."),
+                "do_not": "Do not route generic cost warnings without owner, proof query, and DBA-safe next action.",
+                "route": _text(row, "ROUTE", default="Alert Center"),
+                "category": _text(row, "CATEGORY", default="Cost Control"),
+                "value": _text(row, "VALUE_AT_RISK_USD", default="0"),
+            })
+
+    timeline = state.get("cost_contract_incident_timeline")
+    if _is_df(timeline):
+        view = timeline.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        if "EVENT_ORDER" in view.columns:
+            view = view.sort_values(["EVENT_ORDER"], ascending=True)
+        for _, row in view.head(6).iterrows():
+            _append_card(cards, {
+                "surface": "Cost & Contract - Incident Timeline",
+                "severity": _text(row, "SEVERITY", default="Medium"),
+                "signal": _text(row, "INCIDENT_STEP", "EVENT_TYPE", default="Cost incident step"),
+                "entity": _text(row, "ENTITY", "ENTITY_NAME", default="Cost incident"),
+                "evidence": _text(row, "EVIDENCE", default="Loaded cost incident timeline evidence."),
+                "next_action": _text(row, "NEXT_ACTION", default="Work the next cost incident step."),
+                "proof": _text(row, "PROOF_REQUIRED", "PROOF_QUERY", default="Attach proof before closure."),
+                "do_not": "Do not close a cost incident until root cause, alert route, and verification proof are complete.",
+                "route": _text(row, "ROUTE", default="Cost & Contract"),
+                "category": "Cost Incident Timeline",
+                "value": _text(row, "EVENT_ORDER", default="0"),
+            })
+
+    mart = state.get("cost_contract_mart_operability")
+    if _is_df(mart):
+        view = mart.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        for _, row in view.head(4).iterrows():
+            _append_card(cards, {
+                "surface": "Cost & Contract - Governance Mart Operability",
+                "severity": "Medium",
+                "signal": _text(row, "STATE", default="Install Ready"),
+                "entity": _text(row, "COMPONENT", default="Cost governance mart"),
+                "evidence": _text(row, "PROOF", default="Cost governance mart setup evidence."),
+                "next_action": _text(row, "DBA_USE", default="Install or verify the cost governance mart object."),
+                "proof": "snowflake/OVERWATCH_MART_SETUP.sql contains the clean object DDL, procedure, task, and smoke checks.",
+                "do_not": "Do not treat app-only generated SQL as the deploy source of truth.",
+                "route": "Cost & Contract > Cost Governance Mart SQL",
+                "category": "Cost Governance Mart",
+                "value": _text(row, "STATE", default="Install Ready"),
             })
 
 

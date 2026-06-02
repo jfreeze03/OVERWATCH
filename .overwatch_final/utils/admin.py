@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import timedelta
 
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA
+from .company_filter import get_active_environment
 from .query import safe_identifier, sql_literal
 
 
@@ -68,6 +70,28 @@ def admin_actions_enabled() -> bool:
     """Return whether live account-changing controls are enabled."""
     initialize_admin_actions_default()
     return bool(st.session_state.get(ADMIN_ACTIONS_KEY, False))
+
+
+def clamp_global_date_range(
+    start_date,
+    end_date,
+    standard_days: int = 35,
+    admin_days: int = 90,
+) -> tuple:
+    """Clamp a requested global date window to the current admin policy."""
+    if not start_date or not end_date:
+        return start_date, end_date, False, int(standard_days)
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    max_days = int(admin_days if admin_actions_enabled() else standard_days)
+    span_days = (end_date - start_date).days + 1
+    if span_days <= max_days:
+        return start_date, end_date, False, max_days
+
+    clamped_start = end_date - timedelta(days=max_days - 1)
+    return clamped_start, end_date, True, max_days
 
 
 def admin_disabled_reason() -> str:
@@ -181,7 +205,7 @@ def log_admin_action(
         exec_context = _current_execution_context(session)
         app_user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
         company = str(company or st.session_state.get("active_company", "") or "")
-        environment = str(environment or st.session_state.get("active_environment", "") or "")
+        environment = str(environment or get_active_environment() or "")
         session.sql(build_admin_audit_insert_sql(
             company=company,
             environment=environment,

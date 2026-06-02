@@ -53,6 +53,9 @@ def _load_adoption_mart(days: int) -> dict:
 
 def _load_adoption_live(session, days: int) -> dict:
     company = get_active_company()
+    live_days = min(int(days or 7), 35)
+    if live_days < int(days or 7):
+        st.warning("Adoption Analytics live fallback is capped at 35 days to avoid broad ACCOUNT_USAGE scans.")
     filters = get_global_filter_clause(
         date_col="q.start_time",
         wh_col="q.warehouse_name",
@@ -104,7 +107,7 @@ def _load_adoption_live(session, days: int) -> dict:
         client_join = f"""
             LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.SESSIONS l
               ON q.session_id = l.session_id
-             AND l.created_on >= DATEADD('day', -{min(365, int(days) + 14)}, CURRENT_TIMESTAMP())
+             AND l.created_on >= DATEADD('day', -{min(365, int(live_days) + 14)}, CURRENT_TIMESTAMP())
         """
         client_source_expr = "'QUERY_HISTORY session_id to SESSIONS client metadata'"
     elif can_join_login:
@@ -119,7 +122,7 @@ def _load_adoption_live(session, days: int) -> dict:
         client_join = f"""
             LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY l
               ON q.authn_event_id = l.event_id
-             AND l.event_timestamp >= DATEADD('day', -{min(365, int(days) + 14)}, CURRENT_TIMESTAMP())
+             AND l.event_timestamp >= DATEADD('day', -{min(365, int(live_days) + 14)}, CURRENT_TIMESTAMP())
         """
         client_source_expr = "'AUTHN_EVENT_ID to LOGIN_HISTORY reported client'"
     else:
@@ -139,10 +142,10 @@ def _load_adoption_live(session, days: int) -> dict:
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_time_per_query_sec,
             ROUND(100 * {error_count_expr} / NULLIF(COUNT(*), 0), 1) AS error_rate
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+        WHERE q.start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
-    """, ttl_key=f"aa_summary_{company}_{days}", tier="historical")
+    """, ttl_key=f"aa_summary_{company}_{live_days}", tier="historical")
 
     warehouse_size = run_query(f"""
         SELECT
@@ -151,12 +154,12 @@ def _load_adoption_live(session, days: int) -> dict:
             COUNT(DISTINCT q.user_name) AS users,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+        WHERE q.start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
         GROUP BY warehouse_size
         ORDER BY query_count DESC
-    """, ttl_key=f"aa_warehouse_size_{company}_{days}", tier="historical")
+    """, ttl_key=f"aa_warehouse_size_{company}_{live_days}", tier="historical")
 
     trend = run_query(f"""
         SELECT
@@ -166,12 +169,12 @@ def _load_adoption_live(session, days: int) -> dict:
             ROUND(COUNT(*) / NULLIF(COUNT(DISTINCT q.user_name), 0), 1) AS queries_per_user,
             ROUND(100 * {error_count_expr} / NULLIF(COUNT(*), 0), 1) AS error_rate
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+        WHERE q.start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
         GROUP BY activity_day
         ORDER BY activity_day
-    """, ttl_key=f"aa_trend_{company}_{days}", tier="historical")
+    """, ttl_key=f"aa_trend_{company}_{live_days}", tier="historical")
 
     users_wh = run_query(f"""
         SELECT
@@ -180,13 +183,13 @@ def _load_adoption_live(session, days: int) -> dict:
             COUNT(*) AS query_count,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+        WHERE q.start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
         GROUP BY q.warehouse_name
         ORDER BY users DESC, query_count DESC
         LIMIT 50
-    """, ttl_key=f"aa_users_wh_{company}_{days}", tier="historical")
+    """, ttl_key=f"aa_users_wh_{company}_{live_days}", tier="historical")
 
     users_db = run_query(f"""
         SELECT
@@ -195,13 +198,13 @@ def _load_adoption_live(session, days: int) -> dict:
             COUNT(*) AS query_count,
             ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+        WHERE q.start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
         GROUP BY database_name
         ORDER BY users DESC, query_count DESC
         LIMIT 50
-    """, ttl_key=f"aa_users_db_{company}_{days}", tier="historical")
+    """, ttl_key=f"aa_users_db_{company}_{live_days}", tier="historical")
 
     by_role_type = run_query(f"""
         SELECT
@@ -211,13 +214,13 @@ def _load_adoption_live(session, days: int) -> dict:
             COUNT(DISTINCT q.user_name) AS users,
             ROUND(100 * {error_count_expr} / NULLIF(COUNT(*), 0), 1) AS error_rate
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-        WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+        WHERE q.start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
         GROUP BY role_name, query_type
         ORDER BY query_count DESC
         LIMIT 100
-    """, ttl_key=f"aa_role_type_{company}_{days}", tier="historical")
+    """, ttl_key=f"aa_role_type_{company}_{live_days}", tier="historical")
 
     applications = run_query(f"""
         SELECT
@@ -229,13 +232,13 @@ def _load_adoption_live(session, days: int) -> dict:
             {client_source_expr} AS source_confidence
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         {client_join}
-        WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+        WHERE q.start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
           AND q.warehouse_name IS NOT NULL
           {filters}
         GROUP BY client_application, client_version, source_confidence
         ORDER BY query_count DESC
         LIMIT 30
-    """, ttl_key=f"aa_applications_{company}_{days}", tier="historical")
+    """, ttl_key=f"aa_applications_{company}_{live_days}", tier="historical")
 
     return {
         "summary": summary,

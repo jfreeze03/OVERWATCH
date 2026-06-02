@@ -78,11 +78,14 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_control_coverage_board,
     _build_cost_decomposition_board,
     _build_cost_drilldown_command_map,
+    _build_cost_governance_alert_rows,
+    _build_cost_incident_timeline,
     _build_cost_run_rate_sql,
     _build_cost_spike_root_cause_board,
     _build_native_cost_control_inventory,
     _build_resource_monitor_guardrail_sql,
     _build_savings_verification_task_summary,
+    build_cost_governance_mart_sql,
 )
 from sections.budget_governance import (  # noqa: E402
     _build_budget_custom_action_sql,
@@ -1377,6 +1380,174 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ALFA_WH", result["answer"])
         self.assertIn("before tuning", result["answer"])
 
+    def test_cost_governance_alert_rows_promote_specific_cost_issues(self):
+        budget = pd.DataFrame([{
+            "SEVERITY": "High",
+            "LANE": "Warehouse guardrail",
+            "SIGNAL": "Resource monitor candidate",
+            "NATIVE_CONTROL": "Resource Monitor",
+            "CONTROL_SCOPE": "Warehouse-only",
+            "VALUE_AT_RISK_USD": 420.0,
+            "EVIDENCE": "ALFA_WH is the current top warehouse mover.",
+            "NEXT_ACTION": "Review resource monitor assignment after owner approval.",
+            "PROOF_REQUIRED": "SHOW RESOURCE MONITORS; SELECT * FROM FACT_WAREHOUSE_HOURLY;",
+            "ROUTE": "Warehouse Health > Settings / Cost & Contract > Budget governance",
+        }])
+        root = pd.DataFrame([{
+            "SEVERITY": "High",
+            "DRIVER": "Warehouse movement",
+            "ENTITY": "ALFA_WH",
+            "VALUE_AT_RISK_USD": 680.0,
+            "EVIDENCE": "ALFA_WH moved 170 credits versus prior window.",
+            "NEXT_ACTION": "Confirm owner demand and setting changes before tuning.",
+            "PROOF_REQUIRED": "WAREHOUSE_METERING_HISTORY current/prior window.",
+            "ROUTE": "Cost & Contract > Explain bill / attribution / contract",
+        }])
+        correlation = pd.DataFrame([{
+            "SEVERITY": "High",
+            "CORRELATION": "Top warehouse change proximity",
+            "ENTITY": "ALFA_WH",
+            "EVIDENCE": "ALTER WAREHOUSE change may explain the cost movement.",
+            "NEXT_ACTION": "Compare change query_id to the cost window before tuning.",
+            "PROOF_REQUIRED": "FACT_OBJECT_CHANGE query_id and rollback evidence.",
+            "ROUTE": "Change & Drift > Controlled DBA actions",
+        }])
+
+        summary, alerts = _build_cost_governance_alert_rows(
+            budget_board=budget,
+            root_cause=root,
+            correlation=correlation,
+            email_target="jdees@alfains.com",
+        )
+        by_type = {row["ALERT_TYPE"]: row for _, row in alerts.iterrows()}
+
+        self.assertEqual(summary["critical_high"], 3)
+        self.assertEqual(alerts.iloc[0]["ENTITY_NAME"], "ALFA_WH")
+        self.assertEqual(by_type["Cost Root Cause Candidate"]["EMAIL_TARGET"], "jdees@alfains.com")
+        self.assertIn("current/prior", by_type["Cost Root Cause Candidate"]["PROOF_QUERY"])
+        self.assertIn("before tuning", by_type["Change Cost Correlation"]["SUGGESTED_ACTION"])
+
+    def test_cost_incident_timeline_orders_detection_root_cause_alert_and_verification(self):
+        cockpit = pd.DataFrame([{
+            "CURRENT_CREDITS": 220,
+            "PRIOR_CREDITS": 90,
+            "TOP_INCREASE_WAREHOUSE": "ALFA_WH",
+            "TOP_INCREASE_CREDITS": 130,
+        }])
+        run_rate = pd.DataFrame([{"PCT_VS_30D_AVG": 34.0}])
+        queue = pd.DataFrame([{
+            "CATEGORY": "Cost Control",
+            "STATUS": "New",
+            "SEVERITY": "High",
+        }])
+        alerts = pd.DataFrame([{
+            "SEVERITY": "High",
+            "ALERT_TYPE": "Cost Root Cause Candidate",
+            "ENTITY_NAME": "ALFA_WH",
+            "MESSAGE": "ALFA_WH moved 130 credits.",
+            "SUGGESTED_ACTION": "Route to DBA / FinOps email triage.",
+            "PROOF_QUERY": "SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = 'ALFA_WH'",
+            "VALUE_AT_RISK_USD": 478.4,
+        }])
+        state = {
+            "cost_contract_spike_root_cause": pd.DataFrame([{
+                "SEVERITY": "High",
+                "ENTITY": "ALFA_WH",
+                "EVIDENCE": "Top warehouse delta is the leading root-cause candidate.",
+                "NEXT_ACTION": "Confirm owner demand before tuning.",
+                "PROOF_REQUIRED": "Current/prior warehouse metering.",
+                "ROUTE": "Cost & Contract",
+            }]),
+            "cost_contract_change_cost_correlation": pd.DataFrame([{
+                "SEVERITY": "High",
+                "ENTITY": "ALFA_WH",
+                "EVIDENCE": "Recent warehouse setting change is near the cost window.",
+                "NEXT_ACTION": "Compare query_id and rollback evidence.",
+                "PROOF_REQUIRED": "FACT_OBJECT_CHANGE query_id.",
+                "ROUTE": "Change & Drift",
+            }]),
+        }
+
+        summary, timeline = _build_cost_incident_timeline(
+            cockpit=cockpit,
+            run_rate=run_rate,
+            queue=queue,
+            alert_rows=alerts,
+            state=state,
+        )
+
+        self.assertEqual(list(timeline["EVENT_ORDER"]), [1, 2, 3, 4, 5])
+        self.assertEqual(timeline.iloc[0]["INCIDENT_STEP"], "Cost movement detected")
+        self.assertEqual(timeline.iloc[3]["INCIDENT_STEP"], "Alert routed")
+        self.assertIn("owner-approved", timeline.iloc[4]["NEXT_ACTION"])
+        self.assertEqual(summary["critical_high"], 5)
+
+    def test_ask_overwatch_reads_cost_governance_alerts_and_timeline(self):
+        state = {
+            "cost_contract_governance_alerts": pd.DataFrame([{
+                "SEVERITY": "High",
+                "CATEGORY": "Cost Control",
+                "ALERT_TYPE": "Cost Root Cause Candidate",
+                "ENTITY_NAME": "ALFA_WH",
+                "MESSAGE": "ALFA_WH moved 130 credits and needs owner-backed proof.",
+                "SUGGESTED_ACTION": "Open Cost & Contract root-cause drilldown and route the alert.",
+                "PROOF_QUERY": "SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = 'ALFA_WH'",
+                "ROUTE": "Alert Center",
+                "EMAIL_TARGET": "jdees@alfains.com",
+                "VALUE_AT_RISK_USD": 478.4,
+            }]),
+            "cost_contract_incident_timeline": pd.DataFrame([{
+                "EVENT_ORDER": 4,
+                "SEVERITY": "High",
+                "INCIDENT_STEP": "Alert routed",
+                "ENTITY": "ALFA_WH",
+                "EVIDENCE": "Cost governance alert is ready for email triage.",
+                "NEXT_ACTION": "Route the alert to DBA / FinOps.",
+                "PROOF_REQUIRED": "Alert proof query.",
+                "ROUTE": "Alert Center",
+            }]),
+        }
+
+        cards = build_ask_overwatch_context(state)
+        result = answer_ask_overwatch(
+            "What cost alert should we route?",
+            state,
+            active_section="Cost & Contract",
+            company="ALFA",
+            environment="PROD",
+        )
+
+        self.assertEqual(cards[0]["surface"], "Cost & Contract - Governance Alert Candidate")
+        self.assertIn("ALFA_WH", result["answer"])
+        self.assertIn("jdees@alfains.com", result["answer"])
+        self.assertIn("Alert Center", result["answer"])
+
+    def test_overwatch_mart_setup_is_clean_fresh_deploy_for_cost_governance(self):
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
+        setup_upper = setup_sql.upper()
+
+        self.assertNotIn("ADD COLUMN IF NOT EXISTS", setup_upper)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_GOVERNANCE_SIGNAL", setup_upper)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_INCIDENT_TIMELINE", setup_upper)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_GOVERNANCE", setup_upper)
+        self.assertIn("CREATE OR REPLACE TASK OVERWATCH_COST_GOVERNANCE_REFRESH", setup_upper)
+        self.assertIn("AFTER OVERWATCH_REFRESH_CONTROL_ROOM", setup_upper)
+        self.assertIn("OVERWATCH_ALERTS", setup_upper)
+        self.assertIn("WAREHOUSE = COMPUTE_WH", setup_upper)
+        self.assertIn("WAREHOUSE_COST_MOVEMENT", setup_upper)
+        self.assertIn("CORTEX_BUDGET_AND_QUOTA", setup_upper)
+        self.assertIn("CHANGE_COST_CORRELATION", setup_upper)
+
+    def test_cost_governance_mart_sql_matches_setup_object_contract(self):
+        sql = build_cost_governance_mart_sql().upper()
+
+        self.assertIn("FACT_COST_GOVERNANCE_SIGNAL", sql)
+        self.assertIn("FACT_COST_INCIDENT_TIMELINE", sql)
+        self.assertIn("SP_OVERWATCH_REFRESH_COST_GOVERNANCE", sql)
+        self.assertIn("OVERWATCH_COST_GOVERNANCE_REFRESH", sql)
+        self.assertIn("OVERWATCH_ALERTS", sql)
+        self.assertIn("WAREHOUSE = COMPUTE_WH", sql)
+
     def test_budget_governance_board_tracks_summit_budget_capabilities(self):
         summary, board = _build_budget_governance_board()
         capabilities = set(board["CAPABILITY"])
@@ -2278,8 +2449,7 @@ class FormulaRegressionTests(unittest.TestCase):
             ddl_block = setup_sql[ddl_start:ddl_end]
             self.assertIn("ENVIRONMENT", ddl_block, table_name)
 
-            alter_stmt = f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS ENVIRONMENT"
-            self.assertIn(alter_stmt, setup_sql, table_name)
+        self.assertNotIn("ADD COLUMN IF NOT EXISTS", setup_sql)
 
         proc_start = setup_sql.index("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_PROCEDURE_RUN")
         proc_end = setup_sql.index(");", proc_start)

@@ -273,7 +273,7 @@ def _task_full_name(row: pd.Series) -> str:
 
 
 def _is_prod_task(row: pd.Series) -> bool:
-    env = str(st.session_state.get("active_environment", "") or "").upper()
+    env = str(get_active_environment() or "").upper()
     db = str(row.get("DATABASE_NAME") or "").upper()
     schema = str(row.get("SCHEMA_NAME") or "").upper()
     return "PROD" in {env, db, schema} or "_PROD" in db or db.endswith("PROD")
@@ -1597,7 +1597,7 @@ def _log_admin_action(
         confirmation_text=confirmation_text,
         control_context=control_context,
         company=get_active_company(),
-        environment=str(st.session_state.get("active_environment", "") or ""),
+        environment=get_active_environment(),
     )
 
 
@@ -2788,9 +2788,19 @@ def render():
         if st.button("Load ETL Audit Log", key="etl_load"):
             try:
                 df_etl = run_query(f"""
-                    SELECT * FROM {ETL_AUDIT_FQN}
-                    ORDER BY RUN_START DESC LIMIT 500
-                """, ttl_key="task_management_etl_audit", tier="standard")
+                    SELECT
+                        RUN_ID,
+                        PIPELINE_NAME,
+                        TASK_NAME,
+                        STATUS,
+                        RUN_START,
+                        RUN_END,
+                        ERROR_MESSAGE
+                    FROM {ETL_AUDIT_FQN}
+                    WHERE RUN_START >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+                    ORDER BY RUN_START DESC
+                    LIMIT 500
+                """, ttl_key="task_management_etl_audit", tier="recent", section="Task Management")
                 st.session_state["tm_df_etl"] = df_etl
             except Exception as e:
                 st.info(f"Audit table unavailable. Deploy `snowflake/OVERWATCH_MART_SETUP.sql`, then retry. ({format_snowflake_error(e)})")

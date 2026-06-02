@@ -12,6 +12,7 @@ from utils import (
     build_metered_credit_cte, make_action_id, upsert_actions,
     run_query, format_snowflake_error, filter_existing_columns, render_optimization_advisor,
     build_mart_warehouse_overview_sql, build_mart_warehouse_scaling_sql,
+    build_mart_warehouse_heatmap_sql,
     mart_object_name, resolve_owner_context, safe_float, safe_identifier, safe_int, sql_literal,
     action_queue_environment_clause,
 )
@@ -2697,19 +2698,22 @@ def _render_warehouse_ownership_panel(session, company: str, environment: str) -
             "Checks recent warehouse usage against warehouse tags and the owner directory before DBA setting changes are approved."
         )
         owner_days = st.slider("Ownership usage days", 7, 90, 30, key="wh_owner_inventory_days")
+        owner_query_days = min(int(owner_days), 30)
+        if owner_query_days < int(owner_days):
+            st.warning("Warehouse ownership readiness live fallback is capped at 30 days to avoid broad usage scans.")
         if st.button("Load Warehouse Ownership Readiness", key="wh_owner_inventory_load"):
             try:
-                owner_sql = _warehouse_owner_inventory_sql(owner_days, company, environment)
+                owner_sql = _warehouse_owner_inventory_sql(owner_query_days, company, environment)
                 owner_inventory = run_query(
                     owner_sql,
-                    ttl_key=f"wh_owner_inventory_{company}_{environment}_{owner_days}",
+                    ttl_key=f"wh_owner_inventory_{company}_{environment}_{owner_query_days}",
                     tier="standard",
                     section="Warehouse Health",
                 )
                 st.session_state["wh_owner_inventory"] = _annotate_warehouse_owner_inventory(owner_inventory)
                 st.session_state["wh_owner_inventory_sql"] = owner_sql
                 st.session_state["wh_owner_inventory_meta"] = _warehouse_scope_meta(
-                    company, environment, owner_days
+                    company, environment, owner_query_days
                 )
             except Exception as exc:
                 st.session_state["wh_owner_inventory"] = pd.DataFrame()
@@ -2719,7 +2723,7 @@ def _render_warehouse_ownership_panel(session, company: str, environment: str) -
         if owner_inventory is None:
             st.info("Load this before approving warehouse setting changes or queuing capacity actions.")
             with st.expander("Ownership readiness query", expanded=False):
-                st.code(_warehouse_owner_inventory_sql(owner_days, company, environment), language="sql")
+                st.code(_warehouse_owner_inventory_sql(owner_query_days, company, environment), language="sql")
             return
         if owner_inventory.empty:
             st.info("No warehouse usage rows found for the selected company/environment scope.")
@@ -3243,21 +3247,43 @@ def render():
 
         if st.button("Build Heatmap", key="hm_build"):
             try:
-                df_hm = run_query(f"""
-                    SELECT warehouse_name,
-                           DAYOFWEEK(start_time) AS day_of_week,
-                           HOUR(start_time)      AS hour_of_day,
-                           COUNT(*)              AS query_count,
-                           ROUND(AVG(total_elapsed_time)/1000,2) AS avg_elapsed_sec
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day', -{hm_days}, CURRENT_TIMESTAMP())
-                      AND warehouse_name IS NOT NULL
-                      {wh_plain_filters}
-                    GROUP BY warehouse_name, day_of_week, hour_of_day
-                    ORDER BY warehouse_name, day_of_week, hour_of_day
-                """, ttl_key=f"wh_heatmap_{company}_{hm_days}", tier="historical")
+                mart_sql = build_mart_warehouse_heatmap_sql(
+                    hm_days,
+                    company=company,
+                    warehouse_contains=global_warehouse,
+                    user_contains=global_user,
+                    role_contains=global_role,
+                    database_contains=global_database,
+                    start_date=global_start_date,
+                    end_date=global_end_date,
+                )
+                df_hm = run_query(
+                    mart_sql,
+                    ttl_key=f"wh_heatmap_mart_{company}_{hm_days}",
+                    tier="historical",
+                )
+                source = "OVERWATCH mart: FACT_QUERY_HOURLY"
+                if df_hm.empty:
+                    live_days = min(int(hm_days), 30)
+                    if live_days < int(hm_days):
+                        st.warning("Workload heatmap live fallback is capped at 30 days to avoid broad query-history scans.")
+                    df_hm = run_query(f"""
+                        SELECT warehouse_name,
+                               DAYOFWEEK(start_time) AS day_of_week,
+                               HOUR(start_time)      AS hour_of_day,
+                               COUNT(*)              AS query_count,
+                               ROUND(AVG(total_elapsed_time)/1000,2) AS avg_elapsed_sec
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                        WHERE start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
+                          AND warehouse_name IS NOT NULL
+                          {wh_plain_filters}
+                        GROUP BY warehouse_name, day_of_week, hour_of_day
+                        ORDER BY warehouse_name, day_of_week, hour_of_day
+                    """, ttl_key=f"wh_heatmap_live_{company}_{live_days}", tier="historical")
+                    source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                 st.session_state["wh_df_hm"] = df_hm
                 st.session_state["wh_df_hm_meta"] = _warehouse_scope_meta(company, environment, hm_days)
+                st.session_state["wh_df_hm_source"] = source
             except Exception as e:
                 st.warning(f"Workload heatmap unavailable in this role/context: {format_snowflake_error(e)}")
 

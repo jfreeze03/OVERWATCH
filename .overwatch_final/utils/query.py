@@ -25,6 +25,11 @@ CACHE_TIERS: dict[str, int] = {
     "metadata":   14400,  # SHOW WAREHOUSES, SHOW TASKS, USERS — 4-hour cache
 }
 
+STANDARD_RESULT_WARNING_ROWS = 5_000
+STANDARD_RESULT_WARNING_MB = 25.0
+ADMIN_RESULT_HARD_ROWS = 25_000
+ADMIN_RESULT_HARD_MB = 100.0
+
 _RESULT_SIZE_DEEP_ROW_LIMIT = 5_000
 _RESULT_SIZE_SAMPLE_ROWS = 1_000
 
@@ -71,6 +76,26 @@ def _estimate_result_mb(result: pd.DataFrame) -> float:
         return float(non_object_bytes + estimated_object_bytes + index_bytes) / (1024 * 1024)
     except Exception:
         return 0.0
+
+
+def _admin_actions_enabled() -> bool:
+    """Return whether the admin gate is open without introducing an import cycle."""
+    try:
+        from .admin import admin_actions_enabled
+
+        return bool(admin_actions_enabled())
+    except Exception:
+        return False
+
+
+def _query_is_metadata_probe(query_text: str) -> bool:
+    """Return True for safe metadata probes that should not be size-guarded."""
+    sql = str(query_text or "").strip().upper()
+    if not sql:
+        return False
+    if sql.startswith("SHOW ") or sql.startswith("DESC ") or sql.startswith("DESCRIBE "):
+        return True
+    return "LIMIT 0" in sql
 
 
 def _is_expensive_query(elapsed_ms: float, row_count: int, result_mb: float) -> bool:
@@ -230,6 +255,66 @@ def _show_query_warning(prefix: str, error: Exception) -> None:
     st.warning(message)
 
 
+def _show_result_guard_message(message: str, level: str = "warning") -> None:
+    """Show a de-duplicated result-size guardrail message."""
+    normalized_level = "error" if str(level or "").lower() == "error" else "warning"
+    seen = st.session_state.setdefault("_overwatch_result_guard_warning_hashes", set())
+    warning_hash = hashlib.sha1(f"{normalized_level}|{message}".encode("utf-8", errors="ignore")).hexdigest()[:12]
+    if warning_hash in seen:
+        return
+    seen.add(warning_hash)
+    if normalized_level == "error":
+        st.error(message)
+    else:
+        st.warning(message)
+
+
+def _apply_result_guard(
+    query_text: str,
+    result: pd.DataFrame,
+    ttl_key: str = "",
+    section: str = "",
+    tier: str = "recent",
+) -> pd.DataFrame:
+    """Warn or clamp overly large query results before callers consume them."""
+    if result is None:
+        return pd.DataFrame()
+    if not isinstance(result, pd.DataFrame) or result.empty:
+        return result if isinstance(result, pd.DataFrame) else pd.DataFrame()
+    if _query_is_metadata_probe(query_text):
+        return result
+
+    row_count = len(result)
+    result_mb = _estimate_result_mb(result)
+    active_section = _infer_telemetry_section(section, ttl_key)
+    admin_mode = _admin_actions_enabled()
+
+    if admin_mode:
+        if row_count > ADMIN_RESULT_HARD_ROWS or result_mb > ADMIN_RESULT_HARD_MB:
+            _show_result_guard_message(
+                (
+                    "OVERWATCH admin result guard: "
+                    f"{active_section} query returned {row_count:,} rows / {result_mb:.1f} MB; "
+                    f"ceiling is {ADMIN_RESULT_HARD_ROWS:,} rows or {ADMIN_RESULT_HARD_MB:.0f} MB. "
+                    "Refine the filters before loading this result."
+                ),
+                level="error",
+            )
+            return pd.DataFrame()
+    elif row_count > STANDARD_RESULT_WARNING_ROWS or result_mb > STANDARD_RESULT_WARNING_MB:
+        _show_result_guard_message(
+            (
+                "OVERWATCH result guard: "
+                f"{active_section} query returned {row_count:,} rows / {result_mb:.1f} MB; "
+                f"standard dashboard guardrail is {STANDARD_RESULT_WARNING_ROWS:,} rows or {STANDARD_RESULT_WARNING_MB:.0f} MB. "
+                "Tighten filters before rerunning."
+            ),
+            level="warning",
+        )
+
+    return result
+
+
 def format_snowflake_error(error: Exception, max_len: int = 320) -> str:
     """Return a short UI-safe Snowflake error message."""
     text = str(error or "").strip()
@@ -315,6 +400,7 @@ def clear_query_telemetry() -> None:
     st.session_state["_overwatch_query_telemetry"] = []
     st.session_state["_overwatch_query_budget_hits"] = {}
     st.session_state["_overwatch_query_budget_warning_hashes"] = set()
+    st.session_state["_overwatch_result_guard_warning_hashes"] = set()
     st.session_state.pop("_overwatch_active_query_tag", None)
 
 
@@ -394,10 +480,17 @@ def _apply_overwatch_query_tag(session, query_tag: str) -> None:
         pass
 
 
-def _execute_snowflake_query(query_text: str, query_tag: str = "") -> pd.DataFrame:
+def _execute_snowflake_query(
+    query_text: str,
+    query_tag: str = "",
+    ttl_key: str = "",
+    tier: str = "recent",
+    section: str = "",
+) -> pd.DataFrame:
     session = get_session()
     _apply_overwatch_query_tag(session, query_tag)
-    return normalize_df(session.sql(query_text).to_pandas())
+    result = normalize_df(session.sql(query_text).to_pandas())
+    return _apply_result_guard(query_text, result, ttl_key=ttl_key, section=section, tier=tier)
 
 
 def _cache_context() -> str:
@@ -419,36 +512,64 @@ def _cache_context() -> str:
 
 
 @st.cache_data(ttl=CACHE_TIERS["live"], show_spinner=False)
-def _cached_live(query_text: str, cache_context: str = "", cache_salt: str = "", _query_tag: str = "") -> pd.DataFrame:
+def _cached_live(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, _query_tag)
+        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="live", section=_section)
     except Exception as e:
         _show_query_warning("Live data unavailable", e)
         return pd.DataFrame()
 
 
 @st.cache_data(ttl=CACHE_TIERS["recent"], show_spinner=False)
-def _cached_recent(query_text: str, cache_context: str = "", cache_salt: str = "", _query_tag: str = "") -> pd.DataFrame:
+def _cached_recent(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, _query_tag)
+        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section)
     except Exception as e:
         _show_query_warning("Data unavailable", e)
         return pd.DataFrame()
 
 
 @st.cache_data(ttl=CACHE_TIERS["historical"], show_spinner=False)
-def _cached_historical(query_text: str, cache_context: str = "", cache_salt: str = "", _query_tag: str = "") -> pd.DataFrame:
+def _cached_historical(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, _query_tag)
+        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="historical", section=_section)
     except Exception as e:
         _show_query_warning("Historical data unavailable", e)
         return pd.DataFrame()
 
 
 @st.cache_data(ttl=CACHE_TIERS["metadata"], show_spinner=False)
-def _cached_metadata(query_text: str, cache_context: str = "", cache_salt: str = "", _query_tag: str = "") -> pd.DataFrame:
+def _cached_metadata(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
     try:
-        return _execute_snowflake_query(query_text, _query_tag)
+        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="metadata", section=_section)
     except Exception as e:
         _show_query_warning("Metadata unavailable", e)
         return pd.DataFrame()
@@ -456,10 +577,17 @@ def _cached_metadata(query_text: str, cache_context: str = "", cache_salt: str =
 
 # Backward-compatible 5-min cache — for callers that don't pass tier=
 @st.cache_data(ttl=CACHE_TIERS["recent"], show_spinner=False)
-def run_query_cached(query_text: str, cache_context: str = "", cache_salt: str = "", _query_tag: str = "") -> pd.DataFrame:
+def run_query_cached(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
     """Backward-compatible runner. Prefer run_query(tier=...) for new code."""
     try:
-        return _execute_snowflake_query(query_text, _query_tag)
+        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section)
     except Exception as e:
         _show_query_warning("Data unavailable", e)
         return pd.DataFrame()
@@ -503,10 +631,10 @@ def _run_query_base(
                 cache_salt = st.session_state.get(f"_refresh_salt_{ttl_key}", "")
                 context = _cache_context()
                 fn   = _TIER_FN.get(tier, _cached_recent)
-                return fn(query_text, context, cache_salt, query_tag)
+                return fn(query_text, context, cache_salt, query_tag, ttl_key, section)
             # Bypass cache — always wrapped in try/except
             try:
-                return _execute_snowflake_query(query_text, query_tag)
+                return _execute_snowflake_query(query_text, query_tag, ttl_key=ttl_key, tier=tier, section=section)
             except Exception as e:
                 _show_query_warning("Data unavailable", e)
                 return pd.DataFrame()
@@ -558,7 +686,7 @@ def run_query_or_raise(
         session = get_session()
         _apply_overwatch_query_tag(session, query_tag)
         result = normalize_df(session.sql(query_text).to_pandas())
-        return result
+        return _apply_result_guard(query_text, result, ttl_key=ttl_key, section=section, tier=tier)
     finally:
         elapsed_ms = (time.perf_counter() - started) * 1000
         _record_query_telemetry(

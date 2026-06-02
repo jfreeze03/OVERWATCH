@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+from functools import lru_cache
 
 import streamlit as st
 
@@ -15,6 +16,13 @@ CONFIDENCE_BANDS = (
     ("manual", "Manual", "Configured, email, owner, approval, ITSM, or directory evidence."),
     ("unavailable", "Unavailable", "Expected evidence is stale, missing, or not loaded."),
 )
+
+
+SECTION_SOURCE_HEALTH_STATE_KEYS = {
+    "Architecture Readiness": ("arch_source_health",),
+}
+
+_SOURCE_HEALTH_FALLBACK_SCAN_LIMIT = 40
 
 
 SECTION_OPERATING_GUIDE = {
@@ -101,34 +109,65 @@ def _state_band(state: object) -> str:
     return ""
 
 
-def _source_health_rows(state: dict | None) -> list[dict]:
+def _looks_like_source_health_frame(value: object) -> bool:
+    columns = getattr(value, "columns", None)
+    if columns is None:
+        return False
+    colset = {str(column).upper() for column in columns}
+    return {"STATE", "CONFIDENCE"}.issubset(colset) and bool({"SURFACE", "SOURCE"} & colset)
+
+
+def _source_health_frame_rows(key: str, value: object) -> list[dict]:
+    rows: list[dict] = []
+    if not _looks_like_source_health_frame(value):
+        return rows
+    try:
+        for row in value.to_dict("records"):
+            rows.append({
+                "key": str(key),
+                "surface": str(row.get("SURFACE") or row.get("SOURCE") or key),
+                "state": str(row.get("STATE") or ""),
+                "confidence": str(row.get("CONFIDENCE") or ""),
+                "rows": row.get("ROWS", ""),
+            })
+    except Exception:
+        return []
+    return rows
+
+
+def _source_health_rows(section: str, state: dict | None) -> list[dict]:
     rows: list[dict] = []
     if not state:
         return rows
-    try:
-        state_items = state.items()
-    except Exception:
-        state_items = []
-    for key, value in state_items:
-        columns = getattr(value, "columns", None)
-        if columns is None:
-            continue
-        colset = {str(column).upper() for column in columns}
-        if not {"STATE", "CONFIDENCE"}.issubset(colset):
-            continue
-        if not ({"SURFACE", "SOURCE"} & colset):
-            continue
+
+    checked_keys: set[str] = set()
+    for key in SECTION_SOURCE_HEALTH_STATE_KEYS.get(str(section), ()):
+        checked_keys.add(str(key))
         try:
-            for row in value.to_dict("records"):
-                rows.append({
-                    "key": str(key),
-                    "surface": str(row.get("SURFACE") or row.get("SOURCE") or key),
-                    "state": str(row.get("STATE") or ""),
-                    "confidence": str(row.get("CONFIDENCE") or ""),
-                    "rows": row.get("ROWS", ""),
-                })
+            rows.extend(_source_health_frame_rows(str(key), state.get(key)))
         except Exception:
             continue
+
+    if rows:
+        return rows
+
+    # Compatibility path for tests and older sections that may add source-health
+    # frames before they are registered above. Keep the scan bounded so the
+    # confidence meter cannot become slower as Streamlit session_state grows.
+    try:
+        state_items = list(state.items())
+    except Exception:
+        state_items = []
+    scanned = 0
+    for key, value in state_items:
+        if str(key) in checked_keys:
+            continue
+        if "source_health" not in str(key).lower():
+            continue
+        scanned += 1
+        rows.extend(_source_health_frame_rows(str(key), value))
+        if scanned >= _SOURCE_HEALTH_FALLBACK_SCAN_LIMIT:
+            break
     return rows
 
 
@@ -142,7 +181,7 @@ def build_section_confidence_meter(section: str, state: dict | None = None) -> d
         band_counts[band] += 1
         details[band].append(str(row.get("source") or "").strip())
 
-    loaded_sources = _source_health_rows(state)
+    loaded_sources = _source_health_rows(str(section), state)
     for row in loaded_sources:
         band = _state_band(row.get("state")) or _confidence_band(row.get("confidence"))
         band_counts[band] += 1
@@ -353,6 +392,7 @@ def _guide_value(section: str, key: str) -> str:
     return str(guide.get(key, "")).strip()
 
 
+@lru_cache(maxsize=16)
 def _section_guide_markup(section: str) -> str:
     """Return the compact SOP markup for the active DBA section."""
     guide = SECTION_OPERATING_GUIDE.get(str(section))
@@ -452,6 +492,7 @@ def render_section_evidence_contract(section: str) -> None:
         st.markdown(markup, unsafe_allow_html=True)
 
 
+@lru_cache(maxsize=16)
 def _section_evidence_contract_markup(section: str) -> str:
     """Return the evidence contract markup for the active DBA section."""
     rows = SECTION_EVIDENCE_CONTRACT.get(str(section))

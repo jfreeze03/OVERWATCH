@@ -27,6 +27,7 @@ from utils.section_guidance import (  # noqa: E402
     CONFIDENCE_BANDS,
     SECTION_EVIDENCE_CONTRACT,
     SECTION_OPERATING_GUIDE,
+    SECTION_SOURCE_HEALTH_STATE_KEYS,
     build_section_confidence_meter,
 )
 from utils.scorecards import DBA_CONTROL_PLANE_SECTION_BASELINE  # noqa: E402
@@ -326,6 +327,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn(".ow-confidence-gauge-track", theme_text)
         self.assertIn(".ow-confidence-gauge-marker", theme_text)
         self.assertIn(".ow-confidence-mix-item", theme_text)
+        self.assertIn("SECTION_SOURCE_HEALTH_STATE_KEYS", guidance_text)
+        self.assertIn("_SOURCE_HEALTH_FALLBACK_SCAN_LIMIT", guidance_text)
+        self.assertIn("lru_cache", guidance_text)
+        self.assertIn("@lru_cache(maxsize=16)", guidance_text)
+        self.assertIn('"arch_source_health"', guidance_text)
         self.assertNotIn("ow-confidence-chip", theme_text)
         self.assertNotIn("ow-confidence-chip", guidance_text)
         self.assertNotIn("ow-confidence-card-detail", theme_text)
@@ -368,6 +374,21 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertGreaterEqual(loaded_by_label["Unavailable"]["count"], 1)
         self.assertEqual(with_loaded_health["source_health_rows"], 2)
         self.assertIn(with_loaded_health["state"], {"Use With Caution", "Evidence Gaps"})
+
+        self.assertEqual(SECTION_SOURCE_HEALTH_STATE_KEYS["Architecture Readiness"], ("arch_source_health",))
+        ignored_noise = build_section_confidence_meter(
+            "Cost & Contract",
+            {
+                f"random_frame_{idx}": pd.DataFrame([{
+                    "SURFACE": "Noise",
+                    "STATE": "Stale",
+                    "SOURCE": "Not a source health key",
+                    "CONFIDENCE": "Unavailable",
+                }])
+                for idx in range(100)
+            },
+        )
+        self.assertEqual(ignored_noise["source_health_rows"], 0)
 
     def test_priority_tables_defer_full_raw_detail_rendering(self):
         workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
@@ -454,10 +475,22 @@ class NavigationIntegrityTests(unittest.TestCase):
         task_management_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
         data_text = (APP_ROOT / "utils" / "data.py").read_text(encoding="utf-8")
+        top_import_block = app_text.split("def _snapshot_ask_overwatch_state", 1)[0]
 
         self.assertIn("Telemetry summaries are rendered on demand", app_text)
         self.assertIn('st.button("Render telemetry summary"', app_text)
+        self.assertNotIn("from utils.ask_overwatch import answer_ask_overwatch", top_import_block)
+        self.assertIn("from utils.ask_overwatch import answer_ask_overwatch", app_text)
+        self.assertNotIn("from utils.bookmarks import (", top_import_block)
+        self.assertIn("def _load_bookmark_helpers", app_text)
+        self.assertNotIn("import utils.display as display_module", top_import_block)
+        self.assertNotIn("import utils.workflows as workflows_module", top_import_block)
+        self.assertIn("def _maybe_reload_dev_helpers", app_text)
+        self.assertIn('st.session_state.get("_overwatch_dev_reload_helpers", False)', app_text)
         self.assertIn('st.session_state["_logging_enabled"] = False', app_text)
+        self.assertIn('"Persist section timing"', app_text)
+        self.assertIn("section_render_started = time.perf_counter()", app_text)
+        self.assertIn("log_section_load(active_section, duration_ms)", app_text)
         self.assertIn('st.session_state["_detailed_query_tags_enabled"] = False', app_text)
         self.assertIn('"Detailed Snowflake query tags"', app_text)
         self.assertIn("st.session_state.get(_ENABLED_KEY, False)", logging_text)
@@ -471,10 +504,23 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("force_inventory_refresh=True", task_management_text)
         self.assertIn("_task_management_execution_context_cache", task_management_text)
         self.assertIn("_EXECUTION_CONTEXT_CACHE_TTL_SECONDS = 300", task_management_text)
+        self.assertIn('"Check Fast Snapshot"', dba_control_text)
+        self.assertIn("Fast mart snapshot lookup is on demand", dba_control_text)
+        self.assertNotIn("load_latest_control_room_mart(company, max_age_hours=6) if snapshot_scope_ok else None", dba_control_text)
+        self.assertIn('"Fast Watch"', dba_control_text)
+        self.assertIn('"Operations Tower"', dba_control_text)
+        self.assertIn('"App Performance"', dba_control_text)
+        self.assertIn('"Build Operations Tower"', dba_control_text)
+        self.assertIn("Control Tower, Autopilot, Incident Board, and Shift Handoff are deferred", dba_control_text)
+        self.assertIn("def _render_app_performance_guardrail", dba_control_text)
+        self.assertIn("_latest_local_snowflake_suite_result", dba_control_text)
         self.assertIn("_RESULT_SIZE_SAMPLE_ROWS", query_text)
+        self.assertIn("OVERWATCH_PERF_RUN_ID", query_text)
+        self.assertIn('"perf_run_id": _perf_run_id()', query_text)
         self.assertIn('st.session_state.get("_detailed_query_tags_enabled", False)', query_text)
         self.assertIn('return "OVERWATCH"', query_text)
         self.assertNotIn("OVERWATCH:v3", query_text)
+        self.assertIn("PERF_RUN_ID", logging_text)
         self.assertIn('_QUERY_TAG = "OVERWATCH"', session_text)
         self.assertNotIn("OVERWATCH:v3", session_text)
         self.assertIn('st.session_state["_overwatch_active_query_tag"] = _QUERY_TAG', session_text)

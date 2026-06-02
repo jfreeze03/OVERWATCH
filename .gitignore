@@ -4,3 +4,4 @@ __pycache__/
 .streamlit/secrets.toml
 .streamlit/*.toml
 !.streamlit/config.toml
+perf_tests/results/

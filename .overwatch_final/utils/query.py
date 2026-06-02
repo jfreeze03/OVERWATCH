@@ -9,6 +9,7 @@
 #      (previous version had a single flat 300s TTL for all query types)
 # ─────────────────────────────────────────────────────────────────────────────
 import hashlib
+import os
 import re
 import time
 import streamlit as st
@@ -33,6 +34,16 @@ QUERY_BUDGET_THRESHOLDS = {
     "large_result_mb": 25.0,
     "repeat_warning_count": 3,
 }
+
+
+def _perf_run_id() -> str:
+    """Optional run id used by the external performance test harness."""
+    try:
+        value = st.session_state.get("_overwatch_perf_run_id", "")
+    except Exception:
+        value = ""
+    value = value or os.environ.get("OVERWATCH_PERF_RUN_ID", "")
+    return re.sub(r"[^A-Za-z0-9_.:-]+", "", str(value or ""))[:80]
 
 
 def _estimate_result_mb(result: pd.DataFrame) -> float:
@@ -145,6 +156,7 @@ def _record_query_telemetry(
         entries = st.session_state.setdefault("_overwatch_query_telemetry", [])
         entries.append({
             "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "perf_run_id": _perf_run_id(),
             "section": active_section,
             "ttl_key": ttl_key,
             "tier": tier,
@@ -363,7 +375,11 @@ def _build_overwatch_query_tag(section: str, ttl_key: str, tier: str) -> str:
     section_label = _infer_telemetry_section(section, ttl_key)
     section_label = re.sub(r"[^A-Za-z0-9 _&:/.-]+", "", str(section_label)).strip() or "Unknown"
     company = str(st.session_state.get("active_company", "ALFA") or "ALFA")
-    return f"OVERWATCH|{company[:24]}|{section_label[:80]}|{str(tier or 'recent')[:20]}"
+    perf = _perf_run_id()
+    tag = f"OVERWATCH|{company[:24]}|{section_label[:80]}|{str(tier or 'recent')[:20]}"
+    if perf:
+        tag = f"{tag}|PERF:{perf[:48]}"
+    return tag[:250]
 
 
 def _apply_overwatch_query_tag(session, query_tag: str) -> None:

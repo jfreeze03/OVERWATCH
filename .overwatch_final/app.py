@@ -9,6 +9,7 @@
 import streamlit as st
 import html
 import importlib
+import time
 from datetime import datetime, timedelta
 from streamlit.runtime.scriptrunner import StopException
 
@@ -37,18 +38,13 @@ import utils as utils_package
 if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-01-ranked-chart-exports-v1":
     utils_package = importlib.reload(utils_package)
 
-import utils.display as display_module
-
-if getattr(display_module, "DISPLAY_VERSION", "") != "2026-06-01-explicit-drilldowns-v1":
-    display_module = importlib.reload(display_module)
-
 from utils.cache import clear_all_cache
 from utils.session import get_session
 from utils.query import (
     get_query_telemetry, get_query_budget_summary,
     clear_query_telemetry, format_snowflake_error,
 )
-from utils.ask_overwatch import answer_ask_overwatch
+from utils.logging import log_section_load
 from utils.company_filter import invalidate_company_cache
 from utils.admin import render_admin_mode_control
 import utils.section_guidance as section_guidance
@@ -76,11 +72,45 @@ def _snapshot_ask_overwatch_state(state) -> dict:
         except Exception:
             continue
     return snapshot
-import utils.workflows as workflows_module
-from utils.bookmarks import (
-    save_bookmark, load_bookmarks,
-    apply_bookmark, delete_bookmark,
-)
+
+
+def _load_bookmark_helpers():
+    """Lazy-load saved-view helpers only when a bookmark action is requested."""
+    from utils.bookmarks import (
+        save_bookmark,
+        load_bookmarks,
+        apply_bookmark,
+        delete_bookmark,
+    )
+
+    return save_bookmark, load_bookmarks, apply_bookmark, delete_bookmark
+
+
+def _dev_reload_helpers_enabled() -> bool:
+    """Return whether shared helper hot-reload checks should run."""
+    try:
+        return bool(st.session_state.get("_overwatch_dev_reload_helpers", False))
+    except Exception:
+        return False
+
+
+def _maybe_reload_dev_helpers() -> None:
+    """Reload shared UI helpers only during explicit local development."""
+    if not _dev_reload_helpers_enabled():
+        return
+
+    import utils.display as display_module
+    import utils.workflows as workflows_module
+
+    if getattr(display_module, "DISPLAY_VERSION", "") != "2026-06-01-explicit-drilldowns-v1":
+        importlib.reload(display_module)
+
+    if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-01-compact-workflow-ui-v2":
+        importlib.reload(workflows_module)
+        if hasattr(sections, "reload_loaded_sections"):
+            sections.reload_loaded_sections()
+
+
 import sections
 
 if getattr(theme_module, "THEME_VERSION", "") != "2026-06-01-compact-workflow-ui-v3":
@@ -91,10 +121,7 @@ if getattr(theme_module, "THEME_VERSION", "") != "2026-06-01-compact-workflow-ui
 if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-06-01-platform-futures-v1":
     section_guidance = importlib.reload(section_guidance)
 
-if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-01-compact-workflow-ui-v2":
-    workflows_module = importlib.reload(workflows_module)
-    if hasattr(sections, "reload_loaded_sections"):
-        sections.reload_loaded_sections()
+_maybe_reload_dev_helpers()
 
 inject_theme()
 
@@ -507,6 +534,7 @@ with st.sidebar:
         ):
             try:
                 _session = get_session()
+                _, load_bookmarks, _, _ = _load_bookmark_helpers()
                 bookmarks = load_bookmarks(_session)
                 st.session_state["_overwatch_saved_views_cache"] = bookmarks
                 st.session_state["_overwatch_saved_views_loaded"] = True
@@ -542,11 +570,13 @@ with st.sidebar:
                     ):
                         if not _session:
                             _session = get_session()
+                        _, _, apply_bookmark, _ = _load_bookmark_helpers()
                         apply_bookmark(_session, bm)  # calls st.rerun()
                 with col_del:
                     if st.button("Delete", key=f"bm_del_{bm['id']}", help="Delete bookmark"):
                         if not _session:
                             _session = get_session()
+                        _, _, _, delete_bookmark = _load_bookmark_helpers()
                         if delete_bookmark(_session, bm["id"]):
                             st.session_state.pop("_overwatch_saved_views_cache", None)
                             st.session_state["_overwatch_saved_views_loaded"] = False
@@ -572,12 +602,14 @@ with st.sidebar:
                     _session = None
             if not _session:
                 st.warning("Connect Snowflake before saving views.")
-            elif save_bookmark(_session, new_bm_name, bm_shared):
-                st.success(f"Saved '{new_bm_name}'")
-                st.session_state.pop("bm_name_input", None)
-                st.session_state.pop("_overwatch_saved_views_cache", None)
-                st.session_state["_overwatch_saved_views_loaded"] = False
-                st.rerun()
+            else:
+                save_bookmark, _, _, _ = _load_bookmark_helpers()
+                if save_bookmark(_session, new_bm_name, bm_shared):
+                    st.success(f"Saved '{new_bm_name}'")
+                    st.session_state.pop("bm_name_input", None)
+                    st.session_state.pop("_overwatch_saved_views_cache", None)
+                    st.session_state["_overwatch_saved_views_loaded"] = False
+                    st.rerun()
 
         if _session:
             st.caption("Saved View table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
@@ -677,6 +709,14 @@ with st.sidebar:
             key="rt_interval",
         )
         st.toggle(
+            "Persist section timing",
+            key="_logging_enabled",
+            help=(
+                "Benchmark mode: writes one lightweight usage row per completed section render. "
+                "Keep off during normal browsing unless you are measuring performance."
+            ),
+        )
+        st.toggle(
             "Persist query telemetry",
             key="_query_logging_enabled",
             help="Optional audit mode: write query hash, section, elapsed time, row count, and result size to the OVERWATCH usage log when that table exists.",
@@ -766,6 +806,8 @@ with st.expander("Ask OVERWATCH", expanded=False):
         if not ask_text:
             st.info("Type a specific DBA operating question first.")
         else:
+            from utils.ask_overwatch import answer_ask_overwatch
+
             result = answer_ask_overwatch(
                 ask_text[:500],
                 _snapshot_ask_overwatch_state(st.session_state),
@@ -790,6 +832,7 @@ section_signature = _section_render_signature(active_section, active_company, cu
 transition_slot = st.empty()
 section_slot = st.empty()
 show_transition = _section_transition_needed(section_signature)
+section_render_started = time.perf_counter()
 if show_transition:
     with transition_slot.container():
         _render_section_transition_state(active_section)
@@ -819,5 +862,8 @@ try:
                 )
             _mark_section_rendered(active_section, section_signature)
 finally:
+    duration_ms = int((time.perf_counter() - section_render_started) * 1000)
+    st.session_state["_overwatch_last_section_render_ms"] = duration_ms
+    log_section_load(active_section, duration_ms)
     if show_transition:
         transition_slot.empty()

@@ -30,6 +30,7 @@ from utils import (
     get_active_environment,
     get_credit_price,
     get_global_filter_clause,
+    get_query_telemetry,
     get_query_budget_summary,
     get_session,
     get_user_filter_clause,
@@ -67,11 +68,14 @@ DBA_CONTROL_SCOPE_FILTER_KEYS = (
     "global_end_date",
 )
 DBA_CONTROL_ROOM_PANES = (
+    "Fast Watch",
+    "Operations Tower",
     "Triage",
     "Drill Routes",
     "Release Compare",
     "Executive Evidence",
     "Source Health",
+    "App Performance",
 )
 DBA_CONTROL_ROOM_DETAIL_PANES = (
     "Failed Queries",
@@ -83,6 +87,43 @@ DBA_CONTROL_ROOM_DETAIL_PANES = (
     "Object Changes",
     "Action Queue",
 )
+
+DBA_CONTROL_ROOM_DERIVED_STATE_KEYS = (
+    "dba_control_room_incident_board",
+    "dba_control_room_handoff",
+    "dba_control_tower_priority_index",
+    "dba_autopilot_flight_plan",
+    "dba_autopilot_flight_plan_markdown",
+    "dba_control_room_ops_scope_key",
+    "dba_control_room_ops_ready",
+)
+
+
+def _clear_dba_control_room_derived_state() -> None:
+    """Clear derived boards when the loaded evidence scope changes."""
+    for key in DBA_CONTROL_ROOM_DERIVED_STATE_KEYS:
+        st.session_state.pop(key, None)
+
+
+def _dba_control_ops_scope_key(
+    company: str,
+    environment: str,
+    lookback_hours: int,
+    cortex_budget_usd: float,
+    include_deep_evidence: bool,
+    allow_live_fallback: bool,
+    loaded_meta: dict | None,
+) -> tuple:
+    meta_items = tuple(sorted((str(k), _dba_control_scope_value(v)) for k, v in (loaded_meta or {}).items()))
+    return (
+        str(company),
+        str(environment),
+        int(lookback_hours),
+        round(safe_float(cortex_budget_usd), 2),
+        bool(include_deep_evidence),
+        bool(allow_live_fallback),
+        meta_items,
+    )
 
 
 def _task_management_helpers():
@@ -3341,6 +3382,172 @@ def _render_control_room_source_health(
     return source_health
 
 
+def _latest_local_perf_result(*, sections: bool = False) -> dict:
+    """Read the latest local perf harness JSON result when available."""
+    try:
+        import json
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        results_dir = root / "perf_tests" / "results"
+        if not results_dir.exists():
+            return {}
+        pattern = "*_sections.json" if sections else "*.json"
+        candidates = [
+            path for path in results_dir.glob(pattern)
+            if path.is_file() and (sections or not path.name.endswith("_sections.json"))
+        ]
+        if not candidates:
+            return {}
+        latest = max(candidates, key=lambda path: path.stat().st_mtime)
+        with latest.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        payload["_report_path"] = str(latest)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _latest_local_snowflake_suite_result() -> dict:
+    """Read the latest guarded Snowflake perf-suite JSON result when available."""
+    try:
+        import json
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        results_dir = root / "perf_tests" / "results"
+        if not results_dir.exists():
+            return {}
+        candidates = [path for path in results_dir.glob("*_snowflake_safe_suite.json") if path.is_file()]
+        if not candidates:
+            return {}
+        latest = max(candidates, key=lambda path: path.stat().st_mtime)
+        with latest.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        payload["_report_path"] = str(latest)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _render_app_performance_guardrail() -> None:
+    """Show app self-performance, query-budget, and perf-harness state."""
+    telemetry = get_query_telemetry()
+    budget_summary = get_query_budget_summary()
+    http_result = _latest_local_perf_result(sections=False)
+    section_result = _latest_local_perf_result(sections=True)
+    snowflake_result = _latest_local_snowflake_suite_result()
+    http_summary = http_result.get("summary", {}) if isinstance(http_result.get("summary"), dict) else http_result
+    section_summary = section_result.get("summary", {}) if isinstance(section_result.get("summary"), dict) else section_result
+    telemetry_count = 0 if telemetry is None or telemetry.empty else len(telemetry)
+    budget_watch = 0
+    budget_high = 0
+    if budget_summary is not None and not budget_summary.empty and "budget_risk" in budget_summary.columns:
+        risk = budget_summary["budget_risk"].fillna("").astype(str).str.upper()
+        budget_watch = int(risk.isin(["WATCH", "HIGH"]).sum())
+        budget_high = int(risk.eq("HIGH").sum())
+
+    st.markdown("**OVERWATCH App Performance Guardrail**")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Last Render", f"{safe_int(st.session_state.get('_overwatch_last_section_render_ms')):,} ms")
+    c2.metric("Session Queries", f"{telemetry_count:,}")
+    c3.metric("Budget Watch", f"{budget_watch:,}", f"{budget_high:,} High", delta_color="inverse")
+    c4.metric("HTTP p95", f"{safe_float(http_summary.get('p95_ms')):,.0f} ms")
+    c5.metric("Section p95", f"{safe_float(section_summary.get('p95_ms')):,.0f} ms")
+    c6.metric("Slowest", str(section_summary.get("slowest_section") or "n/a"))
+
+    readiness_rows = []
+    for label, payload, summary in [
+        ("HTTP load", http_result, http_summary),
+        ("Section smoke", section_result, section_summary),
+    ]:
+        if not payload:
+            readiness_rows.append({
+                "TEST": label,
+                "STATE": "Not run locally",
+                "P95_MS": 0,
+                "ERROR_RATE": 0,
+                "RUN_ID": "",
+                "REPORT": "",
+                "NEXT_ACTION": "Run perf_tests from the local workspace when validating release performance.",
+            })
+            continue
+        state = str(summary.get("readiness_state") or payload.get("readiness_state") or "UNKNOWN")
+        error_rate = safe_float(summary.get("error_rate", payload.get("error_rate", 0)))
+        p95_ms = safe_float(summary.get("p95_ms", payload.get("p95_ms", 0)))
+        if state.upper() != "PASS":
+            next_action = "Block release until p95/error-rate regression is explained."
+        elif p95_ms >= 5000 or error_rate > 0:
+            next_action = "Investigate slow or failing paths before release."
+        else:
+            next_action = "Keep as baseline and compare next run before committing performance-sensitive changes."
+        readiness_rows.append({
+            "TEST": label,
+            "STATE": state,
+            "P95_MS": round(p95_ms, 2),
+            "ERROR_RATE": round(error_rate, 4),
+            "RUN_ID": str(payload.get("run_id") or ""),
+            "REPORT": str(payload.get("_report_path") or payload.get("markdown_report") or ""),
+            "NEXT_ACTION": next_action,
+        })
+
+    snowflake_suite = snowflake_result or st.session_state.get("perf_sql_last_run", {})
+    readiness_rows.append({
+        "TEST": "Snowflake safe metadata suite",
+        "STATE": str(snowflake_suite.get("state") or "Not run from this session"),
+        "P95_MS": 0,
+        "ERROR_RATE": 0,
+        "RUN_ID": str(snowflake_suite.get("run_id") or ""),
+        "REPORT": str(snowflake_suite.get("_report_path") or snowflake_suite.get("report") or ""),
+        "NEXT_ACTION": str(
+            snowflake_suite.get("next_action")
+            or "Run perf SQL setup/report in Snowflake to catch warehouse-side cost and spill."
+        ),
+    })
+    readiness = pd.DataFrame(readiness_rows)
+    render_priority_dataframe(
+        readiness,
+        title="Release performance gates",
+        priority_columns=["TEST", "STATE", "P95_MS", "ERROR_RATE", "RUN_ID", "NEXT_ACTION", "REPORT"],
+        sort_by=["STATE", "P95_MS"],
+        ascending=[True, False],
+        raw_label="All performance gate rows",
+        height=220,
+    )
+
+    if budget_summary is None or budget_summary.empty:
+        st.info("No query budget telemetry has been recorded in this Streamlit session yet.")
+    else:
+        render_priority_dataframe(
+            budget_summary,
+            title="Current session query-budget pressure",
+            priority_columns=[
+                "section", "budget_risk", "calls", "unique_queries",
+                "expensive_calls", "elapsed_sec", "max_rows", "max_result_mb",
+            ],
+            sort_by=["budget_risk", "expensive_calls", "elapsed_sec"],
+            ascending=[False, False, False],
+            raw_label="All query budget rows",
+            height=260,
+        )
+        download_csv(budget_summary, "overwatch_query_budget_summary.csv")
+
+    if telemetry is not None and not telemetry.empty:
+        tail = telemetry.tail(50)
+        render_priority_dataframe(
+            tail,
+            title="Latest app query events",
+            priority_columns=[
+                "timestamp", "perf_run_id", "section", "tier", "elapsed_ms",
+                "rows", "result_mb", "ttl_key", "query_hash",
+            ],
+            sort_by=["elapsed_ms", "rows", "result_mb"],
+            ascending=[False, False, False],
+            raw_label="All latest query events",
+            height=260,
+        )
+
+
 def _render_admin_readiness_panel() -> None:
     section_rows = pd.DataFrame(dba_control_plane_section_scorecards())
     component_rows = pd.DataFrame(dba_control_plane_component_rows())
@@ -3552,7 +3759,28 @@ def render() -> None:
         )
 
     snapshot_scope_ok = _dba_snapshot_scope_compatible(environment, st.session_state)
-    snapshot_result = load_latest_control_room_mart(company, max_age_hours=6) if snapshot_scope_ok else None
+    snapshot_scope_key = (
+        str(company),
+        str(environment),
+        str(st.session_state.get("global_warehouse", "")),
+        str(st.session_state.get("global_user", "")),
+        str(st.session_state.get("global_role", "")),
+        str(st.session_state.get("global_database", "")),
+    )
+    snapshot_result = None
+    if st.session_state.get("dba_control_room_snapshot_scope_key") == snapshot_scope_key:
+        snapshot_result = st.session_state.get("dba_control_room_snapshot_result")
+    else:
+        st.session_state.pop("dba_control_room_snapshot_scope_key", None)
+        st.session_state.pop("dba_control_room_snapshot_result", None)
+
+    if snapshot_scope_ok:
+        st.caption("Fast mart snapshot lookup is on demand to avoid startup Snowflake queries.")
+        if st.button("Check Fast Snapshot", key="dba_control_room_check_snapshot"):
+            with st.spinner("Checking latest control-room mart snapshot..."):
+                snapshot_result = load_latest_control_room_mart(company, max_age_hours=6)
+                st.session_state["dba_control_room_snapshot_scope_key"] = snapshot_scope_key
+                st.session_state["dba_control_room_snapshot_result"] = snapshot_result
     if snapshot_result is not None and snapshot_result.available and not snapshot_result.data.empty:
         snapshot = snapshot_result.data.copy()
         st.caption(f"Fast snapshot available from {snapshot_result.source}. Use it for cheap triage; load detail only for investigation.")
@@ -3575,6 +3803,7 @@ def render() -> None:
                 False,
                 False,
             )
+            _clear_dba_control_room_derived_state()
             st.rerun()
     elif snapshot_result is not None and not snapshot_result.available:
         st.caption("Fast mart snapshot unavailable. Install/run OVERWATCH_MART_SETUP.sql to enable cheap control-room triage.")
@@ -3630,6 +3859,7 @@ def render() -> None:
                 bool(include_deep_evidence),
                 bool(allow_live_fallback),
             )
+            _clear_dba_control_room_derived_state()
 
     data = st.session_state.get("dba_control_room_data", {})
     if not data:
@@ -3706,102 +3936,6 @@ def render() -> None:
     with a2:
         st.caption("All alert history, email-ready messages, suppression windows, and action queue routing are consolidated in Alert Center.")
 
-    _render_watch_floor(
-        data,
-        exceptions,
-        row,
-        period_credits,
-        credit_delta,
-        credit_price,
-        regression_count,
-        0 if cortex_exceptions.empty else len(cortex_exceptions),
-    )
-    action_queue = data.get("action_queue", _empty_df())
-    command_queue = _build_command_queue(action_queue)
-    source_health_for_handoff = _dba_control_source_health_rows(
-        data,
-        st.session_state,
-        company,
-        environment,
-        int(lookback_hours),
-        safe_float(cortex_budget_usd),
-        bool(include_deep_evidence),
-        bool(allow_live_fallback),
-    )
-    closure_rollup_for_handoff = _command_queue_closure_readiness(action_queue)
-    incident_board = _dba_incident_board(
-        exceptions,
-        command_queue,
-        closure_rollup_for_handoff,
-        source_health_for_handoff,
-    )
-    section_board_for_tower = _dba_section_operability_board(
-        command_queue=command_queue,
-        closure_rollup=closure_rollup_for_handoff,
-    )
-    control_tower = _dba_control_tower_priority_index(
-        section_board_for_tower,
-        incident_board,
-        command_queue,
-        source_health_for_handoff,
-    )
-    st.session_state["dba_control_tower_priority_index"] = control_tower
-    _render_control_tower_priority_index(control_tower)
-    autopilot_plan = _dba_autopilot_flight_plan(
-        control_tower,
-        company=company,
-        environment=environment,
-        lookback_hours=int(lookback_hours),
-    )
-    autopilot_md = _build_dba_autopilot_flight_plan_markdown(
-        autopilot_plan,
-        company=company,
-        environment=environment,
-        lookback_hours=int(lookback_hours),
-    )
-    st.session_state["dba_autopilot_flight_plan"] = autopilot_plan
-    st.session_state["dba_autopilot_flight_plan_markdown"] = autopilot_md
-    _render_dba_autopilot_flight_plan(autopilot_plan, autopilot_md)
-    _render_command_queue_control(
-        command_queue,
-        action_queue,
-        closure_rollup=closure_rollup_for_handoff,
-        section_board=section_board_for_tower,
-    )
-    incident_md = _build_dba_incident_markdown(
-        incident_board,
-        company=company,
-        environment=environment,
-        lookback_hours=int(lookback_hours),
-        source_mode=source_mode,
-    )
-    st.session_state["dba_control_room_incident_board"] = incident_board
-    _render_incident_board_panel(
-        incident_board,
-        incident_md,
-        company=company,
-        environment=environment,
-    )
-    handoff_rows = _dba_handoff_rows(
-        exceptions,
-        command_queue,
-        closure_rollup_for_handoff,
-        source_health_for_handoff,
-    )
-    handoff_md = _build_dba_shift_handoff_markdown(
-        handoff_rows,
-        company=company,
-        environment=environment,
-        lookback_hours=int(lookback_hours),
-        source_mode=source_mode,
-    )
-    st.session_state["dba_control_room_handoff"] = handoff_rows
-    _render_shift_handoff_panel(
-        handoff_rows,
-        handoff_md,
-        company=company,
-        environment=environment,
-    )
     st.divider()
 
     active_view = st.radio(
@@ -3812,7 +3946,146 @@ def render() -> None:
         key="dba_control_room_active_view",
     )
 
-    if active_view == "Triage":
+    if active_view == "Fast Watch":
+        _render_watch_floor(
+            data,
+            exceptions,
+            row,
+            period_credits,
+            credit_delta,
+            credit_price,
+            regression_count,
+            0 if cortex_exceptions.empty else len(cortex_exceptions),
+        )
+        priority = _priority_exceptions(exceptions).head(8)
+        if priority.empty:
+            st.success("Fast Watch is clear for the loaded scope.")
+        else:
+            render_priority_dataframe(
+                priority,
+                title="Fast Watch priority lanes",
+                priority_columns=["Severity", "Signal", "Evidence", "Action", "Route", "Workflow"],
+                sort_by=["Severity", "Signal"],
+                ascending=[True, True],
+                raw_label="All fast-watch exception rows",
+                height=260,
+            )
+            _render_route_buttons(priority)
+        st.caption(
+            "Control Tower, Autopilot, Incident Board, and Shift Handoff are deferred to Operations Tower "
+            "so section switching stays fast."
+        )
+
+    elif active_view == "Operations Tower":
+        ops_scope_key = _dba_control_ops_scope_key(
+            company,
+            environment,
+            int(lookback_hours),
+            safe_float(cortex_budget_usd),
+            bool(include_deep_evidence),
+            bool(allow_live_fallback),
+            loaded_meta,
+        )
+        if st.session_state.get("dba_control_room_ops_scope_key") != ops_scope_key:
+            st.session_state.pop("dba_control_room_ops_ready", None)
+            st.session_state["dba_control_room_ops_scope_key"] = ops_scope_key
+        if not st.session_state.get("dba_control_room_ops_ready"):
+            st.info(
+                "Operations Tower builds the heavier control-board package only when requested. "
+                "Use Fast Watch for normal section switching and morning triage."
+            )
+            if st.button("Build Operations Tower", key="dba_control_room_build_ops", type="primary"):
+                st.session_state["dba_control_room_ops_ready"] = True
+                st.rerun()
+        else:
+            action_queue = data.get("action_queue", _empty_df())
+            command_queue = _build_command_queue(action_queue)
+            source_health_for_handoff = _dba_control_source_health_rows(
+                data,
+                st.session_state,
+                company,
+                environment,
+                int(lookback_hours),
+                safe_float(cortex_budget_usd),
+                bool(include_deep_evidence),
+                bool(allow_live_fallback),
+            )
+            closure_rollup_for_handoff = _command_queue_closure_readiness(action_queue)
+            incident_board = _dba_incident_board(
+                exceptions,
+                command_queue,
+                closure_rollup_for_handoff,
+                source_health_for_handoff,
+            )
+            section_board_for_tower = _dba_section_operability_board(
+                command_queue=command_queue,
+                closure_rollup=closure_rollup_for_handoff,
+            )
+            control_tower = _dba_control_tower_priority_index(
+                section_board_for_tower,
+                incident_board,
+                command_queue,
+                source_health_for_handoff,
+            )
+            st.session_state["dba_control_tower_priority_index"] = control_tower
+            _render_control_tower_priority_index(control_tower)
+            autopilot_plan = _dba_autopilot_flight_plan(
+                control_tower,
+                company=company,
+                environment=environment,
+                lookback_hours=int(lookback_hours),
+            )
+            autopilot_md = _build_dba_autopilot_flight_plan_markdown(
+                autopilot_plan,
+                company=company,
+                environment=environment,
+                lookback_hours=int(lookback_hours),
+            )
+            st.session_state["dba_autopilot_flight_plan"] = autopilot_plan
+            st.session_state["dba_autopilot_flight_plan_markdown"] = autopilot_md
+            _render_dba_autopilot_flight_plan(autopilot_plan, autopilot_md)
+            _render_command_queue_control(
+                command_queue,
+                action_queue,
+                closure_rollup=closure_rollup_for_handoff,
+                section_board=section_board_for_tower,
+            )
+            incident_md = _build_dba_incident_markdown(
+                incident_board,
+                company=company,
+                environment=environment,
+                lookback_hours=int(lookback_hours),
+                source_mode=source_mode,
+            )
+            st.session_state["dba_control_room_incident_board"] = incident_board
+            _render_incident_board_panel(
+                incident_board,
+                incident_md,
+                company=company,
+                environment=environment,
+            )
+            handoff_rows = _dba_handoff_rows(
+                exceptions,
+                command_queue,
+                closure_rollup_for_handoff,
+                source_health_for_handoff,
+            )
+            handoff_md = _build_dba_shift_handoff_markdown(
+                handoff_rows,
+                company=company,
+                environment=environment,
+                lookback_hours=int(lookback_hours),
+                source_mode=source_mode,
+            )
+            st.session_state["dba_control_room_handoff"] = handoff_rows
+            _render_shift_handoff_panel(
+                handoff_rows,
+                handoff_md,
+                company=company,
+                environment=environment,
+            )
+
+    elif active_view == "Triage":
         if exceptions.empty:
             st.success("No major exceptions detected by the DBA Control Room rules.")
         else:
@@ -4205,24 +4478,6 @@ def render() -> None:
                 raw_label="All fast snapshot rows",
                 height=180,
             )
-        budget_summary = get_query_budget_summary()
-        st.subheader("Current Session Query Budget")
-        if budget_summary is None or budget_summary.empty:
-            st.info("No query telemetry has been recorded in this Streamlit session yet.")
-        else:
-            st.caption(
-                "Use this to spot OVERWATCH pages that are repeatedly scanning too much, returning too many rows, "
-                "or taking too long. High-risk rows should be candidates for caching, aggregation, or progressive load."
-            )
-            render_priority_dataframe(
-                budget_summary,
-                title="Query budget risks",
-                priority_columns=[
-                    "section", "budget_risk", "calls", "unique_queries",
-                    "expensive_calls", "elapsed_sec", "max_rows", "max_result_mb",
-                ],
-                sort_by=["budget_risk", "expensive_calls", "elapsed_sec"],
-                ascending=[False, False, False],
-                raw_label="All query budget rows",
-            )
-            download_csv(budget_summary, "overwatch_query_budget_summary.csv")
+
+    elif active_view == "App Performance":
+        _render_app_performance_guardrail()

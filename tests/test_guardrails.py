@@ -65,3 +65,9 @@ class GuardrailTests(unittest.TestCase):
         self.assertIn("WHERE RUN_START >= DATEADD('DAY', -30, CURRENT_TIMESTAMP())", task_text)
         self.assertIn("ADOPTION ANALYTICS LIVE FALLBACK IS CAPPED AT 35 DAYS", adoption_text)
 
+    def test_app_clamps_global_date_widget_before_instantiation(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn('date_input_key = "_global_date_range_input"', app_text)
+        self.assertIn("key=date_input_key", app_text)
+        self.assertNotIn('st.session_state["_global_date_range_input"] =', app_text)

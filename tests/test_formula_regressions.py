@@ -1522,11 +1522,12 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("jdees@alfains.com", result["answer"])
         self.assertIn("Alert Center", result["answer"])
 
-    def test_overwatch_mart_setup_is_clean_fresh_deploy_for_cost_governance(self):
+    def test_overwatch_mart_setup_keeps_cost_governance_and_upgrade_contract(self):
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
         setup_upper = setup_sql.upper()
 
-        self.assertNotIn("ADD COLUMN IF NOT EXISTS", setup_upper)
+        self.assertIn("ALTER TABLE IF EXISTS FACT_QUERY_HOURLY ADD COLUMN IF NOT EXISTS ENVIRONMENT", setup_upper)
+        self.assertIn("ALTER TABLE IF EXISTS FACT_QUERY_DETAIL_RECENT ADD COLUMN IF NOT EXISTS ENVIRONMENT", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_GOVERNANCE_SIGNAL", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_INCIDENT_TIMELINE", setup_upper)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_GOVERNANCE", setup_upper)
@@ -2449,7 +2450,27 @@ class FormulaRegressionTests(unittest.TestCase):
             ddl_block = setup_sql[ddl_start:ddl_end]
             self.assertIn("ENVIRONMENT", ddl_block, table_name)
 
-        self.assertNotIn("ADD COLUMN IF NOT EXISTS", setup_sql)
+        upgrade_columns = [
+            ("FACT_QUERY_HOURLY", "ENVIRONMENT"),
+            ("FACT_QUERY_DETAIL_RECENT", "ENVIRONMENT"),
+            ("FACT_TASK_RUN", "ENVIRONMENT"),
+            ("DIM_TASK_SNAPSHOT", "ENVIRONMENT"),
+            ("DIM_PROCEDURE_SNAPSHOT", "ENVIRONMENT"),
+            ("FACT_PROCEDURE_RUN", "DATABASE_NAME"),
+            ("FACT_PROCEDURE_RUN", "ENVIRONMENT"),
+            ("FACT_OBJECT_CHANGE", "ENVIRONMENT"),
+            ("FACT_STORAGE_DAILY", "ENVIRONMENT"),
+            ("FACT_GRANT_DAILY", "CREATED_ON"),
+            ("DIM_TABLE_SNAPSHOT", "ENVIRONMENT"),
+            ("FACT_COPY_LOAD_DAILY", "ENVIRONMENT"),
+            ("FACT_CHARGEBACK_DAILY", "ENVIRONMENT"),
+            ("FACT_CHARGEBACK_DAILY", "ENVIRONMENT_ROLLUP"),
+        ]
+        for table_name, column_name in upgrade_columns:
+            self.assertIn(
+                f"ALTER TABLE IF EXISTS {table_name} ADD COLUMN IF NOT EXISTS {column_name}",
+                setup_sql,
+            )
 
         proc_start = setup_sql.index("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_PROCEDURE_RUN")
         proc_end = setup_sql.index(");", proc_start)

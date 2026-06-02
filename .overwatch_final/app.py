@@ -645,20 +645,40 @@ with st.sidebar:
     with st.expander("Global Filters", expanded=False):
         default_end = datetime.now().date()
         default_start = default_end - timedelta(days=7)
+        date_input_key = "_global_date_range_input"
+        existing_date_range = st.session_state.get(date_input_key)
+        if isinstance(existing_date_range, tuple) and len(existing_date_range) == 2:
+            clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(
+                existing_date_range[0],
+                existing_date_range[1],
+            )
+            if was_clamped:
+                st.session_state[date_input_key] = (clamped_start, clamped_end)
+                st.session_state["global_start_date"] = clamped_start
+                st.session_state["global_end_date"] = clamped_end
+                clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
+                st.session_state["_global_date_clamp_pending_warning"] = (clamp_key, max_days)
         date_range = st.date_input(
             "Date range",
             value=(
                 st.session_state.get("global_start_date", default_start),
                 st.session_state.get("global_end_date", default_end),
             ),
-            key="_global_date_range_input",
+            key=date_input_key,
         )
         if isinstance(date_range, tuple) and len(date_range) == 2:
             clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(date_range[0], date_range[1])
             st.session_state["global_start_date"] = clamped_start
             st.session_state["global_end_date"] = clamped_end
-            st.session_state["_global_date_range_input"] = (clamped_start, clamped_end)
-            if was_clamped:
+            pending_clamp_warning = st.session_state.pop("_global_date_clamp_pending_warning", None)
+            if pending_clamp_warning:
+                clamp_key, max_days = pending_clamp_warning
+                if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
+                    st.warning(
+                        f"Global date range was clamped to the most recent {max_days} days to keep dashboard scans bounded."
+                    )
+                    st.session_state["_global_date_clamp_notice_key"] = clamp_key
+            elif was_clamped:
                 clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
                 if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
                     st.warning(

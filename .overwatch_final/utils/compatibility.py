@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import re
+import threading
+import time
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -14,6 +16,10 @@ from .query import format_snowflake_error
 
 _OBJECT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){1,2}$")
 _COLUMN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+_COLUMN_METADATA_TTL_SECONDS = 300
+_GLOBAL_COLUMN_CACHE: dict[str, tuple[float, set[str]]] = {}
+_GLOBAL_UNAVAILABLE_OBJECTS: dict[str, float] = {}
+_GLOBAL_COLUMN_CACHE_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -174,15 +180,71 @@ def _validate_column_name(column: str) -> str:
     return column
 
 
+def clear_compatibility_process_cache() -> None:
+    """Clear process-wide compatibility metadata caches."""
+    with _GLOBAL_COLUMN_CACHE_LOCK:
+        _GLOBAL_COLUMN_CACHE.clear()
+        _GLOBAL_UNAVAILABLE_OBJECTS.clear()
+
+
+def _fresh_timestamp(ts: float) -> bool:
+    return (time.monotonic() - ts) <= _COLUMN_METADATA_TTL_SECONDS
+
+
+def _process_cached_columns(object_name: str) -> set[str] | None:
+    with _GLOBAL_COLUMN_CACHE_LOCK:
+        entry = _GLOBAL_COLUMN_CACHE.get(object_name)
+        if not entry:
+            return None
+        ts, columns = entry
+        if not _fresh_timestamp(ts):
+            _GLOBAL_COLUMN_CACHE.pop(object_name, None)
+            return None
+        return set(columns)
+
+
+def _mark_process_columns(object_name: str, columns: set[str]) -> None:
+    with _GLOBAL_COLUMN_CACHE_LOCK:
+        _GLOBAL_COLUMN_CACHE[object_name] = (time.monotonic(), set(columns))
+        _GLOBAL_UNAVAILABLE_OBJECTS.pop(object_name, None)
+
+
+def _process_unavailable(object_name: str) -> bool:
+    with _GLOBAL_COLUMN_CACHE_LOCK:
+        ts = _GLOBAL_UNAVAILABLE_OBJECTS.get(object_name)
+        if not ts:
+            return False
+        if not _fresh_timestamp(ts):
+            _GLOBAL_UNAVAILABLE_OBJECTS.pop(object_name, None)
+            return False
+        return True
+
+
+def _mark_process_unavailable(object_name: str) -> None:
+    with _GLOBAL_COLUMN_CACHE_LOCK:
+        _GLOBAL_UNAVAILABLE_OBJECTS[object_name] = time.monotonic()
+
+
 def get_available_columns(session, object_name: str) -> set[str]:
     """Return upper-case columns exposed by an account/view without scanning data."""
     object_name = _validate_object_name(object_name)
     cache = st.session_state.setdefault("_overwatch_available_columns", {})
     if object_name in cache:
         return {str(col).upper() for col in cache.get(object_name, [])}
-    df = normalize_df(session.sql(f"SELECT * FROM {object_name} LIMIT 0").to_pandas())
+    cached_columns = _process_cached_columns(object_name)
+    if cached_columns is not None:
+        cache[object_name] = sorted(cached_columns)
+        return cached_columns
+    if _process_unavailable(object_name):
+        raise RuntimeError(f"{object_name} unavailable in recent compatibility probe.")
+    try:
+        df = normalize_df(session.sql(f"SELECT * FROM {object_name} LIMIT 0").to_pandas())
+    except Exception:
+        _mark_process_unavailable(object_name)
+        raise
     columns = {str(col).upper() for col in df.columns}
     cache[object_name] = sorted(columns)
+    _mark_process_columns(object_name, columns)
     return columns
 
 
@@ -208,6 +270,9 @@ def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -
         return []
     unavailable = st.session_state.setdefault("_overwatch_unavailable_column_views", set())
     if object_name in unavailable:
+        return []
+    if _process_unavailable(object_name):
+        unavailable.add(object_name)
         return []
     try:
         available = get_available_columns(session, object_name)

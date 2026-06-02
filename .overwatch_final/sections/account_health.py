@@ -1214,6 +1214,335 @@ def _account_health_control_board(
     ).reset_index(drop=True)
 
 
+def _account_health_frame_sum(frame: pd.DataFrame | None, column: str) -> int:
+    if frame is None or frame.empty or column not in frame.columns:
+        return 0
+    return int(pd.to_numeric(frame[column], errors="coerce").fillna(0).sum())
+
+
+def _account_health_operator_next_moves(
+    *,
+    health_score: int | float,
+    checklist: pd.DataFrame | None,
+    control_board: pd.DataFrame | None = None,
+    closure: pd.DataFrame | None = None,
+    access_hygiene: pd.DataFrame | None = None,
+    operability_fact: pd.DataFrame | None = None,
+    source_health: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Build a no-query action gate for loaded Account Health evidence."""
+    checks = pd.DataFrame() if checklist is None else checklist.copy()
+    control = pd.DataFrame() if control_board is None else control_board.copy()
+    close = pd.DataFrame() if closure is None else closure.copy()
+    hygiene = pd.DataFrame() if access_hygiene is None else access_hygiene.copy()
+    fact = pd.DataFrame() if operability_fact is None else operability_fact.copy()
+    sources = pd.DataFrame() if source_health is None else source_health.copy()
+    for frame in (control, close, hygiene, fact, sources):
+        if not frame.empty:
+            frame.columns = [str(col).upper() for col in frame.columns]
+
+    actionable = 0
+    if not checks.empty:
+        annotated = _annotate_account_health_checklist_readiness(checks)
+        actionable = len(_account_health_actionable_checklist(annotated))
+    issue_rows = max(actionable, _account_health_frame_sum(fact, "ISSUE_ROWS"))
+    route_blocks = max(
+        int((control.get("QUEUE_READINESS", pd.Series(dtype=str)).astype(str) != "Ready to Queue").sum()) if not control.empty and "QUEUE_READINESS" in control.columns else 0,
+        _account_health_frame_sum(fact, "ROUTE_BLOCKER_ROWS"),
+        _account_health_frame_sum(fact, "QUEUE_REQUIRED_ROWS"),
+    )
+    overdue = max(
+        _account_health_frame_sum(control, "OVERDUE_OPEN"),
+        _account_health_frame_sum(close, "OVERDUE_OPEN"),
+        _account_health_frame_sum(fact, "OVERDUE_OPEN"),
+    )
+    fixed_without_verification = max(
+        _account_health_frame_sum(control, "FIXED_WITHOUT_VERIFICATION"),
+        _account_health_frame_sum(close, "FIXED_WITHOUT_VERIFICATION"),
+        _account_health_frame_sum(fact, "FIXED_WITHOUT_VERIFICATION"),
+    )
+    recovery_risk = max(
+        _account_health_frame_sum(control, "RECOVERY_RISK_ROWS"),
+        _account_health_frame_sum(close, "RECOVERY_RISK_ROWS"),
+        _account_health_frame_sum(fact, "RECOVERY_RISK_ROWS"),
+    )
+    verified = max(
+        _account_health_frame_sum(control, "VERIFIED_CLOSURES"),
+        _account_health_frame_sum(close, "VERIFIED_CLOSURES"),
+        _account_health_frame_sum(fact, "VERIFIED_CLOSURES"),
+    )
+    access_rows = max(
+        0 if hygiene.empty else int(len(hygiene)),
+        _account_health_frame_sum(fact, "ACCESS_HYGIENE_ROWS"),
+        _account_health_frame_sum(fact, "FAILED_LOGIN_ROWS"),
+        _account_health_frame_sum(fact, "PRIVILEGED_GRANT_ROWS"),
+    )
+    access_route_blocks = 0
+    if not hygiene.empty and "QUEUE_READINESS" in hygiene.columns:
+        access_route_blocks = int(hygiene["QUEUE_READINESS"].astype(str).ne("Ready to Queue").sum())
+    if not control.empty and "CHECK_NAME" in control.columns:
+        access_route_blocks = max(
+            access_route_blocks,
+            int(
+                (
+                    control["CHECK_NAME"].astype(str).str.upper().eq("ACCOUNT ACCESS HYGIENE")
+                    & control.get("QUEUE_READINESS", pd.Series(dtype=str)).astype(str).ne("Ready to Queue")
+                ).sum()
+            ),
+        )
+    high_access = 0
+    if not hygiene.empty and "SEVERITY" in hygiene.columns:
+        high_access = int(hygiene["SEVERITY"].fillna("").astype(str).str.upper().isin(["CRITICAL", "HIGH"]).sum())
+
+    stale_sources = 0
+    unavailable_sources = 0
+    if not sources.empty and "STATE" in sources.columns:
+        state = sources["STATE"].fillna("").astype(str).str.upper()
+        stale_sources = int(state.eq("STALE").sum())
+        unavailable_sources = int(state.eq("UNAVAILABLE").sum())
+
+    rows: list[dict] = []
+    closure_blocks = overdue + fixed_without_verification + recovery_risk
+    if closure_blocks:
+        state, rank, count = "Closure Blocked", 0, closure_blocks
+        next_action = "Escalate overdue or unverified Account Health actions before claiming the account is controlled."
+    elif issue_rows and close.empty and fact.empty:
+        state, rank, count = "Load Closure Analytics", 4, issue_rows
+        next_action = "Load closure analytics before accepting checklist or access-hygiene work as complete."
+    else:
+        state, rank, count = "Clear", 8, verified
+        next_action = "Retain verified closure evidence for audit trend review."
+    rows.append({
+        "GATE": "Closure proof",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "owner approval, ticket, verification result, recovery evidence, closure timestamp",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if route_blocks:
+        state, rank, count = "Route Blocked", 1, route_blocks
+        next_action = "Complete owner-directory evidence, approver, scope confidence, and proof SQL before queueing."
+    elif issue_rows:
+        state, rank, count = "Queue Ready", 6, issue_rows
+        next_action = "Queue only actionable checklist rows with owner, approval, and verification context attached."
+    else:
+        state, rank, count = "Clear", 8, 0
+        next_action = "No checklist route currently needs DBA action."
+    rows.append({
+        "GATE": "Checklist route",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "owner, approver, scope confidence, source verification SQL, recovery SLA",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if access_route_blocks:
+        state, rank, count = "Access Route Blocked", 1, access_route_blocks
+        next_action = "Complete IAM/security owner, approval group, and review evidence before queueing account-level access work."
+    elif high_access:
+        state, rank, count = "High-Risk Access Review", 2, high_access
+        next_action = "Prioritize admin-role, MFA, stale-login, and failed-login rows for DBA/Security review."
+    elif access_rows:
+        state, rank, count = "Access Hygiene Watch", 6, access_rows
+        next_action = "Retain account-level evidence and queue only medium-or-higher rows."
+    else:
+        state, rank, count = "Clear", 8, 0
+        next_action = "No account-level access hygiene rows are loaded for action."
+    rows.append({
+        "GATE": "Access hygiene",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "user, IAM ticket, admin-role/MFA posture, failed-login context, owner approval",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if unavailable_sources:
+        state, rank, count = "Source Unavailable", 2, unavailable_sources
+        next_action = "Deploy or grant missing Account Health mart/source objects before relying on the board."
+    elif stale_sources:
+        state, rank, count = "Source Stale", 3, stale_sources
+        next_action = "Reload stale Account Health evidence before queueing or closing work."
+    else:
+        state, rank, count = "Current", 8, 0
+        next_action = "Loaded sources are current for the active Account Health scope."
+    rows.append({
+        "GATE": "Source confidence",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "fresh source state, mart/load timestamp, scope match, account-level disclosure where needed",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    if safe_float(health_score) < 75 or issue_rows:
+        state = "Account Review Required" if safe_float(health_score) < 75 else "Checklist Review"
+        rank = 5
+        count = max(issue_rows, 1)
+        next_action = "Work Account Health issues before lower-risk optimization work."
+    else:
+        state, rank, count = "Controlled", 8, 0
+        next_action = "No account-level health pressure crossed the current action threshold."
+    rows.append({
+        "GATE": "Account pressure",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "health score, failed queries/tasks, queue pressure, storage/cost/change signals",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
+    return pd.DataFrame(rows).sort_values(["GATE_RANK", "COUNT"], ascending=[True, False]).reset_index(drop=True)
+
+
+def _account_health_intervention_matrix(
+    *,
+    checklist: pd.DataFrame | None,
+    control_board: pd.DataFrame | None = None,
+    closure: pd.DataFrame | None = None,
+    access_hygiene: pd.DataFrame | None = None,
+    operability_fact: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Build a compact Account Health worklist from already-loaded account evidence."""
+    control = control_board if isinstance(control_board, pd.DataFrame) else pd.DataFrame()
+    hygiene = access_hygiene if isinstance(access_hygiene, pd.DataFrame) else pd.DataFrame()
+    fact = operability_fact if isinstance(operability_fact, pd.DataFrame) else pd.DataFrame()
+    checks = pd.DataFrame() if checklist is None else _annotate_account_health_checklist_readiness(checklist)
+
+    rows: list[dict] = []
+    if not control.empty:
+        for _, row in control.head(25).iterrows():
+            control_state = str(row.get("CONTROL_STATE") or "Review")
+            check_name = str(row.get("CHECK_NAME") or row.get("CHECK") or "Account Health")
+            severity = str(row.get("SEVERITY") or "Medium")
+            route = str(row.get("ROUTE") or "Account Health")
+            queue_readiness = str(row.get("QUEUE_READINESS") or "")
+            closure_state = "Open"
+            if safe_int(row.get("OVERDUE_OPEN")) > 0:
+                closure_state = "Overdue"
+            elif safe_int(row.get("FIXED_WITHOUT_VERIFICATION")) > 0:
+                closure_state = "Fixed without verification"
+            elif safe_int(row.get("VERIFIED_CLOSURES")) > 0:
+                closure_state = "Verified"
+            scope = str(row.get("SCOPE_CONFIDENCE") or row.get("DATABASE_CONTEXT") or "Account-Level Control")
+
+            control_upper = control_state.upper()
+            if "BLOCK" in control_upper or closure_state in {"Overdue", "Fixed without verification"}:
+                state = "Closure Block"
+                rank = 0
+                decision = "Hold green account-health claims until ticket, owner, verification, and recovery evidence are attached."
+            elif queue_readiness != "Ready to Queue" or "REQUIRED" in control_upper:
+                state = "Route Block"
+                rank = 1
+                decision = "Complete owner, approver, and proof route before queueing this account-health issue."
+            elif severity.upper() in {"CRITICAL", "HIGH"}:
+                state = "Intervene"
+                rank = 2
+                decision = "Work this high-risk account-health issue before routine monitoring."
+            else:
+                state = "Watch"
+                rank = 4
+                decision = "Keep on the daily checklist and retain trend evidence."
+
+            rows.append({
+                "DBA_PRIORITY": f"P{rank}",
+                "INTERVENTION_STATE": state,
+                "SURFACE": check_name,
+                "SEVERITY": severity,
+                "ROUTE": route,
+                "OWNER": str(row.get("OWNER") or "DBA"),
+                "CONTROL_STATE": control_state,
+                "QUEUE_READINESS": queue_readiness or "Unknown",
+                "CLOSURE_READINESS": closure_state,
+                "SCOPE_CONFIDENCE": scope,
+                "COUNT": max(
+                    safe_int(row.get("OPEN_ACTIONS")),
+                    safe_int(row.get("ISSUE_SNAPSHOTS")),
+                    safe_int(row.get("OVERDUE_OPEN")),
+                    1,
+                ),
+                "NEXT_DECISION": decision,
+                "PROOF_REQUIRED": str(row.get("PROOF_REQUIRED") or "owner, ticket, approval, verification, recovery evidence"),
+                "_RANK": rank,
+            })
+
+    existing_surfaces = {str(row["SURFACE"]).upper() for row in rows}
+    if not hygiene.empty and "ACCOUNT ACCESS HYGIENE" not in existing_surfaces:
+        severity_series = hygiene.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+        high_rows = int(severity_series.isin(["CRITICAL", "HIGH"]).sum())
+        route_blocks = 0
+        if "QUEUE_READINESS" in hygiene.columns:
+            route_blocks = int(hygiene["QUEUE_READINESS"].fillna("").astype(str).ne("Ready to Queue").sum())
+        state = "Route Block" if route_blocks else "Intervene" if high_rows else "Watch"
+        rank = 1 if route_blocks else 2 if high_rows else 4
+        rows.append({
+            "DBA_PRIORITY": f"P{rank}",
+            "INTERVENTION_STATE": state,
+            "SURFACE": "Account Access Hygiene",
+            "SEVERITY": "High" if high_rows else "Medium",
+            "ROUTE": "Security Posture",
+            "OWNER": "DBA / Security",
+            "CONTROL_STATE": "High-risk access review" if high_rows else "Access hygiene review",
+            "QUEUE_READINESS": "Needs Routing Data" if route_blocks else "Ready to Queue",
+            "CLOSURE_READINESS": "No recent action",
+            "SCOPE_CONFIDENCE": "Account-Level Control",
+            "COUNT": len(hygiene),
+            "NEXT_DECISION": "Review privileged grants, failed logins, MFA gaps, and service-user exposure at account scope.",
+            "PROOF_REQUIRED": "user, role/grant, MFA/IAM evidence, owner approval, verification result",
+            "_RANK": rank,
+        })
+
+    if not fact.empty and "CONTROL_STATE" in fact.columns:
+        blocked = fact["CONTROL_STATE"].fillna("").astype(str).str.contains("Blocked|Overdue|Required|Review", case=False, na=False)
+        if int(blocked.sum()) and not rows:
+            rows.append({
+                "DBA_PRIORITY": "P3",
+                "INTERVENTION_STATE": "Fact Review",
+                "SURFACE": "Account Health operability mart",
+                "SEVERITY": "Medium",
+                "ROUTE": "Account Health",
+                "OWNER": "DBA",
+                "CONTROL_STATE": "Pre-aggregated blocker",
+                "QUEUE_READINESS": "Review",
+                "CLOSURE_READINESS": "Review",
+                "SCOPE_CONFIDENCE": "Mixed",
+                "COUNT": int(blocked.sum()),
+                "NEXT_DECISION": "Load the matching detailed surface only for the blocked control rows.",
+                "PROOF_REQUIRED": "fact row, source surface, owner route, verification evidence",
+                "_RANK": 3,
+            })
+
+    if not rows and not checks.empty:
+        actionable = _account_health_actionable_checklist(checks)
+        if not actionable.empty:
+            rows.append({
+                "DBA_PRIORITY": "P4",
+                "INTERVENTION_STATE": "Checklist Review",
+                "SURFACE": "Daily DBA checklist",
+                "SEVERITY": "Medium",
+                "ROUTE": "Account Health",
+                "OWNER": "DBA",
+                "CONTROL_STATE": "Checklist issue",
+                "QUEUE_READINESS": "Review",
+                "CLOSURE_READINESS": "No recent action",
+                "SCOPE_CONFIDENCE": "Mixed",
+                "COUNT": len(actionable),
+                "NEXT_DECISION": "Queue only checklist rows with owner, proof, and recovery expectations.",
+                "PROOF_REQUIRED": "check evidence, owner, route, verification query",
+                "_RANK": 4,
+            })
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values(
+        ["_RANK", "COUNT", "SURFACE"],
+        ascending=[True, False, True],
+    ).drop(columns=["_RANK"], errors="ignore").reset_index(drop=True)
+
+
 def _account_health_access_hygiene_sql(session, days: int, company: str, environment: str = "ALL") -> str:
     """Build account-level user/auth hygiene SQL for the daily DBA command center.
 
@@ -2542,6 +2871,55 @@ def render():
             trend=st.session_state.get("account_health_checklist_trend"),
             environment=get_active_environment(),
         )
+        operability_gate_fact = operability_fact if (
+            operability_fact is not None
+            and not operability_fact.empty
+            and _account_health_meta_matches(
+                st.session_state.get("account_health_operability_fact_meta"),
+                _account_health_scope_meta(company, environment, window="30d"),
+            )
+        ) else pd.DataFrame()
+        account_operator_gates = _account_health_operator_next_moves(
+            health_score=health_score,
+            checklist=checklist,
+            control_board=account_control_board,
+            closure=st.session_state.get("account_health_closure_analytics"),
+            access_hygiene=st.session_state.get("account_health_access_hygiene"),
+            operability_fact=operability_gate_fact,
+            source_health=_account_health_source_health_rows(st.session_state, company, environment),
+        )
+        render_priority_dataframe(
+            account_operator_gates,
+            title="Account Health operator next-move gates",
+            priority_columns=["GATE", "STATE", "COUNT", "PROOF_REQUIRED", "NEXT_ACTION"],
+            sort_by=["GATE_RANK", "COUNT"],
+            ascending=[True, False],
+            raw_label="All Account Health operator gates",
+            height=240,
+            max_rows=5,
+        )
+        account_intervention_matrix = _account_health_intervention_matrix(
+            checklist=checklist,
+            control_board=account_control_board,
+            closure=st.session_state.get("account_health_closure_analytics"),
+            access_hygiene=st.session_state.get("account_health_access_hygiene"),
+            operability_fact=operability_gate_fact,
+        )
+        if not account_intervention_matrix.empty:
+            render_priority_dataframe(
+                account_intervention_matrix,
+                title="Account Health DBA intervention matrix",
+                priority_columns=[
+                    "DBA_PRIORITY", "INTERVENTION_STATE", "SURFACE", "SEVERITY", "ROUTE", "OWNER",
+                    "CONTROL_STATE", "QUEUE_READINESS", "CLOSURE_READINESS",
+                    "SCOPE_CONFIDENCE", "COUNT", "NEXT_DECISION", "PROOF_REQUIRED",
+                ],
+                sort_by=["DBA_PRIORITY", "COUNT", "SURFACE"],
+                ascending=[True, False, True],
+                raw_label="All Account Health DBA intervention rows",
+                height=280,
+                max_rows=8,
+            )
         if not account_control_board.empty:
             render_priority_dataframe(
                 account_control_board,

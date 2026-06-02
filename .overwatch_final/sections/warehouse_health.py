@@ -1194,6 +1194,51 @@ def _warehouse_operator_next_moves(
         "GATE_RANK": rank,
     })
 
+    metered_credits = 0.0
+    credit_spike_rows = 0
+    savings_required = 0
+    if exceptions is not None and not exceptions.empty:
+        metered_credits = float(pd.to_numeric(
+            exceptions.get("METERED_CREDITS", pd.Series(dtype=float)),
+            errors="coerce",
+        ).fillna(0).sum())
+        credit_spike_rows = int(
+            exceptions.get("SIGNAL", pd.Series(dtype=str)).fillna("").astype(str).str.upper().str.contains("CREDIT").sum()
+        )
+        if "SAVINGS_VERIFICATION_REQUIRED" in exceptions.columns:
+            savings_required = int(
+                exceptions["SAVINGS_VERIFICATION_REQUIRED"].fillna("").astype(str).str.upper().eq("YES").sum()
+            )
+    if not control.empty and "SAVINGS_VERIFICATION_REQUIRED" in control.columns:
+        savings_required = max(
+            savings_required,
+            int(control["SAVINGS_VERIFICATION_REQUIRED"].fillna("").astype(str).str.upper().eq("YES").sum()),
+        )
+
+    if credit_spike_rows or savings_required:
+        state = "Cost Impact Review"
+        rank = 3
+        count = max(credit_spike_rows, savings_required)
+        next_action = "Attach credit delta, savings hypothesis, owner approval, and post-change verification before changing settings."
+    elif metered_credits > 0 and exception_count:
+        state = "Estimated Cost Watch"
+        rank = 6
+        count = exception_count
+        next_action = "Keep warehouse metering and setting-review evidence together before claiming DBA savings."
+    else:
+        state = "Clear"
+        rank = 8
+        count = 0
+        next_action = "No loaded warehouse action needs cost-impact proof."
+    rows.append({
+        "GATE": "Cost guardrail",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "metered credits, cost delta, savings hypothesis, owner approval, post-change verification",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
     return pd.DataFrame(rows).sort_values(["GATE_RANK", "COUNT"], ascending=[True, False]).reset_index(drop=True)
 
 
@@ -1693,6 +1738,95 @@ def _warehouse_capacity_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
     view["NEXT_ACTION"] = view.get("SIGNAL", pd.Series(dtype=str)).apply(lambda value: _warehouse_capacity_action_for(value)[0])
     view["NEXT_WORKFLOW"] = view.get("SIGNAL", pd.Series(dtype=str)).apply(_warehouse_capacity_workflow_for)
     return view.sort_values(["_RANK", "CAPACITY_SCORE", "METERED_CREDITS"], ascending=[True, True, False]).drop(columns=["_RANK"], errors="ignore")
+
+
+def _warehouse_intervention_matrix(
+    exceptions: pd.DataFrame,
+    control_board: pd.DataFrame | None = None,
+    closure: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Rank warehouses by whether DBAs can safely intervene now or need proof first."""
+    priority = _warehouse_capacity_priority_view(exceptions)
+    if priority.empty:
+        return pd.DataFrame()
+
+    control = control_board if isinstance(control_board, pd.DataFrame) else pd.DataFrame()
+    closure_df = closure if isinstance(closure, pd.DataFrame) else pd.DataFrame()
+    control_by_wh = {
+        str(row.get("WAREHOUSE_NAME") or "").upper(): row
+        for _, row in control.iterrows()
+    } if not control.empty else {}
+    closure_by_wh = {
+        str(row.get("WAREHOUSE_NAME") or "").upper(): row
+        for _, row in closure_df.iterrows()
+    } if not closure_df.empty else {}
+
+    rows: list[dict] = []
+    for _, item in priority.head(25).iterrows():
+        wh = str(item.get("WAREHOUSE_NAME") or "Unknown warehouse")
+        control_row = control_by_wh.get(wh.upper(), {})
+        closure_row = closure_by_wh.get(wh.upper(), {})
+        signal = str(item.get("SIGNAL") or "")
+        severity = str(item.get("SEVERITY") or "Medium")
+        score = safe_float(item.get("CAPACITY_SCORE"))
+        credits = safe_float(item.get("METERED_CREDITS"))
+        queued = safe_int(item.get("QUEUED_QUERIES"))
+        spill = safe_int(item.get("SPILL_QUERIES"))
+        high_latency = safe_int(item.get("HIGH_LATENCY_QUERIES"))
+        readiness = str(control_row.get("CONTROL_STATE") or item.get("ADMIN_READINESS") or "Review")
+        blockers = str(control_row.get("AUDIT_BLOCKERS") or item.get("ADMIN_BLOCKERS") or "")
+        closure_state = str(closure_row.get("CLOSURE_READINESS") or control_row.get("CLOSURE_READINESS") or "No recent action")
+        savings_required = str(
+            control_row.get("SAVINGS_VERIFICATION_REQUIRED")
+            or item.get("SAVINGS_VERIFICATION_REQUIRED")
+            or ""
+        ).upper() == "YES"
+        approval_required = str(
+            control_row.get("APPROVAL_REQUIRED")
+            or item.get("APPROVAL_REQUIRED")
+            or ""
+        ).upper() == "YES"
+        audit_bad = any(token in readiness.upper() for token in ("BLOCK", "FAILED", "PENDING", "NO SETTING"))
+        closure_bad = any(token in closure_state.upper() for token in ("OVERDUE", "WITHOUT VERIFICATION", "GAP"))
+
+        if audit_bad or closure_bad or approval_required:
+            state = "Proof Blocked"
+            rank = 0
+            decision = "Hold setting change until approval, audit, rollback, and closure evidence are attached."
+        elif score < 65 or severity.upper() == "CRITICAL":
+            state = "Intervene"
+            rank = 1
+            decision = "Run DBA setting review and verify queue, spill, latency, and credit impact after the change."
+        elif savings_required or credits > 0:
+            state = "Cost Review"
+            rank = 2
+            decision = "Quantify credit delta and savings hypothesis before claiming optimization value."
+        else:
+            state = "Watch"
+            rank = 4
+            decision = "Monitor pressure; avoid touching settings without a stronger service or cost signal."
+
+        rows.append({
+            "DBA_PRIORITY": f"P{rank}",
+            "INTERVENTION_STATE": state,
+            "WAREHOUSE_NAME": wh,
+            "SEVERITY": severity,
+            "SIGNAL": signal,
+            "CAPACITY_SCORE": score,
+            "METERED_CREDITS": credits,
+            "PRESSURE_EVIDENCE": f"queued={queued:,}; spill={spill:,}; p95/latency rows={high_latency:,}",
+            "CONTROL_STATE": readiness,
+            "CLOSURE_READINESS": closure_state,
+            "NEXT_DECISION": decision,
+            "PROOF_REQUIRED": "owner approval, rollback SQL, execution audit, post-change service/cost verification",
+            "NEXT_WORKFLOW": str(item.get("NEXT_WORKFLOW") or _warehouse_capacity_workflow_for(signal)),
+            "_RANK": rank,
+        })
+
+    return pd.DataFrame(rows).sort_values(
+        ["_RANK", "CAPACITY_SCORE", "METERED_CREDITS"],
+        ascending=[True, True, False],
+    ).drop(columns=["_RANK"], errors="ignore").reset_index(drop=True)
 
 
 def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_row: dict) -> None:
@@ -2243,8 +2377,32 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                 ascending=[True, False],
                 raw_label="All warehouse operator gates",
                 height=220,
-                max_rows=4,
+                max_rows=5,
             )
+            intervention_matrix = _warehouse_intervention_matrix(
+                exceptions,
+                control_board=control_board,
+                closure=closure_for_board,
+            )
+            if not intervention_matrix.empty:
+                render_priority_dataframe(
+                    intervention_matrix,
+                    title="Warehouse DBA intervention matrix",
+                    priority_columns=[
+                        "DBA_PRIORITY", "INTERVENTION_STATE", "WAREHOUSE_NAME", "SEVERITY", "SIGNAL",
+                        "CAPACITY_SCORE", "METERED_CREDITS", "PRESSURE_EVIDENCE",
+                        "CONTROL_STATE", "CLOSURE_READINESS", "NEXT_DECISION",
+                        "PROOF_REQUIRED", "NEXT_WORKFLOW",
+                    ],
+                    sort_by=["DBA_PRIORITY", "CAPACITY_SCORE", "METERED_CREDITS"],
+                    ascending=[True, True, False],
+                    raw_label="All warehouse DBA intervention rows",
+                    height=280,
+                    max_rows=8,
+                    column_config={
+                        "CAPACITY_SCORE": st.column_config.ProgressColumn("Capacity", min_value=0, max_value=100, format="%.1f"),
+                    },
+                )
             if not control_board.empty:
                 render_priority_dataframe(
                     control_board,

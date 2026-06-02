@@ -27,7 +27,9 @@ from sections.account_health import (  # noqa: E402
     _account_health_checklist_history_sql,
     _account_health_closure_analytics_sql,
     _account_health_control_board,
+    _account_health_intervention_matrix,
     _account_health_operability_fact_sql,
+    _account_health_operator_next_moves,
     _account_health_source_health_rows,
     _build_account_health_dba_checklist,
     _enrich_account_health_checklist_owners,
@@ -44,6 +46,9 @@ from sections.adoption_analytics import (  # noqa: E402
 from sections.alert_center import (  # noqa: E402
     _alert_center_operability_rows,
     _alert_center_readiness_score,
+    _alert_integration_readiness_board,
+    _alert_lifecycle_board,
+    _alert_owner_route_board,
 )
 from sections.architecture_readiness import (  # noqa: E402
     _architecture_objectives_frame,
@@ -66,7 +71,10 @@ from sections.cost_center import (  # noqa: E402
     _warehouse_cost_verification_sql,
 )
 from sections.cost_contract import (  # noqa: E402
+    _build_cost_allocation_trust_board,
     _build_cost_closure_analytics,
+    _build_cost_control_coverage_board,
+    _build_cost_drilldown_command_map,
     _build_cost_run_rate_sql,
     _build_savings_verification_task_summary,
 )
@@ -116,6 +124,7 @@ from sections.change_drift import (  # noqa: E402
     _change_drift_rating,
     _change_drift_score,
     _change_control_operability_fact_sql,
+    _change_intervention_matrix,
     _change_operator_next_moves,
     _change_source_health_rows,
     _change_verification_sql,
@@ -183,6 +192,7 @@ from sections.task_management import (  # noqa: E402
     _build_task_ops_frames,
     _build_task_ops_markdown,
     _build_task_recovery_sla_frame,
+    _task_recovery_command_board,
     build_admin_preflight_sql,
     _collect_graph_tasks,
     _extract_object_candidates,
@@ -201,6 +211,7 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_setting_audit_readiness_for_row,
     _warehouse_setting_control_board,
     _warehouse_setting_execution_audit_sql,
+    _warehouse_intervention_matrix,
     _warehouse_operator_next_moves,
     _build_warehouse_capacity_markdown,
     _queue_efficiency_findings,
@@ -226,6 +237,7 @@ from utils.cost import (  # noqa: E402
     credits_to_dollars,
     query_attribution_supported,
 )
+from utils.compatibility import clear_compatibility_process_cache  # noqa: E402
 from utils.ask_overwatch import (  # noqa: E402
     answer_ask_overwatch,
     build_ask_overwatch_context,
@@ -285,6 +297,7 @@ from utils.owner_directory import (  # noqa: E402
     build_owner_directory_ddl,
     default_owner_directory,
     enrich_owner_dataframe,
+    owner_directory_readiness_board,
     resolve_owner_context,
 )
 from utils.workload_audit import build_workload_recovery_audit_ddl  # noqa: E402
@@ -394,6 +407,7 @@ class FormulaRegressionTests(unittest.TestCase):
         previous = dict(st.session_state)
         try:
             st.session_state.clear()
+            clear_compatibility_process_cache()
             self.assertTrue(query_attribution_supported(Session([
                 "QUERY_ID",
                 "START_TIME",
@@ -402,12 +416,14 @@ class FormulaRegressionTests(unittest.TestCase):
             ])))
 
             st.session_state.clear()
+            clear_compatibility_process_cache()
             self.assertFalse(query_attribution_supported(Session([
                 "QUERY_ID",
                 "START_TIME",
                 "CREDITS_ATTRIBUTED_COMPUTE",
             ])))
         finally:
+            clear_compatibility_process_cache()
             st.session_state.clear()
             st.session_state.update(previous)
 
@@ -631,7 +647,26 @@ class FormulaRegressionTests(unittest.TestCase):
             access_hygiene=hygiene,
             environment="PROD",
         )
+        gates = _account_health_operator_next_moves(
+            health_score=68,
+            checklist=checklist,
+            control_board=board,
+            closure=closure,
+            access_hygiene=_annotate_account_health_access_hygiene(hygiene),
+            source_health=pd.DataFrame([{
+                "SOURCE": "Daily DBA checklist",
+                "STATE": "Stale",
+            }]),
+        )
+        matrix = _account_health_intervention_matrix(
+            checklist=checklist,
+            control_board=board,
+            closure=closure,
+            access_hygiene=_annotate_account_health_access_hygiene(hygiene),
+        )
         by_check = {row["CHECK_NAME"]: row for _, row in board.iterrows()}
+        by_gate = {row["GATE"]: row for _, row in gates.iterrows()}
+        by_surface = {row["SURFACE"]: row for _, row in matrix.iterrows()}
 
         self.assertEqual(by_check["Query failure review"]["CONTROL_STATE"], "Closure Overdue")
         self.assertEqual(by_check["Cost spike review"]["CONTROL_STATE"], "Closure Evidence Blocked")
@@ -639,6 +674,15 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_check["Account access hygiene"]["CONTROL_STATE"], "High-Risk Access Review")
         self.assertEqual(by_check["Account access hygiene"]["DATABASE_CONTEXT"], "No")
         self.assertIn("user hygiene", by_check["Account access hygiene"]["NEXT_CONTROL_ACTION"])
+        self.assertEqual(by_gate["Closure proof"]["STATE"], "Closure Blocked")
+        self.assertEqual(by_gate["Checklist route"]["STATE"], "Route Blocked")
+        self.assertEqual(by_gate["Access hygiene"]["STATE"], "High-Risk Access Review")
+        self.assertEqual(by_gate["Source confidence"]["STATE"], "Source Stale")
+        self.assertEqual(by_surface["Query failure review"]["INTERVENTION_STATE"], "Closure Block")
+        self.assertEqual(by_surface["Query failure review"]["DBA_PRIORITY"], "P0")
+        self.assertEqual(by_surface["Refresh source confidence"]["INTERVENTION_STATE"], "Route Block")
+        self.assertEqual(by_surface["Refresh source confidence"]["DBA_PRIORITY"], "P1")
+        self.assertEqual(by_surface["Account access hygiene"]["SCOPE_CONFIDENCE"], "Account-Level Control")
 
     def test_account_health_closure_analytics_sql_scores_action_queue_evidence(self):
         sql = _account_health_closure_analytics_sql(45, "ALFA", "PROD").upper()
@@ -965,6 +1009,77 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("FACT_WAREHOUSE_HOURLY", mart_sql)
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", mart_sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", live_sql)
+
+    def test_cost_control_coverage_board_requires_drilldown_and_verified_savings(self):
+        cockpit = pd.DataFrame([{"CURRENT_CREDITS": 10, "PRIOR_CREDITS": 8}])
+        run_rate = pd.DataFrame([{"AVG_DAILY_7D": 1.2, "YOY_7D_PCT": 5.0, "YOY_30D_PCT": 3.0}])
+        queue = pd.DataFrame([{
+                "CATEGORY": "Cost Control",
+                "STATUS": "New",
+                "OWNER_SOURCE": "OWNER_DIRECTORY:COST_CONTROL_DEFAULT",
+                "VERIFICATION_STATUS": "Pending",
+            }])
+        state = {
+            "df_cost_explorer_detail": pd.DataFrame([{
+                    "COMPANY": "ALFA",
+                    "ENVIRONMENT_ROLLUP": "DEV_ALL",
+                    "DATABASE_NAME": "ALFA_EDW_DEV",
+                    "ROLE_NAME": "ETL_ROLE",
+                    "USER_NAME": "ETL_USER",
+                    "DEPARTMENT": "DATA",
+                    "ALLOCATION_CONFIDENCE": "Allocated/Estimated",
+                }]),
+            "df_chargeback": pd.DataFrame([
+                {
+                    "COMPANY": "ALFA",
+                    "ENVIRONMENT": "DEV",
+                    "DATABASE_NAME": "ALFA_EDW_DEV",
+                    "ALLOCATION_CONFIDENCE": "Allocated/Estimated",
+                },
+                {
+                    "COMPANY": "ALFA",
+                    "ENVIRONMENT": "DEV",
+                    "DATABASE_NAME": "",
+                    "ALLOCATION_CONFIDENCE": "Shared / No Database Context",
+                },
+            ]),
+        }
+        summary, board = _build_cost_control_coverage_board(
+            cockpit=cockpit,
+            run_rate=run_rate,
+            queue=queue,
+            verification_health=pd.DataFrame(),
+            state=state,
+        )
+        trust_summary, trust = _build_cost_allocation_trust_board(
+            cockpit=cockpit,
+            run_rate=run_rate,
+            queue=queue,
+            state=state,
+        )
+        drill_summary, drill_map = _build_cost_drilldown_command_map(
+            cockpit=cockpit,
+            run_rate=run_rate,
+            queue=queue,
+            state=state,
+        )
+
+        by_control = {row["CONTROL"]: row for _, row in board.iterrows()}
+        by_trust = {row["CONTROL"]: row for _, row in trust.iterrows()}
+        by_drill = {row["DRILLDOWN"]: row for _, row in drill_map.iterrows()}
+        self.assertEqual(by_control["Exact warehouse metering"]["STATE"], "Ready")
+        self.assertEqual(by_control["Role, user, and department drivers"]["STATE"], "Ready")
+        self.assertEqual(by_control["Verified savings ledger"]["STATE"], "Review")
+        self.assertGreaterEqual(summary["score"], 90)
+        self.assertEqual(by_trust["Contract and warehouse totals"]["TRUST_STATE"], "Exact")
+        self.assertEqual(by_trust["Database attribution"]["TRUST_STATE"], "Allocated/Estimated")
+        self.assertEqual(by_trust["Shared and no-database spend"]["TRUST_STATE"], "Allocated/Estimated")
+        self.assertLess(trust_summary["score"], 100)
+        self.assertEqual(by_drill["Warehouse bill movement"]["TRUST"], "Exact")
+        self.assertEqual(by_drill["Warehouse bill movement"]["COMMAND_PRIORITY"], "P0")
+        self.assertEqual(by_drill["Database, DEV rollup, no-database spend"]["TRUST"], "Allocated/Estimated")
+        self.assertIn("no-database", by_drill["Database, DEV rollup, no-database spend"]["NEXT_ACTION"])
+        self.assertGreaterEqual(drill_summary["ready"], 3)
 
     def test_control_room_snapshot_maps_to_watch_floor_shape(self):
         snapshot = pd.DataFrame([
@@ -2735,10 +2850,22 @@ class FormulaRegressionTests(unittest.TestCase):
                 "VERIFIED_CLOSURES": [0],
             }
         )
+        exceptions = pd.DataFrame({
+            "ENTITY": ["SNOWFLAKE ACCOUNT"],
+            "FINDING_TYPE": ["Destructive DDL"],
+            "SEVERITY": ["High"],
+            "USER_NAME": ["JFREEZE03"],
+            "QUERY_ID": [""],
+        })
         gates = _change_operator_next_moves(
             score=82,
-            exceptions=pd.DataFrame({"ENTITY": ["SNOWFLAKE ACCOUNT"]}),
+            exceptions=exceptions,
             readiness_summary=readiness_summary,
+            closure=closure,
+        )
+        matrix = _change_intervention_matrix(
+            exceptions,
+            readiness=_build_change_control_readiness(exceptions),
             closure=closure,
         )
         by_gate = {row["GATE"]: row for _, row in gates.iterrows()}
@@ -2747,7 +2874,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_gate["Change proof"]["STATE"], "Evidence Blocked")
         self.assertEqual(by_gate["Closure proof"]["STATE"], "Closure Blocked")
         self.assertEqual(by_gate["Scope confidence"]["STATE"], "Account-Scope Review")
+        self.assertEqual(by_gate["Recovery readiness"]["STATE"], "Recovery Proof Required")
         self.assertIn("database environment scope cannot prove", by_gate["Scope confidence"]["NEXT_ACTION"])
+        self.assertEqual(matrix.iloc[0]["INTERVENTION_STATE"], "Recovery Block")
+        self.assertEqual(matrix.iloc[0]["DBA_PRIORITY"], "P0")
+        self.assertIn("blast radius", matrix.iloc[0]["NEXT_DECISION"])
 
     def test_change_verification_sql_is_read_only_for_missing_query_id(self):
         sql = _change_verification_sql("").upper()
@@ -3257,19 +3388,27 @@ class FormulaRegressionTests(unittest.TestCase):
         )
 
         board = _warehouse_setting_control_board(exceptions, owner_inventory, closure, audit)
+        matrix = _warehouse_intervention_matrix(exceptions, control_board=board, closure=closure)
         by_wh = {row["WAREHOUSE_NAME"]: row for _, row in board.iterrows()}
+        by_matrix = {row["WAREHOUSE_NAME"]: row for _, row in matrix.iterrows()}
 
         self.assertEqual(by_wh["BI_COMPUTE_WH"]["CONTROL_STATE"], "Closure Overdue")
         self.assertEqual(by_wh["LOAD_TASK_WH"]["CONTROL_STATE"], "Execution Failed")
         self.assertEqual(by_wh["DEV_WH"]["CONTROL_STATE"], "Pre-Change Blocked")
         self.assertIn("rollback", by_wh["DEV_WH"]["AUDIT_BLOCKERS"].lower())
+        self.assertEqual(by_matrix["BI_COMPUTE_WH"]["INTERVENTION_STATE"], "Proof Blocked")
+        self.assertEqual(by_matrix["BI_COMPUTE_WH"]["DBA_PRIORITY"], "P0")
+        self.assertEqual(by_matrix["LOAD_TASK_WH"]["INTERVENTION_STATE"], "Proof Blocked")
+        self.assertIn("post-change", by_matrix["DEV_WH"]["PROOF_REQUIRED"])
 
     def test_warehouse_operator_next_moves_prioritize_closure_and_audit_gates(self):
         exceptions = pd.DataFrame(
             {
                 "WAREHOUSE_NAME": ["BI_COMPUTE_WH"],
-                "SIGNAL": ["Queue Pressure"],
+                "SIGNAL": ["Credit Spike"],
                 "QUEUED_QUERIES": [80],
+                "METERED_CREDITS": [42.5],
+                "SAVINGS_VERIFICATION_REQUIRED": ["Yes"],
             }
         )
         control_board = pd.DataFrame(
@@ -3293,6 +3432,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(by_gate["Closure proof"]["STATE"], "Blocked")
         self.assertEqual(by_gate["Execution audit"]["STATE"], "Failed Execution")
+        self.assertEqual(by_gate["Cost guardrail"]["STATE"], "Cost Impact Review")
         self.assertEqual(by_gate["Owner approval route"]["STATE"], "Approval Route Blocked")
         self.assertIn("before approving", by_gate["Closure proof"]["NEXT_ACTION"])
 
@@ -3750,6 +3890,42 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_task["CHILD_TASK"]["APPROVAL_GROUP"], "Pipeline Owner")
         self.assertIn("OWNER_DIRECTORY", by_task["CHILD_TASK"]["OWNER_SOURCE"])
         self.assertIn("P", by_task["CHILD_TASK"]["INCIDENT_PRIORITY"])
+
+    def test_task_recovery_command_board_prioritizes_blocked_retries(self):
+        exceptions = pd.DataFrame([{
+            "INCIDENT_PRIORITY": "P1 - Graph Incident",
+            "SEVERITY": "Critical",
+            "SIGNAL": "Failed Task Run",
+            "TASK_NAME": "CHILD_TASK",
+            "ROOT_TASK_NAME": "ROOT_TASK",
+            "GRAPH_ROLE": "Child",
+            "DOWNSTREAM_TASK_COUNT": 4,
+            "RECOVERY_READINESS": "Blocked - fix failure root cause first",
+            "OWNER_APPROVAL_STATE": "Root-cause owner approval required",
+            "ONCALL_PRIMARY": "DBA On-Call",
+            "APPROVAL_GROUP": "Pipeline Owner",
+            "NEXT_ACTION": "Review task error and retry after correction.",
+            "VERIFY_AFTER_FIX": "Latest TASK_HISTORY run succeeds.",
+        }])
+        recovery = pd.DataFrame([{
+            "INCIDENT_PRIORITY": "P2 - Open Recovery",
+            "TASK_NAME": "ROOT_TASK",
+            "ROOT_TASK_NAME": "ROOT_TASK",
+            "GRAPH_ROLE": "Root",
+            "DOWNSTREAM_TASK_COUNT": 4,
+            "RECOVERY_STATE": "Open Failure",
+            "OWNER_APPROVAL_STATE": "Root-cause owner approval required",
+            "ONCALL_PRIMARY": "DBA On-Call",
+            "APPROVAL_GROUP": "Pipeline Owner",
+        }])
+
+        board = _task_recovery_command_board(exceptions, recovery)
+
+        self.assertFalse(board.empty)
+        self.assertEqual(board.iloc[0]["COMMAND_STATE"], "Blocked")
+        self.assertEqual(board.iloc[0]["INCIDENT_PRIORITY"], "P1 - Graph Incident")
+        self.assertIn("owner approval", " ".join(board["OWNER_APPROVAL_STATE"].astype(str)).lower())
+        self.assertIn("verify", " ".join(board["NEXT_ACTION"].astype(str)).lower())
 
     def test_task_critical_path_snapshot_ranks_graph_blast_radius(self):
         inventory = pd.DataFrame(
@@ -4732,6 +4908,18 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_OWNER_DIRECTORY", ddl)
         self.assertIn("OVERWATCH_OWNER_DIRECTORY_ACTIVE_V", ddl)
 
+    def test_owner_directory_readiness_flags_placeholder_routes(self):
+        summary, board = owner_directory_readiness_board(default_owner_directory())
+        by_key = {row["OWNER_KEY"]: row for _, row in board.iterrows()}
+
+        self.assertGreater(summary["total_routes"], 0)
+        self.assertEqual(summary["production_ready"], 0)
+        self.assertEqual(summary["placeholder_routes"], summary["total_routes"])
+        self.assertGreater(summary["tier0_tier1_gaps"], 0)
+        self.assertEqual(board.iloc[0]["ROUTE_STATE"], "Priority Gap")
+        self.assertIn("non-placeholder email", by_key["COST_CONTROL_DEFAULT"]["BLOCKERS"])
+        self.assertIn("named on-call", by_key["TASK_DEFAULT"]["BLOCKERS"])
+
     def test_architecture_objectives_enrich_database_findings_with_owner_and_rpo(self):
         objectives = _architecture_objectives_frame("ALFA")
         finding = pd.DataFrame([{
@@ -5649,6 +5837,74 @@ class FormulaRegressionTests(unittest.TestCase):
                 runbook="Too short.",
             )
 
+    def test_alert_owner_route_and_lifecycle_boards_prioritize_operational_gaps(self):
+        alerts = pd.DataFrame([
+            {
+                "ALERT_ID": "A1",
+                "ALERT_TS": pd.Timestamp("2026-06-01 08:00"),
+                "STATUS": "New",
+                "SLA_STATE": "Overdue",
+                "SEVERITY": "High",
+                "CATEGORY": "Reliability",
+                "ALERT_TYPE": "Task Failure",
+                "ENTITY_NAME": "LOAD_POLICY",
+                "OWNER": "DBA",
+                "EMAIL_TARGET": "jdees@alfains.com",
+                "DELIVERY_STATUS": "EMAIL_READY",
+                "SUGGESTED_ACTION": "Open task graph and assign owner.",
+            },
+            {
+                "ALERT_ID": "A2",
+                "ALERT_TS": pd.Timestamp("2026-06-01 09:00"),
+                "STATUS": "New",
+                "SLA_STATE": "Due Soon",
+                "SEVERITY": "Medium",
+                "CATEGORY": "Cost Control",
+                "ALERT_TYPE": "Credit Spike",
+                "ENTITY_NAME": "COMPUTE_WH",
+                "OWNER": "DBA / FinOps",
+                "EMAIL_TARGET": "",
+                "DELIVERY_STATUS": "",
+                "SUGGESTED_ACTION": "Explain bill movement.",
+            },
+        ])
+        queue = pd.DataFrame([{
+            "STATUS": "New",
+            "SEVERITY": "High",
+            "CATEGORY": "Reliability",
+            "ENTITY": "LOAD_POLICY",
+            "OWNER": "Pipeline Owner Smith",
+            "OWNER_EMAIL": "jdees@alfains.com",
+            "ONCALL_PRIMARY": "DBA On-Call",
+            "ESCALATION_TARGET": "DBA Lead",
+            "OWNER_SOURCE": "OWNER_DIRECTORY:TASK_DEFAULT",
+            "RECOMMENDED_ACTION": "Work queued task incident.",
+        }])
+
+        route_summary, route_board = _alert_owner_route_board(alerts, queue)
+        lifecycle = _alert_lifecycle_board(alerts, queue)
+        integration = _alert_integration_readiness_board(
+            alerts,
+            queue,
+            delivery_log=pd.DataFrame(),
+            owner_summary={
+                "total_routes": 8,
+                "production_ready": 2,
+                "placeholder_routes": 6,
+                "tier0_tier1_gaps": 3,
+            },
+        )
+        integration_by_control = {row["CONTROL"]: row for _, row in integration.iterrows()}
+
+        self.assertEqual(route_summary["route_gaps"], 2)
+        self.assertIn("Needs named owner", set(route_board["OWNER_ROUTE_STATE"]))
+        self.assertEqual(lifecycle.iloc[0]["LIFECYCLE_STATE"], "Escalate now")
+        self.assertIn("post-fix verification", lifecycle.iloc[0]["CLOSURE_PROOF_REQUIRED"])
+        self.assertEqual(integration.iloc[0]["CONTROL"], "Named owner routes")
+        self.assertEqual(integration_by_control["Snowflake notification integration"]["STATE"], "Manual")
+        self.assertEqual(integration_by_control["ITSM lifecycle sync"]["STATE"], "Manual")
+        self.assertIn("Tier 0/1 gap", integration_by_control["Named owner routes"]["EVIDENCE"])
+
     def test_alert_delivery_audit_and_escalation_ack_sql(self):
         ddl = build_alert_delivery_log_ddl().upper()
         insert_sql = build_alert_delivery_log_insert_sql(
@@ -5827,6 +6083,19 @@ class FormulaRegressionTests(unittest.TestCase):
                 "RUNBOOK": "Review task graph evidence and route to owner.",
                 "IS_ACTIVE": True,
             }]), source="Database"),
+            "owner_directory": pd.DataFrame([{
+                "OWNER_KEY": "ALFA_PROD_PLATFORM",
+                "ENTITY_TYPE": "DATABASE",
+                "ENTITY_PATTERN": "ALFA_EDW_PROD",
+                "OWNER_NAME": "ALFA Platform Team",
+                "OWNER_EMAIL": "snowflake-platform@alfains.com",
+                "ONCALL_PRIMARY": "ALFA Snowflake Oncall",
+                "APPROVAL_GROUP": "ALFA Snowflake CAB",
+                "ESCALATION_TARGET": "ALFA Platform Manager",
+                "DEFAULT_ROUTE": "DBA Control Room",
+                "SERVICE_TIER": "Tier 0",
+                "MATCH_PRIORITY": 100,
+            }]),
             "issues": pd.DataFrame(),
         }
 

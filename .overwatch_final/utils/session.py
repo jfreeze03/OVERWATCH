@@ -123,6 +123,36 @@ def get_session():
     return st.session_state["sf_session"]
 
 
+def snowflake_connection_known_unavailable() -> bool:
+    """Return True when startup already proved Snowflake is unavailable."""
+    return bool(
+        st.session_state.get("_overwatch_connection_unavailable")
+        or st.session_state.get("_overwatch_connection_available") is False
+    )
+
+
+def get_session_for_action(
+    action: str,
+    *,
+    surface: str = "OVERWATCH",
+    offline_note: str = "Static setup and source summaries remain available without a connection.",
+):
+    """Return a session for explicit live actions, or None with a consistent UI guard."""
+    if snowflake_connection_known_unavailable():
+        st.info(f"Snowflake connection is required to {action}. {offline_note}")
+        return None
+    try:
+        return get_session()
+    except BaseException as exc:
+        if exc.__class__.__name__ != "StopException":
+            raise
+        st.info(f"Snowflake connection is required to {action}. {offline_note}")
+        st.session_state["_overwatch_connection_unavailable"] = True
+        st.session_state["_overwatch_connection_available"] = False
+        st.session_state["_overwatch_connection_surface"] = surface
+        return None
+
+
 def invalidate_session():
     """Force-drop the cached Snowflake session."""
     st.session_state.pop("sf_session", None)

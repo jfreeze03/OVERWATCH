@@ -14,7 +14,7 @@ UTILS_EXPORT_VERSION = "2026-06-01-ranked-chart-exports-v1"
 
 _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "session": (
-        "get_session",
+        "get_session", "get_session_for_action", "snowflake_connection_known_unavailable",
     ),
     "query": (
         "run_query", "run_query_cached", "run_query_or_raise", "force_refresh",
@@ -43,7 +43,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "OWNER_CONTEXT_COLUMNS", "OWNER_DIRECTORY_TABLE", "OWNER_DIRECTORY_VIEW",
         "build_owner_directory_ddl", "default_owner_directory",
         "enrich_owner_dataframe", "load_owner_directory", "owner_directory_fqn",
-        "owner_directory_view_fqn", "resolve_owner_context",
+        "owner_directory_readiness_board", "owner_directory_view_fqn", "resolve_owner_context",
     ),
     "workload_audit": (
         "WORKLOAD_RECOVERY_AUDIT_TABLE", "build_workload_recovery_audit_ddl",

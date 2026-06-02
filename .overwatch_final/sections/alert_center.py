@@ -27,7 +27,7 @@ ALERT_CENTER_PANES = [
 ]
 
 ALERT_CENTER_SOURCES_BY_PANE = {
-    "Control Health": {"alerts", "action_queue", "delivery_log", "rules", "rule_audit"},
+    "Control Health": {"alerts", "action_queue", "delivery_log", "rules", "rule_audit", "owner_directory"},
     "Issue Inbox": {"alerts", "action_queue"},
     "Triage Digest": {"alerts"},
     "Alert History": {"alerts"},
@@ -69,6 +69,12 @@ ALERT_CENTER_SOURCE_PLAN = {
         "WHY": "Evidence for alert-rule changes",
         "COST_GUARDRAIL": "Recent configuration audit read",
     },
+    "owner_directory": {
+        "SOURCE": "Owner directory",
+        "OBJECT": "Owner/on-call routing directory",
+        "WHY": "Named owner, email, approval, and escalation readiness",
+        "COST_GUARDRAIL": "Small configuration read with built-in fallback",
+    },
 }
 
 
@@ -101,32 +107,14 @@ def _format_snowflake_error(exc: Exception) -> str:
     return format_snowflake_error(exc)
 
 
-def _get_session():
-    from utils import get_session
-
-    return get_session()
-
-
 def _alert_center_action_session(action: str):
-    if (
-        st.session_state.get("_overwatch_connection_unavailable")
-        or st.session_state.get("_overwatch_connection_available") is False
-    ):
-        st.info(
-            f"Snowflake connection is required to {action}. "
-            "Alert Center setup SQL and source summaries remain available without a connection."
-        )
-        return None
-    try:
-        return _get_session()
-    except BaseException as exc:
-        if exc.__class__.__name__ != "StopException":
-            raise
-        st.info(
-            f"Snowflake connection is required to {action}. "
-            "Alert Center setup SQL and source summaries remain available without a connection."
-        )
-        return None
+    from utils import get_session_for_action
+
+    return get_session_for_action(
+        action,
+        surface="Alert Center",
+        offline_note="Alert Center setup SQL and source summaries remain available without a connection.",
+    )
 
 
 def _download_csv(df: pd.DataFrame, file_name: str) -> None:
@@ -183,11 +171,13 @@ def _load_center_data(
         "delivery_log": pd.DataFrame(),
         "rules": pd.DataFrame(),
         "rule_audit": pd.DataFrame(),
+        "owner_directory": pd.DataFrame(),
         "alerts_error": "",
         "queue_error": "",
         "delivery_error": "",
         "rule_error": "",
         "rule_audit_error": "",
+        "owner_directory_error": "",
         "loaded_at": datetime.now().isoformat(timespec="seconds"),
         "_loaded_sources": sorted(sources),
     }
@@ -225,6 +215,13 @@ def _load_center_data(
             data["rule_audit"] = load_alert_rule_audit(section="Alert Center", limit=50)
         except Exception as exc:
             data["rule_audit_error"] = _format_snowflake_error(exc)
+    if "owner_directory" in sources:
+        try:
+            from utils import load_owner_directory
+
+            data["owner_directory"] = load_owner_directory(section="Alert Center")
+        except Exception as exc:
+            data["owner_directory_error"] = _format_snowflake_error(exc)
     data["issues"] = build_dashboard_issue_rows(
         alerts=data["alerts"] if isinstance(data["alerts"], pd.DataFrame) else pd.DataFrame(),
         queue=data["action_queue"] if isinstance(data["action_queue"], pd.DataFrame) else pd.DataFrame(),
@@ -411,6 +408,7 @@ def _alert_center_operability_rows(
     queue = data.get("action_queue") if isinstance(data.get("action_queue"), pd.DataFrame) else pd.DataFrame()
     delivery_log = data.get("delivery_log") if isinstance(data.get("delivery_log"), pd.DataFrame) else pd.DataFrame()
     rules = data.get("rules") if isinstance(data.get("rules"), pd.DataFrame) else pd.DataFrame()
+    owner_directory = data.get("owner_directory") if isinstance(data.get("owner_directory"), pd.DataFrame) else pd.DataFrame()
     issues = data.get("issues") if isinstance(data.get("issues"), pd.DataFrame) else pd.DataFrame()
 
     rows: list[dict] = []
@@ -549,6 +547,41 @@ def _alert_center_operability_rows(
             "Persist rules in Snowflake before production ownership/SLA changes.",
         )
 
+    owner_directory_error = str(data.get("owner_directory_error") or "")
+    if owner_directory_error:
+        add(
+            "Owner directory source",
+            "Degraded",
+            "Medium",
+            owner_directory_error,
+            "Deploy or grant the owner directory before trusting named route coverage.",
+        )
+    else:
+        try:
+            from utils import owner_directory_readiness_board
+
+            owner_summary, _owner_board = owner_directory_readiness_board(owner_directory)
+            placeholder_routes = int(owner_summary.get("placeholder_routes", 0))
+            tier_gaps = int(owner_summary.get("tier0_tier1_gaps", 0))
+            add(
+                "Owner directory source",
+                "Ready" if placeholder_routes == 0 else "Review",
+                "Low" if tier_gaps == 0 else "High",
+                (
+                    f"{int(owner_summary.get('total_routes', 0)):,} route(s); "
+                    f"{placeholder_routes:,} placeholder route(s); {tier_gaps:,} Tier 0/1 gap(s)."
+                ),
+                "Replace built-in placeholder rows with named ALFA owner, email, on-call, approval, and escalation routes.",
+            )
+        except Exception as exc:
+            add(
+                "Owner directory source",
+                "Review",
+                "Medium",
+                f"Could not score owner directory: {_format_snowflake_error(exc)}",
+                "Review owner directory data shape and deployment.",
+            )
+
     email_targets = pd.Series(dtype=str)
     if not alerts.empty and "EMAIL_TARGET" in alerts.columns:
         email_targets = alerts["EMAIL_TARGET"].fillna("").astype(str).str.strip()
@@ -608,6 +641,269 @@ def _alert_center_readiness_score(rows: pd.DataFrame) -> int:
         else:
             penalty += 4
     return max(0, min(100, 100 - penalty))
+
+
+def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
+    pd = _pd()
+    generic_owners = {
+        "",
+        "DBA",
+        "OVERWATCH",
+        "DBA / FINOPS",
+        "DBA / PLATFORM",
+        "DBA / SECURITY",
+        "DBA / PIPELINE OWNER",
+        "DBA / PROCEDURE OWNER",
+        "DATA ENGINEERING",
+        "UNKNOWN",
+        "UNASSIGNED",
+    }
+    rows: list[dict] = []
+
+    if alerts is not None and not alerts.empty:
+        open_alerts = alerts[_open_alert_mask(alerts)].copy()
+        for _, row in open_alerts.iterrows():
+            owner = str(row.get("OWNER") or "").strip()
+            owner_key = owner.upper()
+            email_target = str(row.get("EMAIL_TARGET") or DEFAULT_ALERT_EMAIL or "").strip()
+            route = str(row.get("ALERT_ROUTE") or row.get("ROUTE") or "Alert Center").strip()
+            rows.append({
+                "ISSUE_SOURCE": "Alert",
+                "SEVERITY": row.get("SEVERITY", ""),
+                "STATUS": row.get("STATUS", "New"),
+                "CATEGORY": row.get("CATEGORY", ""),
+                "ENTITY": row.get("ENTITY_NAME", ""),
+                "OWNER": owner or "DBA",
+                "EMAIL_TARGET": email_target,
+                "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
+                "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
+                "OWNER_SOURCE": row.get("OWNER_SOURCE", ""),
+                "OWNER_ROUTE_STATE": "Needs named owner" if owner_key in generic_owners else "Named owner",
+                "DELIVERY_ROUTE_STATE": "Missing email target" if not email_target else "Email target ready",
+                "ACTION_ROUTE_STATE": "Route to action queue" if route == "Alert Center" else f"Route: {route}",
+                "NEXT_ACTION": row.get("SUGGESTED_ACTION", "Review alert evidence and assign owner."),
+            })
+
+    if queue is not None and not queue.empty:
+        status = queue.get("STATUS", pd.Series(["New"] * len(queue), index=queue.index)).fillna("New").astype(str).str.title()
+        open_queue = queue[~status.isin(["Fixed", "Ignored"])].copy()
+        for _, row in open_queue.iterrows():
+            owner = str(row.get("OWNER") or row.get("OWNER_NAME") or "").strip()
+            owner_key = owner.upper()
+            email_target = str(row.get("OWNER_EMAIL") or row.get("EMAIL_TARGET") or "").strip()
+            rows.append({
+                "ISSUE_SOURCE": "Action Queue",
+                "SEVERITY": row.get("SEVERITY", ""),
+                "STATUS": row.get("STATUS", "New"),
+                "CATEGORY": row.get("CATEGORY", ""),
+                "ENTITY": row.get("ENTITY_NAME", row.get("ENTITY", "")),
+                "OWNER": owner or "DBA",
+                "EMAIL_TARGET": email_target,
+                "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
+                "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
+                "OWNER_SOURCE": row.get("OWNER_SOURCE", ""),
+                "OWNER_ROUTE_STATE": "Needs named owner" if owner_key in generic_owners else "Named owner",
+                "DELIVERY_ROUTE_STATE": "Missing owner email" if not email_target else "Owner email ready",
+                "ACTION_ROUTE_STATE": "Queued",
+                "NEXT_ACTION": row.get("RECOMMENDED_ACTION", row.get("NEXT_ACTION", "Work queued DBA action.")),
+            })
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {
+            "open_items": 0,
+            "named_owner_pct": 100.0,
+            "email_route_pct": 100.0,
+            "oncall_pct": 100.0,
+            "route_gaps": 0,
+        }, board
+
+    owner_ready = board["OWNER_ROUTE_STATE"].astype(str).eq("Named owner")
+    email_ready = ~board["DELIVERY_ROUTE_STATE"].astype(str).str.startswith("Missing")
+    oncall_ready = board["ONCALL_PRIMARY"].fillna("").astype(str).str.strip().ne("")
+    route_gap = (
+        board["OWNER_ROUTE_STATE"].astype(str).ne("Named owner")
+        | ~email_ready
+        | ~oncall_ready
+    )
+    board["ROUTE_READY"] = route_gap.map({True: "Review", False: "Ready"})
+    board["_ROUTE_RANK"] = route_gap.map({True: 0, False: 1})
+    board = board.sort_values(["_ROUTE_RANK", "SEVERITY", "ISSUE_SOURCE", "ENTITY"]).drop(
+        columns=["_ROUTE_RANK"], errors="ignore"
+    )
+    total = max(len(board), 1)
+    return {
+        "open_items": int(len(board)),
+        "named_owner_pct": round(float(owner_ready.sum()) / total * 100, 1),
+        "email_route_pct": round(float(email_ready.sum()) / total * 100, 1),
+        "oncall_pct": round(float(oncall_ready.sum()) / total * 100, 1),
+        "route_gaps": int(route_gap.sum()),
+    }, board.reset_index(drop=True)
+
+
+def _alert_lifecycle_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> pd.DataFrame:
+    pd = _pd()
+    if alerts is None or alerts.empty:
+        return pd.DataFrame()
+
+    queue_entities = set()
+    queue_alert_ids = set()
+    if queue is not None and not queue.empty:
+        for col in ["ALERT_ID", "SOURCE_ID", "SOURCE_ALERT_ID"]:
+            if col in queue.columns:
+                queue_alert_ids |= set(queue[col].dropna().astype(str))
+        for col in ["ENTITY_NAME", "ENTITY"]:
+            if col in queue.columns:
+                queue_entities |= set(queue[col].dropna().astype(str))
+
+    rows: list[dict] = []
+    for _, row in alerts.iterrows():
+        alert_id = str(row.get("ALERT_ID") or "").strip()
+        entity = str(row.get("ENTITY_NAME") or "").strip()
+        status_key = _status_key(row.get("STATUS"))
+        owner = str(row.get("OWNER") or "DBA").strip()
+        owner_ready = owner.upper() not in {"", "DBA", "OVERWATCH"}
+        sla_state = str(row.get("SLA_STATE") or "Unknown").strip()
+        severity = str(row.get("SEVERITY") or "").strip()
+        delivery_status = str(row.get("DELIVERY_STATUS") or "").upper()
+        delivery_logged = "LOGGED" in delivery_status
+        email_ready = "EMAIL_READY" in delivery_status or bool(str(row.get("EMAIL_TARGET") or "").strip())
+        queued = bool((alert_id and alert_id in queue_alert_ids) or (entity and entity in queue_entities))
+
+        if status_key in {"FIXED", "RESOLVED", "CLOSED"}:
+            lifecycle_state = "Closed - verify evidence"
+        elif sla_state == "Overdue" and severity in {"Critical", "High"}:
+            lifecycle_state = "Escalate now"
+        elif not owner_ready:
+            lifecycle_state = "Assign owner"
+        elif not queued:
+            lifecycle_state = "Route to action queue"
+        elif not delivery_logged and email_ready:
+            lifecycle_state = "Log delivery evidence"
+        else:
+            lifecycle_state = "Work and verify"
+
+        rows.append({
+            "ALERT_ID": alert_id,
+            "LIFECYCLE_STATE": lifecycle_state,
+            "SLA_STATE": sla_state,
+            "SEVERITY": severity,
+            "STATUS": row.get("STATUS", "New"),
+            "CATEGORY": row.get("CATEGORY", ""),
+            "ALERT_TYPE": row.get("ALERT_TYPE", ""),
+            "ENTITY_NAME": entity,
+            "OWNER": owner,
+            "ESCALATION_TARGET": row.get("ESCALATION_TARGET", ""),
+            "DELIVERY_STATUS": row.get("DELIVERY_STATUS", ""),
+            "ACTION_QUEUE_STATE": "Queued" if queued else "Not queued",
+            "CLOSURE_PROOF_REQUIRED": (
+                "ticket, owner approval, remediation note, and post-fix verification evidence"
+                if status_key not in {"FIXED", "RESOLVED", "CLOSED"}
+                else "retain closure evidence and delivery/action audit"
+            ),
+            "NEXT_ACTION": row.get("SUGGESTED_ACTION", "Review alert evidence and update lifecycle."),
+            "ALERT_TS": row.get("ALERT_TS", ""),
+        })
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return board
+    state_rank = {
+        "Escalate now": 0,
+        "Assign owner": 1,
+        "Route to action queue": 2,
+        "Log delivery evidence": 3,
+        "Work and verify": 4,
+        "Closed - verify evidence": 5,
+    }
+    severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    board["_STATE_RANK"] = board["LIFECYCLE_STATE"].map(state_rank).fillna(9)
+    board["_SEV_RANK"] = board["SEVERITY"].map(severity_rank).fillna(9)
+    return board.sort_values(["_STATE_RANK", "_SEV_RANK", "ALERT_TS"], ascending=[True, True, False]).drop(
+        columns=["_STATE_RANK", "_SEV_RANK"], errors="ignore"
+    ).reset_index(drop=True)
+
+
+def _alert_integration_readiness_board(
+    alerts: pd.DataFrame,
+    queue: pd.DataFrame,
+    delivery_log: pd.DataFrame,
+    owner_summary: dict,
+) -> pd.DataFrame:
+    pd = _pd()
+    alerts = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
+    queue = queue if isinstance(queue, pd.DataFrame) else pd.DataFrame()
+    delivery_log = delivery_log if isinstance(delivery_log, pd.DataFrame) else pd.DataFrame()
+    rows: list[dict] = []
+    open_alert_count = int(_open_alert_mask(alerts).sum()) if not alerts.empty else 0
+    email_ready = 0
+    if not alerts.empty and "DELIVERY_STATUS" in alerts.columns:
+        email_ready = int(alerts["DELIVERY_STATUS"].fillna("").astype(str).str.upper().str.contains("EMAIL_READY").sum())
+    delivery_rows = len(delivery_log)
+
+    rows.append({
+        "CONTROL": "Email delivery evidence",
+        "STATE": "Ready" if delivery_rows > 0 else "Manual",
+        "EVIDENCE": f"{email_ready:,} email-ready alert(s); {delivery_rows:,} delivery audit row(s).",
+        "NEXT_ACTION": "Log each digest delivery until an approved Snowflake notification integration is enabled.",
+        "OWNER": "DBA / Alert Owner",
+    })
+    rows.append({
+        "CONTROL": "Snowflake notification integration",
+        "STATE": "Manual",
+        "EVIDENCE": "Teams webhook is not available; email-first delivery uses a placeholder recipient until approved integration exists.",
+        "NEXT_ACTION": "Create approved email/notification integration and replace placeholder routing with production distribution lists.",
+        "OWNER": "DBA / Platform",
+    })
+
+    ticket_col = "TICKET_ID" if "TICKET_ID" in queue.columns else ""
+    tickets = 0
+    open_queue = 0
+    if not queue.empty:
+        status = queue.get("STATUS", pd.Series(["New"] * len(queue), index=queue.index)).fillna("New").astype(str).str.title()
+        open_queue = int((~status.isin(["Fixed", "Ignored"])).sum())
+        if ticket_col:
+            tickets = int(queue[ticket_col].fillna("").astype(str).str.strip().ne("").sum())
+    rows.append({
+        "CONTROL": "ITSM lifecycle sync",
+        "STATE": "Manual" if tickets == 0 else "Partial",
+        "EVIDENCE": f"{open_queue:,} open queue row(s); {tickets:,} ticket id(s) attached.",
+        "NEXT_ACTION": "Sync alert/action status to ITSM so acknowledgment, owner approval, and closure evidence are not manually reconciled.",
+        "OWNER": "DBA / ITSM Owner",
+    })
+
+    placeholder_routes = int(owner_summary.get("placeholder_routes", 0) or 0)
+    tier_gaps = int(owner_summary.get("tier0_tier1_gaps", 0) or 0)
+    rows.append({
+        "CONTROL": "Named owner routes",
+        "STATE": "Ready" if placeholder_routes == 0 else "Priority Gap" if tier_gaps else "Review",
+        "EVIDENCE": (
+            f"{int(owner_summary.get('production_ready', 0) or 0):,}/"
+            f"{int(owner_summary.get('total_routes', 0) or 0):,} route(s) production-ready; "
+            f"{tier_gaps:,} Tier 0/1 gap(s)."
+        ),
+        "NEXT_ACTION": "Replace built-in owner-directory defaults with named ALFA owner, email, on-call, approval, and escalation rows.",
+        "OWNER": "DBA Lead",
+    })
+    rows.append({
+        "CONTROL": "Open alert lifecycle",
+        "STATE": "Ready" if open_alert_count == 0 else "Review",
+        "EVIDENCE": f"{open_alert_count:,} open alert(s) in the loaded scope.",
+        "NEXT_ACTION": "Every open alert needs owner, ticket/notes, delivery evidence, action queue state, and closure proof.",
+        "OWNER": "DBA / Alert Owner",
+    })
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return board
+    board["_STATE_RANK"] = board["STATE"].map({
+        "Priority Gap": 0,
+        "Manual": 1,
+        "Review": 2,
+        "Partial": 3,
+        "Ready": 4,
+    }).fillna(9)
+    return board.sort_values(["_STATE_RANK", "CONTROL"]).drop(columns=["_STATE_RANK"], errors="ignore")
 
 
 def render() -> None:
@@ -675,6 +971,7 @@ def render() -> None:
     delivery_log = data.get("delivery_log") if isinstance(data.get("delivery_log"), pd.DataFrame) else pd.DataFrame()
     rules = data.get("rules") if isinstance(data.get("rules"), pd.DataFrame) else pd.DataFrame()
     rule_audit = data.get("rule_audit") if isinstance(data.get("rule_audit"), pd.DataFrame) else pd.DataFrame()
+    owner_directory = data.get("owner_directory") if isinstance(data.get("owner_directory"), pd.DataFrame) else pd.DataFrame()
     if data.get("alerts_error"):
         st.info(f"Alert history unavailable. Deploy the alert table/task setup SQL first. {data['alerts_error']}")
     if data.get("queue_error"):
@@ -685,6 +982,8 @@ def render() -> None:
         st.caption(f"Alert rule catalog unavailable until setup SQL is deployed: {data['rule_error']}")
     if data.get("rule_audit_error"):
         st.caption(f"Alert rule audit unavailable until setup SQL is deployed: {data['rule_audit_error']}")
+    if data.get("owner_directory_error"):
+        st.caption(f"Owner directory unavailable until setup SQL is deployed: {data['owner_directory_error']}")
     st.caption(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {DEFAULT_ALERT_EMAIL}.")
 
     open_alerts = _open_alert_mask(alerts)
@@ -748,6 +1047,68 @@ def render() -> None:
             raw_label="All alert control-health rows",
             height=360,
         )
+        owner_summary, owner_board = _alert_owner_route_board(alerts, queue)
+        if not owner_board.empty:
+            st.markdown("**Owner Route Coverage**")
+            o1, o2, o3, o4 = st.columns(4)
+            o1.metric("Open routed items", f"{owner_summary['open_items']:,}")
+            o2.metric("Named owners", f"{owner_summary['named_owner_pct']:.0f}%")
+            o3.metric("Email routes", f"{owner_summary['email_route_pct']:.0f}%")
+            o4.metric("Route gaps", f"{owner_summary['route_gaps']:,}", delta_color="inverse")
+            _render_priority_dataframe(
+                owner_board,
+                title="Owner/on-call route gaps",
+                priority_columns=[
+                    "ROUTE_READY", "ISSUE_SOURCE", "SEVERITY", "STATUS", "CATEGORY",
+                    "ENTITY", "OWNER", "OWNER_ROUTE_STATE", "EMAIL_TARGET",
+                    "DELIVERY_ROUTE_STATE", "ONCALL_PRIMARY", "ESCALATION_TARGET",
+                    "OWNER_SOURCE", "NEXT_ACTION",
+                ],
+                sort_by=["ROUTE_READY", "SEVERITY", "ENTITY"],
+                ascending=[True, True, True],
+                raw_label="All owner route rows",
+                height=280,
+            )
+        from utils import owner_directory_readiness_board
+
+        directory_summary, directory_board = owner_directory_readiness_board(owner_directory)
+        st.markdown("**Owner Directory Production Readiness**")
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("Route readiness", f"{directory_summary['readiness_pct']:.0f}%")
+        d2.metric(
+            "Production routes",
+            f"{directory_summary['production_ready']:,}/{directory_summary['total_routes']:,}",
+        )
+        d3.metric("Placeholder routes", f"{directory_summary['placeholder_routes']:,}", delta_color="inverse")
+        d4.metric("Tier 0/1 gaps", f"{directory_summary['tier0_tier1_gaps']:,}", delta_color="inverse")
+        if not directory_board.empty:
+            _render_priority_dataframe(
+                directory_board,
+                title="Owner directory route readiness",
+                priority_columns=[
+                    "ROUTE_STATE", "SERVICE_TIER", "OWNER_KEY", "ENTITY_TYPE",
+                    "ENTITY_PATTERN", "OWNER_NAME", "OWNER_EMAIL", "ONCALL_PRIMARY",
+                    "APPROVAL_GROUP", "ESCALATION_TARGET", "BLOCKERS", "NEXT_ACTION",
+                ],
+                raw_label="All owner directory rows",
+                height=300,
+            )
+
+        integration_board = _alert_integration_readiness_board(
+            alerts,
+            queue,
+            delivery_log,
+            directory_summary,
+        )
+        if not integration_board.empty:
+            st.markdown("**Notification & ITSM Readiness**")
+            _render_priority_dataframe(
+                integration_board,
+                title="Alert integration readiness",
+                priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
+                raw_label="All alert integration controls",
+                height=220,
+            )
 
     elif active_view == "Issue Inbox":
         st.subheader("All Active DBA Issues")
@@ -884,6 +1245,39 @@ def render() -> None:
         if alerts.empty:
             st.info("No alert history rows found for this scope.")
         else:
+            lifecycle = _alert_lifecycle_board(alerts, queue)
+            if not lifecycle.empty:
+                l1, l2, l3, l4 = st.columns(4)
+                l1.metric("Lifecycle Rows", f"{len(lifecycle):,}")
+                l2.metric(
+                    "Escalate Now",
+                    f"{int(lifecycle['LIFECYCLE_STATE'].eq('Escalate now').sum()):,}",
+                    delta_color="inverse",
+                )
+                l3.metric(
+                    "Needs Owner",
+                    f"{int(lifecycle['LIFECYCLE_STATE'].eq('Assign owner').sum()):,}",
+                    delta_color="inverse",
+                )
+                l4.metric(
+                    "Not Queued",
+                    f"{int(lifecycle['ACTION_QUEUE_STATE'].eq('Not queued').sum()):,}",
+                    delta_color="inverse",
+                )
+                _render_priority_dataframe(
+                    lifecycle,
+                    title="Alert lifecycle command board",
+                    priority_columns=[
+                        "LIFECYCLE_STATE", "SLA_STATE", "SEVERITY", "STATUS",
+                        "CATEGORY", "ALERT_TYPE", "ENTITY_NAME", "OWNER",
+                        "ESCALATION_TARGET", "DELIVERY_STATUS", "ACTION_QUEUE_STATE",
+                        "CLOSURE_PROOF_REQUIRED", "NEXT_ACTION",
+                    ],
+                    sort_by=["LIFECYCLE_STATE", "SEVERITY", "ALERT_TS"],
+                    ascending=[True, True, False],
+                    raw_label="All alert lifecycle rows",
+                    height=300,
+                )
             _render_priority_dataframe(
                 alerts,
                 title="Alert history",

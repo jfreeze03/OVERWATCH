@@ -115,7 +115,7 @@ def _maybe_reload_dev_helpers() -> None:
 
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-06-01-compact-workflow-ui-v3":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-06-02-readable-light-themes-v4":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker

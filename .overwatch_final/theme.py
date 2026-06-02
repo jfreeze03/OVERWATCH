@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # THEMES:
 #   1. midnight   — Original dark glassmorphism (cyan/indigo/purple)
-#   2. corporate  — Traditional light: white cards, navy sidebar, ALFA blue
+#   2. corporate  — Henson light: muted shell with dominant red navigation
 #   3. terminal   — Snowflake White: classic white with Snowflake blue
 #   4. black_ice  — Dark high-contrast lime/cyan accents
 #   5. carbon     — Snowflake Dark: classic dark with Snowflake blue
@@ -20,7 +20,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
 
-THEME_VERSION = "2026-06-01-compact-workflow-ui-v3"
+THEME_VERSION = "2026-06-02-readable-light-themes-v4"
 
 _DEFAULT_THEME = "midnight"
 _THEME_ALIASES = {
@@ -30,24 +30,24 @@ _THEME_ALIASES = {
 # ── Theme metadata (used for the picker UI) ───────────────────────────────────
 THEMES = {
     "midnight": {
-        "label":    "Henson Basic",
+        "label":    "Midnight",
         "swatch":   "#38bdf8",
         "bg":       "#0a0e1a",
     },
     "corporate": {
-        "label":    "ALFA",
+        "label":    "Henson",
         "swatch":   "#b00020",
-        "bg":       "#ffffff",
+        "bg":       "#f1f4f7",
     },
     "terminal": {
         "label":    "Snowflake White",
         "swatch":   "#29B5E8",
-        "bg":       "#ffffff",
+        "bg":       "#eef6fb",
     },
     "black_ice": {
-        "label":    "Black Ice",
-        "swatch":   "#a3e635",
-        "bg":       "#05070b",
+        "label":    "Graphite Ember",
+        "swatch":   "#f97316",
+        "bg":       "#12100f",
     },
     "carbon": {
         "label":    "Snowflake Dark",
@@ -107,25 +107,25 @@ _VARS = {
 }
 """,
 
-# ─── 2. CORPORATE — traditional light, navy sidebar, ALFA blue ───────────────
+# ─── 2. HENSON — muted light shell with dominant red navigation ──────────────
 "corporate": """
 :root {
-    --bg-app:          #ffffff;
-    --bg-sidebar:      #ffffff;
+    --bg-app:          #f1f4f7;
+    --bg-sidebar:      linear-gradient(180deg, #fff7f8 0%, #f3e8eb 100%);
     --bg-card:         #ffffff;
-    --bg-card-hover:   #f8fafc;
+    --bg-card-hover:   #f7eef1;
     --bg-input:        #ffffff;
-    --bg-tab-list:     #f1f5f9;
+    --bg-tab-list:     #e6ebf0;
     --bg-expander:     #ffffff;
 
-    --border-subtle:   #e5e7eb;
-    --border-normal:   #cbd5e1;
-    --border-strong:   #0f7894;
-    --border-sidebar:  #e2e8f0;
+    --border-subtle:   #d6dde5;
+    --border-normal:   #b7c4cf;
+    --border-strong:   #b00020;
+    --border-sidebar:  #d9c5cb;
 
-    --text-primary:    #1f2937;
-    --text-secondary:  #334155;
-    --text-muted:      #64748b;
+    --text-primary:    #151f2c;
+    --text-secondary:  #28384a;
+    --text-muted:      #5a6b7d;
     --text-input:      #111827;
     --text-heading:    #b00020;
 
@@ -135,12 +135,12 @@ _VARS = {
     --accent3:         #475569;
     --h1-gradient:     linear-gradient(90deg, #b00020 0%, #b00020 44%, #3f3f46 44%, #3f3f46 100%);
 
-    --metric-shadow:        0 1px 10px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.05);
-    --metric-hover-shadow:  0 8px 24px rgba(15, 120, 148, 0.16), 0 2px 8px rgba(15, 23, 42, 0.08);
-    --btn-bg:          #ffffff;
-    --btn-bg-hover:    #f8fafc;
-    --btn-border:      rgba(15, 120, 148, 0.46);
-    --btn-hover-shadow: 0 2px 12px rgba(15, 120, 148, 0.18);
+    --metric-shadow:        0 1px 10px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.06);
+    --metric-hover-shadow:  0 8px 24px rgba(176, 0, 32, 0.16), 0 2px 8px rgba(15, 23, 42, 0.10);
+    --btn-bg:          linear-gradient(135deg, #ffffff, #f7eef1);
+    --btn-bg-hover:    linear-gradient(135deg, #fff6f8, #f0dce2);
+    --btn-border:      rgba(176, 0, 32, 0.34);
+    --btn-hover-shadow: 0 2px 12px rgba(176, 0, 32, 0.18);
     --slider-track:    linear-gradient(90deg, #b00020, #0f7894);
     --tab-active-bg:   rgba(176, 0, 32, 0.08);
     --tab-active-col:  #b00020;
@@ -157,40 +157,40 @@ _VARS = {
 # ─── 3. SNOWFLAKE WHITE — classic white with Snowflake brand blues ───────────
 "terminal": """
 :root {
-    --bg-app:          #ffffff;
-    --bg-sidebar:      #f7fbfd;
+    --bg-app:          #eef6fb;
+    --bg-sidebar:      linear-gradient(180deg, #f1f9fd 0%, #dfeff7 100%);
     --bg-card:         #ffffff;
-    --bg-card-hover:   #f3f8fb;
+    --bg-card-hover:   #f0f8fc;
     --bg-input:        #ffffff;
-    --bg-tab-list:     #eef7fb;
+    --bg-tab-list:     #dceff7;
     --bg-expander:     #ffffff;
 
-    --border-subtle:   #d9ebf3;
-    --border-normal:   #b8d8e5;
-    --border-strong:   #29B5E8;
-    --border-sidebar:  #d7e8f0;
+    --border-subtle:   #c6dcea;
+    --border-normal:   #9fc9dd;
+    --border-strong:   #0068b7;
+    --border-sidebar:  #b7d5e5;
 
-    --text-primary:    #24323D;
-    --text-secondary:  #11567F;
-    --text-muted:      #5f7180;
-    --text-input:      #24323D;
+    --text-primary:    #102a43;
+    --text-secondary:  #1f4e6b;
+    --text-muted:      #526b7a;
+    --text-input:      #102a43;
     --text-heading:    #003545;
 
-    --accent:          #29B5E8;
-    --accent-rgb:      41, 181, 232;
-    --accent2:         #11567F;
+    --accent:          #0068b7;
+    --accent-rgb:      0, 104, 183;
+    --accent2:         #29B5E8;
     --accent3:         #71D3DC;
     --h1-gradient:     linear-gradient(90deg, #003545, #11567F, #29B5E8);
 
-    --metric-shadow:        0 1px 10px rgba(0, 53, 69, 0.08), 0 1px 2px rgba(0, 53, 69, 0.06);
-    --metric-hover-shadow:  0 8px 24px rgba(41, 181, 232, 0.18), 0 2px 8px rgba(0, 53, 69, 0.08);
-    --btn-bg:          #ffffff;
-    --btn-bg-hover:    #eef7fb;
-    --btn-border:      rgba(41, 181, 232, 0.46);
-    --btn-hover-shadow: 0 2px 14px rgba(41, 181, 232, 0.22);
-    --slider-track:    linear-gradient(90deg, #11567F, #29B5E8);
-    --tab-active-bg:   rgba(41, 181, 232, 0.13);
-    --tab-active-col:  #11567F;
+    --metric-shadow:        0 1px 10px rgba(0, 53, 69, 0.10), 0 1px 2px rgba(0, 53, 69, 0.07);
+    --metric-hover-shadow:  0 8px 24px rgba(0, 104, 183, 0.18), 0 2px 8px rgba(0, 53, 69, 0.10);
+    --btn-bg:          linear-gradient(135deg, #ffffff, #edf8fd);
+    --btn-bg-hover:    linear-gradient(135deg, #f8fdff, #d9f1fb);
+    --btn-border:      rgba(0, 104, 183, 0.38);
+    --btn-hover-shadow: 0 2px 14px rgba(0, 104, 183, 0.22);
+    --slider-track:    linear-gradient(90deg, #0068b7, #29B5E8);
+    --tab-active-bg:   rgba(0, 104, 183, 0.14);
+    --tab-active-col:  #0068b7;
     --hr-bg:           linear-gradient(90deg, transparent, #cfe6ef, transparent);
     --scrollbar-track: #eef7fb;
     --scrollbar-thumb: rgba(41, 181, 232, 0.35);
@@ -201,47 +201,47 @@ _VARS = {
 }
 """,
 
-# ─── 4. BLACK ICE — high-contrast dark with lime/cyan accents ────────
+# ─── 4. GRAPHITE EMBER — warm graphite with ember and teal accents ───────────
 "black_ice": """
 :root {
-    --bg-app:          linear-gradient(160deg, #05070b 0%, #0b1220 48%, #111827 100%);
-    --bg-sidebar:      linear-gradient(180deg, #05070b 0%, #0b1220 58%, #111827 100%);
-    --bg-card:         rgba(8, 13, 24, 0.78);
-    --bg-card-hover:   rgba(12, 20, 35, 0.94);
-    --bg-input:        rgba(5, 8, 15, 0.92);
-    --bg-tab-list:     rgba(10, 16, 28, 0.66);
-    --bg-expander:     rgba(8, 13, 24, 0.76);
+    --bg-app:          linear-gradient(160deg, #12100f 0%, #181513 46%, #221a16 100%);
+    --bg-sidebar:      linear-gradient(180deg, #11100f 0%, #1c1714 58%, #241a15 100%);
+    --bg-card:         rgba(30, 24, 20, 0.82);
+    --bg-card-hover:   rgba(40, 30, 24, 0.96);
+    --bg-input:        rgba(18, 15, 13, 0.92);
+    --bg-tab-list:     rgba(32, 25, 21, 0.70);
+    --bg-expander:     rgba(29, 23, 19, 0.80);
 
-    --border-subtle:   rgba(163, 230, 53, 0.12);
-    --border-normal:   rgba(163, 230, 53, 0.26);
-    --border-strong:   rgba(34, 211, 238, 0.62);
-    --border-sidebar:  rgba(163, 230, 53, 0.16);
+    --border-subtle:   rgba(249, 115, 22, 0.14);
+    --border-normal:   rgba(249, 115, 22, 0.30);
+    --border-strong:   rgba(20, 184, 166, 0.64);
+    --border-sidebar:  rgba(250, 204, 21, 0.18);
 
-    --text-primary:    #f8fafc;
-    --text-secondary:  #d9f99d;
-    --text-muted:      #94a3b8;
-    --text-input:      #f8fafc;
+    --text-primary:    #fff7ed;
+    --text-secondary:  #fed7aa;
+    --text-muted:      #b8a89a;
+    --text-input:      #fff7ed;
     --text-heading:    transparent;
 
-    --accent:          #a3e635;
-    --accent-rgb:      163, 230, 53;
-    --accent2:         #22d3ee;
-    --accent3:         #38bdf8;
-    --h1-gradient:     linear-gradient(90deg, #f8fafc, #a3e635, #22d3ee);
+    --accent:          #f97316;
+    --accent-rgb:      249, 115, 22;
+    --accent2:         #14b8a6;
+    --accent3:         #facc15;
+    --h1-gradient:     linear-gradient(90deg, #fff7ed, #f97316, #14b8a6);
 
-    --metric-shadow:        0 4px 24px rgba(0,0,0,0.50), inset 0 1px 0 rgba(163,230,53,0.08);
-    --metric-hover-shadow:  0 8px 32px rgba(163,230,53,0.16), inset 0 1px 0 rgba(34,211,238,0.12);
-    --btn-bg:          linear-gradient(135deg, rgba(163,230,53,0.12), rgba(34,211,238,0.10));
-    --btn-bg-hover:    linear-gradient(135deg, rgba(163,230,53,0.25), rgba(34,211,238,0.20));
-    --btn-border:      rgba(163, 230, 53, 0.34);
-    --btn-hover-shadow: 0 0 20px rgba(163,230,53,0.24);
-    --slider-track:    linear-gradient(90deg, #a3e635, #22d3ee);
-    --tab-active-bg:   rgba(163, 230, 53, 0.14);
-    --tab-active-col:  #d9f99d;
-    --hr-bg:           linear-gradient(90deg, transparent, rgba(163,230,53,0.28), transparent);
-    --scrollbar-track: rgba(5, 8, 15, 0.72);
-    --scrollbar-thumb: rgba(163, 230, 53, 0.32);
-    --scrollbar-hover: rgba(34, 211, 238, 0.56);
+    --metric-shadow:        0 4px 24px rgba(0,0,0,0.48), inset 0 1px 0 rgba(249,115,22,0.08);
+    --metric-hover-shadow:  0 8px 32px rgba(249,115,22,0.16), inset 0 1px 0 rgba(20,184,166,0.12);
+    --btn-bg:          linear-gradient(135deg, rgba(249,115,22,0.13), rgba(20,184,166,0.10));
+    --btn-bg-hover:    linear-gradient(135deg, rgba(249,115,22,0.26), rgba(20,184,166,0.20));
+    --btn-border:      rgba(249, 115, 22, 0.36);
+    --btn-hover-shadow: 0 0 20px rgba(249,115,22,0.24);
+    --slider-track:    linear-gradient(90deg, #f97316, #14b8a6);
+    --tab-active-bg:   rgba(249, 115, 22, 0.15);
+    --tab-active-col:  #fed7aa;
+    --hr-bg:           linear-gradient(90deg, transparent, rgba(249,115,22,0.30), transparent);
+    --scrollbar-track: rgba(18, 15, 13, 0.76);
+    --scrollbar-thumb: rgba(249, 115, 22, 0.34);
+    --scrollbar-hover: rgba(20, 184, 166, 0.56);
     --font-body:       'Inter', system-ui, sans-serif;
     --font-mono:       'JetBrains Mono', 'Cascadia Mono', monospace;
     --extra-css:       '';
@@ -1224,24 +1224,39 @@ code, pre, .stCodeBlock {
 _THEME_EXTRAS = {
     "corporate": """
 <style>
+/* Henson: reduce glare and make navigation decisively red. */
+.stButton > button {
+    color: #151f2c !important;
+    background: linear-gradient(135deg, #ffffff, #f7eef1) !important;
+    border-color: rgba(176,0,32,0.34) !important;
+}
+.stButton > button:hover {
+    color: #8f001a !important;
+    background: linear-gradient(135deg, #fff6f8, #f0dce2) !important;
+    border-color: rgba(176,0,32,0.55) !important;
+}
+.stButton > button[kind="primary"],
+.stButton > button[kind="primary"] p {
+    color: #ffffff !important;
+}
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] .stRadio > label,
 [data-testid="stSidebar"] p {
-    color: #334155 !important;
+    color: #28384a !important;
 }
 [data-testid="stSidebar"] .stButton > button {
-    color: #1f2937 !important;
-    background: #ffffff !important;
-    border-color: #d7e2ea !important;
-    box-shadow: none !important;
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #b00020, #8f001a) !important;
+    border-color: rgba(143,0,26,0.78) !important;
+    box-shadow: 0 2px 9px rgba(176,0,32,0.16) !important;
 }
 [data-testid="stSidebar"] .stButton > button p {
     color: inherit !important;
 }
 [data-testid="stSidebar"] .stButton > button:hover {
-    color: #b00020 !important;
-    background: rgba(176,0,32,0.06) !important;
-    border-color: rgba(176,0,32,0.28) !important;
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #c91535, #9f0b25) !important;
+    border-color: rgba(176,0,32,0.90) !important;
 }
 [data-testid="stSidebar"] .stRadio > div > label:hover {
     color: #b00020 !important;
@@ -1252,9 +1267,14 @@ _THEME_EXTRAS = {
     background: rgba(176,0,32,0.10);
     border-left: 3px solid #b00020;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #7f0017, #b00020) !important;
+    border-color: rgba(127,0,23,0.94) !important;
+    box-shadow: inset 4px 0 0 #0f7894, 0 3px 13px rgba(176,0,32,0.24) !important;
+}
 [data-testid="stSidebar"] .stButton > button[kind="primary"] p {
-    color: #b00020 !important;
+    color: #ffffff !important;
 }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
     color: #b00020 !important;
@@ -1267,6 +1287,34 @@ _THEME_EXTRAS = {
 [data-testid="stExpander"] {
     background: #ffffff !important;
     border-color: #d7e2ea !important;
+}
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary > div,
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span {
+    color: #151f2c !important;
+}
+[data-testid="stExpander"] summary {
+    background: #ffffff !important;
+    border-radius: 7px !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #b00020, #8f001a) !important;
+    border: 1px solid rgba(143,0,26,0.78) !important;
+    border-bottom: 1px solid rgba(143,0,26,0.78) !important;
+    box-shadow: 0 2px 9px rgba(176,0,32,0.16) !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: linear-gradient(135deg, #c91535, #9f0b25) !important;
+    border-color: rgba(176,0,32,0.90) !important;
 }
 [data-testid="stExpander"] details,
 [data-testid="stExpander"] summary,
@@ -1281,6 +1329,12 @@ _THEME_EXTRAS = {
 [data-testid="stExpander"] summary:hover span {
     color: #b00020 !important;
 }
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover > span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover span {
+    color: #ffffff !important;
+}
 [data-testid="stWidgetLabel"],
 [data-testid="stWidgetLabel"] p,
 .stTextInput label,
@@ -1293,6 +1347,7 @@ _THEME_EXTRAS = {
     opacity: 1 !important;
 }
 .stTabs [data-baseweb="tab-list"] {
+    background: #e6ebf0 !important;
     border-bottom: 2px solid rgba(176,0,32,0.65);
 }
 .stTabs [data-baseweb="tab"] {
@@ -1300,61 +1355,132 @@ _THEME_EXTRAS = {
     font-weight: 650;
 }
 .stTabs [aria-selected="true"] {
-    color: #b00020 !important;
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #b00020, #8f001a) !important;
+    border-color: rgba(143,0,26,0.72) !important;
 }
 </style>
 """,
     "terminal": """
 <style>
+/* Snowflake White: reduce glare and make navigation decisively blue. */
+.stButton > button {
+    color: #102a43 !important;
+    background: linear-gradient(135deg, #ffffff, #edf8fd) !important;
+    border-color: rgba(0,104,183,0.38) !important;
+}
+.stButton > button:hover {
+    color: #004f8f !important;
+    background: linear-gradient(135deg, #f8fdff, #d9f1fb) !important;
+    border-color: rgba(0,104,183,0.58) !important;
+}
+.stButton > button[kind="primary"],
+.stButton > button[kind="primary"] p {
+    color: #ffffff !important;
+}
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] .stRadio > label,
 [data-testid="stSidebar"] p {
-    color: #24323D !important;
+    color: #1f4e6b !important;
 }
 [data-testid="stSidebar"] .stButton > button {
-    color: #24323D !important;
-    background: #ffffff !important;
-    border-color: #b8d8e5 !important;
-    box-shadow: none !important;
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0068b7, #00528f) !important;
+    border-color: rgba(0,82,143,0.78) !important;
+    box-shadow: 0 2px 9px rgba(0,104,183,0.16) !important;
 }
 [data-testid="stSidebar"] .stButton > button p {
     color: inherit !important;
 }
 [data-testid="stSidebar"] .stButton > button:hover {
-    color: #11567F !important;
-    background: #eef7fb !important;
-    border-color: rgba(41,181,232,0.48) !important;
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0079d6, #005fa8) !important;
+    border-color: rgba(0,104,183,0.90) !important;
 }
 [data-testid="stSidebar"] .stRadio > div > label:hover {
-    color: #11567F !important;
-    background: rgba(41,181,232,0.08);
+    color: #0068b7 !important;
+    background: rgba(0,104,183,0.08);
 }
 [data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {
-    color: #11567F !important;
-    background: rgba(41,181,232,0.13);
-    border-left: 3px solid #29B5E8;
+    color: #0068b7 !important;
+    background: rgba(0,104,183,0.13);
+    border-left: 3px solid #0068b7;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #003f73, #0068b7) !important;
+    border-color: rgba(0,63,115,0.94) !important;
+    box-shadow: inset 4px 0 0 #71D3DC, 0 3px 13px rgba(0,104,183,0.24) !important;
+}
 [data-testid="stSidebar"] .stButton > button[kind="primary"] p {
-    color: #11567F !important;
+    color: #ffffff !important;
 }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
-    color: #11567F !important;
+    color: #0068b7 !important;
 }
 [data-testid="stMetric"] {
-    border-top: 3px solid rgba(41,181,232,0.75) !important;
+    border-top: 3px solid rgba(0,104,183,0.75) !important;
 }
-[data-testid="stMetricValue"] { color: #24323D !important; }
-[data-testid="stMetricLabel"] { color: #5f7180 !important; }
+[data-testid="stMetricValue"] { color: #102a43 !important; }
+[data-testid="stMetricLabel"] { color: #526b7a !important; }
+[data-testid="stExpander"] {
+    background: #ffffff !important;
+    border-color: #b7d5e5 !important;
+}
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary > div,
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span,
+[data-testid="stExpander"] details,
+[data-testid="stExpander"] [data-testid="stMarkdownContainer"],
+[data-testid="stExpander"] [data-testid="stMarkdownContainer"] p {
+    color: #102a43 !important;
+}
+[data-testid="stExpander"] summary {
+    background: #ffffff !important;
+    border-radius: 7px !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0068b7, #00528f) !important;
+    border: 1px solid rgba(0,82,143,0.78) !important;
+    border-bottom: 1px solid rgba(0,82,143,0.78) !important;
+    box-shadow: 0 2px 9px rgba(0,104,183,0.16) !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: linear-gradient(135deg, #0079d6, #005fa8) !important;
+    border-color: rgba(0,104,183,0.90) !important;
+}
+[data-testid="stExpander"] summary:hover,
+[data-testid="stExpander"] summary:hover p,
+[data-testid="stExpander"] summary:hover span {
+    color: #0068b7 !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover > span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover span {
+    color: #ffffff !important;
+}
 .stTabs [data-baseweb="tab-list"] {
-    border-bottom: 2px solid rgba(41,181,232,0.55);
+    background: #dceff7 !important;
+    border-bottom: 2px solid rgba(0,104,183,0.55);
 }
 .stTabs [data-baseweb="tab"] {
-    color: #24323D !important;
+    color: #102a43 !important;
     font-weight: 650;
 }
 .stTabs [aria-selected="true"] {
-    color: #11567F !important;
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0068b7, #00528f) !important;
+    border-color: rgba(0,82,143,0.72) !important;
 }
 </style>
 """,

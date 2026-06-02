@@ -22,6 +22,7 @@ load without creating surprise Snowflake cost.
 | `sql/99_cleanup_perf_test.sql` | Drops only `PERF_TEST_*` objects. |
 | `perf_runner.py` | Local HTTP concurrency runner and Markdown/JSON report generator. |
 | `section_smoke_runner.py` | Optional browser runner that clicks every primary section and reports visible section switch time. |
+| `live_concurrent_runner.py` | Concurrent browser runner that exercises Streamlit sessions, section navigation, and safe live-data load buttons. |
 | `run_snowflake_safe_suite.py` | Env-driven Snowflake runner for the guarded metadata-scale SQL suite. It never runs the physical 5 TB script. |
 
 ## Safe Test Sequence
@@ -47,6 +48,34 @@ $env:OVERWATCH_PERF_RUN_ID="PERF_TEST_LOCAL_001"
 .\.venv\Scripts\python.exe .\perf_tests\section_smoke_runner.py --url http://localhost:8501/
 ```
 
+6. Optional live-data stress test with real concurrent browser users:
+
+```powershell
+# Calibration run.
+.\.venv\Scripts\python.exe .\perf_tests\live_concurrent_runner.py --url http://localhost:8501/ --users 5 --iterations 1
+
+# Larger run after calibration is clean.
+.\.venv\Scripts\python.exe .\perf_tests\live_concurrent_runner.py --url http://localhost:8501/ --users 20 --iterations 1 --ramp-seconds 10
+```
+
+The live concurrent runner clicks only safe read/load actions by default:
+
+- Alert Center: `Load Full Control Health`
+- Cost & Contract: `Load Cost Cockpit`
+
+The default profile intentionally avoids deep workflow buttons that may be
+behind a selected subview or collapsed investigation path, such as Account
+Health refresh, Warehouse Capacity Brief, or Change & Drift Brief. Use targeted
+section smoke tests for those paths so a broad concurrency run does not report
+stale skipped controls.
+
+It does not click grant, save, queue, email-send, retry, suspend/resume, or
+warehouse setting mutation controls. Use `--no-load-buttons` for navigation-only
+browser concurrency. By default, configured load buttons that are not visible in
+the current default view are reported as skipped instead of failed; use
+`--missing-load-button fail` when validating that a specific button must remain
+present.
+
 If Playwright is not installed in the local test environment:
 
 ```powershell
@@ -57,7 +86,7 @@ If Playwright is not installed in the local test environment:
 If browser tooling cannot be installed, keep using `perf_runner.py` and rely on
 `PERF_TEST_APP_USAGE_REPORT_V` for section timing.
 
-6. In Snowflake, run:
+7. In Snowflake, run:
 
 ```sql
 -- Safe setup.
@@ -70,7 +99,7 @@ If browser tooling cannot be installed, keep using `perf_runner.py` and rely on
 @perf_tests/sql/04_benchmark_report.sql;
 ```
 
-7. Review:
+8. Review:
 
 ```sql
 SELECT * FROM PERF_TEST_SCALE_SUMMARY_V;
@@ -98,7 +127,7 @@ The runner executes `01_perf_test_setup.sql`, calls
 `SP_PERF_TEST_GUARDRAIL_CHECK('LIGHTWEIGHT_METADATA', FALSE)`, and stops before
 synthetic data generation unless the guardrail returns `OK`.
 
-8. Cleanup:
+9. Cleanup:
 
 ```sql
 @perf_tests/sql/99_cleanup_perf_test.sql;
@@ -109,6 +138,7 @@ synthetic data generation unless the guardrail returns `OK`.
 | Signal | Pass | Watch | Fail |
 |---|---:|---:|---:|
 | Initial HTTP p95 | <= 2500 ms | <= 5000 ms | > 5000 ms |
+| Live browser step p95 | <= 10000 ms | <= 20000 ms | > 20000 ms |
 | HTTP error rate | 0% | <= 2% | > 2% |
 | Snowflake query p95 | <= 8 sec | <= 20 sec | > 20 sec |
 | Remote spill | 0-5 GB | 5-25 GB | > 25 GB |

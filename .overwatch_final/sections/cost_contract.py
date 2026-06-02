@@ -12,7 +12,7 @@ from utils import (
     format_snowflake_error,
     get_active_company,
     get_credit_price,
-    get_session,
+    get_session_for_action,
     get_wh_filter_clause,
     load_action_queue,
     run_query,
@@ -588,6 +588,505 @@ def _render_cost_run_rate_lens(run_rate: pd.DataFrame | None, credit_price: floa
     )
 
 
+def _state_frame(state: dict, key: str) -> pd.DataFrame:
+    value = state.get(key)
+    return value if isinstance(value, pd.DataFrame) else pd.DataFrame()
+
+
+def _has_columns(df: pd.DataFrame, columns: list[str]) -> bool:
+    return isinstance(df, pd.DataFrame) and not df.empty and all(col in df.columns for col in columns)
+
+
+def _add_coverage_row(rows: list[dict], control: str, state: str, evidence: str, action: str, owner: str = "DBA / FinOps") -> None:
+    rows.append({
+        "CONTROL": control,
+        "STATE": state,
+        "EVIDENCE": evidence,
+        "NEXT_ACTION": action,
+        "OWNER": owner,
+    })
+
+
+def _build_cost_control_coverage_board(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    verification_health: pd.DataFrame,
+    state: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    state = state or st.session_state
+    rows: list[dict] = []
+    explorer = _state_frame(state, "df_cost_explorer_detail")
+    chargeback = _state_frame(state, "df_chargeback")
+    cortex_projection, cortex_exceptions = _loaded_cortex_state()
+
+    _add_coverage_row(
+        rows,
+        "Exact warehouse metering",
+        "Ready" if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Load Needed",
+        "Cockpit has exact WAREHOUSE_METERING_HISTORY current/prior credits." if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Cost cockpit has not loaded exact warehouse movement yet.",
+        "Load Cost Cockpit before explaining any bill movement.",
+    )
+    _add_coverage_row(
+        rows,
+        "7-day average and YOY",
+        "Ready" if _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"]) else "Load Needed",
+        "Run-rate lens has complete-day 7d average and prior-year comparison." if _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"]) else "Run-rate/YOY evidence is not loaded.",
+        "Load Cost Cockpit to populate complete-day run-rate and YOY proof.",
+    )
+    _add_coverage_row(
+        rows,
+        "Company and environment split",
+        "Ready" if _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"]) else "Review",
+        "Chargeback/Cost Explorer includes company and environment dimensions." if _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"]) else "Company/environment attribution is not loaded in this session.",
+        "Load Cost Explorer or Chargeback before defending ALFA/Trexis or PROD/DEV allocation.",
+    )
+    _add_coverage_row(
+        rows,
+        "Database and DEV rollup",
+        "Ready" if _has_columns(chargeback, ["DATABASE_NAME"]) or _has_columns(explorer, ["DATABASE_NAME"]) else "Review",
+        "Database-attributed cost is visible and labeled Allocated / Estimated." if _has_columns(chargeback, ["DATABASE_NAME"]) or _has_columns(explorer, ["DATABASE_NAME"]) else "Database-level attribution has not been loaded.",
+        "Use Chargeback for PROD, DEV_ALL, and individual DEV database cost views.",
+    )
+    _add_coverage_row(
+        rows,
+        "Role, user, and department drivers",
+        "Ready" if _has_columns(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"]) else "Review",
+        "Cost Explorer detail includes role, user, and department dimensions." if _has_columns(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"]) else "Role/user/department cost drivers are not loaded.",
+        "Load Cost Explorer and sort by estimated cost before assigning optimization work.",
+    )
+
+    open_cost_queue = pd.DataFrame()
+    if isinstance(queue, pd.DataFrame) and not queue.empty:
+        category = queue.get("CATEGORY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+        status = queue.get("STATUS", pd.Series(["New"] * len(queue), index=queue.index)).fillna("New").astype(str).str.title()
+        open_cost_queue = queue[category.str.contains("COST|CHARGEBACK|FINOPS|CORTEX", na=False) & ~status.isin(["Fixed", "Ignored"])]
+    owner_source = open_cost_queue.get("OWNER_SOURCE", pd.Series(dtype=str)).fillna("").astype(str).str.strip() if not open_cost_queue.empty else pd.Series(dtype=str)
+    owner_ready = int(owner_source.ne("").sum()) if not owner_source.empty else 0
+    _add_coverage_row(
+        rows,
+        "Owned cost action queue",
+        "Ready" if not open_cost_queue.empty and owner_ready == len(open_cost_queue) else "Review" if not open_cost_queue.empty else "No Rows",
+        f"{len(open_cost_queue):,} open cost action(s); {owner_ready:,} have owner-source evidence.",
+        "Route cost findings through the action queue with owner, due date, approval, and verification proof.",
+    )
+
+    verification_summary, _ = _build_savings_verification_task_summary(verification_health)
+    verifier_state = str(verification_summary.get("state") or "Unknown")
+    _add_coverage_row(
+        rows,
+        "Verified savings ledger",
+        "Ready" if verifier_state == "Ready" else "Review",
+        str(verification_summary.get("evidence") or "Savings verifier health has not been loaded."),
+        str(verification_summary.get("next_action") or "Deploy and monitor the scheduled savings verifier task."),
+    )
+    _add_coverage_row(
+        rows,
+        "Cortex cost guardrail",
+        "Ready" if cortex_projection > 0 or cortex_exceptions > 0 else "No Rows",
+        f"Projected Cortex spend ${cortex_projection:,.0f}/30d with {cortex_exceptions:,} exception(s).",
+        "Open AI and Cortex spend when projection or exception count is non-zero.",
+    )
+    _add_coverage_row(
+        rows,
+        "Shared-cost disclosure",
+        "Ready",
+        "Warehouse totals are exact; user/query/database chargeback is explicitly labeled Allocated / Estimated.",
+        "Keep shared warehouse and no-database-context costs out of exact PROD/DEV claims until owner/tag proof exists.",
+    )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {"score": 0, "ready": 0, "review": 0, "load_needed": 0}, board
+    load_needed = int(board["STATE"].eq("Load Needed").sum())
+    review = int(board["STATE"].eq("Review").sum())
+    ready = int(board["STATE"].isin(["Ready", "No Rows"]).sum())
+    score = max(0, min(100, 100 - load_needed * 12 - review * 6))
+    board["_STATE_RANK"] = board["STATE"].map({"Load Needed": 0, "Review": 1, "No Rows": 2, "Ready": 3}).fillna(9)
+    return {
+        "score": int(score),
+        "ready": ready,
+        "review": review,
+        "load_needed": load_needed,
+    }, board.sort_values(["_STATE_RANK", "CONTROL"]).drop(columns=["_STATE_RANK"], errors="ignore")
+
+
+def _build_cost_allocation_trust_board(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    state: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Classify cost evidence as exact, allocated/estimated, or not yet defensible."""
+    state = state or st.session_state
+    rows: list[dict] = []
+    explorer = _state_frame(state, "df_cost_explorer_detail")
+    chargeback = _state_frame(state, "df_chargeback")
+
+    def add(control: str, trust: str, evidence: str, action: str, owner: str = "DBA / FinOps") -> None:
+        rows.append({
+            "CONTROL": control,
+            "TRUST_STATE": trust,
+            "EVIDENCE": evidence,
+            "NEXT_ACTION": action,
+            "OWNER": owner,
+        })
+
+    exact_loaded = _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"])
+    run_rate_loaded = _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"])
+    add(
+        "Contract and warehouse totals",
+        "Exact" if exact_loaded and run_rate_loaded else "Load Needed",
+        "Warehouse metering and complete-day run-rate/YOY are loaded." if exact_loaded and run_rate_loaded else "Exact warehouse totals or complete-day run-rate evidence is missing.",
+        "Load Cost Cockpit before defending contract pace, 7-day average, or YOY movement.",
+    )
+
+    company_env_loaded = _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"])
+    add(
+        "Company and environment view",
+        "Allocated/Estimated" if company_env_loaded else "Review",
+        "Company/environment split is present; database-attributed cost remains allocated where warehouse usage is shared." if company_env_loaded else "Company/environment allocation is not loaded in this session.",
+        "Load Cost Explorer or Chargeback before explaining ALFA/Trexis or PROD/DEV cost movement.",
+    )
+
+    db_loaded = _has_columns(chargeback, ["DATABASE_NAME"]) or _has_columns(explorer, ["DATABASE_NAME"])
+    allocation_confidence = pd.Series(dtype=str)
+    if _has_columns(chargeback, ["ALLOCATION_CONFIDENCE"]):
+        allocation_confidence = chargeback["ALLOCATION_CONFIDENCE"].fillna("").astype(str)
+    elif _has_columns(explorer, ["ALLOCATION_CONFIDENCE"]):
+        allocation_confidence = explorer["ALLOCATION_CONFIDENCE"].fillna("").astype(str)
+    estimated_rows = int(allocation_confidence.str.contains("ESTIMATED|ALLOCATED|SHARED", case=False, regex=True).sum()) if len(allocation_confidence) else 0
+    add(
+        "Database attribution",
+        "Allocated/Estimated" if db_loaded else "Review",
+        (
+            f"Database drilldown loaded; {estimated_rows:,} row(s) explicitly carry allocated/shared/estimated confidence."
+            if db_loaded else "Database attribution is not loaded."
+        ),
+        "Use database views for chargeback directionally; do not present shared warehouse database spend as exact.",
+    )
+
+    human_driver_loaded = _has_columns(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"])
+    add(
+        "Role, user, department drivers",
+        "Allocated/Estimated" if human_driver_loaded else "Review",
+        "Human and department cost drivers are available for prioritization." if human_driver_loaded else "Role/user/department drilldown is not loaded.",
+        "Load Cost Explorer before assigning optimization work to teams or departments.",
+    )
+
+    no_database_rows = 0
+    for frame in (chargeback, explorer):
+        if _has_columns(frame, ["DATABASE_NAME"]):
+            no_database_rows += int(frame["DATABASE_NAME"].fillna("").astype(str).str.strip().eq("").sum())
+    add(
+        "Shared and no-database spend",
+        "Allocated/Estimated" if no_database_rows else "Ready" if db_loaded else "Review",
+        (
+            f"{no_database_rows:,} loaded row(s) have no database context and must stay outside exact PROD/DEV claims."
+            if no_database_rows else "No loaded database-attribution rows are missing database context." if db_loaded else "No database-attribution rows loaded."
+        ),
+        "Keep no-database, login-only, and shared-service spend labeled allocated/estimated until owner/tag proof exists.",
+    )
+
+    open_cost_queue = pd.DataFrame()
+    if isinstance(queue, pd.DataFrame) and not queue.empty:
+        category = queue.get("CATEGORY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+        status = queue.get("STATUS", pd.Series(["New"] * len(queue), index=queue.index)).fillna("New").astype(str).str.title()
+        open_cost_queue = queue[category.str.contains("COST|CHARGEBACK|FINOPS|CORTEX", na=False) & ~status.isin(["Fixed", "Ignored"])].copy()
+    owner_ready = 0
+    verification_ready = 0
+    if not open_cost_queue.empty:
+        owner_ready = int(open_cost_queue.get("OWNER_SOURCE", pd.Series(dtype=str)).fillna("").astype(str).str.strip().ne("").sum())
+        verification_ready = int(
+            open_cost_queue.get("VERIFICATION_STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper().str.contains("VERIFIED|PASSED|COMPLETE", regex=True).sum()
+        )
+    add(
+        "Optimization closure trust",
+        "Ready" if not open_cost_queue.empty and owner_ready == len(open_cost_queue) and verification_ready > 0 else "Review" if not open_cost_queue.empty else "No Rows",
+        f"{len(open_cost_queue):,} open cost action(s); {owner_ready:,} owner-routed; {verification_ready:,} verified/completed.",
+        "Do not claim savings until owner approval, measurement period, verification result, and closure evidence are attached.",
+    )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {"score": 0, "exact": 0, "estimated": 0, "review": 0, "load_needed": 0}, board
+    exact = int(board["TRUST_STATE"].isin(["Exact", "Ready", "No Rows"]).sum())
+    estimated = int(board["TRUST_STATE"].eq("Allocated/Estimated").sum())
+    review = int(board["TRUST_STATE"].eq("Review").sum())
+    load_needed = int(board["TRUST_STATE"].eq("Load Needed").sum())
+    score = max(0, min(100, 100 - load_needed * 14 - review * 7 - estimated * 2))
+    board["_TRUST_RANK"] = board["TRUST_STATE"].map({
+        "Load Needed": 0,
+        "Review": 1,
+        "Allocated/Estimated": 2,
+        "No Rows": 3,
+        "Ready": 4,
+        "Exact": 5,
+    }).fillna(9)
+    return {
+        "score": int(score),
+        "exact": exact,
+        "estimated": estimated,
+        "review": review,
+        "load_needed": load_needed,
+    }, board.sort_values(["_TRUST_RANK", "CONTROL"]).drop(columns=["_TRUST_RANK"], errors="ignore").reset_index(drop=True)
+
+
+def _build_cost_drilldown_command_map(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    state: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Expose which cost drilldowns are defensible from already-loaded data."""
+    state = state or st.session_state
+    explorer = _state_frame(state, "df_cost_explorer_detail")
+    chargeback = _state_frame(state, "df_chargeback")
+    cortex_projection, cortex_exceptions = _loaded_cortex_state()
+
+    rows: list[dict] = []
+
+    def loaded_rows(*frames: pd.DataFrame) -> int:
+        return sum(len(frame) for frame in frames if isinstance(frame, pd.DataFrame) and not frame.empty)
+
+    def add(
+        grain: str,
+        state_value: str,
+        trust: str,
+        rows_loaded: int,
+        metric: str,
+        next_action: str,
+        workflow: str,
+        rank: int,
+    ) -> None:
+        rows.append({
+            "COMMAND_PRIORITY": f"P{rank}",
+            "DRILLDOWN": grain,
+            "STATE": state_value,
+            "TRUST": trust,
+            "ROWS_LOADED": rows_loaded,
+            "PRIMARY_METRIC": metric,
+            "NEXT_ACTION": next_action,
+            "WORKFLOW": workflow,
+            "_RANK": rank,
+        })
+
+    current_credits = safe_float(cockpit.iloc[0].get("CURRENT_CREDITS")) if isinstance(cockpit, pd.DataFrame) and not cockpit.empty else 0.0
+    prior_credits = safe_float(cockpit.iloc[0].get("PRIOR_CREDITS")) if isinstance(cockpit, pd.DataFrame) and not cockpit.empty else 0.0
+    top_wh = str(cockpit.iloc[0].get("TOP_INCREASE_WAREHOUSE") or "") if isinstance(cockpit, pd.DataFrame) and not cockpit.empty else ""
+    exact_loaded = _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"])
+    add(
+        "Warehouse bill movement",
+        "Ready" if exact_loaded else "Load Needed",
+        "Exact",
+        loaded_rows(cockpit),
+        f"{current_credits:,.2f} current credits; {prior_credits:,.2f} prior credits",
+        f"Explain top warehouse movement first{f': {top_wh}' if top_wh else ''}.",
+        "Explain bill / attribution / contract",
+        0 if exact_loaded else 1,
+    )
+
+    run_loaded = _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"])
+    add(
+        "7-day average and YOY pace",
+        "Ready" if run_loaded else "Load Needed",
+        "Exact",
+        loaded_rows(run_rate),
+        (
+            f"7d avg {safe_float(run_rate.iloc[0].get('AVG_DAILY_7D')):,.2f} credits; "
+            f"YOY7 {safe_float(run_rate.iloc[0].get('YOY_7D_PCT')):+.1f}%"
+            if run_loaded and not run_rate.empty else "No run-rate evidence loaded"
+        ),
+        "Use complete-day 7d average and YOY before calling a spike real.",
+        "Explain bill / attribution / contract",
+        0 if run_loaded else 1,
+    )
+
+    company_loaded = _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"])
+    add(
+        "Company and environment",
+        "Ready" if company_loaded else "Review",
+        "Allocated/Estimated",
+        loaded_rows(chargeback, explorer),
+        "ALFA/Trexis plus PROD/DEV split" if company_loaded else "No company/environment rows loaded",
+        "Use this for chargeback direction; keep shared warehouse disclosure visible.",
+        "Explain bill / attribution / contract",
+        2 if company_loaded else 3,
+    )
+
+    db_loaded = _has_columns(chargeback, ["DATABASE_NAME"]) or _has_columns(explorer, ["DATABASE_NAME"])
+    no_db_rows = 0
+    for frame in (chargeback, explorer):
+        if _has_columns(frame, ["DATABASE_NAME"]):
+            no_db_rows += int(frame["DATABASE_NAME"].fillna("").astype(str).str.strip().eq("").sum())
+    add(
+        "Database, DEV rollup, no-database spend",
+        "Ready" if db_loaded else "Review",
+        "Allocated/Estimated",
+        loaded_rows(chargeback, explorer),
+        f"{no_db_rows:,} no-database row(s)" if db_loaded else "No database rows loaded",
+        "Show PROD, DEV_ALL, individual DEV databases, and keep no-database spend out of exact claims.",
+        "Explain bill / attribution / contract",
+        2 if db_loaded else 3,
+    )
+
+    human_loaded = _has_columns(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"])
+    add(
+        "Role, user, department",
+        "Ready" if human_loaded else "Review",
+        "Allocated/Estimated",
+        loaded_rows(explorer),
+        "Role/user/department drivers loaded" if human_loaded else "Human driver rows not loaded",
+        "Sort by estimated dollars before assigning work to a department or user.",
+        "Explain bill / attribution / contract",
+        2 if human_loaded else 3,
+    )
+
+    open_cost_queue = pd.DataFrame()
+    if isinstance(queue, pd.DataFrame) and not queue.empty:
+        mask = _cost_action_mask(queue)
+        open_cost_queue = queue[mask].copy()
+    verified = 0
+    if not open_cost_queue.empty:
+        verified = int(
+            open_cost_queue.get("VERIFICATION_STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper().str.contains(
+                "VERIFIED|PASSED|COMPLETE",
+                regex=True,
+            ).sum()
+        )
+    add(
+        "Savings closure proof",
+        "Ready" if not open_cost_queue.empty and verified else "Review" if not open_cost_queue.empty else "No Rows",
+        "Exact after verification",
+        len(open_cost_queue),
+        f"{verified:,} verified/completed action(s)",
+        "Do not count savings until measurement, owner approval, and verification result are attached.",
+        "Recommendations and action queue",
+        2 if verified else 3,
+    )
+
+    add(
+        "AI and Cortex spend",
+        "Ready" if cortex_projection > 0 or cortex_exceptions > 0 else "No Rows",
+        "Allocated/Estimated",
+        cortex_exceptions,
+        f"${cortex_projection:,.0f}/30d projection; {cortex_exceptions:,} exception(s)",
+        "Review first/last usage, user attribution, and projected token-credit spend.",
+        "AI and Cortex spend",
+        2 if cortex_projection > 0 or cortex_exceptions > 0 else 4,
+    )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {"ready": 0, "review": 0, "load_needed": 0, "estimated": 0}, board
+    ready = int(board["STATE"].isin(["Ready", "No Rows"]).sum())
+    review = int(board["STATE"].eq("Review").sum())
+    load_needed = int(board["STATE"].eq("Load Needed").sum())
+    estimated = int(board["TRUST"].eq("Allocated/Estimated").sum())
+    return {
+        "ready": ready,
+        "review": review,
+        "load_needed": load_needed,
+        "estimated": estimated,
+    }, board.sort_values(["_RANK", "DRILLDOWN"]).drop(columns=["_RANK"], errors="ignore").reset_index(drop=True)
+
+
+def _render_cost_control_coverage_board(
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    verification_health: pd.DataFrame,
+) -> None:
+    summary, board = _build_cost_control_coverage_board(
+        cockpit=cockpit,
+        run_rate=run_rate,
+        queue=queue,
+        verification_health=verification_health,
+    )
+    if board.empty:
+        return
+    st.markdown("**Cost Control Coverage**")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Coverage", f"{summary['score']}/100")
+    c2.metric("Ready", f"{summary['ready']:,}")
+    c3.metric("Review", f"{summary['review']:,}", delta_color="inverse")
+    c4.metric("Load Needed", f"{summary['load_needed']:,}", delta_color="inverse")
+    render_priority_dataframe(
+        board,
+        title="Cost evidence coverage",
+        priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
+        sort_by=["STATE", "CONTROL"],
+        ascending=[True, True],
+        raw_label="All cost control coverage rows",
+        max_rows=12,
+    )
+
+
+def _render_cost_allocation_trust_board(
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+) -> None:
+    summary, board = _build_cost_allocation_trust_board(
+        cockpit=cockpit,
+        run_rate=run_rate,
+        queue=queue,
+    )
+    if board.empty:
+        return
+    st.markdown("**Cost Allocation Trust**")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Trust", f"{summary['score']}/100")
+    c2.metric("Exact / Ready", f"{summary['exact']:,}")
+    c3.metric("Allocated / Estimated", f"{summary['estimated']:,}")
+    c4.metric("Review / Load", f"{summary['review'] + summary['load_needed']:,}", delta_color="inverse")
+    render_priority_dataframe(
+        board,
+        title="Cost attribution trust states",
+        priority_columns=["TRUST_STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
+        sort_by=["TRUST_STATE", "CONTROL"],
+        ascending=[True, True],
+        raw_label="All cost allocation trust rows",
+        max_rows=10,
+    )
+
+
+def _render_cost_drilldown_command_map(
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+) -> None:
+    summary, board = _build_cost_drilldown_command_map(
+        cockpit=cockpit,
+        run_rate=run_rate,
+        queue=queue,
+    )
+    if board.empty:
+        return
+    st.markdown("**Cost Drilldown Command Map**")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Ready", f"{summary['ready']:,}")
+    c2.metric("Review", f"{summary['review']:,}", delta_color="inverse")
+    c3.metric("Load Needed", f"{summary['load_needed']:,}", delta_color="inverse")
+    c4.metric("Allocated", f"{summary['estimated']:,}")
+    render_priority_dataframe(
+        board,
+        title="Cost drilldowns to trust or load next",
+        priority_columns=[
+            "COMMAND_PRIORITY", "STATE", "DRILLDOWN", "TRUST", "ROWS_LOADED", "PRIMARY_METRIC",
+            "NEXT_ACTION", "WORKFLOW",
+        ],
+        sort_by=["COMMAND_PRIORITY", "DRILLDOWN"],
+        ascending=[True, True],
+        raw_label="All cost drilldown command rows",
+        height=280,
+        max_rows=10,
+    )
+
+
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     st.subheader("Cost Control Cockpit")
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -595,6 +1094,13 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         days = st.selectbox("Cost cockpit window", [7, 14, 30], index=0, format_func=lambda d: f"{d} days")
     with c2:
         if st.button("Load Cost Cockpit", key="cost_contract_cockpit_load", type="primary"):
+            session = get_session_for_action(
+                "load the Cost Control Cockpit",
+                surface="Cost & Contract",
+                offline_note="Cost workflow navigation remains available without a live Snowflake connection.",
+            )
+            if session is None:
+                return
             try:
                 st.session_state["cost_contract_cockpit"] = run_query(
                     build_mart_cost_cockpit_sql(company, int(days)),
@@ -654,7 +1160,6 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                         f"live fallback failed: {format_snowflake_error(exc)}"
                     )
             try:
-                session = get_session()
                 st.session_state["cost_contract_queue"] = load_action_queue(session)
                 st.session_state["cost_contract_queue_error"] = ""
             except Exception as exc:
@@ -741,6 +1246,22 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         st.session_state.get("cost_contract_verification_health_error", ""),
     )
     _render_savings_closure_control(queue, credit_price)
+    _render_cost_control_coverage_board(
+        data,
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        queue,
+        st.session_state.get("cost_contract_verification_health", pd.DataFrame()),
+    )
+    _render_cost_allocation_trust_board(
+        data,
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        queue,
+    )
+    _render_cost_drilldown_command_map(
+        data,
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        queue,
+    )
 
     moves = []
     if delta_pct >= 20 or safe_float(row.get("TOP_INCREASE_CREDITS", 0)) > 0:

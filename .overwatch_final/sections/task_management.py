@@ -751,6 +751,74 @@ def _task_ops_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _task_recovery_command_board(exceptions: pd.DataFrame, recovery_sla: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict] = []
+    seen_tasks: set[str] = set()
+    if exceptions is not None and not exceptions.empty:
+        for _, row in _task_ops_priority_view(exceptions).head(50).iterrows():
+            task_name = str(row.get("TASK_NAME") or row.get("ROOT_TASK_NAME") or "").strip()
+            if task_name:
+                seen_tasks.add(task_name)
+            readiness = str(row.get("RECOVERY_READINESS") or _task_exception_recovery_readiness(row)).strip()
+            owner_state = str(row.get("OWNER_APPROVAL_STATE") or _task_owner_approval_state(row)).strip()
+            rows.append({
+                "INCIDENT_PRIORITY": row.get("INCIDENT_PRIORITY", ""),
+                "COMMAND_STATE": "Blocked" if readiness.upper().startswith("BLOCKED") else "Ready for DBA review",
+                "SIGNAL": row.get("SIGNAL", ""),
+                "TASK_NAME": task_name,
+                "ROOT_TASK_NAME": row.get("ROOT_TASK_NAME", ""),
+                "GRAPH_ROLE": row.get("GRAPH_ROLE", ""),
+                "DOWNSTREAM_TASK_COUNT": safe_int(row.get("DOWNSTREAM_TASK_COUNT")),
+                "RECOVERY_STATE": row.get("RECOVERY_STATE", ""),
+                "RECOVERY_READINESS": readiness,
+                "OWNER_APPROVAL_STATE": owner_state,
+                "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
+                "APPROVAL_GROUP": row.get("APPROVAL_GROUP", ""),
+                "NEXT_WORKFLOW": row.get("NEXT_WORKFLOW", _task_ops_workflow_for(row.get("SIGNAL", ""))),
+                "NEXT_ACTION": row.get("NEXT_ACTION", _task_action_for(row.get("SIGNAL", ""))[0]),
+                "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", "Verify the next successful TASK_HISTORY run before closure."),
+            })
+
+    if recovery_sla is not None and not recovery_sla.empty:
+        for _, row in recovery_sla.iterrows():
+            task_name = str(row.get("TASK_NAME") or "").strip()
+            recovery_state = str(row.get("RECOVERY_STATE") or "").strip()
+            if task_name in seen_tasks or recovery_state == "Recovered Within SLA":
+                continue
+            rows.append({
+                "INCIDENT_PRIORITY": row.get("INCIDENT_PRIORITY", ""),
+                "COMMAND_STATE": "Blocked" if recovery_state in {"Open Failure", "Recovered Late"} else "Ready for DBA review",
+                "SIGNAL": "Open Recovery SLA" if recovery_state == "Open Failure" else "Recovery SLA Review",
+                "TASK_NAME": task_name,
+                "ROOT_TASK_NAME": row.get("ROOT_TASK_NAME", ""),
+                "GRAPH_ROLE": row.get("GRAPH_ROLE", ""),
+                "DOWNSTREAM_TASK_COUNT": safe_int(row.get("DOWNSTREAM_TASK_COUNT")),
+                "RECOVERY_STATE": recovery_state,
+                "RECOVERY_READINESS": (
+                    "Blocked - verify successful recovery run first"
+                    if recovery_state == "Open Failure"
+                    else "Blocked - attach late recovery evidence before close"
+                ),
+                "OWNER_APPROVAL_STATE": row.get("OWNER_APPROVAL_STATE", ""),
+                "ONCALL_PRIMARY": row.get("ONCALL_PRIMARY", ""),
+                "APPROVAL_GROUP": row.get("APPROVAL_GROUP", ""),
+                "NEXT_WORKFLOW": "Failure Console",
+                "NEXT_ACTION": "Attach owner-approved recovery evidence and verify the next successful task run before closure.",
+                "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", "Attach TASK_HISTORY recovery proof before closure."),
+            })
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return board
+    priority_rank = board["INCIDENT_PRIORITY"].astype(str).str.extract(r"P(\d)", expand=False).fillna("9").astype(int)
+    board["_PRIORITY_RANK"] = priority_rank
+    board["_COMMAND_RANK"] = board["COMMAND_STATE"].map({"Blocked": 0, "Ready for DBA review": 1}).fillna(9)
+    return board.sort_values(
+        ["_COMMAND_RANK", "_PRIORITY_RANK", "DOWNSTREAM_TASK_COUNT", "TASK_NAME"],
+        ascending=[True, True, False, True],
+    ).drop(columns=["_COMMAND_RANK", "_PRIORITY_RANK"], errors="ignore").reset_index(drop=True)
+
+
 def _task_ops_workflow_for(signal: str) -> str:
     signal = str(signal or "").upper()
     if "FAILED" in signal:
@@ -1980,6 +2048,35 @@ def _render_task_ops_brief(session) -> None:
             st.info("Watch: task graph operations are mostly stable with exceptions to review.")
         else:
             st.success("Operational: no dominant task graph risk signal in this scope.")
+
+        recovery_board = _task_recovery_command_board(exceptions, recovery_sla)
+        if not recovery_board.empty:
+            st.subheader("Recovery Command Board")
+            r1, r2, r3, r4 = st.columns(4)
+            blocked = int(recovery_board["COMMAND_STATE"].astype(str).eq("Blocked").sum())
+            p1_p2 = int(recovery_board["INCIDENT_PRIORITY"].astype(str).str.startswith(("P1", "P2")).sum())
+            owner_review = int(
+                recovery_board["OWNER_APPROVAL_STATE"].fillna("").astype(str).str.upper().str.contains("REQUIRED|REQUESTED", na=False).sum()
+            )
+            r1.metric("Recovery Items", f"{len(recovery_board):,}")
+            r2.metric("Blocked", f"{blocked:,}", delta_color="inverse")
+            r3.metric("P1 / P2", f"{p1_p2:,}", delta_color="inverse")
+            r4.metric("Owner Review", f"{owner_review:,}", delta_color="inverse")
+            render_priority_dataframe(
+                recovery_board,
+                title="Retry and closure readiness",
+                priority_columns=[
+                    "COMMAND_STATE", "INCIDENT_PRIORITY", "SIGNAL", "TASK_NAME",
+                    "ROOT_TASK_NAME", "GRAPH_ROLE", "DOWNSTREAM_TASK_COUNT",
+                    "RECOVERY_STATE", "RECOVERY_READINESS", "OWNER_APPROVAL_STATE",
+                    "ONCALL_PRIMARY", "APPROVAL_GROUP", "NEXT_WORKFLOW",
+                    "NEXT_ACTION", "VERIFY_AFTER_FIX",
+                ],
+                sort_by=["COMMAND_STATE", "INCIDENT_PRIORITY", "DOWNSTREAM_TASK_COUNT"],
+                ascending=[True, True, False],
+                raw_label="All recovery command rows",
+                max_rows=12,
+            )
 
         priority = _task_ops_priority_view(exceptions).head(3)
         st.markdown("**Next DBA Moves**")

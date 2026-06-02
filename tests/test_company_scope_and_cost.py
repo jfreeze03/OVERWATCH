@@ -20,7 +20,7 @@ from utils.company_filter import (  # noqa: E402
     get_wh_filter_clause,
 )
 from utils.cost import build_cost_reconciliation_sql  # noqa: E402
-from utils.compatibility import filter_existing_columns  # noqa: E402
+from utils.compatibility import clear_compatibility_process_cache, filter_existing_columns  # noqa: E402
 from utils.data import normalize_df  # noqa: E402
 from utils.metadata import (  # noqa: E402
     build_unclassified_assets_sql,
@@ -238,6 +238,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             "_overwatch_column_probe",
         ):
             st.session_state.pop(key, None)
+        clear_compatibility_process_cache()
         session = BrokenSession()
         self.assertEqual(
             filter_existing_columns(
@@ -284,6 +285,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             "_overwatch_column_probe",
         ):
             st.session_state.pop(key, None)
+        clear_compatibility_process_cache()
 
         session = Session()
         existing = filter_existing_columns(

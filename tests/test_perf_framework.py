@@ -30,6 +30,18 @@ def load_snowflake_runner():
     return module
 
 
+def load_live_runner():
+    spec = importlib.util.spec_from_file_location(
+        "overwatch_live_concurrent_runner",
+        PERF_ROOT / "live_concurrent_runner.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class PerformanceFrameworkTests(unittest.TestCase):
     def test_perf_sql_scripts_are_guarded_and_cleanup_is_scoped(self):
         setup_sql = (PERF_ROOT / "sql" / "01_perf_test_setup.sql").read_text(encoding="utf-8").upper()
@@ -94,6 +106,9 @@ class PerformanceFrameworkTests(unittest.TestCase):
         self.assertIn("medium", readme)
         self.assertIn("full_5tb", readme)
         self.assertIn("section_smoke_runner.py", readme)
+        self.assertIn("live_concurrent_runner.py", readme)
+        self.assertIn("--no-load-buttons", readme)
+        self.assertIn("--missing-load-button fail", readme)
         self.assertIn("section timing", readme)
         self.assertIn("99_cleanup_perf_test.sql", readme)
         self.assertIn("PERF_TEST_PRODUCTION_READINESS_V", readme)
@@ -138,3 +153,44 @@ class PerformanceFrameworkTests(unittest.TestCase):
         self.assertIn('page.locator(".ow-section-title").first.wait_for', runner_text)
         self.assertIn("get_by_role(\"button\"", runner_text)
         self.assertIn("_sections.json", runner_text)
+
+    def test_live_concurrent_runner_uses_only_safe_load_buttons(self):
+        runner = load_live_runner()
+        runner_text = (PERF_ROOT / "live_concurrent_runner.py").read_text(encoding="utf-8")
+        unsafe_tokens = ("Grant", "Save", "Queue", "Send", "Retry", "Suspend", "Resume", "Cancel", "Drop", "Alter")
+
+        self.assertIn("DEFAULT_LOAD_BUTTONS", runner_text)
+        self.assertEqual(runner.DEFAULT_LOAD_BUTTONS["Cost & Contract"], "Load Cost Cockpit")
+        self.assertEqual(runner.DEFAULT_LOAD_BUTTONS["Alert Center"], "Load Full Control Health")
+        self.assertNotIn("Account Health", runner.DEFAULT_LOAD_BUTTONS)
+        self.assertNotIn("Warehouse Health", runner.DEFAULT_LOAD_BUTTONS)
+        self.assertNotIn("Change & Drift", runner.DEFAULT_LOAD_BUTTONS)
+        for label in runner.DEFAULT_LOAD_BUTTONS.values():
+            self.assertTrue(label.startswith("Load"))
+            self.assertFalse(any(token in label for token in unsafe_tokens), label)
+
+    def test_live_concurrent_runner_summarizes_browser_steps(self):
+        runner = load_live_runner()
+        samples = [
+            runner.StepSample(1, 1, "App Shell", "initial_load", 500.0, True),
+            runner.StepSample(1, 1, "Cost & Contract", "section_nav", 900.0, True),
+            runner.StepSample(1, 1, "Cost & Contract", "load_button:Load Cost Cockpit", 3000.0, True),
+            runner.StepSample(2, 1, "Cost & Contract", "load_button:Load Cost Cockpit", 5000.0, False, "boom"),
+            runner.StepSample(2, 1, "Warehouse Health", "load_button:Load Capacity Brief", 8.0, True, skipped=True),
+        ]
+        args = runner.parse_args([
+            "--url", "http://localhost:8501/",
+            "--users", "2",
+            "--iterations", "1",
+            "--fail-p95-ms", "6000",
+            "--fail-error-rate", "0.30",
+        ])
+        summary = runner.summarize(samples, 8.0, args)
+
+        self.assertEqual(summary["steps"], 5)
+        self.assertEqual(summary["measured_steps"], 4)
+        self.assertEqual(summary["skipped"], 1)
+        self.assertEqual(summary["errors"], 1)
+        self.assertIn("Cost & Contract", summary["by_section"])
+        self.assertIn("load_button:Load Cost Cockpit", summary["by_action"])
+        self.assertIn(summary["readiness_state"], {"PASS", "WATCH"})

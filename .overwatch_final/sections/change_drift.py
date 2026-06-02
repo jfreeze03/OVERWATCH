@@ -904,6 +904,31 @@ def _change_operator_next_moves(
         "GATE_RANK": rank,
     })
 
+    recovery_sensitive = 0
+    if exceptions is not None and not exceptions.empty:
+        finding_text = exceptions.get("FINDING_TYPE", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+        recovery_sensitive = int(
+            finding_text.str.contains("DESTRUCTIVE|DROP|POLICY|TAG|OWNER", regex=True, na=False).sum()
+        )
+    if recovery_risk or recovery_sensitive:
+        state = "Recovery Proof Required"
+        rank = 3
+        next_action = "Attach restore, rollback, downstream dependency, and owner approval evidence before accepting this change."
+        count = max(recovery_risk, recovery_sensitive)
+    else:
+        state = "Clear"
+        rank = 8
+        next_action = "No destructive, ownership, or policy/tag change currently requires extra recovery proof."
+        count = 0
+    rows.append({
+        "GATE": "Recovery readiness",
+        "STATE": state,
+        "COUNT": count,
+        "PROOF_REQUIRED": "restore path, rollback plan, dependency impact, owner approval, post-change verification",
+        "NEXT_ACTION": next_action,
+        "GATE_RANK": rank,
+    })
+
     if high_risk or safe_float(score) < 95:
         state = "Review Required" if high_risk else "Watch"
         rank = 5
@@ -1260,6 +1285,93 @@ def _change_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
         sort_cols.append("LAST_SEEN")
         ascending.append(False)
     return view.sort_values(sort_cols, ascending=ascending).drop(columns=["_RANK"], errors="ignore")
+
+
+def _change_intervention_matrix(
+    exceptions: pd.DataFrame,
+    readiness: pd.DataFrame | None = None,
+    closure: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Rank change/drift rows by whether the DBA can verify, reconcile, or must block closure."""
+    priority = _change_priority_view(exceptions)
+    if priority.empty:
+        return pd.DataFrame()
+
+    ready = readiness if isinstance(readiness, pd.DataFrame) else pd.DataFrame()
+    closure_df = closure if isinstance(closure, pd.DataFrame) else pd.DataFrame()
+    ready_by_key = {}
+    if not ready.empty:
+        for _, row in ready.iterrows():
+            key = (
+                str(row.get("FINDING_TYPE") or "").upper(),
+                str(row.get("ENTITY") or "").upper(),
+                str(row.get("QUERY_ID") or "").upper(),
+            )
+            ready_by_key[key] = row
+    closure_by_entity = {
+        str(row.get("CHANGE_ENTITY") or row.get("ENTITY") or row.get("CHECK_NAME") or "").upper(): row
+        for _, row in closure_df.iterrows()
+    } if not closure_df.empty else {}
+
+    rows: list[dict] = []
+    for _, item in priority.head(30).iterrows():
+        finding = str(item.get("FINDING_TYPE") or "Change")
+        entity = str(item.get("ENTITY") or "Snowflake account")
+        query_id = str(item.get("QUERY_ID") or "").strip()
+        ready_row = ready_by_key.get((finding.upper(), entity.upper(), query_id.upper()), {})
+        closure_row = closure_by_entity.get(entity.upper(), {})
+        severity = str(item.get("SEVERITY") or "Medium")
+        control_state = str(ready_row.get("CHANGE_CONTROL_STATE") or item.get("CHANGE_CONTROL_STATE") or "Review")
+        ticket_state = str(ready_row.get("CHANGE_TICKET_STATE") or "")
+        iac_state = str(ready_row.get("IAC_RECONCILIATION_STATE") or "")
+        closure_state = str(closure_row.get("CLOSURE_READINESS") or "No recent action")
+        finding_upper = finding.upper()
+        recovery_sensitive = any(token in finding_upper for token in ("DESTRUCTIVE", "DROP", "POLICY", "TAG", "OWNER"))
+        missing_query = not query_id
+        missing_ticket = "MISSING" in ticket_state.upper() or not str(ready_row.get("CHANGE_TICKET_ID") or "").strip()
+        iac_gap = "GAP" in iac_state.upper() or "MISSING" in iac_state.upper()
+        closure_bad = any(token in closure_state.upper() for token in ("OVERDUE", "WITHOUT VERIFICATION", "GAP"))
+
+        if recovery_sensitive:
+            state = "Recovery Block"
+            rank = 0
+            decision = "Block closure until restore path, dependency blast radius, owner approval, and rollback proof exist."
+        elif missing_query or missing_ticket or iac_gap or closure_bad:
+            state = "Evidence Block"
+            rank = 1
+            decision = "Attach query_id, ticket/source-control evidence, and verification proof before accepting the change."
+        elif severity.upper() in {"CRITICAL", "HIGH"}:
+            state = "Verify Now"
+            rank = 2
+            decision = "Review actor, role, blast radius, and approval path before queueing the action."
+        else:
+            state = "Watch"
+            rank = 4
+            decision = "Keep for trend review; no immediate high-risk intervention signal."
+
+        rows.append({
+            "DBA_PRIORITY": f"P{rank}",
+            "INTERVENTION_STATE": state,
+            "SEVERITY": severity,
+            "FINDING_TYPE": finding,
+            "ENTITY": entity,
+            "USER_NAME": str(item.get("USER_NAME") or "unknown"),
+            "ROLE_NAME": str(item.get("ROLE_NAME") or ""),
+            "QUERY_ID": query_id,
+            "CONTROL_STATE": control_state,
+            "TICKET_STATE": ticket_state or "Missing",
+            "IAC_STATE": iac_state or "Missing",
+            "CLOSURE_READINESS": closure_state,
+            "NEXT_DECISION": decision,
+            "PROOF_REQUIRED": "query_id, change ticket, source-control/IaC note, blast-radius evidence, owner approval",
+            "NEXT_WORKFLOW": str(item.get("NEXT_WORKFLOW") or _change_workflow_for(item)),
+            "_RANK": rank,
+        })
+
+    return pd.DataFrame(rows).sort_values(
+        ["_RANK", "SEVERITY", "FINDING_TYPE", "ENTITY"],
+        ascending=[True, True, True, True],
+    ).drop(columns=["_RANK"], errors="ignore").reset_index(drop=True)
 
 
 def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> None:
@@ -2151,8 +2263,29 @@ def render() -> None:
                 ascending=[True, False],
                 raw_label="All change operator gates",
                 height=240,
-                max_rows=5,
+                max_rows=6,
             )
+            intervention_matrix = _change_intervention_matrix(
+                exceptions,
+                readiness=readiness,
+                closure=closure_for_gate,
+            )
+            if not intervention_matrix.empty:
+                render_priority_dataframe(
+                    intervention_matrix,
+                    title="Change DBA intervention matrix",
+                    priority_columns=[
+                        "DBA_PRIORITY", "INTERVENTION_STATE", "SEVERITY", "FINDING_TYPE", "ENTITY",
+                        "USER_NAME", "ROLE_NAME", "QUERY_ID", "CONTROL_STATE",
+                        "TICKET_STATE", "IAC_STATE", "CLOSURE_READINESS",
+                        "NEXT_DECISION", "PROOF_REQUIRED", "NEXT_WORKFLOW",
+                    ],
+                    sort_by=["DBA_PRIORITY", "SEVERITY", "FINDING_TYPE"],
+                    ascending=[True, True, True],
+                    raw_label="All change DBA intervention rows",
+                    height=300,
+                    max_rows=10,
+                )
             if not readiness_summary.empty:
                 r1, r2, r3, r4 = st.columns(4)
                 r1.metric("Change Routes", f"{len(readiness_summary):,}")

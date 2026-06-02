@@ -20,23 +20,25 @@ class ThemeRegistryTests(unittest.TestCase):
 
     def test_theme_picker_uses_clean_current_names(self):
         labels = {key: value["label"] for key, value in theme.THEMES.items()}
-        self.assertEqual(labels["midnight"], "Henson Basic")
-        self.assertEqual(labels["corporate"], "ALFA")
+        self.assertEqual(labels["midnight"], "Midnight")
+        self.assertEqual(labels["corporate"], "Henson")
         self.assertEqual(labels["terminal"], "Snowflake White")
-        self.assertEqual(labels["black_ice"], "Black Ice")
+        self.assertEqual(labels["black_ice"], "Graphite Ember")
         self.assertEqual(labels["carbon"], "Snowflake Dark")
         self.assertNotIn("aurora", theme.THEMES)
         self.assertNotIn("Aurora", labels.values())
+        self.assertNotIn("Black Ice", labels.values())
         self.assertEqual(theme._normalize_theme_key("aurora"), "black_ice")
 
     def test_snowflake_themes_use_snowflake_blue(self):
         self.assertEqual(theme.THEMES["terminal"]["swatch"], "#29B5E8")
         self.assertEqual(theme.THEMES["carbon"]["swatch"], "#29B5E8")
 
-    def test_black_ice_replaces_aurora_palette(self):
-        self.assertEqual(theme.THEMES["black_ice"]["swatch"], "#a3e635")
-        self.assertIn("#a3e635", theme._VARS["black_ice"])
-        self.assertIn("#22d3ee", theme._VARS["black_ice"])
+    def test_graphite_ember_is_visually_distinct_from_snowflake_dark(self):
+        self.assertEqual(theme.THEMES["black_ice"]["swatch"], "#f97316")
+        self.assertIn("#f97316", theme._VARS["black_ice"])
+        self.assertIn("#14b8a6", theme._VARS["black_ice"])
+        self.assertNotIn("#29B5E8", theme._VARS["black_ice"])
 
     def test_light_themes_pin_custom_shell_text_contrast(self):
         self.assertIn(
@@ -63,8 +65,17 @@ class ThemeRegistryTests(unittest.TestCase):
             '[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill',
             theme._STRUCTURAL_CSS,
         )
-        self.assertIn("color: #b00020 !important", theme._THEME_EXTRAS["corporate"])
-        self.assertIn("color: #11567F !important", theme._THEME_EXTRAS["terminal"])
+        self.assertIn("background: linear-gradient(135deg, #7f0017, #b00020) !important", theme._THEME_EXTRAS["corporate"])
+        self.assertIn("background: linear-gradient(135deg, #003f73, #0068b7) !important", theme._THEME_EXTRAS["terminal"])
+        self.assertIn('[data-testid="stSidebar"] [data-testid="stExpander"] summary', theme._THEME_EXTRAS["corporate"])
+        self.assertIn('[data-testid="stSidebar"] [data-testid="stExpander"] summary', theme._THEME_EXTRAS["terminal"])
+        self.assertIn("background: linear-gradient(135deg, #b00020, #8f001a) !important", theme._THEME_EXTRAS["corporate"])
+        self.assertIn("background: linear-gradient(135deg, #0068b7, #00528f) !important", theme._THEME_EXTRAS["terminal"])
+        self.assertIn("color: #ffffff !important", theme._THEME_EXTRAS["corporate"])
+        self.assertIn("color: #ffffff !important", theme._THEME_EXTRAS["terminal"])
+        self.assertIn('[data-testid="stExpander"] summary', theme._THEME_EXTRAS["corporate"])
+        self.assertIn('[data-testid="stExpander"] summary', theme._THEME_EXTRAS["terminal"])
+        self.assertIn("color: #102a43 !important", theme._THEME_EXTRAS["terminal"])
 
 
 if __name__ == "__main__":

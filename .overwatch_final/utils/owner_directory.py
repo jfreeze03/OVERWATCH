@@ -24,6 +24,28 @@ OWNER_CONTEXT_COLUMNS = [
     "OWNER_EVIDENCE",
 ]
 
+PLACEHOLDER_ROUTE_VALUES = {
+    "",
+    "DBA",
+    "DBA LEAD",
+    "DBA ON-CALL",
+    "DBA BACKUP",
+    "FINOPS LEAD",
+    "FINOPS BACKUP",
+    "PIPELINE OWNER",
+    "PIPELINE OWNER BACKUP",
+    "PROCEDURE OWNER",
+    "PROCEDURE OWNER BACKUP",
+    "PLATFORM DBA BACKUP",
+    "SECURITY BACKUP",
+    "DATA ENGINEERING BACKUP",
+    "INFRASTRUCTURE BACKUP",
+    "CHANGE ADVISORY BACKUP",
+    "ANALYTICS OWNER",
+    "ANALYTICS OWNER BACKUP",
+    "OVERWATCH PLATFORM OWNER",
+}
+
 GENERIC_OWNERS = {
     "",
     "DBA",
@@ -555,6 +577,115 @@ def _upper(value: Any) -> str:
 
 def _is_generic_owner(value: Any) -> bool:
     return _upper(value).replace("\\", "/") in GENERIC_OWNERS
+
+
+def _is_placeholder_route_value(value: Any) -> bool:
+    text = _upper(value).replace("\\", "/")
+    if not text or text in PLACEHOLDER_ROUTE_VALUES or text in GENERIC_OWNERS:
+        return True
+    if text.startswith("DBA /") or text.endswith(" OWNER") or text.endswith(" BACKUP"):
+        return True
+    return False
+
+
+def owner_directory_readiness_board(
+    directory: pd.DataFrame | None = None,
+    *,
+    default_email: str = DEFAULT_ALERT_EMAIL,
+) -> tuple[dict[str, int | float], pd.DataFrame]:
+    """Summarize whether owner routes are production-ready or placeholders."""
+    directory = directory if directory is not None and not directory.empty else default_owner_directory()
+    if directory is None or directory.empty:
+        empty = pd.DataFrame(columns=[
+            "OWNER_KEY", "ROUTE_STATE", "BLOCKERS", "NEXT_ACTION",
+        ])
+        return {
+            "total_routes": 0,
+            "production_ready": 0,
+            "placeholder_routes": 0,
+            "tier0_tier1_gaps": 0,
+            "readiness_pct": 0.0,
+        }, empty
+
+    view = directory.copy().fillna("")
+    rows: list[dict[str, Any]] = []
+    default_email_upper = _upper(default_email)
+    for _, row in view.iterrows():
+        owner_name = _text(row.get("OWNER_NAME"))
+        owner_email = _text(row.get("OWNER_EMAIL"))
+        oncall = _text(row.get("ONCALL_PRIMARY"))
+        approval = _text(row.get("APPROVAL_GROUP"))
+        escalation = _text(row.get("ESCALATION_TARGET"))
+        tier = _text(row.get("SERVICE_TIER")) or "Tier ?"
+        blockers: list[str] = []
+        if _is_placeholder_route_value(owner_name):
+            blockers.append("named owner")
+        if not owner_email or _upper(owner_email) == default_email_upper:
+            blockers.append("non-placeholder email")
+        if _is_placeholder_route_value(oncall):
+            blockers.append("named on-call")
+        if _is_placeholder_route_value(approval):
+            blockers.append("approval owner")
+        if _is_placeholder_route_value(escalation):
+            blockers.append("escalation owner")
+
+        if not blockers:
+            route_state = "Production Ready"
+            next_action = "Keep route current through owner-directory change control."
+        elif tier.upper() in {"TIER 0", "TIER 1"}:
+            route_state = "Priority Gap"
+            next_action = "Replace placeholder owner, email, on-call, approval, and escalation values before relying on this route."
+        else:
+            route_state = "Route Gap"
+            next_action = "Complete owner-directory fields before production escalation."
+
+        rows.append({
+            "OWNER_KEY": row.get("OWNER_KEY", ""),
+            "ENTITY_TYPE": row.get("ENTITY_TYPE", ""),
+            "ENTITY_PATTERN": row.get("ENTITY_PATTERN", ""),
+            "OWNER_NAME": owner_name,
+            "OWNER_EMAIL": owner_email,
+            "ONCALL_PRIMARY": oncall,
+            "APPROVAL_GROUP": approval,
+            "ESCALATION_TARGET": escalation,
+            "DEFAULT_ROUTE": row.get("DEFAULT_ROUTE", ""),
+            "SERVICE_TIER": tier,
+            "MATCH_PRIORITY": row.get("MATCH_PRIORITY", ""),
+            "ROUTE_STATE": route_state,
+            "BLOCKERS": ", ".join(blockers) if blockers else "none",
+            "NEXT_ACTION": next_action,
+        })
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {
+            "total_routes": 0,
+            "production_ready": 0,
+            "placeholder_routes": 0,
+            "tier0_tier1_gaps": 0,
+            "readiness_pct": 0.0,
+        }, board
+    production_ready = int(board["ROUTE_STATE"].eq("Production Ready").sum())
+    placeholder_routes = int(len(board) - production_ready)
+    tier0_tier1 = board["SERVICE_TIER"].astype(str).str.upper().isin(["TIER 0", "TIER 1"])
+    tier0_tier1_gaps = int((tier0_tier1 & board["ROUTE_STATE"].ne("Production Ready")).sum())
+    board["_STATE_RANK"] = board["ROUTE_STATE"].map({
+        "Priority Gap": 0,
+        "Route Gap": 1,
+        "Production Ready": 2,
+    }).fillna(9)
+    board["_TIER_RANK"] = board["SERVICE_TIER"].astype(str).str.extract(r"(\d+)", expand=False).fillna("9").astype(int)
+    board = board.sort_values(
+        ["_STATE_RANK", "_TIER_RANK", "MATCH_PRIORITY", "OWNER_KEY"],
+        ascending=[True, True, False, True],
+    ).drop(columns=["_STATE_RANK", "_TIER_RANK"], errors="ignore").reset_index(drop=True)
+    return {
+        "total_routes": int(len(board)),
+        "production_ready": production_ready,
+        "placeholder_routes": placeholder_routes,
+        "tier0_tier1_gaps": tier0_tier1_gaps,
+        "readiness_pct": round(production_ready / max(len(board), 1) * 100, 1),
+    }, board
 
 
 def _wildcard_match(pattern: Any, value: Any) -> tuple[bool, int]:

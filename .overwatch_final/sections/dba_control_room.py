@@ -3717,7 +3717,6 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
 
 
 def render() -> None:
-    session = get_session()
     company = st.session_state.get("active_company", "ALFA")
     environment = get_active_environment()
     credit_price = safe_float(get_credit_price()) or 3.68
@@ -3834,6 +3833,7 @@ def render() -> None:
     load_label = "Load DBA Control Room Deep Evidence" if include_deep_evidence else "Load DBA Control Room Triage"
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         with st.spinner("Loading exception signals..."):
+            session = get_session()
             st.session_state["dba_control_room_data"] = _load_control_room(
                 session,
                 company,
@@ -4324,6 +4324,7 @@ def render() -> None:
         elif st.button("Compare Release Windows", key="dba_release_compare_load", type="primary"):
             with st.spinner("Comparing task graphs and stored procedure runs..."):
                 try:
+                    session = get_session()
                     st.session_state["dba_release_compare_data"] = _load_release_compare(
                         session,
                         company,

@@ -558,6 +558,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_alert_center_sources_for_view(active_view)", alert_center_text)
         self.assertIn('st.radio(\n        "Alert Center view"', alert_center_text)
         self.assertNotIn("st.tabs(", alert_center_text)
+        for label, section_text in {
+            "Alert Center": alert_center_text,
+            "Cost & Contract": cost_contract_text,
+            "DBA Control Room": dba_control_text,
+        }.items():
+            with self.subTest(lazy_session_section=label):
+                render_start = section_text.split("def render() -> None:", 1)[1].split("render_operator_briefing", 1)[0]
+                self.assertNotIn("session = get_session()", render_start)
         self.assertIn('if active_view == "Setup SQL":', alert_center_text)
         self.assertIn('if active_view == "Suppression Windows":', alert_center_text)
         self.assertIn('sources=required_sources', alert_center_text)

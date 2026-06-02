@@ -109,7 +109,7 @@ BEGIN
     SELECT
         COALESCE("size", ''),
         COALESCE("state", ''),
-        TRY_TO_NUMBER("auto_suspend")
+        TRY_TO_NUMBER(TO_VARCHAR("auto_suspend"))
     INTO :wh_size, :wh_state, :wh_auto_suspend
     FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
     LIMIT 1;

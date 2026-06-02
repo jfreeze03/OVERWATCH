@@ -155,7 +155,7 @@ def _annotation_table_name() -> str:
     )
 
 
-def _render_annotations(session) -> None:
+def _render_annotations() -> None:
     table_name = _annotation_table_name()
     st.subheader("Suppression Windows")
     st.caption("Use suppression windows for planned maintenance, deployments, backfills, and load tests so the hourly alert task does not create duplicate noise.")
@@ -187,6 +187,7 @@ def _render_annotations(session) -> None:
                 st.warning("Entity, window start, and window end are required.")
             else:
                 try:
+                    session = get_session()
                     session.sql(f"""
                         INSERT INTO {table_name}
                             (CREATED_BY, ENTITY, ENTITY_TYPE, WINDOW_START, WINDOW_END,
@@ -257,6 +258,7 @@ def _render_annotations(session) -> None:
             selected_id = st.selectbox("Deactivate window", active_ids, key="alert_center_deactivate_id")
             if st.button("Deactivate Suppression Window", key="alert_center_deactivate_annotation"):
                 try:
+                    session = get_session()
                     session.sql(f"""
                         UPDATE {table_name}
                         SET ACTIVE = FALSE
@@ -507,7 +509,6 @@ def _alert_center_readiness_score(rows: pd.DataFrame) -> int:
 
 
 def render() -> None:
-    session = get_session()
     company = get_active_company()
     environment = get_active_environment()
 
@@ -536,7 +537,7 @@ def render() -> None:
         st.code(build_alert_task_sql(email_target=DEFAULT_ALERT_EMAIL), language="sql")
         return
     if active_view == "Suppression Windows":
-        _render_annotations(session)
+        _render_annotations()
         return
 
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -547,6 +548,7 @@ def render() -> None:
     with c3:
         load_label = "Load Full Control Health" if active_view == "Control Health" else f"Load {active_view}"
         if st.button(load_label, key="alert_center_load", type="primary"):
+            session = get_session()
             st.session_state["alert_center_data"] = _load_center_data(
                 session,
                 company,
@@ -717,6 +719,7 @@ def render() -> None:
                         st.warning("Delivery notes are required for audit evidence.")
                     else:
                         try:
+                            session = get_session()
                             logged = log_alert_digest_delivery(
                                 session,
                                 digest_alerts,
@@ -812,6 +815,7 @@ def render() -> None:
                             st.warning("A reason or evidence note is required before changing alert status.")
                         else:
                             try:
+                                session = get_session()
                                 update_alert_status(
                                     session,
                                     selected_alert,
@@ -837,6 +841,7 @@ def render() -> None:
                             st.warning("Acknowledgment note is required for escalation audit.")
                         else:
                             try:
+                                session = get_session()
                                 acknowledge_alert_escalation(
                                     session,
                                     ack_alert,
@@ -916,6 +921,7 @@ def render() -> None:
                 )
             if st.button("Send Open Alerts To Action Queue", key="alert_center_to_action_queue"):
                 try:
+                    session = get_session()
                     saved = upsert_actions(session, actions_preview.to_dict("records"))
                     alert_ids = routable.get("ALERT_ID", pd.Series(dtype=str)).dropna().astype(str).tolist()
                     mark_alerts_routed(session, alert_ids, action_count=saved, actor=_alert_actor())
@@ -1019,6 +1025,7 @@ def render() -> None:
                         submitted_rule = st.form_submit_button("Update Alert Rule")
                     if submitted_rule:
                         try:
+                            session = get_session()
                             update_alert_rule(
                                 session,
                                 rule_id=selected_rule,

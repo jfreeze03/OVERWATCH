@@ -588,7 +588,7 @@ def _render_cost_run_rate_lens(run_rate: pd.DataFrame | None, credit_price: floa
     )
 
 
-def _render_cost_watch_floor(session, company: str, credit_price: float) -> None:
+def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     st.subheader("Cost Control Cockpit")
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
@@ -654,6 +654,7 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
                         f"live fallback failed: {format_snowflake_error(exc)}"
                     )
             try:
+                session = get_session()
                 st.session_state["cost_contract_queue"] = load_action_queue(session)
                 st.session_state["cost_contract_queue_error"] = ""
             except Exception as exc:
@@ -780,7 +781,6 @@ def _render_cost_watch_floor(session, company: str, credit_price: float) -> None
 
 
 def render() -> None:
-    session = get_session()
     company = get_active_company()
     credit_price = safe_float(get_credit_price()) or 3.68
     if st.session_state.get("exceptions_only_mode") and "cost_contract_workflow" not in st.session_state:
@@ -812,7 +812,7 @@ def render() -> None:
             ("Are container services costing us?", "Use SPCS spend."),
         ],
     )
-    _render_cost_watch_floor(session, company, credit_price)
+    _render_cost_watch_floor(company, credit_price)
 
     workflow = render_workflow_selector(
         "Cost workflow",

@@ -41,6 +41,7 @@ class PerformanceFrameworkTests(unittest.TestCase):
         self.assertIn("FULL_5TB_ALLOWED", setup_sql)
         self.assertIn("MAX_ALLOWED_WAREHOUSE_SIZE", setup_sql)
         self.assertIn("AUTO_SUSPEND", setup_sql)
+        self.assertIn("TRY_TO_NUMBER(TO_VARCHAR(\"AUTO_SUSPEND\"))", setup_sql)
         self.assertIn("PERF_TEST_QUERY_HISTORY", synthetic_sql)
         self.assertIn("PERF_TEST_WAREHOUSE_METERING_HISTORY", synthetic_sql)
         self.assertIn("PERF_TEST_TASK_HISTORY", synthetic_sql)
@@ -97,6 +98,14 @@ class PerformanceFrameworkTests(unittest.TestCase):
         self.assertIn("99_cleanup_perf_test.sql", readme)
         self.assertIn("PERF_TEST_PRODUCTION_READINESS_V", readme)
 
+    def test_snowflake_readiness_scores_latest_perf_run_only(self):
+        report_sql = (PERF_ROOT / "sql" / "04_benchmark_report.sql").read_text(encoding="utf-8").upper()
+
+        self.assertIn("LAST_QUERY_TIME", report_sql)
+        self.assertIn("LATEST_SF_PERF", report_sql)
+        self.assertIn("PERF_RUN_ID <> 'PERF:UNLABELED'", report_sql)
+        self.assertIn("QUALIFY ROW_NUMBER() OVER (ORDER BY LAST_QUERY_TIME DESC", report_sql)
+
     def test_snowflake_safe_suite_runner_is_guarded(self):
         runner_text = (PERF_ROOT / "run_snowflake_safe_suite.py").read_text(encoding="utf-8")
         runner = load_snowflake_runner()
@@ -104,6 +113,8 @@ class PerformanceFrameworkTests(unittest.TestCase):
         self.assertIn("SP_PERF_TEST_GUARDRAIL_CHECK('LIGHTWEIGHT_METADATA', FALSE)", runner_text)
         self.assertIn("not guard_message.upper().startswith(\"OK:\")", runner_text)
         self.assertIn("SAFE_SQL_FILES", runner_text)
+        self.assertIn("connection.execute_stream(handle, remove_comments=True)", runner_text)
+        self.assertNotIn("cursor().execute_stream", runner_text)
         self.assertNotIn("03_generate_full_5tb_physical", runner_text)
         self.assertEqual(
             runner.SAFE_SQL_FILES,

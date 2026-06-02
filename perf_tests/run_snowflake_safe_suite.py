@@ -85,7 +85,7 @@ def missing_connection_inputs(kwargs: dict) -> list[str]:
 def execute_sql_file(connection, path: pathlib.Path) -> int:
     statements = 0
     with path.open("r", encoding="utf-8") as handle:
-        for cursor in connection.cursor().execute_stream(handle):
+        for cursor in connection.execute_stream(handle, remove_comments=True):
             statements += 1
             try:
                 cursor.fetchall()

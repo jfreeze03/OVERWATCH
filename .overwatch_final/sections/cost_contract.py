@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
+from config import DEFAULT_ALERT_EMAIL
 from utils import (
     build_cost_savings_verification_health_sql,
     build_cost_savings_verification_sql,
@@ -17,7 +18,9 @@ from utils import (
     load_action_queue,
     run_query,
     safe_float,
+    safe_identifier,
     safe_int,
+    sql_literal,
 )
 from utils.workflows import (
     render_operator_briefing,
@@ -1538,6 +1541,772 @@ def _render_budget_anomaly_command_center(
     )
 
 
+def _cost_column(frame: pd.DataFrame, candidates: list[str]) -> str:
+    if frame is None or getattr(frame, "empty", True):
+        return ""
+    columns = {str(col).upper(): str(col) for col in frame.columns}
+    for candidate in candidates:
+        column = columns.get(str(candidate).upper())
+        if column:
+            return column
+    return ""
+
+
+def _cost_metric_column(frame: pd.DataFrame) -> str:
+    return _cost_column(
+        frame,
+        [
+            "EST_COST", "COST_USD", "ESTIMATED_COST_USD", "TOTAL_COST_USD",
+            "TOTAL_CREDITS", "ALLOCATED_CREDITS", "CREDITS_USED", "CREDITS",
+        ],
+    )
+
+
+def _cost_metric_to_usd(metric_column: str, value: float, credit_price: float) -> float:
+    metric = str(metric_column or "").upper()
+    if "USD" in metric or "COST" in metric:
+        return safe_float(value)
+    return credits_to_dollars(safe_float(value), credit_price)
+
+
+def _top_loaded_cost_driver(
+    frame: pd.DataFrame,
+    dimensions: list[str],
+    *,
+    credit_price: float,
+) -> dict:
+    dim = _cost_column(frame, dimensions)
+    metric = _cost_metric_column(frame)
+    if not dim or not metric or frame is None or getattr(frame, "empty", True):
+        return {
+            "dimension": "",
+            "entity": "",
+            "metric": "",
+            "value": 0.0,
+            "value_usd": 0.0,
+            "rows": 0,
+        }
+    work = frame[[dim, metric]].copy()
+    work[dim] = work[dim].fillna("").astype(str).str.strip()
+    work = work[work[dim].ne("")]
+    if work.empty:
+        return {
+            "dimension": dim,
+            "entity": "",
+            "metric": metric,
+            "value": 0.0,
+            "value_usd": 0.0,
+            "rows": 0,
+        }
+    work[metric] = pd.to_numeric(work[metric], errors="coerce").fillna(0.0)
+    grouped = work.groupby(dim, dropna=False, as_index=False).agg(
+        VALUE=(metric, "sum"),
+        ROWS=(metric, "size"),
+    )
+    grouped = grouped.sort_values(["VALUE", "ROWS"], ascending=[False, False])
+    row = grouped.iloc[0]
+    value = safe_float(row.get("VALUE"))
+    return {
+        "dimension": dim,
+        "entity": str(row.get(dim) or "").strip(),
+        "metric": metric,
+        "value": value,
+        "value_usd": round(_cost_metric_to_usd(metric, value, credit_price), 2),
+        "rows": safe_int(row.get("ROWS")),
+    }
+
+
+def _build_resource_monitor_guardrail_sql(
+    warehouse_name: str,
+    *,
+    credit_quota: float,
+    monitor_name: str = "",
+) -> str:
+    wh = safe_identifier(warehouse_name or "TOP_WAREHOUSE")
+    quota = max(safe_float(credit_quota), 1.0)
+    monitor = safe_identifier(monitor_name or f"OVERWATCH_{wh}_RM")
+    return f"""-- Review-only resource monitor guardrail for a user-managed warehouse.
+-- Resource monitors are warehouse-only controls. Use Snowflake Budgets for serverless, shared, and AI costs.
+-- Notification email must be enabled/verified in Snowflake user preferences; NOTIFY_USERS accepts Snowflake user names, not email addresses.
+USE ROLE ACCOUNTADMIN;
+
+CREATE RESOURCE MONITOR IF NOT EXISTS {monitor}
+  WITH CREDIT_QUOTA = {quota:.2f}
+       FREQUENCY = MONTHLY
+       START_TIMESTAMP = IMMEDIATELY
+       TRIGGERS ON 75 PERCENT DO NOTIFY
+                ON 90 PERCENT DO SUSPEND
+                ON 100 PERCENT DO SUSPEND_IMMEDIATE;
+
+ALTER RESOURCE MONITOR IF EXISTS {monitor}
+  SET CREDIT_QUOTA = {quota:.2f};
+
+ALTER WAREHOUSE IF EXISTS {wh}
+  SET RESOURCE_MONITOR = {monitor};
+
+SHOW RESOURCE MONITORS;
+SHOW WAREHOUSES LIKE {sql_literal(warehouse_name or "TOP_WAREHOUSE", 200)};
+"""
+
+
+def _build_native_cost_control_inventory(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    verification_health: pd.DataFrame | None = None,
+    credit_price: float = 3.68,
+    state: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    state = state or st.session_state
+    current_credits = safe_float(_first_frame_value(cockpit, "CURRENT_CREDITS", 0))
+    prior_credits = safe_float(_first_frame_value(cockpit, "PRIOR_CREDITS", 0))
+    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "Top warehouse not loaded") or "Top warehouse not loaded")
+    top_delta = safe_float(_first_frame_value(cockpit, "TOP_INCREASE_CREDITS", 0))
+    projected_30d = safe_float(_first_frame_value(run_rate, "PROJECTED_30D_FROM_7D", 0))
+    delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
+    cortex_projection, cortex_exceptions = _loaded_cortex_state()
+    open_cost_queue = _open_cost_action_frame(queue)
+    verifier_summary, _ = _build_savings_verification_task_summary(verification_health)
+
+    try:
+        from sections.budget_governance import _build_budget_governance_board
+
+        budget_summary, _ = _build_budget_governance_board()
+    except Exception:
+        budget_summary = {"score": 0, "ready": 0, "pattern": 0, "partial": 1}
+
+    rows: list[dict] = []
+
+    def add(
+        control: str,
+        state_value: str,
+        native_surface: str,
+        scope: str,
+        evidence: str,
+        strict_gap: str,
+        next_action: str,
+        sql_package: str,
+        rank: int,
+    ) -> None:
+        rows.append({
+            "CONTROL": control,
+            "STATE": state_value,
+            "NATIVE_SURFACE": native_surface,
+            "SCOPE": scope,
+            "EVIDENCE": evidence,
+            "STRICT_GAP": strict_gap,
+            "DBA_NEXT_MOVE": next_action,
+            "SQL_PACKAGE": sql_package,
+            "_RANK": rank,
+        })
+
+    add(
+        "Warehouse resource monitor",
+        "Review" if top_delta > 0 or delta_pct >= 20 else "Candidate",
+        "RESOURCE MONITOR",
+        "Warehouse-only",
+        f"Top mover {top_wh}; delta {top_delta:+,.2f} credits; current/prior movement {delta_pct:+.1f}%.",
+        "Does not cover serverless, shared AI, Cortex, Snowpipe, clustering, or no-warehouse cost surfaces.",
+        "Generate a resource-monitor guardrail only after owner approval and quota review.",
+        "Resource monitor guardrail",
+        0,
+    )
+    add(
+        "Account root budget",
+        "Ready to Deploy" if safe_int(budget_summary.get("ready")) else "Review",
+        "SNOWFLAKE.LOCAL.ACCOUNT_ROOT_BUDGET",
+        "Account-level",
+        f"Budget governance score {safe_int(budget_summary.get('score'))}/100; projected 30d from 7d ${credits_to_dollars(projected_30d, credit_price):,.0f}.",
+        "Spending limit must be approved against contract, renewal, and known planned workload.",
+        "Set account budget limit, threshold, and email target after DBA/FinOps approval.",
+        "Native budgets",
+        1,
+    )
+    add(
+        "Shared AI resource budget",
+        "Ready to Deploy" if cortex_projection > 0 or cortex_exceptions > 0 else "Candidate",
+        "SNOWFLAKE.CORE.BUDGET",
+        "Shared AI / serverless",
+        f"Cortex projection ${cortex_projection:,.0f}/30d; {cortex_exceptions:,} exception(s) loaded.",
+        "Tagged-user coverage must be validated or AI shared-resource budget will miss users.",
+        "Deploy shared AI budget and verify GET_SHARED_RESOURCES plus user tag hygiene.",
+        "Native budgets",
+        2,
+    )
+    add(
+        "Per-user AI quota",
+        "Control Pattern",
+        "CORTEX_USER grant + OVERWATCH quota table",
+        "User-level AI",
+        f"Default alert recipient {DEFAULT_ALERT_EMAIL}; quota control remains dry-run until approved.",
+        "Requires removing blanket PUBLIC Cortex access and routing users through a controlled role.",
+        "Deploy quota table/action view, then review generated revoke/restore SQL before enforcement.",
+        "Per-user AI quota",
+        3,
+    )
+    add(
+        "Budget custom action bridge",
+        "Ready to Deploy",
+        "BUDGET ADD_CUSTOM_ACTION",
+        "Budget threshold event",
+        "Projected 75% and actual 90% budget thresholds can create OVERWATCH action queue incidents.",
+        "Stored procedure must run owner-rights and procedure USAGE must be granted to the SNOWFLAKE application.",
+        "Attach custom actions only after confirming procedure grants and dry-run bridge rows.",
+        "Budget custom actions",
+        4,
+    )
+    add(
+        "Email notification path",
+        "Review",
+        "Budget email + monitor notifications",
+        "Recipient / Snowflake user preference",
+        f"Budget email target placeholder is {DEFAULT_ALERT_EMAIL}; resource monitors notify Snowflake users with verified email preferences.",
+        "Budget email and resource monitor notification mechanics are different and must be validated separately.",
+        "Verify budget recipient email and Snowflake user notification preferences before claiming alert readiness.",
+        "Inventory checks",
+        5,
+    )
+    verifier_state = str(verifier_summary.get("health_state") or "Not Loaded")
+    add(
+        "Savings verification task",
+        "Ready" if verifier_state.upper() == "HEALTHY" else "Review",
+        "OVERWATCH scheduled verifier",
+        "Estimated-to-verified savings control",
+        f"Verifier state {verifier_state}; open cost actions {len(open_cost_queue):,}.",
+        "Estimated savings are not audit-ready until owner-approved and measured after the change window.",
+        "Keep the verifier task healthy and reject savings claims without measured post-period proof.",
+        "Inventory checks",
+        6,
+    )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {"score": 0, "ready": 0, "review": 0, "warehouse_only": 0}, board
+    review = int(board["STATE"].isin(["Review", "Candidate"]).sum())
+    ready = int(board["STATE"].isin(["Ready", "Ready to Deploy", "Control Pattern"]).sum())
+    warehouse_only = int(board["SCOPE"].eq("Warehouse-only").sum())
+    score = max(0, min(100, 100 - review * 7 - safe_int(budget_summary.get("partial")) * 4))
+    return {
+        "score": int(score),
+        "ready": ready,
+        "review": review,
+        "warehouse_only": warehouse_only,
+    }, board.sort_values(["_RANK", "CONTROL"]).drop(columns=["_RANK"], errors="ignore").reset_index(drop=True)
+
+
+def _build_cost_spike_root_cause_board(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    credit_price: float,
+    state: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    state = state or st.session_state
+    explorer = _state_frame(state, "df_cost_explorer_detail")
+    chargeback = _state_frame(state, "df_chargeback")
+    current_credits = safe_float(_first_frame_value(cockpit, "CURRENT_CREDITS", 0))
+    prior_credits = safe_float(_first_frame_value(cockpit, "PRIOR_CREDITS", 0))
+    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "No warehouse loaded") or "No warehouse loaded")
+    top_delta = safe_float(_first_frame_value(cockpit, "TOP_INCREASE_CREDITS", 0))
+    delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
+    avg_7d = safe_float(_first_frame_value(run_rate, "AVG_DAILY_7D", 0))
+    avg_30d = safe_float(_first_frame_value(run_rate, "AVG_DAILY_30D", 0))
+    pct_vs_30d = _first_frame_value(run_rate, "PCT_VS_30D_AVG", None)
+    pct_vs_30d_float = safe_float(pct_vs_30d) if pct_vs_30d is not None and not pd.isna(pct_vs_30d) else 0.0
+    yoy_7d = _first_frame_value(run_rate, "YOY_7D_PCT", None)
+    yoy_7d_float = safe_float(yoy_7d) if yoy_7d is not None and not pd.isna(yoy_7d) else 0.0
+    open_cost_queue = _open_cost_action_frame(queue)
+    cortex_projection, cortex_exceptions = _loaded_cortex_state()
+
+    rows: list[dict] = []
+
+    def add(
+        severity: str,
+        driver: str,
+        entity: str,
+        signal: str,
+        evidence: str,
+        confidence: str,
+        trust: str,
+        next_action: str,
+        proof: str,
+        route: str,
+        value: float,
+        rank: int,
+    ) -> None:
+        rows.append({
+            "SEVERITY": severity,
+            "DRIVER": driver,
+            "ENTITY": entity,
+            "ROOT_CAUSE_SIGNAL": signal,
+            "EVIDENCE": evidence,
+            "CONFIDENCE": confidence,
+            "TRUST": trust,
+            "NEXT_ACTION": next_action,
+            "PROOF_REQUIRED": proof,
+            "ROUTE": route,
+            "VALUE_AT_RISK_USD": round(safe_float(value), 2),
+            "_RANK": rank,
+        })
+
+    movement_severity = "Critical" if delta_pct >= 50 and top_delta > 0 else "High" if top_delta > 0 or delta_pct >= 20 else "Info"
+    add(
+        movement_severity,
+        "Warehouse movement",
+        top_wh,
+        "Top warehouse delta",
+        f"{top_wh}: {top_delta:+,.2f} credits; window ${credits_to_dollars(current_credits, credit_price):,.0f} vs prior ${credits_to_dollars(prior_credits, credit_price):,.0f} ({delta_pct:+.1f}%).",
+        "High" if top_delta > 0 else "Medium",
+        "Exact warehouse metering",
+        "Start here. Confirm owner demand, task/query mix, size/auto-suspend changes, and monitor coverage for this warehouse.",
+        "WAREHOUSE_METERING_HISTORY current/prior window and top delta.",
+        "Cost & Contract > Explain bill / attribution / contract",
+        max(credits_to_dollars(top_delta, credit_price), credits_to_dollars(current_credits - prior_credits, credit_price), 0),
+        0,
+    )
+    trend_severity = "High" if pct_vs_30d_float >= 20 or yoy_7d_float >= 25 else "Medium" if pct_vs_30d_float >= 10 or yoy_7d_float >= 15 else "Info"
+    add(
+        trend_severity,
+        "Complete-day trend",
+        top_wh,
+        "7d / 30d / YOY baseline",
+        f"7d avg {avg_7d:,.2f} cr/day vs 30d {avg_30d:,.2f}; 7d vs 30d {pct_vs_30d_float:+.1f}%; YOY7 {yoy_7d_float:+.1f}%.",
+        "High" if _has_columns(run_rate, ["AVG_DAILY_7D", "AVG_DAILY_30D"]) else "Low",
+        "Exact when run-rate lens loaded",
+        "Do not escalate from same-day partial metering; use complete-day trend to decide whether this is a real spike.",
+        "Cost run-rate lens with complete-day 7d, 30d, and prior-year rows.",
+        "Cost & Contract > Explain bill / attribution / contract",
+        credits_to_dollars(abs(top_delta), credit_price),
+        1,
+    )
+
+    company_driver = _top_loaded_cost_driver(chargeback if not chargeback.empty else explorer, ["COMPANY", "ENVIRONMENT", "ENVIRONMENT_ROLLUP"], credit_price=credit_price)
+    add(
+        "Medium" if company_driver["entity"] else "Watch",
+        "Company / environment attribution",
+        company_driver["entity"] or "Not loaded",
+        "Chargeback direction",
+        (
+            f"Top loaded {company_driver['dimension']} is {company_driver['entity']} at ${company_driver['value_usd']:,.0f} across {company_driver['rows']:,} row(s)."
+            if company_driver["entity"] else "Company/environment cost attribution is not loaded in this session."
+        ),
+        "Medium" if company_driver["entity"] else "Low",
+        "Allocated / Estimated",
+        "Use ALFA/Trexis and PROD/DEV attribution to assign ownership, but keep shared warehouse disclosure attached.",
+        "Cost Explorer or Chargeback rows with company/environment dimensions and allocation confidence.",
+        "Cost & Contract > Explain bill / attribution / contract",
+        company_driver["value_usd"],
+        2,
+    )
+
+    db_driver = _top_loaded_cost_driver(chargeback if not chargeback.empty else explorer, ["DATABASE_NAME", "ENVIRONMENT", "ENVIRONMENT_ROLLUP"], credit_price=credit_price)
+    add(
+        "Medium" if db_driver["entity"] else "Watch",
+        "Database / DEV rollup",
+        db_driver["entity"] or "Not loaded",
+        "Database-attributed cost candidate",
+        (
+            f"Top loaded {db_driver['dimension']} is {db_driver['entity']} at ${db_driver['value_usd']:,.0f} across {db_driver['rows']:,} row(s)."
+            if db_driver["entity"] else "Database-level attribution is not loaded."
+        ),
+        "Medium" if db_driver["entity"] else "Low",
+        "Allocated / Estimated",
+        "Drill into PROD, DEV_ALL, and individual DEV database views before assigning database ownership.",
+        "QUERY_HISTORY allocation, tags, and no-database/shared confidence labels.",
+        "Cost & Contract > Explain bill / attribution / contract",
+        db_driver["value_usd"],
+        3,
+    )
+
+    human_driver = _top_loaded_cost_driver(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"], credit_price=credit_price)
+    add(
+        "Medium" if human_driver["entity"] else "Watch",
+        "Role / user / department",
+        human_driver["entity"] or "Not loaded",
+        "Human ownership candidate",
+        (
+            f"Top loaded {human_driver['dimension']} is {human_driver['entity']} at ${human_driver['value_usd']:,.0f} across {human_driver['rows']:,} row(s)."
+            if human_driver["entity"] else "Role, user, and department drilldown is not loaded."
+        ),
+        "Medium" if human_driver["entity"] else "Low",
+        "Allocated / Estimated",
+        "Assign optimization work only after the cost row has role/user/department evidence and owner source.",
+        "Cost Explorer detail with role, user, department, query count, and allocation confidence.",
+        "Cost & Contract > Explain bill / attribution / contract",
+        human_driver["value_usd"],
+        4,
+    )
+
+    savings = (
+        safe_float(pd.to_numeric(open_cost_queue.get("EST_MONTHLY_SAVINGS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        if not open_cost_queue.empty else 0.0
+    )
+    add(
+        "High" if savings > 0 else "Info",
+        "Open savings queue",
+        f"{len(open_cost_queue):,} open cost action(s)",
+        "Existing remediation candidates",
+        f"${savings:,.0f}/mo estimated savings loaded; keep savings estimated until verified.",
+        "Medium" if not open_cost_queue.empty else "Low",
+        "Exact after verification",
+        "Work owner-approved actions first; reject fixed rows without post-period measured proof.",
+        "OVERWATCH_ACTION_QUEUE owner, ticket, approval, verification result, baseline/current values.",
+        "Cost & Contract > Recommendations and action queue",
+        savings,
+        5,
+    )
+    add(
+        "High" if cortex_projection > 0 or cortex_exceptions > 0 else "Info",
+        "AI / Cortex usage",
+        "Cortex",
+        "AI spend or quota candidate",
+        f"Projection ${cortex_projection:,.0f}/30d; {cortex_exceptions:,} exception(s).",
+        "Medium" if cortex_projection > 0 or cortex_exceptions > 0 else "Low",
+        "Allocated / Estimated",
+        "Open AI and Cortex spend to confirm first/last usage, user attribution, and quota route.",
+        "Cortex usage history, user attribution, shared AI budget, and per-user quota action rows.",
+        "Cost & Contract > AI and Cortex spend",
+        cortex_projection,
+        6,
+    )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {"score": 0, "critical_high": 0, "top_driver": "No loaded root-cause evidence"}, board
+    board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_cost_command_severity_rank)
+    board = board.sort_values(["_SEVERITY_RANK", "VALUE_AT_RISK_USD", "_RANK"], ascending=[True, False, True])
+    critical_high = int(board["SEVERITY"].isin(["Critical", "High"]).sum())
+    candidate = int(board["CONFIDENCE"].isin(["Low", "Medium"]).sum())
+    score = max(0, min(100, 100 - critical_high * 10 - candidate * 4))
+    top = board.iloc[0]
+    return {
+        "score": int(score),
+        "critical_high": critical_high,
+        "candidate": candidate,
+        "top_driver": str(top.get("DRIVER") or "Cost root cause"),
+        "top_entity": str(top.get("ENTITY") or "Unknown"),
+        "top_action": str(top.get("NEXT_ACTION") or "Open Cost & Contract drilldown."),
+    }, board.drop(columns=["_SEVERITY_RANK", "_RANK"], errors="ignore").reset_index(drop=True)
+
+
+def _build_change_cost_correlation_board(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    state: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    state = state or st.session_state
+    changes = _state_frame(state, "change_drift_exceptions")
+    operability = _state_frame(state, "change_control_operability_fact")
+    current_credits = safe_float(_first_frame_value(cockpit, "CURRENT_CREDITS", 0))
+    prior_credits = safe_float(_first_frame_value(cockpit, "PRIOR_CREDITS", 0))
+    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "") or "").strip()
+    top_delta = safe_float(_first_frame_value(cockpit, "TOP_INCREASE_CREDITS", 0))
+    pct_vs_30d = _first_frame_value(run_rate, "PCT_VS_30D_AVG", None)
+    pct_vs_30d_float = safe_float(pct_vs_30d) if pct_vs_30d is not None and not pd.isna(pct_vs_30d) else 0.0
+    spike_signal = top_delta > 0 or current_credits > prior_credits or pct_vs_30d_float >= 10
+    rows: list[dict] = []
+
+    def add(
+        severity: str,
+        correlation: str,
+        entity: str,
+        cost_signal: str,
+        change_signal: str,
+        evidence: str,
+        next_action: str,
+        proof: str,
+        route: str,
+        rank: int,
+    ) -> None:
+        rows.append({
+            "SEVERITY": severity,
+            "CORRELATION": correlation,
+            "ENTITY": entity,
+            "COST_SIGNAL": cost_signal,
+            "CHANGE_SIGNAL": change_signal,
+            "EVIDENCE": evidence,
+            "NEXT_ACTION": next_action,
+            "PROOF_REQUIRED": proof,
+            "ROUTE": route,
+            "_RANK": rank,
+        })
+
+    if changes.empty:
+        add(
+            "Medium" if spike_signal else "Watch",
+            "Change evidence not loaded",
+            top_wh or "Cost scope",
+            f"Top warehouse delta {top_delta:+,.2f} credits; 7d vs 30d {pct_vs_30d_float:+.1f}%.",
+            "No loaded Change & Drift exceptions.",
+            "Cost movement cannot be cleared of change-correlation risk until Change & Drift is loaded for the same scope.",
+            "Load Change & Drift Brief, then compare warehouse, query_id, task/procedure, DDL, grant, and policy events to the cost spike.",
+            "Change & Drift exceptions plus Cost Cockpit/run-rate evidence for the same company/environment window.",
+            "Change & Drift > Object and access changes",
+            0,
+        )
+    else:
+        view = changes.copy()
+        text_cols = []
+        for column in ["ENTITY", "WAREHOUSE_NAME", "QUERY_ID", "FINDING_TYPE", "QUERY_TAG", "USER_NAME", "ROLE_NAME"]:
+            if column in view.columns:
+                text_cols.append(column)
+        combined = view[text_cols].fillna("").astype(str).agg(" | ".join, axis=1) if text_cols else pd.Series([""] * len(view), index=view.index)
+        top_matches = combined.str.upper().str.contains(str(top_wh).upper(), na=False) if top_wh else pd.Series([False] * len(view), index=view.index)
+        finding = view.get("FINDING_TYPE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
+        severity = view.get("SEVERITY", pd.Series(["Medium"] * len(view), index=view.index)).fillna("Medium").astype(str)
+        high_rows = int(severity.str.upper().isin(["CRITICAL", "HIGH"]).sum())
+        warehouse_changes = int((finding.str.contains("WAREHOUSE|TASK|PROCEDURE|DRIFT", case=False, regex=True) | top_matches).sum())
+        access_ai_changes = int(finding.str.contains("GRANT|ROLE|POLICY|TAG|AI|CORTEX", case=False, regex=True).sum())
+        matched_rows = int(top_matches.sum())
+        latest = view.iloc[0]
+        matched_entity = str(latest.get("ENTITY") or latest.get("WAREHOUSE_NAME") or top_wh or "Snowflake account")
+        add(
+            "High" if matched_rows and spike_signal else "Medium" if warehouse_changes and spike_signal else "Info",
+            "Top warehouse change proximity",
+            top_wh or matched_entity,
+            f"Top warehouse delta {top_delta:+,.2f} credits; 7d vs 30d {pct_vs_30d_float:+.1f}%.",
+            f"{matched_rows:,} row(s) mention the top warehouse; {warehouse_changes:,} warehouse/task/procedure/drift row(s) loaded.",
+            "A cost spike near warehouse/task/procedure drift must be treated as a root-cause candidate until query/change proof clears it.",
+            "Review query_id, actor, warehouse settings, task/procedure runtime, and rollback evidence before tuning or raising budget.",
+            "Change exception query_id, WAREHOUSE_METERING_HISTORY, QUERY_HISTORY, task/procedure history, and post-change proof.",
+            "Change & Drift > Controlled DBA actions",
+            0,
+        )
+        add(
+            "High" if high_rows and spike_signal else "Medium" if high_rows else "Info",
+            "High-risk change near cost movement",
+            matched_entity,
+            f"Cost movement active={spike_signal}; top warehouse {top_wh or 'not loaded'}.",
+            f"{high_rows:,} Critical/High change exception(s) loaded.",
+            "High-severity DDL/DCL/policy changes near cost movement require a bill explanation, not just a cost chart.",
+            "Attach change ticket, query_id, actor, object, and blast-radius proof to the cost incident.",
+            "Change-control readiness, object/change evidence, and Cost & Contract root-cause board.",
+            "Change & Drift > Object and access changes",
+            1,
+        )
+        add(
+            "Medium" if access_ai_changes else "Info",
+            "AI/access policy cost route",
+            "AI / access control",
+            "Cortex or budget movement may be user-access driven.",
+            f"{access_ai_changes:,} grant/role/policy/tag/AI-related change row(s) loaded.",
+            "AI spend jumps can be caused by access expansion, tag mistakes, or policy changes as much as workload growth.",
+            "Compare Cortex first/last usage to access and tag changes before enforcing per-user quotas.",
+            "Cortex usage history, Change & Drift grants/policy rows, budget tag assignments.",
+            "Cost & Contract > AI and Cortex spend",
+            2,
+        )
+
+    if not operability.empty:
+        blocked = int(pd.to_numeric(operability.get("ROUTE_BLOCKED", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        closure = int(pd.to_numeric(operability.get("CLOSURE_BLOCKED", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        add(
+            "High" if blocked + closure > 0 and spike_signal else "Info",
+            "Change-control closure blocker",
+            "Change operability mart",
+            f"Cost movement active={spike_signal}.",
+            f"{blocked:,} route blocker(s); {closure:,} closure blocker(s).",
+            "Do not close a cost incident as remediated while related change-control routes or closures are blocked.",
+            "Work change-control blockers before declaring the cost spike explained or resolved.",
+            "FACT_CHANGE_CONTROL_OPERABILITY_DAILY with route/closure blocked counts and verified closures.",
+            "Change & Drift > Change Control Operability Mart",
+            3,
+        )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {"score": 0, "high": 0, "top_correlation": "No change/cost evidence"}, board
+    board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_cost_command_severity_rank)
+    board = board.sort_values(["_SEVERITY_RANK", "_RANK"], ascending=[True, True])
+    high = int(board["SEVERITY"].isin(["Critical", "High"]).sum())
+    medium = int(board["SEVERITY"].eq("Medium").sum())
+    score = max(0, min(100, 100 - high * 16 - medium * 7))
+    top = board.iloc[0]
+    return {
+        "score": int(score),
+        "high": high,
+        "medium": medium,
+        "top_correlation": str(top.get("CORRELATION") or "Change/cost correlation"),
+        "top_entity": str(top.get("ENTITY") or "Unknown"),
+        "top_action": str(top.get("NEXT_ACTION") or "Load Change & Drift and compare to Cost & Contract."),
+    }, board.drop(columns=["_SEVERITY_RANK", "_RANK"], errors="ignore").reset_index(drop=True)
+
+
+def _render_native_cost_control_inventory(
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    verification_health: pd.DataFrame | None,
+    credit_price: float,
+) -> None:
+    summary, board = _build_native_cost_control_inventory(
+        cockpit=cockpit,
+        run_rate=run_rate,
+        queue=queue,
+        verification_health=verification_health,
+        credit_price=credit_price,
+    )
+    st.session_state["cost_contract_native_control_summary"] = summary
+    st.session_state["cost_contract_native_control_inventory"] = board
+    if board.empty:
+        return
+    st.markdown("**Native Cost Control Inventory**")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Control Score", f"{summary['score']}/100")
+    c2.metric("Ready / Pattern", f"{summary['ready']:,}")
+    c3.metric("Review", f"{summary['review']:,}", delta_color="inverse")
+    c4.metric("Warehouse-only", f"{summary['warehouse_only']:,}")
+    render_priority_dataframe(
+        board,
+        title="Native controls, strict gaps, and DBA next move",
+        priority_columns=[
+            "STATE", "CONTROL", "NATIVE_SURFACE", "SCOPE", "EVIDENCE",
+            "STRICT_GAP", "DBA_NEXT_MOVE", "SQL_PACKAGE",
+        ],
+        sort_by=["STATE", "CONTROL"],
+        ascending=[True, True],
+        raw_label="All native cost-control inventory rows",
+        height=300,
+        max_rows=8,
+    )
+
+
+def _render_governed_admin_action_pack(
+    company: str,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    credit_price: float,
+) -> None:
+    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "TOP_WAREHOUSE") or "TOP_WAREHOUSE")
+    projected_30d = safe_float(_first_frame_value(run_rate, "PROJECTED_30D_FROM_7D", 0))
+    top_delta = safe_float(_first_frame_value(cockpit, "TOP_INCREASE_CREDITS", 0))
+    quota = max(projected_30d * 1.25, top_delta * 2, 50.0)
+    with st.expander("Governed Admin SQL Pack", expanded=False):
+        st.caption(
+            "Review-only SQL. OVERWATCH does not execute these changes from the dashboard; DBA approval, rollback, and proof are required."
+        )
+        package = st.selectbox(
+            "SQL package",
+            [
+                "Resource monitor guardrail",
+                "Native budgets",
+                "Per-user AI quota",
+                "Budget custom actions",
+                "Inventory checks",
+            ],
+            key="cost_contract_governed_sql_pack",
+        )
+        if package == "Resource monitor guardrail":
+            st.code(
+                _build_resource_monitor_guardrail_sql(top_wh, credit_quota=quota),
+                language="sql",
+            )
+        else:
+            try:
+                from sections.budget_governance import (
+                    _build_budget_custom_action_sql,
+                    _build_budget_inventory_sql,
+                    _build_budget_policy_frame,
+                    _build_native_budget_sql,
+                    _build_per_user_quota_sql,
+                    _default_ai_budget_usd,
+                )
+
+                policy = _build_budget_policy_frame(
+                    company,
+                    credit_price,
+                    ai_budget_usd=_default_ai_budget_usd(company),
+                    per_user_limit_usd=250.0,
+                    email_target=DEFAULT_ALERT_EMAIL,
+                )
+                if package == "Native budgets":
+                    st.code(_build_native_budget_sql(policy, email_target=DEFAULT_ALERT_EMAIL), language="sql")
+                elif package == "Per-user AI quota":
+                    st.code(_build_per_user_quota_sql(default_limit_usd=250.0, credit_price=credit_price), language="sql")
+                elif package == "Budget custom actions":
+                    st.code(_build_budget_custom_action_sql(policy, email_target=DEFAULT_ALERT_EMAIL), language="sql")
+                else:
+                    st.code(
+                        _build_budget_inventory_sql()
+                        + "\n\nSHOW RESOURCE MONITORS;\n"
+                        + f"SHOW WAREHOUSES LIKE {sql_literal(top_wh, 200)};\n",
+                        language="sql",
+                    )
+            except Exception as exc:
+                st.warning(f"Could not build SQL package: {format_snowflake_error(exc)}")
+
+
+def _render_cost_spike_root_cause_board(
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    credit_price: float,
+) -> None:
+    summary, board = _build_cost_spike_root_cause_board(
+        cockpit=cockpit,
+        run_rate=run_rate,
+        queue=queue,
+        credit_price=credit_price,
+    )
+    st.session_state["cost_contract_spike_root_cause_summary"] = summary
+    st.session_state["cost_contract_spike_root_cause"] = board
+    if board.empty:
+        return
+    st.markdown("**Cost Spike Root Cause Drilldown**")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Root-Cause Score", f"{summary['score']}/100")
+    c2.metric("Critical/High", f"{summary['critical_high']:,}", delta_color="inverse")
+    c3.metric("Top Driver", summary["top_driver"])
+    render_priority_dataframe(
+        board,
+        title="Cost root-cause candidates ranked by risk and value",
+        priority_columns=[
+            "SEVERITY", "DRIVER", "ENTITY", "ROOT_CAUSE_SIGNAL", "VALUE_AT_RISK_USD",
+            "CONFIDENCE", "TRUST", "EVIDENCE", "NEXT_ACTION", "PROOF_REQUIRED", "ROUTE",
+        ],
+        sort_by=["SEVERITY", "VALUE_AT_RISK_USD"],
+        ascending=[True, False],
+        raw_label="All cost root-cause candidate rows",
+        height=340,
+        max_rows=8,
+    )
+
+
+def _render_change_cost_correlation_board(
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+) -> None:
+    summary, board = _build_change_cost_correlation_board(
+        cockpit=cockpit,
+        run_rate=run_rate,
+    )
+    st.session_state["cost_contract_change_cost_summary"] = summary
+    st.session_state["cost_contract_change_cost_correlation"] = board
+    if board.empty:
+        return
+    st.markdown("**Change + Cost Correlation**")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Correlation Score", f"{summary['score']}/100")
+    c2.metric("High", f"{summary['high']:,}", delta_color="inverse")
+    c3.metric("Top Correlation", summary["top_correlation"])
+    render_priority_dataframe(
+        board,
+        title="Recent changes that may explain cost movement",
+        priority_columns=[
+            "SEVERITY", "CORRELATION", "ENTITY", "COST_SIGNAL", "CHANGE_SIGNAL",
+            "EVIDENCE", "NEXT_ACTION", "PROOF_REQUIRED", "ROUTE",
+        ],
+        sort_by=["SEVERITY", "CORRELATION"],
+        ascending=[True, True],
+        raw_label="All change and cost correlation rows",
+        height=300,
+        max_rows=8,
+    )
+
+
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     st.subheader("Cost Control Cockpit")
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -1695,6 +2464,29 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         data,
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
         queue,
+        credit_price,
+    )
+    _render_cost_spike_root_cause_board(
+        data,
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        queue,
+        credit_price,
+    )
+    _render_native_cost_control_inventory(
+        data,
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        queue,
+        st.session_state.get("cost_contract_verification_health", pd.DataFrame()),
+        credit_price,
+    )
+    _render_change_cost_correlation_board(
+        data,
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+    )
+    _render_governed_admin_action_pack(
+        company,
+        data,
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
         credit_price,
     )
 

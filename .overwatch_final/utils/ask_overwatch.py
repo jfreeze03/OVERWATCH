@@ -38,6 +38,12 @@ ASK_OVERWATCH_STATE_KEYS = (
     "arch_agentic_ai_scorecard",
     "cost_contract_budget_command_summary",
     "cost_contract_budget_command_center",
+    "cost_contract_native_control_summary",
+    "cost_contract_native_control_inventory",
+    "cost_contract_spike_root_cause_summary",
+    "cost_contract_spike_root_cause",
+    "cost_contract_change_cost_summary",
+    "cost_contract_change_cost_correlation",
 )
 
 
@@ -206,6 +212,92 @@ def _cards_from_cost_command_center(state: Mapping, cards: list[dict]) -> None:
             "category": native,
             "value": value,
         })
+
+
+def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> None:
+    inventory = state.get("cost_contract_native_control_inventory")
+    if _is_df(inventory):
+        view = inventory.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        state_rank = {
+            "REVIEW": 0,
+            "CANDIDATE": 1,
+            "CONTROL PATTERN": 2,
+            "READY TO DEPLOY": 3,
+            "READY": 4,
+        }
+        view["_RANK"] = view.get("STATE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper().map(state_rank).fillna(9)
+        view = view.sort_values(["_RANK", "CONTROL"], ascending=[True, True]).drop(columns=["_RANK"])
+        for _, row in view.head(8).iterrows():
+            control = _text(row, "CONTROL", default="Cost control")
+            _append_card(cards, {
+                "surface": "Cost & Contract - Native Cost Control Inventory",
+                "severity": "High" if _text(row, "STATE").upper() in {"REVIEW", "CANDIDATE"} else "Medium",
+                "signal": _text(row, "STATE", default="Review"),
+                "entity": control,
+                "evidence": (
+                    f"native_surface={_text(row, 'NATIVE_SURFACE')}; scope={_text(row, 'SCOPE')}. "
+                    f"{_text(row, 'EVIDENCE')}"
+                ),
+                "next_action": _text(row, "DBA_NEXT_MOVE", default="Open Cost & Contract and review the native control gap."),
+                "proof": _text(row, "STRICT_GAP", default="Attach native control inventory, budget, monitor, and email proof."),
+                "do_not": "Do not claim Snowflake cost-control readiness until the native surface, scope, and notification gap are verified.",
+                "route": _text(row, "SQL_PACKAGE", default="Cost & Contract > Budget governance"),
+                "category": _text(row, "NATIVE_SURFACE", default="Cost Control"),
+                "value": _text(row, "STATE", default="Review"),
+            })
+
+    root_cause = state.get("cost_contract_spike_root_cause")
+    if _is_df(root_cause):
+        view = root_cause.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        view["_RANK"] = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).apply(_rank)
+        if "VALUE_AT_RISK_USD" not in view.columns:
+            view["VALUE_AT_RISK_USD"] = 0
+        view = view.sort_values(["_RANK", "VALUE_AT_RISK_USD"], ascending=[True, False]).drop(columns=["_RANK"])
+        for _, row in view.head(8).iterrows():
+            driver = _text(row, "DRIVER", default="Cost root cause")
+            _append_card(cards, {
+                "surface": "Cost & Contract - Cost Spike Root Cause",
+                "severity": _text(row, "SEVERITY", default="Medium"),
+                "signal": _text(row, "ROOT_CAUSE_SIGNAL", default=driver),
+                "entity": _text(row, "ENTITY", default=driver),
+                "evidence": (
+                    f"driver={driver}; trust={_text(row, 'TRUST')}; confidence={_text(row, 'CONFIDENCE')}; "
+                    f"value_at_risk=${_text(row, 'VALUE_AT_RISK_USD', default='0')}. {_text(row, 'EVIDENCE')}"
+                ),
+                "next_action": _text(row, "NEXT_ACTION", default="Open Cost & Contract root-cause drilldown."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Attach run-rate, warehouse, attribution, and owner proof."),
+                "do_not": "Do not tune warehouses, enforce quotas, or change budgets until the root-cause proof is attached.",
+                "route": _text(row, "ROUTE", default="Cost & Contract"),
+                "category": driver,
+                "value": _text(row, "VALUE_AT_RISK_USD", default="0"),
+            })
+
+    correlation = state.get("cost_contract_change_cost_correlation")
+    if _is_df(correlation):
+        view = correlation.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        view["_RANK"] = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).apply(_rank)
+        view = view.sort_values(["_RANK", "CORRELATION"], ascending=[True, True]).drop(columns=["_RANK"])
+        for _, row in view.head(6).iterrows():
+            correlation_name = _text(row, "CORRELATION", default="Change/cost correlation")
+            _append_card(cards, {
+                "surface": "Cost & Contract - Change + Cost Correlation",
+                "severity": _text(row, "SEVERITY", default="Medium"),
+                "signal": correlation_name,
+                "entity": _text(row, "ENTITY", default="Cost scope"),
+                "evidence": (
+                    f"cost_signal={_text(row, 'COST_SIGNAL')}; change_signal={_text(row, 'CHANGE_SIGNAL')}. "
+                    f"{_text(row, 'EVIDENCE')}"
+                ),
+                "next_action": _text(row, "NEXT_ACTION", default="Load Change & Drift and compare it to the cost movement."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Attach change query_id, ticket, actor, and cost proof."),
+                "do_not": "Do not close a cost spike until related change-control blockers are cleared or disproven.",
+                "route": _text(row, "ROUTE", default="Change & Drift"),
+                "category": "Change/Cost Correlation",
+                "value": _text(row, "SEVERITY", default="Medium"),
+            })
 
 
 def _cards_from_platform_futures(state: Mapping, cards: list[dict]) -> None:
@@ -531,6 +623,7 @@ def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[
     _cards_from_recommendations(state, cards)
     _cards_from_automation_board(state, cards)
     _cards_from_cost_command_center(state, cards)
+    _cards_from_cost_operational_boards(state, cards)
     _cards_from_platform_futures(state, cards)
     _cards_from_queue(state.get("rec_action_queue"), cards, surface="Recommendations action queue")
     _cards_from_queue(state.get("cost_contract_queue"), cards, surface="Cost & Contract action queue")
@@ -552,7 +645,7 @@ def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[
 def _domain_filter(question: str, cards: list[dict]) -> list[dict]:
     q = question.lower()
     domain_terms = {
-        "cost": ("cost", "credit", "spend", "budget", "quota", "savings", "contract", "idle", "cortex", "resource monitor"),
+        "cost": ("cost", "credit", "spend", "budget", "quota", "savings", "contract", "idle", "cortex", "resource monitor", "root cause", "cost spike"),
         "warehouse": ("warehouse", "queue", "spill", "capacity", "sizing", "suspend", "auto_suspend"),
         "reliability": ("task", "procedure", "failure", "failed", "runtime", "sla", "graph"),
         "alert": ("alert", "incident", "email", "overdue", "issue"),

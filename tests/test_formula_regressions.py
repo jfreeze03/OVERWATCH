@@ -72,12 +72,16 @@ from sections.cost_center import (  # noqa: E402
 )
 from sections.cost_contract import (  # noqa: E402
     _build_budget_anomaly_command_center,
+    _build_change_cost_correlation_board,
     _build_cost_allocation_trust_board,
     _build_cost_closure_analytics,
     _build_cost_control_coverage_board,
     _build_cost_decomposition_board,
     _build_cost_drilldown_command_map,
     _build_cost_run_rate_sql,
+    _build_cost_spike_root_cause_board,
+    _build_native_cost_control_inventory,
+    _build_resource_monitor_guardrail_sql,
     _build_savings_verification_task_summary,
 )
 from sections.budget_governance import (  # noqa: E402
@@ -1200,6 +1204,178 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("native_control=Resource Monitor", cards[0]["evidence"])
         self.assertIn("Warehouse guardrail", result["answer"])
         self.assertIn("Do not use resource monitors as AI/serverless", result["answer"])
+
+    def test_native_cost_control_inventory_separates_monitors_budgets_and_email(self):
+        cockpit = pd.DataFrame([{
+            "CURRENT_CREDITS": 140,
+            "PRIOR_CREDITS": 80,
+            "TOP_INCREASE_WAREHOUSE": "ALFA_WH",
+            "TOP_INCREASE_CREDITS": 50,
+        }])
+        run_rate = pd.DataFrame([{
+            "PROJECTED_30D_FROM_7D": 450,
+        }])
+        queue = pd.DataFrame([{
+            "CATEGORY": "Cost Control",
+            "STATUS": "New",
+            "SEVERITY": "High",
+        }])
+
+        summary, board = _build_native_cost_control_inventory(
+            cockpit=cockpit,
+            run_rate=run_rate,
+            queue=queue,
+            verification_health=pd.DataFrame([{"TASK_HEALTH_STATE": "Healthy"}]),
+            credit_price=4.0,
+            state={},
+        )
+        by_control = {row["CONTROL"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_control["Warehouse resource monitor"]["SCOPE"], "Warehouse-only")
+        self.assertIn("RESOURCE MONITOR", by_control["Warehouse resource monitor"]["NATIVE_SURFACE"])
+        self.assertIn("serverless", by_control["Warehouse resource monitor"]["STRICT_GAP"])
+        self.assertIn("ACCOUNT_ROOT_BUDGET", by_control["Account root budget"]["NATIVE_SURFACE"])
+        self.assertIn("jdees@alfains.com", by_control["Email notification path"]["EVIDENCE"])
+        self.assertGreaterEqual(summary["ready"], 3)
+        self.assertEqual(summary["warehouse_only"], 1)
+
+    def test_resource_monitor_guardrail_sql_is_review_only_and_assigns_warehouse(self):
+        sql = _build_resource_monitor_guardrail_sql(
+            "ALFA_WH",
+            credit_quota=250,
+            monitor_name="OVERWATCH_ALFA_WH_RM",
+        ).upper()
+
+        self.assertIn("RESOURCE MONITORS ARE WAREHOUSE-ONLY CONTROLS", sql)
+        self.assertIn("CREATE RESOURCE MONITOR IF NOT EXISTS OVERWATCH_ALFA_WH_RM", sql)
+        self.assertIn("TRIGGERS ON 75 PERCENT DO NOTIFY", sql)
+        self.assertIn("ON 90 PERCENT DO SUSPEND", sql)
+        self.assertIn("ALTER WAREHOUSE IF EXISTS ALFA_WH", sql)
+        self.assertIn("SET RESOURCE_MONITOR = OVERWATCH_ALFA_WH_RM", sql)
+        self.assertIn("SHOW RESOURCE MONITORS", sql)
+
+    def test_cost_spike_root_cause_board_uses_loaded_dimensions_and_keeps_allocation_trust(self):
+        cockpit = pd.DataFrame([{
+            "CURRENT_CREDITS": 120,
+            "PRIOR_CREDITS": 60,
+            "TOP_INCREASE_WAREHOUSE": "ALFA_WH",
+            "TOP_INCREASE_CREDITS": 55,
+        }])
+        run_rate = pd.DataFrame([{
+            "AVG_DAILY_7D": 17,
+            "AVG_DAILY_30D": 8.5,
+            "PCT_VS_30D_AVG": 100,
+            "YOY_7D_PCT": 42,
+        }])
+        queue = pd.DataFrame([{
+            "CATEGORY": "Cost Control",
+            "STATUS": "New",
+            "EST_MONTHLY_SAVINGS": 700,
+        }])
+        state = {
+            "df_chargeback": pd.DataFrame([{
+                "COMPANY": "ALFA",
+                "ENVIRONMENT": "PROD",
+                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "TOTAL_CREDITS": 40,
+            }]),
+            "df_cost_explorer_detail": pd.DataFrame([{
+                "ROLE_NAME": "ETL_ROLE",
+                "USER_NAME": "ETL_USER",
+                "DEPARTMENT": "DATA",
+                "TOTAL_CREDITS": 30,
+            }]),
+        }
+
+        summary, board = _build_cost_spike_root_cause_board(
+            cockpit=cockpit,
+            run_rate=run_rate,
+            queue=queue,
+            credit_price=4.0,
+            state=state,
+        )
+        by_driver = {row["DRIVER"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_driver["Warehouse movement"]["ENTITY"], "ALFA_WH")
+        self.assertEqual(by_driver["Warehouse movement"]["TRUST"], "Exact warehouse metering")
+        self.assertEqual(by_driver["Database / DEV rollup"]["ENTITY"], "ALFA_EDW_PROD")
+        self.assertEqual(by_driver["Database / DEV rollup"]["TRUST"], "Allocated / Estimated")
+        self.assertEqual(by_driver["Role / user / department"]["ENTITY"], "ETL_ROLE")
+        self.assertIn("post-period measured proof", by_driver["Open savings queue"]["NEXT_ACTION"])
+        self.assertEqual(summary["top_driver"], "Warehouse movement")
+        self.assertLess(summary["score"], 100)
+
+    def test_change_cost_correlation_board_flags_top_warehouse_change_risk(self):
+        cockpit = pd.DataFrame([{
+            "CURRENT_CREDITS": 120,
+            "PRIOR_CREDITS": 60,
+            "TOP_INCREASE_WAREHOUSE": "ALFA_WH",
+            "TOP_INCREASE_CREDITS": 55,
+        }])
+        run_rate = pd.DataFrame([{"PCT_VS_30D_AVG": 40}])
+        state = {
+            "change_drift_exceptions": pd.DataFrame([{
+                "SEVERITY": "High",
+                "FINDING_TYPE": "Warehouse Setting Change",
+                "ENTITY": "ALFA_WH",
+                "WAREHOUSE_NAME": "ALFA_WH",
+                "QUERY_ID": "01change",
+                "USER_NAME": "DBA",
+            }])
+        }
+
+        summary, board = _build_change_cost_correlation_board(
+            cockpit=cockpit,
+            run_rate=run_rate,
+            state=state,
+        )
+        by_correlation = {row["CORRELATION"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_correlation["Top warehouse change proximity"]["SEVERITY"], "High")
+        self.assertIn("ALFA_WH", by_correlation["Top warehouse change proximity"]["ENTITY"])
+        self.assertIn("query_id", by_correlation["Top warehouse change proximity"]["PROOF_REQUIRED"].lower())
+        self.assertIn("before tuning", by_correlation["Top warehouse change proximity"]["NEXT_ACTION"])
+        self.assertLess(summary["score"], 100)
+
+    def test_ask_overwatch_reads_cost_root_cause_and_change_correlation(self):
+        state = {
+            "cost_contract_spike_root_cause": pd.DataFrame([{
+                "SEVERITY": "High",
+                "DRIVER": "Warehouse movement",
+                "ENTITY": "ALFA_WH",
+                "ROOT_CAUSE_SIGNAL": "Top warehouse delta",
+                "VALUE_AT_RISK_USD": 220,
+                "CONFIDENCE": "High",
+                "TRUST": "Exact warehouse metering",
+                "EVIDENCE": "ALFA_WH moved 55 credits versus prior.",
+                "NEXT_ACTION": "Confirm owner demand and warehouse setting changes before tuning.",
+                "PROOF_REQUIRED": "WAREHOUSE_METERING_HISTORY current/prior window and top delta.",
+                "ROUTE": "Cost & Contract > Explain bill / attribution / contract",
+            }]),
+            "cost_contract_change_cost_correlation": pd.DataFrame([{
+                "SEVERITY": "High",
+                "CORRELATION": "Top warehouse change proximity",
+                "ENTITY": "ALFA_WH",
+                "COST_SIGNAL": "Top warehouse delta 55 credits.",
+                "CHANGE_SIGNAL": "1 row mentions the top warehouse.",
+                "EVIDENCE": "Warehouse setting change is a root-cause candidate.",
+                "NEXT_ACTION": "Review query_id, actor, warehouse settings, and rollback evidence before tuning.",
+                "PROOF_REQUIRED": "Change exception query_id and WAREHOUSE_METERING_HISTORY.",
+                "ROUTE": "Change & Drift > Controlled DBA actions",
+            }]),
+        }
+
+        result = answer_ask_overwatch(
+            "What is the root cause of the cost spike on ALFA_WH?",
+            state,
+            active_section="Cost & Contract",
+            company="ALFA",
+            environment="PROD",
+        )
+
+        self.assertIn("Warehouse movement", result["answer"])
+        self.assertIn("ALFA_WH", result["answer"])
+        self.assertIn("before tuning", result["answer"])
 
     def test_budget_governance_board_tracks_summit_budget_capabilities(self):
         summary, board = _build_budget_governance_board()

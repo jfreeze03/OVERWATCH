@@ -62,6 +62,8 @@ _ASK_OVERWATCH_STATE_KEYS = (
     "arch_futures_board",
 )
 
+CONNECTION_OPTIONAL_SECTIONS = {"Alert Center"}
+
 
 def _snapshot_ask_overwatch_state(state) -> dict:
     snapshot = {}
@@ -151,6 +153,10 @@ def _resolve_visible_sections() -> list[str]:
 
 def _normalize_nav_section(section: str) -> str:
     return normalize_section_name(section)
+
+
+def _section_requires_connection(section: str) -> bool:
+    return _normalize_nav_section(section) not in CONNECTION_OPTIONAL_SECTIONS
 
 
 def _queue_section_navigation(section: str) -> None:
@@ -838,7 +844,8 @@ if show_transition:
         _render_section_transition_state(active_section)
 
 try:
-    if not connection_available or st.session_state.get("_overwatch_connection_unavailable"):
+    needs_connection = _section_requires_connection(active_section)
+    if needs_connection and (not connection_available or st.session_state.get("_overwatch_connection_unavailable")):
         with section_slot.container():
             _render_connection_empty_state(active_section)
         _mark_section_rendered(active_section, section_signature)

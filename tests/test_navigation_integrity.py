@@ -258,6 +258,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
 
         self.assertIn("def _queue_section_navigation", app_text)
+        self.assertIn('CONNECTION_OPTIONAL_SECTIONS = {"Alert Center"}', app_text)
+        self.assertIn("def _section_requires_connection", app_text)
         self.assertIn("_overwatch_pending_section", app_text)
         self.assertIn("def _section_render_signature", app_text)
         self.assertIn("_overwatch_last_section_render_signature", app_text)
@@ -266,6 +268,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_render_section_transition_state(active_section)", app_text)
         self.assertIn("with section_slot.container():", app_text)
         self.assertIn("sections.dispatch(active_section)", app_text)
+        self.assertIn("needs_connection = _section_requires_connection(active_section)", app_text)
+        self.assertIn("if needs_connection and (not connection_available", app_text)
         self.assertIn("transition_slot.empty()", app_text)
         self.assertIn(".ow-section-transition", theme_text)
         self.assertIn("position: fixed", theme_text)
@@ -556,15 +560,33 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.button("Load Operability Mart"', account_health_text)
         self.assertIn("ALERT_CENTER_SOURCES_BY_PANE", alert_center_text)
         self.assertIn("_alert_center_sources_for_view(active_view)", alert_center_text)
+        self.assertIn("ALERT_CENTER_SOURCE_PLAN", alert_center_text)
+        self.assertIn("_alert_center_source_summary(required_sources)", alert_center_text)
+        self.assertIn("Sources on load", alert_center_text)
+        self.assertNotIn("_alert_center_load_plan", alert_center_text)
+        self.assertNotIn("with st.expander(\"Source plan\"", alert_center_text)
         self.assertIn('st.radio(\n        "Alert Center view"', alert_center_text)
         self.assertNotIn("st.tabs(", alert_center_text)
+        alert_center_import_block = alert_center_text.split("ALERT_CENTER_PANES", 1)[0]
+        self.assertNotIn("build_alert_task_sql", alert_center_import_block)
+        self.assertNotIn("load_alert_history", alert_center_import_block)
+        self.assertNotIn("from utils.alerts import", alert_center_import_block)
+        self.assertNotIn("import pandas as pd", alert_center_import_block)
+        self.assertNotIn("from utils.workflows import", alert_center_import_block)
+        self.assertIn("def _pd()", alert_center_text)
+        self.assertIn("def _render_priority_dataframe", alert_center_text)
+        self.assertIn("def _alert_center_action_session", alert_center_text)
+        self.assertIn('st.session_state.get("_overwatch_connection_unavailable")', alert_center_text)
+        self.assertIn("Snowflake connection is required to {action}", alert_center_text)
+        self.assertIn('session = _alert_center_action_session(f"load {active_view}")', alert_center_text)
+        self.assertNotIn("session = _get_session()", alert_center_text.replace("return _get_session()", ""))
         for label, section_text in {
             "Alert Center": alert_center_text,
             "Cost & Contract": cost_contract_text,
             "DBA Control Room": dba_control_text,
         }.items():
             with self.subTest(lazy_session_section=label):
-                render_start = section_text.split("def render() -> None:", 1)[1].split("render_operator_briefing", 1)[0]
+                render_start = section_text.split("def render() -> None:", 1)[1].split("if st.button", 1)[0]
                 self.assertNotIn("session = get_session()", render_start)
         self.assertIn('if active_view == "Setup SQL":', alert_center_text)
         self.assertIn('if active_view == "Suppression Windows":', alert_center_text)

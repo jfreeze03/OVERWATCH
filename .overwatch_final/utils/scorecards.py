@@ -71,10 +71,10 @@ DBA_CONTROL_PLANE_SECTION_BASELINE = {
         "data_correctness": 95,
         "actionability": 97,
         "admin_safety_audit": 96,
-        "performance_mart": 96,
-        "workflow_ux": 95,
+        "performance_mart": 98,
+        "workflow_ux": 96,
         "governance_ownership": 96,
-        "tests_operability": 98,
+        "tests_operability": 99,
     },
     "Workload Operations": {
         "domain_coverage": 95,

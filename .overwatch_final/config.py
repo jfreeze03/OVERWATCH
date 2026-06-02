@@ -366,8 +366,8 @@ FORWARD_PLATFORM_CONTROLS = (
         "PRIMARY_EVIDENCE": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY; SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY",
         "SOURCE_OBJECTS": "Cortex Agent usage, Snowflake Intelligence usage",
         "RISK_IF_MISSING": "AI usage can create token-credit spend with weak user, role, interface, or owner accountability.",
-        "DBA_DECISION": "Route high-credit, external-interface, or privileged-role usage to owners with daily/weekly budget review.",
-        "AUTOMATION_BOUNDARY": "Alert and queue only until budget policy and approval workflow exist.",
+        "DBA_DECISION": "Route high-credit, external-interface, or privileged-role usage to owners with Snowflake budget, quota, and custom-action review.",
+        "AUTOMATION_BOUNDARY": "Generate budget and quota deployment SQL, alert, and queue only. Do not auto-revoke AI access or change budget limits without approval.",
         "MATCH_PRIORITY": 230,
     },
     {

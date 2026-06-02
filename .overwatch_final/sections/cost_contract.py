@@ -32,6 +32,7 @@ WORKFLOWS = (
     "Explain bill / attribution / contract",
     "Recommendations and action queue",
     "Snowflake value log",
+    "Budget governance",
     "AI and Cortex spend",
     "SPCS spend",
 )
@@ -40,6 +41,7 @@ WORKFLOW_DETAILS = {
     "Explain bill / attribution / contract": "Start here: bill movement, chargeback, contract pacing, and cost drivers.",
     "Recommendations and action queue": "Owned fixes with severity, proof, savings, and status.",
     "Snowflake value log": "Evidence that DBA changes avoided spend or improved service.",
+    "Budget governance": "Native Snowflake budgets, shared AI resources, per-user AI quota patterns, and custom actions.",
     "AI and Cortex spend": "Cortex usage, model spend, users, and runaway AI cost signals.",
     "SPCS spend": "Snowpark Container Services usage and service cost exposure.",
 }
@@ -48,6 +50,7 @@ WORKFLOW_MODULES = {
     "Explain bill / attribution / contract": "sections.cost_center",
     "Recommendations and action queue": "sections.recommendations",
     "Snowflake value log": "sections.snowflake_value",
+    "Budget governance": "sections.budget_governance",
     "AI and Cortex spend": "sections.cortex_monitor",
     "SPCS spend": "sections.spcs_tracker",
 }
@@ -1478,6 +1481,7 @@ def render() -> None:
             ("Why did the bill move?", "Use Explain bill / attribution / contract."),
             ("What should we fix first?", "Use Recommendations and action queue."),
             ("How do we prove savings?", "Use Snowflake value log."),
+            ("Can Snowflake enforce budgets?", "Use Budget governance."),
             ("Are AI costs controlled?", "Use AI and Cortex spend."),
             ("Are container services costing us?", "Use SPCS spend."),
         ],

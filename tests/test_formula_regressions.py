@@ -79,6 +79,14 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_run_rate_sql,
     _build_savings_verification_task_summary,
 )
+from sections.budget_governance import (  # noqa: E402
+    _build_budget_custom_action_sql,
+    _build_budget_governance_board,
+    _build_budget_inventory_sql,
+    _build_budget_policy_frame,
+    _build_native_budget_sql,
+    _build_per_user_quota_sql,
+)
 from sections.dba_control_room import (  # noqa: E402
     _build_report as _build_dba_control_report,
     _build_command_queue,
@@ -1099,6 +1107,95 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_driver["Company and environment split"]["TRUST"], "Allocated/Estimated")
         self.assertEqual(by_driver["Open cost action queue"]["STATUS"], "Ready")
         self.assertGreaterEqual(decomposition_summary["score"], 80)
+
+    def test_budget_governance_board_tracks_summit_budget_capabilities(self):
+        summary, board = _build_budget_governance_board()
+        capabilities = set(board["CAPABILITY"])
+        self.assertEqual(
+            capabilities,
+            {
+                "Cost Controls for AI",
+                "Org-Level Controls",
+                "Per-User Quota",
+                "Shared Resource Budgets",
+                "Budget Custom Actions",
+                "Anomaly Explanations",
+            },
+        )
+        self.assertGreaterEqual(summary["score"], 80)
+        self.assertGreaterEqual(summary["ready"], 4)
+        self.assertEqual(board.loc[board["CAPABILITY"].eq("Per-User Quota"), "STATE"].iloc[0], "Control Pattern")
+        self.assertEqual(board.loc[board["CAPABILITY"].eq("Anomaly Explanations"), "STATE"].iloc[0], "Partial")
+
+    def test_budget_policy_frame_exposes_company_ai_and_quota_controls(self):
+        policy = _build_budget_policy_frame(
+            "ALL",
+            4.0,
+            ai_budget_usd=8000.0,
+            per_user_limit_usd=400.0,
+            email_target="jdees@alfains.com",
+        )
+        controls = set(policy["CONTROL_TYPE"])
+        self.assertIn("SHARED_AI_RESOURCE_BUDGET", controls)
+        self.assertIn("PER_USER_AI_QUOTA", controls)
+        self.assertIn("ACCOUNT_ROOT_BUDGET", controls)
+        self.assertIn("CUSTOM_ACTION_BRIDGE", controls)
+        self.assertIn("ALFA_AI", set(policy["TAG_VALUE"]))
+        self.assertIn("TREXIS_AI", set(policy["TAG_VALUE"]))
+        self.assertTrue(policy["ALERT_TARGET"].eq("jdees@alfains.com").all())
+        self.assertTrue((policy.loc[policy["CONTROL_TYPE"].eq("PER_USER_AI_QUOTA"), "MONTHLY_LIMIT_CREDITS"] == 100.0).all())
+
+    def test_native_budget_sql_uses_snowflake_budget_shared_resource_methods(self):
+        policy = _build_budget_policy_frame("ALFA", 4.0, ai_budget_usd=4000.0, email_target="jdees@alfains.com")
+        sql = _build_native_budget_sql(policy, email_target="jdees@alfains.com").upper()
+        self.assertIn("CREATE SNOWFLAKE.CORE.BUDGET", sql)
+        self.assertIn("SET_SPENDING_LIMIT", sql)
+        self.assertIn("SET_NOTIFICATION_THRESHOLD(75)", sql)
+        self.assertIn("SET_EMAIL_NOTIFICATIONS('JDEES@ALFAINS.COM')", sql)
+        self.assertIn("SET_USER_TAGS", sql)
+        self.assertIn("SYSTEM$REFERENCE('TAG'", sql)
+        self.assertIn("APPLYBUDGET", sql)
+        self.assertIn("ADD_SHARED_RESOURCE('AI FUNCTION')", sql)
+        self.assertIn("ADD_SHARED_RESOURCE('CORTEX CODE')", sql)
+        self.assertIn("ADD_SHARED_RESOURCE('CORTEX AGENT')", sql)
+        self.assertIn("ADD_SHARED_RESOURCE('SNOWFLAKE INTELLIGENCE')", sql)
+        self.assertIn("SNOWFLAKE.LOCAL.ACCOUNT_ROOT_BUDGET", sql)
+
+    def test_per_user_quota_sql_is_dry_run_role_based_cortex_control(self):
+        sql = _build_per_user_quota_sql(default_limit_usd=300.0, credit_price=3.0).upper()
+        self.assertIn("OVERWATCH_AI_USER_QUOTA", sql)
+        self.assertIn("OVERWATCH_AI_USER_MONTHLY_USAGE_V", sql)
+        self.assertIn("CORTEX_AI_FUNCTIONS_USAGE_HISTORY", sql)
+        self.assertIn("CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY", sql)
+        self.assertIn("REVOKE DATABASE ROLE SNOWFLAKE.CORTEX_USER FROM ROLE PUBLIC", sql)
+        self.assertIn("GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER TO ROLE OVERWATCH_AI_FUNCTIONS_USER_ROLE", sql)
+        self.assertIn("REVOKE ROLE OVERWATCH_AI_FUNCTIONS_USER_ROLE FROM USER", sql)
+        self.assertIn("RESTORE_SQL", sql)
+        self.assertIn("CREATE OR REPLACE TASK", sql)
+        self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
+
+    def test_budget_custom_action_sql_bridges_native_budget_events_to_action_queue(self):
+        policy = _build_budget_policy_frame("ALFA", 4.0, ai_budget_usd=4000.0, email_target="jdees@alfains.com")
+        sql = _build_budget_custom_action_sql(policy, email_target="jdees@alfains.com").upper()
+        self.assertIn("SP_OVERWATCH_BUDGET_CUSTOM_ACTION", sql)
+        self.assertIn("EXECUTE AS OWNER", sql)
+        self.assertIn("OVERWATCH_BUDGET_ACTION_BRIDGE", sql)
+        self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
+        self.assertIn("GRANT USAGE ON PROCEDURE", sql)
+        self.assertIn("TO APPLICATION SNOWFLAKE", sql)
+        self.assertIn("ADD_CUSTOM_ACTION", sql)
+        self.assertIn("SYSTEM$REFERENCE('PROCEDURE'", sql)
+        self.assertIn("'PROJECTED'", sql)
+        self.assertIn("'ACTUAL'", sql)
+        self.assertIn("GET_CUSTOM_ACTIONS", sql)
+
+    def test_budget_inventory_sql_is_read_only_budget_introspection(self):
+        sql = _build_budget_inventory_sql().upper()
+        self.assertIn("SYSTEM$SHOW_BUDGETS_IN_ACCOUNT", sql)
+        self.assertIn("ACCOUNT_ROOT_BUDGET!GET_CONFIG", sql)
+        self.assertIn("GET_SPENDING_HISTORY", sql)
+        self.assertIn("GET_SHARED_RESOURCES", sql)
+        self.assertIn("GET_CUSTOM_ACTIONS", sql)
 
     def test_control_room_snapshot_maps_to_watch_floor_shape(self):
         snapshot = pd.DataFrame([

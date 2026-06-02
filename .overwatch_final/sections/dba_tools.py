@@ -1601,22 +1601,23 @@ ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
 
         # ── Per-user Cortex policy (Enterprise) ───────────────────────────────
         st.divider()
-        st.subheader("Per-User / Per-Role Cortex Access (Network Policies / Object Tags)")
+        st.subheader("Per-User / Per-Role Cortex Access and Quotas")
         st.caption(
-            "Snowflake does not yet support per-user Cortex credit limits natively (as of 2025). "
-            "The recommended pattern is to use OBJECT_TAGS or role-based feature flags in `config.py` "
-            "to control Cortex exposure per team. "
-            "Track per-user spend in OVERWATCH → Cost & Contract → AI and Cortex spend → Cortex Code Users."
+            "Use Snowflake Budgets for shared AI resources and route Cortex access through a controlled role "
+            "when per-user monthly quota enforcement is required. "
+            "The generated quota framework lives in Cost & Contract -> Budget governance."
         )
         st.info(
-            "💡 **Tip:** To restrict Cortex to specific roles, use `GRANT SNOWFLAKE.CORTEX.USER` "
-            "or revoke the `SNOWFLAKE` database usage from roles that shouldn't have access. "
-            "See Snowflake docs: `GRANT USAGE ON DATABASE SNOWFLAKE TO ROLE <role>`."
+            "Tip: To enforce user quotas, revoke the blanket `SNOWFLAKE.CORTEX_USER` grant from PUBLIC, "
+            "grant it only through an approved AI role, then use OVERWATCH to queue revoke/restore review SQL."
         )
         with st.expander("📋 Cortex access control SQL snippets"):
             st.code("""
 -- Grant Cortex access to a specific role
 GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER TO ROLE <your_role>;
+
+-- Required before per-user quota enforcement
+REVOKE DATABASE ROLE SNOWFLAKE.CORTEX_USER FROM ROLE PUBLIC;
 
 -- Revoke Cortex access from a role
 REVOKE DATABASE ROLE SNOWFLAKE.CORTEX_USER FROM ROLE <restricted_role>;

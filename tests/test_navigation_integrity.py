@@ -163,6 +163,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Stored procedures", workload_operations.WORKFLOWS)
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Task graphs"], "sections.task_management")
         self.assertIn("Recommendations and action queue", cost_contract.WORKFLOWS)
+        self.assertIn("Budget governance", cost_contract.WORKFLOWS)
+        self.assertEqual(cost_contract.WORKFLOW_MODULES["Budget governance"], "sections.budget_governance")
         self.assertEqual(cost_contract.WORKFLOW_MODULES["AI and Cortex spend"], "sections.cortex_monitor")
         self.assertEqual(SECTION_ALIASES["Alerts"], SECTION_BY_TITLE["Alert Center"])
         self.assertIn("Access posture", security_posture.WORKFLOWS)

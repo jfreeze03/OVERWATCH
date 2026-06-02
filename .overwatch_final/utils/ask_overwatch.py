@@ -34,6 +34,8 @@ ASK_OVERWATCH_STATE_KEYS = (
     "arch_ai_security_guardrails",
     "arch_futures_board",
     "arch_futures_adoption_gate",
+    "arch_agentic_ai_summary",
+    "arch_agentic_ai_scorecard",
 )
 
 
@@ -244,6 +246,45 @@ def _cards_from_platform_futures(state: Mapping, cards: list[dict]) -> None:
                 "route": "Architecture Readiness > AI & Platform Futures",
                 "category": area,
                 "value": score,
+            })
+    agentic = state.get("arch_agentic_ai_scorecard")
+    if _is_df(agentic):
+        view = agentic.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        state_rank = {"BLOCKED": 0, "EVIDENCE GAPS": 1, "CONTROLLED PILOT": 2, "PRODUCTION READY": 3}
+        if "GO_LIVE_STATE" in view.columns:
+            view["_STATE_RANK"] = view["GO_LIVE_STATE"].fillna("").astype(str).str.upper().map(state_rank).fillna(9)
+        else:
+            view["_STATE_RANK"] = 9
+        if "READINESS_SCORE" not in view.columns:
+            view["READINESS_SCORE"] = 0
+        view = view.sort_values(
+            ["_STATE_RANK", "READINESS_SCORE"],
+            ascending=[True, True],
+        ).drop(columns=["_STATE_RANK"])
+        for _, row in view.head(8).iterrows():
+            state_label = _text(row, "GO_LIVE_STATE", default="Evidence Gaps")
+            readiness = _text(row, "READINESS_SCORE", default="0")
+            area = _text(row, "CONTROL_AREA", default="Agentic AI Governance")
+            severity = "Critical" if state_label == "Blocked" else "High" if state_label == "Evidence Gaps" else "Medium"
+            _append_card(cards, {
+                "surface": "Architecture Readiness - Agentic AI Governance Cockpit",
+                "severity": severity,
+                "signal": state_label,
+                "entity": area,
+                "evidence": (
+                    f"surface={_text(row, 'SURFACE_CLASS', default='Agentic AI')}; readiness={readiness}; "
+                    f"critical/high={_text(row, 'CRITICAL_HIGH_FINDINGS', default='0')}; "
+                    f"source_gaps={_text(row, 'SOURCE_GAPS', default='0')}; "
+                    f"owner_gaps={_text(row, 'OWNER_ROUTE_GAPS', default='0')}; "
+                    f"blockers={_text(row, 'BLOCKERS', default='No blockers recorded')}."
+                ),
+                "next_action": _text(row, "DBA_DECISION", "NEXT_DBA_MOVE", default="Close evidence, ownership, approval, and proof gaps before production AI expansion."),
+                "proof": _text(row, "PROOF_REQUIRED", "PRIMARY_EVIDENCE", default="Attach source metadata, owner approval, and regression evidence."),
+                "do_not": _text(row, "DO_NOT_DO", "AUTOMATION_BOUNDARY", default="Do not publish or expand agentic AI surfaces without owner-approved evidence."),
+                "route": "Architecture Readiness > AI & Platform Futures > Agentic AI Cockpit",
+                "category": area,
+                "value": str(max(0, 100 - safe_float(readiness))),
             })
     frame = state.get("arch_futures_board")
     if not _is_df(frame):
@@ -479,7 +520,10 @@ def _domain_filter(question: str, cards: list[dict]) -> list[dict]:
         "security": ("security", "grant", "role", "login", "mfa", "access"),
         "change": ("change", "drift", "ddl", "owner", "approval"),
         "automation": ("automation", "automate", "auto", "guided", "approval", "manual only", "blocker"),
-        "ai_platform": ("agent", "mcp", "intelligence", "openflow", "horizon", "semantic", "aisql", "cortex code", "ai"),
+        "ai_platform": (
+            "agent", "mcp", "intelligence", "openflow", "horizon", "semantic",
+            "aisql", "cortex code", "cortex sense", "cowork", "artifact", "context", "ai",
+        ),
     }
     matched_domains = [
         domain for domain, terms in domain_terms.items()

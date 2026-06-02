@@ -33,6 +33,26 @@ PLATFORM_FUTURES_AREAS = (
     "AI Change Governance",
 )
 
+AGENTIC_AI_CONTROL_AREAS = (
+    "Agent & MCP Governance",
+    "Cortex Sense Context Governance",
+    "CoWork Artifact Governance",
+    "AI Spend & Token Guardrails",
+    "AI Security Guardrails",
+    "Semantic Trust & Verified Query Testing",
+    "AI Change Governance",
+)
+
+AGENTIC_AI_SURFACE_CLASSES = {
+    "Agent & MCP Governance": "Agent / Tooling",
+    "Cortex Sense Context Governance": "Context Trust",
+    "CoWork Artifact Governance": "Shared Artifact",
+    "AI Spend & Token Guardrails": "Cost Control",
+    "AI Security Guardrails": "Security",
+    "Semantic Trust & Verified Query Testing": "Semantic Trust",
+    "AI Change Governance": "Change Control",
+}
+
 PLATFORM_FUTURES_CONTROL_TABLE = "OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER"
 PLATFORM_FUTURES_EVIDENCE_TABLE = "OVERWATCH_PLATFORM_FUTURES_EVIDENCE"
 PLATFORM_FUTURES_LATEST_VIEW = "OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V"
@@ -1837,3 +1857,129 @@ def build_platform_futures_adoption_gate(
         ["_STATE_RANK", "READINESS_SCORE", "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS"],
         ascending=[True, True, False, False],
     ).drop(columns=["_STATE_RANK"])
+
+
+def _agentic_go_live_state(row: Mapping | pd.Series) -> str:
+    score = safe_int(_first_text(row, "READINESS_SCORE", default="0"))
+    critical_high = safe_int(_first_text(row, "CRITICAL_HIGH_FINDINGS", default="0"))
+    medium = safe_int(_first_text(row, "MEDIUM_FINDINGS", default="0"))
+    source_gaps = safe_int(_first_text(row, "SOURCE_GAPS", default="0"))
+    owner_gaps = safe_int(_first_text(row, "OWNER_ROUTE_GAPS", default="0"))
+    approval_gaps = safe_int(_first_text(row, "APPROVAL_GAPS", default="0"))
+    evidence_rows = safe_int(_first_text(row, "EVIDENCE_ROWS", default="0"))
+    if critical_high > 0 or score < 75:
+        return "Blocked"
+    if source_gaps > 0 or owner_gaps > 0 or approval_gaps > 0 or evidence_rows == 0 or medium > 0 or score < 95:
+        return "Evidence Gaps"
+    if score < 99:
+        return "Controlled Pilot"
+    return "Production Ready"
+
+
+def _agentic_blockers(row: Mapping | pd.Series) -> str:
+    blockers: list[str] = []
+    score = safe_int(_first_text(row, "READINESS_SCORE", default="0"))
+    critical_high = safe_int(_first_text(row, "CRITICAL_HIGH_FINDINGS", default="0"))
+    medium = safe_int(_first_text(row, "MEDIUM_FINDINGS", default="0"))
+    source_gaps = safe_int(_first_text(row, "SOURCE_GAPS", default="0"))
+    owner_gaps = safe_int(_first_text(row, "OWNER_ROUTE_GAPS", default="0"))
+    approval_gaps = safe_int(_first_text(row, "APPROVAL_GAPS", default="0"))
+    evidence_rows = safe_int(_first_text(row, "EVIDENCE_ROWS", default="0"))
+    if critical_high:
+        blockers.append(f"{critical_high} critical/high finding(s)")
+    if medium:
+        blockers.append(f"{medium} medium evidence gap(s)")
+    if source_gaps:
+        blockers.append(f"{source_gaps} unloaded or stale source surface(s)")
+    if evidence_rows == 0:
+        blockers.append("no loaded evidence rows")
+    if owner_gaps:
+        blockers.append(f"{owner_gaps} owner route gap(s)")
+    if approval_gaps:
+        blockers.append(f"{approval_gaps} approval gap(s)")
+    if score < 95:
+        blockers.append(f"readiness {score} below 95 target")
+    return "; ".join(blockers) or "No blocking gaps in loaded evidence"
+
+
+def _agentic_dba_decision(row: Mapping | pd.Series) -> str:
+    state = _first_text(row, "GO_LIVE_STATE", default="Evidence Gaps")
+    area = _first_text(row, "CONTROL_AREA", default="agentic AI surface")
+    if state == "Blocked":
+        return f"No-go for {area}; contain usage until blockers are closed with owner-approved proof."
+    if state == "Evidence Gaps":
+        return f"Do not expand {area}; load evidence and attach owner, approval, proof, and rollback route first."
+    if state == "Controlled Pilot":
+        return f"Keep {area} in a named pilot with explicit users, budget/quota guardrails, and weekly verification."
+    return f"{area} can proceed under production governance with evidence refresh, owner review, and rollback checks."
+
+
+def build_agentic_ai_surface_scorecard(
+    control_register: pd.DataFrame | None,
+    evidence_frames: Iterable[pd.DataFrame | None] | None = None,
+    *,
+    source_health: pd.DataFrame | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Return strict go-live readiness for agentic AI surfaces."""
+    gate = build_platform_futures_adoption_gate(
+        control_register,
+        evidence_frames,
+        source_health=source_health,
+    )
+    summary = {
+        "STRICT_SCORE": 0,
+        "AVERAGE_SCORE": 0,
+        "SURFACES": 0,
+        "PRODUCTION_READY": 0,
+        "CONTROLLED_PILOT": 0,
+        "EVIDENCE_GAPS": 0,
+        "BLOCKED": 0,
+        "CRITICAL_HIGH": 0,
+        "SOURCE_GAPS": 0,
+        "OWNER_ROUTE_GAPS": 0,
+        "APPROVAL_GAPS": 0,
+        "TOP_RISK": "No agentic AI readiness evidence loaded",
+        "NEXT_DBA_MOVE": "Load the Agentic AI Cockpit evidence surfaces before approving production AI expansion.",
+    }
+    if gate is None or gate.empty:
+        return summary, pd.DataFrame()
+
+    view = _upper_frame(gate)
+    scorecard = view[view["CONTROL_AREA"].isin(AGENTIC_AI_CONTROL_AREAS)].copy()
+    if scorecard.empty:
+        return summary, scorecard
+
+    scorecard["SURFACE_CLASS"] = scorecard["CONTROL_AREA"].map(AGENTIC_AI_SURFACE_CLASSES).fillna("Agentic AI")
+    scorecard["GO_LIVE_STATE"] = scorecard.apply(_agentic_go_live_state, axis=1)
+    scorecard["BLOCKERS"] = scorecard.apply(_agentic_blockers, axis=1)
+    scorecard["DBA_DECISION"] = scorecard.apply(_agentic_dba_decision, axis=1)
+    scorecard["PROOF_REQUIRED"] = scorecard.get("PRIMARY_EVIDENCE", pd.Series(["Attach source evidence."] * len(scorecard), index=scorecard.index))
+    scorecard["DO_NOT_DO"] = scorecard.get("AUTOMATION_BOUNDARY", pd.Series(["Do not automate production changes without approval."] * len(scorecard), index=scorecard.index))
+
+    state_rank = {"Blocked": 0, "Evidence Gaps": 1, "Controlled Pilot": 2, "Production Ready": 3}
+    scorecard["_STATE_RANK"] = scorecard["GO_LIVE_STATE"].map(state_rank).fillna(9)
+    scorecard = scorecard.sort_values(
+        ["_STATE_RANK", "READINESS_SCORE", "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS"],
+        ascending=[True, True, False, False],
+    ).drop(columns=["_STATE_RANK"])
+
+    ready = int((scorecard["GO_LIVE_STATE"] == "Production Ready").sum())
+    pilots = int((scorecard["GO_LIVE_STATE"] == "Controlled Pilot").sum())
+    gaps = int((scorecard["GO_LIVE_STATE"] == "Evidence Gaps").sum())
+    blocked = int((scorecard["GO_LIVE_STATE"] == "Blocked").sum())
+    summary.update({
+        "STRICT_SCORE": int(scorecard["READINESS_SCORE"].min()),
+        "AVERAGE_SCORE": int(round(safe_float(scorecard["READINESS_SCORE"].mean()))),
+        "SURFACES": int(len(scorecard)),
+        "PRODUCTION_READY": ready,
+        "CONTROLLED_PILOT": pilots,
+        "EVIDENCE_GAPS": gaps,
+        "BLOCKED": blocked,
+        "CRITICAL_HIGH": int(scorecard["CRITICAL_HIGH_FINDINGS"].sum()),
+        "SOURCE_GAPS": int(scorecard["SOURCE_GAPS"].sum()),
+        "OWNER_ROUTE_GAPS": int(scorecard["OWNER_ROUTE_GAPS"].sum()),
+        "APPROVAL_GAPS": int(scorecard["APPROVAL_GAPS"].sum()),
+        "TOP_RISK": str(scorecard.iloc[0].get("CONTROL_AREA") or "Agentic AI readiness"),
+        "NEXT_DBA_MOVE": str(scorecard.iloc[0].get("NEXT_DBA_MOVE") or scorecard.iloc[0].get("DBA_DECISION") or summary["NEXT_DBA_MOVE"]),
+    })
+    return summary, scorecard

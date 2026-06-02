@@ -20,7 +20,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
 
-THEME_VERSION = "2026-06-02-readable-light-themes-v4"
+THEME_VERSION = "2026-06-02-nav-color-parity-v5"
 
 _DEFAULT_THEME = "midnight"
 _THEME_ALIASES = {
@@ -1222,6 +1222,68 @@ code, pre, .stCodeBlock {
 
 # ── Theme picker HTML ─────────────────────────────────────────────────────────
 _THEME_EXTRAS = {
+    "midnight": """
+<style>
+/* Midnight: make cyan/indigo the dominant navigation treatment. */
+[data-testid="stSidebar"] .stButton > button {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0284c7, #3730a3) !important;
+    border-color: rgba(56,189,248,0.70) !important;
+    box-shadow: 0 2px 10px rgba(56,189,248,0.18) !important;
+}
+[data-testid="stSidebar"] .stButton > button p {
+    color: inherit !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0ea5e9, #4f46e5) !important;
+    border-color: rgba(56,189,248,0.95) !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #075985, #4f46e5) !important;
+    border-color: rgba(125,211,252,0.95) !important;
+    box-shadow: inset 4px 0 0 #c084fc, 0 3px 14px rgba(56,189,248,0.28) !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0284c7, #3730a3) !important;
+    border: 1px solid rgba(56,189,248,0.70) !important;
+    border-bottom: 1px solid rgba(56,189,248,0.70) !important;
+    box-shadow: 0 2px 10px rgba(56,189,248,0.18) !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: linear-gradient(135deg, #0ea5e9, #4f46e5) !important;
+    border-color: rgba(56,189,248,0.95) !important;
+}
+[data-testid="stMetric"] {
+    border-top: 3px solid rgba(56,189,248,0.75) !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+    background: rgba(15,23,42,0.72) !important;
+    border-bottom: 2px solid rgba(56,189,248,0.54);
+}
+.stTabs [data-baseweb="tab"] {
+    color: #bae6fd !important;
+    font-weight: 700;
+}
+.stTabs [aria-selected="true"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0284c7, #3730a3) !important;
+    border-color: rgba(56,189,248,0.72) !important;
+}
+</style>
+""",
     "corporate": """
 <style>
 /* Henson: reduce glare and make navigation decisively red. */
@@ -1481,6 +1543,136 @@ _THEME_EXTRAS = {
     color: #ffffff !important;
     background: linear-gradient(135deg, #0068b7, #00528f) !important;
     border-color: rgba(0,82,143,0.72) !important;
+}
+</style>
+""",
+    "black_ice": """
+<style>
+/* Graphite Ember: make ember navigation distinct from Snowflake Dark. */
+[data-testid="stSidebar"] .stButton > button {
+    color: #fff7ed !important;
+    background: linear-gradient(135deg, #c2410c, #7c2d12) !important;
+    border-color: rgba(249,115,22,0.72) !important;
+    box-shadow: 0 2px 10px rgba(249,115,22,0.18) !important;
+}
+[data-testid="stSidebar"] .stButton > button p {
+    color: inherit !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #f97316, #b45309) !important;
+    border-color: rgba(249,115,22,0.95) !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #7c2d12, #f97316) !important;
+    border-color: rgba(251,146,60,0.96) !important;
+    box-shadow: inset 4px 0 0 #14b8a6, 0 3px 14px rgba(249,115,22,0.30) !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #c2410c, #7c2d12) !important;
+    border: 1px solid rgba(249,115,22,0.72) !important;
+    border-bottom: 1px solid rgba(249,115,22,0.72) !important;
+    box-shadow: 0 2px 10px rgba(249,115,22,0.18) !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: linear-gradient(135deg, #f97316, #b45309) !important;
+    border-color: rgba(249,115,22,0.95) !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
+    color: #fed7aa !important;
+}
+[data-testid="stMetric"] {
+    border-top: 3px solid rgba(249,115,22,0.75) !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+    background: rgba(32,25,21,0.82) !important;
+    border-bottom: 2px solid rgba(249,115,22,0.55);
+}
+.stTabs [data-baseweb="tab"] {
+    color: #fed7aa !important;
+    font-weight: 700;
+}
+.stTabs [aria-selected="true"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #c2410c, #7c2d12) !important;
+    border-color: rgba(249,115,22,0.72) !important;
+}
+</style>
+""",
+    "carbon": """
+<style>
+/* Snowflake Dark: make Snowflake blue the dominant navigation treatment. */
+[data-testid="stSidebar"] .stButton > button {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0068b7, #003545) !important;
+    border-color: rgba(41,181,232,0.70) !important;
+    box-shadow: 0 2px 10px rgba(41,181,232,0.18) !important;
+}
+[data-testid="stSidebar"] .stButton > button p {
+    color: inherit !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #29B5E8, #0068b7) !important;
+    border-color: rgba(113,211,220,0.95) !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #003f73, #0068b7) !important;
+    border-color: rgba(113,211,220,0.96) !important;
+    box-shadow: inset 4px 0 0 #71D3DC, 0 3px 14px rgba(41,181,232,0.30) !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0068b7, #003545) !important;
+    border: 1px solid rgba(41,181,232,0.70) !important;
+    border-bottom: 1px solid rgba(41,181,232,0.70) !important;
+    box-shadow: 0 2px 10px rgba(41,181,232,0.18) !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: linear-gradient(135deg, #29B5E8, #0068b7) !important;
+    border-color: rgba(113,211,220,0.95) !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
+    color: #71D3DC !important;
+}
+[data-testid="stMetric"] {
+    border-top: 3px solid rgba(41,181,232,0.75) !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+    background: rgba(11,27,38,0.84) !important;
+    border-bottom: 2px solid rgba(41,181,232,0.55);
+}
+.stTabs [data-baseweb="tab"] {
+    color: #9bddea !important;
+    font-weight: 700;
+}
+.stTabs [aria-selected="true"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0068b7, #003545) !important;
+    border-color: rgba(41,181,232,0.72) !important;
 }
 </style>
 """,

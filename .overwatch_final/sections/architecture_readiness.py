@@ -29,6 +29,7 @@ from utils import (
 )
 from utils.workflows import render_operator_briefing, render_priority_dataframe
 from utils.futures_governance import (
+    build_agentic_ai_surface_scorecard,
     build_forward_platform_control_register,
     build_platform_futures_adoption_gate,
     build_platform_futures_evidence_ddl,
@@ -1125,6 +1126,35 @@ def _render_platform_futures_adoption_gate(controls: pd.DataFrame) -> None:
     download_csv(gate, "architecture_platform_futures_adoption_gate.csv")
 
 
+def _render_agentic_ai_cockpit(summary: dict, scorecard: pd.DataFrame) -> None:
+    if scorecard is None or scorecard.empty:
+        st.info("Load AI platform evidence surfaces to build the Agentic AI Cockpit.")
+        return
+    strict_score = safe_int(summary.get("STRICT_SCORE"))
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Strict Score", f"{strict_score:,}")
+    c2.metric("Blocked", f"{safe_int(summary.get('BLOCKED')):,}")
+    c3.metric("Evidence Gaps", f"{safe_int(summary.get('EVIDENCE_GAPS')):,}")
+    c4.metric("Pilot Only", f"{safe_int(summary.get('CONTROLLED_PILOT')):,}")
+    c5.metric("Critical/High", f"{safe_int(summary.get('CRITICAL_HIGH')):,}")
+    st.progress(max(0, min(100, strict_score)) / 100)
+    render_priority_dataframe(
+        scorecard,
+        title="Agentic AI governance cockpit",
+        priority_columns=[
+            "GO_LIVE_STATE", "READINESS_SCORE", "SURFACE_CLASS", "CONTROL_AREA",
+            "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS", "OWNER_ROUTE_GAPS",
+            "APPROVAL_GAPS", "EVIDENCE_ROWS", "BLOCKERS", "DBA_DECISION",
+            "NEXT_DBA_MOVE", "WHY_EXPERTS_CARE",
+        ],
+        sort_by=["READINESS_SCORE", "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS"],
+        ascending=[True, False, False],
+        raw_label="All agentic AI cockpit rows",
+        height=390,
+    )
+    download_csv(scorecard, "architecture_agentic_ai_cockpit.csv")
+
+
 def _render_platform_futures(session, company: str, environment: str) -> None:
     st.subheader("AI & Platform Futures")
     st.caption(
@@ -1137,11 +1167,19 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
         environment,
         "Forward platform controls",
     )
+    agentic_summary, agentic_scorecard = build_agentic_ai_surface_scorecard(
+        controls,
+        _platform_futures_frames(),
+        source_health=st.session_state.get("arch_source_health"),
+    )
+    st.session_state["arch_agentic_ai_summary"] = agentic_summary
+    st.session_state["arch_agentic_ai_scorecard"] = agentic_scorecard
 
     futures_view = st.radio(
         "AI platform futures view",
         (
             "Overview",
+            "Agentic AI Cockpit",
             "Adaptive Compute",
             "Agents & MCP",
             "AI Usage",
@@ -1169,6 +1207,11 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
             else 0
         )
         c4.metric("Critical/High", f"{high_count:,}")
+        if isinstance(agentic_scorecard, pd.DataFrame) and not agentic_scorecard.empty:
+            st.caption(
+                f"Agentic AI strict score {safe_int(agentic_summary.get('STRICT_SCORE')):,}; "
+                f"top risk: {agentic_summary.get('TOP_RISK', 'Agentic AI readiness')}."
+            )
         _render_platform_futures_adoption_gate(controls)
         if board is None or board.empty:
             st.info("Load one of the futures evidence surfaces to build the prioritized board.")
@@ -1207,6 +1250,9 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
             raw_label="All forward platform controls",
             height=300,
         )
+
+    elif futures_view == "Agentic AI Cockpit":
+        _render_agentic_ai_cockpit(agentic_summary, agentic_scorecard)
 
     elif futures_view == "Adaptive Compute":
         c1, c2 = st.columns(2)

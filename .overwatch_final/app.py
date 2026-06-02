@@ -59,7 +59,12 @@ _ASK_OVERWATCH_STATE_KEYS = (
     "dba_control_room_data",
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
+    "arch_adaptive_compute",
+    "arch_ai_security_guardrails",
     "arch_futures_board",
+    "arch_futures_adoption_gate",
+    "arch_agentic_ai_summary",
+    "arch_agentic_ai_scorecard",
 )
 
 CONNECTION_OPTIONAL_SECTIONS = {"Alert Center"}
@@ -115,7 +120,7 @@ def _maybe_reload_dev_helpers() -> None:
 
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-06-02-readable-light-themes-v4":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-06-02-nav-color-parity-v5":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker

@@ -114,8 +114,10 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "futures_governance": (
         "PLATFORM_FUTURES_CONTROL_TABLE", "PLATFORM_FUTURES_EVIDENCE_TABLE",
         "PLATFORM_FUTURES_LATEST_VIEW", "PLATFORM_FUTURES_COVERAGE_VIEW",
+        "AGENTIC_AI_CONTROL_AREAS",
         "build_platform_futures_evidence_ddl",
         "build_forward_platform_control_register", "build_platform_futures_adoption_gate",
+        "build_agentic_ai_surface_scorecard",
         "build_platform_futures_board",
         "classify_adaptive_compute_readiness", "load_adaptive_compute_readiness",
         "load_agent_mcp_inventory", "load_ai_usage_guardrails",

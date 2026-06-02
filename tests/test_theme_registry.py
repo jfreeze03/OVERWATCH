@@ -77,6 +77,23 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn('[data-testid="stExpander"] summary', theme._THEME_EXTRAS["terminal"])
         self.assertIn("color: #102a43 !important", theme._THEME_EXTRAS["terminal"])
 
+    def test_all_themes_pin_sidebar_navigation_to_theme_color(self):
+        expected_gradients = {
+            "midnight": "background: linear-gradient(135deg, #0284c7, #3730a3) !important",
+            "corporate": "background: linear-gradient(135deg, #b00020, #8f001a) !important",
+            "terminal": "background: linear-gradient(135deg, #0068b7, #00528f) !important",
+            "black_ice": "background: linear-gradient(135deg, #c2410c, #7c2d12) !important",
+            "carbon": "background: linear-gradient(135deg, #0068b7, #003545) !important",
+        }
+        for theme_key, gradient in expected_gradients.items():
+            with self.subTest(theme=theme_key):
+                extra = theme._THEME_EXTRAS[theme_key]
+                self.assertIn('[data-testid="stSidebar"] .stButton > button', extra)
+                self.assertIn('[data-testid="stSidebar"] [data-testid="stExpander"] summary', extra)
+                self.assertIn(".stTabs [aria-selected=\"true\"]", extra)
+                self.assertIn(gradient, extra)
+                self.assertIn("color: #ffffff !important", extra)
+
 
 if __name__ == "__main__":
     unittest.main()

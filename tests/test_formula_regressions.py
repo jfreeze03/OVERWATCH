@@ -260,8 +260,10 @@ from utils.ask_overwatch import (  # noqa: E402
     snapshot_ask_overwatch_state,
 )
 from utils.futures_governance import (  # noqa: E402
+    AGENTIC_AI_CONTROL_AREAS,
     HORIZON_SEMANTIC_PROBES,
     PLATFORM_FUTURES_EXPERT_CRITERIA,
+    build_agentic_ai_surface_scorecard,
     build_forward_platform_control_register,
     build_platform_futures_adoption_gate,
     build_platform_futures_evidence_ddl,
@@ -4845,6 +4847,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "rec_automation_board": pd.DataFrame([{"ENTITY": "COMPUTE_WH"}]),
             "unrelated_large_frame": huge_frame,
             "dba_control_room_data": {"summary": pd.DataFrame()},
+            "arch_agentic_ai_scorecard": pd.DataFrame([{"CONTROL_AREA": "CoWork Artifact Governance"}]),
         }
         snapshot = snapshot_ask_overwatch_state(state)
 
@@ -4853,6 +4856,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("rec_recommendations", snapshot)
         self.assertIn("rec_automation_board", snapshot)
         self.assertIn("dba_control_room_data", snapshot)
+        self.assertIn("arch_agentic_ai_scorecard", snapshot)
         self.assertNotIn("unrelated_large_frame", snapshot)
 
     def test_grounded_cortex_prompt_for_future_use_is_strict(self):
@@ -5505,6 +5509,68 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_area["AI Spend & Token Guardrails"]["SOURCE_GAPS"], 1)
         self.assertEqual(by_area["AI Spend & Token Guardrails"]["ADOPTION_STATE"], "Evidence Gaps")
 
+    def test_agentic_ai_cockpit_scores_all_ai_surfaces_strictly(self):
+        controls = build_forward_platform_control_register()
+        raw_agents = pd.DataFrame([
+            {
+                "NAME": "CLAIMS_TOOLS",
+                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "SCHEMA_NAME": "AGENTS",
+                "OWNER": "ACCOUNTADMIN",
+                "COMMENT": "",
+            }
+        ])
+        with patch("utils.futures_governance.load_owner_directory", return_value=default_owner_directory()):
+            agents = classify_agent_mcp_inventory(
+                raw_agents,
+                source_type="MCP Server",
+                company="ALFA",
+                environment="PROD",
+            )
+        horizon = build_horizon_semantic_readiness_from_availability([
+            {
+                "CONTROL_AREA": "Cortex Sense Context Governance",
+                "SURFACE": "Cortex Sense Context Inventory",
+                "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SENSE_CONTEXTS",
+                "MANDATORY": False,
+                "AVAILABLE": False,
+                "COLUMN_COUNT": 0,
+                "DBA_ACTION": "Require certified context, connector approval, and regression evidence.",
+            },
+            {
+                "CONTROL_AREA": "CoWork Artifact Governance",
+                "SURFACE": "CoWork Artifact Inventory",
+                "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.COWORK_ARTIFACTS",
+                "MANDATORY": False,
+                "AVAILABLE": False,
+                "COLUMN_COUNT": 0,
+                "DBA_ACTION": "Require publisher, certified source, sharing scope, and retirement owner.",
+            },
+        ])
+        source_health = pd.DataFrame([
+            {"SURFACE": "AI agent and MCP inventory", "STATE": "Loaded"},
+            {"SURFACE": "Horizon and semantic trust", "STATE": "Loaded"},
+            {"SURFACE": "AI usage guardrails", "STATE": "Loaded"},
+            {"SURFACE": "AI security guardrails", "STATE": "Loaded"},
+        ])
+
+        summary, scorecard = build_agentic_ai_surface_scorecard(
+            controls,
+            [agents, horizon],
+            source_health=source_health,
+        )
+        by_area = {row["CONTROL_AREA"]: row for _, row in scorecard.iterrows()}
+
+        self.assertEqual(set(by_area), set(AGENTIC_AI_CONTROL_AREAS))
+        self.assertEqual(by_area["Agent & MCP Governance"]["GO_LIVE_STATE"], "Blocked")
+        self.assertEqual(by_area["Cortex Sense Context Governance"]["GO_LIVE_STATE"], "Evidence Gaps")
+        self.assertEqual(by_area["CoWork Artifact Governance"]["GO_LIVE_STATE"], "Evidence Gaps")
+        self.assertIn("medium evidence gap", by_area["Cortex Sense Context Governance"]["BLOCKERS"])
+        self.assertLess(summary["STRICT_SCORE"], 99)
+        self.assertGreaterEqual(summary["EVIDENCE_GAPS"], 1)
+        self.assertGreaterEqual(summary["BLOCKED"], 1)
+        self.assertEqual(summary["TOP_RISK"], "Agent & MCP Governance")
+
     def test_ask_overwatch_answers_from_platform_futures_board(self):
         board = pd.DataFrame([
             {
@@ -5554,6 +5620,39 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(cards[0]["signal"], "Evidence Gaps")
         self.assertIn("readiness=75", cards[0]["evidence"])
         self.assertIn("Load or persist", cards[0]["next_action"])
+
+    def test_ask_overwatch_answers_from_agentic_ai_cockpit(self):
+        scorecard = pd.DataFrame([
+            {
+                "CONTROL_AREA": "CoWork Artifact Governance",
+                "SURFACE_CLASS": "Shared Artifact",
+                "GO_LIVE_STATE": "Evidence Gaps",
+                "READINESS_SCORE": 84,
+                "CRITICAL_HIGH_FINDINGS": 0,
+                "SOURCE_GAPS": 1,
+                "OWNER_ROUTE_GAPS": 0,
+                "BLOCKERS": "1 unloaded or stale source surface(s); readiness 84 below 95 target",
+                "DBA_DECISION": "Do not expand CoWork Artifact Governance; load evidence and attach owner, approval, proof, and rollback route first.",
+                "PROOF_REQUIRED": "CoWork Artifact inventory when available; Snowflake Intelligence usage",
+                "DO_NOT_DO": "Do not publish, share, delete, or alter CoWork Artifacts from dashboard automation.",
+            }
+        ])
+        state = {"arch_agentic_ai_scorecard": scorecard}
+
+        cards = build_ask_overwatch_context(state)
+        result = answer_ask_overwatch(
+            "Can we publish CoWork artifacts broadly?",
+            state,
+            active_section="Architecture Readiness",
+            company="ALFA",
+            environment="PROD",
+        )
+
+        self.assertEqual(cards[0]["surface"], "Architecture Readiness - Agentic AI Governance Cockpit")
+        self.assertEqual(cards[0]["signal"], "Evidence Gaps")
+        self.assertIn("Shared Artifact", cards[0]["evidence"])
+        self.assertIn("CoWork Artifact Governance", result["answer"])
+        self.assertIn("Do not publish", result["answer"])
 
     def test_ask_overwatch_reads_adaptive_compute_advisor(self):
         advisor = pd.DataFrame([

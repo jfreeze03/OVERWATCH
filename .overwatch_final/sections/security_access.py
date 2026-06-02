@@ -771,6 +771,64 @@ def _build_access_action_queue_record(plan: dict, company: str) -> dict:
     }
 
 
+def _build_role_grant_control_board(plan: dict) -> tuple[dict, pd.DataFrame]:
+    """Summarize the current role-grant plan as a compact DBA control plane."""
+    rows = [
+        {
+            "CONTROL": "Risk notes",
+            "STATE": "Ready" if plan.get("risk_notes") else "Review",
+            "EVIDENCE": f"{len(plan.get('risk_notes') or []):,} note(s) flagged for DBA review.",
+            "NEXT_ACTION": "Read the notes before queueing or applying the access change.",
+        },
+        {
+            "CONTROL": "Metadata completeness",
+            "STATE": "Ready" if plan.get("metadata_complete") else "Blocked",
+            "EVIDENCE": "Owner, approver, ticket, and review/expiry date are present." if plan.get("metadata_complete") else "Owner accountability fields are missing.",
+            "NEXT_ACTION": "Fill all required accountability fields before queueing.",
+        },
+        {
+            "CONTROL": "Pre-flight SQL",
+            "STATE": "Ready" if plan.get("preflight_sql") else "Blocked",
+            "EVIDENCE": "Read-only pre-flight evidence is attached." if plan.get("preflight_sql") else "No pre-flight query generated.",
+            "NEXT_ACTION": "Run the pre-flight SQL and attach the proof.",
+        },
+        {
+            "CONTROL": "Change SQL",
+            "STATE": "Ready" if plan.get("change_sql") else "Blocked",
+            "EVIDENCE": "Forward GRANT/REVOKE SQL is prepared." if plan.get("change_sql") else "No change SQL generated.",
+            "NEXT_ACTION": "Apply only after owner approval and typed confirmation.",
+        },
+        {
+            "CONTROL": "Rollback SQL",
+            "STATE": "Ready" if plan.get("rollback_sql") else "Blocked",
+            "EVIDENCE": "Rollback SQL is attached." if plan.get("rollback_sql") else "No rollback SQL generated.",
+            "NEXT_ACTION": "Keep rollback visible before executing the access change.",
+        },
+        {
+            "CONTROL": "Verification SQL",
+            "STATE": "Ready" if plan.get("verification_sql") else "Blocked",
+            "EVIDENCE": "Post-change verification SQL is attached." if plan.get("verification_sql") else "No verification SQL generated.",
+            "NEXT_ACTION": "Run verification after execution and attach the result to the ticket.",
+        },
+        {
+            "CONTROL": "Audit trail",
+            "STATE": "Ready" if plan.get("control_context") else "Review",
+            "EVIDENCE": "Admin audit metadata is prepared for the change." if plan.get("control_context") else "No admin audit context prepared.",
+            "NEXT_ACTION": "Log STARTED, SUCCESS, and VERIFY_REQUIRED states with the admin audit table.",
+        },
+    ]
+    board = pd.DataFrame(rows)
+    state_rank = {"Blocked": 0, "Review": 1, "Ready": 2}
+    board["_RANK"] = board["STATE"].map(state_rank).fillna(9)
+    score = max(0, min(100, 100 - int((board["STATE"] == "Blocked").sum()) * 24 - int((board["STATE"] == "Review").sum()) * 10))
+    return {
+        "score": score,
+        "blocked": int((board["STATE"] == "Blocked").sum()),
+        "review": int((board["STATE"] == "Review").sum()),
+        "ready": int((board["STATE"] == "Ready").sum()),
+    }, board.sort_values(["_RANK", "CONTROL"]).drop(columns=["_RANK"], errors="ignore")
+
+
 def _render_role_grant_change_control(session, company: str) -> None:
     st.divider()
     st.subheader("Role & Grant Change Control")
@@ -823,6 +881,21 @@ def _render_role_grant_change_control(session, company: str) -> None:
         return
 
     st.markdown(f"**Reviewed Access Change Plan: {plan['risk_level']} Risk**")
+    board_summary, board = _build_role_grant_control_board(plan)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Control Score", f"{board_summary['score']}/100")
+    c2.metric("Ready", f"{board_summary['ready']:,}")
+    c3.metric("Review", f"{board_summary['review']:,}", delta_color="inverse")
+    c4.metric("Blocked", f"{board_summary['blocked']:,}", delta_color="inverse")
+    render_priority_dataframe(
+        board,
+        title="Role grant control plane",
+        priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION"],
+        sort_by=["STATE", "CONTROL"],
+        ascending=[True, True],
+        raw_label="All role grant control rows",
+        height=240,
+    )
     render_priority_dataframe(
         plan["risk_df"],
         title="Risk notes requiring DBA review",

@@ -15,6 +15,7 @@ from sections.dba_tools import _build_warehouse_setting_plan  # noqa: E402
 from sections.security_access import (  # noqa: E402
     _build_access_action_queue_record,
     _build_role_grant_change_plan,
+    _build_role_grant_control_board,
 )
 from utils.admin import (  # noqa: E402
     ADMIN_ACTIONS_KEY,
@@ -246,6 +247,26 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("ticket", plan["missing_metadata"])
         self.assertIn("review/expiry date", plan["missing_metadata"])
         self.assertIn("Missing accountability metadata", plan["control_context"])
+
+    def test_role_grant_control_board_reflects_required_plan_steps(self):
+        plan = _build_role_grant_change_plan(
+            "GRANT",
+            "APP_READONLY",
+            "USER",
+            "ETL_RUNNER",
+            "INC12345 approved least-privilege access",
+            "ALFA Finance Data Owner",
+            "SECURITYADMIN_APPROVER",
+            "INC12345",
+            "2026-06-30",
+        )
+        summary, board = _build_role_grant_control_board(plan)
+        by_control = {row["CONTROL"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_control["Metadata completeness"]["STATE"], "Ready")
+        self.assertEqual(by_control["Verification SQL"]["STATE"], "Ready")
+        self.assertEqual(summary["ready"], 7)
+        self.assertGreaterEqual(summary["score"], 90)
 
     def test_access_action_queue_record_carries_owner_ticket_and_verification(self):
         plan = _build_role_grant_change_plan(

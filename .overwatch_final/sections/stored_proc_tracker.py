@@ -579,6 +579,63 @@ def _queue_procedure_reliability_findings(
     return upsert_actions(session, actions)
 
 
+def _build_procedure_reliability_slo_board(summary: dict, exceptions: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
+    """Condense stored-procedure reliability into a compact DBA control board."""
+    rows = [
+        {
+            "SLO": "Procedure runs",
+            "STATE": "Ready" if safe_int(summary.get("RUNS")) > 0 else "Review",
+            "EVIDENCE": f"{safe_int(summary.get('RUNS')):,} run(s) in the selected window.",
+            "NEXT_ACTION": "Load procedure evidence before declaring the surface healthy.",
+        },
+        {
+            "SLO": "Runtime regressions",
+            "STATE": "Ready" if safe_int(summary.get("SLA_BREACHES")) == 0 else "Review",
+            "EVIDENCE": f"{safe_int(summary.get('SLA_BREACHES')):,} runtime breach(es).",
+            "NEXT_ACTION": "Compare the latest CALL against the historical baseline and fix the root cause.",
+        },
+        {
+            "SLO": "Cost regressions",
+            "STATE": "Ready" if safe_int(summary.get("COST_BREACHES")) == 0 else "Review",
+            "EVIDENCE": f"{safe_int(summary.get('COST_BREACHES')):,} cost regression(s).",
+            "NEXT_ACTION": "Check child-query scan volume, warehouse size, and release drift.",
+        },
+        {
+            "SLO": "Owner review",
+            "STATE": "Ready" if safe_int(summary.get("OWNER_REVIEW_REQUIRED")) == 0 else "Review",
+            "EVIDENCE": f"{safe_int(summary.get('OWNER_REVIEW_REQUIRED')):,} procedure(s) require owner review.",
+            "NEXT_ACTION": "Get the owner to approve before treating the procedure as production-safe.",
+        },
+        {
+            "SLO": "Suspended-task dependency",
+            "STATE": "Ready" if safe_int(summary.get("BLOCKED_BY_SUSPENDED_TASK")) == 0 else "Blocked",
+            "EVIDENCE": f"{safe_int(summary.get('BLOCKED_BY_SUSPENDED_TASK')):,} procedure(s) blocked by suspended task(s).",
+            "NEXT_ACTION": "Restore the task graph dependency before retrying the procedure.",
+        },
+    ]
+    if exceptions is not None and not exceptions.empty:
+        p1 = int(exceptions.get("SEVERITY", pd.Series(dtype=str)).astype(str).str.upper().eq("CRITICAL").sum())
+        manual_only = int(exceptions.get("ORCHESTRATION_STATUS", pd.Series(dtype=str)).astype(str).str.contains("MANUAL", case=False, na=False).sum())
+    else:
+        p1 = 0
+        manual_only = 0
+    rows.append({
+        "SLO": "Critical procedure path risk",
+        "STATE": "Ready" if p1 == 0 and manual_only == 0 else "Review",
+        "EVIDENCE": f"Critical exceptions={p1:,}; manual-call-only procedures={manual_only:,}.",
+        "NEXT_ACTION": "Use the operations brief before relying on the task graph as production control.",
+    })
+    board = pd.DataFrame(rows)
+    board["_RANK"] = board["STATE"].map({"Blocked": 0, "Review": 1, "Ready": 2}).fillna(9)
+    score = max(0, min(100, 100 - int((board["STATE"] != "Ready").sum()) * 12))
+    return {
+        "score": score,
+        "ready": int((board["STATE"] == "Ready").sum()),
+        "review": int((board["STATE"] == "Review").sum()),
+        "blocked": int((board["STATE"] == "Blocked").sum()),
+    }, board.sort_values(["_RANK", "SLO"]).drop(columns=["_RANK"], errors="ignore")
+
+
 def _query_history_has_root_query_id(session) -> bool:
     return bool(filter_existing_columns(
         session,
@@ -694,6 +751,23 @@ def render():
                 st.caption(" | ".join(str(v) for v in sources.values()))
             if not exceptions.empty:
                 st.warning("Procedure operations has exceptions to review before relying on task graphs as production workflow control.")
+                slo_summary, slo_board = _build_procedure_reliability_slo_board(summary, exceptions)
+                st.subheader("Procedure Reliability SLO Board")
+                s1, s2, s3, s4 = st.columns(4)
+                s1.metric("SLO Score", f"{slo_summary['score']}/100")
+                s2.metric("Ready", f"{slo_summary['ready']:,}")
+                s3.metric("Review", f"{slo_summary['review']:,}", delta_color="inverse")
+                s4.metric("Blocked", f"{slo_summary['blocked']:,}", delta_color="inverse")
+                render_priority_dataframe(
+                    slo_board,
+                    title="Procedure reliability SLOs and next control step",
+                    priority_columns=["STATE", "SLO", "EVIDENCE", "NEXT_ACTION"],
+                    sort_by=["STATE", "SLO"],
+                    ascending=[True, True],
+                    raw_label="All procedure reliability SLO rows",
+                    height=220,
+                    max_rows=10,
+                )
                 render_priority_dataframe(
                     exceptions,
                     title="Procedure operations exceptions",

@@ -1087,6 +1087,150 @@ def _render_cost_drilldown_command_map(
     )
 
 
+def _build_cost_decomposition_board(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    state: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Summarize the highest-value cost decomposition paths already visible in the session."""
+    state = state or st.session_state
+    explorer = _state_frame(state, "df_cost_explorer_detail")
+    chargeback = _state_frame(state, "df_chargeback")
+    rows: list[dict] = []
+
+    def add(driver: str, status: str, trust: str, evidence: str, next_action: str) -> None:
+        rows.append({
+            "DRIVER": driver,
+            "STATUS": status,
+            "TRUST": trust,
+            "EVIDENCE": evidence,
+            "NEXT_ACTION": next_action,
+        })
+
+    exact_loaded = _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"])
+    run_loaded = _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"])
+    company_loaded = _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"])
+    db_loaded = _has_columns(chargeback, ["DATABASE_NAME"]) or _has_columns(explorer, ["DATABASE_NAME"])
+    human_loaded = _has_columns(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"])
+
+    open_cost_queue = pd.DataFrame()
+    if isinstance(queue, pd.DataFrame) and not queue.empty:
+        open_cost_queue = queue[_cost_action_mask(queue)].copy()
+
+    if exact_loaded:
+        current_credits = safe_float(cockpit.iloc[0].get("CURRENT_CREDITS"))
+        prior_credits = safe_float(cockpit.iloc[0].get("PRIOR_CREDITS"))
+        delta = current_credits - prior_credits
+        add(
+            "Warehouse movement",
+            "Ready",
+            "Exact",
+            f"Current credits {current_credits:,.2f} vs prior {prior_credits:,.2f} ({delta:+,.2f}).",
+            "Start with the warehouse that moved most before blaming user, query, or database behavior.",
+        )
+    else:
+        add(
+            "Warehouse movement",
+            "Load Needed",
+            "Review",
+            "Exact warehouse metering has not been loaded.",
+            "Load the Cost Control Cockpit before explaining contract movement.",
+        )
+
+    if run_loaded:
+        avg_7d = safe_float(run_rate.iloc[0].get("AVG_DAILY_7D"))
+        yoy_7d_pct = safe_float(run_rate.iloc[0].get("YOY_7D_PCT"))
+        yoy_30d_pct = safe_float(run_rate.iloc[0].get("YOY_30D_PCT"))
+        add(
+            "7-day average and YOY",
+            "Ready",
+            "Exact",
+            f"7d avg {avg_7d:,.2f} credits/day; YOY 7d {yoy_7d_pct:+.1f}%; YOY 30d {yoy_30d_pct:+.1f}%.",
+            "Use complete-day average and YOY before calling a spike or dip real.",
+        )
+    else:
+        add(
+            "7-day average and YOY",
+            "Load Needed",
+            "Review",
+            "Run-rate evidence has not been loaded.",
+            "Reload the run-rate lens before making trend claims.",
+        )
+
+    add(
+        "Company and environment split",
+        "Ready" if company_loaded else "Review",
+        "Allocated/Estimated",
+        "Company/environment split is present." if company_loaded else "Company/environment attribution is not loaded.",
+        "Use this for ALFA/Trexis and PROD/DEV direction, not as exact allocation.",
+    )
+    add(
+        "Database, DEV rollup, no-database spend",
+        "Ready" if db_loaded else "Review",
+        "Allocated/Estimated",
+        "Database-attributed rows are present." if db_loaded else "Database attribution is not loaded.",
+        "Show PROD, DEV_ALL, individual DEV databases, and keep shared/no-db spend labeled allocated or estimated.",
+    )
+    add(
+        "Role, user, department drivers",
+        "Ready" if human_loaded else "Review",
+        "Allocated/Estimated",
+        "Role, user, and department dimensions are available." if human_loaded else "Human driver rows are not loaded.",
+        "Sort by estimated dollars before assigning optimization work.",
+    )
+    add(
+        "Open cost action queue",
+        "Ready" if not open_cost_queue.empty else "No Rows",
+        "Exact after verification" if not open_cost_queue.empty else "No Rows",
+        f"{len(open_cost_queue):,} open cost action(s)." if not open_cost_queue.empty else "No cost actions are loaded.",
+        "Use the queue to close savings with owner, proof, and verification.",
+    )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {"score": 0, "ready": 0, "review": 0}, board
+    ready = int(board["STATUS"].eq("Ready").sum())
+    review = int(board["STATUS"].eq("Review").sum()) + int(board["STATUS"].eq("Load Needed").sum())
+    exact = int(board["TRUST"].eq("Exact").sum())
+    score = max(0, min(100, 100 - review * 12 - max(0, exact - 2) * 1))
+    board["_RANK"] = board["STATUS"].map({"Load Needed": 0, "Review": 1, "Ready": 2, "No Rows": 3}).fillna(9)
+    return {
+        "score": int(score),
+        "ready": ready,
+        "review": review,
+    }, board.sort_values(["_RANK", "DRIVER"]).drop(columns=["_RANK"], errors="ignore").reset_index(drop=True)
+
+
+def _render_cost_decomposition_board(
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+) -> None:
+    summary, board = _build_cost_decomposition_board(
+        cockpit=cockpit,
+        run_rate=run_rate,
+        queue=queue,
+    )
+    if board.empty:
+        return
+    st.markdown("**Cost Decomposition**")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Score", f"{summary['score']}/100")
+    c2.metric("Ready", f"{summary['ready']:,}")
+    c3.metric("Review", f"{summary['review']:,}", delta_color="inverse")
+    render_priority_dataframe(
+        board,
+        title="Cost decomposition and next trust step",
+        priority_columns=["STATUS", "DRIVER", "TRUST", "EVIDENCE", "NEXT_ACTION"],
+        sort_by=["STATUS", "DRIVER"],
+        ascending=[True, True],
+        raw_label="All cost decomposition rows",
+        max_rows=10,
+    )
+
+
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     st.subheader("Cost Control Cockpit")
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -1258,6 +1402,11 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         queue,
     )
     _render_cost_drilldown_command_map(
+        data,
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        queue,
+    )
+    _render_cost_decomposition_board(
         data,
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
         queue,

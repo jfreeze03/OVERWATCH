@@ -1859,6 +1859,72 @@ def _build_task_ops_frames(
     return summary, exceptions, latest
 
 
+def _build_task_reliability_slo_board(summary: dict, exceptions: pd.DataFrame, recovery_sla: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
+    """Condense task graph and recovery reliability into a DBA control board."""
+    rows = [
+        {
+            "SLO": "Failed runs",
+            "STATE": "Ready" if safe_int(summary.get("FAILED_RUNS")) == 0 else "Review",
+            "EVIDENCE": f"{safe_int(summary.get('FAILED_RUNS')):,} failed run(s).",
+            "NEXT_ACTION": "Triage failures before the next production handoff.",
+        },
+        {
+            "SLO": "Suspended tasks",
+            "STATE": "Ready" if safe_int(summary.get("SUSPENDED_TASKS")) == 0 else "Review",
+            "EVIDENCE": f"{safe_int(summary.get('SUSPENDED_TASKS')):,} suspended task(s).",
+            "NEXT_ACTION": "Resume or retire suspended tasks only after checking downstream impact.",
+        },
+        {
+            "SLO": "Runtime drift",
+            "STATE": "Ready" if safe_int(summary.get("LONG_RUNNING_TASKS")) == 0 else "Review",
+            "EVIDENCE": f"{safe_int(summary.get('LONG_RUNNING_TASKS')):,} long-running task(s).",
+            "NEXT_ACTION": "Compare the latest run to the historical baseline and isolate regressions.",
+        },
+        {
+            "SLO": "Cost drift",
+            "STATE": "Ready" if safe_int(summary.get("COST_DRIFT_TASKS")) == 0 else "Review",
+            "EVIDENCE": f"{safe_int(summary.get('COST_DRIFT_TASKS')):,} cost-drift candidate(s).",
+            "NEXT_ACTION": "Check warehouse size, release changes, and child-query spill before closing.",
+        },
+        {
+            "SLO": "Open recovery",
+            "STATE": "Ready" if safe_int(summary.get("OPEN_RECOVERIES")) == 0 else "Review",
+            "EVIDENCE": f"{safe_int(summary.get('OPEN_RECOVERIES')):,} open recovery item(s).",
+            "NEXT_ACTION": "Close recoveries with proof, owner approval, and a successful next run.",
+        },
+        {
+            "SLO": "Recovery SLA",
+            "STATE": "Ready" if safe_int(summary.get("RECOVERY_SLA_BREACHES")) == 0 else "Review",
+            "EVIDENCE": f"{safe_int(summary.get('RECOVERY_SLA_BREACHES')):,} recovery SLA breach(es).",
+            "NEXT_ACTION": "Escalate breaches that exceed the recovery target hours.",
+        },
+    ]
+    if exceptions is not None and not exceptions.empty:
+        p1 = int(exceptions.get("INCIDENT_PRIORITY", pd.Series(dtype=str)).astype(str).str.startswith("P1").sum())
+        blocked = int(exceptions.get("RECOVERY_READINESS", pd.Series(dtype=str)).astype(str).str.startswith("Blocked").sum())
+    else:
+        p1 = 0
+        blocked = 0
+    if recovery_sla is not None and not recovery_sla.empty:
+        recovery_breaches = int(recovery_sla.get("RECOVERY_STATE", pd.Series(dtype=str)).astype(str).str.contains("Breach|Open Failure", case=False, na=False).sum())
+    else:
+        recovery_breaches = 0
+    rows.append({
+        "SLO": "Critical path risk",
+        "STATE": "Ready" if p1 == 0 and blocked == 0 and recovery_breaches == 0 else "Review",
+        "EVIDENCE": f"P1 incidents={p1:,}; blocked recoveries={blocked:,}; recovery breaches={recovery_breaches:,}.",
+        "NEXT_ACTION": "Use the recovery command board before treating the task graph as healthy.",
+    })
+    board = pd.DataFrame(rows)
+    board["_RANK"] = board["STATE"].map({"Review": 0, "Ready": 1}).fillna(9)
+    score = max(0, min(100, 100 - int((board["STATE"] == "Review").sum()) * 12))
+    return {
+        "score": score,
+        "ready": int((board["STATE"] == "Ready").sum()),
+        "review": int((board["STATE"] == "Review").sum()),
+    }, board.sort_values(["_RANK", "SLO"]).drop(columns=["_RANK"], errors="ignore")
+
+
 def _queue_task_ops_findings(session, exceptions: pd.DataFrame) -> int:
     if exceptions is None or exceptions.empty:
         return 0
@@ -2048,6 +2114,23 @@ def _render_task_ops_brief(session) -> None:
             st.info("Watch: task graph operations are mostly stable with exceptions to review.")
         else:
             st.success("Operational: no dominant task graph risk signal in this scope.")
+
+        slo_summary, slo_board = _build_task_reliability_slo_board(summary, exceptions, recovery_sla)
+        st.subheader("Task Reliability SLO Board")
+        s1, s2, s3 = st.columns(3)
+        s1.metric("SLO Score", f"{slo_summary['score']}/100")
+        s2.metric("Ready", f"{slo_summary['ready']:,}")
+        s3.metric("Review", f"{slo_summary['review']:,}", delta_color="inverse")
+        render_priority_dataframe(
+            slo_board,
+            title="Task reliability SLOs and next control step",
+            priority_columns=["STATE", "SLO", "EVIDENCE", "NEXT_ACTION"],
+            sort_by=["STATE", "SLO"],
+            ascending=[True, True],
+            raw_label="All task reliability SLO rows",
+            height=220,
+            max_rows=10,
+        )
 
         recovery_board = _task_recovery_command_board(exceptions, recovery_sla)
         if not recovery_board.empty:

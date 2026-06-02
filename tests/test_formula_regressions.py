@@ -74,6 +74,7 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_allocation_trust_board,
     _build_cost_closure_analytics,
     _build_cost_control_coverage_board,
+    _build_cost_decomposition_board,
     _build_cost_drilldown_command_map,
     _build_cost_run_rate_sql,
     _build_savings_verification_task_summary,
@@ -173,8 +174,13 @@ from sections.security_posture import (  # noqa: E402
     build_security_operability_fact_ddl,
     build_security_operability_fact_migration_sql,
 )
+from sections.security_access import (  # noqa: E402
+    _build_role_grant_change_plan,
+    _build_role_grant_control_board,
+)
 from sections.stored_proc_tracker import (  # noqa: E402
     _build_procedure_reliability_action,
+    _build_procedure_reliability_slo_board,
     _build_procedure_sla_frames,
     _build_procedure_ops_frames,
     _procedure_from_task_definition,
@@ -190,6 +196,7 @@ from sections.task_management import (  # noqa: E402
     _build_task_reliability_action,
     _build_task_graph_dot,
     _build_task_ops_frames,
+    _build_task_reliability_slo_board,
     _build_task_ops_markdown,
     _build_task_recovery_sla_frame,
     _task_recovery_command_board,
@@ -1080,6 +1087,18 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_drill["Database, DEV rollup, no-database spend"]["TRUST"], "Allocated/Estimated")
         self.assertIn("no-database", by_drill["Database, DEV rollup, no-database spend"]["NEXT_ACTION"])
         self.assertGreaterEqual(drill_summary["ready"], 3)
+
+        decomposition_summary, decomposition = _build_cost_decomposition_board(
+            cockpit=cockpit,
+            run_rate=run_rate,
+            queue=queue,
+            state=state,
+        )
+        by_driver = {row["DRIVER"]: row for _, row in decomposition.iterrows()}
+        self.assertEqual(by_driver["Warehouse movement"]["TRUST"], "Exact")
+        self.assertEqual(by_driver["Company and environment split"]["TRUST"], "Allocated/Estimated")
+        self.assertEqual(by_driver["Open cost action queue"]["STATUS"], "Ready")
+        self.assertGreaterEqual(decomposition_summary["score"], 80)
 
     def test_control_room_snapshot_maps_to_watch_floor_shape(self):
         snapshot = pd.DataFrame([
@@ -4842,6 +4861,50 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("QUERY_HISTORY", action["Proof Query"])
         self.assertIn("next procedure run", action["Proof Query"])
         self.assertIn("Verify", action["Action"])
+
+    def test_procedure_reliability_slo_board_summarizes_reliability_controls(self):
+        summary = {
+            "RUNS": 12,
+            "SLA_BREACHES": 1,
+            "COST_BREACHES": 2,
+            "OWNER_REVIEW_REQUIRED": 1,
+            "BLOCKED_BY_SUSPENDED_TASK": 0,
+        }
+        exceptions = pd.DataFrame([
+            {"SEVERITY": "Critical", "ORCHESTRATION_STATUS": "Manual CALL only"},
+        ])
+        slo_summary, slo_board = _build_procedure_reliability_slo_board(summary, exceptions)
+        by_slo = {row["SLO"]: row for _, row in slo_board.iterrows()}
+
+        self.assertEqual(by_slo["Runtime regressions"]["STATE"], "Review")
+        self.assertEqual(by_slo["Suspended-task dependency"]["STATE"], "Ready")
+        self.assertGreaterEqual(slo_summary["review"], 1)
+        self.assertEqual(slo_summary["blocked"], 0)
+
+    def test_task_reliability_slo_board_summarizes_task_and_recovery_risk(self):
+        summary = {
+            "FAILED_RUNS": 2,
+            "SUSPENDED_TASKS": 1,
+            "LONG_RUNNING_TASKS": 1,
+            "COST_DRIFT_TASKS": 0,
+            "OPEN_RECOVERIES": 1,
+            "RECOVERY_SLA_BREACHES": 1,
+            "P1_INCIDENTS": 1,
+            "BLOCKED_RECOVERIES": 1,
+        }
+        exceptions = pd.DataFrame([
+            {"INCIDENT_PRIORITY": "P1 - Production Risk", "RECOVERY_READINESS": "Blocked - dependency"},
+        ])
+        recovery_sla = pd.DataFrame([
+            {"RECOVERY_STATE": "Open Failure"},
+        ])
+        slo_summary, slo_board = _build_task_reliability_slo_board(summary, exceptions, recovery_sla)
+        by_slo = {row["SLO"]: row for _, row in slo_board.iterrows()}
+
+        self.assertEqual(by_slo["Failed runs"]["STATE"], "Review")
+        self.assertEqual(by_slo["Recovery SLA"]["STATE"], "Review")
+        self.assertEqual(by_slo["Critical path risk"]["STATE"], "Review")
+        self.assertGreaterEqual(slo_summary["review"], 1)
 
     def test_cost_center_chargeback_exposes_environment_and_database(self):
         cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()

@@ -1234,6 +1234,310 @@ def _render_cost_decomposition_board(
     )
 
 
+def _cost_command_severity_rank(value: object) -> int:
+    return {"Critical": 0, "High": 1, "Medium": 2, "Watch": 3, "Info": 4}.get(str(value or "Info"), 9)
+
+
+def _cost_native_control_scope(control_type: str) -> str:
+    text = str(control_type or "").upper()
+    if "RESOURCE MONITOR" in text:
+        return "Warehouse-only"
+    if "BUDGET" in text:
+        return "Account / shared / serverless / AI capable"
+    return "OVERWATCH evidence control"
+
+
+def _first_frame_value(frame: pd.DataFrame | None, column: str, default: object = "") -> object:
+    if frame is None or getattr(frame, "empty", True) or column not in frame.columns:
+        return default
+    return frame.iloc[0].get(column, default)
+
+
+def _open_cost_action_frame(queue: pd.DataFrame | None) -> pd.DataFrame:
+    if queue is None or getattr(queue, "empty", True):
+        return pd.DataFrame()
+    view = queue.loc[_cost_action_mask(queue)].copy()
+    if view.empty:
+        return view
+    status = _queue_series(view, "STATUS", "New").fillna("New").astype(str).str.upper()
+    return view[~status.isin(["FIXED", "IGNORED"])].copy()
+
+
+def _build_budget_anomaly_command_center(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    credit_price: float,
+    state: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Build a DBA command board for budget, anomaly, and native control decisions."""
+    state = state or st.session_state
+    rows: list[dict] = []
+    current_credits = safe_float(_first_frame_value(cockpit, "CURRENT_CREDITS", 0))
+    prior_credits = safe_float(_first_frame_value(cockpit, "PRIOR_CREDITS", 0))
+    top_wh = str(_first_frame_value(cockpit, "TOP_INCREASE_WAREHOUSE", "No loaded warehouse")).strip() or "No loaded warehouse"
+    top_delta = safe_float(_first_frame_value(cockpit, "TOP_INCREASE_CREDITS", 0))
+    delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
+    current_dollars = credits_to_dollars(current_credits, credit_price)
+    prior_dollars = credits_to_dollars(prior_credits, credit_price)
+    top_delta_dollars = credits_to_dollars(top_delta, credit_price)
+
+    avg_7d = safe_float(_first_frame_value(run_rate, "AVG_DAILY_7D", 0))
+    avg_30d = safe_float(_first_frame_value(run_rate, "AVG_DAILY_30D", 0))
+    pct_vs_30d = _first_frame_value(run_rate, "PCT_VS_30D_AVG", None)
+    pct_vs_30d_float = safe_float(pct_vs_30d) if pct_vs_30d is not None and not pd.isna(pct_vs_30d) else 0.0
+    yoy_7d = _first_frame_value(run_rate, "YOY_7D_PCT", None)
+    yoy_7d_float = safe_float(yoy_7d) if yoy_7d is not None and not pd.isna(yoy_7d) else 0.0
+    yoy_30d = _first_frame_value(run_rate, "YOY_30D_PCT", None)
+    yoy_30d_float = safe_float(yoy_30d) if yoy_30d is not None and not pd.isna(yoy_30d) else 0.0
+    run_state = str(_first_frame_value(run_rate, "RUN_RATE_STATE", "Not loaded") or "Not loaded")
+    yoy_state = str(_first_frame_value(run_rate, "YOY_STATE", "Not loaded") or "Not loaded")
+    top_yoy_wh = str(_first_frame_value(run_rate, "TOP_YOY_INCREASE_WAREHOUSE", "No YOY baseline") or "No YOY baseline")
+    top_yoy_delta = safe_float(_first_frame_value(run_rate, "TOP_YOY_INCREASE_CREDITS", 0))
+
+    open_cost_queue = _open_cost_action_frame(queue)
+    high_open = (
+        int(open_cost_queue.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).isin(["Critical", "High"]).sum())
+        if not open_cost_queue.empty else 0
+    )
+    open_savings = (
+        safe_float(pd.to_numeric(open_cost_queue.get("EST_MONTHLY_SAVINGS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        if not open_cost_queue.empty else 0.0
+    )
+    verified_open = (
+        int(open_cost_queue.get("VERIFICATION_STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper().str.contains("VERIFIED|PASSED|COMPLETE", regex=True).sum())
+        if not open_cost_queue.empty else 0
+    )
+    cortex_projection, cortex_exceptions = _loaded_cortex_state()
+    explorer = _state_frame(state, "df_cost_explorer_detail")
+    chargeback = _state_frame(state, "df_chargeback")
+    company_loaded = _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"])
+    db_loaded = _has_columns(chargeback, ["DATABASE_NAME"]) or _has_columns(explorer, ["DATABASE_NAME"])
+    human_loaded = _has_columns(explorer, ["ROLE_NAME", "USER_NAME", "DEPARTMENT"])
+
+    try:
+        from sections.budget_governance import _build_budget_governance_board
+
+        budget_summary, budget_board = _build_budget_governance_board()
+    except Exception:
+        budget_summary, budget_board = {"score": 0, "ready": 0, "partial": 1}, pd.DataFrame()
+
+    def add(
+        lane: str,
+        severity: str,
+        signal: str,
+        native_control: str,
+        evidence: str,
+        dba_decision: str,
+        next_action: str,
+        proof: str,
+        do_not: str,
+        route: str,
+        value: float = 0.0,
+    ) -> None:
+        rows.append({
+            "SEVERITY": severity,
+            "LANE": lane,
+            "SIGNAL": signal,
+            "NATIVE_CONTROL": native_control,
+            "CONTROL_SCOPE": _cost_native_control_scope(native_control),
+            "EVIDENCE": evidence,
+            "DBA_DECISION": dba_decision,
+            "NEXT_ACTION": next_action,
+            "PROOF_REQUIRED": proof,
+            "DO_NOT_DO": do_not,
+            "ROUTE": route,
+            "VALUE_AT_RISK_USD": round(safe_float(value), 2),
+        })
+
+    spend_severity = "Critical" if delta_pct >= 50 and current_credits > prior_credits else "High" if delta_pct >= 20 or top_delta > 0 else "Info"
+    add(
+        "Account budget pace",
+        spend_severity,
+        "Spend movement" if spend_severity != "Info" else "Spend baseline",
+        "Snowflake Budget - Account Root Budget",
+        (
+            f"Window ${current_dollars:,.0f} vs prior ${prior_dollars:,.0f} ({delta_pct:+.1f}%); "
+            f"top warehouse increase {top_wh} {top_delta:+,.2f} credits (${top_delta_dollars:+,.0f})."
+        ),
+        "Explain the top warehouse driver before changing budget limits or contract assumptions.",
+        "Open Explain bill / attribution / contract, then attach owner and metering proof for the top increase.",
+        "Cost cockpit current/prior WAREHOUSE_METERING_HISTORY and top warehouse delta.",
+        "Do not raise budget limits or call this a contract issue until the top driver is assigned.",
+        "Cost & Contract > Explain bill / attribution / contract",
+        max(current_dollars - prior_dollars, top_delta_dollars, 0),
+    )
+    baseline_severity = "High" if pct_vs_30d_float >= 20 or yoy_7d_float >= 25 else "Medium" if pct_vs_30d_float >= 10 or yoy_7d_float >= 15 else "Info"
+    add(
+        "Anomaly explanation",
+        baseline_severity,
+        "7d / YOY pace",
+        "OVERWATCH Anomaly Explanation",
+        (
+            f"{run_state}; {yoy_state}; 7d avg {avg_7d:,.2f} credits/day vs 30d avg {avg_30d:,.2f}; "
+            f"7d vs 30d {pct_vs_30d_float:+.1f}%; YOY7 {yoy_7d_float:+.1f}%; "
+            f"top YOY increase {top_yoy_wh} {top_yoy_delta:+,.2f} credits."
+        ),
+        "Use complete-day run-rate and prior-year comparison before declaring an incident or savings win.",
+        "If the 7d or YOY move is high, queue a bill-explanation action for the top warehouse and owner.",
+        "Cost run-rate lens: complete-day 7d, 30d, and prior-year warehouse metering.",
+        "Do not act from same-day partial metering or a chart without a complete-day baseline.",
+        "Cost & Contract > Explain bill / attribution / contract",
+        credits_to_dollars(abs(top_yoy_delta), credit_price),
+    )
+    monitor_severity = "High" if top_delta > 0 and spend_severity in {"Critical", "High"} else "Medium"
+    add(
+        "Warehouse guardrail",
+        monitor_severity,
+        "Resource monitor candidate",
+        "Resource Monitor",
+        f"{top_wh} is the current top warehouse mover; resource monitors are useful only for warehouse credit control.",
+        "Review warehouse-level resource monitor assignment for the top mover, but use Budgets for serverless, AI, and shared resources.",
+        "Open Warehouse Health or DBA Tools to review monitor assignment and threshold SQL after owner approval.",
+        "SHOW RESOURCE MONITORS; SHOW WAREHOUSES LIKE top warehouse; WAREHOUSE_METERING_HISTORY.",
+        "Do not use resource monitors as AI/serverless budget controls; Snowflake budgets are the correct surface there.",
+        "Warehouse Health > Settings / Cost & Contract > Budget governance",
+        top_delta_dollars,
+    )
+    ai_severity = "High" if cortex_projection > 0 or cortex_exceptions > 0 else "Medium"
+    add(
+        "AI budget and quota",
+        ai_severity,
+        "Cortex spend control" if cortex_projection > 0 or cortex_exceptions > 0 else "Cortex control readiness",
+        "Snowflake Budget + Per-User AI Quota",
+        f"Loaded Cortex projection ${cortex_projection:,.0f}/30d with {cortex_exceptions:,} exception(s).",
+        "Route Cortex usage through shared AI budgets and per-user quota review before broadening access.",
+        "Open Budget governance to deploy shared AI budget/quota SQL; open AI and Cortex spend for first/last usage and user proof.",
+        "Cortex usage history, shared AI budget policy, per-user quota action view.",
+        "Do not revoke AI access or enforce quotas from projected spend alone; use dry-run and approval first.",
+        "Cost & Contract > Budget governance / AI and Cortex spend",
+        cortex_projection,
+    )
+    add(
+        "Shared resource budget",
+        "Medium" if safe_int(budget_summary.get("partial")) else "Info",
+        "Native budget coverage",
+        "Snowflake Budget - Shared Resource Budget",
+        f"Budget governance score {safe_int(budget_summary.get('score'))}/100; ready controls {safe_int(budget_summary.get('ready'))}; partial controls {safe_int(budget_summary.get('partial'))}.",
+        "Use Snowflake Budgets for AI, serverless, and shared resources because warehouse monitors cannot see those costs.",
+        "Deploy account/shared AI budgets with verified email recipients and projected/actual thresholds.",
+        "Budget policy frame, SET_EMAIL_NOTIFICATIONS, GET_SHARED_RESOURCES, spending history.",
+        "Do not present warehouse-only monitors as full account or AI cost control.",
+        "Cost & Contract > Budget governance",
+        0,
+    )
+    add(
+        "Budget custom action bridge",
+        "Medium",
+        "Budget event to action queue",
+        "Snowflake Budget Custom Action",
+        "Projected 75% and actual 90% budget events can be bridged to OVERWATCH_ACTION_QUEUE through an owner-rights procedure.",
+        "Treat custom actions as incident creation and notification, not autonomous destructive remediation.",
+        "Attach budget custom actions after confirming procedure access and SNOWFLAKE application grants.",
+        "ADD_CUSTOM_ACTION, CONFIRM_CUSTOM_ACTIONS_ACCESS, TASK_HISTORY for triggered procedures.",
+        "Do not suspend warehouses or revoke users from budget custom actions without approval and a cycle-start recovery path.",
+        "Cost & Contract > Budget governance",
+        0,
+    )
+    queue_severity = "High" if high_open else "Medium" if not open_cost_queue.empty else "Info"
+    add(
+        "DBA-safe action playbook",
+        queue_severity,
+        "Open cost actions" if not open_cost_queue.empty else "No loaded cost actions",
+        "OVERWATCH Action Queue",
+        f"{len(open_cost_queue):,} open cost action(s), {high_open:,} critical/high, ${open_savings:,.0f}/mo estimated savings, {verified_open:,} verified/completed.",
+        "Work owner-approved high-impact actions first and keep savings estimated until measured and verified.",
+        "Open Recommendations and action queue; require owner, ticket, verification query, baseline/current values, and closure proof.",
+        "OVERWATCH_ACTION_QUEUE with owner approval, verification status, and measured post-period usage.",
+        "Do not claim savings from recommendations that are fixed but unverified.",
+        "Cost & Contract > Recommendations and action queue",
+        open_savings,
+    )
+    allocation_state = "Ready" if company_loaded and db_loaded and human_loaded else "Review"
+    add(
+        "Chargeback drilldown",
+        "Medium" if allocation_state == "Review" else "Info",
+        "Allocation trust",
+        "OVERWATCH Allocated / Estimated Attribution",
+        (
+            f"Company/env loaded={company_loaded}; database loaded={db_loaded}; role/user/department loaded={human_loaded}. "
+            "Warehouse totals are exact; database/user/department views are allocated when warehouses are shared."
+        ),
+        "Use drilldowns to assign ownership, but keep shared warehouse and no-database rows labeled Allocated / Estimated.",
+        "Load Cost Explorer or Chargeback before assigning database, role, user, or department ownership.",
+        "QUERY_HISTORY, TAG_REFERENCES, owner directory, allocation confidence, chargeback-ready flag.",
+        "Do not apply PROD/DEV database filters to login-only/no-database context or present shared allocation as exact.",
+        "Cost & Contract > Explain bill / attribution / contract",
+        0,
+    )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {"score": 0, "critical_high": 0, "budget_controls": 0, "top_lane": "No loaded cost governance evidence"}, board
+    board["_SEVERITY_RANK"] = board["SEVERITY"].apply(_cost_command_severity_rank)
+    board = board.sort_values(["_SEVERITY_RANK", "VALUE_AT_RISK_USD"], ascending=[True, False]).drop(columns=["_SEVERITY_RANK"])
+    severity = board["SEVERITY"].fillna("").astype(str)
+    critical_high = int(severity.isin(["Critical", "High"]).sum())
+    medium = int(severity.eq("Medium").sum())
+    score = max(0, min(100, 100 - critical_high * 14 - medium * 5))
+    top = board.iloc[0]
+    summary = {
+        "score": int(score),
+        "critical_high": critical_high,
+        "medium": medium,
+        "budget_controls": int(board["NATIVE_CONTROL"].fillna("").astype(str).str.contains("Budget", case=False, regex=False).sum()),
+        "warehouse_only_controls": int(board["CONTROL_SCOPE"].eq("Warehouse-only").sum()),
+        "top_lane": str(top.get("LANE") or "Cost governance"),
+        "top_signal": str(top.get("SIGNAL") or "Cost movement"),
+        "top_next_action": str(top.get("NEXT_ACTION") or "Open Cost & Contract drilldown."),
+        "top_native_control": str(top.get("NATIVE_CONTROL") or "OVERWATCH evidence control"),
+    }
+    return summary, board.reset_index(drop=True)
+
+
+def _render_budget_anomaly_command_center(
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    credit_price: float,
+) -> None:
+    summary, board = _build_budget_anomaly_command_center(
+        cockpit=cockpit,
+        run_rate=run_rate,
+        queue=queue,
+        credit_price=credit_price,
+    )
+    st.session_state["cost_contract_budget_command_summary"] = summary
+    st.session_state["cost_contract_budget_command_center"] = board
+    if board.empty:
+        return
+    st.markdown("**Budget & Anomaly Command Center**")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Command Score", f"{summary['score']}/100")
+    c2.metric("Critical/High", f"{summary['critical_high']:,}", delta_color="inverse")
+    c3.metric("Budget Controls", f"{summary['budget_controls']:,}")
+    c4.metric("Warehouse Only", f"{summary['warehouse_only_controls']:,}")
+    st.caption(
+        f"Top lane: {summary['top_lane']} | Native route: {summary['top_native_control']} | "
+        f"{summary['top_next_action']}"
+    )
+    render_priority_dataframe(
+        board,
+        title="Budget, anomaly, and DBA-safe cost actions",
+        priority_columns=[
+            "SEVERITY", "LANE", "SIGNAL", "NATIVE_CONTROL", "CONTROL_SCOPE",
+            "VALUE_AT_RISK_USD", "EVIDENCE", "DBA_DECISION", "NEXT_ACTION",
+            "PROOF_REQUIRED", "DO_NOT_DO", "ROUTE",
+        ],
+        sort_by=["SEVERITY", "VALUE_AT_RISK_USD"],
+        ascending=[True, False],
+        raw_label="All budget and anomaly command rows",
+        height=360,
+        max_rows=10,
+    )
+
+
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     st.subheader("Cost Control Cockpit")
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -1386,6 +1690,12 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
         credit_price,
         st.session_state.get("cost_contract_run_rate_error", ""),
+    )
+    _render_budget_anomaly_command_center(
+        data,
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        queue,
+        credit_price,
     )
 
     _render_savings_verification_task_health(

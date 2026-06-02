@@ -71,6 +71,7 @@ from sections.cost_center import (  # noqa: E402
     _warehouse_cost_verification_sql,
 )
 from sections.cost_contract import (  # noqa: E402
+    _build_budget_anomaly_command_center,
     _build_cost_allocation_trust_board,
     _build_cost_closure_analytics,
     _build_cost_control_coverage_board,
@@ -1111,6 +1112,94 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_driver["Company and environment split"]["TRUST"], "Allocated/Estimated")
         self.assertEqual(by_driver["Open cost action queue"]["STATUS"], "Ready")
         self.assertGreaterEqual(decomposition_summary["score"], 80)
+
+    def test_budget_anomaly_command_center_distinguishes_budgets_from_resource_monitors(self):
+        cockpit = pd.DataFrame([{
+            "CURRENT_CREDITS": 120,
+            "PRIOR_CREDITS": 60,
+            "TOP_INCREASE_WAREHOUSE": "ALFA_WH",
+            "TOP_INCREASE_CREDITS": 55,
+        }])
+        run_rate = pd.DataFrame([{
+            "AVG_DAILY_7D": 17.0,
+            "AVG_DAILY_30D": 8.5,
+            "PCT_VS_30D_AVG": 100.0,
+            "YOY_7D_PCT": 42.0,
+            "YOY_30D_PCT": 18.0,
+            "RUN_RATE_STATE": "Accelerating",
+            "YOY_STATE": "Above prior year",
+            "TOP_YOY_INCREASE_WAREHOUSE": "ALFA_WH",
+            "TOP_YOY_INCREASE_CREDITS": 40,
+        }])
+        queue = pd.DataFrame([{
+            "CATEGORY": "Cost Control",
+            "STATUS": "New",
+            "SEVERITY": "High",
+            "EST_MONTHLY_SAVINGS": 900,
+            "VERIFICATION_STATUS": "Pending",
+        }])
+        state = {
+            "df_cost_explorer_detail": pd.DataFrame([{
+                "COMPANY": "ALFA",
+                "ENVIRONMENT_ROLLUP": "PROD",
+                "DATABASE_NAME": "ALFA_EDW_PROD",
+                "ROLE_NAME": "ETL_ROLE",
+                "USER_NAME": "ETL_USER",
+                "DEPARTMENT": "DATA",
+            }])
+        }
+
+        summary, board = _build_budget_anomaly_command_center(
+            cockpit=cockpit,
+            run_rate=run_rate,
+            queue=queue,
+            credit_price=4.0,
+            state=state,
+        )
+        by_lane = {row["LANE"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_lane["Account budget pace"]["SEVERITY"], "Critical")
+        self.assertIn("ALFA_WH", by_lane["Account budget pace"]["EVIDENCE"])
+        self.assertEqual(by_lane["Warehouse guardrail"]["CONTROL_SCOPE"], "Warehouse-only")
+        self.assertIn("Resource Monitor", by_lane["Warehouse guardrail"]["NATIVE_CONTROL"])
+        self.assertIn("Snowflake Budget", by_lane["AI budget and quota"]["NATIVE_CONTROL"])
+        self.assertIn("Budget Custom Action", by_lane["Budget custom action bridge"]["NATIVE_CONTROL"])
+        self.assertIn("7d avg", by_lane["Anomaly explanation"]["EVIDENCE"])
+        self.assertIn("Do not use resource monitors as AI/serverless", by_lane["Warehouse guardrail"]["DO_NOT_DO"])
+        self.assertGreaterEqual(summary["budget_controls"], 4)
+        self.assertEqual(summary["warehouse_only_controls"], 1)
+        self.assertLess(summary["score"], 100)
+
+    def test_ask_overwatch_answers_from_budget_anomaly_command_center(self):
+        board = pd.DataFrame([{
+            "SEVERITY": "High",
+            "LANE": "Warehouse guardrail",
+            "SIGNAL": "Resource monitor candidate",
+            "NATIVE_CONTROL": "Resource Monitor",
+            "CONTROL_SCOPE": "Warehouse-only",
+            "VALUE_AT_RISK_USD": 220.0,
+            "EVIDENCE": "ALFA_WH is the current top warehouse mover; resource monitors are useful only for warehouse credit control.",
+            "DBA_DECISION": "Review warehouse-level resource monitor assignment for the top mover, but use Budgets for serverless, AI, and shared resources.",
+            "NEXT_ACTION": "Open Warehouse Health or DBA Tools to review monitor assignment and threshold SQL after owner approval.",
+            "PROOF_REQUIRED": "SHOW RESOURCE MONITORS; SHOW WAREHOUSES LIKE ALFA_WH;",
+            "DO_NOT_DO": "Do not use resource monitors as AI/serverless budget controls; Snowflake budgets are the correct surface there.",
+            "ROUTE": "Warehouse Health > Settings / Cost & Contract > Budget governance",
+        }])
+        state = {"cost_contract_budget_command_center": board}
+
+        cards = build_ask_overwatch_context(state)
+        result = answer_ask_overwatch(
+            "Should we use a resource monitor or budget for the cost spike?",
+            state,
+            active_section="Cost & Contract",
+            company="ALFA",
+            environment="PROD",
+        )
+
+        self.assertEqual(cards[0]["surface"], "Cost & Contract - Budget & Anomaly Command Center")
+        self.assertIn("native_control=Resource Monitor", cards[0]["evidence"])
+        self.assertIn("Warehouse guardrail", result["answer"])
+        self.assertIn("Do not use resource monitors as AI/serverless", result["answer"])
 
     def test_budget_governance_board_tracks_summit_budget_capabilities(self):
         summary, board = _build_budget_governance_board()

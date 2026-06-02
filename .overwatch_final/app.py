@@ -55,6 +55,8 @@ _ASK_OVERWATCH_STATE_KEYS = (
     "rec_automation_board",
     "rec_action_queue",
     "cost_contract_queue",
+    "cost_contract_budget_command_summary",
+    "cost_contract_budget_command_center",
     "alert_center_data",
     "dba_control_room_data",
     "dba_control_room_incident_board",

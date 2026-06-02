@@ -36,6 +36,8 @@ ASK_OVERWATCH_STATE_KEYS = (
     "arch_futures_adoption_gate",
     "arch_agentic_ai_summary",
     "arch_agentic_ai_scorecard",
+    "cost_contract_budget_command_summary",
+    "cost_contract_budget_command_center",
 )
 
 
@@ -167,6 +169,42 @@ def _cards_from_automation_board(state: Mapping, cards: list[dict]) -> None:
             "route": "Cost & Contract > Automation Readiness",
             "category": _text(row, "CATEGORY", default="Automation"),
             "value": _text(row, "AUTOMATION_SCORE", default="0"),
+        })
+
+
+def _cards_from_cost_command_center(state: Mapping, cards: list[dict]) -> None:
+    frame = state.get("cost_contract_budget_command_center")
+    if not _is_df(frame):
+        return
+    view = frame.copy()
+    view.columns = [str(col).upper() for col in view.columns]
+    if "SEVERITY" in view.columns:
+        view["_RANK"] = view["SEVERITY"].apply(_rank)
+    else:
+        view["_RANK"] = 9
+    if "VALUE_AT_RISK_USD" not in view.columns:
+        view["VALUE_AT_RISK_USD"] = 0
+    view = view.sort_values(["_RANK", "VALUE_AT_RISK_USD"], ascending=[True, False]).drop(columns=["_RANK"])
+    for _, row in view.head(8).iterrows():
+        lane = _text(row, "LANE", default="Cost governance")
+        native = _text(row, "NATIVE_CONTROL", default="OVERWATCH evidence control")
+        scope = _text(row, "CONTROL_SCOPE", default="Cost evidence")
+        value = _text(row, "VALUE_AT_RISK_USD", default="0")
+        _append_card(cards, {
+            "surface": "Cost & Contract - Budget & Anomaly Command Center",
+            "severity": _text(row, "SEVERITY", default="Medium"),
+            "signal": _text(row, "SIGNAL", default=lane),
+            "entity": lane,
+            "evidence": (
+                f"native_control={native}; scope={scope}; value_at_risk=${value}. "
+                f"{_text(row, 'EVIDENCE', default='Loaded cost governance evidence.')}"
+            ),
+            "next_action": _text(row, "NEXT_ACTION", "DBA_DECISION", default="Open Cost & Contract and work the top budget/anomaly lane."),
+            "proof": _text(row, "PROOF_REQUIRED", default="Attach cost cockpit, run-rate, budget, or action queue evidence before closure."),
+            "do_not": _text(row, "DO_NOT_DO", default="Do not change budgets, monitors, or warehouse settings without owner approval and proof."),
+            "route": _text(row, "ROUTE", default="Cost & Contract"),
+            "category": native,
+            "value": value,
         })
 
 
@@ -492,6 +530,7 @@ def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[
     cards: list[dict] = []
     _cards_from_recommendations(state, cards)
     _cards_from_automation_board(state, cards)
+    _cards_from_cost_command_center(state, cards)
     _cards_from_platform_futures(state, cards)
     _cards_from_queue(state.get("rec_action_queue"), cards, surface="Recommendations action queue")
     _cards_from_queue(state.get("cost_contract_queue"), cards, surface="Cost & Contract action queue")
@@ -513,7 +552,7 @@ def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[
 def _domain_filter(question: str, cards: list[dict]) -> list[dict]:
     q = question.lower()
     domain_terms = {
-        "cost": ("cost", "credit", "spend", "budget", "savings", "contract", "idle", "cortex"),
+        "cost": ("cost", "credit", "spend", "budget", "quota", "savings", "contract", "idle", "cortex", "resource monitor"),
         "warehouse": ("warehouse", "queue", "spill", "capacity", "sizing", "suspend", "auto_suspend"),
         "reliability": ("task", "procedure", "failure", "failed", "runtime", "sla", "graph"),
         "alert": ("alert", "incident", "email", "overdue", "issue"),

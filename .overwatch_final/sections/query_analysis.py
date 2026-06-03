@@ -15,6 +15,7 @@ from config import THRESHOLDS
 QUERY_ANALYSIS_PANES = (
     "Bottlenecks",
     "Pattern Degradation",
+    "Root-Cause Brief",
     "Detailed Diagnosis",
     "Plan Steps",
     "AI Diagnosis",
@@ -286,6 +287,12 @@ def render():
                 st.success("✅ No significant query pattern degradation detected.")
 
     # ── PLAN STEPS ────────────────────────────────────────────────────────────
+    elif active_view == "Root-Cause Brief":
+        import importlib
+
+        query_workbench = importlib.import_module("sections.query_workbench")
+        query_workbench.render_root_cause_brief(session)
+
     elif active_view == "Detailed Diagnosis":
         import importlib
 

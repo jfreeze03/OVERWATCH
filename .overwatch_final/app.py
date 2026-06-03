@@ -31,7 +31,7 @@ from config import (
     ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
     DEFAULT_COMPANY, ROLE_SECTIONS,
     SECTION_BY_TITLE, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
-    SECTION_ICONS, normalize_section_name,
+    SECTION_ICONS, DEFAULT_ALERT_EMAIL, normalize_section_name,
 )
 import utils as utils_package
 
@@ -151,7 +151,7 @@ def _maybe_reload_dev_helpers() -> None:
     if getattr(display_module, "DISPLAY_VERSION", "") != "2026-06-01-explicit-drilldowns-v1":
         importlib.reload(display_module)
 
-    if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-01-compact-workflow-ui-v2":
+    if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-03-bottom-notes-v1":
         importlib.reload(workflows_module)
         if hasattr(sections, "reload_loaded_sections"):
             sections.reload_loaded_sections()
@@ -159,12 +159,12 @@ def _maybe_reload_dev_helpers() -> None:
 
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-06-02-nav-color-parity-v5":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-06-03-bottom-notes-v1":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker
 
-if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-06-01-platform-futures-v1":
+if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-06-03-bottom-notes-v1":
     section_guidance = importlib.reload(section_guidance)
 
 _maybe_reload_dev_helpers()
@@ -342,7 +342,7 @@ def _probe_snowflake_available(force: bool = False) -> bool:
 SECTION_SUBTITLES = {
     "DBA Control Room": "Morning triage, route readiness, source health, and release risk.",
     "Alert Center": "Consolidated incidents, email digests, annotation history, and alert setup.",
-    "Account Health": "Daily DBA checklist, source confidence, user hygiene, and account posture.",
+    "Account Health": "Daily DBA checklist, source readiness, user hygiene, and account posture.",
     "Workload Operations": "Query history, task graphs, stored procedures, pipeline health, and runbooks.",
     "Warehouse Health": "Warehouse pressure, capacity controls, setting review, and efficiency evidence.",
     "Architecture Readiness": "Isolation, clustering, cache, DR, and forward Snowflake architecture checks.",
@@ -481,6 +481,7 @@ visible_sections = _current_visible_sections()
 active_section = _current_active_section(visible_sections)
 active_company = str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
 credit_price = _current_credit_price()
+st.session_state["_overwatch_active_section"] = active_section
 
 # Paint the main app shell before the sidebar and selected section hydrate. During
 # high-concurrency startup this gives users an immediate, stable command-center frame.
@@ -759,6 +760,13 @@ with st.sidebar:
             step=1.0, key="_storage_cost_input",
         )
         st.session_state["storage_cost_per_tb"] = storage_cost
+        alert_email_targets = st.text_input(
+            "Alert email recipients",
+            value=st.session_state.get("alert_email_targets", DEFAULT_ALERT_EMAIL),
+            key="_alert_email_targets_input",
+            help="Comma-separated Snowflake notification recipients for generated alert SQL.",
+        )
+        st.session_state["alert_email_targets"] = str(alert_email_targets or "").strip() or DEFAULT_ALERT_EMAIL
         st.caption(
             "Dollar values use the configured rate. Database, user, role, and query cost views are "
             "allocated estimates unless a panel explicitly marks the metric as exact."
@@ -853,8 +861,6 @@ with st.sidebar:
 active_section = _current_active_section(visible_sections)
 secondary_chrome_ready = bool(st.session_state.get("_overwatch_secondary_chrome_ready"))
 if secondary_chrome_ready:
-    section_guidance.render_section_operating_guide(active_section)
-
     if st.button("Ask OVERWATCH", key="ask_overwatch_panel_toggle", type="secondary"):
         st.session_state["_overwatch_show_ask_overwatch"] = not bool(
             st.session_state.get("_overwatch_show_ask_overwatch")
@@ -893,6 +899,7 @@ if secondary_chrome_ready:
 
 # Section dispatch.
 active_section = _current_active_section(visible_sections)
+st.session_state["_overwatch_active_section"] = active_section
 
 section_signature = _section_render_signature(active_section, active_company, current_role)
 transition_slot = st.empty()
@@ -912,7 +919,9 @@ try:
     else:
         try:
             with section_slot.container():
+                section_guidance.clear_deferred_section_notes(active_section)
                 sections.dispatch(active_section)
+                section_guidance.render_deferred_section_notes(active_section)
             _mark_section_rendered(active_section, section_signature)
         except StopException:
             st.session_state["_overwatch_connection_unavailable"] = True

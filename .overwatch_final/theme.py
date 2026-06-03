@@ -20,7 +20,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
 
-THEME_VERSION = "2026-06-02-nav-color-parity-v5"
+THEME_VERSION = "2026-06-03-bottom-notes-v1"
 
 _DEFAULT_THEME = "midnight"
 _THEME_ALIASES = {
@@ -908,134 +908,26 @@ code, pre, .stCodeBlock {
     line-height: 1.35;
     margin-top: 0.18rem;
 }
-.ow-confidence-meter {
-    margin: 0.15rem 0 0.8rem;
-    border-top: 1px solid var(--border-subtle);
-    border-bottom: 1px solid var(--border-subtle);
-    padding: 0.55rem 0 0.6rem;
+.ow-section-notes {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin: 0.1rem 0 0.85rem;
 }
-.ow-confidence-meter-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 0.4rem;
-}
-.ow-confidence-meter-kicker {
+.ow-section-notes-title {
     color: var(--text-muted);
-    font-size: 0.7rem;
+    font-size: 0.64rem;
     font-weight: 850;
     letter-spacing: 0.06em;
-    margin-right: 0.45rem;
     text-transform: uppercase;
+    margin-bottom: 0.25rem;
 }
-.ow-confidence-meter-title {
-    color: var(--text-primary);
-    font-size: 0.9rem;
-    font-weight: 850;
+.ow-section-notes ul {
+    margin: 0;
+    padding-left: 1rem;
 }
-.ow-confidence-score {
-    color: var(--text-primary);
-    font-size: 1.18rem;
-    font-weight: 850;
-    line-height: 1;
-    text-align: right;
-    white-space: nowrap;
-}
-.ow-confidence-score span {
-    color: var(--text-muted);
-    font-size: 0.72rem;
-    font-weight: 750;
-    margin-left: 0.12rem;
-}
-.ow-confidence-exact { background: #22c55e; }
-.ow-confidence-allocated { background: #38bdf8; }
-.ow-confidence-delayed { background: #f59e0b; }
-.ow-confidence-manual { background: #a78bfa; }
-.ow-confidence-unavailable { background: #ef4444; }
-.ow-confidence-gauge {
-    height: 28px;
-    margin: 0.1rem 0 0.2rem;
-    position: relative;
-}
-.ow-confidence-gauge-track {
-    background:
-        linear-gradient(
-            90deg,
-            #ef4444 0%,
-            #f97316 24%,
-            #f59e0b 42%,
-            #38bdf8 68%,
-            #22c55e 100%
-        );
-    border: 1px solid rgba(255,255,255,0.22);
-    border-radius: 999px;
-    box-shadow:
-        inset 0 1px 2px rgba(15,23,42,0.28),
-        0 0 0 1px rgba(15,23,42,0.08);
-    height: 16px;
-    left: 0;
-    opacity: 0.94;
-    position: absolute;
-    right: 0;
-    top: 7px;
-}
-.ow-confidence-gauge-marker {
-    background: var(--text-primary);
-    border: 2px solid var(--bg-card);
-    border-radius: 999px;
-    box-shadow: 0 6px 14px rgba(15,23,42,0.22);
-    height: 28px;
-    position: absolute;
-    top: 1px;
-    transform: translateX(-50%);
-    width: 10px;
-}
-.ow-confidence-gauge-marker::after {
-    background: var(--text-primary);
-    border-radius: 999px;
-    bottom: -6px;
-    content: "";
-    height: 6px;
-    left: 50%;
-    position: absolute;
-    transform: translateX(-50%);
-    width: 2px;
-}
-.ow-confidence-foot {
-    align-items: center;
-    display: flex;
-    gap: 0.7rem;
-    justify-content: space-between;
-}
-.ow-confidence-meta {
-    color: var(--text-muted);
-    font-size: 0.68rem;
-    white-space: nowrap;
-}
-.ow-confidence-mix {
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.55rem;
-    min-width: 0;
-}
-.ow-confidence-mix-item {
-    align-items: center;
-    color: var(--text-secondary);
-    display: inline-flex;
-    font-size: 0.68rem;
-    font-weight: 800;
-    gap: 0.25rem;
-    line-height: 1;
-    white-space: nowrap;
-}
-.ow-confidence-dot {
-    border-radius: 999px;
-    display: inline-block;
-    height: 0.45rem;
-    margin-right: 0.05rem;
-    width: 0.45rem;
+.ow-section-notes li {
+    margin: 0.2rem 0;
 }
 .ow-evidence-contract {
     display: grid;
@@ -1087,16 +979,14 @@ code, pre, .stCodeBlock {
 [data-testid="stMarkdownContainer"] .ow-section-title,
 [data-testid="stMarkdownContainer"] .ow-empty-title,
 [data-testid="stMarkdownContainer"] .ow-table-heading span:first-child,
-[data-testid="stMarkdownContainer"] .ow-confidence-meter-title,
-[data-testid="stMarkdownContainer"] .ow-confidence-score,
 [data-testid="stMarkdownContainer"] .ow-scope-chip strong {
     color: var(--text-primary) !important;
 }
 [data-testid="stMarkdownContainer"] .ow-section-subtitle,
 [data-testid="stMarkdownContainer"] .ow-scope-chip,
 [data-testid="stMarkdownContainer"] .ow-empty-list span,
+[data-testid="stMarkdownContainer"] .ow-section-notes,
 [data-testid="stMarkdownContainer"] .ow-section-guide-detail,
-[data-testid="stMarkdownContainer"] .ow-confidence-mix-item,
 [data-testid="stMarkdownContainer"] .ow-evidence-contract-card,
 [data-testid="stMarkdownContainer"] .ow-brief-detail {
     color: var(--text-secondary) !important;
@@ -1104,10 +994,8 @@ code, pre, .stCodeBlock {
 [data-testid="stMarkdownContainer"] .ow-section-kicker,
 [data-testid="stMarkdownContainer"] .ow-scope-chip span,
 [data-testid="stMarkdownContainer"] .ow-run-context,
+[data-testid="stMarkdownContainer"] .ow-section-notes-title,
 [data-testid="stMarkdownContainer"] .ow-section-guide-label,
-[data-testid="stMarkdownContainer"] .ow-confidence-meter-kicker,
-[data-testid="stMarkdownContainer"] .ow-confidence-score span,
-[data-testid="stMarkdownContainer"] .ow-confidence-meta,
 [data-testid="stMarkdownContainer"] .ow-evidence-contract-card span,
 [data-testid="stMarkdownContainer"] .ow-brief-label,
 [data-testid="stMarkdownContainer"] .ow-table-heading span:last-child {
@@ -1141,17 +1029,6 @@ code, pre, .stCodeBlock {
     }
     .ow-section-guide {
         grid-template-columns: 1fr;
-    }
-    .ow-confidence-meter-head {
-        flex-direction: column;
-    }
-    .ow-confidence-score {
-        text-align: left;
-    }
-    .ow-confidence-foot {
-        align-items: flex-start;
-        flex-direction: column;
-        gap: 0.45rem;
     }
     .ow-brief-grid {
         grid-template-columns: 1fr !important;

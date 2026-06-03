@@ -50,6 +50,8 @@ snowflake/OVERWATCH_MART_SETUP.sql
 | `OVERWATCH_ADMIN_ACTION_AUDIT` | Permanent | DBA action audit trail | App/admin controls | Event-driven |
 | `OVERWATCH_USAGE_LOG` | Permanent | App query telemetry and guardrails | App `run_query()` | Event-driven |
 | `OVERWATCH_ACTION_QUEUE` | Permanent | Recommendations and operational work queue | App/mart findings | Event-driven |
+| `OVERWATCH_SOURCE_CONTROL_CHANGE` | Permanent | Terraform/Git deployment evidence for change-control matching | CI/CD source-control jobs | Event-driven |
+| `OVERWATCH_ITSM_TICKET` | Permanent | Jira/change-ticket status and approval evidence | Jira export/sync job | Event-driven |
 | `OVERWATCH_ALERTS` | Permanent | Teams/email alert history | Alerts/recommendations | Event-driven |
 | `OVERWATCH_ROI_LOG` | Permanent | Optimization wins and ROI evidence | App/manual entries | Event-driven |
 | `FACT_WAREHOUSE_HOURLY` | Transient | Compute credits and warehouse cost | `WAREHOUSE_METERING_HISTORY` | Hourly |

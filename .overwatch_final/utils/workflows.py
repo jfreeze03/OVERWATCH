@@ -10,9 +10,10 @@ from collections.abc import Mapping, Sequence
 import streamlit as st
 
 from .cost import freshness_note, metric_confidence_label
+from .section_guidance import defer_section_note
 
 
-WORKFLOWS_VERSION = "2026-06-01-compact-workflow-ui-v2"
+WORKFLOWS_VERSION = "2026-06-03-bottom-notes-v1"
 
 
 def coerce_workflow_state(key: str, workflows: Sequence[str]) -> str:
@@ -92,43 +93,23 @@ def render_workflow_module(workflow: str, workflow_modules: Mapping[str, str]) -
 
 
 def render_workflow_guide(summary: str, rows: Sequence[tuple[str, str]]) -> None:
-    """Render a compact, collapsible DBA decision guide."""
-    with st.expander("DBA path", expanded=False):
-        st.caption(summary)
-        for trigger, action in rows:
-            st.markdown(f"**{trigger}**: {action}")
+    """Collect DBA decision-guide text for the bottom notes area."""
+    defer_section_note(summary)
+    for trigger, action in rows:
+        defer_section_note(f"{trigger}: {action}")
 
 
 def render_operator_briefing(
     rows: Sequence[tuple[str, str]],
     *,
-    title: str = "Operator briefing",
+    title: str = "Operating notes",
     columns: int = 4,
 ) -> None:
-    """Render a collapsed operating brief for workflow hubs."""
+    """Collect operating brief text for the bottom notes area."""
     if not rows:
         return
-    columns = max(1, min(int(columns or 4), 4))
-    items = list(rows)
-    cells = []
-    for label, detail in items:
-        cells.append(
-            "<div class=\"ow-brief-item\">"
-            f"<div class=\"ow-brief-label\">{html.escape(str(label))}</div>"
-            f"<div class=\"ow-brief-detail\">{html.escape(str(detail))}</div>"
-            "</div>"
-        )
-    with st.expander(str(title), expanded=False):
-        st.markdown(
-            f"""
-            <div class="ow-brief-strip ow-brief-strip-collapsed">
-                <div class="ow-brief-grid" style="grid-template-columns: repeat({columns}, minmax(0, 1fr));">
-                    {''.join(cells)}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    for label, detail in rows:
+        defer_section_note(f"{label}: {detail}")
 
 
 def add_signal_routes(
@@ -258,11 +239,11 @@ def render_signal_confidence(
     confidence: str = "allocated",
     scope_note: str = "",
 ) -> None:
-    """Render a consistent confidence/freshness strip for workflow hubs."""
+    """Collect consistent source/freshness notes for workflow hubs."""
     parts = [
         freshness_note(source),
         metric_confidence_label(confidence),
     ]
     if scope_note:
         parts.append(scope_note)
-    st.caption(" | ".join(parts))
+    defer_section_note(" | ".join(parts))

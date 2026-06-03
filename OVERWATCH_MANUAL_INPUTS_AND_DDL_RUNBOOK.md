@@ -125,6 +125,15 @@ Durable platform-futures objects are included in
 | Cortex AI credit price | `2.20` | `DEFAULTS["ai_credit_price"]` | `OVERWATCH_SETTINGS.AI_CREDIT_PRICE_USD` |
 | Storage cost per TB | `23.00` | `DEFAULTS["storage_cost_per_tb"]`, `THRESHOLDS["storage_cost_per_tb"]` | Used by app calculations; not currently a seeded `OVERWATCH_SETTINGS` row. |
 
+The `3.68` compute credit rate is the ALFA contract estimate used for
+OVERWATCH dollarized warehouse metrics. Snowflake-official reconciliation is
+kept separate: Account Overview-style warehouse credits use
+`SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY`, billed warehouse credits
+use `SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY.CREDITS_BILLED`, and
+official currency spend uses
+`SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY` when the active role has
+organization billing access.
+
 Database-attributed cost split is allocated/estimated unless the source is exact
 Snowflake metering. Shared warehouse metering cannot be split exactly by PROD
 and DEV without query attribution, tags, or session lineage.
@@ -133,7 +142,7 @@ and DEV without query attribution, tags, or session lineage.
 
 | Value | Current default | Locations |
 |---|---|---|
-| Default recipients | `jdees@alfains.com,jfreeze03@yahoo.com` | `config.DEFAULT_ALERT_EMAIL`, `OVERWATCH_SETTINGS.DEFAULT_ALERT_EMAIL`, owner-directory seeds, alert procedure defaults, tests. |
+| Default recipients | `dba-alerts@yourcompany.com` | Public-repo placeholder in `config.DEFAULT_ALERT_EMAIL`; replace in Settings or deployment config before enabling alert delivery. |
 | Delivery method | `EMAIL` | `config.ALERT_DELIVERY_METHOD`, `OVERWATCH_SETTINGS.ALERT_DELIVERY_METHOD`, alert rows. |
 | Notification integration name | `OVERWATCH_EMAIL_INT` | `OVERWATCH_SETTINGS.ALERT_EMAIL_NOTIFICATION_INTEGRATION`, `SP_OVERWATCH_SEND_ALERT_DIGEST`, alert helpers. |
 
@@ -478,6 +487,8 @@ To add or change a rule:
 ## DDL Inventory
 
 All production DDL currently lives in `snowflake/OVERWATCH_MART_SETUP.sql`.
+Alert Center setup objects are part of that bundle; the app no longer exposes a
+separate in-interface setup SQL pane.
 
 ### Runtime Objects
 
@@ -499,6 +510,8 @@ All production DDL currently lives in `snowflake/OVERWATCH_MART_SETUP.sql`.
 - `OVERWATCH_COST_SAVINGS_VERIFICATION_RUN`
 - `OVERWATCH_DBA_CHECKLIST_HISTORY`
 - `OVERWATCH_CHANGE_CONTROL_EVIDENCE`
+- `OVERWATCH_SOURCE_CONTROL_CHANGE`
+- `OVERWATCH_ITSM_TICKET`
 - `OVERWATCH_WAREHOUSE_SETTING_REVIEW`
 - `OVERWATCH_SECURITY_ACCESS_REVIEW`
 - `OVERWATCH_ALERTS`
@@ -532,6 +545,30 @@ All production DDL currently lives in `snowflake/OVERWATCH_MART_SETUP.sql`.
 - `FACT_CORTEX_DAILY`
 - `FACT_MONITORING_COST_DAILY`
 - `MART_DBA_CONTROL_ROOM`
+
+### Jira, Git, And Terraform Evidence
+
+Change & Drift reads Jira and source-control evidence from Snowflake tables, not
+from live app-side API calls. Feed these tables from ALFA CI/CD or a scheduled
+Jira export job:
+
+- `OVERWATCH_SOURCE_CONTROL_CHANGE`: one row per Terraform/Git deployment
+  object or PR/apply event. Include `COMPANY`, `ENVIRONMENT`, `SOURCE_SYSTEM`,
+  `REPOSITORY`, `COMMIT_SHA`, `PR_URL`, `CHANGE_TICKET_ID`,
+  `OBJECT_DATABASE`, `OBJECT_SCHEMA`, `OBJECT_NAME`, `OBJECT_FQN`,
+  `TERRAFORM_ADDRESS`, `PLANNED_ACTION`, `APPLY_STATUS`, `DEPLOYED_BY`, and
+  `APPLY_TS`.
+- `OVERWATCH_ITSM_TICKET`: one row per Jira/change ticket snapshot. Include
+  `COMPANY`, `ENVIRONMENT`, `TICKET_ID`, `TICKET_URL`, `STATUS`, `ASSIGNEE`,
+  `APPROVER`, `APPROVAL_STATUS`, `RISK`, change window timestamps, linked
+  repository, linked commit SHA, linked PR URL, and `UPDATED_AT`.
+- Terraform/Snowflake deployment jobs should set query tags with at least the
+  ticket and commit when possible, for example
+  `OVERWATCH:TERRAFORM;repo=alfa-snowflake;commit=<sha>;ticket=<key>`.
+
+The app joins these rows to `FACT_OBJECT_CHANGE` by Jira key, commit SHA in
+query tag, object FQN, and database/schema context. Missing joins become Change
+& Drift evidence gaps instead of being hidden.
 
 ### Views, Functions, Procedures, And Tasks
 

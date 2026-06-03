@@ -8,14 +8,14 @@ Start daily work in the DBA Control Room. It triages exceptions, routes DBAs
 into specialist tools, and produces report-ready leadership evidence without
 requiring executives to access the app.
 
-Use Query Workbench for query incidents. It consolidates live triage,
-slow-query diagnosis, pattern analysis, and historical query search into one
-DBA workflow.
+Use Workload Operations for query incidents. It consolidates live triage,
+query analysis, task graphs, stored procedure tracking, pipeline health, and
+historical query search into one DBA workflow.
 
 Use the DBA Workflows group for investigations:
 
-- Query Workbench consolidates live query triage, diagnosis, pattern analysis,
-  and history search.
+- Workload Operations consolidates live query triage, query analysis, task
+  graphs, stored procedure tracking, pipeline health, and history search.
 - Warehouse Health consolidates scaling, efficiency, spill, heatmap, and
   optimization work.
 - Cost & Contract consolidates bill explanation, cost attribution, contract
@@ -23,13 +23,17 @@ Use the DBA Workflows group for investigations:
 - Security Posture consolidates login posture, MFA, grants, exfiltration,
   lineage, and data sharing exposure.
 - Change & Drift consolidates object/access changes, stored procedure lineage,
-  schema/object drift checks, dynamic tables, replication, and DBA controls.
+  schema/object drift checks, Jira/Terraform evidence linkage, dynamic tables,
+  replication, and DBA controls.
 
 Cost & Contract's Explain This Bill tab is the starting point for billing
 questions. It compares exact warehouse-metered credits to the prior comparable
 period, identifies the largest warehouse and workload deltas, calls out
 unallocated/idle overhead, and exports a report-ready explanation for
-leadership follow-up.
+leadership follow-up. Its Snowflake Cost Management parity check uses the same
+documented Snowflake warehouse source as Account Overview, keeps ALFA's
+configured `$3.68` compute credit rate, and attempts billed-credit/currency
+reconciliation when the active role can see those Snowflake views.
 
 ## Quick Start
 
@@ -48,8 +52,8 @@ Local run:
 Production Snowflake mart setup:
 
 - Run `snowflake/OVERWATCH_MART_SETUP.sql` in Snowflake to create the low-cost
-  OVERWATCH mart schema, persistence tables, refresh procedures, and scheduled
-  tasks.
+  OVERWATCH mart schema, persistence tables, Jira/Terraform evidence tables,
+  refresh procedures, and scheduled tasks.
 - The Streamlit-in-Snowflake app runs on X-Small `OVERWATCH_WH` with
   60-second auto-suspend for runtime cost isolation. The current mart refresh
   tasks still run on `COMPUTE_WH`. The compact mart loads keep the Streamlit

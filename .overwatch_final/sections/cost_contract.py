@@ -11,6 +11,9 @@ from utils import (
     build_cost_savings_verification_sql,
     build_mart_cost_cockpit_sql,
     build_mart_cost_run_rate_sql,
+    build_snowflake_billed_credit_reconciliation_sql,
+    build_snowflake_cost_management_account_sql,
+    build_snowflake_org_currency_cost_sql,
     credits_to_dollars,
     format_snowflake_error,
     get_active_company,
@@ -62,6 +65,7 @@ WORKFLOW_MODULES = {
 
 _DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
 _FULL_COCKPIT_BOARDS_KEY = "_cost_contract_full_cockpit_boards"
+_SNOWFLAKE_COST_PARITY_KEY = "_cost_contract_snowflake_cost_parity"
 
 
 def _cost_score(current_credits: float, prior_credits: float, open_actions: int, high_actions: int, cortex_exceptions: int) -> int:
@@ -2530,7 +2534,7 @@ def build_cost_governance_mart_sql(
 --   SP_OVERWATCH_REFRESH_COST_GOVERNANCE
 --   OVERWATCH_COST_GOVERNANCE_REFRESH
 --   OVERWATCH_ALERTS bridge
--- Defaults: warehouse COMPUTE_WH, email jdees@alfains.com,jfreeze03@yahoo.com.
+-- Defaults: warehouse COMPUTE_WH, email dba-alerts@yourcompany.com.
 """
 
     table_block = _extract_setup_sql_block(
@@ -2842,6 +2846,160 @@ def _render_change_cost_correlation_board(
     )
 
 
+def _render_snowflake_cost_management_parity(company: str, days: int, credit_price: float) -> None:
+    """Render an on-demand parity check against Snowflake Cost Management sources."""
+    with st.expander("Snowflake Cost Management Parity", expanded=False):
+        st.caption(
+            "Account Overview-style warehouse spend uses WAREHOUSE_METERING_HISTORY; "
+            f"OVERWATCH dollar estimates use ALFA's configured ${credit_price:,.2f}/credit rate."
+        )
+        c_rate, c_scope = st.columns(2)
+        c_rate.metric("Configured Compute Price/Credit", f"${credit_price:,.2f}")
+        c_scope.metric("Window", f"{int(days)} complete days")
+
+        if st.button("Load Snowflake Cost Parity", key="cost_contract_sf_cost_parity_load"):
+            session = get_session_for_action(
+                "load Snowflake Cost Management parity",
+                surface="Cost & Contract",
+                offline_note="Cost parity needs live Snowflake ACCOUNT_USAGE access.",
+            )
+            if session is not None:
+                wh_filter = get_wh_filter_clause("warehouse_name", company)
+                result = {
+                    "company": company,
+                    "days": int(days),
+                    "credit_price": safe_float(credit_price),
+                    "account": pd.DataFrame(),
+                    "billed": pd.DataFrame(),
+                    "currency": pd.DataFrame(),
+                    "account_error": "",
+                    "billed_error": "",
+                    "currency_error": "",
+                    "account_sql": build_snowflake_cost_management_account_sql(
+                        int(days),
+                        credit_price=safe_float(credit_price),
+                        wh_filter=wh_filter,
+                    ),
+                    "billed_sql": build_snowflake_billed_credit_reconciliation_sql(int(days)),
+                    "currency_sql": build_snowflake_org_currency_cost_sql(int(days)),
+                }
+                try:
+                    result["account"] = run_query(
+                        result["account_sql"],
+                        ttl_key=f"cost_contract_sf_account_{company}_{days}_{credit_price}",
+                        tier="historical",
+                        section="Cost & Contract",
+                    )
+                except Exception as exc:
+                    result["account_error"] = format_snowflake_error(exc)
+                try:
+                    result["billed"] = run_query(
+                        result["billed_sql"],
+                        ttl_key=f"cost_contract_sf_billed_{days}",
+                        tier="historical",
+                        section="Cost & Contract",
+                    )
+                except Exception as exc:
+                    result["billed_error"] = format_snowflake_error(exc)
+                try:
+                    result["currency"] = run_query(
+                        result["currency_sql"],
+                        ttl_key=f"cost_contract_sf_currency_{days}",
+                        tier="historical",
+                        section="Cost & Contract",
+                    )
+                except Exception as exc:
+                    result["currency_error"] = format_snowflake_error(exc)
+                st.session_state[_SNOWFLAKE_COST_PARITY_KEY] = result
+
+        result = st.session_state.get(_SNOWFLAKE_COST_PARITY_KEY)
+        if not isinstance(result, dict):
+            st.caption("Load parity when you need to compare OVERWATCH to Snowflake Admin > Cost Management.")
+            return
+        if result.get("company") != company or int(result.get("days", 0) or 0) != int(days):
+            st.info("Loaded parity data is for a different company/window. Reload to refresh this scope.")
+            return
+
+        account = result.get("account")
+        if result.get("account_error"):
+            st.warning(f"Warehouse cost parity unavailable: {result['account_error']}")
+        elif isinstance(account, pd.DataFrame) and not account.empty:
+            row = account.iloc[0]
+            k1, k2, k3, k4, k5 = st.columns(5)
+            k1.metric("Spend In Currency", f"${safe_float(row.get('SPEND_IN_CURRENCY_EST_USD')):,.2f}")
+            k2.metric("Spend In Credits", f"{safe_float(row.get('SPEND_IN_CREDITS')):,.2f}")
+            k3.metric("Compute Price/Credit", f"${safe_float(row.get('COMPUTE_PRICE_PER_CREDIT_USD')):,.2f}")
+            k4.metric("Average Daily Cost", f"${safe_float(row.get('AVERAGE_DAILY_COST_EST_USD')):,.2f}")
+            k5.metric("Average Daily Credits", f"{safe_float(row.get('AVERAGE_DAILY_CREDITS')):,.2f}")
+            st.caption(str(row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"))
+            top = str(row.get("TOP_WAREHOUSES_BY_COST") or "").strip()
+            if top:
+                st.caption(f"Top warehouses by cost: {top}")
+            render_priority_dataframe(
+                account,
+                title="Snowflake Account Overview parity summary",
+                priority_columns=[
+                    "SPEND_IN_CURRENCY_EST_USD",
+                    "SPEND_IN_CREDITS",
+                    "COMPUTE_PRICE_PER_CREDIT_USD",
+                    "AVERAGE_DAILY_COST_EST_USD",
+                    "AVERAGE_DAILY_CREDITS",
+                    "COMPUTE_CREDITS",
+                    "CLOUD_SERVICES_CREDITS",
+                    "ACTIVE_WAREHOUSES",
+                    "OBSERVED_DAYS",
+                ],
+                raw_label="All Snowflake Account Overview parity columns",
+                height=180,
+                max_rows=1,
+            )
+
+        billed = result.get("billed")
+        if result.get("billed_error"):
+            st.caption(f"Billed-credit reconciliation unavailable: {result['billed_error']}")
+        elif isinstance(billed, pd.DataFrame) and not billed.empty:
+            billed_row = billed.iloc[0]
+            b1, b2, b3 = st.columns(3)
+            b1.metric("Account Billed Warehouse Credits", f"{safe_float(billed_row.get('ACCOUNT_BILLED_WAREHOUSE_CREDITS')):,.2f}")
+            b2.metric("Cloud Services Adjustment", f"{safe_float(billed_row.get('ACCOUNT_CLOUD_SERVICES_ADJUSTMENT')):,.2f}")
+            b3.metric("Billed Days", f"{safe_int(billed_row.get('BILLED_DAYS')):,}")
+            st.caption(str(billed_row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY"))
+
+        currency = result.get("currency")
+        if result.get("currency_error"):
+            st.caption(
+                "Organization currency view unavailable for this role/account. "
+                f"Snowflake only exposes currency cost when billing-viewer access is present: {result['currency_error']}"
+            )
+        elif isinstance(currency, pd.DataFrame) and not currency.empty:
+            currency_row = currency.iloc[0]
+            if safe_float(currency_row.get("OFFICIAL_COMPUTE_CREDITS")) > 0:
+                o1, o2, o3 = st.columns(3)
+                o1.metric(
+                    "Official Compute Spend",
+                    f"{currency_row.get('CURRENCY', 'USD')} {safe_float(currency_row.get('OFFICIAL_SPEND_IN_CURRENCY')):,.2f}",
+                )
+                o2.metric("Official Compute Credits", f"{safe_float(currency_row.get('OFFICIAL_COMPUTE_CREDITS')):,.2f}")
+                o3.metric(
+                    "Official Effective Price/Credit",
+                    f"{currency_row.get('CURRENCY', 'USD')} {safe_float(currency_row.get('OFFICIAL_EFFECTIVE_PRICE_PER_CREDIT')):,.2f}",
+                )
+                st.caption(str(currency_row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY"))
+            else:
+                st.caption("Organization currency view returned no warehouse-metering compute rows for this window.")
+
+        with st.expander("Parity SQL", expanded=False):
+            st.code(
+                "-- Account Overview-style warehouse source\n"
+                + str(result.get("account_sql") or "").strip()
+                + "\n\n-- Billed-credit reconciliation\n"
+                + str(result.get("billed_sql") or "").strip()
+                + "\n\n-- Official organization currency, when accessible\n"
+                + str(result.get("currency_sql") or "").strip(),
+                language="sql",
+            )
+
+
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     st.subheader("Cost Control Cockpit")
     c1, c2, c3 = st.columns([1, 1, 2])
@@ -2934,6 +3092,8 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                 st.session_state["cost_contract_verification_health_error"] = format_snowflake_error(exc)
     with c3:
         st.info("Use this cockpit to decide whether to explain the bill, work the action queue, inspect Cortex spend, or log verified savings.")
+
+    _render_snowflake_cost_management_parity(company, int(days), credit_price)
 
     data = st.session_state.get("cost_contract_cockpit")
     meta = st.session_state.get("cost_contract_cockpit_meta", {})

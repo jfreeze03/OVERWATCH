@@ -141,15 +141,22 @@ from sections.change_drift import (  # noqa: E402
     _change_drift_rating,
     _change_drift_score,
     _change_control_operability_fact_sql,
+    _change_integration_status_sql,
+    _change_integration_timeline_sql,
+    _change_unmatched_evidence_sql,
     _change_intervention_matrix,
     _change_operator_next_moves,
     _change_source_health_rows,
     _change_verification_sql,
     _enrich_change_control_evidence,
+    build_change_itsm_ticket_ddl,
+    build_change_itsm_ticket_migration_sql,
     build_change_control_evidence_ddl,
     build_change_control_evidence_migration_sql,
     build_change_control_operability_fact_ddl,
     build_change_control_operability_fact_migration_sql,
+    build_change_source_control_ddl,
+    build_change_source_control_migration_sql,
 )
 from sections.query_workbench import (  # noqa: E402
     _build_mart_root_cause_sql,
@@ -254,6 +261,9 @@ from sections.warehouse_health import (  # noqa: E402
     build_warehouse_setting_review_migration_sql,
 )
 from utils.cost import (  # noqa: E402
+    build_snowflake_billed_credit_reconciliation_sql,
+    build_snowflake_cost_management_account_sql,
+    build_snowflake_org_currency_cost_sql,
     build_cost_reconciliation_sql,
     build_idle_warehouse_sql,
     build_metered_credit_cte,
@@ -315,7 +325,6 @@ from utils.alerts import (  # noqa: E402
     build_alert_rule_audit_insert_sql,
     build_alert_rule_update_sql,
     build_alert_status_update_sql,
-    build_alert_task_sql,
     build_alert_triage_view_sql,
     build_dashboard_issue_rows,
     normalize_alert_rule_frame,
@@ -381,6 +390,33 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("('CREDIT_PRICE_USD', '3.68'", setup_sql)
         self.assertIn("credit_price := COALESCE(credit_price, 3.68)", setup_sql)
         self.assertEqual(credits_to_dollars(10, DEFAULTS["credit_price"]), 36.8)
+
+    def test_snowflake_cost_management_parity_sql_keeps_alfa_rate_and_official_sources(self):
+        account_sql = build_snowflake_cost_management_account_sql(
+            7,
+            credit_price=DEFAULTS["credit_price"],
+            wh_filter="AND WAREHOUSE_NAME = 'COMPUTE_WH'",
+        ).upper()
+        billed_sql = build_snowflake_billed_credit_reconciliation_sql(7).upper()
+        currency_sql = build_snowflake_org_currency_cost_sql(7).upper()
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", account_sql)
+        self.assertIn("3.6800::FLOAT AS CONFIGURED_CREDIT_PRICE_USD", account_sql)
+        self.assertIn("COMPUTE_PRICE_PER_CREDIT_USD", account_sql)
+        self.assertIn("SPEND_IN_CURRENCY_EST_USD", account_sql)
+        self.assertIn("AVERAGE_DAILY_CREDITS", account_sql)
+        self.assertIn("TOP_WAREHOUSES_BY_COST", account_sql)
+        self.assertIn("WAREHOUSE_NAME = 'COMPUTE_WH'", account_sql)
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", billed_sql)
+        self.assertIn("CREDITS_BILLED", billed_sql)
+        self.assertIn("CREDITS_ADJUSTMENT_CLOUD_SERVICES", billed_sql)
+        self.assertIn("SERVICE_TYPE) = 'WAREHOUSE_METERING'", billed_sql)
+
+        self.assertIn("SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY", currency_sql)
+        self.assertIn("USAGE_IN_CURRENCY", currency_sql)
+        self.assertIn("RATING_TYPE) = 'COMPUTE'", currency_sql)
+        self.assertIn("CURRENT_ACCOUNT_NAME()", currency_sql)
 
     def test_metered_credit_cte_uses_compute_credits_with_total_fallback(self):
         sql = build_metered_credit_cte(hours_back=24, include_recent=True).upper()
@@ -491,7 +527,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_check["Query failure review"]["SEVERITY"], "High")
         self.assertEqual(by_check["Task and procedure reliability"]["ROUTE"], "Workload Operations")
         self.assertIn("query_id", by_check["Change and drift review"]["PROOF_REQUIRED"])
-        self.assertIn("Snapshot timestamp", by_check["Refresh source confidence"]["PROOF_REQUIRED"])
+        self.assertIn("Snapshot timestamp", by_check["Refresh source readiness"]["PROOF_REQUIRED"])
 
         routed = _annotate_account_health_checklist_readiness(checklist, environment="PROD")
         by_check = {row["CHECK"]: row for _, row in routed.iterrows()}
@@ -699,18 +735,18 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(by_check["Query failure review"]["CONTROL_STATE"], "Closure Overdue")
         self.assertEqual(by_check["Cost spike review"]["CONTROL_STATE"], "Closure Evidence Blocked")
-        self.assertEqual(by_check["Refresh source confidence"]["CONTROL_STATE"], "Queue Required")
+        self.assertEqual(by_check["Refresh source readiness"]["CONTROL_STATE"], "Queue Required")
         self.assertEqual(by_check["Account access hygiene"]["CONTROL_STATE"], "High-Risk Access Review")
         self.assertEqual(by_check["Account access hygiene"]["DATABASE_CONTEXT"], "No")
         self.assertIn("user hygiene", by_check["Account access hygiene"]["NEXT_CONTROL_ACTION"])
         self.assertEqual(by_gate["Closure proof"]["STATE"], "Closure Blocked")
         self.assertEqual(by_gate["Checklist route"]["STATE"], "Route Blocked")
         self.assertEqual(by_gate["Access hygiene"]["STATE"], "High-Risk Access Review")
-        self.assertEqual(by_gate["Source confidence"]["STATE"], "Source Stale")
+        self.assertEqual(by_gate["Source readiness"]["STATE"], "Source Stale")
         self.assertEqual(by_surface["Query failure review"]["INTERVENTION_STATE"], "Closure Block")
         self.assertEqual(by_surface["Query failure review"]["DBA_PRIORITY"], "P0")
-        self.assertEqual(by_surface["Refresh source confidence"]["INTERVENTION_STATE"], "Route Block")
-        self.assertEqual(by_surface["Refresh source confidence"]["DBA_PRIORITY"], "P1")
+        self.assertEqual(by_surface["Refresh source readiness"]["INTERVENTION_STATE"], "Route Block")
+        self.assertEqual(by_surface["Refresh source readiness"]["DBA_PRIORITY"], "P1")
         self.assertEqual(by_surface["Account access hygiene"]["SCOPE_CONFIDENCE"], "Account-Level Control")
 
     def test_account_health_closure_analytics_sql_scores_action_queue_evidence(self):
@@ -1240,7 +1276,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("RESOURCE MONITOR", by_control["Warehouse resource monitor"]["NATIVE_SURFACE"])
         self.assertIn("serverless", by_control["Warehouse resource monitor"]["STRICT_GAP"])
         self.assertIn("ACCOUNT_ROOT_BUDGET", by_control["Account root budget"]["NATIVE_SURFACE"])
-        self.assertIn("jdees@alfains.com", by_control["Email notification path"]["EVIDENCE"])
+        self.assertIn(DEFAULT_ALERT_EMAIL, by_control["Email notification path"]["EVIDENCE"])
         self.assertGreaterEqual(summary["ready"], 3)
         self.assertEqual(summary["warehouse_only"], 1)
 
@@ -1419,13 +1455,13 @@ class FormulaRegressionTests(unittest.TestCase):
             budget_board=budget,
             root_cause=root,
             correlation=correlation,
-            email_target="jdees@alfains.com",
+            email_target="dba-alerts@example.com",
         )
         by_type = {row["ALERT_TYPE"]: row for _, row in alerts.iterrows()}
 
         self.assertEqual(summary["critical_high"], 3)
         self.assertEqual(alerts.iloc[0]["ENTITY_NAME"], "ALFA_WH")
-        self.assertEqual(by_type["Cost Root Cause Candidate"]["EMAIL_TARGET"], "jdees@alfains.com")
+        self.assertEqual(by_type["Cost Root Cause Candidate"]["EMAIL_TARGET"], "dba-alerts@example.com")
         self.assertIn("current/prior", by_type["Cost Root Cause Candidate"]["PROOF_QUERY"])
         self.assertIn("before tuning", by_type["Change Cost Correlation"]["SUGGESTED_ACTION"])
 
@@ -1495,7 +1531,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SUGGESTED_ACTION": "Open Cost & Contract root-cause drilldown and route the alert.",
                 "PROOF_QUERY": "SELECT * FROM FACT_WAREHOUSE_HOURLY WHERE WAREHOUSE_NAME = 'ALFA_WH'",
                 "ROUTE": "Alert Center",
-                "EMAIL_TARGET": "jdees@alfains.com",
+                "EMAIL_TARGET": "dba-alerts@example.com",
                 "VALUE_AT_RISK_USD": 478.4,
             }]),
             "cost_contract_incident_timeline": pd.DataFrame([{
@@ -1521,7 +1557,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(cards[0]["surface"], "Cost & Contract - Governance Alert Candidate")
         self.assertIn("ALFA_WH", result["answer"])
-        self.assertIn("jdees@alfains.com", result["answer"])
+        self.assertIn("dba-alerts@example.com", result["answer"])
         self.assertIn("Alert Center", result["answer"])
 
     def test_overwatch_mart_setup_keeps_cost_governance_and_upgrade_contract(self):
@@ -1580,7 +1616,7 @@ class FormulaRegressionTests(unittest.TestCase):
             4.0,
             ai_budget_usd=8000.0,
             per_user_limit_usd=400.0,
-            email_target="jdees@alfains.com",
+            email_target="dba-alerts@example.com",
         )
         controls = set(policy["CONTROL_TYPE"])
         self.assertIn("SHARED_AI_RESOURCE_BUDGET", controls)
@@ -1589,16 +1625,16 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CUSTOM_ACTION_BRIDGE", controls)
         self.assertIn("ALFA_AI", set(policy["TAG_VALUE"]))
         self.assertIn("TREXIS_AI", set(policy["TAG_VALUE"]))
-        self.assertTrue(policy["ALERT_TARGET"].eq("jdees@alfains.com").all())
+        self.assertTrue(policy["ALERT_TARGET"].eq("dba-alerts@example.com").all())
         self.assertTrue((policy.loc[policy["CONTROL_TYPE"].eq("PER_USER_AI_QUOTA"), "MONTHLY_LIMIT_CREDITS"] == 100.0).all())
 
     def test_native_budget_sql_uses_snowflake_budget_shared_resource_methods(self):
-        policy = _build_budget_policy_frame("ALFA", 4.0, ai_budget_usd=4000.0, email_target="jdees@alfains.com")
-        sql = _build_native_budget_sql(policy, email_target="jdees@alfains.com").upper()
+        policy = _build_budget_policy_frame("ALFA", 4.0, ai_budget_usd=4000.0, email_target="dba-alerts@example.com")
+        sql = _build_native_budget_sql(policy, email_target="dba-alerts@example.com").upper()
         self.assertIn("CREATE SNOWFLAKE.CORE.BUDGET", sql)
         self.assertIn("SET_SPENDING_LIMIT", sql)
         self.assertIn("SET_NOTIFICATION_THRESHOLD(75)", sql)
-        self.assertIn("SET_EMAIL_NOTIFICATIONS('JDEES@ALFAINS.COM')", sql)
+        self.assertIn("SET_EMAIL_NOTIFICATIONS('DBA-ALERTS@EXAMPLE.COM')", sql)
         self.assertIn("SET_USER_TAGS", sql)
         self.assertIn("SYSTEM$REFERENCE('TAG'", sql)
         self.assertIn("APPLYBUDGET", sql)
@@ -1622,8 +1658,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
 
     def test_budget_custom_action_sql_bridges_native_budget_events_to_action_queue(self):
-        policy = _build_budget_policy_frame("ALFA", 4.0, ai_budget_usd=4000.0, email_target="jdees@alfains.com")
-        sql = _build_budget_custom_action_sql(policy, email_target="jdees@alfains.com").upper()
+        policy = _build_budget_policy_frame("ALFA", 4.0, ai_budget_usd=4000.0, email_target="dba-alerts@example.com")
+        sql = _build_budget_custom_action_sql(policy, email_target="dba-alerts@example.com").upper()
         self.assertIn("SP_OVERWATCH_BUDGET_CUSTOM_ACTION", sql)
         self.assertIn("EXECUTE AS OWNER", sql)
         self.assertIn("OVERWATCH_BUDGET_ACTION_BRIDGE", sql)
@@ -3373,6 +3409,42 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ENVIRONMENT = 'PROD'", trend_sql)
         self.assertIn("MISSING_TICKET_ROWS", trend_sql)
 
+    def test_change_external_integration_tables_and_sql_join_jira_terraform_evidence(self):
+        source_ddl = build_change_source_control_ddl().upper()
+        ticket_ddl = build_change_itsm_ticket_ddl().upper()
+        source_migration = "\n".join(build_change_source_control_migration_sql()).upper()
+        ticket_migration = "\n".join(build_change_itsm_ticket_migration_sql()).upper()
+        status_sql = _change_integration_status_sql(14, "ALFA", "PROD").upper()
+        unmatched_sql = _change_unmatched_evidence_sql(14, "ALFA", "PROD").upper()
+        timeline_sql = _change_integration_timeline_sql(14, "ALFA", "PROD").upper()
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS", source_ddl)
+        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", source_ddl)
+        self.assertIn("TERRAFORM_ADDRESS", source_ddl)
+        self.assertIn("COMMIT_SHA", source_ddl)
+        self.assertIn("CHANGE_TICKET_ID", source_ddl)
+        self.assertIn("CREATE TABLE IF NOT EXISTS", ticket_ddl)
+        self.assertIn("OVERWATCH_ITSM_TICKET", ticket_ddl)
+        self.assertIn("APPROVAL_STATUS", ticket_ddl)
+        self.assertIn("LINKED_COMMIT_SHA", ticket_ddl)
+        self.assertIn("ADD COLUMN IF NOT EXISTS OBJECT_FQN", source_migration)
+        self.assertIn("ADD COLUMN IF NOT EXISTS LINKED_PR_URL", ticket_migration)
+        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", setup_sql)
+        self.assertIn("OVERWATCH_ITSM_TICKET", setup_sql)
+        self.assertIn("FACT_OBJECT_CHANGE", status_sql)
+        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", status_sql)
+        self.assertIn("OVERWATCH_ITSM_TICKET", status_sql)
+        self.assertIn("REGEXP_SUBSTR", status_sql)
+        self.assertIn("COMMIT_SHA <> ''", status_sql)
+        self.assertIn("OBJECT_MATCH_KEY", status_sql)
+        self.assertIn("SNOWFLAKE CHANGE MISSING JIRA/TERRAFORM EVIDENCE", unmatched_sql)
+        self.assertIn("APPROVED JIRA CHANGE MISSING DEPLOY EVIDENCE", unmatched_sql)
+        self.assertIn("EVENT_SOURCE", timeline_sql)
+        self.assertIn("'JIRA'", timeline_sql)
+        self.assertIn("TO_DATE(COALESCE(APPLY_TS, SNAPSHOT_TS))", timeline_sql)
+        self.assertNotIn("ACCOUNT_USAGE.QUERY_HISTORY", status_sql)
+
     def test_change_control_operability_fact_is_fast_and_environment_scoped(self):
         ddl = build_change_control_operability_fact_ddl().upper()
         migration_sql = "\n".join(build_change_control_operability_fact_migration_sql()).upper()
@@ -3431,6 +3503,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "global_start_date": "",
                 "global_end_date": "",
             },
+            "change_integration_days": 14,
         }
 
         rows = _change_source_health_rows(state, company="ALFA", environment="PROD")
@@ -3442,6 +3515,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Evidence trend"]["STATE"], "Stale")
         self.assertEqual(by_surface["Closure analytics"]["STATE"], "Not Loaded")
+        self.assertEqual(by_surface["Jira/Terraform evidence"]["STATE"], "Not Loaded")
+        self.assertIn("OVERWATCH_ITSM_TICKET", by_surface["Jira/Terraform evidence"]["SOURCE"])
         self.assertIn("Reload", by_surface["Evidence trend"]["NEXT_ACTION"])
 
     def test_change_action_queue_closure_sql_scores_evidence_gaps(self):
@@ -6321,10 +6396,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Stabilize", cards[0]["next_action"])
 
     def test_alert_task_is_email_first_and_dba_focused(self):
-        sql = build_alert_task_sql(email_target="jdees@alfains.com").upper()
+        sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
 
         self.assertIn("OVERWATCH_ANOMALY_CHECK", sql)
-        self.assertIn("JDEES@ALFAINS.COM", sql)
+        self.assertIn("DBA-ALERTS@YOURCOMPANY.COM", sql)
         self.assertIn("EMAIL_TARGET", sql)
         self.assertIn("EMAIL_SUBJECT", sql)
         self.assertIn("EMAIL_BODY", sql)
@@ -6356,7 +6431,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("TEAMS_TARGET", sql)
 
     def test_alert_email_delivery_procedure_is_dry_run_guarded_and_audited(self):
-        sql = build_alert_email_delivery_procedure_sql(email_target="jdees@alfains.com").upper()
+        sql = build_alert_email_delivery_procedure_sql(email_target="dba-alerts@example.com").upper()
 
         self.assertIn("SP_OVERWATCH_SEND_ALERT_DIGEST", sql)
         self.assertIn("P_DRY_RUN BOOLEAN DEFAULT TRUE", sql)
@@ -6365,7 +6440,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", sql)
         self.assertIn("EMAIL_DRY_RUN", sql)
         self.assertIn("LAST_DELIVERY_AT", sql)
-        self.assertIn("JDEES@ALFAINS.COM", sql)
+        self.assertIn("DBA-ALERTS@EXAMPLE.COM", sql)
 
     def test_workload_recovery_audit_ddl_captures_owner_and_verification_evidence(self):
         sql = build_workload_recovery_audit_ddl().upper()
@@ -6392,7 +6467,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "MESSAGE": "Task failed.",
             "SUGGESTED_ACTION": "Open task graph.",
             "OWNER": "DBA",
-            "EMAIL_TARGET": "jdees@alfains.com",
+            "EMAIL_TARGET": "dba-alerts@example.com",
             "DELIVERY_STATUS": "EMAIL_READY",
             "STATUS": "New",
         }])
@@ -6421,19 +6496,24 @@ class FormulaRegressionTests(unittest.TestCase):
         issues = build_dashboard_issue_rows(exceptions=exceptions, alerts=alert, queue=queue)
 
         self.assertIn("OVERWATCH Critical", subject)
-        self.assertIn("jdees@alfains.com", alert["EMAIL_TARGET"].iloc[0])
+        self.assertIn("dba-alerts@example.com", alert["EMAIL_TARGET"].iloc[0])
         self.assertIn("Environment: PROD", body)
         self.assertEqual(len(issues), 3)
         self.assertEqual(issues.iloc[0]["SEVERITY"], "Critical")
         self.assertEqual(set(issues["ISSUE_SOURCE"]), {"Alert History", "Action Queue", "Control Room Signal"})
-        self.assertTrue(issues["EMAIL_TARGET"].astype(str).str.contains("jdees@alfains.com").all())
+        self.assertTrue(
+            issues.loc[issues["ISSUE_SOURCE"].eq("Alert History"), "EMAIL_TARGET"]
+            .astype(str)
+            .str.contains("dba-alerts@example.com")
+            .all()
+        )
         self.assertTrue(
             (
                 issues.loc[issues["ISSUE_SOURCE"].ne("Alert History"), "EMAIL_TARGET"]
                 == DEFAULT_ALERT_EMAIL
             ).all()
         )
-        self.assertIn("jfreeze03@yahoo.com", "\n".join(issues["EMAIL_TARGET"].astype(str)))
+        self.assertNotIn("@yahoo.com", "\n".join(issues["EMAIL_TARGET"].astype(str)))
 
     def test_alert_lifecycle_sla_and_status_sql(self):
         df = pd.DataFrame([
@@ -6718,7 +6798,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "ALERT_TYPE": "Task Failure",
                 "ENTITY_NAME": "LOAD_POLICY",
                 "OWNER": "DBA",
-                "EMAIL_TARGET": "jdees@alfains.com",
+                "EMAIL_TARGET": "dba-alerts@example.com",
                 "DELIVERY_STATUS": "EMAIL_READY",
                 "SUGGESTED_ACTION": "Open task graph and assign owner.",
             },
@@ -6743,7 +6823,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "CATEGORY": "Reliability",
             "ENTITY": "LOAD_POLICY",
             "OWNER": "Pipeline Owner Smith",
-            "OWNER_EMAIL": "jdees@alfains.com",
+            "OWNER_EMAIL": "dba-alerts@example.com",
             "ONCALL_PRIMARY": "DBA On-Call",
             "ESCALATION_TARGET": "DBA Lead",
             "OWNER_SOURCE": "OWNER_DIRECTORY:TASK_DEFAULT",
@@ -6780,7 +6860,7 @@ class FormulaRegressionTests(unittest.TestCase):
             alert_ids=[101, "102"],
             company="ALFA",
             environment="PROD",
-            delivery_target="jdees@alfains.com",
+            delivery_target="dba-alerts@example.com",
             email_subject="OVERWATCH Alert Digest",
             email_body="Digest body",
             actor="DBA_USER",
@@ -6788,7 +6868,7 @@ class FormulaRegressionTests(unittest.TestCase):
         ).upper()
         mark_sql = build_alert_delivery_mark_sql(
             alert_ids=[101, 102],
-            delivery_target="jdees@alfains.com",
+            delivery_target="dba-alerts@example.com",
             actor="DBA_USER",
             columns={
                 "DELIVERY_STATUS", "DELIVERY_TARGET", "EMAIL_TARGET",
@@ -6823,7 +6903,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 alert_ids=[],
                 company="ALFA",
                 environment="PROD",
-                delivery_target="jdees@alfains.com",
+                delivery_target="dba-alerts@example.com",
                 email_subject="Subject",
                 email_body="Body",
                 actor="DBA_USER",
@@ -6875,7 +6955,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         summary = build_alert_digest_summary(df)
         subject = build_alert_digest_subject(df, company="ALFA", environment="PROD")
-        body = build_alert_digest_body(df, company="ALFA", environment="PROD", recipient="jdees@alfains.com")
+        body = build_alert_digest_body(df, company="ALFA", environment="PROD", recipient="dba-alerts@example.com")
         candidates = alert_escalation_candidates(df, limit=5)
 
         self.assertEqual(summary["open"], 2)
@@ -6883,7 +6963,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(summary["overdue"], 1)
         self.assertGreaterEqual(summary["needs_owner"], 1)
         self.assertIn("2 open", subject)
-        self.assertIn("jdees@alfains.com", body)
+        self.assertIn("dba-alerts@example.com", body)
         self.assertIn("Escalate first", body)
         self.assertEqual(candidates.iloc[0]["ALERT_ID"], 20)
         self.assertIn("SLA_STATE", candidates.columns)

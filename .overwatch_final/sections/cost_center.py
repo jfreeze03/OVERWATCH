@@ -1105,7 +1105,7 @@ def _bill_driver_summary(
 
     next_action = (
         f"Start with {top_wh.get('WAREHOUSE_NAME', 'the top warehouse')} and validate "
-        f"{top_type.get('QUERY_TYPE', 'the top query type')} activity in Query Workbench before changing warehouse settings."
+        f"{top_type.get('QUERY_TYPE', 'the top query type')} activity in Query Analysis before changing warehouse settings."
     )
     return {
         "severity": severity,

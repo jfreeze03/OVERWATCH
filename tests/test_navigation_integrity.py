@@ -24,11 +24,8 @@ from config import (  # noqa: E402
     normalize_section_name,
 )
 from utils.section_guidance import (  # noqa: E402
-    CONFIDENCE_BANDS,
     SECTION_EVIDENCE_CONTRACT,
     SECTION_OPERATING_GUIDE,
-    SECTION_SOURCE_HEALTH_STATE_KEYS,
-    build_section_confidence_meter,
 )
 from utils.scorecards import DBA_CONTROL_PLANE_SECTION_BASELINE  # noqa: E402
 
@@ -214,6 +211,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Query diagnosis", workload_operations.WORKFLOWS)
         self.assertIn("Task graphs", workload_operations.WORKFLOWS)
         self.assertIn("Stored procedures", workload_operations.WORKFLOWS)
+        self.assertEqual(workload_operations.WORKFLOW_MODULES["Query diagnosis"], "sections.query_analysis")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Task graphs"], "sections.task_management")
         self.assertIn("Recommendations and action queue", cost_contract.WORKFLOWS)
         self.assertIn("Budget governance", cost_contract.WORKFLOWS)
@@ -382,7 +380,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
 
-        self.assertIn("render_section_operating_guide(active_section)", app_text)
+        self.assertNotIn("render_section_operating_guide(active_section)", app_text)
+        self.assertIn("clear_deferred_section_notes(active_section)", app_text)
+        self.assertIn("render_deferred_section_notes(active_section)", app_text)
         self.assertNotIn("render_section_reference(active_section)", app_text)
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_OPERATING_GUIDE))
         for section, guide in SECTION_OPERATING_GUIDE.items():
@@ -406,10 +406,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         guidance_text = (APP_ROOT / "utils" / "section_guidance.py").read_text(encoding="utf-8")
 
         self.assertNotIn("render_section_confidence_meter(active_section", app_text)
-        self.assertIn("render_section_operating_guide(active_section)", app_text)
+        self.assertNotIn("render_section_operating_guide(active_section)", app_text)
+        self.assertIn("render_deferred_section_notes(active_section)", app_text)
         self.assertNotIn("render_section_reference(active_section)", app_text)
         self.assertNotIn("render_section_evidence_contract(active_section)", app_text)
-        self.assertIn('st.expander("Details", expanded=False)', guidance_text)
+        self.assertIn('st.expander("Notes / Evidence", expanded=False)', guidance_text)
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_EVIDENCE_CONTRACT))
         for section, rows in SECTION_EVIDENCE_CONTRACT.items():
             with self.subTest(section=section):
@@ -433,71 +434,21 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Do not run clustering-depth", architecture_invalid_uses)
         self.assertIn("Do not auto-change agents", architecture_invalid_uses)
         self.assertIn(".ow-evidence-contract", theme_text)
-        self.assertIn(".ow-confidence-gauge-track", theme_text)
-        self.assertIn(".ow-confidence-gauge-marker", theme_text)
-        self.assertIn(".ow-confidence-mix-item", theme_text)
-        self.assertIn("SECTION_SOURCE_HEALTH_STATE_KEYS", guidance_text)
-        self.assertIn("_SOURCE_HEALTH_FALLBACK_SCAN_LIMIT", guidance_text)
         self.assertIn("lru_cache", guidance_text)
         self.assertIn("@lru_cache(maxsize=16)", guidance_text)
-        self.assertIn('"arch_source_health"', guidance_text)
+        self.assertNotIn("build_section_confidence_meter", guidance_text)
+        self.assertNotIn("render_section_confidence_meter", guidance_text)
+        self.assertNotIn("SECTION_SOURCE_HEALTH_STATE_KEYS", guidance_text)
+        self.assertNotIn("_SOURCE_HEALTH_FALLBACK_SCAN_LIMIT", guidance_text)
+        self.assertNotIn(".ow-confidence-gauge-track", theme_text)
+        self.assertNotIn(".ow-confidence-gauge-marker", theme_text)
+        self.assertNotIn(".ow-confidence-mix-item", theme_text)
+        self.assertNotIn(".ow-confidence-meter", theme_text)
         self.assertNotIn("ow-confidence-chip", theme_text)
         self.assertNotIn("ow-confidence-chip", guidance_text)
         self.assertNotIn("ow-confidence-card-detail", theme_text)
         self.assertNotIn("ow-confidence-card-detail", guidance_text)
         self.assertNotIn("The OVERWATCH shell is loaded", app_text)
-
-    def test_confidence_meter_classifies_contract_and_loaded_source_health(self):
-        band_keys = [key for key, _, _ in CONFIDENCE_BANDS]
-        self.assertEqual(band_keys, ["exact", "allocated", "delayed", "manual", "unavailable"])
-
-        meter = build_section_confidence_meter("Cost & Contract")
-        by_label = {row["label"]: row for row in meter["rows"]}
-        self.assertGreater(by_label["Exact"]["count"], 0)
-        self.assertGreater(by_label["Allocated"]["count"], 0)
-        self.assertEqual(meter["source_health_rows"], 0)
-        self.assertEqual(meter["state"], "Mixed Confidence")
-
-        with_loaded_health = build_section_confidence_meter(
-            "Warehouse Health",
-            {
-                "wh_source_health": pd.DataFrame([
-                    {
-                        "SURFACE": "Overview",
-                        "STATE": "Stale",
-                        "SOURCE": "ACCOUNT_USAGE",
-                        "CONFIDENCE": "Pre-aggregated",
-                        "ROWS": 2,
-                    },
-                    {
-                        "SURFACE": "Capacity brief",
-                        "STATE": "Loaded",
-                        "SOURCE": "WAREHOUSE_METERING_HISTORY",
-                        "CONFIDENCE": "Exact",
-                        "ROWS": 1,
-                    },
-                ])
-            },
-        )
-        loaded_by_label = {row["label"]: row for row in with_loaded_health["rows"]}
-        self.assertGreaterEqual(loaded_by_label["Unavailable"]["count"], 1)
-        self.assertEqual(with_loaded_health["source_health_rows"], 2)
-        self.assertIn(with_loaded_health["state"], {"Use With Caution", "Evidence Gaps"})
-
-        self.assertEqual(SECTION_SOURCE_HEALTH_STATE_KEYS["Architecture Readiness"], ("arch_source_health",))
-        ignored_noise = build_section_confidence_meter(
-            "Cost & Contract",
-            {
-                f"random_frame_{idx}": pd.DataFrame([{
-                    "SURFACE": "Noise",
-                    "STATE": "Stale",
-                    "SOURCE": "Not a source health key",
-                    "CONFIDENCE": "Unavailable",
-                }])
-                for idx in range(100)
-            },
-        )
-        self.assertEqual(ignored_noise["source_health_rows"], 0)
 
     def test_priority_tables_defer_full_raw_detail_rendering(self):
         workflows_text = (APP_ROOT / "utils" / "workflows.py").read_text(encoding="utf-8")
@@ -535,21 +486,25 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def reload_loaded_sections()", sections_text)
         self.assertIn("help=details.get(workflow) or None", workflows_text)
         self.assertNotIn("st.caption(details[workflow])", workflows_text)
-        self.assertIn("with st.expander(str(title), expanded=False)", workflows_text)
-        self.assertIn("ow-brief-strip-collapsed", workflows_text)
+        self.assertIn("from .section_guidance import defer_section_note", workflows_text)
+        self.assertIn("defer_section_note(summary)", workflows_text)
+        self.assertIn('defer_section_note(" | ".join(parts))', workflows_text)
+        self.assertNotIn("with st.expander(str(title), expanded=False)", workflows_text)
+        self.assertNotIn("ow-brief-strip-collapsed", workflows_text)
         self.assertNotIn("ow-brief-title", workflows_text)
         self.assertNotIn("ow-brief-title", theme_text)
-        duplicate_headers = {
-            "dba_control_room.py": 'st.header("DBA Control Room")',
-            "alert_center.py": 'st.header("Alert Center")',
-            "cost_contract.py": 'st.header("Cost & Contract")',
-            "workload_operations.py": 'st.header("Workload Operations")',
-            "security_posture.py": 'st.header("Security Posture")',
-            "change_drift.py": 'st.header("Change & Drift")',
-            "architecture_readiness.py": 'st.header("Architecture Readiness")',
-            "account_health.py": 'st.header("Account Health - Command Center")',
-        }
-        for filename, marker in duplicate_headers.items():
+        duplicate_headers = [
+            ("dba_control_room.py", 'st.header("DBA Control Room")'),
+            ("alert_center.py", 'st.header("Alert Center")'),
+            ("cost_contract.py", 'st.header("Cost & Contract")'),
+            ("workload_operations.py", 'st.header("Workload Operations")'),
+            ("security_posture.py", 'st.header("Security Posture")'),
+            ("change_drift.py", 'st.header("Change & Drift")'),
+            ("architecture_readiness.py", 'st.header("Architecture Readiness")'),
+            ("architecture_readiness.py", 'st.header("Snowflake Architecture Readiness")'),
+            ("account_health.py", 'st.header("Account Health - Command Center")'),
+        ]
+        for filename, marker in duplicate_headers:
             with self.subTest(filename=filename):
                 section_text = (APP_ROOT / "sections" / filename).read_text(encoding="utf-8")
                 self.assertNotIn(marker, section_text)
@@ -575,8 +530,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         recommendations_text = (APP_ROOT / "sections" / "recommendations.py").read_text(encoding="utf-8")
         live_monitor_text = (APP_ROOT / "sections" / "live_monitor.py").read_text(encoding="utf-8")
         query_analysis_text = (APP_ROOT / "sections" / "query_analysis.py").read_text(encoding="utf-8")
+        query_workbench_text = (APP_ROOT / "sections" / "query_workbench.py").read_text(encoding="utf-8")
         query_search_text = (APP_ROOT / "sections" / "query_search.py").read_text(encoding="utf-8")
         pipeline_health_text = (APP_ROOT / "sections" / "pipeline_health.py").read_text(encoding="utf-8")
+        workload_operations_text = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
+        spcs_text = (APP_ROOT / "sections" / "spcs_tracker.py").read_text(encoding="utf-8")
+        data_sharing_text = (APP_ROOT / "sections" / "data_sharing.py").read_text(encoding="utf-8")
         object_change_text = (APP_ROOT / "sections" / "object_change_monitor.py").read_text(encoding="utf-8")
         adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8")
         platform_text = (APP_ROOT / "sections" / "platform_topology.py").read_text(encoding="utf-8")
@@ -586,6 +545,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         downloads_text = (APP_ROOT / "utils" / "downloads.py").read_text(encoding="utf-8")
         dba_tool_catalog_text = (APP_ROOT / "utils" / "dba_tool_catalog.py").read_text(encoding="utf-8")
         dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
+        config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
         task_management_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
         data_text = (APP_ROOT / "utils" / "data.py").read_text(encoding="utf-8")
@@ -664,7 +624,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_COMBINED_CSS_CACHE", theme_text)
         self.assertIn("_has_company_scope_columns", data_text)
         self.assertNotIn("render_section_confidence_meter(active_section, st.session_state)", app_text)
-        self.assertIn("render_section_operating_guide(active_section)", app_text)
+        self.assertNotIn("render_section_operating_guide(active_section)", app_text)
+        self.assertIn("render_deferred_section_notes(active_section)", app_text)
         self.assertIn('secondary_chrome_ready = bool(st.session_state.get("_overwatch_secondary_chrome_ready"))', app_text)
         self.assertIn("if secondary_chrome_ready:", app_text)
         self.assertIn('st.session_state["_overwatch_secondary_chrome_ready"] = True', app_text)
@@ -767,6 +728,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Recovery readiness", change_drift_text)
         self.assertIn("_change_intervention_matrix", change_drift_text)
         self.assertIn("Change DBA intervention matrix", change_drift_text)
+        self.assertIn("Jira & Terraform Evidence", change_drift_text)
+        self.assertIn("_render_change_external_integrations(company, environment, days)", change_drift_render_preload)
+        self.assertIn('st.button("Load Jira / Terraform Evidence"', change_drift_text)
         self.assertIn('sort_by=["DBA_PRIORITY", "SEVERITY", "FINDING_TYPE"]', change_drift_text)
         self.assertIn("ALERT_CENTER_SOURCES_BY_PANE", alert_center_text)
         self.assertIn("_alert_center_sources_for_view(active_view)", alert_center_text)
@@ -803,7 +767,10 @@ class NavigationIntegrityTests(unittest.TestCase):
             with self.subTest(lazy_session_section=label):
                 render_start = section_text.split("def render() -> None:", 1)[1].split("if st.button", 1)[0]
                 self.assertNotIn("session = get_session()", render_start)
-        self.assertIn('if active_view == "Setup SQL":', alert_center_text)
+        self.assertNotIn('"Setup SQL",', alert_center_text.split("ALERT_CENTER_SOURCE_PLAN", 1)[0])
+        self.assertNotIn('if active_view == "Setup SQL":', alert_center_text)
+        self.assertNotIn("build_alert_task_sql", alert_center_text)
+        self.assertIn("snowflake/OVERWATCH_MART_SETUP.sql", alert_center_text)
         self.assertIn('if active_view == "Suppression Windows":', alert_center_text)
         self.assertIn('sources=required_sources', alert_center_text)
         self.assertIn('"_loaded_sources": sorted(sources)', alert_center_text)
@@ -846,9 +813,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("LIVE_MONITOR_PANES", live_monitor_text)
         self.assertIn("Live query polling is paused", live_monitor_text)
         self.assertIn("QUERY_ANALYSIS_PANES", query_analysis_text)
+        self.assertIn('"Root-Cause Brief"', query_analysis_text)
         self.assertIn('"Detailed Diagnosis"', query_analysis_text)
+        self.assertIn('importlib.import_module("sections.query_workbench")', query_analysis_text)
         self.assertIn('importlib.import_module("sections.detailed_diagnosis")', query_analysis_text)
+        self.assertNotIn("render_workflow_selector(", query_workbench_text)
+        self.assertNotIn("from sections import detailed_diagnosis", query_workbench_text)
         self.assertIn("_query_history_exprs()", query_analysis_text)
+        self.assertIn("workload_operations_snapshot", workload_operations_text)
+        self.assertIn("build_mart_control_room_summary_sql", workload_operations_text)
         self.assertIn("PIPELINE_HEALTH_PANES", pipeline_health_text)
         self.assertIn('"Snowpipe Usage"', pipeline_health_text)
         self.assertIn('"Dynamic Tables"', pipeline_health_text)
@@ -859,6 +832,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Prefix starts with"', query_search_text)
         self.assertIn('"Text contains"', query_search_text)
         self.assertIn("Contains search is capped at 7 days", query_search_text)
+        self.assertIn("_search_date_predicate", query_search_text)
+        self.assertIn("Snowflake Search Optimization does not accelerate ACCOUNT_USAGE", query_search_text)
+        self.assertIn("_load_spcs_usage", spcs_text)
+        self.assertIn("spcs_auto_attempted", spcs_text)
+        self.assertIn("_load_shared_databases", data_sharing_text)
+        self.assertIn("ds_shared_auto_attempted", data_sharing_text)
+        self.assertIn("alert_email_targets", app_text)
+        self.assertIn("current_alert_recipient", alert_center_text)
+        self.assertIn("dba-alerts@yourcompany.com", config_text)
+        self.assertNotIn("@yahoo.com", config_text)
         self.assertIn("OBJECT_CHANGE_PANES", object_change_text)
         self.assertIn("_query_history_drift_caps()", object_change_text)
         self.assertIn("ADOPTION_ANALYTICS_PANES", adoption_text)
@@ -899,6 +882,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Run-Rate and YOY", cost_contract_text)
         self.assertIn("build_mart_cost_run_rate_sql", cost_contract_text)
         self.assertIn("YOY_7D_PCT", cost_contract_text)
+        self.assertIn("Snowflake Cost Management Parity", cost_contract_text)
+        self.assertIn('st.button("Load Snowflake Cost Parity"', cost_contract_text)
+        self.assertIn("build_snowflake_cost_management_account_sql", cost_contract_text)
+        self.assertIn("build_snowflake_billed_credit_reconciliation_sql", cost_contract_text)
+        self.assertIn("build_snowflake_org_currency_cost_sql", cost_contract_text)
         self.assertIn("Cortex user cost and recency", cortex_text)
         self.assertIn('"FIRST_USAGE"', cortex_text)
         self.assertIn('"LAST_USAGE"', cortex_text)
@@ -943,6 +931,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"build_platform_futures_evidence_ddl"', utils_text)
         self.assertIn('"build_mart_cost_run_rate_sql"', utils_text)
         self.assertIn('"build_mart_cost_explorer_sql"', utils_text)
+        self.assertIn('"build_snowflake_cost_management_account_sql"', utils_text)
+        self.assertIn('"build_snowflake_billed_credit_reconciliation_sql"', utils_text)
+        self.assertIn('"build_snowflake_org_currency_cost_sql"', utils_text)
 
     def test_dead_ui_helpers_stay_removed(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")

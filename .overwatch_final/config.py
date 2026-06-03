@@ -662,7 +662,9 @@ ETL_AUDIT_TABLE = "ETL_RUN_AUDIT"
 ALERT_DB = "DBA_MAINT_DB"
 ALERT_SCHEMA = "OVERWATCH"
 ALERT_TABLE = "OVERWATCH_ALERTS"
-DEFAULT_ALERT_EMAILS = ("jdees@alfains.com", "jfreeze03@yahoo.com")
+# Public-repo default only. Replace in the app Settings panel or deployment config
+# before enabling scheduled alert delivery.
+DEFAULT_ALERT_EMAILS = ("dba-alerts@yourcompany.com",)
 DEFAULT_ALERT_EMAIL = ",".join(DEFAULT_ALERT_EMAILS)
 ALERT_DELIVERY_METHOD = "EMAIL"
 

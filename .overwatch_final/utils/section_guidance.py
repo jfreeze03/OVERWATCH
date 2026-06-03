@@ -7,23 +7,8 @@ from functools import lru_cache
 import streamlit as st
 
 
-SECTION_GUIDANCE_VERSION = "2026-06-01-platform-futures-v1"
-
-CONFIDENCE_BANDS = (
-    ("exact", "Exact", "Source-of-truth or direct operational evidence."),
-    ("allocated", "Allocated", "Useful for routing and chargeback, not exact ownership cost."),
-    ("delayed", "Delayed", "Snowflake metadata or source-health evidence with latency."),
-    ("manual", "Manual", "Configured, email, owner, approval, ITSM, or directory evidence."),
-    ("unavailable", "Unavailable", "Expected evidence is stale, missing, or not loaded."),
-)
-
-
-SECTION_SOURCE_HEALTH_STATE_KEYS = {
-    "Architecture Readiness": ("arch_source_health",),
-}
-
-_SOURCE_HEALTH_FALLBACK_SCAN_LIMIT = 40
-
+SECTION_GUIDANCE_VERSION = "2026-06-03-bottom-notes-v1"
+_DEFERRED_NOTES_PREFIX = "_overwatch_deferred_section_notes"
 
 SECTION_OPERATING_GUIDE = {
     "DBA Control Room": {
@@ -83,148 +68,6 @@ SECTION_OPERATING_GUIDE = {
 }
 
 
-def _confidence_band(confidence: object) -> str:
-    text = str(confidence or "").lower()
-    if any(token in text for token in ("unavailable", "not loaded", "missing", "stale")):
-        return "unavailable"
-    if any(token in text for token in ("allocated", "estimated", "estimate", "derived", "forecast", "projection")):
-        return "allocated"
-    if any(token in text for token in ("delayed", "freshness", "metadata", "account_usage", "lag")):
-        return "delayed"
-    if "exact" in text or "source-of-truth" in text:
-        return "exact"
-    if any(token in text for token in ("manual", "email", "configured", "directory", "itsm", "approval", "owner")):
-        return "manual"
-    return "manual"
-
-
-def _state_band(state: object) -> str:
-    text = str(state or "").strip().lower()
-    if text in {"loaded", "ready", "verified", "no rows"}:
-        return "exact"
-    if text in {"stale", "scope stale", "deferred", "not loaded", "unavailable"}:
-        return "unavailable"
-    if "blocked" in text or "gap" in text or "failed" in text:
-        return "unavailable"
-    return ""
-
-
-def _looks_like_source_health_frame(value: object) -> bool:
-    columns = getattr(value, "columns", None)
-    if columns is None:
-        return False
-    colset = {str(column).upper() for column in columns}
-    return {"STATE", "CONFIDENCE"}.issubset(colset) and bool({"SURFACE", "SOURCE"} & colset)
-
-
-def _source_health_frame_rows(key: str, value: object) -> list[dict]:
-    rows: list[dict] = []
-    if not _looks_like_source_health_frame(value):
-        return rows
-    try:
-        for row in value.to_dict("records"):
-            rows.append({
-                "key": str(key),
-                "surface": str(row.get("SURFACE") or row.get("SOURCE") or key),
-                "state": str(row.get("STATE") or ""),
-                "confidence": str(row.get("CONFIDENCE") or ""),
-                "rows": row.get("ROWS", ""),
-            })
-    except Exception:
-        return []
-    return rows
-
-
-def _source_health_rows(section: str, state: dict | None) -> list[dict]:
-    rows: list[dict] = []
-    if not state:
-        return rows
-
-    checked_keys: set[str] = set()
-    for key in SECTION_SOURCE_HEALTH_STATE_KEYS.get(str(section), ()):
-        checked_keys.add(str(key))
-        try:
-            rows.extend(_source_health_frame_rows(str(key), state.get(key)))
-        except Exception:
-            continue
-
-    if rows:
-        return rows
-
-    # Compatibility path for tests and older sections that may add source-health
-    # frames before they are registered above. Keep the scan bounded so the
-    # confidence meter cannot become slower as Streamlit session_state grows.
-    try:
-        state_items = list(state.items())
-    except Exception:
-        state_items = []
-    scanned = 0
-    for key, value in state_items:
-        if str(key) in checked_keys:
-            continue
-        if "source_health" not in str(key).lower():
-            continue
-        scanned += 1
-        rows.extend(_source_health_frame_rows(str(key), value))
-        if scanned >= _SOURCE_HEALTH_FALLBACK_SCAN_LIMIT:
-            break
-    return rows
-
-
-def build_section_confidence_meter(section: str, state: dict | None = None) -> dict:
-    """Return a compact confidence meter model for the active section."""
-    contract = SECTION_EVIDENCE_CONTRACT.get(str(section), [])
-    band_counts = {key: 0 for key, _, _ in CONFIDENCE_BANDS}
-    details = {key: [] for key, _, _ in CONFIDENCE_BANDS}
-    for row in contract:
-        band = _confidence_band(row.get("confidence"))
-        band_counts[band] += 1
-        details[band].append(str(row.get("source") or "").strip())
-
-    loaded_sources = _source_health_rows(str(section), state)
-    for row in loaded_sources:
-        band = _state_band(row.get("state")) or _confidence_band(row.get("confidence"))
-        band_counts[band] += 1
-        details[band].append(str(row.get("surface") or row.get("key") or "").strip())
-
-    total = sum(band_counts.values()) or 1
-    penalty = (
-        band_counts["allocated"] * 6
-        + band_counts["delayed"] * 8
-        + band_counts["manual"] * 10
-        + band_counts["unavailable"] * 18
-    )
-    score = max(0, min(100, round(100 - (penalty / total), 1)))
-    if band_counts["unavailable"] >= 2:
-        state_label = "Evidence Gaps"
-    elif band_counts["unavailable"] == 1 or band_counts["delayed"] >= 2:
-        state_label = "Use With Caution"
-    elif band_counts["allocated"] or band_counts["manual"]:
-        state_label = "Mixed Confidence"
-    else:
-        state_label = "High Confidence"
-
-    rows = []
-    for key, label, description in CONFIDENCE_BANDS:
-        count = int(band_counts[key])
-        rows.append({
-            "key": key,
-            "label": label,
-            "count": count,
-            "pct": round((count / total) * 100, 1),
-            "description": description,
-            "examples": ", ".join(item for item in details[key] if item) or "None in current section contract",
-        })
-    return {
-        "section": str(section),
-        "score": score,
-        "state": state_label,
-        "total": total,
-        "source_health_rows": len(loaded_sources),
-        "rows": rows,
-    }
-
-
 SECTION_EVIDENCE_CONTRACT = {
     "DBA Control Room": [
         {
@@ -236,7 +79,7 @@ SECTION_EVIDENCE_CONTRACT = {
         },
         {
             "source": "Source-health rows",
-            "confidence": "Freshness confidence",
+            "confidence": "Freshness state",
             "decision_use": "Decide whether the control room is safe to trust.",
             "invalid_use": "Do not treat stale or unavailable sources as healthy.",
             "proof": "Loaded source timestamp and state for each surface.",
@@ -429,60 +272,6 @@ def render_section_operating_guide(section: str) -> None:
         st.markdown(markup, unsafe_allow_html=True)
 
 
-def render_section_confidence_meter(section: str, state: dict | None = None) -> None:
-    """Render the section-level trust/confidence meter."""
-    meter = build_section_confidence_meter(section, state)
-    score = meter["score"]
-    state_label = meter["state"]
-    display_state = {
-        "Evidence Gaps": "Gaps",
-        "Use With Caution": "Caution",
-        "Mixed Confidence": "Mixed",
-        "High Confidence": "High",
-    }.get(str(state_label), str(state_label))
-    rows = meter["rows"]
-    total = max(1, int(meter["total"]))
-    mix = []
-    for row in rows:
-        key = row["key"]
-        count = int(row["count"])
-        label = {"allocated": "Alloc", "delayed": "Delay", "unavailable": "Gaps"}.get(key, row["label"])
-        mix.append(
-            f"<span class=\"ow-confidence-mix-item ow-confidence-mix-{html.escape(key)}\">"
-            f"<span class=\"ow-confidence-dot ow-confidence-{html.escape(key)}\"></span>"
-            f"{html.escape(str(label))} {count}"
-            "</span>"
-        )
-    marker_left = max(0.0, min(100.0, float(score)))
-    loaded_note = (
-        f"{meter['source_health_rows']} live source row(s)"
-        if meter["source_health_rows"]
-        else "baseline"
-    )
-    st.markdown(
-        f"""
-        <div class="ow-confidence-meter" aria-label="{html.escape(str(section))} confidence meter">
-            <div class="ow-confidence-meter-head">
-                <div>
-                    <span class="ow-confidence-meter-kicker">Confidence:</span>
-                    <span class="ow-confidence-meter-title">{html.escape(display_state)}</span>
-                </div>
-                <div class="ow-confidence-score">{score:.1f}<span>/100</span></div>
-            </div>
-            <div class="ow-confidence-gauge" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{score:.1f}">
-                <div class="ow-confidence-gauge-track"></div>
-                <span class="ow-confidence-gauge-marker" style="left:{marker_left:.1f}%"></span>
-            </div>
-            <div class="ow-confidence-foot">
-                <div class="ow-confidence-mix">{' '.join(mix)}</div>
-                <div class="ow-confidence-meta">{total:,} signals | {html.escape(loaded_note)}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def render_section_evidence_contract(section: str) -> None:
     """Render the trust boundary for the active DBA section."""
     markup = _section_evidence_contract_markup(section)
@@ -490,6 +279,52 @@ def render_section_evidence_contract(section: str) -> None:
         return
     with st.expander("Evidence Contract", expanded=False):
         st.markdown(markup, unsafe_allow_html=True)
+
+
+def _notes_key(section: str) -> str:
+    safe_section = str(section or "section").strip() or "section"
+    return f"{_DEFERRED_NOTES_PREFIX}:{safe_section}"
+
+
+def clear_deferred_section_notes(section: str) -> None:
+    """Clear transient notes for the section before a fresh render."""
+    st.session_state[_notes_key(section)] = []
+
+
+def defer_section_note(note: str, *, section: str | None = None) -> None:
+    """Collect non-critical explanatory text for a bottom Notes / Evidence area."""
+    clean_note = " ".join(str(note or "").split())
+    if not clean_note:
+        return
+    active_section = section or st.session_state.get("_overwatch_active_section", "")
+    key = _notes_key(active_section)
+    notes = list(st.session_state.get(key, []))
+    if clean_note not in notes:
+        notes.append(clean_note)
+    st.session_state[key] = notes
+
+
+def render_deferred_section_notes(section: str) -> None:
+    """Render deferred explanations and source contracts in one quiet bottom expander."""
+    guide_markup = _section_guide_markup(section)
+    contract_markup = _section_evidence_contract_markup(section)
+    notes = list(st.session_state.get(_notes_key(section), []))
+    if not notes and not guide_markup and not contract_markup:
+        return
+
+    note_items = "".join(f"<li>{html.escape(note)}</li>" for note in notes)
+    notes_markup = (
+        f"""
+        <div class="ow-section-notes">
+            <div class="ow-section-notes-title">Source Notes</div>
+            <ul>{note_items}</ul>
+        </div>
+        """
+        if notes
+        else ""
+    )
+    with st.expander("Notes / Evidence", expanded=False):
+        st.markdown(f"{notes_markup}{guide_markup}{contract_markup}", unsafe_allow_html=True)
 
 
 @lru_cache(maxsize=16)
@@ -503,7 +338,7 @@ def _section_evidence_contract_markup(section: str) -> str:
         contract_cards.append(
             "<div class=\"ow-evidence-contract-card\">"
             f"<div class=\"ow-evidence-contract-source\">{html.escape(row['source'])}</div>"
-            f"<div><span>Confidence:</span>{html.escape(row['confidence'])}</div>"
+            f"<div><span>Source basis:</span>{html.escape(row['confidence'])}</div>"
             f"<div><span>Decision use:</span>{html.escape(row['decision_use'])}</div>"
             f"<div><span>Invalid use:</span>{html.escape(row['invalid_use'])}</div>"
             f"<div><span>Closure proof:</span>{html.escape(row['proof'])}</div>"

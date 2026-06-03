@@ -1,16 +1,14 @@
-# sections/query_workbench.py - Consolidated query investigation workflow
+# sections/query_workbench.py - legacy root-cause helpers for Query Analysis
 from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
-from sections import detailed_diagnosis, live_monitor, query_analysis, query_search
 from utils import (
     filter_existing_columns,
     format_snowflake_error,
     get_active_company,
     get_global_filter_clause,
-    get_session,
     mart_object_name,
     make_action_id,
     render_query_drilldown,
@@ -22,16 +20,6 @@ from utils import (
 )
 from utils.workflows import (
     render_priority_dataframe,
-    render_signal_confidence,
-    render_workflow_guide,
-    render_workflow_selector,
-)
-
-WORKFLOWS = (
-    "Live Triage",
-    "Diagnosis",
-    "Patterns",
-    "History Search",
 )
 
 
@@ -134,7 +122,7 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
     affected_users = safe_int(summary_row.get("AFFECTED_USERS"))
 
     c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.4])
-    c1.metric("Workbench Readiness", f"{score}/100", _root_cause_rating(score))
+    c1.metric("Root-Cause Score", f"{score}/100", _root_cause_rating(score))
     c2.metric("High-Risk Queries", f"{high_risk:,}", delta_color="inverse")
     c3.metric("Affected Scope", f"{affected_warehouses:,} WH / {affected_users:,} users")
     with c4:
@@ -184,10 +172,15 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
                     st.session_state["dd_mode"] = mode
                     st.session_state["dd_days"] = min(max(int(days), 1), 30)
                     st.session_state["dd_focus_query_id"] = query_id
-                    st.session_state["workload_query_diagnosis_mode"] = "Detailed diagnosis"
+                    st.session_state["query_analysis_active_view"] = "Detailed Diagnosis"
+                    st.session_state["workload_operations_workflow"] = "Query diagnosis"
                 elif workflow == "Patterns":
-                    st.session_state["workload_query_diagnosis_mode"] = "Root cause patterns"
-                st.session_state["query_workbench_workflow"] = workflow
+                    st.session_state["query_analysis_active_view"] = "Pattern Degradation"
+                    st.session_state["workload_operations_workflow"] = "Query diagnosis"
+                elif workflow == "History Search":
+                    st.session_state["workload_operations_workflow"] = "History search"
+                elif workflow == "Live Triage":
+                    st.session_state["workload_operations_workflow"] = "Live triage"
                 st.rerun()
 
 
@@ -211,7 +204,7 @@ def _build_root_cause_markdown(
         "",
         "## DBA Narrative",
         (
-            "Use this brief as the first-pass triage view before opening Query Workbench drilldowns. "
+            "Use this brief as the first-pass triage view before opening query analysis drilldowns. "
             "It separates failure, queue, memory spill, full-scan, and slow-query pressure so the DBA can "
             "route the issue to warehouse capacity, SQL tuning, access fixes, or deployment rollback."
         ),
@@ -617,7 +610,7 @@ def _queue_root_cause_actions(session, exceptions: pd.DataFrame) -> int:
         )
         actions.append({
             "Action ID": make_action_id("Query Root Cause", qid or warehouse, finding),
-            "Source": "Query Workbench - Root Cause",
+            "Source": "Query Analysis - Root Cause",
             "Category": "Query Performance",
             "Severity": row.get("SEVERITY", "High"),
             "Entity Type": entity_type,
@@ -636,7 +629,7 @@ def _queue_root_cause_actions(session, exceptions: pd.DataFrame) -> int:
     return upsert_actions(session, actions)
 
 
-def _render_root_cause_brief(session) -> None:
+def render_root_cause_brief(session) -> None:
     company = get_active_company()
     with st.expander("Root-Cause Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
         c1, c2 = st.columns([1, 1])
@@ -653,13 +646,13 @@ def _render_root_cause_brief(session) -> None:
                         summary_sql,
                         ttl_key=f"qw_root_summary_mart_{company}_{days}",
                         tier="historical",
-                        section="Query Workbench",
+                        section="Query Analysis",
                     )
                     exceptions = run_query(
                         exceptions_sql,
                         ttl_key=f"qw_root_exceptions_mart_{company}_{days}_{limit}",
                         tier="historical",
-                        section="Query Workbench",
+                        section="Query Analysis",
                     )
                     st.session_state["qw_root_summary"] = summary_df
                     st.session_state["qw_root_exceptions"] = exceptions
@@ -680,13 +673,13 @@ def _render_root_cause_brief(session) -> None:
                             summary_sql,
                             ttl_key=f"qw_root_summary_live_{company}_{days}",
                             tier="historical",
-                            section="Query Workbench",
+                            section="Query Analysis",
                         )
                         exceptions = run_query(
                             exceptions_sql,
                             ttl_key=f"qw_root_exceptions_live_{company}_{days}_{limit}",
                             tier="historical",
-                            section="Query Workbench",
+                            section="Query Analysis",
                         )
                         st.session_state["qw_root_summary"] = summary_df
                         st.session_state["qw_root_exceptions"] = exceptions
@@ -785,50 +778,14 @@ def _render_root_cause_brief(session) -> None:
             st.code(sql_map.get("exceptions", ""), language="sql")
 
 
+def _render_root_cause_brief(session) -> None:
+    render_root_cause_brief(session)
+
+
 def render() -> None:
-    session = get_session()
-    if st.session_state.get("exceptions_only_mode") and "query_workbench_workflow" not in st.session_state:
-        st.session_state["query_workbench_workflow"] = "Diagnosis"
-    st.header("Query Workbench")
-    st.caption(
-        "One place for live query triage, slow-query diagnosis, pattern analysis, "
-        "and historical query search. Use this before jumping into cost, warehouse, "
-        "or security follow-up."
-    )
-    render_signal_confidence(
-        source="INFORMATION_SCHEMA",
-        confidence="exact",
-        scope_note="Current activity is live; history is ACCOUNT_USAGE-backed.",
-    )
-    if st.session_state.get("exceptions_only_mode"):
-        st.warning("Exceptions-only mode: start with Diagnosis unless you need currently running queries.")
+    """Compatibility entry point for old imports; route users to Query Analysis."""
+    st.session_state["query_analysis_active_view"] = "Root-Cause Brief"
+    import importlib
 
-    render_workflow_guide(
-        "Confirm whether the query is still running, diagnose the bottleneck, "
-        "compare recurring patterns, then pull exact query text/history for evidence.",
-        [
-            ("Something is running now", "Use Live Triage."),
-            ("Something was slow, queued, blocked, or spilling", "Use Diagnosis."),
-            ("A user, role, warehouse, or query type keeps recurring", "Use Patterns."),
-            ("You have a query ID or need exact SQL text", "Use History Search."),
-        ],
-    )
-
-    _render_root_cause_brief(session)
-    if st.session_state.get("exceptions_only_mode"):
-        st.stop()
-
-    workflow = render_workflow_selector(
-        "Query workflow",
-        "query_workbench_workflow",
-        WORKFLOWS,
-    )
-
-    if workflow == "Live Triage":
-        live_monitor.render()
-    elif workflow == "Diagnosis":
-        detailed_diagnosis.render()
-    elif workflow == "Patterns":
-        query_analysis.render()
-    else:
-        query_search.render()
+    query_analysis = importlib.import_module("sections.query_analysis")
+    query_analysis.render()

@@ -711,7 +711,7 @@ def _account_health_owner_context(check: object, route: object = "") -> dict:
             "escalation": "DBA Lead",
             "source": "Checklist owner map",
         }
-    elif "source confidence" in name:
+    elif "source readiness" in name or "source confidence" in name:
         base = {
             "owner": "OVERWATCH Platform Owner",
             "escalation": "DBA Lead",
@@ -786,7 +786,7 @@ def _build_account_health_dba_checklist(
     delta = safe_float(pct_delta)
     rows = [
         {
-            "CHECK": "Refresh source confidence",
+            "CHECK": "Refresh source readiness",
             "STATUS": "OK" if control_mart_used else "Verify fallback",
             "SEVERITY": "Low" if control_mart_used else "Medium",
             "EVIDENCE": detail_source or ("OVERWATCH mart facts" if control_mart_used else "Live ACCOUNT_USAGE fallback"),
@@ -877,7 +877,7 @@ def _build_account_health_dba_checklist(
 def _account_health_verification_sql(check: object, evidence: object = "") -> str:
     """Build a read-only source query for a daily DBA checklist action."""
     name = str(check or "").lower()
-    if "refresh source confidence" in name:
+    if "refresh source readiness" in name or "refresh source confidence" in name:
         usage_fqn = f"{safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.OVERWATCH_USAGE_LOG"
         return f"""
 SELECT
@@ -1394,7 +1394,7 @@ def _account_health_operator_next_moves(
 
     if route_blocks:
         state, rank, count = "Route Blocked", 1, route_blocks
-        next_action = "Complete owner-directory evidence, approver, scope confidence, and proof SQL before queueing."
+        next_action = "Complete owner-directory evidence, approver, scope basis, and proof SQL before queueing."
     elif issue_rows:
         state, rank, count = "Queue Ready", 6, issue_rows
         next_action = "Queue only actionable checklist rows with owner, approval, and verification context attached."
@@ -1405,7 +1405,7 @@ def _account_health_operator_next_moves(
         "GATE": "Checklist route",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "owner, approver, scope confidence, source verification SQL, recovery SLA",
+        "PROOF_REQUIRED": "owner, approver, scope basis, source verification SQL, recovery SLA",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1441,7 +1441,7 @@ def _account_health_operator_next_moves(
         state, rank, count = "Current", 8, 0
         next_action = "Loaded sources are current for the active Account Health scope."
     rows.append({
-        "GATE": "Source confidence",
+        "GATE": "Source readiness",
         "STATE": state,
         "COUNT": count,
         "PROOF_REQUIRED": "fresh source state, mart/load timestamp, scope match, account-level disclosure where needed",
@@ -2149,7 +2149,7 @@ def _account_health_checklist_action_payload(row: pd.Series | dict, company: str
             f"-- Route: {route}",
             f"-- Proof required: {row.get('PROOF_REQUIRED', 'verification evidence')}",
             f"-- Queue readiness: {row.get('QUEUE_READINESS', 'Ready to Queue')}",
-            f"-- Scope confidence: {row.get('SCOPE_CONFIDENCE', 'Account-Level Control')}",
+            f"-- Scope basis: {row.get('SCOPE_CONFIDENCE', 'Account-Level Control')}",
         ]),
         "Proof Query": verification_query,
         "Verification Query": verification_query,

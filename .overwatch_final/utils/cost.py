@@ -1,4 +1,4 @@
-# utils/cost.py — Credit/dollar formatting + metered credit CTE builder
+# utils/cost.py - Credit/dollar formatting + metered credit CTE builder
 import pandas as pd
 import streamlit as st
 from config import CREDIT_RATES, COMPUTE_CREDIT_CASE, DEFAULTS
@@ -10,7 +10,9 @@ __all__ = [
     "query_attribution_supported",
     "build_metered_credit_cte", "build_idle_warehouse_sql",
     "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
-    "build_cost_reconciliation_sql", "metric_confidence_label", "freshness_note",
+    "build_cost_reconciliation_sql", "build_snowflake_cost_management_account_sql",
+    "build_snowflake_billed_credit_reconciliation_sql",
+    "build_snowflake_org_currency_cost_sql", "metric_confidence_label", "freshness_note",
     "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
 ]
 
@@ -26,7 +28,7 @@ def get_storage_cost_per_tb() -> float:
 
 
 def format_credits(credits: float, credit_price: float = None) -> str:
-    """Format credits as 'X.XX (${dollar})' — consistent across all sections."""
+    """Format credits as 'X.XX (${dollar})' consistently across all sections."""
     if credits is None or (isinstance(credits, float) and pd.isna(credits)):
         return "0 ($0.00)"
     credits = float(credits)
@@ -60,9 +62,139 @@ def credits_to_dollars(credits: float, credit_price: float = None) -> float:
     return round((credits or 0) * credit_price, 2)
 
 
+def build_snowflake_cost_management_account_sql(
+    days_back: int = 7,
+    credit_price: float = None,
+    wh_filter: str = "",
+) -> str:
+    """Return an Account Overview-style warehouse cost summary.
+
+    Snowflake documents the Account Overview top-warehouse tile as querying
+    ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY. This query keeps that warehouse
+    credit source and dollarizes it with the configured ALFA rate.
+    """
+    days_back = max(1, int(days_back or 7))
+    if credit_price is None:
+        credit_price = DEFAULTS["credit_price"]
+    credit_price = float(credit_price or DEFAULTS["credit_price"])
+    wh_filter = wh_filter or ""
+    return f"""
+    WITH bounds AS (
+        SELECT
+            DATEADD('DAY', -{days_back}, CURRENT_DATE()) AS start_date,
+            CURRENT_DATE() AS end_date,
+            {credit_price:.4f}::FLOAT AS configured_credit_price_usd
+    ),
+    warehouse_daily AS (
+        SELECT
+            TO_DATE(start_time) AS usage_date,
+            warehouse_name,
+            SUM(COALESCE(credits_used, 0)) AS warehouse_credits,
+            SUM(COALESCE(credits_used_compute, credits_used, 0)) AS compute_credits,
+            SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY, bounds
+        WHERE start_time >= start_date
+          AND start_time < end_date
+          {wh_filter}
+        GROUP BY usage_date, warehouse_name
+    ),
+    top_warehouses AS (
+        SELECT
+            warehouse_name,
+            ROUND(SUM(warehouse_credits), 4) AS warehouse_credits
+        FROM warehouse_daily
+        GROUP BY warehouse_name
+        QUALIFY ROW_NUMBER() OVER (ORDER BY SUM(warehouse_credits) DESC, warehouse_name) <= 5
+    ),
+    summary AS (
+        SELECT
+            ROUND(COALESCE(SUM(warehouse_credits), 0), 4) AS spend_in_credits,
+            ROUND(COALESCE(SUM(compute_credits), 0), 4) AS compute_credits,
+            ROUND(COALESCE(SUM(cloud_services_credits), 0), 4) AS cloud_services_credits,
+            COUNT(DISTINCT warehouse_name) AS active_warehouses,
+            COUNT(DISTINCT usage_date) AS observed_days
+        FROM warehouse_daily
+    )
+    SELECT
+        spend_in_credits,
+        compute_credits,
+        cloud_services_credits,
+        ROUND(spend_in_credits * configured_credit_price_usd, 2) AS spend_in_currency_est_usd,
+        configured_credit_price_usd AS compute_price_per_credit_usd,
+        ROUND(spend_in_credits / NULLIF(observed_days, 0), 4) AS average_daily_credits,
+        ROUND(spend_in_credits * configured_credit_price_usd / NULLIF(observed_days, 0), 2) AS average_daily_cost_est_usd,
+        active_warehouses,
+        observed_days,
+        'SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY' AS snowflake_source,
+        (
+            SELECT LISTAGG(warehouse_name || ': ' || warehouse_credits || ' cr', ', ')
+                WITHIN GROUP (ORDER BY warehouse_credits DESC, warehouse_name)
+            FROM top_warehouses
+        ) AS top_warehouses_by_cost
+    FROM summary, bounds
+    """
+
+
+def build_snowflake_billed_credit_reconciliation_sql(days_back: int = 7) -> str:
+    """Return account-level billed warehouse credits from METERING_DAILY_HISTORY."""
+    days_back = max(1, int(days_back or 7))
+    return f"""
+    WITH bounds AS (
+        SELECT
+            DATEADD('DAY', -{days_back}, CURRENT_DATE()) AS start_date,
+            CURRENT_DATE() AS end_date
+    )
+    SELECT
+        ROUND(SUM(COALESCE(credits_used_compute, 0)), 4) AS account_compute_credits,
+        ROUND(SUM(COALESCE(credits_used_cloud_services, 0)), 4) AS account_cloud_services_credits,
+        ROUND(SUM(COALESCE(credits_adjustment_cloud_services, 0)), 4) AS account_cloud_services_adjustment,
+        ROUND(SUM(COALESCE(credits_billed, 0)), 4) AS account_billed_warehouse_credits,
+        COUNT(DISTINCT usage_date) AS billed_days,
+        'SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY' AS snowflake_source
+    FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY, bounds
+    WHERE usage_date >= start_date
+      AND usage_date < end_date
+      AND UPPER(service_type) = 'WAREHOUSE_METERING'
+    """
+
+
+def build_snowflake_org_currency_cost_sql(days_back: int = 7) -> str:
+    """Return official organization currency spend when the role can access it."""
+    days_back = max(1, int(days_back or 7))
+    return f"""
+    WITH bounds AS (
+        SELECT
+            DATEADD('DAY', -{days_back}, CURRENT_DATE()) AS start_date,
+            CURRENT_DATE() AS end_date
+    ),
+    scoped AS (
+        SELECT
+            usage,
+            usage_in_currency,
+            currency
+        FROM SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY, bounds
+        WHERE usage_date >= start_date
+          AND usage_date < end_date
+          AND UPPER(rating_type) = 'COMPUTE'
+          AND UPPER(service_type) = 'WAREHOUSE_METERING'
+          AND (
+              UPPER(account_locator) = UPPER(CURRENT_ACCOUNT())
+              OR UPPER(account_name) = UPPER(CURRENT_ACCOUNT_NAME())
+          )
+    )
+    SELECT
+        ROUND(COALESCE(SUM(usage), 0), 4) AS official_compute_credits,
+        ROUND(COALESCE(SUM(usage_in_currency), 0), 2) AS official_spend_in_currency,
+        ROUND(COALESCE(SUM(usage_in_currency), 0) / NULLIF(SUM(usage), 0), 4) AS official_effective_price_per_credit,
+        COALESCE(MIN(currency), 'N/A') AS currency,
+        'SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY' AS snowflake_source
+    FROM scoped
+    """
+
+
 def estimate_live_credits(row) -> float:
     """Fallback estimator for LIVE queries where metering data is not yet available.
-    Uses warehouse size credit rate × elapsed seconds / 3600.
+    Uses warehouse size credit rate times elapsed seconds / 3600.
     """
     size = row.get("WAREHOUSE_SIZE", "") or ""
     exec_sec = float(
@@ -529,18 +661,18 @@ def build_cost_reconciliation_sql(days_back: int = 30, prefer_query_attribution:
 
 
 def metric_confidence_label(kind: str) -> str:
-    """Small UI label explaining whether a metric is exact or estimated."""
+    """Small UI label explaining the source basis for a metric."""
     labels = {
-        "exact": "Confidence: Exact",
-        "allocated": "Confidence: Allocated / Estimated from exact warehouse metering",
-        "estimated": "Confidence: Estimated",
-        "forecast": "Confidence: Forecast based on recent observed burn",
-        "projection": "Confidence: Projection based on recent observed burn",
-        "composite": "Confidence: Composite score from weighted operational signals",
-        "account": "Confidence: Account-wide",
-        "account-wide": "Confidence: Account-wide",
+        "exact": "Source basis: Exact",
+        "allocated": "Source basis: Allocated / estimated from exact warehouse metering",
+        "estimated": "Source basis: Estimated",
+        "forecast": "Source basis: Forecast from recent observed burn",
+        "projection": "Source basis: Projection from recent observed burn",
+        "composite": "Source basis: Composite score from weighted operational signals",
+        "account": "Source basis: Account-wide",
+        "account-wide": "Source basis: Account-wide",
     }
-    return labels.get(str(kind or "").lower(), "Confidence: Calculation depends on available account metadata")
+    return labels.get(str(kind or "").lower(), "Source basis: Calculation depends on available account metadata")
 
 
 def freshness_note(source: str) -> str:

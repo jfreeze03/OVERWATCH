@@ -13,6 +13,7 @@ import streamlit as st
 
 from config import DEFAULT_ENVIRONMENT, DEFAULTS, SECTION_BY_TITLE, normalize_section_name
 import utils as _utils
+from utils.section_guidance import defer_section_note
 
 
 class _LazyPandas:
@@ -70,16 +71,16 @@ def get_credit_price() -> float:
 
 def metric_confidence_label(kind: str) -> str:
     labels = {
-        "exact": "Confidence: Exact",
-        "allocated": "Confidence: Allocated / Estimated from exact warehouse metering",
-        "estimated": "Confidence: Estimated",
-        "forecast": "Confidence: Forecast based on recent observed burn",
-        "projection": "Confidence: Projection based on recent observed burn",
-        "composite": "Confidence: Composite score from weighted operational signals",
-        "account": "Confidence: Account-wide",
-        "account-wide": "Confidence: Account-wide",
+        "exact": "Source basis: Exact",
+        "allocated": "Source basis: Allocated / estimated from exact warehouse metering",
+        "estimated": "Source basis: Estimated",
+        "forecast": "Source basis: Forecast from recent observed burn",
+        "projection": "Source basis: Projection from recent observed burn",
+        "composite": "Source basis: Composite score from weighted operational signals",
+        "account": "Source basis: Account-wide",
+        "account-wide": "Source basis: Account-wide",
     }
-    return labels.get(str(kind or "").lower(), "Confidence: Calculation depends on available account metadata")
+    return labels.get(str(kind or "").lower(), "Source basis: Calculation depends on available account metadata")
 
 
 def freshness_note(source: str) -> str:
@@ -96,11 +97,8 @@ def freshness_note(source: str) -> str:
 
 
 def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
-    cols = st.columns(columns)
-    for idx, (label, detail) in enumerate(items):
-        with cols[idx % len(cols)]:
-            st.caption(str(label))
-            st.write(str(detail))
+    for label, detail in items:
+        defer_section_note(f"{label}: {detail}")
 
 
 build_metered_credit_cte = _lazy_util("build_metered_credit_cte")
@@ -3862,7 +3860,7 @@ def render() -> None:
             "over broad exploratory charts."
         )
 
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+    c1, c2, c3 = st.columns(3)
     with c1:
         lookback_hours = st.selectbox("Lookback", [12, 24, 48, 168], index=1, format_func=lambda h: f"{h} hours")
     with c2:
@@ -3875,12 +3873,11 @@ def render() -> None:
         )
     with c3:
         st.metric("Scope", f"{company} / {environment}")
-    with c4:
-        st.info(
-            f"{freshness_note('ACCOUNT_USAGE')} "
-            f"Cost confidence: {metric_confidence_label('allocated')}. "
-            "Use this as triage, then validate high-impact actions in the drilldown page."
-        )
+    defer_section_note(
+        f"{freshness_note('ACCOUNT_USAGE')} | "
+        f"Cost basis: {metric_confidence_label('allocated')} | "
+        "Use this as triage, then validate high-impact actions in the drilldown page."
+    )
 
     snapshot_scope_ok = _dba_snapshot_scope_compatible(environment, st.session_state)
     snapshot_scope_key = (

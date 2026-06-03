@@ -63,6 +63,8 @@ WORKFLOW_MODULES = {
 
 CHANGE_CONTROL_EVIDENCE_TABLE = "OVERWATCH_CHANGE_CONTROL_EVIDENCE"
 CHANGE_CONTROL_OPERABILITY_FACT_TABLE = "FACT_CHANGE_CONTROL_OPERABILITY_DAILY"
+CHANGE_SOURCE_CONTROL_TABLE = "OVERWATCH_SOURCE_CONTROL_CHANGE"
+CHANGE_ITSM_TICKET_TABLE = "OVERWATCH_ITSM_TICKET"
 CHANGE_SCOPE_FILTER_KEYS = (
     "global_warehouse",
     "global_user",
@@ -83,6 +85,111 @@ def change_control_evidence_fqn(
     table: str = CHANGE_CONTROL_EVIDENCE_TABLE,
 ) -> str:
     return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
+
+
+def change_source_control_fqn(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHANGE_SOURCE_CONTROL_TABLE,
+) -> str:
+    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
+
+
+def change_itsm_ticket_fqn(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHANGE_ITSM_TICKET_TABLE,
+) -> str:
+    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
+
+
+def build_change_source_control_ddl(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHANGE_SOURCE_CONTROL_TABLE,
+) -> str:
+    fqn = change_source_control_fqn(db=db, schema=schema, table=table)
+    return f"""CREATE TABLE IF NOT EXISTS {fqn} (
+    SNAPSHOT_TS          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    COMPANY              VARCHAR(100),
+    ENVIRONMENT          VARCHAR(100),
+    SOURCE_SYSTEM        VARCHAR(80),
+    REPOSITORY           VARCHAR(500),
+    BRANCH_NAME          VARCHAR(500),
+    COMMIT_SHA           VARCHAR(120),
+    PR_ID                VARCHAR(120),
+    PR_URL               VARCHAR(1000),
+    CHANGE_TICKET_ID     VARCHAR(200),
+    OBJECT_DATABASE      VARCHAR(300),
+    OBJECT_SCHEMA        VARCHAR(300),
+    OBJECT_NAME          VARCHAR(500),
+    OBJECT_TYPE          VARCHAR(120),
+    OBJECT_FQN           VARCHAR(1000),
+    TERRAFORM_ADDRESS    VARCHAR(1000),
+    PLANNED_ACTION       VARCHAR(80),
+    APPLY_STATUS         VARCHAR(120),
+    DEPLOYED_BY          VARCHAR(300),
+    APPLY_TS             TIMESTAMP_NTZ,
+    EVIDENCE_URL         VARCHAR(1000),
+    NOTES                VARCHAR(4000)
+);"""
+
+
+def build_change_itsm_ticket_ddl(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHANGE_ITSM_TICKET_TABLE,
+) -> str:
+    fqn = change_itsm_ticket_fqn(db=db, schema=schema, table=table)
+    return f"""CREATE TABLE IF NOT EXISTS {fqn} (
+    SNAPSHOT_TS           TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    COMPANY               VARCHAR(100),
+    ENVIRONMENT           VARCHAR(100),
+    TICKET_ID             VARCHAR(200),
+    TICKET_URL            VARCHAR(1000),
+    SUMMARY               VARCHAR(2000),
+    STATUS                VARCHAR(120),
+    ASSIGNEE              VARCHAR(300),
+    REQUESTER             VARCHAR(300),
+    APPROVER              VARCHAR(300),
+    APPROVAL_STATUS       VARCHAR(120),
+    RISK                  VARCHAR(120),
+    CHANGE_WINDOW_START   TIMESTAMP_NTZ,
+    CHANGE_WINDOW_END     TIMESTAMP_NTZ,
+    LINKED_REPOSITORY     VARCHAR(500),
+    LINKED_COMMIT_SHA     VARCHAR(120),
+    LINKED_PR_URL         VARCHAR(1000),
+    UPDATED_AT            TIMESTAMP_NTZ,
+    NOTES                 VARCHAR(4000)
+);"""
+
+
+def build_change_source_control_migration_sql(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHANGE_SOURCE_CONTROL_TABLE,
+) -> list[str]:
+    fqn = change_source_control_fqn(db=db, schema=schema, table=table)
+    return [
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS SOURCE_SYSTEM VARCHAR(80)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS OBJECT_FQN VARCHAR(1000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS TERRAFORM_ADDRESS VARCHAR(1000)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS EVIDENCE_URL VARCHAR(1000)",
+    ]
+
+
+def build_change_itsm_ticket_migration_sql(
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+    table: str = CHANGE_ITSM_TICKET_TABLE,
+) -> list[str]:
+    fqn = change_itsm_ticket_fqn(db=db, schema=schema, table=table)
+    return [
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ENVIRONMENT VARCHAR(100)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS APPROVAL_STATUS VARCHAR(120)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LINKED_COMMIT_SHA VARCHAR(120)",
+        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LINKED_PR_URL VARCHAR(1000)",
+    ]
 
 
 def build_change_control_evidence_ddl(
@@ -416,6 +523,16 @@ def _change_source_health_rows(
             "source": "Action queue closure evidence",
             "confidence": "Workflow evidence",
             "error_key": "change_action_closure_error",
+        },
+        {
+            "surface": "Jira/Terraform evidence",
+            "frame_key": "change_integration_status",
+            "meta_key": "change_integration_meta",
+            "days_key": "change_integration_days",
+            "default_days": 14,
+            "source": f"Workflow evidence: {CHANGE_ITSM_TICKET_TABLE} + {CHANGE_SOURCE_CONTROL_TABLE}",
+            "confidence": "Workflow evidence",
+            "error_key": "change_integration_error",
         },
     ]
     rows = []
@@ -1799,6 +1916,432 @@ ORDER BY
 LIMIT 100""".strip()
 
 
+def _change_ticket_sql_expr(query_tag_col: str = "QUERY_TAG", query_text_col: str = "QUERY_TEXT") -> str:
+    return (
+        "UPPER(COALESCE(REGEXP_SUBSTR("
+        f"COALESCE({query_tag_col}, '') || ' ' || COALESCE({query_text_col}, ''), "
+        "'(CHG|CHANGE|INC|REQ|RFC|JIRA)[-_]?[0-9]+|[A-Z][A-Z0-9]+-[0-9]+', 1, 1, 'i'"
+        "), ''))"
+    )
+
+
+def _change_external_integration_ctes(days: int, company: str, environment: str = "ALL") -> str:
+    fact_table = mart_object_name("FACT_OBJECT_CHANGE")
+    source_table = change_source_control_fqn()
+    ticket_table = change_itsm_ticket_fqn()
+    lookback = max(1, int(days or 14))
+
+    object_where = [
+        f"START_TIME >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())",
+        "CHANGE_CATEGORY <> 'OTHER'",
+    ]
+    if str(company or "").upper() != "ALL":
+        object_where.append(f"COMPANY = {sql_literal(company, 100)}")
+    object_scope = _change_scope_clause(
+        date_col="start_time",
+        wh_col="",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
+    if object_scope:
+        object_where.append(object_scope)
+
+    source_where = [f"COALESCE(APPLY_TS, SNAPSHOT_TS) >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())"]
+    ticket_where = [f"COALESCE(UPDATED_AT, SNAPSHOT_TS) >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())"]
+    if str(company or "").upper() != "ALL":
+        source_where.append(f"COMPANY = {sql_literal(company, 100)}")
+        ticket_where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
+    if env_clause:
+        source_where.append(env_clause)
+        ticket_where.append(env_clause)
+
+    ticket_expr = _change_ticket_sql_expr("QUERY_TAG", "QUERY_TEXT")
+    source_match = """
+            (oc.CHANGE_TICKET_ID <> '' AND oc.CHANGE_TICKET_ID = sc.CHANGE_TICKET_ID)
+            OR (sc.COMMIT_SHA <> '' AND POSITION(sc.COMMIT_SHA IN oc.QUERY_TAG_UPPER) > 0)
+            OR (sc.OBJECT_MATCH_KEY <> '' AND POSITION(sc.OBJECT_MATCH_KEY IN oc.QUERY_TEXT_UPPER) > 0)
+            OR (
+                sc.OBJECT_DATABASE <> ''
+                AND sc.OBJECT_DATABASE = oc.DATABASE_NAME_UPPER
+                AND (sc.OBJECT_SCHEMA = '' OR sc.OBJECT_SCHEMA = oc.SCHEMA_NAME_UPPER)
+            )
+    """.strip()
+    return f"""
+WITH object_changes AS (
+    SELECT
+        START_TIME,
+        COMPANY,
+        COALESCE(ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
+        QUERY_ID,
+        USER_NAME,
+        ROLE_NAME,
+        DATABASE_NAME,
+        SCHEMA_NAME,
+        UPPER(COALESCE(DATABASE_NAME, '')) AS DATABASE_NAME_UPPER,
+        UPPER(COALESCE(SCHEMA_NAME, '')) AS SCHEMA_NAME_UPPER,
+        CHANGE_CATEGORY,
+        QUERY_TYPE,
+        QUERY_TAG,
+        QUERY_TEXT,
+        UPPER(COALESCE(QUERY_TAG, '')) AS QUERY_TAG_UPPER,
+        UPPER(COALESCE(QUERY_TEXT, '')) AS QUERY_TEXT_UPPER,
+        {ticket_expr} AS CHANGE_TICKET_ID,
+        COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME, DATABASE_NAME, QUERY_ID) AS ENTITY
+    FROM {fact_table}
+    WHERE {" AND ".join(object_where)}
+),
+source_control AS (
+    SELECT
+        COALESCE(APPLY_TS, SNAPSHOT_TS) AS EVENT_TS,
+        COMPANY,
+        COALESCE(ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
+        COALESCE(SOURCE_SYSTEM, 'Terraform/Git') AS SOURCE_SYSTEM,
+        REPOSITORY,
+        BRANCH_NAME,
+        UPPER(COALESCE(COMMIT_SHA, '')) AS COMMIT_SHA,
+        PR_ID,
+        PR_URL,
+        UPPER(COALESCE(CHANGE_TICKET_ID, '')) AS CHANGE_TICKET_ID,
+        UPPER(COALESCE(OBJECT_DATABASE, '')) AS OBJECT_DATABASE,
+        UPPER(COALESCE(OBJECT_SCHEMA, '')) AS OBJECT_SCHEMA,
+        UPPER(COALESCE(OBJECT_NAME, '')) AS OBJECT_NAME,
+        OBJECT_TYPE,
+        UPPER(COALESCE(
+            OBJECT_FQN,
+            OBJECT_DATABASE || '.' || OBJECT_SCHEMA || '.' || OBJECT_NAME,
+            OBJECT_DATABASE || '.' || OBJECT_SCHEMA,
+            OBJECT_DATABASE,
+            ''
+        )) AS OBJECT_MATCH_KEY,
+        TERRAFORM_ADDRESS,
+        COALESCE(PLANNED_ACTION, '') AS PLANNED_ACTION,
+        COALESCE(APPLY_STATUS, '') AS APPLY_STATUS,
+        DEPLOYED_BY,
+        EVIDENCE_URL,
+        NOTES
+    FROM {source_table}
+    WHERE {" AND ".join(source_where)}
+),
+tickets AS (
+    SELECT
+        COALESCE(UPDATED_AT, SNAPSHOT_TS) AS EVENT_TS,
+        COMPANY,
+        COALESCE(ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
+        UPPER(COALESCE(TICKET_ID, '')) AS TICKET_ID,
+        TICKET_URL,
+        SUMMARY,
+        COALESCE(STATUS, '') AS STATUS,
+        ASSIGNEE,
+        REQUESTER,
+        APPROVER,
+        COALESCE(APPROVAL_STATUS, '') AS APPROVAL_STATUS,
+        RISK,
+        CHANGE_WINDOW_START,
+        CHANGE_WINDOW_END,
+        LINKED_REPOSITORY,
+        UPPER(COALESCE(LINKED_COMMIT_SHA, '')) AS LINKED_COMMIT_SHA,
+        LINKED_PR_URL,
+        NOTES
+    FROM {ticket_table}
+    WHERE {" AND ".join(ticket_where)}
+),
+object_flags AS (
+    SELECT
+        oc.*,
+        (
+            QUERY_TAG_UPPER ILIKE '%TERRAFORM%'
+            OR QUERY_TAG_UPPER ILIKE '%IAC%'
+            OR QUERY_TAG_UPPER ILIKE '%DEPLOY%'
+            OR QUERY_TAG_UPPER ILIKE '%RELEASE%'
+        ) AS HAS_DEPLOYMENT_TAG,
+        EXISTS (
+            SELECT 1
+            FROM source_control sc
+            WHERE {source_match}
+        ) AS HAS_SOURCE_CONTROL,
+        EXISTS (
+            SELECT 1
+            FROM tickets t
+            WHERE oc.CHANGE_TICKET_ID <> '' AND t.TICKET_ID = oc.CHANGE_TICKET_ID
+        ) AS HAS_ITSM_TICKET
+    FROM object_changes oc
+),
+source_flags AS (
+    SELECT
+        sc.*,
+        EXISTS (
+            SELECT 1
+            FROM tickets t
+            WHERE sc.CHANGE_TICKET_ID <> '' AND t.TICKET_ID = sc.CHANGE_TICKET_ID
+        ) AS HAS_ITSM_TICKET,
+        EXISTS (
+            SELECT 1
+            FROM object_changes oc
+            WHERE {source_match}
+        ) AS HAS_OBSERVED_CHANGE
+    FROM source_control sc
+),
+ticket_flags AS (
+    SELECT
+        t.*,
+        (
+            UPPER(APPROVAL_STATUS) IN ('APPROVED', 'AUTHORIZED', 'APPROVE')
+            OR UPPER(STATUS) IN ('APPROVED', 'IMPLEMENTING', 'IN PROGRESS', 'DONE', 'CLOSED', 'RESOLVED')
+        ) AS IS_APPROVED_OR_ACTIVE,
+        EXISTS (
+            SELECT 1
+            FROM source_control sc
+            WHERE t.TICKET_ID <> '' AND sc.CHANGE_TICKET_ID = t.TICKET_ID
+        ) AS HAS_SOURCE_CONTROL,
+        EXISTS (
+            SELECT 1
+            FROM object_changes oc
+            WHERE t.TICKET_ID <> '' AND oc.CHANGE_TICKET_ID = t.TICKET_ID
+        ) AS HAS_OBSERVED_CHANGE
+    FROM tickets t
+)
+""".strip()
+
+
+def _change_integration_status_sql(days: int, company: str, environment: str = "ALL") -> str:
+    base = _change_external_integration_ctes(days, company, environment)
+    return f"""
+{base},
+status_rows AS (
+    SELECT
+        'Snowflake object changes' AS SURFACE,
+        CASE
+            WHEN COUNT(*) = 0 THEN 'No Rows'
+            WHEN COUNT_IF(NOT HAS_SOURCE_CONTROL AND NOT HAS_ITSM_TICKET AND NOT HAS_DEPLOYMENT_TAG) > 0 THEN 'Drift Gaps'
+            ELSE 'Covered'
+        END AS STATE,
+        COUNT(*) AS ROWS,
+        COUNT_IF(HAS_SOURCE_CONTROL) AS SOURCE_MATCH_ROWS,
+        COUNT_IF(HAS_ITSM_TICKET) AS TICKET_MATCH_ROWS,
+        COUNT_IF(NOT HAS_SOURCE_CONTROL AND NOT HAS_ITSM_TICKET AND NOT HAS_DEPLOYMENT_TAG) AS GAP_ROWS,
+        MAX(START_TIME) AS LAST_ACTIVITY_TS,
+        CASE
+            WHEN COUNT_IF(NOT HAS_SOURCE_CONTROL AND NOT HAS_ITSM_TICKET AND NOT HAS_DEPLOYMENT_TAG) > 0
+                THEN 'Attach Jira or Terraform evidence, codify the drift, or revert through approved deployment.'
+            ELSE 'Retain observed Snowflake change history with ticket/source-control evidence.'
+        END AS NEXT_ACTION
+    FROM object_flags
+    UNION ALL
+    SELECT
+        'Terraform/Git evidence' AS SURFACE,
+        CASE
+            WHEN COUNT(*) = 0 THEN 'No Rows'
+            WHEN COUNT_IF(NOT HAS_ITSM_TICKET OR NOT HAS_OBSERVED_CHANGE) > 0 THEN 'Evidence Gaps'
+            ELSE 'Covered'
+        END AS STATE,
+        COUNT(*) AS ROWS,
+        COUNT_IF(HAS_OBSERVED_CHANGE) AS SOURCE_MATCH_ROWS,
+        COUNT_IF(HAS_ITSM_TICKET) AS TICKET_MATCH_ROWS,
+        COUNT_IF(NOT HAS_ITSM_TICKET OR NOT HAS_OBSERVED_CHANGE) AS GAP_ROWS,
+        MAX(EVENT_TS) AS LAST_ACTIVITY_TS,
+        CASE
+            WHEN COUNT_IF(NOT HAS_ITSM_TICKET) > 0 THEN 'Link Terraform/Git deploy evidence to Jira ticket keys.'
+            WHEN COUNT_IF(NOT HAS_OBSERVED_CHANGE) > 0 THEN 'Confirm applied source-control changes are visible in Snowflake object-change history.'
+            ELSE 'Terraform/Git evidence is linked to observed Snowflake or Jira evidence.'
+        END AS NEXT_ACTION
+    FROM source_flags
+    UNION ALL
+    SELECT
+        'Jira tickets' AS SURFACE,
+        CASE
+            WHEN COUNT(*) = 0 THEN 'No Rows'
+            WHEN COUNT_IF(IS_APPROVED_OR_ACTIVE AND NOT HAS_SOURCE_CONTROL AND NOT HAS_OBSERVED_CHANGE) > 0 THEN 'Approval Gaps'
+            ELSE 'Covered'
+        END AS STATE,
+        COUNT(*) AS ROWS,
+        COUNT_IF(HAS_SOURCE_CONTROL) AS SOURCE_MATCH_ROWS,
+        COUNT_IF(HAS_OBSERVED_CHANGE) AS TICKET_MATCH_ROWS,
+        COUNT_IF(IS_APPROVED_OR_ACTIVE AND NOT HAS_SOURCE_CONTROL AND NOT HAS_OBSERVED_CHANGE) AS GAP_ROWS,
+        MAX(EVENT_TS) AS LAST_ACTIVITY_TS,
+        CASE
+            WHEN COUNT_IF(IS_APPROVED_OR_ACTIVE AND NOT HAS_SOURCE_CONTROL AND NOT HAS_OBSERVED_CHANGE) > 0
+                THEN 'Link approved Jira changes to Terraform/Git evidence or observed Snowflake change rows.'
+            ELSE 'Jira ticket evidence is linked to deployment or Snowflake activity.'
+        END AS NEXT_ACTION
+    FROM ticket_flags
+)
+SELECT
+    SURFACE,
+    STATE,
+    CASE STATE
+        WHEN 'Drift Gaps' THEN 0
+        WHEN 'Evidence Gaps' THEN 1
+        WHEN 'Approval Gaps' THEN 1
+        WHEN 'Covered' THEN 8
+        WHEN 'No Rows' THEN 9
+        ELSE 5
+    END AS STATE_RANK,
+    ROWS,
+    SOURCE_MATCH_ROWS,
+    TICKET_MATCH_ROWS,
+    GAP_ROWS,
+    LAST_ACTIVITY_TS,
+    NEXT_ACTION
+FROM status_rows
+ORDER BY STATE_RANK, GAP_ROWS DESC, SURFACE""".strip()
+
+
+def _change_unmatched_evidence_sql(days: int, company: str, environment: str = "ALL") -> str:
+    base = _change_external_integration_ctes(days, company, environment)
+    return f"""
+{base},
+unmatched_rows AS (
+    SELECT
+        'Snowflake' AS EVIDENCE_SOURCE,
+        'Snowflake change missing Jira/Terraform evidence' AS GAP_TYPE,
+        IFF(CHANGE_CATEGORY IN ('DROP', 'POLICY', 'OWNER'), 'High', IFF(CHANGE_CATEGORY = 'GRANT', 'Medium', 'Low')) AS SEVERITY,
+        ENTITY,
+        USER_NAME AS ACTOR,
+        CHANGE_TICKET_ID AS TICKET_ID,
+        NULL::VARCHAR AS REPOSITORY,
+        NULL::VARCHAR AS COMMIT_SHA,
+        NULL::VARCHAR AS PR_URL,
+        QUERY_ID,
+        START_TIME AS EVENT_TS,
+        QUERY_TAG,
+        'Attach Jira approval/source-control evidence or classify as unauthorized drift.' AS NEXT_ACTION
+    FROM object_flags
+    WHERE NOT HAS_SOURCE_CONTROL AND NOT HAS_ITSM_TICKET AND NOT HAS_DEPLOYMENT_TAG
+    UNION ALL
+    SELECT
+        SOURCE_SYSTEM AS EVIDENCE_SOURCE,
+        CASE
+            WHEN NOT HAS_ITSM_TICKET THEN 'Terraform/Git deploy missing Jira ticket'
+            ELSE 'Terraform/Git deploy not observed in Snowflake change history'
+        END AS GAP_TYPE,
+        IFF(UPPER(PLANNED_ACTION) IN ('DELETE', 'DESTROY', 'DROP'), 'High', 'Medium') AS SEVERITY,
+        COALESCE(NULLIF(OBJECT_MATCH_KEY, ''), TERRAFORM_ADDRESS, REPOSITORY, 'Source-control change') AS ENTITY,
+        DEPLOYED_BY AS ACTOR,
+        CHANGE_TICKET_ID AS TICKET_ID,
+        REPOSITORY,
+        COMMIT_SHA,
+        PR_URL,
+        NULL::VARCHAR AS QUERY_ID,
+        EVENT_TS,
+        NULL::VARCHAR AS QUERY_TAG,
+        IFF(
+            NOT HAS_ITSM_TICKET,
+            'Add Jira ticket key to the Terraform/Git evidence row and deployment query tag.',
+            'Confirm query tag/object mapping or investigate why Snowflake did not record the applied change.'
+        ) AS NEXT_ACTION
+    FROM source_flags
+    WHERE NOT HAS_ITSM_TICKET OR NOT HAS_OBSERVED_CHANGE
+    UNION ALL
+    SELECT
+        'Jira' AS EVIDENCE_SOURCE,
+        'Approved Jira change missing deploy evidence' AS GAP_TYPE,
+        IFF(UPPER(RISK) IN ('HIGH', 'CRITICAL'), 'High', 'Medium') AS SEVERITY,
+        COALESCE(SUMMARY, TICKET_ID, 'Jira change') AS ENTITY,
+        COALESCE(ASSIGNEE, REQUESTER) AS ACTOR,
+        TICKET_ID,
+        LINKED_REPOSITORY AS REPOSITORY,
+        LINKED_COMMIT_SHA AS COMMIT_SHA,
+        LINKED_PR_URL AS PR_URL,
+        NULL::VARCHAR AS QUERY_ID,
+        EVENT_TS,
+        NULL::VARCHAR AS QUERY_TAG,
+        'Link the approved Jira change to Terraform/Git evidence or observed Snowflake query history.' AS NEXT_ACTION
+    FROM ticket_flags
+    WHERE IS_APPROVED_OR_ACTIVE AND NOT HAS_SOURCE_CONTROL AND NOT HAS_OBSERVED_CHANGE
+)
+SELECT *
+FROM unmatched_rows
+ORDER BY
+    CASE SEVERITY WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END,
+    EVENT_TS DESC
+LIMIT 100""".strip()
+
+
+def _change_integration_timeline_sql(days: int, company: str, environment: str = "ALL") -> str:
+    fact_table = mart_object_name("FACT_OBJECT_CHANGE")
+    source_table = change_source_control_fqn()
+    ticket_table = change_itsm_ticket_fqn()
+    lookback = max(1, int(days or 14))
+
+    object_where = [
+        f"START_TIME >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())",
+        "CHANGE_CATEGORY <> 'OTHER'",
+    ]
+    if str(company or "").upper() != "ALL":
+        object_where.append(f"COMPANY = {sql_literal(company, 100)}")
+    object_scope = _change_scope_clause(
+        date_col="start_time",
+        wh_col="",
+        user_col="user_name",
+        role_col="role_name",
+        db_col="database_name",
+    )
+    if object_scope:
+        object_where.append(object_scope)
+
+    source_where = [f"COALESCE(APPLY_TS, SNAPSHOT_TS) >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())"]
+    ticket_where = [f"COALESCE(UPDATED_AT, SNAPSHOT_TS) >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())"]
+    if str(company or "").upper() != "ALL":
+        source_where.append(f"COMPANY = {sql_literal(company, 100)}")
+        ticket_where.append(f"COMPANY = {sql_literal(company, 100)}")
+    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
+    if env_clause:
+        source_where.append(env_clause)
+        ticket_where.append(env_clause)
+
+    return f"""
+WITH timeline AS (
+    SELECT
+        TO_DATE(START_TIME) AS EVENT_DATE,
+        'Snowflake' AS EVENT_SOURCE,
+        CHANGE_CATEGORY AS EVENT_TYPE,
+        'Observed' AS EVENT_STATE,
+        COUNT(*) AS EVENT_COUNT,
+        COUNT_IF(CHANGE_CATEGORY IN ('DROP', 'POLICY', 'OWNER')) AS HIGH_RISK_COUNT,
+        MAX(START_TIME) AS LAST_EVENT_TS
+    FROM {fact_table}
+    WHERE {" AND ".join(object_where)}
+    GROUP BY TO_DATE(START_TIME), CHANGE_CATEGORY
+    UNION ALL
+    SELECT
+        TO_DATE(COALESCE(APPLY_TS, SNAPSHOT_TS)) AS EVENT_DATE,
+        COALESCE(SOURCE_SYSTEM, 'Terraform/Git') AS EVENT_SOURCE,
+        COALESCE(PLANNED_ACTION, 'Source-control change') AS EVENT_TYPE,
+        COALESCE(APPLY_STATUS, 'Recorded') AS EVENT_STATE,
+        COUNT(*) AS EVENT_COUNT,
+        COUNT_IF(UPPER(COALESCE(PLANNED_ACTION, '')) IN ('DELETE', 'DESTROY', 'DROP')) AS HIGH_RISK_COUNT,
+        MAX(COALESCE(APPLY_TS, SNAPSHOT_TS)) AS LAST_EVENT_TS
+    FROM {source_table}
+    WHERE {" AND ".join(source_where)}
+    GROUP BY TO_DATE(COALESCE(APPLY_TS, SNAPSHOT_TS)), COALESCE(SOURCE_SYSTEM, 'Terraform/Git'), COALESCE(PLANNED_ACTION, 'Source-control change'), COALESCE(APPLY_STATUS, 'Recorded')
+    UNION ALL
+    SELECT
+        TO_DATE(COALESCE(UPDATED_AT, SNAPSHOT_TS)) AS EVENT_DATE,
+        'Jira' AS EVENT_SOURCE,
+        COALESCE(STATUS, 'Ticket update') AS EVENT_TYPE,
+        COALESCE(APPROVAL_STATUS, 'Unknown approval') AS EVENT_STATE,
+        COUNT(*) AS EVENT_COUNT,
+        COUNT_IF(UPPER(COALESCE(RISK, '')) IN ('HIGH', 'CRITICAL')) AS HIGH_RISK_COUNT,
+        MAX(COALESCE(UPDATED_AT, SNAPSHOT_TS)) AS LAST_EVENT_TS
+    FROM {ticket_table}
+    WHERE {" AND ".join(ticket_where)}
+    GROUP BY TO_DATE(COALESCE(UPDATED_AT, SNAPSHOT_TS)), COALESCE(STATUS, 'Ticket update'), COALESCE(APPROVAL_STATUS, 'Unknown approval')
+)
+SELECT
+    EVENT_DATE,
+    EVENT_SOURCE,
+    EVENT_TYPE,
+    EVENT_STATE,
+    EVENT_COUNT,
+    HIGH_RISK_COUNT,
+    LAST_EVENT_TS
+FROM timeline
+ORDER BY EVENT_DATE DESC, EVENT_SOURCE, EVENT_TYPE
+LIMIT 500""".strip()
+
+
 def _change_action_queue_closure_sql(days: int, company: str, environment: str = "ALL") -> str:
     fqn = f"{safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.{safe_identifier(ACTION_QUEUE_TABLE)}"
     where = [
@@ -2039,6 +2582,151 @@ def _render_change_source_health(company: str, environment: str) -> None:
         )
 
 
+def _render_change_external_integrations(company: str, environment: str, default_days: int) -> None:
+    with st.expander("Jira & Terraform Evidence", expanded=False):
+        st.caption(
+            "Load ticket and source-control evidence that has been ingested into Snowflake by ALFA's Jira/Git/Terraform jobs. "
+            "The app does not need Jira or Git credentials at runtime."
+        )
+        slider_default = safe_int(st.session_state.get("change_integration_days", default_days)) or default_days
+        slider_default = max(1, min(90, int(slider_default)))
+        integration_days = st.slider(
+            "Jira/Terraform evidence lookback (days)",
+            1,
+            90,
+            slider_default,
+            key="change_integration_days",
+        )
+        if st.button("Load Jira / Terraform Evidence", key="change_integration_load", width="stretch"):
+            try:
+                status_sql = _change_integration_status_sql(integration_days, company, environment)
+                unmatched_sql = _change_unmatched_evidence_sql(integration_days, company, environment)
+                timeline_sql = _change_integration_timeline_sql(integration_days, company, environment)
+                st.session_state["change_integration_status"] = run_query(
+                    status_sql,
+                    ttl_key=f"change_integration_status_{company}_{environment}_{integration_days}",
+                    tier="standard",
+                    section="Change & Drift",
+                )
+                st.session_state["change_integration_unmatched"] = run_query(
+                    unmatched_sql,
+                    ttl_key=f"change_integration_unmatched_{company}_{environment}_{integration_days}",
+                    tier="standard",
+                    section="Change & Drift",
+                )
+                st.session_state["change_integration_timeline"] = run_query(
+                    timeline_sql,
+                    ttl_key=f"change_integration_timeline_{company}_{environment}_{integration_days}",
+                    tier="standard",
+                    section="Change & Drift",
+                )
+                st.session_state["change_integration_sql"] = {
+                    "status": status_sql,
+                    "unmatched": unmatched_sql,
+                    "timeline": timeline_sql,
+                }
+                st.session_state["change_integration_meta"] = _change_scope_meta(
+                    company,
+                    environment,
+                    integration_days,
+                )
+                st.session_state.pop("change_integration_error", None)
+            except Exception as exc:
+                st.session_state["change_integration_status"] = pd.DataFrame()
+                st.session_state["change_integration_unmatched"] = pd.DataFrame()
+                st.session_state["change_integration_timeline"] = pd.DataFrame()
+                st.session_state["change_integration_error"] = format_snowflake_error(exc)
+                st.warning(
+                    "Jira/Terraform evidence is not available yet. Deploy the integration tables and feed them from CI/Jira, then reload."
+                )
+
+        expected_meta = _change_scope_meta(company, environment, integration_days)
+        status = st.session_state.get("change_integration_status")
+        timeline = st.session_state.get("change_integration_timeline")
+        unmatched = st.session_state.get("change_integration_unmatched")
+        current = _change_meta_matches(st.session_state.get("change_integration_meta"), expected_meta)
+        if status is not None and not status.empty and current:
+            s1, s2, s3, s4 = st.columns(4)
+            s1.metric("Evidence Surfaces", f"{len(status):,}")
+            s2.metric("Rows", f"{safe_int(status.get('ROWS', pd.Series(dtype=int)).sum()):,}")
+            s3.metric("Matched Evidence", f"{safe_int(status.get('SOURCE_MATCH_ROWS', pd.Series(dtype=int)).sum() + status.get('TICKET_MATCH_ROWS', pd.Series(dtype=int)).sum()):,}")
+            s4.metric("Gaps", f"{safe_int(status.get('GAP_ROWS', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+            render_priority_dataframe(
+                status,
+                title="Jira, Terraform, and Snowflake evidence coverage",
+                priority_columns=[
+                    "STATE", "SURFACE", "ROWS", "SOURCE_MATCH_ROWS",
+                    "TICKET_MATCH_ROWS", "GAP_ROWS", "LAST_ACTIVITY_TS", "NEXT_ACTION",
+                ],
+                sort_by=["STATE_RANK", "GAP_ROWS", "SURFACE"],
+                ascending=[True, False, True],
+                raw_label="All Jira/Terraform evidence coverage rows",
+                height=220,
+            )
+        elif status is not None and not current and not st.session_state.get("change_integration_error"):
+            st.info("Loaded Jira/Terraform evidence is stale for the active scope. Reload before acting.")
+
+        if unmatched is not None and not unmatched.empty and current:
+            render_priority_dataframe(
+                unmatched,
+                title="Unmatched drift and approval evidence",
+                priority_columns=[
+                    "SEVERITY", "GAP_TYPE", "EVIDENCE_SOURCE", "ENTITY", "ACTOR",
+                    "TICKET_ID", "REPOSITORY", "COMMIT_SHA", "PR_URL", "QUERY_ID",
+                    "EVENT_TS", "NEXT_ACTION",
+                ],
+                sort_by=["SEVERITY", "EVENT_TS", "GAP_TYPE"],
+                ascending=[True, False, True],
+                raw_label="All unmatched Jira/Terraform evidence rows",
+                height=300,
+            )
+        elif unmatched is not None and unmatched.empty and current and status is not None and not status.empty:
+            st.success("No unmatched Jira/Terraform/Snowflake evidence rows found for the selected window.")
+
+        if timeline is not None and not timeline.empty and current:
+            chart = (
+                timeline.pivot_table(
+                    index="EVENT_DATE",
+                    columns="EVENT_SOURCE",
+                    values="EVENT_COUNT",
+                    aggfunc="sum",
+                )
+                .fillna(0)
+                .sort_index()
+            )
+            st.bar_chart(chart)
+            render_priority_dataframe(
+                timeline,
+                title="Change-control event timeline",
+                priority_columns=[
+                    "EVENT_DATE", "EVENT_SOURCE", "EVENT_TYPE", "EVENT_STATE",
+                    "EVENT_COUNT", "HIGH_RISK_COUNT", "LAST_EVENT_TS",
+                ],
+                sort_by=["EVENT_DATE", "EVENT_SOURCE"],
+                ascending=[False, True],
+                raw_label="All Jira/Terraform/Snowflake timeline rows",
+                height=260,
+            )
+
+        if st.session_state.get("change_integration_error"):
+            st.caption(
+                f"Integration evidence unavailable: {st.session_state.get('change_integration_error')}"
+            )
+        with st.expander("Integration table setup SQL", expanded=False):
+            st.code(
+                "\n\n".join([
+                    build_change_source_control_ddl(),
+                    build_change_itsm_ticket_ddl(),
+                ]),
+                language="sql",
+            )
+        with st.expander("Integration proof SQL", expanded=False):
+            proof_sql = st.session_state.get("change_integration_sql", {})
+            st.code(proof_sql.get("status", "-- Load Jira / Terraform Evidence first."), language="sql")
+            st.code(proof_sql.get("unmatched", "-- Load Jira / Terraform Evidence first."), language="sql")
+            st.code(proof_sql.get("timeline", "-- Load Jira / Terraform Evidence first."), language="sql")
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -2074,6 +2762,7 @@ def render() -> None:
 
     days = st.slider("Change brief lookback (days)", 1, 90, 14, key="change_drift_brief_days")
     _render_change_source_health(company, environment)
+    _render_change_external_integrations(company, environment, days)
     if st.button("Load Change & Drift Brief", key="change_drift_brief_load", type="primary"):
         try:
             summary_sql, exceptions_sql = _build_mart_change_drift_sql(days, company)

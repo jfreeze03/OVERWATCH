@@ -73,6 +73,8 @@ control, and account parameter changes, require elevated Snowflake privileges.
 The recommended production architecture is to keep the Streamlit app thin and
 move expensive account-wide scans into a small Snowflake mart. The setup script
 is `snowflake/OVERWATCH_MART_SETUP.sql`.
+Alert Center DDL is deployed from the same setup script; the app does not expose
+a separate setup SQL pane.
 
 The detailed table inventory, refresh flow, cost controls, and migration
 strategy are documented in `SNOWFLAKE_ARCHITECTURE.md`.
@@ -270,6 +272,12 @@ user/database/role filters are applied to query history before reporting. This
 prevents a filtered user or database view from being charged for the full
 warehouse-hour spend of unrelated workloads.
 
+Cost & Contract includes a Snowflake Cost Management parity check. It mirrors
+the documented Account Overview warehouse source, keeps ALFA's configured
+`$3.68` compute credit rate for estimated dollars, and separately attempts
+Snowflake billed-credit and organization-currency reconciliation when those
+views are visible to the active role.
+
 `company_scoped_query()` centralizes company/global filter injection and cache
 key construction for new section SQL. Use `{company_scope}` or `{global_scope}`
 placeholders in SQL instead of hand-building company filters in every section.
@@ -378,6 +386,7 @@ state such as:
 - Alert history
 - Recommendation action queue
 - Snowflake value log
+- Jira ticket and Terraform/Git deployment evidence for Change & Drift
 
 The app can generate setup DDL for saved views from the sidebar Saved Views
 panel.

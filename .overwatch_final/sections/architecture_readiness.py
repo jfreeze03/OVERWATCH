@@ -28,6 +28,7 @@ from utils import (
     upsert_actions,
 )
 from utils.workflows import render_operator_briefing, render_priority_dataframe
+from utils.section_guidance import defer_section_note
 from utils.futures_governance import (
     build_agentic_ai_surface_scorecard,
     build_forward_platform_control_register,
@@ -1157,7 +1158,7 @@ def _render_agentic_ai_cockpit(summary: dict, scorecard: pd.DataFrame) -> None:
 
 def _render_platform_futures(session, company: str, environment: str) -> None:
     st.subheader("AI & Platform Futures")
-    st.caption(
+    defer_section_note(
         "Forward Snowflake controls for Adaptive Compute, CoWork Artifacts, Cortex Sense, agents, MCP servers, AI spend, AI security, Openflow, Horizon governance, semantic trust, DR drills, and AI-assisted change."
     )
     controls = build_forward_platform_control_register()
@@ -1208,7 +1209,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
         )
         c4.metric("Critical/High", f"{high_count:,}")
         if isinstance(agentic_scorecard, pd.DataFrame) and not agentic_scorecard.empty:
-            st.caption(
+            defer_section_note(
                 f"Agentic AI strict score {safe_int(agentic_summary.get('STRICT_SCORE')):,}; "
                 f"top risk: {agentic_summary.get('TOP_RISK', 'Agentic AI readiness')}."
             )
@@ -1331,7 +1332,11 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
         if isinstance(df, pd.DataFrame):
             _render_loaded_metrics(df, "agent and MCP")
             if df.empty:
-                st.info("No Cortex Agents or MCP servers are visible to the active role.")
+                st.info(
+                    "No Cortex Agents or MCP servers are visible to the active role. "
+                    "SHOW AGENTS and SHOW MCP SERVERS are preview/role-gated surfaces in some accounts; "
+                    "an empty result can mean the feature is not enabled, not granted, or genuinely unused."
+                )
             else:
                 render_priority_dataframe(
                     df,
@@ -1606,8 +1611,7 @@ def render():
     )
     st.session_state["arch_source_health"] = _architecture_source_health_rows(st.session_state, company, environment)
 
-    st.header("Snowflake Architecture Readiness")
-    st.caption("Forward-looking Snowflake architecture checks for isolation, clustering, cache behavior, and DR readiness.")
+    defer_section_note("Forward-looking Snowflake architecture checks for isolation, clustering, cache behavior, and DR readiness.")
     render_operator_briefing(
         [
             ("First move", "Find architecture risks that repeat across sections."),
@@ -1617,7 +1621,7 @@ def render():
         ],
         columns=4,
     )
-    st.caption(
+    defer_section_note(
         " | ".join([
             metric_confidence_label("delayed"),
             metric_confidence_label("manual"),
@@ -1685,7 +1689,7 @@ def render():
             min_gb = st.slider("Minimum table GB", 1.0, 500.0, 25.0, step=1.0, key="arch_cluster_min_gb")
         with c2:
             row_limit = st.slider("Max tables", 25, 500, 150, step=25, key="arch_cluster_limit")
-        st.caption("This ranks candidates only. Run clustering-depth proof SQL for one selected table before changing keys.")
+        defer_section_note("Clustering candidates are ranked only. Run clustering-depth proof SQL for one selected table before changing keys.")
         if st.button("Load Clustering Candidates", key="arch_cluster_load"):
             with st.spinner("Loading table clustering candidates..."):
                 try:
@@ -1773,7 +1777,7 @@ def render():
 
     elif active_pane == "Objectives & Owners":
         st.subheader("Architecture Objective Register")
-        st.caption("Manual DBA control objectives for database families, execution warehouses, workload classes, and RPO/RTO targets.")
+        defer_section_note("Manual DBA control objectives cover database families, execution warehouses, workload classes, and RPO/RTO targets.")
         if objectives.empty:
             st.warning("No architecture objectives are configured for the active company.")
         else:
@@ -1811,7 +1815,7 @@ def render():
     elif active_pane == "DR Readiness":
         st.subheader("Disaster Recovery Readiness")
         days = st.slider("Replication usage lookback days", 1, 90, 30, key="arch_dr_days")
-        st.caption(f"Replication lag warning threshold: {THRESHOLDS.get('replication_lag_warn_min', 120)} minutes.")
+        defer_section_note(f"Replication lag warning threshold: {THRESHOLDS.get('replication_lag_warn_min', 120)} minutes.")
         if st.button("Load DR Readiness", key="arch_dr_load"):
             with st.spinner("Loading DR and replication metadata..."):
                 try:

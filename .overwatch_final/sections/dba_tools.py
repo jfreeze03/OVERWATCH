@@ -2156,6 +2156,34 @@ WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
 GROUP BY warehouse_name, usage_day
 ORDER BY usage_day DESC, total_warehouse_credits DESC;
 
+-- Billed warehouse credits after cloud-services adjustment
+SELECT usage_date,
+       SUM(COALESCE(credits_used_compute, 0)) AS account_compute_credits,
+       SUM(COALESCE(credits_used_cloud_services, 0)) AS account_cloud_services_credits,
+       SUM(COALESCE(credits_adjustment_cloud_services, 0)) AS account_cloud_services_adjustment,
+       SUM(COALESCE(credits_billed, 0)) AS account_billed_warehouse_credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
+WHERE usage_date >= DATEADD('day', -30, CURRENT_DATE())
+  AND usage_date < CURRENT_DATE()
+  AND UPPER(service_type) = 'WAREHOUSE_METERING'
+GROUP BY usage_date
+ORDER BY usage_date DESC;
+
+-- Official organization currency spend when billing access is available
+SELECT usage_date,
+       currency,
+       SUM(usage) AS official_compute_credits,
+       SUM(usage_in_currency) AS official_spend_in_currency,
+       SUM(usage_in_currency) / NULLIF(SUM(usage), 0) AS official_effective_price_per_credit
+FROM SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY
+WHERE usage_date >= DATEADD('day', -30, CURRENT_DATE())
+  AND usage_date < CURRENT_DATE()
+  AND UPPER(rating_type) = 'COMPUTE'
+  AND UPPER(service_type) = 'WAREHOUSE_METERING'
+  AND (UPPER(account_locator) = UPPER(CURRENT_ACCOUNT()) OR UPPER(account_name) = UPPER(CURRENT_ACCOUNT_NAME()))
+GROUP BY usage_date, currency
+ORDER BY usage_date DESC;
+
 -- Serverless account-level credit check
 SELECT service_type,
        DATE_TRUNC('day', start_time) AS usage_day,

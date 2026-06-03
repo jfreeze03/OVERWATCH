@@ -35,6 +35,37 @@ def _query_search_clause(search_value: str, mode: str) -> tuple[str, str, int | 
     return f"AND query_text ILIKE '%' || {sql_literal(search_value)} || '%'", "Text contains", 7
 
 
+def _global_date_label() -> str:
+    start = st.session_state.get("global_start_date")
+    end = st.session_state.get("global_end_date")
+    if start and end:
+        return f"Global Filters date range: {start} to {end}"
+    if start:
+        return f"Global Filters date range: from {start}"
+    if end:
+        return f"Global Filters date range: through {end}"
+    return ""
+
+
+def _search_date_predicate(days_back: int, day_cap: int | None) -> tuple[str, str, int]:
+    """Return extra date predicate, display label, and effective local-day value."""
+    global_label = _global_date_label()
+    if global_label:
+        if day_cap:
+            return (
+                f"AND start_time >= DATEADD('day', -{int(day_cap)}, CURRENT_TIMESTAMP())",
+                f"{global_label}; contains safety cap: {int(day_cap)}d",
+                int(day_cap),
+            )
+        return "", global_label, int(days_back)
+    effective_days = min(int(days_back), int(day_cap)) if day_cap else int(days_back)
+    return (
+        f"AND start_time >= DATEADD('day', -{effective_days}, CURRENT_TIMESTAMP())",
+        f"{effective_days}d",
+        effective_days,
+    )
+
+
 def render():
     session = get_session()
     company = get_active_company()
@@ -90,8 +121,12 @@ def render():
     )
     st.caption(
         "Exact query ID is the cheapest path. Prefix search avoids a leading wildcard. "
-        "Contains search is capped at 7 days to avoid broad query-text scans."
+        "Contains search is capped at 7 days to avoid broad query-text scans. "
+        "Snowflake Search Optimization does not accelerate ACCOUNT_USAGE query-text history."
     )
+    global_date_label = _global_date_label()
+    if global_date_label:
+        st.caption(f"Using {global_date_label}; the Days back slider applies only when Global Filters dates are cleared.")
 
     autorun = bool(st.session_state.pop("qs_autorun", False))
     if (st.button("Search", key="qs_run") or autorun) and search_text:
@@ -101,9 +136,17 @@ def render():
         except ValueError as exc:
             st.warning(str(exc))
             return
-        effective_days = min(days_back, day_cap) if day_cap else days_back
-        if day_cap and days_back > day_cap:
-            st.warning(f"Contains search is capped at {day_cap} days. Use exact query ID or prefix search for wider lookbacks.")
+        date_predicate, date_label, effective_days = _search_date_predicate(days_back, day_cap)
+        if day_cap and (days_back > day_cap or global_date_label):
+            st.warning(
+                f"Contains search is capped at {day_cap} days. "
+                "Use exact query ID or prefix search for wider lookbacks."
+            )
+        if resolved_mode == "Text contains":
+            st.info(
+                "Text contains mode scans query text in ACCOUNT_USAGE. Prefer exact query ID or prefix search "
+                "when the query ID or leading SQL token is known."
+            )
 
         user_cl = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
         status_cl = f"AND execution_status = {sql_literal(status_filter)}" if status_filter != "ALL" else ""
@@ -124,7 +167,8 @@ def render():
                        {cloud_credits_expr},
                        SUBSTR(query_text,1,500) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                WHERE start_time >= DATEADD('day', -{effective_days}, CURRENT_TIMESTAMP())
+                WHERE 1=1
+                  {date_predicate}
                   {search_cl}
                   {scoped_filters}
                   {user_cl} {status_cl}
@@ -134,6 +178,7 @@ def render():
             st.session_state["qs_df_qs"] = df_qs
             st.session_state["qs_search_mode"] = resolved_mode
             st.session_state["qs_effective_days"] = effective_days
+            st.session_state["qs_date_label"] = date_label
         except Exception as e:
             st.warning(f"Query search unavailable: {format_snowflake_error(e)}")
 
@@ -142,7 +187,7 @@ def render():
         if not df_q.empty:
             st.success(
                 f"Found {len(df_q):,} matching queries "
-                f"({st.session_state.get('qs_search_mode', 'Search')}, {st.session_state.get('qs_effective_days', days_back)}d)."
+                f"({st.session_state.get('qs_search_mode', 'Search')}, {st.session_state.get('qs_date_label', str(st.session_state.get('qs_effective_days', days_back)) + 'd')})."
             )
             render_query_drilldown(df_q, key="qs_result")
             download_csv(df_q, "query_search_results.csv")

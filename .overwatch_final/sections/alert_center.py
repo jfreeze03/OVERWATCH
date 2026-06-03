@@ -23,7 +23,6 @@ ALERT_CENTER_PANES = [
     "Action Queue Routing",
     "Rules & SLAs",
     "Suppression Windows",
-    "Setup SQL",
 ]
 
 ALERT_CENTER_SOURCES_BY_PANE = {
@@ -35,7 +34,6 @@ ALERT_CENTER_SOURCES_BY_PANE = {
     "Action Queue Routing": {"alerts", "action_queue"},
     "Rules & SLAs": {"alerts", "rules", "rule_audit"},
     "Suppression Windows": set(),
-    "Setup SQL": set(),
 }
 
 ALERT_CENTER_SOURCE_PLAN = {
@@ -78,6 +76,12 @@ ALERT_CENTER_SOURCE_PLAN = {
 }
 
 
+def _alert_email_target() -> str:
+    from utils.alerts import current_alert_recipient
+
+    return current_alert_recipient(DEFAULT_ALERT_EMAIL)
+
+
 def _alert_center_sources_for_view(view: str) -> set[str]:
     return set(ALERT_CENTER_SOURCES_BY_PANE.get(view, {"alerts"}))
 
@@ -113,7 +117,10 @@ def _alert_center_action_session(action: str):
     return get_session_for_action(
         action,
         surface="Alert Center",
-        offline_note="Alert Center setup SQL and source summaries remain available without a connection.",
+        offline_note=(
+            "Alert Center source summaries remain available without a connection. "
+            "Alert DDL is managed in snowflake/OVERWATCH_MART_SETUP.sql."
+        ),
     )
 
 
@@ -327,7 +334,7 @@ def _render_annotations() -> None:
                     LIMIT 300
                 """, ttl_key="alert_center_annotations", tier="recent", section="Alert Center")
             except Exception as exc:
-                st.info(f"Suppression windows are unavailable until the setup SQL is deployed. {_format_snowflake_error(exc)}")
+                st.info(f"Suppression windows are unavailable until `snowflake/OVERWATCH_MART_SETUP.sql` is deployed. {_format_snowflake_error(exc)}")
                 st.session_state["alert_center_annotations"] = pd.DataFrame()
     with c2:
         st.caption("Active global windows suppress every alert; entity windows suppress only the named warehouse, task, user, or alert entity.")
@@ -449,7 +456,7 @@ def _alert_center_operability_rows(
             "Needs Setup",
             "High",
             alert_error,
-            "Deploy alert table, triage view, and hourly task from Setup SQL.",
+            "Deploy alert objects from snowflake/OVERWATCH_MART_SETUP.sql.",
         )
     elif alerts.empty:
         add(
@@ -591,7 +598,7 @@ def _alert_center_operability_rows(
         "Email route",
         "Ready" if missing_email == 0 else "Review",
         "Low" if missing_email == 0 else "Medium",
-        f"Default recipient {DEFAULT_ALERT_EMAIL}; {ready_email:,} email-ready alert(s); {missing_email:,} missing target(s).",
+        f"Default recipient {_alert_email_target()}; {ready_email:,} email-ready alert(s); {missing_email:,} missing target(s).",
         "Keep email-first delivery until the approved Snowflake notification integration is available.",
     )
 
@@ -665,7 +672,7 @@ def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple
         for _, row in open_alerts.iterrows():
             owner = str(row.get("OWNER") or "").strip()
             owner_key = owner.upper()
-            email_target = str(row.get("EMAIL_TARGET") or DEFAULT_ALERT_EMAIL or "").strip()
+            email_target = str(row.get("EMAIL_TARGET") or _alert_email_target() or "").strip()
             route = str(row.get("ALERT_ROUTE") or row.get("ROUTE") or "Alert Center").strip()
             rows.append({
                 "ISSUE_SOURCE": "Alert",
@@ -919,13 +926,6 @@ def render() -> None:
     )
     required_sources = _alert_center_sources_for_view(active_view)
 
-    if active_view == "Setup SQL":
-        from utils.alerts import build_alert_task_sql
-
-        st.subheader("Alert Framework Setup SQL")
-        st.caption("Deploy this through controlled Snowflake change management. It creates/updates alerts, owner routing, delivery audit, optional email replay, and the hourly email-ready alert task.")
-        st.code(build_alert_task_sql(email_target=DEFAULT_ALERT_EMAIL), language="sql")
-        return
     if active_view == "Suppression Windows":
         _render_annotations()
         return
@@ -973,18 +973,18 @@ def render() -> None:
     rule_audit = data.get("rule_audit") if isinstance(data.get("rule_audit"), pd.DataFrame) else pd.DataFrame()
     owner_directory = data.get("owner_directory") if isinstance(data.get("owner_directory"), pd.DataFrame) else pd.DataFrame()
     if data.get("alerts_error"):
-        st.info(f"Alert history unavailable. Deploy the alert table/task setup SQL first. {data['alerts_error']}")
+        st.info(f"Alert history unavailable. Deploy alert objects from snowflake/OVERWATCH_MART_SETUP.sql first. {data['alerts_error']}")
     if data.get("queue_error"):
         st.caption(f"Action queue unavailable for this role/context: {data['queue_error']}")
     if data.get("delivery_error"):
-        st.caption(f"Delivery audit unavailable until setup SQL is deployed: {data['delivery_error']}")
+        st.caption(f"Delivery audit unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed: {data['delivery_error']}")
     if data.get("rule_error"):
-        st.caption(f"Alert rule catalog unavailable until setup SQL is deployed: {data['rule_error']}")
+        st.caption(f"Alert rule catalog unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed: {data['rule_error']}")
     if data.get("rule_audit_error"):
-        st.caption(f"Alert rule audit unavailable until setup SQL is deployed: {data['rule_audit_error']}")
+        st.caption(f"Alert rule audit unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed: {data['rule_audit_error']}")
     if data.get("owner_directory_error"):
-        st.caption(f"Owner directory unavailable until setup SQL is deployed: {data['owner_directory_error']}")
-    st.caption(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {DEFAULT_ALERT_EMAIL}.")
+        st.caption(f"Owner directory unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed: {data['owner_directory_error']}")
+    st.caption(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {_alert_email_target()}.")
 
     open_alerts = _open_alert_mask(alerts)
     high_alerts = pd.Series(dtype=bool)
@@ -1157,7 +1157,7 @@ def render() -> None:
                 alerts,
                 company=company,
                 environment=environment,
-                recipient=DEFAULT_ALERT_EMAIL,
+                recipient=_alert_email_target(),
                 limit=10,
             )
             st.text_input("Digest email subject", value=digest_subject, key="alert_center_digest_subject")
@@ -1167,7 +1167,7 @@ def render() -> None:
                 with st.form("alert_center_log_digest_delivery"):
                     delivery_target = st.text_input(
                         "Delivery target",
-                        value=DEFAULT_ALERT_EMAIL,
+                        value=_alert_email_target(),
                         key="alert_center_digest_target",
                     )
                     delivery_notes = st.text_area(
@@ -1365,12 +1365,12 @@ def render() -> None:
 
     elif active_view == "Email Delivery":
         st.subheader("Email Delivery Queue")
-        st.caption("Rows are email-ready by default; the setup SQL also includes a dry-run governed SYSTEM$SEND_EMAIL procedure for an approved Snowflake email integration.")
+        st.caption("Rows are email-ready by default; snowflake/OVERWATCH_MART_SETUP.sql includes a dry-run governed SYSTEM$SEND_EMAIL procedure for an approved Snowflake email integration.")
         if alerts.empty:
             st.info("No email-ready alert rows found.")
         else:
             email_view = alerts.copy()
-            email_view["EMAIL_TARGET"] = email_view["EMAIL_TARGET"].replace("", DEFAULT_ALERT_EMAIL).fillna(DEFAULT_ALERT_EMAIL)
+            email_view["EMAIL_TARGET"] = email_view["EMAIL_TARGET"].replace("", _alert_email_target()).fillna(_alert_email_target())
             _render_priority_dataframe(
                 email_view,
                 title="Email-ready alert messages",
@@ -1497,7 +1497,7 @@ def render() -> None:
             )
             editable_rules = rules[rules.get("RULE_SOURCE", pd.Series(index=rules.index, dtype=str)).astype(str).eq("Database")]
             if editable_rules.empty:
-                st.info("Deploy `OVERWATCH_ALERT_RULES` from Setup SQL before editing alert rule ownership, SLA, and routing.")
+                st.info("Deploy `OVERWATCH_ALERT_RULES` from `snowflake/OVERWATCH_MART_SETUP.sql` before editing alert rule ownership, SLA, and routing.")
             else:
                 with st.expander("Edit alert rule routing and SLA", expanded=False):
                     selected_rule = st.selectbox(

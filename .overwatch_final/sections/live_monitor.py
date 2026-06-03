@@ -17,7 +17,7 @@ from utils import (
     credits_to_dollars, estimate_live_credits, download_csv,
     render_query_drilldown, get_active_company, get_user_filter_clause,
     get_global_filter_clause, get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
-    format_snowflake_error, filter_existing_columns,
+    safe_identifier, format_snowflake_error, filter_existing_columns,
     admin_button_disabled, log_admin_action, require_admin_enabled,
 )
 from utils.workflows import render_priority_dataframe
@@ -29,6 +29,27 @@ LIVE_MONITOR_PANES = (
     "Timeline",
     "Sessions",
 )
+
+
+def _live_query_history_function(warehouse_filter: str = "") -> str:
+    """Return the most selective INFORMATION_SCHEMA query history function."""
+    warehouse = str(warehouse_filter or "").strip()
+    if warehouse:
+        try:
+            safe_identifier(warehouse)
+            return (
+                "INFORMATION_SCHEMA.QUERY_HISTORY_BY_WAREHOUSE("
+                f"WAREHOUSE_NAME=>{sql_literal(warehouse.upper())}, "
+                "END_TIME_RANGE_START=>DATEADD('hours',-1,CURRENT_TIMESTAMP()), "
+                "RESULT_LIMIT=>100)"
+            )
+        except ValueError:
+            pass
+    return (
+        "INFORMATION_SCHEMA.QUERY_HISTORY("
+        "END_TIME_RANGE_START=>DATEADD('hours',-1,CURRENT_TIMESTAMP()), "
+        "RESULT_LIMIT=>100)"
+    )
 
 
 def render():
@@ -95,14 +116,13 @@ def render():
 
             # -- Live - INFORMATION_SCHEMA (0-latency) ------------------------
             st.subheader("Currently Running")
+            live_history_fn = _live_query_history_function(wh_filter_clean)
             live_sql = f"""
             SELECT query_id, SUBSTR(query_text,1,300) AS query_text,
                    user_name, warehouse_name, warehouse_size, execution_status, start_time,
                    DATEDIFF('second',start_time,CURRENT_TIMESTAMP()) AS elapsed_sec,
                    bytes_scanned/POWER(1024,2) AS mb_scanned, rows_produced
-            FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
-                END_TIME_RANGE_START=>DATEADD('hours',-1,CURRENT_TIMESTAMP()),
-                RESULT_LIMIT=>100))
+            FROM TABLE({live_history_fn})
             WHERE UPPER(execution_status) IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
               {wh_clause}
               {company_wh_clause}

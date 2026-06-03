@@ -70,7 +70,8 @@ Snowflake telemetry.
 | `ALFA_EDW_PROD` database | Tier 0 production EDW, PROD environment, 120 minute RPO, 240 minute RTO, owner-approved PROD routing required. |
 | `ALFA_EDW_DEV`, `ALFA_EDW_SAN`, `ALFA_EDW_PHX`, `ALFA_EDW_SEA` databases | Tier 2 DEV/Sandbox EDW, DEV_ALL environment, restore/clone posture unless a stricter owner objective is documented. |
 | `ALFA_EDW_SIT` database | Tier 1 SIT EDW, DEV_ALL environment, release-test recovery expectations should be documented. |
-| `COMPUTE_WH` warehouse | Current OVERWATCH app/task execution and utility warehouse. Monitor its cost separately from ALFA/Trexis business workload warehouses. |
+| `OVERWATCH_WH` warehouse | Dedicated OVERWATCH Streamlit app execution warehouse. Monitor its cost separately from ALFA/Trexis business workload warehouses. |
+| `COMPUTE_WH` warehouse | Current OVERWATCH mart task and utility warehouse. Monitor its cost separately from ALFA/Trexis business workload warehouses. |
 | `BI_COMPUTE_WH` warehouse | BI/reporting compute where repeated dashboard workloads may justify warm-cache tuning. |
 | `WH_ALFA_%` warehouses | ALFA application workload compute; routing and settings should have application owner approval. |
 | `WH_TRXS_%` warehouses | Trexis workload compute; keep Trexis isolation separate from ALFA unless approved. |
@@ -132,7 +133,7 @@ and DEV without query attribution, tags, or session lineage.
 
 | Value | Current default | Locations |
 |---|---|---|
-| Default recipient | `jdees@alfains.com` | `config.DEFAULT_ALERT_EMAIL`, `OVERWATCH_SETTINGS.DEFAULT_ALERT_EMAIL`, owner-directory seeds, alert procedure defaults, tests. |
+| Default recipients | `jdees@alfains.com,jfreeze03@yahoo.com` | `config.DEFAULT_ALERT_EMAIL`, `OVERWATCH_SETTINGS.DEFAULT_ALERT_EMAIL`, owner-directory seeds, alert procedure defaults, tests. |
 | Delivery method | `EMAIL` | `config.ALERT_DELIVERY_METHOD`, `OVERWATCH_SETTINGS.ALERT_DELIVERY_METHOD`, alert rows. |
 | Notification integration name | `OVERWATCH_EMAIL_INT` | `OVERWATCH_SETTINGS.ALERT_EMAIL_NOTIFICATION_INTEGRATION`, `SP_OVERWATCH_SEND_ALERT_DIGEST`, alert helpers. |
 
@@ -149,29 +150,30 @@ the delivery procedure supports dry-run packaging.
 | Alert table | `OVERWATCH_ALERTS` | `config.ALERT_TABLE`, setup SQL |
 | Action queue table | `OVERWATCH_ACTION_QUEUE` | `config.ACTION_QUEUE_TABLE`, setup SQL |
 | ETL audit table | `ETL_RUN_AUDIT` | `config.ETL_AUDIT_TABLE` |
-| Future isolation warehouse created by setup | `OVERWATCH_WH` | setup SQL |
+| Dedicated app runtime warehouse created by setup | `OVERWATCH_WH` | setup SQL, `.overwatch_final/snowflake.yml` |
 | Current main load/anomaly task warehouse | `COMPUTE_WH` | setup SQL task definitions |
 | Current cost-savings verifier task warehouse | `COMPUTE_WH` | setup SQL task definitions |
 
-Task warehouses are app execution inputs, not monitoring scope inputs. Today the
-main load, anomaly, and cost-savings verifier tasks run on `COMPUTE_WH` for
-now. `OVERWATCH_WH` remains reserved as a future isolation option. OVERWATCH
-still monitors ALFA and Trexis warehouses through `COMPANY_CONFIG`,
+Task warehouses are app execution inputs, not monitoring scope inputs. Today
+the Streamlit app runs on `OVERWATCH_WH`; the main load, anomaly, and
+cost-savings verifier tasks continue to run on `COMPUTE_WH`. OVERWATCH still
+monitors ALFA and Trexis warehouses through `COMPANY_CONFIG`,
 `OVERWATCH_COMPANY_SCOPE`, `WAREHOUSE_METERING_HISTORY`, `QUERY_HISTORY`, task
 history, and the mart facts. If the app execution warehouse changes later,
-update the setup SQL task clauses, monitoring-cost logic, documentation, and
-task-warehouse regression test in the same release. Do not add monitored
-warehouses by changing the task warehouse.
+update the Streamlit manifest, monitoring-cost logic, documentation, and
+warehouse regression tests in the same release. If mart task warehouses change,
+update the setup SQL task clauses and task-warehouse regression test in the
+same release. Do not add monitored warehouses by changing runtime warehouses.
 
 ## Adding A Warehouse
 
 Use this checklist when a new warehouse should appear in OVERWATCH scope,
 ownership, cost controls, or admin actions.
 
-Adding a monitored warehouse is separate from changing the warehouse that runs
-the app or mart tasks. `COMPUTE_WH` is the current execution warehouse for the
-main OVERWATCH load/anomaly task graph. `OVERWATCH_WH` is the documented future
-isolation candidate if we later split app runtime from shared compute. The
+Adding a monitored warehouse is separate from changing the warehouses that run
+the app or mart tasks. `OVERWATCH_WH` is the current Streamlit app execution
+warehouse. `COMPUTE_WH` is the current execution warehouse for the main
+OVERWATCH load/anomaly task graph. The
 monitored warehouse list is driven by company scope, Snowflake account-usage
 history, and mart facts.
 
@@ -481,7 +483,7 @@ All production DDL currently lives in `snowflake/OVERWATCH_MART_SETUP.sql`.
 
 - Database: `DBA_MAINT_DB`
 - Schema: `DBA_MAINT_DB.OVERWATCH`
-- Warehouse: `OVERWATCH_WH` (future isolation option; current app/task runtime remains `COMPUTE_WH`)
+- Warehouse: `OVERWATCH_WH` (dedicated Streamlit app runtime; mart tasks currently remain on `COMPUTE_WH`)
 
 ### Permanent Configuration, Audit, And Workflow Tables
 

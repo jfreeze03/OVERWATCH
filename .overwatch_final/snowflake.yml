@@ -6,7 +6,7 @@ definition_version: 1
 # App:       DBA_MAINT_DB.PUBLIC.OVERWATCHV3
 # Stage:     DBA_MAINT_DB.PUBLIC.OVERWATCH_STAGE
 # Roles:     SNOW_ACCOUNTADMIN, SNOW_SYSADMIN
-# Warehouse: COMPUTE_WH
+# Warehouse: OVERWATCH_WH
 #
 # execute_as: CALLER (SiS default — intentionally not set to OWNER)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -44,7 +44,7 @@ streamlit:
 
   # Warehouse used by SiS for Python execution. SQL queries run here unless
   # the session executes USE WAREHOUSE first.
-  query_warehouse: COMPUTE_WH
+  query_warehouse: OVERWATCH_WH
 
   artifacts:
     - app.py

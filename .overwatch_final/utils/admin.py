@@ -16,7 +16,7 @@ def safe_identifier(value: str, allow_qualified: bool = False) -> str:
     if not raw:
         raise ValueError("Identifier cannot be blank")
     parts = raw.split(".") if allow_qualified else [raw]
-    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,254}$")
+    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,254}$")
     if any(not ident_re.match(part) for part in parts):
         raise ValueError(f"Unsafe Snowflake identifier: {raw}")
     return ".".join(parts)

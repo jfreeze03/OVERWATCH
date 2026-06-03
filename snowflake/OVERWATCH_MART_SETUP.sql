@@ -10,7 +10,7 @@
 --   - MONITOR ACCOUNT for operational metadata
 --
 -- Cost posture:
---   - future OVERWATCH isolation warehouse, XSMALL, 60-second auto-suspend
+--   - dedicated OVERWATCH app warehouse, XSMALL, 60-second auto-suspend
 --   - transient mart tables for rebuildable data
 --   - permanent audit/action tables for evidence
 --   - hourly refresh, offset from the top of the hour for ACCOUNT_USAGE latency
@@ -27,8 +27,8 @@ CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH
   AUTO_SUSPEND = 60
   AUTO_RESUME = TRUE
   INITIALLY_SUSPENDED = TRUE
-  STATEMENT_TIMEOUT_IN_SECONDS = 1000
-  COMMENT = 'Future OVERWATCH isolation warehouse for optional verification tasks and mart refreshes. Current app/task runtime remains COMPUTE_WH.';
+  STATEMENT_TIMEOUT_IN_SECONDS = 600
+  COMMENT = 'Dedicated warehouse for OVERWATCH Streamlit app runtime and isolated cost attribution.';
 
 USE DATABASE DBA_MAINT_DB;
 USE SCHEMA OVERWATCH;
@@ -55,7 +55,7 @@ USING (
     ('DETAIL_RETENTION_DAYS', '30', 'NUMBER', 'Retention for recent query/task/procedure detail marts.'),
     ('AGG_RETENTION_DAYS', '730', 'NUMBER', 'Retention for hourly and daily aggregate marts.'),
     ('SLA_DURATION_MULTIPLIER', '1.5', 'NUMBER', 'Flags task/procedure latest duration over this multiple of historical average.'),
-    ('DEFAULT_ALERT_EMAIL', 'jdees@alfains.com', 'STRING', 'Default email recipient for OVERWATCH alert messages until Teams/webhook delivery is configured.'),
+    ('DEFAULT_ALERT_EMAIL', 'jdees@alfains.com,jfreeze03@yahoo.com', 'STRING', 'Default email recipient list for OVERWATCH alert messages until Teams/webhook delivery is configured.'),
     ('ALERT_DELIVERY_METHOD', 'EMAIL', 'STRING', 'Alert delivery channel used by the OVERWATCH anomaly task.'),
     ('ALERT_EMAIL_NOTIFICATION_INTEGRATION', 'OVERWATCH_EMAIL_INT', 'STRING', 'Approved Snowflake notification integration name for optional Alert Center email delivery.')
 ) src(SETTING_NAME, SETTING_VALUE, SETTING_TYPE, DESCRIPTION)
@@ -154,29 +154,30 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_DIRECTORY (
 MERGE INTO OVERWATCH_OWNER_DIRECTORY tgt
 USING (
   SELECT * FROM VALUES
-    ('COST_CONTROL_DEFAULT', 'COST_CONTROL', '*', 'DBA / FinOps', 'jdees@alfains.com', 'DBA On-Call', 'FinOps Backup', 'FinOps Lead / Cost Owner', 'FinOps Lead', 'Cost & Contract', 'Tier 1', 80, 'Default route for bill movement, chargeback, savings verification, and cost-control actions.'),
-    ('COST_VERIFIER_TASK', 'TASK', '*OVERWATCH_COST_SAVINGS_VERIFY*', 'DBA / FinOps', 'jdees@alfains.com', 'DBA On-Call', 'FinOps Backup', 'FinOps Lead', 'FinOps Lead', 'Cost & Contract', 'Tier 0', 200, 'Owner route for the scheduled savings-verification task.'),
-    ('TASK_DEFAULT', 'TASK', '*', 'DBA / Pipeline Owner', 'jdees@alfains.com', 'DBA On-Call', 'Pipeline Owner Backup', 'Pipeline Owner', 'DBA Lead', 'Workload Operations', 'Tier 0', 70, 'Default route for failed or late task graph recovery.'),
-    ('PROCEDURE_DEFAULT', 'PROCEDURE', '*', 'DBA / Procedure Owner', 'jdees@alfains.com', 'DBA On-Call', 'Procedure Owner Backup', 'Procedure Owner', 'DBA Lead', 'Workload Operations', 'Tier 1', 70, 'Default route for stored procedure runtime, orchestration, and cost regressions.'),
-    ('WAREHOUSE_DEFAULT', 'WAREHOUSE', '*', 'DBA / Platform', 'jdees@alfains.com', 'DBA On-Call', 'Platform DBA Backup', 'Platform DBA Lead', 'DBA Lead', 'Warehouse Health', 'Tier 1', 60, 'Default route for warehouse pressure, capacity, and setting-change controls.'),
-    ('COMPUTE_WH_EXECUTION', 'WAREHOUSE', 'COMPUTE_WH', 'OVERWATCH Platform Owner', 'jdees@alfains.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead / OVERWATCH Platform Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 205, 'Current OVERWATCH app and task execution warehouse; monitor separately from business workload warehouses.'),
-    ('ADAPTIVE_COMPUTE_DEFAULT', 'ADAPTIVE_COMPUTE', '*', 'DBA / Platform Architecture', 'jdees@alfains.com', 'DBA On-Call', 'FinOps Backup', 'DBA Lead / FinOps Lead', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 158, 'Default route for Adaptive Compute candidate review, pilot approval, cost baseline, and rollback proof.'),
-    ('ALFA_EDW_PROD_DATABASE', 'DATABASE', 'ALFA_EDW_PROD', 'ALFA EDW Data Owner', 'jdees@alfains.com', 'DBA On-Call', 'Data Platform Backup', 'DBA Lead / ALFA EDW Data Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 0', 220, 'Owner route for PROD EDW isolation, clustering, cache, and DR architecture decisions.'),
-    ('ALFA_EDW_DEV_DATABASES', 'DATABASE', 'ALFA_EDW_%', 'ALFA Development Data Owner', 'jdees@alfains.com', 'DBA On-Call', 'Development Platform Backup', 'DBA Lead / Development Platform Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 2', 120, 'Fallback route for ALFA DEV/Sandbox EDW database architecture decisions.'),
-    ('ARCHITECTURE_DEFAULT', 'ARCHITECTURE', '*', 'DBA / Platform Architecture', 'jdees@alfains.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 65, 'Fallback route for architecture objective, workload isolation, clustering, cache, and DR findings.'),
-    ('AI_AGENT_DEFAULT', 'AI_AGENT', '*', 'DBA / AI Governance', 'jdees@alfains.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 160, 'Default route for Cortex Agent inventory, Snowflake Intelligence usage, MCP tool exposure, and AI governance actions.'),
-    ('MCP_SERVER_DEFAULT', 'MCP_SERVER', '*', 'DBA / AI Governance', 'jdees@alfains.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 170, 'Default route for MCP server owner, tool-scope, role-scope, and blast-radius review.'),
-    ('CORTEX_SENSE_DEFAULT', 'CORTEX_SENSE', '*', 'DBA / AI Governance', 'jdees@alfains.com', 'DBA On-Call', 'Data Governance Backup', 'DBA Lead / Data Governance Lead', 'Data Governance Lead', 'Architecture Readiness', 'Tier 0', 168, 'Default route for Cortex Sense shared context, business definitions, semantic source, connector, citation, and regression-test governance.'),
-    ('COWORK_ARTIFACT_DEFAULT', 'COWORK_ARTIFACT', '*', 'DBA / Analytics Governance', 'jdees@alfains.com', 'DBA On-Call', 'Analytics Owner Backup', 'Analytics Owner / DBA Lead', 'Analytics Owner', 'Architecture Readiness', 'Tier 1', 166, 'Default route for CoWork Artifact publisher, certified source, sharing scope, freshness, sensitivity, and retirement governance.'),
-    ('AI_COST_DEFAULT', 'AI_USAGE', '*', 'DBA / FinOps', 'jdees@alfains.com', 'DBA On-Call', 'FinOps Backup', 'FinOps Lead / DBA Lead', 'FinOps Lead', 'Cost & Contract', 'Tier 1', 155, 'Default route for AI token-credit spend, Snowflake Intelligence usage, and Cortex Agent cost guardrails.'),
-    ('AI_SECURITY_DEFAULT', 'AI_SECURITY', '*', 'DBA / AI Governance', 'jdees@alfains.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 156, 'Default route for Cortex AI Guardrails, PUBLIC AI access, per-function privileges, and sensitive-data report readiness.'),
-    ('OPENFLOW_DEFAULT', 'OPENFLOW', '*', 'DBA / Integration Platform', 'jdees@alfains.com', 'DBA On-Call', 'Data Engineering Backup', 'Data Engineering Lead / DBA Lead', 'Data Engineering Lead', 'Architecture Readiness', 'Tier 1', 150, 'Default route for Openflow runtime, data-plane, auth, cost, and recovery evidence.'),
-    ('HORIZON_GOVERNANCE_DEFAULT', 'GOVERNANCE_VIEW', '*', 'DBA / Data Governance', 'jdees@alfains.com', 'DBA On-Call', 'Security Backup', 'Data Governance Lead / Security Approver', 'Data Governance Lead', 'Security Posture', 'Tier 0', 145, 'Default route for Horizon catalog, classification, policy, lineage, access-history, and governance-readiness gaps.'),
-    ('SEMANTIC_TRUST_DEFAULT', 'SEMANTIC_TRUST', '*', 'DBA / Analytics Governance', 'jdees@alfains.com', 'DBA On-Call', 'Analytics Owner Backup', 'Analytics Owner / DBA Lead', 'Analytics Owner', 'Architecture Readiness', 'Tier 1', 140, 'Default route for semantic model ownership, certification, verified query tests, and AI answer trust.'),
-    ('BCDR_DRILL_DEFAULT', 'BCDR_DRILL', '*', 'DBA / Platform Architecture', 'jdees@alfains.com', 'DBA On-Call', 'Infrastructure Backup', 'DBA Lead / Infrastructure Owner', 'Infrastructure Owner', 'Architecture Readiness', 'Tier 0', 135, 'Default route for DR drill ledger, recovery proof, RPO/RTO validation, and failover/replication evidence.'),
-    ('AI_CHANGE_GOVERNANCE_DEFAULT', 'AI_CHANGE_GOVERNANCE', '*', 'DBA Change Owner', 'jdees@alfains.com', 'DBA On-Call', 'Change Advisory Backup', 'Change Advisory / DBA Lead', 'DBA Lead / Change Advisory', 'Change & Drift', 'Tier 0', 130, 'Default route for Cortex Code, AISQL, and AI-assisted admin change governance.'),
-    ('SECURITY_DEFAULT', 'SECURITY', '*', 'DBA / Security', 'jdees@alfains.com', 'DBA On-Call', 'Security Backup', 'Security Approver', 'Security Lead', 'Security Posture', 'Tier 0', 60, 'Default route for grant, revoke, role, and rights controls.'),
-    ('ALERT_DEFAULT', 'ALERT', '*', 'DBA', 'jdees@alfains.com', 'DBA On-Call', 'DBA Backup', 'DBA Lead', 'DBA Lead', 'Alert Center', 'Tier 1', 10, 'Fallback route for alerts without a more specific owner.')
+    ('COST_CONTROL_DEFAULT', 'COST_CONTROL', '*', 'DBA / FinOps', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'FinOps Backup', 'FinOps Lead / Cost Owner', 'FinOps Lead', 'Cost & Contract', 'Tier 1', 80, 'Default route for bill movement, chargeback, savings verification, and cost-control actions.'),
+    ('COST_VERIFIER_TASK', 'TASK', '*OVERWATCH_COST_SAVINGS_VERIFY*', 'DBA / FinOps', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'FinOps Backup', 'FinOps Lead', 'FinOps Lead', 'Cost & Contract', 'Tier 0', 200, 'Owner route for the scheduled savings-verification task.'),
+    ('TASK_DEFAULT', 'TASK', '*', 'DBA / Pipeline Owner', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Pipeline Owner Backup', 'Pipeline Owner', 'DBA Lead', 'Workload Operations', 'Tier 0', 70, 'Default route for failed or late task graph recovery.'),
+    ('PROCEDURE_DEFAULT', 'PROCEDURE', '*', 'DBA / Procedure Owner', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Procedure Owner Backup', 'Procedure Owner', 'DBA Lead', 'Workload Operations', 'Tier 1', 70, 'Default route for stored procedure runtime, orchestration, and cost regressions.'),
+    ('WAREHOUSE_DEFAULT', 'WAREHOUSE', '*', 'DBA / Platform', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Platform DBA Backup', 'Platform DBA Lead', 'DBA Lead', 'Warehouse Health', 'Tier 1', 60, 'Default route for warehouse pressure, capacity, and setting-change controls.'),
+    ('OVERWATCH_WH_EXECUTION', 'WAREHOUSE', 'OVERWATCH_WH', 'OVERWATCH Platform Owner', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead / OVERWATCH Platform Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 215, 'Dedicated OVERWATCH Streamlit app execution warehouse; monitor separately from business workload warehouses.'),
+    ('COMPUTE_WH_EXECUTION', 'WAREHOUSE', 'COMPUTE_WH', 'OVERWATCH Platform Owner', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead / OVERWATCH Platform Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 205, 'Legacy OVERWATCH mart task and utility warehouse; monitor separately from business workload warehouses.'),
+    ('ADAPTIVE_COMPUTE_DEFAULT', 'ADAPTIVE_COMPUTE', '*', 'DBA / Platform Architecture', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'FinOps Backup', 'DBA Lead / FinOps Lead', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 158, 'Default route for Adaptive Compute candidate review, pilot approval, cost baseline, and rollback proof.'),
+    ('ALFA_EDW_PROD_DATABASE', 'DATABASE', 'ALFA_EDW_PROD', 'ALFA EDW Data Owner', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Data Platform Backup', 'DBA Lead / ALFA EDW Data Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 0', 220, 'Owner route for PROD EDW isolation, clustering, cache, and DR architecture decisions.'),
+    ('ALFA_EDW_DEV_DATABASES', 'DATABASE', 'ALFA_EDW_%', 'ALFA Development Data Owner', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Development Platform Backup', 'DBA Lead / Development Platform Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 2', 120, 'Fallback route for ALFA DEV/Sandbox EDW database architecture decisions.'),
+    ('ARCHITECTURE_DEFAULT', 'ARCHITECTURE', '*', 'DBA / Platform Architecture', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 65, 'Fallback route for architecture objective, workload isolation, clustering, cache, and DR findings.'),
+    ('AI_AGENT_DEFAULT', 'AI_AGENT', '*', 'DBA / AI Governance', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 160, 'Default route for Cortex Agent inventory, Snowflake Intelligence usage, MCP tool exposure, and AI governance actions.'),
+    ('MCP_SERVER_DEFAULT', 'MCP_SERVER', '*', 'DBA / AI Governance', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 170, 'Default route for MCP server owner, tool-scope, role-scope, and blast-radius review.'),
+    ('CORTEX_SENSE_DEFAULT', 'CORTEX_SENSE', '*', 'DBA / AI Governance', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Data Governance Backup', 'DBA Lead / Data Governance Lead', 'Data Governance Lead', 'Architecture Readiness', 'Tier 0', 168, 'Default route for Cortex Sense shared context, business definitions, semantic source, connector, citation, and regression-test governance.'),
+    ('COWORK_ARTIFACT_DEFAULT', 'COWORK_ARTIFACT', '*', 'DBA / Analytics Governance', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Analytics Owner Backup', 'Analytics Owner / DBA Lead', 'Analytics Owner', 'Architecture Readiness', 'Tier 1', 166, 'Default route for CoWork Artifact publisher, certified source, sharing scope, freshness, sensitivity, and retirement governance.'),
+    ('AI_COST_DEFAULT', 'AI_USAGE', '*', 'DBA / FinOps', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'FinOps Backup', 'FinOps Lead / DBA Lead', 'FinOps Lead', 'Cost & Contract', 'Tier 1', 155, 'Default route for AI token-credit spend, Snowflake Intelligence usage, and Cortex Agent cost guardrails.'),
+    ('AI_SECURITY_DEFAULT', 'AI_SECURITY', '*', 'DBA / AI Governance', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 156, 'Default route for Cortex AI Guardrails, PUBLIC AI access, per-function privileges, and sensitive-data report readiness.'),
+    ('OPENFLOW_DEFAULT', 'OPENFLOW', '*', 'DBA / Integration Platform', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Data Engineering Backup', 'Data Engineering Lead / DBA Lead', 'Data Engineering Lead', 'Architecture Readiness', 'Tier 1', 150, 'Default route for Openflow runtime, data-plane, auth, cost, and recovery evidence.'),
+    ('HORIZON_GOVERNANCE_DEFAULT', 'GOVERNANCE_VIEW', '*', 'DBA / Data Governance', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Security Backup', 'Data Governance Lead / Security Approver', 'Data Governance Lead', 'Security Posture', 'Tier 0', 145, 'Default route for Horizon catalog, classification, policy, lineage, access-history, and governance-readiness gaps.'),
+    ('SEMANTIC_TRUST_DEFAULT', 'SEMANTIC_TRUST', '*', 'DBA / Analytics Governance', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Analytics Owner Backup', 'Analytics Owner / DBA Lead', 'Analytics Owner', 'Architecture Readiness', 'Tier 1', 140, 'Default route for semantic model ownership, certification, verified query tests, and AI answer trust.'),
+    ('BCDR_DRILL_DEFAULT', 'BCDR_DRILL', '*', 'DBA / Platform Architecture', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Infrastructure Backup', 'DBA Lead / Infrastructure Owner', 'Infrastructure Owner', 'Architecture Readiness', 'Tier 0', 135, 'Default route for DR drill ledger, recovery proof, RPO/RTO validation, and failover/replication evidence.'),
+    ('AI_CHANGE_GOVERNANCE_DEFAULT', 'AI_CHANGE_GOVERNANCE', '*', 'DBA Change Owner', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Change Advisory Backup', 'Change Advisory / DBA Lead', 'DBA Lead / Change Advisory', 'Change & Drift', 'Tier 0', 130, 'Default route for Cortex Code, AISQL, and AI-assisted admin change governance.'),
+    ('SECURITY_DEFAULT', 'SECURITY', '*', 'DBA / Security', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'Security Backup', 'Security Approver', 'Security Lead', 'Security Posture', 'Tier 0', 60, 'Default route for grant, revoke, role, and rights controls.'),
+    ('ALERT_DEFAULT', 'ALERT', '*', 'DBA', 'jdees@alfains.com,jfreeze03@yahoo.com', 'DBA On-Call', 'DBA Backup', 'DBA Lead', 'DBA Lead', 'Alert Center', 'Tier 1', 10, 'Fallback route for alerts without a more specific owner.')
 ) src(OWNER_KEY, ENTITY_TYPE, ENTITY_PATTERN, OWNER_NAME, OWNER_EMAIL, ONCALL_PRIMARY,
       ONCALL_SECONDARY, APPROVAL_GROUP, ESCALATION_TARGET, DEFAULT_ROUTE, SERVICE_TIER,
       MATCH_PRIORITY, NOTES)
@@ -1033,7 +1034,7 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_ALERT_DELIVERY_LOG (
 CREATE OR REPLACE PROCEDURE SP_OVERWATCH_SEND_ALERT_DIGEST(
   P_COMPANY VARCHAR DEFAULT 'ALFA',
   P_ENVIRONMENT VARCHAR DEFAULT 'ALL',
-  P_RECIPIENT VARCHAR DEFAULT 'jdees@alfains.com',
+  P_RECIPIENT VARCHAR DEFAULT 'jdees@alfains.com,jfreeze03@yahoo.com',
   P_DRY_RUN BOOLEAN DEFAULT TRUE
 )
 RETURNS VARCHAR
@@ -2766,17 +2767,19 @@ BEGIN
     TO_DATE(START_TIME) AS USAGE_DATE,
     CASE WHEN WAREHOUSE_NAME ILIKE 'WH_TRXS_%' THEN 'Trexis' ELSE 'ALFA' END AS COMPANY,
     CASE
+      WHEN WAREHOUSE_NAME = 'OVERWATCH_WH' THEN 'APP_RUNTIME'
       WHEN WAREHOUSE_NAME = 'COMPUTE_WH' THEN 'MART_REFRESH'
       WHEN WAREHOUSE_NAME ILIKE '%STREAMLIT%' THEN 'STREAMLIT_APP'
       ELSE 'OVERWATCH_TAGGED'
     END AS COST_COMPONENT,
     SUM(CREDITS_USED) AS CREDITS_USED,
     ROUND(SUM(CREDITS_USED) * :credit_price, 2) AS EST_COST_USD,
-    'WAREHOUSE_METERING_HISTORY filtered to COMPUTE_WH and Streamlit-style warehouses' AS SOURCE
+    'WAREHOUSE_METERING_HISTORY filtered to OVERWATCH_WH, COMPUTE_WH, and Streamlit-style warehouses' AS SOURCE
   FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
   WHERE START_TIME >= DATEADD('DAY', -35, CURRENT_TIMESTAMP())
     AND (
-      WAREHOUSE_NAME = 'COMPUTE_WH'
+      WAREHOUSE_NAME = 'OVERWATCH_WH'
+      OR WAREHOUSE_NAME = 'COMPUTE_WH'
       OR WAREHOUSE_NAME ILIKE '%STREAMLIT%'
     )
   GROUP BY 1,2,3;
@@ -3597,11 +3600,11 @@ LANGUAGE SQL
 AS
 $$
 DECLARE
-  alert_email VARCHAR DEFAULT 'jdees@alfains.com';
+  alert_email VARCHAR DEFAULT 'jdees@alfains.com,jfreeze03@yahoo.com';
 BEGIN
   SELECT COALESCE(
            MAX(CASE WHEN SETTING_NAME = 'DEFAULT_ALERT_EMAIL' THEN SETTING_VALUE END),
-           'jdees@alfains.com'
+           'jdees@alfains.com,jfreeze03@yahoo.com'
          )
     INTO :alert_email
   FROM OVERWATCH_SETTINGS;
@@ -3803,7 +3806,7 @@ INSERT INTO OVERWATCH_ALERTS (
 WITH alert_config AS (
   SELECT COALESCE(
            MAX(CASE WHEN SETTING_NAME = 'DEFAULT_ALERT_EMAIL' THEN SETTING_VALUE END),
-           'jdees@alfains.com'
+           'jdees@alfains.com,jfreeze03@yahoo.com'
          ) AS EMAIL_TARGET
   FROM OVERWATCH_SETTINGS
 ),

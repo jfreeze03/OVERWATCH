@@ -208,15 +208,32 @@ ARCHITECTURE_OBJECTIVES = (
     {
         "COMPANY": "ALFA",
         "ENTITY_TYPE": "WAREHOUSE",
-        "ENTITY_PATTERN": "COMPUTE_WH",
+        "ENTITY_PATTERN": "OVERWATCH_WH",
         "EXPECTED_ENVIRONMENT": "No Database Context",
-        "WORKLOAD_CLASS": "OVERWATCH execution and utility compute",
+        "WORKLOAD_CLASS": "OVERWATCH app execution compute",
         "SERVICE_TIER": "Tier 1",
         "OWNER": "OVERWATCH Platform Owner",
         "APPROVAL_GROUP": "DBA Lead / OVERWATCH Platform Owner",
         "RPO_MINUTES": 240,
         "RTO_MINUTES": 480,
-        "ISOLATION_POLICY": "Current app/task execution warehouse; monitor cost separately from ALFA/Trexis workload warehouses.",
+        "ISOLATION_POLICY": "Dedicated Streamlit app execution warehouse; keep dashboard runtime separate from ALFA/Trexis workload warehouses.",
+        "CACHE_POLICY": "Do not optimize business workload cache from app-execution evidence alone.",
+        "CLUSTERING_POLICY": "Not applicable to warehouse settings.",
+        "DR_POLICY": "App persistence objects, tasks, and email alerting need documented recovery ownership.",
+        "MATCH_PRIORITY": 215,
+    },
+    {
+        "COMPANY": "ALFA",
+        "ENTITY_TYPE": "WAREHOUSE",
+        "ENTITY_PATTERN": "COMPUTE_WH",
+        "EXPECTED_ENVIRONMENT": "No Database Context",
+        "WORKLOAD_CLASS": "OVERWATCH mart refresh and utility compute",
+        "SERVICE_TIER": "Tier 1",
+        "OWNER": "OVERWATCH Platform Owner",
+        "APPROVAL_GROUP": "DBA Lead / OVERWATCH Platform Owner",
+        "RPO_MINUTES": 240,
+        "RTO_MINUTES": 480,
+        "ISOLATION_POLICY": "Legacy mart task and utility warehouse; monitor cost separately from ALFA/Trexis workload warehouses.",
         "CACHE_POLICY": "Do not optimize business workload cache from app-execution evidence alone.",
         "CLUSTERING_POLICY": "Not applicable to warehouse settings.",
         "DR_POLICY": "App persistence objects, tasks, and email alerting need documented recovery ownership.",
@@ -483,6 +500,7 @@ COMPANY_CONFIG = {
         "wh_patterns": [
             "WH_ALFA_%",
             "BI_COMPUTE_WH",
+            "OVERWATCH_WH",
             "COMPUTE_WH",
             "CROWDSTRIKE_WH",
             "DOC_AI_WH",
@@ -644,7 +662,8 @@ ETL_AUDIT_TABLE = "ETL_RUN_AUDIT"
 ALERT_DB = "DBA_MAINT_DB"
 ALERT_SCHEMA = "OVERWATCH"
 ALERT_TABLE = "OVERWATCH_ALERTS"
-DEFAULT_ALERT_EMAIL = "jdees@alfains.com"
+DEFAULT_ALERT_EMAILS = ("jdees@alfains.com", "jfreeze03@yahoo.com")
+DEFAULT_ALERT_EMAIL = ",".join(DEFAULT_ALERT_EMAILS)
 ALERT_DELIVERY_METHOD = "EMAIL"
 
 ACTION_QUEUE_TABLE = "OVERWATCH_ACTION_QUEUE"

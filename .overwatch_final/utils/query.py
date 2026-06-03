@@ -29,6 +29,8 @@ STANDARD_RESULT_WARNING_ROWS = 5_000
 STANDARD_RESULT_WARNING_MB = 25.0
 ADMIN_RESULT_HARD_ROWS = 25_000
 ADMIN_RESULT_HARD_MB = 100.0
+STANDARD_SQL_READ_LIMIT_ROWS = STANDARD_RESULT_WARNING_ROWS
+ADMIN_SQL_READ_LIMIT_ROWS = ADMIN_RESULT_HARD_ROWS
 
 _RESULT_SIZE_DEEP_ROW_LIMIT = 5_000
 _RESULT_SIZE_SAMPLE_ROWS = 1_000
@@ -96,6 +98,64 @@ def _query_is_metadata_probe(query_text: str) -> bool:
     if sql.startswith("SHOW ") or sql.startswith("DESC ") or sql.startswith("DESCRIBE "):
         return True
     return "LIMIT 0" in sql
+
+
+def _query_starts_with_read(sql: str) -> bool:
+    """Return True for plain read statements that can safely accept LIMIT."""
+    return bool(
+        re.match(
+            r"^\s*(?:(?:--[^\r\n]*(?:\r?\n|$))|(?:/\*.*?\*/\s*))*\s*(?:SELECT|WITH)\b",
+            str(sql or ""),
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    )
+
+
+def _has_extra_statement_separator(sql: str) -> bool:
+    """Return True when a statement has semicolons beyond an optional terminator."""
+    text = str(sql or "").strip()
+    if text.endswith(";"):
+        text = text[:-1]
+    return ";" in text
+
+
+def _strip_sql_literals(sql: str) -> str:
+    """Mask single-quoted literals before lightweight keyword checks."""
+    return re.sub(r"'(?:''|[^'])*'", "''", str(sql or ""), flags=re.DOTALL)
+
+
+def _query_already_has_limit(sql: str) -> bool:
+    """Return True when the SQL text already contains an explicit LIMIT clause."""
+    return bool(re.search(r"\bLIMIT\s+\d+\b", _strip_sql_literals(sql), flags=re.IGNORECASE))
+
+
+def _default_sql_read_limit() -> int:
+    """Return the SQL-side row cap for the current operator mode."""
+    return ADMIN_SQL_READ_LIMIT_ROWS if _admin_actions_enabled() else STANDARD_SQL_READ_LIMIT_ROWS
+
+
+def _inject_read_limit(query_text: str, max_rows: int | None = None) -> str:
+    """Append a conservative LIMIT to unbounded read SQL before execution."""
+    sql = str(query_text or "")
+    if not sql.strip():
+        return sql
+    if _query_is_metadata_probe(sql):
+        return sql
+    if not _query_starts_with_read(sql):
+        return sql
+    if _has_extra_statement_separator(sql):
+        return sql
+    if _query_already_has_limit(sql):
+        return sql
+
+    try:
+        row_cap = int(max_rows or _default_sql_read_limit())
+    except Exception:
+        row_cap = STANDARD_SQL_READ_LIMIT_ROWS
+    if row_cap <= 0:
+        return sql
+
+    return f"{sql.rstrip().rstrip(';')}\nLIMIT {row_cap}"
 
 
 def _is_expensive_query(elapsed_ms: float, row_count: int, result_mb: float) -> bool:
@@ -432,7 +492,7 @@ def safe_identifier(value: str, allow_qualified: bool = False) -> str:
     if not raw:
         raise ValueError("Identifier cannot be blank")
     parts = raw.split(".") if allow_qualified else [raw]
-    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,254}$")
+    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,254}$")
     if any(not ident_re.match(part) for part in parts):
         raise ValueError(f"Unsafe Snowflake identifier: {raw}")
     return ".".join(parts)
@@ -487,10 +547,11 @@ def _execute_snowflake_query(
     tier: str = "recent",
     section: str = "",
 ) -> pd.DataFrame:
+    executable_query = _inject_read_limit(query_text)
     session = get_session()
     _apply_overwatch_query_tag(session, query_tag)
-    result = normalize_df(session.sql(query_text).to_pandas())
-    return _apply_result_guard(query_text, result, ttl_key=ttl_key, section=section, tier=tier)
+    result = normalize_df(session.sql(executable_query).to_pandas())
+    return _apply_result_guard(executable_query, result, ttl_key=ttl_key, section=section, tier=tier)
 
 
 def _cache_context() -> str:
@@ -615,6 +676,7 @@ def _run_query_base(
     spinner_msg: str = "Loading data...",
     tier: str = "recent",
     section: str = "",
+    max_rows: int | None = None,
 ) -> pd.DataFrame:
     """
     Central query runner with tiered caching and full error handling.
@@ -626,21 +688,23 @@ def _run_query_base(
         spinner_msg: Shown while executing.
         tier:        'live' | 'recent' | 'standard' | 'historical' | 'metadata'
                      Default 'recent' (300s) for backward compatibility.
+        max_rows:    Optional SQL-side read cap for unbounded SELECT/WITH queries.
 
     Returns:
         Normalized DataFrame. Empty DataFrame on any error (never raises).
     """
     with st.spinner(spinner_msg):
         try:
+            executable_query = _inject_read_limit(query_text, max_rows=max_rows)
             query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
             if use_cache:
                 cache_salt = _cache_salt(ttl_key)
                 context = _cache_context()
                 fn   = _TIER_FN.get(tier, _cached_recent)
-                return fn(query_text, context, cache_salt, query_tag, ttl_key, section)
+                return fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
             # Bypass cache — always wrapped in try/except
             try:
-                return _execute_snowflake_query(query_text, query_tag, ttl_key=ttl_key, tier=tier, section=section)
+                return _execute_snowflake_query(executable_query, query_tag, ttl_key=ttl_key, tier=tier, section=section)
             except Exception as e:
                 _show_query_warning("Data unavailable", e)
                 return pd.DataFrame()
@@ -656,6 +720,7 @@ def run_query(
     spinner_msg: str = "Loading data...",
     tier: str = "recent",
     section: str = "",
+    max_rows: int | None = None,
 ) -> pd.DataFrame:
     """Execute a query through the cached runner and log lightweight telemetry."""
     started = time.perf_counter()
@@ -666,6 +731,7 @@ def run_query(
         spinner_msg=spinner_msg,
         tier=tier,
         section=section,
+        max_rows=max_rows,
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
     result_mb = _estimate_result_mb(result)
@@ -678,6 +744,7 @@ def run_query_or_raise(
     section: str = "",
     ttl_key: str = "direct",
     tier: str = "live",
+    max_rows: int | None = None,
 ) -> pd.DataFrame:
     """
     Execute SQL and return a normalized DataFrame, preserving exceptions.
@@ -688,11 +755,12 @@ def run_query_or_raise(
     started = time.perf_counter()
     result = pd.DataFrame()
     query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
+    executable_query = _inject_read_limit(query_text, max_rows=max_rows)
     try:
         session = get_session()
         _apply_overwatch_query_tag(session, query_tag)
-        result = normalize_df(session.sql(query_text).to_pandas())
-        return _apply_result_guard(query_text, result, ttl_key=ttl_key, section=section, tier=tier)
+        result = normalize_df(session.sql(executable_query).to_pandas())
+        return _apply_result_guard(executable_query, result, ttl_key=ttl_key, section=section, tier=tier)
     finally:
         elapsed_ms = (time.perf_counter() - started) * 1000
         _record_query_telemetry(

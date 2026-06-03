@@ -697,7 +697,7 @@ def classify_adaptive_compute_readiness(
             or "INTERACTIVE" in warehouse_type_upper
             or size_upper in {"5XLARGE", "6XLARGE", "X5LARGE", "X6LARGE"}
         )
-        app_execution = warehouse_upper == "COMPUTE_WH" or warehouse_upper.startswith("SYSTEM$STREAMLIT")
+        app_execution = warehouse_upper in {"OVERWATCH_WH", "COMPUTE_WH"} or warehouse_upper.startswith("SYSTEM$STREAMLIT")
         low_signal = query_count < max(25, int(query_watch / 10)) and credits < max(1.0, credit_watch / 10)
         score = 45
         score += 18 if material_spend else 0
@@ -719,7 +719,7 @@ def classify_adaptive_compute_readiness(
             decision = "Hold - App Execution"
             severity = "Medium"
             finding = "Warehouse is the OVERWATCH app/utility execution route; do not mix app runtime with business workload conversion tests."
-            action = "Keep COMPUTE_WH as the app execution baseline unless the OVERWATCH owner approves a separate benchmark and rollback window."
+            action = "Keep OVERWATCH_WH/COMPUTE_WH execution routes out of business workload conversion tests unless the OVERWATCH owner approves a separate benchmark and rollback window."
             queue_readiness = "Review Only"
         elif pressure and material_spend and steady_workload:
             decision = "Pilot Candidate"

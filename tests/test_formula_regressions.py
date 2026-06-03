@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
-from config import DEFAULTS, FORWARD_PLATFORM_CONTROLS  # noqa: E402
+from config import DEFAULTS, DEFAULT_ALERT_EMAIL, FORWARD_PLATFORM_CONTROLS  # noqa: E402
 from sections.account_health import (  # noqa: E402
     _account_health_actionable_checklist,
     _account_health_access_hygiene_action_payload,
@@ -1530,11 +1530,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ALTER TABLE IF EXISTS FACT_QUERY_DETAIL_RECENT ADD COLUMN IF NOT EXISTS ENVIRONMENT", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_GOVERNANCE_SIGNAL", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_INCIDENT_TIMELINE", setup_upper)
+        self.assertIn("CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH", setup_upper)
+        self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS = 600", setup_upper)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_GOVERNANCE", setup_upper)
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_COST_GOVERNANCE_REFRESH", setup_upper)
         self.assertIn("AFTER OVERWATCH_REFRESH_CONTROL_ROOM", setup_upper)
         self.assertIn("OVERWATCH_ALERTS", setup_upper)
         self.assertIn("WAREHOUSE = COMPUTE_WH", setup_upper)
+        self.assertIn("APP_RUNTIME", setup_upper)
         self.assertIn("WAREHOUSE_COST_MOVEMENT", setup_upper)
         self.assertIn("CORTEX_BUDGET_AND_QUOTA", setup_upper)
         self.assertIn("CHANGE_COST_CORRELATION", setup_upper)
@@ -5649,10 +5652,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ALFA_EDW_PROD_DATABASE", row["OWNER_SOURCE"])
         self.assertIn("database_name = 'ALFA_EDW_PROD'", row["VERIFICATION_QUERY"])
 
-    def test_architecture_objectives_keep_compute_wh_as_app_execution_scope(self):
+    def test_architecture_objectives_keep_overwatch_wh_as_app_execution_scope(self):
         objectives = _architecture_objectives_frame("ALFA")
         finding = pd.DataFrame([{
-            "WAREHOUSE_NAME": "COMPUTE_WH",
+            "WAREHOUSE_NAME": "OVERWATCH_WH",
             "SEVERITY": "Medium",
             "CACHE_DECISION": "Cache-hostile suspend",
             "FINDING": "cache=5 repeated=60",
@@ -5671,12 +5674,12 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         row = enriched.iloc[0]
 
-        self.assertEqual(row["WORKLOAD_CLASS"], "OVERWATCH execution and utility compute")
+        self.assertEqual(row["WORKLOAD_CLASS"], "OVERWATCH app execution compute")
         self.assertEqual(row["OWNER"], "OVERWATCH Platform Owner")
-        self.assertIn("COMPUTE_WH_EXECUTION", row["OWNER_SOURCE"])
-        self.assertIn("monitor cost separately", row["ISOLATION_POLICY"])
+        self.assertIn("OVERWATCH_WH_EXECUTION", row["OWNER_SOURCE"])
+        self.assertIn("Dedicated Streamlit app execution warehouse", row["ISOLATION_POLICY"])
         self.assertIn("Do not optimize business workload cache", row["CACHE_POLICY"])
-        self.assertIn("warehouse_name = 'COMPUTE_WH'", row["VERIFICATION_QUERY"])
+        self.assertIn("warehouse_name = 'OVERWATCH_WH'", row["VERIFICATION_QUERY"])
 
     def test_architecture_source_health_tracks_loaded_scope(self):
         state = {
@@ -5813,6 +5816,21 @@ class FormulaRegressionTests(unittest.TestCase):
                 "MAX_CLUSTER_COUNT": 1,
             },
             {
+                "WAREHOUSE_NAME": "OVERWATCH_WH",
+                "WAREHOUSE_SIZE": "X-Small",
+                "TYPE": "STANDARD",
+                "QUERY_COUNT": 500,
+                "USERS": 3,
+                "ROLES": 2,
+                "DATABASES": 0,
+                "CREDITS_30D": 4.0,
+                "QUEUED_SEC": 5.0,
+                "REMOTE_SPILL_GB": 0.0,
+                "P95_ELAPSED_SEC": 90.0,
+                "REPEATED_QUERIES": 20,
+                "MAX_CLUSTER_COUNT": 1,
+            },
+            {
                 "WAREHOUSE_NAME": "ML_SNOWPARK_WH",
                 "WAREHOUSE_SIZE": "Large",
                 "TYPE": "SNOWPARK-OPTIMIZED",
@@ -5839,6 +5857,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SHOW WAREHOUSES", by_wh["BI_COMPUTE_WH"]["PROOF_SQL"])
         self.assertIn("WAREHOUSE_METERING_HISTORY", by_wh["BI_COMPUTE_WH"]["VERIFICATION_QUERY"])
         self.assertIn("No automatic conversion", by_wh["BI_COMPUTE_WH"]["CONVERSION_BOUNDARY"])
+        self.assertEqual(by_wh["OVERWATCH_WH"]["ADAPTIVE_DECISION"], "Hold - App Execution")
+        self.assertEqual(by_wh["OVERWATCH_WH"]["QUEUE_READINESS"], "Review Only")
         self.assertEqual(by_wh["COMPUTE_WH"]["ADAPTIVE_DECISION"], "Hold - App Execution")
         self.assertEqual(by_wh["COMPUTE_WH"]["QUEUE_READINESS"], "Review Only")
         self.assertEqual(by_wh["ML_SNOWPARK_WH"]["ADAPTIVE_DECISION"], "Hold - Preview Limitation")
@@ -6388,7 +6408,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(len(issues), 3)
         self.assertEqual(issues.iloc[0]["SEVERITY"], "Critical")
         self.assertEqual(set(issues["ISSUE_SOURCE"]), {"Alert History", "Action Queue", "Control Room Signal"})
-        self.assertTrue((issues["EMAIL_TARGET"] == "jdees@alfains.com").all())
+        self.assertTrue(issues["EMAIL_TARGET"].astype(str).str.contains("jdees@alfains.com").all())
+        self.assertTrue(
+            (
+                issues.loc[issues["ISSUE_SOURCE"].ne("Alert History"), "EMAIL_TARGET"]
+                == DEFAULT_ALERT_EMAIL
+            ).all()
+        )
+        self.assertIn("jfreeze03@yahoo.com", "\n".join(issues["EMAIL_TARGET"].astype(str)))
 
     def test_alert_lifecycle_sla_and_status_sql(self):
         df = pd.DataFrame([

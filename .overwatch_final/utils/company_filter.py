@@ -1,7 +1,7 @@
 # utils/company_filter.py — Multi-tenant company filtering (ALFA / Trexis)
 # ─────────────────────────────────────────────────────────────────────────────
 # Warehouse naming convention (confirmed from Snowflake UI 2025-05-20):
-#   ALFA:   WH_ALFA_*, BI_COMPUTE_WH, COMPUTE_WH, CROWDSTRIKE_WH,
+#   ALFA:   WH_ALFA_*, BI_COMPUTE_WH, OVERWATCH_WH, COMPUTE_WH, CROWDSTRIKE_WH,
 #           DOC_AI_WH, POSIT_WORKBENCH, SNOWFLAKE_LEARNING_WH, SYSTEM$STREAMLIT*
 #   Trexis: WH_TRXS_* only
 #
@@ -319,6 +319,7 @@ def get_company_case_expr(
             THEN 'Trexis'
         WHEN {wh_col} ILIKE 'WH_ALFA_%'
           OR {wh_col} = 'BI_COMPUTE_WH'
+          OR {wh_col} = 'OVERWATCH_WH'
           OR {wh_col} = 'COMPUTE_WH'
           OR {wh_col} = 'CROWDSTRIKE_WH'
           OR {wh_col} = 'DOC_AI_WH'

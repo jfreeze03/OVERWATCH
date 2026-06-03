@@ -190,6 +190,12 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         self.assertEqual(deprecated, [])
 
+    def test_streamlit_manifest_uses_dedicated_app_warehouse(self):
+        manifest = (APP_ROOT / "snowflake.yml").read_text(encoding="utf-8")
+        self.assertIn("query_warehouse: OVERWATCH_WH", manifest)
+        self.assertNotIn("query_warehouse: COMPUTE_WH", manifest)
+        self.assertIn("execute_as: CALLER", manifest)
+
     def test_architecture_objectives_cover_alfa_prod_dev_and_execution_warehouse(self):
         objectives = {
             (row["ENTITY_TYPE"], row["ENTITY_PATTERN"]): row
@@ -197,7 +203,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         }
         self.assertEqual(objectives[("DATABASE", "ALFA_EDW_PROD")]["EXPECTED_ENVIRONMENT"], "PROD")
         self.assertEqual(objectives[("DATABASE", "ALFA_EDW_DEV")]["EXPECTED_ENVIRONMENT"], "DEV_ALL")
-        self.assertEqual(objectives[("WAREHOUSE", "COMPUTE_WH")]["WORKLOAD_CLASS"], "OVERWATCH execution and utility compute")
+        self.assertEqual(objectives[("WAREHOUSE", "OVERWATCH_WH")]["WORKLOAD_CLASS"], "OVERWATCH app execution compute")
+        self.assertIn("Dedicated Streamlit app execution warehouse", objectives[("WAREHOUSE", "OVERWATCH_WH")]["ISOLATION_POLICY"])
+        self.assertEqual(objectives[("WAREHOUSE", "COMPUTE_WH")]["WORKLOAD_CLASS"], "OVERWATCH mart refresh and utility compute")
         self.assertIn("monitor cost separately", objectives[("WAREHOUSE", "COMPUTE_WH")]["ISOLATION_POLICY"])
 
     def test_workflow_hubs_expose_expected_subworkflows(self):
@@ -712,6 +720,8 @@ class NavigationIntegrityTests(unittest.TestCase):
             1,
         )[0]
         self.assertIn("RESULT_LIMIT=>100", live_monitor_text)
+        self.assertIn("QUERY_HISTORY_BY_WAREHOUSE", live_monitor_text)
+        self.assertIn("WAREHOUSE_NAME=>", live_monitor_text)
         self.assertIn("admin_button_disabled", live_monitor_text)
         self.assertIn("require_admin_enabled(\"query cancellation\")", live_monitor_text)
         self.assertIn("log_admin_action(", live_monitor_text)

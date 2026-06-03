@@ -2455,7 +2455,7 @@ def build_cost_governance_mart_sql(
 --   SP_OVERWATCH_REFRESH_COST_GOVERNANCE
 --   OVERWATCH_COST_GOVERNANCE_REFRESH
 --   OVERWATCH_ALERTS bridge
--- Defaults: warehouse COMPUTE_WH, email jdees@alfains.com.
+-- Defaults: warehouse COMPUTE_WH, email jdees@alfains.com,jfreeze03@yahoo.com.
 """
 
     table_block = _extract_setup_sql_block(

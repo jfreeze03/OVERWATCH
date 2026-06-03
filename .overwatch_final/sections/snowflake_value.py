@@ -41,6 +41,58 @@ def _value_table_has_company(session) -> bool:
         return False
 
 
+def _load_snowflake_value_state(session, company: str, *, show_errors: bool = True) -> bool:
+    try:
+        has_company = _value_table_has_company(session)
+        company_filter = ""
+        company_select = "NULL::VARCHAR AS COMPANY,"
+        if has_company:
+            company_select = "COMPANY,"
+            if company != "ALL":
+                company_filter = f"WHERE COMPANY = {sql_literal(company)}"
+        elif company == "Trexis":
+            company_filter = "WHERE 1=0"
+        df_summary = run_query(f"""
+            SELECT CATEGORY,
+                   COUNT(*) AS action_count,
+                   ROUND(SUM(SAVINGS_CREDITS * 30), 2) AS est_30_day_credit_savings,
+                   ROUND(SUM(SAVINGS_MONTHLY), 2) AS monthly_dollar_savings,
+                   ROUND(SUM(SAVINGS_MONTHLY * 12), 2) AS projected_annual_savings,
+                   SUM(CASE WHEN VERIFIED THEN 1 ELSE 0 END) AS verified_count
+            FROM {VALUE_TABLE}
+            {company_filter}
+            GROUP BY CATEGORY
+            ORDER BY monthly_dollar_savings DESC
+        """, ttl_key=f"snowflake_value_summary_{company}", tier="historical")
+        df_detail = run_query(f"""
+            SELECT ROI_ID, LOGGED_DATE, {company_select} CATEGORY, DESCRIPTION, ENTITY,
+                   BASELINE_CREDITS, CURRENT_CREDITS, SAVINGS_CREDITS,
+                   SAVINGS_MONTHLY, VERIFIED, NOTES
+            FROM {VALUE_TABLE}
+            {company_filter}
+            ORDER BY LOGGED_DATE DESC
+            LIMIT 500
+        """, ttl_key=f"snowflake_value_detail_{company}", tier="historical")
+        df_app_cost = run_query(
+            build_app_runtime_cost_sql(30),
+            ttl_key=f"snowflake_value_app_cost_{company}",
+            tier="historical",
+            section="Snowflake Value",
+        )
+        st.session_state["sf_value_summary"] = df_summary
+        st.session_state["sf_value_detail"] = df_detail
+        st.session_state["sf_value_app_cost"] = df_app_cost
+        st.session_state["sf_value_meta"] = {"company": company}
+        return True
+    except Exception as e:
+        st.session_state["sf_value_summary"] = None
+        st.session_state["sf_value_detail"] = None
+        st.session_state["sf_value_app_cost"] = None
+        if show_errors:
+            st.info(f"Snowflake value table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
+        return False
+
+
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
@@ -54,51 +106,16 @@ def render():
 
     st.info("Snowflake Value table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
 
+    load_meta = {"company": company}
+    if (
+        st.session_state.get("sf_value_meta") != load_meta
+        and st.session_state.get("sf_value_autoload_failed_meta") != load_meta
+    ):
+        if not _load_snowflake_value_state(session, company, show_errors=False):
+            st.session_state["sf_value_autoload_failed_meta"] = load_meta
+
     if st.button("Load Snowflake Value", key="sf_value_load"):
-        try:
-            has_company = _value_table_has_company(session)
-            company_filter = ""
-            company_select = "NULL::VARCHAR AS COMPANY,"
-            if has_company:
-                company_select = "COMPANY,"
-                if company != "ALL":
-                    company_filter = f"WHERE COMPANY = {sql_literal(company)}"
-            elif company == "Trexis":
-                company_filter = "WHERE 1=0"
-            df_summary = run_query(f"""
-                SELECT CATEGORY,
-                       COUNT(*) AS action_count,
-                       ROUND(SUM(SAVINGS_CREDITS * 30), 2) AS est_30_day_credit_savings,
-                       ROUND(SUM(SAVINGS_MONTHLY), 2) AS monthly_dollar_savings,
-                       ROUND(SUM(SAVINGS_MONTHLY * 12), 2) AS projected_annual_savings,
-                       SUM(CASE WHEN VERIFIED THEN 1 ELSE 0 END) AS verified_count
-                FROM {VALUE_TABLE}
-                {company_filter}
-                GROUP BY CATEGORY
-                ORDER BY monthly_dollar_savings DESC
-            """, ttl_key=f"snowflake_value_summary_{company}", tier="historical")
-            df_detail = run_query(f"""
-                SELECT ROI_ID, LOGGED_DATE, {company_select} CATEGORY, DESCRIPTION, ENTITY,
-                       BASELINE_CREDITS, CURRENT_CREDITS, SAVINGS_CREDITS,
-                       SAVINGS_MONTHLY, VERIFIED, NOTES
-                FROM {VALUE_TABLE}
-                {company_filter}
-                ORDER BY LOGGED_DATE DESC
-                LIMIT 500
-            """, ttl_key=f"snowflake_value_detail_{company}", tier="historical")
-            df_app_cost = run_query(
-                build_app_runtime_cost_sql(30),
-                ttl_key=f"snowflake_value_app_cost_{company}",
-                tier="historical",
-                section="Snowflake Value",
-            )
-            st.session_state["sf_value_summary"] = df_summary
-            st.session_state["sf_value_detail"] = df_detail
-            st.session_state["sf_value_app_cost"] = df_app_cost
-        except Exception as e:
-            st.info(f"Snowflake value table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
-            st.session_state["sf_value_summary"] = None
-            st.session_state["sf_value_detail"] = None
+        _load_snowflake_value_state(session, company, show_errors=True)
 
     df_summary = st.session_state.get("sf_value_summary")
     if df_summary is not None:

@@ -599,6 +599,81 @@ def _render_cost_run_rate_lens(run_rate: pd.DataFrame | None, credit_price: floa
     )
 
 
+def _build_cost_period_explanation(
+    cockpit: pd.DataFrame | None,
+    run_rate: pd.DataFrame | None,
+    queue: pd.DataFrame | None,
+    credit_price: float,
+) -> pd.DataFrame:
+    """Summarize cost movement, likely driver, and next workflow for executives."""
+    rows: list[dict] = []
+    cockpit_row = cockpit.iloc[0] if isinstance(cockpit, pd.DataFrame) and not cockpit.empty else pd.Series(dtype=object)
+    run_row = run_rate.iloc[0] if isinstance(run_rate, pd.DataFrame) and not run_rate.empty else pd.Series(dtype=object)
+    current_credits = safe_float(cockpit_row.get("CURRENT_CREDITS"))
+    prior_credits = safe_float(cockpit_row.get("PRIOR_CREDITS"))
+    credit_delta = current_credits - prior_credits
+    delta_pct = (credit_delta / prior_credits * 100) if prior_credits else None
+    top_wh = str(cockpit_row.get("TOP_INCREASE_WAREHOUSE") or "No warehouse loaded")
+    top_delta = safe_float(cockpit_row.get("TOP_INCREASE_CREDITS"))
+    pct_vs_30d = _nullable_float(run_row, "PCT_VS_30D_AVG") if not run_row.empty else None
+    yoy_7d = _nullable_float(run_row, "YOY_7D_PCT") if not run_row.empty else None
+    yoy_state = str(run_row.get("YOY_STATE") or "No YOY baseline")
+    open_savings = 0.0
+    open_count = 0
+    if isinstance(queue, pd.DataFrame) and not queue.empty:
+        status = queue.get("STATUS", pd.Series(dtype=str)).astype(str)
+        open_mask = ~status.isin(["Fixed", "Ignored"])
+        open_count = int(open_mask.sum())
+        if "EST_MONTHLY_SAVINGS" in queue.columns:
+            open_savings = safe_float(pd.to_numeric(queue.loc[open_mask, "EST_MONTHLY_SAVINGS"], errors="coerce").fillna(0).sum())
+
+    rows.append({
+        "QUESTION": "Did the bill move?",
+        "ANSWER": f"{credit_delta:+,.2f} credits ({_format_optional_pct(delta_pct)}) vs prior window.",
+        "DOLLAR_IMPACT": f"${credits_to_dollars(credit_delta, credit_price):+,.0f}",
+        "EVIDENCE": f"Current {current_credits:,.2f} credits; prior {prior_credits:,.2f} credits.",
+        "NEXT_ACTION": "If the move is above 10%, explain the bill before tuning or raising budgets.",
+    })
+    rows.append({
+        "QUESTION": "What likely changed?",
+        "ANSWER": f"{top_wh} is the largest loaded increase at {top_delta:+,.2f} credits.",
+        "DOLLAR_IMPACT": f"${credits_to_dollars(top_delta, credit_price):+,.0f}",
+        "EVIDENCE": "Cost cockpit current/prior warehouse movement.",
+        "NEXT_ACTION": "Open Warehouse Health to confirm queue, spill, p95, and setting evidence for that warehouse.",
+    })
+    rows.append({
+        "QUESTION": "Is this a short spike or trend?",
+        "ANSWER": f"7d vs 30d {_format_optional_pct(pct_vs_30d)}; YOY7 {_format_optional_pct(yoy_7d)}; {yoy_state}.",
+        "DOLLAR_IMPACT": "Trend proof",
+        "EVIDENCE": "Complete-day 7d, 30d, and prior-year metering.",
+        "NEXT_ACTION": "Use the run-rate lens before calling same-day partial metering a real cost incident.",
+    })
+    rows.append({
+        "QUESTION": "Is there already a fix path?",
+        "ANSWER": f"{open_count:,} open action(s), ${open_savings:,.0f}/mo estimated savings.",
+        "DOLLAR_IMPACT": f"${open_savings:,.0f}/mo",
+        "EVIDENCE": "Open Cost & Contract action queue rows.",
+        "NEXT_ACTION": "Work owner-approved actions first and verify savings with post-period metering.",
+    })
+    return pd.DataFrame(rows)
+
+
+def _render_cost_period_explanation(
+    cockpit: pd.DataFrame | None,
+    run_rate: pd.DataFrame | None,
+    queue: pd.DataFrame | None,
+    credit_price: float,
+) -> None:
+    st.markdown("**Why Did Cost Change?**")
+    render_priority_dataframe(
+        _build_cost_period_explanation(cockpit, run_rate, queue, credit_price),
+        title="Cost movement explanation",
+        priority_columns=["QUESTION", "ANSWER", "DOLLAR_IMPACT", "EVIDENCE", "NEXT_ACTION"],
+        raw_label="All cost movement explanation rows",
+        height=260,
+    )
+
+
 def _state_frame(state: dict, key: str) -> pd.DataFrame:
     value = state.get(key)
     return value if isinstance(value, pd.DataFrame) else pd.DataFrame()
@@ -2920,6 +2995,12 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
         credit_price,
         st.session_state.get("cost_contract_run_rate_error", ""),
+    )
+    _render_cost_period_explanation(
+        data,
+        st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        queue,
+        credit_price,
     )
     if not st.session_state.get(_FULL_COCKPIT_BOARDS_KEY):
         if st.button("Open full cockpit boards", key="cost_contract_open_full_cockpit_boards"):

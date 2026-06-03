@@ -15,6 +15,7 @@ from config import THRESHOLDS
 QUERY_ANALYSIS_PANES = (
     "Bottlenecks",
     "Pattern Degradation",
+    "Detailed Diagnosis",
     "Plan Steps",
     "AI Diagnosis",
 )
@@ -285,6 +286,12 @@ def render():
                 st.success("✅ No significant query pattern degradation detected.")
 
     # ── PLAN STEPS ────────────────────────────────────────────────────────────
+    elif active_view == "Detailed Diagnosis":
+        import importlib
+
+        detailed_diagnosis = importlib.import_module("sections.detailed_diagnosis")
+        detailed_diagnosis.render()
+
     elif active_view == "Plan Steps":
         st.header("🗂️ Query Plan Steps (GET_QUERY_OPERATOR_STATS)")
         st.caption("Enter a Query ID to inspect operator-level statistics.")

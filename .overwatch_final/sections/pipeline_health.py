@@ -7,6 +7,8 @@ from utils import (
     build_mart_pipeline_load_failures_sql,
     build_mart_pipeline_volume_sql,
     download_csv,
+    ensure_column_alias,
+    filter_existing_columns,
     get_db_filter_clause,
     get_session,
     format_snowflake_error,
@@ -16,6 +18,8 @@ from utils import (
     run_query,
     safe_float,
     safe_int,
+    scope_metadata_df,
+    show_to_df,
     upsert_actions,
 )
 
@@ -24,6 +28,8 @@ PIPELINE_HEALTH_PANES = (
     "Freshness SLA",
     "Load Failures",
     "Volume Watch",
+    "Snowpipe Usage",
+    "Dynamic Tables",
 )
 
 
@@ -37,6 +43,12 @@ def _annotate_pipeline_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFra
     elif finding_type == "Load Failure":
         routed["NEXT_WORKFLOW"] = "Workload operations"
         routed["NEXT_ACTION"] = "Open COPY/load history, inspect the latest error, repair the source file or stage, then reload failed files."
+    elif finding_type == "Snowpipe":
+        routed["NEXT_WORKFLOW"] = "Pipeline health"
+        routed["NEXT_ACTION"] = "Confirm pipe owner, file backlog, recent COPY errors, and whether ingestion credits match expected volume."
+    elif finding_type == "Dynamic Table":
+        routed["NEXT_WORKFLOW"] = "Change & drift"
+        routed["NEXT_ACTION"] = "Review refresh state, target lag, upstream changes, and the latest refresh query before changing lag or warehouse settings."
     else:
         routed["NEXT_WORKFLOW"] = "Change & drift"
         routed["NEXT_ACTION"] = "Review owner, retention, table growth, and lifecycle policy before archive/drop or clustering changes."
@@ -55,16 +67,37 @@ def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> No
         table = row.get("TABLE_NAME", "")
         entity = ".".join([str(v) for v in [db, schema, table] if v])
         if finding_type == "Freshness":
+            entity_type = "Table"
             severity = "High" if safe_float(row.get("HOURS_SINCE_CHANGE", 0)) >= 72 else "Medium"
             finding = f"{entity} has not changed for {safe_int(row.get('HOURS_SINCE_CHANGE', 0))} hours"
             action = "Confirm upstream pipeline SLA, source feed health, and whether the table is still business critical."
             proof = "ACCOUNT_USAGE.TABLES last_altered freshness scan"
         elif finding_type == "Load Failure":
+            entity_type = "Table"
             severity = "High"
             finding = f"{entity} has {safe_int(row.get('FILE_COUNT', 0))} failed load files with status {row.get('STATUS', '')}"
             action = "Review COPY_HISTORY error, repair source file/stage issue, and reload failed files."
             proof = "ACCOUNT_USAGE.COPY_HISTORY non-loaded status scan"
+        elif finding_type == "Snowpipe":
+            entity = str(row.get("PIPE_NAME") or "Unknown pipe")
+            entity_type = "Pipe"
+            credits = safe_float(row.get("DAILY_CREDITS", 0))
+            files = safe_int(row.get("FILES_INSERTED", 0))
+            severity = "High" if credits >= 10 else "Medium"
+            finding = f"{entity} used {credits:,.2f} Snowpipe credits with {files:,} files inserted."
+            action = "Confirm pipe owner, ingestion volume, failed files, and whether batching or source cadence changed."
+            proof = "ACCOUNT_USAGE.PIPE_USAGE_HISTORY credit and file-volume scan"
+        elif finding_type == "Dynamic Table":
+            name = row.get("NAME", row.get("DYNAMIC_TABLE_NAME", ""))
+            entity = ".".join([str(v) for v in [db, schema, name] if v])
+            entity_type = "Dynamic Table"
+            state = str(row.get("LAST_REFRESH_STATE_CODE") or row.get("STATE") or "UNKNOWN")
+            severity = "High" if state.upper() not in {"", "SUCCESS", "SUCCEEDED", "ACTIVE"} else "Medium"
+            finding = f"{entity} refresh state is {state}."
+            action = "Review refresh state/message, target lag, upstream changes, and latest refresh query."
+            proof = "SHOW DYNAMIC TABLES plus ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY"
         else:
+            entity_type = "Table"
             severity = "Medium"
             finding = f"{entity} is on volume watch: {row.get('WATCH_REASON', '')}; {safe_float(row.get('SIZE_GB', 0)):,.1f} GB"
             action = "Review retention, clustering, time travel, and whether old data can be archived or dropped."
@@ -74,7 +107,7 @@ def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> No
             "Source": f"Pipeline Health - {finding_type}",
             "Severity": severity,
             "Category": "Pipeline",
-            "Entity Type": "Table",
+            "Entity Type": entity_type,
             "Entity": entity,
             "Owner": "Data Engineering",
             "Finding": finding,
@@ -90,6 +123,86 @@ def _queue_pipeline_findings(session, df: pd.DataFrame, finding_type: str) -> No
     except Exception as e:
         st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
         st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+
+
+def _pipe_company_filter(company: str) -> str:
+    company_upper = str(company or "").upper()
+    if company_upper == "TREXIS":
+        return "AND pipe_name ILIKE '%TRXS%'"
+    if company_upper == "ALFA":
+        return "AND pipe_name NOT ILIKE '%TRXS%'"
+    return ""
+
+
+def _load_dynamic_table_inventory(session, company: str, days: int) -> pd.DataFrame:
+    df_dyn = show_to_df(session, "SHOW DYNAMIC TABLES IN ACCOUNT")
+    df_dyn = ensure_column_alias(df_dyn, "NAME", ["NAME", "DYNAMIC_TABLE_NAME"])
+    df_dyn = ensure_column_alias(df_dyn, "DATABASE_NAME", ["DATABASE_NAME", "DATABASE"])
+    df_dyn = ensure_column_alias(df_dyn, "SCHEMA_NAME", ["SCHEMA_NAME", "SCHEMA"])
+    df_dyn = scope_metadata_df(df_dyn, company=company)
+    if df_dyn.empty:
+        return df_dyn
+
+    try:
+        refresh_object = "SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY"
+        requested_cols = [
+            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "DYNAMIC_TABLE_NAME", "STATE_CODE",
+            "STATE_MESSAGE", "REFRESH_ACTION", "REFRESH_TRIGGER",
+            "REFRESH_START_TIME", "REFRESH_END_TIME", "TARGET_LAG_SEC", "QUERY_ID",
+        ]
+        available_cols = filter_existing_columns(session, refresh_object, requested_cols)
+        if "REFRESH_START_TIME" not in available_cols:
+            raise ValueError("Dynamic table refresh history does not expose REFRESH_START_TIME.")
+        name_expr = (
+            "NAME AS NAME"
+            if "NAME" in available_cols
+            else "DYNAMIC_TABLE_NAME AS NAME"
+            if "DYNAMIC_TABLE_NAME" in available_cols
+            else "'UNKNOWN' AS NAME"
+        )
+        select_cols = [
+            "DATABASE_NAME" if "DATABASE_NAME" in available_cols else "NULL::VARCHAR AS DATABASE_NAME",
+            "SCHEMA_NAME" if "SCHEMA_NAME" in available_cols else "NULL::VARCHAR AS SCHEMA_NAME",
+            name_expr,
+        ]
+        select_cols.extend([
+            col for col in available_cols
+            if col not in {"DATABASE_NAME", "SCHEMA_NAME", "NAME", "DYNAMIC_TABLE_NAME"}
+        ])
+        db_filter = get_db_filter_clause("database_name", company) if "DATABASE_NAME" in available_cols else ""
+        df_refresh = run_query(f"""
+            SELECT {", ".join(select_cols)}
+            FROM {refresh_object}
+            WHERE refresh_start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+              {db_filter}
+            ORDER BY refresh_start_time DESC
+            LIMIT 5000
+        """, ttl_key=f"pipeline_dynamic_refresh_{company}_{days}", tier="standard", section="Pipeline Health")
+        if df_refresh.empty or not all(c in df_dyn.columns for c in ["DATABASE_NAME", "SCHEMA_NAME", "NAME"]):
+            return df_dyn
+        df_refresh = df_refresh.rename(columns={
+            "STATE_CODE": "LAST_REFRESH_STATE_CODE",
+            "STATE_MESSAGE": "LAST_REFRESH_MESSAGE",
+            "REFRESH_START_TIME": "LAST_REFRESH_START_TIME",
+            "REFRESH_END_TIME": "LAST_REFRESH_END_TIME",
+            "QUERY_ID": "LAST_REFRESH_QUERY_ID",
+        })
+        if "LAST_REFRESH_START_TIME" in df_refresh.columns:
+            df_refresh = df_refresh.sort_values("LAST_REFRESH_START_TIME", ascending=False)
+        keep_cols = [
+            c for c in [
+                "DATABASE_NAME", "SCHEMA_NAME", "NAME",
+                "LAST_REFRESH_STATE_CODE", "LAST_REFRESH_MESSAGE",
+                "REFRESH_ACTION", "REFRESH_TRIGGER",
+                "LAST_REFRESH_START_TIME", "LAST_REFRESH_END_TIME",
+                "TARGET_LAG_SEC", "LAST_REFRESH_QUERY_ID",
+            ]
+            if c in df_refresh.columns
+        ]
+        df_refresh = df_refresh[keep_cols].drop_duplicates(["DATABASE_NAME", "SCHEMA_NAME", "NAME"])
+        return df_dyn.merge(df_refresh, how="left", on=["DATABASE_NAME", "SCHEMA_NAME", "NAME"])
+    except Exception:
+        return df_dyn
 
 
 def render():
@@ -301,3 +414,98 @@ def render():
                 download_csv(df_volume, "pipeline_volume_watch.csv")
                 if st.button("Save volume watch to Action Queue", key="pipe_volume_queue"):
                     _queue_pipeline_findings(session, df_volume, "Volume")
+
+    elif active_view == "Snowpipe Usage":
+        st.header("Snowpipe Usage")
+        st.caption("Snowpipe credit and file-volume monitoring from ACCOUNT_USAGE.PIPE_USAGE_HISTORY.")
+        pipe_days = st.slider("Lookback days", 1, 14, 3, key="pipe_snowpipe_days")
+        if st.button("Load Snowpipe Usage", key="pipe_snowpipe_load"):
+            try:
+                df_pipe = run_query(f"""
+                    SELECT
+                        pipe_name,
+                        DATE_TRUNC('day', start_time) AS day,
+                        ROUND(SUM(credits_used), 4) AS daily_credits,
+                        ROUND(SUM(bytes_inserted) / POWER(1024, 3), 2) AS gb_inserted,
+                        SUM(files_inserted) AS files_inserted
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.PIPE_USAGE_HISTORY
+                    WHERE start_time >= DATEADD('day', -{int(pipe_days)}, CURRENT_TIMESTAMP())
+                      {_pipe_company_filter(company)}
+                    GROUP BY pipe_name, day
+                    ORDER BY daily_credits DESC, files_inserted DESC
+                    LIMIT 300
+                """, ttl_key=f"pipeline_snowpipe_{company}_{pipe_days}", tier="standard", section="Pipeline Health")
+                st.session_state["pipe_snowpipe"] = _annotate_pipeline_routes(df_pipe, "Snowpipe")
+                st.session_state["pipe_snowpipe_source"] = "Live: SNOWFLAKE.ACCOUNT_USAGE.PIPE_USAGE_HISTORY"
+            except Exception as e:
+                st.warning(f"Snowpipe usage unavailable in this role/context: {format_snowflake_error(e)}")
+                st.session_state["pipe_snowpipe"] = pd.DataFrame()
+
+        df_pipe = st.session_state.get("pipe_snowpipe")
+        if df_pipe is not None:
+            st.caption(st.session_state.get("pipe_snowpipe_source", "SNOWFLAKE.ACCOUNT_USAGE.PIPE_USAGE_HISTORY"))
+            if df_pipe.empty:
+                st.info("No Snowpipe usage found for the selected period and company scope.")
+            else:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Pipes active", f"{df_pipe['PIPE_NAME'].nunique():,}")
+                c2.metric("Credits", f"{safe_float(df_pipe['DAILY_CREDITS'].sum()):,.2f}")
+                c3.metric("Files inserted", f"{safe_int(df_pipe['FILES_INSERTED'].sum()):,}")
+                render_priority_dataframe(
+                    df_pipe,
+                    title="Snowpipe cost and volume drivers",
+                    priority_columns=[
+                        "PIPE_NAME", "DAY", "DAILY_CREDITS", "GB_INSERTED",
+                        "FILES_INSERTED", "NEXT_WORKFLOW", "NEXT_ACTION",
+                    ],
+                    sort_by=["DAILY_CREDITS", "FILES_INSERTED"],
+                    ascending=[False, False],
+                    raw_label="All Snowpipe usage rows",
+                )
+                download_csv(df_pipe, "pipeline_snowpipe_usage.csv")
+                if st.button("Save Snowpipe findings to Action Queue", key="pipe_snowpipe_queue"):
+                    _queue_pipeline_findings(session, df_pipe, "Snowpipe")
+
+    elif active_view == "Dynamic Tables":
+        st.header("Dynamic Table Refresh Health")
+        st.caption("Inventory and latest refresh state for Snowflake dynamic tables.")
+        dyn_days = st.slider("Refresh lookback days", 1, 30, 7, key="pipe_dynamic_days")
+        if st.button("Load Dynamic Tables", key="pipe_dynamic_load"):
+            try:
+                df_dyn = _load_dynamic_table_inventory(session, company, dyn_days)
+                st.session_state["pipe_dynamic_tables"] = _annotate_pipeline_routes(df_dyn, "Dynamic Table")
+                st.session_state["pipe_dynamic_source"] = "SHOW DYNAMIC TABLES + ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY"
+            except Exception as e:
+                st.info(f"Dynamic table data unavailable in this role/context: {format_snowflake_error(e)}")
+                st.session_state["pipe_dynamic_tables"] = pd.DataFrame()
+
+        df_dyn = st.session_state.get("pipe_dynamic_tables")
+        if df_dyn is not None:
+            st.caption(st.session_state.get("pipe_dynamic_source", "SHOW DYNAMIC TABLES"))
+            if df_dyn.empty:
+                st.info("No dynamic tables found for the selected company scope.")
+            else:
+                state_col = "LAST_REFRESH_STATE_CODE" if "LAST_REFRESH_STATE_CODE" in df_dyn.columns else "STATE"
+                bad_states = pd.Series([False] * len(df_dyn), index=df_dyn.index)
+                if state_col in df_dyn.columns:
+                    bad_states = ~df_dyn[state_col].fillna("").astype(str).str.upper().isin(["", "SUCCESS", "SUCCEEDED", "ACTIVE"])
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Dynamic tables", f"{len(df_dyn):,}")
+                c2.metric("Refresh alerts", f"{int(bad_states.sum()):,}", delta_color="inverse")
+                c3.metric("Databases", f"{df_dyn['DATABASE_NAME'].nunique() if 'DATABASE_NAME' in df_dyn.columns else 0:,}")
+                render_priority_dataframe(
+                    df_dyn,
+                    title="Dynamic tables needing attention",
+                    priority_columns=[
+                        "DATABASE_NAME", "SCHEMA_NAME", "NAME", "STATE",
+                        "LAST_REFRESH_STATE_CODE", "LAST_REFRESH_MESSAGE",
+                        "REFRESH_ACTION", "REFRESH_TRIGGER", "LAST_REFRESH_START_TIME",
+                        "TARGET_LAG_SEC", "LAST_REFRESH_QUERY_ID", "NEXT_WORKFLOW", "NEXT_ACTION",
+                    ],
+                    sort_by=["LAST_REFRESH_STATE_CODE", "LAST_REFRESH_START_TIME", "TARGET_LAG_SEC"],
+                    ascending=[True, False, False],
+                    raw_label="All dynamic table rows",
+                )
+                download_csv(df_dyn, "pipeline_dynamic_tables.csv")
+                if int(bad_states.sum()) and st.button("Save dynamic table findings to Action Queue", key="pipe_dynamic_queue"):
+                    _queue_pipeline_findings(session, df_dyn[bad_states], "Dynamic Table")

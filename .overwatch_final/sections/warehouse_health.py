@@ -2882,6 +2882,41 @@ def _warehouse_support_panels_have_state() -> bool:
     )
 
 
+def _warehouse_period_movement(df: pd.DataFrame | None) -> pd.DataFrame:
+    """Return warehouse current/prior movement rows for the overview board."""
+    if df is None or getattr(df, "empty", True):
+        return pd.DataFrame()
+    required = {"WAREHOUSE_NAME", "METERED_CREDITS", "PRIOR_METERED_CREDITS", "CREDIT_DELTA"}
+    if not required.issubset(df.columns):
+        return pd.DataFrame()
+    movement = df.copy()
+    movement["CREDIT_DELTA_ABS"] = pd.to_numeric(movement["CREDIT_DELTA"], errors="coerce").fillna(0).abs()
+    movement["MOVEMENT_STATE"] = movement.apply(
+        lambda row: (
+            "New or no prior baseline"
+            if safe_float(row.get("PRIOR_METERED_CREDITS")) <= 0
+            else "Higher than prior"
+            if safe_float(row.get("CREDIT_DELTA")) > 0
+            else "Lower than prior"
+            if safe_float(row.get("CREDIT_DELTA")) < 0
+            else "Stable"
+        ),
+        axis=1,
+    )
+    movement["NEXT_ACTION"] = movement.apply(
+        lambda row: (
+            "Review queue, spill, p95, and settings before changing capacity."
+            if safe_float(row.get("CREDIT_DELTA")) > 0
+            else "Confirm the lower burn did not coincide with failures, queueing, or delayed tasks."
+            if safe_float(row.get("CREDIT_DELTA")) < 0
+            else "Keep monitoring; no material period movement loaded."
+        ),
+        axis=1,
+    )
+    sort_cols = ["CREDIT_DELTA_ABS", "METERED_CREDITS"]
+    return movement.sort_values(sort_cols, ascending=[False, False]).drop(columns=["CREDIT_DELTA_ABS"], errors="ignore")
+
+
 def render():
     credit_price = st.session_state.get("credit_price", 3.00)
     company = get_active_company()
@@ -3005,13 +3040,33 @@ def render():
         elif st.session_state.get("wh_df_wh") is not None and not st.session_state["wh_df_wh"].empty:
             df_w = st.session_state["wh_df_wh"]
 
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("Warehouses Active", len(df_w))
             c2.metric("Total Queries",     f"{int(df_w['TOTAL_QUERIES'].sum()):,}")
             c3.metric("Total Remote Spill", f"{df_w['TOTAL_REMOTE_SPILL_GB'].sum():.1f} GB")
+            c4.metric("Credit Delta", format_credits(float(df_w.get("CREDIT_DELTA", pd.Series(dtype=float)).sum())))
             wh_source = st.session_state.get("wh_df_wh_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
             confidence = "estimated" if "mart:" in str(wh_source).lower() else "exact"
             st.caption(f"{metric_confidence_label(confidence)} | {wh_source}")
+
+            movement = _warehouse_period_movement(df_w)
+            if not movement.empty:
+                st.subheader("Warehouse Period Movement")
+                render_priority_dataframe(
+                    movement,
+                    title="Current vs prior warehouse movement",
+                    priority_columns=[
+                        "WAREHOUSE_NAME", "MOVEMENT_STATE", "METERED_CREDITS",
+                        "PRIOR_METERED_CREDITS", "CREDIT_DELTA", "CREDIT_DELTA_PCT",
+                        "AVG_QUEUED_SEC", "TOTAL_REMOTE_SPILL_GB", "NEXT_ACTION",
+                    ],
+                    sort_by=["CREDIT_DELTA", "METERED_CREDITS"],
+                    ascending=[False, False],
+                    raw_label="All warehouse period movement rows",
+                    height=320,
+                )
+            else:
+                st.caption("Current/prior warehouse movement appears when the OVERWATCH mart overview is available.")
 
             # Flag warehouses needing attention
             for _, row in df_w.iterrows():
@@ -3034,6 +3089,8 @@ def render():
                     "TOTAL_REMOTE_SPILL_GB",
                     "AVG_ELAPSED_SEC",
                     "METERED_CREDITS",
+                    "PRIOR_METERED_CREDITS",
+                    "CREDIT_DELTA",
                     "AVG_CACHE_PCT",
                 ],
                 sort_by=[

@@ -1079,6 +1079,9 @@ def build_mart_warehouse_overview_sql(
     warehouse_table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter = _mart_company_filter(company)
     query_window = _mart_window_filter("HOUR_START", days_back, start_date, end_date)
+    credit_window = _mart_window_condition("HOUR_START", days_back, start_date, end_date)
+    prior_start = f"DATEADD('DAY', -{int(days_back) * 2}, CURRENT_TIMESTAMP())"
+    prior_end = f"DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())"
     wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
     user_filter = _mart_text_filter("USER_NAME", user_contains)
     role_filter = _mart_text_filter("ROLE_NAME", role_contains)
@@ -1109,14 +1112,27 @@ def build_mart_warehouse_overview_sql(
         credit_rollup AS (
             SELECT
                 warehouse_name,
-                ROUND(SUM(COALESCE(credits_used, 0)), 4) AS metered_credits,
-                ROUND(SUM(COALESCE(credits_used_compute, 0)), 4) AS credits_used_compute,
-                ROUND(SUM(COALESCE(credits_used_cloud_services, 0)), 4) AS credits_used_cloud_services,
+                ROUND(SUM(IFF({credit_window}, COALESCE(credits_used, 0), 0)), 4) AS metered_credits,
+                ROUND(SUM(IFF(HOUR_START >= {prior_start} AND HOUR_START < {prior_end}, COALESCE(credits_used, 0), 0)), 4) AS prior_metered_credits,
+                ROUND(
+                    SUM(IFF({credit_window}, COALESCE(credits_used, 0), 0))
+                    - SUM(IFF(HOUR_START >= {prior_start} AND HOUR_START < {prior_end}, COALESCE(credits_used, 0), 0)),
+                    4
+                ) AS credit_delta,
+                ROUND(
+                    (
+                        SUM(IFF({credit_window}, COALESCE(credits_used, 0), 0))
+                        - SUM(IFF(HOUR_START >= {prior_start} AND HOUR_START < {prior_end}, COALESCE(credits_used, 0), 0))
+                    ) / NULLIF(SUM(IFF(HOUR_START >= {prior_start} AND HOUR_START < {prior_end}, COALESCE(credits_used, 0), 0)), 0) * 100,
+                    1
+                ) AS credit_delta_pct,
+                ROUND(SUM(IFF({credit_window}, COALESCE(credits_used_compute, 0), 0)), 4) AS credits_used_compute,
+                ROUND(SUM(IFF({credit_window}, COALESCE(credits_used_cloud_services, 0), 0)), 4) AS credits_used_cloud_services,
                 MAX(load_ts) AS mart_load_ts
             FROM {warehouse_table}
             WHERE warehouse_name IS NOT NULL
+              AND HOUR_START >= {prior_start}
               {company_filter}
-              {query_window}
               {wh_filter}
             GROUP BY warehouse_name
         )
@@ -1132,6 +1148,9 @@ def build_mart_warehouse_overview_sql(
             q.error_count,
             q.total_gb_scanned,
             COALESCE(c.metered_credits, 0) AS metered_credits,
+            COALESCE(c.prior_metered_credits, 0) AS prior_metered_credits,
+            COALESCE(c.credit_delta, 0) AS credit_delta,
+            c.credit_delta_pct,
             COALESCE(c.credits_used_compute, 0) AS credits_used_compute,
             COALESCE(c.credits_used_cloud_services, 0) AS credits_used_cloud_services,
             c.mart_load_ts
@@ -1386,24 +1405,39 @@ def build_mart_usage_cost_drivers_sql(
     start_date: object = None,
     end_date: object = None,
 ) -> str:
-    """Build top warehouse cost drivers from hourly warehouse facts."""
+    """Build top warehouse cost drivers and prior-period movement from hourly warehouse facts."""
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter = _mart_company_filter(company)
-    window_filter = _mart_window_filter("HOUR_START", days_back, start_date, end_date)
+    current_window = _mart_window_condition("HOUR_START", days_back, start_date, end_date)
+    prior_start = f"DATEADD('DAY', -{int(days_back) * 2}, CURRENT_TIMESTAMP())"
+    prior_end = f"DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())"
     wh_filter = _mart_text_filter("WAREHOUSE_NAME", warehouse_contains)
     return f"""
         SELECT
             warehouse_name,
-            ROUND(SUM(COALESCE(credits_used, 0)), 4) AS total_credits,
-            ROUND(SUM(COALESCE(credits_used_compute, 0)), 4) AS compute_credits,
-            ROUND(SUM(COALESCE(credits_used_cloud_services, 0)), 4) AS cloud_credits
+            ROUND(SUM(IFF({current_window}, COALESCE(credits_used, 0), 0)), 4) AS total_credits,
+            ROUND(SUM(IFF(HOUR_START >= {prior_start} AND HOUR_START < {prior_end}, COALESCE(credits_used, 0), 0)), 4) AS prior_credits,
+            ROUND(
+                SUM(IFF({current_window}, COALESCE(credits_used, 0), 0))
+                - SUM(IFF(HOUR_START >= {prior_start} AND HOUR_START < {prior_end}, COALESCE(credits_used, 0), 0)),
+                4
+            ) AS credit_delta,
+            ROUND(
+                (
+                    SUM(IFF({current_window}, COALESCE(credits_used, 0), 0))
+                    - SUM(IFF(HOUR_START >= {prior_start} AND HOUR_START < {prior_end}, COALESCE(credits_used, 0), 0))
+                ) / NULLIF(SUM(IFF(HOUR_START >= {prior_start} AND HOUR_START < {prior_end}, COALESCE(credits_used, 0), 0)), 0) * 100,
+                1
+            ) AS credit_delta_pct,
+            ROUND(SUM(IFF({current_window}, COALESCE(credits_used_compute, 0), 0)), 4) AS compute_credits,
+            ROUND(SUM(IFF({current_window}, COALESCE(credits_used_cloud_services, 0), 0)), 4) AS cloud_credits
         FROM {table}
         WHERE warehouse_name IS NOT NULL
+          AND HOUR_START >= {prior_start}
           {company_filter}
-          {window_filter}
           {wh_filter}
         GROUP BY warehouse_name
-        ORDER BY total_credits DESC
+        ORDER BY credit_delta DESC, total_credits DESC
         LIMIT 20
     """
 

@@ -4,6 +4,7 @@ import streamlit as st
 
 from utils import (
     build_task_health_sql,
+    credits_to_dollars,
     download_csv,
     executive_health_score,
     format_credits,
@@ -285,18 +286,39 @@ def _load_overview(session, days: int) -> dict:
         )
         pressure_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
 
+    driver_preview = pd.DataFrame()
+    driver_preview_source = "Deferred: warehouse movement preview needs the OVERWATCH mart"
+    try:
+        driver_preview = run_query(
+            build_mart_usage_cost_drivers_sql(
+                days,
+                company=company,
+                warehouse_contains=global_warehouse,
+                start_date=global_start_date,
+                end_date=global_end_date,
+            ),
+            ttl_key=f"uo_driver_preview_mart_{company}_{days}",
+            tier="historical",
+            section="Usage Overview",
+        )
+        driver_preview_source = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+    except Exception:
+        driver_preview = pd.DataFrame()
+
     return {
         "overview": overview,
         "metering": metering,
         "storage": storage,
         "task_health": task_health,
         "warehouse_pressure": warehouse_pressure,
+        "driver_preview": driver_preview,
         "sources": {
             "overview": overview_source,
             "metering": metering_source,
             "warehouse_pressure": pressure_source,
             "storage": storage_source,
             "task_health": "Live: task history metadata",
+            "driver_preview": driver_preview_source,
         },
     }
 
@@ -325,28 +347,37 @@ def _load_cost_drivers(session, days: int):
         "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
         ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
     ))
-    wm_compute_expr = (
-        "ROUND(SUM(COALESCE(credits_used_compute, credits_used)), 4)"
-        if "CREDITS_USED_COMPUTE" in wm_cols
-        else "ROUND(SUM(credits_used), 4)"
-    )
-    wm_cloud_expr = (
-        "ROUND(SUM(COALESCE(credits_used_cloud_services, 0)), 4)"
-        if "CREDITS_USED_CLOUD_SERVICES" in wm_cols
-        else "0"
-    )
+    compute_measure = "COALESCE(credits_used_compute, credits_used)" if "CREDITS_USED_COMPUTE" in wm_cols else "credits_used"
+    cloud_measure = "COALESCE(credits_used_cloud_services, 0)" if "CREDITS_USED_CLOUD_SERVICES" in wm_cols else "0"
     live_df = company_scoped_query(
         f"""
         SELECT
             warehouse_name,
-            ROUND(SUM(credits_used), 4) AS total_credits,
-            {wm_compute_expr} AS compute_credits,
-            {wm_cloud_expr} AS cloud_credits
+            ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0)), 4) AS total_credits,
+            ROUND(SUM(IFF(start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
+                          AND start_time < DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0)), 4) AS prior_credits,
+            ROUND(
+                SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0))
+                - SUM(IFF(start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
+                          AND start_time < DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0)),
+                4
+            ) AS credit_delta,
+            ROUND(
+                (
+                    SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0))
+                    - SUM(IFF(start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
+                              AND start_time < DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0))
+                ) / NULLIF(SUM(IFF(start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
+                                AND start_time < DATEADD('day', -{days}, CURRENT_TIMESTAMP()), credits_used, 0)), 0) * 100,
+                1
+            ) AS credit_delta_pct,
+            ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), {compute_measure}, 0)), 4) AS compute_credits,
+            ROUND(SUM(IFF(start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP()), {cloud_measure}, 0)), 4) AS cloud_credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-        WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+        WHERE start_time >= DATEADD('day', -{days * 2}, CURRENT_TIMESTAMP())
           {{company_scope}}
         GROUP BY warehouse_name
-        ORDER BY total_credits DESC
+        ORDER BY credit_delta DESC, total_credits DESC
         LIMIT 20
         """,
         "uo_top_wh",
@@ -480,6 +511,97 @@ def _first_number(df, column: str) -> float:
     return safe_float(df.iloc[0].get(column, 0))
 
 
+def _pct_delta(current: float, prior: float) -> float | None:
+    return ((safe_float(current) - safe_float(prior)) / safe_float(prior) * 100) if safe_float(prior) else None
+
+
+def _movement_label(delta_pct: float | None, up_bad: bool = True) -> str:
+    if delta_pct is None:
+        return "No prior baseline"
+    if abs(delta_pct) < 5:
+        return "Stable"
+    if delta_pct > 0:
+        return "Higher than prior" if up_bad else "Improved"
+    return "Lower than prior" if up_bad else "Pressure reduced"
+
+
+def _format_pct_delta(delta_pct: float | None) -> str:
+    return "No baseline" if delta_pct is None else f"{delta_pct:+.1f}%"
+
+
+def _build_usage_change_explanation(data: dict, days: int, credit_price: float) -> pd.DataFrame:
+    """Return executive-friendly period movement and likely cost-change drivers."""
+    overview = data.get("overview", pd.DataFrame())
+    metering = data.get("metering", pd.DataFrame())
+    storage = data.get("storage", pd.DataFrame())
+    pressure = data.get("warehouse_pressure", pd.DataFrame())
+    drivers = data.get("driver_preview", pd.DataFrame())
+
+    rows: list[dict] = []
+    current_credits = _first_number(metering, "TOTAL_CREDITS")
+    prior_credits = _first_number(metering, "PRIOR_CREDITS")
+    credit_delta = current_credits - prior_credits
+    credit_delta_pct = _pct_delta(current_credits, prior_credits)
+    rows.append({
+        "SIGNAL": "Credits vs prior period",
+        "STATE": _movement_label(credit_delta_pct),
+        "MOVEMENT": f"{format_credits(current_credits)} now; {credit_delta:+,.2f} credits ({_format_pct_delta(credit_delta_pct)})",
+        "DOLLAR_IMPACT": f"${credits_to_dollars(credit_delta, credit_price):+,.0f}",
+        "EVIDENCE": f"Current {days}d window compared with the previous {days}d window.",
+        "NEXT_ACTION": "If movement is above 10%, open Cost Drivers and confirm the warehouse, owner, and workload reason.",
+    })
+
+    if isinstance(drivers, pd.DataFrame) and not drivers.empty and {"WAREHOUSE_NAME", "CREDIT_DELTA"}.issubset(drivers.columns):
+        driver_view = drivers.copy()
+        driver_view["CREDIT_DELTA_ABS"] = pd.to_numeric(driver_view["CREDIT_DELTA"], errors="coerce").fillna(0).abs()
+        top = driver_view.sort_values(["CREDIT_DELTA_ABS", "TOTAL_CREDITS"], ascending=[False, False]).iloc[0]
+        top_delta = safe_float(top.get("CREDIT_DELTA"))
+        top_pct = _pct_delta(top.get("TOTAL_CREDITS", 0), top.get("PRIOR_CREDITS", 0))
+        rows.append({
+            "SIGNAL": "Top warehouse movement",
+            "STATE": _movement_label(top_pct),
+            "MOVEMENT": f"{top.get('WAREHOUSE_NAME', 'Unknown')} moved {top_delta:+,.2f} credits ({_format_pct_delta(top_pct)})",
+            "DOLLAR_IMPACT": f"${credits_to_dollars(top_delta, credit_price):+,.0f}",
+            "EVIDENCE": "Warehouse-level current/prior movement from the OVERWATCH hourly mart.",
+            "NEXT_ACTION": "Open Warehouse Health for queue, spill, p95, and setting evidence before changing capacity.",
+        })
+    else:
+        rows.append({
+            "SIGNAL": "Top warehouse movement",
+            "STATE": "Detail deferred",
+            "MOVEMENT": "Warehouse movement preview is not loaded from the mart.",
+            "DOLLAR_IMPACT": "$0",
+            "EVIDENCE": "Cost Driver Chart can load the detailed warehouse list on demand.",
+            "NEXT_ACTION": "Load Cost Driver Chart only when the aggregate movement needs warehouse-level proof.",
+        })
+
+    current_storage = _first_number(storage, "ACTIVE_STORAGE_TB")
+    prior_storage = _first_number(storage, "PRIOR_ACTIVE_STORAGE_TB")
+    storage_delta = current_storage - prior_storage
+    storage_delta_pct = _pct_delta(current_storage, prior_storage)
+    rows.append({
+        "SIGNAL": "Storage vs prior period",
+        "STATE": _movement_label(storage_delta_pct),
+        "MOVEMENT": f"{current_storage:,.2f} TB now; {storage_delta:+,.2f} TB ({_format_pct_delta(storage_delta_pct)})",
+        "DOLLAR_IMPACT": "Allocated",
+        "EVIDENCE": "Latest storage snapshot compared with the prior-period snapshot.",
+        "NEXT_ACTION": "If storage grew materially, open Storage Monitor and review largest databases/tables.",
+    })
+
+    failed = _first_number(overview, "FAILED_QUERIES")
+    queued = _first_number(overview, "QUEUED_QUERIES")
+    pressured = _first_number(pressure, "PRESSURE_WAREHOUSES")
+    rows.append({
+        "SIGNAL": "Operational pressure",
+        "STATE": "Pressure" if failed or queued or pressured else "Stable",
+        "MOVEMENT": f"{failed:,.0f} failed queries, {queued:,.0f} queued queries, {pressured:,.0f} pressured warehouses",
+        "DOLLAR_IMPACT": "Service risk",
+        "EVIDENCE": "Query, task, and warehouse pressure signals for the same selected window.",
+        "NEXT_ACTION": "Use Service Health and Warehouse Health when cost movement coincides with failures or queueing.",
+    })
+    return pd.DataFrame(rows)
+
+
 def _queue_top_warehouses(session, df):
     if df is None or df.empty:
         st.info("No warehouse cost drivers are loaded yet.")
@@ -569,9 +691,19 @@ def render():
             metric_confidence_label("composite"),
             sources.get("overview", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"),
             sources.get("metering", "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"),
+            sources.get("driver_preview", "Warehouse movement preview deferred"),
             freshness_note("ACCOUNT_USAGE"),
             "Progressive load: KPI queries ran; charts below load only when requested.",
         ])
+    )
+
+    st.subheader("Why Did Usage Change?")
+    render_priority_dataframe(
+        _build_usage_change_explanation(data, days, st.session_state.get("credit_price", 3.0)),
+        title="Executive movement summary",
+        priority_columns=["SIGNAL", "STATE", "MOVEMENT", "DOLLAR_IMPACT", "EVIDENCE", "NEXT_ACTION"],
+        raw_label="All usage movement signals",
+        height=260,
     )
 
     with st.expander("Health score contributors"):
@@ -608,6 +740,19 @@ def render():
         elif not top_wh.empty:
             st.caption(st.session_state.get("uo_top_wh_source", "Source unavailable"))
             render_drillable_bar_chart(top_wh, "WAREHOUSE_NAME", "TOTAL_CREDITS", "uo_top_wh", "Top Warehouses By Credit Usage", "warehouse_name", 24 * min(days, 14), 15)
+            movement_cols = [
+                "WAREHOUSE_NAME", "TOTAL_CREDITS", "PRIOR_CREDITS", "CREDIT_DELTA",
+                "CREDIT_DELTA_PCT", "COMPUTE_CREDITS", "CLOUD_CREDITS",
+            ]
+            render_priority_dataframe(
+                top_wh,
+                title="Warehouse period-over-period movement",
+                priority_columns=movement_cols,
+                sort_by=["CREDIT_DELTA", "TOTAL_CREDITS"],
+                ascending=[False, False],
+                raw_label="All warehouse movement rows",
+                height=320,
+            )
             if st.button("Send top warehouses to Action Queue", key="uo_queue_wh"):
                 _queue_top_warehouses(session, top_wh)
             download_csv(top_wh, "usage_overview_top_warehouses.csv")

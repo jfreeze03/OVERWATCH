@@ -33,6 +33,7 @@ WORKFLOW_DETAILS = {
 
 WORKFLOW_MODULES = {
     "Live triage": "sections.live_monitor",
+    "Query diagnosis": "sections.query_analysis",
     "Root cause patterns": "sections.query_analysis",
     "Detailed diagnosis": "sections.detailed_diagnosis",
     "Task graphs": "sections.task_management",
@@ -97,16 +98,8 @@ def render() -> None:
     if workflow == "Live triage":
         render_workflow_module(workflow, WORKFLOW_MODULES)
     elif workflow == "Query diagnosis":
-        mode = st.radio(
-            "Diagnosis mode",
-            ["Root cause patterns", "Detailed diagnosis"],
-            horizontal=True,
-            label_visibility="collapsed",
-            key="workload_query_diagnosis_mode",
-        )
-        if mode == "Root cause patterns":
-            render_workflow_module(mode, WORKFLOW_MODULES)
-        else:
-            render_workflow_module(mode, WORKFLOW_MODULES)
+        if st.session_state.pop("workload_query_diagnosis_mode", "") == "Detailed diagnosis":
+            st.session_state["query_analysis_active_view"] = "Detailed Diagnosis"
+        render_workflow_module(workflow, WORKFLOW_MODULES)
     else:
         render_workflow_module(workflow, WORKFLOW_MODULES)

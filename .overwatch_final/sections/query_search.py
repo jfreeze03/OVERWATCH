@@ -14,6 +14,27 @@ from utils import (
 )
 
 
+def _looks_like_query_id(value: str) -> bool:
+    text = str(value or "").strip()
+    if len(text) < 16 or any(ch.isspace() for ch in text):
+        return False
+    return "-" in text or text[:2].isdigit()
+
+
+def _query_search_clause(search_value: str, mode: str) -> tuple[str, str, int | None]:
+    """Return SQL predicate, display mode, and an optional day cap for safe query search."""
+    normalized_mode = str(mode or "Auto").strip()
+    if normalized_mode == "Exact query ID" or (normalized_mode == "Auto" and _looks_like_query_id(search_value)):
+        return f"AND query_id = {sql_literal(search_value)}", "Exact query ID", None
+    if normalized_mode == "Prefix starts with":
+        if len(search_value) < 3:
+            raise ValueError("Enter at least 3 characters for prefix search.")
+        return f"AND query_text ILIKE {sql_literal(search_value + '%')}", "Prefix starts with", None
+    if len(search_value) < 6:
+        raise ValueError("Enter at least 6 characters for contains search, or switch to exact query ID.")
+    return f"AND query_text ILIKE '%' || {sql_literal(search_value)} || '%'", "Text contains", 7
+
+
 def render():
     session = get_session()
     company = get_active_company()
@@ -62,22 +83,30 @@ def render():
         ["ALL", "SUCCESS", "FAILED_WITH_ERROR", "QUEUED", "BLOCKED"],
         key="qs_status",
     )
+    search_mode = st.selectbox(
+        "Search mode",
+        ["Auto", "Exact query ID", "Prefix starts with", "Text contains"],
+        key="qs_mode",
+    )
+    st.caption(
+        "Exact query ID is the cheapest path. Prefix search avoids a leading wildcard. "
+        "Contains search is capped at 7 days to avoid broad query-text scans."
+    )
 
     autorun = bool(st.session_state.pop("qs_autorun", False))
     if (st.button("Search", key="qs_run") or autorun) and search_text:
         search_value = search_text.strip()
-        looks_like_query_id = len(search_value) >= 20 and "-" in search_value
-        if len(search_value) < 3:
-            st.warning("Enter at least 3 characters to avoid an expensive full-account query-text scan.")
+        try:
+            search_cl, resolved_mode, day_cap = _query_search_clause(search_value, search_mode)
+        except ValueError as exc:
+            st.warning(str(exc))
             return
+        effective_days = min(days_back, day_cap) if day_cap else days_back
+        if day_cap and days_back > day_cap:
+            st.warning(f"Contains search is capped at {day_cap} days. Use exact query ID or prefix search for wider lookbacks.")
 
         user_cl = f"AND user_name ILIKE '%' || {sql_literal(user_filter)} || '%'" if user_filter else ""
         status_cl = f"AND execution_status = {sql_literal(status_filter)}" if status_filter != "ALL" else ""
-        search_cl = (
-            f"AND query_id = {sql_literal(search_value)}"
-            if looks_like_query_id
-            else f"AND query_text ILIKE '%' || {sql_literal(search_value)} || '%'"
-        )
         scoped_filters = get_global_filter_clause(
             date_col="start_time",
             wh_col="warehouse_name",
@@ -95,21 +124,26 @@ def render():
                        {cloud_credits_expr},
                        SUBSTR(query_text,1,500) AS query_text
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                WHERE start_time >= DATEADD('day', -{days_back}, CURRENT_TIMESTAMP())
+                WHERE start_time >= DATEADD('day', -{effective_days}, CURRENT_TIMESTAMP())
                   {search_cl}
                   {scoped_filters}
                   {user_cl} {status_cl}
                 ORDER BY start_time DESC
                 LIMIT {row_limit}
-            """, ttl_key=f"query_search_{company}_{search_value}_{user_filter}_{status_filter}_{days_back}_{row_limit}", tier="historical", section="Query Search & History")
+            """, ttl_key=f"query_search_{company}_{resolved_mode}_{search_value}_{user_filter}_{status_filter}_{effective_days}_{row_limit}", tier="historical", section="Query Search & History")
             st.session_state["qs_df_qs"] = df_qs
+            st.session_state["qs_search_mode"] = resolved_mode
+            st.session_state["qs_effective_days"] = effective_days
         except Exception as e:
             st.warning(f"Query search unavailable: {format_snowflake_error(e)}")
 
     df_q = st.session_state.get("qs_df_qs")
     if df_q is not None:
         if not df_q.empty:
-            st.success(f"Found {len(df_q):,} matching queries.")
+            st.success(
+                f"Found {len(df_q):,} matching queries "
+                f"({st.session_state.get('qs_search_mode', 'Search')}, {st.session_state.get('qs_effective_days', days_back)}d)."
+            )
             render_query_drilldown(df_q, key="qs_result")
             download_csv(df_q, "query_search_results.csv")
         else:

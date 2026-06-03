@@ -351,7 +351,9 @@ from utils.mart import (  # noqa: E402
     build_mart_procedure_calls_sql,
     build_mart_procedure_inventory_sql,
     build_mart_procedure_sla_sql,
+    build_mart_usage_cost_drivers_sql,
     build_mart_usage_metering_sql,
+    build_mart_warehouse_overview_sql,
     build_mart_pipeline_load_failures_sql,
     build_mart_query_bottleneck_sql,
     build_mart_query_degradation_sql,
@@ -4929,6 +4931,21 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("IFF(AND ", sql)
         self.assertIn("IFF(HOUR_START >=", sql)
         self.assertIn("HOUR_START < DATEADD('DAY', 1", sql)
+
+    def test_usage_and_warehouse_mart_sql_exposes_period_movement(self):
+        usage_sql = build_mart_usage_cost_drivers_sql(7, "ALFA").upper()
+        warehouse_sql = build_mart_warehouse_overview_sql(7, "ALFA").upper()
+
+        self.assertIn("FACT_WAREHOUSE_HOURLY", usage_sql)
+        self.assertIn("PRIOR_CREDITS", usage_sql)
+        self.assertIn("CREDIT_DELTA", usage_sql)
+        self.assertIn("CREDIT_DELTA_PCT", usage_sql)
+        self.assertIn("ORDER BY CREDIT_DELTA DESC", usage_sql)
+
+        self.assertIn("PRIOR_METERED_CREDITS", warehouse_sql)
+        self.assertIn("CREDIT_DELTA", warehouse_sql)
+        self.assertIn("CREDIT_DELTA_PCT", warehouse_sql)
+        self.assertIn("HOUR_START >= DATEADD('DAY', -14", warehouse_sql)
 
     def test_explain_bill_driver_aliases_match_visible_columns(self):
         cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()

@@ -16,6 +16,20 @@ from utils import (
 from utils.workflows import render_priority_dataframe
 
 
+def _load_storage_trend_from_mart(stor_days: int, company: str) -> bool:
+    df_stor = run_query(
+        build_mart_storage_trend_sql(stor_days, company),
+        ttl_key=f"storage_trend_mart_{company}_{stor_days}",
+        tier="historical",
+    )
+    if df_stor.empty:
+        return False
+    st.session_state["stor_df_stor"] = df_stor
+    st.session_state["stor_source"] = "OVERWATCH mart: FACT_STORAGE_DAILY"
+    st.session_state["stor_meta"] = {"company": company, "days": int(stor_days)}
+    return True
+
+
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
@@ -26,18 +40,22 @@ def render():
     st.caption("Database & stage storage with cost estimates ($23/TB/month default).")
 
     stor_days = st.slider("Lookback (days)", 7, 180, 90, key="stor_days")
+    stor_meta = {"company": company, "days": int(stor_days)}
+
+    if (
+        st.session_state.get("stor_meta") != stor_meta
+        and st.session_state.get("stor_autoload_failed_meta") != stor_meta
+    ):
+        try:
+            if not _load_storage_trend_from_mart(stor_days, company):
+                st.session_state["stor_autoload_failed_meta"] = stor_meta
+        except Exception:
+            st.session_state["stor_autoload_failed_meta"] = stor_meta
 
     if st.button("Load Storage Data", key="stor_load"):
         try:
-            df_stor = run_query(
-                build_mart_storage_trend_sql(stor_days, company),
-                ttl_key=f"storage_trend_mart_{company}_{stor_days}",
-                tier="historical",
-            )
-            if df_stor.empty:
+            if not _load_storage_trend_from_mart(stor_days, company):
                 raise RuntimeError("Storage mart returned no rows.")
-            st.session_state["stor_df_stor"] = df_stor
-            st.session_state["stor_source"] = "OVERWATCH mart: FACT_STORAGE_DAILY"
             if company != "ALL":
                 st.info("Stage storage is account-level in Snowflake, so this company view shows database and failsafe storage only.")
         except Exception:
@@ -81,9 +99,10 @@ def render():
             FROM database_storage d
             FULL OUTER JOIN stage_storage s ON d.usage_date = s.usage_date
             ORDER BY usage_date
-            """, ttl_key=f"storage_trend_{company}_{stor_days}", tier="historical")
+                    """, ttl_key=f"storage_trend_{company}_{stor_days}", tier="historical")
                 st.session_state["stor_df_stor"] = df_stor
                 st.session_state["stor_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE storage views"
+                st.session_state["stor_meta"] = stor_meta
             except Exception as e:
                 st.warning(f"Storage data unavailable in this role/context: {format_snowflake_error(e)}")
 

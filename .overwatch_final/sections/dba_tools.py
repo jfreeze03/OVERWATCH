@@ -30,44 +30,17 @@ from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
     ACTION_QUEUE_TABLE, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA,
 )
-from utils.workflows import render_priority_dataframe
-
-# ── Snowflake warehouse parameter documentation ──────────────────────────────
-_WH_PARAM_HELP = {
-    "WAREHOUSE_SIZE":           "Credit rate: X-Small=1, Small=2, Medium=4, Large=8, X-Large=16, 2X-Large=32...",
-    "AUTO_SUSPEND":             "Seconds of inactivity before the warehouse suspends. 0 = never. Recommended: 60–300.",
-    "AUTO_RESUME":              "Automatically resume when a query is submitted. Should almost always be TRUE.",
-    "STATEMENT_TIMEOUT_IN_SECONDS": "Maximum seconds a single query can run before being cancelled. 0 = no limit. Recommended: 3600.",
-    "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS": "Max seconds a query waits in the queue. 0 = no limit. Recommended: 600.",
-    "MAX_CONCURRENCY_LEVEL":    "Max concurrent SQL statements per cluster. Default: 8. Range: 1–10.",
-    "MAX_CLUSTER_COUNT":        "Multi-cluster: max number of clusters. 1 = single cluster. Requires Enterprise.",
-    "MIN_CLUSTER_COUNT":        "Multi-cluster: min clusters always running. Setting >1 incurs constant credit cost.",
-    "SCALING_POLICY":           "STANDARD = scale up when queue builds. ECONOMY = scale only when full queue detected.",
-    "ENABLE_QUERY_ACCELERATION": "Allow eligible queries to use the Query Acceleration Service. Requires Enterprise.",
-    "QUERY_ACCELERATION_MAX_SCALE_FACTOR": "Max scale factor for QAS (0 = unlimited, 1–100). Each factor = 1 credit/hr.",
-    "COMMENT":                  "Free-text label for this warehouse.",
-}
-
-_SIZE_OPTS = ["X-Small","Small","Medium","Large","X-Large","2X-Large","3X-Large","4X-Large","5X-Large","6X-Large"]
-_SIZE_SQL = {
-    "X-Small": "XSMALL",
-    "Small": "SMALL",
-    "Medium": "MEDIUM",
-    "Large": "LARGE",
-    "X-Large": "XLARGE",
-    "2X-Large": "XXLARGE",
-    "3X-Large": "XXXLARGE",
-    "4X-Large": "X4LARGE",
-    "5X-Large": "X5LARGE",
-    "6X-Large": "X6LARGE",
-}
-_SCALE_OPTS = ["STANDARD","ECONOMY"]
-TASK_GRAPH_CONTROL_PANES = (
-    "Running Task Queries",
-    "Cancel Graph / Task",
-    "Suspend / Resume",
-    "DAG Inspector",
+from utils.dba_tool_catalog import (
+    DBA_TOOL_FOCUS_GROUPS,
+    DBA_TOOL_FOCUS_HINTS,
+    DBA_TOOL_GROUPS,
+    SCALE_OPTS as _SCALE_OPTS,
+    SIZE_OPTS as _SIZE_OPTS,
+    SIZE_SQL as _SIZE_SQL,
+    TASK_GRAPH_CONTROL_PANES,
+    WH_PARAM_HELP as _WH_PARAM_HELP,
 )
+from utils.workflows import render_priority_dataframe
 
 
 def _load_button(label, key):
@@ -412,11 +385,10 @@ def render():
     )
     focus = st.session_state.get("dba_tools_focus")
     if focus:
-        focus_hint = {
-            "Governance": "Start with Governance for schema compare, recent objects, unused objects, and object drift.",
-            "Data Movement": "Start with Data Movement for loads, Snowpipe, dynamic tables, and replication.",
-            "Controlled Actions": "Start with Warehouse Ops for query/task/warehouse actions, then Cost & Setup for setup/audit evidence.",
-        }.get(str(focus), "Use the matching tab group below first; other tools remain available when needed.")
+        focus_hint = DBA_TOOL_FOCUS_HINTS.get(
+            str(focus),
+            "Use the matching tab group below first; other tools remain available when needed.",
+        )
         st.info(f"Change & Drift focus: {focus}. {focus_hint}")
     with st.expander("DBA Tools Operating Model", expanded=not bool(focus)):
         risk_a, risk_b, risk_c = st.columns(3)
@@ -450,42 +422,8 @@ def render():
         st.rerun()
     st.divider()
 
-    tool_groups = {
-        "Warehouse Ops": [
-            "Query Kill List",
-            "Warehouse Settings",
-            "QAS Monitor",
-            "Task Graph Control",
-        ],
-        "Data Movement": [
-            "Data Loading",
-            "Snowpipe Monitor",
-            "Dynamic Tables",
-            "Replication",
-        ],
-        "Governance": [
-            "Network & Sessions",
-            "Unused Objects",
-            "Schema Compare",
-            "Recent Objects",
-        ],
-        "Cost & Setup": [
-            "Mart Readiness",
-            "Serverless Costs",
-            "Cost Formula Audit",
-            "Cortex AI Limits",
-            "Usage Log",
-            "Setup Status",
-        ],
-    }
-    focus_to_group = {
-        "Governance": "Governance",
-        "Data Movement": "Data Movement",
-        "Controlled Actions": "Warehouse Ops",
-        "Cost": "Cost & Setup",
-    }
-    default_group = focus_to_group.get(str(focus), "Warehouse Ops")
-    group_names = list(tool_groups)
+    default_group = DBA_TOOL_FOCUS_GROUPS.get(str(focus), "Warehouse Ops")
+    group_names = list(DBA_TOOL_GROUPS)
     group_index = group_names.index(default_group) if default_group in group_names else 0
     selected_group = st.radio(
         "DBA workflow",
@@ -496,7 +434,7 @@ def render():
     )
     selected_tool = st.selectbox(
         "Open specialist tool",
-        tool_groups[selected_group],
+        DBA_TOOL_GROUPS[selected_group],
         key=f"dba_tools_tool_selector_{selected_group}",
     )
     st.caption(

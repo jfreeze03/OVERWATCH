@@ -835,7 +835,7 @@ def _load_cache_optimization(session, days: int, row_limit: int) -> pd.DataFrame
         if cache_pct < 20 and repeated_ratio >= 0.35 and auto_suspend and auto_suspend <= 60:
             severity = "High"
             decision = "Cache-hostile suspend"
-            action = "For BI/reporting workloads, test a longer auto-suspend or route repeated queries to a warmer warehouse."
+            action = "For BI/reporting workloads, validate a longer auto-suspend or route repeated queries to a warmer warehouse."
         elif cache_pct < 20 and repeated_ratio >= 0.35:
             severity = "Medium"
             decision = "Poor cache reuse"

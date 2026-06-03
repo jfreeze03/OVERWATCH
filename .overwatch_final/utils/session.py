@@ -59,17 +59,16 @@ def _make_session():
                 )
                 st.stop()
 
-    for stmt in [
-        f"ALTER SESSION SET QUERY_TAG = '{_QUERY_TAG}'",
-        f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {_STMT_TIMEOUT_SECONDS}",
-        "ALTER SESSION SET TIMEZONE = 'UTC'",
-    ]:
-        try:
-            sess.sql(stmt).collect()
-            if stmt.startswith("ALTER SESSION SET QUERY_TAG"):
-                st.session_state["_overwatch_active_query_tag"] = _QUERY_TAG
-        except Exception:
-            pass
+    try:
+        sess.sql(
+            "ALTER SESSION SET "
+            f"QUERY_TAG = '{_QUERY_TAG}', "
+            f"STATEMENT_TIMEOUT_IN_SECONDS = {_STMT_TIMEOUT_SECONDS}, "
+            "TIMEZONE = 'UTC'"
+        ).collect()
+        st.session_state["_overwatch_active_query_tag"] = _QUERY_TAG
+    except Exception:
+        pass
 
     _capture_current_role(sess)
     return sess

@@ -195,6 +195,18 @@ def dba_readiness_label(score: float) -> str:
     return "Not Ready"
 
 
+def dba_deployment_label(score: float) -> str:
+    """Deployment-facing readiness band after live gates are applied."""
+    score = float(score or 0)
+    if score >= 95:
+        return "Ready"
+    if score >= 90:
+        return "Ready With Watch"
+    if score >= 80:
+        return "Action Required"
+    return "Blocked"
+
+
 def bad_ratio_score(total: float, bad: float, penalty: float = 100.0) -> float:
     """Score a bad-event ratio with a category-specific penalty weight."""
     total = float(total or 0)
@@ -298,6 +310,50 @@ def dba_control_plane_readiness_score(component_scores: dict) -> dict:
     }
 
 
+def dba_effective_readiness_score(readiness_score: float, gates: dict | None = None) -> dict:
+    """Apply live deployment gates to a section's built-readiness score.
+
+    The base score answers whether the section is built as a DBA control plane.
+    This effective score answers whether the currently loaded deployment state
+    is safe enough to rely on.
+    """
+    base_score = clamp_score(readiness_score)
+    gate_rows = []
+    for key, gate in (gates or {}).items():
+        if isinstance(gate, dict):
+            gate_score = clamp_score(gate.get("score", 100))
+            label = str(gate.get("label") or key).strip()
+            state = str(gate.get("state") or dba_deployment_label(gate_score)).strip()
+            reason = str(gate.get("reason") or "").strip()
+        else:
+            gate_score = clamp_score(gate)
+            label = str(key).replace("_", " ").title()
+            state = dba_deployment_label(gate_score)
+            reason = ""
+        gate_rows.append({
+            "KEY": str(key),
+            "GATE": label,
+            "SCORE": gate_score,
+            "STATE": state,
+            "REASON": reason,
+        })
+
+    gate_floor = min((row["SCORE"] for row in gate_rows), default=100.0)
+    effective_score = clamp_score(min(base_score, gate_floor))
+    blocking = [
+        row for row in gate_rows
+        if row["SCORE"] <= effective_score or row["SCORE"] < base_score
+    ]
+    blocking.sort(key=lambda row: row["SCORE"])
+    return {
+        "score": effective_score,
+        "base_score": base_score,
+        "label": dba_deployment_label(effective_score),
+        "gates": gate_rows,
+        "gate_drivers": blocking,
+    }
+
+
 def _cap_driver_label(reason: str) -> str:
     reason_lower = str(reason or "").lower()
     if "below 70" in reason_lower:
@@ -315,26 +371,42 @@ def _cap_driver_label(reason: str) -> str:
     return str(reason or "score cap")
 
 
-def dba_control_plane_section_scorecards(section_scores: dict | None = None) -> list[dict]:
+def dba_control_plane_section_scorecards(
+    section_scores: dict | None = None,
+    deployment_gates: dict | None = None,
+) -> list[dict]:
     """Return strict readiness rows for the DBA workflow sections."""
     section_scores = section_scores or DBA_CONTROL_PLANE_SECTION_BASELINE
+    deployment_gates = deployment_gates or {}
     rows = []
     for section, scores in section_scores.items():
         result = dba_control_plane_readiness_score(scores)
+        effective = dba_effective_readiness_score(
+            result["score"],
+            deployment_gates.get(section, {}),
+        )
         lowest = min(result["components"], key=lambda row: row["SCORE"])
         cap_drivers = []
         for cap in result["caps"]:
             label = _cap_driver_label(cap.get("REASON", ""))
             if label not in cap_drivers:
                 cap_drivers.append(label)
+        gate_drivers = []
+        for gate in effective["gate_drivers"]:
+            label = str(gate.get("GATE") or gate.get("KEY") or "").strip()
+            if label and label not in gate_drivers:
+                gate_drivers.append(label)
         rows.append({
             "SECTION": section,
             "SCORE": result["score"],
+            "EFFECTIVE_SCORE": effective["score"],
             "RAW_SCORE": result["raw_score"],
             "LABEL": result["label"],
+            "DEPLOYMENT_LABEL": effective["label"],
             "LOWEST_COMPONENT": lowest["COMPONENT"],
             "LOWEST_SCORE": lowest["SCORE"],
             "CAP_DRIVERS": ", ".join(cap_drivers) if cap_drivers else "none",
+            "GATE_DRIVERS": ", ".join(gate_drivers) if gate_drivers else "none",
             "NEXT_95_MOVE": DBA_CONTROL_PLANE_SECTION_NEXT_MOVES.get(section, "Raise weak control-plane components."),
         })
     return rows

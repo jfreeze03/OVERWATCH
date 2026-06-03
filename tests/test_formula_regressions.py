@@ -5722,7 +5722,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CoWork Artifact Governance", areas)
         self.assertIn("Openflow Operations", areas)
         self.assertIn("Horizon Governance Readiness", areas)
-        self.assertIn("Semantic Trust & Verified Query Testing", areas)
+        self.assertIn("Semantic Trust & Verified Query Validation", areas)
         self.assertIn("BCDR Drill Ledger", areas)
         self.assertIn("AI Change Governance", areas)
         self.assertIn("Cortex Sense Context Governance", PLATFORM_FUTURES_EXPERT_CRITERIA)

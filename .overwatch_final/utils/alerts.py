@@ -2053,7 +2053,7 @@ def build_annotation_ddl(
 ) -> str:
     """Generate DDL for the OVERWATCH_ANNOTATIONS table."""
     return f"""-- OVERWATCH Annotation System
--- Prevents re-alerting on known events such as load tests, deployments, or planned maintenance.
+-- Prevents re-alerting on known events such as high-volume validation windows, deployments, or planned maintenance.
 
 CREATE TABLE IF NOT EXISTS {safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(ANNOTATION_TABLE)} (
     ANNOTATION_ID   NUMBER AUTOINCREMENT PRIMARY KEY,

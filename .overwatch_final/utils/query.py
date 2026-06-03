@@ -42,7 +42,7 @@ QUERY_BUDGET_THRESHOLDS = {
 
 
 def _perf_run_id() -> str:
-    """Optional run id used by the external performance test harness."""
+    """Optional run id used by external release validation."""
     try:
         value = st.session_state.get("_overwatch_perf_run_id", "")
     except Exception:
@@ -506,9 +506,15 @@ def _cache_context() -> str:
         str(st.session_state.get("global_role", "")),
         str(st.session_state.get("global_database", "")),
         str(st.session_state.get("global_environment", "")),
-        str(st.session_state.get("exceptions_only_mode", "")),
         str(st.session_state.get("_overwatch_current_role", "")),
     ])
+
+
+def _cache_salt(ttl_key: str) -> str:
+    """Return cache salt for global refresh plus a specific query namespace."""
+    global_salt = st.session_state.get("_refresh_salt_global", "")
+    scoped_salt = st.session_state.get(f"_refresh_salt_{ttl_key}", "")
+    return f"{global_salt}|{scoped_salt}"
 
 
 @st.cache_data(ttl=CACHE_TIERS["live"], show_spinner=False)
@@ -628,7 +634,7 @@ def _run_query_base(
         try:
             query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
             if use_cache:
-                cache_salt = st.session_state.get(f"_refresh_salt_{ttl_key}", "")
+                cache_salt = _cache_salt(ttl_key)
                 context = _cache_context()
                 fn   = _TIER_FN.get(tier, _cached_recent)
                 return fn(query_text, context, cache_salt, query_tag, ttl_key, section)

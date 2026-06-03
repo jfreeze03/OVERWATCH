@@ -108,6 +108,7 @@ build_task_failure_summary_sql = _lazy_util("build_task_failure_summary_sql")
 build_task_history_sql = _lazy_util("build_task_history_sql")
 credits_to_dollars = _lazy_util("credits_to_dollars")
 dba_control_plane_section_scorecards = _lazy_util("dba_control_plane_section_scorecards")
+dba_effective_readiness_score = _lazy_util("dba_effective_readiness_score")
 download_csv = _lazy_util("download_csv")
 enrich_action_queue_view = _lazy_util("enrich_action_queue_view")
 format_credits = _lazy_util("format_credits")
@@ -156,7 +157,7 @@ DBA_CONTROL_ROOM_PANES = (
     "Release Compare",
     "Executive Evidence",
     "Source Health",
-    "App Performance",
+    "App Operations",
 )
 DBA_CONTROL_ROOM_DETAIL_PANES = (
     "Failed Queries",
@@ -2349,10 +2350,48 @@ def _dba_incident_board(
     return result.drop(columns=["STATUS_RANK", "SEVERITY_RANK"], errors="ignore")
 
 
+def _dba_source_health_deployment_gate(source_health: pd.DataFrame | None) -> dict:
+    """Return a global source-health gate for effective readiness."""
+    if source_health is None or source_health.empty or "STATE" not in source_health.columns:
+        return {
+            "score": 100,
+            "label": "Source Health",
+            "reason": "",
+        }
+    states = source_health["STATE"].fillna("").astype(str)
+    unavailable = int(states.isin(["Unavailable"]).sum())
+    stale = int(states.isin(["Stale"]).sum())
+    not_loaded = int(states.isin(["Not Loaded"]).sum())
+    if unavailable:
+        return {
+            "score": 86,
+            "label": "Source Health",
+            "reason": f"{unavailable:,} required source surface(s) unavailable.",
+        }
+    if stale:
+        return {
+            "score": 90,
+            "label": "Source Health",
+            "reason": f"{stale:,} source surface(s) stale for the active scope.",
+        }
+    if not_loaded:
+        return {
+            "score": 94,
+            "label": "Source Health",
+            "reason": f"{not_loaded:,} source surface(s) not loaded in this session.",
+        }
+    return {
+        "score": 100,
+        "label": "Source Health",
+        "reason": "",
+    }
+
+
 def _dba_section_operability_board(
     section_rows: pd.DataFrame | None = None,
     command_queue: pd.DataFrame | None = None,
     closure_rollup: pd.DataFrame | None = None,
+    source_health: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Join static 95-readiness with live command/closure blockers by DBA route."""
     sections = section_rows.copy() if section_rows is not None and not section_rows.empty else pd.DataFrame(dba_control_plane_section_scorecards())
@@ -2369,6 +2408,7 @@ def _dba_section_operability_board(
         str(row.get("ROUTE") or ""): row
         for _, row in closure.iterrows()
     } if not closure.empty else {}
+    source_gate = _dba_source_health_deployment_gate(source_health)
 
     rows: list[dict] = []
     for _, section in sections.iterrows():
@@ -2390,29 +2430,59 @@ def _dba_section_operability_board(
         if overdue:
             state, rank = "Escalate Now", 0
             next_action = "Escalate overdue route work and attach owner, ticket, and verification evidence."
+            closure_gate_score = 72
         elif fixed_without_verification or recovery_risk or closure_rank in {1, 2}:
             state, rank = "Closure Evidence Blocked", 1
             next_action = "Attach verification or recovery evidence before accepting the section as controlled."
+            closure_gate_score = 82
         elif metadata_blocks:
             state, rank = "Route Metadata Blocked", 2
             next_action = "Complete owner, ticket, approver, and verification metadata for open work."
+            closure_gate_score = 88
         elif approval_blocks:
             state, rank = "Approval Blocked", 3
             next_action = "Collect owner approval before DBA execution."
+            closure_gate_score = 90
         elif open_actions:
             state, rank = "Work Open Actions", 4
             next_action = "Work ready actions, then retain proof for closure."
+            closure_gate_score = 94
         elif score < 95:
             state, rank = "Build Toward 95", 6
             next_action = str(section.get("NEXT_95_MOVE") or "Raise weak control-plane components.")
+            closure_gate_score = 100
         else:
             state, rank = "95 Target", 8
             next_action = "Maintain verified closure evidence and owner routing."
+            closure_gate_score = 100
+
+        gates = {
+            "source_health": source_gate,
+            "route_control": {
+                "score": closure_gate_score,
+                "label": "Route Control",
+                "reason": next_action if closure_gate_score < 100 else "",
+            },
+        }
+        effective = dba_effective_readiness_score(score, gates)
+        effective_score = safe_float(effective.get("score", score))
+        gate_drivers = ", ".join(
+            str(gate.get("GATE") or gate.get("KEY") or "").strip()
+            for gate in effective.get("gate_drivers", [])
+            if str(gate.get("GATE") or gate.get("KEY") or "").strip()
+        ) or "none"
+        if effective_score < score and rank >= 6:
+            state, rank = "Deployment Gate", 5
+            gate_reason = str(source_gate.get("reason") or "").strip()
+            next_action = gate_reason or "Resolve active deployment gate driver(s) before treating this section as ready."
 
         rows.append({
             "SECTION": name,
             "SCORE": score,
+            "EFFECTIVE_SCORE": effective_score,
             "LABEL": section.get("LABEL", ""),
+            "DEPLOYMENT_LABEL": effective.get("label", ""),
+            "GATE_DRIVERS": gate_drivers,
             "OPERABILITY_STATE": state,
             "OPERABILITY_RANK": rank,
             "OPEN_ACTIONS": open_actions,
@@ -2456,6 +2526,9 @@ def _dba_control_tower_state(row: pd.Series | dict) -> tuple[str, str]:
     approval_blocks = safe_int(row.get("APPROVAL_BLOCKS", 0))
     source_issues = safe_int(row.get("SOURCE_ISSUES", 0))
     execution_ready = safe_int(row.get("EXECUTION_READY", 0))
+    section_score = safe_float(row.get("SCORE", 0))
+    effective_score = safe_float(row.get("EFFECTIVE_SCORE", section_score))
+    gate_drivers = str(row.get("GATE_DRIVERS") or "").strip()
     incident_status = str(row.get("WORST_INCIDENT_STATUS") or "")
     incident_action = str(row.get("INCIDENT_CONTAINMENT") or "").strip()
     section_action = str(row.get("SECTION_NEXT_ACTION") or "").strip()
@@ -2470,7 +2543,10 @@ def _dba_control_tower_state(row: pd.Series | dict) -> tuple[str, str]:
         return "Approval Required", "Collect owner approval before executing DBA-controlled action."
     if execution_ready:
         return "Execute Ready Work", "Work execution-ready items, then attach before/after verification proof."
-    if safe_float(row.get("SCORE", 0)) < 99:
+    if effective_score < section_score:
+        detail = f"Resolve gate driver(s): {gate_drivers}." if gate_drivers and gate_drivers != "none" else "Resolve active deployment gate driver(s)."
+        return "Deployment Gate", detail
+    if effective_score < 99:
         return "Raise Toward 99", next_99 or section_action or "Harden the lowest control component and preserve closure evidence."
     return "Monitor", "Maintain source health, owner route, and verified closure evidence."
 
@@ -2487,6 +2563,7 @@ def _dba_control_tower_priority_index(
     board = section_board.copy() if section_board is not None and not section_board.empty else _dba_section_operability_board(
         command_queue=command_queue,
         closure_rollup=_command_queue_closure_readiness(command_queue),
+        source_health=source_health,
     )
     if board is None or board.empty:
         return _empty_df()
@@ -2511,6 +2588,7 @@ def _dba_control_tower_priority_index(
     for _, item in board.iterrows():
         section = str(item.get("SECTION") or "DBA Control Room")
         score = safe_float(item.get("SCORE", 0))
+        effective_score = safe_float(item.get("EFFECTIVE_SCORE", score))
         matched_incidents = _empty_df()
         if not incident.empty and "AFFECTED_ROUTES" in incident.columns:
             route_text = incident["AFFECTED_ROUTES"].fillna("").astype(str)
@@ -2550,9 +2628,11 @@ def _dba_control_tower_priority_index(
         recovery_risk = safe_int(item.get("RECOVERY_RISK_ROWS"))
         fixed_without_verification = safe_int(item.get("FIXED_WITHOUT_VERIFICATION"))
         proof_blocks = closure_blockers + recovery_risk + fixed_without_verification
-        target_gap = max(0.0, 99.0 - score)
+        target_gap = max(0.0, 99.0 - effective_score)
+        deployment_gap = max(0.0, score - effective_score)
         priority_score = min(100, round(
             (target_gap * 1.7)
+            + (deployment_gap * 1.4)
             + incident_points
             + overdue * 18
             + proof_blocks * 10
@@ -2575,12 +2655,17 @@ def _dba_control_tower_priority_index(
             reason_bits.append(f"{approval_blocks:,} approval blocker(s)")
         if source_issue_count:
             reason_bits.append(f"{source_issue_count:,} stale/unavailable source(s)")
+        if deployment_gap:
+            reason_bits.append(f"{deployment_gap:.1f} effective-readiness gate")
         if not reason_bits and target_gap:
             reason_bits.append(f"{target_gap:.1f} points from 99 target")
         row = {
             "SECTION": section,
             "PRIORITY_SCORE": priority_score,
             "SCORE": score,
+            "EFFECTIVE_SCORE": effective_score,
+            "DEPLOYMENT_LABEL": str(item.get("DEPLOYMENT_LABEL") or ""),
+            "GATE_DRIVERS": str(item.get("GATE_DRIVERS") or "none"),
             "TARGET_GAP_TO_99": round(target_gap, 1),
             "WORST_INCIDENT_STATUS": worst_status,
             "WORST_SIGNAL": worst_signal or str(item.get("OPERABILITY_STATE") or "No live incident"),
@@ -2618,13 +2703,14 @@ def _render_control_tower_priority_index(tower: pd.DataFrame) -> None:
     c1.metric("Control Tower", str(hot.get("CONTROL_TOWER_STATE") or "Monitor"))
     c2.metric("Top Route", str(hot.get("SECTION") or "DBA Control Room"))
     c3.metric("Priority", f"{safe_float(hot.get('PRIORITY_SCORE')):.1f}")
-    c4.metric("Gap to 99", f"{safe_float(hot.get('TARGET_GAP_TO_99')):.1f}")
+    c4.metric("Effective Readiness", f"{safe_float(hot.get('EFFECTIVE_SCORE', hot.get('SCORE'))):.1f}")
     render_priority_dataframe(
         tower,
         title="DBA Control Tower priority index",
         priority_columns=[
-            "CONTROL_TOWER_STATE", "PRIORITY_SCORE", "SECTION", "SCORE",
-            "TARGET_GAP_TO_99", "WHY_NOW", "FIRST_MOVE", "PROOF_REQUIRED",
+            "CONTROL_TOWER_STATE", "PRIORITY_SCORE", "SECTION", "EFFECTIVE_SCORE",
+            "SCORE", "DEPLOYMENT_LABEL", "GATE_DRIVERS", "TARGET_GAP_TO_99",
+            "WHY_NOW", "FIRST_MOVE", "PROOF_REQUIRED",
         ],
         sort_by=["PRIORITY_SCORE", "TARGET_GAP_TO_99"],
         ascending=[False, False],
@@ -2633,6 +2719,7 @@ def _render_control_tower_priority_index(tower: pd.DataFrame) -> None:
         max_rows=9,
         column_config={
             "PRIORITY_SCORE": st.column_config.ProgressColumn("Priority", min_value=0, max_value=100, format="%.1f"),
+            "EFFECTIVE_SCORE": st.column_config.ProgressColumn("Effective", min_value=0, max_value=100, format="%.1f"),
             "SCORE": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
             "TARGET_GAP_TO_99": st.column_config.ProgressColumn("Gap to 99", min_value=0, max_value=10, format="%.1f"),
         },
@@ -2977,18 +3064,20 @@ def _render_command_queue_control(
             section_board,
             title="DBA control-plane operating board",
             priority_columns=[
-                "OPERABILITY_STATE", "SECTION", "SCORE", "LABEL", "OPEN_ACTIONS",
+                "OPERABILITY_STATE", "SECTION", "EFFECTIVE_SCORE", "SCORE",
+                "DEPLOYMENT_LABEL", "GATE_DRIVERS", "OPEN_ACTIONS",
                 "OVERDUE", "EXECUTION_READY", "METADATA_BLOCKS", "APPROVAL_BLOCKS",
                 "CLOSURE_READINESS", "CLOSURE_BLOCKERS", "FIXED_WITHOUT_VERIFICATION",
                 "RECOVERY_RISK_ROWS", "LOWEST_COMPONENT", "LOWEST_SCORE",
                 "PROOF_REQUIRED", "NEXT_CONTROL_ACTION",
             ],
-            sort_by=["OPERABILITY_RANK", "SCORE"],
+            sort_by=["OPERABILITY_RANK", "EFFECTIVE_SCORE"],
             ascending=[True, True],
             raw_label="All DBA control-plane operating rows",
             height=280,
             max_rows=12,
             column_config={
+                "EFFECTIVE_SCORE": st.column_config.ProgressColumn("Effective", min_value=0, max_value=100, format="%.1f"),
                 "SCORE": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
                 "LOWEST_SCORE": st.column_config.ProgressColumn("Lowest", min_value=0, max_value=100, format="%.1f"),
             },
@@ -3474,7 +3563,7 @@ def _render_control_room_source_health(
 
 
 def _latest_local_perf_result(*, sections: bool = False) -> dict:
-    """Read the latest local perf harness JSON result when available."""
+    """Read the latest local release-check JSON result when available."""
     try:
         import json
         from pathlib import Path
@@ -3500,7 +3589,7 @@ def _latest_local_perf_result(*, sections: bool = False) -> dict:
 
 
 def _latest_local_snowflake_suite_result() -> dict:
-    """Read the latest guarded Snowflake perf-suite JSON result when available."""
+    """Read the latest guarded Snowflake release-check JSON result when available."""
     try:
         import json
         from pathlib import Path
@@ -3521,13 +3610,29 @@ def _latest_local_snowflake_suite_result() -> dict:
         return {}
 
 
+def _running_in_streamlit_in_snowflake() -> bool:
+    """Return True when the app is using Snowflake's injected Streamlit session."""
+    if "_overwatch_is_sis" in st.session_state:
+        return bool(st.session_state.get("_overwatch_is_sis"))
+    try:
+        from snowflake.snowpark.context import get_active_session
+
+        get_active_session()
+        is_sis = True
+    except Exception:
+        is_sis = False
+    st.session_state["_overwatch_is_sis"] = is_sis
+    return is_sis
+
+
 def _render_app_performance_guardrail() -> None:
-    """Show app self-performance, query-budget, and perf-harness state."""
+    """Show app runtime health, query-budget pressure, and deployment gates."""
     telemetry = get_query_telemetry()
     budget_summary = get_query_budget_summary()
-    http_result = _latest_local_perf_result(sections=False)
-    section_result = _latest_local_perf_result(sections=True)
-    snowflake_result = _latest_local_snowflake_suite_result()
+    is_sis = _running_in_streamlit_in_snowflake()
+    http_result = {} if is_sis else _latest_local_perf_result(sections=False)
+    section_result = {} if is_sis else _latest_local_perf_result(sections=True)
+    snowflake_result = {} if is_sis else _latest_local_snowflake_suite_result()
     http_summary = http_result.get("summary", {}) if isinstance(http_result.get("summary"), dict) else http_result
     section_summary = section_result.get("summary", {}) if isinstance(section_result.get("summary"), dict) else section_result
     telemetry_count = 0 if telemetry is None or telemetry.empty else len(telemetry)
@@ -3538,7 +3643,7 @@ def _render_app_performance_guardrail() -> None:
         budget_watch = int(risk.isin(["WATCH", "HIGH"]).sum())
         budget_high = int(risk.eq("HIGH").sum())
 
-    st.markdown("**OVERWATCH App Performance Guardrail**")
+    st.markdown("**OVERWATCH App Operations**")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Last Render", f"{safe_int(st.session_state.get('_overwatch_last_section_render_ms')):,} ms")
     c2.metric("Session Queries", f"{telemetry_count:,}")
@@ -3546,21 +3651,24 @@ def _render_app_performance_guardrail() -> None:
     c4.metric("HTTP p95", f"{safe_float(http_summary.get('p95_ms')):,.0f} ms")
     c5.metric("Section p95", f"{safe_float(section_summary.get('p95_ms')):,.0f} ms")
     c6.metric("Slowest", str(section_summary.get("slowest_section") or "n/a"))
+    if is_sis:
+        st.info(
+            "External release-check files are not available inside Streamlit-in-Snowflake. "
+            "Use live render and query-budget signals here, and complete deployment validation from the release workstation."
+        )
 
     readiness_rows = []
     for label, payload, summary in [
-        ("HTTP load", http_result, http_summary),
-        ("Section smoke", section_result, section_summary),
+        ("App shell load", http_result, http_summary),
+        ("Section render path", section_result, section_summary),
     ]:
         if not payload:
             readiness_rows.append({
-                "TEST": label,
-                "STATE": "Not run locally",
+                "GATE": label,
+                "STATE": "External validation not loaded",
                 "P95_MS": 0,
                 "ERROR_RATE": 0,
-                "RUN_ID": "",
-                "REPORT": "",
-                "NEXT_ACTION": "Run perf_tests from the local workspace when validating release performance.",
+                "NEXT_ACTION": "Complete release validation from the deployment workstation before changing production.",
             })
             continue
         state = str(summary.get("readiness_state") or payload.get("readiness_state") or "UNKNOWN")
@@ -3573,36 +3681,32 @@ def _render_app_performance_guardrail() -> None:
         else:
             next_action = "Keep as baseline and compare next run before committing performance-sensitive changes."
         readiness_rows.append({
-            "TEST": label,
+            "GATE": label,
             "STATE": state,
             "P95_MS": round(p95_ms, 2),
             "ERROR_RATE": round(error_rate, 4),
-            "RUN_ID": str(payload.get("run_id") or ""),
-            "REPORT": str(payload.get("_report_path") or payload.get("markdown_report") or ""),
             "NEXT_ACTION": next_action,
         })
 
     snowflake_suite = snowflake_result or st.session_state.get("perf_sql_last_run", {})
     readiness_rows.append({
-        "TEST": "Snowflake safe metadata suite",
+        "GATE": "Snowflake metadata safety",
         "STATE": str(snowflake_suite.get("state") or "Not run from this session"),
         "P95_MS": 0,
         "ERROR_RATE": 0,
-        "RUN_ID": str(snowflake_suite.get("run_id") or ""),
-        "REPORT": str(snowflake_suite.get("_report_path") or snowflake_suite.get("report") or ""),
         "NEXT_ACTION": str(
             snowflake_suite.get("next_action")
-            or "Run perf SQL setup/report in Snowflake to catch warehouse-side cost and spill."
+            or "Run the guarded Snowflake validation before approving warehouse-side release changes."
         ),
     })
     readiness = pd.DataFrame(readiness_rows)
     render_priority_dataframe(
         readiness,
-        title="Release performance gates",
-        priority_columns=["TEST", "STATE", "P95_MS", "ERROR_RATE", "RUN_ID", "NEXT_ACTION", "REPORT"],
+        title="Deployment runtime gates",
+        priority_columns=["GATE", "STATE", "P95_MS", "ERROR_RATE", "NEXT_ACTION"],
         sort_by=["STATE", "P95_MS"],
         ascending=[True, False],
-        raw_label="All performance gate rows",
+        raw_label="All deployment runtime gate rows",
         height=220,
     )
 
@@ -3629,7 +3733,7 @@ def _render_app_performance_guardrail() -> None:
             tail,
             title="Latest app query events",
             priority_columns=[
-                "timestamp", "perf_run_id", "section", "tier", "elapsed_ms",
+                "timestamp", "section", "tier", "elapsed_ms",
                 "rows", "result_mb", "ttl_key", "query_hash",
             ],
             sort_by=["elapsed_ms", "rows", "result_mb"],
@@ -4053,6 +4157,7 @@ def render() -> None:
             section_board_for_tower = _dba_section_operability_board(
                 command_queue=command_queue,
                 closure_rollup=closure_rollup_for_handoff,
+                source_health=source_health_for_handoff,
             )
             control_tower = _dba_control_tower_priority_index(
                 section_board_for_tower,
@@ -4127,11 +4232,10 @@ def render() -> None:
                 exceptions,
                 title="Control-room exceptions to work first",
                 priority_columns=[
-                    "SEVERITY", "DOMAIN", "SIGNAL", "ENTITY", "DETAIL",
-                    "NEXT_WORKFLOW", "NEXT_ACTION",
+                    "Severity", "Signal", "Evidence", "Action", "Route", "Workflow",
                 ],
-                sort_by=["SEVERITY", "DOMAIN", "ENTITY"],
-                ascending=[True, True, True],
+                sort_by=["Severity", "Signal"],
+                ascending=[True, True],
                 raw_label="All control-room exceptions",
                 height=260,
             )
@@ -4513,5 +4617,5 @@ def render() -> None:
                 height=180,
             )
 
-    elif active_view == "App Performance":
+    elif active_view == "App Operations":
         _render_app_performance_guardrail()

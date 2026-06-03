@@ -282,7 +282,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("previous_metric_signature != current_metric_signature", app_text)
         self.assertIn("clear_all_cache()", app_text)
         self.assertIn("clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)", app_text)
+        self.assertIn("bump_global_cache_salt", cache_text)
+        self.assertIn('st.session_state["_refresh_salt_global"]', cache_text)
+        self.assertNotIn("st.cache_data.clear()", cache_text)
+        self.assertIn('st.session_state.get("_refresh_salt_global"', query_text)
         self.assertIn('st.session_state.get("global_environment"', query_text)
+        self.assertNotIn('st.session_state.get("exceptions_only_mode"', query_text)
         self.assertIn('st.session_state.get("_overwatch_current_role"', query_text)
         self.assertIn("_query_tag", query_text)
         for prefix in (
@@ -369,7 +374,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
 
-        self.assertIn("render_section_reference(active_section)", app_text)
+        self.assertIn("render_section_operating_guide(active_section)", app_text)
+        self.assertNotIn("render_section_reference(active_section)", app_text)
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_OPERATING_GUIDE))
         for section, guide in SECTION_OPERATING_GUIDE.items():
             with self.subTest(section=section):
@@ -391,9 +397,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
         guidance_text = (APP_ROOT / "utils" / "section_guidance.py").read_text(encoding="utf-8")
 
-        self.assertIn("render_section_confidence_meter(active_section", app_text)
-        self.assertIn("render_section_reference(active_section)", app_text)
-        self.assertNotIn("render_section_operating_guide(active_section)", app_text)
+        self.assertNotIn("render_section_confidence_meter(active_section", app_text)
+        self.assertIn("render_section_operating_guide(active_section)", app_text)
+        self.assertNotIn("render_section_reference(active_section)", app_text)
         self.assertNotIn("render_section_evidence_contract(active_section)", app_text)
         self.assertIn('st.expander("Details", expanded=False)', guidance_text)
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_EVIDENCE_CONTRACT))
@@ -575,8 +581,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         data_text = (APP_ROOT / "utils" / "data.py").read_text(encoding="utf-8")
         top_import_block = app_text.split("def _snapshot_ask_overwatch_state", 1)[0]
 
-        self.assertIn("Telemetry summaries are rendered on demand", app_text)
-        self.assertIn('st.button("Render telemetry summary"', app_text)
+        self.assertIn("Query activity summaries are rendered on demand", app_text)
+        self.assertIn('st.button("Render query activity summary"', app_text)
         self.assertNotIn("from utils.ask_overwatch import answer_ask_overwatch", top_import_block)
         self.assertIn("from utils.ask_overwatch import answer_ask_overwatch", app_text)
         self.assertNotIn("from utils.bookmarks import (", top_import_block)
@@ -586,7 +592,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _maybe_reload_dev_helpers", app_text)
         self.assertIn('st.session_state.get("_overwatch_dev_reload_helpers", False)', app_text)
         self.assertIn('st.session_state["_logging_enabled"] = False', app_text)
-        self.assertIn('"Persist section timing"', app_text)
+        self.assertIn('"Record section runtime"', app_text)
+        self.assertIn('"Record query activity"', app_text)
         self.assertIn("section_render_started = time.perf_counter()", app_text)
         self.assertIn("log_section_load(active_section, duration_ms)", app_text)
         self.assertIn('st.session_state["_detailed_query_tags_enabled"] = False', app_text)
@@ -607,11 +614,19 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("load_latest_control_room_mart(company, max_age_hours=6) if snapshot_scope_ok else None", dba_control_text)
         self.assertIn('"Fast Watch"', dba_control_text)
         self.assertIn('"Operations Tower"', dba_control_text)
-        self.assertIn('"App Performance"', dba_control_text)
+        self.assertIn('"App Operations"', dba_control_text)
         self.assertIn('"Build Operations Tower"', dba_control_text)
         self.assertIn("Control Tower, Autopilot, Incident Board, and Shift Handoff are deferred", dba_control_text)
         self.assertIn("def _render_app_performance_guardrail", dba_control_text)
+        self.assertIn("def _running_in_streamlit_in_snowflake", dba_control_text)
+        self.assertIn("External release-check files are not available inside Streamlit-in-Snowflake", dba_control_text)
         self.assertIn("_latest_local_snowflake_suite_result", dba_control_text)
+        self.assertIn("dba_effective_readiness_score", dba_control_text)
+        self.assertIn('"EFFECTIVE_SCORE"', dba_control_text)
+        self.assertIn('"DEPLOYMENT_LABEL"', dba_control_text)
+        self.assertIn('"GATE_DRIVERS"', dba_control_text)
+        self.assertIn('"Severity", "Signal", "Evidence", "Action", "Route", "Workflow"', dba_control_text)
+        self.assertNotIn('"SEVERITY", "DOMAIN", "SIGNAL", "ENTITY", "DETAIL"', dba_control_text)
         self.assertIn("_RESULT_SIZE_SAMPLE_ROWS", query_text)
         self.assertIn("OVERWATCH_PERF_RUN_ID", query_text)
         self.assertIn('"perf_run_id": _perf_run_id()', query_text)
@@ -621,6 +636,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("PERF_RUN_ID", logging_text)
         self.assertIn('_QUERY_TAG = "OVERWATCH"', session_text)
         self.assertNotIn("OVERWATCH:v3", session_text)
+        self.assertNotIn("for stmt in [", session_text)
+        self.assertIn("ALTER SESSION SET ", session_text)
+        self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS", session_text)
         self.assertIn('st.session_state["_overwatch_active_query_tag"] = _QUERY_TAG', session_text)
         self.assertIn("from utils.cache import clear_all_cache", app_text)
         self.assertNotIn("from utils.display import clear_all_cache", app_text)
@@ -635,7 +653,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.session_state.get("_query_logging_enabled", False)', query_text)
         self.assertIn("_COMBINED_CSS_CACHE", theme_text)
         self.assertIn("_has_company_scope_columns", data_text)
-        self.assertIn("render_section_confidence_meter(active_section, st.session_state)", app_text)
+        self.assertNotIn("render_section_confidence_meter(active_section, st.session_state)", app_text)
+        self.assertIn("render_section_operating_guide(active_section)", app_text)
         self.assertIn('secondary_chrome_ready = bool(st.session_state.get("_overwatch_secondary_chrome_ready"))', app_text)
         self.assertIn("if secondary_chrome_ready:", app_text)
         self.assertIn('st.session_state["_overwatch_secondary_chrome_ready"] = True', app_text)
@@ -692,6 +711,10 @@ class NavigationIntegrityTests(unittest.TestCase):
             'if active_view == "Active Queries":',
             1,
         )[0]
+        self.assertIn("RESULT_LIMIT=>100", live_monitor_text)
+        self.assertIn("admin_button_disabled", live_monitor_text)
+        self.assertIn("require_admin_enabled(\"query cancellation\")", live_monitor_text)
+        self.assertIn("log_admin_action(", live_monitor_text)
         architecture_render_preload = architecture_text.split("def render():", 1)[1].split(
             "active_pane = st.radio",
             1,

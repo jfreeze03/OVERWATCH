@@ -120,12 +120,36 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual(result["label"], "95 Target")
         self.assertEqual(result["caps"], [])
 
+    def test_effective_readiness_applies_live_deployment_gates(self):
+        result = scorecards.dba_effective_readiness_score(
+            96.4,
+            {
+                "source_health": {
+                    "score": 90,
+                    "label": "Source Health",
+                    "reason": "Source rows are stale.",
+                },
+                "route_control": {
+                    "score": 100,
+                    "label": "Route Control",
+                },
+            },
+        )
+
+        self.assertEqual(result["score"], 90.0)
+        self.assertEqual(result["base_score"], 96.4)
+        self.assertEqual(result["label"], "Ready With Watch")
+        self.assertEqual(result["gate_drivers"][0]["GATE"], "Source Health")
+
     def test_dba_section_baseline_is_strict_and_repeatable(self):
         rows = scorecards.dba_control_plane_section_scorecards()
         by_section = {row["SECTION"]: row for row in rows}
 
         self.assertEqual(by_section["DBA Control Room"]["SCORE"], 96.4)
+        self.assertEqual(by_section["DBA Control Room"]["EFFECTIVE_SCORE"], 96.4)
         self.assertEqual(by_section["DBA Control Room"]["LABEL"], "95 Target")
+        self.assertEqual(by_section["DBA Control Room"]["DEPLOYMENT_LABEL"], "Ready")
+        self.assertEqual(by_section["DBA Control Room"]["GATE_DRIVERS"], "none")
         self.assertEqual(by_section["Alert Center"]["SCORE"], 97.0)
         self.assertEqual(by_section["Alert Center"]["LABEL"], "95 Target")
         self.assertEqual(by_section["Warehouse Health"]["SCORE"], 96.3)

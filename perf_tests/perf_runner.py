@@ -207,7 +207,7 @@ def build_recommendations(summary: dict, samples: list[Sample], mode: str) -> li
         )
     if mode == "metadata":
         recommendations.append(
-            "This was a shallow app-shell test. Run the section smoke runner and Snowflake report views before claiming 5 TB readiness."
+            "This was a shallow app-shell validation. Run section render validation and Snowflake report views before claiming 5 TB readiness."
         )
     if not samples:
         recommendations.append("No samples were collected. Re-run with a reachable URL before making release decisions.")

@@ -18,6 +18,7 @@ from utils import (
     render_query_drilldown, get_active_company, get_user_filter_clause,
     get_global_filter_clause, get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
     format_snowflake_error, filter_existing_columns,
+    admin_button_disabled, log_admin_action, require_admin_enabled,
 )
 from utils.workflows import render_priority_dataframe
 from config import THRESHOLDS
@@ -101,7 +102,7 @@ def render():
                    bytes_scanned/POWER(1024,2) AS mb_scanned, rows_produced
             FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(
                 END_TIME_RANGE_START=>DATEADD('hours',-1,CURRENT_TIMESTAMP()),
-                RESULT_LIMIT=>500))
+                RESULT_LIMIT=>100))
             WHERE UPPER(execution_status) IN ('RUNNING','QUEUED','BLOCKED','RESUMING_WAREHOUSE')
               {wh_clause}
               {company_wh_clause}
@@ -176,11 +177,43 @@ def render():
                     key="lm_kill_confirm",
                     placeholder="CANCEL",
                 )
-                if kill_qid and confirm_cancel == "CANCEL" and st.button("Cancel Query", type="primary", key="lm_kill_btn"):
+                cancel_ready = bool(kill_qid and confirm_cancel == "CANCEL")
+                if st.button(
+                    "Cancel Query",
+                    type="primary",
+                    key="lm_kill_btn",
+                    disabled=admin_button_disabled(not cancel_ready),
+                ):
+                    cancel_sql = f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_qid)})"
                     try:
-                        _session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_qid)})").collect()
+                        if not require_admin_enabled("query cancellation"):
+                            return
+                        _session.sql(cancel_sql).collect()
+                        log_admin_action(
+                            _session,
+                            action_type="CANCEL QUERY",
+                            target_object=str(kill_qid),
+                            sql_text=cancel_sql,
+                            confirmation_text=confirm_cancel,
+                            control_context=(
+                                "Live Monitor manual cancellation. Operator typed CANCEL and used the "
+                                "Admin actions gate before sending SYSTEM$CANCEL_QUERY."
+                            ),
+                            result_status="SUCCESS",
+                            result_message=f"Cancel sent for {kill_qid}",
+                        )
                         st.success(f"Cancel sent for `{kill_qid}`")
                     except Exception as e:
+                        log_admin_action(
+                            _session,
+                            action_type="CANCEL QUERY",
+                            target_object=str(kill_qid),
+                            sql_text=cancel_sql,
+                            confirmation_text=confirm_cancel,
+                            control_context="Live Monitor manual cancellation failed after operator confirmation.",
+                            result_status="ERROR",
+                            result_message=format_snowflake_error(e),
+                        )
                         st.error(f"Cancel failed: {format_snowflake_error(e)}")
             else:
                 st.success("No active queries right now.")

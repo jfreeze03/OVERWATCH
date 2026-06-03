@@ -243,7 +243,7 @@ def _render_annotations() -> None:
     pd = _pd()
     table_name = _annotation_table_name()
     st.subheader("Suppression Windows")
-    st.caption("Use suppression windows for planned maintenance, deployments, backfills, and load tests so the hourly alert task does not create duplicate noise.")
+    st.caption("Use suppression windows for planned maintenance, deployments, backfills, and high-volume validation windows so the hourly alert task does not create duplicate noise.")
 
     with st.form("alert_center_annotation_create"):
         c1, c2, c3 = st.columns(3)
@@ -261,11 +261,11 @@ def _render_annotations() -> None:
         with c3:
             annotation_type = st.selectbox(
                 "Reason",
-                ["DEPLOYMENT", "LOAD_TEST", "PLANNED_MAINTENANCE", "BACKFILL", "OTHER"],
+                ["DEPLOYMENT", "HIGH_VOLUME_VALIDATION", "PLANNED_MAINTENANCE", "BACKFILL", "OTHER"],
                 key="alert_annotation_type",
             )
             suppress = st.checkbox("Suppress alerts", value=True, key="alert_annotation_suppress")
-        description = st.text_area("Description", key="alert_annotation_description", placeholder="Release, migration, planned warehouse test, etc.")
+        description = st.text_area("Description", key="alert_annotation_description", placeholder="Release, migration, planned warehouse validation, etc.")
         submitted = st.form_submit_button("Create Suppression Window")
         if submitted:
             if not entity.strip() or not window_start.strip() or not window_end.strip():

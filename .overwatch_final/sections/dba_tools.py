@@ -1,4 +1,4 @@
-# sections/dba_tools.py — DBA admin toolkit
+﻿# sections/dba_tools.py — DBA admin toolkit
 # ─────────────────────────────────────────────────────────────────────────────
 # NEW tabs vs prior version:
 #   Tab 1  — Auto-Suspend Audit → FULL INTERACTIVE WAREHOUSE SETTINGS MANAGER
@@ -2247,11 +2247,11 @@ ORDER BY current_tb DESC;"""
 
     # Setup status and install readiness
     if selected_tool == "Setup Status":
-        st.header("🔧 Setup Status")
+        st.header("Setup Status")
         st.caption(
-            "Run this before demos or deployment. It checks Snowflake view access, "
+            "Run this before deployment. It checks Snowflake view access, "
             "optional column availability, persistent OVERWATCH objects, calculation "
-            "confidence, and the live smoke-test checklist."
+            "confidence, and the operational readiness checklist."
         )
 
         st.subheader("Snowflake Compatibility Check")
@@ -2367,17 +2367,17 @@ ORDER BY current_tb DESC;"""
         )
 
         st.divider()
-        st.subheader("Live Smoke-Test Checklist")
+        st.subheader("Operational Readiness Checklist")
         smoke_df = build_smoke_test_checklist()
         render_priority_dataframe(
             smoke_df,
-            title="Live smoke-test checklist",
-            priority_columns=["SECTION", "ACTION", "PASS_CRITERIA"],
+            title="Operational readiness checklist",
+            priority_columns=["SECTION", "ACTION", "READY_CRITERIA"],
             sort_by=["SECTION", "ACTION"],
             ascending=[True, True],
-            raw_label="Full smoke-test checklist",
+            raw_label="Full operational readiness checklist",
         )
-        download_csv(smoke_df, "overwatch_smoke_test_checklist.csv")
+        download_csv(smoke_df, "overwatch_operational_readiness_checklist.csv")
 
         st.info(
             "Persistent object DDL and mart aggregation setup have been removed from this dashboard. "

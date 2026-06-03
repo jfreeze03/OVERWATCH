@@ -557,7 +557,7 @@ def run_compatibility_checks(session) -> pd.DataFrame:
 
 
 def build_smoke_test_checklist() -> pd.DataFrame:
-    """Manual live smoke-test checklist for post-deploy validation."""
+    """Manual operational readiness checklist for post-deploy validation."""
     rows = [
         ("Account Health", "Refresh Health", "Metrics load without red Snowflake errors."),
         ("Usage Overview", "Load dashboard", "Credits, query counts, users, and storage reflect selected company."),
@@ -570,7 +570,7 @@ def build_smoke_test_checklist() -> pd.DataFrame:
         ("Settings", "Open Settings and Saved Views", "No material-icon text leaks are visible."),
         ("Company Selector", "Switch ALFA/Trexis/ALL", "Cache clears and all section data refreshes to the selected company."),
     ]
-    return pd.DataFrame(rows, columns=["SECTION", "ACTION", "PASS_CRITERIA"])
+    return pd.DataFrame(rows, columns=["SECTION", "ACTION", "READY_CRITERIA"])
 
 
 def build_cost_formula_audit() -> pd.DataFrame:

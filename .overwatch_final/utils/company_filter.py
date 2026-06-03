@@ -11,6 +11,7 @@
 #   ALL   → no filter, but get_company_case_expr() labels every row
 # ─────────────────────────────────────────────────────────────────────────────
 import hashlib
+from datetime import datetime
 
 import streamlit as st
 import fnmatch
@@ -81,10 +82,7 @@ def invalidate_company_cache(
     for k in keys_to_drop:
         del st.session_state[k]
     if clear_streamlit_cache:
-        try:
-            st.cache_data.clear()
-        except Exception:
-            pass
+        st.session_state["_refresh_salt_global"] = datetime.now().isoformat()
 
 
 # ── WHERE clause builders ─────────────────────────────────────────────────────

@@ -779,17 +779,16 @@ with st.sidebar:
             key="rt_interval",
         )
         st.toggle(
-            "Persist section timing",
+            "Record section runtime",
             key="_logging_enabled",
             help=(
-                "Benchmark mode: writes one lightweight usage row per completed section render. "
-                "Keep off during normal browsing unless you are measuring performance."
+                "Writes one lightweight usage row per completed section render when the usage log is available."
             ),
         )
         st.toggle(
-            "Persist query telemetry",
+            "Record query activity",
             key="_query_logging_enabled",
-            help="Optional audit mode: write query hash, section, elapsed time, row count, and result size to the OVERWATCH usage log when that table exists.",
+            help="Writes query hash, section, elapsed time, row count, and result size to the OVERWATCH usage log when that table exists.",
         )
         st.toggle(
             "Detailed Snowflake query tags",
@@ -804,9 +803,9 @@ with st.sidebar:
         telemetry_count = len(st.session_state.get("_overwatch_query_telemetry", []))
         if telemetry_count:
             st.divider()
-            with st.expander(f"OVERWATCH query telemetry ({telemetry_count:,})", expanded=False):
-                st.caption("Telemetry summaries are rendered on demand to keep normal sidebar reruns light.")
-                if st.button("Render telemetry summary", key="render_query_telemetry"):
+            with st.expander(f"OVERWATCH query activity ({telemetry_count:,})", expanded=False):
+                st.caption("Query activity summaries are rendered on demand to keep normal sidebar reruns light.")
+                if st.button("Render query activity summary", key="render_query_telemetry"):
                     telemetry = get_query_telemetry()
                     total_calls = len(telemetry)
                     total_elapsed = float(telemetry["elapsed_ms"].fillna(0).sum()) / 1000
@@ -836,7 +835,7 @@ with st.sidebar:
                             },
                         )
                     st.dataframe(telemetry.tail(50), width="stretch", height=220)
-                if st.button("Clear telemetry", key="clear_query_telemetry"):
+                if st.button("Clear query activity", key="clear_query_telemetry"):
                     clear_query_telemetry()
                     st.rerun()
 
@@ -854,8 +853,7 @@ with st.sidebar:
 active_section = _current_active_section(visible_sections)
 secondary_chrome_ready = bool(st.session_state.get("_overwatch_secondary_chrome_ready"))
 if secondary_chrome_ready:
-    section_guidance.render_section_confidence_meter(active_section, st.session_state)
-    section_guidance.render_section_reference(active_section)
+    section_guidance.render_section_operating_guide(active_section)
 
     if st.button("Ask OVERWATCH", key="ask_overwatch_panel_toggle", type="secondary"):
         st.session_state["_overwatch_show_ask_overwatch"] = not bool(

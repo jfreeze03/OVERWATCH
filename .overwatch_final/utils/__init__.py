@@ -37,6 +37,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "clamp_score", "score_label", "bad_ratio_score", "trend_score",
         "weighted_score", "burn_trend_label", "executive_health_score",
         "service_health_scorecard", "dba_control_plane_readiness_score",
+        "dba_effective_readiness_score", "dba_deployment_label",
         "dba_control_plane_section_scorecards", "dba_control_plane_component_rows",
     ),
     "owner_directory": (
@@ -50,7 +51,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "workload_recovery_audit_fqn",
     ),
     "cache": (
-        "clear_all_cache",
+        "bump_global_cache_salt", "clear_all_cache",
     ),
     "downloads": (
         "download_csv", "show_loaded_time", "mark_loaded",

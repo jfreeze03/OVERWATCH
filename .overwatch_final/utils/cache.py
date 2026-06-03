@@ -1,4 +1,6 @@
 # utils/cache.py - lightweight app cache invalidation helpers
+from datetime import datetime
+
 import streamlit as st
 
 from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
@@ -14,6 +16,13 @@ _METADATA_CACHE_PREFIXES = (
 )
 
 
+def bump_global_cache_salt() -> str:
+    """Invalidate OVERWATCH cached query entries without clearing shared caches."""
+    salt = datetime.now().isoformat()
+    st.session_state["_refresh_salt_global"] = salt
+    return salt
+
+
 def clear_all_cache(
     *,
     clear_streamlit_cache: bool = True,
@@ -26,7 +35,8 @@ def clear_all_cache(
 
     Routine filter/metric changes should pass clear_streamlit_cache=False so
     scoped st.cache_data entries can be reused when their query context still
-    matches. The top-level Refresh button keeps the default hard purge.
+    matches. The top-level Refresh button keeps the default scoped purge by
+    bumping an OVERWATCH salt instead of clearing Streamlit's shared cache.
     """
     transient_prefixes = (
         "_data_", "_ts_", "df_", "_refresh_salt_", "_sec_",
@@ -59,7 +69,4 @@ def clear_all_cache(
     st.session_state.pop("_sf_session_created_at", None)
 
     if clear_streamlit_cache:
-        try:
-            st.cache_data.clear()
-        except Exception:
-            pass
+        bump_global_cache_salt()

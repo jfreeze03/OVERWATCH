@@ -28,7 +28,7 @@ PLATFORM_FUTURES_AREAS = (
     "AI Security Guardrails",
     "Openflow Operations",
     "Horizon Governance Readiness",
-    "Semantic Trust & Verified Query Testing",
+    "Semantic Trust & Verified Query Validation",
     "BCDR Drill Ledger",
     "AI Change Governance",
 )
@@ -39,7 +39,7 @@ AGENTIC_AI_CONTROL_AREAS = (
     "CoWork Artifact Governance",
     "AI Spend & Token Guardrails",
     "AI Security Guardrails",
-    "Semantic Trust & Verified Query Testing",
+    "Semantic Trust & Verified Query Validation",
     "AI Change Governance",
 )
 
@@ -49,7 +49,7 @@ AGENTIC_AI_SURFACE_CLASSES = {
     "CoWork Artifact Governance": "Shared Artifact",
     "AI Spend & Token Guardrails": "Cost Control",
     "AI Security Guardrails": "Security",
-    "Semantic Trust & Verified Query Testing": "Semantic Trust",
+    "Semantic Trust & Verified Query Validation": "Semantic Trust",
     "AI Change Governance": "Change Control",
 }
 
@@ -72,7 +72,7 @@ PLATFORM_FUTURES_EXPERT_CRITERIA = {
     },
     "Cortex Sense Context Governance": {
         "surfaces": ("Horizon and semantic trust", "AI agent and MCP inventory"),
-        "why": "Cortex Sense can make agents more useful by sharing business context, but experts will expect owner, semantic certification, connector approval, citation policy, and regression-test proof before broad trust.",
+        "why": "Cortex Sense can make agents more useful by sharing business context, but experts will expect owner, semantic certification, connector approval, citation policy, and regression-validation proof before broad trust.",
     },
     "CoWork Artifact Governance": {
         "surfaces": ("AI usage guardrails", "Horizon and semantic trust"),
@@ -94,7 +94,7 @@ PLATFORM_FUTURES_EXPERT_CRITERIA = {
         "surfaces": ("Horizon and semantic trust",),
         "why": "Governance claims need visible classification, policy, access-history, lineage, Trust Center, and data-quality evidence.",
     },
-    "Semantic Trust & Verified Query Testing": {
+    "Semantic Trust & Verified Query Validation": {
         "surfaces": ("Horizon and semantic trust",),
         "why": "Semantic models make answers look authoritative, so owners, certification, freshness, and verified query tests are mandatory.",
     },
@@ -138,32 +138,32 @@ HORIZON_SEMANTIC_PROBES = (
         "DBA_ACTION": "Use dependencies to prove blast radius before changing shared views, semantic models, or data products.",
     },
     {
-        "CONTROL_AREA": "Semantic Trust & Verified Query Testing",
+        "CONTROL_AREA": "Semantic Trust & Verified Query Validation",
         "SURFACE": "Semantic Views",
         "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.SEMANTIC_VIEWS",
         "MANDATORY": False,
         "DBA_ACTION": "Inventory semantic views and require owner, certification, and regression query evidence.",
     },
     {
-        "CONTROL_AREA": "Semantic Trust & Verified Query Testing",
+        "CONTROL_AREA": "Semantic Trust & Verified Query Validation",
         "SURFACE": "Semantic Tables",
         "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.SEMANTIC_TABLES",
         "MANDATORY": False,
         "DBA_ACTION": "Inventory semantic tables and validate freshness and ownership before agent trust.",
     },
     {
-        "CONTROL_AREA": "Semantic Trust & Verified Query Testing",
+        "CONTROL_AREA": "Semantic Trust & Verified Query Validation",
         "SURFACE": "Semantic Metrics",
         "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.SEMANTIC_METRICS",
         "MANDATORY": False,
-        "DBA_ACTION": "Treat metric definitions as governed assets with owner, test, and change evidence.",
+        "DBA_ACTION": "Treat metric definitions as governed assets with owner, validation, and change evidence.",
     },
     {
         "CONTROL_AREA": "Cortex Sense Context Governance",
         "SURFACE": "Cortex Sense Context Inventory",
         "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SENSE_CONTEXTS",
         "MANDATORY": False,
-        "DBA_ACTION": "If Cortex Sense is enabled, require owner, certified business definitions, approved MCP connectors, citation policy, and regression tests before production agent use.",
+        "DBA_ACTION": "If Cortex Sense is enabled, require owner, certified business definitions, approved MCP connectors, citation policy, and regression validation before production agent use.",
     },
     {
         "CONTROL_AREA": "CoWork Artifact Governance",

@@ -258,7 +258,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "DEFAULT_ROUTE": "Architecture Readiness",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 168,
-        "NOTES": "Default route for Cortex Sense shared context, business definitions, semantic source, connector, citation, and regression-test governance.",
+        "NOTES": "Default route for Cortex Sense shared context, business definitions, semantic source, connector, citation, and regression-validation governance.",
     },
     {
         "OWNER_KEY": "COWORK_ARTIFACT_DEFAULT",
@@ -348,7 +348,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "DEFAULT_ROUTE": "Architecture Readiness",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 140,
-        "NOTES": "Default route for semantic model ownership, certification, verified query tests, and AI answer trust.",
+        "NOTES": "Default route for semantic model ownership, certification, verified query validation, and AI answer trust.",
     },
     {
         "OWNER_KEY": "BCDR_DRILL_DEFAULT",

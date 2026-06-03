@@ -81,7 +81,7 @@ class PerformanceFrameworkTests(unittest.TestCase):
         self.assertIn("cold_start_gap_pct", summary)
         self.assertIn(summary["readiness_state"], {"PASS", "WATCH"})
         recommendations = runner.build_recommendations(summary, samples, "metadata")
-        self.assertTrue(any("section smoke runner" in item.lower() for item in recommendations))
+        self.assertTrue(any("section render validation" in item.lower() for item in recommendations))
 
         with tempfile.TemporaryDirectory() as tmpdir:
             args = type("Args", (), {

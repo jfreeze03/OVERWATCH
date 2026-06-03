@@ -133,7 +133,7 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
         evidence = f"{entity}: {spill_gb:,.2f} GB remote spill in the recommendation window."
         safe_next = (
             "Open Warehouse Health > Capacity Brief, identify the query IDs causing spill, and decide between SQL tuning, "
-            "workload isolation, or a one-step warehouse size test."
+            "workload isolation, or a one-step warehouse size validation."
         )
         proof = "Show remote spill GB and queue time trend lower after the change; attach top query IDs used for diagnosis."
         do_not = "Do not upsize blindly; remote spill can be caused by SQL shape and may just multiply cost."
@@ -394,9 +394,9 @@ def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:
     )
     if spill > spill_threshold and queue_sec > 5:
         return {
-            "DECISION": "Capacity incident: test isolation or one-step scale-up",
+            "DECISION": "Capacity incident: validate isolation or one-step scale-up",
             "EVIDENCE_PACKET": evidence,
-            "SAFE_NEXT_ACTION": "Capture top spilling query IDs, then run a controlled one-size-up or multi-cluster test for the same workload window.",
+            "SAFE_NEXT_ACTION": "Capture top spilling query IDs, then run a controlled one-size-up or multi-cluster validation for the same workload window.",
             "PROOF_REQUIRED": "Queue seconds and remote spill GB both decline for the same workload class after the change.",
             "DO_NOT_DO": "Do not leave the larger setting permanent without before/after proof.",
         }
@@ -420,8 +420,8 @@ def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:
         return {
             "DECISION": "Downsize candidate",
             "EVIDENCE_PACKET": evidence,
-            "SAFE_NEXT_ACTION": "Ask the owner whether the workload is latency-sensitive, then test one size down during the same usage window.",
-            "PROOF_REQUIRED": "Runtime and failure rate stay stable while credits drop after the test.",
+            "SAFE_NEXT_ACTION": "Ask the owner whether the workload is latency-sensitive, then validate one size down during the same usage window.",
+            "PROOF_REQUIRED": "Runtime and failure rate stay stable while credits drop after the validation.",
             "DO_NOT_DO": "Do not downsize shared or SLA-sensitive warehouses without owner approval.",
         }
     return {

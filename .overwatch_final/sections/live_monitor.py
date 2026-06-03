@@ -1,14 +1,14 @@
-# sections/live_monitor.py — Real-time query history, timeline, sessions
-# ─────────────────────────────────────────────────────────────────────────────
+# sections/live_monitor.py - Real-time query history, timeline, sessions
+# -----------------------------------------------------------------------------
 # FIXES vs previous version:
-#   1. time.sleep() blocking REMOVED — replaced with @st.fragment(run_every=N)
+#   1. time.sleep() blocking REMOVED - replaced with @st.fragment(run_every=N)
 #      The entire active queries panel is now a fragment that refreshes
 #      independently without blocking the app thread or forcing a full rerun.
 #      Users on other tabs (Timeline, Sessions) are unaffected.
 #   2. Bare session.sql() on line 76 (ACCOUNT_USAGE fallback) already had
-#      an inner try/except — confirmed clean in this version.
+#      an inner try/except - confirmed clean in this version.
 #   3. Lock Wait History added to Sessions tab.
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -31,7 +31,6 @@ LIVE_MONITOR_PANES = (
 
 
 def render():
-    session      = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     rt_interval  = st.session_state.get("rt_interval", 30)
     company      = get_active_company()
@@ -44,9 +43,9 @@ def render():
         key="live_monitor_active_view",
     )
 
-    # ── ACTIVE QUERIES ─────────────────────────────────────────────────────────
+    # -- ACTIVE QUERIES --------------------------------------------------------
     if active_view == "Active Queries":
-        st.header("🔴 Live & Recent Queries")
+        st.header("Live & Recent Queries")
         st.caption(
             "Uses `ACCOUNT_USAGE.QUERY_HISTORY` by default for Streamlit-in-Snowflake compatibility. "
             "Zero-latency metadata can be tried when the active role/context allows it."
@@ -58,7 +57,7 @@ def render():
         with c2:
             auto_refresh = st.checkbox(
                 "Auto-refresh", key="lm_auto",
-                help=f"Refreshes every {rt_interval}s via st.fragment — non-blocking."
+                help=f"Refreshes every {rt_interval}s via st.fragment - non-blocking."
             )
         with c3:
             try_info_schema = st.checkbox(
@@ -75,10 +74,10 @@ def render():
                 key="lm_status",
             )
 
-        # ── @st.fragment — refreshes this panel independently on a timer ──────
+        # -- @st.fragment refreshes this panel independently on a timer.
         # run_every=N means Streamlit re-executes just this function every N
         # seconds without triggering a full app rerun. No time.sleep() needed.
-        # When auto_refresh is unchecked, run_every=None → fragment renders
+        # When auto_refresh is unchecked, run_every=None means the fragment renders
         # once and waits for a manual interaction.
         _run_every = rt_interval if auto_refresh else None
 
@@ -91,10 +90,10 @@ def render():
             st_clause = f"AND execution_status = '{status_filter}'" if status_filter != "ALL" else ""
 
             if auto_refresh:
-                st.caption(f"⏱ Last updated: {datetime.now().strftime('%H:%M:%S')} · auto-refresh {rt_interval}s")
+                st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')} - auto-refresh {rt_interval}s")
 
-            # ── Live — INFORMATION_SCHEMA (0-latency) ─────────────────────────
-            st.subheader("🟢 Currently Running")
+            # -- Live - INFORMATION_SCHEMA (0-latency) ------------------------
+            st.subheader("Currently Running")
             live_sql = f"""
             SELECT query_id, SUBSTR(query_text,1,300) AS query_text,
                    user_name, warehouse_name, warehouse_size, execution_status, start_time,
@@ -170,7 +169,7 @@ def render():
 
                 # Kill query
                 st.divider()
-                st.subheader("⛔ Kill Query")
+                st.subheader("Kill Query")
                 kill_qid = st.text_input("Query ID to cancel", key="lm_kill_id")
                 confirm_cancel = st.text_input(
                     "Type CANCEL to confirm",
@@ -180,15 +179,15 @@ def render():
                 if kill_qid and confirm_cancel == "CANCEL" and st.button("Cancel Query", type="primary", key="lm_kill_btn"):
                     try:
                         _session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_qid)})").collect()
-                        st.success(f"✅ Cancel sent for `{kill_qid}`")
+                        st.success(f"Cancel sent for `{kill_qid}`")
                     except Exception as e:
                         st.error(f"Cancel failed: {format_snowflake_error(e)}")
             else:
-                st.success("✅ No active queries right now.")
+                st.success("No active queries right now.")
 
-            # ── Recent — ACCOUNT_USAGE (≤45 min lag) ──────────────────────────
+            # -- Recent - ACCOUNT_USAGE (45 min lag or less) ------------------
             st.divider()
-            st.subheader("🟡 Recent (last 4h, ACCOUNT_USAGE)")
+            st.subheader("Recent (last 4h, ACCOUNT_USAGE)")
             try:
                 recent_optional = set(filter_existing_columns(
                     _session,
@@ -260,9 +259,9 @@ def render():
         else:
             st.info("Live query polling is paused. Refresh once or enable auto-refresh when you need active query evidence.")
 
-    # ── TIMELINE ───────────────────────────────────────────────────────────────
+    # -- TIMELINE --------------------------------------------------------------
     elif active_view == "Timeline":
-        st.header("📈 Query Timeline")
+        st.header("Query Timeline")
         tl_hours = st.slider("Lookback (hours)", 1, 24, 6, key="lm_tl_hours")
         if st.button("Load Timeline", key="lm_tl_load"):
             try:
@@ -300,9 +299,9 @@ def render():
                 )
             download_csv(df_t, "query_timeline.csv")
 
-    # ── SESSIONS ───────────────────────────────────────────────────────────────
+    # -- SESSIONS --------------------------------------------------------------
     elif active_view == "Sessions":
-        st.header("🖥️ Active Sessions")
+        st.header("Active Sessions")
         s1, s2 = st.columns(2)
 
         with s1:
@@ -360,7 +359,7 @@ def render():
             c1.metric("Total Sessions",       len(df_s))
             c2.metric("Long Sessions (>8h)",  len(long_s), delta_color="inverse")
             if not long_s.empty:
-                st.warning(f"⚠️ {len(long_s)} session(s) active > 8 hours.")
+                st.warning(f"{len(long_s)} session(s) active > 8 hours.")
                 render_priority_dataframe(
                     long_s,
                     title="Long sessions to review first",
@@ -396,9 +395,9 @@ def render():
         if st.session_state.get("lm_df_lock") is not None:
             df_lk = st.session_state["lm_df_lock"]
             st.divider()
-            st.subheader("🔒 Lock Wait History (last 24h, >5s blocked)")
+            st.subheader("Lock Wait History (last 24h, >5s blocked)")
             if not df_lk.empty:
-                st.warning(f"⚠️ {len(df_lk)} queries were blocked by lock contention.")
+                st.warning(f"{len(df_lk)} queries were blocked by lock contention.")
                 render_priority_dataframe(
                     df_lk,
                     title="Lock waits to investigate first",
@@ -417,4 +416,4 @@ def render():
                 )
                 download_csv(df_lk, "lock_wait_history.csv")
             else:
-                st.success("✅ No significant lock waits in the last 24h.")
+                st.success("No significant lock waits in the last 24h.")

@@ -184,7 +184,6 @@ def _queue_changes(session, df, source: str, category: str, entity_type: str, se
 
 
 def render():
-    session = get_session()
     company = _active_company()
     qh_caps = None
 
@@ -193,7 +192,7 @@ def render():
         if qh_caps is not None:
             return qh_caps
         qh_cols = set(filter_existing_columns(
-            session,
+            get_session(),
             "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
             ["QUERY_TAG"],
         ))
@@ -343,7 +342,7 @@ def render():
             )
             download_csv(df, "object_changes.csv")
             if st.button("Save object changes to Action Queue", key="ocm_obj_queue"):
-                _queue_changes(session, df, "Object Change Monitor", "Governance", "Object", "Medium")
+                _queue_changes(get_session(), df, "Object Change Monitor", "Governance", "Object", "Medium")
 
     elif active_view == "Grants & Roles":
         if st.button("Load Grant / Role Changes", key="ocm_grant_load"):
@@ -401,7 +400,7 @@ def render():
                 raw_label="All access changes",
             )
             if st.button("Save access changes to Action Queue", key="ocm_access_queue"):
-                _queue_changes(session, df, "Access Change Monitor", "Security", "Grant/Role", "High")
+                _queue_changes(get_session(), df, "Access Change Monitor", "Security", "Grant/Role", "High")
 
     elif active_view == "Policies & Tags":
         if st.button("Load Masking / Tag Policy Changes", key="ocm_policy_load"):
@@ -456,7 +455,7 @@ def render():
                 raw_label="All policy changes",
             )
             if st.button("Save policy changes to Action Queue", key="ocm_policy_queue"):
-                _queue_changes(session, df, "Policy Change Monitor", "Security", "Policy/Tag", "High")
+                _queue_changes(get_session(), df, "Policy Change Monitor", "Security", "Policy/Tag", "High")
 
     elif active_view == "Terraform Drift":
         if st.button("Load Drift Indicators", key="ocm_drift_load"):
@@ -514,4 +513,4 @@ def render():
             )
             download_csv(df, "terraform_drift_indicators.csv")
             if st.button("Save drift indicators to Action Queue", key="ocm_drift_queue"):
-                _queue_changes(session, df, "Terraform Drift Monitor", "Governance", "Drift", "High")
+                _queue_changes(get_session(), df, "Terraform Drift Monitor", "Governance", "Drift", "High")

@@ -1,4 +1,4 @@
-# sections/security_access.py — Login audit, roles & privileges, data lineage, MFA, exfiltration
+# sections/security_access.py - Login audit, roles & privileges, data lineage, MFA, exfiltration
 import streamlit as st
 import pandas as pd
 from utils import (
@@ -1120,7 +1120,6 @@ def _annotate_security_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFra
 
 
 def render():
-    session = get_session()
     company = get_active_company()
     user_filter = get_user_filter_clause("user_name")
     user_filter_u = get_user_filter_clause("u.name")
@@ -1139,7 +1138,7 @@ def render():
         nonlocal query_history_cols
         if query_history_cols is None:
             query_history_cols = set(filter_existing_columns(
-                session,
+                get_session(),
                 "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
                 ["WAREHOUSE_SIZE", "ROWS_PRODUCED", "BYTES_WRITTEN_TO_RESULT"],
             ))
@@ -1149,7 +1148,7 @@ def render():
         nonlocal user_cols
         if user_cols is None:
             user_cols = set(filter_existing_columns(
-                session,
+                get_session(),
                 "SNOWFLAKE.ACCOUNT_USAGE.USERS",
                 ["LAST_SUCCESS_LOGIN", "HAS_PASSWORD", "EXT_AUTHN_DUO"],
             ))
@@ -1176,9 +1175,9 @@ def render():
         key="security_access_active_view",
     )
 
-    # ── LOGIN AUDIT ───────────────────────────────────────────────────────────
+    # -- LOGIN AUDIT -----------------------------------------------------------
     if active_view == "Login Audit":
-        st.header("🔒 Login Audit")
+        st.header("Login Audit")
         sec_days = st.slider("Lookback (days)", 1, 90, 30, key="sec_days")
 
         if st.button("Load Login Data", key="sec_load"):
@@ -1253,7 +1252,7 @@ def render():
             )
             download_csv(failed_logins, "failed_logins.csv")
             if st.button("Save failed-login findings to Action Queue", key="sec_failed_login_queue"):
-                _queue_security_findings(session, failed_logins, "Failed Login", "Medium")
+                _queue_security_findings(get_session(), failed_logins, "Failed Login", "Medium")
 
         if st.session_state.get("sec_df_login_trend") is not None and not st.session_state["sec_df_login_trend"].empty:
             df_t = st.session_state["sec_df_login_trend"]
@@ -1425,7 +1424,7 @@ def render():
         if st.button("Load Connected Programs", key="sec_connected_programs_load"):
             with st.spinner("Tracing connected programs..."):
                 try:
-                    for key, df in _load_connected_programs(session, company, program_days).items():
+                    for key, df in _load_connected_programs(get_session(), company, program_days).items():
                         st.session_state[key] = df
                     st.session_state["sec_connected_program_source"] = "SESSIONS, LOGIN_HISTORY, and QUERY_HISTORY linkage"
                 except Exception as exc:
@@ -1568,7 +1567,7 @@ def render():
 
     # Roles & grants
     elif active_view == "Roles & Grants":
-        st.header("🛡️ Roles & Grants")
+        st.header("Roles & Grants")
         if st.button("Load Grants", key="grants_load"):
             try:
                 st.session_state["sec_df_grants"] = _load_grants_mart(company)
@@ -1607,11 +1606,11 @@ def render():
             )
             download_csv(df_g, "grants_to_users.csv")
 
-        _render_role_grant_change_control(session, company)
+        _render_role_grant_change_control(get_session(), company)
 
         # Dormant users
         st.divider()
-        st.subheader("💤 Dormant User Detection")
+        st.subheader("Dormant User Detection")
         dormant_days = st.number_input("Inactive threshold (days)", 30, 365, THRESHOLDS["dormant_user_days"], key="dom_days")
         dormant_lookback = min(365, int(dormant_days) + 30)
         if st.button("Find Dormant Users", key="dom_find"):
@@ -1653,7 +1652,7 @@ def render():
 
         if st.session_state.get("sec_df_dom") is not None and not st.session_state["sec_df_dom"].empty:
             df_d = st.session_state["sec_df_dom"]
-            st.warning(f"⚠️ {len(df_d)} users inactive > {dormant_days} days — review for deactivation.")
+            st.warning(f"{len(df_d)} users inactive > {dormant_days} days - review for deactivation.")
             df_d = _annotate_security_routes(df_d, "Dormant User")
             render_priority_dataframe(
                 df_d,
@@ -1668,11 +1667,11 @@ def render():
             )
             download_csv(df_d, "dormant_users.csv")
             if st.button("Save dormant users to Action Queue", key="sec_dormant_queue"):
-                _queue_security_findings(session, df_d, "Dormant User", "Medium")
+                _queue_security_findings(get_session(), df_d, "Dormant User", "Medium")
 
-    # ── MFA COVERAGE ──────────────────────────────────────────────────────────
+    # -- MFA COVERAGE ----------------------------------------------------------
     elif active_view == "MFA Coverage":
-        st.header("🔐 MFA Coverage Report")
+        st.header("MFA Coverage Report")
         if st.button("Check MFA", key="mfa_check"):
             try:
                 user_exprs = _user_column_exprs()
@@ -1701,7 +1700,7 @@ def render():
             c1.metric("Users Without MFA",  len(no_mfa),    delta_color="inverse")
             c2.metric("MFA Coverage",       f"{(1-len(no_mfa)/max(len(df_m),1))*100:.0f}%")
             if not no_mfa.empty:
-                st.warning(f"⚠️ {len(no_mfa)} active user(s) without MFA enabled.")
+                st.warning(f"{len(no_mfa)} active user(s) without MFA enabled.")
                 no_mfa = _annotate_security_routes(no_mfa, "No MFA")
                 render_priority_dataframe(
                     no_mfa,
@@ -1716,14 +1715,14 @@ def render():
                 )
                 download_csv(no_mfa, "users_without_mfa.csv")
                 if st.button("Save MFA findings to Action Queue", key="sec_mfa_queue"):
-                    _queue_security_findings(session, no_mfa, "No MFA", "High")
+                    _queue_security_findings(get_session(), no_mfa, "No MFA", "High")
             else:
-                st.success("✅ All active users have MFA enabled.")
+                st.success("All active users have MFA enabled.")
 
-    # ── EXFILTRATION SIGNALS ──────────────────────────────────────────────────
+    # -- EXFILTRATION SIGNALS --------------------------------------------------
     elif active_view == "Exfiltration Signals":
-        st.header("🚨 Data Exfiltration Signals")
-        st.caption("Users with >2σ BYTES_WRITTEN_TO_RESULT vs their 30-day baseline.")
+        st.header("Data Exfiltration Signals")
+        st.caption("Users with >2 sigma BYTES_WRITTEN_TO_RESULT vs their 30-day baseline.")
         if st.button("Check Exfiltration", key="exfil_load"):
             qh_cols = _query_history_columns()
             if "BYTES_WRITTEN_TO_RESULT" not in qh_cols:
@@ -1777,7 +1776,7 @@ def render():
         if st.session_state.get("sec_df_exfil") is not None:
             df_ex = st.session_state["sec_df_exfil"]
             if not df_ex.empty:
-                st.error(f"⚠️ {len(df_ex)} queries with anomalously high data output (>2σ above user baseline).")
+                st.error(f"{len(df_ex)} queries with anomalously high data output (>2 sigma above user baseline).")
                 df_ex = _annotate_security_routes(df_ex, "Exfiltration")
                 render_priority_dataframe(
                     df_ex,
@@ -1792,13 +1791,13 @@ def render():
                 )
                 download_csv(df_ex, "exfiltration_signals.csv")
                 if st.button("Save exfiltration signals to Action Queue", key="sec_exfil_queue"):
-                    _queue_security_findings(session, df_ex, "Exfiltration", "Critical")
+                    _queue_security_findings(get_session(), df_ex, "Exfiltration", "Critical")
             else:
-                st.success("✅ No unusual data exfiltration patterns detected.")
+                st.success("No unusual data exfiltration patterns detected.")
 
-    # ── DATA LINEAGE ──────────────────────────────────────────────────────────
+    # -- DATA LINEAGE ----------------------------------------------------------
     elif active_view == "Data Lineage":
-        st.header("🔗 Data Lineage (ACCESS_HISTORY)")
+        st.header("Data Lineage (ACCESS_HISTORY)")
         st.caption("Object-level access lineage from ACCOUNT_USAGE.ACCESS_HISTORY.")
         lin_days = st.slider("Lookback (days)", 1, 30, 7, key="lin_days")
 

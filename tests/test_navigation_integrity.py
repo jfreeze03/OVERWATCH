@@ -556,6 +556,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         change_drift_text = (APP_ROOT / "sections" / "change_drift.py").read_text(encoding="utf-8")
         alert_center_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
         dba_control_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+        security_posture_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
         security_access_text = (APP_ROOT / "sections" / "security_access.py").read_text(encoding="utf-8")
         recommendations_text = (APP_ROOT / "sections" / "recommendations.py").read_text(encoding="utf-8")
         live_monitor_text = (APP_ROOT / "sections" / "live_monitor.py").read_text(encoding="utf-8")
@@ -687,6 +688,30 @@ class NavigationIntegrityTests(unittest.TestCase):
             "render_operator_briefing",
             1,
         )[0]
+        live_monitor_render_preload = live_monitor_text.split("def render():", 1)[1].split(
+            'if active_view == "Active Queries":',
+            1,
+        )[0]
+        architecture_render_preload = architecture_text.split("def render():", 1)[1].split(
+            "active_pane = st.radio",
+            1,
+        )[0]
+        security_posture_render_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
+            'if st.button("Load Security Brief"',
+            1,
+        )[0]
+        security_access_render_preload = security_access_text.split("def render():", 1)[1].split(
+            "def _query_history_columns",
+            1,
+        )[0]
+        change_drift_render_preload = change_drift_text.split("def render() -> None:", 1)[1].split(
+            'if st.button("Load Change & Drift Brief"',
+            1,
+        )[0]
+        object_change_render_preload = object_change_text.split("def render():", 1)[1].split(
+            "def _query_history_drift_caps",
+            1,
+        )[0]
         self.assertIn("def _warehouse_action_session", warehouse_health_text)
         self.assertIn("get_session_for_action", warehouse_health_text)
         self.assertIn("def _warehouse_sql_exprs", warehouse_health_text)
@@ -698,6 +723,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("_render_capacity_brief(", warehouse_render_preload)
         self.assertNotIn("_render_warehouse_ownership_panel(", warehouse_render_preload)
         self.assertNotIn("_render_warehouse_source_health(", warehouse_render_preload)
+        self.assertNotIn("get_session()", live_monitor_render_preload)
+        self.assertNotIn("get_session()", architecture_render_preload)
+        self.assertNotIn("get_session()", security_posture_render_preload)
+        self.assertNotIn("get_session()", security_access_render_preload)
+        self.assertNotIn("get_session()", change_drift_render_preload)
+        self.assertNotIn("get_session()", object_change_render_preload)
         self.assertIn("Recovery readiness", change_drift_text)
         self.assertIn("_change_intervention_matrix", change_drift_text)
         self.assertIn("Change DBA intervention matrix", change_drift_text)

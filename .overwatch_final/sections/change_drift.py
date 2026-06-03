@@ -2040,7 +2040,6 @@ def _render_change_source_health(company: str, environment: str) -> None:
 
 
 def render() -> None:
-    session = get_session()
     company = get_active_company()
     environment = get_active_environment()
     if st.session_state.get("exceptions_only_mode") and "change_drift_workflow" not in st.session_state:
@@ -2101,6 +2100,7 @@ def render() -> None:
             st.session_state.pop("change_drift_error", None)
         except Exception as exc:
             try:
+                session = get_session()
                 summary_sql, exceptions_sql = _build_change_drift_sql(session, days, company)
                 source_label = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                 st.session_state["change_drift_summary"] = run_query(
@@ -2342,7 +2342,7 @@ def render() -> None:
             with save_col:
                 if st.button("Save Change Evidence Snapshot", key="change_drift_evidence_snapshot", width="stretch"):
                     _save_change_control_evidence_snapshot(
-                        session,
+                        get_session(),
                         readiness,
                         company=company,
                         environment=environment,
@@ -2458,7 +2458,7 @@ def render() -> None:
                 elif closure is not None and closure_current:
                     st.info("No Change & Drift action-queue rows found for the selected scope.")
             if st.button("Save Change Exceptions to Action Queue", key="change_drift_queue"):
-                _queue_change_exceptions(session, exceptions)
+                _queue_change_exceptions(get_session(), exceptions)
         elif exceptions is not None:
             st.success("No change/drift exceptions crossed the default thresholds.")
         brief_md = _build_change_drift_markdown(

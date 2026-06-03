@@ -2132,7 +2132,7 @@ def _queue_privileged_grant_actions(
         st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
-def _render_privileged_grant_readiness(session, company: str, environment: str, days: int) -> None:
+def _render_privileged_grant_readiness(company: str, environment: str, days: int) -> None:
     with st.expander("Privileged Grant Readiness", expanded=False):
         st.caption(
             "Reviews account-level admin role grants and database-scoped object privileges before DBA grant/revoke work. "
@@ -2206,7 +2206,7 @@ def _render_privileged_grant_readiness(session, company: str, environment: str, 
             height=320,
         )
         if st.button("Save Privileged Grants to Action Queue", key="security_priv_grants_queue"):
-            _queue_privileged_grant_actions(session, grants, company=company, environment=environment)
+            _queue_privileged_grant_actions(get_session(), grants, company=company, environment=environment)
         with st.expander("Privileged grant readiness query", expanded=False):
             st.code(st.session_state.get("security_privileged_grants_sql", ""), language="sql")
 
@@ -2248,7 +2248,6 @@ def _render_security_source_health(company: str, environment: str) -> None:
 
 
 def render() -> None:
-    session = get_session()
     company = get_active_company()
     environment = get_active_environment()
     if st.session_state.get("exceptions_only_mode") and "security_posture_workflow" not in st.session_state:
@@ -2279,10 +2278,12 @@ def render() -> None:
     )
 
     days = st.slider("Security brief lookback (days)", 1, 90, 30, key="security_posture_brief_days")
-    _render_privileged_grant_readiness(session, company, environment, days)
+    _render_privileged_grant_readiness(company, environment, days)
     _render_security_source_health(company, environment)
     if st.button("Load Security Brief", key="security_posture_brief_load", type="primary"):
+        session = None
         try:
+            session = get_session()
             summary_sql, exceptions_sql = _build_security_mart_brief_sql(session, days, company)
             st.session_state["security_posture_summary"] = run_query(
                 summary_sql,
@@ -2306,6 +2307,7 @@ def render() -> None:
             }
         except Exception as exc:
             try:
+                session = session or get_session()
                 summary_sql, exceptions_sql = _build_security_summary_sql(session, days, company)
                 st.session_state["security_posture_summary"] = run_query(
                     summary_sql,
@@ -2495,7 +2497,7 @@ def render() -> None:
             with review_col:
                 if st.button("Save Access Review Snapshot", key="security_posture_access_review_snapshot"):
                     _save_security_access_review_snapshot(
-                        session,
+                        get_session(),
                         access_review,
                         company=company,
                         environment=environment,
@@ -2503,7 +2505,7 @@ def render() -> None:
                     )
             with queue_col:
                 if st.button("Save Security Exceptions to Action Queue", key="security_posture_queue"):
-                    _queue_security_exceptions(session, exceptions)
+                    _queue_security_exceptions(get_session(), exceptions)
 
             with st.expander("Security Access Review Trend", expanded=False):
                 trend_days = st.slider(

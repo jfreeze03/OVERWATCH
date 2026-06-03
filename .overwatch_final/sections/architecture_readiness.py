@@ -1589,7 +1589,6 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
 
 
 def render():
-    session = get_session()
     company = get_active_company()
     environment = get_active_environment()
     objectives = _architecture_objectives_frame(company)
@@ -1646,7 +1645,7 @@ def render():
         if st.button("Load Isolation Matrix", key="arch_iso_load"):
             with st.spinner("Loading database-to-warehouse isolation evidence..."):
                 try:
-                    st.session_state["arch_iso_df"] = _load_workload_isolation(session, days, row_limit)
+                    st.session_state["arch_iso_df"] = _load_workload_isolation(get_session(), days, row_limit)
                     st.session_state["arch_iso_meta"] = _architecture_scope_meta(
                         company,
                         environment,
@@ -1676,7 +1675,7 @@ def render():
                     height=420,
                 )
                 if st.button("Queue Isolation Findings", key="arch_iso_queue"):
-                    _queue_architecture_findings(session, df, "Architecture Readiness - Isolation", "DATABASE_NAME", "Workload Isolation")
+                    _queue_architecture_findings(get_session(), df, "Architecture Readiness - Isolation", "DATABASE_NAME", "Workload Isolation")
                 download_csv(df, "architecture_workload_isolation.csv")
 
     elif active_pane == "Clustering Strategy":
@@ -1690,7 +1689,7 @@ def render():
         if st.button("Load Clustering Candidates", key="arch_cluster_load"):
             with st.spinner("Loading table clustering candidates..."):
                 try:
-                    st.session_state["arch_cluster_df"] = _load_clustering_strategy(session, min_gb, row_limit)
+                    st.session_state["arch_cluster_df"] = _load_clustering_strategy(get_session(), min_gb, row_limit)
                     st.session_state["arch_cluster_meta"] = _architecture_scope_meta(
                         company,
                         environment,
@@ -1727,7 +1726,7 @@ def render():
                 if st.button("Queue Clustering Findings", key="arch_cluster_queue"):
                     queue_df = df.copy()
                     queue_df["ENTITY"] = queue_df.apply(_table_fqn, axis=1)
-                    _queue_architecture_findings(session, queue_df, "Architecture Readiness - Clustering", "ENTITY", "Clustering Strategy")
+                    _queue_architecture_findings(get_session(), queue_df, "Architecture Readiness - Clustering", "ENTITY", "Clustering Strategy")
                 download_csv(df, "architecture_clustering_strategy.csv")
 
     elif active_pane == "Cache Optimization":
@@ -1740,7 +1739,7 @@ def render():
         if st.button("Load Cache Evidence", key="arch_cache_load"):
             with st.spinner("Loading warehouse cache evidence..."):
                 try:
-                    st.session_state["arch_cache_df"] = _load_cache_optimization(session, days, row_limit)
+                    st.session_state["arch_cache_df"] = _load_cache_optimization(get_session(), days, row_limit)
                     st.session_state["arch_cache_meta"] = _architecture_scope_meta(
                         company,
                         environment,
@@ -1769,7 +1768,7 @@ def render():
                     height=420,
                 )
                 if st.button("Queue Cache Findings", key="arch_cache_queue"):
-                    _queue_architecture_findings(session, df, "Architecture Readiness - Cache", "WAREHOUSE_NAME", "Cache Optimization")
+                    _queue_architecture_findings(get_session(), df, "Architecture Readiness - Cache", "WAREHOUSE_NAME", "Cache Optimization")
                 download_csv(df, "architecture_cache_optimization.csv")
 
     elif active_pane == "Objectives & Owners":
@@ -1816,7 +1815,7 @@ def render():
         if st.button("Load DR Readiness", key="arch_dr_load"):
             with st.spinner("Loading DR and replication metadata..."):
                 try:
-                    st.session_state["arch_dr_data"] = _load_dr_readiness(session, days)
+                    st.session_state["arch_dr_data"] = _load_dr_readiness(get_session(), days)
                     readiness = st.session_state["arch_dr_data"].get("readiness", pd.DataFrame())
                     st.session_state["arch_dr_readiness"] = readiness
                     st.session_state["arch_dr_meta"] = _architecture_scope_meta(
@@ -1845,7 +1844,7 @@ def render():
                 height=360,
             )
             if st.button("Queue DR Findings", key="arch_dr_queue"):
-                _queue_architecture_findings(session, readiness, "Architecture Readiness - DR", "GROUP_NAME", "Disaster Recovery")
+                _queue_architecture_findings(get_session(), readiness, "Architecture Readiness - DR", "GROUP_NAME", "Disaster Recovery")
             usage = data.get("usage", pd.DataFrame())
             if usage is not None and not usage.empty:
                 st.subheader("Replication Usage History")
@@ -1865,7 +1864,7 @@ def render():
             download_csv(readiness, "architecture_dr_readiness.csv")
 
     elif active_pane == "AI & Platform Futures":
-        _render_platform_futures(session, company, environment)
+        _render_platform_futures(get_session(), company, environment)
 
     elif active_pane == "Forward Watchlist":
         _render_forward_watchlist()

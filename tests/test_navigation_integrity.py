@@ -75,6 +75,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("import pandas", shell_import_block)
         self.assertNotIn("from utils", shell_import_block)
         self.assertNotIn("import utils", shell_import_block)
+        self.assertNotIn("st.number_input", shell_text)
 
     def test_roles_and_aliases_resolve_to_visible_sections(self):
         for role, sections in ROLE_SECTIONS.items():
@@ -607,6 +608,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_COMBINED_CSS_CACHE", theme_text)
         self.assertIn("_has_company_scope_columns", data_text)
         self.assertIn("render_section_confidence_meter(active_section, st.session_state)", app_text)
+        self.assertIn('secondary_chrome_ready = bool(st.session_state.get("_overwatch_secondary_chrome_ready"))', app_text)
+        self.assertIn("if secondary_chrome_ready:", app_text)
+        self.assertIn('st.session_state["_overwatch_secondary_chrome_ready"] = True', app_text)
         self.assertNotIn("render_section_confidence_meter(active_section, dict(st.session_state))", app_text)
         self.assertNotIn("dict(state).items()", (APP_ROOT / "utils" / "section_guidance.py").read_text(encoding="utf-8"))
         self.assertIn("cc_user_profile_requested", cost_center_text)
@@ -633,10 +637,39 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_account_health_intervention_matrix", account_health_text)
         self.assertIn("Account Health DBA intervention matrix", account_health_text)
         self.assertIn('sort_by=["DBA_PRIORITY", "COUNT", "SURFACE"]', account_health_text)
+        account_health_render_preload = account_health_text.split("def render():", 1)[1].split(
+            "active_view = st.radio",
+            1,
+        )[0]
+        self.assertIn("def _account_health_action_session", account_health_text)
+        self.assertIn("get_session_for_action", account_health_text)
+        self.assertIn("def _account_query_history_capabilities", account_health_text)
+        self.assertIn("qh = _query_history_capabilities(action_session)", account_health_text)
+        self.assertNotIn("session = get_session()", account_health_render_preload)
+        self.assertNotIn("filter_existing_columns(", account_health_render_preload)
         self.assertIn("Cost guardrail", warehouse_health_text)
         self.assertIn("_warehouse_intervention_matrix", warehouse_health_text)
         self.assertIn("Warehouse DBA intervention matrix", warehouse_health_text)
         self.assertIn('sort_by=["DBA_PRIORITY", "CAPACITY_SCORE", "METERED_CREDITS"]', warehouse_health_text)
+        warehouse_render_preload = warehouse_health_text.split("def render():", 1)[1].split(
+            "warehouse_view = render_workflow_selector",
+            1,
+        )[0]
+        warehouse_render_start = warehouse_health_text.split("def render():", 1)[1].split(
+            "render_operator_briefing",
+            1,
+        )[0]
+        self.assertIn("def _warehouse_action_session", warehouse_health_text)
+        self.assertIn("get_session_for_action", warehouse_health_text)
+        self.assertIn("def _warehouse_sql_exprs", warehouse_health_text)
+        self.assertIn("exprs = _warehouse_sql_exprs(session)", warehouse_health_text)
+        self.assertIn("def _warehouse_support_panels_have_state", warehouse_health_text)
+        self.assertIn('st.button("Support Panels"', warehouse_health_text)
+        self.assertNotIn("session = get_session()", warehouse_render_start)
+        self.assertNotIn("filter_existing_columns(", warehouse_render_preload)
+        self.assertNotIn("_render_capacity_brief(", warehouse_render_preload)
+        self.assertNotIn("_render_warehouse_ownership_panel(", warehouse_render_preload)
+        self.assertNotIn("_render_warehouse_source_health(", warehouse_render_preload)
         self.assertIn("Recovery readiness", change_drift_text)
         self.assertIn("_change_intervention_matrix", change_drift_text)
         self.assertIn("Change DBA intervention matrix", change_drift_text)

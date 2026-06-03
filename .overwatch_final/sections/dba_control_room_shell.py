@@ -40,6 +40,10 @@ def _credit_price() -> float:
     return _safe_float(st.session_state.get("credit_price", DEFAULTS["credit_price"]), DEFAULTS["credit_price"])
 
 
+def _cortex_budget() -> float:
+    return _safe_float(st.session_state.get("dba_control_room_cortex_budget_usd", 5000.0), 5000.0)
+
+
 def _full_workspace_requested() -> bool:
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
@@ -78,13 +82,7 @@ def render() -> None:
     with c1:
         st.metric("Scope", f"{_active_company()} / {_active_environment()}")
     with c2:
-        st.number_input(
-            "Cortex monthly budget ($)",
-            min_value=1.0,
-            value=float(st.session_state.get("dba_control_room_cortex_budget_usd", 5000.0)),
-            step=250.0,
-            key="dba_control_room_cortex_budget_usd",
-        )
+        st.metric("Cortex Budget", f"${_cortex_budget():,.0f}")
     with c3:
         st.info("DBA Control Room evidence is available on demand for live triage, snapshot checks, source health, and exports.")
 

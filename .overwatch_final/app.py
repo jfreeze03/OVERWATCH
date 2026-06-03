@@ -922,44 +922,46 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 active_section = _current_active_section(visible_sections)
-section_guidance.render_section_confidence_meter(active_section, st.session_state)
-section_guidance.render_section_reference(active_section)
+secondary_chrome_ready = bool(st.session_state.get("_overwatch_secondary_chrome_ready"))
+if secondary_chrome_ready:
+    section_guidance.render_section_confidence_meter(active_section, st.session_state)
+    section_guidance.render_section_reference(active_section)
 
-if st.button("Ask OVERWATCH", key="ask_overwatch_panel_toggle", type="secondary"):
-    st.session_state["_overwatch_show_ask_overwatch"] = not bool(
-        st.session_state.get("_overwatch_show_ask_overwatch")
-    )
+    if st.button("Ask OVERWATCH", key="ask_overwatch_panel_toggle", type="secondary"):
+        st.session_state["_overwatch_show_ask_overwatch"] = not bool(
+            st.session_state.get("_overwatch_show_ask_overwatch")
+        )
 
-if st.session_state.get("_overwatch_show_ask_overwatch"):
-    with st.expander("Ask OVERWATCH", expanded=True):
-        with st.form("ask_overwatch_form", clear_on_submit=False):
-            ask_q = st.text_input(
-                "Ask a specific DBA operating question...",
-                placeholder="e.g. What should I work first for cost or task reliability?",
-                key="ask_overwatch_input",
-                max_chars=500,
-            )
-            ask_submitted = st.form_submit_button("Ask")
-        if ask_submitted:
-            ask_text = str(st.session_state.get("ask_overwatch_input") or ask_q or "").strip()
-            if not ask_text:
-                st.info("Type a specific DBA operating question first.")
-            else:
-                from utils.ask_overwatch import answer_ask_overwatch
-
-                result = answer_ask_overwatch(
-                    ask_text[:500],
-                    _snapshot_ask_overwatch_state(st.session_state),
-                    active_section=active_section,
-                    company=active_company,
-                    environment=st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
-                    role=current_role or "",
+    if st.session_state.get("_overwatch_show_ask_overwatch"):
+        with st.expander("Ask OVERWATCH", expanded=True):
+            with st.form("ask_overwatch_form", clear_on_submit=False):
+                ask_q = st.text_input(
+                    "Ask a specific DBA operating question...",
+                    placeholder="e.g. What should I work first for cost or task reliability?",
+                    key="ask_overwatch_input",
+                    max_chars=500,
                 )
-                st.markdown(result["answer"])
-                cards = result.get("cards") or []
-                if cards:
-                    with st.expander("Evidence used", expanded=False):
-                        st.dataframe(cards, use_container_width=True, hide_index=True, height=260)
+                ask_submitted = st.form_submit_button("Ask")
+            if ask_submitted:
+                ask_text = str(st.session_state.get("ask_overwatch_input") or ask_q or "").strip()
+                if not ask_text:
+                    st.info("Type a specific DBA operating question first.")
+                else:
+                    from utils.ask_overwatch import answer_ask_overwatch
+
+                    result = answer_ask_overwatch(
+                        ask_text[:500],
+                        _snapshot_ask_overwatch_state(st.session_state),
+                        active_section=active_section,
+                        company=active_company,
+                        environment=st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
+                        role=current_role or "",
+                    )
+                    st.markdown(result["answer"])
+                    cards = result.get("cards") or []
+                    if cards:
+                        with st.expander("Evidence used", expanded=False):
+                            st.dataframe(cards, use_container_width=True, hide_index=True, height=260)
 
 # Section dispatch.
 active_section = _current_active_section(visible_sections)
@@ -1001,6 +1003,7 @@ try:
 finally:
     duration_ms = int((time.perf_counter() - section_render_started) * 1000)
     st.session_state["_overwatch_last_section_render_ms"] = duration_ms
+    st.session_state["_overwatch_secondary_chrome_ready"] = True
     log_section_load(active_section, duration_ms)
     if show_transition:
         transition_slot.empty()

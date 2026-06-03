@@ -175,6 +175,27 @@ class PerformanceFrameworkTests(unittest.TestCase):
         self.assertIn('button_wait_ms = timeout_ms if missing_behavior == "fail"', runner_text)
         self.assertIn("wait_for_named_button(page, label, button_wait_ms)", runner_text)
 
+    def test_live_concurrent_runner_can_wait_for_initial_idle(self):
+        runner = load_live_runner()
+        runner_text = (PERF_ROOT / "live_concurrent_runner.py").read_text(encoding="utf-8")
+
+        args = runner.parse_args(["--wait-initial-idle"])
+
+        self.assertTrue(args.wait_initial_idle)
+        self.assertIn("if args.wait_initial_idle:", runner_text)
+        self.assertIn("wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms)", runner_text)
+
+    def test_live_concurrent_runner_supports_single_initial_load_mode(self):
+        runner = load_live_runner()
+        runner_text = (PERF_ROOT / "live_concurrent_runner.py").read_text(encoding="utf-8")
+
+        args = runner.parse_args(["--single-initial-load"])
+
+        self.assertTrue(args.single_initial_load)
+        self.assertIn("if args.single_initial_load:", runner_text)
+        self.assertIn("if not args.single_initial_load:", runner_text)
+        self.assertIn("Load the app once per user", runner_text)
+
     def test_live_concurrent_runner_summarizes_browser_steps(self):
         runner = load_live_runner()
         samples = [

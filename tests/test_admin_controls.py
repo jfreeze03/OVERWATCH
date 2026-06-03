@@ -34,6 +34,7 @@ from utils.action_queue import (  # noqa: E402
     build_action_queue_ddl,
     build_cost_savings_verification_health_sql,
     build_cost_savings_verification_sql,
+    clear_action_queue_process_cache,
     enrich_action_queue_view,
     summarize_verification_frame,
     update_action_status_with_evidence,
@@ -630,6 +631,7 @@ class AdminControlTests(unittest.TestCase):
         previous = dict(st.session_state)
         try:
             st.session_state.clear()
+            clear_action_queue_process_cache()
             session = FakeSession()
             update_action_status_with_evidence(
                 session,
@@ -654,7 +656,33 @@ class AdminControlTests(unittest.TestCase):
             )
             update_sql = session.sql_texts[-1].upper()
             show_calls = [sql for sql in session.sql_texts if "SHOW COLUMNS" in sql.upper()]
+
+            st.session_state.clear()
+            second_session = FakeSession()
+            update_action_status_with_evidence(
+                second_session,
+                "ABC124",
+                "Fixed",
+                reason="Resolved under INC778",
+                verification_notes="Warehouse setting validation stayed green after the second review.",
+                verification_result="Current 7-day metered credits remain below the reviewed baseline.",
+                verification_query="SELECT 1;",
+                ticket_id="INC778",
+                approver="DBA_MANAGER",
+                due_date="2026-06-02",
+                baseline_value=100,
+                current_value=68,
+                measured_delta=-32,
+                owner_approval_status="Approved",
+                owner_approval_note="Pipeline owner approved follow-up recovery after INC778.",
+                recovery_sla_state="Recovered Within SLA",
+                recovery_sla_hours=1.25,
+                recovery_sla_target_hours=4,
+                recovery_evidence="Latest task run succeeded within the recovery window.",
+            )
+            second_show_calls = [sql for sql in second_session.sql_texts if "SHOW COLUMNS" in sql.upper()]
         finally:
+            clear_action_queue_process_cache()
             st.session_state.clear()
             st.session_state.update(previous)
 
@@ -668,9 +696,10 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("OWNER_APPROVAL_STATUS", update_sql)
         self.assertIn("OWNER_APPROVAL_BY", update_sql)
         self.assertIn("OWNER_APPROVAL_AT", update_sql)
+        self.assertEqual(len(show_calls), 1)
+        self.assertEqual(second_show_calls, [])
         self.assertIn("RECOVERY_SLA_STATE", update_sql)
         self.assertIn("RECOVERY_EVIDENCE", update_sql)
-        self.assertEqual(len(show_calls), 1)
 
     def test_action_queue_triage_fields_expose_due_state_and_evidence_gaps(self):
         self.assertEqual(action_queue_default_due_days("Critical"), 1)

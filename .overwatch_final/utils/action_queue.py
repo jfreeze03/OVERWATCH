@@ -1,6 +1,8 @@
 # utils/action_queue.py - persistent recommendation/action queue helpers
 import hashlib
 import re
+import threading
+import time
 
 import pandas as pd
 import streamlit as st
@@ -56,6 +58,16 @@ ACTION_QUEUE_SEVERITY_SLA_DAYS = {
 }
 
 _ACTION_QUEUE_COLUMN_CACHE_KEY = "_overwatch_action_queue_columns"
+_ACTION_QUEUE_COLUMN_TTL_SECONDS = 300
+_ACTION_QUEUE_PROCESS_COLUMN_CACHE: dict[str, tuple[float, set[str]]] = {}
+_ACTION_QUEUE_PROCESS_COLUMN_LOCK = threading.RLock()
+_ACTION_QUEUE_SHOW_LOCK = threading.Lock()
+
+
+def clear_action_queue_process_cache() -> None:
+    """Clear process-wide action queue metadata cache."""
+    with _ACTION_QUEUE_PROCESS_COLUMN_LOCK:
+        _ACTION_QUEUE_PROCESS_COLUMN_CACHE.clear()
 
 
 def make_action_id(category: str, entity: str, finding: str) -> str:
@@ -436,18 +448,58 @@ def _show_column_name(row) -> str:
     return ""
 
 
+def _action_queue_role_scope() -> str:
+    try:
+        return str(st.session_state.get("_overwatch_current_role", "") or "").upper()
+    except Exception:
+        return ""
+
+
+def _action_queue_process_cache_key() -> str:
+    return f"{_action_queue_role_scope()}|{ACTION_QUEUE_FQN}"
+
+
+def _action_queue_process_cached_columns() -> set[str] | None:
+    key = _action_queue_process_cache_key()
+    with _ACTION_QUEUE_PROCESS_COLUMN_LOCK:
+        entry = _ACTION_QUEUE_PROCESS_COLUMN_CACHE.get(key)
+        if not entry:
+            return None
+        ts, columns = entry
+        if (time.monotonic() - ts) > _ACTION_QUEUE_COLUMN_TTL_SECONDS:
+            _ACTION_QUEUE_PROCESS_COLUMN_CACHE.pop(key, None)
+            return None
+        return set(columns)
+
+
+def _mark_action_queue_process_columns(columns: set[str]) -> None:
+    key = _action_queue_process_cache_key()
+    with _ACTION_QUEUE_PROCESS_COLUMN_LOCK:
+        _ACTION_QUEUE_PROCESS_COLUMN_CACHE[key] = (time.monotonic(), set(columns))
+
+
 def _action_queue_column_names(session) -> set[str]:
-    """Return deployed action-queue columns using one cached SHOW per session."""
+    """Return deployed action-queue columns using cached metadata per role."""
     cached = st.session_state.get(_ACTION_QUEUE_COLUMN_CACHE_KEY)
     if isinstance(cached, set):
         return cached
-    try:
-        rows = session.sql(f"SHOW COLUMNS IN TABLE {ACTION_QUEUE_FQN}").collect()
-    except Exception:
-        rows = []
-    columns = {name for row in rows for name in [_show_column_name(row)] if name}
-    st.session_state[_ACTION_QUEUE_COLUMN_CACHE_KEY] = columns
-    return columns
+    process_cached = _action_queue_process_cached_columns()
+    if process_cached is not None:
+        st.session_state[_ACTION_QUEUE_COLUMN_CACHE_KEY] = process_cached
+        return process_cached
+    with _ACTION_QUEUE_SHOW_LOCK:
+        process_cached = _action_queue_process_cached_columns()
+        if process_cached is not None:
+            st.session_state[_ACTION_QUEUE_COLUMN_CACHE_KEY] = process_cached
+            return process_cached
+        try:
+            rows = session.sql(f"SHOW COLUMNS IN TABLE {ACTION_QUEUE_FQN}").collect()
+        except Exception:
+            rows = []
+        columns = {name for row in rows for name in [_show_column_name(row)] if name}
+        st.session_state[_ACTION_QUEUE_COLUMN_CACHE_KEY] = columns
+        _mark_action_queue_process_columns(columns)
+        return columns
 
 
 def _action_queue_has_column(session, column: str) -> bool:

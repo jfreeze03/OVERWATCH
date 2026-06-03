@@ -273,17 +273,18 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
         )
 
     try:
-        for iteration in range(1, args.iterations + 1):
+        async def initial_load():
+            await page.goto(args.url, wait_until="domcontentloaded", timeout=args.timeout_ms)
+            await page.wait_for_timeout(args.initial_wait_ms)
+            await wait_for_app_ready(page, args.timeout_ms)
+            if args.wait_initial_idle:
+                await wait_for_streamlit_idle(page, args.timeout_ms, args.action_settle_ms)
 
-            async def initial_load():
-                await page.goto(args.url, wait_until="domcontentloaded", timeout=args.timeout_ms)
-                await page.wait_for_timeout(args.initial_wait_ms)
-                await wait_for_app_ready(page, args.timeout_ms)
-
+        if args.single_initial_load:
             initial_sample = await timed_step(
                 page=page,
                 user_id=user_id,
-                iteration=iteration,
+                iteration=1,
                 section="App Shell",
                 action="initial_load",
                 browser_errors=browser_errors,
@@ -291,7 +292,22 @@ async def run_user(browser, args: argparse.Namespace, user_id: int) -> list[Step
             )
             samples.append(initial_sample)
             if not initial_sample.ok and args.stop_user_on_error:
-                break
+                return samples
+
+        for iteration in range(1, args.iterations + 1):
+            if not args.single_initial_load:
+                initial_sample = await timed_step(
+                    page=page,
+                    user_id=user_id,
+                    iteration=iteration,
+                    section="App Shell",
+                    action="initial_load",
+                    browser_errors=browser_errors,
+                    operation=initial_load,
+                )
+                samples.append(initial_sample)
+                if not initial_sample.ok and args.stop_user_on_error:
+                    break
 
             for section in args.sections:
 
@@ -581,6 +597,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--fail-console-errors", action="store_true", help="Treat browser console errors as failed steps.")
     parser.add_argument("--timeout-ms", type=int, default=60000, help="Per-step browser timeout.")
     parser.add_argument("--initial-wait-ms", type=int, default=1200, help="Initial page settle time.")
+    parser.add_argument("--wait-initial-idle", action="store_true", help="After initial app readiness, wait for Streamlit idle before recording the step.")
+    parser.add_argument("--single-initial-load", action="store_true", help="Load the app once per user, then repeat in-app section flows without hard page reloads.")
     parser.add_argument("--action-settle-ms", type=int, default=900, help="Minimum wait after clicks before spinner checks.")
     parser.add_argument("--ramp-seconds", type=float, default=5.0, help="Ramp users across this many seconds.")
     parser.add_argument("--width", type=int, default=1440, help="Browser viewport width.")

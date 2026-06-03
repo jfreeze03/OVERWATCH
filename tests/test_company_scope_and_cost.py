@@ -298,6 +298,22 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertEqual(len(session.statements), 2)
         self.assertIn("SELECT QUERY_ID, WAREHOUSE_SIZE", session.statements[1])
 
+        for key in (
+            "_overwatch_available_columns",
+            "_overwatch_unavailable_column_views",
+            "_overwatch_column_probe",
+        ):
+            st.session_state.pop(key, None)
+        second_session = Session()
+        existing_again = filter_existing_columns(
+            second_session,
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            ["QUERY_ID", "WAREHOUSE_SIZE"],
+        )
+
+        self.assertEqual(existing_again, ["QUERY_ID", "WAREHOUSE_SIZE"])
+        self.assertEqual(second_session.statements, [])
+
     def test_metadata_scope_uses_active_company_when_no_company_passed(self):
         previous_company = st.session_state.get("active_company")
         st.session_state["active_company"] = "Trexis"

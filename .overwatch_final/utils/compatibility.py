@@ -18,8 +18,10 @@ _OBJECT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){1,
 _COLUMN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 _COLUMN_METADATA_TTL_SECONDS = 300
 _GLOBAL_COLUMN_CACHE: dict[str, tuple[float, set[str]]] = {}
+_GLOBAL_COLUMN_PROBE_CACHE: dict[str, tuple[float, bool]] = {}
 _GLOBAL_UNAVAILABLE_OBJECTS: dict[str, float] = {}
 _GLOBAL_COLUMN_CACHE_LOCK = threading.RLock()
+_GLOBAL_COLUMN_PROBE_EXECUTION_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -184,6 +186,7 @@ def clear_compatibility_process_cache() -> None:
     """Clear process-wide compatibility metadata caches."""
     with _GLOBAL_COLUMN_CACHE_LOCK:
         _GLOBAL_COLUMN_CACHE.clear()
+        _GLOBAL_COLUMN_PROBE_CACHE.clear()
         _GLOBAL_UNAVAILABLE_OBJECTS.clear()
 
 
@@ -207,6 +210,36 @@ def _mark_process_columns(object_name: str, columns: set[str]) -> None:
     with _GLOBAL_COLUMN_CACHE_LOCK:
         _GLOBAL_COLUMN_CACHE[object_name] = (time.monotonic(), set(columns))
         _GLOBAL_UNAVAILABLE_OBJECTS.pop(object_name, None)
+
+
+def _role_cache_scope() -> str:
+    try:
+        return str(st.session_state.get("_overwatch_current_role", "") or "").upper()
+    except Exception:
+        return ""
+
+
+def _column_probe_cache_key(object_name: str, column: str) -> str:
+    return f"{_role_cache_scope()}|{object_name}|{column}"
+
+
+def _process_column_probe_result(object_name: str, column: str) -> bool | None:
+    key = _column_probe_cache_key(object_name, column)
+    with _GLOBAL_COLUMN_CACHE_LOCK:
+        entry = _GLOBAL_COLUMN_PROBE_CACHE.get(key)
+        if not entry:
+            return None
+        ts, result = entry
+        if not _fresh_timestamp(ts):
+            _GLOBAL_COLUMN_PROBE_CACHE.pop(key, None)
+            return None
+        return bool(result)
+
+
+def _mark_process_column_probe(object_name: str, column: str, result: bool) -> None:
+    key = _column_probe_cache_key(object_name, column)
+    with _GLOBAL_COLUMN_CACHE_LOCK:
+        _GLOBAL_COLUMN_PROBE_CACHE[key] = (time.monotonic(), bool(result))
 
 
 def _process_unavailable(object_name: str) -> bool:
@@ -281,22 +314,41 @@ def filter_existing_columns(session, object_name: str, columns: Iterable[str]) -
         return []
     probe_cache = st.session_state.setdefault("_overwatch_column_probe", {})
     candidates = [col for col in requested if col in available]
+    for col in candidates:
+        cache_key = f"{object_name}:{col}"
+        if cache_key in probe_cache:
+            continue
+        process_result = _process_column_probe_result(object_name, col)
+        if process_result is not None:
+            probe_cache[cache_key] = process_result
     unprobed = [col for col in candidates if f"{object_name}:{col}" not in probe_cache]
     if unprobed:
-        try:
-            session.sql(f"SELECT {', '.join(unprobed)} FROM {object_name} LIMIT 0").collect()
-            for col in unprobed:
-                probe_cache[f"{object_name}:{col}"] = True
-        except Exception:
-            for col in unprobed:
+        with _GLOBAL_COLUMN_PROBE_EXECUTION_LOCK:
+            for col in list(unprobed):
                 cache_key = f"{object_name}:{col}"
                 if cache_key in probe_cache:
                     continue
+                process_result = _process_column_probe_result(object_name, col)
+                if process_result is not None:
+                    probe_cache[cache_key] = process_result
+            unprobed = [col for col in candidates if f"{object_name}:{col}" not in probe_cache]
+            if unprobed:
                 try:
-                    session.sql(f"SELECT {col} FROM {object_name} LIMIT 0").collect()
-                    probe_cache[cache_key] = True
+                    session.sql(f"SELECT {', '.join(unprobed)} FROM {object_name} LIMIT 0").collect()
+                    for col in unprobed:
+                        probe_cache[f"{object_name}:{col}"] = True
+                        _mark_process_column_probe(object_name, col, True)
                 except Exception:
-                    probe_cache[cache_key] = False
+                    for col in unprobed:
+                        cache_key = f"{object_name}:{col}"
+                        if cache_key in probe_cache:
+                            continue
+                        try:
+                            session.sql(f"SELECT {col} FROM {object_name} LIMIT 0").collect()
+                            probe_cache[cache_key] = True
+                        except Exception:
+                            probe_cache[cache_key] = False
+                        _mark_process_column_probe(object_name, col, bool(probe_cache[cache_key]))
     existing: list[str] = []
     for col in candidates:
         cache_key = f"{object_name}:{col}"

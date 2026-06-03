@@ -5,7 +5,7 @@ import streamlit as st
 import pandas as pd
 from utils.workflows import render_operator_briefing, render_priority_dataframe, render_workflow_selector
 from utils import (
-    get_session, format_credits,
+    get_session_for_action, format_credits,
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
     get_active_company, get_active_environment, get_environment_filter_clause, get_global_filter_clause,
     metric_confidence_label, freshness_note,
@@ -46,6 +46,14 @@ WAREHOUSE_SCOPE_FILTER_KEYS = (
     "global_start_date",
     "global_end_date",
 )
+
+
+def _warehouse_action_session(action: str):
+    return get_session_for_action(
+        action,
+        surface="Warehouse Health",
+        offline_note="Warehouse shell, source summaries, and cached evidence remain visible without a live connection.",
+    )
 
 
 def warehouse_setting_review_fqn(
@@ -180,6 +188,63 @@ def _warehouse_meta_matches(meta: dict | None, expected: dict | None) -> bool:
         elif _scope_value(actual) != _scope_value(expected_value):
             return False
     return True
+
+
+def _warehouse_sql_exprs(session) -> dict[str, str]:
+    """Resolve optional ACCOUNT_USAGE columns only when a live query is requested."""
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "WAREHOUSE_SIZE",
+            "QUEUED_OVERLOAD_TIME",
+            "BYTES_SPILLED_TO_LOCAL_STORAGE",
+            "BYTES_SPILLED_TO_REMOTE_STORAGE",
+            "PERCENTAGE_SCANNED_FROM_CACHE",
+            "BYTES_SCANNED",
+        ],
+    ))
+    wm_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+        ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
+    ))
+    return {
+        "wh_size_expr": "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
+        "plain_wh_size_expr": "MAX(warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
+        "latest_size_expr": "q.warehouse_size" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
+        "queue_avg_expr": "AVG(q.queued_overload_time)/1000" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0",
+        "queue_sum_expr": "SUM(q.queued_overload_time)" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0",
+        "remote_spill_sum_expr": (
+            "SUM(q.bytes_spilled_to_remote_storage)"
+            if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+            else "0"
+        ),
+        "local_spill_expr": (
+            "SUM(bytes_spilled_to_local_storage)"
+            if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols
+            else "0"
+        ),
+        "local_spill_row_expr": (
+            "bytes_spilled_to_local_storage"
+            if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols
+            else "0"
+        ),
+        "remote_spill_expr": (
+            "SUM(bytes_spilled_to_remote_storage)"
+            if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+            else "0"
+        ),
+        "remote_spill_row_expr": (
+            "bytes_spilled_to_remote_storage"
+            if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
+            else "0"
+        ),
+        "cache_expr": "AVG(q.percentage_scanned_from_cache)" if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "0",
+        "bytes_scanned_expr": "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0",
+        "compute_meter_expr": "m.credits_used_compute" if "CREDITS_USED_COMPUTE" in wm_cols else "m.credits_used",
+        "cloud_meter_expr": "m.credits_used_cloud_services" if "CREDITS_USED_CLOUD_SERVICES" in wm_cols else "0::FLOAT",
+    }
 
 
 def _frame_row_count(frame) -> int:
@@ -2204,12 +2269,15 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
     return upsert_actions(session, actions)
 
 
-def _render_capacity_brief(session, company: str, environment: str) -> None:
+def _render_capacity_brief(company: str, environment: str) -> None:
     with st.expander("Capacity Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
         days = st.slider("Capacity lookback (days)", 1, 30, 7, key="wh_capacity_days")
         if st.button("Load Capacity Brief", key="wh_capacity_load"):
             with st.spinner("Building warehouse capacity brief..."):
                 try:
+                    session = _warehouse_action_session("load the warehouse capacity brief")
+                    if session is None:
+                        return
                     summary_sql, exceptions_sql = _build_warehouse_capacity_sql(session, days)
                     summary = run_query(
                         summary_sql,
@@ -2448,13 +2516,15 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
             save_col, setup_col = st.columns([1, 2])
             with save_col:
                 if st.button("Save Setting Review Snapshot", key="wh_setting_review_snapshot", use_container_width=True):
-                    _save_warehouse_setting_review_snapshot(
-                        session,
-                        exceptions,
-                        company=company,
-                        environment=environment,
-                        source="Warehouse Health Capacity Brief",
-                    )
+                    session = _warehouse_action_session("save a warehouse setting review snapshot")
+                    if session is not None:
+                        _save_warehouse_setting_review_snapshot(
+                            session,
+                            exceptions,
+                            company=company,
+                            environment=environment,
+                            source="Warehouse Health Capacity Brief",
+                        )
             with setup_col:
                 st.caption(
                     "Snapshot stores owner approval path, rollback requirement, baseline pressure, and post-change verification SQL."
@@ -2579,8 +2649,10 @@ def _render_capacity_brief(session, company: str, environment: str) -> None:
                 )
             if st.button("Save Capacity Findings to Action Queue", key="wh_capacity_queue"):
                 try:
-                    saved = _queue_capacity_findings(session, exceptions)
-                    st.success(f"Saved {saved} warehouse capacity findings to the action queue.")
+                    session = _warehouse_action_session("save warehouse capacity findings to the action queue")
+                    if session is not None:
+                        saved = _queue_capacity_findings(session, exceptions)
+                        st.success(f"Saved {saved} warehouse capacity findings to the action queue.")
                 except Exception as e:
                     st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
                     st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
@@ -2695,7 +2767,7 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
         st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
-def _render_warehouse_ownership_panel(session, company: str, environment: str) -> None:
+def _render_warehouse_ownership_panel(company: str, environment: str) -> None:
     with st.expander("Warehouse Ownership Readiness", expanded=False):
         st.caption(
             "Checks recent warehouse usage against warehouse tags and the owner directory before DBA setting changes are approved."
@@ -2796,8 +2868,21 @@ def _render_warehouse_source_health(company: str, environment: str) -> None:
         )
 
 
+def _warehouse_support_panels_have_state() -> bool:
+    return any(
+        st.session_state.get(key) is not None
+        for key in (
+            "wh_capacity_summary",
+            "wh_capacity_exceptions",
+            "wh_operability_fact",
+            "wh_owner_inventory",
+            "wh_setting_review_snapshot",
+            "wh_action_closure",
+        )
+    )
+
+
 def render():
-    session = get_session()
     credit_price = st.session_state.get("credit_price", 3.00)
     company = get_active_company()
     environment = get_active_environment()
@@ -2821,57 +2906,6 @@ def render():
         role_col="role_name",
         db_col="database_name",
     )
-    qh_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-        [
-            "WAREHOUSE_SIZE",
-            "QUEUED_OVERLOAD_TIME",
-            "BYTES_SPILLED_TO_LOCAL_STORAGE",
-            "BYTES_SPILLED_TO_REMOTE_STORAGE",
-            "PERCENTAGE_SCANNED_FROM_CACHE",
-            "BYTES_SCANNED",
-        ],
-    ))
-    wm_cols = set(filter_existing_columns(
-        session,
-        "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
-        ["CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES"],
-    ))
-    wh_size_expr = "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
-    plain_wh_size_expr = "MAX(warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
-    latest_size_expr = "q.warehouse_size" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR"
-    queue_avg_expr = "AVG(q.queued_overload_time)/1000" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0"
-    queue_sum_expr = "SUM(q.queued_overload_time)" if "QUEUED_OVERLOAD_TIME" in qh_cols else "0"
-    remote_spill_sum_expr = (
-        "SUM(q.bytes_spilled_to_remote_storage)"
-        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
-        else "0"
-    )
-    local_spill_expr = (
-        "SUM(bytes_spilled_to_local_storage)"
-        if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols
-        else "0"
-    )
-    local_spill_row_expr = (
-        "bytes_spilled_to_local_storage"
-        if "BYTES_SPILLED_TO_LOCAL_STORAGE" in qh_cols
-        else "0"
-    )
-    remote_spill_expr = (
-        "SUM(bytes_spilled_to_remote_storage)"
-        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
-        else "0"
-    )
-    remote_spill_row_expr = (
-        "bytes_spilled_to_remote_storage"
-        if "BYTES_SPILLED_TO_REMOTE_STORAGE" in qh_cols
-        else "0"
-    )
-    cache_expr = "AVG(q.percentage_scanned_from_cache)" if "PERCENTAGE_SCANNED_FROM_CACHE" in qh_cols else "0"
-    bytes_scanned_expr = "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0"
-    compute_meter_expr = "m.credits_used_compute" if "CREDITS_USED_COMPUTE" in wm_cols else "m.credits_used"
-    cloud_meter_expr = "m.credits_used_cloud_services" if "CREDITS_USED_CLOUD_SERVICES" in wm_cols else "0::FLOAT"
 
     render_operator_briefing(
         [
@@ -2882,12 +2916,6 @@ def render():
         ],
         columns=4,
     )
-    _render_capacity_brief(session, company, environment)
-    _render_warehouse_ownership_panel(session, company, environment)
-    _render_warehouse_source_health(company, environment)
-    if st.session_state.get("exceptions_only_mode"):
-        st.stop()
-
     warehouse_view = render_workflow_selector(
         "Warehouse Health workflow",
         "warehouse_health_view",
@@ -2895,6 +2923,20 @@ def render():
         WAREHOUSE_HEALTH_DETAILS,
         columns=3,
     )
+    show_support_panels = (
+        bool(st.session_state.get("warehouse_health_support_panels_open"))
+        or bool(st.session_state.get("exceptions_only_mode"))
+        or _warehouse_support_panels_have_state()
+    )
+    if show_support_panels:
+        _render_capacity_brief(company, environment)
+        _render_warehouse_ownership_panel(company, environment)
+        _render_warehouse_source_health(company, environment)
+    elif st.button("Support Panels", key="warehouse_health_open_support_panels"):
+        st.session_state["warehouse_health_support_panels_open"] = True
+        st.rerun()
+    if st.session_state.get("exceptions_only_mode"):
+        st.stop()
 
     # ── OVERVIEW ──────────────────────────────────────────────────────────────
     if warehouse_view == "Overview & Scaling":
@@ -2923,17 +2965,21 @@ def render():
                     "(cache and warehouse size require live ACCOUNT_USAGE)"
                 )
                 if df_w.empty:
+                    session = _warehouse_action_session("load live warehouse overview fallback")
+                    if session is None:
+                        return
+                    exprs = _warehouse_sql_exprs(session)
                     df_w = run_query(f"""
                         SELECT q.warehouse_name,
-                               {wh_size_expr} AS warehouse_size,
+                               {exprs["wh_size_expr"]} AS warehouse_size,
                                COUNT(*)                            AS total_queries,
                                AVG(q.total_elapsed_time)/1000      AS avg_elapsed_sec,
                                PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY q.total_elapsed_time)/1000 AS p95_elapsed_sec,
-                               {queue_avg_expr}                    AS avg_queued_sec,
-                               {remote_spill_sum_expr}/POWER(1024,3)  AS total_remote_spill_gb,
-                               {cache_expr} AS avg_cache_pct,
+                               {exprs["queue_avg_expr"]}           AS avg_queued_sec,
+                               {exprs["remote_spill_sum_expr"]}/POWER(1024,3)  AS total_remote_spill_gb,
+                               {exprs["cache_expr"]} AS avg_cache_pct,
                                SUM(CASE WHEN UPPER(q.execution_status)='FAILED_WITH_ERROR' THEN 1 ELSE 0 END) AS error_count,
-                               {bytes_scanned_expr}/POWER(1024,3)  AS total_gb_scanned
+                               {exprs["bytes_scanned_expr"]}/POWER(1024,3)  AS total_gb_scanned
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                         WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
                           AND q.warehouse_name IS NOT NULL
@@ -3035,11 +3081,15 @@ def render():
                     )
                     scale_source = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
                     if df_scale.empty:
+                        session = _warehouse_action_session("load live warehouse scaling fallback")
+                        if session is None:
+                            return
+                        exprs = _warehouse_sql_exprs(session)
                         df_scale = run_query(f"""
                             WITH latest_size AS (
                                 SELECT warehouse_name, warehouse_size
                                 FROM (
-                                    SELECT q.warehouse_name, {latest_size_expr} AS warehouse_size,
+                                    SELECT q.warehouse_name, {exprs["latest_size_expr"]} AS warehouse_size,
                                            ROW_NUMBER() OVER (PARTITION BY q.warehouse_name ORDER BY q.start_time DESC) AS rn
                                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                                     WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
@@ -3049,8 +3099,8 @@ def render():
                                 WHERE rn = 1
                             )
                             SELECT m.warehouse_name, ls.warehouse_size, m.start_time, m.end_time,
-                                   m.credits_used, {compute_meter_expr} AS credits_used_compute,
-                                   {cloud_meter_expr} AS credits_used_cloud_services
+                                   m.credits_used, {exprs["compute_meter_expr"]} AS credits_used_compute,
+                                   {exprs["cloud_meter_expr"]} AS credits_used_cloud_services
                             FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY m
                             LEFT JOIN latest_size ls ON m.warehouse_name = ls.warehouse_name
                             WHERE m.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
@@ -3100,19 +3150,23 @@ def render():
         eff_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_eff_days")
         if st.button("Load Efficiency Metrics", key="wh_eff_load"):
             try:
+                session = _warehouse_action_session("load warehouse efficiency metrics")
+                if session is None:
+                    return
+                exprs = _warehouse_sql_exprs(session)
                 df_eff = run_query(f"""
                     WITH {build_metered_credit_cte(days_back=eff_days, include_recent=True)}
                     SELECT q.warehouse_name,
-                           {wh_size_expr} AS warehouse_size,
+                           {exprs["wh_size_expr"]} AS warehouse_size,
                            COUNT(*) AS query_count,
                            ROUND(SUM(COALESCE(pqc.metered_credits, 0)), 4) AS metered_credits,
                            ROUND(SUM(COALESCE(pqc.metered_credits, 0)) / NULLIF(COUNT(*), 0), 6) AS credits_per_query,
-                           ROUND({queue_sum_expr} / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS queue_sec_per_credit,
-                           ROUND({remote_spill_sum_expr} / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS remote_spill_gb_per_credit,
-                           ROUND({cache_expr}, 2) AS avg_cache_pct,
+                           ROUND({exprs["queue_sum_expr"]} / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS queue_sec_per_credit,
+                           ROUND({exprs["remote_spill_sum_expr"]} / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 2) AS remote_spill_gb_per_credit,
+                           ROUND({exprs["cache_expr"]}, 2) AS avg_cache_pct,
                            ROUND(100
-                                 - LEAST(COALESCE({queue_sum_expr} / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
-                                 - LEAST(COALESCE({remote_spill_sum_expr} / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
+                                 - LEAST(COALESCE({exprs["queue_sum_expr"]} / 1000 / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
+                                 - LEAST(COALESCE({exprs["remote_spill_sum_expr"]} / POWER(1024,3) / NULLIF(SUM(COALESCE(pqc.metered_credits, 0)), 0), 0), 25)
                                  - LEAST(COALESCE(SUM(COALESCE(pqc.metered_credits, 0)) / NULLIF(COUNT(*), 0), 0) * 10, 25),
                                  1) AS efficiency_score
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
@@ -3172,7 +3226,9 @@ def render():
             )
             download_csv(df_eff, "warehouse_efficiency.csv")
             if st.button("Save low-efficiency warehouses to Action Queue", key="wh_eff_queue"):
-                _queue_efficiency_findings(session, df_eff)
+                session = _warehouse_action_session("save warehouse efficiency findings to the action queue")
+                if session is not None:
+                    _queue_efficiency_findings(session, df_eff)
 
     # ── SPILL ─────────────────────────────────────────────────────────────────
     elif warehouse_view == "Spill & Memory":
@@ -3181,15 +3237,19 @@ def render():
 
         if st.button("Load Spill Data", key="sp_load"):
             try:
+                session = _warehouse_action_session("load warehouse spill data")
+                if session is None:
+                    return
+                exprs = _warehouse_sql_exprs(session)
                 df_sp = run_query(f"""
-                    SELECT warehouse_name, {plain_wh_size_expr} AS warehouse_size,
+                    SELECT warehouse_name, {exprs["plain_wh_size_expr"]} AS warehouse_size,
                            COUNT(*) AS spill_query_count,
-                           ROUND({local_spill_expr}/POWER(1024,3),2)  AS local_spill_gb,
-                           ROUND({remote_spill_expr}/POWER(1024,3),2) AS remote_spill_gb,
+                           ROUND({exprs["local_spill_expr"]}/POWER(1024,3),2)  AS local_spill_gb,
+                           ROUND({exprs["remote_spill_expr"]}/POWER(1024,3),2) AS remote_spill_gb,
                            ROUND(AVG(total_elapsed_time)/1000,2)                       AS avg_elapsed_sec
                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                     WHERE start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
-                      AND ({local_spill_row_expr} > 0 OR {remote_spill_row_expr} > 0)
+                      AND ({exprs["local_spill_row_expr"]} > 0 OR {exprs["remote_spill_row_expr"]} > 0)
                       AND warehouse_name IS NOT NULL
                       {wh_plain_filters}
                     GROUP BY warehouse_name

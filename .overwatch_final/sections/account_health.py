@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
 from utils import (
-    get_session, run_query, run_query_or_raise, format_credits,
+    get_session_for_action, run_query, run_query_or_raise, format_credits,
     credits_to_dollars, download_csv, mark_loaded, show_loaded_time,
     build_metered_credit_cte, build_monitoring_cost_sql,
     metric_confidence_label, freshness_note,
@@ -46,6 +46,14 @@ ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (
     "global_role",
     "global_database",
 )
+
+
+def _account_health_action_session(action: str):
+    return get_session_for_action(
+        action,
+        surface="Account Health",
+        offline_note="Account Health shell, source summaries, and cached evidence remain visible without a live connection.",
+    )
 
 
 def _account_health_scope_value(value) -> str:
@@ -372,6 +380,67 @@ def _task_health_sql_or_empty(session, time_predicate: str, company: str) -> str
                    0::NUMBER AS SUCCEEDED_TASKS,
                    0::NUMBER AS DISTINCT_TASKS
         """
+
+
+def _default_query_history_capabilities() -> dict[str, str]:
+    return {
+        "cost_wh_size_expr": "NULL::VARCHAR",
+        "cost_bytes_scanned_expr": "0",
+        "failed_pred_q": "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'",
+        "failed_pred_plain": "UPPER(execution_status) = 'FAILED_WITH_ERROR'",
+        "queued_count_expr_q": "SUM(CASE WHEN q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)",
+        "queued_count_expr_plain": "SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)",
+        "pressure_wh_size_expr": "NULL::VARCHAR",
+    }
+
+
+def _account_query_history_capabilities(session) -> dict[str, str]:
+    if session is None:
+        return _default_query_history_capabilities()
+    qh_cols = set(filter_existing_columns(
+        session,
+        "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+        [
+            "WAREHOUSE_SIZE",
+            "BYTES_SCANNED",
+            "ERROR_CODE",
+            "QUEUED_OVERLOAD_TIME",
+            "QUEUED_PROVISIONING_TIME",
+            "QUEUED_REPAIR_TIME",
+        ],
+    ))
+    queue_cols = [
+        col.lower()
+        for col in ["QUEUED_OVERLOAD_TIME", "QUEUED_PROVISIONING_TIME", "QUEUED_REPAIR_TIME"]
+        if col in qh_cols
+    ]
+    queue_time_q = " + ".join([f"COALESCE(q.{col}, 0)" for col in queue_cols])
+    queue_time_plain = " + ".join([f"COALESCE({col}, 0)" for col in queue_cols])
+    return {
+        "cost_wh_size_expr": "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
+        "cost_bytes_scanned_expr": "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0",
+        "failed_pred_q": (
+            "q.error_code IS NOT NULL"
+            if "ERROR_CODE" in qh_cols
+            else "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'"
+        ),
+        "failed_pred_plain": (
+            "error_code IS NOT NULL"
+            if "ERROR_CODE" in qh_cols
+            else "UPPER(execution_status) = 'FAILED_WITH_ERROR'"
+        ),
+        "queued_count_expr_q": (
+            f"SUM(CASE WHEN {queue_time_q} > 0 OR q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+            if queue_cols
+            else "SUM(CASE WHEN q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+        ),
+        "queued_count_expr_plain": (
+            f"SUM(CASE WHEN {queue_time_plain} > 0 OR execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+            if queue_cols
+            else "SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
+        ),
+        "pressure_wh_size_expr": "MAX(warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
+    }
 
 
 def _live_query_status_sql(wh_filter: str, db_filter: str, user_filter: str) -> str:
@@ -2265,7 +2334,7 @@ def _queue_account_health_access_hygiene(
         st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
-def _render_account_health_access_hygiene(session, company: str, environment: str) -> None:
+def _render_account_health_access_hygiene(company: str, environment: str) -> None:
     with st.expander("Account Access Hygiene", expanded=False):
         st.caption(
             "Account-level user/auth posture is intentionally not database-filtered. "
@@ -2273,9 +2342,12 @@ def _render_account_health_access_hygiene(session, company: str, environment: st
         )
         days = st.slider("Access hygiene lookback days", 7, 120, 30, key="account_health_access_hygiene_days")
         if st.button("Load Access Hygiene", key="account_health_access_hygiene_load"):
+            action_session = _account_health_action_session("load Account Access Hygiene")
+            if action_session is None:
+                return
             try:
                 sql = _account_health_access_hygiene_sql(
-                    session,
+                    action_session,
                     days,
                     company=company,
                     environment=environment,
@@ -2356,12 +2428,14 @@ def _render_account_health_access_hygiene(session, company: str, environment: st
                     use_container_width=True,
                     disabled=actionable.empty,
                 ):
-                    _queue_account_health_access_hygiene(
-                        session,
-                        hygiene,
-                        company=company,
-                        days=days,
-                    )
+                    action_session = _account_health_action_session("queue Account Access Hygiene reviews")
+                    if action_session is not None:
+                        _queue_account_health_access_hygiene(
+                            action_session,
+                            hygiene,
+                            company=company,
+                            days=days,
+                        )
             with b2:
                 route_ready = int((hygiene.get("QUEUE_READINESS", pd.Series(dtype=str)) == "Ready to Queue").sum())
                 st.caption(
@@ -2411,7 +2485,6 @@ def _render_account_health_source_health(company: str, environment: str) -> None
 
 
 def render():
-    session      = get_session()
     credit_price = get_credit_price()
     company      = st.session_state.get("active_company", "ALFA")
     environment  = get_active_environment()
@@ -2424,54 +2497,12 @@ def render():
     )
     query_history_caps = None
 
-    def _query_history_capabilities() -> dict:
+    def _query_history_capabilities(action_session=None) -> dict:
         nonlocal query_history_caps
-        if query_history_caps is not None:
-            return query_history_caps
-        qh_cols = set(filter_existing_columns(
-            session,
-            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-            [
-                "WAREHOUSE_SIZE",
-                "BYTES_SCANNED",
-                "ERROR_CODE",
-                "QUEUED_OVERLOAD_TIME",
-                "QUEUED_PROVISIONING_TIME",
-                "QUEUED_REPAIR_TIME",
-            ],
-        ))
-        queue_cols = [
-            col.lower()
-            for col in ["QUEUED_OVERLOAD_TIME", "QUEUED_PROVISIONING_TIME", "QUEUED_REPAIR_TIME"]
-            if col in qh_cols
-        ]
-        queue_time_q = " + ".join([f"COALESCE(q.{col}, 0)" for col in queue_cols])
-        queue_time_plain = " + ".join([f"COALESCE({col}, 0)" for col in queue_cols])
-        query_history_caps = {
-            "cost_wh_size_expr": "MAX(q.warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
-            "cost_bytes_scanned_expr": "SUM(q.bytes_scanned)" if "BYTES_SCANNED" in qh_cols else "0",
-            "failed_pred_q": (
-                "q.error_code IS NOT NULL"
-                if "ERROR_CODE" in qh_cols
-                else "UPPER(q.execution_status) = 'FAILED_WITH_ERROR'"
-            ),
-            "failed_pred_plain": (
-                "error_code IS NOT NULL"
-                if "ERROR_CODE" in qh_cols
-                else "UPPER(execution_status) = 'FAILED_WITH_ERROR'"
-            ),
-            "queued_count_expr_q": (
-                f"SUM(CASE WHEN {queue_time_q} > 0 OR q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-                if queue_cols
-                else "SUM(CASE WHEN q.execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-            ),
-            "queued_count_expr_plain": (
-                f"SUM(CASE WHEN {queue_time_plain} > 0 OR execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-                if queue_cols
-                else "SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END)"
-            ),
-            "pressure_wh_size_expr": "MAX(warehouse_size)" if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR",
-        }
+        if query_history_caps is None:
+            if action_session is None:
+                action_session = _account_health_action_session("load Account Health QUERY_HISTORY metadata")
+            query_history_caps = _account_query_history_capabilities(action_session)
         return query_history_caps
 
     active_view = st.radio(
@@ -2523,6 +2554,9 @@ def render():
             st.caption(f"Loaded health snapshot is {cache_age / 60:.1f} minutes old. Refresh when current evidence matters.")
 
         if refresh_health:
+            action_session = _account_health_action_session("load Account Health")
+            if action_session is None:
+                return
             hd = {}
             mart_ok, mart_reason = _can_use_control_room_mart(company)
             control_mart = load_latest_control_room_mart(company) if mart_ok else None
@@ -2551,7 +2585,7 @@ def render():
                 ]
                 hd["_account_health_detail_source"] = "OVERWATCH mart facts"
             else:
-                qh = _query_history_capabilities()
+                qh = _query_history_capabilities(action_session)
                 cost_wh_size_expr = qh["cost_wh_size_expr"]
                 cost_bytes_scanned_expr = qh["cost_bytes_scanned_expr"]
                 failed_pred_q = qh["failed_pred_q"]
@@ -2583,7 +2617,7 @@ def render():
                     LIMIT 5
                 """),
                 ("failed_jobs", _task_failure_sql_or_empty(
-                    session,
+                    action_session,
                     "scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())",
                         5,
                         company,
@@ -2670,7 +2704,7 @@ def render():
                     FROM wh
                 """),
                 ("task_health", _task_health_sql_or_empty(
-                    session,
+                    action_session,
                     "scheduled_time >= DATEADD('hours', -24, CURRENT_TIMESTAMP())",
                     company,
                 )),
@@ -2950,26 +2984,30 @@ def render():
                 use_container_width=True,
                 disabled=actionable_checklist.empty,
             ):
-                _queue_account_health_checklist(
-                    session,
-                    checklist,
-                    company=company,
-                    environment=get_active_environment(),
-                )
+                action_session = _account_health_action_session("queue Account Health checklist issues")
+                if action_session is not None:
+                    _queue_account_health_checklist(
+                        action_session,
+                        checklist,
+                        company=company,
+                        environment=get_active_environment(),
+                    )
         with q2:
             if st.button(
                 "Save Checklist Snapshot",
                 key="account_health_save_checklist_snapshot",
                 use_container_width=True,
             ):
-                _save_account_health_checklist_snapshot(
-                    session,
-                    checklist,
-                    company=company,
-                    environment=get_active_environment(),
-                    health_score=health_score,
-                    detail_source=hd.get("_account_health_detail_source", ""),
-                )
+                action_session = _account_health_action_session("save Account Health checklist snapshot")
+                if action_session is not None:
+                    _save_account_health_checklist_snapshot(
+                        action_session,
+                        checklist,
+                        company=company,
+                        environment=get_active_environment(),
+                        health_score=health_score,
+                        detail_source=hd.get("_account_health_detail_source", ""),
+                    )
         with q3:
             if actionable_checklist.empty:
                 st.caption("Daily checklist is clean for this snapshot; no queue item is needed. Save the snapshot for trend tracking.")
@@ -2980,7 +3018,6 @@ def render():
                     f"verification SQL, proof requirements, and scope evidence. {ready_count:,} are route-ready without blockers."
                 )
         _render_account_health_access_hygiene(
-            session,
             company=company,
             environment=get_active_environment(),
         )
@@ -3313,10 +3350,13 @@ def render():
         st.caption("Credit quota vs. consumed — with suspend threshold validation.")
 
         if st.button("Load Resource Monitors", key="resmon_load"):
+            action_session = _account_health_action_session("load Resource Monitors")
+            if action_session is None:
+                return
             try:
                 rm_object = "SNOWFLAKE.ACCOUNT_USAGE.RESOURCE_MONITORS"
                 rm_cols = set(filter_existing_columns(
-                    session,
+                    action_session,
                     rm_object,
                     [
                         "NAME", "CREATED", "CREDIT_QUOTA", "USED_CREDITS",
@@ -3538,12 +3578,15 @@ def render():
         br_hours  = hours_map[briefing_window]
 
         if st.button("Generate Executive Briefing", key="br_generate", type="primary"):
+            action_session = _account_health_action_session("generate Account Health executive briefing")
+            if action_session is None:
+                return
             with st.spinner("Collecting metrics and generating briefing via Cortex AI..."):
                 br_data = {}
 
                 # ── Collect metrics ────────────────────────────────────────────
                 briefing_mart_ok, briefing_mart_reason = _can_use_control_room_mart(company)
-                qh = _query_history_capabilities()
+                qh = _query_history_capabilities(action_session)
                 failed_pred_plain = qh["failed_pred_plain"]
                 queued_count_expr_q = qh["queued_count_expr_q"]
                 metric_queries = {
@@ -3579,7 +3622,7 @@ def render():
                         ORDER BY credits DESC LIMIT 1
                     """,
                     "failed_tasks": _task_failure_sql_or_empty(
-                        session,
+                        action_session,
                         f"scheduled_time >= DATEADD('hours',-{int(br_hours)},CURRENT_TIMESTAMP())",
                         1,
                         company,
@@ -3705,7 +3748,7 @@ def render():
                 prompt_esc = prompt.replace("'", "''")
 
                 try:
-                    result = session.sql(
+                    result = action_session.sql(
                         f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', '{prompt_esc}') AS briefing"
                     ).collect()
                     briefing_text = result[0]["BRIEFING"] or ""

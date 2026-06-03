@@ -64,6 +64,18 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         self.assertEqual(missing, [])
 
+    def test_dba_control_room_uses_fast_shell_module(self):
+        self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room_shell")
+        shell_text = (APP_ROOT / "sections" / "dba_control_room_shell.py").read_text(encoding="utf-8")
+        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+
+        self.assertIn("def _delegate_full_workspace", shell_text)
+        self.assertIn("from sections import dba_control_room", shell_text)
+        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
+        self.assertNotIn("import pandas", shell_import_block)
+        self.assertNotIn("from utils", shell_import_block)
+        self.assertNotIn("import utils", shell_import_block)
+
     def test_roles_and_aliases_resolve_to_visible_sections(self):
         for role, sections in ROLE_SECTIONS.items():
             with self.subTest(role=role):
@@ -110,7 +122,8 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_ask_overwatch_is_evidence_grounded_without_raw_cortex_call(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        self.assertIn('st.expander("Ask OVERWATCH", expanded=False)', app_text)
+        self.assertIn('"ask_overwatch_panel_toggle"', app_text)
+        self.assertIn('st.expander("Ask OVERWATCH", expanded=True)', app_text)
         self.assertIn("answer_ask_overwatch(", app_text)
         self.assertIn('"rec_automation_board"', (APP_ROOT / "utils" / "ask_overwatch.py").read_text(encoding="utf-8"))
         self.assertIn('"arch_futures_board"', (APP_ROOT / "utils" / "ask_overwatch.py").read_text(encoding="utf-8"))
@@ -218,6 +231,17 @@ class NavigationIntegrityTests(unittest.TestCase):
                 for pattern in removed_patterns:
                     self.assertNotIn(pattern, text)
 
+    def test_cost_contract_detail_workspace_is_opened_on_demand(self):
+        text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+
+        self.assertIn('_DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"', text)
+        self.assertIn('_FULL_COCKPIT_BOARDS_KEY = "_cost_contract_full_cockpit_boards"', text)
+        self.assertIn('st.button("Open detail"', text)
+        self.assertIn('st.button("Open full cockpit boards"', text)
+        self.assertIn("st.session_state.pop(_FULL_COCKPIT_BOARDS_KEY, None)", text)
+        self.assertIn("if open_workflow == workflow:", text)
+        self.assertIn("render_workflow_module(workflow, WORKFLOW_MODULES)", text)
+
     def test_navigation_labels_are_plain_titles(self):
         for section in ALL_SECTIONS:
             with self.subTest(section=section):
@@ -257,6 +281,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"_prev_global_filter_signature"', state_keys_text)
         self.assertIn('"_prev_metric_settings_signature"', state_keys_text)
 
+    def test_current_role_is_seeded_from_snowflake_secrets(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn("def _seed_current_role_from_secrets", app_text)
+        self.assertIn('snowflake_cfg.get("role")', app_text)
+        self.assertIn("_seed_current_role_from_secrets()", app_text)
+
     def test_sidebar_saved_views_are_explicit_load_only(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         self.assertIn("_overwatch_saved_views_loaded", app_text)
@@ -274,6 +305,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_overwatch_pending_section", app_text)
         self.assertIn("def _section_render_signature", app_text)
         self.assertIn("_overwatch_last_section_render_signature", app_text)
+        self.assertIn("def _should_show_section_transition", app_text)
+        self.assertIn('has_prior_render = "_overwatch_last_section_render_signature" in st.session_state', app_text)
+        self.assertIn('has_pending_navigation = "_overwatch_pending_section" in st.session_state', app_text)
         self.assertIn("transition_slot = st.empty()", app_text)
         self.assertIn("section_slot = st.empty()", app_text)
         self.assertIn("_render_section_transition_state(active_section)", app_text)
@@ -293,6 +327,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertLess(header_index, sidebar_index)
         self.assertIn("def _current_active_section", app_text)
         self.assertIn("def _current_credit_price", app_text)
+        self.assertIn("def _sidebar_panel_toggle", app_text)
+        self.assertIn('if _sidebar_panel_toggle("Command Palette", "command_palette")', app_text)
+        self.assertIn('if _sidebar_panel_toggle("Saved Views", "saved_views")', app_text)
+        self.assertIn('if _sidebar_panel_toggle("Global Filters", "global_filters")', app_text)
+        self.assertIn('if _sidebar_panel_toggle("Settings", "settings")', app_text)
+        self.assertNotIn('with st.expander("Command Palette", expanded=False)', app_text)
+        self.assertNotIn('with st.expander("Saved Views", expanded=False)', app_text)
+        self.assertNotIn('with st.expander("Global Filters", expanded=False)', app_text)
+        self.assertNotIn('with st.expander("Settings", expanded=False)', app_text)
 
     def test_current_sections_have_operating_guides(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")

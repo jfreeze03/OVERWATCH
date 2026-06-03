@@ -14,7 +14,24 @@ import os
 import re
 import streamlit as st
 from config import ALERT_DB, ALERT_SCHEMA
-from .query import safe_identifier, sql_literal
+
+
+def safe_identifier(value: str, allow_qualified: bool = False) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("Identifier cannot be blank")
+    parts = raw.split(".") if allow_qualified else [raw]
+    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,254}$")
+    if any(not ident_re.match(part) for part in parts):
+        raise ValueError(f"Unsafe Snowflake identifier: {raw}")
+    return ".".join(parts)
+
+
+def sql_literal(value, max_len: int = 8000) -> str:
+    if value is None:
+        return "NULL"
+    text = str(value).replace("\x00", "")[:max_len]
+    return "'" + text.replace("'", "''") + "'"
 
 LOG_TABLE = (
     f"{safe_identifier(ALERT_DB)}."

@@ -9,54 +9,135 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-import pandas as pd
 import streamlit as st
 
-from config import SECTION_BY_TITLE, normalize_section_name
-from utils import (
-    build_metered_credit_cte,
-    build_task_failure_summary_sql,
-    build_task_history_sql,
-    credits_to_dollars,
-    dba_control_plane_section_scorecards,
-    download_csv,
-    enrich_action_queue_view,
-    format_credits,
-    format_snowflake_error,
-    freshness_note,
-    filter_existing_columns,
-    get_db_filter_clause,
-    get_active_environment,
-    get_credit_price,
-    get_global_filter_clause,
-    get_query_telemetry,
-    get_query_budget_summary,
-    get_session,
-    get_user_filter_clause,
-    get_wh_filter_clause,
-    build_mart_control_room_summary_sql,
-    build_mart_control_room_credits_sql,
-    build_mart_control_room_cost_drivers_sql,
-    build_mart_control_room_warehouse_pressure_sql,
-    build_mart_control_room_failed_queries_sql,
-    build_mart_control_room_object_changes_sql,
-    build_mart_control_room_failed_logins_sql,
-    build_mart_control_room_task_failures_sql,
-    build_mart_query_detail_recent_sql,
-    build_mart_task_history_sql,
-    build_mart_procedure_sla_sql,
-    load_latest_control_room_mart,
-    load_task_inventory,
-    load_action_queue,
-    metric_confidence_label,
-    OWNER_CONTEXT_COLUMNS,
-    run_query,
-    safe_float,
-    safe_int,
-    sql_literal,
-    resolve_owner_context,
-)
-from utils.workflows import render_operator_briefing, render_priority_dataframe
+from config import DEFAULT_ENVIRONMENT, DEFAULTS, SECTION_BY_TITLE, normalize_section_name
+import utils as _utils
+
+
+class _LazyPandas:
+    """Load pandas only when the Control Room actually needs dataframe work."""
+
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            import pandas as pandas_module
+
+            self._module = pandas_module
+        return self._module
+
+    def __getattr__(self, name: str):
+        return getattr(self._load(), name)
+
+
+pd = _LazyPandas()
+
+
+def _lazy_util(name: str):
+    def _call(*args, **kwargs):
+        return getattr(_utils, name)(*args, **kwargs)
+
+    _call.__name__ = name
+    return _call
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value != value:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value != value:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_active_environment() -> str:
+    return str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+
+
+def get_credit_price() -> float:
+    return safe_float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)), 3.68)
+
+
+def metric_confidence_label(kind: str) -> str:
+    labels = {
+        "exact": "Confidence: Exact",
+        "allocated": "Confidence: Allocated / Estimated from exact warehouse metering",
+        "estimated": "Confidence: Estimated",
+        "forecast": "Confidence: Forecast based on recent observed burn",
+        "projection": "Confidence: Projection based on recent observed burn",
+        "composite": "Confidence: Composite score from weighted operational signals",
+        "account": "Confidence: Account-wide",
+        "account-wide": "Confidence: Account-wide",
+    }
+    return labels.get(str(kind or "").lower(), "Confidence: Calculation depends on available account metadata")
+
+
+def freshness_note(source: str) -> str:
+    source_key = str(source or "").lower()
+    if "information_schema" in source_key or source_key in {"live", "is"}:
+        return "Freshness: live INFORMATION_SCHEMA view"
+    if "account_usage" in source_key or source_key in {"account", "query_history", "warehouse_metering_history"}:
+        return "Freshness: ACCOUNT_USAGE can lag up to about 45-90 minutes"
+    if "organization_usage" in source_key:
+        return "Freshness: ORGANIZATION_USAGE can lag several hours"
+    if "session" in source_key:
+        return "Freshness: current Streamlit session only"
+    return "Freshness: depends on source view availability"
+
+
+def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
+    cols = st.columns(columns)
+    for idx, (label, detail) in enumerate(items):
+        with cols[idx % len(cols)]:
+            st.caption(str(label))
+            st.write(str(detail))
+
+
+build_metered_credit_cte = _lazy_util("build_metered_credit_cte")
+build_task_failure_summary_sql = _lazy_util("build_task_failure_summary_sql")
+build_task_history_sql = _lazy_util("build_task_history_sql")
+credits_to_dollars = _lazy_util("credits_to_dollars")
+dba_control_plane_section_scorecards = _lazy_util("dba_control_plane_section_scorecards")
+download_csv = _lazy_util("download_csv")
+enrich_action_queue_view = _lazy_util("enrich_action_queue_view")
+format_credits = _lazy_util("format_credits")
+format_snowflake_error = _lazy_util("format_snowflake_error")
+filter_existing_columns = _lazy_util("filter_existing_columns")
+get_db_filter_clause = _lazy_util("get_db_filter_clause")
+get_global_filter_clause = _lazy_util("get_global_filter_clause")
+get_query_telemetry = _lazy_util("get_query_telemetry")
+get_query_budget_summary = _lazy_util("get_query_budget_summary")
+get_session = _lazy_util("get_session")
+get_user_filter_clause = _lazy_util("get_user_filter_clause")
+get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
+build_mart_control_room_summary_sql = _lazy_util("build_mart_control_room_summary_sql")
+build_mart_control_room_credits_sql = _lazy_util("build_mart_control_room_credits_sql")
+build_mart_control_room_cost_drivers_sql = _lazy_util("build_mart_control_room_cost_drivers_sql")
+build_mart_control_room_warehouse_pressure_sql = _lazy_util("build_mart_control_room_warehouse_pressure_sql")
+build_mart_control_room_failed_queries_sql = _lazy_util("build_mart_control_room_failed_queries_sql")
+build_mart_control_room_object_changes_sql = _lazy_util("build_mart_control_room_object_changes_sql")
+build_mart_control_room_failed_logins_sql = _lazy_util("build_mart_control_room_failed_logins_sql")
+build_mart_control_room_task_failures_sql = _lazy_util("build_mart_control_room_task_failures_sql")
+build_mart_query_detail_recent_sql = _lazy_util("build_mart_query_detail_recent_sql")
+build_mart_task_history_sql = _lazy_util("build_mart_task_history_sql")
+build_mart_procedure_sla_sql = _lazy_util("build_mart_procedure_sla_sql")
+load_latest_control_room_mart = _lazy_util("load_latest_control_room_mart")
+load_task_inventory = _lazy_util("load_task_inventory")
+load_action_queue = _lazy_util("load_action_queue")
+run_query = _lazy_util("run_query")
+sql_literal = _lazy_util("sql_literal")
+resolve_owner_context = _lazy_util("resolve_owner_context")
+render_priority_dataframe = _lazy_util("render_priority_dataframe")
 
 DBA_CONTROL_SCOPE_FILTER_KEYS = (
     "global_warehouse",
@@ -1622,7 +1703,7 @@ def _enrich_command_owner_context(view: pd.DataFrame) -> pd.DataFrame:
         ),
         axis=1,
     )
-    for column in OWNER_CONTEXT_COLUMNS:
+    for column in _utils.OWNER_CONTEXT_COLUMNS:
         enriched[column] = contexts.apply(lambda context: context.get(column, ""))
     return enriched
 

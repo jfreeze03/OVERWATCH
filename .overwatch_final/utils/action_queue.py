@@ -55,6 +55,8 @@ ACTION_QUEUE_SEVERITY_SLA_DAYS = {
     "LOW": 14,
 }
 
+_ACTION_QUEUE_COLUMN_CACHE_KEY = "_overwatch_action_queue_columns"
+
 
 def make_action_id(category: str, entity: str, finding: str) -> str:
     raw = f"{category}|{entity}|{finding}".upper().encode("utf-8", errors="ignore")
@@ -423,23 +425,37 @@ def build_cost_savings_verification_health_sql(
     """
 
 
+def _show_column_name(row) -> str:
+    for key in ("column_name", "COLUMN_NAME", "name", "NAME"):
+        try:
+            value = row.get(key) if isinstance(row, dict) else row[key]
+        except Exception:
+            value = None
+        if value not in (None, ""):
+            return str(value).upper()
+    return ""
+
+
+def _action_queue_column_names(session) -> set[str]:
+    """Return deployed action-queue columns using one cached SHOW per session."""
+    cached = st.session_state.get(_ACTION_QUEUE_COLUMN_CACHE_KEY)
+    if isinstance(cached, set):
+        return cached
+    try:
+        rows = session.sql(f"SHOW COLUMNS IN TABLE {ACTION_QUEUE_FQN}").collect()
+    except Exception:
+        rows = []
+    columns = {name for row in rows for name in [_show_column_name(row)] if name}
+    st.session_state[_ACTION_QUEUE_COLUMN_CACHE_KEY] = columns
+    return columns
+
+
 def _action_queue_has_column(session, column: str) -> bool:
     """Return whether the deployed action queue has an optional column."""
     column = str(column or "").upper()
     if not column:
         return False
-    cache_key = f"_overwatch_action_queue_has_{column.lower()}"
-    if cache_key in st.session_state:
-        return bool(st.session_state[cache_key])
-    try:
-        rows = session.sql(
-            f"SHOW COLUMNS LIKE {sql_literal(column, 200)} IN TABLE {ACTION_QUEUE_FQN}"
-        ).collect()
-        found = bool(rows)
-    except Exception:
-        found = False
-    st.session_state[cache_key] = found
-    return found
+    return column in _action_queue_column_names(session)
 
 
 def action_queue_environment_values(environment: str | None = None) -> list[str]:

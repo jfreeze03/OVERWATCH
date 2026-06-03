@@ -599,32 +599,64 @@ class AdminControlTests(unittest.TestCase):
             def sql(self, sql_text):
                 self.sql_texts.append(sql_text)
                 if "SHOW COLUMNS" in sql_text:
-                    return FakeResult([{"name": "present"}])
+                    return FakeResult([
+                        {"column_name": column}
+                        for column in (
+                            "ENVIRONMENT",
+                            "TICKET_ID",
+                            "APPROVER",
+                            "DUE_DATE",
+                            "VERIFICATION_STATUS",
+                            "VERIFICATION_NOTES",
+                            "VERIFICATION_QUERY",
+                            "VERIFICATION_RESULT",
+                            "BASELINE_VALUE",
+                            "CURRENT_VALUE",
+                            "MEASURED_DELTA",
+                            "VERIFIED_BY",
+                            "VERIFIED_AT",
+                            "OWNER_APPROVAL_STATUS",
+                            "OWNER_APPROVAL_BY",
+                            "OWNER_APPROVAL_AT",
+                            "OWNER_APPROVAL_NOTE",
+                            "RECOVERY_SLA_STATE",
+                            "RECOVERY_SLA_HOURS",
+                            "RECOVERY_SLA_TARGET_HOURS",
+                            "RECOVERY_EVIDENCE",
+                        )
+                    ])
                 return FakeResult([])
 
-        session = FakeSession()
-        update_action_status_with_evidence(
-            session,
-            "ABC123",
-            "Fixed",
-            reason="Resolved under INC777",
-            verification_notes="Warehouse auto-suspend reduced idle runtime after owner review.",
-            verification_result="Current 7-day metered credits are 30 percent lower than the baseline window.",
-            verification_query="SELECT 1;",
-            ticket_id="INC777",
-            approver="DBA_MANAGER",
-            due_date="2026-06-01",
-            baseline_value=100,
-            current_value=70,
-            measured_delta=-30,
-            owner_approval_status="Approved",
-            owner_approval_note="Pipeline owner approved recovery after INC777.",
-            recovery_sla_state="Recovered Within SLA",
-            recovery_sla_hours=1.5,
-            recovery_sla_target_hours=4,
-            recovery_evidence="Latest task run succeeded 1.5 hours after failure.",
-        )
-        update_sql = session.sql_texts[-1].upper()
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            session = FakeSession()
+            update_action_status_with_evidence(
+                session,
+                "ABC123",
+                "Fixed",
+                reason="Resolved under INC777",
+                verification_notes="Warehouse auto-suspend reduced idle runtime after owner review.",
+                verification_result="Current 7-day metered credits are 30 percent lower than the baseline window.",
+                verification_query="SELECT 1;",
+                ticket_id="INC777",
+                approver="DBA_MANAGER",
+                due_date="2026-06-01",
+                baseline_value=100,
+                current_value=70,
+                measured_delta=-30,
+                owner_approval_status="Approved",
+                owner_approval_note="Pipeline owner approved recovery after INC777.",
+                recovery_sla_state="Recovered Within SLA",
+                recovery_sla_hours=1.5,
+                recovery_sla_target_hours=4,
+                recovery_evidence="Latest task run succeeded 1.5 hours after failure.",
+            )
+            update_sql = session.sql_texts[-1].upper()
+            show_calls = [sql for sql in session.sql_texts if "SHOW COLUMNS" in sql.upper()]
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
         self.assertIn("VERIFICATION_STATUS = 'VERIFIED'", update_sql)
         self.assertIn("VERIFICATION_RESULT", update_sql)
@@ -638,6 +670,7 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("OWNER_APPROVAL_AT", update_sql)
         self.assertIn("RECOVERY_SLA_STATE", update_sql)
         self.assertIn("RECOVERY_EVIDENCE", update_sql)
+        self.assertEqual(len(show_calls), 1)
 
     def test_action_queue_triage_fields_expose_due_state_and_evidence_gaps(self):
         self.assertEqual(action_queue_default_due_days("Critical"), 1)

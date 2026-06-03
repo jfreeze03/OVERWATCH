@@ -169,6 +169,12 @@ class PerformanceFrameworkTests(unittest.TestCase):
             self.assertTrue(label.startswith("Load"))
             self.assertFalse(any(token in label for token in unsafe_tokens), label)
 
+    def test_live_concurrent_runner_fail_mode_waits_full_button_timeout(self):
+        runner_text = (PERF_ROOT / "live_concurrent_runner.py").read_text(encoding="utf-8")
+
+        self.assertIn('button_wait_ms = timeout_ms if missing_behavior == "fail"', runner_text)
+        self.assertIn("wait_for_named_button(page, label, button_wait_ms)", runner_text)
+
     def test_live_concurrent_runner_summarizes_browser_steps(self):
         runner = load_live_runner()
         samples = [

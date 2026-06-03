@@ -60,6 +60,9 @@ WORKFLOW_MODULES = {
     "SPCS spend": "sections.spcs_tracker",
 }
 
+_DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
+_FULL_COCKPIT_BOARDS_KEY = "_cost_contract_full_cockpit_boards"
+
 
 def _cost_score(current_credits: float, prior_credits: float, open_actions: int, high_actions: int, cortex_exceptions: int) -> int:
     delta_pct = ((safe_float(current_credits) - safe_float(prior_credits)) / safe_float(prior_credits) * 100) if safe_float(prior_credits) > 0 else 0.0
@@ -2771,6 +2774,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         days = st.selectbox("Cost cockpit window", [7, 14, 30], index=0, format_func=lambda d: f"{d} days")
     with c2:
         if st.button("Load Cost Cockpit", key="cost_contract_cockpit_load", type="primary"):
+            st.session_state.pop(_FULL_COCKPIT_BOARDS_KEY, None)
             session = get_session_for_action(
                 "load the Cost Control Cockpit",
                 surface="Cost & Contract",
@@ -2917,6 +2921,13 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         credit_price,
         st.session_state.get("cost_contract_run_rate_error", ""),
     )
+    if not st.session_state.get(_FULL_COCKPIT_BOARDS_KEY):
+        if st.button("Open full cockpit boards", key="cost_contract_open_full_cockpit_boards"):
+            st.session_state[_FULL_COCKPIT_BOARDS_KEY] = True
+            st.rerun()
+        st.caption("Derived governance, incident, allocation, and drilldown boards are rendered only when opened.")
+        return
+
     _render_budget_anomaly_command_center(
         data,
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
@@ -3015,6 +3026,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             st.caption(evidence)
             if st.button(f"Open {workflow}", key=f"cost_contract_next_{idx}_{workflow}", use_container_width=True):
                 st.session_state["cost_contract_workflow"] = workflow
+                st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
                 st.rerun()
 
 
@@ -3061,4 +3073,21 @@ def render() -> None:
         columns=5,
     )
 
-    render_workflow_module(workflow, WORKFLOW_MODULES)
+    open_workflow = st.session_state.get(_DETAIL_WORKFLOW_KEY)
+    if open_workflow not in WORKFLOWS:
+        open_workflow = ""
+        st.session_state.pop(_DETAIL_WORKFLOW_KEY, None)
+
+    detail_cols = st.columns([1, 4])
+    with detail_cols[0]:
+        if st.button("Open detail", key="cost_contract_open_workflow_detail", use_container_width=True):
+            st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
+            st.rerun()
+    with detail_cols[1]:
+        if open_workflow and open_workflow != workflow:
+            st.caption(f"Detail workspace is open for {open_workflow}. Select it again or open the current workflow.")
+        else:
+            st.caption(f"Selected workflow: {workflow}")
+
+    if open_workflow == workflow:
+        render_workflow_module(workflow, WORKFLOW_MODULES)

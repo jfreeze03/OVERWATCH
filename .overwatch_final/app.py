@@ -40,14 +40,25 @@ if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-02-guardrails-
 
 from utils.cache import clear_all_cache
 from utils.session import get_session
-from utils.query import (
-    get_query_telemetry, get_query_budget_summary,
-    clear_query_telemetry, format_snowflake_error,
-)
 from utils.logging import log_section_load
 from utils.company_filter import invalidate_company_cache
 from utils.admin import clamp_global_date_range, render_admin_mode_control
 import utils.section_guidance as section_guidance
+
+
+def _lazy_query_call(name: str):
+    def _call(*args, **kwargs):
+        query_module = importlib.import_module("utils.query")
+        return getattr(query_module, name)(*args, **kwargs)
+
+    _call.__name__ = name
+    return _call
+
+
+get_query_telemetry = _lazy_query_call("get_query_telemetry")
+get_query_budget_summary = _lazy_query_call("get_query_budget_summary")
+clear_query_telemetry = _lazy_query_call("clear_query_telemetry")
+format_snowflake_error = _lazy_query_call("format_snowflake_error")
 
 
 _ASK_OVERWATCH_STATE_KEYS = (
@@ -82,6 +93,20 @@ _ASK_OVERWATCH_STATE_KEYS = (
 )
 
 CONNECTION_OPTIONAL_SECTIONS = {"Alert Center"}
+
+
+def _seed_current_role_from_secrets() -> None:
+    """Use configured Snowflake role as a zero-query startup hint when present."""
+    if st.session_state.get("_overwatch_current_role"):
+        return
+    try:
+        connections = st.secrets.get("connections", {})
+        snowflake_cfg = connections.get("snowflake", {}) if connections else {}
+        role = str(snowflake_cfg.get("role") or "").strip().upper()
+    except Exception:
+        role = ""
+    if role:
+        st.session_state["_overwatch_current_role"] = role
 
 
 def _snapshot_ask_overwatch_state(state) -> dict:
@@ -155,6 +180,13 @@ if "_query_logging_enabled" not in st.session_state:
     st.session_state["_query_logging_enabled"] = False
 if "_detailed_query_tags_enabled" not in st.session_state:
     st.session_state["_detailed_query_tags_enabled"] = False
+_seed_current_role_from_secrets()
+if "global_start_date" not in st.session_state or "global_end_date" not in st.session_state:
+    _default_end = datetime.now().date()
+    _default_start = _default_end - timedelta(days=7)
+    st.session_state.setdefault("global_start_date", _default_start)
+    st.session_state.setdefault("global_end_date", _default_end)
+    st.session_state.setdefault("_global_date_range_input", (_default_start, _default_end))
 
 
 # Role resolution, cached for five minutes.
@@ -229,6 +261,13 @@ def _section_transition_needed(signature: tuple) -> bool:
     return st.session_state.get("_overwatch_last_section_render_signature") != signature
 
 
+def _should_show_section_transition(signature: tuple) -> bool:
+    """Show the stale-body cover only after a section has actually rendered."""
+    has_prior_render = "_overwatch_last_section_render_signature" in st.session_state
+    has_pending_navigation = "_overwatch_pending_section" in st.session_state
+    return (has_prior_render or has_pending_navigation) and _section_transition_needed(signature)
+
+
 def _current_visible_sections() -> list[str]:
     """Return visible sections for the current role without importing section modules."""
     return _resolve_visible_sections()
@@ -249,6 +288,21 @@ def _current_credit_price() -> float:
     if "_credit_price_input" in st.session_state:
         st.session_state["credit_price"] = st.session_state["_credit_price_input"]
     return float(st.session_state.get("credit_price", DEFAULTS["credit_price"]))
+
+
+def _sidebar_panel_toggle(label: str, panel_key: str) -> bool:
+    """Render a sidebar panel launcher and return whether the panel is open."""
+    active_panel = str(st.session_state.get("_overwatch_sidebar_panel", "") or "")
+    is_active = active_panel == panel_key
+    if st.button(
+        label,
+        key=f"sidebar_panel_{panel_key}",
+        type="primary" if is_active else "secondary",
+        use_container_width=True,
+    ):
+        is_active = not is_active
+        st.session_state["_overwatch_sidebar_panel"] = panel_key if is_active else ""
+    return is_active
 
 
 def _mark_section_rendered(section: str, signature: tuple) -> None:
@@ -481,7 +535,7 @@ with st.sidebar:
     }.get(matched_profile, "#38bdf8")
     role_label = current_role[:20] or "DBA"
 
-    with st.expander("Command Palette", expanded=False):
+    if _sidebar_panel_toggle("Command Palette", "command_palette"):
         cmd = st.text_input(
             "Search or jump",
             placeholder="warehouse, user, query_id, task, database, cost, alerts",
@@ -576,7 +630,7 @@ with st.sidebar:
     st.divider()
 
     # Saved views / bookmarks.
-    with st.expander("Saved Views", expanded=False):
+    if _sidebar_panel_toggle("Saved Views", "saved_views"):
         _session = st.session_state.get("sf_session")
         saved_views_loaded = bool(st.session_state.get("_overwatch_saved_views_loaded"))
         bookmarks = st.session_state.get("_overwatch_saved_views_cache", [])
@@ -671,7 +725,7 @@ with st.sidebar:
     st.divider()
 
     # Settings.
-    with st.expander("Global Filters", expanded=False):
+    if _sidebar_panel_toggle("Global Filters", "global_filters"):
         default_end = datetime.now().date()
         default_start = default_end - timedelta(days=7)
         date_input_key = "_global_date_range_input"
@@ -757,7 +811,7 @@ with st.sidebar:
 
     st.divider()
 
-    with st.expander("Settings", expanded=False):
+    if _sidebar_panel_toggle("Settings", "settings"):
         render_theme_picker()
         st.divider()
         credit_price = st.number_input(
@@ -871,36 +925,41 @@ active_section = _current_active_section(visible_sections)
 section_guidance.render_section_confidence_meter(active_section, st.session_state)
 section_guidance.render_section_reference(active_section)
 
-# Ask OVERWATCH
-with st.expander("Ask OVERWATCH", expanded=False):
-    with st.form("ask_overwatch_form", clear_on_submit=False):
-        ask_q = st.text_input(
-            "Ask a specific DBA operating question...",
-            placeholder="e.g. What should I work first for cost or task reliability?",
-            key="ask_overwatch_input",
-            max_chars=500,
-        )
-        ask_submitted = st.form_submit_button("Ask")
-    if ask_submitted:
-        ask_text = str(st.session_state.get("ask_overwatch_input") or ask_q or "").strip()
-        if not ask_text:
-            st.info("Type a specific DBA operating question first.")
-        else:
-            from utils.ask_overwatch import answer_ask_overwatch
+if st.button("Ask OVERWATCH", key="ask_overwatch_panel_toggle", type="secondary"):
+    st.session_state["_overwatch_show_ask_overwatch"] = not bool(
+        st.session_state.get("_overwatch_show_ask_overwatch")
+    )
 
-            result = answer_ask_overwatch(
-                ask_text[:500],
-                _snapshot_ask_overwatch_state(st.session_state),
-                active_section=active_section,
-                company=active_company,
-                environment=st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
-                role=current_role or "",
+if st.session_state.get("_overwatch_show_ask_overwatch"):
+    with st.expander("Ask OVERWATCH", expanded=True):
+        with st.form("ask_overwatch_form", clear_on_submit=False):
+            ask_q = st.text_input(
+                "Ask a specific DBA operating question...",
+                placeholder="e.g. What should I work first for cost or task reliability?",
+                key="ask_overwatch_input",
+                max_chars=500,
             )
-            st.markdown(result["answer"])
-            cards = result.get("cards") or []
-            if cards:
-                with st.expander("Evidence used", expanded=False):
-                    st.dataframe(cards, use_container_width=True, hide_index=True, height=260)
+            ask_submitted = st.form_submit_button("Ask")
+        if ask_submitted:
+            ask_text = str(st.session_state.get("ask_overwatch_input") or ask_q or "").strip()
+            if not ask_text:
+                st.info("Type a specific DBA operating question first.")
+            else:
+                from utils.ask_overwatch import answer_ask_overwatch
+
+                result = answer_ask_overwatch(
+                    ask_text[:500],
+                    _snapshot_ask_overwatch_state(st.session_state),
+                    active_section=active_section,
+                    company=active_company,
+                    environment=st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
+                    role=current_role or "",
+                )
+                st.markdown(result["answer"])
+                cards = result.get("cards") or []
+                if cards:
+                    with st.expander("Evidence used", expanded=False):
+                        st.dataframe(cards, use_container_width=True, hide_index=True, height=260)
 
 # Section dispatch.
 active_section = _current_active_section(visible_sections)
@@ -908,7 +967,7 @@ active_section = _current_active_section(visible_sections)
 section_signature = _section_render_signature(active_section, active_company, current_role)
 transition_slot = st.empty()
 section_slot = st.empty()
-show_transition = _section_transition_needed(section_signature)
+show_transition = _should_show_section_transition(section_signature)
 section_render_started = time.perf_counter()
 if show_transition:
     with transition_slot.container():

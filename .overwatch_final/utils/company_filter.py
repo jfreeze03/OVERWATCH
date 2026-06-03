@@ -15,8 +15,14 @@ import hashlib
 import streamlit as st
 import fnmatch
 from config import COMPANY_CONFIG, DEFAULT_COMPANY, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT
-from .query import sql_literal
 from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
+
+
+def sql_literal(value, max_len: int = 8000) -> str:
+    if value is None:
+        return "NULL"
+    text = str(value).replace("\x00", "")[:max_len]
+    return "'" + text.replace("'", "''") + "'"
 
 
 def get_active_company() -> str:

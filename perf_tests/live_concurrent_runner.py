@@ -199,8 +199,9 @@ async def click_named_button(page, label: str, timeout_ms: int) -> None:
 
 
 async def click_optional_named_button(page, label: str, timeout_ms: int, missing_behavior: str, missing_wait_ms: int) -> bool:
+    button_wait_ms = timeout_ms if missing_behavior == "fail" else min(timeout_ms, missing_wait_ms)
     try:
-        button = await wait_for_named_button(page, label, min(timeout_ms, missing_wait_ms))
+        button = await wait_for_named_button(page, label, button_wait_ms)
     except Exception:
         if missing_behavior == "skip":
             return False

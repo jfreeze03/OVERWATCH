@@ -537,7 +537,7 @@ class SectionDefinition:
 # Retired standalone pages are handled by redirect aliases below so saved views
 # and old bookmarks keep working without making legacy names first-class routes.
 SECTION_DEFINITIONS = (
-    SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room"),
+    SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room_shell"),
     SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center"),
     SectionDefinition("COMMAND CENTER", "home", "Account Health", "sections.account_health"),
     SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations"),

@@ -114,6 +114,7 @@ format_credits = _lazy_util("format_credits")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 filter_existing_columns = _lazy_util("filter_existing_columns")
 get_db_filter_clause = _lazy_util("get_db_filter_clause")
+get_active_company = _lazy_util("get_active_company")
 get_global_filter_clause = _lazy_util("get_global_filter_clause")
 get_query_telemetry = _lazy_util("get_query_telemetry")
 get_query_budget_summary = _lazy_util("get_query_budget_summary")
@@ -857,7 +858,7 @@ def _load_release_compare(
 ) -> dict:
     _, _, _, _, _query_detail_sql = _task_management_helpers()
     _, _, _, _query_history_has_root_query_id = _procedure_helpers()
-    task_inventory = load_task_inventory(session, company, force_refresh=True)
+    task_inventory = load_task_inventory(session, company)
 
     def load_task_window(label: str, start: date, end: date) -> pd.DataFrame:
         history = run_query(
@@ -2921,7 +2922,7 @@ def _render_dba_autopilot_flight_plan(plan: pd.DataFrame, markdown: str) -> None
             data=markdown,
             file_name="dba_autopilot_flight_plan.md",
             mime="text/markdown",
-            use_container_width=True,
+            width="stretch",
         )
     download_csv(plan, "dba_autopilot_flight_plan.csv")
 
@@ -3122,7 +3123,7 @@ def _render_watch_floor(
             st.markdown(f"**{item.get('Severity', 'Signal')}: {item.get('Signal', '')}**")
             st.caption(str(item.get("Evidence", "")))
             st.write(str(item.get("Action", "")))
-            if route and st.button(f"Open {route}", key=f"dba_watch_floor_{idx}_{route}", use_container_width=True):
+            if route and st.button(f"Open {route}", key=f"dba_watch_floor_{idx}_{route}", width="stretch"):
                 _jump(route, workflow=workflow)
 
 
@@ -3643,7 +3644,7 @@ def _render_route_buttons(exceptions: pd.DataFrame) -> None:
         route = str(item.get("Route", ""))
         workflow = str(item.get("Workflow", "") or "")
         with cols[idx % len(cols)]:
-            if st.button(route, key=f"dba_control_route_{route}", use_container_width=True):
+            if st.button(route, key=f"dba_control_route_{route}", width="stretch"):
                 _jump(route, workflow=workflow)
 
 
@@ -3728,7 +3729,7 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
 
 
 def render() -> None:
-    company = st.session_state.get("active_company", "ALFA")
+    company = get_active_company()
     environment = get_active_environment()
     credit_price = safe_float(get_credit_price()) or 3.68
 
@@ -3940,7 +3941,7 @@ def render() -> None:
 
     a1, a2 = st.columns([1, 5])
     with a1:
-        if st.button("Alert Center", key="dba_control_room_open_alert_center", use_container_width=True):
+        if st.button("Alert Center", key="dba_control_room_open_alert_center", width="stretch"):
             _jump("Alert Center")
             st.rerun()
     with a2:
@@ -4178,7 +4179,7 @@ def render() -> None:
                 ("Pipeline Health", "Pipeline health"),
             ]
             for label, workflow in reliability_routes:
-                if st.button(label, key=f"dba_control_reliability_{label}", use_container_width=True):
+                if st.button(label, key=f"dba_control_reliability_{label}", width="stretch"):
                     _jump("Workload Operations", workflow=workflow)
         with r2:
             st.subheader("Cost and Capacity")
@@ -4188,13 +4189,13 @@ def render() -> None:
                 ("AI / Cortex Spend", "Cost & Contract", "AI and Cortex spend"),
                 ("Warehouse Health", "Warehouse Health", ""),
             ]:
-                if st.button(label, key=f"dba_control_cost_{label}", use_container_width=True):
+                if st.button(label, key=f"dba_control_cost_{label}", width="stretch"):
                     _jump(title, workflow=workflow)
         with r3:
             st.subheader("Security and Governance")
             st.write("Login posture, grants, data sharing, object changes, procedure lineage, drift checks, and admin controls.")
             for title, workflow in [("Security Posture", "Access posture"), ("Change & Drift", "Object and access changes")]:
-                if st.button(title, key=f"dba_control_security_{title}", use_container_width=True):
+                if st.button(title, key=f"dba_control_security_{title}", width="stretch"):
                     _jump(title, workflow=workflow)
 
         st.divider()

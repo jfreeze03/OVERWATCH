@@ -163,7 +163,7 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
             st.caption(f"{item.get('QUERY_ID', '')} | {item.get('WAREHOUSE_NAME', 'unknown warehouse')}")
             st.caption(f"Impact: {safe_float(item.get('IMPACT_VALUE')):,.2f} {item.get('IMPACT_UNIT', '')}")
             st.write(str(item.get("NEXT_ACTION", "")))
-            if st.button(f"Open {workflow}", key=f"qw_watch_floor_{idx}_{workflow}", use_container_width=True):
+            if st.button(f"Open {workflow}", key=f"qw_watch_floor_{idx}_{workflow}", width="stretch"):
                 if warehouse:
                     st.session_state["global_warehouse"] = warehouse
                     st.session_state["lm_wh"] = warehouse

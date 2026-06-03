@@ -1,4 +1,4 @@
-# sections/task_management.py — Task history, ETL audit framework, execute task
+# sections/task_management.py â€” Task history, ETL audit framework, execute task
 import re
 import time
 
@@ -2177,7 +2177,7 @@ def _render_task_ops_brief(session) -> None:
                     if detail:
                         st.caption(detail[:220])
                     st.write(str(item.get("NEXT_ACTION", "")))
-                    if st.button(f"Open {workflow}", key=f"task_ops_next_{idx}_{workflow}", use_container_width=True):
+                    if st.button(f"Open {workflow}", key=f"task_ops_next_{idx}_{workflow}", width="stretch"):
                         st.session_state["task_management_view"] = workflow
                         st.rerun()
 
@@ -2246,7 +2246,7 @@ def _render_task_ops_brief(session) -> None:
                     "Shows task predecessor edges from SHOW TASKS. Dashed nodes are predecessors outside the loaded scope."
                 )
                 max_nodes = st.slider("Max graph nodes", 10, 150, 80, key="task_ops_graph_nodes")
-                st.graphviz_chart(_build_task_graph_dot(inventory, max_nodes=max_nodes), use_container_width=True)
+                st.graphviz_chart(_build_task_graph_dot(inventory, max_nodes=max_nodes), width="stretch")
             map_cols = [
                 col for col in [
                     "DATABASE_NAME", "SCHEMA_NAME", "ROOT_TASK_NAME", "NAME", "STATE",
@@ -2535,7 +2535,7 @@ def render():
         columns=3,
     )
 
-    # ── TASK HISTORY ──────────────────────────────────────────────────────────
+    # â”€â”€ TASK HISTORY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if task_view == "Task History":
         st.header("Task Execution History")
         th_days = st.slider("Lookback (days)", 1, 30, 7, key="th_days")
@@ -2579,7 +2579,7 @@ def render():
             c3.metric("Failed",      len(failed_tasks), delta_color="inverse")
 
             if not failed_tasks.empty:
-                st.subheader("❌ Failed Tasks")
+                st.subheader("âŒ Failed Tasks")
                 render_priority_dataframe(
                     failed_tasks,
                     title="Failed task runs to triage first",
@@ -2776,7 +2776,7 @@ def render():
                     key="tm_failure_runbook_download",
                 )
 
-    # ── ETL AUDIT ─────────────────────────────────────────────────────────────
+    # â”€â”€ ETL AUDIT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elif task_view == "SLA & Cost Drift":
         _render_sla_cost_drift_console(session)
 
@@ -2880,7 +2880,7 @@ def render():
                 if _is_prod_task(root_row):
                     st.error("PROD-like task detected. Controls require the PROD confirmation phrase below.")
                 with st.expander("Graph Preview", expanded=True):
-                    st.graphviz_chart(_build_task_graph_dot(graph_tasks, max_nodes=120), use_container_width=True)
+                    st.graphviz_chart(_build_task_graph_dot(graph_tasks, max_nodes=120), width="stretch")
                     preview_cols = [
                         col for col in ["DATABASE_NAME", "SCHEMA_NAME", "NAME", "STATE", "SCHEDULE", "WAREHOUSE", "PROCEDURE_NAME"]
                         if col in graph_tasks.columns
@@ -3050,7 +3050,7 @@ def render():
                     else:
                         st.info("The selected cancellation target is not available from this role/account metadata.")
 
-    # ── EXECUTE TASK ──────────────────────────────────────────────────────────
+    # â”€â”€ EXECUTE TASK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elif task_view == "Execute Task":
         st.header("Execute Task On-Demand")
         st.caption("Select and manually trigger a task. Ensure dependencies are met before running.")

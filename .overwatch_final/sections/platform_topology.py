@@ -280,7 +280,7 @@ def render():
                 color=alt.Color("QUERY_COUNT:Q", title="Queries"),
                 tooltip=["DATABASE_NAME", "SCHEMA_NAME", "USERS", "ROLES", "QUERY_COUNT", "FAILED_QUERIES"],
             ).properties(height=420)
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
             render_priority_dataframe(
                 db_schema,
                 title="Database/schema workload relationships",

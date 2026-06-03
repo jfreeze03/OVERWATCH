@@ -298,7 +298,7 @@ def _sidebar_panel_toggle(label: str, panel_key: str) -> bool:
         label,
         key=f"sidebar_panel_{panel_key}",
         type="primary" if is_active else "secondary",
-        use_container_width=True,
+        width="stretch",
     ):
         is_active = not is_active
         st.session_state["_overwatch_sidebar_panel"] = panel_key if is_active else ""
@@ -426,7 +426,7 @@ def _render_app_header(section: str, company: str, credit_price: float, role: st
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Refresh", key="global_refresh", use_container_width=True):
+        if st.button("Refresh", key="global_refresh", width="stretch"):
             clear_all_cache()
             st.rerun()
 
@@ -622,7 +622,7 @@ with st.sidebar:
                 section_name,
                 key=f"nav_btn_{group_name}_{section_name}",
                 type="primary" if is_active else "secondary",
-                use_container_width=True,
+                width="stretch",
                 on_click=_set_section,
                 args=(section_name,),
             )
@@ -637,7 +637,7 @@ with st.sidebar:
         if st.button(
             "Refresh Saved Views" if saved_views_loaded else "Load Saved Views",
             key="bm_load_saved_views",
-            use_container_width=True,
+            width="stretch",
             disabled=not connection_available,
         ):
             try:
@@ -674,7 +674,7 @@ with st.sidebar:
                         f"{bm['name']}{shared_badge}{uses_badge}",
                         key=f"bm_apply_{bm['id']}",
                         help=f"Section: {bm['section']}\nCreated: {bm['created']}",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         if not _session:
                             _session = get_session()
@@ -892,7 +892,7 @@ with st.sidebar:
                         )
                         st.dataframe(
                             budget_summary,
-                            use_container_width=True,
+                            width="stretch",
                             height=220,
                             column_config={
                                 "section": "Section",
@@ -905,7 +905,7 @@ with st.sidebar:
                                 "max_result_mb": st.column_config.NumberColumn("Max MB", format="%.1f"),
                             },
                         )
-                    st.dataframe(telemetry.tail(50), use_container_width=True, height=220)
+                    st.dataframe(telemetry.tail(50), width="stretch", height=220)
                 if st.button("Clear telemetry", key="clear_query_telemetry"):
                     clear_query_telemetry()
                     st.rerun()
@@ -961,7 +961,7 @@ if secondary_chrome_ready:
                     cards = result.get("cards") or []
                     if cards:
                         with st.expander("Evidence used", expanded=False):
-                            st.dataframe(cards, use_container_width=True, hide_index=True, height=260)
+                            st.dataframe(cards, width="stretch", hide_index=True, height=260)
 
 # Section dispatch.
 active_section = _current_active_section(visible_sections)

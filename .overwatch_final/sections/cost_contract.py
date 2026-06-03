@@ -2591,7 +2591,7 @@ def _render_cost_governance_mart_and_incident_timeline(
         max_rows=6,
     )
     with st.expander("Cost Governance Mart SQL", expanded=False):
-        st.dataframe(mart_board, hide_index=True, use_container_width=True)
+        st.dataframe(mart_board, hide_index=True, width="stretch")
         st.code(sql_text, language="sql")
 
 
@@ -3024,7 +3024,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         with cols[idx]:
             st.markdown(f"**{title}**")
             st.caption(evidence)
-            if st.button(f"Open {workflow}", key=f"cost_contract_next_{idx}_{workflow}", use_container_width=True):
+            if st.button(f"Open {workflow}", key=f"cost_contract_next_{idx}_{workflow}", width="stretch"):
                 st.session_state["cost_contract_workflow"] = workflow
                 st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
                 st.rerun()
@@ -3080,7 +3080,7 @@ def render() -> None:
 
     detail_cols = st.columns([1, 4])
     with detail_cols[0]:
-        if st.button("Open detail", key="cost_contract_open_workflow_detail", use_container_width=True):
+        if st.button("Open detail", key="cost_contract_open_workflow_detail", width="stretch"):
             st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
             st.rerun()
     with detail_cols[1]:

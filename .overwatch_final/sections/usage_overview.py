@@ -630,7 +630,7 @@ def render():
                 tooltip=["QUERY_TYPE", "QUERY_COUNT", "USERS", "AVG_ELAPSED_SEC", "FAILED_QUERIES"],
                 color=alt.value("#38bdf8"),
             ).properties(height=420)
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
             render_priority_dataframe(
                 qt,
                 title="Query mix drivers",

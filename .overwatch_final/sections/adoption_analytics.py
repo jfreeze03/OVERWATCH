@@ -318,7 +318,7 @@ def render():
                 y=alt.Y("QUERIES_PER_USER:Q", title="Queries/User"),
                 tooltip=["ACTIVITY_DAY:T", "QUERIES_PER_USER"],
             )
-            st.altair_chart(alt.layer(chart, line).resolve_scale(y="independent"), use_container_width=True)
+            st.altair_chart(alt.layer(chart, line).resolve_scale(y="independent"), width="stretch")
             download_csv(trend, "adoption_trend.csv")
         else:
             st.info("No adoption trend data found.")
@@ -369,6 +369,6 @@ def render():
                     tooltip=["CLIENT_APPLICATION", "CLIENT_VERSION", "QUERY_COUNT", "USERS", "ERROR_RATE", "SOURCE_CONFIDENCE"],
                     color=alt.value("#c084fc"),
                 ).properties(height=360)
-                st.altair_chart(chart, use_container_width=True)
+                st.altair_chart(chart, width="stretch")
             if apps is not None:
                 download_csv(apps, "adoption_connected_programs.csv")

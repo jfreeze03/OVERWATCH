@@ -1,4 +1,4 @@
-# sections/cost_center.py — User leaderboard, burn rate, forecast, budget, attribution, chargeback
+# sections/cost_center.py â€” User leaderboard, burn rate, forecast, budget, attribution, chargeback
 # FIX: Chargeback tab now uses get_company_case_expr() from company_filter.py
 #      instead of the old hardcoded CASE that missed WH_ALFA_* warehouses.
 import streamlit as st
@@ -1441,7 +1441,7 @@ def render():
         "Progressive load is enabled: each cost view runs only when its Load or Calculate button is selected."
     )
 
-    # ── USER LEADERBOARD ──────────────────────────────────────────────────────
+    # â”€â”€ USER LEADERBOARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if cost_view == "Cost Explorer":
         st.header("Cost Explorer")
         st.caption(
@@ -2386,7 +2386,7 @@ def render():
                     )
                 with load_col:
                     st.write("")
-                    if st.button("Load", key="cc_user_profile_load", use_container_width=True, disabled=not bool(sel_user)):
+                    if st.button("Load", key="cc_user_profile_load", width="stretch", disabled=not bool(sel_user)):
                         st.session_state["cc_user_profile_requested"] = sel_user
                 if (
                     sel_user
@@ -2401,7 +2401,7 @@ def render():
             if st.button("Save top cost outliers to Action Queue", key="cc_lead_queue"):
                 _queue_cost_outliers(session, df_l, credit_price, "Cost & Contract - User Leaderboard")
 
-    # ── BURN RATE ─────────────────────────────────────────────────────────────
+    # â”€â”€ BURN RATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elif cost_view == "Burn Rate":
         st.header("Credit Burn Rate")
         br_days = st.slider("Lookback (days)", 1, 90, 30, key="br_days")
@@ -2537,7 +2537,7 @@ def render():
             )
             download_csv(df_r, "cost_reconciliation.csv")
 
-    # ── FORECAST ──────────────────────────────────────────────────────────────
+    # â”€â”€ FORECAST â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elif cost_view == "Forecast":
         st.header("Credit Forecast (30-day Linear Projection)")
         if st.button("Generate Forecast", key="fc_load"):
@@ -2575,7 +2575,7 @@ def render():
             c3.metric("Projected 30-day Cost", f"${proj_cost:,.2f}")
             st.area_chart(df_f.set_index("DAY")["DAILY_CREDITS"])
 
-    # ── BUDGET VS ACTUAL ──────────────────────────────────────────────────────
+    # â”€â”€ BUDGET VS ACTUAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elif cost_view == "Budget vs Actual":
         st.header("Budget vs Actual")
         monthly_budget = st.number_input(
@@ -2613,7 +2613,7 @@ def render():
             st.bar_chart(df_bv.set_index("MONTH")[["ACTUAL_CREDITS","BUDGET"]])
             download_csv(df_bv, "budget_vs_actual.csv")
 
-    # ── ATTRIBUTION ───────────────────────────────────────────────────────────
+    # â”€â”€ ATTRIBUTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elif cost_view == "Attribution":
         st.header("Cost Attribution")
         attr_days = st.slider("Lookback (days)", 1, 90, 30, key="cc_attr_days")
@@ -2694,7 +2694,7 @@ def render():
             )
             download_csv(df_attr, "cost_attribution.csv")
 
-    # ── CHARGEBACK — ALFA / Trexis split ─────────────────────────────────────
+    # â”€â”€ CHARGEBACK â€” ALFA / Trexis split â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elif cost_view == "Chargeback":
         st.header("ALFA / Trexis Chargeback")
         st.caption(
@@ -2784,7 +2784,7 @@ def render():
                 "Chargeback source: not loaded",
             ))
 
-            # Summary by company — the key chargeback output
+            # Summary by company â€” the key chargeback output
             summary = (
                 df_cb.groupby("COMPANY", as_index=False)
                 .agg(
@@ -2906,7 +2906,7 @@ def render():
             if st.button("Save chargeback outliers to Action Queue", key="cc_chargeback_queue"):
                 _queue_cost_outliers(session, df_show, credit_price, "Cost & Contract - Chargeback")
 
-    # ── CONTRACT / COMMITMENT UTILIZATION ─────────────────────────────────────
+    # â”€â”€ CONTRACT / COMMITMENT UTILIZATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elif cost_view == "Contract Utilization":
         st.header("Contract & Commitment Utilization")
         st.caption(
@@ -3021,7 +3021,7 @@ def render():
             pacing_ratio = (pct_consumed / pct_time_elapsed) if pct_time_elapsed > 0 else 1.0
             projected_pct_over = ((projected_total / committed) * 100 - 100) if committed > 0 else 0.0
 
-            # ── KPI row ────────────────────────────────────────────────────────
+            # â”€â”€ KPI row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("YTD Consumed",         format_credits(ytd_used))
             k2.metric("Remaining Budget",     format_credits(remaining_budget))
@@ -3041,11 +3041,11 @@ def render():
             p2.metric("30-Day Projection", format_credits(projected_30), burn_trend_label(last_30_avg, daily_rate))
             p3.metric("Business-Day Adjusted", format_credits(projected_business), f"{business_avg:,.1f} cr/business day")
 
-            # ── Progress bar ───────────────────────────────────────────────────
+            # â”€â”€ Progress bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             bar_pct = min(pct_consumed / 100, 1.0)
             st.progress(bar_pct, text=f"{pct_consumed:.1f}% of {committed:,} committed credits")
 
-            # ── Pacing diagnosis ───────────────────────────────────────────────
+            # â”€â”€ Pacing diagnosis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             st.divider()
             if pacing_ratio > 1.15:
                 exhaustion_line = (
@@ -3056,7 +3056,7 @@ def render():
                     else "Current burn cannot calculate a reliable exhaustion date. "
                 )
                 st.error(
-                    f"🔴 **Burning too fast** — consuming credits {pacing_ratio:.1f}x faster than the "
+                    f"ðŸ”´ **Burning too fast** â€” consuming credits {pacing_ratio:.1f}x faster than the "
                     f"contract pace. {exhaustion_line}"
                     f"Projected year-end: **{projected_total:,.0f}** vs committed **{committed:,}** "
                     f"({projected_pct_over:.0f}% over)."
@@ -3064,19 +3064,19 @@ def render():
             elif pacing_ratio < 0.75:
                 under_pct = 100 - (projected_total / committed * 100) if committed > 0 else 0.0
                 st.warning(
-                    f"🟡 **Under-utilizing** — tracking at {pacing_ratio:.2f}x the contract pace. "
+                    f"ðŸŸ¡ **Under-utilizing** â€” tracking at {pacing_ratio:.2f}x the contract pace. "
                     f"Projected year-end: **{projected_total:,.0f}** of {committed:,} credits "
                     f"({under_pct:.0f}% under-utilized). "
-                    f"Review with Snowflake account team — unused committed credits typically do not roll over."
+                    f"Review with Snowflake account team â€” unused committed credits typically do not roll over."
                 )
             else:
                 st.success(
-                    f"✅ **On pace** — pacing ratio {pacing_ratio:.2f}x. "
+                    f"âœ… **On pace** â€” pacing ratio {pacing_ratio:.2f}x. "
                     f"Projected year-end: **{projected_total:,.0f}** of {committed:,} credits "
                     f"({pct_consumed:.0f}% consumed, {pct_time_elapsed:.0f}% of contract elapsed)."
                 )
 
-            # ── Monthly breakdown chart ────────────────────────────────────────
+            # â”€â”€ Monthly breakdown chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             st.divider()
             st.subheader("Monthly Consumption")
             if st.button("Load Monthly Breakdown", key="cc_monthly_breakdown"):
@@ -3113,7 +3113,7 @@ def render():
 
                 download_csv(df_m, "contract_utilization.csv")
 
-            # ── By service type ────────────────────────────────────────────────
+            # â”€â”€ By service type â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             st.divider()
             st.subheader("Consumption by Service Type")
             if company != "ALL":

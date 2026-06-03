@@ -730,6 +730,6 @@ def render() -> None:
             st.warning(f"Budget inventory unavailable: {err}")
         inventory = st.session_state.get("budget_governance_inventory")
         if isinstance(inventory, pd.DataFrame) and not inventory.empty:
-            st.dataframe(inventory, use_container_width=True, hide_index=True)
+            st.dataframe(inventory, width="stretch", hide_index=True)
         else:
             st.caption("Inventory is optional and only runs when loaded.")

@@ -75,7 +75,7 @@ def render_ranked_bar_chart(
         )
         .properties(height=_ranked_chart_height(len(chart_df)))
     )
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width="stretch")
     return chart_df
 
 
@@ -137,12 +137,12 @@ def _query_history_detail_exprs(prefix: str = "") -> dict:
     return result
 
 
-# ── Query drill-down ───────────────────────────────────────────────────────────
+# â”€â”€ Query drill-down â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_query_drilldown(
     df: pd.DataFrame,
     key: str,
-    title: str = "🔎 Query Drill Down",
+    title: str = "ðŸ”Ž Query Drill Down",
 ):
     """Interactive single-row drill-down with operator statistics."""
     if df is None or df.empty or "QUERY_ID" not in df.columns:
@@ -155,7 +155,7 @@ def render_query_drilldown(
     try:
         event = st.dataframe(
             grid_df,
-            use_container_width=True,
+            width="stretch",
             height=380,
             selection_mode="single-row",
             on_select="rerun",
@@ -163,7 +163,7 @@ def render_query_drilldown(
         )
         selected_rows = event.selection.rows
     except Exception:
-        st.dataframe(grid_df, use_container_width=True, height=380)
+        st.dataframe(grid_df, width="stretch", height=380)
         selected_qid = st.selectbox(
             "Select query_id",
             grid_df["QUERY_ID"].astype(str).tolist(),
@@ -200,12 +200,12 @@ def render_query_drilldown(
                 ops_df = run_query_or_raise(
                     f"SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS({sql_literal(qid)}))"
                 )
-                st.dataframe(ops_df, use_container_width=True, height=350)
+                st.dataframe(ops_df, width="stretch", height=350)
             except Exception as e:
                 st.info(f"Operator stats unavailable: {format_snowflake_error(e)}")
 
 
-# ── Warehouse drill-down ───────────────────────────────────────────────────────
+# â”€â”€ Warehouse drill-down â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_warehouse_drilldown(
     warehouse_name: str,
@@ -241,10 +241,10 @@ def render_warehouse_drilldown(
         st.info("No recent query detail found for this warehouse.")
         return
     render_query_drilldown(df_wh, key=f"{key}_wh_query",
-                           title=f"🔎 Warehouse Drill Down — {warehouse_name}")
+                           title=f"ðŸ”Ž Warehouse Drill Down â€” {warehouse_name}")
 
 
-# ── Entity drill-down ──────────────────────────────────────────────────────────
+# â”€â”€ Entity drill-down â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_entity_query_drilldown(
     entity_value: str,
@@ -318,10 +318,10 @@ def render_entity_query_drilldown(
         st.info("No query detail found for the selected item.")
         return
     render_query_drilldown(df_detail, key=f"{key}_{col}_query",
-                           title=f"Drill Down — {entity_column}: {entity_value}")
+                           title=f"Drill Down â€” {entity_column}: {entity_value}")
 
 
-# ── Altair drillable bar chart ─────────────────────────────────────────────────
+# â”€â”€ Altair drillable bar chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _selected_altair_value(event, selection_name: str, dimension: str):
     try:
@@ -396,11 +396,11 @@ def render_drillable_bar_chart(
 
     selected = None
     try:
-        event    = st.altair_chart(chart, use_container_width=True,
+        event    = st.altair_chart(chart, width="stretch",
                                    on_select="rerun", key=f"{key}_chart")
         selected = _selected_altair_value(event, selection_name, dimension)
     except Exception:
-        st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart, width="stretch")
 
     options       = chart_df[dimension].astype(str).tolist()
     default_index = (
@@ -417,7 +417,7 @@ def render_drillable_bar_chart(
     requested_key = f"{key}_drill_requested"
     with load_col:
         st.write("")
-        if st.button("Load", key=f"{key}_drill_load", use_container_width=True):
+        if st.button("Load", key=f"{key}_drill_load", width="stretch"):
             st.session_state[requested_key] = selected
 
     requested = st.session_state.get(requested_key)

@@ -168,6 +168,23 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("Sections At 95", dba_control_text)
         self.assertNotIn("dba_control_plane_component_rows", dba_control_text)
 
+    def test_dba_control_room_uses_shared_company_scope_and_cached_release_inventory(self):
+        dba_control_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
+
+        self.assertIn('get_active_company = _lazy_util("get_active_company")', dba_control_text)
+        self.assertIn("company = get_active_company()", dba_control_text)
+        self.assertNotIn('st.session_state.get("active_company", "ALFA")', dba_control_text)
+        self.assertNotIn("load_task_inventory(session, company, force_refresh=True)", dba_control_text)
+
+    def test_streamlit_width_uses_current_api(self):
+        deprecated = []
+        for path in APP_ROOT.rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            if "use_container_width=" in text:
+                deprecated.append(str(path.relative_to(APP_ROOT)))
+
+        self.assertEqual(deprecated, [])
+
     def test_architecture_objectives_cover_alfa_prod_dev_and_execution_warehouse(self):
         objectives = {
             (row["ENTITY_TYPE"], row["ENTITY_PATTERN"]): row

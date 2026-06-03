@@ -1935,7 +1935,7 @@ def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_
                 f"{format_credits(safe_float(item.get('METERED_CREDITS')))}"
             )
             st.write(str(item.get("NEXT_ACTION", "")))
-            if st.button(f"Open {workflow}", key=f"wh_watch_floor_{idx}_{workflow}", use_container_width=True):
+            if st.button(f"Open {workflow}", key=f"wh_watch_floor_{idx}_{workflow}", width="stretch"):
                 warehouse = str(item.get("WAREHOUSE_NAME") or "")
                 if warehouse:
                     st.session_state["global_warehouse"] = warehouse
@@ -2390,7 +2390,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
         if exceptions is not None and not exceptions.empty:
             audit_col, audit_hint_col = st.columns([1, 3])
             with audit_col:
-                if st.button("Load Execution Audit", key="wh_setting_execution_audit_load", use_container_width=True):
+                if st.button("Load Execution Audit", key="wh_setting_execution_audit_load", width="stretch"):
                     try:
                         audit_sql = _warehouse_setting_execution_audit_sql(30, company, environment)
                         audit = run_query(
@@ -2515,7 +2515,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
             )
             save_col, setup_col = st.columns([1, 2])
             with save_col:
-                if st.button("Save Setting Review Snapshot", key="wh_setting_review_snapshot", use_container_width=True):
+                if st.button("Save Setting Review Snapshot", key="wh_setting_review_snapshot", width="stretch"):
                     session = _warehouse_action_session("save a warehouse setting review snapshot")
                     if session is not None:
                         _save_warehouse_setting_review_snapshot(
@@ -2938,7 +2938,7 @@ def render():
     if st.session_state.get("exceptions_only_mode"):
         st.stop()
 
-    # ── OVERVIEW ──────────────────────────────────────────────────────────────
+    # â”€â”€ OVERVIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if warehouse_view == "Overview & Scaling":
         st.header("Warehouse Health Overview")
         wh_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_days")
@@ -3230,7 +3230,7 @@ def render():
                 if session is not None:
                     _queue_efficiency_findings(session, df_eff)
 
-    # ── SPILL ─────────────────────────────────────────────────────────────────
+    # â”€â”€ SPILL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elif warehouse_view == "Spill & Memory":
         st.header("Spill & Memory Pressure")
         sp_days = st.slider("Lookback (days)", 1, 30, 7, key="sp_days")
@@ -3303,7 +3303,7 @@ def render():
                     st.error(f"**{row['WAREHOUSE_NAME']}**: {row['REMOTE_SPILL_GB']:.1f} GB remote spill - upsize immediately")
             download_csv(df_sp, "spill_report.csv")
 
-    # ── HEATMAP ───────────────────────────────────────────────────────────────
+    # â”€â”€ HEATMAP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elif warehouse_view == "Workload Heatmap":
         st.header("Workload Concurrency Heatmap")
         hm_days = st.slider("Lookback (days)", 7, 90, 30, key="hm_days")
@@ -3372,7 +3372,7 @@ def render():
                 day_names = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
                 pivot.index = pivot.index.map(lambda x: day_names.get(int(x), str(x)))
                 st.subheader(f"Query Volume Heatmap - {sel_wh}")
-                st.dataframe(pivot.style.background_gradient(cmap="YlOrRd"), use_container_width=True)
+                st.dataframe(pivot.style.background_gradient(cmap="YlOrRd"), width="stretch")
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Total Queries", f"{int(wh_data['QUERY_COUNT'].sum()):,}")
                 c2.metric("Peak Hour",     f"{int(pivot.max().max()):,}")

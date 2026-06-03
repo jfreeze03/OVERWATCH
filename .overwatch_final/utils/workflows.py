@@ -52,7 +52,7 @@ def render_workflow_selector(
                     workflow,
                     key=f"{key}_{start}_{workflow}",
                     type="primary" if is_selected else "secondary",
-                    use_container_width=True,
+                    width="stretch",
                     help=details.get(workflow) or None,
                 ):
                     st.session_state[key] = workflow

@@ -1136,7 +1136,7 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
             st.caption(f"{item.get('ENTITY_TYPE', 'Access')}: {item.get('ENTITY', 'unknown')}")
             st.write(str(item.get("NEXT_ACTION", "")))
             st.caption(str(item.get("PROOF_QUERY", "")))
-            if st.button(f"Open {workflow}", key=f"security_watch_floor_{idx}_{workflow}", use_container_width=True):
+            if st.button(f"Open {workflow}", key=f"security_watch_floor_{idx}_{workflow}", width="stretch"):
                 entity = str(item.get("ENTITY") or "").strip()
                 if workflow == "Data sharing exposure":
                     if entity and entity.lower() != "unknown":

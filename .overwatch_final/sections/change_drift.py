@@ -1413,7 +1413,7 @@ def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> Non
             st.caption(f"{item.get('ENTITY_TYPE', 'Object')}: {item.get('ENTITY', 'unknown')}")
             st.caption(f"Actor: {item.get('USER_NAME', 'unknown')} | Query: {item.get('QUERY_ID', '')}")
             st.write(str(item.get("NEXT_ACTION", "")))
-            if st.button(f"Open {workflow}", key=f"change_watch_floor_{idx}_{workflow}", use_container_width=True):
+            if st.button(f"Open {workflow}", key=f"change_watch_floor_{idx}_{workflow}", width="stretch"):
                 entity = str(item.get("ENTITY") or "").strip()
                 actor = str(item.get("USER_NAME") or "").strip()
                 query_id = str(item.get("QUERY_ID") or "").strip()
@@ -2340,7 +2340,7 @@ def render() -> None:
             )
             save_col, setup_col = st.columns([1, 2])
             with save_col:
-                if st.button("Save Change Evidence Snapshot", key="change_drift_evidence_snapshot", use_container_width=True):
+                if st.button("Save Change Evidence Snapshot", key="change_drift_evidence_snapshot", width="stretch"):
                     _save_change_control_evidence_snapshot(
                         session,
                         readiness,

@@ -1532,6 +1532,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_INCIDENT_TIMELINE", setup_upper)
         self.assertIn("CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH", setup_upper)
         self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS = 600", setup_upper)
+        self.assertIn("WHEN SRC.SETTING_NAME = 'DEFAULT_ALERT_EMAIL' THEN SRC.SETTING_VALUE", setup_upper)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_COST_GOVERNANCE", setup_upper)
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_COST_GOVERNANCE_REFRESH", setup_upper)
         self.assertIn("AFTER OVERWATCH_REFRESH_CONTROL_ROOM", setup_upper)

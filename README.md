@@ -50,10 +50,10 @@ Production Snowflake mart setup:
 - Run `snowflake/OVERWATCH_MART_SETUP.sql` in Snowflake to create the low-cost
   OVERWATCH mart schema, persistence tables, refresh procedures, and scheduled
   tasks.
-- The mart can use an X-Small `OVERWATCH_WH` with 60-second auto-suspend as a
-  future isolation warehouse, but the current app/task runtime remains on
-  `COMPUTE_WH`. The compact mart loads still keep the Streamlit app from
-  repeatedly scanning `SNOWFLAKE.ACCOUNT_USAGE`.
+- The Streamlit-in-Snowflake app runs on X-Small `OVERWATCH_WH` with
+  60-second auto-suspend for runtime cost isolation. The current mart refresh
+  tasks still run on `COMPUTE_WH`. The compact mart loads keep the Streamlit
+  app from repeatedly scanning `SNOWFLAKE.ACCOUNT_USAGE`.
 
 For full setup, feature notes, Snowflake grants, and operating guidance, see
 [OVERWATCH_DOCUMENTATION.md](OVERWATCH_DOCUMENTATION.md).

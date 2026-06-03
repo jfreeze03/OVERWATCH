@@ -3,8 +3,8 @@ definition_version: 1
 # ─────────────────────────────────────────────────────────────────────────────
 # OVERWATCH — Streamlit-in-Snowflake (SiS) Deployment Manifest
 # Account:   ALFA Insurance
-# App:       DBA_MAINT_DB.PUBLIC.OVERWATCHV3
-# Stage:     DBA_MAINT_DB.PUBLIC.OVERWATCH_STAGE
+# App:       DBA_MAINT_DB.OVERWATCH.OVERWATCH
+# Stage:     DBA_MAINT_DB.OVERWATCH.OVERWATCH_STAGE
 # Roles:     SNOW_ACCOUNTADMIN, SNOW_SYSADMIN
 # Warehouse: OVERWATCH_WH
 #

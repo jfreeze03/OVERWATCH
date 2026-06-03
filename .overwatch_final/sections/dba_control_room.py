@@ -178,6 +178,21 @@ DBA_CONTROL_ROOM_DERIVED_STATE_KEYS = (
     "dba_control_room_ops_scope_key",
     "dba_control_room_ops_ready",
 )
+DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS = 24
+DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS = {
+    "credits",
+    "failed_queries",
+    "failed_logins",
+}
+
+
+def _live_fallback_deferred_message(source: str, mart_exc: Exception | None = None) -> str:
+    detail = format_snowflake_error(mart_exc) if mart_exc is not None else ""
+    suffix = f" Mart error: {detail}" if detail else ""
+    return (
+        f"{source} live fallback is deferred to avoid long account scans from the Control Room. "
+        f"Use the specialist workflow or refresh the OVERWATCH mart for this surface.{suffix}"
+    )
 
 
 def _clear_dba_control_room_derived_state() -> None:
@@ -400,8 +415,11 @@ def _dba_control_source_health_rows(
         if not message and mode_info.get("Mode Message", "").lower() not in ("", "nan", "none"):
             message = mode_info["Mode Message"]
         loaded = isinstance(value, pd.DataFrame)
-        if str(mode).lower() == "deferred":
+        mode_lower = str(mode).lower()
+        if mode_lower == "deferred" or "deferred" in mode_lower:
             state_label = "Deferred"
+        elif "unavailable" in mode_lower:
+            state_label = "Unavailable"
         elif err is not None and not err.empty:
             state_label = "Unavailable"
         elif not loaded:
@@ -420,7 +438,7 @@ def _dba_control_source_health_rows(
             next_action = "Load deep evidence only when this source is needed for the current investigation."
         elif state_label == "No Rows":
             next_action = "Confirm the selected scope has relevant events or mart rows."
-        elif "fallback" in str(mode).lower():
+        elif "fallback" in mode_lower:
             next_action = "Use for investigation; prefer mart refresh for repeated morning triage."
         else:
             next_action = "Current for the active DBA control-room scope."
@@ -1021,6 +1039,7 @@ def _load_control_room(
     global_q = get_global_filter_clause(
         "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
     )
+    live_lookback_hours = min(int(lookback_hours), DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS)
 
     data: dict[str, pd.DataFrame] = {}
     queries = {
@@ -1041,23 +1060,23 @@ def _load_control_room(
                 COUNT(DISTINCT warehouse_name) AS active_warehouses,
                 COUNT(DISTINCT user_name) AS active_users
             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-            WHERE q.start_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())
+            WHERE q.start_time >= DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
               AND q.warehouse_name IS NOT NULL
               {global_q}
         """,
         "credits": f"""
             SELECT
-                SUM(CASE WHEN start_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())
+                SUM(CASE WHEN start_time >= DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
                          THEN credits_used ELSE 0 END) AS period_credits,
-                SUM(CASE WHEN start_time >= DATEADD('hour', -{int(lookback_hours * 2)}, CURRENT_TIMESTAMP())
-                          AND start_time < DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())
+                SUM(CASE WHEN start_time >= DATEADD('hour', -{int(live_lookback_hours * 2)}, CURRENT_TIMESTAMP())
+                          AND start_time < DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
                          THEN credits_used ELSE 0 END) AS prior_credits
             FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-            WHERE start_time >= DATEADD('hour', -{int(lookback_hours * 2)}, CURRENT_TIMESTAMP())
+            WHERE start_time >= DATEADD('hour', -{int(live_lookback_hours * 2)}, CURRENT_TIMESTAMP())
               {wh_m}
         """,
         "cost_drivers": f"""
-            WITH {build_metered_credit_cte(hours_back=lookback_hours, include_recent=True)}
+            WITH {build_metered_credit_cte(hours_back=live_lookback_hours, include_recent=True)}
             SELECT
                 q.user_name,
                 q.warehouse_name,
@@ -1067,7 +1086,7 @@ def _load_control_room(
                 ROUND(AVG(q.total_elapsed_time) / 1000, 2) AS avg_elapsed_sec
             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
             LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
-            WHERE q.start_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())
+            WHERE q.start_time >= DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
               AND q.warehouse_name IS NOT NULL
               {global_q}
             GROUP BY q.user_name, q.warehouse_name
@@ -1089,7 +1108,7 @@ def _load_control_room(
                 ROUND(SUM(COALESCE(q.bytes_spilled_to_remote_storage, 0)) / POWER(1024, 3), 2) AS remote_spill_gb,
                 ROUND(APPROX_PERCENTILE(q.total_elapsed_time / 1000, 0.95), 2) AS p95_elapsed_sec
             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-            WHERE q.start_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())
+            WHERE q.start_time >= DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
               AND q.warehouse_name IS NOT NULL
               {wh_q} {db_q} {user_q}
             GROUP BY q.warehouse_name
@@ -1109,7 +1128,7 @@ def _load_control_room(
                 LEFT(q.error_message, 240) AS error_message,
                 q.start_time
             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-            WHERE q.start_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())
+            WHERE q.start_time >= DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
               AND (q.error_code IS NOT NULL OR UPPER(q.execution_status) = 'FAILED_WITH_ERROR')
               {wh_q} {db_q} {user_q}
             ORDER BY q.start_time DESC
@@ -1126,7 +1145,7 @@ def _load_control_room(
                 q.warehouse_name,
                 LEFT(q.query_text, 220) AS query_preview
             FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-            WHERE q.start_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())
+            WHERE q.start_time >= DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
               AND (
                     q.query_type ILIKE 'CREATE%'
                  OR q.query_type ILIKE 'ALTER%'
@@ -1147,7 +1166,7 @@ def _load_control_room(
                 error_code,
                 error_message
             FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-            WHERE event_timestamp >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())
+            WHERE event_timestamp >= DATEADD('hour', -{live_lookback_hours}, CURRENT_TIMESTAMP())
               AND is_success = 'NO'
               {get_user_filter_clause("user_name", company)}
             ORDER BY event_timestamp DESC
@@ -1185,16 +1204,28 @@ def _load_control_room(
                         "Message": "Live fallback skipped to keep DBA Control Room responsive.",
                     })
                     continue
+                if key not in DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS:
+                    data[key] = _empty_df()
+                    data[f"{key}_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(mart_exc)]})
+                    source_rows.append({
+                        "Source": key,
+                        "Mode": "Live fallback deferred",
+                        "Message": _live_fallback_deferred_message(key, mart_exc),
+                    })
+                    continue
                 data[key] = run_query(
                     sql,
-                    ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_{key}",
-                    tier="recent" if lookback_hours <= 24 else "historical",
+                    ttl_key=f"dba_control_room_live_{company}_{live_lookback_hours}_{key}",
+                    tier="recent",
                     section="DBA Control Room",
                 )
                 source_rows.append({
                     "Source": key,
-                    "Mode": "Live fallback",
-                    "Message": format_snowflake_error(mart_exc),
+                    "Mode": "Limited live fallback",
+                    "Message": (
+                        f"Mart unavailable; ran a bounded ACCOUNT_USAGE probe capped at "
+                        f"{live_lookback_hours}h. {format_snowflake_error(mart_exc)}"
+                    ),
                 })
         except Exception as exc:
             data[key] = _empty_df()
@@ -1219,21 +1250,12 @@ def _load_control_room(
                     "Message": "Live fallback skipped to keep DBA Control Room responsive.",
                 })
             else:
-                data["task_failures"] = run_query(
-                    build_task_failure_summary_sql(
-                        session,
-                        f"scheduled_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())",
-                        limit=10,
-                        company=company,
-                    ),
-                    ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_task_failures",
-                    tier="recent",
-                    section="DBA Control Room",
-                )
+                data["task_failures"] = _empty_df()
+                data["task_failures_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(mart_exc)]})
                 source_rows.append({
                     "Source": "task_failures",
-                    "Mode": "Live fallback",
-                    "Message": format_snowflake_error(mart_exc),
+                    "Mode": "Live fallback deferred",
+                    "Message": _live_fallback_deferred_message("task_failures", mart_exc),
                 })
     except Exception as exc:
         data["task_failures"] = _empty_df()
@@ -1281,22 +1303,20 @@ def _load_control_room(
                 section="DBA Control Room",
             )
         except Exception as mart_exc:
-            task_history_source = "Live fallback"
-            task_history = run_query(
-                build_task_history_sql(
-                    session,
-                    f"scheduled_time >= DATEADD('hour', -{int(lookback_hours)}, CURRENT_TIMESTAMP())",
-                    limit=1000,
-                    company=company,
-                ),
-                ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_task_sla_history",
-                tier="recent",
-                section="DBA Control Room",
-            )
+            if not allow_live_fallback:
+                task_history_source = "Mart unavailable"
+                task_history = _empty_df()
+            else:
+                task_history_source = "Live fallback deferred"
+                task_history = _empty_df()
             source_rows.append({
                 "Source": "task_sla_history",
                 "Mode": task_history_source,
-                "Message": format_snowflake_error(mart_exc),
+                "Message": (
+                    "Live fallback skipped to keep DBA Control Room responsive."
+                    if not allow_live_fallback
+                    else _live_fallback_deferred_message("task_sla_history", mart_exc)
+                ),
             })
         if task_history_source == "OVERWATCH mart":
             source_rows.append({"Source": "task_sla_history", "Mode": task_history_source})
@@ -1314,18 +1334,10 @@ def _load_control_room(
                     )
                     source_rows.append({"Source": "task_query_detail", "Mode": "OVERWATCH mart"})
             except Exception as mart_exc:
-                query_sql = _query_detail_sql(session, qids)
-                if query_sql:
-                    task_query_details = run_query(
-                        query_sql,
-                        ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_task_query_detail_{len(qids)}",
-                        tier="standard",
-                        section="DBA Control Room",
-                    )
                 source_rows.append({
                     "Source": "task_query_detail",
-                    "Mode": "Live fallback",
-                    "Message": format_snowflake_error(mart_exc),
+                    "Mode": "Live fallback deferred",
+                    "Message": _live_fallback_deferred_message("task_query_detail", mart_exc),
                 })
         _, task_ops_exceptions, task_latest = _build_task_ops_frames(task_inventory, task_history, task_query_details)
         data["task_sla_cost"] = task_ops_exceptions[
@@ -1350,17 +1362,15 @@ def _load_control_room(
             )
             source_rows.append({"Source": "procedure_sla", "Mode": "OVERWATCH mart"})
         except Exception as mart_exc:
-            has_root_query_id = _query_history_has_root_query_id(session)
-            proc_runs = run_query(
-                _build_procedure_sla_sql(session, max(1, int(lookback_hours / 24)), has_root_query_id),
-                ttl_key=f"dba_control_room_live_{company}_{lookback_hours}_procedure_sla_{has_root_query_id}",
-                tier="standard",
-                section="DBA Control Room",
-            )
+            proc_runs = _empty_df()
             source_rows.append({
                 "Source": "procedure_sla",
-                "Mode": "Live fallback",
-                "Message": format_snowflake_error(mart_exc),
+                "Mode": "Live fallback deferred" if allow_live_fallback else "Mart unavailable",
+                "Message": (
+                    _live_fallback_deferred_message("procedure_sla", mart_exc)
+                    if allow_live_fallback
+                    else "Live fallback skipped to keep DBA Control Room responsive."
+                ),
             })
         _, proc_exceptions, proc_latest = _build_procedure_sla_frames(proc_runs)
         data["procedure_sla_cost"] = proc_exceptions
@@ -3833,14 +3843,19 @@ def render() -> None:
         ),
     )
     allow_live_fallback = st.checkbox(
-        "Allow live ACCOUNT_USAGE fallback queries",
+        "Allow limited live fallback (24h max)",
         value=False,
         key="dba_control_room_allow_live_fallback",
         help=(
-            "Default off prevents surprise long compiles. Turn on only when the OVERWATCH mart is missing "
-            "or stale and you accept slower direct ACCOUNT_USAGE scans."
+            "Default off prevents surprise long compiles. When enabled, Control Room only runs bounded "
+            "24h ACCOUNT_USAGE probes for credits, failed queries, and failed logins; heavy panels stay deferred."
         ),
     )
+    if allow_live_fallback:
+        st.caption(
+            "Limited fallback is capped to 24h and only covers credits, failed queries, and failed logins. "
+            "Refresh the OVERWATCH mart or use specialist workflows for deep live evidence."
+        )
     load_label = "Load DBA Control Room Deep Evidence" if include_deep_evidence else "Load DBA Control Room Triage"
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         with st.spinner("Loading exception signals..."):
@@ -3857,8 +3872,12 @@ def render() -> None:
             st.session_state["dba_control_room_company"] = company
             st.session_state["dba_control_room_lookback"] = int(lookback_hours)
             st.session_state["dba_control_room_source_mode"] = (
-                "Deep evidence live + fallback queries"
+                "Deep evidence mart + limited live fallback"
+                if include_deep_evidence and allow_live_fallback
+                else "Deep evidence mart-only"
                 if include_deep_evidence
+                else "Fast triage mart + limited live fallback"
+                if allow_live_fallback
                 else "Fast triage mart queries"
             )
             st.session_state["dba_control_room_live_fallback"] = bool(allow_live_fallback)
@@ -3880,7 +3899,7 @@ def render() -> None:
         return
 
     loaded_lookback = st.session_state.get("dba_control_room_lookback", lookback_hours)
-    source_mode = st.session_state.get("dba_control_room_source_mode", "Detailed live + fallback queries")
+    source_mode = st.session_state.get("dba_control_room_source_mode", "Fast triage mart queries")
     expected_meta = _dba_control_scope_meta(
         company,
         environment,
@@ -3912,6 +3931,9 @@ def render() -> None:
         st.info("Showing fast triage. Deep task, procedure, and Cortex evidence is deferred to keep this page responsive.")
         if not st.session_state.get("dba_control_room_live_fallback"):
             st.caption("Live ACCOUNT_USAGE fallbacks were skipped. Missing mart panels show as unavailable instead of running slow scans.")
+    elif "limited live fallback" in source_mode:
+        st.info("Showing mart-first evidence with limited 24h live probes only where they are cheap enough for Control Room.")
+        st.caption("Heavy account scans remain deferred; refresh the OVERWATCH mart or use specialist workflows for deep evidence.")
 
     exceptions = _severity_rows(data, credit_price)
     summary = data.get("summary", _empty_df())

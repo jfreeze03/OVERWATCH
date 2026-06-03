@@ -67,6 +67,7 @@ class NavigationIntegrityTests(unittest.TestCase):
     def test_dba_control_room_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room_shell")
         shell_text = (APP_ROOT / "sections" / "dba_control_room_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
         shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
 
         self.assertIn("def _delegate_full_workspace", shell_text)
@@ -76,6 +77,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("from utils", shell_import_block)
         self.assertNotIn("import utils", shell_import_block)
         self.assertNotIn("st.number_input", shell_text)
+        self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS = 24", full_workspace_text)
+        self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS", full_workspace_text)
+        self.assertIn("Allow limited live fallback (24h max)", full_workspace_text)
+        self.assertNotIn("Allow live ACCOUNT_USAGE fallback queries", full_workspace_text)
 
     def test_roles_and_aliases_resolve_to_visible_sections(self):
         for role, sections in ROLE_SECTIONS.items():
@@ -346,14 +351,19 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _current_active_section", app_text)
         self.assertIn("def _current_credit_price", app_text)
         self.assertIn("def _sidebar_panel_toggle", app_text)
-        self.assertIn('if _sidebar_panel_toggle("Command Palette", "command_palette")', app_text)
         self.assertIn('if _sidebar_panel_toggle("Saved Views", "saved_views")', app_text)
         self.assertIn('if _sidebar_panel_toggle("Global Filters", "global_filters")', app_text)
         self.assertIn('if _sidebar_panel_toggle("Settings", "settings")', app_text)
-        self.assertNotIn('with st.expander("Command Palette", expanded=False)', app_text)
+        self.assertEqual(app_text.count('if _sidebar_panel_toggle("Global Filters", "global_filters")'), 1)
+        self.assertNotIn("Command Palette", app_text)
+        self.assertNotIn("command_palette", app_text)
         self.assertNotIn('with st.expander("Saved Views", expanded=False)', app_text)
         self.assertNotIn('with st.expander("Global Filters", expanded=False)', app_text)
         self.assertNotIn('with st.expander("Settings", expanded=False)', app_text)
+        self.assertLess(app_text.index('"Company view"'), app_text.index('if _sidebar_panel_toggle("Global Filters", "global_filters")'))
+        self.assertLess(app_text.index('if _sidebar_panel_toggle("Global Filters", "global_filters")'), app_text.index('"Exceptions-only mode"'))
+        self.assertLess(app_text.index('"Exceptions-only mode"'), app_text.index('if _sidebar_panel_toggle("Saved Views", "saved_views")'))
+        self.assertLess(app_text.index('if _sidebar_panel_toggle("Saved Views", "saved_views")'), app_text.index('if _sidebar_panel_toggle("Settings", "settings")'))
 
     def test_current_sections_have_operating_guides(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -647,6 +657,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.radio(\n        "Account Health view"', account_health_text)
         self.assertNotIn("st.tabs(", account_health_text)
         self.assertIn('st.button("Load / Refresh Health"', account_health_text)
+        self.assertIn("if not refresh_health:", account_health_text)
         self.assertNotIn("or cache_age > 300", account_health_text)
         self.assertIn('st.button("Load Operability Mart"', account_health_text)
         self.assertIn("_account_health_operator_next_moves", account_health_text)

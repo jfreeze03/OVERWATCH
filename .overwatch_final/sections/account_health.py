@@ -332,8 +332,8 @@ def _build_briefing_prompt(data: dict, credit_price: float, company: str) -> str
     )
 
     return f"""You are OVERWATCH, a Snowflake monitoring assistant for ALFA Insurance.
-Write a concise executive briefing (3â€“4 short paragraphs, plain English, no bullet points, no markdown headers).
-The audience is senior IT leadership â€” not technical DBAs.
+Write a concise executive briefing (3-4 short paragraphs, plain English, no bullet points, no markdown headers).
+The audience is senior IT leadership - not technical DBAs.
 Tone: professional, direct, factual. Flag risks clearly. Quantify in dollars where possible.
 Do NOT invent data. Only use the numbers provided. Do NOT use markdown headers or bullet points.
 Today is {datetime.now().strftime('%A, %B %d %Y')}.
@@ -2513,7 +2513,7 @@ def render():
         key="account_health_active_view",
     )
 
-    # â”€â”€ OVERVIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- OVERVIEW --------------------------------------------------------------
     if active_view == "Overview":
         render_operator_briefing(
             [
@@ -2546,12 +2546,13 @@ def render():
         health_loaded = isinstance(st.session_state.get("health_data"), dict) and bool(st.session_state.get("health_data"))
         stale_scope = health_loaded and st.session_state.get("_health_filter_sig") != filter_sig
         refresh_health = st.button("Load / Refresh Health", key="health_refresh")
-        if not health_loaded:
-            st.info("Health snapshot is not loaded. Load it when you need current Account Health evidence.")
-        elif stale_scope:
-            st.warning("Loaded health snapshot is stale for the active filters. Refresh before acting.")
-        elif cache_age > 300:
-            st.caption(f"Loaded health snapshot is {cache_age / 60:.1f} minutes old. Refresh when current evidence matters.")
+        if not refresh_health:
+            if not health_loaded:
+                st.info("Health snapshot is not loaded. Load it when you need current Account Health evidence.")
+            elif stale_scope:
+                st.warning("Loaded health snapshot is stale for the active filters. Refresh before acting.")
+            elif cache_age > 300:
+                st.caption(f"Loaded health snapshot is {cache_age / 60:.1f} minutes old. Refresh when current evidence matters.")
 
         if refresh_health:
             action_session = _account_health_action_session("load Account Health")
@@ -3199,13 +3200,13 @@ def render():
                 )
                 if "USER_NAME" in cost_df.columns:
                     sel_user = st.selectbox(
-                        "â†’ Drill into user", ["(none)"] + cost_df["USER_NAME"].dropna().tolist(),
+                        "-> Drill into user", ["(none)"] + cost_df["USER_NAME"].dropna().tolist(),
                         key="ah_drill_user", label_visibility="collapsed",
                     )
                     if sel_user and sel_user != "(none)":
                         if st.button(f"Open Cost & Contract for {sel_user}", key="ah_drill_user_btn"):
                             _drill_to(
-                                "ðŸ’¸ Cost & Contract",
+                                "Cost & Contract",
                                 user_filter=sel_user,
                                 workflow_key="cost_contract_workflow",
                                 workflow="Explain bill / attribution / contract",
@@ -3251,7 +3252,7 @@ def render():
             st.info("Use Cost & Contract for optimization actions, action queue triage, and Teams-ready alerting.")
             if st.button("Open Cost & Contract", key="ah_open_recommendations"):
                 _drill_to(
-                    "ðŸ’¸ Cost & Contract",
+                    "Cost & Contract",
                     workflow_key="cost_contract_workflow",
                     workflow="Recommendations and action queue",
                 )
@@ -3294,7 +3295,7 @@ def render():
             return
 
         st.divider()
-        st.markdown("**ðŸ­ Warehouse Pressure (last 1h)**")
+        st.markdown("**Warehouse Pressure (last 1h)**")
         try:
             if control_mart_used:
                 df_wp = run_query(
@@ -3334,20 +3335,20 @@ def render():
                     key="ah_warehouse_pressure", title="Warehouse pressure drill-down",
                     drilldown_column="warehouse_name", lookback_hours=24, top_n=8,
                 )
-                st.markdown("**â†’ Jump to Warehouse Health:**")
+                st.markdown("**Jump to Warehouse Health:**")
                 wh_cols = st.columns(min(len(df_wp), 4))
                 for idx, wh_row in df_wp.head(4).iterrows():
                     wh_name = wh_row["WAREHOUSE_NAME"]
                     with wh_cols[idx % 4]:
                         if st.button(wh_name, key=f"ah_wh_drill_{wh_name}"):
-                            _drill_to("ðŸ­ Warehouse Health", wh_filter=wh_name)
+                            _drill_to("Warehouse Health", wh_filter=wh_name)
         except Exception as e:
             st.caption(f"Warehouse pressure unavailable: {format_snowflake_error(e)}")
 
-    # â”€â”€ RESOURCE MONITORS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- RESOURCE MONITORS -----------------------------------------------------
     elif active_view == "Resource Monitors":
         st.header("Resource Monitor Dashboard")
-        st.caption("Credit quota vs. consumed â€” with suspend threshold validation.")
+        st.caption("Credit quota vs. consumed - with suspend threshold validation.")
 
         if st.button("Load Resource Monitors", key="resmon_load"):
             action_session = _account_health_action_session("load Resource Monitors")
@@ -3430,7 +3431,7 @@ def render():
                     st.warning(f"**{name}** has no suspend threshold.")
             download_csv(df_rm, "resource_monitors.csv")
 
-    # â”€â”€ MORNING REPORT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- MORNING REPORT --------------------------------------------------------
     elif active_view == "Morning Report":
         st.header("Morning Health Report")
         st.caption("Overnight summary: failures, cost spikes, longest queries (last 12h).")
@@ -3515,7 +3516,7 @@ def render():
             if md.get("_source"):
                 st.caption(f"Source: {md['_source']}")
             if not md["failures"].empty:
-                st.subheader("âŒ Overnight Failures by Type")
+                st.subheader("Overnight Failures by Type")
                 render_priority_dataframe(
                     md["failures"],
                     title="Overnight failure groups",
@@ -3528,7 +3529,7 @@ def render():
             else:
                 st.success("No query failures overnight")
             if not md["long_queries"].empty:
-                st.subheader("ðŸŒ Longest Running Queries")
+                st.subheader("Longest Running Queries")
                 render_priority_dataframe(
                     md["long_queries"],
                     title="Longest overnight queries",
@@ -3560,12 +3561,12 @@ def render():
                 key="morning_brief_export",
             )
 
-    # â”€â”€ EXECUTIVE BRIEFING (NEW) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- EXECUTIVE BRIEFING (NEW) -----------------------------------------------
     elif active_view == "Executive Briefing":
         st.header("Executive Briefing")
         st.caption(
             "Plain-English summary generated by Cortex AI from live OVERWATCH data. "
-            "Designed to be copied into an email or Teams message to leadership â€” no dashboard login required."
+            "Designed to be copied into an email or Teams message to leadership - no dashboard login required."
         )
 
         briefing_window = st.selectbox(
@@ -3584,7 +3585,7 @@ def render():
             with st.spinner("Collecting metrics and generating briefing via Cortex AI..."):
                 br_data = {}
 
-                # â”€â”€ Collect metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                # -- Collect metrics --------------------------------------------
                 briefing_mart_ok, briefing_mart_reason = _can_use_control_room_mart(company)
                 qh = _query_history_capabilities(action_session)
                 failed_pred_plain = qh["failed_pred_plain"]
@@ -3715,7 +3716,7 @@ def render():
                 except Exception:
                     br_data["contract_pct"] = None
 
-                # â”€â”€ Extract values â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                # -- Extract values --------------------------------------------
                 cr24     = safe_float(br_data["credits"]["PERIOD_CREDITS"].iloc[0]) if not br_data["credits"].empty else 0
                 cr_prior = safe_float(br_data["credits"]["PRIOR_PERIOD_CREDITS"].iloc[0]) if not br_data["credits"].empty else 0
                 failures = safe_int(br_data["failures"]["FAIL_COUNT"].iloc[0]) if not br_data["failures"].empty else 0
@@ -3743,7 +3744,7 @@ def render():
                     "failed_task": failed_task,
                 }
 
-                # â”€â”€ Call Cortex â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                # -- Call Cortex ------------------------------------------------
                 prompt = _build_briefing_prompt(metric_payload, credit_price, company)
                 prompt_esc = prompt.replace("'", "''")
 
@@ -3775,7 +3776,7 @@ def render():
                     company, environment, window=briefing_window
                 )
 
-        # â”€â”€ Render briefing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # -- Render briefing ----------------------------------------------------
         if st.session_state.get("ah_briefing_text"):
             briefing_text   = st.session_state["ah_briefing_text"]
             briefing_ts     = st.session_state.get("ah_briefing_ts", "")

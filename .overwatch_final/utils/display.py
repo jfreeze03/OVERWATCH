@@ -137,12 +137,12 @@ def _query_history_detail_exprs(prefix: str = "") -> dict:
     return result
 
 
-# â”€â”€ Query drill-down â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# -- Query drill-down -----------------------------------------------------------
 
 def render_query_drilldown(
     df: pd.DataFrame,
     key: str,
-    title: str = "ðŸ”Ž Query Drill Down",
+    title: str = "Query Drill Down",
 ):
     """Interactive single-row drill-down with operator statistics."""
     if df is None or df.empty or "QUERY_ID" not in df.columns:
@@ -205,7 +205,7 @@ def render_query_drilldown(
                 st.info(f"Operator stats unavailable: {format_snowflake_error(e)}")
 
 
-# â”€â”€ Warehouse drill-down â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# -- Warehouse drill-down -------------------------------------------------------
 
 def render_warehouse_drilldown(
     warehouse_name: str,
@@ -241,10 +241,10 @@ def render_warehouse_drilldown(
         st.info("No recent query detail found for this warehouse.")
         return
     render_query_drilldown(df_wh, key=f"{key}_wh_query",
-                           title=f"ðŸ”Ž Warehouse Drill Down â€” {warehouse_name}")
+                           title=f"Warehouse Drill Down - {warehouse_name}")
 
 
-# â”€â”€ Entity drill-down â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# -- Entity drill-down ----------------------------------------------------------
 
 def render_entity_query_drilldown(
     entity_value: str,
@@ -318,10 +318,10 @@ def render_entity_query_drilldown(
         st.info("No query detail found for the selected item.")
         return
     render_query_drilldown(df_detail, key=f"{key}_{col}_query",
-                           title=f"Drill Down â€” {entity_column}: {entity_value}")
+                           title=f"Drill Down - {entity_column}: {entity_value}")
 
 
-# â”€â”€ Altair drillable bar chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# -- Altair drillable bar chart -------------------------------------------------
 
 def _selected_altair_value(event, selection_name: str, dimension: str):
     try:

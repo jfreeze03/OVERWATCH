@@ -1686,6 +1686,52 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertTrue(any(row.get("Mode") == "Mart unavailable" for _, row in data["_source_modes"].iterrows()))
         self.assertFalse(any("SNOWFLAKE.ACCOUNT_USAGE" in sql for sql in called_sql))
 
+    def test_control_room_live_fallback_defers_heavy_account_scans(self):
+        called_sql = []
+
+        def fail_mart_and_capture_live(sql, **_kwargs):
+            sql_upper = str(sql).upper()
+            called_sql.append(sql_upper)
+            if "SNOWFLAKE.ACCOUNT_USAGE" in sql_upper:
+                return pd.DataFrame()
+            raise RuntimeError("mart unavailable")
+
+        with patch("sections.dba_control_room.run_query", side_effect=fail_mart_and_capture_live), patch(
+            "sections.dba_control_room.load_action_queue",
+            return_value=pd.DataFrame(),
+        ):
+            data = _load_control_room(
+                session=None,
+                company="ALFA",
+                credit_price=3.68,
+                lookback_hours=168,
+                cortex_budget_usd=5000,
+                allow_live_fallback=True,
+            )
+
+        live_sql = [sql for sql in called_sql if "SNOWFLAKE.ACCOUNT_USAGE" in sql]
+        self.assertTrue(any("WAREHOUSE_METERING_HISTORY" in sql for sql in live_sql))
+        self.assertTrue(any("QUERY_HISTORY" in sql and "FAILED_WITH_ERROR" in sql for sql in live_sql))
+        self.assertTrue(any("LOGIN_HISTORY" in sql for sql in live_sql))
+        self.assertFalse(any("APPROX_PERCENTILE" in sql for sql in live_sql))
+        self.assertFalse(any("ALLOCATED_CREDITS" in sql for sql in live_sql))
+        self.assertFalse(any("ILIKE 'CREATE%'" in sql or "ILIKE 'ALTER%'" in sql for sql in live_sql))
+        self.assertFalse(any("TASK_HISTORY" in sql for sql in live_sql))
+        self.assertFalse(any("DATEADD('HOUR', -168" in sql for sql in live_sql))
+
+        source_modes = {
+            str(row.get("Source")): str(row.get("Mode"))
+            for _, row in data["_source_modes"].iterrows()
+        }
+        self.assertEqual(source_modes["credits"], "Limited live fallback")
+        self.assertEqual(source_modes["failed_queries"], "Limited live fallback")
+        self.assertEqual(source_modes["failed_logins"], "Limited live fallback")
+        self.assertEqual(source_modes["summary"], "Live fallback deferred")
+        self.assertEqual(source_modes["cost_drivers"], "Live fallback deferred")
+        self.assertEqual(source_modes["warehouse_pressure"], "Live fallback deferred")
+        self.assertEqual(source_modes["object_changes"], "Live fallback deferred")
+        self.assertEqual(source_modes["task_failures"], "Live fallback deferred")
+
     def test_dba_control_room_source_health_flags_scope_stale_and_deferred_sources(self):
         data = {
             "summary": pd.DataFrame({"FAILED_QUERIES": [2]}),

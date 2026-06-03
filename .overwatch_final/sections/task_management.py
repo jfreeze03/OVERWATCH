@@ -1,4 +1,4 @@
-# sections/task_management.py â€” Task history, ETL audit framework, execute task
+# sections/task_management.py - Task history, ETL audit framework, execute task
 import re
 import time
 
@@ -2535,7 +2535,7 @@ def render():
         columns=3,
     )
 
-    # â”€â”€ TASK HISTORY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- TASK HISTORY ----------------------------------------------------------
     if task_view == "Task History":
         st.header("Task Execution History")
         th_days = st.slider("Lookback (days)", 1, 30, 7, key="th_days")
@@ -2579,7 +2579,7 @@ def render():
             c3.metric("Failed",      len(failed_tasks), delta_color="inverse")
 
             if not failed_tasks.empty:
-                st.subheader("âŒ Failed Tasks")
+                st.subheader("Failed Tasks")
                 render_priority_dataframe(
                     failed_tasks,
                     title="Failed task runs to triage first",
@@ -2776,7 +2776,7 @@ def render():
                     key="tm_failure_runbook_download",
                 )
 
-    # â”€â”€ ETL AUDIT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- ETL AUDIT -------------------------------------------------------------
     elif task_view == "SLA & Cost Drift":
         _render_sla_cost_drift_console(session)
 
@@ -3050,7 +3050,7 @@ def render():
                     else:
                         st.info("The selected cancellation target is not available from this role/account metadata.")
 
-    # â”€â”€ EXECUTE TASK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- EXECUTE TASK ----------------------------------------------------------
     elif task_view == "Execute Task":
         st.header("Execute Task On-Demand")
         st.caption("Select and manually trigger a task. Ensure dependencies are met before running.")

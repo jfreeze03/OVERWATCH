@@ -2938,7 +2938,7 @@ def render():
     if st.session_state.get("exceptions_only_mode"):
         st.stop()
 
-    # â”€â”€ OVERVIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- OVERVIEW --------------------------------------------------------------
     if warehouse_view == "Overview & Scaling":
         st.header("Warehouse Health Overview")
         wh_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_days")
@@ -3230,7 +3230,7 @@ def render():
                 if session is not None:
                     _queue_efficiency_findings(session, df_eff)
 
-    # â”€â”€ SPILL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- SPILL -----------------------------------------------------------------
     elif warehouse_view == "Spill & Memory":
         st.header("Spill & Memory Pressure")
         sp_days = st.slider("Lookback (days)", 1, 30, 7, key="sp_days")
@@ -3303,7 +3303,7 @@ def render():
                     st.error(f"**{row['WAREHOUSE_NAME']}**: {row['REMOTE_SPILL_GB']:.1f} GB remote spill - upsize immediately")
             download_csv(df_sp, "spill_report.csv")
 
-    # â”€â”€ HEATMAP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- HEATMAP ---------------------------------------------------------------
     elif warehouse_view == "Workload Heatmap":
         st.header("Workload Concurrency Heatmap")
         hm_days = st.slider("Lookback (days)", 7, 90, 30, key="hm_days")

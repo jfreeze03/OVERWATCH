@@ -515,6 +515,91 @@ with st.sidebar:
     if _prev_company != active_company:
         invalidate_company_cache()
     st.session_state["_prev_active_company"] = active_company
+
+    if _sidebar_panel_toggle("Global Filters", "global_filters"):
+        default_end = datetime.now().date()
+        default_start = default_end - timedelta(days=7)
+        date_input_key = "_global_date_range_input"
+        existing_date_range = st.session_state.get(date_input_key)
+        if isinstance(existing_date_range, tuple) and len(existing_date_range) == 2:
+            clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(
+                existing_date_range[0],
+                existing_date_range[1],
+            )
+            if was_clamped:
+                st.session_state[date_input_key] = (clamped_start, clamped_end)
+                st.session_state["global_start_date"] = clamped_start
+                st.session_state["global_end_date"] = clamped_end
+                clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
+                st.session_state["_global_date_clamp_pending_warning"] = (clamp_key, max_days)
+        date_range = st.date_input(
+            "Date range",
+            value=(
+                st.session_state.get("global_start_date", default_start),
+                st.session_state.get("global_end_date", default_end),
+            ),
+            key=date_input_key,
+        )
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(date_range[0], date_range[1])
+            st.session_state["global_start_date"] = clamped_start
+            st.session_state["global_end_date"] = clamped_end
+            pending_clamp_warning = st.session_state.pop("_global_date_clamp_pending_warning", None)
+            if pending_clamp_warning:
+                clamp_key, max_days = pending_clamp_warning
+                if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
+                    st.warning(
+                        f"Global date range was clamped to the most recent {max_days} days to keep dashboard scans bounded."
+                    )
+                    st.session_state["_global_date_clamp_notice_key"] = clamp_key
+            elif was_clamped:
+                clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
+                if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
+                    st.warning(
+                        f"Global date range was clamped to the most recent {max_days} days to keep dashboard scans bounded."
+                    )
+                    st.session_state["_global_date_clamp_notice_key"] = clamp_key
+            else:
+                st.session_state.pop("_global_date_clamp_notice_key", None)
+        st.text_input("Warehouse contains", key="global_warehouse")
+        st.text_input("User contains", key="global_user")
+        st.text_input("Role contains", key="global_role")
+        st.text_input("Database contains", key="global_database")
+        st.selectbox(
+            "Environment",
+            list(ENVIRONMENT_CONFIG.keys()),
+            index=list(ENVIRONMENT_CONFIG.keys()).index(
+                st.session_state.get("global_environment", DEFAULT_ENVIRONMENT)
+                if st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) in ENVIRONMENT_CONFIG
+                else DEFAULT_ENVIRONMENT
+            ),
+            format_func=lambda key: ENVIRONMENT_CONFIG[key]["label"],
+            key="global_environment",
+            help=(
+                "Splits ALFA_EDW_PROD from DEV/SAN/PHX/SEA/SIT. "
+                "Cost split is allocated by query database when warehouses are shared."
+            ),
+        )
+
+        current_filter_signature = _global_filter_signature()
+        previous_filter_signature = st.session_state.get("_prev_global_filter_signature")
+        if previous_filter_signature is None:
+            st.session_state["_prev_global_filter_signature"] = current_filter_signature
+        elif previous_filter_signature != current_filter_signature:
+            clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
+            st.session_state["_prev_global_filter_signature"] = current_filter_signature
+
+        if st.button("Clear Global Filters", key="global_filters_clear"):
+            for _k in [
+                "global_start_date", "global_end_date", "global_warehouse",
+                "global_user", "global_role", "global_database", "global_environment",
+                "_global_date_range_input",
+                "_global_date_clamp_notice_key",
+            ]:
+                st.session_state.pop(_k, None)
+            clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
+            st.rerun()
+
     st.toggle(
         "Exceptions-only mode",
         key="exceptions_only_mode",
@@ -534,74 +619,6 @@ with st.sidebar:
         "ANALYST": "#fbbf24", "MANAGER": "#c084fc", "REPORT": "#fbbf24",
     }.get(matched_profile, "#38bdf8")
     role_label = current_role[:20] or "DBA"
-
-    if _sidebar_panel_toggle("Command Palette", "command_palette"):
-        cmd = st.text_input(
-            "Search or jump",
-            placeholder="warehouse, user, query_id, task, database, cost, alerts",
-            key="command_palette_input",
-        )
-        cmd_type = st.selectbox(
-            "Target",
-            ["Auto", "Warehouse", "User", "Query ID", "Task", "Database", "Section"],
-            key="command_palette_type",
-        )
-        if st.button("Go", key="command_palette_go", disabled=not cmd):
-            value = str(cmd).strip()
-            upper = value.upper()
-            target = SECTION_BY_TITLE["DBA Control Room"]
-            if cmd_type == "Warehouse" or (cmd_type == "Auto" and ("WH" in upper or "WAREHOUSE" in upper)):
-                st.session_state["global_warehouse"] = value
-                st.session_state["wh_filter"] = value
-                target = SECTION_BY_TITLE["Warehouse Health"]
-            elif cmd_type == "User":
-                st.session_state["global_user"] = value
-                target = SECTION_BY_TITLE["Cost & Contract"]
-                st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
-            elif cmd_type == "Query ID" or (cmd_type == "Auto" and len(value) >= 20 and "-" in value):
-                st.session_state["qs_qid"] = value
-                st.session_state["workload_operations_workflow"] = "History search"
-                target = SECTION_BY_TITLE["Workload Operations"]
-            elif cmd_type == "Task" or (cmd_type == "Auto" and "TASK" in upper):
-                st.session_state["tm_search"] = value
-                st.session_state["workload_operations_workflow"] = "Task graphs"
-                target = SECTION_BY_TITLE["Workload Operations"]
-            elif cmd_type == "Database" or (cmd_type == "Auto" and upper.startswith(("DB_", "ALFA", "TRXS"))):
-                st.session_state["global_database"] = value
-                target = SECTION_BY_TITLE["Cost & Contract"]
-                st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
-            elif "COST" in upper or "SPEND" in upper:
-                target = SECTION_BY_TITLE["Cost & Contract"]
-                st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
-            elif "ALERT" in upper or "INCIDENT" in upper:
-                target = SECTION_BY_TITLE["Alert Center"]
-            elif "RECOMMEND" in upper or "ACTION" in upper:
-                target = SECTION_BY_TITLE["Cost & Contract"]
-                st.session_state["cost_contract_workflow"] = "Recommendations and action queue"
-            elif "VALUE" in upper or "ROI" in upper or "SAVING" in upper:
-                target = SECTION_BY_TITLE["Cost & Contract"]
-                st.session_state["cost_contract_workflow"] = "Snowflake value log"
-            elif "CORTEX" in upper or "AI" in upper:
-                target = SECTION_BY_TITLE["Cost & Contract"]
-                st.session_state["cost_contract_workflow"] = "AI and Cortex spend"
-            elif "LOGIN" in upper or "GRANT" in upper or "MFA" in upper or "SECURITY" in upper:
-                target = SECTION_BY_TITLE["Security Posture"]
-                st.session_state["security_posture_workflow"] = "Access posture"
-            elif "SHARE" in upper or "SHARING" in upper:
-                target = SECTION_BY_TITLE["Security Posture"]
-                st.session_state["security_posture_workflow"] = "Data sharing exposure"
-            elif any(token in upper for token in ("ARCHITECTURE", "CLUSTER", "CACHE", "ISOLATION", "DISASTER", "DR ")):
-                target = SECTION_BY_TITLE["Architecture Readiness"]
-            elif "DBA" in upper or "WAREHOUSE SETTING" in upper or "DRIFT" in upper or "CHANGE" in upper:
-                target = SECTION_BY_TITLE["Change & Drift"]
-                st.session_state["change_drift_workflow"] = "Object and access changes"
-            else:
-                for section in visible_sections:
-                    if upper in section.upper():
-                        target = section
-                        break
-            _queue_section_navigation(target if target in visible_sections else visible_sections[0])
-            st.rerun()
 
     st.caption(f"{role_label} - {matched_profile} VIEW")
     st.caption("NAVIGATE")
@@ -721,93 +738,6 @@ with st.sidebar:
 
         if _session:
             st.caption("Saved View table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
-
-    st.divider()
-
-    # Settings.
-    if _sidebar_panel_toggle("Global Filters", "global_filters"):
-        default_end = datetime.now().date()
-        default_start = default_end - timedelta(days=7)
-        date_input_key = "_global_date_range_input"
-        existing_date_range = st.session_state.get(date_input_key)
-        if isinstance(existing_date_range, tuple) and len(existing_date_range) == 2:
-            clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(
-                existing_date_range[0],
-                existing_date_range[1],
-            )
-            if was_clamped:
-                st.session_state[date_input_key] = (clamped_start, clamped_end)
-                st.session_state["global_start_date"] = clamped_start
-                st.session_state["global_end_date"] = clamped_end
-                clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
-                st.session_state["_global_date_clamp_pending_warning"] = (clamp_key, max_days)
-        date_range = st.date_input(
-            "Date range",
-            value=(
-                st.session_state.get("global_start_date", default_start),
-                st.session_state.get("global_end_date", default_end),
-            ),
-            key=date_input_key,
-        )
-        if isinstance(date_range, tuple) and len(date_range) == 2:
-            clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(date_range[0], date_range[1])
-            st.session_state["global_start_date"] = clamped_start
-            st.session_state["global_end_date"] = clamped_end
-            pending_clamp_warning = st.session_state.pop("_global_date_clamp_pending_warning", None)
-            if pending_clamp_warning:
-                clamp_key, max_days = pending_clamp_warning
-                if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
-                    st.warning(
-                        f"Global date range was clamped to the most recent {max_days} days to keep dashboard scans bounded."
-                    )
-                    st.session_state["_global_date_clamp_notice_key"] = clamp_key
-            elif was_clamped:
-                clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
-                if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
-                    st.warning(
-                        f"Global date range was clamped to the most recent {max_days} days to keep dashboard scans bounded."
-                    )
-                    st.session_state["_global_date_clamp_notice_key"] = clamp_key
-            else:
-                st.session_state.pop("_global_date_clamp_notice_key", None)
-        st.text_input("Warehouse contains", key="global_warehouse")
-        st.text_input("User contains", key="global_user")
-        st.text_input("Role contains", key="global_role")
-        st.text_input("Database contains", key="global_database")
-        st.selectbox(
-            "Environment",
-            list(ENVIRONMENT_CONFIG.keys()),
-            index=list(ENVIRONMENT_CONFIG.keys()).index(
-                st.session_state.get("global_environment", DEFAULT_ENVIRONMENT)
-                if st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) in ENVIRONMENT_CONFIG
-                else DEFAULT_ENVIRONMENT
-            ),
-            format_func=lambda key: ENVIRONMENT_CONFIG[key]["label"],
-            key="global_environment",
-            help=(
-                "Splits ALFA_EDW_PROD from DEV/SAN/PHX/SEA/SIT. "
-                "Cost split is allocated by query database when warehouses are shared."
-            ),
-        )
-
-        current_filter_signature = _global_filter_signature()
-        previous_filter_signature = st.session_state.get("_prev_global_filter_signature")
-        if previous_filter_signature is None:
-            st.session_state["_prev_global_filter_signature"] = current_filter_signature
-        elif previous_filter_signature != current_filter_signature:
-            clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
-            st.session_state["_prev_global_filter_signature"] = current_filter_signature
-
-        if st.button("Clear Global Filters", key="global_filters_clear"):
-            for _k in [
-                "global_start_date", "global_end_date", "global_warehouse",
-                "global_user", "global_role", "global_database", "global_environment",
-                "_global_date_range_input",
-                "_global_date_clamp_notice_key",
-            ]:
-                st.session_state.pop(_k, None)
-            clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
-            st.rerun()
 
     st.divider()
 

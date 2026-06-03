@@ -36,11 +36,11 @@ definition_version: 1
 # ─────────────────────────────────────────────────────────────────────────────
 
 streamlit:
-  name: OVERWATCHV3
-  stage: DBA_MAINT_DB.PUBLIC.OVERWATCH_STAGE
+  name: OVERWATCH
+  stage: DBA_MAINT_DB.OVERWATCH.OVERWATCH_STAGE
   main_file: app.py
   title: "OVERWATCH — Snowflake DBA Monitor"
-  comment: "v3 — Modular DBA command center for ALFA Insurance"
+  comment: "DBA command center for ALFA Insurance"
 
   # Warehouse used by SiS for Python execution. SQL queries run here unless
   # the session executes USE WAREHOUSE first.

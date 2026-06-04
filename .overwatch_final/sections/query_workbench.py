@@ -48,16 +48,6 @@ def _root_cause_score(
     return max(0, min(100, int(round(100 - penalty))))
 
 
-def _root_cause_rating(score: int) -> str:
-    if score >= 90:
-        return "Stable"
-    if score >= 78:
-        return "Watch"
-    if score >= 65:
-        return "Degraded"
-    return "Incident Risk"
-
-
 def _root_cause_action_for(cause: str) -> tuple[str, str, str]:
     cause = str(cause or "").upper()
     if "FAILED" in cause:
@@ -123,8 +113,8 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
     affected_users = safe_int(summary_row.get("AFFECTED_USERS"))
 
     c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.4])
-    c1.metric("Root-Cause Score", f"{score}/100", _root_cause_rating(score))
-    c2.metric("High-Risk Queries", f"{high_risk:,}", delta_color="inverse")
+    c1.metric("High-Risk Queries", f"{high_risk:,}", delta_color="inverse")
+    c2.metric("Priority Queries", f"{len(priority):,}", delta_color="inverse")
     c3.metric("Affected Scope", f"{affected_warehouses:,} WH / {affected_users:,} users")
     with c4:
         if priority.empty:
@@ -196,7 +186,6 @@ def _build_root_cause_markdown(
         f"# OVERWATCH Query Root-Cause Brief - {company}",
         "",
         f"- Lookback: {days} days",
-        f"- Root-cause score: {score} ({_root_cause_rating(score)})",
         f"- Total queries: {safe_int(summary_row.get('TOTAL_QUERIES')):,}",
         f"- Failed queries: {safe_int(summary_row.get('FAILED_QUERIES')):,}",
         f"- Queued queries: {safe_int(summary_row.get('QUEUED_QUERIES')):,}",
@@ -719,13 +708,11 @@ def render_root_cause_brief(session) -> None:
             slow_queries=safe_int(summary_row.get("SLOW_QUERIES")),
             total_queries=safe_int(summary_row.get("TOTAL_QUERIES")),
         )
-        rating = _root_cause_rating(score)
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Root-Cause Score", score, rating)
-        c2.metric("Failed", f"{safe_int(summary_row.get('FAILED_QUERIES')):,}", delta_color="inverse")
-        c3.metric("Queued", f"{safe_int(summary_row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
-        c4.metric("Spill", f"{safe_int(summary_row.get('SPILL_QUERIES')):,}", delta_color="inverse")
-        c5.metric("Full Scan", f"{safe_int(summary_row.get('FULL_SCAN_QUERIES')):,}", delta_color="inverse")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Failed", f"{safe_int(summary_row.get('FAILED_QUERIES')):,}", delta_color="inverse")
+        c2.metric("Queued", f"{safe_int(summary_row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
+        c3.metric("Spill", f"{safe_int(summary_row.get('SPILL_QUERIES')):,}", delta_color="inverse")
+        c4.metric("Full Scan", f"{safe_int(summary_row.get('FULL_SCAN_QUERIES')):,}", delta_color="inverse")
 
         if score < 65:
             st.error("Incident risk: query failures, queue pressure, spill, or scan-heavy workload needs DBA action.")

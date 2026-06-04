@@ -588,7 +588,7 @@ def _alert_center_operability_rows(
                 "Owner directory source",
                 "Review",
                 "Medium",
-                f"Could not score owner directory: {_format_snowflake_error(exc)}",
+                f"Could not evaluate owner directory: {_format_snowflake_error(exc)}",
                 "Review owner directory data shape and deployment.",
             )
 
@@ -1037,14 +1037,14 @@ def render() -> None:
     if active_view == "Control Health":
         st.subheader("Alert Control Health")
         defer_source_note("Uses only the data loaded by the explicit Alert Center refresh; no hidden tab scans are required.")
-        h1, h2, h3, h4 = st.columns(4)
         blocked = int(readiness_rows["STATE"].isin(["Needs Setup", "Degraded", "Scope Stale"]).sum()) if not readiness_rows.empty else 0
         review = int(readiness_rows["STATE"].eq("Review").sum()) if not readiness_rows.empty else 0
         ready = int(readiness_rows["STATE"].isin(["Ready", "No Rows"]).sum()) if not readiness_rows.empty else 0
-        h1.metric("Readiness", f"{readiness_score}/100")
-        h2.metric("Ready Controls", f"{ready:,}")
-        h3.metric("Needs Review", f"{review:,}", delta_color="inverse")
-        h4.metric("Blocked / Setup", f"{blocked:,}", delta_color="inverse")
+        h1, h2, h3, h4 = st.columns(4)
+        h1.metric("Ready Controls", f"{ready:,}")
+        h2.metric("Needs Review", f"{review:,}", delta_color="inverse")
+        h3.metric("Blocked / Setup", f"{blocked:,}", delta_color="inverse")
+        h4.metric("Controls", f"{len(readiness_rows):,}")
         _render_priority_dataframe(
             readiness_rows,
             title="Alert source and delivery readiness",
@@ -1172,11 +1172,10 @@ def render() -> None:
         review = int(automation_board["STATE"].astype(str).isin(["Manual", "Review"]).sum()) if not automation_board.empty else 0
         ready = int(automation_board["STATE"].astype(str).isin(["Ready", "No Open Alerts", "No Open Queue"]).sum()) if not automation_board.empty else 0
         a1, a2, a3, a4 = st.columns(4)
-        score = max(0, min(100, int(round((ready / max(len(automation_board), 1)) * 100 - blocked * 15 - review * 5))))
-        a1.metric("Automation Score", f"{score}/100")
-        a2.metric("Ready Controls", f"{ready:,}")
-        a3.metric("Manual / Review", f"{review:,}", delta_color="inverse")
-        a4.metric("Blocked", f"{blocked:,}", delta_color="inverse")
+        a1.metric("Ready Controls", f"{ready:,}")
+        a2.metric("Manual / Review", f"{review:,}", delta_color="inverse")
+        a3.metric("Blocked", f"{blocked:,}", delta_color="inverse")
+        a4.metric("Controls", f"{len(automation_board):,}")
         _render_priority_dataframe(
             automation_board,
             title="Alert automation controls",

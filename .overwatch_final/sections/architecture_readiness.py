@@ -1107,19 +1107,19 @@ def _render_platform_futures_adoption_gate(controls: pd.DataFrame) -> None:
     if gate is None or gate.empty:
         return
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Lowest Readiness", f"{int(gate['READINESS_SCORE'].min()):,}")
-    c2.metric("Blocked Areas", f"{int((gate['ADOPTION_STATE'] == 'Blocked').sum()):,}")
-    c3.metric("Evidence Gaps", f"{int((gate['ADOPTION_STATE'] == 'Evidence Gaps').sum()):,}")
-    c4.metric("Critical/High", f"{int(gate['CRITICAL_HIGH_FINDINGS'].sum()):,}")
+    c1.metric("Blocked Areas", f"{int((gate['ADOPTION_STATE'] == 'Blocked').sum()):,}", delta_color="inverse")
+    c2.metric("Evidence Gaps", f"{int((gate['ADOPTION_STATE'] == 'Evidence Gaps').sum()):,}", delta_color="inverse")
+    c3.metric("Critical/High", f"{int(gate['CRITICAL_HIGH_FINDINGS'].sum()):,}", delta_color="inverse")
+    c4.metric("Control Areas", f"{len(gate):,}")
     render_priority_dataframe(
         gate,
         title="Expert adoption gate",
         priority_columns=[
-            "ADOPTION_STATE", "READINESS_SCORE", "CONTROL_AREA",
+            "ADOPTION_STATE", "CONTROL_AREA",
             "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS", "OWNER_ROUTE_GAPS",
             "EVIDENCE_ROWS", "NEXT_DBA_MOVE", "WHY_EXPERTS_CARE",
         ],
-        sort_by=["READINESS_SCORE", "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS"],
+        sort_by=["ADOPTION_STATE", "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS"],
         ascending=[True, False, False],
         raw_label="All platform adoption gate rows",
         height=360,
@@ -1131,24 +1131,22 @@ def _render_agentic_ai_cockpit(summary: dict, scorecard: pd.DataFrame) -> None:
     if scorecard is None or scorecard.empty:
         st.info("Load AI platform evidence surfaces to build the Agentic AI Cockpit.")
         return
-    strict_score = safe_int(summary.get("STRICT_SCORE"))
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Strict Score", f"{strict_score:,}")
-    c2.metric("Blocked", f"{safe_int(summary.get('BLOCKED')):,}")
-    c3.metric("Evidence Gaps", f"{safe_int(summary.get('EVIDENCE_GAPS')):,}")
-    c4.metric("Pilot Only", f"{safe_int(summary.get('CONTROLLED_PILOT')):,}")
-    c5.metric("Critical/High", f"{safe_int(summary.get('CRITICAL_HIGH')):,}")
-    st.progress(max(0, min(100, strict_score)) / 100)
+    c1.metric("Blocked", f"{safe_int(summary.get('BLOCKED')):,}", delta_color="inverse")
+    c2.metric("Evidence Gaps", f"{safe_int(summary.get('EVIDENCE_GAPS')):,}", delta_color="inverse")
+    c3.metric("Pilot Only", f"{safe_int(summary.get('CONTROLLED_PILOT')):,}")
+    c4.metric("Critical/High", f"{safe_int(summary.get('CRITICAL_HIGH')):,}", delta_color="inverse")
+    c5.metric("Control Areas", f"{len(scorecard):,}")
     render_priority_dataframe(
         scorecard,
         title="Agentic AI governance cockpit",
         priority_columns=[
-            "GO_LIVE_STATE", "READINESS_SCORE", "SURFACE_CLASS", "CONTROL_AREA",
+            "GO_LIVE_STATE", "SURFACE_CLASS", "CONTROL_AREA",
             "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS", "OWNER_ROUTE_GAPS",
             "APPROVAL_GAPS", "EVIDENCE_ROWS", "BLOCKERS", "DBA_DECISION",
             "NEXT_DBA_MOVE", "WHY_EXPERTS_CARE",
         ],
-        sort_by=["READINESS_SCORE", "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS"],
+        sort_by=["GO_LIVE_STATE", "CRITICAL_HIGH_FINDINGS", "SOURCE_GAPS"],
         ascending=[True, False, False],
         raw_label="All agentic AI cockpit rows",
         height=390,
@@ -1210,8 +1208,9 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
         c4.metric("Critical/High", f"{high_count:,}")
         if isinstance(agentic_scorecard, pd.DataFrame) and not agentic_scorecard.empty:
             defer_section_note(
-                f"Agentic AI strict score {safe_int(agentic_summary.get('STRICT_SCORE')):,}; "
-                f"top risk: {agentic_summary.get('TOP_RISK', 'Agentic AI readiness')}."
+                f"Agentic AI top risk: {agentic_summary.get('TOP_RISK', 'Agentic AI readiness')}. "
+                f"Blocked areas: {safe_int(agentic_summary.get('BLOCKED')):,}; "
+                f"evidence gaps: {safe_int(agentic_summary.get('EVIDENCE_GAPS')):,}."
             )
         _render_platform_futures_adoption_gate(controls)
         if board is None or board.empty:
@@ -1291,18 +1290,18 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 c1.metric("Pilot Candidates", f"{int(decisions.str.contains('Pilot Candidate', case=False, regex=False).sum()):,}")
                 c2.metric("Hold Decisions", f"{int(decisions.str.contains('Hold', case=False, regex=False).sum()):,}")
                 c3.metric("Credits", f"{safe_float(df.get('CREDITS_30D', pd.Series(dtype=float)).sum()):,.1f}")
-                c4.metric("Top Score", f"{safe_int(df.get('READINESS_SCORE', pd.Series(dtype=int)).max()):,}")
+                c4.metric("Workloads", f"{len(df):,}")
                 render_priority_dataframe(
                     df,
                     title="Adaptive Compute transition advisor",
                     priority_columns=[
-                        "SEVERITY", "ADAPTIVE_DECISION", "READINESS_SCORE", "WAREHOUSE_NAME",
+                        "SEVERITY", "ADAPTIVE_DECISION", "WAREHOUSE_NAME",
                         "CREDITS_30D", "QUERY_COUNT", "USERS", "DATABASES",
                         "QUEUED_SEC", "REMOTE_SPILL_GB", "P95_ELAPSED_SEC",
                         "FINDING", "DBA_ACTION", "QUEUE_READINESS",
                     ],
-                    sort_by=["SEVERITY", "READINESS_SCORE", "CREDITS_30D"],
-                    ascending=[True, False, False],
+                    sort_by=["SEVERITY", "CREDITS_30D"],
+                    ascending=[True, False],
                     raw_label="All Adaptive Compute advisor rows",
                     height=430,
                 )

@@ -76,7 +76,7 @@ def _finops_readiness_rows(
     rows.append({
         "CONTROL": "Exact vs allocated labels",
         "STATE": "Ready",
-        "EVIDENCE": f"{official:,} formula row(s) identify official or metered confidence.",
+        "EVIDENCE": f"{official:,} formula row(s) identify official or metered source basis.",
         "NEXT_ACTION": "Keep chargeback views labeled as allocated unless Snowflake exposes exact billing grain.",
     })
     return pd.DataFrame(rows)

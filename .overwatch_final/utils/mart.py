@@ -881,6 +881,33 @@ def build_mart_cost_cockpit_sql(company: str = "ALFA", days: int = 7) -> str:
     """
 
 
+def build_mart_cost_service_lens_sql(days_back: int = 7, credit_price: float = 3.68) -> str:
+    """Build account service-cost lens from the daily cost mart."""
+    table = mart_object_name("FACT_COST_DAILY")
+    days_back = max(1, int(days_back or 7))
+    credit_price = float(credit_price or 3.68)
+    return f"""
+        SELECT
+            SERVICE_CATEGORY,
+            SERVICE_TYPE,
+            ROUND(SUM(CREDITS_BILLED), 4) AS CREDITS_BILLED,
+            ROUND(SUM(CREDITS_USED_COMPUTE), 4) AS CREDITS_USED_COMPUTE,
+            ROUND(SUM(COALESCE(CREDITS_USED_CLOUD_SERVICES, 0)), 4) AS CREDITS_USED_CLOUD_SERVICES,
+            ROUND(SUM(CREDITS_ADJUSTMENT_CLOUD_SERVICES), 4) AS CREDITS_ADJUSTMENT_CLOUD_SERVICES,
+            ROUND(SUM(COALESCE(EST_COST_USD, CREDITS_BILLED * {credit_price:.4f})), 2) AS ESTIMATED_COST_USD,
+            COUNT(DISTINCT USAGE_DATE) AS OBSERVED_DAYS,
+            'OVERWATCH mart: FACT_COST_DAILY' AS SNOWFLAKE_SOURCE
+        FROM {table}
+        WHERE USAGE_DATE >= DATEADD('DAY', -{days_back}, CURRENT_DATE())
+          AND USAGE_DATE < CURRENT_DATE()
+        GROUP BY SERVICE_CATEGORY, SERVICE_TYPE
+        HAVING ABS(SUM(CREDITS_BILLED)) > 0
+            OR ABS(SUM(CREDITS_USED_COMPUTE)) > 0
+            OR ABS(SUM(COALESCE(CREDITS_USED_CLOUD_SERVICES, 0))) > 0
+        ORDER BY CREDITS_BILLED DESC, SERVICE_CATEGORY, SERVICE_TYPE
+    """
+
+
 def build_mart_cost_run_rate_sql(company: str = "ALFA") -> str:
     """Build complete-day 7d/30d run-rate and YOY cost trend from mart facts."""
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")

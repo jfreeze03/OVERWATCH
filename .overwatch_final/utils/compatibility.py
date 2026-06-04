@@ -574,7 +574,7 @@ def build_smoke_test_checklist() -> pd.DataFrame:
 
 
 def build_cost_formula_audit() -> pd.DataFrame:
-    """Document the app's cost formulas and confidence level."""
+    """Document the app's cost formulas and source basis."""
     rows = [
         (
             "Warehouse credits",

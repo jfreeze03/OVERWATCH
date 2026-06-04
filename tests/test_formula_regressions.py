@@ -81,10 +81,13 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_governance_alert_rows,
     _build_cost_incident_timeline,
     _build_cost_run_rate_sql,
+    _build_cost_source_health_board,
     _build_cost_spike_root_cause_board,
     _build_native_cost_control_inventory,
     _build_resource_monitor_guardrail_sql,
     _build_savings_verification_task_summary,
+    _build_attribution_gap_summary,
+    _build_service_cost_lens_summary,
     build_cost_governance_mart_sql,
 )
 from sections.budget_governance import (  # noqa: E402
@@ -141,28 +144,38 @@ from sections.change_drift import (  # noqa: E402
     _change_drift_rating,
     _change_drift_score,
     _change_control_operability_fact_sql,
+    _available_change_integration_tables,
     _change_integration_status_sql,
     _change_integration_timeline_sql,
+    _change_integration_object_inventory_sql,
+    _change_legacy_integration_status_sql,
+    _change_legacy_integration_timeline_sql,
+    _change_legacy_unmatched_evidence_sql,
+    _change_legacy_feed_health_sql,
+    _change_split_feed_health_sql,
     _change_unmatched_evidence_sql,
     _change_intervention_matrix,
     _change_operator_next_moves,
     _change_source_health_rows,
     _change_verification_sql,
     _enrich_change_control_evidence,
+    _split_change_evidence_tables_ready,
     build_change_itsm_ticket_ddl,
+    build_change_itsm_ticket_feed_load_sql,
     build_change_itsm_ticket_migration_sql,
     build_change_control_evidence_ddl,
     build_change_control_evidence_migration_sql,
     build_change_control_operability_fact_ddl,
     build_change_control_operability_fact_migration_sql,
+    build_change_evidence_feed_stage_sql,
     build_change_source_control_ddl,
+    build_change_source_control_feed_load_sql,
     build_change_source_control_migration_sql,
 )
 from sections.query_workbench import (  # noqa: E402
     _build_mart_root_cause_sql,
     _build_root_cause_markdown,
     _root_cause_action_for,
-    _root_cause_rating,
     _root_cause_score,
 )
 from sections.recommendations import (  # noqa: E402
@@ -230,7 +243,6 @@ from sections.task_management import (  # noqa: E402
     _parse_task_predecessors,
     _procedure_from_definition,
     _task_action_for,
-    _task_ops_rating,
     _task_ops_score,
 )
 from sections.usage_overview import _first_number as usage_first_number  # noqa: E402
@@ -247,7 +259,6 @@ from sections.warehouse_health import (  # noqa: E402
     _queue_efficiency_findings,
     _queue_capacity_findings,
     _warehouse_capacity_action_for,
-    _warehouse_capacity_rating,
     _warehouse_capacity_score,
     _warehouse_capacity_verification_sql,
     _warehouse_owner_inventory_sql,
@@ -264,12 +275,15 @@ from utils.cost import (  # noqa: E402
     build_snowflake_billed_credit_reconciliation_sql,
     build_snowflake_cost_management_account_sql,
     build_snowflake_org_currency_cost_sql,
+    build_snowflake_rate_sheet_reconciliation_sql,
+    build_snowflake_service_cost_lens_sql,
     build_cost_reconciliation_sql,
     build_idle_warehouse_sql,
     build_metered_credit_cte,
     credits_to_dollars,
     query_attribution_supported,
 )
+from utils.mart import build_mart_cost_service_lens_sql  # noqa: E402
 from utils.compatibility import clear_compatibility_process_cache  # noqa: E402
 from utils.deployment import (  # noqa: E402
     OVERWATCH_SCHEMA_VERSION,
@@ -421,8 +435,41 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertIn("SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY", currency_sql)
         self.assertIn("USAGE_IN_CURRENCY", currency_sql)
+        self.assertIn("BALANCE_SOURCE", currency_sql)
         self.assertIn("RATING_TYPE) = 'COMPUTE'", currency_sql)
         self.assertIn("CURRENT_ACCOUNT_NAME()", currency_sql)
+
+    def test_cost_contract_official_rate_and_service_lens_sql_are_bounded(self):
+        rate_sql = build_snowflake_rate_sheet_reconciliation_sql(
+            14,
+            configured_credit_price=DEFAULTS["credit_price"],
+        ).upper()
+        service_sql = build_snowflake_service_cost_lens_sql(
+            14,
+            credit_price=DEFAULTS["credit_price"],
+        ).upper()
+        mart_sql = build_mart_cost_service_lens_sql(
+            14,
+            credit_price=DEFAULTS["credit_price"],
+        ).upper()
+
+        self.assertIn("SNOWFLAKE.ORGANIZATION_USAGE.RATE_SHEET_DAILY", rate_sql)
+        self.assertIn("EFFECTIVE_RATE", rate_sql)
+        self.assertIn("CONFIGURED_CREDIT_PRICE_USD", rate_sql)
+        self.assertIn("DATE >= START_DATE", rate_sql)
+        self.assertIn("SERVICE_TYPE) = 'WAREHOUSE_METERING'", rate_sql)
+
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", service_sql)
+        self.assertIn("SERVICE_CATEGORY", service_sql)
+        self.assertIn("AI / CORTEX", service_sql)
+        self.assertIn("SERVERLESS / MANAGED COMPUTE", service_sql)
+        self.assertIn("CREDITS_BILLED", service_sql)
+        self.assertIn("USAGE_DATE >= DATEADD('DAY', -14", service_sql)
+
+        self.assertIn("FACT_COST_DAILY", mart_sql)
+        self.assertIn("SERVICE_CATEGORY", mart_sql)
+        self.assertIn("CREDITS_BILLED", mart_sql)
+        self.assertIn("OVERWATCH MART: FACT_COST_DAILY", mart_sql)
 
     def test_metered_credit_cte_uses_compute_credits_with_total_fallback(self):
         sql = build_metered_credit_cte(hours_back=24, include_recent=True).upper()
@@ -454,6 +501,68 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS", sql)
         self.assertIn("OVERWATCH_ALLOCATED_CREDITS", sql)
         self.assertIn("OFFICIAL_ATTRIBUTED_QUERIES", sql)
+
+    def test_cost_contract_source_health_and_gap_summaries(self):
+        cockpit = pd.DataFrame([{"CURRENT_CREDITS": 12.0, "PRIOR_CREDITS": 9.0}])
+        run_rate = pd.DataFrame([{"AVG_DAILY_7D": 1.5, "YOY_7D_PCT": 4.0, "YOY_30D_PCT": 3.0}])
+        attribution = pd.DataFrame([
+            {
+                "WAREHOUSE_NAME": "COMPUTE_WH",
+                "EXACT_METERED_CREDITS": 10.0,
+                "ALLOCATED_QUERY_CREDITS": 6.0,
+                "OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS": 5.5,
+                "OFFICIAL_ATTRIBUTED_QUERIES": 12,
+                "VARIANCE_CREDITS": 4.0,
+            },
+            {
+                "WAREHOUSE_NAME": "OVERWATCH_WH",
+                "EXACT_METERED_CREDITS": 2.0,
+                "ALLOCATED_QUERY_CREDITS": 1.5,
+                "OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS": 1.5,
+                "OFFICIAL_ATTRIBUTED_QUERIES": 3,
+                "VARIANCE_CREDITS": 0.5,
+            },
+        ])
+        service_lens = pd.DataFrame([
+            {"SERVICE_CATEGORY": "Warehouse", "SERVICE_TYPE": "WAREHOUSE_METERING", "CREDITS_BILLED": 10.0},
+            {"SERVICE_CATEGORY": "AI / Cortex", "SERVICE_TYPE": "CORTEX", "CREDITS_BILLED": 2.0},
+            {"SERVICE_CATEGORY": "Serverless / Managed Compute", "SERVICE_TYPE": "SERVERLESS_TASK", "CREDITS_BILLED": 1.0},
+        ])
+        state = {
+            "cost_contract_service_lens_source": "OVERWATCH mart: FACT_COST_DAILY",
+            "_cost_contract_snowflake_cost_parity": {
+                "rate": pd.DataFrame([{"OFFICIAL_EFFECTIVE_RATE": 3.68}]),
+                "currency": pd.DataFrame([{"OFFICIAL_COMPUTE_CREDITS": 10.0}]),
+            },
+        }
+
+        source_summary, source_board = _build_cost_source_health_board(
+            cockpit=cockpit,
+            run_rate=run_rate,
+            queue=pd.DataFrame(),
+            verification_health=pd.DataFrame(),
+            attribution=attribution,
+            service_lens=service_lens,
+            state=state,
+        )
+        by_source = dict(zip(source_board["SOURCE"], source_board["STATE"]))
+        self.assertEqual(by_source["Warehouse metering"], "Ready")
+        self.assertEqual(by_source["Query attribution gap"], "Ready")
+        self.assertEqual(by_source["Account service lens"], "Ready")
+        self.assertEqual(by_source["Organization rate and currency"], "Ready")
+        self.assertGreaterEqual(source_summary["score"], 90)
+
+        gap = _build_attribution_gap_summary(attribution, DEFAULTS["credit_price"])
+        self.assertEqual(gap["official_queries"], 15)
+        self.assertAlmostEqual(gap["exact_credits"], 12.0)
+        self.assertAlmostEqual(gap["query_credits"], 7.5)
+        self.assertEqual(gap["top_gap_warehouse"], "COMPUTE_WH")
+
+        service_summary = _build_service_cost_lens_summary(service_lens)
+        self.assertAlmostEqual(service_summary["total_credits"], 13.0)
+        self.assertAlmostEqual(service_summary["non_warehouse_credits"], 3.0)
+        self.assertAlmostEqual(service_summary["ai_credits"], 2.0)
+        self.assertAlmostEqual(service_summary["serverless_credits"], 1.0)
 
     def test_query_attribution_support_requires_all_generated_sql_columns(self):
         import streamlit as st
@@ -1574,6 +1683,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ALTER TABLE IF EXISTS FACT_QUERY_DETAIL_RECENT ADD COLUMN IF NOT EXISTS ENVIRONMENT", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_GOVERNANCE_SIGNAL", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_INCIDENT_TIMELINE", setup_upper)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_DAILY", setup_upper)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_SOURCE_HEALTH_DAILY", setup_upper)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", setup_upper)
+        self.assertIn("SERVICE_CATEGORY", setup_upper)
         self.assertIn("CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH", setup_upper)
         self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS = 600", setup_upper)
         self.assertIn("CREATE RESOURCE MONITOR IF NOT EXISTS OVERWATCH_WH_RM", setup_upper)
@@ -1605,9 +1718,19 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", status_sql)
         self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", status_sql)
         self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", status_sql)
+        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE", status_sql)
+        self.assertIn("OVERWATCH_ITSM_TICKET_STAGE", status_sql)
+        self.assertIn("FACT_COST_DAILY", status_sql)
+        self.assertIn("FACT_COST_SOURCE_HEALTH_DAILY", status_sql)
+        self.assertIn("OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT", status_sql)
+        self.assertIn("INFORMATION_SCHEMA.STAGES", status_sql)
+        self.assertIn("INFORMATION_SCHEMA.FILE_FORMATS", status_sql)
         self.assertIn("VERSION DRIFT", status_sql)
         self.assertIn("Schema migration ledger", set(contract["COMPONENT"]))
+        self.assertIn("Change evidence feed ingress", set(contract["COMPONENT"]))
         self.assertIn("OVERWATCH_SCHEMA_MIGRATION", set(contract["REQUIRED_OBJECT"]))
+        self.assertIn("FACT_COST_DAILY", set(contract["REQUIRED_OBJECT"]))
+        self.assertIn("Cost proof mart", set(contract["COMPONENT"]))
 
     def test_cost_governance_mart_sql_matches_setup_object_contract(self):
         sql = build_cost_governance_mart_sql().upper()
@@ -2795,7 +2918,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(_service_cost_category("AUTO_CLUSTERING"), "Serverless features")
         self.assertEqual(_service_cost_category("CLOUD_SERVICES"), "Cloud services / metadata")
 
-    def test_finance_movement_summary_separates_confidence_levels(self):
+    def test_finance_movement_summary_separates_source_basis_levels(self):
         service_df = pd.DataFrame(
             {
                 "PERIOD": ["CURRENT", "PRIOR", "CURRENT"],
@@ -2819,10 +2942,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Data loading / ingestion", categories)
         self.assertIn("AI / Cortex", categories)
         self.assertIn("Budget variance", categories)
-        confidence = dict(zip(summary["Category"], summary["Confidence"]))
-        self.assertEqual(confidence["Warehouse metering"], "Exact")
-        self.assertEqual(confidence["Query-attributed workload"], "Allocated / Estimated")
-        self.assertEqual(confidence["Data loading / ingestion"], "Account-wide")
+        source_basis = dict(zip(summary["Category"], summary["Source Basis"]))
+        self.assertEqual(source_basis["Warehouse metering"], "Exact")
+        self.assertEqual(source_basis["Query-attributed workload"], "Allocated / Estimated")
+        self.assertEqual(source_basis["Data loading / ingestion"], "Account-wide")
 
     def test_security_score_weights_mfa_and_failures(self):
         strong = _security_score(
@@ -2876,7 +2999,9 @@ class FormulaRegressionTests(unittest.TestCase):
             exceptions=exceptions,
         )
         self.assertIn("OVERWATCH Security Brief - ALFA", md)
-        self.assertIn("Security score: 91", md)
+        self.assertIn("Security state:", md)
+        self.assertNotIn("Security score", md)
+        self.assertIn("## Source Basis", md)
         self.assertIn("MFA Gap", md)
         self.assertIn("Company scope uses user/database naming", md)
 
@@ -3440,11 +3565,20 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_change_external_integration_tables_and_sql_join_jira_terraform_evidence(self):
         source_ddl = build_change_source_control_ddl().upper()
         ticket_ddl = build_change_itsm_ticket_ddl().upper()
+        stage_sql = build_change_evidence_feed_stage_sql().upper()
+        source_load_sql = build_change_source_control_feed_load_sql().upper()
+        ticket_load_sql = build_change_itsm_ticket_feed_load_sql().upper()
         source_migration = "\n".join(build_change_source_control_migration_sql()).upper()
         ticket_migration = "\n".join(build_change_itsm_ticket_migration_sql()).upper()
         status_sql = _change_integration_status_sql(14, "ALFA", "PROD").upper()
         unmatched_sql = _change_unmatched_evidence_sql(14, "ALFA", "PROD").upper()
         timeline_sql = _change_integration_timeline_sql(14, "ALFA", "PROD").upper()
+        feed_health_sql = _change_split_feed_health_sql(14, "ALFA", "PROD").upper()
+        legacy_status_sql = _change_legacy_integration_status_sql(14, "ALFA", "PROD").upper()
+        legacy_unmatched_sql = _change_legacy_unmatched_evidence_sql(14, "ALFA", "PROD").upper()
+        legacy_timeline_sql = _change_legacy_integration_timeline_sql(14, "ALFA", "PROD").upper()
+        legacy_feed_health_sql = _change_legacy_feed_health_sql(14, "ALFA", "PROD").upper()
+        inventory_sql = _change_integration_object_inventory_sql().upper()
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
 
         self.assertIn("CREATE TABLE IF NOT EXISTS", source_ddl)
@@ -3460,18 +3594,65 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ADD COLUMN IF NOT EXISTS LINKED_PR_URL", ticket_migration)
         self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", setup_sql)
         self.assertIn("OVERWATCH_ITSM_TICKET", setup_sql)
+        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE", setup_sql)
+        self.assertIn("OVERWATCH_ITSM_TICKET_STAGE", setup_sql)
+        self.assertIn("CREATE FILE FORMAT IF NOT EXISTS OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT", setup_sql)
+        self.assertIn("CREATE STAGE IF NOT EXISTS", stage_sql)
+        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE", stage_sql)
+        self.assertIn("OVERWATCH_ITSM_TICKET_STAGE", stage_sql)
+        self.assertIn("COPY INTO", source_load_sql)
+        self.assertIn("FROM @DBA_MAINT_DB.OVERWATCH.OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE", source_load_sql)
+        self.assertIn("TRY_TO_TIMESTAMP_NTZ($20)", source_load_sql)
+        self.assertIn("COPY INTO", ticket_load_sql)
+        self.assertIn("FROM @DBA_MAINT_DB.OVERWATCH.OVERWATCH_ITSM_TICKET_STAGE", ticket_load_sql)
+        self.assertIn("TRY_TO_TIMESTAMP_NTZ($18)", ticket_load_sql)
         self.assertIn("FACT_OBJECT_CHANGE", status_sql)
         self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", status_sql)
         self.assertIn("OVERWATCH_ITSM_TICKET", status_sql)
         self.assertIn("REGEXP_SUBSTR", status_sql)
         self.assertIn("COMMIT_SHA <> ''", status_sql)
         self.assertIn("OBJECT_MATCH_KEY", status_sql)
+        self.assertIn('AS "ROWS"', status_sql)
+        self.assertNotIn(" AND AND ", status_sql)
+        self.assertNotIn(" AND AND ", unmatched_sql)
+        self.assertNotIn(" AND AND ", timeline_sql)
         self.assertIn("SNOWFLAKE CHANGE MISSING EXTERNAL EVIDENCE", unmatched_sql)
         self.assertIn("APPROVED JIRA CHANGE MISSING DEPLOY EVIDENCE", unmatched_sql)
         self.assertIn("EVENT_SOURCE", timeline_sql)
         self.assertIn("'JIRA'", timeline_sql)
         self.assertIn("TO_DATE(COALESCE(APPLY_TS, SNAPSHOT_TS))", timeline_sql)
         self.assertNotIn("ACCOUNT_USAGE.QUERY_HISTORY", status_sql)
+        self.assertIn("READY - EMPTY", feed_health_sql)
+        self.assertIn('AS "ROWS"', feed_health_sql)
+        self.assertIn("ACTIVE_SCOPE_ROWS", feed_health_sql)
+        self.assertIn("COALESCE(COUNT_IF", feed_health_sql)
+        self.assertIn("TICKET_KEY_ROWS", feed_health_sql)
+        self.assertIn("LINK_KEY_ROWS", feed_health_sql)
+        self.assertIn("EVIDENCE_URL_ROWS", feed_health_sql)
+        self.assertNotIn(" AND AND ", feed_health_sql)
+        self.assertIn("INFORMATION_SCHEMA.TABLES", inventory_sql)
+        self.assertIn("OVERWATCH_CHANGE_CONTROL_EVIDENCE", inventory_sql)
+        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", inventory_sql)
+        self.assertIn("OVERWATCH_ITSM_TICKET", inventory_sql)
+        self.assertIn("OVERWATCH_CHANGE_CONTROL_EVIDENCE", legacy_status_sql)
+        self.assertIn("FACT_OBJECT_CHANGE", legacy_status_sql)
+        self.assertIn("LEGACY_SOURCE", legacy_status_sql)
+        self.assertIn("LEGACY_TICKETS", legacy_status_sql)
+        self.assertIn("LEGACY EVIDENCE IS IN USE", legacy_status_sql)
+        self.assertNotIn("FROM DBA_MAINT_DB.OVERWATCH.OVERWATCH_SOURCE_CONTROL_CHANGE", legacy_status_sql)
+        self.assertNotIn("FROM DBA_MAINT_DB.OVERWATCH.OVERWATCH_ITSM_TICKET", legacy_status_sql)
+        self.assertIn("LEGACY EVIDENCE MISSING SPLIT-TABLE DETAIL", legacy_unmatched_sql)
+        self.assertIn("TERRAFORM/GIT (LEGACY)", legacy_timeline_sql)
+        self.assertIn("'JIRA'", legacy_timeline_sql)
+        self.assertIn("LEGACY CHANGE-CONTROL EVIDENCE", legacy_feed_health_sql)
+        self.assertIn('AS "ROWS"', legacy_feed_health_sql)
+        self.assertIn("ACTIVE_SCOPE_ROWS", legacy_feed_health_sql)
+        self.assertNotIn(" AND AND ", legacy_feed_health_sql)
+        available = _available_change_integration_tables(
+            pd.DataFrame({"TABLE_NAME": ["overwatch_source_control_change", "OVERWATCH_ITSM_TICKET"]})
+        )
+        self.assertTrue(_split_change_evidence_tables_ready(available))
+        self.assertFalse(_split_change_evidence_tables_ready({"OVERWATCH_CHANGE_CONTROL_EVIDENCE"}))
 
     def test_change_control_operability_fact_is_fast_and_environment_scoped(self):
         ddl = build_change_control_operability_fact_ddl().upper()
@@ -3709,7 +3890,9 @@ class FormulaRegressionTests(unittest.TestCase):
             exceptions=exceptions,
         )
         self.assertIn("OVERWATCH Change & Drift Brief - ALFA", md)
-        self.assertIn("Control score: 81", md)
+        self.assertIn("Control state:", md)
+        self.assertNotIn("Control score", md)
+        self.assertIn("## Source Basis", md)
         self.assertIn("Destructive DDL", md)
         self.assertIn("DDL/DCL detection is text-pattern based", md)
 
@@ -3732,8 +3915,6 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         self.assertGreaterEqual(stable, 95)
         self.assertLess(risky, 70)
-        self.assertEqual(_root_cause_rating(stable), "Stable")
-        self.assertEqual(_root_cause_rating(risky), "Incident Risk")
 
     def test_query_root_cause_actions_are_specific(self):
         self.assertEqual(_root_cause_action_for("Failed Query")[0], "Query")
@@ -3767,7 +3948,8 @@ class FormulaRegressionTests(unittest.TestCase):
             exceptions=exceptions,
         )
         self.assertIn("OVERWATCH Query Root-Cause Brief - ALFA", md)
-        self.assertIn("Root-cause score: 82", md)
+        self.assertNotIn("Root-cause score", md)
+        self.assertIn("Failed queries: 2", md)
         self.assertIn("Warehouse Queue", md)
         self.assertIn("QUERY_HISTORY can lag", md)
 
@@ -3788,8 +3970,6 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         self.assertGreaterEqual(healthy, 95)
         self.assertLess(risky, 65)
-        self.assertEqual(_warehouse_capacity_rating(healthy), "Healthy")
-        self.assertEqual(_warehouse_capacity_rating(risky), "Capacity Risk")
 
     def test_warehouse_capacity_actions_are_signal_specific(self):
         self.assertIn("multi-cluster", _warehouse_capacity_action_for("Queue Pressure")[0])
@@ -3912,7 +4092,8 @@ class FormulaRegressionTests(unittest.TestCase):
             exceptions=exceptions,
         )
         self.assertIn("OVERWATCH Warehouse Capacity Brief - ALFA", md)
-        self.assertIn("Capacity score: 80", md)
+        self.assertNotIn("Capacity score", md)
+        self.assertIn("Queued queries: 20", md)
         self.assertIn("Credit Spike", md)
         self.assertIn("Settings Change Readiness", md)
         self.assertIn("Warehouse Settings Manager", md)
@@ -4461,9 +4642,8 @@ class FormulaRegressionTests(unittest.TestCase):
             total_runs=100,
             total_tasks=20,
         )
-        self.assertEqual(_task_ops_rating(stable), "Operational")
+        self.assertGreaterEqual(stable, 95)
         self.assertLess(risky, 65)
-        self.assertEqual(_task_ops_rating(risky), "Incident Risk")
 
     def test_task_definition_extracts_procedure_call(self):
         self.assertEqual(

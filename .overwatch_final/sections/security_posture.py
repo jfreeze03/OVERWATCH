@@ -1108,9 +1108,9 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
     users_without_mfa = safe_int(row.get("USERS_WITHOUT_MFA", 0))
     shared_databases = safe_int(row.get("SHARED_DATABASES", 0))
     c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.2])
-    c1.metric("Posture Readiness", f"{score}/100", _security_rating(score))
-    c2.metric("Priority Findings", f"{len(priority):,}", delta_color="inverse")
-    c3.metric("Identity Signals", f"{failed_logins + users_without_mfa:,}", delta_color="inverse")
+    c1.metric("Priority Findings", f"{len(priority):,}", delta_color="inverse")
+    c2.metric("Identity Signals", f"{failed_logins + users_without_mfa:,}", delta_color="inverse")
+    c3.metric("Shared DBs", f"{shared_databases:,}")
     with c4:
         if priority.empty:
             st.success("No urgent security findings crossed the brief thresholds.")
@@ -1189,7 +1189,7 @@ def _build_security_brief_markdown(
         f"# OVERWATCH Security Brief - {company}",
         "",
         f"Lookback window: {days} day(s).",
-        f"Security score: {score} ({_security_rating(score)}).",
+        f"Security state: {_security_rating(score)}.",
         "",
         "## Key Metrics",
         f"- Active users: {active_users:,}",
@@ -1207,7 +1207,7 @@ def _build_security_brief_markdown(
         "- Review shared/imported databases with the data owner and contract context.",
         "- Save material findings to the OVERWATCH Action Queue for status tracking.",
         "",
-        "## Confidence",
+        "## Source Basis",
         "Source: SNOWFLAKE.ACCOUNT_USAGE. Company scope uses user/database naming where Snowflake does not expose direct company ownership.",
     ]
     return "\n".join(lines)
@@ -2381,12 +2381,11 @@ def render() -> None:
             recent_grants=recent_grants,
             shared_databases=shared_databases,
         )
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Security Score", score, _security_rating(score))
-        c2.metric("Failed Logins", f"{failed_logins:,}", delta_color="inverse")
-        c3.metric("Users Without MFA", f"{users_without_mfa:,}", delta_color="inverse")
-        c4.metric("Recent Grants", f"{recent_grants:,}")
-        c5.metric("Shared DBs", f"{shared_databases:,}")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Failed Logins", f"{failed_logins:,}", delta_color="inverse")
+        c2.metric("Users Without MFA", f"{users_without_mfa:,}", delta_color="inverse")
+        c3.metric("Recent Grants", f"{recent_grants:,}")
+        c4.metric("Shared DBs", f"{shared_databases:,}")
         if score < 85:
             st.warning("Security posture needs DBA review before this can be called clean.")
         elif score < 95:

@@ -31,7 +31,7 @@ WAREHOUSE_HEALTH_VIEWS = (
 
 WAREHOUSE_HEALTH_DETAILS = {
     "Overview & Scaling": "Warehouse volume, latency, spill, cache, and metering events.",
-    "Efficiency": "Credits per query, queue per credit, spill per credit, and scorecard.",
+    "Efficiency": "Credits per query, queue per credit, spill per credit, and risk board.",
     "Spill & Memory": "Local and remote spill drilldowns by warehouse.",
     "Workload Heatmap": "Concurrency by warehouse, day, and hour.",
     "Optimization Advisor": "Actionable sizing, suspend, spill, and reliability recommendations.",
@@ -498,16 +498,6 @@ def _warehouse_capacity_score(
         + min(spike_pct / 4, 20)
     )
     return max(0, min(100, int(round(100 - penalty))))
-
-
-def _warehouse_capacity_rating(score: int) -> str:
-    if score >= 90:
-        return "Healthy"
-    if score >= 78:
-        return "Watch"
-    if score >= 65:
-        return "Pressure"
-    return "Capacity Risk"
 
 
 def _warehouse_capacity_action_for(signal: str) -> tuple[str, str]:
@@ -1906,9 +1896,9 @@ def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_
         high_risk = int(exceptions["SEVERITY"].isin(["Critical", "High"]).sum())
 
     c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.4])
-    c1.metric("Warehouse Readiness", f"{score}/100", _warehouse_capacity_rating(score))
-    c2.metric("High-Risk Warehouses", f"{high_risk:,}", delta_color="inverse")
-    c3.metric("Remote Spill", f"{safe_float(summary_row.get('REMOTE_SPILL_GB')):,.1f} GB", delta_color="inverse")
+    c1.metric("High-Risk Warehouses", f"{high_risk:,}", delta_color="inverse")
+    c2.metric("Remote Spill", f"{safe_float(summary_row.get('REMOTE_SPILL_GB')):,.1f} GB", delta_color="inverse")
+    c3.metric("Queued Queries", f"{safe_int(summary_row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
     with c4:
         if priority.empty:
             st.success("No urgent warehouse capacity exceptions crossed the selected thresholds.")
@@ -1929,7 +1919,11 @@ def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_
         workflow = str(item.get("NEXT_WORKFLOW") or "Overview & Scaling")
         with cols[idx]:
             st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('SIGNAL', '')}**")
-            st.caption(f"{item.get('WAREHOUSE_NAME', 'unknown warehouse')} | Score {safe_float(item.get('CAPACITY_SCORE')):,.1f}")
+            st.caption(
+                f"{item.get('WAREHOUSE_NAME', 'unknown warehouse')} | "
+                f"Queued {safe_int(item.get('QUEUED_QUERIES')):,} | "
+                f"Spill {safe_int(item.get('SPILL_QUERIES')):,}"
+            )
             st.caption(
                 f"Queued {safe_int(item.get('QUEUED_QUERIES')):,} | "
                 f"Spill {safe_int(item.get('SPILL_QUERIES')):,} | "
@@ -1960,7 +1954,6 @@ def _build_warehouse_capacity_markdown(
         f"# OVERWATCH Warehouse Capacity Brief - {company}",
         "",
         f"- Lookback: {days} days",
-        f"- Capacity score: {score} ({_warehouse_capacity_rating(score)})",
         f"- Warehouses active: {safe_int(summary_row.get('WAREHOUSES_ACTIVE')):,}",
         f"- Queries: {safe_int(summary_row.get('TOTAL_QUERIES')):,}",
         f"- Queued queries: {safe_int(summary_row.get('QUEUED_QUERIES')):,}",
@@ -1983,7 +1976,7 @@ def _build_warehouse_capacity_markdown(
             lines.append(
                 "- "
                 f"{row.get('SEVERITY', 'Watch')} | {row.get('SIGNAL', 'Unknown')} | "
-                f"{row.get('WAREHOUSE_NAME', '')} | score {safe_float(row.get('CAPACITY_SCORE')):,.1f} | "
+                f"{row.get('WAREHOUSE_NAME', '')} | "
                 f"{safe_float(row.get('METERED_CREDITS')):,.2f} credits | "
                 f"{row.get('SETTING_CHANGE_CANDIDATE', 'Review warehouse settings')}"
             )
@@ -2217,7 +2210,7 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
             company=company,
         )
         finding = (
-            f"{signal} on {wh}: capacity score={safe_float(row.get('CAPACITY_SCORE')):,.1f}, "
+            f"{signal} on {wh}: "
             f"queued={safe_int(row.get('QUEUED_QUERIES')):,}, spill={safe_int(row.get('SPILL_QUERIES')):,}, "
             f"credits={safe_float(row.get('METERED_CREDITS')):,.2f}; "
             f"{row.get('PRESSURE_EVIDENCE', '')}."
@@ -2335,12 +2328,10 @@ def _render_capacity_brief(company: str, environment: str) -> None:
             total_queries=safe_int(row.get("TOTAL_QUERIES")),
             credit_spike_pct=safe_float(row.get("CREDIT_SPIKE_PCT")),
         )
-        rating = _warehouse_capacity_rating(score)
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Capacity Score", score, rating)
-        c2.metric("Queued", f"{safe_int(row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
-        c3.metric("Spill", f"{safe_int(row.get('SPILL_QUERIES')):,}", delta_color="inverse")
-        c4.metric("Metered Credits", format_credits(safe_float(row.get("METERED_CREDITS"))))
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Queued", f"{safe_int(row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
+        c2.metric("Spill", f"{safe_int(row.get('SPILL_QUERIES')):,}", delta_color="inverse")
+        c3.metric("Metered Credits", format_credits(safe_float(row.get("METERED_CREDITS"))))
         if score < 65:
             st.error("Capacity risk: warehouse pressure is high enough to affect service levels or cost control.")
         elif score < 78:
@@ -2367,15 +2358,15 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                 title="Pre-aggregated warehouse blockers",
                 priority_columns=[
                     "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "ENVIRONMENT",
-                    "WAREHOUSE_NAME", "SEVERITY", "SIGNAL", "CAPACITY_SCORE",
+                    "WAREHOUSE_NAME", "SEVERITY", "SIGNAL",
                     "QUERY_ROWS", "QUEUE_PRESSURE_ROWS", "SPILL_PRESSURE_ROWS",
                     "HIGH_LATENCY_ROWS", "METERED_CREDITS", "CREDIT_ALLOCATION_METHOD", "REVIEW_ROWS",
                     "APPROVAL_REQUIRED_ROWS", "ROLLBACK_REQUIRED_ROWS",
                     "SAVINGS_VERIFICATION_ROWS", "OPEN_ACTIONS", "OVERDUE_OPEN",
                     "FIXED_WITHOUT_VERIFICATION", "VERIFIED_CLOSURES", "NEXT_CONTROL_ACTION",
                 ],
-                sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "CAPACITY_SCORE"],
-                ascending=[True, False, False, True],
+                sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "METERED_CREDITS"],
+                ascending=[True, False, False, False],
                 raw_label="All warehouse operability facts",
                 height=300,
             )
@@ -2463,18 +2454,15 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     title="Warehouse DBA intervention matrix",
                     priority_columns=[
                         "DBA_PRIORITY", "INTERVENTION_STATE", "WAREHOUSE_NAME", "SEVERITY", "SIGNAL",
-                        "CAPACITY_SCORE", "METERED_CREDITS", "PRESSURE_EVIDENCE",
+                        "METERED_CREDITS", "PRESSURE_EVIDENCE",
                         "CONTROL_STATE", "CLOSURE_READINESS", "NEXT_DECISION",
                         "PROOF_REQUIRED", "NEXT_WORKFLOW",
                     ],
-                    sort_by=["DBA_PRIORITY", "CAPACITY_SCORE", "METERED_CREDITS"],
-                    ascending=[True, True, False],
+                    sort_by=["DBA_PRIORITY", "METERED_CREDITS"],
+                    ascending=[True, False],
                     raw_label="All warehouse DBA intervention rows",
                     height=280,
                     max_rows=8,
-                    column_config={
-                        "CAPACITY_SCORE": st.column_config.ProgressColumn("Capacity", min_value=0, max_value=100, format="%.1f"),
-                    },
                 )
             if not control_board.empty:
                 render_priority_dataframe(
@@ -2482,20 +2470,17 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     title="Warehouse setting control board",
                     priority_columns=[
                         "CONTROL_STATE", "WAREHOUSE_NAME", "SEVERITY", "SIGNAL",
-                        "CAPACITY_SCORE", "METERED_CREDITS", "GOVERNANCE_READINESS",
+                        "METERED_CREDITS", "GOVERNANCE_READINESS",
                         "AUDIT_READINESS", "AUDIT_BLOCKERS", "CLOSURE_READINESS",
                         "AUDIT_ROWS", "SUCCESSFUL_CHANGES", "FAILED_CHANGES",
                         "LAST_EXECUTION_STATUS", "APPROVAL_REQUIRED", "ROLLBACK_REQUIRED",
                         "SAVINGS_VERIFICATION_REQUIRED", "NEXT_CONTROL_ACTION",
                     ],
-                    sort_by=["CONTROL_RANK", "CAPACITY_SCORE", "METERED_CREDITS"],
-                    ascending=[True, True, False],
+                    sort_by=["CONTROL_RANK", "METERED_CREDITS"],
+                    ascending=[True, False],
                     raw_label="All warehouse setting control rows",
                     height=300,
                     max_rows=12,
-                    column_config={
-                        "CAPACITY_SCORE": st.column_config.ProgressColumn("Capacity", min_value=0, max_value=100, format="%.1f"),
-                    },
                 )
         st.divider()
 
@@ -2705,7 +2690,7 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
             "OWNER": owner_context.get("owner", ""),
         })
         finding = (
-            f"{wh} efficiency score is {score:.1f}; queue sec/credit={queue:.2f}, "
+            f"{wh} efficiency review: queue sec/credit={queue:.2f}, "
             f"spill GB/credit={spill:.2f}; metered credits={credits:.2f}."
         )
         actions.append({
@@ -2742,11 +2727,11 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
             "Approver": approver,
             "Owner Approval Status": "Requested",
             "Owner Approval Note": (
-                f"Efficiency score {score:.1f}. Owner evidence: {owner_context.get('owner_evidence', '')}. "
+                f"Efficiency review basis attached. Owner evidence: {owner_context.get('owner_evidence', '')}. "
                 "Setting changes require owner approval, rollback SQL, and post-change verification."
             ),
             "Recovery Evidence": (
-                f"Baseline efficiency score={score:.1f}; queue sec/credit={queue:.2f}; "
+                f"Baseline queue sec/credit={queue:.2f}; "
                 f"remote spill GB/credit={spill:.2f}; metered credits={credits:.2f}. "
                 "Closure requires verified queue/spill/credit evidence for the same warehouse and environment."
             ),
@@ -3205,7 +3190,7 @@ def render():
                 st.info("No scaling or metering events found for the selected warehouse scope.")
 
     elif warehouse_view == "Efficiency":
-        st.header("Warehouse Efficiency Scorecard")
+        st.header("Warehouse Efficiency Risks")
         eff_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_eff_days")
         if st.button("Load Efficiency Metrics", key="wh_eff_load"):
             try:
@@ -3254,32 +3239,33 @@ def render():
         elif df_eff is not None and not df_eff.empty:
             low = df_eff[df_eff["EFFICIENCY_SCORE"] < 70]
             c1, c2, c3 = st.columns(3)
-            c1.metric("Warehouses scored", len(df_eff))
-            c2.metric("Under 70 score", len(low), delta_color="inverse")
+            c1.metric("Warehouses Reviewed", len(df_eff))
+            c2.metric("Needs Review", len(low), delta_color="inverse")
             c3.metric("Total metered credits", format_credits(float(df_eff["METERED_CREDITS"].sum())))
             defer_source_note(metric_confidence_label("allocated"), freshness_note("ACCOUNT_USAGE"))
+            df_eff_display = df_eff.rename(columns={"EFFICIENCY_SCORE": "REVIEW_PRIORITY"})
             render_priority_dataframe(
-                df_eff,
+                df_eff_display,
                 title="Warehouse efficiency risks",
                 priority_columns=[
                     "WAREHOUSE_NAME",
                     "WAREHOUSE_SIZE",
-                    "EFFICIENCY_SCORE",
+                    "REVIEW_PRIORITY",
                     "METERED_CREDITS",
                     "CREDITS_PER_QUERY",
                     "QUEUE_SEC_PER_CREDIT",
                     "REMOTE_SPILL_GB_PER_CREDIT",
                     "AVG_CACHE_PCT",
                 ],
-                sort_by=["EFFICIENCY_SCORE", "METERED_CREDITS"],
+                sort_by=["REVIEW_PRIORITY", "METERED_CREDITS"],
                 ascending=[True, False],
                 raw_label="All warehouse efficiency rows",
             )
             render_drillable_bar_chart(
-                df_eff,
+                df_eff_display,
                 dimension="WAREHOUSE_NAME",
-                measure="EFFICIENCY_SCORE",
-                key="wh_efficiency_score",
+                measure="REVIEW_PRIORITY",
+                key="wh_efficiency_review_priority",
                 drilldown_column="warehouse_name",
                 lookback_hours=eff_days * 24,
             )

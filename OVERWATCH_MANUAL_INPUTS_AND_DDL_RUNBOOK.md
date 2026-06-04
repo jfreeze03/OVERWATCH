@@ -133,6 +133,13 @@ use `SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY.CREDITS_BILLED`, and
 official currency spend uses
 `SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY` when the active role has
 organization billing access.
+Cost & Contract also compares the configured ALFA rate to
+`SNOWFLAKE.ORGANIZATION_USAGE.RATE_SHEET_DAILY` when the role can access the
+organization rate sheet. `FACT_COST_DAILY` stores account-level daily billed
+credits by Snowflake service type from
+`SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY` so the dashboard can split
+warehouse, AI/Cortex, serverless, storage, and network spend without rescanning
+the official history view on every render.
 
 Database-attributed cost split is allocated/estimated unless the source is exact
 Snowflake metering. Shared warehouse metering cannot be split exactly by PROD
@@ -545,6 +552,8 @@ separate in-interface setup SQL pane.
 - `FACT_COPY_LOAD_DAILY`
 - `FACT_CORTEX_DAILY`
 - `FACT_MONITORING_COST_DAILY`
+- `FACT_COST_DAILY`
+- `FACT_COST_SOURCE_HEALTH_DAILY`
 - `MART_DBA_CONTROL_ROOM`
 
 ### Jira, Git, And Terraform Evidence
@@ -570,6 +579,42 @@ Jira export job:
 The app joins these rows to `FACT_OBJECT_CHANGE` by Jira key, commit SHA in
 query tag, object FQN, and database/schema context. Missing joins become Change
 & Drift evidence gaps instead of being hidden.
+
+#### Feed Stages And Health
+
+The setup bundle also creates these optional internal stages for CSV handoff
+from CI/CD or scheduled Jira exports:
+
+- `OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE`
+- `OVERWATCH_ITSM_TICKET_STAGE`
+- `OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT`
+
+Change & Drift now shows feed health for Terraform/Git and Jira evidence:
+
+- `Ready - Empty`: table exists but no feed rows have arrived yet.
+- `No Active Scope Rows`: rows exist, but not for the selected
+  company/environment/lookback.
+- `Stale`: rows exist, but the latest event is outside the active lookback.
+- `Flowing`: rows exist for the active scope and can be joined to Snowflake
+  change history.
+
+The Terraform CSV load order is:
+
+`SNAPSHOT_TS, COMPANY, ENVIRONMENT, SOURCE_SYSTEM, REPOSITORY, BRANCH_NAME,
+COMMIT_SHA, PR_ID, PR_URL, CHANGE_TICKET_ID, OBJECT_DATABASE, OBJECT_SCHEMA,
+OBJECT_NAME, OBJECT_TYPE, OBJECT_FQN, TERRAFORM_ADDRESS, PLANNED_ACTION,
+APPLY_STATUS, DEPLOYED_BY, APPLY_TS, EVIDENCE_URL, NOTES`
+
+The Jira CSV load order is:
+
+`SNAPSHOT_TS, COMPANY, ENVIRONMENT, TICKET_ID, TICKET_URL, SUMMARY, STATUS,
+ASSIGNEE, REQUESTER, APPROVER, APPROVAL_STATUS, RISK, CHANGE_WINDOW_START,
+CHANGE_WINDOW_END, LINKED_REPOSITORY, LINKED_COMMIT_SHA, LINKED_PR_URL,
+UPDATED_AT, NOTES`
+
+CI/Jira jobs can either insert directly into the tables with these columns or
+upload CSVs to the matching stage and run the load SQL shown in the Change &
+Drift Terraform/Jira evidence tabs.
 
 ### Views, Functions, Procedures, And Tasks
 

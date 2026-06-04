@@ -749,7 +749,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Cost guardrail", warehouse_health_text)
         self.assertIn("_warehouse_intervention_matrix", warehouse_health_text)
         self.assertIn("Warehouse DBA intervention matrix", warehouse_health_text)
-        self.assertIn('sort_by=["DBA_PRIORITY", "CAPACITY_SCORE", "METERED_CREDITS"]', warehouse_health_text)
+        self.assertIn('sort_by=["DBA_PRIORITY", "METERED_CREDITS"]', warehouse_health_text)
         warehouse_render_preload = warehouse_health_text.split("def render():", 1)[1].split(
             "warehouse_view = render_workflow_selector",
             1,
@@ -853,7 +853,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Owner Directory Production Readiness", alert_center_text)
         self.assertIn("Notification & ITSM Readiness", alert_center_text)
         self.assertIn("Alert Automation Readiness", alert_center_text)
-        self.assertIn("Automation Score", alert_center_text)
+        self.assertIn("Ready Controls", alert_center_text)
         self.assertIn("owner_directory_readiness_board", alert_center_text)
         self.assertIn("get_session_for_action", alert_center_text)
         self.assertIn("snowflake_connection_known_unavailable", session_text)
@@ -990,6 +990,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("build_snowflake_cost_management_account_sql", cost_contract_text)
         self.assertIn("build_snowflake_billed_credit_reconciliation_sql", cost_contract_text)
         self.assertIn("build_snowflake_org_currency_cost_sql", cost_contract_text)
+        self.assertIn("build_snowflake_rate_sheet_reconciliation_sql", cost_contract_text)
+        self.assertIn("build_snowflake_service_cost_lens_sql", cost_contract_text)
+        self.assertIn("build_mart_cost_service_lens_sql", cost_contract_text)
+        self.assertIn("Cost Source Health", cost_contract_text)
+        self.assertIn("Query Attribution Gap", cost_contract_text)
+        self.assertIn("Account Service Cost Lens", cost_contract_text)
         self.assertIn("Cortex user cost and recency", cortex_text)
         self.assertIn('"FIRST_USAGE"', cortex_text)
         self.assertIn('"LAST_USAGE"', cortex_text)

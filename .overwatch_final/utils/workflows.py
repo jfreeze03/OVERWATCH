@@ -208,8 +208,21 @@ def render_priority_dataframe(
     }
     if height is not None:
         dataframe_kwargs["height"] = height
+    default_column_config = {
+        "CONFIDENCE": st.column_config.TextColumn("Source Basis"),
+        "ALLOCATION_CONFIDENCE": st.column_config.TextColumn("Allocation Source Basis"),
+        "SCOPE_CONFIDENCE": st.column_config.TextColumn("Scope Basis"),
+        "SOURCE_CONFIDENCE": st.column_config.TextColumn("Source Basis"),
+    }
+    active_column_config = {
+        column: config
+        for column, config in default_column_config.items()
+        if column in view.columns
+    }
     if column_config:
-        dataframe_kwargs["column_config"] = column_config
+        active_column_config.update(column_config)
+    if active_column_config:
+        dataframe_kwargs["column_config"] = active_column_config
     st.dataframe(view.head(max_rows), **dataframe_kwargs)
     if len(df) > max_rows:
         with st.expander(f"{raw_label} ({len(df):,} rows)", expanded=False):
@@ -228,8 +241,8 @@ def render_priority_dataframe(
             button_key = f"ow_raw_detail_{hashlib.sha1(key_basis.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
             if st.button("Render full detail", key=button_key):
                 raw_kwargs = {"use_container_width": True, "hide_index": True}
-                if column_config:
-                    raw_kwargs["column_config"] = column_config
+                if active_column_config:
+                    raw_kwargs["column_config"] = active_column_config
                 st.dataframe(df, **raw_kwargs)
 
 

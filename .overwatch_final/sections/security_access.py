@@ -883,11 +883,10 @@ def _render_role_grant_change_control(session, company: str) -> None:
 
     st.markdown(f"**Reviewed Access Change Plan: {plan['risk_level']} Risk**")
     board_summary, board = _build_role_grant_control_board(plan)
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Control Score", f"{board_summary['score']}/100")
-    c2.metric("Ready", f"{board_summary['ready']:,}")
-    c3.metric("Review", f"{board_summary['review']:,}", delta_color="inverse")
-    c4.metric("Blocked", f"{board_summary['blocked']:,}", delta_color="inverse")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Ready", f"{board_summary['ready']:,}")
+    c2.metric("Review", f"{board_summary['review']:,}", delta_color="inverse")
+    c3.metric("Blocked", f"{board_summary['blocked']:,}", delta_color="inverse")
     render_priority_dataframe(
         board,
         title="Role grant control plane",

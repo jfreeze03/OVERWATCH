@@ -192,7 +192,7 @@ def _cost_allocation_quality(row) -> dict:
 
 
 def _annotate_allocation_quality(df: pd.DataFrame) -> pd.DataFrame:
-    """Add DBA chargeback rollup and confidence columns to cost attribution rows."""
+    """Add DBA chargeback rollup and allocation-source columns to cost attribution rows."""
     if df is None or df.empty:
         return df
     annotated = df.copy()
@@ -427,10 +427,10 @@ def _cost_explorer_gap_board(detail: pd.DataFrame, lens_summary: pd.DataFrame) -
         _gap_row(
             "Not chargeback ready",
             readiness.isin({"NO", "REVIEW", "DIRECTIONAL", "MIXED", ""}),
-            "Resolve owner proof, shared warehouse basis, and allocation confidence before sending chargeback.",
+            "Resolve owner proof, shared warehouse basis, and allocation source basis before sending chargeback.",
         ),
         _gap_row(
-            "Shared / low-confidence allocation",
+            "Shared / needs-owner allocation",
             confidence.str.contains("SHARED|ACCOUNT-WIDE|NEEDS OWNER", na=False),
             "Keep these rows in estimated review and attach service-specific lineage before charging a team.",
         ),
@@ -680,14 +680,14 @@ def _chargeback_action_sql_note(row: pd.Series, credits: float, est_cost: float)
     owner_evidence = _row_text(row, "OWNER_EVIDENCE") or "No owner evidence attached."
     return "\n".join([
         "-- Chargeback review plan, not state-changing SQL.",
-        "-- Do not bill an owner from this row until allocation confidence and ownership evidence are attached.",
+        "-- Do not bill an owner from this row until allocation source basis and ownership evidence are attached.",
         f"-- Database: {database}",
         f"-- Environment rollup: {env_rollup}",
         f"-- Cost owner: {cost_owner}",
         f"-- Owner source: {owner_source}",
         f"-- Owner evidence: {owner_evidence}",
         f"-- Credits: {credits:,.4f}; estimated cost: ${est_cost:,.2f}",
-        f"-- Allocation confidence: {confidence}",
+        f"-- Allocation source basis: {confidence}",
         f"-- Chargeback readiness: {readiness}",
         f"-- Allocation basis: {basis}",
         f"-- Scope review: {scope_review}",
@@ -855,7 +855,7 @@ def _annotate_cost_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
     elif finding_type == "Chargeback":
         routed["NEXT_WORKFLOW"] = "Cost & Contract"
         routed["NEXT_ACTION"] = (
-            "Validate company scope, warehouse ownership, and allocation confidence before sending the chargeback report."
+            "Validate company scope, warehouse ownership, and allocation source basis before sending the chargeback report."
         )
     elif finding_type == "Service Cost":
         routed["NEXT_WORKFLOW"] = "Cost & Contract"
@@ -864,7 +864,7 @@ def _annotate_cost_routes(df: pd.DataFrame, finding_type: str) -> pd.DataFrame:
         )
     else:
         routed["NEXT_WORKFLOW"] = "Cost & Contract"
-        routed["NEXT_ACTION"] = "Validate confidence level, owner, and proof query before taking a cost-control action."
+        routed["NEXT_ACTION"] = "Validate source basis, owner, and proof query before taking a cost-control action."
     return routed
 
 
@@ -1231,7 +1231,7 @@ def _build_finance_movement_summary(
     credit_price: float,
     budget: float = 0.0,
 ) -> pd.DataFrame:
-    """Build a concise finance-facing movement bridge with confidence labels."""
+    """Build a concise finance-facing movement bridge with source-basis labels."""
     current_credits = safe_float(current_credits)
     prior_credits = safe_float(prior_credits)
     allocated_credits = safe_float(allocated_credits)
@@ -1246,7 +1246,7 @@ def _build_finance_movement_summary(
             "Delta Credits": round(current_credits - prior_credits, 4),
             "Current Cost": round(credits_to_dollars(current_credits, credit_price), 2),
             "Delta Cost": round(credits_to_dollars(current_credits - prior_credits, credit_price), 2),
-            "Confidence": "Exact",
+            "Source Basis": "Exact",
             "Action": "Use this as the official warehouse-compute bill movement.",
         },
         {
@@ -1257,7 +1257,7 @@ def _build_finance_movement_summary(
             "Delta Credits": None,
             "Current Cost": round(credits_to_dollars(allocated_credits, credit_price), 2),
             "Delta Cost": None,
-            "Confidence": "Allocated / Estimated",
+            "Source Basis": "Allocated / Estimated",
             "Action": "Use for directional user, role, database, and query-type chargeback.",
         },
         {
@@ -1268,7 +1268,7 @@ def _build_finance_movement_summary(
             "Delta Credits": None,
             "Current Cost": round(credits_to_dollars(unallocated_credits, credit_price), 2),
             "Delta Cost": None,
-            "Confidence": "Estimated",
+            "Source Basis": "Estimated",
             "Action": "Review auto-suspend, idle periods, non-query activity, and ACCOUNT_USAGE latency.",
         },
     ]
@@ -1287,7 +1287,7 @@ def _build_finance_movement_summary(
             "Delta Credits": round(delta, 4),
             "Current Cost": round(credits_to_dollars(current, credit_price), 2),
             "Delta Cost": round(credits_to_dollars(delta, credit_price), 2),
-            "Confidence": "Account-wide",
+            "Source Basis": "Account-wide",
             "Action": "Do not charge back to ALFA/Trexis unless a service-specific owner tag or lineage exists.",
         })
     if budget and budget > 0:
@@ -1300,7 +1300,7 @@ def _build_finance_movement_summary(
             "Delta Credits": None,
             "Current Cost": round(current_cost, 2),
             "Delta Cost": round(current_cost - safe_float(budget), 2),
-            "Confidence": "Estimated",
+            "Source Basis": "Estimated",
             "Action": "Escalate if variance is positive and supported by a repeating workload driver.",
         })
     return pd.DataFrame(rows)
@@ -2049,7 +2049,7 @@ def render():
                 title="Finance movement bridge",
                 priority_columns=[
                     "Category", "Current Credits", "Prior Credits", "Delta Credits",
-                    "Current Cost", "Delta Cost", "Confidence", "Basis", "Action",
+                    "Current Cost", "Delta Cost", "Source Basis", "Basis", "Action",
                 ],
                 sort_by=["Current Credits", "Delta Credits"],
                 ascending=False,

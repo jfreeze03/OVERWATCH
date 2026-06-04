@@ -2131,11 +2131,12 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
         c2.metric("Exact / Source-of-Truth", f"{exact_count:,}")
         c3.metric("Estimated / Allocated", f"{estimate_count:,}")
 
+        audit_view = audit_df.rename(columns={"CONFIDENCE": "SOURCE_BASIS"})
         render_priority_dataframe(
-            audit_df,
-            title="Cost formula confidence",
-            priority_columns=["METRIC", "CONFIDENCE", "FORMULA", "NOTES"],
-            sort_by=["CONFIDENCE", "METRIC"],
+            audit_view,
+            title="Cost formula validation",
+            priority_columns=["METRIC", "SOURCE_BASIS", "FORMULA", "NOTES"],
+            sort_by=["SOURCE_BASIS", "METRIC"],
             ascending=[True, True],
             raw_label="All formula checks",
         )
@@ -2219,7 +2220,7 @@ ORDER BY current_tb DESC;"""
         st.caption("Deployment preflight for access, setup objects, formulas, and readiness.")
         defer_source_note(
             "Run Setup Status before deployment to check Snowflake view access, optional account columns, "
-            "persistent OVERWATCH objects, calculation confidence, and the operational readiness checklist."
+            "persistent OVERWATCH objects, formula validation, and the operational readiness checklist."
         )
 
         st.subheader("Snowflake Compatibility Check")
@@ -2377,13 +2378,14 @@ ORDER BY current_tb DESC;"""
             )
 
         st.divider()
-        st.subheader("Cost Formula Confidence")
+        st.subheader("Cost Formula Validation")
         cost_formula_df = build_cost_formula_audit()
+        cost_formula_view = cost_formula_df.rename(columns={"CONFIDENCE": "SOURCE_BASIS"})
         render_priority_dataframe(
-            cost_formula_df,
-            title="Cost formula confidence",
-            priority_columns=["METRIC", "CONFIDENCE", "FORMULA", "NOTES"],
-            sort_by=["CONFIDENCE", "METRIC"],
+            cost_formula_view,
+            title="Cost formula validation",
+            priority_columns=["METRIC", "SOURCE_BASIS", "FORMULA", "NOTES"],
+            sort_by=["SOURCE_BASIS", "METRIC"],
             ascending=[True, True],
             raw_label="All formula checks",
         )

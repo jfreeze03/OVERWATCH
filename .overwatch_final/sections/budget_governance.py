@@ -584,23 +584,6 @@ CALL SNOWFLAKE.LOCAL.ACCOUNT_ROOT_BUDGET!GET_CONFIG();
 """.strip()
 
 
-def _render_budget_progress(score: int) -> None:
-    score = max(0, min(100, safe_int(score)))
-    color = "#ef4444"
-    if score >= 90:
-        color = "#16a34a"
-    elif score >= 75:
-        color = "#f59e0b"
-    st.markdown(
-        f"""
-        <div style="height:10px;border-radius:999px;background:rgba(148,163,184,.22);overflow:hidden;margin:.35rem 0 .15rem;">
-            <div style="height:10px;width:{score}%;background:{color};border-radius:999px;"></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -624,11 +607,10 @@ def render() -> None:
     )
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Budget Control Score", f"{summary['score']}/100")
-    c2.metric("Native Ready", f"{summary['ready']:,}")
-    c3.metric("Patterns", f"{summary['pattern']:,}")
-    c4.metric("Partial", f"{summary['partial']:,}", delta_color="inverse")
-    _render_budget_progress(summary["score"])
+    c1.metric("Native Ready", f"{summary['ready']:,}")
+    c2.metric("Patterns", f"{summary['pattern']:,}")
+    c3.metric("Partial", f"{summary['partial']:,}", delta_color="inverse")
+    c4.metric("Controls", f"{len(board):,}")
 
     policy_defaults = _default_ai_budget_usd(company)
     p1, p2, p3 = st.columns(3)

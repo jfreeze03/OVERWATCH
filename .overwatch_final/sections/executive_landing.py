@@ -246,7 +246,7 @@ def render() -> None:
         snapshot.get("migration", pd.DataFrame()),
     )
     k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Executive State", summary["state"], f"{summary['score']}/100")
+    k1.metric("Executive State", summary["state"])
     k2.metric("Current Spend", f"${credits_to_dollars(summary['current_credits'], credit_price):,.0f}")
     k3.metric("Credit Delta", f"{summary['cost_delta']:+,.2f}", delta_color="inverse")
     k4.metric("Critical / High Alerts", f"{summary['critical_high_alerts']:,}", delta_color="inverse")

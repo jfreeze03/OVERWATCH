@@ -76,7 +76,7 @@ def metric_confidence_label(kind: str) -> str:
         "estimated": "Source basis: Estimated",
         "forecast": "Source basis: Forecast from recent observed burn",
         "projection": "Source basis: Projection from recent observed burn",
-        "composite": "Source basis: Composite score from weighted operational signals",
+        "composite": "Source basis: Composite rollup from weighted operational signals",
         "account": "Source basis: Account-wide",
         "account-wide": "Source basis: Account-wide",
     }
@@ -1534,7 +1534,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
                 "Signal": "Cortex / AI cost risk",
                 "Evidence": (
                     f"Projected 30-day Cortex cost ${projected_cost:,.0f} vs ${cortex_budget:,.0f} budget; "
-                    f"{len(cortex_exceptions):,} user/source exception(s); score {score} ({_cortex_cost_rating(score)})"
+                    f"{len(cortex_exceptions):,} user/source exception(s); state {_cortex_cost_rating(score)}"
                 ),
                 "Action": "Review Cortex users, source split, cost-per-request spikes, and daily credit guardrails.",
                 "Route": "Cost & Contract",
@@ -2700,14 +2700,14 @@ def _render_control_tower_priority_index(tower: pd.DataFrame) -> None:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Control Tower", str(hot.get("CONTROL_TOWER_STATE") or "Monitor"))
     c2.metric("Top Route", str(hot.get("SECTION") or "DBA Control Room"))
-    c3.metric("Priority", f"{safe_float(hot.get('PRIORITY_SCORE')):.1f}")
-    c4.metric("Effective Readiness", f"{safe_float(hot.get('EFFECTIVE_SCORE', hot.get('SCORE'))):.1f}")
+    c3.metric("Target Gap", f"{safe_float(hot.get('TARGET_GAP_TO_99')):.1f}", delta_color="inverse")
+    c4.metric("Proof Blocks", f"{safe_int(hot.get('PROOF_BLOCKS')):,}", delta_color="inverse")
     render_priority_dataframe(
         tower,
         title="DBA Control Tower priority index",
         priority_columns=[
-            "CONTROL_TOWER_STATE", "PRIORITY_SCORE", "SECTION", "EFFECTIVE_SCORE",
-            "SCORE", "DEPLOYMENT_LABEL", "GATE_DRIVERS", "TARGET_GAP_TO_99",
+            "CONTROL_TOWER_STATE", "SECTION", "DEPLOYMENT_LABEL", "GATE_DRIVERS", "TARGET_GAP_TO_99",
+            "PROOF_BLOCKS", "METADATA_BLOCKS", "APPROVAL_BLOCKS",
             "WHY_NOW", "FIRST_MOVE", "PROOF_REQUIRED",
         ],
         sort_by=["PRIORITY_SCORE", "TARGET_GAP_TO_99"],
@@ -2716,9 +2716,6 @@ def _render_control_tower_priority_index(tower: pd.DataFrame) -> None:
         height=260,
         max_rows=9,
         column_config={
-            "PRIORITY_SCORE": st.column_config.ProgressColumn("Priority", min_value=0, max_value=100, format="%.1f"),
-            "EFFECTIVE_SCORE": st.column_config.ProgressColumn("Effective", min_value=0, max_value=100, format="%.1f"),
-            "SCORE": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
             "TARGET_GAP_TO_99": st.column_config.ProgressColumn("Gap to 99", min_value=0, max_value=10, format="%.1f"),
         },
     )
@@ -2754,7 +2751,7 @@ ORDER BY credits_used DESC;""",
         return {
             "owner_route": "FinOps owner / DBA cost reviewer",
             "containment": "Freeze savings claims; isolate top company, warehouse, database, role, user, and task driver before action.",
-            "candidate": "Queue only the driver with owner, baseline/current value, finance confidence, and verification query attached.",
+            "candidate": "Queue only the driver with owner, baseline/current value, finance source basis, and verification query attached.",
             "preflight_sql": f"""SELECT warehouse_name, SUM(credits_used) AS credits_used,
        MAX(end_time) AS last_metered_hour
 FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
@@ -3062,23 +3059,17 @@ def _render_command_queue_control(
             section_board,
             title="DBA control-plane operating board",
             priority_columns=[
-                "OPERABILITY_STATE", "SECTION", "EFFECTIVE_SCORE", "SCORE",
-                "DEPLOYMENT_LABEL", "GATE_DRIVERS", "OPEN_ACTIONS",
+                "OPERABILITY_STATE", "SECTION", "DEPLOYMENT_LABEL", "GATE_DRIVERS", "OPEN_ACTIONS",
                 "OVERDUE", "EXECUTION_READY", "METADATA_BLOCKS", "APPROVAL_BLOCKS",
                 "CLOSURE_READINESS", "CLOSURE_BLOCKERS", "FIXED_WITHOUT_VERIFICATION",
-                "RECOVERY_RISK_ROWS", "LOWEST_COMPONENT", "LOWEST_SCORE",
+                "RECOVERY_RISK_ROWS", "LOWEST_COMPONENT",
                 "PROOF_REQUIRED", "NEXT_CONTROL_ACTION",
             ],
-            sort_by=["OPERABILITY_RANK", "EFFECTIVE_SCORE"],
-            ascending=[True, True],
+            sort_by=["OPERABILITY_RANK", "OVERDUE"],
+            ascending=[True, False],
             raw_label="All DBA control-plane operating rows",
             height=280,
             max_rows=12,
-            column_config={
-                "EFFECTIVE_SCORE": st.column_config.ProgressColumn("Effective", min_value=0, max_value=100, format="%.1f"),
-                "SCORE": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
-                "LOWEST_SCORE": st.column_config.ProgressColumn("Lowest", min_value=0, max_value=100, format="%.1f"),
-            },
         )
 
     if queue.empty and closure_rollup.empty:
@@ -3171,16 +3162,6 @@ def _control_room_score(
     return max(0, min(100, int(round(100 - penalty))))
 
 
-def _control_room_rating(score: int) -> str:
-    if score >= 92:
-        return "Clear"
-    if score >= 82:
-        return "Watch"
-    if score >= 70:
-        return "Degraded"
-    return "War Room"
-
-
 def _render_watch_floor(
     data: dict,
     exceptions: pd.DataFrame,
@@ -3192,12 +3173,11 @@ def _render_watch_floor(
     cortex_exception_count: int,
 ) -> None:
     score = _control_room_score(exceptions, row, credit_delta, regression_count, cortex_exception_count)
-    rating = _control_room_rating(score)
     priority = _priority_exceptions(exceptions).head(3)
     c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.2])
-    c1.metric("Readiness", f"{score}/100", rating)
-    c2.metric("Critical Moves", f"{len(priority):,}", delta_color="inverse")
-    c3.metric("Cost Window", f"${credits_to_dollars(period_credits, credit_price):,.0f}", f"{credit_delta:+.1f}%", delta_color="inverse")
+    c1.metric("Critical Moves", f"{len(priority):,}", delta_color="inverse")
+    c2.metric("Cost Window", f"${credits_to_dollars(period_credits, credit_price):,.0f}", f"{credit_delta:+.1f}%", delta_color="inverse")
+    c3.metric("Regression / AI", f"{safe_int(regression_count) + safe_int(cortex_exception_count):,}", delta_color="inverse")
     with c4:
         if priority.empty:
             st.success("Watch floor is clear. Use Release Compare or Source Health if you are validating a recent deployment.")
@@ -3905,12 +3885,11 @@ def render() -> None:
     if snapshot_result is not None and snapshot_result.available and not snapshot_result.data.empty:
         snapshot = snapshot_result.data.copy()
         st.caption(f"Fast snapshot available from {snapshot_result.source}. Use it for cheap triage; load detail only for investigation.")
-        s1, s2, s3, s4, s5 = st.columns(5)
-        s1.metric("Snapshot Health", f"{safe_float(snapshot['HEALTH_SCORE'].min()):.0f}/100")
-        s2.metric("Failed Queries 24h", f"{safe_int(snapshot['FAILED_QUERIES_24H'].sum()):,}", delta_color="inverse")
-        s3.metric("Failed Tasks 24h", f"{safe_int(snapshot['FAILED_TASKS_24H'].sum()):,}", delta_color="inverse")
-        s4.metric("Credits 24h", format_credits(snapshot["CREDITS_24H"].sum()))
-        s5.metric("Cortex 7d", f"${safe_float(snapshot['CORTEX_COST_7D_USD'].sum()):,.0f}", delta_color="inverse")
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Failed Queries 24h", f"{safe_int(snapshot['FAILED_QUERIES_24H'].sum()):,}", delta_color="inverse")
+        s2.metric("Failed Tasks 24h", f"{safe_int(snapshot['FAILED_TASKS_24H'].sum()):,}", delta_color="inverse")
+        s3.metric("Credits 24h", format_credits(snapshot["CREDITS_24H"].sum()))
+        s4.metric("Cortex 7d", f"${safe_float(snapshot['CORTEX_COST_7D_USD'].sum()):,.0f}", delta_color="inverse")
         if st.button("Use Fast Snapshot", key="dba_control_room_use_snapshot"):
             st.session_state["dba_control_room_data"] = _control_room_snapshot_to_data(snapshot)
             st.session_state["dba_control_room_company"] = company

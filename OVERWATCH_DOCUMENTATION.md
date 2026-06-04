@@ -16,7 +16,7 @@ dashboard built with Streamlit. The active application lives in
 - Alert Automation Readiness: Alert Center pane for digest readiness, delivery
   proof, route ownership, and email-first escalation controls.
 - FinOps Control Center: Cost & Contract workflow for Snowflake Cost Management
-  parity, resource monitors, formula confidence, and migration status.
+  parity, resource monitors, formula validation, and migration status.
 - Schema / Mart Migration Status: Setup Status panel that compares the expected
   app setup contract to the deployed OVERWATCH mart ledger.
 
@@ -161,6 +161,12 @@ Cost model:
   direct Snowflake history only for live drilldowns or admin-control screens.
 - `FACT_MONITORING_COST_DAILY` tracks OVERWATCH task/app/tagged query spend so
   the monitor can report its own operating cost.
+- `FACT_COST_DAILY` tracks account billed credits by Snowflake service type from
+  `SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY`; Cost & Contract uses it for
+  the account service-cost lens before falling back to the live history view.
+- `FACT_COST_SOURCE_HEALTH_DAILY` records whether the main cost proof sources
+  have recent rows so Cost & Contract can show source-health issues separately
+  from actual spend anomalies.
 
 After running setup, resume the root task:
 
@@ -316,7 +322,7 @@ calendar days with zero credits before calculating run rates. This avoids
 overstating usage when Snowflake metering returns only days with activity.
 
 DBA Tools > Cost & Setup > Cost Formula Audit documents each cost calculation,
-its source table, confidence level, and reconciliation SQL. This separates
+its source table, source basis, and reconciliation SQL. This separates
 exact billed metrics from allocated query estimates and forecast projections.
 
 OVERWATCH query telemetry records query hash, section, elapsed time, row count,
@@ -337,7 +343,7 @@ formula. Executive health combines query failures, queue pressure, latency,
 task reliability, warehouse pressure, credit spikes, and storage growth. Service
 Health uses category-specific weights so warehouse, task, query, login, and load
 events do not carry the same severity by default. Composite score panels include
-confidence captions and contributor tables.
+source-basis captions and contributor tables.
 
 Snowflake Value uses measured OVERWATCH runtime cost from Snowflake metering
 where available: tagged OVERWATCH queries, Streamlit warehouses, Cortex usage,
@@ -411,7 +417,7 @@ state such as:
 - Alert history
 - Recommendation action queue
 - Snowflake value log
-- Source-control/Terraform deployment evidence for Change & Drift
+- Source-control/Terraform deployment evidence for Change & Drift, including feed health for the Snowflake evidence tables and optional CSV stage/load SQL for CI and Jira exports
 - Jira/ITSM ticket and approval evidence for Change & Drift
 
 The app can generate setup DDL for saved views from the sidebar Saved Views
@@ -433,8 +439,8 @@ queue with status values such as New, Acknowledged, Fixed, and Ignored.
 - Some features are best-effort because Snowflake account history availability
   depends on edition, privileges, retention, and account settings.
 - Metrics that mix service costs, allocated query cost, storage, Cortex, or
-  procedure attribution should show confidence labels such as Exact, Allocated,
-  Estimated, or Account-wide.
+  procedure attribution should show source-basis labels such as Exact,
+  Allocated, Estimated, or Account-wide.
 - ACCOUNT_USAGE-backed metrics should show freshness context because source
   latency can make "live" and "last 24h" numbers differ.
 - Keep credentials in Streamlit or Snowflake-managed secrets, never in the repo.
@@ -453,12 +459,12 @@ queue with status values such as New, Acknowledged, Fixed, and Ignored.
 - Credit Contract was consolidated into Cost Center contract utilization.
 - Usage Overview now loads KPIs first and defers chart/drilldown panels until
   requested.
-- OVERWATCH cost-of-monitoring, query budget guardrails, metric confidence
-  labels, source freshness notes, and leadership exceptions-only mode were
+- OVERWATCH cost-of-monitoring, query budget guardrails, source-basis labels,
+  source freshness notes, and leadership exceptions-only mode were
   added.
 - Dormant Users was removed from DBA Tools and remains available in Security &
   Access.
-- Migration Confidence and Teradata-oriented executive language were removed.
+- Migration score language and Teradata-oriented executive language were removed.
 
 ## Troubleshooting
 

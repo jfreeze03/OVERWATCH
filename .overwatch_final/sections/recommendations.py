@@ -873,7 +873,7 @@ def render():
 
     elif active_view == "Anomaly Log":
         st.header("Anomaly Log")
-        st.caption("Z-score based credit spike detection per warehouse using a rolling 7-day baseline.")
+        st.caption("Flags warehouse credit spikes against a rolling 7-day baseline.")
         anom_days = st.slider("Detection window (days)", 14, 90, 30, key="anom_days")
 
         if st.button("Detect Anomalies", key="anom_detect"):

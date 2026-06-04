@@ -37,7 +37,7 @@ CORTEX_VIEWS = (
 )
 
 CORTEX_VIEW_DETAILS = {
-    "Budget Control": "Control score, projected spend, source split, exceptions, and proof SQL.",
+    "Budget Control": "Projected spend, source split, exceptions, and proof SQL.",
     "User Attribution": "User/source chargeback, requests, AI credits, and cost-per-request spikes.",
     "Daily Trends": "Daily requests, active users, credits, rolling burn, and source split.",
     "Anomaly Detection": "Z-score detection for unusual user-level Cortex spend.",
@@ -102,7 +102,7 @@ def _build_cortex_control_markdown(
         f"# OVERWATCH Cortex Cost Control Brief - {company}",
         "",
         f"- Lookback: {days} days",
-        f"- Control score: {score} ({_cortex_cost_rating(score)})",
+        f"- Control state: {_cortex_cost_rating(score)}",
         f"- Monthly budget: ${safe_float(budget_usd):,.2f}",
         f"- Projected 30-day cost: ${projected_cost:,.2f}",
         f"- Active users: {safe_int(summary_row.get('ACTIVE_USERS')):,}",
@@ -420,11 +420,10 @@ def _render_cortex_control_brief(session, company: str) -> None:
             spike_users=safe_int(row.get("HEAVY_USERS")),
             active_users=safe_int(row.get("ACTIVE_USERS")),
         )
-        rating = _cortex_cost_rating(score)
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Cortex Control Score", score, rating)
-        c2.metric("Projected 30d Cost", f"${projected_cost:,.2f}")
-        c3.metric("Active Users", f"{safe_int(row.get('ACTIVE_USERS')):,}")
+        c1.metric("Projected 30d Cost", f"${projected_cost:,.2f}")
+        c2.metric("Active Users", f"{safe_int(row.get('ACTIVE_USERS')):,}")
+        c3.metric("Heavy Users", f"{safe_int(row.get('HEAVY_USERS')):,}", delta_color="inverse")
         c4.metric("Requests", f"{safe_int(row.get('TOTAL_REQUESTS')):,}")
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Daily Budget", f"${daily_budget:,.2f}")
@@ -819,7 +818,7 @@ def render():
     # ── ANOMALY DETECTION ─────────────────────────────────────────────────────
     elif cortex_view == "Anomaly Detection":
         st.header("Cortex Code Anomaly Detection")
-        st.caption("Z-score based anomaly detection on daily per-user Cortex spend.")
+        st.caption("Flags unusual daily per-user Cortex spend against the recent baseline.")
 
         cc_anom_days = st.slider("Detection window (days)", 14, 90, 30, key="cc_anom_days")
         if st.button("Detect Anomalies", key="cc_anom_load"):

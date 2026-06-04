@@ -679,14 +679,14 @@ def render():
     })
     health_score = health["score"]
 
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("Health Score", f"{health_score:.1f}", health["label"])
-    k2.metric("Users", f"{_first_number(overview, 'TOTAL_USERS'):,.0f}")
-    k3.metric("Databases", f"{_first_number(overview, 'ACTIVE_DATABASES'):,.0f}")
-    k4.metric("Success Rate", f"{success_rate:.1f}%")
-    k5.metric("Avg Elapsed", f"{_first_number(overview, 'AVG_ELAPSED_SEC'):,.2f}s")
-    k6.metric("Total Credits", format_credits(_first_number(metering, "TOTAL_CREDITS")))
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Users", f"{_first_number(overview, 'TOTAL_USERS'):,.0f}")
+    k2.metric("Databases", f"{_first_number(overview, 'ACTIVE_DATABASES'):,.0f}")
+    k3.metric("Success Rate", f"{success_rate:.1f}%")
+    k4.metric("Avg Elapsed", f"{_first_number(overview, 'AVG_ELAPSED_SEC'):,.2f}s")
+    k5.metric("Total Credits", format_credits(_first_number(metering, "TOTAL_CREDITS")))
     defer_source_note(
+        f"Health state: {health['label']}",
         metric_confidence_label("exact"),
         metric_confidence_label("composite"),
         sources.get("overview", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"),
@@ -705,14 +705,14 @@ def render():
         height=260,
     )
 
-    with st.expander("Health score contributors"):
+    with st.expander("Health signal contributors"):
         render_priority_dataframe(
-            pd.DataFrame(health["components"]),
-            title="Health score contributors",
-            priority_columns=["COMPONENT", "SCORE", "WEIGHT", "DETAIL"],
-            sort_by=["SCORE", "WEIGHT"],
+            pd.DataFrame(health["components"]).rename(columns={"SCORE": "SIGNAL_VALUE"}),
+            title="Health signal contributors",
+            priority_columns=["COMPONENT", "SIGNAL_VALUE", "WEIGHT", "DETAIL"],
+            sort_by=["SIGNAL_VALUE", "WEIGHT"],
             ascending=[True, False],
-            raw_label="All health score components",
+            raw_label="All health signal contributors",
             height=280,
         )
 

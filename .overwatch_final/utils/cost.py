@@ -12,7 +12,8 @@ __all__ = [
     "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
     "build_cost_reconciliation_sql", "build_snowflake_cost_management_account_sql",
     "build_snowflake_billed_credit_reconciliation_sql",
-    "build_snowflake_org_currency_cost_sql", "metric_confidence_label", "freshness_note",
+    "build_snowflake_org_currency_cost_sql", "build_snowflake_rate_sheet_reconciliation_sql",
+    "build_snowflake_service_cost_lens_sql", "metric_confidence_label", "freshness_note",
     "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
 ]
 
@@ -171,7 +172,8 @@ def build_snowflake_org_currency_cost_sql(days_back: int = 7) -> str:
         SELECT
             usage,
             usage_in_currency,
-            currency
+            currency,
+            balance_source
         FROM SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY, bounds
         WHERE usage_date >= start_date
           AND usage_date < end_date
@@ -186,9 +188,136 @@ def build_snowflake_org_currency_cost_sql(days_back: int = 7) -> str:
         ROUND(COALESCE(SUM(usage), 0), 4) AS official_compute_credits,
         ROUND(COALESCE(SUM(usage_in_currency), 0), 2) AS official_spend_in_currency,
         ROUND(COALESCE(SUM(usage_in_currency), 0) / NULLIF(SUM(usage), 0), 4) AS official_effective_price_per_credit,
+        ROUND(SUM(IFF(UPPER(COALESCE(balance_source, '')) = 'CAPACITY', usage_in_currency, 0)), 2) AS capacity_spend_in_currency,
+        ROUND(SUM(IFF(UPPER(COALESCE(balance_source, '')) = 'ROLLOVER', usage_in_currency, 0)), 2) AS rollover_spend_in_currency,
+        ROUND(SUM(IFF(UPPER(COALESCE(balance_source, '')) = 'OVERAGE', usage_in_currency, 0)), 2) AS overage_spend_in_currency,
+        LISTAGG(DISTINCT COALESCE(balance_source, 'unknown'), ', ')
+            WITHIN GROUP (ORDER BY COALESCE(balance_source, 'unknown')) AS balance_source_mix,
         COALESCE(MIN(currency), 'N/A') AS currency,
         'SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY' AS snowflake_source
     FROM scoped
+    """
+
+
+def build_snowflake_rate_sheet_reconciliation_sql(
+    days_back: int = 7,
+    configured_credit_price: float = None,
+) -> str:
+    """Return official effective rate comparison from ORGANIZATION_USAGE.RATE_SHEET_DAILY."""
+    days_back = max(1, int(days_back or 7))
+    if configured_credit_price is None:
+        configured_credit_price = DEFAULTS["credit_price"]
+    configured_credit_price = float(configured_credit_price or DEFAULTS["credit_price"])
+    return f"""
+    WITH bounds AS (
+        SELECT
+            DATEADD('DAY', -{days_back}, CURRENT_DATE()) AS start_date,
+            CURRENT_DATE() AS end_date,
+            {configured_credit_price:.4f}::FLOAT AS configured_credit_price_usd
+    ),
+    scoped AS (
+        SELECT
+            date AS rate_date,
+            contract_number,
+            account_name,
+            account_locator,
+            currency,
+            effective_rate
+        FROM SNOWFLAKE.ORGANIZATION_USAGE.RATE_SHEET_DAILY, bounds
+        WHERE date >= start_date
+          AND date < end_date
+          AND UPPER(rating_type) = 'COMPUTE'
+          AND UPPER(service_type) = 'WAREHOUSE_METERING'
+          AND (
+              UPPER(account_locator) = UPPER(CURRENT_ACCOUNT())
+              OR UPPER(account_name) = UPPER(CURRENT_ACCOUNT_NAME())
+          )
+    )
+    SELECT
+        ROUND(AVG(effective_rate), 4) AS official_effective_rate,
+        ROUND(MIN(effective_rate), 4) AS min_effective_rate,
+        ROUND(MAX(effective_rate), 4) AS max_effective_rate,
+        configured_credit_price_usd,
+        ROUND(configured_credit_price_usd - AVG(effective_rate), 4) AS configured_vs_official_delta,
+        ROUND(100 * (configured_credit_price_usd - AVG(effective_rate)) / NULLIF(AVG(effective_rate), 0), 2) AS configured_vs_official_pct,
+        COUNT(DISTINCT rate_date) AS observed_rate_days,
+        COUNT(DISTINCT contract_number) AS observed_contracts,
+        COALESCE(MIN(currency), 'N/A') AS currency,
+        'SNOWFLAKE.ORGANIZATION_USAGE.RATE_SHEET_DAILY' AS snowflake_source
+    FROM scoped, bounds
+    GROUP BY configured_credit_price_usd
+    """
+
+
+def build_snowflake_service_cost_lens_sql(
+    days_back: int = 7,
+    credit_price: float = None,
+) -> str:
+    """Return account service cost by official Snowflake service type.
+
+    This uses METERING_DAILY_HISTORY so the UI can separate warehouse spend from
+    serverless, AI/Cortex, storage, and data-transfer surfaces without rescanning
+    high-cardinality query history.
+    """
+    days_back = max(1, int(days_back or 7))
+    if credit_price is None:
+        credit_price = DEFAULTS["credit_price"]
+    credit_price = float(credit_price or DEFAULTS["credit_price"])
+    return f"""
+    WITH scoped AS (
+        SELECT
+            usage_date,
+            UPPER(COALESCE(service_type, 'UNKNOWN')) AS service_type,
+            COALESCE(credits_used_compute, 0) AS credits_used_compute,
+            COALESCE(credits_used_cloud_services, 0) AS credits_used_cloud_services,
+            COALESCE(credits_adjustment_cloud_services, 0) AS credits_adjustment_cloud_services,
+            COALESCE(credits_billed, 0) AS credits_billed
+        FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
+        WHERE usage_date >= DATEADD('DAY', -{days_back}, CURRENT_DATE())
+          AND usage_date < CURRENT_DATE()
+    ),
+    categorized AS (
+        SELECT
+            usage_date,
+            service_type,
+            CASE
+                WHEN service_type ILIKE '%CORTEX%' OR service_type ILIKE '%AI%' OR service_type ILIKE '%INTELLIGENCE%'
+                    THEN 'AI / Cortex'
+                WHEN service_type IN (
+                    'AUTOMATIC_CLUSTERING', 'COPY_FILES', 'MATERIALIZED_VIEW',
+                    'QUERY_ACCELERATION', 'SEARCH_OPTIMIZATION', 'SERVERLESS_ALERTS',
+                    'SERVERLESS_TASK', 'SNOWPIPE', 'SNOWPIPE_STREAMING',
+                    'SNOWPARK_CONTAINER_SERVICES', 'REPLICATION'
+                )
+                    THEN 'Serverless / Managed Compute'
+                WHEN service_type ILIKE '%STORAGE%' THEN 'Storage'
+                WHEN service_type ILIKE '%DATA_TRANSFER%' OR service_type ILIKE '%PRIVATELINK%'
+                    THEN 'Data Transfer / Network'
+                WHEN service_type = 'WAREHOUSE_METERING' THEN 'Warehouse'
+                ELSE 'Other'
+            END AS service_category,
+            credits_used_compute,
+            credits_used_cloud_services,
+            credits_adjustment_cloud_services,
+            credits_billed
+        FROM scoped
+    )
+    SELECT
+        service_category,
+        service_type,
+        ROUND(SUM(credits_billed), 4) AS credits_billed,
+        ROUND(SUM(credits_used_compute), 4) AS credits_used_compute,
+        ROUND(SUM(COALESCE(credits_used_cloud_services, 0)), 4) AS credits_used_cloud_services,
+        ROUND(SUM(credits_adjustment_cloud_services), 4) AS credits_adjustment_cloud_services,
+        ROUND(SUM(credits_billed) * {credit_price:.4f}, 2) AS estimated_cost_usd,
+        COUNT(DISTINCT usage_date) AS observed_days,
+        'SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY' AS snowflake_source
+    FROM categorized
+    GROUP BY service_category, service_type
+    HAVING ABS(SUM(credits_billed)) > 0
+        OR ABS(SUM(credits_used_compute)) > 0
+        OR ABS(SUM(COALESCE(credits_used_cloud_services, 0))) > 0
+    ORDER BY credits_billed DESC, service_category, service_type
     """
 
 

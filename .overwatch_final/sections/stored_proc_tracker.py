@@ -754,11 +754,10 @@ def render():
                 st.warning("Procedure operations has exceptions to review before relying on task graphs as production workflow control.")
                 slo_summary, slo_board = _build_procedure_reliability_slo_board(summary, exceptions)
                 st.subheader("Procedure Reliability SLO Board")
-                s1, s2, s3, s4 = st.columns(4)
-                s1.metric("SLO Score", f"{slo_summary['score']}/100")
-                s2.metric("Ready", f"{slo_summary['ready']:,}")
-                s3.metric("Review", f"{slo_summary['review']:,}", delta_color="inverse")
-                s4.metric("Blocked", f"{slo_summary['blocked']:,}", delta_color="inverse")
+                s1, s2, s3 = st.columns(3)
+                s1.metric("Ready", f"{slo_summary['ready']:,}")
+                s2.metric("Review", f"{slo_summary['review']:,}", delta_color="inverse")
+                s3.metric("Blocked", f"{slo_summary['blocked']:,}", delta_color="inverse")
                 render_priority_dataframe(
                     slo_board,
                     title="Procedure reliability SLOs and next control step",

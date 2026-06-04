@@ -32,7 +32,8 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
         "build_cost_reconciliation_sql", "build_snowflake_cost_management_account_sql",
         "build_snowflake_billed_credit_reconciliation_sql",
-        "build_snowflake_org_currency_cost_sql", "metric_confidence_label",
+        "build_snowflake_org_currency_cost_sql", "build_snowflake_rate_sheet_reconciliation_sql",
+        "build_snowflake_service_cost_lens_sql", "metric_confidence_label",
         "freshness_note", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
     ),
     "scorecards": (
@@ -150,7 +151,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_mart_account_health_ytd_credits_sql",
         "build_mart_bill_summary_sql", "build_mart_bill_warehouse_delta_sql",
         "build_mart_chargeback_sql", "build_mart_cost_explorer_sql",
-        "build_mart_cost_cockpit_sql",
+        "build_mart_cost_cockpit_sql", "build_mart_cost_service_lens_sql",
         "build_mart_cost_run_rate_sql",
         "build_mart_warehouse_overview_sql", "build_mart_warehouse_scaling_sql",
         "build_mart_usage_overview_sql", "build_mart_usage_metering_sql",

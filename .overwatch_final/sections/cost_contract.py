@@ -7,13 +7,17 @@ import pandas as pd
 import streamlit as st
 from config import DEFAULT_ALERT_EMAIL, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
 from utils import (
+    build_cost_reconciliation_sql,
     build_cost_savings_verification_health_sql,
     build_cost_savings_verification_sql,
     build_mart_cost_cockpit_sql,
     build_mart_cost_run_rate_sql,
+    build_mart_cost_service_lens_sql,
     build_snowflake_billed_credit_reconciliation_sql,
     build_snowflake_cost_management_account_sql,
     build_snowflake_org_currency_cost_sql,
+    build_snowflake_rate_sheet_reconciliation_sql,
+    build_snowflake_service_cost_lens_sql,
     credits_to_dollars,
     defer_source_note,
     format_snowflake_error,
@@ -23,6 +27,7 @@ from utils import (
     get_wh_filter_clause,
     load_action_queue,
     run_query,
+    run_query_or_raise,
     safe_float,
     safe_identifier,
     safe_int,
@@ -70,27 +75,6 @@ WORKFLOW_MODULES = {
 _DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
 _FULL_COCKPIT_BOARDS_KEY = "_cost_contract_full_cockpit_boards"
 _SNOWFLAKE_COST_PARITY_KEY = "_cost_contract_snowflake_cost_parity"
-
-
-def _cost_score(current_credits: float, prior_credits: float, open_actions: int, high_actions: int, cortex_exceptions: int) -> int:
-    delta_pct = ((safe_float(current_credits) - safe_float(prior_credits)) / safe_float(prior_credits) * 100) if safe_float(prior_credits) > 0 else 0.0
-    penalty = (
-        min(max(delta_pct, 0) / 2, 24)
-        + min(safe_int(open_actions) * 1.5, 18)
-        + min(safe_int(high_actions) * 5, 28)
-        + min(safe_int(cortex_exceptions) * 4, 22)
-    )
-    return max(0, min(100, int(round(100 - penalty))))
-
-
-def _cost_rating(score: int) -> str:
-    if score >= 92:
-        return "Controlled"
-    if score >= 82:
-        return "Watch"
-    if score >= 70:
-        return "Pressure"
-    return "Cost Incident"
 
 
 def _build_cost_cockpit_sql(company: str, days: int) -> str:
@@ -565,6 +549,21 @@ def _format_optional_pct(value: float | None, empty: str = "No baseline") -> str
     return f"{value:+.1f}%"
 
 
+def _render_metric_items(items: list[dict]) -> None:
+    """Render a compact metric row from already-filtered headline items."""
+    visible = [item for item in items if item]
+    if not visible:
+        return
+    columns = st.columns(len(visible))
+    for column, item in zip(columns, visible):
+        column.metric(
+            str(item.get("label") or ""),
+            str(item.get("value") or ""),
+            item.get("delta"),
+            delta_color=str(item.get("delta_color") or "normal"),
+        )
+
+
 def _render_cost_run_rate_lens(run_rate: pd.DataFrame | None, credit_price: float, error: str = "") -> None:
     st.markdown("**Run-Rate and YOY**")
     if error:
@@ -588,17 +587,39 @@ def _render_cost_run_rate_lens(run_rate: pd.DataFrame | None, credit_price: floa
     run_state = str(row.get("RUN_RATE_STATE") or "Unknown")
     yoy_state = str(row.get("YOY_STATE") or "Unknown")
 
-    r1, r2, r3, r4, r5 = st.columns(5)
-    r1.metric(
-        "7d Avg",
-        f"{avg_7d:,.1f} cr/day",
-        _format_optional_pct(pct_vs_30d, run_state) + " vs 30d",
-        delta_color="inverse",
-    )
-    r2.metric("7d Cost", f"${credits_to_dollars(credits_7d, credit_price):,.0f}", f"${credits_to_dollars(avg_7d, credit_price):,.0f}/day")
-    r3.metric("30d Run-Rate", f"${credits_to_dollars(projected_30d, credit_price):,.0f}/30d", run_state)
-    r4.metric("7d YOY", _format_optional_pct(yoy_7d_pct), f"{yoy_days_7d}/7 PY days", delta_color="inverse")
-    r5.metric("30d YOY", _format_optional_pct(yoy_30d_pct), f"{yoy_days_30d}/30 PY days", delta_color="inverse")
+    metrics = [
+        {
+            "label": "7d Avg",
+            "value": f"{avg_7d:,.1f} cr/day",
+            "delta": _format_optional_pct(pct_vs_30d, run_state) + " vs 30d",
+            "delta_color": "inverse",
+        },
+        {
+            "label": "7d Cost",
+            "value": f"${credits_to_dollars(credits_7d, credit_price):,.0f}",
+            "delta": f"${credits_to_dollars(avg_7d, credit_price):,.0f}/day",
+        },
+        {
+            "label": "30d Run-Rate",
+            "value": f"${credits_to_dollars(projected_30d, credit_price):,.0f}/30d",
+            "delta": run_state,
+        },
+    ]
+    if yoy_7d_pct is not None and yoy_days_7d > 0:
+        metrics.append({
+            "label": "7d YOY",
+            "value": _format_optional_pct(yoy_7d_pct),
+            "delta": f"{yoy_days_7d}/7 PY days",
+            "delta_color": "inverse",
+        })
+    if yoy_30d_pct is not None and yoy_days_30d > 0:
+        metrics.append({
+            "label": "30d YOY",
+            "value": _format_optional_pct(yoy_30d_pct),
+            "delta": f"{yoy_days_30d}/30 PY days",
+            "delta_color": "inverse",
+        })
+    _render_metric_items(metrics)
 
     top_wh = str(row.get("TOP_YOY_INCREASE_WAREHOUSE") or "No warehouse baseline")
     top_delta = safe_float(row.get("TOP_YOY_INCREASE_CREDITS"))
@@ -690,6 +711,347 @@ def _state_frame(state: dict, key: str) -> pd.DataFrame:
 
 def _has_columns(df: pd.DataFrame, columns: list[str]) -> bool:
     return isinstance(df, pd.DataFrame) and not df.empty and all(col in df.columns for col in columns)
+
+
+def _loaded_rows(frame: pd.DataFrame | None) -> int:
+    return int(len(frame)) if isinstance(frame, pd.DataFrame) and not frame.empty else 0
+
+
+def _source_state(frame: pd.DataFrame | None, error: str = "", *, empty_state: str = "No Rows") -> str:
+    if str(error or "").strip():
+        return "Unavailable"
+    if isinstance(frame, pd.DataFrame) and not frame.empty:
+        return "Ready"
+    return empty_state
+
+
+def _add_source_health_row(
+    rows: list[dict],
+    source: str,
+    scope: str,
+    state: str,
+    rows_loaded: int,
+    evidence: str,
+    next_action: str,
+    freshness: str,
+) -> None:
+    rows.append({
+        "SOURCE": source,
+        "SCOPE": scope,
+        "STATE": state,
+        "ROWS_LOADED": safe_int(rows_loaded),
+        "FRESHNESS": freshness,
+        "EVIDENCE": evidence,
+        "NEXT_ACTION": next_action,
+    })
+
+
+def _build_cost_source_health_board(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    verification_health: pd.DataFrame,
+    attribution: pd.DataFrame,
+    service_lens: pd.DataFrame,
+    state: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Build a compact source-health panel for official and OVERWATCH cost proof."""
+    state = state or st.session_state
+    rows: list[dict] = []
+    cockpit_error = str(state.get("cost_contract_cockpit_error", "") or "")
+    run_error = str(state.get("cost_contract_run_rate_error", "") or "")
+    attribution_error = str(state.get("cost_contract_attribution_error", "") or "")
+    service_error = str(state.get("cost_contract_service_lens_error", "") or "")
+    verification_error = str(state.get("cost_contract_verification_health_error", "") or "")
+
+    _add_source_health_row(
+        rows,
+        "Warehouse metering",
+        "Exact warehouse spend",
+        _source_state(cockpit, cockpit_error, empty_state="Load Needed"),
+        _loaded_rows(cockpit),
+        "Current/prior movement loaded from warehouse metering mart or live Account Usage."
+        if _loaded_rows(cockpit) else "Cost cockpit has not loaded warehouse movement proof.",
+        "Load Cost Cockpit before explaining bill movement.",
+        "ACCOUNT_USAGE warehouse metering latency applies; mart refresh is preferred.",
+    )
+    _add_source_health_row(
+        rows,
+        "Run-rate and YOY",
+        "Complete-day trend",
+        _source_state(run_rate, run_error, empty_state="Load Needed"),
+        _loaded_rows(run_rate),
+        "7d, 30d, and prior-year complete-day windows are loaded." if _loaded_rows(run_rate) else "Run-rate lens has not loaded complete-day trend proof.",
+        "Use complete-day trend before declaring spikes or savings.",
+        "Uses mart first, then bounded live warehouse metering fallback.",
+    )
+    _add_source_health_row(
+        rows,
+        "Query attribution gap",
+        "Execution-only query cost",
+        _source_state(attribution, attribution_error, empty_state="No Rows"),
+        _loaded_rows(attribution),
+        "Warehouse credits have been reconciled to query-attributed or allocated execution cost."
+        if _loaded_rows(attribution) else "No query attribution reconciliation rows loaded.",
+        "Review idle/unallocated gap before assigning query owners.",
+        "QUERY_ATTRIBUTION_HISTORY can lag and excludes idle/serverless/AI costs.",
+    )
+    _add_source_health_row(
+        rows,
+        "Account service lens",
+        "Warehouse, AI, serverless, storage, network",
+        _source_state(service_lens, service_error, empty_state="No Rows"),
+        _loaded_rows(service_lens),
+        "Service-type cost rows are available for non-warehouse surfaces." if _loaded_rows(service_lens) else "No service-type rows loaded.",
+        "Use Budgets for AI/serverless and resource monitors for warehouses only.",
+        str(state.get("cost_contract_service_lens_source") or "METERING_DAILY_HISTORY / FACT_COST_DAILY"),
+    )
+    _add_source_health_row(
+        rows,
+        "Action and savings proof",
+        "Queue and verified savings",
+        "Unavailable" if verification_error else "Ready" if _loaded_rows(queue) or _loaded_rows(verification_health) else "No Rows",
+        _loaded_rows(queue) + _loaded_rows(verification_health),
+        "Action queue or savings verifier evidence is loaded." if _loaded_rows(queue) or _loaded_rows(verification_health) else "No queue/verifier rows loaded for this role.",
+        "Keep savings estimated until verifier evidence is attached.",
+        "OVERWATCH mart and action tables; no direct Snowflake billing scan.",
+    )
+
+    parity = state.get(_SNOWFLAKE_COST_PARITY_KEY)
+    if isinstance(parity, dict):
+        rate = parity.get("rate")
+        currency = parity.get("currency")
+        rate_error = str(parity.get("rate_error", "") or "")
+        currency_error = str(parity.get("currency_error", "") or "")
+        official_rows = _loaded_rows(rate) + _loaded_rows(currency)
+        official_error = "; ".join(part for part in [rate_error, currency_error] if part)
+        official_state = "Ready" if official_rows else "Unavailable" if official_error else "No Rows"
+        evidence = "Organization rate/currency reconciliation loaded." if official_rows else official_error or "Organization views returned no rows."
+        action = "Compare official effective rate to ALFA configured $/credit." if official_rows else "Load Snowflake Cost Parity with an org billing-capable role."
+    else:
+        official_rows = 0
+        official_state = "On Demand"
+        evidence = "Organization usage parity has not been loaded in this session."
+        action = "Open Snowflake Cost Management Parity when contract-rate proof is needed."
+    _add_source_health_row(
+        rows,
+        "Organization rate and currency",
+        "Official contract/currency reconciliation",
+        official_state,
+        official_rows,
+        evidence,
+        action,
+        "ORGANIZATION_USAGE can lag and may require billing-viewer access.",
+    )
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return {"score": 0, "ready": 0, "review": 0, "unavailable": 0}, board
+    state_series = board["STATE"].fillna("").astype(str)
+    unavailable = int(state_series.eq("Unavailable").sum())
+    load_needed = int(state_series.eq("Load Needed").sum())
+    review = int(state_series.isin(["On Demand", "No Rows"]).sum())
+    ready = int(state_series.eq("Ready").sum())
+    score = max(0, min(100, 100 - unavailable * 18 - load_needed * 12 - review * 4))
+    board["_STATE_RANK"] = state_series.map({
+        "Unavailable": 0,
+        "Load Needed": 1,
+        "On Demand": 2,
+        "No Rows": 3,
+        "Ready": 4,
+    }).fillna(9)
+    return {
+        "score": int(score),
+        "ready": ready,
+        "review": review + load_needed,
+        "unavailable": unavailable,
+    }, board.sort_values(["_STATE_RANK", "SOURCE"]).drop(columns=["_STATE_RANK"], errors="ignore").reset_index(drop=True)
+
+
+def _build_attribution_gap_summary(reconciliation: pd.DataFrame, credit_price: float) -> dict:
+    if reconciliation is None or getattr(reconciliation, "empty", True):
+        return {
+            "exact_credits": 0.0,
+            "query_credits": 0.0,
+            "official_query_credits": 0.0,
+            "gap_credits": 0.0,
+            "gap_pct": 0.0,
+            "gap_usd": 0.0,
+            "official_queries": 0,
+            "top_gap_warehouse": "No rows",
+            "rows": 0,
+        }
+    exact = safe_float(pd.to_numeric(reconciliation.get("EXACT_METERED_CREDITS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    query = safe_float(pd.to_numeric(reconciliation.get("ALLOCATED_QUERY_CREDITS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    official = safe_float(pd.to_numeric(reconciliation.get("OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    official_queries = safe_int(pd.to_numeric(reconciliation.get("OFFICIAL_ATTRIBUTED_QUERIES", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    gap = exact - query
+    gap_pct = (gap / exact * 100) if exact > 0 else 0.0
+    top_gap = "No rows"
+    if "VARIANCE_CREDITS" in reconciliation.columns and "WAREHOUSE_NAME" in reconciliation.columns:
+        view = reconciliation.copy()
+        view["_ABS_GAP"] = pd.to_numeric(view["VARIANCE_CREDITS"], errors="coerce").fillna(0).abs()
+        if not view.empty:
+            top_gap = str(view.sort_values("_ABS_GAP", ascending=False).iloc[0].get("WAREHOUSE_NAME") or "Unknown")
+    return {
+        "exact_credits": exact,
+        "query_credits": query,
+        "official_query_credits": official,
+        "gap_credits": gap,
+        "gap_pct": gap_pct,
+        "gap_usd": credits_to_dollars(gap, credit_price),
+        "official_queries": official_queries,
+        "top_gap_warehouse": top_gap,
+        "rows": len(reconciliation),
+    }
+
+
+def _build_service_cost_lens_summary(service_lens: pd.DataFrame) -> dict:
+    if service_lens is None or getattr(service_lens, "empty", True):
+        return {
+            "total_credits": 0.0,
+            "non_warehouse_credits": 0.0,
+            "ai_credits": 0.0,
+            "serverless_credits": 0.0,
+            "top_service": "No rows",
+            "categories": 0,
+        }
+    credits = pd.to_numeric(service_lens.get("CREDITS_BILLED", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    category = service_lens.get("SERVICE_CATEGORY", pd.Series(dtype=str)).fillna("").astype(str)
+    service = service_lens.get("SERVICE_TYPE", pd.Series(dtype=str)).fillna("").astype(str)
+    total = safe_float(credits.sum())
+    non_warehouse = safe_float(credits[~category.eq("Warehouse")].sum())
+    ai = safe_float(credits[category.eq("AI / Cortex")].sum())
+    serverless = safe_float(credits[category.eq("Serverless / Managed Compute")].sum())
+    top_service = "No rows"
+    if len(service_lens):
+        top_service = str(service_lens.assign(_CREDITS=credits).sort_values("_CREDITS", ascending=False).iloc[0].get("SERVICE_TYPE") or "Unknown")
+    return {
+        "total_credits": total,
+        "non_warehouse_credits": non_warehouse,
+        "ai_credits": ai,
+        "serverless_credits": serverless,
+        "top_service": top_service,
+        "categories": int(category.nunique()),
+    }
+
+
+def _render_cost_source_health(
+    *,
+    cockpit: pd.DataFrame,
+    run_rate: pd.DataFrame,
+    queue: pd.DataFrame,
+    verification_health: pd.DataFrame,
+    attribution: pd.DataFrame,
+    service_lens: pd.DataFrame,
+) -> None:
+    summary, board = _build_cost_source_health_board(
+        cockpit=cockpit,
+        run_rate=run_rate,
+        queue=queue,
+        verification_health=verification_health,
+        attribution=attribution,
+        service_lens=service_lens,
+    )
+    if board.empty:
+        return
+    st.markdown("**Cost Source Health**")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Ready Sources", f"{summary['ready']:,}")
+    c2.metric("Review / On Demand", f"{summary['review']:,}", delta_color="inverse")
+    c3.metric("Unavailable", f"{summary['unavailable']:,}", delta_color="inverse")
+    render_priority_dataframe(
+        board,
+        title="Cost source readiness",
+        priority_columns=["STATE", "SOURCE", "SCOPE", "ROWS_LOADED", "FRESHNESS", "EVIDENCE", "NEXT_ACTION"],
+        sort_by=["STATE", "SOURCE"],
+        ascending=[True, True],
+        raw_label="All cost source health rows",
+        height=260,
+        max_rows=8,
+    )
+
+
+def _render_query_attribution_gap(reconciliation: pd.DataFrame, credit_price: float, error: str = "") -> None:
+    if error:
+        st.caption(f"Query attribution gap unavailable: {error}")
+        return
+    if reconciliation is None or getattr(reconciliation, "empty", True):
+        return
+    summary = _build_attribution_gap_summary(reconciliation, credit_price)
+    st.markdown("**Query Attribution Gap**")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Metered Credits", f"{summary['exact_credits']:,.2f}")
+    c2.metric("Query-Attributed", f"{summary['query_credits']:,.2f}")
+    c3.metric("Unallocated / Idle Gap", f"{summary['gap_credits']:,.2f}", f"{summary['gap_pct']:+.1f}%", delta_color="inverse")
+    c4.metric("Gap Dollars", f"${summary['gap_usd']:,.0f}", delta_color="inverse")
+    st.caption(
+        f"Top gap warehouse: {summary['top_gap_warehouse']}. "
+        "Query attribution is execution-only; idle, serverless, storage, data transfer, cloud services, and AI token costs remain outside query-level attribution."
+    )
+    render_priority_dataframe(
+        reconciliation,
+        title="Warehouse metering to query attribution reconciliation",
+        priority_columns=[
+            "RECONCILIATION_STATUS", "WAREHOUSE_NAME", "USAGE_DAY", "EXACT_METERED_CREDITS",
+            "ALLOCATED_QUERY_CREDITS", "OFFICIAL_ATTRIBUTED_COMPUTE_CREDITS",
+            "VARIANCE_CREDITS", "VARIANCE_PCT", "ATTRIBUTION_SOURCE",
+        ],
+        sort_by=["VARIANCE_CREDITS"],
+        ascending=[False],
+        raw_label="All query attribution reconciliation rows",
+        height=280,
+        max_rows=8,
+    )
+
+
+def _render_account_service_cost_lens(service_lens: pd.DataFrame, credit_price: float, error: str = "") -> None:
+    if error:
+        st.caption(f"Account service-cost lens unavailable: {error}")
+        return
+    if service_lens is None or getattr(service_lens, "empty", True):
+        return
+    summary = _build_service_cost_lens_summary(service_lens)
+    st.markdown("**Account Service Cost Lens**")
+    metrics = [
+        {"label": "Total Billed Credits", "value": f"{summary['total_credits']:,.2f}"},
+        {
+            "label": "Non-Warehouse Credits",
+            "value": f"{summary['non_warehouse_credits']:,.2f}",
+            "delta_color": "inverse",
+        },
+    ]
+    if safe_float(summary.get("ai_credits")) >= 0.005:
+        metrics.append({
+            "label": "AI / Cortex Credits",
+            "value": f"{summary['ai_credits']:,.2f}",
+            "delta_color": "inverse",
+        })
+    if safe_float(summary.get("serverless_credits")) >= 0.005:
+        metrics.append({
+            "label": "Serverless Credits",
+            "value": f"{summary['serverless_credits']:,.2f}",
+            "delta_color": "inverse",
+        })
+    _render_metric_items(metrics)
+    st.caption(
+        f"Top service: {summary['top_service']}. "
+        f"Estimated dollars use the configured ${credit_price:,.2f}/credit display rate unless official currency data is loaded."
+    )
+    render_priority_dataframe(
+        service_lens,
+        title="Cost by Snowflake service type",
+        priority_columns=[
+            "SERVICE_CATEGORY", "SERVICE_TYPE", "CREDITS_BILLED", "ESTIMATED_COST_USD",
+            "CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES", "OBSERVED_DAYS",
+        ],
+        sort_by=["CREDITS_BILLED"],
+        ascending=[False],
+        raw_label="All service-cost lens rows",
+        height=280,
+        max_rows=10,
+    )
 
 
 def _add_coverage_row(rows: list[dict], control: str, state: str, evidence: str, action: str, owner: str = "DBA / FinOps") -> None:
@@ -857,7 +1219,7 @@ def _build_cost_allocation_trust_board(
         "Database attribution",
         "Allocated/Estimated" if db_loaded else "Review",
         (
-            f"Database drilldown loaded; {estimated_rows:,} row(s) explicitly carry allocated/shared/estimated confidence."
+            f"Database drilldown loaded; {estimated_rows:,} row(s) explicitly carry allocated/shared/estimated source basis."
             if db_loaded else "Database attribution is not loaded."
         ),
         "Use database views for chargeback directionally; do not present shared warehouse database spend as exact.",
@@ -1104,11 +1466,10 @@ def _render_cost_control_coverage_board(
     if board.empty:
         return
     st.markdown("**Cost Control Coverage**")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Coverage", f"{summary['score']}/100")
-    c2.metric("Ready", f"{summary['ready']:,}")
-    c3.metric("Review", f"{summary['review']:,}", delta_color="inverse")
-    c4.metric("Load Needed", f"{summary['load_needed']:,}", delta_color="inverse")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Ready", f"{summary['ready']:,}")
+    c2.metric("Review", f"{summary['review']:,}", delta_color="inverse")
+    c3.metric("Load Needed", f"{summary['load_needed']:,}", delta_color="inverse")
     render_priority_dataframe(
         board,
         title="Cost evidence coverage",
@@ -1133,11 +1494,10 @@ def _render_cost_allocation_trust_board(
     if board.empty:
         return
     st.markdown("**Cost Allocation Trust**")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Trust", f"{summary['score']}/100")
-    c2.metric("Exact / Ready", f"{summary['exact']:,}")
-    c3.metric("Allocated / Estimated", f"{summary['estimated']:,}")
-    c4.metric("Review / Load", f"{summary['review'] + summary['load_needed']:,}", delta_color="inverse")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Exact / Ready", f"{summary['exact']:,}")
+    c2.metric("Allocated / Estimated", f"{summary['estimated']:,}")
+    c3.metric("Review / Load", f"{summary['review'] + summary['load_needed']:,}", delta_color="inverse")
     render_priority_dataframe(
         board,
         title="Cost attribution trust states",
@@ -1312,9 +1672,9 @@ def _render_cost_decomposition_board(
         return
     st.markdown("**Cost Decomposition**")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Score", f"{summary['score']}/100")
-    c2.metric("Ready", f"{summary['ready']:,}")
-    c3.metric("Review", f"{summary['review']:,}", delta_color="inverse")
+    c1.metric("Ready", f"{summary['ready']:,}")
+    c2.metric("Review", f"{summary['review']:,}", delta_color="inverse")
+    c3.metric("Drivers", f"{len(board):,}")
     render_priority_dataframe(
         board,
         title="Cost decomposition and next trust step",
@@ -1511,7 +1871,7 @@ def _build_budget_anomaly_command_center(
         "Medium" if safe_int(budget_summary.get("partial")) else "Info",
         "Native budget coverage",
         "Snowflake Budget - Shared Resource Budget",
-        f"Budget governance score {safe_int(budget_summary.get('score'))}/100; ready controls {safe_int(budget_summary.get('ready'))}; partial controls {safe_int(budget_summary.get('partial'))}.",
+        f"Ready budget controls {safe_int(budget_summary.get('ready'))}; partial controls {safe_int(budget_summary.get('partial'))}.",
         "Use Snowflake Budgets for AI, serverless, and shared resources because warehouse monitors cannot see those costs.",
         "Deploy account/shared AI budgets with verified email recipients and projected/actual thresholds.",
         "Budget policy frame, SET_EMAIL_NOTIFICATIONS, GET_SHARED_RESOURCES, spending history.",
@@ -1558,7 +1918,7 @@ def _build_budget_anomaly_command_center(
         ),
         "Use drilldowns to assign ownership, but keep shared warehouse and no-database rows labeled Allocated / Estimated.",
         "Load Cost Explorer or Chargeback before assigning database, role, user, or department ownership.",
-        "QUERY_HISTORY, TAG_REFERENCES, owner directory, allocation confidence, chargeback-ready flag.",
+        "QUERY_HISTORY, TAG_REFERENCES, owner directory, allocation source basis, chargeback-ready flag.",
         "Do not apply PROD/DEV database filters to login-only/no-database context or present shared allocation as exact.",
         "Cost & Contract > Explain bill / attribution / contract",
         0,
@@ -1605,11 +1965,11 @@ def _render_budget_anomaly_command_center(
     if board.empty:
         return
     st.markdown("**Budget & Anomaly Command Center**")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Command Score", f"{summary['score']}/100")
-    c2.metric("Critical/High", f"{summary['critical_high']:,}", delta_color="inverse")
+    value_at_risk = safe_float(pd.to_numeric(board.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Critical/High", f"{summary['critical_high']:,}", delta_color="inverse")
+    c2.metric("Value at Risk", f"${value_at_risk:,.0f}", delta_color="inverse")
     c3.metric("Budget Controls", f"{summary['budget_controls']:,}")
-    c4.metric("Warehouse Only", f"{summary['warehouse_only_controls']:,}")
     st.caption(
         f"Top lane: {summary['top_lane']} | Native route: {summary['top_native_control']} | "
         f"{summary['top_next_action']}"
@@ -1806,7 +2166,7 @@ def _build_native_cost_control_inventory(
         "Ready to Deploy" if safe_int(budget_summary.get("ready")) else "Review",
         "SNOWFLAKE.LOCAL.ACCOUNT_ROOT_BUDGET",
         "Account-level",
-        f"Budget governance score {safe_int(budget_summary.get('score'))}/100; projected 30d from 7d ${credits_to_dollars(projected_30d, credit_price):,.0f}.",
+        f"Projected 30d from 7d ${credits_to_dollars(projected_30d, credit_price):,.0f}; ready budget controls {safe_int(budget_summary.get('ready'))}.",
         "Spending limit must be approved against contract, renewal, and known planned workload.",
         "Set account budget limit, threshold, and email target after DBA/FinOps approval.",
         "Native budgets",
@@ -1984,7 +2344,7 @@ def _build_cost_spike_root_cause_board(
         "Medium" if company_driver["entity"] else "Low",
         "Allocated / Estimated",
         "Use ALFA/Trexis and PROD/DEV attribution to assign ownership, but keep shared warehouse disclosure attached.",
-        "Cost Explorer or Chargeback rows with company/environment dimensions and allocation confidence.",
+        "Cost Explorer or Chargeback rows with company/environment dimensions and allocation source basis.",
         "Cost & Contract > Explain bill / attribution / contract",
         company_driver["value_usd"],
         2,
@@ -2003,7 +2363,7 @@ def _build_cost_spike_root_cause_board(
         "Medium" if db_driver["entity"] else "Low",
         "Allocated / Estimated",
         "Drill into PROD, DEV_ALL, and individual DEV database views before assigning database ownership.",
-        "QUERY_HISTORY allocation, tags, and no-database/shared confidence labels.",
+        "QUERY_HISTORY allocation, tags, and no-database/shared source-basis labels.",
         "Cost & Contract > Explain bill / attribution / contract",
         db_driver["value_usd"],
         3,
@@ -2022,7 +2382,7 @@ def _build_cost_spike_root_cause_board(
         "Medium" if human_driver["entity"] else "Low",
         "Allocated / Estimated",
         "Assign optimization work only after the cost row has role/user/department evidence and owner source.",
-        "Cost Explorer detail with role, user, department, query count, and allocation confidence.",
+        "Cost Explorer detail with role, user, department, query count, and allocation source basis.",
         "Cost & Contract > Explain bill / attribution / contract",
         human_driver["value_usd"],
         4,
@@ -2698,11 +3058,10 @@ def _render_native_cost_control_inventory(
     if board.empty:
         return
     st.markdown("**Native Cost Control Inventory**")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Control Score", f"{summary['score']}/100")
-    c2.metric("Ready / Pattern", f"{summary['ready']:,}")
-    c3.metric("Review", f"{summary['review']:,}", delta_color="inverse")
-    c4.metric("Warehouse-only", f"{summary['warehouse_only']:,}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Ready / Pattern", f"{summary['ready']:,}")
+    c2.metric("Review", f"{summary['review']:,}", delta_color="inverse")
+    c3.metric("Controls", f"{len(board):,}")
     render_priority_dataframe(
         board,
         title="Native controls, strict gaps, and DBA next move",
@@ -2800,16 +3159,17 @@ def _render_cost_spike_root_cause_board(
     if board.empty:
         return
     st.markdown("**Cost Spike Root Cause Drilldown**")
+    value_at_risk = safe_float(pd.to_numeric(board.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
     c1, c2, c3 = st.columns(3)
-    c1.metric("Root-Cause Score", f"{summary['score']}/100")
-    c2.metric("Critical/High", f"{summary['critical_high']:,}", delta_color="inverse")
+    c1.metric("Critical/High", f"{summary['critical_high']:,}", delta_color="inverse")
+    c2.metric("Value at Risk", f"${value_at_risk:,.0f}", delta_color="inverse")
     c3.metric("Top Driver", summary["top_driver"])
     render_priority_dataframe(
-        board,
+        board.rename(columns={"CONFIDENCE": "SOURCE_BASIS"}),
         title="Cost root-cause candidates ranked by risk and value",
         priority_columns=[
             "SEVERITY", "DRIVER", "ENTITY", "ROOT_CAUSE_SIGNAL", "VALUE_AT_RISK_USD",
-            "CONFIDENCE", "TRUST", "EVIDENCE", "NEXT_ACTION", "PROOF_REQUIRED", "ROUTE",
+            "SOURCE_BASIS", "TRUST", "EVIDENCE", "NEXT_ACTION", "PROOF_REQUIRED", "ROUTE",
         ],
         sort_by=["SEVERITY", "VALUE_AT_RISK_USD"],
         ascending=[True, False],
@@ -2833,8 +3193,8 @@ def _render_change_cost_correlation_board(
         return
     st.markdown("**Change + Cost Correlation**")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Correlation Score", f"{summary['score']}/100")
-    c2.metric("High", f"{summary['high']:,}", delta_color="inverse")
+    c1.metric("High", f"{summary['high']:,}", delta_color="inverse")
+    c2.metric("Medium", f"{summary['medium']:,}", delta_color="inverse")
     c3.metric("Top Correlation", summary["top_correlation"])
     render_priority_dataframe(
         board,
@@ -2877,9 +3237,11 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
                     "account": pd.DataFrame(),
                     "billed": pd.DataFrame(),
                     "currency": pd.DataFrame(),
+                    "rate": pd.DataFrame(),
                     "account_error": "",
                     "billed_error": "",
                     "currency_error": "",
+                    "rate_error": "",
                     "account_sql": build_snowflake_cost_management_account_sql(
                         int(days),
                         credit_price=safe_float(credit_price),
@@ -2887,9 +3249,13 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
                     ),
                     "billed_sql": build_snowflake_billed_credit_reconciliation_sql(int(days)),
                     "currency_sql": build_snowflake_org_currency_cost_sql(int(days)),
+                    "rate_sql": build_snowflake_rate_sheet_reconciliation_sql(
+                        int(days),
+                        configured_credit_price=safe_float(credit_price),
+                    ),
                 }
                 try:
-                    result["account"] = run_query(
+                    result["account"] = run_query_or_raise(
                         result["account_sql"],
                         ttl_key=f"cost_contract_sf_account_{company}_{days}_{credit_price}",
                         tier="historical",
@@ -2898,7 +3264,7 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
                 except Exception as exc:
                     result["account_error"] = format_snowflake_error(exc)
                 try:
-                    result["billed"] = run_query(
+                    result["billed"] = run_query_or_raise(
                         result["billed_sql"],
                         ttl_key=f"cost_contract_sf_billed_{days}",
                         tier="historical",
@@ -2907,7 +3273,7 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
                 except Exception as exc:
                     result["billed_error"] = format_snowflake_error(exc)
                 try:
-                    result["currency"] = run_query(
+                    result["currency"] = run_query_or_raise(
                         result["currency_sql"],
                         ttl_key=f"cost_contract_sf_currency_{days}",
                         tier="historical",
@@ -2915,6 +3281,15 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
                     )
                 except Exception as exc:
                     result["currency_error"] = format_snowflake_error(exc)
+                try:
+                    result["rate"] = run_query_or_raise(
+                        result["rate_sql"],
+                        ttl_key=f"cost_contract_sf_rate_{days}_{credit_price}",
+                        tier="historical",
+                        section="Cost & Contract",
+                    )
+                except Exception as exc:
+                    result["rate_error"] = format_snowflake_error(exc)
                 st.session_state[_SNOWFLAKE_COST_PARITY_KEY] = result
 
         result = st.session_state.get(_SNOWFLAKE_COST_PARITY_KEY)
@@ -2990,8 +3365,40 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
                     f"{currency_row.get('CURRENCY', 'USD')} {safe_float(currency_row.get('OFFICIAL_EFFECTIVE_PRICE_PER_CREDIT')):,.2f}",
                 )
                 defer_source_note(str(currency_row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY"))
+                mix = str(currency_row.get("BALANCE_SOURCE_MIX") or "").strip()
+                if mix:
+                    b1, b2, b3 = st.columns(3)
+                    b1.metric("Capacity Spend", f"{currency_row.get('CURRENCY', 'USD')} {safe_float(currency_row.get('CAPACITY_SPEND_IN_CURRENCY')):,.2f}")
+                    b2.metric("Rollover Spend", f"{currency_row.get('CURRENCY', 'USD')} {safe_float(currency_row.get('ROLLOVER_SPEND_IN_CURRENCY')):,.2f}")
+                    b3.metric("Overage Spend", f"{currency_row.get('CURRENCY', 'USD')} {safe_float(currency_row.get('OVERAGE_SPEND_IN_CURRENCY')):,.2f}")
+                    st.caption(f"Balance-source mix: {mix}")
             else:
                 st.caption("Organization currency view returned no warehouse-metering compute rows for this window.")
+
+        rate = result.get("rate")
+        if result.get("rate_error"):
+            st.caption(
+                "Organization rate sheet unavailable for this role/account. "
+                f"Official effective-rate comparison needs RATE_SHEET_DAILY access: {result['rate_error']}"
+            )
+        elif isinstance(rate, pd.DataFrame) and not rate.empty:
+            rate_row = rate.iloc[0]
+            if safe_float(rate_row.get("OFFICIAL_EFFECTIVE_RATE")) > 0:
+                r1, r2, r3, r4 = st.columns(4)
+                r1.metric(
+                    "Official Effective Rate",
+                    f"{rate_row.get('CURRENCY', 'USD')} {safe_float(rate_row.get('OFFICIAL_EFFECTIVE_RATE')):,.2f}",
+                )
+                r2.metric("Configured ALFA Rate", f"${safe_float(rate_row.get('CONFIGURED_CREDIT_PRICE_USD')):,.2f}")
+                r3.metric(
+                    "Rate Delta",
+                    f"${safe_float(rate_row.get('CONFIGURED_VS_OFFICIAL_DELTA')):,.2f}",
+                    f"{safe_float(rate_row.get('CONFIGURED_VS_OFFICIAL_PCT')):+.1f}%",
+                )
+                r4.metric("Rate Days", f"{safe_int(rate_row.get('OBSERVED_RATE_DAYS')):,}")
+                defer_source_note(str(rate_row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ORGANIZATION_USAGE.RATE_SHEET_DAILY"))
+            else:
+                st.caption("Organization rate sheet returned no warehouse-metering compute rows for this window.")
 
         with st.expander("Parity SQL", expanded=False):
             st.code(
@@ -3000,7 +3407,9 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
                 + "\n\n-- Billed-credit reconciliation\n"
                 + str(result.get("billed_sql") or "").strip()
                 + "\n\n-- Official organization currency, when accessible\n"
-                + str(result.get("currency_sql") or "").strip(),
+                + str(result.get("currency_sql") or "").strip()
+                + "\n\n-- Official effective rate sheet, when accessible\n"
+                + str(result.get("rate_sql") or "").strip(),
                 language="sql",
             )
 
@@ -3095,6 +3504,49 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             except Exception as exc:
                 st.session_state["cost_contract_verification_health"] = pd.DataFrame()
                 st.session_state["cost_contract_verification_health_error"] = format_snowflake_error(exc)
+            try:
+                st.session_state["cost_contract_attribution_reconciliation"] = run_query_or_raise(
+                    build_cost_reconciliation_sql(int(days), prefer_query_attribution=True),
+                    ttl_key=f"cost_contract_attribution_reconciliation_{company}_{days}",
+                    tier="historical",
+                    section="Cost & Contract",
+                )
+                st.session_state["cost_contract_attribution_error"] = ""
+                st.session_state["cost_contract_attribution_source"] = (
+                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_ATTRIBUTION_HISTORY + WAREHOUSE_METERING_HISTORY"
+                )
+            except Exception as exc:
+                st.session_state["cost_contract_attribution_reconciliation"] = pd.DataFrame()
+                st.session_state["cost_contract_attribution_error"] = format_snowflake_error(exc)
+                st.session_state["cost_contract_attribution_source"] = ""
+            try:
+                st.session_state["cost_contract_service_lens"] = run_query_or_raise(
+                    build_mart_cost_service_lens_sql(int(days), credit_price),
+                    ttl_key=f"cost_contract_service_lens_mart_{company}_{days}_{credit_price}",
+                    tier="historical",
+                    section="Cost & Contract",
+                )
+                st.session_state["cost_contract_service_lens_error"] = ""
+                st.session_state["cost_contract_service_lens_source"] = "OVERWATCH mart: FACT_COST_DAILY"
+            except Exception as mart_exc:
+                try:
+                    st.session_state["cost_contract_service_lens"] = run_query_or_raise(
+                        build_snowflake_service_cost_lens_sql(int(days), credit_price),
+                        ttl_key=f"cost_contract_service_lens_live_{company}_{days}_{credit_price}",
+                        tier="historical",
+                        section="Cost & Contract",
+                    )
+                    st.session_state["cost_contract_service_lens_error"] = ""
+                    st.session_state["cost_contract_service_lens_source"] = (
+                        "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY"
+                    )
+                except Exception as exc:
+                    st.session_state["cost_contract_service_lens"] = pd.DataFrame()
+                    st.session_state["cost_contract_service_lens_error"] = (
+                        f"Mart unavailable: {format_snowflake_error(mart_exc)}; "
+                        f"live fallback failed: {format_snowflake_error(exc)}"
+                    )
+                    st.session_state["cost_contract_service_lens_source"] = ""
     with c3:
         st.info("Use this cockpit to decide whether to explain the bill, work the action queue, inspect Cortex spend, or log verified savings.")
 
@@ -3143,15 +3595,42 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     current_credits = safe_float(row.get("CURRENT_CREDITS", 0))
     prior_credits = safe_float(row.get("PRIOR_CREDITS", 0))
     delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
+    top_wh = str(row.get("TOP_INCREASE_WAREHOUSE") or "No increase")
+    top_delta = safe_float(row.get("TOP_INCREASE_CREDITS", 0))
+    top_delta_usd = credits_to_dollars(top_delta, credit_price)
+    top_delta_usd_label = f"{'+' if top_delta_usd >= 0 else '-'}${abs(top_delta_usd):,.0f}"
     cortex_projected, cortex_exception_count = _loaded_cortex_state()
-    score = _cost_score(current_credits, prior_credits, open_actions, high_actions, cortex_exception_count)
-
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Cost Score", f"{score}/100", _cost_rating(score))
-    k2.metric("Current Window", f"${credits_to_dollars(current_credits, credit_price):,.0f}", f"{delta_pct:+.1f}%", delta_color="inverse")
-    k3.metric("Open Actions", f"{open_actions:,}", f"{high_actions:,} high", delta_color="inverse")
-    k4.metric("Savings Queue", f"${total_savings:,.0f}/mo")
-    k5.metric("Cortex Projection", f"${cortex_projected:,.0f}/30d", f"{cortex_exception_count:,} exceptions", delta_color="inverse")
+    metrics = [
+        {
+            "label": "Current Window",
+            "value": f"${credits_to_dollars(current_credits, credit_price):,.0f}",
+            "delta": f"{delta_pct:+.1f}%",
+            "delta_color": "inverse",
+        },
+        {
+            "label": "Top Increase",
+            "value": top_wh,
+            "delta": f"{top_delta:+,.2f} credits / {top_delta_usd_label}",
+            "delta_color": "inverse",
+        },
+    ]
+    if open_actions or high_actions:
+        metrics.append({
+            "label": "Open Actions",
+            "value": f"{open_actions:,}",
+            "delta": f"{high_actions:,} high",
+            "delta_color": "inverse",
+        })
+    if total_savings > 0:
+        metrics.append({"label": "Savings Queue", "value": f"${total_savings:,.0f}/mo"})
+    if cortex_projected > 0 or cortex_exception_count > 0:
+        metrics.append({
+            "label": "Cortex Projection",
+            "value": f"${cortex_projected:,.0f}/30d",
+            "delta": f"{cortex_exception_count:,} exceptions",
+            "delta_color": "inverse",
+        })
+    _render_metric_items(metrics)
 
     run_rate_source = st.session_state.get("cost_contract_run_rate_source", "")
     if run_rate_source:
@@ -3166,6 +3645,24 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
         queue,
         credit_price,
+    )
+    _render_cost_source_health(
+        cockpit=data,
+        run_rate=st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
+        queue=queue,
+        verification_health=st.session_state.get("cost_contract_verification_health", pd.DataFrame()),
+        attribution=st.session_state.get("cost_contract_attribution_reconciliation", pd.DataFrame()),
+        service_lens=st.session_state.get("cost_contract_service_lens", pd.DataFrame()),
+    )
+    _render_query_attribution_gap(
+        st.session_state.get("cost_contract_attribution_reconciliation", pd.DataFrame()),
+        credit_price,
+        st.session_state.get("cost_contract_attribution_error", ""),
+    )
+    _render_account_service_cost_lens(
+        st.session_state.get("cost_contract_service_lens", pd.DataFrame()),
+        credit_price,
+        st.session_state.get("cost_contract_service_lens_error", ""),
     )
     if not st.session_state.get(_FULL_COCKPIT_BOARDS_KEY):
         if st.button("Open full cockpit boards", key="cost_contract_open_full_cockpit_boards"):

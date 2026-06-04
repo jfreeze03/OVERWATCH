@@ -13,7 +13,7 @@ DBA_CONTROL_PLANE_RUBRIC = (
         "key": "data_correctness",
         "label": "Data Correctness & Scope",
         "weight": 15,
-        "definition": "Uses the right Snowflake sources, company/environment scope, freshness/confidence labels, and defensible formulas.",
+        "definition": "Uses the right Snowflake sources, company/environment scope, freshness/source-basis labels, and defensible formulas.",
     },
     {
         "key": "actionability",

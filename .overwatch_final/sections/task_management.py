@@ -416,16 +416,6 @@ def _task_ops_score(
     return max(0, min(100, int(round(100 - penalty))))
 
 
-def _task_ops_rating(score: int) -> str:
-    if score >= 90:
-        return "Operational"
-    if score >= 78:
-        return "Watch"
-    if score >= 65:
-        return "Degraded"
-    return "Incident Risk"
-
-
 def _task_time_series(df: pd.DataFrame, *columns: str) -> pd.Series:
     values = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
     for column in columns:
@@ -1479,7 +1469,6 @@ def _build_task_ops_markdown(
         f"# OVERWATCH Task Graph Operations Brief - {company}",
         "",
         f"- Lookback: {days} days",
-        f"- Operations score: {score} ({_task_ops_rating(score)})",
         f"- Task graphs/tasks: {safe_int(summary.get('TOTAL_TASKS')):,}",
         f"- Task runs: {safe_int(summary.get('TOTAL_RUNS')):,}",
         f"- Failed runs: {safe_int(summary.get('FAILED_RUNS')):,}",
@@ -2078,11 +2067,10 @@ def _render_task_ops_brief(session) -> None:
             total_runs=safe_int(summary.get("TOTAL_RUNS")),
             total_tasks=safe_int(summary.get("TOTAL_TASKS")),
         )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Ops Score", score, _task_ops_rating(score))
-        c2.metric("Tasks", f"{safe_int(summary.get('TOTAL_TASKS')):,}")
-        c3.metric("Runs", f"{safe_int(summary.get('TOTAL_RUNS')):,}")
-        c4.metric("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}", delta_color="inverse")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Tasks", f"{safe_int(summary.get('TOTAL_TASKS')):,}")
+        c2.metric("Runs", f"{safe_int(summary.get('TOTAL_RUNS')):,}")
+        c3.metric("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}", delta_color="inverse")
         c5, c6, c7, c8 = st.columns(4)
         c5.metric("Suspended", f"{safe_int(summary.get('SUSPENDED_TASKS')):,}", delta_color="inverse")
         c6.metric("SLA/Cost Drift", f"{safe_int(summary.get('LONG_RUNNING_TASKS')) + safe_int(summary.get('COST_DRIFT_TASKS')):,}", delta_color="inverse")
@@ -2118,9 +2106,9 @@ def _render_task_ops_brief(session) -> None:
         slo_summary, slo_board = _build_task_reliability_slo_board(summary, exceptions, recovery_sla)
         st.subheader("Task Reliability SLO Board")
         s1, s2, s3 = st.columns(3)
-        s1.metric("SLO Score", f"{slo_summary['score']}/100")
-        s2.metric("Ready", f"{slo_summary['ready']:,}")
-        s3.metric("Review", f"{slo_summary['review']:,}", delta_color="inverse")
+        s1.metric("Ready", f"{slo_summary['ready']:,}")
+        s2.metric("Review", f"{slo_summary['review']:,}", delta_color="inverse")
+        s3.metric("SLOs", f"{len(slo_board):,}")
         render_priority_dataframe(
             slo_board,
             title="Task reliability SLOs and next control step",

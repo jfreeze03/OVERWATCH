@@ -223,7 +223,7 @@ def _queue_service_findings(session, services: pd.DataFrame):
             "Entity Type": "Snowflake Service",
             "Entity": service,
             "Owner": "DBA",
-            "Finding": f"{service} score is {float(row['SCORE']):.1f}. {row['SIGNAL']}",
+            "Finding": f"{service} service signal: {row['SIGNAL']}",
             "Action": str(row["ACTION"]),
             "Estimated Monthly Savings": 0,
             "Generated SQL Fix": "-- Investigate the linked Snowflake ACCOUNT_USAGE views before changing capacity or access controls.",
@@ -283,28 +283,30 @@ def render():
     services["ACTION"] = services["SERVICE"].map(lambda name: action_map.get(name, ("Review source detail.", "ACCOUNT_USAGE"))[0])
     services["PROOF"] = services["SERVICE"].map(lambda name: action_map.get(name, ("Review source detail.", "ACCOUNT_USAGE"))[1])
 
-    cols = st.columns(5)
-    for idx, row in services.iterrows():
-        label = "Healthy" if row["SCORE"] >= 90 else ("Watch" if row["SCORE"] >= 75 else ("At Risk" if row["SCORE"] >= 60 else "Critical"))
-        cols[idx].metric(row["SERVICE"], f"{row['SCORE']:.1f}", label)
-    st.metric("Overall Service Score", f"{scorecard['score']:.1f}", scorecard["label"])
+    risk_services = services[services["SCORE"] < 90] if "SCORE" in services.columns else pd.DataFrame()
+    critical_services = services[services["SCORE"] < 60] if "SCORE" in services.columns else pd.DataFrame()
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Services", f"{len(services):,}")
+    k2.metric("Watch / At Risk", f"{len(risk_services):,}", delta_color="inverse")
+    k3.metric("Critical", f"{len(critical_services):,}", delta_color="inverse")
     source_text = " | ".join(v for v in data.get("sources", {}).values() if v)
     defer_source_note(metric_confidence_label("composite"), source_text, freshness_note("ACCOUNT_USAGE"))
 
     if (services["SCORE"] < 95).any() and st.button("Send service findings to Action Queue", key="svc_queue"):
         _queue_service_findings(session, services)
 
-    st.subheader("Service Scorecard")
+    st.subheader("Service Risk Board")
+    service_risk_view = services.rename(columns={"SCORE": "RISK_VALUE"})
     render_priority_dataframe(
-        services,
+        service_risk_view,
         title="Service risks to work first",
-        priority_columns=["SERVICE", "SCORE", "SIGNAL", "ACTION", "PROOF"],
-        sort_by=["SCORE"],
+        priority_columns=["SERVICE", "RISK_VALUE", "SIGNAL", "ACTION", "PROOF"],
+        sort_by=["RISK_VALUE"],
         ascending=True,
-        raw_label="All service score rows",
+        raw_label="All service risk rows",
         height=260,
     )
-    download_csv(services, "service_health_scorecard.csv")
+    download_csv(services, "service_health_risk_board.csv")
 
     st.subheader("Warehouse Pressure Detail")
     if wh_df.empty:

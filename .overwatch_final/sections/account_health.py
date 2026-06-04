@@ -861,7 +861,7 @@ def _build_account_health_dba_checklist(
             "CHECK": "Overall health escalation",
             "STATUS": "Needs DBA",
             "SEVERITY": "High" if score < 60 else "Medium",
-            "EVIDENCE": f"Health score {score:.0f} ({score_label})",
+            "EVIDENCE": f"Health state {score_label}; account pressure crossed DBA threshold",
             "OWNER": "DBA Lead",
             "ROUTE": "DBA Control Room",
             "NEXT_ACTION": "Run DBA Control Room triage and convert active signals into owned action queue items.",
@@ -1461,7 +1461,7 @@ def _account_health_operator_next_moves(
         "GATE": "Account pressure",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "health score, failed queries/tasks, queue pressure, storage/cost/change signals",
+        "PROOF_REQUIRED": "health state, failed queries/tasks, queue pressure, storage/cost/change signals",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -2791,16 +2791,16 @@ def render():
             score_label = health["label"]
             health_components = pd.DataFrame(health["components"])
 
-        k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
-        k1.metric("Health Score",   f"{health_score:.0f}", score_label)
-        k2.metric("Active Queries", live_val)
-        k3.metric("Queued",         queued)
-        k4.metric("Credits (24h)",  f"{last24:,.0f}", delta=f"{pct_delta:+.1f}%")
-        k5.metric("Cost (24h)",     f"${cost24:,.0f}")
-        k6.metric("Storage",        f"{stor_tb:.1f} TB")
-        k7.metric("Failed (24h)",   err_count, delta_color="inverse")
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        k1.metric("Active Queries", live_val)
+        k2.metric("Queued", queued)
+        k3.metric("Failed (24h)", err_count, delta_color="inverse")
+        k4.metric("Credits (24h)", f"{last24:,.0f}", delta=f"{pct_delta:+.1f}%")
+        k5.metric("Cost (24h)", f"${cost24:,.0f}")
+        k6.metric("Storage", f"{stor_tb:.1f} TB")
         st.caption(
             " | ".join([
+                f"Health state: {score_label}",
                 metric_confidence_label("composite"),
                 metric_confidence_label("exact") + " for source counts",
                 hd.get("_control_mart_source", "Live fallback"),
@@ -3128,14 +3128,14 @@ def render():
                     st.code(st.session_state.get("account_health_closure_analytics_sql", ""), language="sql")
             elif closure is not None:
                 st.info("No Account Health checklist action-queue rows found for the selected scope.")
-        with st.expander("Health score contributors", expanded=False):
+        with st.expander("Health signal contributors", expanded=False):
             render_priority_dataframe(
-                health_components,
-                title="Health score components",
-                priority_columns=["COMPONENT", "SCORE", "WEIGHT", "SIGNAL"],
-                sort_by=["SCORE"],
+                health_components.rename(columns={"SCORE": "SIGNAL_VALUE"}),
+                title="Health signal contributors",
+                priority_columns=["COMPONENT", "SIGNAL_VALUE", "WEIGHT", "SIGNAL"],
+                sort_by=["SIGNAL_VALUE"],
                 ascending=True,
-                raw_label="All health score components",
+                raw_label="All health signal contributors",
                 height=260,
             )
 

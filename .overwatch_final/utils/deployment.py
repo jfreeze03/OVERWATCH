@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 
 
-OVERWATCH_SCHEMA_VERSION = "2026.06.03-operating-surfaces"
+OVERWATCH_SCHEMA_VERSION = "2026.06.04-cost-proof-mart"
 MIGRATION_TABLE = "OVERWATCH_SCHEMA_MIGRATION"
 
 
@@ -40,11 +40,25 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "READY_CRITERIA": "Verification table, procedure, view, and scheduled task are deployed.",
         },
         {
+            "COMPONENT": "Cost proof mart",
+            "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
+            "REQUIRED_OBJECT": "FACT_COST_DAILY",
+            "WHY_IT_MATTERS": "Persists billed cost by Snowflake service type so the UI does not rescan daily metering views.",
+            "READY_CRITERIA": "Daily service-cost mart and source-health mart exist.",
+        },
+        {
             "COMPONENT": "Change evidence integration",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_SOURCE_CONTROL_CHANGE",
             "WHY_IT_MATTERS": "Connects Snowflake drift to Terraform/Git evidence and approval context.",
             "READY_CRITERIA": "Source-control and ITSM evidence tables exist.",
+        },
+        {
+            "COMPONENT": "Change evidence feed ingress",
+            "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
+            "REQUIRED_OBJECT": "OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE",
+            "WHY_IT_MATTERS": "Gives CI/CD a Snowflake landing point for Terraform/Git evidence exports.",
+            "READY_CRITERIA": "Source-control and ITSM evidence stages plus CSV file format exist.",
         },
         {
             "COMPONENT": "Schema migration ledger",
@@ -75,8 +89,13 @@ WITH required_objects AS (
         ('Alert automation', 'OVERWATCH_ALERT_DELIVERY_LOG', 'TABLE', '{version}'),
         ('FinOps verification', 'OVERWATCH_COST_SAVINGS_VERIFICATION_RUN', 'TABLE', '{version}'),
         ('FinOps verification', 'OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V', 'VIEW', '{version}'),
+        ('Cost proof mart', 'FACT_COST_DAILY', 'TABLE', '{version}'),
+        ('Cost proof mart', 'FACT_COST_SOURCE_HEALTH_DAILY', 'TABLE', '{version}'),
         ('Change evidence integration', 'OVERWATCH_SOURCE_CONTROL_CHANGE', 'TABLE', '{version}'),
         ('Change evidence integration', 'OVERWATCH_ITSM_TICKET', 'TABLE', '{version}'),
+        ('Change evidence feed ingress', 'OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT', 'FILE FORMAT', '{version}'),
+        ('Change evidence feed ingress', 'OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE', 'STAGE', '{version}'),
+        ('Change evidence feed ingress', 'OVERWATCH_ITSM_TICKET_STAGE', 'STAGE', '{version}'),
         ('Schema migration ledger', 'OVERWATCH_SCHEMA_MIGRATION', 'TABLE', '{version}')
     AS t(component, object_name, object_type, required_version)
 ),
@@ -84,6 +103,14 @@ object_inventory AS (
     SELECT table_name AS object_name, table_type AS object_type
     FROM {db}.INFORMATION_SCHEMA.TABLES
     WHERE table_schema = '{sch}'
+    UNION ALL
+    SELECT stage_name AS object_name, 'STAGE' AS object_type
+    FROM {db}.INFORMATION_SCHEMA.STAGES
+    WHERE stage_schema = '{sch}'
+    UNION ALL
+    SELECT file_format_name AS object_name, 'FILE FORMAT' AS object_type
+    FROM {db}.INFORMATION_SCHEMA.FILE_FORMATS
+    WHERE file_format_schema = '{sch}'
 ),
 ledger AS (
     SELECT
@@ -138,9 +165,9 @@ MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
 USING (
   SELECT
     '{version}' AS MIGRATION_VERSION,
-    'Dashboard polish, alert automation, FinOps controls, role UX, and migration ledger' AS MIGRATION_NAME,
+    'Cost proof mart, evidence feed health, alert automation, and migration ledger' AS MIGRATION_NAME,
     'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
-    'Baseline setup ledger row for the app release.' AS NOTES
+    'Baseline setup ledger row for the app release, including cost proof marts and Terraform/Jira evidence feed ingress.' AS NOTES
 ) src
 ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
 WHEN MATCHED THEN UPDATE SET

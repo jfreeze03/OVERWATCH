@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from utils import (
+    defer_source_note,
     filter_existing_columns,
     format_snowflake_error,
     get_active_company,
@@ -734,7 +735,7 @@ def render_root_cause_brief(session) -> None:
             st.info("Watch: a few exceptions exist, but the query estate is broadly controlled.")
         else:
             st.success("Stable: no dominant query root-cause pressure in the selected scope.")
-        st.caption(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
+        defer_source_note(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
         _render_query_watch_floor(score, exceptions, summary_row, days)
         st.divider()

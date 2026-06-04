@@ -8,6 +8,7 @@ from utils import (
     build_mart_service_warehouse_health_sql,
     build_mart_service_login_health_sql,
     build_mart_service_task_health_sql,
+    defer_source_note,
     download_csv,
     filter_existing_columns,
     get_active_company,
@@ -288,7 +289,7 @@ def render():
         cols[idx].metric(row["SERVICE"], f"{row['SCORE']:.1f}", label)
     st.metric("Overall Service Score", f"{scorecard['score']:.1f}", scorecard["label"])
     source_text = " | ".join(v for v in data.get("sources", {}).values() if v)
-    st.caption(f"{metric_confidence_label('composite')} | {source_text} | {freshness_note('ACCOUNT_USAGE')}")
+    defer_source_note(metric_confidence_label("composite"), source_text, freshness_note("ACCOUNT_USAGE"))
 
     if (services["SCORE"] < 95).any() and st.button("Send service findings to Action Queue", key="svc_queue"):
         _queue_service_findings(session, services)

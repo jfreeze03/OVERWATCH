@@ -1,18 +1,18 @@
 definition_version: 1
 
-# ─────────────────────────────────────────────────────────────────────────────
-# OVERWATCH — Streamlit-in-Snowflake (SiS) Deployment Manifest
+# -----------------------------------------------------------------------------
+# OVERWATCH - Streamlit-in-Snowflake (SiS) Deployment Manifest
 # Account:   ALFA Insurance
 # App:       DBA_MAINT_DB.OVERWATCH.OVERWATCH
 # Stage:     DBA_MAINT_DB.OVERWATCH.OVERWATCH_STAGE
 # Roles:     SNOW_ACCOUNTADMIN, SNOW_SYSADMIN
 # Warehouse: OVERWATCH_WH
 #
-# execute_as: CALLER (SiS default — intentionally not set to OWNER)
-# ─────────────────────────────────────────────────────────────────────────────
+# execute_as: CALLER (SiS default - intentionally not set to OWNER)
+# -----------------------------------------------------------------------------
 # CALLER MODE MEANS:
 #   Every SQL statement executes with the privileges of whoever opened the app.
-#   SNOW_ACCOUNTADMIN and SNOW_SYSADMIN have full access — all OVERWATCH
+#   SNOW_ACCOUNTADMIN and SNOW_SYSADMIN have full access - all OVERWATCH
 #   features work without any additional grants.
 #
 # IMPLICATION FOR FUTURE USERS:
@@ -33,13 +33,13 @@ definition_version: 1
 #   returns a permissions error and the section shows an empty state.
 #   This is the single most common misconfiguration when expanding OVERWATCH
 #   to non-admin users.
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 streamlit:
   name: OVERWATCH
   stage: DBA_MAINT_DB.OVERWATCH.OVERWATCH_STAGE
   main_file: app.py
-  title: "OVERWATCH — Snowflake DBA Monitor"
+  title: "OVERWATCH - Snowflake DBA Monitor"
   comment: "DBA command center for ALFA Insurance"
 
   # Warehouse used by SiS for Python execution. SQL queries run here unless

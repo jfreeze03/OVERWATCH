@@ -8,6 +8,7 @@ import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
 from utils import (
+    defer_source_note,
     filter_existing_columns,
     format_snowflake_error,
     get_active_company,
@@ -2230,7 +2231,7 @@ def _render_security_source_health(company: str, environment: str) -> None:
         c2.metric("Mart-Backed", f"{mart_backed:,}")
         c3.metric("Stale", f"{stale:,}", delta_color="inverse")
         c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
-        st.caption(
+        defer_source_note(
             "Use this before acting on access findings. Login-only evidence keeps account scope, while database-scoped "
             "evidence follows the selected company and environment."
         )
@@ -2392,7 +2393,7 @@ def render() -> None:
             st.info("Security posture is usable, but there are findings worth reviewing.")
         else:
             st.success("Security posture is strong for the selected window.")
-        st.caption(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE"))
+        defer_source_note(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE"))
         _render_security_watch_floor(score, exceptions, row)
         st.divider()
         operability_fact = st.session_state.get("security_operability_fact")
@@ -2426,7 +2427,7 @@ def render() -> None:
             with st.expander("Security operability fact query", expanded=False):
                 st.code(st.session_state.get("security_operability_fact_sql", ""), language="sql")
         elif st.session_state.get("security_operability_fact_error"):
-            st.caption(
+            defer_source_note(
                 "Security operability mart not available yet; deploy or refresh "
                 "`FACT_SECURITY_OPERABILITY_DAILY` to enable the fast blocker surface."
             )
@@ -2562,10 +2563,11 @@ def render() -> None:
                         st.code(st.session_state.get("security_access_review_trend_sql", ""), language="sql")
                 elif trend is not None:
                     st.info("No saved security access-review snapshots found for the selected scope.")
-                with st.expander("Access Review Setup SQL", expanded=False):
-                    st.code(build_security_access_review_ddl(), language="sql")
+                defer_source_note(
+                    "Access-review DDL is managed by snowflake/OVERWATCH_MART_SETUP.sql; do not deploy setup SQL from the dashboard."
+                )
             with st.expander("Security Action Closure Analytics", expanded=False):
-                st.caption(
+                defer_source_note(
                     "Uses Security Posture action-queue rows to show open, overdue, unapproved, "
                     "or closed-without-verification security work."
                 )
@@ -2643,7 +2645,7 @@ def render() -> None:
         with dl2:
             with st.expander("Proof SQL", expanded=False):
                 proof_sql = st.session_state.get("security_posture_proof_sql", {})
-                st.caption("Use these source queries when an auditor or security partner asks where a number came from.")
+                defer_source_note("Use these source queries when an auditor or security partner asks where a number came from.")
                 st.code(proof_sql.get("summary", "-- Load the security brief first."), language="sql")
                 st.code(proof_sql.get("exceptions", "-- Load the security brief first."), language="sql")
         if st.session_state.get("exceptions_only_mode"):

@@ -15,6 +15,7 @@ from utils import (
     build_snowflake_cost_management_account_sql,
     build_snowflake_org_currency_cost_sql,
     credits_to_dollars,
+    defer_source_note,
     format_snowflake_error,
     get_active_company,
     get_credit_price,
@@ -473,7 +474,7 @@ def _render_savings_verification_task_health(health: pd.DataFrame | None, error:
 
     if error:
         st.warning(f"Verification task health view unavailable: {error}")
-        st.caption("Deploy the latest OVERWATCH mart setup SQL to create OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V.")
+        st.info("Deploy the latest OVERWATCH mart setup SQL to create OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V.")
         return
     if detail.empty:
         st.info("Load the cockpit after deploying the verifier health view to monitor savings task failures and stale runs.")
@@ -505,7 +506,7 @@ def _render_savings_verification_task_health(health: pd.DataFrame | None, error:
 def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) -> None:
     summary, detail = _build_cost_closure_analytics(queue, credit_price)
     st.markdown("**Savings Closure Control**")
-    st.caption(
+    defer_source_note(
         "Potential savings stay estimated until the action is fixed, owner-approved, verified, "
         "and the measured post-period usage is lower than the stored baseline."
     )
@@ -519,7 +520,7 @@ def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) ->
     if detail.empty:
         st.info("No cost-control or chargeback actions are currently visible in the loaded action queue scope.")
         with st.expander("Deploy scheduled savings verification", expanded=False):
-            st.caption("Install this once in the OVERWATCH mart schema, review the task, then resume it.")
+            defer_source_note("Install scheduled savings verification once in the OVERWATCH mart schema, review the task, then resume it.")
             st.code(build_cost_savings_verification_sql(), language="sql")
         return
 
@@ -541,7 +542,7 @@ def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) ->
         max_rows=10,
     )
     with st.expander("Deploy scheduled savings verification", expanded=False):
-        st.caption(
+        defer_source_note(
             "This Snowflake procedure/task verifies warehouse cost-control actions from exact metering. "
             "Chargeback and database/user allocations still require owner evidence."
         )
@@ -564,10 +565,11 @@ def _format_optional_pct(value: float | None, empty: str = "No baseline") -> str
 def _render_cost_run_rate_lens(run_rate: pd.DataFrame | None, credit_price: float, error: str = "") -> None:
     st.markdown("**Run-Rate and YOY**")
     if error:
-        st.caption(f"Run-rate trend unavailable: {error}")
+        st.info("Run-rate trend unavailable.")
+        defer_source_note(error)
         return
     if run_rate is None or getattr(run_rate, "empty", True):
-        st.caption("Load the cockpit to show complete-day 7-day averages, 30-day context, and prior-year comparison.")
+        defer_source_note("Load the cockpit to show complete-day 7-day averages, 30-day context, and prior-year comparison.")
         return
 
     row = run_rate.iloc[0]
@@ -597,7 +599,7 @@ def _render_cost_run_rate_lens(run_rate: pd.DataFrame | None, credit_price: floa
 
     top_wh = str(row.get("TOP_YOY_INCREASE_WAREHOUSE") or "No warehouse baseline")
     top_delta = safe_float(row.get("TOP_YOY_INCREASE_CREDITS"))
-    st.caption(
+    defer_source_note(
         f"{yoy_state}. Top same-week YOY increase: {top_wh} "
         f"({top_delta:+,.2f} credits). Uses complete days only."
     )
@@ -2931,7 +2933,7 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
             k3.metric("Compute Price/Credit", f"${safe_float(row.get('COMPUTE_PRICE_PER_CREDIT_USD')):,.2f}")
             k4.metric("Average Daily Cost", f"${safe_float(row.get('AVERAGE_DAILY_COST_EST_USD')):,.2f}")
             k5.metric("Average Daily Credits", f"{safe_float(row.get('AVERAGE_DAILY_CREDITS')):,.2f}")
-            st.caption(str(row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"))
+            defer_source_note(str(row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"))
             top = str(row.get("TOP_WAREHOUSES_BY_COST") or "").strip()
             if top:
                 st.caption(f"Top warehouses by cost: {top}")
@@ -2963,7 +2965,7 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
             b1.metric("Account Billed Warehouse Credits", f"{safe_float(billed_row.get('ACCOUNT_BILLED_WAREHOUSE_CREDITS')):,.2f}")
             b2.metric("Cloud Services Adjustment", f"{safe_float(billed_row.get('ACCOUNT_CLOUD_SERVICES_ADJUSTMENT')):,.2f}")
             b3.metric("Billed Days", f"{safe_int(billed_row.get('BILLED_DAYS')):,}")
-            st.caption(str(billed_row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY"))
+            defer_source_note(str(billed_row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY"))
 
         currency = result.get("currency")
         if result.get("currency_error"):
@@ -2984,7 +2986,7 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
                     "Official Effective Price/Credit",
                     f"{currency_row.get('CURRENCY', 'USD')} {safe_float(currency_row.get('OFFICIAL_EFFECTIVE_PRICE_PER_CREDIT')):,.2f}",
                 )
-                st.caption(str(currency_row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY"))
+                defer_source_note(str(currency_row.get("SNOWFLAKE_SOURCE") or "SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY"))
             else:
                 st.caption("Organization currency view returned no warehouse-metering compute rows for this window.")
 
@@ -3121,7 +3123,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         st.caption("Load the cost cockpit for a fast first move. Specialist pages still load their own detailed data.")
         return
 
-    st.caption(st.session_state.get("cost_contract_cockpit_source", "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"))
+    defer_source_note(st.session_state.get("cost_contract_cockpit_source", "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"))
     row = data.iloc[0]
     queue = st.session_state.get("cost_contract_queue", pd.DataFrame())
     queue_err = st.session_state.get("cost_contract_queue_error", "")
@@ -3150,7 +3152,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
 
     run_rate_source = st.session_state.get("cost_contract_run_rate_source", "")
     if run_rate_source:
-        st.caption(run_rate_source)
+        defer_source_note(run_rate_source)
     _render_cost_run_rate_lens(
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
         credit_price,

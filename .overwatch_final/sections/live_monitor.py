@@ -30,6 +30,13 @@ LIVE_MONITOR_PANES = (
     "Sessions",
 )
 
+QUERY_HISTORY_OPTIONAL_COLUMNS = (
+    "WAREHOUSE_SIZE",
+    "BYTES_SCANNED",
+    "ROWS_PRODUCED",
+    "CREDITS_USED_CLOUD_SERVICES",
+)
+
 
 def _live_query_history_function(warehouse_filter: str = "") -> str:
     """Return the most selective INFORMATION_SCHEMA query history function."""
@@ -102,14 +109,58 @@ def render():
         # When auto_refresh is unchecked, run_every=None means the fragment renders
         # once and waits for a manual interaction.
         _run_every = rt_interval if auto_refresh else None
+        query_history_optional = set()
+        if refresh_live or auto_refresh:
+            try:
+                query_history_optional = set(filter_existing_columns(
+                    get_session(),
+                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+                    QUERY_HISTORY_OPTIONAL_COLUMNS,
+                ))
+            except Exception as exc:
+                st.caption(f"Query-history optional columns unavailable: {format_snowflake_error(exc)}")
+        fallback_wh_size_expr = (
+            "warehouse_size"
+            if "WAREHOUSE_SIZE" in query_history_optional
+            else "NULL::VARCHAR AS warehouse_size"
+        )
+        fallback_mb_scanned_expr = (
+            "bytes_scanned/POWER(1024,2) AS mb_scanned"
+            if "BYTES_SCANNED" in query_history_optional
+            else "0::FLOAT AS mb_scanned"
+        )
+        fallback_rows_expr = (
+            "rows_produced"
+            if "ROWS_PRODUCED" in query_history_optional
+            else "0::NUMBER AS rows_produced"
+        )
+        warehouse_size_expr = (
+            "warehouse_size"
+            if "WAREHOUSE_SIZE" in query_history_optional
+            else "NULL::VARCHAR AS warehouse_size"
+        )
+        bytes_scanned_expr = (
+            "bytes_scanned/POWER(1024,3) AS gb_scanned"
+            if "BYTES_SCANNED" in query_history_optional
+            else "NULL::FLOAT AS gb_scanned"
+        )
+        rows_produced_expr = (
+            "rows_produced"
+            if "ROWS_PRODUCED" in query_history_optional
+            else "NULL::NUMBER AS rows_produced"
+        )
+        cloud_credits_expr = (
+            "credits_used_cloud_services AS cloud_credits"
+            if "CREDITS_USED_CLOUD_SERVICES" in query_history_optional
+            else "NULL::FLOAT AS cloud_credits"
+        )
 
         @st.fragment(run_every=_run_every)
         def _live_panel():
-            _session  = get_session()
             wh_filter_clean = (wh_filter or "").strip()
             wh_clause = f"AND warehouse_name ILIKE {sql_literal('%' + wh_filter_clean + '%')}" if wh_filter_clean else ""
             company_wh_clause = get_wh_filter_clause("warehouse_name")
-            st_clause = f"AND execution_status = '{status_filter}'" if status_filter != "ALL" else ""
+            st_clause = f"AND execution_status = {sql_literal(status_filter, 40)}" if status_filter != "ALL" else ""
 
             if auto_refresh:
                 st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')} - auto-refresh {rt_interval}s")
@@ -128,26 +179,6 @@ def render():
               {company_wh_clause}
             ORDER BY elapsed_sec DESC
             """
-            fallback_optional = set(filter_existing_columns(
-                _session,
-                "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-                ["WAREHOUSE_SIZE", "BYTES_SCANNED", "ROWS_PRODUCED"],
-            ))
-            fallback_wh_size_expr = (
-                "warehouse_size"
-                if "WAREHOUSE_SIZE" in fallback_optional
-                else "NULL::VARCHAR AS warehouse_size"
-            )
-            fallback_mb_scanned_expr = (
-                "bytes_scanned/POWER(1024,2) AS mb_scanned"
-                if "BYTES_SCANNED" in fallback_optional
-                else "0::FLOAT AS mb_scanned"
-            )
-            fallback_rows_expr = (
-                "rows_produced"
-                if "ROWS_PRODUCED" in fallback_optional
-                else "0::NUMBER AS rows_produced"
-            )
             df_live = pd.DataFrame()
             try:
                 if not try_info_schema:
@@ -161,7 +192,7 @@ def render():
                     # IS unavailable (e.g. serverless context) - fall back to AU.
                     st.info("Live metadata unavailable - using ACCOUNT_USAGE fallback.")
                 try:
-                    df_live = run_query_or_raise(f"""
+                    df_live = run_query(f"""
                         SELECT query_id, SUBSTR(query_text,1,300) AS query_text,
                                user_name, warehouse_name, {fallback_wh_size_expr},
                                execution_status, start_time,
@@ -173,7 +204,7 @@ def render():
                           {wh_clause}
                           {company_wh_clause}
                         ORDER BY start_time DESC LIMIT 100
-                    """)
+                    """, ttl_key=f"live_active_fallback_{company}_{wh_filter_clean}_{status_filter}", tier="live")
                 except Exception as fallback_err:
                     st.warning(f"Live query data unavailable: {format_snowflake_error(fallback_err)}")
 
@@ -208,9 +239,10 @@ def render():
                     try:
                         if not require_admin_enabled("query cancellation"):
                             return
-                        _session.sql(cancel_sql).collect()
+                        action_session = get_session()
+                        action_session.sql(cancel_sql).collect()
                         log_admin_action(
-                            _session,
+                            action_session,
                             action_type="CANCEL QUERY",
                             target_object=str(kill_qid),
                             sql_text=cancel_sql,
@@ -225,7 +257,7 @@ def render():
                         st.success(f"Cancel sent for `{kill_qid}`")
                     except Exception as e:
                         log_admin_action(
-                            _session,
+                            get_session(),
                             action_type="CANCEL QUERY",
                             target_object=str(kill_qid),
                             sql_text=cancel_sql,
@@ -242,36 +274,6 @@ def render():
             st.divider()
             st.subheader("Recent (last 4h, ACCOUNT_USAGE)")
             try:
-                recent_optional = set(filter_existing_columns(
-                    _session,
-                    "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
-                    [
-                        "WAREHOUSE_SIZE",
-                        "BYTES_SCANNED",
-                        "ROWS_PRODUCED",
-                        "CREDITS_USED_CLOUD_SERVICES",
-                    ],
-                ))
-                warehouse_size_expr = (
-                    "warehouse_size"
-                    if "WAREHOUSE_SIZE" in recent_optional
-                    else "NULL::VARCHAR AS warehouse_size"
-                )
-                bytes_scanned_expr = (
-                    "bytes_scanned/POWER(1024,3) AS gb_scanned"
-                    if "BYTES_SCANNED" in recent_optional
-                    else "NULL::FLOAT AS gb_scanned"
-                )
-                rows_produced_expr = (
-                    "rows_produced"
-                    if "ROWS_PRODUCED" in recent_optional
-                    else "NULL::NUMBER AS rows_produced"
-                )
-                cloud_credits_expr = (
-                    "credits_used_cloud_services AS cloud_credits"
-                    if "CREDITS_USED_CLOUD_SERVICES" in recent_optional
-                    else "NULL::FLOAT AS cloud_credits"
-                )
                 df_recent = run_query(f"""
                     SELECT query_id, user_name, warehouse_name, {warehouse_size_expr}, execution_status,
                            start_time, total_elapsed_time/1000 AS elapsed_sec,

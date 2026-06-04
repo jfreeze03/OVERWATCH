@@ -23,6 +23,7 @@ from utils import (
     make_action_id, upsert_actions,
     run_query, sql_literal, format_snowflake_error,
     resolve_owner_context,
+    defer_source_note,
     safe_float,
 )
 
@@ -1437,16 +1438,14 @@ def render():
         COST_CENTER_VIEW_DETAILS,
         columns=3,
     )
-    st.caption(
+    defer_source_note(
         "Progressive load is enabled: each cost view runs only when its Load or Calculate button is selected."
     )
 
     # -- USER LEADERBOARD ------------------------------------------------------
     if cost_view == "Cost Explorer":
         st.header("Cost Explorer")
-        st.caption(
-            "Allocated / Estimated cost drilldown by company, department, warehouse, database, role, and user."
-        )
+        st.caption("Cost drilldown by company, owner, warehouse, database, role, and user.")
 
         c1, c2, c3, c4 = st.columns([1, 1.35, 1, 1.2])
         with c1:
@@ -1552,7 +1551,7 @@ def render():
                 m4.metric("Tag proof", f"{tag_cost / denominator * 100:.0f}%")
                 m5.metric("No DB context", f"${no_context_cost:,.0f}")
                 m6.metric("Top driver", f"{top_share:.0f}%")
-                st.caption(st.session_state.get(
+                defer_source_note(st.session_state.get(
                     "df_cost_explorer_source",
                     "Cost Explorer source: not loaded",
                 ))
@@ -1566,7 +1565,7 @@ def render():
                     color="#0ea5e9",
                 )
                 if not chart_rows.empty:
-                    st.caption("Bars are sorted highest to lowest by estimated cost.")
+                    defer_source_note("Cost Explorer bars are sorted highest to lowest by estimated cost.")
 
                 render_priority_dataframe(
                     summary,
@@ -1634,8 +1633,8 @@ def render():
 
     elif cost_view == "Explain This Bill":
         st.header("Explain This Bill")
-        st.caption(
-            "Start here when someone asks why Snowflake spend moved. "
+        st.caption("Start here when someone asks why Snowflake spend moved.")
+        defer_source_note(
             "Warehouse totals use exact ACCOUNT_USAGE metering; user and query drivers are allocated estimates."
         )
         explain_period = st.selectbox(
@@ -2003,7 +2002,7 @@ def render():
                     "over budget" if budget_delta > 0 else "under budget",
                 )
 
-            st.caption(
+            defer_source_note(
                 f"{metric_confidence_label('exact')} for warehouse totals | "
                 f"{metric_confidence_label('allocated')} for user/query attribution | "
                 f"{explain_meta.get('summary_source', 'Live fallback: WAREHOUSE_METERING_HISTORY')} | "
@@ -2041,7 +2040,7 @@ def render():
                 budget=explain_budget,
             )
             st.subheader("Finance Movement Summary")
-            st.caption(
+            defer_source_note(
                 "This bridge separates exact warehouse compute, allocated workload, estimated overhead, "
                 "and account-wide service/serverless credits. It is designed for bill review and executive talking points."
             )
@@ -2083,7 +2082,7 @@ def render():
                 credit_price=credit_price,
             )
             st.subheader("Bill Movement Waterfall")
-            st.caption(
+            defer_source_note(
                 "Positive bars increased the bill; negative bars reduced it. "
                 "Baseline and current total are exact warehouse-metering totals."
             )
@@ -2176,7 +2175,7 @@ def render():
             )
 
             st.subheader("PROD vs DEV Cost Split")
-            st.caption(
+            defer_source_note(
                 f"{metric_confidence_label('allocated')} | Shared warehouses mean exact WAREHOUSE_METERING_HISTORY "
                 "cannot split PROD and DEV by itself. This view allocates metered credits to query database context, "
                 "then rolls ALFA_EDW_PROD separately from ALFA_EDW_DEV/SAN/PHX/SEA/SIT."
@@ -2247,7 +2246,7 @@ def render():
                 )
 
             st.subheader("Account-Wide Service / Serverless Contributors")
-            st.caption(
+            defer_source_note(
                 f"{metric_confidence_label('account-wide')} | "
                 "METERING_HISTORY service credits are not company-scoped by warehouse. "
                 "Use tags, ownership standards, or service-specific lineage before chargeback."
@@ -2333,7 +2332,7 @@ def render():
             c1.metric("Distinct Users",  df_l["USER_NAME"].nunique())
             c2.metric("Total Credits",   format_credits(df_l["TOTAL_CREDITS"].sum()))
             c3.metric("Total Est. Cost", f"${df_l['COST'].sum():,.2f}")
-            st.caption(f"{metric_confidence_label('allocated')} | {freshness_note('ACCOUNT_USAGE')}")
+            defer_source_note(metric_confidence_label("allocated"), freshness_note("ACCOUNT_USAGE"))
 
             st.subheader("Top Users by Cost")
             df_l = _annotate_cost_routes(df_l, "User Cost")
@@ -2442,7 +2441,7 @@ def render():
             c1.metric("Total Credits",     format_credits(total_cr))
             c2.metric("Total Cost",        f"${credits_to_dollars(total_cr, credit_price):,.2f}")
             c3.metric("Avg Daily Credits", f"{total_cr / max(br_days,1):,.2f}")
-            st.caption(f"{metric_confidence_label('exact')} | {freshness_note('WAREHOUSE_METERING_HISTORY')}")
+            defer_source_note(metric_confidence_label("exact"), freshness_note("WAREHOUSE_METERING_HISTORY"))
             daily = df_b.groupby("DAY")["DAILY_CREDITS"].sum().reset_index()
             st.line_chart(daily.set_index("DAY")["DAILY_CREDITS"])
             by_wh = (
@@ -2461,7 +2460,7 @@ def render():
     # -- COST RECONCILIATION -------------------------------------------------
     elif cost_view == "Reconciliation":
         st.header("Cost Reconciliation")
-        st.caption(
+        defer_source_note(
             "Compares exact warehouse metering to query-level allocated credits. "
             "Large variances usually mean idle warehouse time, non-query activity, latency, or chargeback assumptions need review."
         )
@@ -2495,7 +2494,7 @@ def render():
             c1.metric("Exact Metered", format_credits(total_exact))
             c2.metric("Allocated to Queries", format_credits(total_alloc))
             c3.metric("Unallocated / Variance", format_credits(total_var))
-            st.caption(
+            defer_source_note(
                 f"{metric_confidence_label('exact')} for metering; "
                 f"{metric_confidence_label('allocated')} for query attribution. "
                 f"Source: {st.session_state.get('cc_recon_attribution_source', 'OVERWATCH allocated fallback')} | "
@@ -2697,8 +2696,8 @@ def render():
     # -- CHARGEBACK - ALFA / Trexis split -------------------------------------
     elif cost_view == "Chargeback":
         st.header("ALFA / Trexis Chargeback")
-        st.caption(
-            "Allocated / Estimated credits split by company, environment, database, user, and warehouse. "
+        st.caption("Allocated credits split by company, environment, database, user, and warehouse.")
+        defer_source_note(
             "Database-attributed cost is directional because shared warehouses cannot be exactly split by PROD/DEV."
         )
         cb_days = st.slider("Lookback (days)", 1, 90, 30, key="cc_cb_days")
@@ -2779,7 +2778,7 @@ def render():
         if st.session_state.get("df_chargeback") is not None and not st.session_state["df_chargeback"].empty:
             df_cb = _annotate_allocation_quality(st.session_state["df_chargeback"])
             df_cb["EST_COST"] = df_cb["TOTAL_CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
-            st.caption(st.session_state.get(
+            defer_source_note(st.session_state.get(
                 "df_chargeback_source",
                 "Chargeback source: not loaded",
             ))
@@ -2909,8 +2908,8 @@ def render():
     # -- CONTRACT / COMMITMENT UTILIZATION -------------------------------------
     elif cost_view == "Contract Utilization":
         st.header("Contract & Commitment Utilization")
-        st.caption(
-            "Track consumption against your annual Snowflake committed-use contract. "
+        st.caption("Track consumption against the annual Snowflake committed-use contract.")
+        defer_source_note(
             "Projects burn rate to flag over- and under-utilization risk. "
             "This is the canonical contract view; the standalone Credit Contract page has been consolidated here."
         )
@@ -3030,7 +3029,7 @@ def render():
                       delta_color="inverse" if pct_consumed > pct_time_elapsed + 5 else "normal")
             k4.metric("Daily Burn Rate",      f"{daily_rate:,.1f} cr/day")
             k5.metric("Projected Year-End",   format_credits(projected_total))
-            st.caption(
+            defer_source_note(
                 f"{metric_confidence_label('exact')} for consumed credits | "
                 f"{metric_confidence_label('projection')} | "
                 f"{freshness_note('WAREHOUSE_METERING_HISTORY')}"

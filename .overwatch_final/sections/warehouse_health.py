@@ -9,6 +9,7 @@ from utils import (
     download_csv, render_drillable_bar_chart, get_wh_filter_clause,
     get_active_company, get_active_environment, get_environment_filter_clause, get_global_filter_clause,
     metric_confidence_label, freshness_note,
+    defer_source_note,
     build_metered_credit_cte, make_action_id, upsert_actions,
     run_query, format_snowflake_error, filter_existing_columns, render_optimization_advisor,
     build_mart_warehouse_overview_sql, build_mart_warehouse_scaling_sql,
@@ -1920,7 +1921,7 @@ def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_
 
     st.markdown("**Warehouse Watch Floor**")
     if priority.empty:
-        st.caption("Use Overview & Scaling for periodic checks, or Efficiency after a cost spike.")
+        defer_source_note("Use Overview & Scaling for periodic checks, or Efficiency after a cost spike.")
         return
 
     cols = st.columns(len(priority))
@@ -2381,7 +2382,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
             with st.expander("Warehouse operability fact query", expanded=False):
                 st.code(st.session_state.get("wh_operability_fact_sql", ""), language="sql")
         elif st.session_state.get("wh_operability_fact_error"):
-            st.caption(
+            defer_source_note(
                 "Warehouse operability mart not available yet; deploy or refresh "
                 "`FACT_WAREHOUSE_OPERABILITY_DAILY` to enable the fast blocker surface."
             )
@@ -2408,7 +2409,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                         st.session_state["wh_setting_execution_audit"] = pd.DataFrame()
                         st.warning(f"Warehouse execution audit unavailable: {format_snowflake_error(exc)}")
             with audit_hint_col:
-                st.caption(
+                defer_source_note(
                     "Joins setting-review snapshots to DBA Tools ALTER WAREHOUSE audit rows so changes have "
                     "approval, rollback, SQL hash, executor, and verification evidence."
                 )
@@ -2526,7 +2527,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                             source="Warehouse Health Capacity Brief",
                         )
             with setup_col:
-                st.caption(
+                defer_source_note(
                     "Snapshot stores owner approval path, rollback requirement, baseline pressure, and post-change verification SQL."
                 )
             with st.expander("Warehouse Setting Review Trend", expanded=False):
@@ -2561,10 +2562,11 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                         raw_label="All persisted warehouse setting reviews",
                         height=260,
                     )
-                with st.expander("Warehouse setting review setup SQL", expanded=False):
-                    st.code(build_warehouse_setting_review_ddl(), language="sql")
+                defer_source_note(
+                    "Warehouse setting-review DDL is managed by snowflake/OVERWATCH_MART_SETUP.sql; do not deploy setup SQL from the dashboard."
+                )
             with st.expander("Warehouse Action Closure Analytics", expanded=False):
-                st.caption(
+                defer_source_note(
                     "Uses Warehouse Health action-queue rows to show which capacity or efficiency actions are open, "
                     "overdue, missing owner approval, or closed without verification evidence."
                 )
@@ -2641,7 +2643,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     st.info("Loaded warehouse execution audit is stale for the active scope. Reload execution audit before acting.")
                 elif audit is not None:
                     st.info("No warehouse setting review or ALTER WAREHOUSE audit rows found for the selected scope.")
-                st.caption("Warehouse execution audit query")
+                defer_source_note("Warehouse execution audit query")
                 st.code(
                     st.session_state.get("wh_setting_execution_audit_sql")
                     or _warehouse_setting_execution_audit_sql(30, company, environment),
@@ -2769,7 +2771,7 @@ def _queue_efficiency_findings(session, df_eff: pd.DataFrame) -> None:
 
 def _render_warehouse_ownership_panel(company: str, environment: str) -> None:
     with st.expander("Warehouse Ownership Readiness", expanded=False):
-        st.caption(
+        defer_source_note(
             "Checks recent warehouse usage against warehouse tags and the owner directory before DBA setting changes are approved."
         )
         owner_days = st.slider("Ownership usage days", 7, 90, 30, key="wh_owner_inventory_days")
@@ -2851,7 +2853,7 @@ def _render_warehouse_source_health(company: str, environment: str) -> None:
         c2.metric("Mart-Backed", f"{mart_backed:,}")
         c3.metric("Stale", f"{stale:,}", delta_color="inverse")
         c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
-        st.caption(
+        defer_source_note(
             "Use this before acting on warehouse findings. Stale rows mean the data was loaded under a different "
             "company, environment, lookback, or global filter."
         )
@@ -3047,7 +3049,7 @@ def render():
             c4.metric("Credit Delta", format_credits(float(df_w.get("CREDIT_DELTA", pd.Series(dtype=float)).sum())))
             wh_source = st.session_state.get("wh_df_wh_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
             confidence = "estimated" if "mart:" in str(wh_source).lower() else "exact"
-            st.caption(f"{metric_confidence_label(confidence)} | {wh_source}")
+            defer_source_note(metric_confidence_label(confidence), wh_source)
 
             movement = _warehouse_period_movement(df_w)
             if not movement.empty:
@@ -3066,7 +3068,7 @@ def render():
                     height=320,
                 )
             else:
-                st.caption("Current/prior warehouse movement appears when the OVERWATCH mart overview is available.")
+                defer_source_note("Current/prior warehouse movement appears when the OVERWATCH mart overview is available.")
 
             # Flag warehouses needing attention
             for _, row in df_w.iterrows():
@@ -3116,7 +3118,7 @@ def render():
                     lookback_hours=wh_days * 24,
                 )
             else:
-                st.info("Cache hit percentage is a live ACCOUNT_USAGE-only metric and is not stored in the hourly mart.")
+                defer_source_note("Cache hit percentage is a live ACCOUNT_USAGE-only metric and is not stored in the hourly mart.")
 
             download_csv(df_w, "warehouse_health.csv")
 
@@ -3181,7 +3183,7 @@ def render():
                 st.info("Loaded scaling events are stale for the active scope. Reload Scaling Events before acting.")
             elif df_scale is not None and not df_scale.empty:
                 scale_source = st.session_state.get("wh_scaling_source", "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY")
-                st.caption(f"{metric_confidence_label('exact')} | {scale_source}")
+                defer_source_note(metric_confidence_label("exact"), scale_source)
                 render_priority_dataframe(
                     df_scale,
                     title="Largest scaling/metering events",
@@ -3255,7 +3257,7 @@ def render():
             c1.metric("Warehouses scored", len(df_eff))
             c2.metric("Under 70 score", len(low), delta_color="inverse")
             c3.metric("Total metered credits", format_credits(float(df_eff["METERED_CREDITS"].sum())))
-            st.caption(f"{metric_confidence_label('allocated')} | {freshness_note('ACCOUNT_USAGE')}")
+            defer_source_note(metric_confidence_label("allocated"), freshness_note("ACCOUNT_USAGE"))
             render_priority_dataframe(
                 df_eff,
                 title="Warehouse efficiency risks",

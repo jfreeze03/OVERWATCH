@@ -1,8 +1,9 @@
-# sections/storage_monitor.py — Storage overview, data freshness, iceberg, egress
+# sections/storage_monitor.py - Storage overview, data freshness, iceberg, egress
 import streamlit as st
 from utils import (
     build_mart_storage_db_detail_sql,
     build_mart_storage_trend_sql,
+    defer_source_note,
     get_active_company,
     get_db_filter_clause,
     get_session,
@@ -14,6 +15,9 @@ from utils import (
     safe_float,
 )
 from utils.workflows import render_priority_dataframe
+
+
+LIVE_STORAGE_FALLBACK_MAX_DAYS = 90
 
 
 def _load_storage_trend_from_mart(stor_days: int, company: str) -> bool:
@@ -36,7 +40,7 @@ def render():
     storage_cost_per_tb = st.session_state.get("storage_cost_per_tb", 23.00)
     company = get_active_company()
 
-    st.header("🗄️ Storage Monitor")
+    st.header("Storage Monitor")
     st.caption("Database & stage storage with cost estimates ($23/TB/month default).")
 
     stor_days = st.slider("Lookback (days)", 7, 180, 90, key="stor_days")
@@ -62,12 +66,18 @@ def render():
             try:
                 if company != "ALL":
                     st.info("Stage storage is account-level in Snowflake, so this company view shows database and failsafe storage only.")
+                fallback_days = min(int(stor_days), LIVE_STORAGE_FALLBACK_MAX_DAYS)
+                if int(stor_days) > fallback_days:
+                    st.info(
+                        f"Live storage fallback is capped at {fallback_days} days. "
+                        "Use the OVERWATCH mart for longer storage trends."
+                    )
                 stage_storage_cte = (
                     f"""
             stage_storage AS (
                 SELECT usage_date, SUM(average_stage_bytes) AS stage_bytes
                 FROM SNOWFLAKE.ACCOUNT_USAGE.STAGE_STORAGE_USAGE_HISTORY
-                WHERE usage_date >= DATEADD('day', -{stor_days}, CURRENT_DATE())
+                WHERE usage_date >= DATEADD('day', -{fallback_days}, CURRENT_DATE())
                 GROUP BY usage_date
             )
                 """
@@ -85,7 +95,7 @@ def render():
                        SUM(average_database_bytes) AS storage_bytes,
                        SUM(average_failsafe_bytes) AS failsafe_bytes
                 FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-                WHERE usage_date >= DATEADD('day', -{stor_days}, CURRENT_DATE())
+                WHERE usage_date >= DATEADD('day', -{fallback_days}, CURRENT_DATE())
                   {get_db_filter_clause("database_name")}
                 GROUP BY usage_date
             ),
@@ -99,10 +109,10 @@ def render():
             FROM database_storage d
             FULL OUTER JOIN stage_storage s ON d.usage_date = s.usage_date
             ORDER BY usage_date
-                    """, ttl_key=f"storage_trend_{company}_{stor_days}", tier="historical")
+                    """, ttl_key=f"storage_trend_{company}_{fallback_days}", tier="historical")
                 st.session_state["stor_df_stor"] = df_stor
                 st.session_state["stor_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE storage views"
-                st.session_state["stor_meta"] = stor_meta
+                st.session_state["stor_meta"] = {"company": company, "days": fallback_days}
             except Exception as e:
                 st.warning(f"Storage data unavailable in this role/context: {format_snowflake_error(e)}")
 
@@ -118,7 +128,11 @@ def render():
             c3.metric("Stage GB",     f"{safe_float(latest.get('STAGE_GB',0)):,.1f}")
             c4.metric("Est Monthly Cost", f"${total_tb * storage_cost_per_tb:,.2f}")
             confidence = "account-wide" if company != "ALL" else "exact"
-            st.caption(f"{metric_confidence_label(confidence)} | {st.session_state.get('stor_source', 'SNOWFLAKE.ACCOUNT_USAGE')} | {freshness_note('ACCOUNT_USAGE')}")
+            defer_source_note(
+                metric_confidence_label(confidence),
+                st.session_state.get("stor_source", "SNOWFLAKE.ACCOUNT_USAGE"),
+                freshness_note("ACCOUNT_USAGE"),
+            )
 
         st.subheader("Storage Trend")
         st.area_chart(df_st.set_index("USAGE_DATE")[["STORAGE_GB","FAILSAFE_GB","STAGE_GB"]])
@@ -156,7 +170,7 @@ def render():
                     df_db = None
                     source = ""
             if df_db is not None:
-                st.caption(source)
+                defer_source_note(source)
                 render_priority_dataframe(
                     df_db,
                     title="Largest databases by storage",

@@ -190,6 +190,9 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "render_signal_confidence", "add_signal_routes", "render_priority_dataframe",
         "migrate_legacy_workflow_state", "render_workflow_module",
     ),
+    "section_guidance": (
+        "defer_section_note", "defer_source_note",
+    ),
     "compatibility": (
         "run_compatibility_checks", "get_available_columns", "view_supports_columns",
         "filter_existing_columns", "build_smoke_test_checklist",

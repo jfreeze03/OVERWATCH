@@ -8,6 +8,7 @@ from utils import (
     build_mart_adoption_users_db_sql,
     build_mart_adoption_users_wh_sql,
     build_mart_adoption_warehouse_size_sql,
+    defer_source_note,
     download_csv,
     filter_existing_columns,
     get_active_company,
@@ -293,7 +294,7 @@ def render():
     m3.metric("Queries/User", f"{_metric(summary, 'QUERIES_PER_USER'):,.1f}")
     m4.metric("Time/Query", f"{_metric(summary, 'AVG_TIME_PER_QUERY_SEC'):,.2f}s")
     m5.metric("Error Rate", f"{_metric(summary, 'ERROR_RATE'):,.1f}%")
-    st.caption(data.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
+    defer_source_note(data.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
     active_view = st.radio(
         "Adoption detail view",

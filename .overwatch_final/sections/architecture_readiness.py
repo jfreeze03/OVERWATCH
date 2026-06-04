@@ -1332,10 +1332,9 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
         if isinstance(df, pd.DataFrame):
             _render_loaded_metrics(df, "agent and MCP")
             if df.empty:
-                st.info(
-                    "No Cortex Agents or MCP servers are visible to the active role. "
-                    "SHOW AGENTS and SHOW MCP SERVERS are preview/role-gated surfaces in some accounts; "
-                    "an empty result can mean the feature is not enabled, not granted, or genuinely unused."
+                st.info("No Cortex Agents or MCP servers are visible to the active role.")
+                defer_section_note(
+                    "Agent and MCP inventory can be role-gated or preview-gated. Empty results can mean the feature is not enabled, not granted, or genuinely unused."
                 )
             else:
                 render_priority_dataframe(

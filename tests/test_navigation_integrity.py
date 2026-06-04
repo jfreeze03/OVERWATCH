@@ -192,6 +192,50 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("query_warehouse: OVERWATCH_WH", manifest)
         self.assertNotIn("query_warehouse: COMPUTE_WH", manifest)
         self.assertIn("execute_as: CALLER", manifest)
+        self.assertIn("main_file: app.py", manifest)
+        self.assertIn('title: "OVERWATCH - Snowflake DBA Monitor"', manifest)
+
+    def test_streamlit_deployment_entrypoints_are_pinned(self):
+        wrapper = (ROOT / "streamlit_app.py").read_text(encoding="utf-8")
+        config = (ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+        cloud_docs = (ROOT / "STREAMLIT_CLOUD_DEPLOY.md").read_text(encoding="utf-8")
+
+        self.assertIn('APP_DIR = Path(__file__).resolve().parent / ".overwatch_final"', wrapper)
+        self.assertIn('runpy.run_path(str(APP_DIR / "app.py"), run_name="__main__")', wrapper)
+        self.assertIn("showSidebarNavigation = false", config)
+        self.assertIn("gatherUsageStats = false", config)
+        self.assertIn("Main file path: `streamlit_app.py`", cloud_docs)
+
+    def test_deployment_text_files_do_not_contain_mojibake(self):
+        bad_patterns = (
+            "\u00e2", "\u00f0", "\ufffd", "\u00c3", "\u00c2",
+            "\u20ac\u2122", "\u20ac", "\u0153", "\u017d", "\u0178",
+            "\u009d", "\u0090", "\u008d",
+        )
+        for path in (
+            ROOT / "README.md",
+            ROOT / "STREAMLIT_CLOUD_DEPLOY.md",
+            ROOT / "OVERWATCH_DOCUMENTATION.md",
+            ROOT / "OVERWATCH_MANUAL_INPUTS_AND_DDL_RUNBOOK.md",
+            APP_ROOT / "snowflake.yml",
+        ):
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                self.assertFalse(any(pattern in text for pattern in bad_patterns))
+
+    def test_local_secret_files_are_ignored(self):
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        for pattern in (
+            ".streamlit/secrets.toml",
+            ".streamlit/*.toml",
+            "!.streamlit/config.toml",
+            ".env",
+            ".env.*",
+            "*.pem",
+            "*.key",
+        ):
+            with self.subTest(pattern=pattern):
+                self.assertIn(pattern, gitignore)
 
     def test_architecture_objectives_cover_alfa_prod_dev_and_execution_warehouse(self):
         objectives = {
@@ -487,8 +531,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("help=details.get(workflow) or None", workflows_text)
         self.assertNotIn("st.caption(details[workflow])", workflows_text)
         self.assertIn("from .section_guidance import defer_section_note", workflows_text)
+        self.assertIn("defer_source_note", workflows_text)
         self.assertIn("defer_section_note(summary)", workflows_text)
-        self.assertIn('defer_section_note(" | ".join(parts))', workflows_text)
+        self.assertIn("defer_source_note(*parts)", workflows_text)
         self.assertNotIn("with st.expander(str(title), expanded=False)", workflows_text)
         self.assertNotIn("ow-brief-strip-collapsed", workflows_text)
         self.assertNotIn("ow-brief-title", workflows_text)
@@ -688,6 +733,17 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("admin_button_disabled", live_monitor_text)
         self.assertIn("require_admin_enabled(\"query cancellation\")", live_monitor_text)
         self.assertIn("log_admin_action(", live_monitor_text)
+        self.assertIn("QUERY_HISTORY_OPTIONAL_COLUMNS", live_monitor_text)
+        self.assertIn("execution_status = {sql_literal(status_filter, 40)}", live_monitor_text)
+        self.assertNotIn("execution_status = '{status_filter}'", live_monitor_text)
+        live_panel_body = live_monitor_text.split("def _live_panel():", 1)[1].split(
+            "        if refresh_live or auto_refresh:",
+            1,
+        )[0]
+        self.assertNotIn("filter_existing_columns(", live_panel_body)
+        self.assertNotIn("df_live = run_query_or_raise(f\"\"\"", live_panel_body)
+        self.assertIn('ttl_key=f"live_active_fallback_', live_panel_body)
+        self.assertIn('tier="live"', live_panel_body)
         architecture_render_preload = architecture_text.split("def render():", 1)[1].split(
             "active_pane = st.radio",
             1,

@@ -2,6 +2,7 @@
 import streamlit as st
 
 from utils import (
+    defer_source_note,
     download_csv,
     format_snowflake_error,
     get_active_company,
@@ -283,7 +284,7 @@ def render():
     c2.metric("Worst", f"{safe_float(df[metric_col].max()):,.2f}")
     c3.metric("Affected Warehouses", f"{df['WAREHOUSE_NAME'].nunique():,}")
     c4.metric("Affected Users", f"{df['USER_NAME'].nunique():,}")
-    st.caption(st.session_state.get("dd_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
+    defer_source_note(st.session_state.get("dd_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
     if st.button("Send diagnosis findings to Action Queue", key="dd_queue"):
         _queue_diagnosis(session, df, loaded_mode)

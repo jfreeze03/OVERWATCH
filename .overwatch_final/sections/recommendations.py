@@ -12,6 +12,7 @@ from utils import (
     build_safe_verification_query,
     build_task_failure_summary_sql,
     credits_to_dollars,
+    defer_source_note,
     download_csv,
     filter_existing_columns,
     format_snowflake_error,
@@ -818,9 +819,10 @@ def render():
             c3.metric("Est. Monthly Savings", f"${monthly:,.0f}")
             c4.metric("Proof-Ready", f"{proof_ready:,}", delta=f"{decisive_pct:.0f}%")
             c5.metric("SQL Fix Candidates", f"{max(sql_ready - no_auto_fix, 0):,}", delta=f"{no_auto_fix:,} manual")
-            st.caption(
-                f"{metric_confidence_label('estimated')} | {freshness_note('ACCOUNT_USAGE')} | "
-                "Savings are directional until the action is fixed and logged to Snowflake Value."
+            defer_source_note(
+                metric_confidence_label("estimated"),
+                freshness_note("ACCOUNT_USAGE"),
+                "Savings are directional until the action is fixed and logged to Snowflake Value.",
             )
             top_rec = df_recs.iloc[0]
             st.warning(
@@ -829,7 +831,7 @@ def render():
             )
             source_notes = st.session_state.get("rec_recommendation_sources", [])
             if source_notes:
-                st.caption("Recommendation sources: " + "; ".join(source_notes))
+                defer_source_note("Recommendation sources: " + "; ".join(source_notes))
             render_priority_dataframe(
                 df_recs,
                 title="Recommendations to work first",

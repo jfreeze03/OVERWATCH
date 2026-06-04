@@ -9,6 +9,7 @@ import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
 from utils import (
+    defer_source_note,
     filter_existing_columns,
     format_snowflake_error,
     environment_label_for_database,
@@ -2565,7 +2566,7 @@ def _render_change_source_health(company: str, environment: str) -> None:
         c2.metric("Mart-Backed", f"{mart_backed:,}")
         c3.metric("Stale", f"{stale:,}", delta_color="inverse")
         c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
-        st.caption(
+        defer_source_note(
             "Use this before acting on change findings. DDL/DCL detection is text-pattern based, "
             "and account/role-only events are intentionally retained when no database context exists."
         )
@@ -2868,7 +2869,7 @@ def render() -> None:
             st.info("Change control is usable, but there are changes worth validating.")
         else:
             st.success("Change control looks clean for the selected window.")
-        st.caption(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
+        defer_source_note(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
         operability_fact = st.session_state.get("change_control_operability_fact")
         operability_fact_current = _change_meta_matches(
@@ -2907,7 +2908,7 @@ def render() -> None:
         elif operability_fact is not None and not operability_fact.empty and not operability_fact_current:
             st.info("Loaded change-control operability facts are stale for the active scope. Reload the brief before acting.")
         elif st.session_state.get("change_control_operability_fact_error"):
-            st.caption(
+            defer_source_note(
                 "Change-control operability mart not available yet; deploy or refresh "
                 "`FACT_CHANGE_CONTROL_OPERABILITY_DAILY` to enable the fast blocker surface."
             )
@@ -3038,7 +3039,7 @@ def render() -> None:
                         source=meta.get("source", ""),
                     )
             with setup_col:
-                st.caption(
+                defer_source_note(
                     "Snapshot stores ticket, IaC, owner, approver, query-id, and blast-radius requirements for audit trend review."
                 )
             with st.expander("Change Control Evidence Trend", expanded=False):
@@ -3090,7 +3091,7 @@ def render() -> None:
                 with st.expander("Change-control evidence setup SQL", expanded=False):
                     st.code(build_change_control_evidence_ddl(), language="sql")
             with st.expander("Change Action Closure Analytics", expanded=False):
-                st.caption(
+                defer_source_note(
                     "Uses Change & Drift action-queue rows to show open, overdue, unapproved, "
                     "or closed-without-verification change-control work."
                 )
@@ -3169,7 +3170,7 @@ def render() -> None:
         with dl2:
             with st.expander("Proof SQL", expanded=False):
                 proof_sql = st.session_state.get("change_drift_proof_sql", {})
-                st.caption("Use these source queries to defend change counts and exception rows.")
+                defer_source_note("Use these source queries to defend change counts and exception rows.")
                 st.code(proof_sql.get("summary", "-- Load the change brief first."), language="sql")
                 st.code(proof_sql.get("exceptions", "-- Load the change brief first."), language="sql")
         if st.session_state.get("exceptions_only_mode"):

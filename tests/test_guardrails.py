@@ -65,6 +65,14 @@ class GuardrailTests(unittest.TestCase):
         self.assertIn("WHERE RUN_START >= DATEADD('DAY', -30, CURRENT_TIMESTAMP())", task_text)
         self.assertIn("ADOPTION ANALYTICS LIVE FALLBACK IS CAPPED AT 35 DAYS", adoption_text)
 
+    def test_storage_monitor_live_fallback_is_capped(self):
+        storage_text = (APP_ROOT / "sections" / "storage_monitor.py").read_text(encoding="utf-8")
+
+        self.assertIn("LIVE_STORAGE_FALLBACK_MAX_DAYS = 90", storage_text)
+        self.assertIn("fallback_days = min(int(stor_days), LIVE_STORAGE_FALLBACK_MAX_DAYS)", storage_text)
+        self.assertIn("DATEADD('day', -{fallback_days}, CURRENT_DATE())", storage_text)
+        self.assertIn('ttl_key=f"storage_trend_{company}_{fallback_days}"', storage_text)
+
     def test_app_clamps_global_date_widget_before_instantiation(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
 

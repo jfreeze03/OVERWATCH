@@ -25,6 +25,7 @@ from utils import (
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
     load_warehouse_inventory, build_unclassified_assets_sql,
     safe_float, safe_int, render_ranked_bar_chart,
+    defer_source_note,
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
@@ -2214,14 +2215,14 @@ ORDER BY current_tb DESC;"""
     # Setup status and install readiness
     if selected_tool == "Setup Status":
         st.header("Setup Status")
-        st.caption(
-            "Run this before deployment. It checks Snowflake view access, "
-            "optional column availability, persistent OVERWATCH objects, calculation "
-            "confidence, and the operational readiness checklist."
+        st.caption("Deployment preflight for access, setup objects, formulas, and readiness.")
+        defer_source_note(
+            "Run Setup Status before deployment to check Snowflake view access, optional account columns, "
+            "persistent OVERWATCH objects, calculation confidence, and the operational readiness checklist."
         )
 
         st.subheader("Snowflake Compatibility Check")
-        st.caption(
+        defer_source_note(
             "Validates required ACCOUNT_USAGE views, optional columns that vary by account, "
             "and SHOW commands used by DBA operations."
         )
@@ -2257,7 +2258,7 @@ ORDER BY current_tb DESC;"""
 
         st.divider()
         st.subheader("Company Scope Audit")
-        st.caption(
+        defer_source_note(
             "Find warehouses and databases that are not matched to the ALFA or Trexis allowlists. "
             "Review this before widening company filters."
         )
@@ -2296,10 +2297,10 @@ ORDER BY current_tb DESC;"""
             if st.button("Check Setup Status", key="setup_status_load"):
                 st.session_state["dba_setup_status"] = _setup_status_df(session)
         with c2:
-            st.info(
+            st.info(f"Setup source of truth: snowflake/OVERWATCH_MART_SETUP.sql")
+            defer_source_note(
                 "Run the setup SQL with a role that can create tables and tasks in "
-                f"{ALERT_DB}.{ALERT_SCHEMA}. Review the alert task warehouse and schedule "
-                "before enabling it."
+                f"{ALERT_DB}.{ALERT_SCHEMA}. Review the alert task warehouse and schedule before enabling it."
             )
 
         if st.session_state.get("dba_setup_status") is not None:
@@ -2345,7 +2346,4 @@ ORDER BY current_tb DESC;"""
         )
         download_csv(smoke_df, "overwatch_operational_readiness_checklist.csv")
 
-        st.info(
-            "Persistent object DDL and mart aggregation setup have been removed from this dashboard. "
-            "Use the version-controlled Snowflake setup script as the deployment source of truth."
-        )
+        st.info("Persistent object DDL lives in the version-controlled Snowflake setup script.")

@@ -304,6 +304,17 @@ def defer_section_note(note: str, *, section: str | None = None) -> None:
     st.session_state[key] = notes
 
 
+def defer_source_note(*parts: object, section: str | None = None) -> None:
+    """Collect source/freshness text without adding visual noise near metrics."""
+    clean_parts = [
+        " ".join(str(part or "").split())
+        for part in parts
+        if str(part or "").strip()
+    ]
+    if clean_parts:
+        defer_section_note(" | ".join(clean_parts), section=section)
+
+
 def render_deferred_section_notes(section: str) -> None:
     """Render deferred explanations and source contracts in one quiet bottom expander."""
     guide_markup = _section_guide_markup(section)

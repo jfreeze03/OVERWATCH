@@ -10,6 +10,7 @@ from utils import (
     format_snowflake_error,
     format_credits,
     credits_to_dollars,
+    defer_source_note,
     metric_confidence_label,
     freshness_note,
     download_csv,
@@ -748,7 +749,7 @@ def render():
                 )
             sources = st.session_state.get("sp_ops_sources", {})
             if sources:
-                st.caption(" | ".join(str(v) for v in sources.values()))
+                defer_source_note(*[str(v) for v in sources.values()])
             if not exceptions.empty:
                 st.warning("Procedure operations has exceptions to review before relying on task graphs as production workflow control.")
                 slo_summary, slo_board = _build_procedure_reliability_slo_board(summary, exceptions)
@@ -868,9 +869,7 @@ def render():
                 if using_mart_sla
                 else "credits are estimated from warehouse size, elapsed seconds, and cloud services credits"
             )
-            st.caption(
-                f"{metric_confidence_label(confidence)} | {sla_source} | {credit_note}."
-            )
+            defer_source_note(metric_confidence_label(confidence), sla_source, f"{credit_note}.")
             if exceptions.empty:
                 st.success("No procedure runtime or cost regressions crossed the default thresholds.")
             else:
@@ -1010,9 +1009,10 @@ def render():
         c3.metric("Downstream Queries", f"{int(df_sp['DOWNSTREAM_QUERY_COUNT'].sum()):,}")
         c4.metric("Total Credits", format_credits(total_credits))
         lineage_confidence = "allocated" if st.session_state.get("spt_has_root_query_id", False) else "estimated"
-        st.caption(
-            f"{metric_confidence_label(lineage_confidence)} | "
-            f"{freshness_note('QUERY_HISTORY')} | child-query coverage depends on ROOT_QUERY_ID availability."
+        defer_source_note(
+            metric_confidence_label(lineage_confidence),
+            freshness_note("QUERY_HISTORY"),
+            "Child-query coverage depends on ROOT_QUERY_ID availability.",
         )
         df_sp["EST_COST"] = (df_sp["METERED_CREDITS"] + df_sp["CLOUD_CREDITS"]).apply(
             lambda x: credits_to_dollars(x, credit_price)

@@ -42,6 +42,7 @@ Streamlit Community Cloud settings:
 - Repository: `jfreeze03/OVERWATCH`
 - Branch: `main`
 - Main file path: `streamlit_app.py`
+- Tracked app config: `.streamlit/config.toml`
 
 Local run:
 
@@ -55,9 +56,19 @@ Production Snowflake mart setup:
   OVERWATCH mart schema, persistence tables, Jira/Terraform evidence tables,
   refresh procedures, and scheduled tasks.
 - The Streamlit-in-Snowflake app runs on X-Small `OVERWATCH_WH` with
-  60-second auto-suspend for runtime cost isolation. The current mart refresh
-  tasks still run on `COMPUTE_WH`. The compact mart loads keep the Streamlit
-  app from repeatedly scanning `SNOWFLAKE.ACCOUNT_USAGE`.
+  60-second auto-suspend for runtime cost isolation. Setup also assigns the
+  `OVERWATCH_WH_RM` resource monitor with a 50-credit monthly quota. The current
+  mart refresh tasks still run on `COMPUTE_WH`. The compact mart loads keep the
+  Streamlit app from repeatedly scanning `SNOWFLAKE.ACCOUNT_USAGE`.
+
+Deployment preflight:
+
+- Confirm `.streamlit/secrets.toml`, `.env*`, `*.pem`, and `*.key` files are not
+  tracked.
+- Confirm Community Cloud still points at `streamlit_app.py`; Snowflake
+  Streamlit-in-Snowflake still uses `.overwatch_final/snowflake.yml` with
+  `main_file: app.py` and `query_warehouse: OVERWATCH_WH`.
+- Run the regression suite and section smoke before promoting a release.
 
 For full setup, feature notes, Snowflake grants, and operating guidance, see
 [OVERWATCH_DOCUMENTATION.md](OVERWATCH_DOCUMENTATION.md).

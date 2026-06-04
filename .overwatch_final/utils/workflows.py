@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 import streamlit as st
 
 from .cost import freshness_note, metric_confidence_label
-from .section_guidance import defer_section_note
+from .section_guidance import defer_section_note, defer_source_note
 
 
 WORKFLOWS_VERSION = "2026-06-03-bottom-notes-v1"
@@ -246,4 +246,4 @@ def render_signal_confidence(
     ]
     if scope_note:
         parts.append(scope_note)
-    defer_section_note(" | ".join(parts))
+    defer_source_note(*parts)

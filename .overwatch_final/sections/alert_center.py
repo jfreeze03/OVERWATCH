@@ -7,6 +7,7 @@ import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, DEFAULT_ALERT_EMAIL
 from utils import (
+    defer_source_note,
     get_active_company,
     get_active_environment,
 )
@@ -952,7 +953,8 @@ def render() -> None:
 
     data = st.session_state.get("alert_center_data")
     if not isinstance(data, dict):
-        st.info(f"Load {active_view} when ready. Sources on load: {_alert_center_source_summary(required_sources)}.")
+        st.info(f"Load {active_view} when ready.")
+        defer_source_note(f"Sources on load: {_alert_center_source_summary(required_sources)}")
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
@@ -961,7 +963,8 @@ def render() -> None:
     loaded_sources = set(data.get("_loaded_sources") or [])
     missing_sources = sorted(required_sources - loaded_sources)
     if missing_sources:
-        st.info(f"Load {active_view} to fetch missing source(s): {_alert_center_source_summary(set(missing_sources))}.")
+        st.info(f"Load {active_view} to fetch missing source(s).")
+        defer_source_note(f"Missing Alert Center source(s): {_alert_center_source_summary(set(missing_sources))}")
         return
 
     pd = _pd()
@@ -973,18 +976,22 @@ def render() -> None:
     rule_audit = data.get("rule_audit") if isinstance(data.get("rule_audit"), pd.DataFrame) else pd.DataFrame()
     owner_directory = data.get("owner_directory") if isinstance(data.get("owner_directory"), pd.DataFrame) else pd.DataFrame()
     if data.get("alerts_error"):
-        st.info(f"Alert history unavailable. Deploy alert objects from snowflake/OVERWATCH_MART_SETUP.sql first. {data['alerts_error']}")
+        st.info("Alert history unavailable.")
+        defer_source_note(
+            "Deploy alert objects from snowflake/OVERWATCH_MART_SETUP.sql first.",
+            data["alerts_error"],
+        )
     if data.get("queue_error"):
-        st.caption(f"Action queue unavailable for this role/context: {data['queue_error']}")
+        defer_source_note("Action queue unavailable for this role/context.", data["queue_error"])
     if data.get("delivery_error"):
-        st.caption(f"Delivery audit unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed: {data['delivery_error']}")
+        defer_source_note("Delivery audit unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["delivery_error"])
     if data.get("rule_error"):
-        st.caption(f"Alert rule catalog unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed: {data['rule_error']}")
+        defer_source_note("Alert rule catalog unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["rule_error"])
     if data.get("rule_audit_error"):
-        st.caption(f"Alert rule audit unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed: {data['rule_audit_error']}")
+        defer_source_note("Alert rule audit unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["rule_audit_error"])
     if data.get("owner_directory_error"):
-        st.caption(f"Owner directory unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed: {data['owner_directory_error']}")
-    st.caption(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {_alert_email_target()}.")
+        defer_source_note("Owner directory unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["owner_directory_error"])
+    defer_source_note(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {_alert_email_target()}.")
 
     open_alerts = _open_alert_mask(alerts)
     high_alerts = pd.Series(dtype=bool)
@@ -1027,7 +1034,7 @@ def render() -> None:
 
     if active_view == "Control Health":
         st.subheader("Alert Control Health")
-        st.caption("Uses only the data loaded by the explicit Alert Center refresh. No hidden tab scans are required to review source readiness.")
+        defer_source_note("Uses only the data loaded by the explicit Alert Center refresh; no hidden tab scans are required.")
         h1, h2, h3, h4 = st.columns(4)
         blocked = int(readiness_rows["STATE"].isin(["Needs Setup", "Degraded", "Scope Stale"]).sum()) if not readiness_rows.empty else 0
         review = int(readiness_rows["STATE"].eq("Review").sum()) if not readiness_rows.empty else 0
@@ -1365,7 +1372,9 @@ def render() -> None:
 
     elif active_view == "Email Delivery":
         st.subheader("Email Delivery Queue")
-        st.caption("Rows are email-ready by default; snowflake/OVERWATCH_MART_SETUP.sql includes a dry-run governed SYSTEM$SEND_EMAIL procedure for an approved Snowflake email integration.")
+        defer_source_note(
+            "Rows are email-ready by default; snowflake/OVERWATCH_MART_SETUP.sql includes a dry-run governed SYSTEM$SEND_EMAIL procedure for an approved Snowflake email integration."
+        )
         if alerts.empty:
             st.info("No email-ready alert rows found.")
         else:
@@ -1412,12 +1421,12 @@ def render() -> None:
             from utils.action_queue import upsert_actions
 
             routable = alerts[_open_alert_mask(alerts)] if not alerts.empty else alerts
-            st.caption(f"{len(routable):,} open alert row(s) are eligible for action queue routing.")
+            defer_source_note(f"{len(routable):,} open alert row(s) are eligible for action queue routing.")
             actions_preview = pd.DataFrame(alert_history_to_actions(routable, company=company))
             if not actions_preview.empty:
                 recovery_count = int((actions_preview.get("Category", pd.Series(dtype=str)) == "Task & Procedure Reliability").sum())
                 if recovery_count:
-                    st.caption(f"{recovery_count:,} task/procedure recovery action(s) include owner approval and recovery SLA evidence fields.")
+                    defer_source_note(f"{recovery_count:,} task/procedure recovery action(s) include owner approval and recovery SLA evidence fields.")
                 _render_priority_dataframe(
                     actions_preview,
                     title="Action queue routing preview",
@@ -1491,7 +1500,7 @@ def render() -> None:
             )
         if not rules.empty:
             configured_count = int((rules["RULE_SOURCE"].astype(str) == "Database").sum()) if "RULE_SOURCE" in rules.columns else 0
-            st.caption(
+            defer_source_note(
                 f"{configured_count:,} rule(s) loaded from Snowflake configuration; "
                 f"{len(rules) - configured_count:,} built-in fallback rule(s) shown for deployment readiness."
             )

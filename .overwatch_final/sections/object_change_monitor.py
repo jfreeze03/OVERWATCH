@@ -1,6 +1,7 @@
 # sections/object_change_monitor.py - Who changed what?
 import streamlit as st
 from utils import (
+    defer_source_note,
     download_csv,
     format_snowflake_error,
     filter_existing_columns,
@@ -314,12 +315,12 @@ def render():
                 """, ttl_key=f"ocm_objects_{company}_{days}_{text_filter}_{row_limit}", tier="standard", section="Object Change Monitor")
                     st.session_state["ocm_source_object_changes"] = "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                     if str(mart_exc):
-                        st.caption(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                        defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
                 except Exception as e:
                     st.warning(f"Object change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_object_changes") is not None:
             df = _annotate_change_routes(st.session_state["ocm_df_object_changes"], "Object")
-            st.caption(st.session_state.get("ocm_source_object_changes", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
+            defer_source_note(st.session_state.get("ocm_source_object_changes", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
             if not df.empty:
                 render_priority_dataframe(
                     df.groupby(["CHANGE_TYPE", "USER_NAME"]).size().reset_index(name="COUNT"),
@@ -382,12 +383,12 @@ def render():
                 """, ttl_key=f"ocm_access_{company}_{days}_{text_filter}_{row_limit}", tier="standard", section="Object Change Monitor")
                     st.session_state["ocm_source_access_changes"] = "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                     if str(mart_exc):
-                        st.caption(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                        defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
                 except Exception as e:
                     st.warning(f"Access change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_access_changes") is not None:
             df = _annotate_change_routes(st.session_state["ocm_df_access_changes"], "Access")
-            st.caption(st.session_state.get("ocm_source_access_changes", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
+            defer_source_note(st.session_state.get("ocm_source_access_changes", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
             render_priority_dataframe(
                 df,
                 title="Access changes to review first",
@@ -437,12 +438,12 @@ def render():
                 """, ttl_key=f"ocm_policy_{company}_{days}_{text_filter}_{row_limit}", tier="standard", section="Object Change Monitor")
                     st.session_state["ocm_source_policy_changes"] = "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                     if str(mart_exc):
-                        st.caption(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                        defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
                 except Exception as e:
                     st.warning(f"Policy change scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_policy_changes") is not None:
             df = _annotate_change_routes(st.session_state["ocm_df_policy_changes"], "Policy")
-            st.caption(st.session_state.get("ocm_source_policy_changes", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
+            defer_source_note(st.session_state.get("ocm_source_policy_changes", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
             render_priority_dataframe(
                 df,
                 title="Policy changes to review first",
@@ -494,12 +495,12 @@ def render():
                 """, ttl_key=f"ocm_drift_{company}_{days}_{text_filter}_{row_limit}", tier="standard", section="Object Change Monitor")
                     st.session_state["ocm_source_drift"] = "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
                     if str(mart_exc):
-                        st.caption(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                        defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
                 except Exception as e:
                     st.warning(f"Drift scan unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("ocm_df_drift") is not None:
             df = _annotate_change_routes(st.session_state["ocm_df_drift"], "Drift")
-            st.caption(st.session_state.get("ocm_source_drift", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
+            defer_source_note(st.session_state.get("ocm_source_drift", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
             render_priority_dataframe(
                 df,
                 title="Drift indicators to review first",

@@ -2,6 +2,7 @@
 import streamlit as st
 
 from utils import (
+    defer_source_note,
     download_csv,
     get_active_company,
     format_snowflake_error,
@@ -206,7 +207,7 @@ def render():
     days = st.slider("Lookback days", 1, 90, 30, key="topology_days")
     row_limit = st.slider("Max rows per topology query", 100, 1000, 250, step=50, key="topology_row_limit")
     if days > 30 and row_limit > 500:
-        st.caption("Large topology windows can scan more ACCOUNT_USAGE history; start with KPIs and raise limits only for exports.")
+        defer_source_note("Large topology windows can scan more ACCOUNT_USAGE history; start with KPIs and raise limits only for exports.")
     if st.button("Load Platform Topology", key="topology_load"):
         with st.spinner("Building topology views..."):
             try:
@@ -217,7 +218,11 @@ def render():
     data = st.session_state.get("topology_data")
     if not data:
         return
-    st.caption(f"{metric_confidence_label('estimated')} | {freshness_note('ACCOUNT_USAGE')} | Role grants are scoped by user patterns when no warehouse/database signal exists.")
+    defer_source_note(
+        metric_confidence_label("estimated"),
+        freshness_note("ACCOUNT_USAGE"),
+        "Role grants are scoped by user patterns when no warehouse/database signal exists.",
+    )
 
     wh_user = data["warehouse_user"]
     db_schema = data["db_schema"]

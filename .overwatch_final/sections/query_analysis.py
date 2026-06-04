@@ -1,6 +1,7 @@
-# sections/query_analysis.py — Bottlenecks, plan steps, pattern degradation, AI diagnosis
+# sections/query_analysis.py - Bottlenecks, plan steps, pattern degradation, AI diagnosis
 import streamlit as st
 from utils import (
+    defer_source_note,
     get_session, run_query, sql_literal,
     format_credits, download_csv,
     render_query_drilldown, build_metered_credit_cte, get_active_company, get_global_filter_clause,
@@ -195,7 +196,7 @@ def render():
             c2.metric("Avg Elapsed (s)", f"{df['ELAPSED_SEC'].mean():.1f}")
             c3.metric("Total Remote Spill", f"{df['REMOTE_SPILL_GB'].sum():.1f} GB")
             c4.metric("Total Credits", format_credits(df["METERED_CREDITS"].sum()))
-            st.caption(st.session_state.get("qa_bottleneck_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
+            defer_source_note(st.session_state.get("qa_bottleneck_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
             # Flag high-impact queries
             flagged = df[
@@ -269,8 +270,8 @@ def render():
         if st.session_state.get("qa_df_deg") is not None:
             df_d = st.session_state["qa_df_deg"]
             if not df_d.empty:
-                st.warning(f"⚠️ {len(df_d)} query patterns degraded >25% vs prior week.")
-                st.caption(st.session_state.get("qa_degradation_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
+                st.warning(f"Warning: {len(df_d)} query patterns degraded >25% vs prior week.")
+                defer_source_note(st.session_state.get("qa_degradation_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
                 render_priority_dataframe(
                     df_d,
                     title="Query regressions to investigate first",

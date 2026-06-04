@@ -19,6 +19,7 @@ Streamlit Community Cloud settings:
 Repository: jfreeze03/OVERWATCH
 Branch: main
 Main file path: streamlit_app.py
+Tracked config: .streamlit/config.toml
 ```
 
 Community Cloud must use the root wrapper `streamlit_app.py`. That wrapper runs
@@ -30,6 +31,15 @@ Local Windows run:
 
 ```powershell
 .\run_overwatch_local.ps1
+```
+
+Deployment preflight:
+
+```text
+1. Confirm Community Cloud points to streamlit_app.py.
+2. Confirm .overwatch_final/snowflake.yml uses main_file: app.py and query_warehouse: OVERWATCH_WH.
+3. Confirm .streamlit/secrets.toml, .env*, *.pem, and *.key are ignored and not tracked.
+4. Run the regression suite and section smoke against the local app.
 ```
 
 Manual local run:
@@ -95,7 +105,8 @@ USE ROLE ACCOUNTADMIN;
 The script creates:
 
 - `DBA_MAINT_DB.OVERWATCH` for app-owned state and marts
-- `OVERWATCH_WH`, an X-Small support warehouse with 60-second auto-suspend
+- `OVERWATCH_WH`, an X-Small support warehouse with 60-second auto-suspend and
+  the `OVERWATCH_WH_RM` 50-credit monthly resource monitor
 - configuration tables for company scope, settings, alerts, action queue,
   usage logging, admin action audit, and ROI tracking
 - compact fact/dimension tables for warehouse credits, query history, recent

@@ -6,6 +6,7 @@ from utils import (
     build_mart_pipeline_freshness_sql,
     build_mart_pipeline_load_failures_sql,
     build_mart_pipeline_volume_sql,
+    defer_source_note,
     download_csv,
     ensure_column_alias,
     filter_existing_columns,
@@ -256,7 +257,7 @@ def render():
 
         df_fresh = st.session_state.get("pipe_freshness")
         if df_fresh is not None:
-            st.caption(st.session_state.get("pipe_freshness_source", "SNOWFLAKE.ACCOUNT_USAGE.TABLES"))
+            defer_source_note(st.session_state.get("pipe_freshness_source", "SNOWFLAKE.ACCOUNT_USAGE.TABLES"))
             if df_fresh.empty:
                 st.success("No stale tables found for the selected threshold.")
             else:
@@ -327,7 +328,7 @@ def render():
 
         df_loads = st.session_state.get("pipe_load_failures")
         if df_loads is not None:
-            st.caption(st.session_state.get("pipe_load_failures_source", "SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY"))
+            defer_source_note(st.session_state.get("pipe_load_failures_source", "SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY"))
             if df_loads.empty:
                 st.success("No copy/load failures found in the selected window.")
             else:
@@ -350,7 +351,7 @@ def render():
 
     elif active_view == "Volume Watch":
         st.header("Table Volume Watch")
-        st.caption("Highlights large and fast-changing tables from ACCOUNT_USAGE.TABLES metadata.")
+        defer_source_note("Highlights large and fast-changing tables from ACCOUNT_USAGE.TABLES metadata.")
         min_gb = st.slider("Minimum table size (GB)", 1, 500, 25, key="pipe_min_gb")
         if st.button("Load Volume Watchlist", key="pipe_volume_load"):
             try:
@@ -392,7 +393,7 @@ def render():
 
         df_volume = st.session_state.get("pipe_volume")
         if df_volume is not None:
-            st.caption(st.session_state.get("pipe_volume_source", "SNOWFLAKE.ACCOUNT_USAGE.TABLES"))
+            defer_source_note(st.session_state.get("pipe_volume_source", "SNOWFLAKE.ACCOUNT_USAGE.TABLES"))
             if df_volume.empty:
                 st.success("No tables matched the volume threshold.")
             else:
@@ -417,7 +418,7 @@ def render():
 
     elif active_view == "Snowpipe Usage":
         st.header("Snowpipe Usage")
-        st.caption("Snowpipe credit and file-volume monitoring from ACCOUNT_USAGE.PIPE_USAGE_HISTORY.")
+        defer_source_note("Snowpipe credit and file-volume monitoring from ACCOUNT_USAGE.PIPE_USAGE_HISTORY.")
         pipe_days = st.slider("Lookback days", 1, 14, 3, key="pipe_snowpipe_days")
         if st.button("Load Snowpipe Usage", key="pipe_snowpipe_load"):
             try:
@@ -443,7 +444,7 @@ def render():
 
         df_pipe = st.session_state.get("pipe_snowpipe")
         if df_pipe is not None:
-            st.caption(st.session_state.get("pipe_snowpipe_source", "SNOWFLAKE.ACCOUNT_USAGE.PIPE_USAGE_HISTORY"))
+            defer_source_note(st.session_state.get("pipe_snowpipe_source", "SNOWFLAKE.ACCOUNT_USAGE.PIPE_USAGE_HISTORY"))
             if df_pipe.empty:
                 st.info("No Snowpipe usage found for the selected period and company scope.")
             else:
@@ -481,7 +482,7 @@ def render():
 
         df_dyn = st.session_state.get("pipe_dynamic_tables")
         if df_dyn is not None:
-            st.caption(st.session_state.get("pipe_dynamic_source", "SHOW DYNAMIC TABLES"))
+            defer_source_note(st.session_state.get("pipe_dynamic_source", "SHOW DYNAMIC TABLES"))
             if df_dyn.empty:
                 st.info("No dynamic tables found for the selected company scope.")
             else:

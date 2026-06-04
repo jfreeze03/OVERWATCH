@@ -9,6 +9,7 @@ from utils import (
     executive_health_score,
     format_credits,
     format_snowflake_error,
+    defer_source_note,
     freshness_note,
     get_active_company,
     get_db_filter_clause,
@@ -685,16 +686,14 @@ def render():
     k4.metric("Success Rate", f"{success_rate:.1f}%")
     k5.metric("Avg Elapsed", f"{_first_number(overview, 'AVG_ELAPSED_SEC'):,.2f}s")
     k6.metric("Total Credits", format_credits(_first_number(metering, "TOTAL_CREDITS")))
-    st.caption(
-        " | ".join([
-            metric_confidence_label("exact"),
-            metric_confidence_label("composite"),
-            sources.get("overview", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"),
-            sources.get("metering", "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"),
-            sources.get("driver_preview", "Warehouse movement preview deferred"),
-            freshness_note("ACCOUNT_USAGE"),
-            "Progressive load: KPI queries ran; charts below load only when requested.",
-        ])
+    defer_source_note(
+        metric_confidence_label("exact"),
+        metric_confidence_label("composite"),
+        sources.get("overview", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"),
+        sources.get("metering", "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"),
+        sources.get("driver_preview", "Warehouse movement preview deferred"),
+        freshness_note("ACCOUNT_USAGE"),
+        "Progressive load: KPI queries ran; charts below load only when requested.",
     )
 
     st.subheader("Why Did Usage Change?")
@@ -738,7 +737,7 @@ def render():
         if top_wh is None:
             st.info("Cost driver chart is deferred. Load it when you need warehouse detail.")
         elif not top_wh.empty:
-            st.caption(st.session_state.get("uo_top_wh_source", "Source unavailable"))
+            defer_source_note(st.session_state.get("uo_top_wh_source", "Source unavailable"))
             render_drillable_bar_chart(top_wh, "WAREHOUSE_NAME", "TOTAL_CREDITS", "uo_top_wh", "Top Warehouses By Credit Usage", "warehouse_name", 24 * min(days, 14), 15)
             movement_cols = [
                 "WAREHOUSE_NAME", "TOTAL_CREDITS", "PRIOR_CREDITS", "CREDIT_DELTA",
@@ -767,7 +766,7 @@ def render():
         if qt is None:
             st.info("Query mix is deferred to keep Usage Overview lightweight.")
         elif not qt.empty:
-            st.caption(st.session_state.get("uo_query_types_source", "Source unavailable"))
+            defer_source_note(st.session_state.get("uo_query_types_source", "Source unavailable"))
             alt = _altair()
             chart = alt.Chart(qt.sort_values("QUERY_COUNT", ascending=False)).mark_bar().encode(
                 x=alt.X("QUERY_COUNT:Q", title="Queries"),
@@ -797,7 +796,7 @@ def render():
         if db is None:
             st.info("Database adoption detail is deferred until requested.")
         elif not db.empty:
-            st.caption(st.session_state.get("uo_users_by_db_source", "Source unavailable"))
+            defer_source_note(st.session_state.get("uo_users_by_db_source", "Source unavailable"))
             render_drillable_bar_chart(db, "DATABASE_NAME", "USERS", "uo_users_db", "Users By Database", "database_name", 24 * min(days, 14), 15)
             download_csv(db, "usage_overview_users_by_database.csv")
         else:

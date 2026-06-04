@@ -5,11 +5,24 @@ Use this repository with Streamlit Community Cloud:
 - Repository: `jfreeze03/OVERWATCH`
 - Branch: `main`
 - Main file path: `streamlit_app.py`
+- Tracked config: `.streamlit/config.toml`
 
 Community Cloud installs dependencies from the root `requirements.txt`.
 The Snowflake-in-Snowflake deployment still uses `.overwatch_final/environment.yml`.
 Using the root `streamlit_app.py` wrapper keeps Community Cloud from selecting
 the Snowflake-specific conda manifest under `.overwatch_final/`.
+
+## Preflight
+
+Before promoting a release:
+
+- Confirm Streamlit Community Cloud points to `streamlit_app.py`.
+- Confirm `.overwatch_final/snowflake.yml` still uses `main_file: app.py` and
+  `query_warehouse: OVERWATCH_WH` for Streamlit-in-Snowflake.
+- Confirm `.streamlit/secrets.toml`, `.env*`, `*.pem`, and `*.key` are local-only
+  and ignored by Git.
+- Run `python -m unittest discover -s tests`, then the section smoke runner
+  against the local app.
 
 ## Snowflake Connection
 

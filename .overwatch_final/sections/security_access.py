@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 from utils import (
     admin_button_disabled,
+    defer_source_note,
     download_csv,
     filter_existing_columns,
     get_active_company,
@@ -1187,7 +1188,7 @@ def render():
                 st.session_state["sec_login_source"] = "OVERWATCH mart: FACT_LOGIN_DAILY"
             except Exception as mart_exc:
                 st.session_state["sec_login_source"] = "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"
-                st.caption(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
             if st.session_state.get("sec_login_source") != "OVERWATCH mart: FACT_LOGIN_DAILY":
                 for key, sql in [
                     ("sec_df_login_sum", f"""
@@ -1226,7 +1227,7 @@ def render():
 
         if st.session_state.get("sec_df_login_sum") is not None and not st.session_state["sec_df_login_sum"].empty:
             df_ls = st.session_state["sec_df_login_sum"]
-            st.caption(st.session_state.get("sec_login_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
+            defer_source_note(st.session_state.get("sec_login_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
             ok  = df_ls.loc[df_ls["IS_SUCCESS"] == "YES", "EVENT_COUNT"].sum() if "YES" in df_ls["IS_SUCCESS"].values else 0
             fail= df_ls.loc[df_ls["IS_SUCCESS"] == "NO",  "EVENT_COUNT"].sum() if "NO"  in df_ls["IS_SUCCESS"].values else 0
             tot = ok + fail
@@ -1270,7 +1271,7 @@ def render():
                 st.session_state["sec_login_posture_source"] = "OVERWATCH mart: FACT_LOGIN_DAILY"
             except Exception as mart_exc:
                 st.session_state["sec_login_posture_source"] = "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"
-                st.caption(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
                 for key in ("sec_login_ips", "sec_login_clients"):
                     st.session_state[key] = pd.DataFrame()
             for key, sql in [
@@ -1342,7 +1343,7 @@ def render():
         with c1:
             ips = st.session_state.get("sec_login_ips")
             if ips is not None and not ips.empty:
-                st.caption(st.session_state.get("sec_login_posture_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
+                defer_source_note(st.session_state.get("sec_login_posture_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
                 render_ranked_bar_chart(ips, "CLIENT_IP", "LOGIN_EVENTS", title="Top IPs", top_n=20)
                 render_priority_dataframe(
                     ips,
@@ -1357,7 +1358,7 @@ def render():
         with c2:
             clients = st.session_state.get("sec_login_clients")
             if clients is not None and not clients.empty:
-                st.caption(st.session_state.get("sec_login_posture_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
+                defer_source_note(st.session_state.get("sec_login_posture_source", "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"))
                 render_ranked_bar_chart(
                     clients,
                     "REPORTED_CLIENT_TYPE",
@@ -1438,7 +1439,7 @@ def render():
         query_programs = st.session_state.get("sec_connected_query_programs")
         login_programs = st.session_state.get("sec_connected_login_programs")
         if session_programs is not None or query_programs is not None or login_programs is not None:
-            st.caption(st.session_state.get("sec_connected_program_source", "SESSIONS, LOGIN_HISTORY, and QUERY_HISTORY linkage"))
+            defer_source_note(st.session_state.get("sec_connected_program_source", "SESSIONS, LOGIN_HISTORY, and QUERY_HISTORY linkage"))
             combined_programs = []
             if session_programs is not None and not session_programs.empty and "PROGRAM_NAME" in session_programs.columns:
                 combined_programs.append(session_programs[["PROGRAM_NAME"]])
@@ -1574,7 +1575,7 @@ def render():
                 st.session_state["sec_grants_source"] = "OVERWATCH mart: FACT_GRANT_DAILY"
             except Exception as mart_exc:
                 st.session_state["sec_grants_source"] = "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"
-                st.caption(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
                 try:
                     df_grants = run_query(f"""
                         SELECT grantee_name, role, granted_to, granted_by,
@@ -1590,7 +1591,7 @@ def render():
 
         if st.session_state.get("sec_df_grants") is not None and not st.session_state["sec_df_grants"].empty:
             df_g = st.session_state["sec_df_grants"]
-            st.caption(st.session_state.get("sec_grants_source", "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"))
+            defer_source_note(st.session_state.get("sec_grants_source", "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"))
             st.metric("Total Grants", len(df_g))
             df_g = _annotate_security_routes(df_g, "Grant Review")
             render_priority_dataframe(
@@ -1798,7 +1799,7 @@ def render():
     # -- DATA LINEAGE ----------------------------------------------------------
     elif active_view == "Data Lineage":
         st.header("Data Lineage (ACCESS_HISTORY)")
-        st.caption("Object-level access lineage from ACCOUNT_USAGE.ACCESS_HISTORY.")
+        defer_source_note("Object-level access lineage from ACCOUNT_USAGE.ACCESS_HISTORY.")
         lin_days = st.slider("Lookback (days)", 1, 30, 7, key="lin_days")
 
         if st.button("Load Access History", key="lin_load"):

@@ -70,7 +70,7 @@ Snowflake telemetry.
 | `ALFA_EDW_PROD` database | Tier 0 production EDW, PROD environment, 120 minute RPO, 240 minute RTO, owner-approved PROD routing required. |
 | `ALFA_EDW_DEV`, `ALFA_EDW_SAN`, `ALFA_EDW_PHX`, `ALFA_EDW_SEA` databases | Tier 2 DEV/Sandbox EDW, DEV_ALL environment, restore/clone posture unless a stricter owner objective is documented. |
 | `ALFA_EDW_SIT` database | Tier 1 SIT EDW, DEV_ALL environment, release-test recovery expectations should be documented. |
-| `OVERWATCH_WH` warehouse | Dedicated OVERWATCH Streamlit app execution warehouse. Monitor its cost separately from ALFA/Trexis business workload warehouses. |
+| `OVERWATCH_WH` warehouse | Dedicated OVERWATCH Streamlit app execution warehouse. Setup assigns `OVERWATCH_WH_RM`; monitor its cost separately from ALFA/Trexis business workload warehouses. |
 | `COMPUTE_WH` warehouse | Current OVERWATCH mart task and utility warehouse. Monitor its cost separately from ALFA/Trexis business workload warehouses. |
 | `BI_COMPUTE_WH` warehouse | BI/reporting compute where repeated dashboard workloads may justify warm-cache tuning. |
 | `WH_ALFA_%` warehouses | ALFA application workload compute; routing and settings should have application owner approval. |
@@ -160,6 +160,7 @@ the delivery procedure supports dry-run packaging.
 | Action queue table | `OVERWATCH_ACTION_QUEUE` | `config.ACTION_QUEUE_TABLE`, setup SQL |
 | ETL audit table | `ETL_RUN_AUDIT` | `config.ETL_AUDIT_TABLE` |
 | Dedicated app runtime warehouse created by setup | `OVERWATCH_WH` | setup SQL, `.overwatch_final/snowflake.yml` |
+| Dedicated app runtime resource monitor | `OVERWATCH_WH_RM` | setup SQL |
 | Current main load/anomaly task warehouse | `COMPUTE_WH` | setup SQL task definitions |
 | Current cost-savings verifier task warehouse | `COMPUTE_WH` | setup SQL task definitions |
 
@@ -599,7 +600,15 @@ query tag, object FQN, and database/schema context. Missing joins become Change
 ## Setup And Deployment Checklist
 
 1. Edit the app config and setup SQL together.
-2. Run local validation:
+2. Confirm deployment entrypoints and local-only secrets:
+
+```powershell
+git check-ignore -v .streamlit\secrets.toml .env .env.local snowflake_key.pem snowflake_key.key
+Select-String -Path .overwatch_final\snowflake.yml -Pattern "main_file: app.py","query_warehouse: OVERWATCH_WH"
+Select-String -Path STREAMLIT_CLOUD_DEPLOY.md -Pattern "streamlit_app.py"
+```
+
+3. Run local validation:
 
 ```powershell
 python -m compileall .overwatch_final tests
@@ -607,16 +616,16 @@ python -m compileall .overwatch_final tests
 git diff --check
 ```
 
-3. Run `snowflake/OVERWATCH_MART_SETUP.sql` in Snowsight with a platform-admin
+4. Run `snowflake/OVERWATCH_MART_SETUP.sql` in Snowsight with a platform-admin
    role after reviewing DDL changes.
-4. Confirm required grants for the app runtime role.
-5. Confirm task state:
+5. Confirm required grants for the app runtime role.
+6. Confirm task state:
 
 ```sql
 SHOW TASKS LIKE 'OVERWATCH_%' IN SCHEMA DBA_MAINT_DB.OVERWATCH;
 ```
 
-6. Run smoke loads when needed:
+7. Run smoke loads when needed:
 
 ```sql
 CALL DBA_MAINT_DB.OVERWATCH.SP_OVERWATCH_LOAD_HOURLY();
@@ -625,7 +634,7 @@ CALL DBA_MAINT_DB.OVERWATCH.SP_OVERWATCH_REFRESH_CONTROL_ROOM();
 CALL DBA_MAINT_DB.OVERWATCH.SP_OVERWATCH_LOAD_DAILY();
 ```
 
-7. Confirm rows loaded in key marts:
+8. Confirm rows loaded in key marts:
 
 ```sql
 SELECT 'FACT_WAREHOUSE_HOURLY' AS TABLE_NAME, COUNT(*) AS ROWS_LOADED

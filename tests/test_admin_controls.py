@@ -11,7 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
-from sections.dba_tools import _build_warehouse_setting_plan  # noqa: E402
+from sections.dba_tools import (  # noqa: E402
+    _build_warehouse_setting_plan,
+    _current_role_allows_alter_account,
+)
 from sections.security_access import (  # noqa: E402
     _build_access_action_queue_record,
     _build_role_grant_change_plan,
@@ -89,6 +92,18 @@ class AdminControlTests(unittest.TestCase):
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
+
+    def test_alter_account_guard_only_allows_accountadmin_roles(self):
+        allowed_roles = ("ACCOUNTADMIN", "SNOW_ACCOUNTADMIN", "SNOW_ACCOUNTADMINS")
+        blocked_roles = ("", "SYSADMIN", "SNOW_SYSADMIN", "SECURITYADMIN", "APP_READONLY")
+
+        for role in allowed_roles:
+            with self.subTest(role=role):
+                self.assertTrue(_current_role_allows_alter_account(role))
+
+        for role in blocked_roles:
+            with self.subTest(role=role):
+                self.assertFalse(_current_role_allows_alter_account(role))
 
     def test_warehouse_setting_plan_only_alters_changed_values(self):
         current = pd.Series({

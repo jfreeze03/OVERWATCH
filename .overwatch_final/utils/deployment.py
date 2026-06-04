@@ -33,6 +33,13 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "READY_CRITERIA": "Delivery log exists and Alert Center can write digest evidence.",
         },
         {
+            "COMPONENT": "Alert automation",
+            "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
+            "REQUIRED_OBJECT": "OVERWATCH_ANNOTATIONS",
+            "WHY_IT_MATTERS": "Stores suppression windows used by the hourly anomaly task to avoid duplicate alert noise.",
+            "READY_CRITERIA": "Annotation table exists before OVERWATCH_ANOMALY_CHECK is resumed.",
+        },
+        {
             "COMPONENT": "FinOps verification",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_COST_SAVINGS_VERIFICATION_RUN",
@@ -87,6 +94,7 @@ WITH required_objects AS (
         ('Core mart setup', 'OVERWATCH_SETTINGS', 'TABLE', '{version}'),
         ('Action queue and closure proof', 'OVERWATCH_ACTION_QUEUE', 'TABLE', '{version}'),
         ('Alert automation', 'OVERWATCH_ALERT_DELIVERY_LOG', 'TABLE', '{version}'),
+        ('Alert automation', 'OVERWATCH_ANNOTATIONS', 'TABLE', '{version}'),
         ('FinOps verification', 'OVERWATCH_COST_SAVINGS_VERIFICATION_RUN', 'TABLE', '{version}'),
         ('FinOps verification', 'OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V', 'VIEW', '{version}'),
         ('Cost proof mart', 'FACT_COST_DAILY', 'TABLE', '{version}'),

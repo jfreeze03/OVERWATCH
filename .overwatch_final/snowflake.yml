@@ -29,6 +29,9 @@ definition_version: 1
 #     -- Required for DBA Tools: SHOW WAREHOUSES, IS.QUERY_HISTORY
 #     GRANT MONITOR ON ACCOUNT TO ROLE <role>;
 #
+#     -- Required to run the Streamlit app and its Snowflake queries
+#     GRANT USAGE ON WAREHOUSE OVERWATCH_WH TO ROLE <role>;
+#
 #   Without IMPORTED PRIVILEGES on SNOWFLAKE, every ACCOUNT_USAGE query
 #   returns a permissions error and the section shows an empty state.
 #   This is the single most common misconfiguration when expanding OVERWATCH

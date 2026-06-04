@@ -54,6 +54,21 @@ def _typed_confirmation(prompt: str, expected: str, key: str) -> bool:
     return entered.strip() == expected
 
 
+ACCOUNT_PARAMETER_ADMIN_ROLES = {
+    "ACCOUNTADMIN",
+    "SNOW_ACCOUNTADMIN",
+    "SNOW_ACCOUNTADMINS",
+}
+
+
+def _current_role_allows_alter_account(role: str | None = None) -> bool:
+    """Return whether the active caller role is allowed to run ALTER ACCOUNT."""
+    current_role = str(
+        st.session_state.get("_overwatch_current_role", "") if role is None else role
+    ).strip().upper()
+    return current_role in ACCOUNT_PARAMETER_ADMIN_ROLES
+
+
 def _scope_warehouse_names(df: pd.DataFrame, name_col: str = "name") -> pd.DataFrame:
     """Apply ALFA/Trexis warehouse visibility to SHOW-style result sets."""
     return scope_warehouse_names(df, name_col=name_col, company=get_active_company())
@@ -1498,15 +1513,13 @@ ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
                 if st.button("✅ Apply Parameters", type="primary", key="cortex_apply", disabled=admin_button_disabled(not cortex_confirmed)):
                     # CALLER MODE GUARD: ALTER ACCOUNT SET requires ACCOUNTADMIN.
                     # Since execute_as=CALLER, the caller's role must have this privilege.
-                    # SNOW_SYSADMIN cannot run ALTER ACCOUNT — only ACCOUNTADMIN can.
-                    try:
-                        _caller_role = ""
-                    except Exception:
-                        _caller_role = ""
-                    if False and "ACCOUNTADMIN" not in _caller_role.upper():
+                    # SNOW_SYSADMIN cannot run ALTER ACCOUNT; keep this blocked
+                    # before Snowflake receives account-level parameter SQL.
+                    _caller_role = str(st.session_state.get("_overwatch_current_role", "") or "").strip()
+                    if not _current_role_allows_alter_account(_caller_role):
                         st.error(
                             f"⛔ **ALTER ACCOUNT requires ACCOUNTADMIN.** "
-                            f"Your current role is `{_caller_role}`. "
+                            f"Your current role is `{_caller_role or 'unknown'}`. "
                             f"Switch to ACCOUNTADMIN in Snowflake and reload OVERWATCH, "
                             f"or copy the generated SQL below and run it in a Worksheet."
                         )

@@ -1700,6 +1700,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_COST_GOVERNANCE_REFRESH", setup_upper)
         self.assertIn("AFTER OVERWATCH_REFRESH_CONTROL_ROOM", setup_upper)
         self.assertIn("OVERWATCH_ALERTS", setup_upper)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ANNOTATIONS", setup_upper)
         self.assertIn("WAREHOUSE = COMPUTE_WH", setup_upper)
         self.assertIn("APP_RUNTIME", setup_upper)
         self.assertIn("WAREHOUSE_COST_MOVEMENT", setup_upper)
@@ -1717,6 +1718,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn(OVERWATCH_SCHEMA_VERSION.upper(), ddl)
         self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", status_sql)
         self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", status_sql)
+        self.assertIn("OVERWATCH_ANNOTATIONS", status_sql)
         self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", status_sql)
         self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE", status_sql)
         self.assertIn("OVERWATCH_ITSM_TICKET_STAGE", status_sql)
@@ -1730,7 +1732,22 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Change evidence feed ingress", set(contract["COMPONENT"]))
         self.assertIn("OVERWATCH_SCHEMA_MIGRATION", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("FACT_COST_DAILY", set(contract["REQUIRED_OBJECT"]))
+        self.assertIn("OVERWATCH_ANNOTATIONS", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("Cost proof mart", set(contract["COMPONENT"]))
+
+    def test_release_remediation_sql_covers_existing_deployment_drift(self):
+        remediation_sql = (ROOT / "snowflake" / "OVERWATCH_RELEASE_REMEDIATION.sql").read_text(encoding="utf-8")
+        remediation_upper = remediation_sql.upper()
+        runbook_upper = (ROOT / "OVERWATCH_MANUAL_INPUTS_AND_DDL_RUNBOOK.md").read_text(encoding="utf-8").upper()
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ANNOTATIONS", remediation_upper)
+        self.assertIn("CREATE RESOURCE MONITOR IF NOT EXISTS OVERWATCH_WH_RM", remediation_upper)
+        self.assertIn("SET RESOURCE_MONITOR = OVERWATCH_WH_RM", remediation_upper)
+        self.assertIn("2026.06.04-RELEASE-REMEDIATION", remediation_upper)
+        self.assertIn("SHOW TASKS LIKE 'OVERWATCH_%'", remediation_upper)
+        self.assertIn("-- ALTER TASK IF EXISTS DBA_MAINT_DB.OVERWATCH.OVERWATCH_ANOMALY_CHECK RESUME", remediation_upper)
+        self.assertNotRegex(remediation_upper, r"(?m)^ALTER TASK .* RESUME;")
+        self.assertIn("OVERWATCH_RELEASE_REMEDIATION.SQL", runbook_upper)
 
     def test_cost_governance_mart_sql_matches_setup_object_contract(self):
         sql = build_cost_governance_mart_sql().upper()

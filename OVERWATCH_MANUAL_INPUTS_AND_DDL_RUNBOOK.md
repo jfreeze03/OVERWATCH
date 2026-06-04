@@ -347,6 +347,7 @@ Use the deployed app role in place of `<role>`.
 ```sql
 GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE <role>;
 GRANT MONITOR ON ACCOUNT TO ROLE <role>;
+GRANT USAGE ON WAREHOUSE OVERWATCH_WH TO ROLE <role>;
 GRANT USAGE ON DATABASE DBA_MAINT_DB TO ROLE <role>;
 GRANT USAGE ON SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
@@ -523,6 +524,7 @@ separate in-interface setup SQL pane.
 - `OVERWATCH_WAREHOUSE_SETTING_REVIEW`
 - `OVERWATCH_SECURITY_ACCESS_REVIEW`
 - `OVERWATCH_ALERTS`
+- `OVERWATCH_ANNOTATIONS`
 - `OVERWATCH_ALERT_DELIVERY_LOG`
 - `OVERWATCH_ALERT_RULE_AUDIT`
 - `OVERWATCH_ALERT_RULES`
@@ -662,7 +664,8 @@ git diff --check
 ```
 
 4. Run `snowflake/OVERWATCH_MART_SETUP.sql` in Snowsight with a platform-admin
-   role after reviewing DDL changes.
+   role after reviewing DDL changes. For existing deployments that only need
+   release drift repaired, review `snowflake/OVERWATCH_RELEASE_REMEDIATION.sql`.
 5. Confirm required grants for the app runtime role.
 6. Confirm task state:
 

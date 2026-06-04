@@ -26,6 +26,7 @@ from utils import (
     load_warehouse_inventory, build_unclassified_assets_sql,
     safe_float, safe_int, render_ranked_bar_chart,
     defer_source_note,
+    build_schema_migration_contract, build_schema_migration_status_sql,
 )
 from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
@@ -2319,6 +2320,60 @@ ORDER BY current_tb DESC;"""
                 sort_by=["STATUS", "FEATURE"],
                 ascending=[True, True],
                 raw_label="All setup objects",
+            )
+
+        st.divider()
+        st.subheader("Schema / Mart Migration Status")
+        defer_source_note(
+            "The migration ledger lets the app compare its expected setup contract to the deployed OVERWATCH mart version."
+        )
+        c_mig_load, c_mig_hint = st.columns([1, 2])
+        with c_mig_load:
+            if st.button("Check Migration Status", key="schema_migration_status_load", width="stretch"):
+                try:
+                    st.session_state["dba_schema_migration_status"] = run_query(
+                        build_schema_migration_status_sql(),
+                        ttl_key="dba_schema_migration_status",
+                        tier="recent",
+                        section="DBA Tools",
+                    )
+                    st.session_state["dba_schema_migration_status_error"] = ""
+                except Exception as exc:
+                    st.session_state["dba_schema_migration_status"] = pd.DataFrame()
+                    st.session_state["dba_schema_migration_status_error"] = format_snowflake_error(exc)
+        with c_mig_hint:
+            st.info("Use this before release promotion or after rerunning setup SQL.")
+
+        migration_status = st.session_state.get("dba_schema_migration_status")
+        migration_error = st.session_state.get("dba_schema_migration_status_error", "")
+        if migration_error:
+            st.warning("Migration ledger is not available yet.")
+            defer_source_note(migration_error)
+        if isinstance(migration_status, pd.DataFrame) and not migration_status.empty:
+            blockers = int(migration_status["MIGRATION_STATE"].astype(str).isin(["Blocked", "Version Drift"]).sum())
+            m_ready, m_blocked = st.columns(2)
+            m_ready.metric("Migration Rows", f"{len(migration_status):,}")
+            m_blocked.metric("Blockers", f"{blockers:,}", delta_color="inverse")
+            render_priority_dataframe(
+                migration_status,
+                title="Deployed mart migration status",
+                priority_columns=[
+                    "COMPONENT", "OBJECT_NAME", "OBJECT_STATE", "REQUIRED_VERSION",
+                    "DEPLOYED_VERSION", "LATEST_APPLIED_AT", "MIGRATION_STATE", "NEXT_ACTION",
+                ],
+                sort_by=["MIGRATION_STATE", "COMPONENT", "OBJECT_NAME"],
+                ascending=[True, True, True],
+                raw_label="All migration status rows",
+            )
+        else:
+            render_priority_dataframe(
+                build_schema_migration_contract(),
+                title="Expected setup contract",
+                priority_columns=[
+                    "COMPONENT", "REQUIRED_OBJECT", "REQUIRED_VERSION",
+                    "WHY_IT_MATTERS", "READY_CRITERIA",
+                ],
+                raw_label="All expected setup rows",
             )
 
         st.divider()

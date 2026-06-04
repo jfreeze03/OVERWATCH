@@ -17,6 +17,7 @@ ANNOTATION_TABLE = "OVERWATCH_ANNOTATIONS"
 
 ALERT_CENTER_PANES = [
     "Control Health",
+    "Automation Readiness",
     "Issue Inbox",
     "Triage Digest",
     "Alert History",
@@ -28,6 +29,7 @@ ALERT_CENTER_PANES = [
 
 ALERT_CENTER_SOURCES_BY_PANE = {
     "Control Health": {"alerts", "action_queue", "delivery_log", "rules", "rule_audit", "owner_directory"},
+    "Automation Readiness": {"alerts", "action_queue", "delivery_log", "rules", "owner_directory"},
     "Issue Inbox": {"alerts", "action_queue"},
     "Triage Digest": {"alerts"},
     "Alert History": {"alerts"},
@@ -1116,6 +1118,91 @@ def render() -> None:
                 raw_label="All alert integration controls",
                 height=220,
             )
+
+    elif active_view == "Automation Readiness":
+        st.subheader("Alert Automation Readiness")
+        from utils import owner_directory_readiness_board
+        from utils.alerts import build_alert_digest_summary
+
+        digest_summary = build_alert_digest_summary(alerts)
+        owner_summary, owner_board = _alert_owner_route_board(alerts, queue)
+        directory_summary, _ = owner_directory_readiness_board(owner_directory)
+        integration_board = _alert_integration_readiness_board(
+            alerts,
+            queue,
+            delivery_log,
+            directory_summary,
+        )
+        automation_rows = [
+            {
+                "CONTROL": "Digest generation",
+                "STATE": "Ready" if digest_summary["open"] else "No Open Alerts",
+                "EVIDENCE": f"{digest_summary['open']:,} open alert(s), {digest_summary['critical_high']:,} critical/high.",
+                "NEXT_ACTION": "Generate the digest and log delivery when open alerts exist.",
+                "OWNER": "DBA On-Call",
+            },
+            {
+                "CONTROL": "Delivery proof",
+                "STATE": "Ready" if not delivery_log.empty else "Manual",
+                "EVIDENCE": f"{len(delivery_log):,} delivery audit row(s) loaded.",
+                "NEXT_ACTION": "Log each digest delivery until a governed Snowflake notification integration is enabled.",
+                "OWNER": "DBA On-Call",
+            },
+            {
+                "CONTROL": "Owner route automation",
+                "STATE": "Ready" if owner_summary.get("route_gaps", 0) == 0 and owner_summary.get("open_items", 0) else "Review",
+                "EVIDENCE": f"{owner_summary.get('route_gaps', 0):,} route gap(s); {owner_summary.get('named_owner_pct', 0):.0f}% named owners.",
+                "NEXT_ACTION": "Close placeholder owner/email routes before enabling unattended escalation.",
+                "OWNER": "Platform DBA",
+            },
+            {
+                "CONTROL": "Action queue handoff",
+                "STATE": "Ready" if int(open_queue.sum()) else "No Open Queue",
+                "EVIDENCE": f"{int(open_queue.sum()) if len(open_queue) else 0:,} open queue row(s).",
+                "NEXT_ACTION": "Route alerts into owned queue rows with SLA, approval, and verification fields.",
+                "OWNER": "DBA Lead",
+            },
+        ]
+        automation_board = pd.concat(
+            [pd.DataFrame(automation_rows), integration_board],
+            ignore_index=True,
+            sort=False,
+        )
+        blocked = int(automation_board["STATE"].astype(str).isin(["Blocked", "Needs Setup"]).sum()) if not automation_board.empty else 0
+        review = int(automation_board["STATE"].astype(str).isin(["Manual", "Review"]).sum()) if not automation_board.empty else 0
+        ready = int(automation_board["STATE"].astype(str).isin(["Ready", "No Open Alerts", "No Open Queue"]).sum()) if not automation_board.empty else 0
+        a1, a2, a3, a4 = st.columns(4)
+        score = max(0, min(100, int(round((ready / max(len(automation_board), 1)) * 100 - blocked * 15 - review * 5))))
+        a1.metric("Automation Score", f"{score}/100")
+        a2.metric("Ready Controls", f"{ready:,}")
+        a3.metric("Manual / Review", f"{review:,}", delta_color="inverse")
+        a4.metric("Blocked", f"{blocked:,}", delta_color="inverse")
+        _render_priority_dataframe(
+            automation_board,
+            title="Alert automation controls",
+            priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
+            sort_by=["STATE", "CONTROL"],
+            ascending=[True, True],
+            raw_label="All alert automation controls",
+            height=320,
+        )
+        if not owner_board.empty:
+            _render_priority_dataframe(
+                owner_board,
+                title="Automation route blockers",
+                priority_columns=[
+                    "ROUTE_READY", "ISSUE_SOURCE", "SEVERITY", "ENTITY",
+                    "OWNER", "EMAIL_TARGET", "ONCALL_PRIMARY", "ESCALATION_TARGET",
+                    "NEXT_ACTION",
+                ],
+                sort_by=["ROUTE_READY", "SEVERITY", "ENTITY"],
+                ascending=[True, True, True],
+                raw_label="All route blocker rows",
+                height=260,
+            )
+        defer_source_note(
+            "Automation Readiness is deliberately email-first until Snowflake notification integration and ITSM/Jira sync are approved."
+        )
 
     elif active_view == "Issue Inbox":
         st.subheader("All Active DBA Issues")

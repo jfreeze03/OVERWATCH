@@ -6,6 +6,20 @@ OVERWATCH is a Snowflake usage, cost, performance, security, and DBA operations
 dashboard built with Streamlit. The active application lives in
 `.overwatch_final/app.py` and is deployed from the `main` branch.
 
+## Operating Surfaces
+
+- Executive Landing: board-ready status for risk, cost movement, open DBA work,
+  and setup/mart trust.
+- Experience View: sidebar navigation filter for DBA, Executive, FinOps,
+  Security, and Platform personas. It changes density and routing, not
+  Snowflake privileges.
+- Alert Automation Readiness: Alert Center pane for digest readiness, delivery
+  proof, route ownership, and email-first escalation controls.
+- FinOps Control Center: Cost & Contract workflow for Snowflake Cost Management
+  parity, resource monitors, formula confidence, and migration status.
+- Schema / Mart Migration Status: Setup Status panel that compares the expected
+  app setup contract to the deployed OVERWATCH mart ledger.
+
 ## Deployment Targets
 
 The repository supports two primary runtimes:
@@ -397,7 +411,8 @@ state such as:
 - Alert history
 - Recommendation action queue
 - Snowflake value log
-- Jira ticket and Terraform/Git deployment evidence for Change & Drift
+- Source-control/Terraform deployment evidence for Change & Drift
+- Jira/ITSM ticket and approval evidence for Change & Drift
 
 The app can generate setup DDL for saved views from the sidebar Saved Views
 panel.

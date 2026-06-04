@@ -41,6 +41,8 @@ from utils.workflows import (
 WORKFLOWS = (
     "Object and access changes",
     "Stored procedure lineage",
+    "Terraform evidence",
+    "Jira evidence",
     "Schema and object drift",
     "Data movement and replication",
     "Controlled DBA actions",
@@ -49,6 +51,8 @@ WORKFLOWS = (
 WORKFLOW_DETAILS = {
     "Object and access changes": "Who changed what, access movement, destructive DDL, and policy changes.",
     "Stored procedure lineage": "Procedure ownership, child SQL, downstream objects, and runtime/cost drift.",
+    "Terraform evidence": "Source-control and Terraform deploy evidence linked to Snowflake drift and Jira approval.",
+    "Jira evidence": "Jira/ITSM approvals, status, owner, and change-window evidence linked to deployments and Snowflake activity.",
     "Schema and object drift": "Schema compare, object inventory, unused objects, and Terraform drift signals.",
     "Data movement and replication": "Replication, dynamic tables, Snowpipe, data loading, and freshness risk.",
     "Controlled DBA actions": "Guarded admin actions, generated SQL, and operational controls.",
@@ -526,14 +530,24 @@ def _change_source_health_rows(
             "error_key": "change_action_closure_error",
         },
         {
-            "surface": "Jira/Terraform evidence",
-            "frame_key": "change_integration_status",
-            "meta_key": "change_integration_meta",
-            "days_key": "change_integration_days",
+            "surface": "Terraform evidence",
+            "frame_key": "change_integration_terraform_status",
+            "meta_key": "change_integration_terraform_meta",
+            "days_key": "change_integration_terraform_days",
             "default_days": 14,
-            "source": f"Workflow evidence: {CHANGE_ITSM_TICKET_TABLE} + {CHANGE_SOURCE_CONTROL_TABLE}",
+            "source": f"Workflow evidence: {CHANGE_SOURCE_CONTROL_TABLE}",
             "confidence": "Workflow evidence",
-            "error_key": "change_integration_error",
+            "error_key": "change_integration_terraform_error",
+        },
+        {
+            "surface": "Jira evidence",
+            "frame_key": "change_integration_jira_status",
+            "meta_key": "change_integration_jira_meta",
+            "days_key": "change_integration_jira_days",
+            "default_days": 14,
+            "source": f"Workflow evidence: {CHANGE_ITSM_TICKET_TABLE}",
+            "confidence": "Workflow evidence",
+            "error_key": "change_integration_jira_error",
         },
     ]
     rows = []
@@ -2125,7 +2139,7 @@ status_rows AS (
         MAX(START_TIME) AS LAST_ACTIVITY_TS,
         CASE
             WHEN COUNT_IF(NOT HAS_SOURCE_CONTROL AND NOT HAS_ITSM_TICKET AND NOT HAS_DEPLOYMENT_TAG) > 0
-                THEN 'Attach Jira or Terraform evidence, codify the drift, or revert through approved deployment.'
+                THEN 'Attach approved ticket or source-control evidence, codify the drift, or revert through approved deployment.'
             ELSE 'Retain observed Snowflake change history with ticket/source-control evidence.'
         END AS NEXT_ACTION
     FROM object_flags
@@ -2196,7 +2210,7 @@ def _change_unmatched_evidence_sql(days: int, company: str, environment: str = "
 unmatched_rows AS (
     SELECT
         'Snowflake' AS EVIDENCE_SOURCE,
-        'Snowflake change missing Jira/Terraform evidence' AS GAP_TYPE,
+        'Snowflake change missing external evidence' AS GAP_TYPE,
         IFF(CHANGE_CATEGORY IN ('DROP', 'POLICY', 'OWNER'), 'High', IFF(CHANGE_CATEGORY = 'GRANT', 'Medium', 'Low')) AS SEVERITY,
         ENTITY,
         USER_NAME AS ACTOR,
@@ -2583,149 +2597,222 @@ def _render_change_source_health(company: str, environment: str) -> None:
         )
 
 
-def _render_change_external_integrations(company: str, environment: str, default_days: int) -> None:
-    with st.expander("Jira & Terraform Evidence", expanded=False):
+def _integration_mode_config(mode: str) -> dict:
+    if str(mode) == "Jira":
+        return {
+            "slug": "jira",
+            "title": "Jira Evidence",
+            "caption": (
+                "Load Jira/ITSM tickets ingested into Snowflake, then confirm each approved change links "
+                "to Terraform/Git deploy evidence or observed Snowflake activity. OVERWATCH does not need "
+                "Jira credentials at runtime."
+            ),
+            "lookback_label": "Jira evidence lookback (days)",
+            "load_label": "Load Jira Evidence",
+            "status_surfaces": {"Jira tickets", "Snowflake object changes"},
+            "timeline_sources": {"Jira", "Snowflake"},
+            "unmatched_gap_types": {
+                "Snowflake change missing external evidence",
+                "Terraform/Git deploy missing Jira ticket",
+                "Approved Jira change missing deploy evidence",
+            },
+            "setup_sql": build_change_itsm_ticket_ddl(),
+            "proof_placeholder": "-- Load Jira Evidence first.",
+            "stale_copy": "Loaded Jira evidence is stale for the active scope. Reload before acting.",
+            "unavailable_copy": (
+                "Jira evidence is not available yet. Deploy the ITSM evidence table and feed it from Jira, then reload."
+            ),
+            "empty_copy": "No unmatched Jira/Snowflake evidence rows found for the selected window.",
+            "coverage_title": "Jira and Snowflake evidence coverage",
+            "raw_label": "All Jira evidence coverage rows",
+        }
+    return {
+        "slug": "terraform",
+        "title": "Terraform Evidence",
+        "caption": (
+            "Load Terraform/Git deploy evidence ingested into Snowflake, then confirm each applied change "
+            "links to Jira approval and observed Snowflake object-change history. OVERWATCH does not need "
+            "Git or Terraform credentials at runtime."
+        ),
+        "lookback_label": "Terraform evidence lookback (days)",
+        "load_label": "Load Terraform Evidence",
+        "status_surfaces": {"Terraform/Git evidence", "Snowflake object changes"},
+        "timeline_sources": {"Terraform/Git", "Git", "Terraform", "Snowflake"},
+        "unmatched_gap_types": {
+            "Snowflake change missing external evidence",
+            "Terraform/Git deploy missing Jira ticket",
+            "Terraform/Git deploy not observed in Snowflake change history",
+        },
+        "setup_sql": build_change_source_control_ddl(),
+        "proof_placeholder": "-- Load Terraform Evidence first.",
+        "stale_copy": "Loaded Terraform evidence is stale for the active scope. Reload before acting.",
+        "unavailable_copy": (
+            "Terraform evidence is not available yet. Deploy the source-control evidence table and feed it from CI/Git, then reload."
+        ),
+        "empty_copy": "No unmatched Terraform/Snowflake evidence rows found for the selected window.",
+        "coverage_title": "Terraform and Snowflake evidence coverage",
+        "raw_label": "All Terraform evidence coverage rows",
+    }
+
+
+def _filter_integration_frame(df: pd.DataFrame, mode: str, frame_kind: str) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    cfg = _integration_mode_config(mode)
+    view = df.copy()
+    if frame_kind == "status" and "SURFACE" in view.columns:
+        return view[view["SURFACE"].astype(str).isin(cfg["status_surfaces"])].copy()
+    if frame_kind == "timeline" and "EVENT_SOURCE" in view.columns:
+        sources = view["EVENT_SOURCE"].fillna("").astype(str)
+        if str(mode) == "Terraform":
+            mask = sources.eq("Snowflake") | sources.str.contains("Terraform|Git", case=False, regex=True)
+            return view[mask].copy()
+        return view[sources.isin(cfg["timeline_sources"])].copy()
+    if frame_kind == "unmatched" and "GAP_TYPE" in view.columns:
+        return view[view["GAP_TYPE"].astype(str).isin(cfg["unmatched_gap_types"])].copy()
+    return view
+
+
+def _render_change_external_integrations(company: str, environment: str, default_days: int, *, mode: str) -> None:
+    cfg = _integration_mode_config(mode)
+    slug = cfg["slug"]
+    prefix = f"change_integration_{slug}"
+
+    st.subheader(cfg["title"])
+    st.caption(cfg["caption"])
+    slider_default = safe_int(st.session_state.get(f"{prefix}_days", default_days)) or default_days
+    slider_default = max(1, min(90, int(slider_default)))
+    integration_days = st.slider(
+        cfg["lookback_label"],
+        1,
+        90,
+        slider_default,
+        key=f"{prefix}_days",
+    )
+    if st.button(cfg["load_label"], key=f"{prefix}_load", width="stretch"):
+        try:
+            status_sql = _change_integration_status_sql(integration_days, company, environment)
+            unmatched_sql = _change_unmatched_evidence_sql(integration_days, company, environment)
+            timeline_sql = _change_integration_timeline_sql(integration_days, company, environment)
+            raw_status = run_query(
+                status_sql,
+                ttl_key=f"{prefix}_status_{company}_{environment}_{integration_days}",
+                tier="standard",
+                section="Change & Drift",
+            )
+            raw_unmatched = run_query(
+                unmatched_sql,
+                ttl_key=f"{prefix}_unmatched_{company}_{environment}_{integration_days}",
+                tier="standard",
+                section="Change & Drift",
+            )
+            raw_timeline = run_query(
+                timeline_sql,
+                ttl_key=f"{prefix}_timeline_{company}_{environment}_{integration_days}",
+                tier="standard",
+                section="Change & Drift",
+            )
+            st.session_state[f"{prefix}_status"] = _filter_integration_frame(raw_status, mode, "status")
+            st.session_state[f"{prefix}_unmatched"] = _filter_integration_frame(raw_unmatched, mode, "unmatched")
+            st.session_state[f"{prefix}_timeline"] = _filter_integration_frame(raw_timeline, mode, "timeline")
+            st.session_state[f"{prefix}_sql"] = {
+                "status": status_sql,
+                "unmatched": unmatched_sql,
+                "timeline": timeline_sql,
+            }
+            st.session_state[f"{prefix}_meta"] = _change_scope_meta(
+                company,
+                environment,
+                integration_days,
+            )
+            st.session_state.pop(f"{prefix}_error", None)
+        except Exception as exc:
+            st.session_state[f"{prefix}_status"] = pd.DataFrame()
+            st.session_state[f"{prefix}_unmatched"] = pd.DataFrame()
+            st.session_state[f"{prefix}_timeline"] = pd.DataFrame()
+            st.session_state[f"{prefix}_error"] = format_snowflake_error(exc)
+            st.warning(cfg["unavailable_copy"])
+
+    expected_meta = _change_scope_meta(company, environment, integration_days)
+    status = st.session_state.get(f"{prefix}_status")
+    timeline = st.session_state.get(f"{prefix}_timeline")
+    unmatched = st.session_state.get(f"{prefix}_unmatched")
+    current = _change_meta_matches(st.session_state.get(f"{prefix}_meta"), expected_meta)
+    if status is not None and not status.empty and current:
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Evidence Surfaces", f"{len(status):,}")
+        s2.metric("Rows", f"{safe_int(status.get('ROWS', pd.Series(dtype=int)).sum()):,}")
+        matched = status.get("SOURCE_MATCH_ROWS", pd.Series(dtype=int)).sum() + status.get("TICKET_MATCH_ROWS", pd.Series(dtype=int)).sum()
+        s3.metric("Matched Evidence", f"{safe_int(matched):,}")
+        s4.metric("Gaps", f"{safe_int(status.get('GAP_ROWS', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+        render_priority_dataframe(
+            status,
+            title=cfg["coverage_title"],
+            priority_columns=[
+                "STATE", "SURFACE", "ROWS", "SOURCE_MATCH_ROWS",
+                "TICKET_MATCH_ROWS", "GAP_ROWS", "LAST_ACTIVITY_TS", "NEXT_ACTION",
+            ],
+            sort_by=["STATE_RANK", "GAP_ROWS", "SURFACE"],
+            ascending=[True, False, True],
+            raw_label=cfg["raw_label"],
+            height=220,
+        )
+    elif status is not None and not current and not st.session_state.get(f"{prefix}_error"):
+        st.info(cfg["stale_copy"])
+
+    if unmatched is not None and not unmatched.empty and current:
+        render_priority_dataframe(
+            unmatched,
+            title=f"Unmatched {cfg['title'].lower()} rows",
+            priority_columns=[
+                "SEVERITY", "GAP_TYPE", "EVIDENCE_SOURCE", "ENTITY", "ACTOR",
+                "TICKET_ID", "REPOSITORY", "COMMIT_SHA", "PR_URL", "QUERY_ID",
+                "EVENT_TS", "NEXT_ACTION",
+            ],
+            sort_by=["SEVERITY", "EVENT_TS", "GAP_TYPE"],
+            ascending=[True, False, True],
+            raw_label=f"All unmatched {cfg['title'].lower()} rows",
+            height=300,
+        )
+    elif unmatched is not None and unmatched.empty and current and status is not None and not status.empty:
+        st.success(cfg["empty_copy"])
+
+    if timeline is not None and not timeline.empty and current:
+        chart = (
+            timeline.pivot_table(
+                index="EVENT_DATE",
+                columns="EVENT_SOURCE",
+                values="EVENT_COUNT",
+                aggfunc="sum",
+            )
+            .fillna(0)
+            .sort_index()
+        )
+        st.bar_chart(chart)
+        render_priority_dataframe(
+            timeline,
+            title=f"{cfg['title']} event timeline",
+            priority_columns=[
+                "EVENT_DATE", "EVENT_SOURCE", "EVENT_TYPE", "EVENT_STATE",
+                "EVENT_COUNT", "HIGH_RISK_COUNT", "LAST_EVENT_TS",
+            ],
+            sort_by=["EVENT_DATE", "EVENT_SOURCE"],
+            ascending=[False, True],
+            raw_label=f"All {cfg['title'].lower()} timeline rows",
+            height=260,
+        )
+
+    if st.session_state.get(f"{prefix}_error"):
         st.caption(
-            "Load ticket and source-control evidence that has been ingested into Snowflake by ALFA's Jira/Git/Terraform jobs. "
-            "The app does not need Jira or Git credentials at runtime."
+            f"{cfg['title']} unavailable: {st.session_state.get(f'{prefix}_error')}"
         )
-        slider_default = safe_int(st.session_state.get("change_integration_days", default_days)) or default_days
-        slider_default = max(1, min(90, int(slider_default)))
-        integration_days = st.slider(
-            "Jira/Terraform evidence lookback (days)",
-            1,
-            90,
-            slider_default,
-            key="change_integration_days",
-        )
-        if st.button("Load Jira / Terraform Evidence", key="change_integration_load", width="stretch"):
-            try:
-                status_sql = _change_integration_status_sql(integration_days, company, environment)
-                unmatched_sql = _change_unmatched_evidence_sql(integration_days, company, environment)
-                timeline_sql = _change_integration_timeline_sql(integration_days, company, environment)
-                st.session_state["change_integration_status"] = run_query(
-                    status_sql,
-                    ttl_key=f"change_integration_status_{company}_{environment}_{integration_days}",
-                    tier="standard",
-                    section="Change & Drift",
-                )
-                st.session_state["change_integration_unmatched"] = run_query(
-                    unmatched_sql,
-                    ttl_key=f"change_integration_unmatched_{company}_{environment}_{integration_days}",
-                    tier="standard",
-                    section="Change & Drift",
-                )
-                st.session_state["change_integration_timeline"] = run_query(
-                    timeline_sql,
-                    ttl_key=f"change_integration_timeline_{company}_{environment}_{integration_days}",
-                    tier="standard",
-                    section="Change & Drift",
-                )
-                st.session_state["change_integration_sql"] = {
-                    "status": status_sql,
-                    "unmatched": unmatched_sql,
-                    "timeline": timeline_sql,
-                }
-                st.session_state["change_integration_meta"] = _change_scope_meta(
-                    company,
-                    environment,
-                    integration_days,
-                )
-                st.session_state.pop("change_integration_error", None)
-            except Exception as exc:
-                st.session_state["change_integration_status"] = pd.DataFrame()
-                st.session_state["change_integration_unmatched"] = pd.DataFrame()
-                st.session_state["change_integration_timeline"] = pd.DataFrame()
-                st.session_state["change_integration_error"] = format_snowflake_error(exc)
-                st.warning(
-                    "Jira/Terraform evidence is not available yet. Deploy the integration tables and feed them from CI/Jira, then reload."
-                )
-
-        expected_meta = _change_scope_meta(company, environment, integration_days)
-        status = st.session_state.get("change_integration_status")
-        timeline = st.session_state.get("change_integration_timeline")
-        unmatched = st.session_state.get("change_integration_unmatched")
-        current = _change_meta_matches(st.session_state.get("change_integration_meta"), expected_meta)
-        if status is not None and not status.empty and current:
-            s1, s2, s3, s4 = st.columns(4)
-            s1.metric("Evidence Surfaces", f"{len(status):,}")
-            s2.metric("Rows", f"{safe_int(status.get('ROWS', pd.Series(dtype=int)).sum()):,}")
-            s3.metric("Matched Evidence", f"{safe_int(status.get('SOURCE_MATCH_ROWS', pd.Series(dtype=int)).sum() + status.get('TICKET_MATCH_ROWS', pd.Series(dtype=int)).sum()):,}")
-            s4.metric("Gaps", f"{safe_int(status.get('GAP_ROWS', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-            render_priority_dataframe(
-                status,
-                title="Jira, Terraform, and Snowflake evidence coverage",
-                priority_columns=[
-                    "STATE", "SURFACE", "ROWS", "SOURCE_MATCH_ROWS",
-                    "TICKET_MATCH_ROWS", "GAP_ROWS", "LAST_ACTIVITY_TS", "NEXT_ACTION",
-                ],
-                sort_by=["STATE_RANK", "GAP_ROWS", "SURFACE"],
-                ascending=[True, False, True],
-                raw_label="All Jira/Terraform evidence coverage rows",
-                height=220,
-            )
-        elif status is not None and not current and not st.session_state.get("change_integration_error"):
-            st.info("Loaded Jira/Terraform evidence is stale for the active scope. Reload before acting.")
-
-        if unmatched is not None and not unmatched.empty and current:
-            render_priority_dataframe(
-                unmatched,
-                title="Unmatched drift and approval evidence",
-                priority_columns=[
-                    "SEVERITY", "GAP_TYPE", "EVIDENCE_SOURCE", "ENTITY", "ACTOR",
-                    "TICKET_ID", "REPOSITORY", "COMMIT_SHA", "PR_URL", "QUERY_ID",
-                    "EVENT_TS", "NEXT_ACTION",
-                ],
-                sort_by=["SEVERITY", "EVENT_TS", "GAP_TYPE"],
-                ascending=[True, False, True],
-                raw_label="All unmatched Jira/Terraform evidence rows",
-                height=300,
-            )
-        elif unmatched is not None and unmatched.empty and current and status is not None and not status.empty:
-            st.success("No unmatched Jira/Terraform/Snowflake evidence rows found for the selected window.")
-
-        if timeline is not None and not timeline.empty and current:
-            chart = (
-                timeline.pivot_table(
-                    index="EVENT_DATE",
-                    columns="EVENT_SOURCE",
-                    values="EVENT_COUNT",
-                    aggfunc="sum",
-                )
-                .fillna(0)
-                .sort_index()
-            )
-            st.bar_chart(chart)
-            render_priority_dataframe(
-                timeline,
-                title="Change-control event timeline",
-                priority_columns=[
-                    "EVENT_DATE", "EVENT_SOURCE", "EVENT_TYPE", "EVENT_STATE",
-                    "EVENT_COUNT", "HIGH_RISK_COUNT", "LAST_EVENT_TS",
-                ],
-                sort_by=["EVENT_DATE", "EVENT_SOURCE"],
-                ascending=[False, True],
-                raw_label="All Jira/Terraform/Snowflake timeline rows",
-                height=260,
-            )
-
-        if st.session_state.get("change_integration_error"):
-            st.caption(
-                f"Integration evidence unavailable: {st.session_state.get('change_integration_error')}"
-            )
-        with st.expander("Integration table setup SQL", expanded=False):
-            st.code(
-                "\n\n".join([
-                    build_change_source_control_ddl(),
-                    build_change_itsm_ticket_ddl(),
-                ]),
-                language="sql",
-            )
-        with st.expander("Integration proof SQL", expanded=False):
-            proof_sql = st.session_state.get("change_integration_sql", {})
-            st.code(proof_sql.get("status", "-- Load Jira / Terraform Evidence first."), language="sql")
-            st.code(proof_sql.get("unmatched", "-- Load Jira / Terraform Evidence first."), language="sql")
-            st.code(proof_sql.get("timeline", "-- Load Jira / Terraform Evidence first."), language="sql")
+    with st.expander(f"{cfg['title']} table setup SQL", expanded=False):
+        st.code(cfg["setup_sql"], language="sql")
+    with st.expander(f"{cfg['title']} proof SQL", expanded=False):
+        proof_sql = st.session_state.get(f"{prefix}_sql", {})
+        st.code(proof_sql.get("status", cfg["proof_placeholder"]), language="sql")
+        st.code(proof_sql.get("unmatched", cfg["proof_placeholder"]), language="sql")
+        st.code(proof_sql.get("timeline", cfg["proof_placeholder"]), language="sql")
 
 
 def render() -> None:
@@ -2755,6 +2842,8 @@ def render() -> None:
         [
             ("DDL, grant, owner, or policy changed", "Use Object and access changes."),
             ("A stored procedure drove unexpected cost or changes", "Use Stored procedure lineage."),
+            ("Terraform deploy evidence exists", "Use Terraform evidence."),
+            ("Jira approval or ticket status needs review", "Use Jira evidence."),
             ("Schemas, objects, or unused assets may have drifted", "Use Schema and object drift."),
             ("Loads, pipes, dynamic tables, or replication are suspect", "Use Data movement and replication."),
             ("A query, task, warehouse, or setup action is required", "Use Controlled DBA actions."),
@@ -2763,7 +2852,6 @@ def render() -> None:
 
     days = st.slider("Change brief lookback (days)", 1, 90, 14, key="change_drift_brief_days")
     _render_change_source_health(company, environment)
-    _render_change_external_integrations(company, environment, days)
     if st.button("Load Change & Drift Brief", key="change_drift_brief_load", type="primary"):
         try:
             summary_sql, exceptions_sql = _build_mart_change_drift_sql(days, company)
@@ -3188,6 +3276,10 @@ def render() -> None:
         render_workflow_module(workflow, WORKFLOW_MODULES)
     elif workflow == "Stored procedure lineage":
         render_workflow_module(workflow, WORKFLOW_MODULES)
+    elif workflow == "Terraform evidence":
+        _render_change_external_integrations(company, environment, days, mode="Terraform")
+    elif workflow == "Jira evidence":
+        _render_change_external_integrations(company, environment, days, mode="Jira")
     elif workflow == "Schema and object drift":
         st.session_state["dba_tools_focus"] = "Governance"
         st.info("Focused toolkit: schema compare, recent objects, unused objects, object inventory, and drift checks.")

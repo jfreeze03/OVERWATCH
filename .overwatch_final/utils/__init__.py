@@ -193,6 +193,11 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "section_guidance": (
         "defer_section_note", "defer_source_note",
     ),
+    "deployment": (
+        "OVERWATCH_SCHEMA_VERSION", "MIGRATION_TABLE",
+        "build_schema_migration_contract", "build_schema_migration_status_sql",
+        "build_schema_migration_ddl",
+    ),
     "compatibility": (
         "run_compatibility_checks", "get_available_columns", "view_supports_columns",
         "filter_existing_columns", "build_smoke_test_checklist",

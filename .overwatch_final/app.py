@@ -31,7 +31,8 @@ from config import (
     ALL_SECTIONS, NAV_GROUPS, DEFAULTS, COMPANY_CONFIG,
     DEFAULT_COMPANY, ROLE_SECTIONS,
     SECTION_BY_TITLE, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
-    SECTION_ICONS, DEFAULT_ALERT_EMAIL, normalize_section_name,
+    SECTION_ICONS, DEFAULT_ALERT_EMAIL, EXPERIENCE_VIEW_SECTIONS,
+    normalize_section_name,
 )
 import utils as utils_package
 
@@ -195,11 +196,22 @@ def _get_current_role() -> str:
 
 
 def _resolve_visible_sections() -> list[str]:
+    return _resolve_visible_sections_for_experience(
+        str(st.session_state.get("overwatch_experience_view", "DBA") or "DBA")
+    )
+
+
+def _resolve_visible_sections_for_experience(experience: str) -> list[str]:
     role = _get_current_role()
     for key, sec_list in ROLE_SECTIONS.items():
         if key in role:
-            return sec_list
-    return ALL_SECTIONS
+            base_sections = list(sec_list)
+            break
+    else:
+        base_sections = list(ALL_SECTIONS)
+    profile_sections = EXPERIENCE_VIEW_SECTIONS.get(experience, EXPERIENCE_VIEW_SECTIONS["DBA"])
+    visible = [section for section in profile_sections if section in base_sections]
+    return visible or base_sections
 
 
 def _normalize_nav_section(section: str) -> str:
@@ -218,6 +230,15 @@ def _queue_section_navigation(section: str) -> None:
         st.session_state["_overwatch_pending_section"] = target
         st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
     st.session_state["nav_section"] = target
+
+
+def _sync_experience_navigation() -> None:
+    """Keep the active section valid when the persona filter changes."""
+    selected = str(st.session_state.get("overwatch_experience_view", "DBA") or "DBA")
+    visible = _resolve_visible_sections_for_experience(selected)
+    current = _normalize_nav_section(st.session_state.get("nav_section", visible[0]))
+    if current not in visible:
+        _queue_section_navigation(visible[0])
 
 
 def _global_filter_signature() -> tuple:
@@ -340,6 +361,7 @@ def _probe_snowflake_available(force: bool = False) -> bool:
 
 
 SECTION_SUBTITLES = {
+    "Executive Landing": "Board-ready risk, cost movement, action closure, and deployment trust.",
     "DBA Control Room": "Morning triage, route readiness, source health, and release risk.",
     "Alert Center": "Consolidated incidents, email digests, annotation history, and alert setup.",
     "Account Health": "Daily DBA checklist, source readiness, user hygiene, and account posture.",
@@ -613,15 +635,28 @@ with st.sidebar:
     st.divider()
 
     # Navigation.
-    visible_sections = _current_visible_sections()
     current_role     = _get_current_role()
     matched_profile  = next((k for k in ROLE_SECTIONS if k in current_role), "DBA")
+    experience_options = list(EXPERIENCE_VIEW_SECTIONS.keys())
+    current_experience = st.session_state.get("overwatch_experience_view", "DBA")
+    if current_experience not in experience_options:
+        current_experience = "DBA"
+        st.session_state["overwatch_experience_view"] = current_experience
+    selected_experience = st.selectbox(
+        "Experience View",
+        experience_options,
+        index=experience_options.index(current_experience),
+        key="overwatch_experience_view",
+        on_change=_sync_experience_navigation,
+        help="Filters navigation for the current persona without granting additional Snowflake privileges.",
+    )
+    visible_sections = _current_visible_sections()
     profile_color    = {
         "ANALYST": "#fbbf24", "MANAGER": "#c084fc", "REPORT": "#fbbf24",
     }.get(matched_profile, "#38bdf8")
     role_label = current_role[:20] or "DBA"
 
-    st.caption(f"{role_label} - {matched_profile} VIEW")
+    st.caption(f"{role_label} - {matched_profile} ROLE - {selected_experience} VIEW")
     st.caption("NAVIGATE")
 
     active_section = _current_active_section(visible_sections)

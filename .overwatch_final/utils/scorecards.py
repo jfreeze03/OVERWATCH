@@ -56,6 +56,16 @@ DBA_CONTROL_PLANE_RUBRIC = (
 DBA_CONTROL_PLANE_COMPONENTS = tuple(item["key"] for item in DBA_CONTROL_PLANE_RUBRIC)
 
 DBA_CONTROL_PLANE_SECTION_BASELINE = {
+    "Executive Landing": {
+        "domain_coverage": 96,
+        "data_correctness": 96,
+        "actionability": 98,
+        "admin_safety_audit": 96,
+        "performance_mart": 98,
+        "workflow_ux": 98,
+        "governance_ownership": 97,
+        "tests_operability": 98,
+    },
     "DBA Control Room": {
         "domain_coverage": 96,
         "data_correctness": 95,
@@ -149,6 +159,7 @@ DBA_CONTROL_PLANE_SECTION_BASELINE = {
 }
 
 DBA_CONTROL_PLANE_SECTION_NEXT_MOVES = {
+    "Executive Landing": "Connect executive decisions to live ITSM/status proof so routed work can show verified closure back on the landing page.",
     "DBA Control Room": "Connect the operating board to live ITSM ticket state and execution audit writes for verified auto-close.",
     "Alert Center": "Replace placeholder owner rows with named ALFA on-call groups, enable the approved Snowflake notification integration, and sync alert lifecycle to ITSM.",
     "Workload Operations": "Replace placeholder owner rows with named pipeline/procedure owners and wire recovery command-board rows to the ITSM ticket lifecycle.",

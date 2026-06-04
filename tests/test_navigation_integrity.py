@@ -21,6 +21,7 @@ from config import (  # noqa: E402
     SECTION_DEFINITIONS,
     SECTION_MODULES,
     SECTION_REDIRECTS,
+    EXPERIENCE_VIEW_SECTIONS,
     normalize_section_name,
 )
 from utils.section_guidance import (  # noqa: E402
@@ -100,7 +101,39 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Warehouse Health"])
         self.assertEqual(SECTION_ALIASES["Architecture"], SECTION_BY_TITLE["Architecture Readiness"])
         self.assertEqual(SECTION_ALIASES["Disaster Recovery"], SECTION_BY_TITLE["Architecture Readiness"])
+        self.assertEqual(SECTION_ALIASES["Executive Briefing"], SECTION_BY_TITLE["Executive Landing"])
         self.assertNotIn("LEGACY_SECTION_ALIASES", (APP_ROOT / "config.py").read_text(encoding="utf-8"))
+
+    def test_experience_views_are_registered(self):
+        app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
+
+        self.assertIn("Executive Landing", ALL_SECTIONS)
+        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
+        self.assertIn("EXPERIENCE_VIEW_SECTIONS", config_text)
+        self.assertIn("Experience View", app_text)
+        self.assertIn("_sync_experience_navigation", app_text)
+        self.assertIn("on_change=_sync_experience_navigation", app_text)
+        for profile, sections in EXPERIENCE_VIEW_SECTIONS.items():
+            with self.subTest(profile=profile):
+                self.assertTrue(sections)
+                self.assertLessEqual(set(sections), set(ALL_SECTIONS))
+        self.assertIn("Executive Landing", EXPERIENCE_VIEW_SECTIONS["Executive"])
+        self.assertIn("Cost & Contract", EXPERIENCE_VIEW_SECTIONS["FinOps"])
+        self.assertIn("Security Posture", EXPERIENCE_VIEW_SECTIONS["Security"])
+
+    def test_executive_landing_routes_to_workflow_panes(self):
+        executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+
+        self.assertIn("_source_health_rows", executive_text)
+        self.assertIn("Executive source health", executive_text)
+        self.assertIn('"alert_center_active_view": "Automation Readiness"', executive_text)
+        self.assertIn('workflow_key="cost_contract_workflow"', executive_text)
+        self.assertIn('workflow="FinOps Control Center"', executive_text)
+        self.assertIn('workflow_key="change_drift_workflow"', executive_text)
+        self.assertIn('workflow="Controlled DBA actions"', executive_text)
+        self.assertIn('"dba_tools_group_selector": "Cost & Setup"', executive_text)
+        self.assertIn('"dba_tools_tool_selector_Cost & Setup": "Setup Status"', executive_text)
 
     def test_section_alias_literal_has_no_duplicate_keys(self):
         config_tree = ast.parse((APP_ROOT / "config.py").read_text(encoding="utf-8"))
@@ -264,6 +297,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_ALIASES["Alerts"], SECTION_BY_TITLE["Alert Center"])
         self.assertIn("Access posture", security_posture.WORKFLOWS)
         self.assertEqual(security_posture.WORKFLOW_MODULES["Access posture"], "sections.security_access")
+        self.assertIn("Terraform evidence", change_drift.WORKFLOWS)
+        self.assertIn("Jira evidence", change_drift.WORKFLOWS)
         self.assertIn("Schema and object drift", change_drift.WORKFLOWS)
         self.assertIn("Data movement and replication", change_drift.WORKFLOWS)
         self.assertIn("Controlled DBA actions", change_drift.WORKFLOWS)
@@ -784,11 +819,19 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Recovery readiness", change_drift_text)
         self.assertIn("_change_intervention_matrix", change_drift_text)
         self.assertIn("Change DBA intervention matrix", change_drift_text)
-        self.assertIn("Jira & Terraform Evidence", change_drift_text)
-        self.assertIn("_render_change_external_integrations(company, environment, days)", change_drift_render_preload)
-        self.assertIn('st.button("Load Jira / Terraform Evidence"', change_drift_text)
+        self.assertIn('"Terraform evidence"', change_drift_text)
+        self.assertIn('"Jira evidence"', change_drift_text)
+        self.assertIn('mode="Terraform"', change_drift_text)
+        self.assertIn('mode="Jira"', change_drift_text)
+        self.assertIn("Terraform Evidence", change_drift_text)
+        self.assertIn("Jira Evidence", change_drift_text)
+        self.assertIn('"Load Terraform Evidence"', change_drift_text)
+        self.assertIn('"Load Jira Evidence"', change_drift_text)
+        self.assertNotIn("Jira & Terraform Evidence", change_drift_text)
+        self.assertNotIn('st.button("Load Jira / Terraform Evidence"', change_drift_text)
         self.assertIn('sort_by=["DBA_PRIORITY", "SEVERITY", "FINDING_TYPE"]', change_drift_text)
         self.assertIn("ALERT_CENTER_SOURCES_BY_PANE", alert_center_text)
+        self.assertIn('"Automation Readiness"', alert_center_text)
         self.assertIn("_alert_center_sources_for_view(active_view)", alert_center_text)
         self.assertIn("ALERT_CENTER_SOURCE_PLAN", alert_center_text)
         self.assertIn("_alert_center_source_summary(required_sources)", alert_center_text)
@@ -809,6 +852,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _alert_integration_readiness_board", alert_center_text)
         self.assertIn("Owner Directory Production Readiness", alert_center_text)
         self.assertIn("Notification & ITSM Readiness", alert_center_text)
+        self.assertIn("Alert Automation Readiness", alert_center_text)
+        self.assertIn("Automation Score", alert_center_text)
         self.assertIn("owner_directory_readiness_board", alert_center_text)
         self.assertIn("get_session_for_action", alert_center_text)
         self.assertIn("snowflake_connection_known_unavailable", session_text)
@@ -936,6 +981,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Adaptive Compute transition advisor", architecture_text)
         self.assertIn("AI security guardrails to close first", architecture_text)
         self.assertIn("Run-Rate and YOY", cost_contract_text)
+        self.assertIn("FinOps Control Center", cost_contract_text)
+        self.assertIn('"sections.finops_control"', cost_contract_text)
         self.assertIn("build_mart_cost_run_rate_sql", cost_contract_text)
         self.assertIn("YOY_7D_PCT", cost_contract_text)
         self.assertIn("Snowflake Cost Management Parity", cost_contract_text)
@@ -956,6 +1003,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("SHOW GRANTS TO ROLE PUBLIC", architecture_text)
         self.assertIn("Architecture Readiness - Cache", architecture_text)
         self.assertIn("TASK_GRAPH_CONTROL_PANES", dba_tools_text)
+        self.assertIn("Schema / Mart Migration Status", dba_tools_text)
+        self.assertIn("build_schema_migration_status_sql", dba_tools_text)
         self.assertIn("DBA_TOOL_GROUPS", dba_tools_text)
         self.assertIn("DBA_TOOL_GROUPS", dba_tool_catalog_text)
         self.assertIn("WH_PARAM_HELP", dba_tool_catalog_text)

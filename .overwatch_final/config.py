@@ -555,6 +555,7 @@ class SectionDefinition:
 # Retired standalone pages are handled by redirect aliases below so saved views
 # and old bookmarks keep working without making legacy names first-class routes.
 SECTION_DEFINITIONS = (
+    SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing"),
     SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room_shell"),
     SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center"),
     SectionDefinition("COMMAND CENTER", "home", "Account Health", "sections.account_health"),
@@ -574,6 +575,8 @@ ALL_SECTIONS = [_section.label for _section in SECTION_DEFINITIONS]
 SECTION_MODULES = {_section.label: _section.module for _section in SECTION_DEFINITIONS}
 _CANONICAL_SECTION_BY_TITLE = {_section.title: _section.label for _section in SECTION_DEFINITIONS}
 SECTION_REDIRECTS = {
+    "Executive Briefing": _CANONICAL_SECTION_BY_TITLE["Executive Landing"],
+    "Executive Evidence": _CANONICAL_SECTION_BY_TITLE["Executive Landing"],
     "Query Workbench": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
     "Live Monitor": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
     "Detailed Diagnosis": _CANONICAL_SECTION_BY_TITLE["Workload Operations"],
@@ -632,6 +635,7 @@ def _sections_by_title(*titles: str) -> list[str]:
 # limits still apply by reducing access to governance workflows where needed.
 ROLE_SECTIONS = {
     "ANALYST": _sections_by_title(
+        "Executive Landing",
         "DBA Control Room",
         "Alert Center",
         "Account Health",
@@ -642,6 +646,7 @@ ROLE_SECTIONS = {
     ),
     "MANAGER": list(ALL_SECTIONS),
     "REPORT": _sections_by_title(
+        "Executive Landing",
         "DBA Control Room",
         "Alert Center",
         "Account Health",
@@ -653,6 +658,39 @@ ROLE_SECTIONS = {
     "DBA": list(ALL_SECTIONS),
     "SYSADMIN": list(ALL_SECTIONS),
     "ACCOUNTADMIN": list(ALL_SECTIONS),
+}
+
+EXPERIENCE_VIEW_SECTIONS = {
+    "DBA": list(ALL_SECTIONS),
+    "Executive": _sections_by_title(
+        "Executive Landing",
+        "DBA Control Room",
+        "Alert Center",
+        "Cost & Contract",
+        "Account Health",
+    ),
+    "FinOps": _sections_by_title(
+        "Executive Landing",
+        "Cost & Contract",
+        "Warehouse Health",
+        "Alert Center",
+        "Change & Drift",
+    ),
+    "Security": _sections_by_title(
+        "Executive Landing",
+        "Alert Center",
+        "Security Posture",
+        "Change & Drift",
+        "Account Health",
+    ),
+    "Platform": _sections_by_title(
+        "Executive Landing",
+        "DBA Control Room",
+        "Workload Operations",
+        "Warehouse Health",
+        "Architecture Readiness",
+        "Change & Drift",
+    ),
 }
 
 ETL_AUDIT_DB = "DBA_MAINT_DB"

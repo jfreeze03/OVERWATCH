@@ -271,6 +271,12 @@ from utils.cost import (  # noqa: E402
     query_attribution_supported,
 )
 from utils.compatibility import clear_compatibility_process_cache  # noqa: E402
+from utils.deployment import (  # noqa: E402
+    OVERWATCH_SCHEMA_VERSION,
+    build_schema_migration_contract,
+    build_schema_migration_ddl,
+    build_schema_migration_status_sql,
+)
 from utils.ask_overwatch import (  # noqa: E402
     answer_ask_overwatch,
     build_ask_overwatch_context,
@@ -1586,6 +1592,22 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("WAREHOUSE_COST_MOVEMENT", setup_upper)
         self.assertIn("CORTEX_BUDGET_AND_QUOTA", setup_upper)
         self.assertIn("CHANGE_COST_CORRELATION", setup_upper)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_SCHEMA_MIGRATION", setup_upper)
+        self.assertIn(OVERWATCH_SCHEMA_VERSION.upper(), setup_upper)
+
+    def test_schema_migration_contract_tracks_setup_ledger(self):
+        contract = build_schema_migration_contract()
+        ddl = build_schema_migration_ddl().upper()
+        status_sql = build_schema_migration_status_sql().upper()
+
+        self.assertIn("OVERWATCH_SCHEMA_MIGRATION", ddl)
+        self.assertIn(OVERWATCH_SCHEMA_VERSION.upper(), ddl)
+        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", status_sql)
+        self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", status_sql)
+        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", status_sql)
+        self.assertIn("VERSION DRIFT", status_sql)
+        self.assertIn("Schema migration ledger", set(contract["COMPONENT"]))
+        self.assertIn("OVERWATCH_SCHEMA_MIGRATION", set(contract["REQUIRED_OBJECT"]))
 
     def test_cost_governance_mart_sql_matches_setup_object_contract(self):
         sql = build_cost_governance_mart_sql().upper()
@@ -3444,7 +3466,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("REGEXP_SUBSTR", status_sql)
         self.assertIn("COMMIT_SHA <> ''", status_sql)
         self.assertIn("OBJECT_MATCH_KEY", status_sql)
-        self.assertIn("SNOWFLAKE CHANGE MISSING JIRA/TERRAFORM EVIDENCE", unmatched_sql)
+        self.assertIn("SNOWFLAKE CHANGE MISSING EXTERNAL EVIDENCE", unmatched_sql)
         self.assertIn("APPROVED JIRA CHANGE MISSING DEPLOY EVIDENCE", unmatched_sql)
         self.assertIn("EVENT_SOURCE", timeline_sql)
         self.assertIn("'JIRA'", timeline_sql)
@@ -3509,7 +3531,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "global_start_date": "",
                 "global_end_date": "",
             },
-            "change_integration_days": 14,
+            "change_integration_terraform_days": 14,
+            "change_integration_jira_days": 14,
         }
 
         rows = _change_source_health_rows(state, company="ALFA", environment="PROD")
@@ -3521,8 +3544,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Evidence trend"]["STATE"], "Stale")
         self.assertEqual(by_surface["Closure analytics"]["STATE"], "Not Loaded")
-        self.assertEqual(by_surface["Jira/Terraform evidence"]["STATE"], "Not Loaded")
-        self.assertIn("OVERWATCH_ITSM_TICKET", by_surface["Jira/Terraform evidence"]["SOURCE"])
+        self.assertEqual(by_surface["Terraform evidence"]["STATE"], "Not Loaded")
+        self.assertEqual(by_surface["Jira evidence"]["STATE"], "Not Loaded")
+        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", by_surface["Terraform evidence"]["SOURCE"])
+        self.assertIn("OVERWATCH_ITSM_TICKET", by_surface["Jira evidence"]["SOURCE"])
         self.assertIn("Reload", by_surface["Evidence trend"]["NEXT_ACTION"])
 
     def test_change_action_queue_closure_sql_scores_evidence_gaps(self):

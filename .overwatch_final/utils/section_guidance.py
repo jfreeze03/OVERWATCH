@@ -11,6 +11,12 @@ SECTION_GUIDANCE_VERSION = "2026-06-03-bottom-notes-v1"
 _DEFERRED_NOTES_PREFIX = "_overwatch_deferred_section_notes"
 
 SECTION_OPERATING_GUIDE = {
+    "Executive Landing": {
+        "first_move": "Review executive state, critical actions, cost movement, and migration blockers before drilling into owner workflows.",
+        "evidence": "Roll-up of cost cockpit, alert/action queue, source health, and schema migration status evidence.",
+        "closure": "Use linked operational sections for closure; this page should route decisions, not certify remediation by itself.",
+        "guardrail": "Treat Executive Landing as a decision summary; do not override source-section evidence or close findings from roll-up metrics alone.",
+    },
     "DBA Control Room": {
         "first_move": "Work Critical/High incidents first, then stale evidence and unowned action routes.",
         "evidence": "Incident board, source health, command queue, and loaded action-closure evidence.",
@@ -69,6 +75,22 @@ SECTION_OPERATING_GUIDE = {
 
 
 SECTION_EVIDENCE_CONTRACT = {
+    "Executive Landing": [
+        {
+            "source": "Cost cockpit, alert center, action queue, and migration status roll-ups",
+            "confidence": "Derived from source-section evidence",
+            "decision_use": "Prioritize executive attention, route work, and decide which operational section needs review.",
+            "invalid_use": "Do not close, suppress, or approve remediation from summary cards alone.",
+            "proof": "Source-section evidence row, owner route, ticket or approval, and verification result.",
+        },
+        {
+            "source": "Schema migration and deployment readiness contract",
+            "confidence": "Exact when setup ledger is deployed",
+            "decision_use": "Identify whether the app schema/mart contract is ready for operating workflows.",
+            "invalid_use": "Do not treat a missing migration row as Snowflake health failure without checking setup deployment.",
+            "proof": "OVERWATCH_SCHEMA_MIGRATION row, expected version, applied timestamp, and setup SQL source.",
+        },
+    ],
     "DBA Control Room": [
         {
             "source": "Incident board and action queue",

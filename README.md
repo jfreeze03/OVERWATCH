@@ -8,6 +8,12 @@ Start daily work in the DBA Control Room. It triages exceptions, routes DBAs
 into specialist tools, and produces report-ready leadership evidence without
 requiring executives to access the app.
 
+Use Executive Landing for the board-ready view. It summarizes risk, cost
+movement, open DBA actions, and schema/mart deployment trust, then routes users
+to Alert Automation, FinOps controls, DBA queue work, or Setup Status. Its
+source-health rows show when any roll-up is limited by access, setup, or no-row
+scope.
+
 Use Workload Operations for query incidents. It consolidates live triage,
 query analysis, task graphs, stored procedure tracking, pipeline health, and
 historical query search into one DBA workflow.
@@ -19,11 +25,12 @@ Use the DBA Workflows group for investigations:
 - Warehouse Health consolidates scaling, efficiency, spill, heatmap, and
   optimization work.
 - Cost & Contract consolidates bill explanation, cost attribution, contract
-  utilization, recommendations, Snowflake value, Cortex, and SPCS spend.
+  utilization, FinOps Control Center, recommendations, Snowflake value, Cortex,
+  and SPCS spend.
 - Security Posture consolidates login posture, MFA, grants, exfiltration,
   lineage, and data sharing exposure.
 - Change & Drift consolidates object/access changes, stored procedure lineage,
-  schema/object drift checks, Jira/Terraform evidence linkage, dynamic tables,
+  schema/object drift checks, Terraform evidence, Jira approval evidence, dynamic tables,
   replication, and DBA controls.
 
 Cost & Contract's Explain This Bill tab is the starting point for billing
@@ -53,7 +60,7 @@ Local run:
 Production Snowflake mart setup:
 
 - Run `snowflake/OVERWATCH_MART_SETUP.sql` in Snowflake to create the low-cost
-  OVERWATCH mart schema, persistence tables, Jira/Terraform evidence tables,
+  OVERWATCH mart schema, persistence tables, source-control evidence tables, ITSM evidence tables,
   refresh procedures, and scheduled tasks.
 - The Streamlit-in-Snowflake app runs on X-Small `OVERWATCH_WH` with
   60-second auto-suspend for runtime cost isolation. Setup also assigns the
@@ -69,6 +76,8 @@ Deployment preflight:
   Streamlit-in-Snowflake still uses `.overwatch_final/snowflake.yml` with
   `main_file: app.py` and `query_warehouse: OVERWATCH_WH`.
 - Run the regression suite and section smoke before promoting a release.
+- In the app, run Change & Drift > DBA Tools > Setup Status and check
+  Schema / Mart Migration Status before treating a deployment as trusted.
 
 For full setup, feature notes, Snowflake grants, and operating guidance, see
 [OVERWATCH_DOCUMENTATION.md](OVERWATCH_DOCUMENTATION.md).

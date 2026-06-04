@@ -39,6 +39,7 @@ from utils.workflows import (
 
 WORKFLOWS = (
     "Explain bill / attribution / contract",
+    "FinOps Control Center",
     "Recommendations and action queue",
     "Snowflake value log",
     "Budget governance",
@@ -48,6 +49,7 @@ WORKFLOWS = (
 
 WORKFLOW_DETAILS = {
     "Explain bill / attribution / contract": "Start here: bill movement, chargeback, contract pacing, and cost drivers.",
+    "FinOps Control Center": "Cost governance: Cost Management parity, resource monitors, migration status, and formula trust.",
     "Recommendations and action queue": "Owned fixes with severity, proof, savings, and status.",
     "Snowflake value log": "Evidence that DBA changes avoided spend or improved service.",
     "Budget governance": "Native Snowflake budgets, shared AI resources, per-user AI quota patterns, and custom actions.",
@@ -57,6 +59,7 @@ WORKFLOW_DETAILS = {
 
 WORKFLOW_MODULES = {
     "Explain bill / attribution / contract": "sections.cost_center",
+    "FinOps Control Center": "sections.finops_control",
     "Recommendations and action queue": "sections.recommendations",
     "Snowflake value log": "sections.snowflake_value",
     "Budget governance": "sections.budget_governance",

@@ -1,25 +1,133 @@
 # sections/warehouse_health.py - Warehouse stats, scaling events, idle detection, spill, heatmap
+from __future__ import annotations
+
 from datetime import datetime
 
 import streamlit as st
-import pandas as pd
-from utils.workflows import render_operator_briefing, render_priority_dataframe, render_workflow_selector
-from utils import (
-    get_session_for_action, format_credits,
-    download_csv, render_drillable_bar_chart, get_wh_filter_clause,
-    get_active_company, get_active_environment, get_environment_filter_clause, get_global_filter_clause,
-    metric_confidence_label, freshness_note,
-    defer_source_note,
-    build_metered_credit_cte, make_action_id, upsert_actions,
-    run_query, format_snowflake_error, filter_existing_columns, render_optimization_advisor,
-    build_mart_warehouse_overview_sql, build_mart_warehouse_scaling_sql,
-    build_mart_warehouse_heatmap_sql,
-    mart_object_name, resolve_owner_context, safe_float, safe_identifier, safe_int, sql_literal,
-    action_queue_environment_clause,
-)
+import utils as _utils
+from utils.section_guidance import defer_section_note, defer_source_note
 from utils.admin import ADMIN_AUDIT_FQN
-from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, THRESHOLDS
+from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, THRESHOLDS
 
+
+class _LazyPandas:
+    """Load pandas only after Warehouse Health needs dataframe work."""
+
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            import pandas as pandas_module
+
+            self._module = pandas_module
+        return self._module
+
+    def __getattr__(self, name: str):
+        return getattr(self._load(), name)
+
+
+pd = _LazyPandas()
+
+
+def _lazy_util(name: str):
+    def _call(*args, **kwargs):
+        return getattr(_utils, name)(*args, **kwargs)
+
+    _call.__name__ = name
+    return _call
+
+
+get_session_for_action = _lazy_util("get_session_for_action")
+format_credits = _lazy_util("format_credits")
+download_csv = _lazy_util("download_csv")
+render_drillable_bar_chart = _lazy_util("render_drillable_bar_chart")
+get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
+get_environment_filter_clause = _lazy_util("get_environment_filter_clause")
+get_global_filter_clause = _lazy_util("get_global_filter_clause")
+metric_confidence_label = _lazy_util("metric_confidence_label")
+freshness_note = _lazy_util("freshness_note")
+build_metered_credit_cte = _lazy_util("build_metered_credit_cte")
+make_action_id = _lazy_util("make_action_id")
+upsert_actions = _lazy_util("upsert_actions")
+run_query = _lazy_util("run_query")
+format_snowflake_error = _lazy_util("format_snowflake_error")
+filter_existing_columns = _lazy_util("filter_existing_columns")
+render_optimization_advisor = _lazy_util("render_optimization_advisor")
+build_mart_warehouse_overview_sql = _lazy_util("build_mart_warehouse_overview_sql")
+build_mart_warehouse_scaling_sql = _lazy_util("build_mart_warehouse_scaling_sql")
+build_mart_warehouse_heatmap_sql = _lazy_util("build_mart_warehouse_heatmap_sql")
+mart_object_name = _lazy_util("mart_object_name")
+resolve_owner_context = _lazy_util("resolve_owner_context")
+safe_identifier = _lazy_util("safe_identifier")
+sql_literal = _lazy_util("sql_literal")
+action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
+render_priority_dataframe = _lazy_util("render_priority_dataframe")
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value != value:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value != value:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_active_company() -> str:
+    return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+
+
+def get_active_environment() -> str:
+    return str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+
+
+def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
+    for label, detail in items:
+        defer_section_note(f"{label}: {detail}")
+
+
+def render_workflow_selector(
+    label: str,
+    key: str,
+    workflows,
+    details: dict[str, str] | None = None,
+    *,
+    columns: int = 4,
+    show_label: bool = False,
+) -> str:
+    selected = st.session_state.get(key, workflows[0] if workflows else "")
+    if selected not in workflows:
+        selected = workflows[0] if workflows else ""
+        st.session_state[key] = selected
+    if label and show_label:
+        st.caption(label)
+    items = list(workflows)
+    details = details or {}
+    columns = max(1, min(int(columns or 4), 5))
+    for start in range(0, len(items), columns):
+        row = items[start:start + columns]
+        cols = st.columns(len(row))
+        for col, workflow in zip(cols, row):
+            with col:
+                if st.button(
+                    workflow,
+                    key=f"{key}_{start}_{workflow}",
+                    type="primary" if workflow == selected else "secondary",
+                    width="stretch",
+                    help=details.get(workflow) or None,
+                ):
+                    st.session_state[key] = workflow
+                    st.rerun()
+    return str(st.session_state.get(key, selected))
 
 WAREHOUSE_HEALTH_VIEWS = (
     "Overview & Scaling",

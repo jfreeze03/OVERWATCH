@@ -1,16 +1,15 @@
-# utils/query.py — Tiered cached query execution + SQL safety
-# ─────────────────────────────────────────────────────────────────────────────
-# FIXES vs previous version:
+# utils/query.py - Tiered cached query execution + SQL safety
+# Fixes vs previous version:
 #   1. safe_sql(): added 2000-char hard cap (prompt injection prevention)
 #   2. run_query_cached(): wrapped bare session.sql() in try/except
-#      (was unguarded — any Snowflake error caused an unhandled exception
+#      (was unguarded - any Snowflake error caused an unhandled exception
 #      that crashed the entire section render with a red error page)
 #   3. Tiered cache TTLs: live=30s, recent=300s, historical=1800s, metadata=14400s
 #      (previous version had a single flat 300s TTL for all query types)
-# ─────────────────────────────────────────────────────────────────────────────
 import hashlib
 import os
 import re
+import threading
 import time
 import streamlit as st
 import pandas as pd
@@ -19,10 +18,10 @@ from .session import get_session
 from .data import normalize_df
 
 CACHE_TIERS: dict[str, int] = {
-    "live":       30,     # INFORMATION_SCHEMA — real-time, 30s stale is fine
-    "recent":     300,    # ACCOUNT_USAGE last 4h — 5-min cache
-    "historical": 1800,   # ACCOUNT_USAGE 7d+  — 30-min cache
-    "metadata":   14400,  # SHOW WAREHOUSES, SHOW TASKS, USERS — 4-hour cache
+    "live":       30,     # INFORMATION_SCHEMA - real-time, 30s stale is fine
+    "recent":     300,    # ACCOUNT_USAGE last 4h - 5-min cache
+    "historical": 1800,   # ACCOUNT_USAGE 7d+ - 30-min cache
+    "metadata":   14400,  # SHOW WAREHOUSES, SHOW TASKS, USERS - 4-hour cache
 }
 
 STANDARD_RESULT_WARNING_ROWS = 5_000
@@ -31,6 +30,9 @@ ADMIN_RESULT_HARD_ROWS = 25_000
 ADMIN_RESULT_HARD_MB = 100.0
 STANDARD_SQL_READ_LIMIT_ROWS = STANDARD_RESULT_WARNING_ROWS
 ADMIN_SQL_READ_LIMIT_ROWS = ADMIN_RESULT_HARD_ROWS
+
+_QUERY_CACHE_LOCKS: dict[str, threading.Lock] = {}
+_QUERY_CACHE_LOCKS_GUARD = threading.Lock()
 
 _RESULT_SIZE_DEEP_ROW_LIMIT = 5_000
 _RESULT_SIZE_SAMPLE_ROWS = 1_000
@@ -487,7 +489,7 @@ def safe_sql(value: str) -> str:
     Sanitize user input before embedding in SQL or Cortex prompts.
     - Strips SQL comment injection tokens (--, /* */, ;)
     - Escapes single quotes (value is embedded inside a SQL string literal)
-    - Hard cap at 2000 chars — prevents prompt injection via oversized input
+    - Hard cap at 2000 chars - prevents prompt injection via oversized input
     """
     if not value:
         return ""
@@ -528,9 +530,9 @@ def safe_schedule(value: str) -> str:
     return schedule
 
 
-# ── Per-tier cache functions ───────────────────────────────────────────────────
+# Per-tier cache functions
 # Each tier must be a separate decorated function because @st.cache_data TTL
-# is fixed at decoration time — it cannot be passed as a runtime argument.
+# is fixed at decoration time - it cannot be passed as a runtime argument.
 
 def _build_overwatch_query_tag(section: str, ttl_key: str, tier: str) -> str:
     """Build a compact query tag for section-level OVERWATCH cost attribution."""
@@ -594,6 +596,18 @@ def _cache_salt(ttl_key: str) -> str:
     global_salt = st.session_state.get("_refresh_salt_global", "")
     scoped_salt = st.session_state.get(f"_refresh_salt_{ttl_key}", "")
     return f"{global_salt}|{scoped_salt}"
+
+
+def _get_query_cache_lock(query_text: str, cache_context: str, cache_salt: str, tier: str) -> threading.Lock:
+    """Return a process-wide lock for identical in-flight cached queries."""
+    key_basis = "\n".join([str(tier or ""), str(cache_context or ""), str(cache_salt or ""), str(query_text or "")])
+    key = hashlib.sha1(key_basis.encode("utf-8", errors="ignore")).hexdigest()
+    with _QUERY_CACHE_LOCKS_GUARD:
+        lock = _QUERY_CACHE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _QUERY_CACHE_LOCKS[key] = lock
+        return lock
 
 
 @st.cache_data(ttl=CACHE_TIERS["live"], show_spinner=False)
@@ -660,7 +674,55 @@ def _cached_metadata(
         return pd.DataFrame()
 
 
-# Backward-compatible 5-min cache — for callers that don't pass tier=
+@st.cache_data(ttl=CACHE_TIERS["live"], show_spinner=False)
+def _cached_raise_live(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
+    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="live", section=_section)
+
+
+@st.cache_data(ttl=CACHE_TIERS["recent"], show_spinner=False)
+def _cached_raise_recent(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
+    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section)
+
+
+@st.cache_data(ttl=CACHE_TIERS["historical"], show_spinner=False)
+def _cached_raise_historical(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
+    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="historical", section=_section)
+
+
+@st.cache_data(ttl=CACHE_TIERS["metadata"], show_spinner=False)
+def _cached_raise_metadata(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
+    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="metadata", section=_section)
+
+
+# Backward-compatible 5-min cache - for callers that don't pass tier=
 @st.cache_data(ttl=CACHE_TIERS["recent"], show_spinner=False)
 def run_query_cached(
     query_text: str,
@@ -684,6 +746,15 @@ _TIER_FN = {
     "recent":     _cached_recent,
     "historical": _cached_historical,
     "metadata":   _cached_metadata,
+}
+
+
+_RAISE_TIER_FN = {
+    "live":       _cached_raise_live,
+    "standard":   _cached_raise_historical,
+    "recent":     _cached_raise_recent,
+    "historical": _cached_raise_historical,
+    "metadata":   _cached_raise_metadata,
 }
 
 
@@ -719,8 +790,9 @@ def _run_query_base(
                 cache_salt = _cache_salt(ttl_key)
                 context = _cache_context()
                 fn   = _TIER_FN.get(tier, _cached_recent)
-                return fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
-            # Bypass cache — always wrapped in try/except
+                with _get_query_cache_lock(executable_query, context, cache_salt, tier):
+                    return fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
+            # Bypass cache - always wrapped in try/except
             try:
                 return _execute_snowflake_query(executable_query, query_tag, ttl_key=ttl_key, tier=tier, section=section)
             except Exception as e:
@@ -763,6 +835,7 @@ def run_query_or_raise(
     ttl_key: str = "direct",
     tier: str = "live",
     max_rows: int | None = None,
+    use_cache: bool = True,
 ) -> pd.DataFrame:
     """
     Execute SQL and return a normalized DataFrame, preserving exceptions.
@@ -775,6 +848,13 @@ def run_query_or_raise(
     query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
     try:
+        if use_cache:
+            cache_salt = _cache_salt(ttl_key)
+            context = _cache_context()
+            fn = _RAISE_TIER_FN.get(tier, _cached_raise_recent)
+            with _get_query_cache_lock(executable_query, context, cache_salt, tier):
+                result = fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
+                return result
         session = get_session()
         _apply_overwatch_query_tag(session, query_tag)
         result = normalize_df(session.sql(executable_query).to_pandas())
@@ -787,7 +867,7 @@ def run_query_or_raise(
             tier=tier,
             elapsed_ms=elapsed_ms,
             row_count=len(result),
-            used_cache=False,
+            used_cache=use_cache,
             result_mb=_estimate_result_mb(result),
             section=section,
         )

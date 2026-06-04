@@ -1,28 +1,73 @@
 # sections/executive_landing.py - executive landing page
 from __future__ import annotations
 
-import pandas as pd
 import streamlit as st
 
-from utils import (
-    build_mart_cost_cockpit_sql,
-    build_schema_migration_status_sql,
-    credits_to_dollars,
-    defer_source_note,
-    format_snowflake_error,
-    get_active_company,
-    get_active_environment,
-    get_credit_price,
-    get_session_for_action,
-    load_action_queue,
-    load_alert_history,
-    run_query,
-    safe_float,
-)
-from utils.workflows import render_priority_dataframe
+from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS
+import utils as _utils
+from utils.section_guidance import defer_source_note
+
+
+class _LazyPandas:
+    """Load pandas only after an executive snapshot has been requested."""
+
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            import pandas as pandas_module
+
+            self._module = pandas_module
+        return self._module
+
+    def __getattr__(self, name: str):
+        return getattr(self._load(), name)
+
+
+pd = _LazyPandas()
+
+
+def _lazy_util(name: str):
+    def _call(*args, **kwargs):
+        return getattr(_utils, name)(*args, **kwargs)
+
+    _call.__name__ = name
+    return _call
+
+
+build_mart_cost_cockpit_sql = _lazy_util("build_mart_cost_cockpit_sql")
+build_schema_migration_status_sql = _lazy_util("build_schema_migration_status_sql")
+credits_to_dollars = _lazy_util("credits_to_dollars")
+format_snowflake_error = _lazy_util("format_snowflake_error")
+get_session_for_action = _lazy_util("get_session_for_action")
+load_action_queue = _lazy_util("load_action_queue")
+load_alert_history = _lazy_util("load_alert_history")
+render_priority_dataframe = _lazy_util("render_priority_dataframe")
+run_query = _lazy_util("run_query")
 
 
 EXECUTIVE_LANDING_VERSION = "2026-06-03-operating-surfaces"
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value != value:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _active_company() -> str:
+    return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+
+
+def _active_environment() -> str:
+    return str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+
+
+def _credit_price() -> float:
+    return safe_float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)), 3.68)
 
 
 def _load_alerts(session, company: str, environment: str, days: int) -> pd.DataFrame:
@@ -173,9 +218,9 @@ def _nav_button(
 
 
 def render() -> None:
-    company = get_active_company()
-    environment = get_active_environment()
-    credit_price = safe_float(get_credit_price()) or 3.68
+    company = _active_company()
+    environment = _active_environment()
+    credit_price = _credit_price()
     st.caption("Board-ready view of risk, spend movement, closure work, and deployment trust.")
     defer_source_note(
         "Executive Landing loads only on demand and uses OVERWATCH marts, alert/action evidence, and migration status."

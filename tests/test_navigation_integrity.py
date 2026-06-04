@@ -599,6 +599,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         cache_text = (APP_ROOT / "utils" / "cache.py").read_text(encoding="utf-8")
         cost_center_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8")
         cost_contract_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        executive_landing_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
         cortex_text = (APP_ROOT / "sections" / "cortex_monitor.py").read_text(encoding="utf-8")
         account_health_text = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
         warehouse_health_text = (APP_ROOT / "sections" / "warehouse_health.py").read_text(encoding="utf-8")
@@ -648,6 +649,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("log_section_load(active_section, duration_ms)", app_text)
         self.assertIn('st.session_state["_detailed_query_tags_enabled"] = False', app_text)
         self.assertIn('"Detailed Snowflake query tags"', app_text)
+        self.assertIn("import threading", query_text)
+        self.assertIn("_QUERY_CACHE_LOCKS", query_text)
+        self.assertIn("def _get_query_cache_lock", query_text)
+        self.assertIn("with _get_query_cache_lock(executable_query, context, cache_salt, tier):", query_text)
+        self.assertIn("def _cached_raise_historical", query_text)
+        self.assertIn("_RAISE_TIER_FN", query_text)
+        self.assertIn("use_cache: bool = True", query_text)
+        self.assertIn("fn = _RAISE_TIER_FN.get(tier, _cached_raise_recent)", query_text)
         self.assertIn("st.session_state.get(_ENABLED_KEY, False)", logging_text)
         self.assertIn("if not is_query_logging_enabled():", logging_text)
         self.assertNotIn("not is_logging_enabled() or not is_query_logging_enabled()", logging_text)
@@ -711,6 +720,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.session_state["_overwatch_secondary_chrome_ready"] = True', app_text)
         self.assertNotIn("render_section_confidence_meter(active_section, dict(st.session_state))", app_text)
         self.assertNotIn("dict(state).items()", (APP_ROOT / "utils" / "section_guidance.py").read_text(encoding="utf-8"))
+        executive_landing_import_block = executive_landing_text.split("EXECUTIVE_LANDING_VERSION", 1)[0]
+        self.assertNotIn("import pandas as pd", executive_landing_import_block)
+        self.assertNotIn("from utils import (", executive_landing_import_block)
+        self.assertNotIn("from utils.workflows import render_priority_dataframe", executive_landing_import_block)
+        self.assertIn("class _LazyPandas", executive_landing_text)
+        self.assertIn('st.button("Load Executive Snapshot"', executive_landing_text)
         self.assertIn("cc_user_profile_requested", cost_center_text)
         self.assertIn('"Cost Explorer"', cost_center_text)
         self.assertIn("COST_EXPLORER_LENSES", cost_center_text)
@@ -730,6 +745,52 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.button("Load / Refresh Health"', account_health_text)
         self.assertIn("if not refresh_health:", account_health_text)
         self.assertNotIn("or cache_age > 300", account_health_text)
+        account_health_import_block = account_health_text.split("CHECKLIST_HISTORY_TABLE", 1)[0]
+        self.assertIn("from __future__ import annotations", account_health_import_block)
+        self.assertNotIn("import pandas as pd", account_health_import_block)
+        self.assertNotIn("from utils import (", account_health_import_block)
+        self.assertNotIn("from utils.workflows import", account_health_import_block)
+        self.assertIn("class _LazyPandas", account_health_text)
+        self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', account_health_text)
+        self.assertIn("def _account_health_has_source_state", account_health_text)
+        self.assertIn("if _account_health_has_source_state(st.session_state):", account_health_text)
+        for label, section_text, split_marker in (
+            ("Warehouse Health", warehouse_health_text, "WAREHOUSE_HEALTH_VIEWS"),
+            ("Change & Drift", change_drift_text, "WORKFLOWS"),
+            ("Cost & Contract", cost_contract_text, "WORKFLOWS"),
+        ):
+            with self.subTest(lazy_pandas_section=label):
+                section_import_block = section_text.split(split_marker, 1)[0]
+                self.assertNotIn("import pandas as pd", section_import_block)
+                self.assertIn("class _LazyPandas", section_text)
+        warehouse_health_import_block = warehouse_health_text.split("WAREHOUSE_HEALTH_VIEWS", 1)[0]
+        self.assertNotIn("from utils import (", warehouse_health_import_block)
+        self.assertNotIn("from utils.workflows import", warehouse_health_import_block)
+        self.assertIn("def render_workflow_selector", warehouse_health_text)
+        self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', warehouse_health_text)
+        self.assertIn("def _change_has_source_state", change_drift_text)
+        self.assertIn("if _change_has_source_state(st.session_state):", change_drift_text)
+        change_drift_import_block = change_drift_text.split("WORKFLOWS", 1)[0]
+        self.assertNotIn("from utils import (", change_drift_import_block)
+        self.assertNotIn("from utils.workflows import", change_drift_import_block)
+        self.assertIn("def render_workflow_selector", change_drift_text)
+        self.assertIn("def render_signal_confidence", change_drift_text)
+        self.assertIn("def render_workflow_module", change_drift_text)
+        self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', change_drift_text)
+        self.assertIn("def _looks_like_frame", cost_contract_text)
+        self.assertIn("data_is_frame = _looks_like_frame(data)", cost_contract_text)
+        cost_contract_import_block = cost_contract_text.split("WORKFLOWS", 1)[0]
+        self.assertNotIn("from utils import (", cost_contract_import_block)
+        self.assertNotIn("from utils.workflows import", cost_contract_import_block)
+        self.assertIn("def render_workflow_selector", cost_contract_text)
+        self.assertIn("def render_signal_confidence", cost_contract_text)
+        self.assertIn("def render_workflow_module", cost_contract_text)
+        self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', cost_contract_text)
+        cost_watch_preload = cost_contract_text.split("def _render_cost_watch_floor", 1)[1].split(
+            "if st.button(\"Load Cost Cockpit\"",
+            1,
+        )[0]
+        self.assertNotIn("pd.DataFrame", cost_watch_preload)
         self.assertIn('st.button("Load Operability Mart"', account_health_text)
         self.assertIn("_account_health_operator_next_moves", account_health_text)
         self.assertIn("Account Health operator next-move gates", account_health_text)

@@ -3,44 +3,178 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
-from config import DEFAULT_ALERT_EMAIL, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
-from utils import (
-    build_cost_reconciliation_sql,
-    build_cost_savings_verification_health_sql,
-    build_cost_savings_verification_sql,
-    build_mart_cost_cockpit_sql,
-    build_mart_cost_run_rate_sql,
-    build_mart_cost_service_lens_sql,
-    build_snowflake_billed_credit_reconciliation_sql,
-    build_snowflake_cost_management_account_sql,
-    build_snowflake_org_currency_cost_sql,
-    build_snowflake_rate_sheet_reconciliation_sql,
-    build_snowflake_service_cost_lens_sql,
-    credits_to_dollars,
-    defer_source_note,
-    format_snowflake_error,
-    get_active_company,
-    get_credit_price,
-    get_session_for_action,
-    get_wh_filter_clause,
-    load_action_queue,
-    run_query,
-    run_query_or_raise,
-    safe_float,
-    safe_identifier,
-    safe_int,
-    sql_literal,
-)
-from utils.workflows import (
-    render_operator_briefing,
-    render_priority_dataframe,
-    render_signal_confidence,
-    render_workflow_module,
-    render_workflow_guide,
-    render_workflow_selector,
-)
+from importlib import import_module
+
+from config import DEFAULT_ALERT_EMAIL, DEFAULT_COMPANY, DEFAULTS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
+import utils as _utils
+from utils.section_guidance import defer_section_note, defer_source_note
+
+
+class _LazyPandas:
+    """Load pandas only after Cost & Contract needs dataframe work."""
+
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            import pandas as pandas_module
+
+            self._module = pandas_module
+        return self._module
+
+    def __getattr__(self, name: str):
+        return getattr(self._load(), name)
+
+
+pd = _LazyPandas()
+
+
+def _lazy_util(name: str):
+    def _call(*args, **kwargs):
+        return getattr(_utils, name)(*args, **kwargs)
+
+    _call.__name__ = name
+    return _call
+
+
+build_cost_reconciliation_sql = _lazy_util("build_cost_reconciliation_sql")
+build_cost_savings_verification_health_sql = _lazy_util("build_cost_savings_verification_health_sql")
+build_cost_savings_verification_sql = _lazy_util("build_cost_savings_verification_sql")
+build_mart_cost_cockpit_sql = _lazy_util("build_mart_cost_cockpit_sql")
+build_mart_cost_run_rate_sql = _lazy_util("build_mart_cost_run_rate_sql")
+build_mart_cost_service_lens_sql = _lazy_util("build_mart_cost_service_lens_sql")
+build_snowflake_billed_credit_reconciliation_sql = _lazy_util("build_snowflake_billed_credit_reconciliation_sql")
+build_snowflake_cost_management_account_sql = _lazy_util("build_snowflake_cost_management_account_sql")
+build_snowflake_org_currency_cost_sql = _lazy_util("build_snowflake_org_currency_cost_sql")
+build_snowflake_rate_sheet_reconciliation_sql = _lazy_util("build_snowflake_rate_sheet_reconciliation_sql")
+build_snowflake_service_cost_lens_sql = _lazy_util("build_snowflake_service_cost_lens_sql")
+credits_to_dollars = _lazy_util("credits_to_dollars")
+format_snowflake_error = _lazy_util("format_snowflake_error")
+get_session_for_action = _lazy_util("get_session_for_action")
+get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
+load_action_queue = _lazy_util("load_action_queue")
+run_query = _lazy_util("run_query")
+run_query_or_raise = _lazy_util("run_query_or_raise")
+safe_identifier = _lazy_util("safe_identifier")
+sql_literal = _lazy_util("sql_literal")
+render_priority_dataframe = _lazy_util("render_priority_dataframe")
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value != value:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value != value:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_active_company() -> str:
+    return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+
+
+def get_credit_price() -> float:
+    return safe_float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)), 3.68)
+
+
+def _freshness_note(source: str) -> str:
+    source_key = str(source or "").lower()
+    if "information_schema" in source_key or source_key in {"live", "is"}:
+        return "Freshness: live INFORMATION_SCHEMA view"
+    if "organization_usage" in source_key:
+        return "Freshness: ORGANIZATION_USAGE can lag several hours"
+    if "account_usage" in source_key or "warehouse_metering_history" in source_key:
+        return "Freshness: ACCOUNT_USAGE can lag up to about 45-90 minutes"
+    if "mart" in source_key or "overwatch" in source_key:
+        return "Freshness: OVERWATCH mart refresh cadence"
+    return "Freshness: depends on source view availability"
+
+
+def _metric_confidence_label(kind: str) -> str:
+    labels = {
+        "exact": "Source basis: Exact",
+        "allocated": "Source basis: Allocated / estimated from exact warehouse metering",
+        "estimated": "Source basis: Estimated",
+        "forecast": "Source basis: Forecast from recent observed burn",
+        "projection": "Source basis: Projection from recent observed burn",
+    }
+    return labels.get(str(kind or "").lower(), "Source basis: Calculation depends on available account metadata")
+
+
+def render_signal_confidence(*, source: str = "ACCOUNT_USAGE", confidence: str = "allocated", scope_note: str = "") -> None:
+    parts = [_freshness_note(source), _metric_confidence_label(confidence)]
+    if scope_note:
+        parts.append(scope_note)
+    defer_source_note(*parts)
+
+
+def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
+    for label, detail in items:
+        defer_section_note(f"{label}: {detail}")
+
+
+def render_workflow_guide(summary: str, rows) -> None:
+    defer_section_note(summary)
+    for trigger, action in rows:
+        defer_section_note(f"{trigger}: {action}")
+
+
+def render_workflow_selector(
+    label: str,
+    key: str,
+    workflows,
+    details: dict[str, str] | None = None,
+    *,
+    columns: int = 4,
+    show_label: bool = False,
+) -> str:
+    selected = st.session_state.get(key, workflows[0] if workflows else "")
+    if selected not in workflows:
+        selected = workflows[0] if workflows else ""
+        st.session_state[key] = selected
+    if label and show_label:
+        st.caption(label)
+    items = list(workflows)
+    details = details or {}
+    columns = max(1, min(int(columns or 4), 5))
+    for start in range(0, len(items), columns):
+        row = items[start:start + columns]
+        cols = st.columns(len(row))
+        for col, workflow in zip(cols, row):
+            with col:
+                if st.button(
+                    workflow,
+                    key=f"{key}_{start}_{workflow}",
+                    type="primary" if workflow == selected else "secondary",
+                    width="stretch",
+                    help=details.get(workflow) or None,
+                ):
+                    st.session_state[key] = workflow
+                    st.rerun()
+    return str(st.session_state.get(key, selected))
+
+
+def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> None:
+    module_name = workflow_modules.get(str(workflow))
+    if not module_name:
+        st.warning(f"No module registered for workflow: {workflow}")
+        return
+    module = import_module(module_name)
+    render = getattr(module, "render", None)
+    if not callable(render):
+        st.warning(f"Workflow module has no render() function: {module_name}")
+        return
+    render()
 
 WORKFLOWS = (
     "Explain bill / attribution / contract",
@@ -707,6 +841,11 @@ def _render_cost_period_explanation(
 def _state_frame(state: dict, key: str) -> pd.DataFrame:
     value = state.get(key)
     return value if isinstance(value, pd.DataFrame) else pd.DataFrame()
+
+
+def _looks_like_frame(value) -> bool:
+    """Return True for dataframe-like values without importing pandas."""
+    return hasattr(value, "empty") and hasattr(value, "iloc") and hasattr(value, "columns")
 
 
 def _has_columns(df: pd.DataFrame, columns: list[str]) -> bool:
@@ -3558,8 +3697,9 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     if err:
         st.warning(f"Cost cockpit unavailable: {err}")
     loaded_days = meta.get("days")
+    data_is_frame = _looks_like_frame(data)
     if (
-        isinstance(data, pd.DataFrame)
+        data_is_frame
         and not data.empty
         and meta.get("company") == company
         and loaded_days is not None
@@ -3570,7 +3710,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             "Click Load Cost Cockpit to refresh the watch floor."
         )
     if (
-        not isinstance(data, pd.DataFrame)
+        not data_is_frame
         or data.empty
         or meta.get("company") != company
         or meta.get("days") != int(days)

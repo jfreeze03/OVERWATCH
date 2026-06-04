@@ -1,32 +1,114 @@
 """Account Health: KPIs, Resource Monitors, Morning Report, and executive briefing."""
+from __future__ import annotations
+
 import html
 import streamlit as st
-import pandas as pd
 from datetime import datetime
-from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
-from utils import (
-    get_session_for_action, run_query, run_query_or_raise, format_credits,
-    credits_to_dollars, download_csv, mark_loaded, show_loaded_time,
-    build_metered_credit_cte, build_monitoring_cost_sql,
-    metric_confidence_label, freshness_note,
-    render_drillable_bar_chart,
-    build_task_failure_summary_sql, build_task_health_sql,
-    executive_health_score,
-    get_credit_price,
-    get_wh_filter_clause, get_db_filter_clause, get_user_filter_clause,
-    get_global_filter_clause, company_value_allowed, get_active_environment,
-    load_latest_control_room_mart, mart_source_caption,
-    build_mart_account_health_storage_sql, build_mart_account_health_cost_drivers_sql,
-    build_mart_account_health_change_sql, build_mart_control_room_task_failures_sql,
-    build_mart_control_room_warehouse_pressure_sql,
-    build_mart_account_health_failure_types_sql, build_mart_account_health_long_queries_sql,
-    build_mart_account_health_credits_sql, build_mart_account_health_failure_count_sql,
-    build_mart_account_health_top_driver_sql, build_mart_account_health_queued_sql,
-    build_mart_account_health_ytd_credits_sql,
-    format_snowflake_error, filter_existing_columns, make_action_id, safe_float, safe_identifier, safe_int,
-    sql_literal, upsert_actions, action_queue_environment_clause, resolve_owner_context, mart_object_name,
-)
-from utils.workflows import render_operator_briefing, render_priority_dataframe
+from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULTS
+import utils as _utils
+from utils.section_guidance import defer_section_note
+
+
+class _LazyPandas:
+    """Load pandas only after Account Health evidence needs dataframe work."""
+
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            import pandas as pandas_module
+
+            self._module = pandas_module
+        return self._module
+
+    def __getattr__(self, name: str):
+        return getattr(self._load(), name)
+
+
+pd = _LazyPandas()
+
+
+def _lazy_util(name: str):
+    def _call(*args, **kwargs):
+        return getattr(_utils, name)(*args, **kwargs)
+
+    _call.__name__ = name
+    return _call
+
+
+get_session_for_action = _lazy_util("get_session_for_action")
+run_query = _lazy_util("run_query")
+run_query_or_raise = _lazy_util("run_query_or_raise")
+format_credits = _lazy_util("format_credits")
+credits_to_dollars = _lazy_util("credits_to_dollars")
+download_csv = _lazy_util("download_csv")
+mark_loaded = _lazy_util("mark_loaded")
+show_loaded_time = _lazy_util("show_loaded_time")
+build_metered_credit_cte = _lazy_util("build_metered_credit_cte")
+build_monitoring_cost_sql = _lazy_util("build_monitoring_cost_sql")
+metric_confidence_label = _lazy_util("metric_confidence_label")
+freshness_note = _lazy_util("freshness_note")
+render_drillable_bar_chart = _lazy_util("render_drillable_bar_chart")
+build_task_failure_summary_sql = _lazy_util("build_task_failure_summary_sql")
+build_task_health_sql = _lazy_util("build_task_health_sql")
+executive_health_score = _lazy_util("executive_health_score")
+get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
+get_db_filter_clause = _lazy_util("get_db_filter_clause")
+get_user_filter_clause = _lazy_util("get_user_filter_clause")
+get_global_filter_clause = _lazy_util("get_global_filter_clause")
+company_value_allowed = _lazy_util("company_value_allowed")
+get_active_environment = _lazy_util("get_active_environment")
+load_latest_control_room_mart = _lazy_util("load_latest_control_room_mart")
+mart_source_caption = _lazy_util("mart_source_caption")
+build_mart_account_health_storage_sql = _lazy_util("build_mart_account_health_storage_sql")
+build_mart_account_health_cost_drivers_sql = _lazy_util("build_mart_account_health_cost_drivers_sql")
+build_mart_account_health_change_sql = _lazy_util("build_mart_account_health_change_sql")
+build_mart_control_room_task_failures_sql = _lazy_util("build_mart_control_room_task_failures_sql")
+build_mart_control_room_warehouse_pressure_sql = _lazy_util("build_mart_control_room_warehouse_pressure_sql")
+build_mart_account_health_failure_types_sql = _lazy_util("build_mart_account_health_failure_types_sql")
+build_mart_account_health_long_queries_sql = _lazy_util("build_mart_account_health_long_queries_sql")
+build_mart_account_health_credits_sql = _lazy_util("build_mart_account_health_credits_sql")
+build_mart_account_health_failure_count_sql = _lazy_util("build_mart_account_health_failure_count_sql")
+build_mart_account_health_top_driver_sql = _lazy_util("build_mart_account_health_top_driver_sql")
+build_mart_account_health_queued_sql = _lazy_util("build_mart_account_health_queued_sql")
+build_mart_account_health_ytd_credits_sql = _lazy_util("build_mart_account_health_ytd_credits_sql")
+format_snowflake_error = _lazy_util("format_snowflake_error")
+filter_existing_columns = _lazy_util("filter_existing_columns")
+make_action_id = _lazy_util("make_action_id")
+safe_identifier = _lazy_util("safe_identifier")
+sql_literal = _lazy_util("sql_literal")
+upsert_actions = _lazy_util("upsert_actions")
+action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
+resolve_owner_context = _lazy_util("resolve_owner_context")
+mart_object_name = _lazy_util("mart_object_name")
+render_priority_dataframe = _lazy_util("render_priority_dataframe")
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value != value:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value != value:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_credit_price() -> float:
+    return safe_float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)), 3.68)
+
+
+def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
+    for label, detail in items:
+        defer_section_note(f"{label}: {detail}")
 
 CHECKLIST_HISTORY_TABLE = "OVERWATCH_DBA_CHECKLIST_HISTORY"
 ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE = "FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY"
@@ -143,6 +225,35 @@ def _account_health_source_next_action(state: str, source: str) -> str:
     if "fallback" in source_lower:
         return "Use for investigation; prefer mart refresh for repeated morning control."
     return "Current for the active Account Health scope."
+
+
+def _account_health_has_source_state(state: dict) -> bool:
+    """Return True once Account Health has evidence or source errors to summarize."""
+    health_data = state.get("health_data")
+    if isinstance(health_data, dict) and bool(health_data):
+        return True
+    for key in (
+        "account_health_operability_fact",
+        "account_health_operability_fact_error",
+        "account_health_access_hygiene",
+        "account_health_access_hygiene_error",
+        "account_health_checklist_trend",
+        "account_health_checklist_trend_error",
+        "account_health_closure_analytics",
+        "account_health_closure_analytics_error",
+        "morning_data",
+        "morning_data_error",
+        "ah_briefing_text",
+        "ah_briefing_error",
+    ):
+        value = state.get(key)
+        if isinstance(value, str):
+            if value.strip():
+                return True
+            continue
+        if value is not None:
+            return True
+    return False
 
 
 def _account_health_source_health_rows(
@@ -2527,7 +2638,8 @@ def render():
         exceptions_only = bool(st.session_state.get("exceptions_only_mode", False))
         if exceptions_only:
             st.info("Leadership exceptions-only mode is on. Heavy drilldowns stay collapsed until you ask for detail.")
-        _render_account_health_source_health(company, environment)
+        if _account_health_has_source_state(st.session_state):
+            _render_account_health_source_health(company, environment)
 
         cache_age = 999
         filter_sig = "|".join([

@@ -2,41 +2,170 @@
 from __future__ import annotations
 
 from datetime import datetime
+from importlib import import_module
 import re
 
-import pandas as pd
 import streamlit as st
 
-from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
-from utils import (
-    defer_source_note,
-    filter_existing_columns,
-    format_snowflake_error,
-    environment_label_for_database,
-    get_active_company,
-    get_active_environment,
-    get_environment_case_expr,
-    get_global_filter_clause,
-    get_session,
-    mart_object_name,
-    make_action_id,
-    resolve_owner_context,
-    run_query,
-    safe_identifier,
-    safe_float,
-    safe_int,
-    sql_literal,
-    action_queue_environment_clause,
-    upsert_actions,
-)
-from utils.workflows import (
-    render_operator_briefing,
-    render_priority_dataframe,
-    render_signal_confidence,
-    render_workflow_module,
-    render_workflow_guide,
-    render_workflow_selector,
-)
+from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
+import utils as _utils
+from utils.section_guidance import defer_section_note, defer_source_note
+
+
+class _LazyPandas:
+    """Load pandas only after Change & Drift needs dataframe work."""
+
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            import pandas as pandas_module
+
+            self._module = pandas_module
+        return self._module
+
+    def __getattr__(self, name: str):
+        return getattr(self._load(), name)
+
+
+pd = _LazyPandas()
+
+
+def _lazy_util(name: str):
+    def _call(*args, **kwargs):
+        return getattr(_utils, name)(*args, **kwargs)
+
+    _call.__name__ = name
+    return _call
+
+
+filter_existing_columns = _lazy_util("filter_existing_columns")
+format_snowflake_error = _lazy_util("format_snowflake_error")
+environment_label_for_database = _lazy_util("environment_label_for_database")
+get_environment_case_expr = _lazy_util("get_environment_case_expr")
+get_global_filter_clause = _lazy_util("get_global_filter_clause")
+get_session = _lazy_util("get_session")
+mart_object_name = _lazy_util("mart_object_name")
+make_action_id = _lazy_util("make_action_id")
+resolve_owner_context = _lazy_util("resolve_owner_context")
+run_query = _lazy_util("run_query")
+safe_identifier = _lazy_util("safe_identifier")
+sql_literal = _lazy_util("sql_literal")
+action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
+upsert_actions = _lazy_util("upsert_actions")
+render_priority_dataframe = _lazy_util("render_priority_dataframe")
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value != value:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value != value:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_active_company() -> str:
+    return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+
+
+def get_active_environment() -> str:
+    return str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+
+
+def _freshness_note(source: str) -> str:
+    source_key = str(source or "").lower()
+    if "information_schema" in source_key or source_key in {"live", "is"}:
+        return "Freshness: live INFORMATION_SCHEMA view"
+    if "account_usage" in source_key or "query_history" in source_key:
+        return "Freshness: ACCOUNT_USAGE can lag up to about 45-90 minutes"
+    if "mart" in source_key or "overwatch" in source_key:
+        return "Freshness: OVERWATCH mart refresh cadence"
+    return "Freshness: depends on source view availability"
+
+
+def _metric_confidence_label(kind: str) -> str:
+    labels = {
+        "exact": "Source basis: Exact",
+        "allocated": "Source basis: Allocated / estimated from exact source records",
+        "estimated": "Source basis: Estimated",
+    }
+    return labels.get(str(kind or "").lower(), "Source basis: Calculation depends on available account metadata")
+
+
+def render_signal_confidence(*, source: str = "ACCOUNT_USAGE", confidence: str = "allocated", scope_note: str = "") -> None:
+    parts = [_freshness_note(source), _metric_confidence_label(confidence)]
+    if scope_note:
+        parts.append(scope_note)
+    defer_source_note(*parts)
+
+
+def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
+    for label, detail in items:
+        defer_section_note(f"{label}: {detail}")
+
+
+def render_workflow_guide(summary: str, rows) -> None:
+    defer_section_note(summary)
+    for trigger, action in rows:
+        defer_section_note(f"{trigger}: {action}")
+
+
+def render_workflow_selector(
+    label: str,
+    key: str,
+    workflows,
+    details: dict[str, str] | None = None,
+    *,
+    columns: int = 4,
+    show_label: bool = False,
+) -> str:
+    selected = st.session_state.get(key, workflows[0] if workflows else "")
+    if selected not in workflows:
+        selected = workflows[0] if workflows else ""
+        st.session_state[key] = selected
+    if label and show_label:
+        st.caption(label)
+    items = list(workflows)
+    details = details or {}
+    columns = max(1, min(int(columns or 4), 5))
+    for start in range(0, len(items), columns):
+        row = items[start:start + columns]
+        cols = st.columns(len(row))
+        for col, workflow in zip(cols, row):
+            with col:
+                if st.button(
+                    workflow,
+                    key=f"{key}_{start}_{workflow}",
+                    type="primary" if workflow == selected else "secondary",
+                    width="stretch",
+                    help=details.get(workflow) or None,
+                ):
+                    st.session_state[key] = workflow
+                    st.rerun()
+    return str(st.session_state.get(key, selected))
+
+
+def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> None:
+    module_name = workflow_modules.get(str(workflow))
+    if not module_name:
+        st.warning(f"No module registered for workflow: {workflow}")
+        return
+    module = import_module(module_name)
+    render = getattr(module, "render", None)
+    if not callable(render):
+        st.warning(f"Workflow module has no render() function: {module_name}")
+        return
+    render()
 
 WORKFLOWS = (
     "Object and access changes",
@@ -701,6 +830,33 @@ def _change_source_next_action(state: str, source: str) -> str:
     if "fallback" in source_lower:
         return "Use for investigation; prefer mart refresh for repeated daily change control."
     return "Current for the active DBA change scope."
+
+
+def _change_has_source_state(state: dict) -> bool:
+    """Return True once Change & Drift has evidence or source errors to summarize."""
+    for key in (
+        "change_drift_summary",
+        "change_drift_exceptions",
+        "change_drift_error",
+        "change_control_operability_fact",
+        "change_control_operability_fact_error",
+        "change_drift_evidence_trend",
+        "change_drift_evidence_trend_error",
+        "change_action_closure",
+        "change_action_closure_error",
+        "change_integration_terraform_status",
+        "change_integration_terraform_error",
+        "change_integration_jira_status",
+        "change_integration_jira_error",
+    ):
+        value = state.get(key)
+        if isinstance(value, str):
+            if value.strip():
+                return True
+            continue
+        if value is not None:
+            return True
+    return False
 
 
 def _change_source_health_rows(
@@ -3585,7 +3741,8 @@ def render() -> None:
     )
 
     days = st.slider("Change brief lookback (days)", 1, 90, 14, key="change_drift_brief_days")
-    _render_change_source_health(company, environment)
+    if _change_has_source_state(st.session_state):
+        _render_change_source_health(company, environment)
     if st.button("Load Change & Drift Brief", key="change_drift_brief_load", type="primary"):
         try:
             summary_sql, exceptions_sql = _build_mart_change_drift_sql(days, company)

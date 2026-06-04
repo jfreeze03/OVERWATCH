@@ -1,12 +1,12 @@
-# environment.yml — Python package requirements for OVERWATCH (SiS runtime)
-# ─────────────────────────────────────────────────────────────────────────────
+# environment.yml - Python package requirements for OVERWATCH (SiS runtime)
+# -----------------------------------------------------------------------------
 # Snowflake SiS resolves packages from the Snowflake Conda channel.
 # All packages listed must be available in:
 #   https://repo.anaconda.com/pkgs/snowflake
 #
 # IMPORTANT: Do NOT pin exact versions unless you have a specific reason.
 # The Snowflake channel lags PyPI by weeks; over-pinning causes deploy failures.
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 name: overwatch_v3
 channels:
   - snowflake

@@ -114,9 +114,12 @@ from sections.dba_control_room import (  # noqa: E402
     _dba_control_scope_meta,
     _dba_control_source_health_rows,
     _dba_snapshot_scope_compatible,
+    _build_auto_release_readiness_gate,
+    _build_evidence_freshness_gate,
     _build_dba_incident_markdown,
     _build_dba_shift_handoff_markdown,
     _build_release_compare_report,
+    _build_task_failure_root_cause_timeline,
     _compare_release_windows,
     _control_room_snapshot_to_data,
     _load_control_room,
@@ -255,6 +258,7 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_setting_execution_audit_sql,
     _warehouse_intervention_matrix,
     _warehouse_operator_next_moves,
+    _build_warehouse_guardrail_coverage,
     _build_warehouse_capacity_markdown,
     _queue_efficiency_findings,
     _queue_capacity_findings,
@@ -1998,6 +2002,166 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["warehouse_pressure"]["MODE"], "Live fallback")
         self.assertEqual(by_surface["cortex_summary"]["STATE"], "Unavailable")
         self.assertIn("Reload DBA Control Room", by_surface["summary"]["NEXT_ACTION"])
+
+    def test_dba_evidence_freshness_gate_blocks_unavailable_core_sources(self):
+        source_health = pd.DataFrame(
+            [
+                {
+                    "SURFACE": "summary",
+                    "STATE": "Unavailable",
+                    "MODE": "Mart unavailable",
+                    "ROWS": 0,
+                    "SCOPE": "ALFA / PROD / 24h",
+                    "MESSAGE": "summary mart missing",
+                    "NEXT_ACTION": "Refresh summary mart.",
+                },
+                {
+                    "SURFACE": "credits",
+                    "STATE": "Stale",
+                    "MODE": "OVERWATCH mart",
+                    "ROWS": 1,
+                    "SCOPE": "ALFA / PROD / 24h",
+                    "MESSAGE": "",
+                    "NEXT_ACTION": "Reload DBA Control Room.",
+                },
+                {
+                    "SURFACE": "task_sla_cost",
+                    "STATE": "Deferred",
+                    "MODE": "Deferred",
+                    "ROWS": 0,
+                    "SCOPE": "ALFA / PROD / 24h",
+                    "MESSAGE": "",
+                    "NEXT_ACTION": "Load deep task evidence only when needed.",
+                },
+                {
+                    "SURFACE": "cortex_summary",
+                    "STATE": "Unavailable",
+                    "MODE": "Mart unavailable",
+                    "ROWS": 0,
+                    "SCOPE": "ALFA / PROD / 24h",
+                    "MESSAGE": "cortex mart missing",
+                    "NEXT_ACTION": "Refresh cortex mart.",
+                },
+            ]
+        )
+        data = {
+            "schema_migration_status": pd.DataFrame([{
+                "COMPONENT": "Setup ledger",
+                "OBJECT_NAME": "OVERWATCH_SCHEMA_MIGRATION",
+                "OBJECT_TYPE": "TABLE",
+                "OBJECT_STATE": "Present",
+                "REQUIRED_VERSION": "2026.06.04-cost-proof-mart",
+                "DEPLOYED_VERSION": "2026.06.04-cost-proof-mart",
+                "MIGRATION_STATE": "Ready",
+                "NEXT_ACTION": "No action.",
+            }]),
+            "task_failures": pd.DataFrame(),
+            "task_sla_cost": pd.DataFrame(),
+            "task_latest_runs": pd.DataFrame(),
+        }
+
+        source_summary, source_gate = _build_evidence_freshness_gate(source_health)
+        release_summary, release_gate = _build_auto_release_readiness_gate(data, source_health)
+        report = _build_dba_control_report(data, pd.DataFrame(), "ALFA", 3.68, 24, source_health)
+        by_surface = {row["SURFACE"]: row for _, row in source_gate.iterrows()}
+        by_gate = {row["GATE"]: row for _, row in release_gate.iterrows()}
+
+        self.assertEqual(source_summary["blocked"], 1)
+        self.assertEqual(source_summary["review"], 2)
+        self.assertEqual(source_summary["deferred"], 1)
+        self.assertEqual(by_surface["summary"]["GATE_STATE"], "Blocked")
+        self.assertEqual(by_surface["summary"]["ROUTE"], "DBA Control Room")
+        self.assertEqual(by_surface["credits"]["GATE_STATE"], "Review")
+        self.assertEqual(by_surface["task_sla_cost"]["GATE_STATE"], "Deferred")
+        self.assertEqual(by_surface["cortex_summary"]["ROUTE"], "Cost & Contract")
+        self.assertEqual(by_gate["Evidence freshness"]["STATE"], "Blocked")
+        self.assertGreaterEqual(release_summary["blocked"], 1)
+        self.assertIn("Evidence Freshness Gate", report)
+        self.assertIn("summary", report)
+
+    def test_dba_control_room_loads_schema_migration_status_without_live_account_scan(self):
+        called_sql = []
+
+        def fake_run_query(sql, **_kwargs):
+            sql_upper = str(sql).upper()
+            called_sql.append(sql_upper)
+            if "REQUIRED_OBJECTS AS" in sql_upper and "OVERWATCH_SCHEMA_MIGRATION" in sql_upper:
+                return pd.DataFrame([{
+                    "COMPONENT": "Alert automation",
+                    "OBJECT_NAME": "OVERWATCH_ANNOTATIONS",
+                    "OBJECT_TYPE": "TABLE",
+                    "OBJECT_STATE": "Present",
+                    "REQUIRED_VERSION": "2026.06.04-cost-proof-mart",
+                    "DEPLOYED_VERSION": "2026.06.04-cost-proof-mart",
+                    "MIGRATION_STATE": "Ready",
+                    "NEXT_ACTION": "No action.",
+                }])
+            raise RuntimeError("mart unavailable")
+
+        with patch("sections.dba_control_room.run_query", side_effect=fake_run_query), patch(
+            "sections.dba_control_room.load_action_queue",
+            return_value=pd.DataFrame(),
+        ):
+            data = _load_control_room(
+                session=None,
+                company="ALFA",
+                credit_price=3.68,
+                lookback_hours=24,
+                cortex_budget_usd=5000,
+            )
+
+        self.assertFalse(data["schema_migration_status"].empty)
+        self.assertTrue(any("OVERWATCH_SCHEMA_MIGRATION" in sql for sql in called_sql))
+        self.assertFalse(any("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY" in sql for sql in called_sql))
+
+    def test_auto_release_gate_builds_task_root_cause_timeline(self):
+        data = {
+            "schema_migration_status": pd.DataFrame([{
+                "COMPONENT": "Alert automation",
+                "OBJECT_NAME": "OVERWATCH_ANNOTATIONS",
+                "OBJECT_TYPE": "TABLE",
+                "OBJECT_STATE": "Missing",
+                "REQUIRED_VERSION": "2026.06.04-cost-proof-mart",
+                "DEPLOYED_VERSION": "Unknown",
+                "MIGRATION_STATE": "Blocked",
+                "NEXT_ACTION": "Apply release remediation.",
+            }]),
+            "task_failures": pd.DataFrame([{
+                "TASK_NAME": "OVERWATCH_ANOMALY_CHECK",
+                "ROOT_TASK_NAME": "OVERWATCH_ANOMALY_CHECK",
+                "FAILURES": 3,
+                "LAST_FAILURE": "2026-06-04 10:00:00",
+                "LAST_ERROR": "Object OVERWATCH_ANNOTATIONS does not exist or not authorized",
+                "QUERY_ID": "01abc",
+            }]),
+            "object_changes": pd.DataFrame([{
+                "START_TIME": "2026-06-04 09:45:00",
+                "QUERY_TYPE": "CREATE_TABLE",
+                "QUERY_PREVIEW": "CREATE TABLE OVERWATCH_ALERTS",
+            }]),
+            "failed_queries": pd.DataFrame([{
+                "START_TIME": "2026-06-04 10:00:00",
+                "QUERY_ID": "01abc",
+                "ERROR_CODE": "002003",
+                "ERROR_MESSAGE": "Object does not exist",
+            }]),
+            "task_sla_cost": pd.DataFrame(),
+            "task_latest_runs": pd.DataFrame(),
+        }
+
+        summary, gate = _build_auto_release_readiness_gate(data)
+        timeline = _build_task_failure_root_cause_timeline(data, company="ALFA", environment="PROD")
+        exceptions = _dba_control_severity_rows(data, credit_price=3.68)
+        report = _build_dba_control_report(data, exceptions, "ALFA", 3.68, 24)
+
+        self.assertGreaterEqual(summary["blocked"], 2)
+        self.assertIn("Deployment object: OVERWATCH_ANNOTATIONS", set(gate["GATE"]))
+        self.assertIn("Task failure recovery", set(gate["GATE"]))
+        self.assertIn("Object/RBAC drift", set(timeline["ROOT_CAUSE_SIGNAL"]))
+        self.assertIn("Yes", set(timeline["BLOCKS_RELEASE"]))
+        self.assertIn("Release gate blocked", set(exceptions["Signal"]))
+        self.assertIn("Auto Release Gate", report)
+        self.assertIn("Task Failure Root-Cause Timeline", report)
 
     def test_dba_control_room_snapshot_is_only_available_for_unfiltered_all_environment(self):
         unfiltered = {
@@ -4083,6 +4247,81 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_wh["LOAD_TASK_WH"]["OWNER"], "Data Engineering Owner")
         self.assertEqual(by_wh["LOAD_TASK_WH"]["OWNER_TAG_STATE"], "Missing")
         self.assertIn("Add warehouse owner", by_wh["LOAD_TASK_WH"]["NEXT_OWNER_ACTION"])
+
+    def test_warehouse_guardrail_coverage_blocks_missing_monitor_and_never_suspend(self):
+        overview = pd.DataFrame(
+            {
+                "WAREHOUSE_NAME": ["OVERWATCH_WH", "BI_COMPUTE_WH"],
+                "TOTAL_QUERIES": [120, 600],
+                "AVG_QUEUED_SEC": [0.2, 3.5],
+                "TOTAL_REMOTE_SPILL_GB": [0.0, 18.0],
+                "P95_ELAPSED_SEC": [8.0, 72.0],
+                "METERED_CREDITS": [12.0, 125.0],
+                "CREDIT_DELTA": [4.0, 38.0],
+                "CREDIT_DELTA_PCT": [20.0, 65.0],
+            }
+        )
+        settings = pd.DataFrame(
+            {
+                "NAME": ["OVERWATCH_WH", "BI_COMPUTE_WH"],
+                "RESOURCE_MONITOR": ["", "BI_WH_RM"],
+                "AUTO_SUSPEND": [300, 0],
+            }
+        )
+        owner_inventory = _annotate_warehouse_owner_inventory(
+            pd.DataFrame(
+                {
+                    "WAREHOUSE_NAME": ["OVERWATCH_WH", "BI_COMPUTE_WH"],
+                    "WAREHOUSE_SIZE": ["Small", "Medium"],
+                    "QUERY_COUNT": [120, 600],
+                    "DATABASE_COUNT": [1, 2],
+                    "OWNER_TAG": ["Platform DBA", "BI Product Owner"],
+                    "COST_CENTER_TAG": ["Platform", "BI"],
+                    "ENVIRONMENT_TAG": ["PROD", "PROD"],
+                }
+            )
+        )
+
+        summary, board = _build_warehouse_guardrail_coverage(
+            overview,
+            owner_inventory=owner_inventory,
+            settings_inventory=settings,
+        )
+        by_wh = {row["WAREHOUSE_NAME"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(summary["blocked"], 2)
+        self.assertEqual(by_wh["OVERWATCH_WH"]["GUARDRAIL_STATE"], "Blocked")
+        self.assertEqual(by_wh["OVERWATCH_WH"]["RESOURCE_MONITOR_STATE"], "Blocked")
+        self.assertIn("OVERWATCH_WH_RM", by_wh["OVERWATCH_WH"]["NEXT_ACTION"])
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["AUTO_SUSPEND_STATE"], "Blocked")
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["OWNER_ROUTE_STATE"], "Ready")
+        self.assertEqual(by_wh["BI_COMPUTE_WH"]["CAPACITY_STATE"], "Review")
+        self.assertLess(summary["score"], 80)
+
+    def test_warehouse_guardrail_coverage_marks_missing_metadata_as_evidence_gap(self):
+        overview = pd.DataFrame(
+            {
+                "WAREHOUSE_NAME": ["ETL_LOAD_WH"],
+                "TOTAL_QUERIES": [50],
+                "AVG_QUEUED_SEC": [0.0],
+                "TOTAL_REMOTE_SPILL_GB": [0.0],
+                "P95_ELAPSED_SEC": [12.0],
+                "METERED_CREDITS": [3.0],
+                "CREDIT_DELTA": [0.0],
+                "CREDIT_DELTA_PCT": [0.0],
+            }
+        )
+
+        summary, board = _build_warehouse_guardrail_coverage(overview)
+        row = board.iloc[0]
+
+        self.assertEqual(summary["unknown"], 1)
+        self.assertEqual(row["GUARDRAIL_STATE"], "Evidence Missing")
+        self.assertEqual(row["RESOURCE_MONITOR_STATE"], "Unknown")
+        self.assertEqual(row["AUTO_SUSPEND_STATE"], "Unknown")
+        self.assertEqual(row["OWNER_ROUTE_STATE"], "Unknown")
+        self.assertIn("SHOW WAREHOUSES", row["PROOF_REQUIRED"])
+        self.assertLess(row["GUARDRAIL_SCORE"], 100)
 
     def test_warehouse_capacity_brief_markdown_contains_evidence_limits(self):
         summary_row = {

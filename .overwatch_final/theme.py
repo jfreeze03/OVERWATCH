@@ -313,7 +313,6 @@ _STRUCTURAL_CSS = """
     padding-bottom: 2rem !important;
     max-width: 1500px !important;
 }
-[data-testid="stHeader"],
 [data-testid="stToolbar"],
 [data-testid="stDecoration"],
 #MainMenu,
@@ -1594,6 +1593,73 @@ details summary span[translate="no"] {
     font-size: 0 !important;
     line-height: 0 !important;
     opacity: 0 !important;
+}
+
+/* Keep Streamlit's sidebar collapse/reopen control reachable after the
+   native header chrome is visually minimized. */
+[data-testid="stHeader"] {
+    display: flex !important;
+    align-items: center !important;
+    background: transparent !important;
+    pointer-events: none !important;
+    height: 2.75rem !important;
+    min-height: 2.75rem !important;
+}
+[data-testid="stHeader"] button,
+[data-testid="stHeader"] [role="button"],
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    display: inline-flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    min-width: 2.25rem !important;
+    min-height: 2.25rem !important;
+}
+[data-testid="stHeader"] [data-testid="stIconMaterial"],
+[data-testid="stHeader"] [data-testid="stIconMaterial"] *,
+[data-testid="stHeader"] .material-symbols-rounded,
+[data-testid="stHeader"] .material-symbols-outlined,
+[data-testid="stHeader"] .material-icons,
+[data-testid="stHeader"] span[translate="no"] {
+    display: inline-flex !important;
+    width: auto !important;
+    min-width: 1.25rem !important;
+    max-width: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    color: var(--text-primary) !important;
+    font-size: 1.25rem !important;
+    line-height: 1 !important;
+    opacity: 1 !important;
+}
+[data-testid="stSidebar"][aria-expanded="false"] {
+    transform: none !important;
+    width: 3.25rem !important;
+    min-width: 3.25rem !important;
+    max-width: 3.25rem !important;
+    flex-basis: 3.25rem !important;
+    overflow: hidden !important;
+}
+[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"] {
+    width: 3.25rem !important;
+    min-width: 3.25rem !important;
+    max-width: 3.25rem !important;
+    overflow: hidden !important;
+}
+[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarHeader"] {
+    display: flex !important;
+    justify-content: center !important;
+    padding: 0.5rem 0 !important;
+}
+[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"] {
+    transform: none !important;
+    z-index: 1000000 !important;
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-strong) !important;
+    border-radius: 8px !important;
+    box-shadow: var(--metric-shadow) !important;
 }
 </style>
 """

@@ -455,6 +455,20 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertLess(app_text.index('"Exceptions-only mode"'), app_text.index('if _sidebar_panel_toggle("Saved Views", "saved_views")'))
         self.assertLess(app_text.index('if _sidebar_panel_toggle("Saved Views", "saved_views")'), app_text.index('if _sidebar_panel_toggle("Settings", "settings")'))
 
+    def test_sidebar_collapse_reopen_control_remains_visible(self):
+        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+
+        self.assertNotIn('[data-testid="stHeader"],\n[data-testid="stToolbar"]', theme_text)
+        self.assertIn('[data-testid="stHeader"] {', theme_text)
+        self.assertIn('[data-testid="stSidebarCollapsedControl"]', theme_text)
+        self.assertIn('[data-testid="stSidebarCollapseButton"]', theme_text)
+        self.assertIn('[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"]', theme_text)
+        self.assertIn('[data-testid="stSidebar"][aria-expanded="false"] {', theme_text)
+        self.assertIn("width: 3.25rem !important;", theme_text)
+        self.assertIn("transform: none !important;", theme_text)
+        self.assertIn("pointer-events: auto !important;", theme_text)
+        self.assertIn("min-width: 2.25rem !important;", theme_text)
+
     def test_current_sections_have_operating_guides(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")

@@ -56,6 +56,7 @@ render_optimization_advisor = _lazy_util("render_optimization_advisor")
 build_mart_warehouse_overview_sql = _lazy_util("build_mart_warehouse_overview_sql")
 build_mart_warehouse_scaling_sql = _lazy_util("build_mart_warehouse_scaling_sql")
 build_mart_warehouse_heatmap_sql = _lazy_util("build_mart_warehouse_heatmap_sql")
+load_warehouse_inventory = _lazy_util("load_warehouse_inventory")
 mart_object_name = _lazy_util("mart_object_name")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 safe_identifier = _lazy_util("safe_identifier")
@@ -1189,6 +1190,300 @@ def _warehouse_setting_control_board(
         ["CONTROL_RANK", "OVERDUE_OPEN", "FAILED_CHANGES", "CAPACITY_SCORE", "METERED_CREDITS"],
         ascending=[True, False, False, True, False],
     ).reset_index(drop=True)
+
+
+def _warehouse_upper_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    view = frame.copy()
+    view.columns = [str(col).upper() for col in view.columns]
+    return view
+
+
+def _warehouse_text(value: object) -> str:
+    try:
+        if value is None or pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        if value is None:
+            return ""
+    return str(value).strip()
+
+
+def _warehouse_row_by_name(frame: pd.DataFrame, preferred_name_col: str = "WAREHOUSE_NAME") -> dict[str, pd.Series]:
+    if frame.empty:
+        return {}
+    name_col = preferred_name_col if preferred_name_col in frame.columns else "NAME" if "NAME" in frame.columns else ""
+    if not name_col:
+        return {}
+    return {
+        _warehouse_text(row.get(name_col)).upper(): row
+        for _, row in frame.iterrows()
+        if _warehouse_text(row.get(name_col))
+    }
+
+
+def _warehouse_first_setting(row: pd.Series | dict, columns: tuple[str, ...]) -> tuple[object, bool]:
+    for column in columns:
+        if column in row:
+            return row.get(column), True
+    return "", False
+
+
+def _warehouse_setting_present(value: object) -> bool:
+    try:
+        if value is None or pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        if value is None:
+            return False
+    if isinstance(value, str) and not value.strip():
+        return False
+    text = str(value).strip()
+    return bool(text) and text.upper() not in {"NONE", "NULL", "NAN", "NOT SET", "UNSET"}
+
+
+def _build_warehouse_guardrail_coverage(
+    overview: pd.DataFrame | None,
+    owner_inventory: pd.DataFrame | None = None,
+    setting_control: pd.DataFrame | None = None,
+    settings_inventory: pd.DataFrame | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Build an auto-derived warehouse guardrail board from loaded evidence."""
+    overview_view = _warehouse_upper_frame(overview)
+    owner_view = _warehouse_upper_frame(owner_inventory)
+    control_view = _warehouse_upper_frame(setting_control)
+    settings_view = _warehouse_upper_frame(settings_inventory)
+
+    overview_by_wh = _warehouse_row_by_name(overview_view)
+    owner_by_wh = _warehouse_row_by_name(owner_view)
+    settings_by_wh = _warehouse_row_by_name(settings_view, preferred_name_col="NAME")
+    control_by_wh = _warehouse_row_by_name(control_view)
+
+    warehouses = sorted(set(overview_by_wh) | set(owner_by_wh) | set(settings_by_wh) | set(control_by_wh))
+    if not warehouses:
+        return {
+            "warehouses": 0,
+            "blocked": 0,
+            "review": 0,
+            "unknown": 0,
+            "ready": 0,
+            "score": 100,
+        }, pd.DataFrame()
+
+    spill_threshold = safe_float(THRESHOLDS.get("spill_warning_gb", 10), 10.0)
+    rows: list[dict] = []
+
+    for wh_key in warehouses:
+        overview_row = overview_by_wh.get(wh_key, {})
+        owner_row = owner_by_wh.get(wh_key, {})
+        settings_row = settings_by_wh.get(wh_key, {})
+        control_row = control_by_wh.get(wh_key, {})
+        wh_name = (
+            _warehouse_text(overview_row.get("WAREHOUSE_NAME"))
+            or _warehouse_text(owner_row.get("WAREHOUSE_NAME"))
+            or _warehouse_text(settings_row.get("NAME"))
+            or _warehouse_text(control_row.get("WAREHOUSE_NAME"))
+            or wh_key
+        )
+
+        metered = safe_float(
+            overview_row.get("METERED_CREDITS", control_row.get("METERED_CREDITS", 0))
+        )
+        credit_delta = safe_float(overview_row.get("CREDIT_DELTA"))
+        credit_delta_pct = safe_float(overview_row.get("CREDIT_DELTA_PCT"))
+        queued = safe_float(overview_row.get("AVG_QUEUED_SEC"))
+        spill = safe_float(overview_row.get("TOTAL_REMOTE_SPILL_GB"))
+        p95 = safe_float(overview_row.get("P95_ELAPSED_SEC"))
+        total_queries = safe_int(overview_row.get("TOTAL_QUERIES"))
+
+        monitor_value, monitor_known = _warehouse_first_setting(
+            settings_row,
+            ("RESOURCE_MONITOR", "RESOURCE_MONITOR_NAME", "MONITOR_NAME"),
+        )
+        if not monitor_known:
+            monitor_state = "Unknown"
+            monitor_action = "Load warehouse metadata to verify resource monitor coverage."
+            monitor_deduction = 10
+        elif _warehouse_setting_present(monitor_value):
+            monitor_state = "Ready"
+            monitor_action = "Retain resource monitor assignment evidence with the warehouse review."
+            monitor_deduction = 0
+        elif "OVERWATCH" in wh_key:
+            monitor_state = "Blocked"
+            monitor_action = "Attach OVERWATCH_WH to OVERWATCH_WH_RM before declaring release compute guarded."
+            monitor_deduction = 28
+        elif metered >= 50 or credit_delta > 0:
+            monitor_state = "Review"
+            monitor_action = "Review resource monitor assignment for this active or rising-cost warehouse."
+            monitor_deduction = 16
+        else:
+            monitor_state = "Review"
+            monitor_action = "Confirm whether this low-volume warehouse should share or receive a resource monitor."
+            monitor_deduction = 12
+
+        suspend_value, suspend_known = _warehouse_first_setting(settings_row, ("AUTO_SUSPEND",))
+        if not suspend_known or not _warehouse_setting_present(suspend_value):
+            suspend_state = "Unknown"
+            suspend_action = "Load warehouse metadata to verify AUTO_SUSPEND."
+            suspend_deduction = 10
+        else:
+            auto_suspend = safe_int(suspend_value, -1)
+            if auto_suspend == 0:
+                suspend_state = "Blocked" if metered > 0 else "Review"
+                suspend_action = "Route AUTO_SUSPEND=0 through owner approval and rollback proof."
+                suspend_deduction = 24 if metered > 0 else 14
+            elif auto_suspend > 3600:
+                suspend_state = "Review"
+                suspend_action = "Review long auto-suspend against idle burn and service-level needs."
+                suspend_deduction = 16
+            elif auto_suspend > 600 and metered > 0:
+                suspend_state = "Review"
+                suspend_action = "Validate whether auto-suspend above ten minutes is intentional for this workload."
+                suspend_deduction = 12
+            else:
+                suspend_state = "Ready"
+                suspend_action = "AUTO_SUSPEND is inside the normal guardrail range."
+                suspend_deduction = 0
+
+        governance = str(owner_row.get("GOVERNANCE_READINESS") or "").strip()
+        control_state = str(control_row.get("CONTROL_STATE") or "").strip()
+        audit_state = str(control_row.get("AUDIT_READINESS") or "").strip()
+        if "Owner Route Blocked" in {governance, control_state, audit_state}:
+            owner_state = "Blocked"
+            owner_action = str(
+                owner_row.get("NEXT_OWNER_ACTION")
+                or control_row.get("NEXT_CONTROL_ACTION")
+                or "Assign a named warehouse owner route before changing settings."
+            )
+            owner_deduction = 20
+        elif governance in {"Tagged Owner Ready"}:
+            owner_state = "Ready"
+            owner_action = "Use the tagged owner route before approving warehouse setting changes."
+            owner_deduction = 0
+        elif governance in {"Owner Tagged - Tag Gaps", "Directory Route Only"}:
+            owner_state = "Review"
+            owner_action = str(owner_row.get("NEXT_OWNER_ACTION") or "Complete warehouse ownership tags.")
+            owner_deduction = 8
+        elif control_state or audit_state:
+            owner_state = "Review"
+            owner_action = str(control_row.get("NEXT_CONTROL_ACTION") or "Confirm owner route before execution.")
+            owner_deduction = 8
+        else:
+            owner_state = "Unknown"
+            owner_action = "Load warehouse ownership readiness to verify owner route and tags."
+            owner_deduction = 8
+
+        pressure_reasons: list[str] = []
+        if queued > 2:
+            pressure_reasons.append(f"avg queue {queued:.1f}s")
+        if spill > spill_threshold:
+            pressure_reasons.append(f"remote spill {spill:.1f} GB")
+        if p95 > 60:
+            pressure_reasons.append(f"p95 {p95:.1f}s")
+        if pressure_reasons:
+            capacity_state = "Review"
+            capacity_action = "Verify queue, spill, latency, and settings before changing warehouse capacity."
+            capacity_deduction = 15
+        elif total_queries:
+            capacity_state = "Ready"
+            capacity_action = "No loaded pressure signal crosses the warehouse review threshold."
+            capacity_deduction = 0
+        else:
+            capacity_state = "Unknown"
+            capacity_action = "Load warehouse overview data to verify pressure coverage."
+            capacity_deduction = 6
+
+        if credit_delta_pct > 50 or credit_delta >= 25:
+            cost_state = "Review"
+            cost_action = "Attach credit delta and savings verification before changing cost-related settings."
+            cost_deduction = 12
+        elif metered > 0:
+            cost_state = "Ready"
+            cost_action = "Metering evidence is loaded for this warehouse."
+            cost_deduction = 0
+        else:
+            cost_state = "Unknown"
+            cost_action = "Load warehouse metering evidence before declaring cost guardrails covered."
+            cost_deduction = 6
+
+        states = [monitor_state, suspend_state, owner_state, capacity_state, cost_state]
+        if "Blocked" in states:
+            guardrail_state = "Blocked"
+            severity = "High"
+            rank = 0
+        elif "Review" in states:
+            guardrail_state = "Needs Review"
+            severity = "Medium"
+            rank = 2
+        elif "Unknown" in states:
+            guardrail_state = "Evidence Missing"
+            severity = "Medium"
+            rank = 4
+        else:
+            guardrail_state = "Ready"
+            severity = "Low"
+            rank = 8
+
+        deduction = monitor_deduction + suspend_deduction + owner_deduction + capacity_deduction + cost_deduction
+        score = max(0, 100 - deduction)
+        next_actions = [
+            action
+            for state, action in [
+                (monitor_state, monitor_action),
+                (suspend_state, suspend_action),
+                (owner_state, owner_action),
+                (capacity_state, capacity_action),
+                (cost_state, cost_action),
+            ]
+            if state in {"Blocked", "Review", "Unknown"}
+        ]
+        evidence_parts = [
+            f"resource_monitor={monitor_value if monitor_known else 'not loaded'}",
+            f"auto_suspend={suspend_value if suspend_known else 'not loaded'}",
+            f"owner={governance or control_state or 'not loaded'}",
+            f"queued={queued:.2f}s",
+            f"spill={spill:.2f} GB",
+            f"p95={p95:.2f}s",
+            f"credits={metered:.2f}",
+            f"credit_delta={credit_delta:.2f}",
+        ]
+
+        rows.append({
+            "WAREHOUSE_NAME": wh_name,
+            "GUARDRAIL_STATE": guardrail_state,
+            "GUARDRAIL_SCORE": score,
+            "SEVERITY": severity,
+            "RESOURCE_MONITOR_STATE": monitor_state,
+            "AUTO_SUSPEND_STATE": suspend_state,
+            "OWNER_ROUTE_STATE": owner_state,
+            "CAPACITY_STATE": capacity_state,
+            "COST_STATE": cost_state,
+            "METERED_CREDITS": metered,
+            "CREDIT_DELTA": credit_delta,
+            "CREDIT_DELTA_PCT": credit_delta_pct,
+            "AVG_QUEUED_SEC": queued,
+            "TOTAL_REMOTE_SPILL_GB": spill,
+            "P95_ELAPSED_SEC": p95,
+            "PROOF_REQUIRED": "SHOW WAREHOUSES metadata, resource monitor assignment, owner route, metering, queue, spill, and p95 evidence",
+            "EVIDENCE": "; ".join(evidence_parts),
+            "NEXT_ACTION": next_actions[0] if next_actions else "Guardrail coverage is ready for this warehouse.",
+            "GUARDRAIL_RANK": rank,
+        })
+
+    board = pd.DataFrame(rows).sort_values(
+        ["GUARDRAIL_RANK", "GUARDRAIL_SCORE", "METERED_CREDITS", "WAREHOUSE_NAME"],
+        ascending=[True, True, False, True],
+    ).reset_index(drop=True)
+    summary = {
+        "warehouses": int(len(board)),
+        "blocked": int(board["GUARDRAIL_STATE"].eq("Blocked").sum()),
+        "review": int(board["GUARDRAIL_STATE"].eq("Needs Review").sum()),
+        "unknown": int(board["GUARDRAIL_STATE"].eq("Evidence Missing").sum()),
+        "ready": int(board["GUARDRAIL_STATE"].eq("Ready").sum()),
+        "score": int(round(float(pd.to_numeric(board["GUARDRAIL_SCORE"], errors="coerce").fillna(0).mean()))),
+    }
+    return summary, board
 
 
 def _warehouse_frame_sum(frame: pd.DataFrame | None, column: str) -> int:
@@ -3116,8 +3411,26 @@ def render():
                           {wh_query_filters}
                         GROUP BY q.warehouse_name
                         ORDER BY total_queries DESC
-                    """, ttl_key=f"wh_overview_live_{company}_{wh_days}", tier="historical")
+                        """, ttl_key=f"wh_overview_live_{company}_{wh_days}", tier="historical")
                     source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+                try:
+                    metadata_session = locals().get("session")
+                    if metadata_session is None:
+                        metadata_session = _warehouse_action_session("load warehouse guardrail metadata")
+                    if metadata_session is not None:
+                        st.session_state["wh_settings_inventory"] = load_warehouse_inventory(
+                            metadata_session,
+                            company,
+                        )
+                        st.session_state["wh_settings_inventory_meta"] = _warehouse_scope_meta(
+                            company,
+                            environment,
+                            wh_days,
+                        )
+                        st.session_state.pop("wh_settings_inventory_error", None)
+                except Exception as metadata_exc:
+                    st.session_state["wh_settings_inventory"] = pd.DataFrame()
+                    st.session_state["wh_settings_inventory_error"] = format_snowflake_error(metadata_exc)
                 st.session_state["wh_df_wh"] = df_w
                 st.session_state["wh_df_wh_source"] = source
                 st.session_state["wh_df_wh_meta"] = _warehouse_scope_meta(company, environment, wh_days)
@@ -3162,6 +3475,60 @@ def render():
                 )
             else:
                 defer_source_note("Current/prior warehouse movement appears when the OVERWATCH mart overview is available.")
+
+            settings_inventory = st.session_state.get("wh_settings_inventory")
+            if not _warehouse_meta_matches(
+                st.session_state.get("wh_settings_inventory_meta"),
+                _warehouse_scope_meta(company, environment, wh_days),
+            ):
+                settings_inventory = pd.DataFrame()
+            owner_inventory = st.session_state.get("wh_owner_inventory")
+            owner_days = safe_int(st.session_state.get("wh_owner_inventory_days", 30)) or 30
+            owner_query_days = min(owner_days, 30)
+            if not _warehouse_meta_matches(
+                st.session_state.get("wh_owner_inventory_meta"),
+                _warehouse_scope_meta(company, environment, owner_query_days),
+            ):
+                owner_inventory = pd.DataFrame()
+
+            guardrail_summary, guardrail_board = _build_warehouse_guardrail_coverage(
+                df_w,
+                owner_inventory=owner_inventory,
+                settings_inventory=settings_inventory,
+            )
+            if not guardrail_board.empty:
+                st.subheader("Warehouse Guardrail Coverage")
+                g1, g2, g3, g4 = st.columns(4)
+                g1.metric("Guardrail Score", f"{guardrail_summary['score']}/100")
+                g2.metric("Blocked", f"{guardrail_summary['blocked']:,}", delta_color="inverse")
+                g3.metric("Needs Review", f"{guardrail_summary['review']:,}", delta_color="inverse")
+                g4.metric("Evidence Missing", f"{guardrail_summary['unknown']:,}", delta_color="inverse")
+                render_priority_dataframe(
+                    guardrail_board,
+                    title="Auto-derived warehouse guardrail coverage",
+                    priority_columns=[
+                        "WAREHOUSE_NAME", "GUARDRAIL_STATE", "GUARDRAIL_SCORE", "SEVERITY",
+                        "RESOURCE_MONITOR_STATE", "AUTO_SUSPEND_STATE", "OWNER_ROUTE_STATE",
+                        "CAPACITY_STATE", "COST_STATE", "METERED_CREDITS", "CREDIT_DELTA",
+                        "AVG_QUEUED_SEC", "TOTAL_REMOTE_SPILL_GB", "P95_ELAPSED_SEC",
+                        "NEXT_ACTION", "PROOF_REQUIRED",
+                    ],
+                    sort_by=["GUARDRAIL_RANK", "GUARDRAIL_SCORE", "METERED_CREDITS"],
+                    ascending=[True, True, False],
+                    raw_label="All warehouse guardrail coverage rows",
+                    height=320,
+                    max_rows=12,
+                )
+                download_csv(guardrail_board, "warehouse_guardrail_coverage.csv")
+                if st.session_state.get("wh_settings_inventory_error"):
+                    defer_source_note(
+                        "Warehouse metadata was unavailable for resource-monitor and auto-suspend checks: "
+                        f"{st.session_state.get('wh_settings_inventory_error')}"
+                    )
+                elif settings_inventory is None or settings_inventory.empty:
+                    defer_source_note("Resource-monitor and AUTO_SUSPEND checks need SHOW WAREHOUSES metadata.")
+                if owner_inventory is None or owner_inventory.empty:
+                    defer_source_note("Owner-route readiness appears after Warehouse Ownership Readiness has loaded.")
 
             # Flag warehouses needing attention
             for _, row in df_w.iterrows():

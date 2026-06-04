@@ -131,6 +131,7 @@ build_mart_control_room_task_failures_sql = _lazy_util("build_mart_control_room_
 build_mart_query_detail_recent_sql = _lazy_util("build_mart_query_detail_recent_sql")
 build_mart_task_history_sql = _lazy_util("build_mart_task_history_sql")
 build_mart_procedure_sla_sql = _lazy_util("build_mart_procedure_sla_sql")
+build_schema_migration_status_sql = _lazy_util("build_schema_migration_status_sql")
 load_latest_control_room_mart = _lazy_util("load_latest_control_room_mart")
 load_task_inventory = _lazy_util("load_task_inventory")
 load_action_queue = _lazy_util("load_action_queue")
@@ -149,6 +150,7 @@ DBA_CONTROL_SCOPE_FILTER_KEYS = (
 )
 DBA_CONTROL_ROOM_PANES = (
     "Fast Watch",
+    "Release Gate",
     "Operations Tower",
     "Triage",
     "Drill Routes",
@@ -459,6 +461,544 @@ def _dba_control_source_health_rows(
             "NEXT_ACTION": next_action,
         })
     return pd.DataFrame(rows)
+
+
+def _frame_or_empty(data: dict, key: str) -> pd.DataFrame:
+    value = data.get(key, _empty_df()) if isinstance(data, dict) else _empty_df()
+    return value if isinstance(value, pd.DataFrame) else _empty_df()
+
+
+def _row_value(row, *names: str, default: object = "") -> object:
+    for name in names:
+        try:
+            value = row.get(name)
+        except AttributeError:
+            value = None
+        if value is None:
+            continue
+        if isinstance(value, float) and value != value:
+            continue
+        text = str(value).strip()
+        if text and text.upper() not in {"NAN", "NONE", "NULL"}:
+            return value
+    return default
+
+
+def _task_failure_root_cause(error_text: object, query_text: object = "") -> dict:
+    signal = f"{error_text or ''} {query_text or ''}".upper()
+    if any(token in signal for token in [
+        "DOES NOT EXIST", "NOT AUTHORIZED", "INSUFFICIENT PRIVILEGE", "SQL ACCESS CONTROL", "OBJECT"
+    ]):
+        return {
+            "ROOT_CAUSE_SIGNAL": "Object/RBAC drift",
+            "NEXT_ACTION": "Verify the object exists, confirm grants, then rerun the failed task before resuming schedules.",
+            "BLOCKS_RELEASE": "Yes",
+        }
+    if any(token in signal for token in ["WAREHOUSE", "TIMEOUT", "TIMED OUT", "OUT OF MEMORY", "RESOURCE"]):
+        return {
+            "ROOT_CAUSE_SIGNAL": "Warehouse/runtime pressure",
+            "NEXT_ACTION": "Check warehouse pressure, timeout settings, and query profile before retrying the task.",
+            "BLOCKS_RELEASE": "Review",
+        }
+    if any(token in signal for token in ["SYNTAX", "COMPILATION", "INVALID IDENTIFIER", "NUMERIC", "CAST"]):
+        return {
+            "ROOT_CAUSE_SIGNAL": "SQL/procedure logic regression",
+            "NEXT_ACTION": "Inspect the deployed SQL or procedure change and validate with a controlled rerun.",
+            "BLOCKS_RELEASE": "Yes",
+        }
+    if any(token in signal for token in ["CANCELED", "CANCELLED", "ABORTED"]):
+        return {
+            "ROOT_CAUSE_SIGNAL": "Canceled or interrupted run",
+            "NEXT_ACTION": "Confirm whether the cancel was intentional, then rerun only after downstream impact is known.",
+            "BLOCKS_RELEASE": "Review",
+        }
+    return {
+        "ROOT_CAUSE_SIGNAL": "Unclassified task failure",
+        "NEXT_ACTION": "Open Task Failures, inspect TASK_HISTORY and linked QUERY_HISTORY, then add a diagnosis rule if repeated.",
+        "BLOCKS_RELEASE": "Review",
+    }
+
+
+def _build_task_failure_root_cause_timeline(
+    data: dict,
+    *,
+    company: str = "ALFA",
+    environment: str = "ALL",
+    lookback_hours: int = 24,
+    max_tasks: int = 5,
+) -> pd.DataFrame:
+    """Build an automatic task-failure timeline from loaded Control Room evidence."""
+    task_failures = _frame_or_empty(data, "task_failures")
+    task_sla_cost = _frame_or_empty(data, "task_sla_cost")
+    object_changes = _frame_or_empty(data, "object_changes")
+    failed_queries = _frame_or_empty(data, "failed_queries")
+    rows: list[dict] = []
+    event_order = 1
+
+    if task_failures is not None and not task_failures.empty:
+        failures = task_failures.copy()
+        failures.columns = [str(col).upper() for col in failures.columns]
+        if "FAILURES" in failures.columns:
+            failures["_FAILURE_SORT"] = pd.to_numeric(failures["FAILURES"], errors="coerce").fillna(1)
+        else:
+            failures["_FAILURE_SORT"] = 1
+        sort_cols = [col for col in ["_FAILURE_SORT", "LAST_FAILURE", "SCHEDULED_TIME"] if col in failures.columns]
+        failures = failures.sort_values(sort_cols, ascending=[False] * len(sort_cols)).head(max_tasks)
+        for _, failure in failures.iterrows():
+            task_name = str(_row_value(failure, "TASK_NAME", "NAME", "ENTITY", default="Unknown task"))
+            root_task = str(_row_value(failure, "ROOT_TASK_NAME", "ROOT_TASK", default=task_name))
+            event_ts = _row_value(failure, "LAST_FAILURE", "SCHEDULED_TIME", "START_TIME", default="")
+            error_text = _row_value(failure, "LAST_ERROR", "ERROR_MESSAGE", "QUERY_ERROR_MESSAGE", default="")
+            query_text = _row_value(failure, "QUERY_TEXT", default="")
+            diagnosis = _task_failure_root_cause(error_text, query_text)
+            failure_count = safe_int(_row_value(failure, "FAILURES", "FAILURE_COUNT", default=1), 1)
+            query_id = str(_row_value(failure, "QUERY_ID", default=""))
+            rows.extend([
+                {
+                    "EVENT_ORDER": event_order,
+                    "TIMELINE_STAGE": "Failure detected",
+                    "EVENT_TS": event_ts,
+                    "TASK_NAME": task_name,
+                    "ROOT_TASK_NAME": root_task,
+                    "ROOT_CAUSE_SIGNAL": diagnosis["ROOT_CAUSE_SIGNAL"],
+                    "EVIDENCE": f"{failure_count:,} failed run(s). {str(error_text)[:220]}",
+                    "NEXT_ACTION": "Keep release blocked until the failure has an explained cause and a clean rerun.",
+                    "SOURCE": "Task failure mart",
+                    "BLOCKS_RELEASE": "Yes",
+                },
+                {
+                    "EVENT_ORDER": event_order + 1,
+                    "TIMELINE_STAGE": "Probable root cause",
+                    "EVENT_TS": event_ts,
+                    "TASK_NAME": task_name,
+                    "ROOT_TASK_NAME": root_task,
+                    "ROOT_CAUSE_SIGNAL": diagnosis["ROOT_CAUSE_SIGNAL"],
+                    "EVIDENCE": f"Query ID: {query_id or 'not captured'}; signature: {str(error_text)[:180]}",
+                    "NEXT_ACTION": diagnosis["NEXT_ACTION"],
+                    "SOURCE": "Error signature",
+                    "BLOCKS_RELEASE": diagnosis["BLOCKS_RELEASE"],
+                },
+                {
+                    "EVENT_ORDER": event_order + 2,
+                    "TIMELINE_STAGE": "Recovery gate",
+                    "EVENT_TS": "",
+                    "TASK_NAME": task_name,
+                    "ROOT_TASK_NAME": root_task,
+                    "ROOT_CAUSE_SIGNAL": diagnosis["ROOT_CAUSE_SIGNAL"],
+                    "EVIDENCE": "Release can proceed only after TASK_HISTORY shows a successful rerun and downstream marts refresh.",
+                    "NEXT_ACTION": "Verify a clean rerun before resuming or closing the release item.",
+                    "SOURCE": "Derived release gate",
+                    "BLOCKS_RELEASE": "Yes" if diagnosis["BLOCKS_RELEASE"] == "Yes" else "Review",
+                },
+            ])
+            event_order += 3
+
+    if not task_sla_cost.empty:
+        view = task_sla_cost.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        for _, item in view.head(max_tasks).iterrows():
+            rows.append({
+                "EVENT_ORDER": event_order,
+                "TIMELINE_STAGE": "Runtime or cost regression",
+                "EVENT_TS": _row_value(item, "SCHEDULED_TIME", "START_TIME", default=""),
+                "TASK_NAME": str(_row_value(item, "TASK_NAME", "ENTITY", default="Task graph")),
+                "ROOT_TASK_NAME": str(_row_value(item, "ROOT_TASK_NAME", "TASK_NAME", default="Task graph")),
+                "ROOT_CAUSE_SIGNAL": str(_row_value(item, "SIGNAL", default="Task regression")),
+                "EVIDENCE": str(_row_value(item, "DETAIL", "EVIDENCE", "IMPACT_OBJECTS", default="Regression signal detected."))[:260],
+                "NEXT_ACTION": "Compare to the release window and validate query/procedure changes before accepting the new baseline.",
+                "SOURCE": "Task SLA/cost mart",
+                "BLOCKS_RELEASE": "Review",
+            })
+            event_order += 1
+
+    if rows and not object_changes.empty:
+        change = object_changes.copy()
+        change.columns = [str(col).upper() for col in change.columns]
+        latest = change.head(1).iloc[0]
+        rows.append({
+            "EVENT_ORDER": event_order,
+            "TIMELINE_STAGE": "Recent change context",
+            "EVENT_TS": _row_value(latest, "START_TIME", "EVENT_TS", default=""),
+            "TASK_NAME": "Release scope",
+            "ROOT_TASK_NAME": "",
+            "ROOT_CAUSE_SIGNAL": str(_row_value(latest, "QUERY_TYPE", "SIGNAL", default="Object change")),
+            "EVIDENCE": str(_row_value(latest, "QUERY_PREVIEW", "QUERY_TEXT", "EVIDENCE", default="Recent object or grant change."))[:260],
+            "NEXT_ACTION": "Check whether this DDL/grant change touched the failed task dependency path.",
+            "SOURCE": "Object change mart",
+            "BLOCKS_RELEASE": "Review",
+        })
+        event_order += 1
+
+    if rows and not failed_queries.empty:
+        query = failed_queries.copy()
+        query.columns = [str(col).upper() for col in query.columns]
+        latest = query.head(1).iloc[0]
+        rows.append({
+            "EVENT_ORDER": event_order,
+            "TIMELINE_STAGE": "Linked query failure context",
+            "EVENT_TS": _row_value(latest, "START_TIME", "EVENT_TIMESTAMP", default=""),
+            "TASK_NAME": str(_row_value(latest, "QUERY_ID", default="Failed query")),
+            "ROOT_TASK_NAME": "",
+            "ROOT_CAUSE_SIGNAL": str(_row_value(latest, "ERROR_CODE", default="Query failure")),
+            "EVIDENCE": str(_row_value(latest, "ERROR_MESSAGE", default="Recent failed query in same lookback."))[:260],
+            "NEXT_ACTION": "Open query diagnosis and compare query error signature with the failed task.",
+            "SOURCE": "Query failure mart",
+            "BLOCKS_RELEASE": "Review",
+        })
+
+    if not rows:
+        return pd.DataFrame([{
+            "EVENT_ORDER": 1,
+            "TIMELINE_STAGE": "No task failure signal",
+            "EVENT_TS": "",
+            "TASK_NAME": f"{company} / {environment}",
+            "ROOT_TASK_NAME": "",
+            "ROOT_CAUSE_SIGNAL": "No loaded failure evidence",
+            "EVIDENCE": f"No task failures or task SLA/cost regressions found in the loaded {lookback_hours}h scope.",
+            "NEXT_ACTION": "Keep monitoring; run Release Compare after product releases that change task or procedure logic.",
+            "SOURCE": "Derived release gate",
+            "BLOCKS_RELEASE": "No",
+        }])
+    return pd.DataFrame(rows).sort_values("EVENT_ORDER").reset_index(drop=True)
+
+
+def _build_auto_release_readiness_gate(
+    data: dict,
+    source_health: pd.DataFrame | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    """Return automatic release blockers from schema, source, and task evidence."""
+    rows: list[dict] = []
+    migration = _frame_or_empty(data, "schema_migration_status")
+    migration_error = _frame_or_empty(data, "schema_migration_status_error")
+    if migration.empty:
+        if not migration_error.empty:
+            rows.append({
+                "GATE": "Deployment contract",
+                "STATE": "Review",
+                "SEVERITY": "Medium",
+                "EVIDENCE": str(migration_error.iloc[0].get("ERROR", "Schema migration status unavailable."))[:260],
+                "NEXT_ACTION": "Run the release remediation SQL or full setup SQL, then reload Control Room.",
+                "ROUTE": "DBA Control Room",
+                "PROOF_REQUIRED": "schema migration status query returns required objects and current version",
+            })
+        else:
+            rows.append({
+                "GATE": "Deployment contract",
+                "STATE": "Not Loaded",
+                "SEVERITY": "Low",
+                "EVIDENCE": "Schema migration status was not loaded in this Control Room evidence set.",
+                "NEXT_ACTION": "Load DBA Control Room triage before approving a release.",
+                "ROUTE": "DBA Control Room",
+                "PROOF_REQUIRED": "schema migration status query",
+            })
+    else:
+        view = migration.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        state_series = view.get("MIGRATION_STATE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
+        blockers = view[~state_series.str.upper().isin(["READY", "NO ACTION", "NO ACTION."])]
+        if blockers.empty:
+            rows.append({
+                "GATE": "Deployment contract",
+                "STATE": "Ready",
+                "SEVERITY": "Low",
+                "EVIDENCE": f"{len(view):,} required release object(s) present and version-aligned.",
+                "NEXT_ACTION": "Keep the migration ledger with the release artifact.",
+                "ROUTE": "DBA Control Room",
+                "PROOF_REQUIRED": "current OVERWATCH_SCHEMA_MIGRATION row",
+            })
+        else:
+            for _, item in blockers.head(10).iterrows():
+                state = str(item.get("MIGRATION_STATE") or "Review")
+                rows.append({
+                    "GATE": f"Deployment object: {item.get('OBJECT_NAME', '')}",
+                    "STATE": "Blocked" if state == "Blocked" else "Review",
+                    "SEVERITY": "High" if state == "Blocked" else "Medium",
+                    "EVIDENCE": (
+                        f"{item.get('COMPONENT', '')}; object_state={item.get('OBJECT_STATE', '')}; "
+                        f"deployed={item.get('DEPLOYED_VERSION', '')}; required={item.get('REQUIRED_VERSION', '')}"
+                    ),
+                    "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Apply release remediation and reload status."),
+                    "ROUTE": "DBA Control Room",
+                    "PROOF_REQUIRED": "object exists and ledger version matches the app release",
+                })
+
+    task_failures = _frame_or_empty(data, "task_failures")
+    if not task_failures.empty:
+        failures = task_failures.copy()
+        failures.columns = [str(col).upper() for col in failures.columns]
+        failure_total = safe_int(pd.to_numeric(failures.get("FAILURES", pd.Series([1] * len(failures))), errors="coerce").fillna(1).sum())
+        names = ", ".join(dict.fromkeys(failures.get("TASK_NAME", pd.Series(dtype=str)).dropna().astype(str).head(4)))
+        rows.append({
+            "GATE": "Task failure recovery",
+            "STATE": "Blocked",
+            "SEVERITY": "Critical" if failure_total >= 3 else "High",
+            "EVIDENCE": f"{failure_total:,} failed task run(s) across {len(failures):,} grouped task(s). {names}",
+            "NEXT_ACTION": "Use the task root-cause timeline, verify a clean rerun, then decide whether schedules can resume.",
+            "ROUTE": "Workload Operations",
+            "PROOF_REQUIRED": "TASK_HISTORY success after the latest failure and downstream mart refresh proof",
+        })
+
+    task_sla_cost = _frame_or_empty(data, "task_sla_cost")
+    if not task_sla_cost.empty:
+        rows.append({
+            "GATE": "Task release regression",
+            "STATE": "Review",
+            "SEVERITY": "High",
+            "EVIDENCE": f"{len(task_sla_cost):,} task runtime or cost regression candidate(s).",
+            "NEXT_ACTION": "Run Release Compare and verify task/procedure baselines before accepting the release.",
+            "ROUTE": "Workload Operations",
+            "PROOF_REQUIRED": "before/after task graph comparison and owner-approved baseline decision",
+        })
+
+    latest_runs = _frame_or_empty(data, "task_latest_runs")
+    if not latest_runs.empty:
+        latest = latest_runs.copy()
+        latest.columns = [str(col).upper() for col in latest.columns]
+        states = latest.get("STATE", pd.Series([""] * len(latest), index=latest.index)).fillna("").astype(str).str.upper()
+        suspended = int(states.eq("SUSPENDED").sum())
+        if suspended:
+            rows.append({
+                "GATE": "Suspended scheduled work",
+                "STATE": "Review",
+                "SEVERITY": "High",
+                "EVIDENCE": f"{suspended:,} latest task run(s) or inventory row(s) are suspended.",
+                "NEXT_ACTION": "Confirm owner approval and dependency impact before resuming scheduled work.",
+                "ROUTE": "Workload Operations",
+                "PROOF_REQUIRED": "SHOW TASKS state, owner approval, and post-resume TASK_HISTORY success",
+            })
+
+    if source_health is not None and not source_health.empty and "STATE" in source_health.columns:
+        source_gate_summary, source_gate = _build_evidence_freshness_gate(source_health)
+        blocking_sources = safe_int(source_gate_summary.get("blocked"))
+        review_sources = safe_int(source_gate_summary.get("review"))
+        if blocking_sources or review_sources:
+            top_sources = ", ".join(
+                dict.fromkeys(
+                    source_gate[
+                        source_gate["GATE_STATE"].astype(str).isin(["Blocked", "Review"])
+                    ]["SURFACE"].astype(str).head(5).tolist()
+                )
+            )
+            rows.append({
+                "GATE": "Evidence freshness",
+                "STATE": "Blocked" if blocking_sources else "Review",
+                "SEVERITY": "High" if blocking_sources else "Medium",
+                "EVIDENCE": (
+                    f"{blocking_sources:,} blocked; {review_sources:,} review; "
+                    f"score {safe_int(source_gate_summary.get('score'))}/100. {top_sources}"
+                ),
+                "NEXT_ACTION": (
+                    "Refresh unavailable core evidence before release approval."
+                    if blocking_sources
+                    else "Reload stale source evidence or confirm the deferred deep evidence is not needed for this release."
+                ),
+                "ROUTE": "Source Health",
+                "PROOF_REQUIRED": "current source health for the active scope and required release surfaces",
+            })
+
+    if not rows:
+        rows.append({
+            "GATE": "Release readiness",
+            "STATE": "Ready",
+            "SEVERITY": "Low",
+            "EVIDENCE": "No deployment, source, task failure, or release-regression blockers found in loaded evidence.",
+            "NEXT_ACTION": "Keep monitoring and rerun release checks before production changes.",
+            "ROUTE": "DBA Control Room",
+            "PROOF_REQUIRED": "fresh Control Room load",
+        })
+
+    gate = pd.DataFrame(rows)
+    state_rank = {"Blocked": 0, "Review": 1, "Not Loaded": 2, "Ready": 4}
+    severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 4}
+    gate["STATE_RANK"] = gate["STATE"].map(state_rank).fillna(9)
+    gate["SEVERITY_RANK"] = gate["SEVERITY"].map(severity_rank).fillna(9)
+    gate = gate.sort_values(["STATE_RANK", "SEVERITY_RANK", "GATE"]).reset_index(drop=True)
+    summary = {
+        "blocked": int(gate["STATE"].eq("Blocked").sum()),
+        "review": int(gate["STATE"].eq("Review").sum()),
+        "ready": int(gate["STATE"].eq("Ready").sum()),
+        "not_loaded": int(gate["STATE"].eq("Not Loaded").sum()),
+        "score": max(0, min(100, 100 - int(gate["STATE"].eq("Blocked").sum()) * 30 - int(gate["STATE"].eq("Review").sum()) * 12 - int(gate["STATE"].eq("Not Loaded").sum()) * 6)),
+    }
+    return summary, gate.drop(columns=["STATE_RANK", "SEVERITY_RANK"], errors="ignore")
+
+
+def _evidence_surface_route(surface: object) -> tuple[str, str, str]:
+    text = str(surface or "").lower()
+    if "schema" in text or "migration" in text:
+        return (
+            "DBA Control Room",
+            "Release Gate",
+            "schema migration status and required OVERWATCH objects",
+        )
+    if "task" in text or "procedure" in text:
+        return (
+            "Workload Operations",
+            "Task and procedure reliability",
+            "TASK_HISTORY, procedure runs, and clean rerun proof",
+        )
+    if "warehouse" in text:
+        return (
+            "Warehouse Health",
+            "Overview & Scaling",
+            "warehouse overview, pressure, settings, and metering evidence",
+        )
+    if "credit" in text or "cost" in text or "cortex" in text:
+        return (
+            "Cost & Contract",
+            "Cost Cockpit",
+            "current credit, cost-driver, budget, and attribution evidence",
+        )
+    if "object" in text or "change" in text or "grant" in text:
+        return (
+            "Change & Drift",
+            "Object and access changes",
+            "object-change, grant-change, ticket, and blast-radius evidence",
+        )
+    if "login" in text or "security" in text:
+        return (
+            "Account Health",
+            "Security posture",
+            "login, privilege, MFA, and access-review evidence",
+        )
+    if "alert" in text or "action_queue" in text or "action queue" in text:
+        return (
+            "Alert Center",
+            "Alert lifecycle",
+            "alert lifecycle, routing, closure, and delivery evidence",
+        )
+    return (
+        "DBA Control Room",
+        "Source Health",
+        "fresh source health for the active company, environment, lookback, budget, and filters",
+    )
+
+
+def _evidence_freshness_core_surface(surface: object) -> bool:
+    text = str(surface or "").lower()
+    if text in {
+        "summary",
+        "credits",
+        "task_failures",
+        "failed_queries",
+        "warehouse_pressure",
+        "action_queue",
+    }:
+        return True
+    return any(
+        token in text
+        for token in (
+            "schema_migration",
+        )
+    )
+
+
+def _build_evidence_freshness_gate(source_health: pd.DataFrame | None) -> tuple[dict, pd.DataFrame]:
+    """Score loaded Control Room source health as release evidence coverage."""
+    if source_health is None or source_health.empty:
+        return {
+            "surfaces": 0,
+            "blocked": 0,
+            "review": 0,
+            "deferred": 0,
+            "ready": 0,
+            "score": 100,
+        }, _empty_df()
+
+    view = source_health.copy()
+    view.columns = [str(col).upper() for col in view.columns]
+    rows: list[dict] = []
+    for _, item in view.iterrows():
+        surface = str(item.get("SURFACE") or "")
+        state = str(item.get("STATE") or "Not Loaded")
+        mode = str(item.get("MODE") or "")
+        rows_count = safe_int(item.get("ROWS"))
+        message = str(item.get("MESSAGE") or "")
+        next_action = str(item.get("NEXT_ACTION") or "")
+        route, workflow, proof_required = _evidence_surface_route(surface)
+        core_surface = _evidence_freshness_core_surface(surface)
+        state_upper = state.upper()
+
+        if state_upper == "UNAVAILABLE" and core_surface:
+            gate_state = "Blocked"
+            severity = "High"
+            release_impact = "Yes"
+            rank = 0
+            action = next_action or "Refresh or deploy the missing mart/source before release approval."
+        elif state_upper == "UNAVAILABLE":
+            gate_state = "Review"
+            severity = "Medium"
+            release_impact = "Review"
+            rank = 2
+            action = next_action or "Refresh the unavailable evidence before relying on this specialist surface."
+        elif state_upper == "STALE":
+            gate_state = "Review"
+            severity = "High" if core_surface else "Medium"
+            release_impact = "Review"
+            rank = 1 if core_surface else 3
+            action = next_action or "Reload evidence for the active scope before approving the release."
+        elif state_upper == "NOT LOADED" and core_surface:
+            gate_state = "Review"
+            severity = "Medium"
+            release_impact = "Review"
+            rank = 4
+            action = next_action or "Load this core evidence surface before production signoff."
+        elif state_upper == "DEFERRED":
+            gate_state = "Deferred"
+            severity = "Low"
+            release_impact = "No"
+            rank = 7
+            action = next_action or "Load deep evidence only if this release touches the route."
+        elif state_upper in {"LOADED", "NO ROWS"}:
+            gate_state = "Ready"
+            severity = "Low"
+            release_impact = "No"
+            rank = 8
+            action = next_action or "Evidence is current for the active scope."
+        else:
+            gate_state = "Not Loaded"
+            severity = "Low"
+            release_impact = "No"
+            rank = 9
+            action = next_action or "Load evidence if this source is needed for the release."
+
+        rows.append({
+            "SURFACE": surface,
+            "GATE_STATE": gate_state,
+            "SEVERITY": severity,
+            "SOURCE_STATE": state,
+            "MODE": mode,
+            "ROWS": rows_count,
+            "RELEASE_IMPACT": release_impact,
+            "ROUTE": route,
+            "WORKFLOW": workflow,
+            "PROOF_REQUIRED": proof_required,
+            "EVIDENCE": (
+                f"{surface}; state={state}; mode={mode or 'unknown'}; rows={rows_count:,}; "
+                f"{message[:180]}"
+            ).strip(),
+            "NEXT_ACTION": action,
+            "GATE_RANK": rank,
+        })
+
+    board = pd.DataFrame(rows).sort_values(
+        ["GATE_RANK", "SURFACE"],
+        ascending=[True, True],
+    ).reset_index(drop=True)
+    blocked = int(board["GATE_STATE"].eq("Blocked").sum())
+    review = int(board["GATE_STATE"].eq("Review").sum())
+    deferred = int(board["GATE_STATE"].eq("Deferred").sum())
+    ready = int(board["GATE_STATE"].eq("Ready").sum())
+    score = max(0, min(100, 100 - blocked * 22 - review * 8 - deferred * 1))
+    summary = {
+        "surfaces": int(len(board)),
+        "blocked": blocked,
+        "review": review,
+        "deferred": deferred,
+        "ready": ready,
+        "score": score,
+    }
+    return summary, board
 
 
 def _snapshot_metric(df: pd.DataFrame, column: str) -> float:
@@ -1260,6 +1800,23 @@ def _load_control_room(
         data["task_failures"] = _empty_df()
         data["task_failures_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
 
+    try:
+        data["schema_migration_status"] = run_query(
+            build_schema_migration_status_sql(),
+            ttl_key="dba_control_room_schema_migration_status",
+            tier="metadata",
+            section="DBA Control Room",
+        )
+        source_rows.append({"Source": "schema_migration_status", "Mode": "Snowflake metadata"})
+    except Exception as exc:
+        data["schema_migration_status"] = _empty_df()
+        data["schema_migration_status_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
+        source_rows.append({
+            "Source": "schema_migration_status",
+            "Mode": "Metadata unavailable",
+            "Message": "Release migration status unavailable; apply setup or remediation SQL before release approval.",
+        })
+
     if not include_deep_evidence:
         data["task_sla_cost"] = _empty_df()
         data["task_latest_runs"] = _empty_df()
@@ -1435,6 +1992,28 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
     credit_delta = ((period_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0
 
     rows = []
+    release_summary, _release_gate = _build_auto_release_readiness_gate(data)
+    if safe_int(release_summary.get("blocked")):
+        rows.append({
+            "Severity": "High",
+            "Signal": "Release gate blocked",
+            "Evidence": (
+                f"{safe_int(release_summary.get('blocked')):,} blocked gate(s); "
+                f"{safe_int(release_summary.get('review')):,} review item(s)"
+            ),
+            "Action": "Open Release Gate and clear deployment/task recovery blockers before production approval.",
+            "Route": "DBA Control Room",
+            "Workflow": "Release Gate",
+        })
+    elif safe_int(release_summary.get("review")):
+        rows.append({
+            "Severity": "Medium",
+            "Signal": "Release gate needs review",
+            "Evidence": f"{safe_int(release_summary.get('review')):,} release gate review item(s)",
+            "Action": "Review deployment evidence, source health, and task timeline before release signoff.",
+            "Route": "DBA Control Room",
+            "Workflow": "Release Gate",
+        })
     failed_queries = safe_int(row.get("FAILED_QUERIES", 0))
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
     spill_queries = safe_int(row.get("REMOTE_SPILL_QUERIES", 0))
@@ -3540,6 +4119,98 @@ def _render_control_room_source_health(
     return source_health
 
 
+def _render_release_readiness_gate(
+    data: dict,
+    source_health: pd.DataFrame | None,
+    *,
+    company: str,
+    environment: str,
+    lookback_hours: int,
+) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
+    summary, gate = _build_auto_release_readiness_gate(data, source_health)
+    timeline = _build_task_failure_root_cause_timeline(
+        data,
+        company=company,
+        environment=environment,
+        lookback_hours=lookback_hours,
+    )
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Gate Score", f"{safe_int(summary.get('score'))}/100")
+    c2.metric("Blocked", f"{safe_int(summary.get('blocked')):,}", delta_color="inverse")
+    c3.metric("Review", f"{safe_int(summary.get('review')):,}", delta_color="inverse")
+    c4.metric("Ready", f"{safe_int(summary.get('ready')):,}")
+    c5.metric("Timeline Events", f"{len(timeline):,}")
+    if safe_int(summary.get("blocked")):
+        st.error("Release gate is blocked by deployment or task recovery evidence.")
+    elif safe_int(summary.get("review")) or safe_int(summary.get("not_loaded")):
+        st.warning("Release gate needs review before production approval.")
+    else:
+        st.success("Loaded release gate evidence is clear.")
+
+    render_priority_dataframe(
+        gate,
+        title="Auto release readiness gate",
+        priority_columns=["GATE", "STATE", "SEVERITY", "EVIDENCE", "NEXT_ACTION", "ROUTE", "PROOF_REQUIRED"],
+        sort_by=["STATE", "SEVERITY", "GATE"],
+        ascending=[True, True, True],
+        raw_label="All release gate rows",
+        height=300,
+    )
+    download_csv(gate, "overwatch_auto_release_gate.csv")
+
+    source_gate_summary, source_gate = _build_evidence_freshness_gate(source_health)
+    if not source_gate.empty:
+        st.markdown("**Evidence Freshness Gate**")
+        e1, e2, e3, e4 = st.columns(4)
+        e1.metric("Evidence Score", f"{safe_int(source_gate_summary.get('score'))}/100")
+        e2.metric("Blocked Sources", f"{safe_int(source_gate_summary.get('blocked')):,}", delta_color="inverse")
+        e3.metric("Review Sources", f"{safe_int(source_gate_summary.get('review')):,}", delta_color="inverse")
+        e4.metric("Deferred Sources", f"{safe_int(source_gate_summary.get('deferred')):,}")
+        render_priority_dataframe(
+            source_gate,
+            title="Release evidence freshness by source",
+            priority_columns=[
+                "SURFACE", "GATE_STATE", "SEVERITY", "SOURCE_STATE", "MODE", "ROWS",
+                "RELEASE_IMPACT", "ROUTE", "WORKFLOW", "NEXT_ACTION", "PROOF_REQUIRED",
+            ],
+            sort_by=["GATE_RANK", "SURFACE"],
+            ascending=[True, True],
+            raw_label="All release evidence freshness rows",
+            height=300,
+            max_rows=12,
+        )
+        download_csv(source_gate, "overwatch_release_evidence_freshness.csv")
+
+    st.markdown("**Task Failure Root-Cause Timeline**")
+    render_priority_dataframe(
+        timeline,
+        title="Task failure root-cause timeline",
+        priority_columns=[
+            "EVENT_ORDER", "TIMELINE_STAGE", "EVENT_TS", "TASK_NAME", "ROOT_TASK_NAME",
+            "ROOT_CAUSE_SIGNAL", "EVIDENCE", "NEXT_ACTION", "SOURCE", "BLOCKS_RELEASE",
+        ],
+        sort_by=["EVENT_ORDER"],
+        ascending=[True],
+        raw_label="All task failure timeline rows",
+        height=340,
+    )
+    download_csv(timeline, "overwatch_task_failure_root_cause_timeline.csv")
+    r1, r2, r3 = st.columns(3)
+    with r1:
+        if st.button("Open Workload Operations", key="dba_release_gate_open_workload", width="stretch"):
+            _jump("Workload Operations", workflow="Task graphs")
+            st.rerun()
+    with r2:
+        if st.button("Open Change & Drift", key="dba_release_gate_open_change", width="stretch"):
+            _jump("Change & Drift", workflow="Object and access changes")
+            st.rerun()
+    with r3:
+        if st.button("Open App Operations", key="dba_release_gate_open_app_ops", width="stretch"):
+            st.session_state["dba_control_room_active_view"] = "App Operations"
+            st.rerun()
+    return summary, gate, timeline
+
+
 def _latest_local_perf_result(*, sections: bool = False) -> dict:
     """Read the latest local release-check JSON result when available."""
     try:
@@ -3740,7 +4411,14 @@ def _render_route_buttons(exceptions: pd.DataFrame) -> None:
                 _jump(route, workflow=workflow)
 
 
-def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_price: float, lookback_hours: int) -> str:
+def _build_report(
+    data: dict,
+    exceptions: pd.DataFrame,
+    company: str,
+    credit_price: float,
+    lookback_hours: int,
+    source_health: pd.DataFrame | None = None,
+) -> str:
     summary = data.get("summary", _empty_df())
     credits = data.get("credits", _empty_df())
     task_sla_cost = data.get("task_sla_cost", _empty_df())
@@ -3754,6 +4432,9 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
     credit_delta = ((period_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0
     cortex_budget = safe_float(_scalar_frame_value(data, "_cortex_budget_usd", "BUDGET_USD", 0))
     cortex_projected = safe_float(cortex_summary.iloc[0].get("PROJECTED_30D_COST", 0)) if not cortex_summary.empty else 0
+    release_summary, release_gate = _build_auto_release_readiness_gate(data, source_health)
+    release_timeline = _build_task_failure_root_cause_timeline(data, company=company, lookback_hours=lookback_hours)
+    source_gate_summary, source_gate = _build_evidence_freshness_gate(source_health)
 
     lines = [
         "# OVERWATCH DBA Control Room Brief",
@@ -3771,6 +4452,8 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
         f"- Stored procedure release-regression candidates: {0 if procedure_sla_cost.empty else len(procedure_sla_cost):,}",
         f"- Cortex projected 30-day cost: ${cortex_projected:,.2f} vs ${cortex_budget:,.2f} budget",
         f"- Cortex user/source exceptions: {0 if cortex_exceptions.empty else len(cortex_exceptions):,}",
+        f"- Release gate: {safe_int(release_summary.get('blocked')):,} blocked; "
+        f"{safe_int(release_summary.get('review')):,} review; score {safe_int(release_summary.get('score'))}/100",
         f"- Credits: {format_credits(period_credits)} (${credits_to_dollars(period_credits, credit_price):,.2f})",
         f"- Credit change vs prior window: {credit_delta:+.1f}%",
         "",
@@ -3784,6 +4467,39 @@ def _build_report(data: dict, exceptions: pd.DataFrame, company: str, credit_pri
                 f"- {item['Severity']}: {item['Signal']} - {item['Evidence']} "
                 f"Action: {item['Action']} Route: {item['Route']}."
             )
+    if not release_gate.empty:
+        lines.extend(["", "## Auto Release Gate"])
+        for _, item in release_gate.head(10).iterrows():
+            lines.append(
+                f"- {item.get('STATE', '')}: {item.get('GATE', '')} - {item.get('EVIDENCE', '')} "
+                f"Next: {item.get('NEXT_ACTION', '')}"
+            )
+    if not source_gate.empty:
+        lines.extend([
+            "",
+            "## Evidence Freshness Gate",
+            f"- Score: {safe_int(source_gate_summary.get('score'))}/100; "
+            f"blocked {safe_int(source_gate_summary.get('blocked')):,}; "
+            f"review {safe_int(source_gate_summary.get('review')):,}; "
+            f"deferred {safe_int(source_gate_summary.get('deferred')):,}.",
+        ])
+        for _, item in source_gate[source_gate["GATE_STATE"].astype(str).isin(["Blocked", "Review"])].head(10).iterrows():
+            lines.append(
+                f"- {item.get('GATE_STATE', '')}: {item.get('SURFACE', '')} - "
+                f"{item.get('EVIDENCE', '')} Next: {item.get('NEXT_ACTION', '')}"
+            )
+    if not release_timeline.empty:
+        blocking = release_timeline[
+            release_timeline.get("BLOCKS_RELEASE", pd.Series(dtype=str)).fillna("").astype(str).isin(["Yes", "Review"])
+        ]
+        if not blocking.empty:
+            lines.extend(["", "## Task Failure Root-Cause Timeline"])
+            for _, item in blocking.head(10).iterrows():
+                lines.append(
+                    f"- {item.get('EVENT_ORDER', '')}. {item.get('TIMELINE_STAGE', '')}: "
+                    f"{item.get('TASK_NAME', '')} - {item.get('ROOT_CAUSE_SIGNAL', '')}. "
+                    f"{item.get('NEXT_ACTION', '')}"
+                )
     if not task_sla_cost.empty:
         lines.extend(["", "## Task SLA / Cost Regression Candidates"])
         for _, item in task_sla_cost.head(10).iterrows():
@@ -4030,6 +4746,17 @@ def render() -> None:
     cortex_summary = data.get("cortex_summary", _empty_df())
     cortex_exceptions = data.get("cortex_exceptions", _empty_df())
     cortex_projected = safe_float(cortex_summary.iloc[0].get("PROJECTED_30D_COST", 0)) if not cortex_summary.empty else 0
+    release_source_health = _dba_control_source_health_rows(
+        data,
+        st.session_state,
+        company,
+        environment,
+        int(lookback_hours),
+        safe_float(cortex_budget_usd),
+        bool(include_deep_evidence),
+        bool(allow_live_fallback),
+    )
+    release_gate_summary, release_gate_rows = _build_auto_release_readiness_gate(data, release_source_health)
 
     m1, m2, m3, m4, m5, m6, m7, m8 = st.columns(8)
     m1.metric("Open Exceptions", len(exceptions))
@@ -4040,6 +4767,16 @@ def render() -> None:
     m6.metric("Est. Cost", f"${credits_to_dollars(period_credits, credit_price):,.0f}")
     m7.metric("SLA/Cost Drift", f"{regression_count:,}", delta_color="inverse")
     m8.metric("Cortex Risk", f"{0 if cortex_exceptions.empty else len(cortex_exceptions):,}", f"${cortex_projected:,.0f}/30d", delta_color="inverse")
+    if safe_int(release_gate_summary.get("blocked")):
+        st.error(
+            f"Release gate blocked: {safe_int(release_gate_summary.get('blocked')):,} blocker(s), "
+            f"{safe_int(release_gate_summary.get('review')):,} review item(s)."
+        )
+    elif safe_int(release_gate_summary.get("review")) or safe_int(release_gate_summary.get("not_loaded")):
+        st.warning(
+            f"Release gate needs review: {safe_int(release_gate_summary.get('review')):,} review item(s), "
+            f"{safe_int(release_gate_summary.get('not_loaded')):,} not loaded."
+        )
 
     a1, a2 = st.columns([1, 5])
     with a1:
@@ -4087,6 +4824,20 @@ def render() -> None:
         st.caption(
             "Control Tower, Autopilot, Incident Board, and Shift Handoff are deferred to Operations Tower "
             "so section switching stays fast."
+        )
+
+    elif active_view == "Release Gate":
+        st.subheader("Auto Release Readiness Gate")
+        st.caption(
+            "Derived from schema migration status, source freshness, task failure facts, and task regression signals. "
+            "It prepares proof and routing; it does not execute remediation or resume tasks."
+        )
+        _render_release_readiness_gate(
+            data,
+            release_source_health,
+            company=company,
+            environment=environment,
+            lookback_hours=int(lookback_hours),
         )
 
     elif active_view == "Operations Tower":
@@ -4556,7 +5307,14 @@ def render() -> None:
 
     elif active_view == "Executive Evidence":
         st.subheader("Report-Ready Brief")
-        report = _build_report(data, exceptions, company, credit_price, int(loaded_lookback))
+        report = _build_report(
+            data,
+            exceptions,
+            company,
+            credit_price,
+            int(loaded_lookback),
+            release_source_health,
+        )
         st.text_area("Brief text", report, height=420)
         st.download_button(
             "Download DBA Brief",

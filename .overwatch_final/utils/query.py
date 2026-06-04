@@ -102,13 +102,31 @@ def _query_is_metadata_probe(query_text: str) -> bool:
 
 def _query_starts_with_read(sql: str) -> bool:
     """Return True for plain read statements that can safely accept LIMIT."""
-    return bool(
-        re.match(
-            r"^\s*(?:(?:--[^\r\n]*(?:\r?\n|$))|(?:/\*.*?\*/\s*))*\s*(?:SELECT|WITH)\b",
-            str(sql or ""),
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-    )
+    text = str(sql or "")
+    idx = 0
+    length = len(text)
+    while idx < length:
+        while idx < length and text[idx].isspace():
+            idx += 1
+        if text.startswith("--", idx):
+            idx += 2
+            while idx < length and text[idx] not in "\r\n":
+                idx += 1
+            continue
+        if text.startswith("/*", idx):
+            end = text.find("*/", idx + 2)
+            if end < 0:
+                return False
+            idx = end + 2
+            continue
+        break
+
+    for keyword in ("SELECT", "WITH"):
+        end = idx + len(keyword)
+        if text[idx:end].upper() == keyword:
+            if end >= length or not (text[end].isalnum() or text[end] == "_"):
+                return True
+    return False
 
 
 def _has_extra_statement_separator(sql: str) -> bool:

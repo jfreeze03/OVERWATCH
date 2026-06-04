@@ -12,6 +12,7 @@ from utils.query import (  # noqa: E402
     ADMIN_SQL_READ_LIMIT_ROWS,
     STANDARD_SQL_READ_LIMIT_ROWS,
     _inject_read_limit,
+    _query_starts_with_read,
     safe_identifier,
 )
 
@@ -28,6 +29,10 @@ class QueryGuardrailTests(unittest.TestCase):
                 max_rows=456,
             ),
             "WITH q AS (SELECT * FROM T) SELECT * FROM q ORDER BY START_TIME DESC\nLIMIT 456",
+        )
+        self.assertEqual(
+            _inject_read_limit("/* dashboard probe */\n-- scoped read\nSELECT * FROM T", max_rows=25),
+            "/* dashboard probe */\n-- scoped read\nSELECT * FROM T\nLIMIT 25",
         )
 
     def test_read_limit_leaves_bounded_or_non_read_sql_untouched(self):
@@ -50,6 +55,14 @@ class QueryGuardrailTests(unittest.TestCase):
             _inject_read_limit("SELECT 'LIMIT 25' AS NOTE, WAREHOUSE_NAME FROM T", max_rows=250),
             "SELECT 'LIMIT 25' AS NOTE, WAREHOUSE_NAME FROM T\nLIMIT 250",
         )
+
+    def test_read_prefix_detection_is_linear_for_block_comment_noise(self):
+        suspicious_sql = "/*" + ("*" * 20_000) + "/ " + ("*" * 20_000) + " SELECT * FROM T"
+
+        self.assertFalse(_query_starts_with_read(suspicious_sql))
+        self.assertEqual(_inject_read_limit(suspicious_sql, max_rows=100), suspicious_sql)
+        self.assertFalse(_query_starts_with_read("SELECTED_VALUE FROM T"))
+        self.assertFalse(_query_starts_with_read("WITHHELD AS SELECT"))
 
     def test_default_read_limit_tracks_operator_mode(self):
         with patch("utils.query._admin_actions_enabled", return_value=False):

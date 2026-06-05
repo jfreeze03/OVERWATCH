@@ -865,8 +865,21 @@ class NavigationIntegrityTests(unittest.TestCase):
             "active_pane = st.radio",
             1,
         )[0]
+        self.assertNotIn("_architecture_objectives_frame(", architecture_render_preload)
+        self.assertNotIn("build_forward_platform_control_register()", architecture_render_preload)
+        self.assertNotIn("_architecture_source_health_rows(", architecture_render_preload)
+        architecture_top_import_block = architecture_text.split("def build_agentic_ai_surface_scorecard", 1)[0]
+        self.assertNotIn("from utils.futures_governance import", architecture_top_import_block)
         security_posture_render_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
             'if st.button("Load Security Brief"',
+            1,
+        )[0]
+        security_posture_default_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
+            'if active_view == "Evidence Readiness":',
+            1,
+        )[0]
+        security_posture_view_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
+            'if active_view == "Access Workflows":',
             1,
         )[0]
         security_access_render_preload = security_access_text.split("def render():", 1)[1].split(
@@ -895,6 +908,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("get_session()", live_monitor_render_preload)
         self.assertNotIn("get_session()", architecture_render_preload)
         self.assertNotIn("get_session()", security_posture_render_preload)
+        self.assertNotIn("_render_privileged_grant_readiness(", security_posture_default_preload)
+        self.assertNotIn("_render_security_source_health(", security_posture_default_preload)
+        self.assertNotIn("render_workflow_module(", security_posture_view_preload)
         self.assertNotIn("get_session()", security_access_render_preload)
         self.assertNotIn("get_session()", change_drift_render_preload)
         self.assertNotIn("get_session()", object_change_render_preload)
@@ -920,7 +936,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Sources on load", alert_center_text)
         self.assertNotIn("_alert_center_load_plan", alert_center_text)
         self.assertNotIn("with st.expander(\"Source plan\"", alert_center_text)
-        self.assertIn('st.radio(\n        "Alert Center view"', alert_center_text)
+        self.assertIn('st.selectbox(\n        "Alert Center view"', alert_center_text)
+        self.assertNotIn('st.radio(\n        "Alert Center view"', alert_center_text)
         self.assertNotIn("st.tabs(", alert_center_text)
         alert_center_import_block = alert_center_text.split("ALERT_CENTER_PANES", 1)[0]
         self.assertNotIn("build_alert_task_sql", alert_center_import_block)
@@ -1009,6 +1026,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_query_history_exprs()", query_analysis_text)
         self.assertIn("workload_operations_snapshot", workload_operations_text)
         self.assertIn("build_mart_control_room_summary_sql", workload_operations_text)
+        self.assertIn("def _render_workload_action_brief", workload_operations_text)
+        self.assertIn("def _render_workload_metric_rows", workload_operations_text)
+        self.assertNotIn("c1, c2, c3, c4, c5 = st.columns(5)", workload_operations_text)
+        self.assertIn("SECURITY_POSTURE_VIEWS", security_posture_text)
+        self.assertIn('"Security Brief"', security_posture_text)
+        self.assertIn('"Evidence Readiness"', security_posture_text)
+        self.assertIn('"Access Workflows"', security_posture_text)
         self.assertIn("PIPELINE_HEALTH_PANES", pipeline_health_text)
         self.assertIn('"Snowpipe Usage"', pipeline_health_text)
         self.assertIn('"Dynamic Tables"', pipeline_health_text)

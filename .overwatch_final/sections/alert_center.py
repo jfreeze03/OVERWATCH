@@ -1048,11 +1048,9 @@ def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
 
-    active_view = st.radio(
+    active_view = st.selectbox(
         "Alert Center view",
         ALERT_CENTER_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
         key="alert_center_active_view",
     )
     required_sources = _alert_center_sources_for_view(active_view)

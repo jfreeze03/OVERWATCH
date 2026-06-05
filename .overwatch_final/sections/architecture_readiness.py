@@ -29,19 +29,72 @@ from utils import (
 )
 from utils.workflows import render_operator_briefing, render_priority_dataframe
 from utils.section_guidance import defer_section_note
-from utils.futures_governance import (
-    build_agentic_ai_surface_scorecard,
-    build_forward_platform_control_register,
-    build_platform_futures_adoption_gate,
-    build_platform_futures_evidence_ddl,
-    build_platform_futures_board,
-    load_adaptive_compute_readiness,
-    load_agent_mcp_inventory,
-    load_ai_security_guardrails,
-    load_ai_usage_guardrails,
-    load_horizon_semantic_readiness,
-    load_openflow_operations,
-)
+
+
+def build_agentic_ai_surface_scorecard(*args, **kwargs):
+    from utils.futures_governance import build_agentic_ai_surface_scorecard as _build_agentic_ai_surface_scorecard
+
+    return _build_agentic_ai_surface_scorecard(*args, **kwargs)
+
+
+def build_forward_platform_control_register(*args, **kwargs):
+    from utils.futures_governance import build_forward_platform_control_register as _build_forward_platform_control_register
+
+    return _build_forward_platform_control_register(*args, **kwargs)
+
+
+def build_platform_futures_adoption_gate(*args, **kwargs):
+    from utils.futures_governance import build_platform_futures_adoption_gate as _build_platform_futures_adoption_gate
+
+    return _build_platform_futures_adoption_gate(*args, **kwargs)
+
+
+def build_platform_futures_evidence_ddl(*args, **kwargs):
+    from utils.futures_governance import build_platform_futures_evidence_ddl as _build_platform_futures_evidence_ddl
+
+    return _build_platform_futures_evidence_ddl(*args, **kwargs)
+
+
+def build_platform_futures_board(*args, **kwargs):
+    from utils.futures_governance import build_platform_futures_board as _build_platform_futures_board
+
+    return _build_platform_futures_board(*args, **kwargs)
+
+
+def load_adaptive_compute_readiness(*args, **kwargs):
+    from utils.futures_governance import load_adaptive_compute_readiness as _load_adaptive_compute_readiness
+
+    return _load_adaptive_compute_readiness(*args, **kwargs)
+
+
+def load_agent_mcp_inventory(*args, **kwargs):
+    from utils.futures_governance import load_agent_mcp_inventory as _load_agent_mcp_inventory
+
+    return _load_agent_mcp_inventory(*args, **kwargs)
+
+
+def load_ai_security_guardrails(*args, **kwargs):
+    from utils.futures_governance import load_ai_security_guardrails as _load_ai_security_guardrails
+
+    return _load_ai_security_guardrails(*args, **kwargs)
+
+
+def load_ai_usage_guardrails(*args, **kwargs):
+    from utils.futures_governance import load_ai_usage_guardrails as _load_ai_usage_guardrails
+
+    return _load_ai_usage_guardrails(*args, **kwargs)
+
+
+def load_horizon_semantic_readiness(*args, **kwargs):
+    from utils.futures_governance import load_horizon_semantic_readiness as _load_horizon_semantic_readiness
+
+    return _load_horizon_semantic_readiness(*args, **kwargs)
+
+
+def load_openflow_operations(*args, **kwargs):
+    from utils.futures_governance import load_openflow_operations as _load_openflow_operations
+
+    return _load_openflow_operations(*args, **kwargs)
 
 
 ARCHITECTURE_READINESS_PANES = (
@@ -511,6 +564,34 @@ def _architecture_source_health_rows(
             ),
         })
     return pd.DataFrame(rows).sort_values(["STATE_RANK", "SURFACE"])
+
+
+def _ensure_architecture_objectives_state(company: str, environment: str) -> pd.DataFrame:
+    expected = _architecture_scope_meta(company, environment, "Architecture objectives")
+    current = st.session_state.get("arch_objectives_df")
+    if isinstance(current, pd.DataFrame) and _architecture_meta_matches(st.session_state.get("arch_objectives_meta"), expected):
+        return current
+    objectives = _architecture_objectives_frame(company)
+    st.session_state["arch_objectives_df"] = objectives
+    st.session_state["arch_objectives_meta"] = expected
+    return objectives
+
+
+def _ensure_architecture_forward_controls_state(company: str, environment: str) -> pd.DataFrame:
+    expected = _architecture_scope_meta(company, environment, "Forward platform controls")
+    current = st.session_state.get("arch_forward_controls")
+    if isinstance(current, pd.DataFrame) and _architecture_meta_matches(st.session_state.get("arch_forward_controls_meta"), expected):
+        return current
+    controls = build_forward_platform_control_register()
+    st.session_state["arch_forward_controls"] = controls
+    st.session_state["arch_forward_controls_meta"] = expected
+    return controls
+
+
+def _refresh_architecture_source_health_state(company: str, environment: str) -> pd.DataFrame:
+    source_health = _architecture_source_health_rows(st.session_state, company, environment)
+    st.session_state["arch_source_health"] = source_health
+    return source_health
 
 
 def _failure_expr(cols: set[str], alias: str = "q") -> str:
@@ -1159,13 +1240,8 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
     defer_section_note(
         "Forward Snowflake controls for Adaptive Compute, CoWork Artifacts, Cortex Sense, agents, MCP servers, AI spend, AI security, Openflow, Horizon governance, semantic trust, DR drills, and AI-assisted change."
     )
-    controls = build_forward_platform_control_register()
-    st.session_state["arch_forward_controls"] = controls
-    st.session_state["arch_forward_controls_meta"] = _architecture_scope_meta(
-        company,
-        environment,
-        "Forward platform controls",
-    )
+    controls = _ensure_architecture_forward_controls_state(company, environment)
+    _refresh_architecture_source_health_state(company, environment)
     agentic_summary, agentic_scorecard = build_agentic_ai_surface_scorecard(
         controls,
         _platform_futures_frames(),
@@ -1594,20 +1670,6 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
 def render():
     company = get_active_company()
     environment = get_active_environment()
-    objectives = _architecture_objectives_frame(company)
-    st.session_state["arch_objectives_df"] = objectives
-    st.session_state["arch_objectives_meta"] = _architecture_scope_meta(
-        company,
-        environment,
-        "Architecture objectives",
-    )
-    st.session_state["arch_forward_controls"] = build_forward_platform_control_register()
-    st.session_state["arch_forward_controls_meta"] = _architecture_scope_meta(
-        company,
-        environment,
-        "Forward platform controls",
-    )
-    st.session_state["arch_source_health"] = _architecture_source_health_rows(st.session_state, company, environment)
 
     defer_section_note("Forward-looking Snowflake architecture checks for isolation, clustering, cache behavior, and DR readiness.")
     render_operator_briefing(
@@ -1774,6 +1836,7 @@ def render():
                 download_csv(df, "architecture_cache_optimization.csv")
 
     elif active_pane == "Objectives & Owners":
+        objectives = _ensure_architecture_objectives_state(company, environment)
         st.subheader("Architecture Objective Register")
         defer_section_note("Manual DBA control objectives cover database families, execution warehouses, workload classes, and RPO/RTO targets.")
         if objectives.empty:
@@ -1798,8 +1861,7 @@ def render():
                 height=420,
             )
             download_csv(objectives, "architecture_objectives.csv")
-        source_health = _architecture_source_health_rows(st.session_state, company, environment)
-        st.session_state["arch_source_health"] = source_health
+        source_health = _refresh_architecture_source_health_state(company, environment)
         render_priority_dataframe(
             source_health,
             title="Architecture evidence source health",

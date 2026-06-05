@@ -58,6 +58,10 @@ from sections.architecture_readiness import (  # noqa: E402
     _architecture_source_health_rows,
     _enrich_architecture_context,
 )
+from sections.workload_operations import (  # noqa: E402
+    _workload_action_brief,
+    _workload_snapshot_summary,
+)
 from sections.cost_center import (  # noqa: E402
     _bill_driver_summary,
     _build_bill_waterfall,
@@ -7084,6 +7088,42 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("EMAIL_DRY_RUN", sql)
         self.assertIn("LAST_DELIVERY_AT", sql)
         self.assertIn("DBA-ALERTS@EXAMPLE.COM", sql)
+
+    def test_workload_operations_snapshot_action_brief_prioritizes_operator_move(self):
+        snapshot = pd.DataFrame([{
+            "TOTAL_QUERIES": 100,
+            "FAILED_QUERIES": 3,
+            "QUEUED_QUERIES": 7,
+            "REMOTE_SPILL_QUERIES": 2,
+            "P95_ELAPSED_SEC": 18.5,
+        }])
+        summary = _workload_snapshot_summary(snapshot)
+        self.assertEqual(summary["queries"], 100)
+        self.assertEqual(summary["failed"], 3)
+        self.assertEqual(summary["queued"], 7)
+        self.assertEqual(summary["spill"], 2)
+
+        failed = _workload_action_brief(summary)
+        self.assertEqual(failed["workflow"], "Query diagnosis")
+        self.assertIn("failed query", failed["detail"])
+
+        queued = _workload_action_brief({
+            "loaded": True,
+            "queries": 100,
+            "failed": 0,
+            "queued": 7,
+            "spill": 0,
+            "p95": 18.5,
+        })
+        self.assertEqual(queued["workflow"], "Live triage")
+        self.assertEqual(queued["state"], "Queue Pressure")
+
+        missing = _workload_action_brief(
+            _workload_snapshot_summary(pd.DataFrame()),
+            error="source missing",
+        )
+        self.assertTrue(missing["refresh"])
+        self.assertEqual(missing["workflow"], "Live triage")
 
     def test_workload_recovery_audit_ddl_captures_owner_and_verification_evidence(self):
         sql = build_workload_recovery_audit_ddl().upper()

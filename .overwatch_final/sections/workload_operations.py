@@ -5,6 +5,7 @@ import streamlit as st
 
 from utils import (
     build_mart_control_room_summary_sql,
+    defer_source_note,
     format_snowflake_error,
     get_active_company,
     run_query,
@@ -78,7 +79,123 @@ def _load_workload_snapshot(company: str, *, hours: int = 24, show_errors: bool 
         st.session_state["workload_operations_snapshot_meta"] = _snapshot_meta(company, hours)
         st.session_state["workload_operations_snapshot_error"] = format_snowflake_error(exc)
         if show_errors:
-            st.warning(f"Workload snapshot unavailable: {st.session_state['workload_operations_snapshot_error']}")
+            st.info("Workload snapshot unavailable. Start with live triage or retry after source access is available.")
+            defer_source_note("Workload snapshot unavailable.", st.session_state["workload_operations_snapshot_error"])
+
+
+def _workload_snapshot_summary(snapshot) -> dict:
+    if snapshot is None or getattr(snapshot, "empty", True):
+        return {
+            "loaded": False,
+            "queries": 0,
+            "failed": 0,
+            "queued": 0,
+            "spill": 0,
+            "p95": 0.0,
+        }
+    row = snapshot.iloc[0].to_dict()
+    return {
+        "loaded": True,
+        "queries": safe_int(row.get("TOTAL_QUERIES")),
+        "failed": safe_int(row.get("FAILED_QUERIES")),
+        "queued": safe_int(row.get("QUEUED_QUERIES")),
+        "spill": safe_int(row.get("REMOTE_SPILL_QUERIES")),
+        "p95": safe_float(row.get("P95_ELAPSED_SEC")),
+    }
+
+
+def _workload_action_brief(summary: dict, *, snapshot_current: bool = True, error: str = "") -> dict:
+    if not summary.get("loaded") or not snapshot_current:
+        state = "Refresh Needed" if not snapshot_current else "Not Loaded"
+        detail = "Snapshot evidence is optional; live triage remains available for current running work."
+        if error:
+            detail = "Snapshot source needs review; live triage remains available for current running work."
+        return {
+            "state": state,
+            "headline": "Refresh the workload snapshot or start live triage.",
+            "detail": detail,
+            "primary_label": "Refresh Snapshot",
+            "workflow": "Live triage",
+            "refresh": True,
+        }
+    if safe_int(summary.get("failed")) > 0:
+        return {
+            "state": "Failure Review",
+            "headline": "Review failed workload evidence first.",
+            "detail": f"{safe_int(summary.get('failed')):,} failed query row(s) in the loaded 24-hour snapshot.",
+            "primary_label": "Open Query Diagnosis",
+            "workflow": "Query diagnosis",
+            "refresh": False,
+        }
+    if safe_int(summary.get("queued")) > 0:
+        return {
+            "state": "Queue Pressure",
+            "headline": "Check running and queued work before deeper diagnosis.",
+            "detail": f"{safe_int(summary.get('queued')):,} queued query row(s) in the loaded 24-hour snapshot.",
+            "primary_label": "Open Live Triage",
+            "workflow": "Live triage",
+            "refresh": False,
+        }
+    if safe_int(summary.get("spill")) > 0:
+        return {
+            "state": "Spill Review",
+            "headline": "Find the spilling SQL and owning workflow.",
+            "detail": f"{safe_int(summary.get('spill')):,} remote-spill query row(s) in the loaded 24-hour snapshot.",
+            "primary_label": "Open Query Diagnosis",
+            "workflow": "Query diagnosis",
+            "refresh": False,
+        }
+    if safe_float(summary.get("p95")) >= 60.0:
+        return {
+            "state": "Latency Watch",
+            "headline": "Review high-latency query patterns.",
+            "detail": f"P95 elapsed is {safe_float(summary.get('p95')):,.1f}s in the loaded 24-hour snapshot.",
+            "primary_label": "Open Query Diagnosis",
+            "workflow": "Query diagnosis",
+            "refresh": False,
+        }
+    return {
+        "state": "Clear",
+        "headline": "No immediate workload blocker in the snapshot.",
+        "detail": f"{safe_int(summary.get('queries')):,} query row(s) loaded for the last 24 hours.",
+        "primary_label": "Open Live Triage",
+        "workflow": "Live triage",
+        "refresh": False,
+    }
+
+
+def _render_workload_action_brief(company: str, brief: dict) -> None:
+    with st.container(border=True):
+        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption(str(brief.get("state") or "Review"))
+        with detail_col:
+            st.markdown(f"**{brief.get('headline') or 'Review workload evidence.'}**")
+            st.caption(str(brief.get("detail") or ""))
+        with action_col:
+            if st.button(str(brief.get("primary_label") or "Open Live Triage"), key="workload_ops_action_brief_primary", width="stretch"):
+                if bool(brief.get("refresh")):
+                    _load_workload_snapshot(company, show_errors=True)
+                else:
+                    workflow = str(brief.get("workflow") or "Live triage")
+                    if workflow in WORKFLOWS:
+                        st.session_state["workload_operations_workflow"] = workflow
+                st.rerun()
+            if not bool(brief.get("refresh")):
+                if st.button("Refresh Snapshot", key="workload_ops_action_brief_refresh", width="stretch"):
+                    _load_workload_snapshot(company, show_errors=True)
+                    st.rerun()
+
+
+def _render_workload_metric_rows(summary: dict) -> None:
+    row1 = st.columns(3)
+    row1[0].metric("Queries 24h", f"{safe_int(summary.get('queries')):,}")
+    row1[1].metric("Failed 24h", f"{safe_int(summary.get('failed')):,}", delta_color="inverse")
+    row1[2].metric("Queued 24h", f"{safe_int(summary.get('queued')):,}", delta_color="inverse")
+    row2 = st.columns(2)
+    row2[0].metric("Spill 24h", f"{safe_int(summary.get('spill')):,}", delta_color="inverse")
+    row2[1].metric("P95 Elapsed", f"{safe_float(summary.get('p95')):,.1f}s")
 
 
 def _render_workload_snapshot(company: str) -> None:
@@ -86,29 +203,17 @@ def _render_workload_snapshot(company: str) -> None:
     expected_meta = _snapshot_meta(company, hours)
     snapshot = st.session_state.get("workload_operations_snapshot")
     snapshot_current = st.session_state.get("workload_operations_snapshot_meta") == expected_meta
+    err = st.session_state.get("workload_operations_snapshot_error", "")
+    summary = _workload_snapshot_summary(snapshot if snapshot_current else None)
     if snapshot is None or getattr(snapshot, "empty", True) or not snapshot_current:
-        cols = st.columns([1, 3])
-        with cols[0]:
-            if st.button("Refresh Ops Snapshot", key="workload_ops_snapshot_refresh"):
-                _load_workload_snapshot(company, hours=hours, show_errors=True)
-                st.rerun()
-        with cols[1]:
-            err = st.session_state.get("workload_operations_snapshot_error", "")
-            st.caption(
-                "Load a 24-hour workload snapshot when you need router-level failure, queue, spill, and p95 context. "
-                "Use the workflows below for live or source-specific evidence."
-            )
-            if err:
-                st.caption(err)
+        _render_workload_action_brief(
+            company,
+            _workload_action_brief(summary, snapshot_current=snapshot_current, error=str(err or "")),
+        )
         return
 
-    row = snapshot.iloc[0].to_dict()
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Queries 24h", f"{safe_int(row.get('TOTAL_QUERIES')):,}")
-    c2.metric("Failed 24h", f"{safe_int(row.get('FAILED_QUERIES')):,}", delta_color="inverse")
-    c3.metric("Queued 24h", f"{safe_int(row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
-    c4.metric("Spill 24h", f"{safe_int(row.get('REMOTE_SPILL_QUERIES')):,}", delta_color="inverse")
-    c5.metric("P95 Elapsed", f"{safe_float(row.get('P95_ELAPSED_SEC')):,.1f}s")
+    _render_workload_action_brief(company, _workload_action_brief(summary, snapshot_current=True))
+    _render_workload_metric_rows(summary)
 
 
 def render() -> None:

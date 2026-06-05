@@ -39,6 +39,8 @@ from utils.workflows import (
     render_workflow_selector,
 )
 
+SECURITY_POSTURE_VIEWS = ("Security Brief", "Evidence Readiness", "Access Workflows")
+
 WORKFLOWS = ("Access posture", "Data sharing exposure")
 
 WORKFLOW_DETAILS = {
@@ -1156,8 +1158,9 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
                         "sec_df_mfa",
                         "sec_df_exfil",
                         "sec_df_lin",
-                    ):
+                        ):
                         st.session_state.pop(stale_key, None)
+                st.session_state["security_posture_view"] = "Access Workflows"
                 st.session_state["security_posture_workflow"] = workflow
                 st.rerun()
 
@@ -2253,6 +2256,10 @@ def render() -> None:
     environment = get_active_environment()
     if st.session_state.get("exceptions_only_mode") and "security_posture_workflow" not in st.session_state:
         st.session_state["security_posture_workflow"] = "Access posture"
+    if st.session_state.get("exceptions_only_mode") and "security_posture_view" not in st.session_state:
+        st.session_state["security_posture_view"] = "Access Workflows"
+    if st.session_state.get("security_posture_view") not in SECURITY_POSTURE_VIEWS:
+        st.session_state["security_posture_view"] = SECURITY_POSTURE_VIEWS[0]
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="exact",
@@ -2279,8 +2286,27 @@ def render() -> None:
     )
 
     days = st.slider("Security brief lookback (days)", 1, 90, 30, key="security_posture_brief_days")
-    _render_privileged_grant_readiness(company, environment, days)
-    _render_security_source_health(company, environment)
+    active_view = st.radio(
+        "Security posture view",
+        SECURITY_POSTURE_VIEWS,
+        horizontal=True,
+        key="security_posture_view",
+    )
+    if active_view == "Evidence Readiness":
+        _render_security_source_health(company, environment)
+        _render_privileged_grant_readiness(company, environment, days)
+        return
+    if active_view == "Access Workflows":
+        workflow = render_workflow_selector(
+            "Security workflow",
+            "security_posture_workflow",
+            WORKFLOWS,
+            WORKFLOW_DETAILS,
+            columns=2,
+        )
+        render_workflow_module(workflow, WORKFLOW_MODULES)
+        return
+
     if st.button("Load Security Brief", key="security_posture_brief_load", type="primary"):
         session = None
         try:
@@ -2382,9 +2408,9 @@ def render() -> None:
             shared_databases=shared_databases,
         )
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Failed Logins", f"{failed_logins:,}", delta_color="inverse")
-        c2.metric("Users Without MFA", f"{users_without_mfa:,}", delta_color="inverse")
-        c3.metric("Recent Grants", f"{recent_grants:,}")
+        c1.metric("Failed", f"{failed_logins:,}", delta_color="inverse")
+        c2.metric("MFA Gaps", f"{users_without_mfa:,}", delta_color="inverse")
+        c3.metric("Grant Changes", f"{recent_grants:,}")
         c4.metric("Shared DBs", f"{shared_databases:,}")
         if score < 85:
             st.warning("Security posture needs DBA review before this can be called clean.")
@@ -2403,9 +2429,9 @@ def render() -> None:
                 "Blocked|Overdue|Required", case=False, na=False
             )
             f1.metric("Fact Rows", f"{len(operability_fact):,}")
-            f2.metric("Blocked / Required", f"{int(blocked_states.sum()):,}", delta_color="inverse")
+            f2.metric("Blocked", f"{int(blocked_states.sum()):,}", delta_color="inverse")
             f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-            f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+            f4.metric("Verified", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
             render_priority_dataframe(
                 operability_fact,
                 title="Pre-aggregated security blockers",
@@ -2458,9 +2484,9 @@ def render() -> None:
                 b1, b2, b3, b4 = st.columns(4)
                 blocked_states = security_board["CONTROL_STATE"].astype(str).str.contains("Blocked|Overdue|Required", case=False, na=False)
                 b1.metric("Control Rows", f"{len(security_board):,}")
-                b2.metric("Blocked / Required", f"{int(blocked_states.sum()):,}", delta_color="inverse")
+                b2.metric("Blocked", f"{int(blocked_states.sum()):,}", delta_color="inverse")
                 b3.metric("Overdue", f"{int(security_board.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-                b4.metric("Verified Closures", f"{int(security_board.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+                b4.metric("Verified", f"{int(security_board.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
                 render_priority_dataframe(
                     security_board,
                     title="Security issues blocking DBA closure",
@@ -2651,13 +2677,3 @@ def render() -> None:
             st.stop()
     elif summary is not None and not summary.empty:
         st.info("Loaded security brief is stale for the active scope. Reload Security Brief before acting.")
-
-    workflow = render_workflow_selector(
-        "Security workflow",
-        "security_posture_workflow",
-        WORKFLOWS,
-        WORKFLOW_DETAILS,
-        columns=2,
-    )
-
-    render_workflow_module(workflow, WORKFLOW_MODULES)

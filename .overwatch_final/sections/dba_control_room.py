@@ -151,14 +151,22 @@ DBA_CONTROL_SCOPE_FILTER_KEYS = (
 DBA_CONTROL_ROOM_PANES = (
     "Fast Watch",
     "Release Gate",
-    "Operations Tower",
+    "Operations Board",
     "Triage",
     "Drill Routes",
     "Release Compare",
     "Executive Evidence",
     "Source Health",
-    "App Operations",
 )
+DBA_CONTROL_ROOM_PANE_LABELS = {
+    "Fast Watch": "Watch",
+    "Release Gate": "Gate",
+    "Operations Board": "Ops",
+    "Drill Routes": "Routes",
+    "Release Compare": "Compare",
+    "Executive Evidence": "Evidence",
+    "Source Health": "Sources",
+}
 DBA_CONTROL_ROOM_DETAIL_PANES = (
     "Failed Queries",
     "Task Failures",
@@ -173,6 +181,8 @@ DBA_CONTROL_ROOM_DETAIL_PANES = (
 DBA_CONTROL_ROOM_DERIVED_STATE_KEYS = (
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
+    "dba_control_room_escalation_packet",
+    "dba_control_room_escalation_packet_markdown",
     "dba_control_tower_priority_index",
     "dba_autopilot_flight_plan",
     "dba_autopilot_flight_plan_markdown",
@@ -191,8 +201,8 @@ def _live_fallback_deferred_message(source: str, mart_exc: Exception | None = No
     detail = format_snowflake_error(mart_exc) if mart_exc is not None else ""
     suffix = f" Mart error: {detail}" if detail else ""
     return (
-        f"{source} live fallback is deferred to avoid long account scans from the Control Room. "
-        f"Use the specialist workflow or refresh the OVERWATCH mart for this surface.{suffix}"
+        f"{source} evidence is unavailable for the loaded scope. "
+        f"Use the owning workflow or refresh the OVERWATCH mart for this surface.{suffix}"
     )
 
 
@@ -3124,7 +3134,7 @@ def _dba_control_tower_state(row: pd.Series | dict) -> tuple[str, str]:
         detail = f"Resolve gate driver(s): {gate_drivers}." if gate_drivers and gate_drivers != "none" else "Resolve active deployment gate driver(s)."
         return "Deployment Gate", detail
     if effective_score < 99:
-        return "Raise Toward 99", next_99 or section_action or "Harden the lowest control component and preserve closure evidence."
+        return "Review Route", next_99 or section_action or "Harden the lowest control component and preserve closure evidence."
     return "Monitor", "Maintain source health, owner route, and verified closure evidence."
 
 
@@ -3235,7 +3245,7 @@ def _dba_control_tower_priority_index(
         if deployment_gap:
             reason_bits.append(f"{deployment_gap:.1f} effective-readiness gate")
         if not reason_bits and target_gap:
-            reason_bits.append(f"{target_gap:.1f} points from 99 target")
+            reason_bits.append("route needs owner/proof hardening")
         row = {
             "SECTION": section,
             "PRIORITY_SCORE": priority_score,
@@ -3276,33 +3286,52 @@ def _render_control_tower_priority_index(tower: pd.DataFrame) -> None:
     if tower is None or tower.empty:
         return
     hot = tower.iloc[0]
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Control Tower", str(hot.get("CONTROL_TOWER_STATE") or "Monitor"))
-    c2.metric("Top Route", str(hot.get("SECTION") or "DBA Control Room"))
-    c3.metric("Target Gap", f"{safe_float(hot.get('TARGET_GAP_TO_99')):.1f}", delta_color="inverse")
-    c4.metric("Proof Blocks", f"{safe_int(hot.get('PROOF_BLOCKS')):,}", delta_color="inverse")
+    st.markdown("**Operations Priority**")
+    first_move = str(hot.get("FIRST_MOVE") or "Review the top routed workflow.").strip()
+    top_route = str(hot.get("SECTION") or "DBA Control Room").strip()
+    st.info(f"{top_route}: {first_move}")
+    open_blocks = (
+        safe_int(hot.get("PROOF_BLOCKS"))
+        + safe_int(hot.get("METADATA_BLOCKS"))
+        + safe_int(hot.get("APPROVAL_BLOCKS"))
+        + safe_int(hot.get("SOURCE_ISSUES"))
+    )
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Top Route", top_route)
+    c2.metric("Open Blocks", f"{open_blocks:,}", delta_color="inverse")
+    c3.metric("Routes Reviewed", f"{len(tower):,}")
+    view = tower.rename(columns={
+        "CONTROL_TOWER_STATE": "State",
+        "SECTION": "Route",
+        "WORST_SIGNAL": "Signal",
+        "OVERDUE": "Overdue",
+        "PROOF_BLOCKS": "Proof Blocks",
+        "METADATA_BLOCKS": "Metadata Blocks",
+        "APPROVAL_BLOCKS": "Approval Blocks",
+        "SOURCE_ISSUES": "Source Issues",
+        "WHY_NOW": "Why Now",
+        "FIRST_MOVE": "First Move",
+        "PROOF_REQUIRED": "Proof Required",
+        "PRIORITY_SCORE": "Sort Priority",
+    })
     render_priority_dataframe(
-        tower,
-        title="DBA Control Tower priority index",
+        view,
+        title="Operations priority board",
         priority_columns=[
-            "CONTROL_TOWER_STATE", "SECTION", "DEPLOYMENT_LABEL", "GATE_DRIVERS", "TARGET_GAP_TO_99",
-            "PROOF_BLOCKS", "METADATA_BLOCKS", "APPROVAL_BLOCKS",
-            "WHY_NOW", "FIRST_MOVE", "PROOF_REQUIRED",
+            "Route", "State", "Signal", "Overdue", "Proof Blocks", "Metadata Blocks",
+            "Approval Blocks", "Source Issues", "Why Now", "First Move", "Proof Required",
         ],
-        sort_by=["PRIORITY_SCORE", "TARGET_GAP_TO_99"],
-        ascending=[False, False],
-        raw_label="All DBA Control Tower rows",
+        sort_by=["Sort Priority", "Overdue", "Proof Blocks"],
+        ascending=[False, False, False],
+        raw_label="All operations priority rows",
         height=260,
         max_rows=9,
-        column_config={
-            "TARGET_GAP_TO_99": st.column_config.ProgressColumn("Gap to 99", min_value=0, max_value=10, format="%.1f"),
-        },
     )
-    download_csv(tower, "dba_control_tower_priority_index.csv")
+    download_csv(view, "dba_operations_priority.csv")
 
 
 def _dba_autopilot_route_templates(section: object, lookback_hours: int) -> dict:
-    """Return advisory-only route playbook templates for the top Control Tower lane."""
+    """Return advisory-only route playbook templates for the top operations lane."""
     route = str(section or "").upper()
     hours = max(1, min(safe_int(lookback_hours, 24), 168))
     if "WAREHOUSE" in route:
@@ -3431,7 +3460,7 @@ def _dba_autopilot_flight_plan(
     lookback_hours: int,
     generated_at: datetime | None = None,
 ) -> pd.DataFrame:
-    """Build an advisory DBA flight plan from the hottest Control Tower route."""
+    """Build an advisory DBA runbook from the hottest operations route."""
     generated_at = generated_at or datetime.now()
     if tower is None or tower.empty:
         section = "DBA Control Room"
@@ -3439,7 +3468,7 @@ def _dba_autopilot_flight_plan(
             "SECTION": section,
             "CONTROL_TOWER_STATE": "Monitor",
             "PRIORITY_SCORE": 0,
-            "WHY_NOW": "No active Control Tower priority row.",
+            "WHY_NOW": "No active operations priority row.",
             "FIRST_MOVE": "Keep fast snapshot current and review Alert Center.",
             "PROOF_REQUIRED": "fresh Control Room load and Alert Center review",
         }
@@ -3460,8 +3489,8 @@ def _dba_autopilot_flight_plan(
             1,
             "Preflight",
             "Evidence current",
-            f"Confirm Control Tower route {section}, active scope, source freshness, and impacted entity.",
-            str(hot.get("WHY_NOW") or "Control Tower route selected."),
+            f"Confirm operations route {section}, active scope, source freshness, and impacted entity.",
+            str(hot.get("WHY_NOW") or "Operations route selected."),
             templates["preflight_sql"],
         ),
         (
@@ -3533,16 +3562,15 @@ def _build_dba_autopilot_flight_plan_markdown(
     environment: str,
     lookback_hours: int,
 ) -> str:
-    """Create an exportable operator packet for the Autopilot flight plan."""
+    """Create an exportable operator packet for the guided runbook."""
     rows = plan if plan is not None and not plan.empty else _empty_df()
     mission_id = str(rows.iloc[0].get("MISSION_ID")) if not rows.empty else "DBA-AUTO"
     section = str(rows.iloc[0].get("SECTION")) if not rows.empty else "DBA Control Room"
     lines = [
-        "# OVERWATCH DBA Autopilot Flight Plan",
-        f"Mission: {mission_id}",
+        "# OVERWATCH DBA Operator Runbook",
         f"Route: {section}",
         f"Scope: {company} / {environment} / {safe_int(lookback_hours, 24)}h",
-        "Mode: Advisory Only",
+        "Mode: Review-only guidance",
         "",
     ]
     if rows.empty:
@@ -3568,34 +3596,332 @@ def _render_dba_autopilot_flight_plan(plan: pd.DataFrame, markdown: str) -> None
     if plan is None or plan.empty:
         return
     hot = plan.iloc[0]
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Autopilot", str(hot.get("AUTOPILOT_MODE") or "Advisory Only"))
-    c2.metric("Mission", str(hot.get("MISSION_ID") or "DBA-AUTO"))
-    c3.metric("Route", str(hot.get("SECTION") or "DBA Control Room"))
-    c4.metric("Stages", f"{len(plan):,}")
+    st.markdown("**Operator Runbook**")
+    c1, c2 = st.columns(2)
+    c1.metric("Route", str(hot.get("SECTION") or "DBA Control Room"))
+    c2.metric("Steps", f"{len(plan):,}")
     render_priority_dataframe(
         plan,
-        title="DBA Autopilot flight plan",
+        title="Operator runbook",
         priority_columns=[
             "FLIGHT_PHASE", "GO_NO_GO_GATE", "DBA_MOVE",
             "EVIDENCE_REQUIRED", "OWNER_ROUTE", "STOP_CONDITION",
         ],
         sort_by=["PHASE_RANK"],
         ascending=[True],
-        raw_label="All Autopilot flight-plan rows",
+        raw_label="All operator runbook rows",
         height=300,
         max_rows=6,
     )
-    with st.expander("Autopilot packet", expanded=False):
+    with st.expander("Runbook packet", expanded=False):
         st.code(markdown, language="markdown")
         st.download_button(
-            "Download Autopilot Packet",
+            "Download Runbook Packet",
             data=markdown,
-            file_name="dba_autopilot_flight_plan.md",
+            file_name="dba_operator_runbook.md",
             mime="text/markdown",
             width="stretch",
         )
-    download_csv(plan, "dba_autopilot_flight_plan.csv")
+    download_csv(plan, "dba_operator_runbook.csv")
+
+
+def _dba_escalation_priority_level(priority: float, state: object = "") -> str:
+    text = str(state or "").upper()
+    score = safe_float(priority)
+    if score >= 90 or any(token in text for token in ("BLOCK", "CONTAIN", "OVERDUE")):
+        return "Escalate Now"
+    if score >= 70 or any(token in text for token in ("REFRESH", "INVESTIGATE", "HIGH")):
+        return "Same Shift"
+    if score >= 40 or any(token in text for token in ("REVIEW", "APPROVAL", "TRIAGE")):
+        return "Owner Review"
+    return "Monitor"
+
+
+def _dba_escalation_go_no_go(level: str, source_signals: list[str]) -> str:
+    signal_text = " ".join(source_signals).upper()
+    level_text = str(level or "").upper()
+    if "ESCALATE" in level_text or "RELEASE GATE" in signal_text:
+        return "No-Go until blocker proof is current."
+    if "SOURCE HEALTH" in signal_text or "EVIDENCE" in signal_text:
+        return "No-Go for irreversible action until evidence is refreshed."
+    if "SAME SHIFT" in level_text:
+        return "Go only through the owning specialist workflow."
+    return "Go for monitoring and normal owner review."
+
+
+def _dba_escalation_packet(
+    control_tower: pd.DataFrame | None,
+    incident_board: pd.DataFrame | None,
+    handoff_rows: pd.DataFrame | None,
+    release_gate: pd.DataFrame | None = None,
+    *,
+    company: str,
+    environment: str,
+    lookback_hours: int,
+    max_rows: int = 8,
+) -> pd.DataFrame:
+    """Merge loaded Control Room signals into owner-facing escalation rows."""
+    rows_by_route: dict[str, dict] = {}
+    hours = max(1, min(safe_int(lookback_hours, 24), 168))
+    scope = f"{company} / {environment} / {hours}h"
+
+    def upsert(
+        route: object,
+        *,
+        priority: float,
+        state: object,
+        why_now: object,
+        first_move: object,
+        proof_required: object,
+        source_signal: object,
+        sla_target: object = "",
+        workflow: object = "",
+    ) -> None:
+        route_text = str(route or "DBA Control Room").strip() or "DBA Control Room"
+        key = route_text.upper()
+        templates = _dba_autopilot_route_templates(route_text, hours)
+        source_text = str(source_signal or "").strip()
+        incoming_priority = safe_float(priority)
+        current = rows_by_route.get(key)
+        if current is None:
+            rows_by_route[key] = {
+                "ROUTE": route_text,
+                "PRIORITY_SCORE": incoming_priority,
+                "STATE": str(state or "Review"),
+                "WHY_NOW": str(why_now or "Loaded Control Room evidence requires owner review."),
+                "FIRST_MOVE": str(first_move or "Open the owning workflow and validate evidence."),
+                "PROOF_REQUIRED": str(proof_required or _dba_section_proof_required(route_text)),
+                "OWNER_ROUTE": templates["owner_route"],
+                "SCOPE": scope,
+                "SOURCE_SIGNALS_LIST": [source_text] if source_text else [],
+                "SLA_TARGET": str(sla_target or _dba_incident_sla_target(_dba_incident_type(route_text, state), "Medium")),
+                "WORKFLOW": str(workflow or route_text),
+            }
+            return
+
+        if source_text and source_text not in current["SOURCE_SIGNALS_LIST"]:
+            current["SOURCE_SIGNALS_LIST"].append(source_text)
+        if incoming_priority > safe_float(current.get("PRIORITY_SCORE")):
+            current["PRIORITY_SCORE"] = incoming_priority
+            current["STATE"] = str(state or current.get("STATE") or "Review")
+            current["WHY_NOW"] = str(why_now or current.get("WHY_NOW") or "")
+            current["FIRST_MOVE"] = str(first_move or current.get("FIRST_MOVE") or "")
+            current["PROOF_REQUIRED"] = str(proof_required or current.get("PROOF_REQUIRED") or _dba_section_proof_required(route_text))
+            current["SLA_TARGET"] = str(sla_target or current.get("SLA_TARGET") or "")
+            current["WORKFLOW"] = str(workflow or current.get("WORKFLOW") or route_text)
+
+    tower = control_tower.copy() if control_tower is not None and not control_tower.empty else _empty_df()
+    if not tower.empty:
+        tower.columns = [str(col).upper() for col in tower.columns]
+        for _, item in tower.iterrows():
+            route = str(item.get("SECTION") or "DBA Control Room")
+            upsert(
+                route,
+                priority=safe_float(item.get("PRIORITY_SCORE")),
+                state=item.get("CONTROL_TOWER_STATE") or "Operations Priority",
+                why_now=item.get("WHY_NOW") or item.get("WORST_SIGNAL"),
+                first_move=item.get("FIRST_MOVE") or item.get("SECTION_NEXT_ACTION"),
+                proof_required=item.get("PROOF_REQUIRED"),
+                source_signal=f"Operations Priority: {item.get('WORST_SIGNAL') or item.get('WHY_NOW') or route}",
+                workflow=route,
+            )
+
+    incidents = incident_board.copy() if incident_board is not None and not incident_board.empty else _empty_df()
+    if not incidents.empty:
+        incidents.columns = [str(col).upper() for col in incidents.columns]
+        status_points = {
+            "CONTAINMENT REQUIRED": 98,
+            "EVIDENCE REFRESH REQUIRED": 86,
+            "INVESTIGATE NOW": 78,
+            "TRIAGE": 52,
+            "MONITOR": 10,
+        }
+        for _, item in incidents.iterrows():
+            route = str(item.get("AFFECTED_ROUTES") or item.get("ROUTE") or "DBA Control Room")
+            status = str(item.get("STATUS") or "Incident Review")
+            severity = str(item.get("SEVERITY") or "Medium")
+            priority = max(
+                safe_float(item.get("PRIORITY_SCORE")),
+                status_points.get(status.upper(), 50),
+                92 if severity.upper() == "CRITICAL" else 82 if severity.upper() == "HIGH" else 50,
+            )
+            upsert(
+                route,
+                priority=priority,
+                state=status,
+                why_now=item.get("SIGNALS") or item.get("INCIDENT_TYPE"),
+                first_move=item.get("CONTAINMENT_ACTION"),
+                proof_required=item.get("PROOF_REQUIRED"),
+                source_signal=f"Incident Board: {item.get('INCIDENT_ID', '')} {item.get('INCIDENT_TYPE', '')}".strip(),
+                sla_target=item.get("SLA_TARGET"),
+                workflow=item.get("INVESTIGATION_PATH") or route,
+            )
+
+    releases = release_gate.copy() if release_gate is not None and not release_gate.empty else _empty_df()
+    if not releases.empty:
+        releases.columns = [str(col).upper() for col in releases.columns]
+        state_rank = {"BLOCKED": 99, "REVIEW": 74, "NOT LOADED": 58, "READY": 0, "DEFERRED": 35}
+        gated = releases[
+            releases.get("STATE", pd.Series([""] * len(releases), index=releases.index))
+            .fillna("")
+            .astype(str)
+            .str.upper()
+            .isin(["BLOCKED", "REVIEW", "NOT LOADED", "DEFERRED"])
+        ]
+        for _, item in gated.iterrows():
+            route = str(item.get("ROUTE") or "DBA Control Room")
+            state = str(item.get("STATE") or "Release Gate")
+            upsert(
+                route,
+                priority=state_rank.get(state.upper(), 50),
+                state=f"Release Gate {state}",
+                why_now=item.get("EVIDENCE") or item.get("GATE"),
+                first_move=item.get("NEXT_ACTION"),
+                proof_required=item.get("PROOF_REQUIRED"),
+                source_signal=f"Release Gate: {item.get('GATE', '')}".strip(),
+                sla_target="Block release approval until gate evidence is current.",
+                workflow=item.get("WORKFLOW") or route,
+            )
+
+    handoff = handoff_rows.copy() if handoff_rows is not None and not handoff_rows.empty else _empty_df()
+    if not handoff.empty:
+        handoff.columns = [str(col).upper() for col in handoff.columns]
+        important = handoff[pd.to_numeric(handoff.get("PRIORITY_RANK", pd.Series([9] * len(handoff))), errors="coerce").fillna(9) <= 2]
+        for _, item in important.iterrows():
+            route = str(item.get("LANE") or "DBA Control Room")
+            rank = safe_int(item.get("PRIORITY_RANK"), 3)
+            upsert(
+                route,
+                priority=max(40, 84 - rank * 12),
+                state=item.get("STATE") or "Shift Handoff",
+                why_now=item.get("EVIDENCE"),
+                first_move=item.get("NEXT_ACTION"),
+                proof_required=item.get("PROOF_REQUIRED"),
+                source_signal=f"Shift Handoff: {item.get('SOURCE', '')}".strip(),
+                workflow=item.get("OWNER_OR_ROUTE") or route,
+            )
+
+    if not rows_by_route:
+        upsert(
+            "DBA Control Room",
+            priority=0,
+            state="Monitor",
+            why_now="No loaded escalation signals.",
+            first_move="Keep Fast Watch current and review Alert Center for newly routed issues.",
+            proof_required="fresh Control Room load and current Alert Center review",
+            source_signal="Escalation Packet: routine watch",
+            workflow="DBA Control Room",
+        )
+
+    result_rows: list[dict] = []
+    for row in rows_by_route.values():
+        signals = row.pop("SOURCE_SIGNALS_LIST", [])
+        level = _dba_escalation_priority_level(row.get("PRIORITY_SCORE"), row.get("STATE"))
+        row["ESCALATION_LEVEL"] = level
+        row["GO_NO_GO"] = _dba_escalation_go_no_go(level, signals)
+        row["SOURCE_SIGNALS"] = "; ".join(signals) if signals else "Control Room"
+        row["EVIDENCE_PACKET"] = (
+            f"{row.get('WHY_NOW', '')} | First move: {row.get('FIRST_MOVE', '')} | "
+            f"Proof: {row.get('PROOF_REQUIRED', '')}"
+        )
+        row["AUTO_GENERATED"] = "Yes"
+        result_rows.append(row)
+
+    result = pd.DataFrame(result_rows).sort_values(
+        ["PRIORITY_SCORE", "ROUTE"],
+        ascending=[False, True],
+    ).head(max_rows).reset_index(drop=True)
+    result.insert(0, "ESCALATION_ID", [f"ESC-{idx + 1:02d}" for idx in range(len(result))])
+    return result[
+        [
+            "ESCALATION_ID", "ESCALATION_LEVEL", "ROUTE", "OWNER_ROUTE", "SCOPE",
+            "PRIORITY_SCORE", "STATE", "WHY_NOW", "FIRST_MOVE", "PROOF_REQUIRED",
+            "SLA_TARGET", "GO_NO_GO", "SOURCE_SIGNALS", "EVIDENCE_PACKET",
+            "WORKFLOW", "AUTO_GENERATED",
+        ]
+    ]
+
+
+def _build_dba_escalation_packet_markdown(
+    packet: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    lookback_hours: int,
+) -> str:
+    """Create an owner-facing escalation packet from generated escalation rows."""
+    rows = packet if packet is not None and not packet.empty else _empty_df()
+    lines = [
+        "# OVERWATCH DBA Escalation Packet",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Scope: {company} / {environment} / {safe_int(lookback_hours, 24)}h",
+        "Mode: Auto-generated from loaded OVERWATCH evidence",
+        "",
+        "## Escalations",
+    ]
+    if rows.empty:
+        lines.append("- No escalation rows were available.")
+    else:
+        for _, row in rows.iterrows():
+            lines.append(
+                f"- {row.get('ESCALATION_ID', '')} [{row.get('ESCALATION_LEVEL', '')}] "
+                f"{row.get('ROUTE', '')} -> {row.get('OWNER_ROUTE', '')}. "
+                f"Why: {row.get('WHY_NOW', '')}. "
+                f"Move: {row.get('FIRST_MOVE', '')}. "
+                f"Gate: {row.get('GO_NO_GO', '')}. "
+                f"Proof: {row.get('PROOF_REQUIRED', '')}."
+            )
+    lines.extend([
+        "",
+        "## Escalation Rules",
+        "- Do not execute state-changing DBA actions from this packet alone.",
+        "- Use the owning workflow for action, approval, rollback, and verification evidence.",
+        "- Treat release-gate and source-health blockers as No-Go until refreshed proof is attached.",
+    ])
+    return "\n".join(lines).strip()
+
+
+def _render_dba_escalation_packet(packet: pd.DataFrame, markdown: str) -> None:
+    if packet is None or packet.empty:
+        return
+    st.markdown("**DBA Escalation Packet**")
+    e1, e2, e3, e4 = st.columns(4)
+    e1.metric("Escalations", f"{len(packet):,}", delta_color="inverse")
+    same_shift = int(packet["ESCALATION_LEVEL"].astype(str).eq("Same Shift").sum())
+    e2.metric(
+        "Escalate Now",
+        f"{int(packet['ESCALATION_LEVEL'].astype(str).eq('Escalate Now').sum()):,}",
+        delta_color="inverse",
+    )
+    e3.metric(
+        "No-Go Gates",
+        f"{int(packet['GO_NO_GO'].astype(str).str.contains('No-Go', case=False, regex=False).sum()):,}",
+        delta_color="inverse",
+    )
+    e4.metric("Same Shift", f"{same_shift:,}", delta_color="inverse")
+    render_priority_dataframe(
+        packet,
+        title="Owner-facing DBA escalation packet",
+        priority_columns=[
+            "ESCALATION_LEVEL", "ROUTE", "OWNER_ROUTE", "STATE", "WHY_NOW",
+            "FIRST_MOVE", "GO_NO_GO", "PROOF_REQUIRED", "SOURCE_SIGNALS",
+        ],
+        sort_by=["PRIORITY_SCORE", "ROUTE"],
+        ascending=[False, True],
+        raw_label="All DBA escalation packet rows",
+        height=300,
+        max_rows=8,
+    )
+    with st.expander("Escalation packet", expanded=False):
+        st.code(markdown, language="markdown")
+        st.download_button(
+            "Download DBA Escalation Packet",
+            data=markdown,
+            file_name="dba_escalation_packet.md",
+            mime="text/markdown",
+            width="stretch",
+        )
+    download_csv(packet, "dba_escalation_packet.csv")
 
 
 def _render_command_queue_control(
@@ -3607,6 +3933,9 @@ def _render_command_queue_control(
     summary = _command_queue_summary(queue)
     if closure_rollup is None:
         closure_rollup = _command_queue_closure_readiness(raw_queue if raw_queue is not None else queue)
+    if queue.empty and closure_rollup.empty:
+        st.success("No open action queue items or closure evidence blockers for the current company/environment scope.")
+        return
     closure_blockers = (
         0
         if closure_rollup.empty
@@ -3618,15 +3947,12 @@ def _render_command_queue_control(
         )
     )
     st.markdown("**DBA Command Queue Control**")
-    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
-    c1.metric("Open DBA Actions", f"{summary['open']:,}", delta_color="inverse")
+    total_blocks = summary["approval_blocks"] + summary["metadata_blocks"] + closure_blockers
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Open Actions", f"{summary['open']:,}", delta_color="inverse")
     c2.metric("Overdue", f"{summary['overdue']:,}", delta_color="inverse")
-    c3.metric("Execution Ready", f"{summary['execution_ready']:,}")
-    c4.metric("Audit Ready", f"{summary['audit_ready']:,}")
-    c5.metric("Approval Blocks", f"{summary['approval_blocks']:,}", delta_color="inverse")
-    c6.metric("Route Ready", f"{summary['route_ready']:,}")
-    c7.metric("High Risk", f"{summary['high_risk']:,}", delta_color="inverse")
-    c8.metric("Closure Blocks", f"{closure_blockers:,}", delta_color="inverse")
+    c3.metric("Ready", f"{summary['execution_ready']:,}")
+    c4.metric("Blocked", f"{total_blocks:,}", delta_color="inverse")
 
     if section_board is None:
         section_board = _dba_section_operability_board(
@@ -3650,10 +3976,6 @@ def _render_command_queue_control(
             height=280,
             max_rows=12,
         )
-
-    if queue.empty and closure_rollup.empty:
-        st.success("No open action queue items or closure evidence blockers for the current company/environment scope.")
-        return
 
     if not closure_rollup.empty:
         render_priority_dataframe(
@@ -3781,6 +4103,113 @@ def _render_watch_floor(
             st.write(str(item.get("Action", "")))
             if route and st.button(f"Open {route}", key=f"dba_watch_floor_{idx}_{route}", width="stretch"):
                 _jump(route, workflow=workflow)
+
+
+def _dba_action_brief(
+    release_gate_summary: pd.Series | dict,
+    exceptions: pd.DataFrame,
+    *,
+    queued_queries: int,
+    failed_queries: int,
+) -> dict:
+    """Choose the single highest-value operator move for the loaded Control Room scope."""
+    release_blocks = safe_int(release_gate_summary.get("blocked"))
+    release_reviews = safe_int(release_gate_summary.get("review")) + safe_int(release_gate_summary.get("not_loaded"))
+    if release_blocks:
+        return {
+            "state": "Blocked",
+            "headline": "Release gate needs action before approval.",
+            "detail": f"{release_blocks:,} blocker(s), {release_reviews:,} review item(s).",
+            "primary_label": "Open Gate",
+            "target": "Release Gate",
+            "workflow": "",
+        }
+    if release_reviews:
+        return {
+            "state": "Review",
+            "headline": "Release evidence needs owner review.",
+            "detail": f"{release_reviews:,} review/not-loaded item(s).",
+            "primary_label": "Open Gate",
+            "target": "Release Gate",
+            "workflow": "",
+        }
+
+    priority = _priority_exceptions(exceptions if exceptions is not None else _empty_df()).head(1)
+    if not priority.empty:
+        first = priority.iloc[0]
+        route = str(first.get("Route", "") or "DBA Control Room")
+        workflow = str(first.get("Workflow", "") or "")
+        signal = str(first.get("Signal", "") or "Exception")
+        action = str(first.get("Action", "") or "Review the routed workflow.")
+        return {
+            "state": str(first.get("Severity", "") or "Action"),
+            "headline": action,
+            "detail": signal,
+            "primary_label": f"Open {route}",
+            "target": route,
+            "workflow": workflow,
+        }
+
+    if queued_queries:
+        return {
+            "state": "Watch",
+            "headline": "Queue pressure is the next route to verify.",
+            "detail": f"{queued_queries:,} queued queries in the loaded window.",
+            "primary_label": "Open Warehouse Health",
+            "target": "Warehouse Health",
+            "workflow": "Queue pressure",
+        }
+    if failed_queries:
+        return {
+            "state": "Watch",
+            "headline": "Failed query evidence is ready for review.",
+            "detail": f"{failed_queries:,} failed queries in the loaded window.",
+            "primary_label": "Open Triage",
+            "target": "Triage",
+            "workflow": "",
+        }
+    return {
+        "state": "Clear",
+        "headline": "No immediate DBA blocker in this scope.",
+        "detail": "Keep Watch current or open Sources for release evidence.",
+        "primary_label": "Open Watch",
+        "target": "Fast Watch",
+        "workflow": "",
+    }
+
+
+def _render_dba_action_brief(
+    release_gate_summary: pd.Series | dict,
+    exceptions: pd.DataFrame,
+    *,
+    queued_queries: int,
+    failed_queries: int,
+) -> None:
+    brief = _dba_action_brief(
+        release_gate_summary,
+        exceptions,
+        queued_queries=queued_queries,
+        failed_queries=failed_queries,
+    )
+    with st.container(border=True):
+        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption(str(brief["state"]))
+        with detail_col:
+            st.markdown(f"**{brief['headline']}**")
+            st.caption(str(brief["detail"]))
+        with action_col:
+            if st.button(str(brief["primary_label"]), key="dba_control_room_action_brief_primary", width="stretch"):
+                target = str(brief["target"])
+                if target in DBA_CONTROL_ROOM_PANES:
+                    st.session_state["dba_control_room_active_view"] = target
+                else:
+                    _jump(target, workflow=str(brief.get("workflow") or ""))
+                st.rerun()
+            if st.button("Alert Center", key="dba_control_room_action_brief_alerts", width="stretch"):
+                _jump("Alert Center")
+                st.rerun()
 
 
 def _dba_handoff_rows(
@@ -4205,8 +4634,8 @@ def _render_release_readiness_gate(
             _jump("Change & Drift", workflow="Object and access changes")
             st.rerun()
     with r3:
-        if st.button("Open App Operations", key="dba_release_gate_open_app_ops", width="stretch"):
-            st.session_state["dba_control_room_active_view"] = "App Operations"
+        if st.button("Open Source Health", key="dba_release_gate_open_source_health", width="stretch"):
+            st.session_state["dba_control_room_active_view"] = "Source Health"
             st.rerun()
     return summary, gate, timeline
 
@@ -4275,7 +4704,7 @@ def _running_in_streamlit_in_snowflake() -> bool:
 
 
 def _render_app_performance_guardrail() -> None:
-    """Show app runtime health, query-budget pressure, and deployment gates."""
+    """Internal-only runtime guardrail retained for local validation."""
     telemetry = get_query_telemetry()
     budget_summary = get_query_budget_summary()
     is_sis = _running_in_streamlit_in_snowflake()
@@ -4292,7 +4721,7 @@ def _render_app_performance_guardrail() -> None:
         budget_watch = int(risk.isin(["WATCH", "HIGH"]).sum())
         budget_high = int(risk.eq("HIGH").sum())
 
-    st.markdown("**OVERWATCH App Operations**")
+    st.markdown("**OVERWATCH Internal Runtime Guardrail**")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Last Render", f"{safe_int(st.session_state.get('_overwatch_last_section_render_ms')):,} ms")
     c2.metric("Session Queries", f"{telemetry_count:,}")
@@ -4556,18 +4985,16 @@ def render() -> None:
             "over broad exploratory charts."
         )
 
-    c1, c2, c3 = st.columns(3)
+    cortex_budget_usd = float(
+        st.session_state.get(
+            "dba_control_room_cortex_budget_usd",
+            st.session_state.get("cortex_control_budget_usd", 5000.0),
+        )
+    )
+    c1, c2 = st.columns([1, 1])
     with c1:
         lookback_hours = st.selectbox("Lookback", [12, 24, 48, 168], index=1, format_func=lambda h: f"{h} hours")
     with c2:
-        cortex_budget_usd = st.number_input(
-            "Cortex monthly budget ($)",
-            min_value=1.0,
-            value=float(st.session_state.get("cortex_control_budget_usd", 5000.0)),
-            step=250.0,
-            key="dba_control_room_cortex_budget_usd",
-        )
-    with c3:
         st.metric("Scope", f"{company} / {environment}")
     defer_section_note(
         f"{freshness_note('ACCOUNT_USAGE')} | "
@@ -4625,34 +5052,39 @@ def render() -> None:
         st.caption("Fast mart snapshot unavailable. Install/run OVERWATCH_MART_SETUP.sql to enable cheap control-room triage.")
     elif not snapshot_scope_ok:
         st.caption(
-            "Fast mart snapshot is company-level only. Clear environment/global filters to use it, "
-            "or load DBA Control Room triage for scoped evidence."
+            "Snapshot is company-level. Clear filters or load triage for this scoped view."
         )
 
-    include_deep_evidence = st.checkbox(
-        "Include deep task/procedure/Cortex evidence",
-        value=False,
-        key="dba_control_room_include_deep_evidence",
-        help=(
-            "Default off keeps this page fast. Turn on only when you need task run baselines, "
-            "stored procedure SLA/cost evidence, and Cortex exception detail in this page."
-        ),
-    )
-    allow_live_fallback = st.checkbox(
-        "Allow limited live fallback (24h max)",
-        value=False,
-        key="dba_control_room_allow_live_fallback",
-        help=(
-            "Default off prevents surprise long compiles. When enabled, Control Room only runs bounded "
-            "24h ACCOUNT_USAGE probes for credits, failed queries, and failed logins; heavy panels stay deferred."
-        ),
-    )
-    if allow_live_fallback:
-        st.caption(
-            "Limited fallback is capped to 24h and only covers credits, failed queries, and failed logins. "
-            "Refresh the OVERWATCH mart or use specialist workflows for deep live evidence."
+    with st.expander("Evidence options", expanded=False):
+        cortex_budget_usd = st.number_input(
+            "Cortex monthly budget ($)",
+            min_value=1.0,
+            value=float(cortex_budget_usd),
+            step=250.0,
+            key="dba_control_room_cortex_budget_usd",
+            help="Used for Cortex exception thresholds and the exported DBA evidence packet.",
         )
-    load_label = "Load DBA Control Room Deep Evidence" if include_deep_evidence else "Load DBA Control Room Triage"
+        include_deep_evidence = st.checkbox(
+            "Include deep evidence",
+            value=False,
+            key="dba_control_room_include_deep_evidence",
+            help=(
+                "Adds task run baselines, stored procedure SLA/cost evidence, and Cortex exception detail "
+                "to this Control Room load."
+            ),
+        )
+        allow_live_fallback = st.checkbox(
+            "Use live 24h checks when needed",
+            value=False,
+            key="dba_control_room_allow_live_fallback",
+            help=(
+                "Runs bounded 24h checks for credits, failed queries, and failed logins when mart evidence "
+                "is incomplete."
+            ),
+        )
+        if allow_live_fallback:
+            st.caption("Live checks are capped to the loaded 24-hour evidence window.")
+    load_label = "Load Deep Evidence" if include_deep_evidence else "Load Triage"
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         with st.spinner("Loading exception signals..."):
             session = get_session()
@@ -4689,9 +5121,8 @@ def render() -> None:
 
     data = st.session_state.get("dba_control_room_data", {})
     if not data:
-        st.warning("Use the fast mart snapshot or load detail to see today's DBA exceptions and report-ready evidence.")
-        st.markdown("**Designed workflow**")
-        st.write("Fast snapshot -> investigate exception -> assign action -> export leadership evidence.")
+        st.warning("Load triage to see today's DBA exceptions and exportable evidence.")
+        st.caption("Workflow: snapshot -> exception -> owner action -> evidence export.")
         return
 
     loaded_lookback = st.session_state.get("dba_control_room_lookback", lookback_hours)
@@ -4722,14 +5153,11 @@ def render() -> None:
         )
         return
     if source_mode == "OVERWATCH mart snapshot":
-        st.info("Showing fast mart snapshot. Deep evidence tabs may be sparse until you load detail.")
+        st.caption("Snapshot loaded. Load triage when you need full exception detail.")
     elif source_mode == "Fast triage mart queries":
-        st.info("Showing fast triage. Deep task, procedure, and Cortex evidence is deferred to keep this page responsive.")
-        if not st.session_state.get("dba_control_room_live_fallback"):
-            st.caption("Live ACCOUNT_USAGE fallbacks were skipped. Missing mart panels show as unavailable instead of running slow scans.")
+        st.caption("Triage loaded. Use Evidence options when you need a deeper evidence packet.")
     elif "limited live fallback" in source_mode:
-        st.info("Showing mart-first evidence with limited 24h live probes only where they are cheap enough for Control Room.")
-        st.caption("Heavy account scans remain deferred; refresh the OVERWATCH mart or use specialist workflows for deep evidence.")
+        st.caption("Triage loaded with bounded 24-hour live checks.")
 
     exceptions = _severity_rows(data, credit_price)
     summary = data.get("summary", _empty_df())
@@ -4758,41 +5186,39 @@ def render() -> None:
     )
     release_gate_summary, release_gate_rows = _build_auto_release_readiness_gate(data, release_source_health)
 
-    m1, m2, m3, m4, m5, m6, m7, m8 = st.columns(8)
-    m1.metric("Open Exceptions", len(exceptions))
-    m2.metric("Failed Queries", f"{safe_int(row.get('FAILED_QUERIES', 0)):,}", delta_color="inverse")
-    m3.metric("Queued Queries", f"{safe_int(row.get('QUEUED_QUERIES', 0)):,}", delta_color="inverse")
-    m4.metric("p95 Runtime", f"{safe_float(row.get('P95_ELAPSED_SEC', 0)):,.0f}s")
-    m5.metric("Credits", format_credits(period_credits), f"{credit_delta:+.1f}%", delta_color="inverse")
-    m6.metric("Est. Cost", f"${credits_to_dollars(period_credits, credit_price):,.0f}")
-    m7.metric("SLA/Cost Drift", f"{regression_count:,}", delta_color="inverse")
-    m8.metric("Cortex Risk", f"{0 if cortex_exceptions.empty else len(cortex_exceptions):,}", f"${cortex_projected:,.0f}/30d", delta_color="inverse")
-    if safe_int(release_gate_summary.get("blocked")):
-        st.error(
-            f"Release gate blocked: {safe_int(release_gate_summary.get('blocked')):,} blocker(s), "
-            f"{safe_int(release_gate_summary.get('review')):,} review item(s)."
-        )
-    elif safe_int(release_gate_summary.get("review")) or safe_int(release_gate_summary.get("not_loaded")):
-        st.warning(
-            f"Release gate needs review: {safe_int(release_gate_summary.get('review')):,} review item(s), "
-            f"{safe_int(release_gate_summary.get('not_loaded')):,} not loaded."
-        )
-
-    a1, a2 = st.columns([1, 5])
-    with a1:
-        if st.button("Alert Center", key="dba_control_room_open_alert_center", width="stretch"):
-            _jump("Alert Center")
-            st.rerun()
-    with a2:
-        st.caption("All alert history, email-ready messages, suppression windows, and action queue routing are consolidated in Alert Center.")
+    release_blocks = safe_int(release_gate_summary.get("blocked"))
+    release_reviews = safe_int(release_gate_summary.get("review")) + safe_int(release_gate_summary.get("not_loaded"))
+    failed_queries = safe_int(row.get("FAILED_QUERIES", 0))
+    queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
+    p95_runtime = safe_float(row.get("P95_ELAPSED_SEC", 0))
+    cortex_issue_count = 0 if cortex_exceptions.empty else len(cortex_exceptions)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Exceptions", f"{len(exceptions):,}", delta_color="inverse")
+    m2.metric("Release Blocks", f"{release_blocks:,}", f"{release_reviews:,} review", delta_color="inverse")
+    m3.metric("Queued", f"{queued_queries:,}", delta_color="inverse")
+    m4.metric("p95 Runtime", f"{p95_runtime:,.0f}s")
+    n1, n2, n3, n4 = st.columns(4)
+    n1.metric("Failed Queries", f"{failed_queries:,}", delta_color="inverse")
+    n2.metric("Credits", f"{period_credits:,.2f}", f"{credit_delta:+.1f}%", delta_color="inverse")
+    n3.metric("Est. Cost", f"${credits_to_dollars(period_credits, credit_price):,.0f}")
+    n4.metric("Drift / AI", f"{regression_count + cortex_issue_count:,}", delta_color="inverse")
+    _render_dba_action_brief(
+        release_gate_summary,
+        exceptions,
+        queued_queries=queued_queries,
+        failed_queries=failed_queries,
+    )
 
     st.divider()
 
+    if st.session_state.get("dba_control_room_active_view") not in DBA_CONTROL_ROOM_PANES:
+        st.session_state["dba_control_room_active_view"] = "Fast Watch"
     active_view = st.radio(
         "DBA Control Room view",
         DBA_CONTROL_ROOM_PANES,
         horizontal=True,
         label_visibility="collapsed",
+        format_func=lambda pane: DBA_CONTROL_ROOM_PANE_LABELS.get(str(pane), str(pane)),
         key="dba_control_room_active_view",
     )
 
@@ -4822,8 +5248,7 @@ def render() -> None:
             )
             _render_route_buttons(priority)
         st.caption(
-            "Control Tower, Autopilot, Incident Board, and Shift Handoff are deferred to Operations Tower "
-            "so section switching stays fast."
+            "Use Operations Board when you need route priority, runbook, escalation, handoff, incident, or queue detail."
         )
 
     elif active_view == "Release Gate":
@@ -4840,7 +5265,7 @@ def render() -> None:
             lookback_hours=int(lookback_hours),
         )
 
-    elif active_view == "Operations Tower":
+    elif active_view == "Operations Board":
         ops_scope_key = _dba_control_ops_scope_key(
             company,
             environment,
@@ -4854,11 +5279,8 @@ def render() -> None:
             st.session_state.pop("dba_control_room_ops_ready", None)
             st.session_state["dba_control_room_ops_scope_key"] = ops_scope_key
         if not st.session_state.get("dba_control_room_ops_ready"):
-            st.info(
-                "Operations Tower builds the heavier control-board package only when requested. "
-                "Use Fast Watch for normal section switching and morning triage."
-            )
-            if st.button("Build Operations Tower", key="dba_control_room_build_ops", type="primary"):
+            st.caption("Load route priority, runbook, escalation, handoff, incident, and queue detail for the current scope.")
+            if st.button("Load Operations Board", key="dba_control_room_build_ops", type="primary"):
                 st.session_state["dba_control_room_ops_ready"] = True
                 st.rerun()
         else:
@@ -4893,7 +5315,6 @@ def render() -> None:
                 source_health_for_handoff,
             )
             st.session_state["dba_control_tower_priority_index"] = control_tower
-            _render_control_tower_priority_index(control_tower)
             autopilot_plan = _dba_autopilot_flight_plan(
                 control_tower,
                 company=company,
@@ -4908,13 +5329,6 @@ def render() -> None:
             )
             st.session_state["dba_autopilot_flight_plan"] = autopilot_plan
             st.session_state["dba_autopilot_flight_plan_markdown"] = autopilot_md
-            _render_dba_autopilot_flight_plan(autopilot_plan, autopilot_md)
-            _render_command_queue_control(
-                command_queue,
-                action_queue,
-                closure_rollup=closure_rollup_for_handoff,
-                section_board=section_board_for_tower,
-            )
             incident_md = _build_dba_incident_markdown(
                 incident_board,
                 company=company,
@@ -4923,12 +5337,6 @@ def render() -> None:
                 source_mode=source_mode,
             )
             st.session_state["dba_control_room_incident_board"] = incident_board
-            _render_incident_board_panel(
-                incident_board,
-                incident_md,
-                company=company,
-                environment=environment,
-            )
             handoff_rows = _dba_handoff_rows(
                 exceptions,
                 command_queue,
@@ -4943,12 +5351,58 @@ def render() -> None:
                 source_mode=source_mode,
             )
             st.session_state["dba_control_room_handoff"] = handoff_rows
-            _render_shift_handoff_panel(
+            escalation_packet = _dba_escalation_packet(
+                control_tower,
+                incident_board,
                 handoff_rows,
-                handoff_md,
+                release_gate_rows,
                 company=company,
                 environment=environment,
+                lookback_hours=int(lookback_hours),
             )
+            escalation_md = _build_dba_escalation_packet_markdown(
+                escalation_packet,
+                company=company,
+                environment=environment,
+                lookback_hours=int(lookback_hours),
+            )
+            st.session_state["dba_control_room_escalation_packet"] = escalation_packet
+            st.session_state["dba_control_room_escalation_packet_markdown"] = escalation_md
+
+            ops_detail = st.radio(
+                "Operations Board detail",
+                ("Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"),
+                horizontal=True,
+                label_visibility="collapsed",
+                key="dba_operations_board_detail",
+            )
+            if ops_detail == "Priority":
+                _render_control_tower_priority_index(control_tower)
+            elif ops_detail == "Runbook":
+                _render_dba_autopilot_flight_plan(autopilot_plan, autopilot_md)
+            elif ops_detail == "Escalations":
+                _render_dba_escalation_packet(escalation_packet, escalation_md)
+            elif ops_detail == "Handoff":
+                _render_shift_handoff_panel(
+                    handoff_rows,
+                    handoff_md,
+                    company=company,
+                    environment=environment,
+                )
+            elif ops_detail == "Incidents":
+                _render_incident_board_panel(
+                    incident_board,
+                    incident_md,
+                    company=company,
+                    environment=environment,
+                )
+            elif ops_detail == "Queue":
+                _render_command_queue_control(
+                    command_queue,
+                    action_queue,
+                    closure_rollup=closure_rollup_for_handoff,
+                    section_board=section_board_for_tower,
+                )
 
     elif active_view == "Triage":
         if exceptions.empty:
@@ -5350,6 +5804,3 @@ def render() -> None:
                 raw_label="All fast snapshot rows",
                 height=180,
             )
-
-    elif active_view == "App Operations":
-        _render_app_performance_guardrail()

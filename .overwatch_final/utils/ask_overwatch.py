@@ -626,16 +626,16 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
             frame = frame.sort_values(["PRIORITY_SCORE"], ascending=False)
         for _, row in frame.head(5).iterrows():
             _append_card(cards, {
-                "surface": "DBA Control Tower",
+                "surface": "DBA Operations Priority",
                 "severity": "High" if safe_float(_value(row, "PRIORITY_SCORE", default=0)) >= 50 else "Medium",
                 "signal": _text(row, "CONTROL_TOWER_STATE", default="DBA priority route"),
                 "entity": _text(row, "SECTION", default="DBA Control Room"),
-                "evidence": _text(row, "WHY_NOW", default="Control Tower ranked this route from loaded DBA evidence."),
+                "evidence": _text(row, "WHY_NOW", default="Loaded DBA evidence ranked this route for operator review."),
                 "next_action": _text(row, "FIRST_MOVE", default="Open the routed section and attach proof before closure."),
                 "proof": _text(row, "PROOF_REQUIRED", default="Attach owner, ticket, approval, verification, and closure evidence."),
                 "do_not": "Do not execute DBA changes from aggregate priority alone; verify the source row and approval state first.",
                 "route": _text(row, "SECTION", default="DBA Control Room"),
-                "category": "DBA Control Tower",
+                "category": "DBA Operations Priority",
                 "value": _text(row, "PRIORITY_SCORE", default="0"),
             })
 
@@ -654,16 +654,16 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
             dict.fromkeys(frame.get("DBA_MOVE", pd.Series(dtype=str)).dropna().astype(str).head(3).tolist())
         )
         _append_card(cards, {
-            "surface": "DBA Autopilot Flight Plan",
+            "surface": "DBA Operator Runbook",
             "severity": "High",
-            "signal": _text(first, "CONTROL_TOWER_STATE", default="Advisory flight plan"),
+            "signal": _text(first, "CONTROL_TOWER_STATE", default="Guided runbook"),
             "entity": section,
-            "evidence": f"Mission={_text(first, 'MISSION_ID')}; gates={gates}",
-            "next_action": moves or _text(first, "DBA_MOVE", default="Follow the staged DBA flight plan."),
+            "evidence": f"gates={gates}",
+            "next_action": moves or _text(first, "DBA_MOVE", default="Follow the staged DBA runbook."),
             "proof": _text(first, "EVIDENCE_REQUIRED", default="Attach owner, ticket, approval, verification, and rollback evidence."),
             "do_not": _text(first, "STOP_CONDITION", default="Do not proceed if owner, ticket, approval, rollback, or verification evidence is missing."),
             "route": section,
-            "category": "DBA Autopilot",
+            "category": "DBA Operator Runbook",
             "value": _text(first, "PRIORITY_SCORE", default="100"),
         })
 

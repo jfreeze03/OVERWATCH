@@ -898,13 +898,13 @@ def _build_account_health_dba_checklist(
     rows = [
         {
             "CHECK": "Refresh source readiness",
-            "STATUS": "OK" if control_mart_used else "Verify fallback",
+            "STATUS": "OK" if control_mart_used else "Verify source",
             "SEVERITY": "Low" if control_mart_used else "Medium",
-            "EVIDENCE": detail_source or ("OVERWATCH mart facts" if control_mart_used else "Live ACCOUNT_USAGE fallback"),
+            "EVIDENCE": detail_source or ("OVERWATCH mart facts" if control_mart_used else "Current account evidence"),
             "OWNER": "DBA",
             "ROUTE": "DBA Control Room",
-            "NEXT_ACTION": "Use mart snapshot for morning control when filters allow it; document live fallback before acting.",
-            "PROOF_REQUIRED": "Snapshot timestamp or fallback source note",
+            "NEXT_ACTION": "Use the latest evidence snapshot for morning control; document source state before acting.",
+            "PROOF_REQUIRED": "Snapshot timestamp or source-state note",
         },
         {
             "CHECK": "Query failure review",
@@ -1578,6 +1578,77 @@ def _account_health_operator_next_moves(
     })
 
     return pd.DataFrame(rows).sort_values(["GATE_RANK", "COUNT"], ascending=[True, False]).reset_index(drop=True)
+
+
+def _account_health_action_brief(checklist: pd.DataFrame | None) -> dict:
+    """Choose the single Account Health move to show above detailed evidence."""
+    if checklist is None or checklist.empty:
+        return {
+            "state": "Not Loaded",
+            "headline": "Load health evidence before acting.",
+            "detail": "No Account Health checklist rows are loaded for this scope.",
+            "primary_label": "Load Health",
+            "target": "Overview",
+            "workflow": "",
+        }
+    view = checklist.copy()
+    view.columns = [str(col).upper() for col in view.columns]
+    if "CHECK" not in view.columns:
+        view["CHECK"] = "Account Health"
+    severity_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "INFO": 3}
+    state_rank = {"NEEDS DBA": 0, "VERIFY SOURCE": 1, "WATCH": 2, "OK": 8, "HEALTHY": 8, "CLEAR": 8}
+    status = view.get("STATUS", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
+    severity = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
+    view["_SEVERITY_RANK"] = severity.str.upper().map(severity_rank).fillna(4)
+    view["_STATE_RANK"] = status.str.upper().map(state_rank).fillna(3)
+    actionable = view[
+        ~status.str.upper().isin(["OK", "HEALTHY", "CLEAR"])
+    ].sort_values(["_SEVERITY_RANK", "_STATE_RANK", "CHECK"])
+    if actionable.empty:
+        return {
+            "state": "Clear",
+            "headline": "No immediate Account Health blocker.",
+            "detail": "Use Morning Report when you need the brief.",
+            "primary_label": "Morning Report",
+            "target": "Morning Report",
+            "workflow": "",
+        }
+    row = actionable.iloc[0]
+    route = str(row.get("ROUTE") or "Account Health")
+    check = str(row.get("CHECK") or "Account Health")
+    action = str(row.get("NEXT_ACTION") or "Review the owning workflow.")
+    evidence = str(row.get("EVIDENCE") or "")
+    return {
+        "state": str(row.get("STATUS") or row.get("SEVERITY") or "Review"),
+        "headline": action,
+        "detail": f"{check}: {evidence}".strip(": "),
+        "primary_label": f"Open {route}",
+        "target": route,
+        "workflow": check,
+    }
+
+
+def _render_account_health_action_brief(checklist: pd.DataFrame | None) -> None:
+    brief = _account_health_action_brief(checklist)
+    with st.container(border=True):
+        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption(str(brief["state"]))
+        with detail_col:
+            st.markdown(f"**{brief['headline']}**")
+            st.caption(str(brief["detail"]))
+        with action_col:
+            if st.button(str(brief["primary_label"]), key="account_health_action_brief_primary", width="stretch"):
+                target = str(brief["target"])
+                if target in ACCOUNT_HEALTH_PANES:
+                    st.session_state["account_health_active_view"] = target
+                    st.rerun()
+                else:
+                    _drill_to(target)
+            if st.button("Morning Report", key="account_health_action_brief_report", width="stretch"):
+                st.session_state["account_health_active_view"] = "Morning Report"
+                st.rerun()
 
 
 def _account_health_intervention_matrix(
@@ -2903,25 +2974,27 @@ def render():
             score_label = health["label"]
             health_components = pd.DataFrame(health["components"])
 
-        k1, k2, k3, k4, k5, k6 = st.columns(6)
-        k1.metric("Active Queries", live_val)
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Active", live_val)
         k2.metric("Queued", queued)
-        k3.metric("Failed (24h)", err_count, delta_color="inverse")
-        k4.metric("Credits (24h)", f"{last24:,.0f}", delta=f"{pct_delta:+.1f}%")
-        k5.metric("Cost (24h)", f"${cost24:,.0f}")
-        k6.metric("Storage", f"{stor_tb:.1f} TB")
-        st.caption(
-            " | ".join([
-                f"Health state: {score_label}",
-                metric_confidence_label("composite"),
-                metric_confidence_label("exact") + " for source counts",
-                hd.get("_control_mart_source", "Live fallback"),
-                freshness_note(live_source),
-            ])
-        )
-        if control_mart_used:
-            st.caption(f"Mart snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
-        st.caption(f"Landing signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
+        k3.metric("Failed", err_count, delta_color="inverse")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Credits", f"{last24:,.0f}", delta=f"{pct_delta:+.1f}%")
+        c2.metric("Cost", f"${cost24:,.0f}")
+        c3.metric("Storage", f"{stor_tb:.1f} TB")
+        with st.expander("Evidence details", expanded=False):
+            st.caption(
+                " | ".join([
+                    f"Health state: {score_label}",
+                    metric_confidence_label("composite"),
+                    metric_confidence_label("exact") + " for source counts",
+                    hd.get("_control_mart_source", "Live source"),
+                    freshness_note(live_source),
+                ])
+            )
+            if control_mart_used:
+                st.caption(f"Mart snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
+            st.caption(f"Signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
         checklist = _build_account_health_dba_checklist(
             health_score=health_score,
             score_label=score_label,
@@ -2939,6 +3012,7 @@ def render():
             checklist,
             environment=get_active_environment(),
         )
+        _render_account_health_action_brief(checklist)
         if st.button("Load Operability Mart", key="account_health_load_operability_fact"):
             try:
                 operability_sql = _account_health_operability_fact_sql(30, company, get_active_environment())
@@ -2956,65 +3030,7 @@ def render():
             except Exception as fact_exc:
                 st.session_state["account_health_operability_fact"] = pd.DataFrame()
                 st.session_state["account_health_operability_fact_error"] = format_snowflake_error(fact_exc)
-        render_priority_dataframe(
-            checklist,
-            title="Daily DBA checklist",
-            priority_columns=[
-                "SEVERITY", "STATUS", "CHECK", "EVIDENCE", "OWNER",
-                "ESCALATION_TARGET", "ROUTE", "ENVIRONMENT_SCOPE",
-                "DATABASE_CONTEXT", "SCOPE_CONFIDENCE", "QUEUE_READINESS",
-                "QUEUE_BLOCKERS", "APPROVAL_REQUIRED", "RECOVERY_SLA_TARGET_HOURS",
-                "NEXT_ACTION", "PROOF_REQUIRED",
-            ],
-            sort_by=["SEVERITY", "CHECK"],
-            ascending=[True, True],
-            raw_label="All daily DBA checklist rows",
-            height=300,
-            max_rows=12,
-        )
         operability_fact = st.session_state.get("account_health_operability_fact")
-        if (
-            operability_fact is not None
-            and not _account_health_meta_matches(
-                st.session_state.get("account_health_operability_fact_meta"),
-                _account_health_scope_meta(company, environment, window="30d"),
-            )
-        ):
-            st.info("Loaded Account Health operability mart is stale for the active scope. Reload before acting.")
-        elif operability_fact is not None and not operability_fact.empty:
-            st.subheader("Account Health Operability Mart")
-            f1, f2, f3, f4 = st.columns(4)
-            blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
-                "Blocked|Overdue|Required|Review", case=False, na=False
-            )
-            f1.metric("Fact Rows", f"{len(operability_fact):,}")
-            f2.metric("Blocked / Review", f"{int(blocked_states.sum()):,}", delta_color="inverse")
-            f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-            f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
-            render_priority_dataframe(
-                operability_fact,
-                title="Pre-aggregated Account Health blockers",
-                priority_columns=[
-                    "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "CHECK_NAME",
-                    "ROUTE", "SEVERITY", "ENVIRONMENT", "HEALTH_SCORE", "ISSUE_ROWS",
-                    "ROUTE_BLOCKER_ROWS", "QUEUE_REQUIRED_ROWS", "ACCESS_HYGIENE_ROWS",
-                    "FAILED_LOGIN_ROWS", "PRIVILEGED_GRANT_ROWS", "OPEN_ACTIONS",
-                    "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "VERIFIED_CLOSURES",
-                    "OWNER_APPROVAL_GAP_ROWS", "RECOVERY_RISK_ROWS", "NEXT_CONTROL_ACTION",
-                ],
-                sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "ISSUE_ROWS"],
-                ascending=[True, False, False, False],
-                raw_label="All Account Health operability facts",
-                height=320,
-                max_rows=12,
-            )
-            with st.expander("Account Health operability fact query", expanded=False):
-                st.code(st.session_state.get("account_health_operability_fact_sql", ""), language="sql")
-        elif st.session_state.get("account_health_operability_fact_error"):
-            st.caption(
-                "Account Health operability mart not available yet; deploy or refresh "
-                "`FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY` to enable the fast blocker surface."
-            )
         account_control_board = _account_health_control_board(
             checklist,
             closure=st.session_state.get("account_health_closure_analytics"),
@@ -3039,16 +3055,6 @@ def render():
             operability_fact=operability_gate_fact,
             source_health=_account_health_source_health_rows(st.session_state, company, environment),
         )
-        render_priority_dataframe(
-            account_operator_gates,
-            title="Account Health operator next-move gates",
-            priority_columns=["GATE", "STATE", "COUNT", "PROOF_REQUIRED", "NEXT_ACTION"],
-            sort_by=["GATE_RANK", "COUNT"],
-            ascending=[True, False],
-            raw_label="All Account Health operator gates",
-            height=240,
-            max_rows=5,
-        )
         account_intervention_matrix = _account_health_intervention_matrix(
             checklist=checklist,
             control_board=account_control_board,
@@ -3056,7 +3062,42 @@ def render():
             access_hygiene=st.session_state.get("account_health_access_hygiene"),
             operability_fact=operability_gate_fact,
         )
-        if not account_intervention_matrix.empty:
+        account_detail = st.radio(
+            "Account Health detail",
+            ("Checklist", "Gates", "Interventions", "Controls", "Operability"),
+            horizontal=True,
+            label_visibility="collapsed",
+            key="account_health_overview_detail",
+        )
+        if account_detail == "Checklist":
+            render_priority_dataframe(
+                checklist,
+                title="Daily DBA checklist",
+                priority_columns=[
+                    "SEVERITY", "STATUS", "CHECK", "EVIDENCE", "OWNER",
+                    "ESCALATION_TARGET", "ROUTE", "ENVIRONMENT_SCOPE",
+                    "DATABASE_CONTEXT", "SCOPE_CONFIDENCE", "QUEUE_READINESS",
+                    "QUEUE_BLOCKERS", "APPROVAL_REQUIRED", "RECOVERY_SLA_TARGET_HOURS",
+                    "NEXT_ACTION", "PROOF_REQUIRED",
+                ],
+                sort_by=["SEVERITY", "CHECK"],
+                ascending=[True, True],
+                raw_label="All daily DBA checklist rows",
+                height=300,
+                max_rows=12,
+            )
+        elif account_detail == "Gates":
+            render_priority_dataframe(
+                account_operator_gates,
+                title="Account Health operator next-move gates",
+                priority_columns=["GATE", "STATE", "COUNT", "PROOF_REQUIRED", "NEXT_ACTION"],
+                sort_by=["GATE_RANK", "COUNT"],
+                ascending=[True, False],
+                raw_label="All Account Health operator gates",
+                height=240,
+                max_rows=5,
+            )
+        elif account_detail == "Interventions" and not account_intervention_matrix.empty:
             render_priority_dataframe(
                 account_intervention_matrix,
                 title="Account Health DBA intervention matrix",
@@ -3071,7 +3112,7 @@ def render():
                 height=280,
                 max_rows=8,
             )
-        if not account_control_board.empty:
+        elif account_detail == "Controls" and not account_control_board.empty:
             render_priority_dataframe(
                 account_control_board,
                 title="Account Health control board",
@@ -3088,48 +3129,95 @@ def render():
                 height=320,
                 max_rows=12,
             )
-        actionable_checklist = _account_health_actionable_checklist(checklist)
-        q1, q2, q3 = st.columns([1, 1, 3])
-        with q1:
-            if st.button(
-                "Queue Checklist Issues",
-                key="account_health_queue_checklist",
-                width="stretch",
-                disabled=actionable_checklist.empty,
-            ):
-                action_session = _account_health_action_session("queue Account Health checklist issues")
-                if action_session is not None:
-                    _queue_account_health_checklist(
-                        action_session,
-                        checklist,
-                        company=company,
-                        environment=get_active_environment(),
-                    )
-        with q2:
-            if st.button(
-                "Save Checklist Snapshot",
-                key="account_health_save_checklist_snapshot",
-                width="stretch",
-            ):
-                action_session = _account_health_action_session("save Account Health checklist snapshot")
-                if action_session is not None:
-                    _save_account_health_checklist_snapshot(
-                        action_session,
-                        checklist,
-                        company=company,
-                        environment=get_active_environment(),
-                        health_score=health_score,
-                        detail_source=hd.get("_account_health_detail_source", ""),
-                    )
-        with q3:
-            if actionable_checklist.empty:
-                st.caption("Daily checklist is clean for this snapshot; no queue item is needed. Save the snapshot for trend tracking.")
-            else:
-                ready_count = int((actionable_checklist.get("QUEUE_READINESS", pd.Series(dtype=str)) == "Ready to Queue").sum())
-                st.caption(
-                    f"{len(actionable_checklist):,} checklist issue(s) will be saved with owner, approver, "
-                    f"verification SQL, proof requirements, and scope evidence. {ready_count:,} are route-ready without blockers."
+        elif account_detail == "Operability":
+            if (
+                operability_fact is not None
+                and not _account_health_meta_matches(
+                    st.session_state.get("account_health_operability_fact_meta"),
+                    _account_health_scope_meta(company, environment, window="30d"),
                 )
+            ):
+                st.info("Loaded Account Health operability mart is stale for the active scope. Reload before acting.")
+            elif operability_fact is not None and not operability_fact.empty:
+                f1, f2, f3, f4 = st.columns(4)
+                blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
+                    "Blocked|Overdue|Required|Review", case=False, na=False
+                )
+                f1.metric("Fact Rows", f"{len(operability_fact):,}")
+                f2.metric("Blocked / Review", f"{int(blocked_states.sum()):,}", delta_color="inverse")
+                f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+                f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+                render_priority_dataframe(
+                    operability_fact,
+                    title="Pre-aggregated Account Health blockers",
+                    priority_columns=[
+                        "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "CHECK_NAME",
+                        "ROUTE", "SEVERITY", "ENVIRONMENT", "HEALTH_SCORE", "ISSUE_ROWS",
+                        "ROUTE_BLOCKER_ROWS", "QUEUE_REQUIRED_ROWS", "ACCESS_HYGIENE_ROWS",
+                        "FAILED_LOGIN_ROWS", "PRIVILEGED_GRANT_ROWS", "OPEN_ACTIONS",
+                        "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "VERIFIED_CLOSURES",
+                        "OWNER_APPROVAL_GAP_ROWS", "RECOVERY_RISK_ROWS", "NEXT_CONTROL_ACTION",
+                    ],
+                    sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "ISSUE_ROWS"],
+                    ascending=[True, False, False, False],
+                    raw_label="All Account Health operability facts",
+                    height=320,
+                    max_rows=12,
+                )
+                with st.expander("Account Health operability fact query", expanded=False):
+                    st.code(st.session_state.get("account_health_operability_fact_sql", ""), language="sql")
+            elif st.session_state.get("account_health_operability_fact_error"):
+                st.caption(
+                    "Account Health operability mart not available yet; deploy or refresh "
+                    "`FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY` to enable the fast blocker surface."
+                )
+            else:
+                st.caption("Load the operability mart when you need the pre-aggregated blocker surface.")
+        elif account_detail in {"Interventions", "Controls"}:
+            st.success(f"No {account_detail.lower()} rows for the loaded scope.")
+        if account_detail == "Checklist":
+            actionable_checklist = _account_health_actionable_checklist(checklist)
+            q1, q2, q3 = st.columns([1, 1, 3])
+            with q1:
+                if st.button(
+                    "Queue Checklist Issues",
+                    key="account_health_queue_checklist",
+                    width="stretch",
+                    disabled=actionable_checklist.empty,
+                ):
+                    action_session = _account_health_action_session("queue Account Health checklist issues")
+                    if action_session is not None:
+                        _queue_account_health_checklist(
+                            action_session,
+                            checklist,
+                            company=company,
+                            environment=get_active_environment(),
+                        )
+            with q2:
+                if st.button(
+                    "Save Checklist Snapshot",
+                    key="account_health_save_checklist_snapshot",
+                    width="stretch",
+                ):
+                    action_session = _account_health_action_session("save Account Health checklist snapshot")
+                    if action_session is not None:
+                        _save_account_health_checklist_snapshot(
+                            action_session,
+                            checklist,
+                            company=company,
+                            environment=get_active_environment(),
+                            health_score=health_score,
+                            detail_source=hd.get("_account_health_detail_source", ""),
+                        )
+            with q3:
+                if actionable_checklist.empty:
+                    st.caption("Daily checklist is clean for this snapshot; no queue item is needed. Save the snapshot for trend tracking.")
+                else:
+                    ready_count = int((actionable_checklist.get("QUEUE_READINESS", pd.Series(dtype=str)) == "Ready to Queue").sum())
+                    st.caption(
+                        f"{len(actionable_checklist):,} checklist issue(s) will be saved with owner, approver, "
+                        f"verification SQL, proof requirements, and scope evidence. {ready_count:,} are route-ready without blockers."
+                    )
         _render_account_health_access_hygiene(
             company=company,
             environment=get_active_environment(),

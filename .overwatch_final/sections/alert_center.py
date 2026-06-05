@@ -27,6 +27,13 @@ ALERT_CENTER_PANES = [
     "Suppression Windows",
 ]
 
+ALERT_CENTER_HEALTH_DETAIL_OPTIONS = (
+    "Controls",
+    "Owner Routes",
+    "Owner Directory",
+    "Delivery & ITSM",
+)
+
 ALERT_CENTER_SOURCES_BY_PANE = {
     "Control Health": {"alerts", "action_queue", "delivery_log", "rules", "rule_audit", "owner_directory"},
     "Automation Readiness": {"alerts", "action_queue", "delivery_log", "rules", "owner_directory"},
@@ -653,6 +660,127 @@ def _alert_center_readiness_score(rows: pd.DataFrame) -> int:
     return max(0, min(100, 100 - penalty))
 
 
+def _alert_center_action_brief(
+    *,
+    open_issues: int,
+    open_alerts: int,
+    critical_high: int,
+    overdue: int,
+    email_ready: int,
+    email_logged: int,
+    open_queue: int,
+    readiness_rows: pd.DataFrame | None = None,
+) -> dict:
+    pd = _pd()
+    rows = readiness_rows if isinstance(readiness_rows, pd.DataFrame) else pd.DataFrame()
+    if not rows.empty and "STATE" in rows.columns:
+        state_text = rows["STATE"].fillna("").astype(str).str.upper()
+        blockers = rows[state_text.isin({"NEEDS SETUP", "DEGRADED", "SCOPE STALE"})]
+        if not blockers.empty:
+            row = blockers.iloc[0]
+            control = str(row.get("CONTROL") or "Alert control")
+            evidence = str(row.get("EVIDENCE") or "Control evidence needs review.")
+            next_action = str(row.get("NEXT_ACTION") or "").strip()
+            return {
+                "state": str(row.get("STATE") or "Blocked"),
+                "headline": "Restore alert control evidence.",
+                "detail": f"{control}: {next_action or evidence}".strip(": "),
+                "primary_label": "Open Health",
+                "target": "Control Health",
+            }
+
+    if overdue > 0:
+        return {
+            "state": "Escalate",
+            "headline": "Escalate overdue alert rows first.",
+            "detail": f"{overdue:,} overdue alert(s); {critical_high:,} critical/high open alert(s).",
+            "primary_label": "Open Digest",
+            "target": "Triage Digest",
+        }
+    if critical_high > 0:
+        return {
+            "state": "Priority",
+            "headline": "Review critical and high alert rows.",
+            "detail": f"{critical_high:,} critical/high open alert(s) across {open_alerts:,} open alert(s).",
+            "primary_label": "Open Digest",
+            "target": "Triage Digest",
+        }
+    if open_queue > 0:
+        return {
+            "state": "Queue",
+            "headline": "Work open action queue rows.",
+            "detail": f"{open_queue:,} open queue row(s) need owner, ticket, due-date, or closure proof.",
+            "primary_label": "Open Queue",
+            "target": "Action Queue Routing",
+        }
+    if email_ready > email_logged:
+        return {
+            "state": "Evidence",
+            "headline": "Log alert delivery evidence.",
+            "detail": f"{email_ready:,} email-ready alert(s); {email_logged:,} delivery row(s) logged in this scope.",
+            "primary_label": "Open Delivery",
+            "target": "Email Delivery",
+        }
+    if open_issues > 0:
+        return {
+            "state": "Triage",
+            "headline": "Review the consolidated issue inbox.",
+            "detail": f"{open_issues:,} issue row(s) are loaded from alert history and action queue evidence.",
+            "primary_label": "Open Inbox",
+            "target": "Issue Inbox",
+        }
+    return {
+        "state": "Clear",
+        "headline": "No immediate Alert Center move.",
+        "detail": "Keep the selected window loaded for delivery proof, routing, and rule evidence when new alerts arrive.",
+        "primary_label": "Open Inbox",
+        "target": "Issue Inbox",
+    }
+
+
+def _render_alert_center_action_brief(brief: dict) -> None:
+    with st.container(border=True):
+        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption(str(brief.get("state") or "Review"))
+        with detail_col:
+            st.markdown(f"**{brief.get('headline') or 'Review Alert Center evidence.'}**")
+            st.caption(str(brief.get("detail") or ""))
+        with action_col:
+            target = str(brief.get("target") or "Issue Inbox")
+            if st.button(str(brief.get("primary_label") or "Open Inbox"), key="alert_center_action_brief_primary", width="stretch"):
+                if target in ALERT_CENTER_PANES:
+                    st.session_state["alert_center_active_view"] = target
+                    st.rerun()
+            if target != "Issue Inbox":
+                if st.button("Issue Inbox", key="alert_center_action_brief_inbox", width="stretch"):
+                    st.session_state["alert_center_active_view"] = "Issue Inbox"
+                    st.rerun()
+
+
+def _render_alert_center_metric_rows(
+    *,
+    open_issues: int,
+    open_alerts: int,
+    critical_high: int,
+    overdue: int,
+    email_ready: int,
+    email_logged: int,
+    open_queue: int,
+) -> None:
+    row1 = st.columns(4)
+    row1[0].metric("Open Issues", f"{open_issues:,}")
+    row1[1].metric("Open Alerts", f"{open_alerts:,}")
+    row1[2].metric("Critical / High", f"{critical_high:,}", delta_color="inverse")
+    row1[3].metric("Overdue", f"{overdue:,}", delta_color="inverse")
+
+    row2 = st.columns(3)
+    row2[0].metric("Email Ready", f"{email_ready:,}")
+    row2[1].metric("Delivery Logged", f"{email_logged:,}")
+    row2[2].metric("Open Queue", f"{open_queue:,}")
+
+
 def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     pd = _pd()
     generic_owners = {
@@ -1012,17 +1140,15 @@ def render() -> None:
     if not queue.empty and "STATUS" in queue.columns:
         open_queue = ~queue["STATUS"].fillna("New").astype(str).str.title().isin(["Fixed", "Ignored"])
 
-    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
-    m1.metric("Open Issues", f"{len(issues):,}")
-    m2.metric("Open Alerts", f"{int(open_alerts.sum()) if len(open_alerts) else 0:,}")
-    m3.metric("Critical / High", f"{int(high_alerts.sum()) if len(high_alerts) else 0:,}")
-    m4.metric("Overdue", f"{int(overdue_alerts.sum()) if len(overdue_alerts) else 0:,}", delta_color="inverse")
-    m5.metric("Email Ready", f"{int(email_ready.sum()) if len(email_ready) else 0:,}")
-    m6.metric("Delivery Logged", f"{int(email_logged.sum()) if len(email_logged) else 0:,}")
-    m7.metric("Open Queue", f"{int(open_queue.sum()) if len(open_queue) else 0:,}")
+    open_issue_count = len(issues)
+    open_alert_count = int(open_alerts.sum()) if len(open_alerts) else 0
+    critical_high_count = int(high_alerts.sum()) if len(high_alerts) else 0
+    overdue_count = int(overdue_alerts.sum()) if len(overdue_alerts) else 0
+    email_ready_count = int(email_ready.sum()) if len(email_ready) else 0
+    email_logged_count = int(email_logged.sum()) if len(email_logged) else 0
+    open_queue_count = int(open_queue.sum()) if len(open_queue) else 0
 
     readiness_rows = pd.DataFrame()
-    readiness_score = 0
     if active_view == "Control Health":
         readiness_rows = _alert_center_operability_rows(
             data,
@@ -1032,7 +1158,28 @@ def render() -> None:
             limit=int(limit),
             loaded_scope=loaded_scope,
         )
-        readiness_score = _alert_center_readiness_score(readiness_rows)
+
+    _render_alert_center_metric_rows(
+        open_issues=open_issue_count,
+        open_alerts=open_alert_count,
+        critical_high=critical_high_count,
+        overdue=overdue_count,
+        email_ready=email_ready_count,
+        email_logged=email_logged_count,
+        open_queue=open_queue_count,
+    )
+    _render_alert_center_action_brief(
+        _alert_center_action_brief(
+            open_issues=open_issue_count,
+            open_alerts=open_alert_count,
+            critical_high=critical_high_count,
+            overdue=overdue_count,
+            email_ready=email_ready_count,
+            email_logged=email_logged_count,
+            open_queue=open_queue_count,
+            readiness_rows=readiness_rows,
+        )
+    )
 
     if active_view == "Control Health":
         st.subheader("Alert Control Health")
@@ -1045,79 +1192,97 @@ def render() -> None:
         h2.metric("Needs Review", f"{review:,}", delta_color="inverse")
         h3.metric("Blocked / Setup", f"{blocked:,}", delta_color="inverse")
         h4.metric("Controls", f"{len(readiness_rows):,}")
-        _render_priority_dataframe(
-            readiness_rows,
-            title="Alert source and delivery readiness",
-            priority_columns=[
-                "SEVERITY", "CONTROL", "STATE", "EVIDENCE", "NEXT_ACTION", "OWNER", "SCOPE",
-            ],
-            sort_by=["SEVERITY", "CONTROL"],
-            ascending=[True, True],
-            raw_label="All alert control-health rows",
-            height=360,
+        health_detail = st.radio(
+            "Alert health detail",
+            ALERT_CENTER_HEALTH_DETAIL_OPTIONS,
+            horizontal=True,
+            key="alert_center_health_detail",
         )
-        owner_summary, owner_board = _alert_owner_route_board(alerts, queue)
-        if not owner_board.empty:
-            st.markdown("**Owner Route Coverage**")
+
+        if health_detail == "Controls":
+            _render_priority_dataframe(
+                readiness_rows,
+                title="Alert source and delivery readiness",
+                priority_columns=[
+                    "SEVERITY", "CONTROL", "STATE", "EVIDENCE", "NEXT_ACTION", "OWNER", "SCOPE",
+                ],
+                sort_by=["SEVERITY", "CONTROL"],
+                ascending=[True, True],
+                raw_label="All alert control-health rows",
+                height=360,
+            )
+        elif health_detail == "Owner Routes":
+            owner_summary, owner_board = _alert_owner_route_board(alerts, queue)
             o1, o2, o3, o4 = st.columns(4)
             o1.metric("Open routed items", f"{owner_summary['open_items']:,}")
             o2.metric("Named owners", f"{owner_summary['named_owner_pct']:.0f}%")
             o3.metric("Email routes", f"{owner_summary['email_route_pct']:.0f}%")
             o4.metric("Route gaps", f"{owner_summary['route_gaps']:,}", delta_color="inverse")
-            _render_priority_dataframe(
-                owner_board,
-                title="Owner/on-call route gaps",
-                priority_columns=[
-                    "ROUTE_READY", "ISSUE_SOURCE", "SEVERITY", "STATUS", "CATEGORY",
-                    "ENTITY", "OWNER", "OWNER_ROUTE_STATE", "EMAIL_TARGET",
-                    "DELIVERY_ROUTE_STATE", "ONCALL_PRIMARY", "ESCALATION_TARGET",
-                    "OWNER_SOURCE", "NEXT_ACTION",
-                ],
-                sort_by=["ROUTE_READY", "SEVERITY", "ENTITY"],
-                ascending=[True, True, True],
-                raw_label="All owner route rows",
-                height=280,
-            )
-        from utils import owner_directory_readiness_board
+            if owner_board.empty:
+                st.success("No owner route gaps found for the loaded scope.")
+            else:
+                _render_priority_dataframe(
+                    owner_board,
+                    title="Owner/on-call route gaps",
+                    priority_columns=[
+                        "ROUTE_READY", "ISSUE_SOURCE", "SEVERITY", "STATUS", "CATEGORY",
+                        "ENTITY", "OWNER", "OWNER_ROUTE_STATE", "EMAIL_TARGET",
+                        "DELIVERY_ROUTE_STATE", "ONCALL_PRIMARY", "ESCALATION_TARGET",
+                        "OWNER_SOURCE", "NEXT_ACTION",
+                    ],
+                    sort_by=["ROUTE_READY", "SEVERITY", "ENTITY"],
+                    ascending=[True, True, True],
+                    raw_label="All owner route rows",
+                    height=280,
+                )
+        elif health_detail == "Owner Directory":
+            from utils import owner_directory_readiness_board
 
-        directory_summary, directory_board = owner_directory_readiness_board(owner_directory)
-        st.markdown("**Owner Directory Production Readiness**")
-        d1, d2, d3, d4 = st.columns(4)
-        d1.metric("Route readiness", f"{directory_summary['readiness_pct']:.0f}%")
-        d2.metric(
-            "Production routes",
-            f"{directory_summary['production_ready']:,}/{directory_summary['total_routes']:,}",
-        )
-        d3.metric("Placeholder routes", f"{directory_summary['placeholder_routes']:,}", delta_color="inverse")
-        d4.metric("Tier 0/1 gaps", f"{directory_summary['tier0_tier1_gaps']:,}", delta_color="inverse")
-        if not directory_board.empty:
-            _render_priority_dataframe(
-                directory_board,
-                title="Owner directory route readiness",
-                priority_columns=[
-                    "ROUTE_STATE", "SERVICE_TIER", "OWNER_KEY", "ENTITY_TYPE",
-                    "ENTITY_PATTERN", "OWNER_NAME", "OWNER_EMAIL", "ONCALL_PRIMARY",
-                    "APPROVAL_GROUP", "ESCALATION_TARGET", "BLOCKERS", "NEXT_ACTION",
-                ],
-                raw_label="All owner directory rows",
-                height=300,
+            directory_summary, directory_board = owner_directory_readiness_board(owner_directory)
+            st.markdown("**Owner Directory Production Readiness**")
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Route readiness", f"{directory_summary['readiness_pct']:.0f}%")
+            d2.metric(
+                "Production routes",
+                f"{directory_summary['production_ready']:,}/{directory_summary['total_routes']:,}",
             )
+            d3.metric("Placeholder routes", f"{directory_summary['placeholder_routes']:,}", delta_color="inverse")
+            d4.metric("Tier 0/1 gaps", f"{directory_summary['tier0_tier1_gaps']:,}", delta_color="inverse")
+            if directory_board.empty:
+                st.success("No owner-directory route rows found for the loaded scope.")
+            else:
+                _render_priority_dataframe(
+                    directory_board,
+                    title="Owner directory route readiness",
+                    priority_columns=[
+                        "ROUTE_STATE", "SERVICE_TIER", "OWNER_KEY", "ENTITY_TYPE",
+                        "ENTITY_PATTERN", "OWNER_NAME", "OWNER_EMAIL", "ONCALL_PRIMARY",
+                        "APPROVAL_GROUP", "ESCALATION_TARGET", "BLOCKERS", "NEXT_ACTION",
+                    ],
+                    raw_label="All owner directory rows",
+                    height=300,
+                )
+        elif health_detail == "Delivery & ITSM":
+            from utils import owner_directory_readiness_board
 
-        integration_board = _alert_integration_readiness_board(
-            alerts,
-            queue,
-            delivery_log,
-            directory_summary,
-        )
-        if not integration_board.empty:
+            directory_summary, _ = owner_directory_readiness_board(owner_directory)
+            integration_board = _alert_integration_readiness_board(
+                alerts,
+                queue,
+                delivery_log,
+                directory_summary,
+            )
             st.markdown("**Notification & ITSM Readiness**")
-            _render_priority_dataframe(
-                integration_board,
-                title="Alert integration readiness",
-                priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
-                raw_label="All alert integration controls",
-                height=220,
-            )
+            if integration_board.empty:
+                st.success("No delivery or ITSM integration blockers found for the loaded scope.")
+            else:
+                _render_priority_dataframe(
+                    integration_board,
+                    title="Alert integration readiness",
+                    priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
+                    raw_label="All alert integration controls",
+                    height=220,
+                )
 
     elif active_view == "Automation Readiness":
         st.subheader("Alert Automation Readiness")
@@ -1238,12 +1403,13 @@ def render() -> None:
             )
 
             digest_summary = build_alert_digest_summary(alerts)
-            d1, d2, d3, d4, d5 = st.columns(5)
-            d1.metric("Open", f"{digest_summary['open']:,}")
-            d2.metric("Critical / High", f"{digest_summary['critical_high']:,}")
-            d3.metric("Overdue", f"{digest_summary['overdue']:,}", delta_color="inverse")
-            d4.metric("Due Soon", f"{digest_summary['due_soon']:,}")
-            d5.metric("Needs Owner", f"{digest_summary['needs_owner']:,}")
+            digest_row1 = st.columns(3)
+            digest_row1[0].metric("Open", f"{digest_summary['open']:,}")
+            digest_row1[1].metric("Critical / High", f"{digest_summary['critical_high']:,}")
+            digest_row1[2].metric("Overdue", f"{digest_summary['overdue']:,}", delta_color="inverse")
+            digest_row2 = st.columns(2)
+            digest_row2[0].metric("Due Soon", f"{digest_summary['due_soon']:,}")
+            digest_row2[1].metric("Needs Owner", f"{digest_summary['needs_owner']:,}")
 
             digest_subject = build_alert_digest_subject(alerts, company=company, environment=environment)
             digest_body = build_alert_digest_body(

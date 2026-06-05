@@ -16,6 +16,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 from config import DEFAULTS, DEFAULT_ALERT_EMAIL, FORWARD_PLATFORM_CONTROLS  # noqa: E402
 from sections.account_health import (  # noqa: E402
+    _account_health_action_brief,
     _account_health_actionable_checklist,
     _account_health_access_hygiene_action_payload,
     _account_health_access_hygiene_sql,
@@ -44,6 +45,7 @@ from sections.adoption_analytics import (  # noqa: E402
     _metric as adoption_metric,
 )
 from sections.alert_center import (  # noqa: E402
+    _alert_center_action_brief,
     _alert_center_operability_rows,
     _alert_center_readiness_score,
     _alert_integration_readiness_board,
@@ -105,8 +107,11 @@ from sections.dba_control_room import (  # noqa: E402
     _command_queue_summary,
     _command_queue_route_readiness,
     _build_dba_autopilot_flight_plan_markdown,
+    _build_dba_escalation_packet_markdown,
+    _dba_action_brief,
     _dba_autopilot_flight_plan,
     _dba_control_tower_priority_index,
+    _dba_escalation_packet,
     _dba_section_operability_board,
     _dba_section_proof_required,
     _dba_incident_board,
@@ -638,7 +643,7 @@ class FormulaRegressionTests(unittest.TestCase):
             failed_tasks=2,
             object_changes=3,
             control_mart_used=False,
-            detail_source="Live fallback: ACCOUNT_USAGE",
+            detail_source="Current account evidence",
         )
         by_check = {row["CHECK"]: row for _, row in checklist.iterrows()}
 
@@ -657,6 +662,38 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_check["Cost spike review"]["DATABASE_CONTEXT"], "Allocated / Estimated")
         self.assertEqual(by_check["Cost spike review"]["SCOPE_CONFIDENCE"], "Allocated Estimate")
         self.assertIn("allocated/estimated", by_check["Cost spike review"]["SCOPE_EVIDENCE"])
+
+    def test_account_health_action_brief_prioritizes_single_operator_move(self):
+        checklist = _build_account_health_dba_checklist(
+            health_score=88,
+            score_label="Watch",
+            err_count=0,
+            queued=28,
+            pct_delta=4.0,
+            last24=42.0,
+            stor_tb=4.2,
+            failed_tasks=0,
+            object_changes=0,
+            control_mart_used=True,
+            detail_source="OVERWATCH mart facts",
+        )
+        brief = _account_health_action_brief(checklist)
+        self.assertEqual(brief["target"], "Warehouse Health")
+        self.assertEqual(brief["state"], "Needs DBA")
+        self.assertIn("Queue pressure review", brief["detail"])
+
+        clear = _account_health_action_brief(pd.DataFrame([
+            {
+                "CHECK": "Healthy",
+                "STATUS": "OK",
+                "SEVERITY": "Info",
+                "EVIDENCE": "No action",
+                "ROUTE": "Account Health",
+                "NEXT_ACTION": "No action needed.",
+            }
+        ]))
+        self.assertEqual(clear["target"], "Morning Report")
+        self.assertEqual(clear["state"], "Clear")
 
     def test_account_health_checklist_actions_are_queue_ready(self):
         checklist = _build_account_health_dba_checklist(
@@ -2163,6 +2200,46 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Auto Release Gate", report)
         self.assertIn("Task Failure Root-Cause Timeline", report)
 
+    def test_dba_action_brief_prioritizes_single_operator_move(self):
+        exceptions = pd.DataFrame([
+            {
+                "Severity": "High",
+                "Signal": "Queue pressure",
+                "Action": "Check warehouse sizing and concurrency.",
+                "Route": "Warehouse Health",
+                "Workflow": "Queue pressure",
+            }
+        ])
+
+        blocked = _dba_action_brief(
+            {"blocked": 1, "review": 2, "not_loaded": 0},
+            exceptions,
+            queued_queries=734,
+            failed_queries=0,
+        )
+        self.assertEqual(blocked["state"], "Blocked")
+        self.assertEqual(blocked["target"], "Release Gate")
+        self.assertIn("1 blocker", blocked["detail"])
+
+        routed = _dba_action_brief(
+            {"blocked": 0, "review": 0, "not_loaded": 0},
+            exceptions,
+            queued_queries=734,
+            failed_queries=0,
+        )
+        self.assertEqual(routed["target"], "Warehouse Health")
+        self.assertEqual(routed["workflow"], "Queue pressure")
+        self.assertIn("Check warehouse sizing", routed["headline"])
+
+        queue_only = _dba_action_brief(
+            {"blocked": 0, "review": 0, "not_loaded": 0},
+            pd.DataFrame(),
+            queued_queries=25,
+            failed_queries=0,
+        )
+        self.assertEqual(queue_only["target"], "Warehouse Health")
+        self.assertIn("25 queued", queue_only["detail"])
+
     def test_dba_control_room_snapshot_is_only_available_for_unfiltered_all_environment(self):
         unfiltered = {
             "global_warehouse": "",
@@ -2539,8 +2616,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Evidence current", plan["GO_NO_GO_GATE"].tolist())
         self.assertIn("Advisory only", plan["GO_NO_GO_GATE"].tolist())
         self.assertTrue(plan["PROOF_SQL"].str.contains("WAREHOUSE_METERING_HISTORY|QUERY_HISTORY", regex=True).any())
-        self.assertIn("OVERWATCH DBA Autopilot Flight Plan", markdown)
-        self.assertIn("Mode: Advisory Only", markdown)
+        self.assertIn("OVERWATCH DBA Operator Runbook", markdown)
+        self.assertIn("Mode: Review-only guidance", markdown)
         self.assertIn("Rollback or Escalate", markdown)
 
     def test_dba_section_proof_required_names_section_evidence_contracts(self):
@@ -2713,6 +2790,105 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Scope: ALFA / PROD", markdown)
         self.assertIn("Overdue closure", markdown)
         self.assertIn("Closure Standard", markdown)
+
+    def test_dba_escalation_packet_merges_owner_routes_from_loaded_evidence(self):
+        control_tower = pd.DataFrame([
+            {
+                "SECTION": "Warehouse Health",
+                "CONTROL_TOWER_STATE": "Owner Review",
+                "PRIORITY_SCORE": 62,
+                "WHY_NOW": "2 proof blockers",
+                "WORST_SIGNAL": "Warehouse guardrail review",
+                "FIRST_MOVE": "Review warehouse owner route.",
+                "PROOF_REQUIRED": "capacity evidence, owner approval, rollback SQL",
+            }
+        ])
+        incident_board = pd.DataFrame([
+            {
+                "INCIDENT_ID": "DBA-01",
+                "INCIDENT_TYPE": "Warehouse Capacity",
+                "SEVERITY": "High",
+                "STATUS": "Containment Required",
+                "AFFECTED_ROUTES": "Warehouse Health",
+                "SIGNALS": "Queue or warehouse pressure",
+                "CONTAINMENT_ACTION": "Stabilize queue/spill pressure first.",
+                "SLA_TARGET": "Contain within 30 minutes.",
+                "PROOF_REQUIRED": "capacity evidence, owner approval, rollback SQL",
+                "INVESTIGATION_PATH": "Warehouse Health",
+            }
+        ])
+        handoff = pd.DataFrame([
+            {
+                "PRIORITY_RANK": 1,
+                "LANE": "Source Health",
+                "STATE": "Unavailable",
+                "EVIDENCE": "Task SLA / Cost unavailable",
+                "OWNER_OR_ROUTE": "DBA / Platform",
+                "NEXT_ACTION": "Refresh mart grants before relying on this surface.",
+                "PROOF_REQUIRED": "current source health",
+                "SOURCE": "Source Health",
+            }
+        ])
+        release_gate = pd.DataFrame([
+            {
+                "GATE": "Deployment object: OVERWATCH_ANNOTATIONS",
+                "STATE": "Blocked",
+                "SEVERITY": "Critical",
+                "EVIDENCE": "OVERWATCH_ANNOTATIONS missing",
+                "NEXT_ACTION": "Apply release remediation DDL.",
+                "ROUTE": "Change & Drift",
+                "WORKFLOW": "Release Gate",
+                "PROOF_REQUIRED": "schema migration ledger, DDL proof, task retry evidence",
+            }
+        ])
+
+        packet = _dba_escalation_packet(
+            control_tower,
+            incident_board,
+            handoff,
+            release_gate,
+            company="ALFA",
+            environment="PROD",
+            lookback_hours=24,
+        )
+        by_route = {row["ROUTE"]: row for _, row in packet.iterrows()}
+
+        self.assertEqual(packet.iloc[0]["ROUTE"], "Change & Drift")
+        self.assertEqual(by_route["Change & Drift"]["ESCALATION_LEVEL"], "Escalate Now")
+        self.assertIn("No-Go", by_route["Change & Drift"]["GO_NO_GO"])
+        self.assertIn("Change owner", by_route["Change & Drift"]["OWNER_ROUTE"])
+        self.assertEqual(by_route["Warehouse Health"]["ESCALATION_LEVEL"], "Escalate Now")
+        self.assertIn("Incident Board", by_route["Warehouse Health"]["SOURCE_SIGNALS"])
+        self.assertIn("Stabilize queue", by_route["Warehouse Health"]["FIRST_MOVE"])
+        self.assertIn("No-Go", by_route["Source Health"]["GO_NO_GO"])
+        self.assertTrue(packet["AUTO_GENERATED"].eq("Yes").all())
+
+    def test_dba_escalation_packet_markdown_is_owner_ready(self):
+        packet = pd.DataFrame([
+            {
+                "ESCALATION_ID": "ESC-01",
+                "ESCALATION_LEVEL": "Escalate Now",
+                "ROUTE": "Change & Drift",
+                "OWNER_ROUTE": "Change owner / DBA release reviewer",
+                "WHY_NOW": "Release gate blocked by missing deployment object.",
+                "FIRST_MOVE": "Apply release remediation DDL.",
+                "GO_NO_GO": "No-Go until blocker proof is current.",
+                "PROOF_REQUIRED": "schema migration ledger, DDL proof, task retry evidence",
+            }
+        ])
+
+        markdown = _build_dba_escalation_packet_markdown(
+            packet,
+            company="ALFA",
+            environment="PROD",
+            lookback_hours=24,
+        )
+
+        self.assertIn("# OVERWATCH DBA Escalation Packet", markdown)
+        self.assertIn("Mode: Auto-generated from loaded OVERWATCH evidence", markdown)
+        self.assertIn("ESC-01", markdown)
+        self.assertIn("No-Go", markdown)
+        self.assertIn("Do not execute state-changing DBA actions", markdown)
 
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []
@@ -6823,7 +6999,7 @@ class FormulaRegressionTests(unittest.TestCase):
         ])
         cards = build_ask_overwatch_context({"dba_control_tower_priority_index": tower})
 
-        self.assertEqual(cards[0]["surface"], "DBA Control Tower")
+        self.assertEqual(cards[0]["surface"], "DBA Operations Priority")
         self.assertEqual(cards[0]["entity"], "Warehouse Health")
         self.assertIn("Queue or warehouse pressure", cards[0]["evidence"])
         self.assertIn("Stabilize", cards[0]["next_action"])
@@ -6838,7 +7014,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "CONTROL_TOWER_STATE": "Contain Now",
                 "PRIORITY_SCORE": 88.5,
                 "GO_NO_GO_GATE": "Evidence current",
-                "DBA_MOVE": "Confirm Control Tower route Warehouse Health.",
+                "DBA_MOVE": "Confirm operations route Warehouse Health.",
                 "EVIDENCE_REQUIRED": "Queue or warehouse pressure; 1 overdue",
                 "STOP_CONDITION": "Stop if source evidence is stale.",
             },
@@ -6857,9 +7033,9 @@ class FormulaRegressionTests(unittest.TestCase):
         ])
         cards = build_ask_overwatch_context({"dba_autopilot_flight_plan": plan})
 
-        self.assertEqual(cards[0]["surface"], "DBA Autopilot Flight Plan")
+        self.assertEqual(cards[0]["surface"], "DBA Operator Runbook")
         self.assertEqual(cards[0]["entity"], "Warehouse Health")
-        self.assertIn("DBA-AUTO-202606011730", cards[0]["evidence"])
+        self.assertIn("Evidence current", cards[0]["evidence"])
         self.assertIn("Stabilize", cards[0]["next_action"])
 
     def test_alert_task_is_email_first_and_dba_focused(self):
@@ -7529,6 +7705,61 @@ class FormulaRegressionTests(unittest.TestCase):
             rows.loc[rows["CONTROL"] == "Rule catalog source", "STATE"].iloc[0],
             "Ready",
         )
+
+    def test_alert_center_action_brief_prioritizes_single_operator_move(self):
+        blocked = _alert_center_action_brief(
+            open_issues=3,
+            open_alerts=2,
+            critical_high=2,
+            overdue=1,
+            email_ready=2,
+            email_logged=0,
+            open_queue=1,
+            readiness_rows=pd.DataFrame([{
+                "CONTROL": "Delivery audit source",
+                "STATE": "Needs Setup",
+                "EVIDENCE": "Delivery log table is missing.",
+                "NEXT_ACTION": "Deploy delivery audit table.",
+            }]),
+        )
+        self.assertEqual(blocked["target"], "Control Health")
+        self.assertIn("Delivery audit source", blocked["detail"])
+        self.assertIn("Deploy delivery audit table", blocked["detail"])
+
+        overdue = _alert_center_action_brief(
+            open_issues=3,
+            open_alerts=2,
+            critical_high=2,
+            overdue=1,
+            email_ready=2,
+            email_logged=0,
+            open_queue=1,
+        )
+        self.assertEqual(overdue["target"], "Triage Digest")
+        self.assertIn("overdue", overdue["detail"])
+
+        queue_only = _alert_center_action_brief(
+            open_issues=1,
+            open_alerts=0,
+            critical_high=0,
+            overdue=0,
+            email_ready=0,
+            email_logged=0,
+            open_queue=4,
+        )
+        self.assertEqual(queue_only["target"], "Action Queue Routing")
+        self.assertIn("4 open queue", queue_only["detail"])
+
+        clear = _alert_center_action_brief(
+            open_issues=0,
+            open_alerts=0,
+            critical_high=0,
+            overdue=0,
+            email_ready=0,
+            email_logged=0,
+            open_queue=0,
+        )
+        self.assertEqual(clear["state"], "Clear")
 
     def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")

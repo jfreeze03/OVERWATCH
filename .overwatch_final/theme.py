@@ -1,15 +1,13 @@
-# theme.py — OVERWATCH 5-theme system
-# ─────────────────────────────────────────────────────────────────────────────
+# theme.py - OVERWATCH theme system
 # THEMES:
-#   1. midnight   — Original dark glassmorphism (cyan/indigo/purple)
-#   2. corporate  — Henson light: muted shell with dominant red navigation
-#   3. terminal   — Snowflake White: classic white with Snowflake blue
-#   4. black_ice  — Dark high-contrast lime/cyan accents
-#   5. carbon     — Snowflake Dark: classic dark with Snowflake blue
+#   1. carbon     - Snowflake Dark: default dark shell with Snowflake blue
+#   2. terminal   - Snowflake White: classic white with Snowflake blue
+#   3. corporate  - Henson: muted light shell with dominant red navigation
+#   4. roll_tide  - Roll Tide: Alabama crimson and white
+#   5. war_eagle  - War Eagle: Auburn navy and orange
 #
 # Architecture: All structural styles reference CSS custom properties.
 # Switching theme = injecting a new :root { } block. Zero JS required.
-# Theme picker renders as 5 clickable swatches in the sidebar Settings.
 # Preference persists in session_state; optional DB persistence via Bookmarks.
 #
 # Usage in app.py:
@@ -17,95 +15,49 @@
 #   inject_theme()
 #   # inside sidebar Settings expander:
 #   render_theme_picker()
-# ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
 
-THEME_VERSION = "2026-06-03-bottom-notes-v1"
+THEME_VERSION = "2026-06-05-roll-tide-war-eagle-v1"
 
-_DEFAULT_THEME = "midnight"
+_DEFAULT_THEME = "carbon"
 _THEME_ALIASES = {
-    "aurora": "black_ice",
+    "aurora": "carbon",
+    "black_ice": "carbon",
+    "midnight": "carbon",
 }
 
 # ── Theme metadata (used for the picker UI) ───────────────────────────────────
 THEMES = {
-    "midnight": {
-        "label":    "Midnight",
-        "swatch":   "#38bdf8",
-        "bg":       "#0a0e1a",
-    },
-    "corporate": {
-        "label":    "Henson",
-        "swatch":   "#b00020",
-        "bg":       "#f1f4f7",
+    "carbon": {
+        "label":    "Snowflake Dark",
+        "swatch":   "#29B5E8",
+        "bg":       "#0B1117",
     },
     "terminal": {
         "label":    "Snowflake White",
         "swatch":   "#29B5E8",
         "bg":       "#eef6fb",
     },
-    "black_ice": {
-        "label":    "Graphite Ember",
-        "swatch":   "#f97316",
-        "bg":       "#12100f",
+    "corporate": {
+        "label":    "Henson",
+        "swatch":   "#b00020",
+        "bg":       "#f1f4f7",
     },
-    "carbon": {
-        "label":    "Snowflake Dark",
-        "swatch":   "#29B5E8",
-        "bg":       "#0B1117",
+    "roll_tide": {
+        "label":    "Roll Tide",
+        "swatch":   "#981D32",
+        "bg":       "#f7f7f6",
+    },
+    "war_eagle": {
+        "label":    "War Eagle",
+        "swatch":   "#DD550C",
+        "bg":       "#0C213E",
     },
 }
 
 # ── CSS variable blocks — one per theme ───────────────────────────────────────
 
 _VARS = {
-
-# ─── 1. MIDNIGHT — original dark glassmorphism ───────────────────────────────
-"midnight": """
-:root {
-    --bg-app:          linear-gradient(135deg, #0a0e1a 0%, #0d1525 50%, #0a1628 100%);
-    --bg-sidebar:      linear-gradient(180deg, #0d1525 0%, #111d33 100%);
-    --bg-card:         rgba(15, 23, 42, 0.60);
-    --bg-card-hover:   rgba(15, 23, 42, 0.85);
-    --bg-input:        rgba(15, 23, 42, 0.80);
-    --bg-tab-list:     rgba(15, 23, 42, 0.40);
-    --bg-expander:     rgba(15, 23, 42, 0.40);
-
-    --border-subtle:   rgba(56, 189, 248, 0.10);
-    --border-normal:   rgba(56, 189, 248, 0.20);
-    --border-strong:   rgba(56, 189, 248, 0.45);
-    --border-sidebar:  rgba(56, 189, 248, 0.10);
-
-    --text-primary:    #e2e8f0;
-    --text-secondary:  #94a3b8;
-    --text-muted:      #64748b;
-    --text-input:      #e2e8f0;
-    --text-heading:    transparent;
-
-    --accent:          #38bdf8;
-    --accent-rgb:      56, 189, 248;
-    --accent2:         #818cf8;
-    --accent3:         #c084fc;
-    --h1-gradient:     linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
-
-    --metric-shadow:        0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
-    --metric-hover-shadow:  0 8px 32px rgba(56,189,248,0.12), inset 0 1px 0 rgba(255,255,255,0.08);
-    --btn-bg:          linear-gradient(135deg, rgba(56,189,248,0.15), rgba(129,140,248,0.15));
-    --btn-bg-hover:    linear-gradient(135deg, rgba(56,189,248,0.30), rgba(129,140,248,0.30));
-    --btn-border:      rgba(56, 189, 248, 0.30);
-    --btn-hover-shadow: 0 0 20px rgba(56,189,248,0.20);
-    --slider-track:    linear-gradient(90deg, #2563eb, #38bdf8);
-    --tab-active-bg:   rgba(56, 189, 248, 0.15);
-    --tab-active-col:  #38bdf8;
-    --hr-bg:           linear-gradient(90deg, transparent, rgba(56,189,248,0.30), transparent);
-    --scrollbar-track: rgba(15, 23, 42, 0.50);
-    --scrollbar-thumb: rgba(56, 189, 248, 0.30);
-    --scrollbar-hover: rgba(56, 189, 248, 0.55);
-    --font-body:       'Inter', 'DM Sans', system-ui, sans-serif;
-    --font-mono:       'DM Mono', 'Fira Code', monospace;
-    --extra-css:       '';
-}
-""",
 
 # ─── 2. HENSON — muted light shell with dominant red navigation ──────────────
 "corporate": """
@@ -201,53 +153,6 @@ _VARS = {
 }
 """,
 
-# ─── 4. GRAPHITE EMBER — warm graphite with ember and teal accents ───────────
-"black_ice": """
-:root {
-    --bg-app:          linear-gradient(160deg, #12100f 0%, #181513 46%, #221a16 100%);
-    --bg-sidebar:      linear-gradient(180deg, #11100f 0%, #1c1714 58%, #241a15 100%);
-    --bg-card:         rgba(30, 24, 20, 0.82);
-    --bg-card-hover:   rgba(40, 30, 24, 0.96);
-    --bg-input:        rgba(18, 15, 13, 0.92);
-    --bg-tab-list:     rgba(32, 25, 21, 0.70);
-    --bg-expander:     rgba(29, 23, 19, 0.80);
-
-    --border-subtle:   rgba(249, 115, 22, 0.14);
-    --border-normal:   rgba(249, 115, 22, 0.30);
-    --border-strong:   rgba(20, 184, 166, 0.64);
-    --border-sidebar:  rgba(250, 204, 21, 0.18);
-
-    --text-primary:    #fff7ed;
-    --text-secondary:  #fed7aa;
-    --text-muted:      #b8a89a;
-    --text-input:      #fff7ed;
-    --text-heading:    transparent;
-
-    --accent:          #f97316;
-    --accent-rgb:      249, 115, 22;
-    --accent2:         #14b8a6;
-    --accent3:         #facc15;
-    --h1-gradient:     linear-gradient(90deg, #fff7ed, #f97316, #14b8a6);
-
-    --metric-shadow:        0 4px 24px rgba(0,0,0,0.48), inset 0 1px 0 rgba(249,115,22,0.08);
-    --metric-hover-shadow:  0 8px 32px rgba(249,115,22,0.16), inset 0 1px 0 rgba(20,184,166,0.12);
-    --btn-bg:          linear-gradient(135deg, rgba(249,115,22,0.13), rgba(20,184,166,0.10));
-    --btn-bg-hover:    linear-gradient(135deg, rgba(249,115,22,0.26), rgba(20,184,166,0.20));
-    --btn-border:      rgba(249, 115, 22, 0.36);
-    --btn-hover-shadow: 0 0 20px rgba(249,115,22,0.24);
-    --slider-track:    linear-gradient(90deg, #f97316, #14b8a6);
-    --tab-active-bg:   rgba(249, 115, 22, 0.15);
-    --tab-active-col:  #fed7aa;
-    --hr-bg:           linear-gradient(90deg, transparent, rgba(249,115,22,0.30), transparent);
-    --scrollbar-track: rgba(18, 15, 13, 0.76);
-    --scrollbar-thumb: rgba(249, 115, 22, 0.34);
-    --scrollbar-hover: rgba(20, 184, 166, 0.56);
-    --font-body:       'Inter', system-ui, sans-serif;
-    --font-mono:       'JetBrains Mono', 'Cascadia Mono', monospace;
-    --extra-css:       '';
-}
-""",
-
 # ─── 5. SNOWFLAKE DARK — classic dark with Snowflake brand blues ─────────────
 "carbon": """
 :root {
@@ -290,6 +195,100 @@ _VARS = {
     --scrollbar-thumb: rgba(41, 181, 232, 0.32);
     --scrollbar-hover: rgba(113, 211, 220, 0.56);
     --font-body:       'Lato', 'Inter', 'DM Sans', system-ui, sans-serif;
+    --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
+    --extra-css:       '';
+}
+""",
+
+# --- 6. ROLL TIDE - Alabama crimson and white --------------------------------
+"roll_tide": """
+:root {
+    --bg-app:          #f7f7f6;
+    --bg-sidebar:      linear-gradient(180deg, #ffffff 0%, #f2e8ea 100%);
+    --bg-card:         #ffffff;
+    --bg-card-hover:   #fbf3f4;
+    --bg-input:        #ffffff;
+    --bg-tab-list:     #ece7e6;
+    --bg-expander:     #ffffff;
+
+    --border-subtle:   #ddd6d5;
+    --border-normal:   #c7b9b9;
+    --border-strong:   #981D32;
+    --border-sidebar:  #d8c7ca;
+
+    --text-primary:    #1d1a1b;
+    --text-secondary:  #332b2d;
+    --text-muted:      #74645d;
+    --text-input:      #111111;
+    --text-heading:    #981D32;
+
+    --accent:          #981D32;
+    --accent-rgb:      152, 29, 50;
+    --accent2:         #74645d;
+    --accent3:         #c0b7b3;
+    --h1-gradient:     linear-gradient(90deg, #981D32 0%, #981D32 48%, #74645d 48%, #74645d 100%);
+
+    --metric-shadow:        0 1px 10px rgba(29, 26, 27, 0.08), 0 1px 2px rgba(29, 26, 27, 0.06);
+    --metric-hover-shadow:  0 8px 24px rgba(152, 29, 50, 0.17), 0 2px 8px rgba(29, 26, 27, 0.10);
+    --btn-bg:          linear-gradient(135deg, #ffffff, #fbf3f4);
+    --btn-bg-hover:    linear-gradient(135deg, #ffffff, #f4dde2);
+    --btn-border:      rgba(152, 29, 50, 0.36);
+    --btn-hover-shadow: 0 2px 13px rgba(152, 29, 50, 0.20);
+    --slider-track:    linear-gradient(90deg, #981D32, #74645d);
+    --tab-active-bg:   rgba(152, 29, 50, 0.10);
+    --tab-active-col:  #981D32;
+    --hr-bg:           linear-gradient(90deg, transparent, #ded6d6, transparent);
+    --scrollbar-track: #f5f1f1;
+    --scrollbar-thumb: rgba(152, 29, 50, 0.35);
+    --scrollbar-hover: rgba(116, 100, 93, 0.48);
+    --font-body:       'Inter', 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+    --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
+    --extra-css:       '';
+}
+""",
+
+# --- 7. WAR EAGLE - Auburn navy and orange -----------------------------------
+"war_eagle": """
+:root {
+    --bg-app:          linear-gradient(160deg, #0C213E 0%, #132B49 52%, #3C4C60 100%);
+    --bg-sidebar:      linear-gradient(180deg, #07182F 0%, #0C213E 62%, #162F4F 100%);
+    --bg-card:         rgba(12, 33, 62, 0.84);
+    --bg-card-hover:   rgba(19, 43, 73, 0.96);
+    --bg-input:        rgba(8, 24, 47, 0.94);
+    --bg-tab-list:     rgba(12, 33, 62, 0.72);
+    --bg-expander:     rgba(12, 33, 62, 0.80);
+
+    --border-subtle:   rgba(221, 85, 12, 0.16);
+    --border-normal:   rgba(221, 85, 12, 0.34);
+    --border-strong:   rgba(221, 85, 12, 0.72);
+    --border-sidebar:  rgba(96, 106, 122, 0.24);
+
+    --text-primary:    #f7fbff;
+    --text-secondary:  #e7e9eb;
+    --text-muted:      #aab5c2;
+    --text-input:      #f7fbff;
+    --text-heading:    transparent;
+
+    --accent:          #DD550C;
+    --accent-rgb:      221, 85, 12;
+    --accent2:         #3C4C60;
+    --accent3:         #e7e9eb;
+    --h1-gradient:     linear-gradient(90deg, #f7fbff, #DD550C, #e7e9eb);
+
+    --metric-shadow:        0 4px 24px rgba(0,0,0,0.48), inset 0 1px 0 rgba(221,85,12,0.08);
+    --metric-hover-shadow:  0 8px 32px rgba(221,85,12,0.18), inset 0 1px 0 rgba(231,233,235,0.10);
+    --btn-bg:          linear-gradient(135deg, rgba(221,85,12,0.14), rgba(60,76,96,0.20));
+    --btn-bg-hover:    linear-gradient(135deg, rgba(221,85,12,0.30), rgba(60,76,96,0.32));
+    --btn-border:      rgba(221, 85, 12, 0.40);
+    --btn-hover-shadow: 0 0 20px rgba(221,85,12,0.24);
+    --slider-track:    linear-gradient(90deg, #DD550C, #e7e9eb);
+    --tab-active-bg:   rgba(221, 85, 12, 0.16);
+    --tab-active-col:  #f7fbff;
+    --hr-bg:           linear-gradient(90deg, transparent, rgba(221,85,12,0.36), transparent);
+    --scrollbar-track: rgba(8, 24, 47, 0.76);
+    --scrollbar-thumb: rgba(221, 85, 12, 0.38);
+    --scrollbar-hover: rgba(231, 233, 235, 0.56);
+    --font-body:       'Inter', 'DM Sans', system-ui, sans-serif;
     --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
     --extra-css:       '';
 }
@@ -1109,68 +1108,6 @@ code, pre, .stCodeBlock {
 
 # ── Theme picker HTML ─────────────────────────────────────────────────────────
 _THEME_EXTRAS = {
-    "midnight": """
-<style>
-/* Midnight: make cyan/indigo the dominant navigation treatment. */
-[data-testid="stSidebar"] .stButton > button {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #0284c7, #3730a3) !important;
-    border-color: rgba(56,189,248,0.70) !important;
-    box-shadow: 0 2px 10px rgba(56,189,248,0.18) !important;
-}
-[data-testid="stSidebar"] .stButton > button p {
-    color: inherit !important;
-}
-[data-testid="stSidebar"] .stButton > button:hover {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #0ea5e9, #4f46e5) !important;
-    border-color: rgba(56,189,248,0.95) !important;
-}
-[data-testid="stSidebar"] .stButton > button[kind="primary"] {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #075985, #4f46e5) !important;
-    border-color: rgba(125,211,252,0.95) !important;
-    box-shadow: inset 4px 0 0 #c084fc, 0 3px 14px rgba(56,189,248,0.28) !important;
-}
-[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
-    color: #ffffff !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #0284c7, #3730a3) !important;
-    border: 1px solid rgba(56,189,248,0.70) !important;
-    border-bottom: 1px solid rgba(56,189,248,0.70) !important;
-    box-shadow: 0 2px 10px rgba(56,189,248,0.18) !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
-    color: #ffffff !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
-    background: linear-gradient(135deg, #0ea5e9, #4f46e5) !important;
-    border-color: rgba(56,189,248,0.95) !important;
-}
-[data-testid="stMetric"] {
-    border-top: 3px solid rgba(56,189,248,0.75) !important;
-}
-.stTabs [data-baseweb="tab-list"] {
-    background: rgba(15,23,42,0.72) !important;
-    border-bottom: 2px solid rgba(56,189,248,0.54);
-}
-.stTabs [data-baseweb="tab"] {
-    color: #bae6fd !important;
-    font-weight: 700;
-}
-.stTabs [aria-selected="true"] {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #0284c7, #3730a3) !important;
-    border-color: rgba(56,189,248,0.72) !important;
-}
-</style>
-""",
     "corporate": """
 <style>
 /* Henson: reduce glare and make navigation decisively red. */
@@ -1433,71 +1370,6 @@ _THEME_EXTRAS = {
 }
 </style>
 """,
-    "black_ice": """
-<style>
-/* Graphite Ember: make ember navigation distinct from Snowflake Dark. */
-[data-testid="stSidebar"] .stButton > button {
-    color: #fff7ed !important;
-    background: linear-gradient(135deg, #c2410c, #7c2d12) !important;
-    border-color: rgba(249,115,22,0.72) !important;
-    box-shadow: 0 2px 10px rgba(249,115,22,0.18) !important;
-}
-[data-testid="stSidebar"] .stButton > button p {
-    color: inherit !important;
-}
-[data-testid="stSidebar"] .stButton > button:hover {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #f97316, #b45309) !important;
-    border-color: rgba(249,115,22,0.95) !important;
-}
-[data-testid="stSidebar"] .stButton > button[kind="primary"] {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #7c2d12, #f97316) !important;
-    border-color: rgba(251,146,60,0.96) !important;
-    box-shadow: inset 4px 0 0 #14b8a6, 0 3px 14px rgba(249,115,22,0.30) !important;
-}
-[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
-    color: #ffffff !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #c2410c, #7c2d12) !important;
-    border: 1px solid rgba(249,115,22,0.72) !important;
-    border-bottom: 1px solid rgba(249,115,22,0.72) !important;
-    box-shadow: 0 2px 10px rgba(249,115,22,0.18) !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
-    color: #ffffff !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
-    background: linear-gradient(135deg, #f97316, #b45309) !important;
-    border-color: rgba(249,115,22,0.95) !important;
-}
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
-    color: #fed7aa !important;
-}
-[data-testid="stMetric"] {
-    border-top: 3px solid rgba(249,115,22,0.75) !important;
-}
-.stTabs [data-baseweb="tab-list"] {
-    background: rgba(32,25,21,0.82) !important;
-    border-bottom: 2px solid rgba(249,115,22,0.55);
-}
-.stTabs [data-baseweb="tab"] {
-    color: #fed7aa !important;
-    font-weight: 700;
-}
-.stTabs [aria-selected="true"] {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #c2410c, #7c2d12) !important;
-    border-color: rgba(249,115,22,0.72) !important;
-}
-</style>
-""",
     "carbon": """
 <style>
 /* Snowflake Dark: make Snowflake blue the dominant navigation treatment. */
@@ -1560,6 +1432,210 @@ _THEME_EXTRAS = {
     color: #ffffff !important;
     background: linear-gradient(135deg, #0068b7, #003545) !important;
     border-color: rgba(41,181,232,0.72) !important;
+}
+</style>
+""",
+    "roll_tide": """
+<style>
+/* Roll Tide: Alabama crimson navigation over a white shell. */
+.stButton > button {
+    color: #1d1a1b !important;
+    background: linear-gradient(135deg, #ffffff, #fbf3f4) !important;
+    border-color: rgba(152,29,50,0.36) !important;
+}
+.stButton > button:hover {
+    color: #7f1829 !important;
+    background: linear-gradient(135deg, #ffffff, #f4dde2) !important;
+    border-color: rgba(152,29,50,0.58) !important;
+}
+.stButton > button[kind="primary"],
+.stButton > button[kind="primary"] p {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stRadio > label,
+[data-testid="stSidebar"] p {
+    color: #332b2d !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #981D32, #6f1626) !important;
+    border-color: rgba(111,22,38,0.78) !important;
+    box-shadow: 0 2px 9px rgba(152,29,50,0.18) !important;
+}
+[data-testid="stSidebar"] .stButton > button p {
+    color: inherit !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #b41f3b, #841b2f) !important;
+    border-color: rgba(152,29,50,0.92) !important;
+}
+[data-testid="stSidebar"] .stRadio > div > label:hover {
+    color: #981D32 !important;
+    background: rgba(152,29,50,0.07);
+}
+[data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {
+    color: #981D32 !important;
+    background: rgba(152,29,50,0.11);
+    border-left: 3px solid #981D32;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #6f1626, #981D32) !important;
+    border-color: rgba(111,22,38,0.94) !important;
+    box-shadow: inset 4px 0 0 #c0b7b3, 0 3px 13px rgba(152,29,50,0.25) !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
+    color: #981D32 !important;
+}
+[data-testid="stMetric"] {
+    border-top: 3px solid rgba(152,29,50,0.75) !important;
+}
+[data-testid="stMetricValue"] { color: #1d1a1b !important; }
+[data-testid="stMetricLabel"] { color: #74645d !important; }
+[data-testid="stExpander"] {
+    background: #ffffff !important;
+    border-color: #ddd6d5 !important;
+}
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary > div,
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span {
+    color: #1d1a1b !important;
+}
+[data-testid="stExpander"] summary {
+    background: #ffffff !important;
+    border-radius: 7px !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #981D32, #6f1626) !important;
+    border: 1px solid rgba(111,22,38,0.78) !important;
+    border-bottom: 1px solid rgba(111,22,38,0.78) !important;
+    box-shadow: 0 2px 9px rgba(152,29,50,0.18) !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: linear-gradient(135deg, #b41f3b, #841b2f) !important;
+    border-color: rgba(152,29,50,0.92) !important;
+}
+[data-testid="stExpander"] details,
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span,
+[data-testid="stExpander"] [data-testid="stMarkdownContainer"],
+[data-testid="stExpander"] [data-testid="stMarkdownContainer"] p {
+    color: #1f2937 !important;
+}
+[data-testid="stExpander"] summary:hover,
+[data-testid="stExpander"] summary:hover p,
+[data-testid="stExpander"] summary:hover span {
+    color: #981D32 !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover > span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover span {
+    color: #ffffff !important;
+}
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] p,
+.stTextInput label,
+.stTextInput label p {
+    color: #1f2937 !important;
+}
+.stTextInput input::placeholder,
+.stTextArea textarea::placeholder {
+    color: #74645d !important;
+    opacity: 1 !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+    background: #ece7e6 !important;
+    border-bottom: 2px solid rgba(152,29,50,0.65);
+}
+.stTabs [data-baseweb="tab"] {
+    color: #4c4140 !important;
+    font-weight: 650;
+}
+.stTabs [aria-selected="true"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #981D32, #6f1626) !important;
+    border-color: rgba(111,22,38,0.72) !important;
+}
+</style>
+""",
+    "war_eagle": """
+<style>
+/* War Eagle: Auburn navy shell with orange action color. */
+[data-testid="stSidebar"] .stButton > button {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #DD550C, #0C213E) !important;
+    border-color: rgba(221,85,12,0.72) !important;
+    box-shadow: 0 2px 10px rgba(221,85,12,0.20) !important;
+}
+[data-testid="stSidebar"] .stButton > button p {
+    color: inherit !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #f06a16, #132B49) !important;
+    border-color: rgba(221,85,12,0.96) !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0C213E, #DD550C) !important;
+    border-color: rgba(221,85,12,0.96) !important;
+    box-shadow: inset 4px 0 0 #e7e9eb, 0 3px 14px rgba(221,85,12,0.32) !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #DD550C, #0C213E) !important;
+    border: 1px solid rgba(221,85,12,0.72) !important;
+    border-bottom: 1px solid rgba(221,85,12,0.72) !important;
+    box-shadow: 0 2px 10px rgba(221,85,12,0.20) !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: linear-gradient(135deg, #f06a16, #132B49) !important;
+    border-color: rgba(221,85,12,0.96) !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
+    color: #f6a15c !important;
+}
+[data-testid="stMetric"] {
+    border-top: 3px solid rgba(221,85,12,0.78) !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+    background: rgba(12,33,62,0.84) !important;
+    border-bottom: 2px solid rgba(221,85,12,0.58);
+}
+.stTabs [data-baseweb="tab"] {
+    color: #e7e9eb !important;
+    font-weight: 700;
+}
+.stTabs [aria-selected="true"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #DD550C, #0C213E) !important;
+    border-color: rgba(221,85,12,0.74) !important;
 }
 </style>
 """,
@@ -1718,7 +1794,7 @@ def inject_theme() -> None:
 
 def render_theme_picker(persist: bool = False) -> None:
     """
-    Render the 5-theme picker as clickable swatch buttons.
+    Render the theme picker.
     Place this inside the sidebar Settings expander in app.py.
 
     Each option shows only the theme name.
@@ -1729,6 +1805,8 @@ def render_theme_picker(persist: bool = False) -> None:
     """
     current = _get_theme()
     options = list(THEMES.keys())
+    if st.session_state.get("theme_picker_radio") not in options:
+        st.session_state["theme_picker_radio"] = current
     index = options.index(current) if current in options else 0
     selected = st.radio(
         "Theme",

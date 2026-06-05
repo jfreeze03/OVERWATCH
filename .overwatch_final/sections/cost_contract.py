@@ -1312,9 +1312,12 @@ def _build_service_cost_lens_summary(service_lens: pd.DataFrame) -> dict:
             "ai_credits": 0.0,
             "serverless_credits": 0.0,
             "top_service": "No rows",
+            "top_moving_service": "No movement",
+            "top_moving_delta": 0.0,
             "categories": 0,
         }
     credits = pd.to_numeric(service_lens.get("CREDITS_BILLED", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    deltas = pd.to_numeric(service_lens.get("CREDIT_DELTA", pd.Series(dtype=float)), errors="coerce").fillna(0)
     category = service_lens.get("SERVICE_CATEGORY", pd.Series(dtype=str)).fillna("").astype(str)
     service = service_lens.get("SERVICE_TYPE", pd.Series(dtype=str)).fillna("").astype(str)
     total = safe_float(credits.sum())
@@ -1324,12 +1327,20 @@ def _build_service_cost_lens_summary(service_lens: pd.DataFrame) -> dict:
     top_service = "No rows"
     if len(service_lens):
         top_service = str(service_lens.assign(_CREDITS=credits).sort_values("_CREDITS", ascending=False).iloc[0].get("SERVICE_TYPE") or "Unknown")
+    top_moving_service = "No movement"
+    top_moving_delta = 0.0
+    if len(service_lens) and deltas.abs().sum() > 0:
+        mover = service_lens.assign(_ABS_DELTA=deltas.abs()).sort_values("_ABS_DELTA", ascending=False).iloc[0]
+        top_moving_service = str(mover.get("SERVICE_TYPE") or "Unknown")
+        top_moving_delta = safe_float(mover.get("CREDIT_DELTA"))
     return {
         "total_credits": total,
         "non_warehouse_credits": non_warehouse,
         "ai_credits": ai,
         "serverless_credits": serverless,
         "top_service": top_service,
+        "top_moving_service": top_moving_service,
+        "top_moving_delta": top_moving_delta,
         "categories": int(category.nunique()),
     }
 
@@ -1431,6 +1442,14 @@ def _render_account_service_cost_lens(service_lens: pd.DataFrame, credit_price: 
             "value": f"{summary['serverless_credits']:,.2f}",
             "delta_color": "inverse",
         })
+    if safe_float(summary.get("top_moving_delta")):
+        mover = str(summary.get("top_moving_service") or "No movement")
+        metrics.append({
+            "label": "Top Service Move",
+            "value": mover if len(mover) <= 24 else mover[:21] + "...",
+            "delta": f"{safe_float(summary.get('top_moving_delta')):+,.2f} cr",
+            "delta_color": "inverse",
+        })
     _render_metric_items(metrics)
     st.caption(
         f"Top service: {summary['top_service']}. "
@@ -1441,6 +1460,7 @@ def _render_account_service_cost_lens(service_lens: pd.DataFrame, credit_price: 
         title="Cost by Snowflake service type",
         priority_columns=[
             "SERVICE_CATEGORY", "SERVICE_TYPE", "CREDITS_BILLED", "ESTIMATED_COST_USD",
+            "CREDITS_BILLED_PRIOR", "CREDIT_DELTA", "COST_DELTA_USD", "PCT_DELTA",
             "CREDITS_USED_COMPUTE", "CREDITS_USED_CLOUD_SERVICES", "OBSERVED_DAYS",
         ],
         sort_by=["CREDITS_BILLED"],

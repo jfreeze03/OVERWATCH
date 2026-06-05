@@ -888,24 +888,62 @@ def build_mart_cost_service_lens_sql(days_back: int = 7, credit_price: float = 3
     days_back = max(1, int(days_back or 7))
     credit_price = float(credit_price or 3.68)
     return f"""
+        WITH perioded AS (
+            SELECT
+                SERVICE_CATEGORY,
+                SERVICE_TYPE,
+                CASE
+                    WHEN USAGE_DATE >= DATEADD('DAY', -{days_back}, CURRENT_DATE()) THEN 'CURRENT'
+                    ELSE 'PRIOR'
+                END AS PERIOD,
+                COALESCE(CREDITS_BILLED, 0) AS CREDITS_BILLED,
+                COALESCE(CREDITS_USED_COMPUTE, 0) AS CREDITS_USED_COMPUTE,
+                COALESCE(CREDITS_USED_CLOUD_SERVICES, 0) AS CREDITS_USED_CLOUD_SERVICES,
+                COALESCE(CREDITS_ADJUSTMENT_CLOUD_SERVICES, 0) AS CREDITS_ADJUSTMENT_CLOUD_SERVICES,
+                COALESCE(EST_COST_USD, CREDITS_BILLED * {credit_price:.4f}) AS EST_COST_USD,
+                USAGE_DATE
+            FROM {table}
+            WHERE USAGE_DATE >= DATEADD('DAY', -{days_back * 2}, CURRENT_DATE())
+              AND USAGE_DATE < CURRENT_DATE()
+        )
         SELECT
             SERVICE_CATEGORY,
             SERVICE_TYPE,
-            ROUND(SUM(CREDITS_BILLED), 4) AS CREDITS_BILLED,
-            ROUND(SUM(CREDITS_USED_COMPUTE), 4) AS CREDITS_USED_COMPUTE,
-            ROUND(SUM(COALESCE(CREDITS_USED_CLOUD_SERVICES, 0)), 4) AS CREDITS_USED_CLOUD_SERVICES,
-            ROUND(SUM(CREDITS_ADJUSTMENT_CLOUD_SERVICES), 4) AS CREDITS_ADJUSTMENT_CLOUD_SERVICES,
-            ROUND(SUM(COALESCE(EST_COST_USD, CREDITS_BILLED * {credit_price:.4f})), 2) AS ESTIMATED_COST_USD,
-            COUNT(DISTINCT USAGE_DATE) AS OBSERVED_DAYS,
+            ROUND(SUM(IFF(PERIOD = 'CURRENT', CREDITS_BILLED, 0)), 4) AS CREDITS_BILLED,
+            ROUND(SUM(IFF(PERIOD = 'PRIOR', CREDITS_BILLED, 0)), 4) AS CREDITS_BILLED_PRIOR,
+            ROUND(
+                SUM(IFF(PERIOD = 'CURRENT', CREDITS_BILLED, 0))
+                - SUM(IFF(PERIOD = 'PRIOR', CREDITS_BILLED, 0)),
+                4
+            ) AS CREDIT_DELTA,
+            CASE
+                WHEN SUM(IFF(PERIOD = 'PRIOR', CREDITS_BILLED, 0)) = 0 THEN NULL
+                ELSE ROUND(
+                    (
+                        SUM(IFF(PERIOD = 'CURRENT', CREDITS_BILLED, 0))
+                        - SUM(IFF(PERIOD = 'PRIOR', CREDITS_BILLED, 0))
+                    ) / NULLIF(SUM(IFF(PERIOD = 'PRIOR', CREDITS_BILLED, 0)), 0) * 100,
+                    2
+                )
+            END AS PCT_DELTA,
+            ROUND(SUM(IFF(PERIOD = 'CURRENT', CREDITS_USED_COMPUTE, 0)), 4) AS CREDITS_USED_COMPUTE,
+            ROUND(SUM(IFF(PERIOD = 'CURRENT', COALESCE(CREDITS_USED_CLOUD_SERVICES, 0), 0)), 4) AS CREDITS_USED_CLOUD_SERVICES,
+            ROUND(SUM(IFF(PERIOD = 'CURRENT', CREDITS_ADJUSTMENT_CLOUD_SERVICES, 0)), 4) AS CREDITS_ADJUSTMENT_CLOUD_SERVICES,
+            ROUND(SUM(IFF(PERIOD = 'CURRENT', EST_COST_USD, 0)), 2) AS ESTIMATED_COST_USD,
+            ROUND(SUM(IFF(PERIOD = 'PRIOR', EST_COST_USD, 0)), 2) AS PRIOR_ESTIMATED_COST_USD,
+            ROUND(
+                SUM(IFF(PERIOD = 'CURRENT', EST_COST_USD, 0))
+                - SUM(IFF(PERIOD = 'PRIOR', EST_COST_USD, 0)),
+                2
+            ) AS COST_DELTA_USD,
+            COUNT(DISTINCT IFF(PERIOD = 'CURRENT', USAGE_DATE, NULL)) AS OBSERVED_DAYS,
             'OVERWATCH mart: FACT_COST_DAILY' AS SNOWFLAKE_SOURCE
-        FROM {table}
-        WHERE USAGE_DATE >= DATEADD('DAY', -{days_back}, CURRENT_DATE())
-          AND USAGE_DATE < CURRENT_DATE()
+        FROM perioded
         GROUP BY SERVICE_CATEGORY, SERVICE_TYPE
         HAVING ABS(SUM(CREDITS_BILLED)) > 0
             OR ABS(SUM(CREDITS_USED_COMPUTE)) > 0
             OR ABS(SUM(COALESCE(CREDITS_USED_CLOUD_SERVICES, 0))) > 0
-        ORDER BY CREDITS_BILLED DESC, SERVICE_CATEGORY, SERVICE_TYPE
+        ORDER BY ABS(CREDIT_DELTA) DESC, CREDITS_BILLED DESC, SERVICE_CATEGORY, SERVICE_TYPE
     """
 
 

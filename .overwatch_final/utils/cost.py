@@ -80,18 +80,23 @@ def build_snowflake_service_cost_lens_sql(
         SELECT
             usage_date,
             UPPER(COALESCE(service_type, 'UNKNOWN')) AS service_type,
+            CASE
+                WHEN usage_date >= DATEADD('DAY', -{days_back}, CURRENT_DATE()) THEN 'CURRENT'
+                ELSE 'PRIOR'
+            END AS period,
             COALESCE(credits_used_compute, 0) AS credits_used_compute,
             COALESCE(credits_used_cloud_services, 0) AS credits_used_cloud_services,
             COALESCE(credits_adjustment_cloud_services, 0) AS credits_adjustment_cloud_services,
             COALESCE(credits_billed, 0) AS credits_billed
         FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
-        WHERE usage_date >= DATEADD('DAY', -{days_back}, CURRENT_DATE())
+        WHERE usage_date >= DATEADD('DAY', -{days_back * 2}, CURRENT_DATE())
           AND usage_date < CURRENT_DATE()
     ),
     categorized AS (
         SELECT
             usage_date,
             service_type,
+            period,
             CASE
                 WHEN service_type ILIKE '%CORTEX%' OR service_type ILIKE '%AI%' OR service_type ILIKE '%INTELLIGENCE%'
                     THEN 'AI / Cortex'
@@ -117,19 +122,43 @@ def build_snowflake_service_cost_lens_sql(
     SELECT
         service_category,
         service_type,
-        ROUND(SUM(credits_billed), 4) AS credits_billed,
-        ROUND(SUM(credits_used_compute), 4) AS credits_used_compute,
-        ROUND(SUM(COALESCE(credits_used_cloud_services, 0)), 4) AS credits_used_cloud_services,
-        ROUND(SUM(credits_adjustment_cloud_services), 4) AS credits_adjustment_cloud_services,
-        ROUND(SUM(credits_billed) * {credit_price:.4f}, 2) AS estimated_cost_usd,
-        COUNT(DISTINCT usage_date) AS observed_days,
+        ROUND(SUM(IFF(period = 'CURRENT', credits_billed, 0)), 4) AS credits_billed,
+        ROUND(SUM(IFF(period = 'PRIOR', credits_billed, 0)), 4) AS credits_billed_prior,
+        ROUND(
+            SUM(IFF(period = 'CURRENT', credits_billed, 0))
+            - SUM(IFF(period = 'PRIOR', credits_billed, 0)),
+            4
+        ) AS credit_delta,
+        CASE
+            WHEN SUM(IFF(period = 'PRIOR', credits_billed, 0)) = 0 THEN NULL
+            ELSE ROUND(
+                (
+                    SUM(IFF(period = 'CURRENT', credits_billed, 0))
+                    - SUM(IFF(period = 'PRIOR', credits_billed, 0))
+                ) / NULLIF(SUM(IFF(period = 'PRIOR', credits_billed, 0)), 0) * 100,
+                2
+            )
+        END AS pct_delta,
+        ROUND(SUM(IFF(period = 'CURRENT', credits_used_compute, 0)), 4) AS credits_used_compute,
+        ROUND(SUM(IFF(period = 'CURRENT', COALESCE(credits_used_cloud_services, 0), 0)), 4) AS credits_used_cloud_services,
+        ROUND(SUM(IFF(period = 'CURRENT', credits_adjustment_cloud_services, 0)), 4) AS credits_adjustment_cloud_services,
+        ROUND(SUM(IFF(period = 'CURRENT', credits_billed, 0)) * {credit_price:.4f}, 2) AS estimated_cost_usd,
+        ROUND(SUM(IFF(period = 'PRIOR', credits_billed, 0)) * {credit_price:.4f}, 2) AS prior_estimated_cost_usd,
+        ROUND(
+            (
+                SUM(IFF(period = 'CURRENT', credits_billed, 0))
+                - SUM(IFF(period = 'PRIOR', credits_billed, 0))
+            ) * {credit_price:.4f},
+            2
+        ) AS cost_delta_usd,
+        COUNT(DISTINCT IFF(period = 'CURRENT', usage_date, NULL)) AS observed_days,
         'SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY' AS snowflake_source
     FROM categorized
     GROUP BY service_category, service_type
-    HAVING ABS(SUM(credits_billed)) > 0
+        HAVING ABS(SUM(credits_billed)) > 0
         OR ABS(SUM(credits_used_compute)) > 0
         OR ABS(SUM(COALESCE(credits_used_cloud_services, 0))) > 0
-    ORDER BY credits_billed DESC, service_category, service_type
+    ORDER BY ABS(credit_delta) DESC, credits_billed DESC, service_category, service_type
     """
 
 

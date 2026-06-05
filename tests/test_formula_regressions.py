@@ -522,11 +522,22 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("AI / CORTEX", service_sql)
         self.assertIn("SERVERLESS / MANAGED COMPUTE", service_sql)
         self.assertIn("CREDITS_BILLED", service_sql)
-        self.assertIn("USAGE_DATE >= DATEADD('DAY', -14", service_sql)
+        self.assertIn("CREDITS_BILLED_PRIOR", service_sql)
+        self.assertIn("CREDIT_DELTA", service_sql)
+        self.assertIn("PCT_DELTA", service_sql)
+        self.assertIn("COST_DELTA_USD", service_sql)
+        self.assertIn("USAGE_DATE >= DATEADD('DAY', -28", service_sql)
+        self.assertIn("WHEN USAGE_DATE >= DATEADD('DAY', -14", service_sql)
 
         self.assertIn("FACT_COST_DAILY", mart_sql)
         self.assertIn("SERVICE_CATEGORY", mart_sql)
         self.assertIn("CREDITS_BILLED", mart_sql)
+        self.assertIn("CREDITS_BILLED_PRIOR", mart_sql)
+        self.assertIn("CREDIT_DELTA", mart_sql)
+        self.assertIn("PCT_DELTA", mart_sql)
+        self.assertIn("COST_DELTA_USD", mart_sql)
+        self.assertIn("USAGE_DATE >= DATEADD('DAY', -28", mart_sql)
+        self.assertIn("WHEN USAGE_DATE >= DATEADD('DAY', -14", mart_sql)
         self.assertIn("OVERWATCH MART: FACT_COST_DAILY", mart_sql)
 
     def test_metered_credit_cte_uses_compute_credits_with_total_fallback(self):
@@ -582,9 +593,24 @@ class FormulaRegressionTests(unittest.TestCase):
             },
         ])
         service_lens = pd.DataFrame([
-            {"SERVICE_CATEGORY": "Warehouse", "SERVICE_TYPE": "WAREHOUSE_METERING", "CREDITS_BILLED": 10.0},
-            {"SERVICE_CATEGORY": "AI / Cortex", "SERVICE_TYPE": "CORTEX", "CREDITS_BILLED": 2.0},
-            {"SERVICE_CATEGORY": "Serverless / Managed Compute", "SERVICE_TYPE": "SERVERLESS_TASK", "CREDITS_BILLED": 1.0},
+            {
+                "SERVICE_CATEGORY": "Warehouse",
+                "SERVICE_TYPE": "WAREHOUSE_METERING",
+                "CREDITS_BILLED": 10.0,
+                "CREDIT_DELTA": 0.5,
+            },
+            {
+                "SERVICE_CATEGORY": "AI / Cortex",
+                "SERVICE_TYPE": "CORTEX",
+                "CREDITS_BILLED": 2.0,
+                "CREDIT_DELTA": 1.5,
+            },
+            {
+                "SERVICE_CATEGORY": "Serverless / Managed Compute",
+                "SERVICE_TYPE": "SERVERLESS_TASK",
+                "CREDITS_BILLED": 1.0,
+                "CREDIT_DELTA": -3.25,
+            },
         ])
         state = {"cost_contract_service_lens_source": "OVERWATCH mart: FACT_COST_DAILY"}
 
@@ -615,6 +641,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(service_summary["non_warehouse_credits"], 3.0)
         self.assertAlmostEqual(service_summary["ai_credits"], 2.0)
         self.assertAlmostEqual(service_summary["serverless_credits"], 1.0)
+        self.assertEqual(service_summary["top_moving_service"], "SERVERLESS_TASK")
+        self.assertAlmostEqual(service_summary["top_moving_delta"], -3.25)
 
     def test_query_attribution_support_requires_all_generated_sql_columns(self):
         import streamlit as st

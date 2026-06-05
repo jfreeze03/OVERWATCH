@@ -83,6 +83,18 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn('[data-testid="stExpander"] summary', theme._THEME_EXTRAS["corporate"])
         self.assertIn('[data-testid="stExpander"] summary', theme._THEME_EXTRAS["terminal"])
         self.assertIn("color: #102a43 !important", theme._THEME_EXTRAS["terminal"])
+        light_theme_text = {
+            "corporate": ("#151f2c", "#64748b"),
+            "terminal": ("#102a43", "#526b7a"),
+            "roll_tide": ("#1d1a1b", "#74645d"),
+        }
+        for theme_key, (body_color, caption_color) in light_theme_text.items():
+            with self.subTest(theme=theme_key):
+                extra = theme._THEME_EXTRAS[theme_key]
+                self.assertIn('.stMain [data-testid="stMarkdownContainer"] p', extra)
+                self.assertIn('.stMain [data-testid="stCaptionContainer"]', extra)
+                self.assertIn(f"color: {body_color} !important", extra)
+                self.assertIn(f"color: {caption_color} !important", extra)
 
     def test_all_themes_pin_sidebar_navigation_to_theme_color(self):
         expected_gradients = {

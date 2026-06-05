@@ -17,7 +17,7 @@
 #   render_theme_picker()
 import streamlit as st
 
-THEME_VERSION = "2026-06-05-roll-tide-war-eagle-v1"
+THEME_VERSION = "2026-06-05-roll-tide-war-eagle-v3"
 
 _DEFAULT_THEME = "carbon"
 _THEME_ALIASES = {
@@ -26,7 +26,7 @@ _THEME_ALIASES = {
     "midnight": "carbon",
 }
 
-# ── Theme metadata (used for the picker UI) ───────────────────────────────────
+# Theme metadata (used for the picker UI)
 THEMES = {
     "carbon": {
         "label":    "Snowflake Dark",
@@ -55,11 +55,11 @@ THEMES = {
     },
 }
 
-# ── CSS variable blocks — one per theme ───────────────────────────────────────
+# CSS variable blocks - one per theme
 
 _VARS = {
 
-# ─── 2. HENSON — muted light shell with dominant red navigation ──────────────
+# 2. HENSON - muted light shell with dominant red navigation
 "corporate": """
 :root {
     --bg-app:          #f1f4f7;
@@ -106,7 +106,7 @@ _VARS = {
 }
 """,
 
-# ─── 3. SNOWFLAKE WHITE — classic white with Snowflake brand blues ───────────
+# 3. SNOWFLAKE WHITE - classic white with Snowflake brand blues
 "terminal": """
 :root {
     --bg-app:          #eef6fb;
@@ -153,7 +153,7 @@ _VARS = {
 }
 """,
 
-# ─── 5. SNOWFLAKE DARK — classic dark with Snowflake brand blues ─────────────
+# 5. SNOWFLAKE DARK - classic dark with Snowflake brand blues
 "carbon": """
 :root {
     --bg-app:          linear-gradient(160deg, #0B1117 0%, #101A22 48%, #003545 100%);
@@ -295,14 +295,14 @@ _VARS = {
 """,
 }
 
-# ── Shared structural styles (all colors via variables) ───────────────────────
+# Shared structural styles (all colors via variables)
 _STRUCTURAL_CSS = """
 <style>
 {vars}
 
 /* OVERWATCH THEME ENGINE */
 
-/* ── Base ── */
+/* Base */
 .stApp, .stApp > * {
     background: var(--bg-app) !important;
     font-family: var(--font-body) !important;
@@ -319,7 +319,7 @@ footer {
     display: none !important;
 }
 
-/* ── Sidebar ── */
+/* Sidebar */
 [data-testid="stSidebar"] {
     background: var(--bg-sidebar) !important;
     border-right: 1px solid var(--border-sidebar) !important;
@@ -471,7 +471,7 @@ p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
     box-shadow: 0 6px 24px rgba(var(--accent-rgb), 0.55) !important;
 }
 
-/* ── Expanders ── */
+/* Expanders */
 [data-testid="stExpander"] {
     background: var(--bg-expander) !important;
     border: 1px solid var(--border-subtle) !important;
@@ -479,7 +479,7 @@ p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
     backdrop-filter: blur(8px);
 }
 
-/* ── Dividers ── */
+/* Dividers */
 hr {
     border: none !important;
     height: 1px;
@@ -487,14 +487,14 @@ hr {
     margin: 16px 0;
 }
 
-/* ── Charts ── */
+/* Charts */
 [data-testid="stArrowVegaLiteChart"],
 [data-testid="stVegaLiteChart"] {
     background: transparent !important;
     border-radius: 10px;
 }
 
-/* ── Inputs ── */
+/* Inputs */
 .stSelectbox > div > div,
 .stTextInput > div > div > input,
 .stNumberInput > div > div > input,
@@ -512,12 +512,12 @@ hr {
     box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.12) !important;
 }
 
-/* ── Slider ── */
+/* Slider */
 .stSlider > div > div > div > div {
     background: var(--slider-track) !important;
 }
 
-/* ── Tabs ── */
+/* Tabs */
 .stTabs [data-baseweb="tab-list"] {
     gap: 4px;
     row-gap: 6px;
@@ -544,13 +544,13 @@ hr {
     border-color: rgba(var(--accent-rgb), 0.28);
 }
 
-/* ── Captions ── */
+/* Captions */
 .stCaption, [data-testid="stCaptionContainer"] {
     color: var(--text-muted) !important;
     font-family: var(--font-body) !important;
 }
 
-/* ── Code blocks ── */
+/* Code blocks */
 code, pre, .stCodeBlock {
     font-family: var(--font-mono) !important;
     background: var(--bg-input) !important;
@@ -559,13 +559,13 @@ code, pre, .stCodeBlock {
     color: var(--accent) !important;
 }
 
-/* ── Scrollbars ── */
+/* Scrollbars */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 
-/* ── Animations ── */
+/* Animations */
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
 @keyframes black-ice-shift {
     0%   { background-position: 0% 50%; }
@@ -674,7 +674,7 @@ code, pre, .stCodeBlock {
     border-radius: 8px !important;
 }
 
-/* ── Status badges ── */
+/* Status badges */
 .status-badge {
     display: inline-block; padding: 2px 8px; border-radius: 12px;
     font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
@@ -683,7 +683,7 @@ code, pre, .stCodeBlock {
 .badge-warning  { background: rgba(251,191,36,0.20); color:#fbbf24; border:1px solid rgba(251,191,36,0.30); }
 .badge-critical { background: rgba(239,68,68,0.20);  color:#f87171; border:1px solid rgba(239,68,68,0.30); }
 
-/* ── Metric card container (custom) ── */
+/* Metric card container (custom) */
 .metric-card {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
@@ -1044,12 +1044,12 @@ code, pre, .stCodeBlock {
     }
 }
 
-/* ═══════════════════ SNOWFLAKE WHITE theme extras ═══════════════════ */
+/* SNOWFLAKE WHITE theme extras */
 .terminal-extra [data-testid="stMetric"] {
     border-top: 3px solid rgba(41,181,232,0.75) !important;
 }
 
-/* ═══════════════════ CORPORATE theme extras ═══════════════════ */
+/* CORPORATE theme extras */
 /* Sidebar text needs to be white on navy background */
 .corporate-extra [data-testid="stSidebar"] label,
 .corporate-extra [data-testid="stSidebar"] .stRadio > label,
@@ -1106,7 +1106,7 @@ code, pre, .stCodeBlock {
 </style>
 """
 
-# ── Theme picker HTML ─────────────────────────────────────────────────────────
+# Theme picker HTML
 _THEME_EXTRAS = {
     "corporate": """
 <style>
@@ -1124,6 +1124,15 @@ _THEME_EXTRAS = {
 .stButton > button[kind="primary"],
 .stButton > button[kind="primary"] p {
     color: #ffffff !important;
+}
+.stMain [data-testid="stMarkdownContainer"],
+.stMain [data-testid="stMarkdownContainer"] p {
+    color: #151f2c !important;
+}
+.stMain [data-testid="stCaptionContainer"],
+.stMain [data-testid="stCaptionContainer"] p,
+.stMain [data-testid="stCaptionContainer"] span {
+    color: #64748b !important;
 }
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] .stRadio > label,
@@ -1263,6 +1272,15 @@ _THEME_EXTRAS = {
 .stButton > button[kind="primary"],
 .stButton > button[kind="primary"] p {
     color: #ffffff !important;
+}
+.stMain [data-testid="stMarkdownContainer"],
+.stMain [data-testid="stMarkdownContainer"] p {
+    color: #102a43 !important;
+}
+.stMain [data-testid="stCaptionContainer"],
+.stMain [data-testid="stCaptionContainer"] p,
+.stMain [data-testid="stCaptionContainer"] span {
+    color: #526b7a !important;
 }
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] .stRadio > label,
@@ -1451,6 +1469,15 @@ _THEME_EXTRAS = {
 .stButton > button[kind="primary"],
 .stButton > button[kind="primary"] p {
     color: #ffffff !important;
+}
+.stMain [data-testid="stMarkdownContainer"],
+.stMain [data-testid="stMarkdownContainer"] p {
+    color: #1d1a1b !important;
+}
+.stMain [data-testid="stCaptionContainer"],
+.stMain [data-testid="stCaptionContainer"] p,
+.stMain [data-testid="stCaptionContainer"] span {
+    color: #74645d !important;
 }
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] .stRadio > label,

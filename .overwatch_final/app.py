@@ -160,7 +160,7 @@ def _maybe_reload_dev_helpers() -> None:
 
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-06-05-roll-tide-war-eagle-v1":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-06-05-roll-tide-war-eagle-v3":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker

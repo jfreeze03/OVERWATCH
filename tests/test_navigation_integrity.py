@@ -864,6 +864,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('key=f"{key}_{start}_{workflow}"', cost_contract_text)
         self.assertIn("def _cost_action_brief", cost_contract_text)
         self.assertIn("def _render_cost_action_brief", cost_contract_text)
+        self.assertIn("def _render_cost_operating_snapshot", cost_contract_text)
+        self.assertIn('st.markdown("**Operating Snapshot**")', cost_contract_text)
+        self.assertIn('cols = st.columns(4)', cost_contract_text)
         self.assertIn('key="cost_contract_cockpit_window"', cost_contract_text)
         cost_watch_preload = cost_contract_text.split("def _render_cost_watch_floor", 1)[1].split(
             "if st.button(\"Load Cost Cockpit\"",

@@ -3612,14 +3612,57 @@ def _render_cost_action_brief(brief: dict) -> None:
             st.caption(str(brief.get("detail") or ""))
 
 
+def _cost_operating_snapshot(company: str, days: int, credit_price: float) -> dict:
+    data = st.session_state.get("cost_contract_cockpit")
+    meta = st.session_state.get("cost_contract_cockpit_meta", {})
+    loaded = (
+        _looks_like_frame(data)
+        and not data.empty
+        and meta.get("company") == company
+        and meta.get("days") == int(days)
+    )
+    if not loaded:
+        return {"loaded": False}
+
+    row = data.iloc[0]
+    current_credits = safe_float(row.get("CURRENT_CREDITS", 0))
+    prior_credits = safe_float(row.get("PRIOR_CREDITS", 0))
+    delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
+    queue = st.session_state.get("cost_contract_queue")
+    open_actions = 0
+    if _looks_like_frame(queue) and not queue.empty and "STATUS" in queue.columns:
+        status = queue["STATUS"].fillna("").astype(str)
+        open_actions = int((~status.isin(["Fixed", "Ignored"])).sum())
+
+    return {
+        "loaded": True,
+        "spend": credits_to_dollars(current_credits, credit_price),
+        "delta_pct": delta_pct,
+        "top_delta_credits": safe_float(row.get("TOP_INCREASE_CREDITS", 0)),
+        "open_actions": open_actions,
+    }
+
+
+def _render_cost_operating_snapshot(snapshot: dict) -> None:
+    st.markdown("**Operating Snapshot**")
+    loaded = bool(snapshot.get("loaded"))
+    pending = "Pending"
+    cols = st.columns(4)
+    cols[0].metric("Spend", f"${safe_float(snapshot.get('spend')):,.0f}" if loaded else pending)
+    cols[1].metric("Delta", f"{safe_float(snapshot.get('delta_pct')):+.1f}%" if loaded else pending, delta_color="inverse")
+    cols[2].metric("Top Inc", f"{safe_float(snapshot.get('top_delta_credits')):+,.1f} cr" if loaded else pending, delta_color="inverse")
+    cols[3].metric("Actions", f"{safe_int(snapshot.get('open_actions')):,}" if loaded else pending, delta_color="inverse")
+
+
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     selected_days = safe_int(st.session_state.get("cost_contract_cockpit_window", 7), 7)
     if selected_days not in {7, 14, 30}:
         selected_days = 7
     _render_cost_action_brief(_cost_action_brief(company, selected_days, credit_price))
+    _render_cost_operating_snapshot(_cost_operating_snapshot(company, selected_days, credit_price))
 
     st.subheader("Cost Control Cockpit")
-    c1, c2, c3 = st.columns([1, 1, 2])
+    c1, c2 = st.columns([1, 1])
     with c1:
         days = st.selectbox(
             "Cost cockpit window",
@@ -3756,8 +3799,9 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                         f"live fallback failed: {format_snowflake_error(exc)}"
                     )
                     st.session_state["cost_contract_service_lens_source"] = ""
-    with c3:
-        st.info("Use this cockpit to decide whether to explain the bill, work the action queue, inspect Cortex spend, or log verified savings.")
+    defer_section_note(
+        "Cost cockpit: Load it to decide whether to explain the bill, work the action queue, inspect Cortex spend, or log verified savings."
+    )
 
     _render_snowflake_cost_management_parity(company, int(days), credit_price)
 
@@ -3785,7 +3829,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         or meta.get("company") != company
         or meta.get("days") != int(days)
     ):
-        st.caption("Load the cost cockpit for a fast first move. Specialist pages still load their own detailed data.")
+        defer_section_note("Specialist cost pages load their own detailed data after the cockpit first move.")
         return
 
     defer_source_note(st.session_state.get("cost_contract_cockpit_source", "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"))
@@ -3810,37 +3854,22 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     top_delta_usd = credits_to_dollars(top_delta, credit_price)
     top_delta_usd_label = f"{'+' if top_delta_usd >= 0 else '-'}${abs(top_delta_usd):,.0f}"
     cortex_projected, cortex_exception_count = _loaded_cortex_state()
-    metrics = [
-        {
-            "label": "Current Window",
-            "value": f"${credits_to_dollars(current_credits, credit_price):,.0f}",
-            "delta": f"{delta_pct:+.1f}%",
-            "delta_color": "inverse",
-        },
-        {
-            "label": "Top Increase",
-            "value": top_wh,
-            "delta": f"{top_delta:+,.2f} credits / {top_delta_usd_label}",
-            "delta_color": "inverse",
-        },
-    ]
-    if open_actions or high_actions:
-        metrics.append({
-            "label": "Open Actions",
-            "value": f"{open_actions:,}",
-            "delta": f"{high_actions:,} high",
-            "delta_color": "inverse",
-        })
+    secondary_metrics = []
     if total_savings > 0:
-        metrics.append({"label": "Savings Queue", "value": f"${total_savings:,.0f}/mo"})
+        secondary_metrics.append({"label": "Savings Queue", "value": f"${total_savings:,.0f}/mo"})
     if cortex_projected > 0 or cortex_exception_count > 0:
-        metrics.append({
+        secondary_metrics.append({
             "label": "Cortex Projection",
             "value": f"${cortex_projected:,.0f}/30d",
             "delta": f"{cortex_exception_count:,} exceptions",
             "delta_color": "inverse",
         })
-    _render_metric_items(metrics)
+    if secondary_metrics:
+        with st.expander("Secondary cockpit metrics", expanded=False):
+            _render_metric_items(secondary_metrics)
+            if open_actions or high_actions:
+                st.caption(f"{open_actions:,} open cost action(s), {high_actions:,} high priority.")
+            st.caption(f"Top warehouse increase: {top_wh} ({top_delta:+,.2f} credits / {top_delta_usd_label}).")
 
     run_rate_source = st.session_state.get("cost_contract_run_rate_source", "")
     if run_rate_source:

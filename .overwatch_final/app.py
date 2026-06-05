@@ -755,22 +755,26 @@ with st.sidebar:
             max_chars=100,
         )
         bm_shared = st.checkbox("Share with all users", key="bm_shared_toggle")
-        if st.button("Save View", key="bm_save_btn", disabled=not new_bm_name):
-            if not _session:
-                try:
-                    _session = get_session()
-                except Exception:
-                    _session = None
-            if not _session:
-                st.warning("Connect Snowflake before saving views.")
+        if st.button("Save View", key="bm_save_btn"):
+            bookmark_name = str(st.session_state.get("bm_name_input") or new_bm_name or "").strip()
+            if not bookmark_name:
+                st.warning("Enter a bookmark name before saving.")
             else:
-                save_bookmark, _, _, _ = _load_bookmark_helpers()
-                if save_bookmark(_session, new_bm_name, bm_shared):
-                    st.success(f"Saved '{new_bm_name}'")
-                    st.session_state.pop("bm_name_input", None)
-                    st.session_state.pop("_overwatch_saved_views_cache", None)
-                    st.session_state["_overwatch_saved_views_loaded"] = False
-                    st.rerun()
+                if not _session:
+                    try:
+                        _session = get_session()
+                    except Exception:
+                        _session = None
+                if not _session:
+                    st.warning("Connect Snowflake before saving views.")
+                else:
+                    save_bookmark, _, _, _ = _load_bookmark_helpers()
+                    if save_bookmark(_session, bookmark_name, bm_shared):
+                        st.success(f"Saved '{bookmark_name}'")
+                        st.session_state.pop("bm_name_input", None)
+                        st.session_state.pop("_overwatch_saved_views_cache", None)
+                        st.session_state["_overwatch_saved_views_loaded"] = False
+                        st.rerun()
 
         if _session:
             st.caption("Saved View table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")

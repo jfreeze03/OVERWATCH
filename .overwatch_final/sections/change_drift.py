@@ -135,24 +135,7 @@ def render_workflow_selector(
         st.session_state[key] = selected
     if label and show_label:
         st.caption(label)
-    items = list(workflows)
-    details = details or {}
-    columns = max(1, min(int(columns or 4), 5))
-    for start in range(0, len(items), columns):
-        row = items[start:start + columns]
-        cols = st.columns(len(row))
-        for col, workflow in zip(cols, row):
-            with col:
-                if st.button(
-                    workflow,
-                    key=f"{key}_{start}_{workflow}",
-                    type="primary" if workflow == selected else "secondary",
-                    width="stretch",
-                    help=details.get(workflow) or None,
-                ):
-                    st.session_state[key] = workflow
-                    st.rerun()
-    return str(st.session_state.get(key, selected))
+    return str(st.selectbox(label, list(workflows), key=key))
 
 
 def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> None:
@@ -166,6 +149,8 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
         st.warning(f"Workflow module has no render() function: {module_name}")
         return
     render()
+
+CHANGE_DRIFT_VIEWS = ("Change Brief", "Change Workflows")
 
 WORKFLOWS = (
     "Object and access changes",
@@ -1953,6 +1938,7 @@ def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> Non
                     "ocm_df_drift",
                 ):
                     st.session_state.pop(stale_key, None)
+                st.session_state["change_drift_view"] = "Change Workflows"
                 st.session_state["change_drift_workflow"] = workflow
                 st.rerun()
 
@@ -3710,6 +3696,10 @@ def render() -> None:
     environment = get_active_environment()
     if st.session_state.get("exceptions_only_mode") and "change_drift_workflow" not in st.session_state:
         st.session_state["change_drift_workflow"] = "Object and access changes"
+    if st.session_state.get("exceptions_only_mode") and "change_drift_view" not in st.session_state:
+        st.session_state["change_drift_view"] = "Change Workflows"
+    if st.session_state.get("change_drift_view") not in CHANGE_DRIFT_VIEWS:
+        st.session_state["change_drift_view"] = CHANGE_DRIFT_VIEWS[0]
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="estimated",
@@ -3741,8 +3731,44 @@ def render() -> None:
     )
 
     days = st.slider("Change brief lookback (days)", 1, 90, 14, key="change_drift_brief_days")
-    if _change_has_source_state(st.session_state):
-        _render_change_source_health(company, environment)
+    active_view = st.selectbox(
+        "Change & Drift view",
+        CHANGE_DRIFT_VIEWS,
+        key="change_drift_view",
+    )
+    if active_view == "Change Workflows":
+        if _change_has_source_state(st.session_state):
+            _render_change_source_health(company, environment)
+        workflow = render_workflow_selector(
+            "Change workflow",
+            "change_drift_workflow",
+            WORKFLOWS,
+            WORKFLOW_DETAILS,
+            columns=5,
+        )
+
+        if workflow == "Object and access changes":
+            render_workflow_module(workflow, WORKFLOW_MODULES)
+        elif workflow == "Stored procedure lineage":
+            render_workflow_module(workflow, WORKFLOW_MODULES)
+        elif workflow == "Terraform evidence":
+            _render_change_external_integrations(company, environment, days, mode="Terraform")
+        elif workflow == "Jira evidence":
+            _render_change_external_integrations(company, environment, days, mode="Jira")
+        elif workflow == "Schema and object drift":
+            st.session_state["dba_tools_focus"] = "Governance"
+            st.info("Focused toolkit: schema compare, recent objects, unused objects, object inventory, and drift checks.")
+            render_workflow_module(workflow, WORKFLOW_MODULES)
+        elif workflow == "Data movement and replication":
+            st.session_state["dba_tools_focus"] = "Data Movement"
+            st.info("Focused toolkit: data loading, Snowpipe, dynamic tables, and replication checks.")
+            render_workflow_module(workflow, WORKFLOW_MODULES)
+        else:
+            st.session_state["dba_tools_focus"] = "Controlled Actions"
+            st.info("Focused toolkit: query cancellation, warehouse settings, task graph control, setup, and audit evidence.")
+            render_workflow_module(workflow, WORKFLOW_MODULES)
+        return
+
     if st.button("Load Change & Drift Brief", key="change_drift_brief_load", type="primary"):
         try:
             summary_sql, exceptions_sql = _build_mart_change_drift_sql(days, company)
@@ -4153,32 +4179,3 @@ def render() -> None:
                 st.code(proof_sql.get("exceptions", "-- Load the change brief first."), language="sql")
         if st.session_state.get("exceptions_only_mode"):
             st.stop()
-
-    workflow = render_workflow_selector(
-        "Change workflow",
-        "change_drift_workflow",
-        WORKFLOWS,
-        WORKFLOW_DETAILS,
-        columns=5,
-    )
-
-    if workflow == "Object and access changes":
-        render_workflow_module(workflow, WORKFLOW_MODULES)
-    elif workflow == "Stored procedure lineage":
-        render_workflow_module(workflow, WORKFLOW_MODULES)
-    elif workflow == "Terraform evidence":
-        _render_change_external_integrations(company, environment, days, mode="Terraform")
-    elif workflow == "Jira evidence":
-        _render_change_external_integrations(company, environment, days, mode="Jira")
-    elif workflow == "Schema and object drift":
-        st.session_state["dba_tools_focus"] = "Governance"
-        st.info("Focused toolkit: schema compare, recent objects, unused objects, object inventory, and drift checks.")
-        render_workflow_module(workflow, WORKFLOW_MODULES)
-    elif workflow == "Data movement and replication":
-        st.session_state["dba_tools_focus"] = "Data Movement"
-        st.info("Focused toolkit: data loading, Snowpipe, dynamic tables, and replication checks.")
-        render_workflow_module(workflow, WORKFLOW_MODULES)
-    else:
-        st.session_state["dba_tools_focus"] = "Controlled Actions"
-        st.info("Focused toolkit: query cancellation, warehouse settings, task graph control, setup, and audit evidence.")
-        render_workflow_module(workflow, WORKFLOW_MODULES)

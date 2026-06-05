@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from config import COMPANY_CONFIG
+from .admin import safe_identifier, sql_literal
 from .company_filter import company_value_allowed, get_active_company
 from .data import normalize_df
 
@@ -55,6 +56,7 @@ def show_to_df(session, stmt: str, force_refresh: bool = False) -> pd.DataFrame:
         df = normalize_df(session.sql(stmt).to_pandas())
     except Exception:
         return pd.DataFrame()
+    df.columns = [str(col).strip('"').upper() for col in df.columns]
     cache[cache_key] = {"loaded_at": now, "frame": df.copy()}
     _prune_show_cache(cache)
     return df.copy()
@@ -170,6 +172,101 @@ def load_task_inventory(
         return pd.DataFrame()
     df["NAME"] = df["NAME"].astype(str).str.strip()
     return df[df["NAME"] != ""].copy()
+
+
+def load_live_task_runs(
+    session,
+    task_inventory: pd.DataFrame,
+    hours_back: int = 6,
+    result_limit_per_task: int = 10,
+    max_tasks: int = 150,
+) -> pd.DataFrame:
+    """Load currently running task executions from database INFORMATION_SCHEMA.
+
+    ACCOUNT_USAGE.TASK_HISTORY can lag, and database-wide INFORMATION_SCHEMA
+    calls can be dominated by scheduled future rows. For live cancellation, use
+    the visible task inventory as an index and ask each task directly.
+    """
+    if task_inventory is None or task_inventory.empty:
+        return pd.DataFrame()
+
+    db_col = first_existing_column(task_inventory, ["DATABASE_NAME", "DATABASE"])
+    task_col = first_existing_column(task_inventory, ["NAME", "TASK_NAME"])
+    schema_col = first_existing_column(task_inventory, ["SCHEMA_NAME", "SCHEMA"])
+    if not db_col or not task_col:
+        return pd.DataFrame()
+
+    frames: list[pd.DataFrame] = []
+    seen_tasks: set[tuple[str, str, str]] = set()
+    per_task_limit = max(1, min(100, int(result_limit_per_task or 10)))
+    task_limit = max(1, min(500, int(max_tasks or 150)))
+
+    for _, row in task_inventory.head(task_limit).iterrows():
+        database_name = str(row.get(db_col) or "").strip()
+        schema_name = str(row.get(schema_col) or "").strip() if schema_col else ""
+        task_name = str(row.get(task_col) or "").strip()
+        task_key = (database_name.upper(), schema_name.upper(), task_name.upper())
+        if not database_name or not task_name or task_key in seen_tasks:
+            continue
+        seen_tasks.add(task_key)
+        try:
+            database_ident = safe_identifier(database_name)
+        except Exception:
+            continue
+
+        sql = f"""
+            SELECT SCHEDULED_TIME,
+                   COALESCE(QUERY_START_TIME, SCHEDULED_TIME) AS QUERY_START_TIME,
+                   COMPLETED_TIME,
+                   COALESCE(DATABASE_NAME, {sql_literal(database_name, 512)}) AS DATABASE_NAME,
+                   COALESCE(SCHEMA_NAME, {sql_literal(schema_name, 512)}) AS SCHEMA_NAME,
+                   NAME AS TASK_NAME,
+                   NAME,
+                   STATE,
+                   ERROR_CODE,
+                   ERROR_MESSAGE,
+                   QUERY_ID,
+                   ROOT_TASK_ID,
+                   GRAPH_RUN_GROUP_ID,
+                   DATEDIFF(
+                       'second',
+                       COALESCE(QUERY_START_TIME, SCHEDULED_TIME),
+                       COALESCE(COMPLETED_TIME, CURRENT_TIMESTAMP())
+                   ) AS DURATION_SEC,
+                   'INFORMATION_SCHEMA.TASK_HISTORY' AS SOURCE
+            FROM TABLE({database_ident}.INFORMATION_SCHEMA.TASK_HISTORY(
+                TASK_NAME => {sql_literal(task_name, 512)},
+                RESULT_LIMIT => {per_task_limit}
+            ))
+            ORDER BY SCHEDULED_TIME DESC
+        """
+        try:
+            rows = session.sql(sql).collect()
+        except Exception:
+            continue
+        df = pd.DataFrame([row.as_dict() for row in rows])
+        if df.empty:
+            continue
+        df.columns = [str(col).strip('"').upper() for col in df.columns]
+        if schema_name and "SCHEMA_NAME" in df.columns:
+            df = df[df["SCHEMA_NAME"].fillna("").astype(str).str.upper() == schema_name.upper()]
+        if "STATE" in df.columns:
+            df = df[df["STATE"].fillna("").astype(str).str.upper().isin(["EXECUTING", "RUNNING"])]
+        if df.empty:
+            continue
+        frames.append(df)
+
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(frames, ignore_index=True)
+    dedupe_cols = [
+        col for col in ["DATABASE_NAME", "SCHEMA_NAME", "NAME", "QUERY_ID", "GRAPH_RUN_GROUP_ID"]
+        if col in combined.columns
+    ]
+    if dedupe_cols:
+        combined = combined.drop_duplicates(subset=dedupe_cols, keep="first")
+    return combined.copy()
 
 
 def _like_predicate(column: str, patterns: list[str], negate: bool = False) -> str:

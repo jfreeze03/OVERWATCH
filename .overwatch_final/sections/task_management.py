@@ -17,6 +17,7 @@ from utils import (
     log_admin_action,
     CREDIT_RATES,
     filter_existing_columns,
+    load_live_task_runs,
     load_task_inventory,
     make_action_id,
     build_mart_task_critical_path_sql,
@@ -122,7 +123,14 @@ def _qualified_name(*parts: str) -> str:
 
 def _typed_confirmation(prompt: str, expected: str, key: str) -> bool:
     entered = st.text_input(prompt, key=key, placeholder=expected)
-    return entered.strip() == expected
+    return str(st.session_state.get(key) or entered or "").strip() == expected
+
+
+def _require_typed_confirmation(confirmed: bool, expected: str) -> bool:
+    if confirmed:
+        return True
+    st.warning(f"Type `{expected}` exactly before running this action.")
+    return False
 
 
 def _show_tasks(session, force_refresh: bool = False) -> pd.DataFrame:
@@ -2902,26 +2910,27 @@ def render():
                     f"Run graph action: {action}",
                     type="primary",
                     key="tm_graph_run",
-                    disabled=admin_button_disabled(not confirmed or not sql_list),
+                    disabled=admin_button_disabled(not sql_list),
                 ):
-                    completed, errors = _run_admin_sql_list(
-                        session,
-                        sql_list,
-                        f"TASK GRAPH {action}",
-                        root_name,
-                        confirmation_text=phrase,
-                        control_context=(
-                            f"mode=Graph/root task; tasks_affected={len(graph_tasks)}; "
-                            f"prod_guard={_is_prod_task(root_row)}"
-                        ),
-                    )
-                    if errors:
-                        st.warning(f"Completed {completed} statement(s) with {len(errors)} error(s).")
-                        for err in errors[:10]:
-                            st.caption(err)
-                    else:
-                        st.success(f"Completed {completed} statement(s) for graph `{root_name}`.")
-                    st.session_state.pop("tg_list", None)
+                    if _require_typed_confirmation(confirmed, phrase):
+                        completed, errors = _run_admin_sql_list(
+                            session,
+                            sql_list,
+                            f"TASK GRAPH {action}",
+                            root_name,
+                            confirmation_text=phrase,
+                            control_context=(
+                                f"mode=Graph/root task; tasks_affected={len(graph_tasks)}; "
+                                f"prod_guard={_is_prod_task(root_row)}"
+                            ),
+                        )
+                        if errors:
+                            st.warning(f"Completed {completed} statement(s) with {len(errors)} error(s).")
+                            for err in errors[:10]:
+                                st.caption(err)
+                        else:
+                            st.success(f"Completed {completed} statement(s) for graph `{root_name}`.")
+                        st.session_state.pop("tg_list", None)
 
             elif control_mode == "Individual task":
                 task_name = st.selectbox("Task", all_names, key="tm_control_task")
@@ -2947,23 +2956,24 @@ def render():
                     f"Run task action: {action}",
                     type="primary",
                     key="tm_task_run",
-                    disabled=admin_button_disabled(not confirmed),
+                    disabled=admin_button_disabled(),
                 ):
-                    completed, errors = _run_admin_sql_list(
-                        session,
-                        sql_list,
-                        f"TASK {action}",
-                        task_name,
-                        confirmation_text=phrase,
-                        control_context=f"mode=Individual task; prod_guard={_is_prod_task(row)}",
-                    )
-                    if errors:
-                        st.warning(f"Completed {completed} statement(s) with {len(errors)} error(s).")
-                        for err in errors[:10]:
-                            st.caption(err)
-                    else:
-                        st.success(f"Completed task action `{action}` for `{task_name}`.")
-                    st.session_state.pop("tg_list", None)
+                    if _require_typed_confirmation(confirmed, phrase):
+                        completed, errors = _run_admin_sql_list(
+                            session,
+                            sql_list,
+                            f"TASK {action}",
+                            task_name,
+                            confirmation_text=phrase,
+                            control_context=f"mode=Individual task; prod_guard={_is_prod_task(row)}",
+                        )
+                        if errors:
+                            st.warning(f"Completed {completed} statement(s) with {len(errors)} error(s).")
+                            for err in errors[:10]:
+                                st.caption(err)
+                        else:
+                            st.success(f"Completed task action `{action}` for `{task_name}`.")
+                        st.session_state.pop("tg_list", None)
 
             else:
                 st.subheader("Cancel Running Task Graph or Query")
@@ -2973,15 +2983,19 @@ def render():
                 )
                 if st.button("Load Recent Running Task Runs", key="tm_cancel_load"):
                     try:
-                        recent_runs = run_query_or_raise(build_task_history_sql(
-                            session,
-                            "scheduled_time >= DATEADD('hours', -6, CURRENT_TIMESTAMP())",
-                            limit=300,
-                            company=get_active_company(),
-                        ))
-                        if "STATE" in recent_runs.columns:
-                            states = recent_runs["STATE"].astype(str).str.upper()
-                            recent_runs = recent_runs[states.isin(["EXECUTING", "RUNNING", "SCHEDULED"])]
+                        live_runs = load_live_task_runs(session, tl, hours_back=6)
+                        if not live_runs.empty:
+                            recent_runs = live_runs
+                        else:
+                            recent_runs = run_query_or_raise(build_task_history_sql(
+                                session,
+                                "scheduled_time >= DATEADD('hours', -6, CURRENT_TIMESTAMP())",
+                                limit=300,
+                                company=get_active_company(),
+                            ))
+                            if "STATE" in recent_runs.columns:
+                                states = recent_runs["STATE"].astype(str).str.upper()
+                                recent_runs = recent_runs[states.isin(["EXECUTING", "RUNNING"])]
                         st.session_state["tm_cancel_runs"] = recent_runs
                     except Exception as e:
                         st.warning(f"Recent task runs unavailable: {format_snowflake_error(e)}")
@@ -3008,33 +3022,57 @@ def render():
                         selected_graph = st.selectbox("Graph run group", graph_ids, key="tm_cancel_graph")
                         sql_text = f"SELECT SYSTEM$CANCEL_TASK_GRAPH({sql_literal(selected_graph)})"
                         st.code(sql_text + ";", language="sql")
-                        confirmed = _typed_confirmation("Type CANCEL GRAPH to enable cancellation", "CANCEL GRAPH", "tm_cancel_graph_confirm")
-                        if st.button("Cancel graph run", type="primary", key="tm_cancel_graph_btn", disabled=admin_button_disabled(not confirmed)):
-                            completed, errors = _run_admin_sql_list(
-                                session,
-                                [sql_text],
-                                "CANCEL TASK GRAPH",
-                                selected_graph,
-                                confirmation_text="CANCEL GRAPH",
-                                control_context="mode=Cancel running graph/query",
+                        with st.form(f"tm_cancel_graph_form_{selected_graph}"):
+                            graph_confirm_text = st.text_input(
+                                "Type CANCEL GRAPH to enable cancellation",
+                                key="tm_cancel_graph_confirm",
+                                placeholder="CANCEL GRAPH",
                             )
-                            st.success("Cancel request sent.") if not errors else st.error(errors[0])
+                            submitted = st.form_submit_button(
+                                "Cancel graph run",
+                                type="primary",
+                                disabled=admin_button_disabled(),
+                            )
+                        if submitted:
+                            confirmed = str(graph_confirm_text or st.session_state.get("tm_cancel_graph_confirm") or "").strip() == "CANCEL GRAPH"
+                            if _require_typed_confirmation(confirmed, "CANCEL GRAPH"):
+                                completed, errors = _run_admin_sql_list(
+                                    session,
+                                    [sql_text],
+                                    "CANCEL TASK GRAPH",
+                                    selected_graph,
+                                    confirmation_text="CANCEL GRAPH",
+                                    control_context="mode=Cancel running graph/query",
+                                )
+                                st.success("Cancel request sent.") if not errors else st.error(errors[0])
                     elif cancel_type == "Query ID" and "QUERY_ID" in cancel_runs.columns:
                         query_ids = cancel_runs["QUERY_ID"].dropna().astype(str).unique().tolist()
                         selected_query = st.selectbox("Query ID", query_ids, key="tm_cancel_query")
                         sql_text = f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(selected_query)})"
                         st.code(sql_text + ";", language="sql")
-                        confirmed = _typed_confirmation("Type CANCEL QUERY to enable cancellation", "CANCEL QUERY", "tm_cancel_query_confirm")
-                        if st.button("Cancel query", type="primary", key="tm_cancel_query_btn", disabled=admin_button_disabled(not confirmed)):
-                            completed, errors = _run_admin_sql_list(
-                                session,
-                                [sql_text],
-                                "CANCEL QUERY",
-                                selected_query,
-                                confirmation_text="CANCEL QUERY",
-                                control_context="mode=Cancel running graph/query",
+                        with st.form(f"tm_cancel_query_form_{selected_query}"):
+                            query_confirm_text = st.text_input(
+                                "Type CANCEL QUERY to enable cancellation",
+                                key="tm_cancel_query_confirm",
+                                placeholder="CANCEL QUERY",
                             )
-                            st.success("Cancel request sent.") if not errors else st.error(errors[0])
+                            submitted = st.form_submit_button(
+                                "Cancel query",
+                                type="primary",
+                                disabled=admin_button_disabled(),
+                            )
+                        if submitted:
+                            confirmed = str(query_confirm_text or st.session_state.get("tm_cancel_query_confirm") or "").strip() == "CANCEL QUERY"
+                            if _require_typed_confirmation(confirmed, "CANCEL QUERY"):
+                                completed, errors = _run_admin_sql_list(
+                                    session,
+                                    [sql_text],
+                                    "CANCEL QUERY",
+                                    selected_query,
+                                    confirmation_text="CANCEL QUERY",
+                                    control_context="mode=Cancel running graph/query",
+                                )
+                                st.success("Cancel request sent.") if not errors else st.error(errors[0])
                     else:
                         st.info("The selected cancellation target is not available from this role/account metadata.")
 
@@ -3071,41 +3109,46 @@ def render():
                         st.code(build_admin_preflight_sql(row), language="sql")
                     st.warning("This runs the task immediately regardless of schedule.")
 
-                    exec_confirmed = st.text_input(
+                    exec_confirm_key = f"exec_task_confirm_{selected}"
+                    exec_confirmed_value = st.text_input(
                         "Type EXECUTE to enable task run",
-                        key=f"exec_task_confirm_{selected}",
-                    ) == "EXECUTE"
+                        key=exec_confirm_key,
+                    )
+                    exec_confirmed = str(
+                        st.session_state.get(exec_confirm_key) or exec_confirmed_value or ""
+                    ).strip() == "EXECUTE"
 
                     if st.button(
                         f"Execute {selected}",
                         type="primary",
                         key="exec_task_btn",
-                        disabled=admin_button_disabled(not exec_confirmed),
+                        disabled=admin_button_disabled(),
                     ):
-                        sql_text = f"EXECUTE TASK {full}"
-                        try:
-                            session.sql(sql_text).collect()
-                            _log_admin_action(
-                                session,
-                                "EXECUTE TASK",
-                                full,
-                                sql_text,
-                                "SUCCESS",
-                                "Task triggered.",
-                                confirmation_text="EXECUTE",
-                                control_context="mode=Execute Task On-Demand",
-                            )
-                            st.success(f"Task `{full}` triggered.")
-                        except Exception as e:
-                            message = format_snowflake_error(e)
-                            _log_admin_action(
-                                session,
-                                "EXECUTE TASK",
-                                full,
-                                sql_text,
-                                "FAILED",
-                                message,
-                                confirmation_text="EXECUTE",
-                                control_context="mode=Execute Task On-Demand",
-                            )
-                            st.error(f"Execution failed: {message}")
+                        if _require_typed_confirmation(exec_confirmed, "EXECUTE"):
+                            sql_text = f"EXECUTE TASK {full}"
+                            try:
+                                session.sql(sql_text).collect()
+                                _log_admin_action(
+                                    session,
+                                    "EXECUTE TASK",
+                                    full,
+                                    sql_text,
+                                    "SUCCESS",
+                                    "Task triggered.",
+                                    confirmation_text="EXECUTE",
+                                    control_context="mode=Execute Task On-Demand",
+                                )
+                                st.success(f"Task `{full}` triggered.")
+                            except Exception as e:
+                                message = format_snowflake_error(e)
+                                _log_admin_action(
+                                    session,
+                                    "EXECUTE TASK",
+                                    full,
+                                    sql_text,
+                                    "FAILED",
+                                    message,
+                                    confirmation_text="EXECUTE",
+                                    control_context="mode=Execute Task On-Demand",
+                                )
+                                st.error(f"Execution failed: {message}")

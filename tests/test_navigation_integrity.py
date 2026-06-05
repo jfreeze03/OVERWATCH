@@ -403,10 +403,15 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_sidebar_saved_views_are_explicit_load_only(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        bookmarks_text = (APP_ROOT / "utils" / "bookmarks.py").read_text(encoding="utf-8")
         self.assertIn("_overwatch_saved_views_loaded", app_text)
         self.assertIn("_overwatch_saved_views_cache", app_text)
         self.assertIn("Saved views are skipped during normal reruns", app_text)
         self.assertNotIn("bookmarks = load_bookmarks(_session) if _session else []", app_text)
+        self.assertIn('bookmark_name = str(st.session_state.get("bm_name_input") or new_bm_name or "").strip()', app_text)
+        self.assertIn("Enter a bookmark name before saving.", app_text)
+        self.assertNotIn("disabled=not new_bm_name", app_text)
+        self.assertIn("raise", bookmarks_text.split("def load_bookmarks", 1)[1].split("def apply_bookmark", 1)[0])
 
     def test_section_switches_clear_stale_body_during_render(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -680,8 +685,27 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("return frame.copy()", metadata_text)
         self.assertIn("force_refresh=bool(refresh_wh)", dba_tools_text)
         self.assertIn("force_inventory_refresh=True", task_management_text)
+        self.assertIn("def load_live_task_runs", metadata_text)
+        self.assertIn("INFORMATION_SCHEMA.TASK_HISTORY", metadata_text)
+        self.assertIn("TASK_NAME =>", metadata_text)
+        self.assertIn("session.sql(sql).collect()", metadata_text)
+        self.assertIn("pd.DataFrame([row.as_dict() for row in rows])", metadata_text)
+        self.assertIn("load_live_task_runs(session, tl, hours_back=6)", task_management_text)
+        self.assertIn("load_live_task_runs(session, df_tasks, hours_back=6)", dba_tools_text)
+        self.assertIn('st.form(f"tm_cancel_query_form_{selected_query}")', task_management_text)
+        self.assertIn('st.form(f"tm_cancel_graph_form_{selected_graph}")', task_management_text)
+        self.assertIn('st.form(f"tg_cancel_run_query_form_{sel_qid}")', dba_tools_text)
+        self.assertIn('st.form(f"tg_cancel_graph_form_{sel_graph}")', dba_tools_text)
         self.assertIn("_task_management_execution_context_cache", task_management_text)
         self.assertIn("_EXECUTION_CONTEXT_CACHE_TTL_SECONDS = 300", task_management_text)
+        self.assertIn("def _require_typed_confirmation", dba_tools_text)
+        self.assertIn("def _require_typed_confirmation", task_management_text)
+        self.assertNotIn("disabled=admin_button_disabled(not wh_confirmed)", dba_tools_text)
+        self.assertNotIn("disabled=admin_button_disabled(not cortex_confirmed)", dba_tools_text)
+        self.assertNotIn("disabled=admin_button_disabled(not task_confirmed)", dba_tools_text)
+        self.assertNotIn("disabled=admin_button_disabled(not graph_confirmed)", dba_tools_text)
+        self.assertNotIn("disabled=admin_button_disabled(not confirmed)", task_management_text)
+        self.assertNotIn("disabled=admin_button_disabled(not exec_confirmed)", task_management_text)
         self.assertIn('"Check Fast Snapshot"', dba_control_text)
         self.assertIn("Fast mart snapshot lookup is on demand", dba_control_text)
         self.assertNotIn("load_latest_control_room_mart(company, max_age_hours=6) if snapshot_scope_ok else None", dba_control_text)
@@ -756,7 +780,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Cost Drilldown Command Map", cost_contract_text)
         self.assertIn('sort_by=["COMMAND_PRIORITY", "DRILLDOWN"]', cost_contract_text)
         self.assertIn("ACCOUNT_HEALTH_PANES", account_health_text)
-        self.assertIn('st.radio(\n        "Account Health view"', account_health_text)
+        self.assertIn('st.selectbox(\n        "Account Health view"', account_health_text)
         self.assertNotIn("st.tabs(", account_health_text)
         self.assertIn('st.button("Load / Refresh Health"', account_health_text)
         self.assertIn("if not refresh_health:", account_health_text)
@@ -764,6 +788,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _render_account_health_action_brief", account_health_text)
         self.assertIn("Evidence details", account_health_text)
         self.assertIn('"Account Health detail"', account_health_text)
+        self.assertIn('st.selectbox(\n            "Account Health detail"', account_health_text)
+        self.assertNotIn('st.radio(\n            "Account Health detail"', account_health_text)
         self.assertIn('("Checklist", "Gates", "Interventions", "Controls", "Operability")', account_health_text)
         self.assertNotIn("k1, k2, k3, k4, k5, k6 = st.columns(6)", account_health_text)
         account_health_import_block = account_health_text.split("CHECKLIST_HISTORY_TABLE", 1)[0]
@@ -798,6 +824,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def render_signal_confidence", change_drift_text)
         self.assertIn("def render_workflow_module", change_drift_text)
         self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', change_drift_text)
+        self.assertIn("return str(st.selectbox(label, list(workflows), key=key))", change_drift_text)
+        self.assertNotIn('key=f"{key}_{start}_{workflow}"', change_drift_text)
         self.assertIn("def _looks_like_frame", cost_contract_text)
         self.assertIn("data_is_frame = _looks_like_frame(data)", cost_contract_text)
         cost_contract_import_block = cost_contract_text.split("WORKFLOWS", 1)[0]
@@ -807,6 +835,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def render_signal_confidence", cost_contract_text)
         self.assertIn("def render_workflow_module", cost_contract_text)
         self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', cost_contract_text)
+        self.assertIn("return str(st.selectbox(label, list(workflows), key=key))", cost_contract_text)
+        self.assertNotIn('key=f"{key}_{start}_{workflow}"', cost_contract_text)
         cost_watch_preload = cost_contract_text.split("def _render_cost_watch_floor", 1)[1].split(
             "if st.button(\"Load Cost Cockpit\"",
             1,
@@ -819,9 +849,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Account Health DBA intervention matrix", account_health_text)
         self.assertIn('sort_by=["DBA_PRIORITY", "COUNT", "SURFACE"]', account_health_text)
         account_health_render_preload = account_health_text.split("def render():", 1)[1].split(
-            "active_view = st.radio",
+            "active_view = st.selectbox",
             1,
         )[0]
+        self.assertIn('st.selectbox(\n        "Account Health view"', account_health_text)
+        self.assertNotIn('st.radio(\n        "Account Health view"', account_health_text)
         self.assertIn("def _account_health_action_session", account_health_text)
         self.assertIn("get_session_for_action", account_health_text)
         self.assertIn("def _account_query_history_capabilities", account_health_text)
@@ -832,6 +864,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_warehouse_intervention_matrix", warehouse_health_text)
         self.assertIn("Warehouse DBA intervention matrix", warehouse_health_text)
         self.assertIn('sort_by=["DBA_PRIORITY", "METERED_CREDITS"]', warehouse_health_text)
+        self.assertIn("return str(st.selectbox(label, list(workflows), key=key))", warehouse_health_text)
+        self.assertNotIn('key=f"{key}_{start}_{workflow}"', warehouse_health_text)
         warehouse_render_preload = warehouse_health_text.split("def render():", 1)[1].split(
             "warehouse_view = render_workflow_selector",
             1,
@@ -850,6 +884,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("admin_button_disabled", live_monitor_text)
         self.assertIn("require_admin_enabled(\"query cancellation\")", live_monitor_text)
         self.assertIn("log_admin_action(", live_monitor_text)
+        self.assertNotIn("disabled=admin_button_disabled(not cancel_ready)", live_monitor_text)
+        self.assertIn("Type `CANCEL` exactly before cancelling this query.", live_monitor_text)
         self.assertIn("QUERY_HISTORY_OPTIONAL_COLUMNS", live_monitor_text)
         self.assertIn("execution_status = {sql_literal(status_filter, 40)}", live_monitor_text)
         self.assertNotIn("execution_status = '{status_filter}'", live_monitor_text)
@@ -857,12 +893,16 @@ class NavigationIntegrityTests(unittest.TestCase):
             "        if refresh_live or auto_refresh:",
             1,
         )[0]
+        workload_render_default = workload_operations_text.split("def render() -> None:", 1)[1].split(
+            'if active_view == "Workload Brief":',
+            1,
+        )[0]
         self.assertNotIn("filter_existing_columns(", live_panel_body)
         self.assertNotIn("df_live = run_query_or_raise(f\"\"\"", live_panel_body)
         self.assertIn('ttl_key=f"live_active_fallback_', live_panel_body)
         self.assertIn('tier="live"', live_panel_body)
         architecture_render_preload = architecture_text.split("def render():", 1)[1].split(
-            "active_pane = st.radio",
+            "active_pane = st.selectbox",
             1,
         )[0]
         self.assertNotIn("_architecture_objectives_frame(", architecture_render_preload)
@@ -890,6 +930,10 @@ class NavigationIntegrityTests(unittest.TestCase):
             'if st.button("Load Change & Drift Brief"',
             1,
         )[0]
+        change_drift_default_preload = change_drift_text.split("def render() -> None:", 1)[1].split(
+            'if active_view == "Change Workflows":',
+            1,
+        )[0]
         object_change_render_preload = object_change_text.split("def render():", 1)[1].split(
             "def _query_history_drift_caps",
             1,
@@ -906,6 +950,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("_render_warehouse_ownership_panel(", warehouse_render_preload)
         self.assertNotIn("_render_warehouse_source_health(", warehouse_render_preload)
         self.assertNotIn("get_session()", live_monitor_render_preload)
+        self.assertNotIn("render_workflow_module(", workload_render_default)
         self.assertNotIn("get_session()", architecture_render_preload)
         self.assertNotIn("get_session()", security_posture_render_preload)
         self.assertNotIn("_render_privileged_grant_readiness(", security_posture_default_preload)
@@ -913,8 +958,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("render_workflow_module(", security_posture_view_preload)
         self.assertNotIn("get_session()", security_access_render_preload)
         self.assertNotIn("get_session()", change_drift_render_preload)
+        self.assertNotIn("render_workflow_module(", change_drift_default_preload)
         self.assertNotIn("get_session()", object_change_render_preload)
         self.assertIn("Recovery readiness", change_drift_text)
+        self.assertIn("CHANGE_DRIFT_VIEWS", change_drift_text)
+        self.assertIn('"Change Brief"', change_drift_text)
+        self.assertIn('"Change Workflows"', change_drift_text)
         self.assertIn("_change_intervention_matrix", change_drift_text)
         self.assertIn("Change DBA intervention matrix", change_drift_text)
         self.assertIn('"Terraform evidence"', change_drift_text)
@@ -951,6 +1000,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _render_alert_center_action_brief", alert_center_text)
         self.assertIn("ALERT_CENTER_HEALTH_DETAIL_OPTIONS", alert_center_text)
         self.assertIn('"Alert health detail"', alert_center_text)
+        self.assertIn('st.selectbox(\n            "Alert health detail"', alert_center_text)
+        self.assertNotIn('st.radio(\n            "Alert health detail"', alert_center_text)
         self.assertIn("def _alert_integration_readiness_board", alert_center_text)
         self.assertIn("Owner Directory Production Readiness", alert_center_text)
         self.assertIn("Notification & ITSM Readiness", alert_center_text)
@@ -998,7 +1049,13 @@ class NavigationIntegrityTests(unittest.TestCase):
             with self.subTest(active_view_file=name):
                 self.assertNotIn("st.tabs(", text)
         self.assertIn("DBA_CONTROL_ROOM_PANES", dba_control_text)
+        self.assertIn('st.selectbox(\n        "DBA Control Room view"', dba_control_text)
+        self.assertNotIn('st.radio(\n        "DBA Control Room view"', dba_control_text)
         self.assertIn("DBA_CONTROL_ROOM_DETAIL_PANES", dba_control_text)
+        self.assertIn('st.selectbox(\n                "Operations Board detail"', dba_control_text)
+        self.assertNotIn('st.radio(\n                "Operations Board detail"', dba_control_text)
+        self.assertIn('st.selectbox(\n            "Exception detail sample"', dba_control_text)
+        self.assertNotIn('st.radio(\n            "Exception detail sample"', dba_control_text)
         self.assertIn("_dba_control_tower_priority_index", dba_control_text)
         self.assertIn("Operations priority board", dba_control_text)
         self.assertIn("dba_control_tower_priority_index", dba_control_text)
@@ -1026,10 +1083,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_query_history_exprs()", query_analysis_text)
         self.assertIn("workload_operations_snapshot", workload_operations_text)
         self.assertIn("build_mart_control_room_summary_sql", workload_operations_text)
+        self.assertIn("WORKLOAD_OPERATIONS_VIEWS", workload_operations_text)
+        self.assertIn('"Workload Brief"', workload_operations_text)
+        self.assertIn('"Specialist Workflows"', workload_operations_text)
         self.assertIn("def _render_workload_action_brief", workload_operations_text)
         self.assertIn("def _render_workload_metric_rows", workload_operations_text)
         self.assertNotIn("c1, c2, c3, c4, c5 = st.columns(5)", workload_operations_text)
         self.assertIn("SECURITY_POSTURE_VIEWS", security_posture_text)
+        self.assertIn('st.selectbox(\n        "Security posture view"', security_posture_text)
+        self.assertNotIn('st.radio(\n        "Security posture view"', security_posture_text)
         self.assertIn('"Security Brief"', security_posture_text)
         self.assertIn('"Evidence Readiness"', security_posture_text)
         self.assertIn('"Access Workflows"', security_posture_text)
@@ -1058,6 +1120,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("ADOPTION_ANALYTICS_PANES", adoption_text)
         self.assertIn("PLATFORM_TOPOLOGY_PANES", platform_text)
         self.assertIn("ARCHITECTURE_READINESS_PANES", architecture_text)
+        self.assertIn('st.selectbox(\n        "Architecture readiness view"', architecture_text)
+        self.assertNotIn('st.radio(\n        "Architecture readiness view"', architecture_text)
+        self.assertIn('st.selectbox(\n        "AI platform futures view"', architecture_text)
+        self.assertNotIn('st.radio(\n        "AI platform futures view"', architecture_text)
         self.assertIn("Objectives & Owners", architecture_text)
         self.assertIn("AI & Platform Futures", architecture_text)
         self.assertIn("ARCHITECTURE_OBJECTIVES", architecture_text)

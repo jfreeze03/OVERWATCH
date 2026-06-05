@@ -5213,11 +5213,9 @@ def render() -> None:
 
     if st.session_state.get("dba_control_room_active_view") not in DBA_CONTROL_ROOM_PANES:
         st.session_state["dba_control_room_active_view"] = "Fast Watch"
-    active_view = st.radio(
+    active_view = st.selectbox(
         "DBA Control Room view",
         DBA_CONTROL_ROOM_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
         format_func=lambda pane: DBA_CONTROL_ROOM_PANE_LABELS.get(str(pane), str(pane)),
         key="dba_control_room_active_view",
     )
@@ -5369,10 +5367,9 @@ def render() -> None:
             st.session_state["dba_control_room_escalation_packet"] = escalation_packet
             st.session_state["dba_control_room_escalation_packet_markdown"] = escalation_md
 
-            ops_detail = st.radio(
+            ops_detail = st.selectbox(
                 "Operations Board detail",
                 ("Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"),
-                horizontal=True,
                 label_visibility="collapsed",
                 key="dba_operations_board_detail",
             )
@@ -5507,10 +5504,9 @@ def render() -> None:
 
         st.divider()
         st.subheader("Exception Detail Samples")
-        detail_view = st.radio(
+        detail_view = st.selectbox(
             "Exception detail sample",
             DBA_CONTROL_ROOM_DETAIL_PANES,
-            horizontal=True,
             label_visibility="collapsed",
             key="dba_control_room_detail_view",
         )

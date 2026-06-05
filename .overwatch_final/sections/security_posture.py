@@ -2286,10 +2286,9 @@ def render() -> None:
     )
 
     days = st.slider("Security brief lookback (days)", 1, 90, 30, key="security_posture_brief_days")
-    active_view = st.radio(
+    active_view = st.selectbox(
         "Security posture view",
         SECURITY_POSTURE_VIEWS,
-        horizontal=True,
         key="security_posture_view",
     )
     if active_view == "Evidence Readiness":

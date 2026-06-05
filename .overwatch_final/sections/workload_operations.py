@@ -22,6 +22,8 @@ from utils.workflows import (
 )
 
 
+WORKLOAD_OPERATIONS_VIEWS = ("Workload Brief", "Specialist Workflows")
+
 WORKFLOWS = (
     "Live triage",
     "Query diagnosis",
@@ -180,6 +182,7 @@ def _render_workload_action_brief(company: str, brief: dict) -> None:
                 else:
                     workflow = str(brief.get("workflow") or "Live triage")
                     if workflow in WORKFLOWS:
+                        st.session_state["workload_operations_view"] = "Specialist Workflows"
                         st.session_state["workload_operations_workflow"] = workflow
                 st.rerun()
             if not bool(brief.get("refresh")):
@@ -220,6 +223,10 @@ def render() -> None:
     company = get_active_company()
     if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
         st.session_state["workload_operations_workflow"] = "Live triage"
+    if st.session_state.get("exceptions_only_mode") and "workload_operations_view" not in st.session_state:
+        st.session_state["workload_operations_view"] = "Specialist Workflows"
+    if st.session_state.get("workload_operations_view") not in WORKLOAD_OPERATIONS_VIEWS:
+        st.session_state["workload_operations_view"] = WORKLOAD_OPERATIONS_VIEWS[0]
     migrate_legacy_workflow_state(
         "query_workbench_workflow",
         "workload_operations_workflow",
@@ -243,6 +250,14 @@ def render() -> None:
     )
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Exceptions-only mode: start with running work, failures, SLA breaches, and release regressions.")
+
+    active_view = st.selectbox(
+        "Workload Operations view",
+        WORKLOAD_OPERATIONS_VIEWS,
+        key="workload_operations_view",
+    )
+    if active_view == "Workload Brief":
+        return
 
     render_workflow_guide(
         "Start with live triage. Move into query diagnosis, task graphs, or stored procedure tracking only when "

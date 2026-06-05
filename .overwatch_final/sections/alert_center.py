@@ -1190,10 +1190,9 @@ def render() -> None:
         h2.metric("Needs Review", f"{review:,}", delta_color="inverse")
         h3.metric("Blocked / Setup", f"{blocked:,}", delta_color="inverse")
         h4.metric("Controls", f"{len(readiness_rows):,}")
-        health_detail = st.radio(
+        health_detail = st.selectbox(
             "Alert health detail",
             ALERT_CENTER_HEALTH_DETAIL_OPTIONS,
-            horizontal=True,
             key="alert_center_health_detail",
         )
 

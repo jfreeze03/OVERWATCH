@@ -111,24 +111,7 @@ def render_workflow_selector(
         st.session_state[key] = selected
     if label and show_label:
         st.caption(label)
-    items = list(workflows)
-    details = details or {}
-    columns = max(1, min(int(columns or 4), 5))
-    for start in range(0, len(items), columns):
-        row = items[start:start + columns]
-        cols = st.columns(len(row))
-        for col, workflow in zip(cols, row):
-            with col:
-                if st.button(
-                    workflow,
-                    key=f"{key}_{start}_{workflow}",
-                    type="primary" if workflow == selected else "secondary",
-                    width="stretch",
-                    help=details.get(workflow) or None,
-                ):
-                    st.session_state[key] = workflow
-                    st.rerun()
-    return str(st.session_state.get(key, selected))
+    return str(st.selectbox(label, list(workflows), key=key))
 
 WAREHOUSE_HEALTH_VIEWS = (
     "Overview & Scaling",

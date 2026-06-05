@@ -136,7 +136,7 @@ def load_bookmarks(session, include_shared: bool = True) -> list[dict]:
             })
         return result
     except Exception:
-        return []
+        raise
 
 
 def apply_bookmark(session, bookmark: dict) -> None:

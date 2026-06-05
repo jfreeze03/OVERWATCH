@@ -1250,7 +1250,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
     st.session_state["arch_agentic_ai_summary"] = agentic_summary
     st.session_state["arch_agentic_ai_scorecard"] = agentic_scorecard
 
-    futures_view = st.radio(
+    futures_view = st.selectbox(
         "AI platform futures view",
         (
             "Overview",
@@ -1263,7 +1263,6 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
             "Horizon & Semantic",
             "Control Register",
         ),
-        horizontal=True,
         label_visibility="collapsed",
         key="arch_platform_futures_view",
     )
@@ -1691,11 +1690,9 @@ def render():
         ])
     )
 
-    active_pane = st.radio(
+    active_pane = st.selectbox(
         "Architecture readiness view",
         ARCHITECTURE_READINESS_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
         key="architecture_readiness_pane",
     )
 

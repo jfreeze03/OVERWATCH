@@ -2687,11 +2687,9 @@ def render():
             query_history_caps = _account_query_history_capabilities(action_session)
         return query_history_caps
 
-    active_view = st.radio(
+    active_view = st.selectbox(
         "Account Health view",
         ACCOUNT_HEALTH_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
         key="account_health_active_view",
     )
 
@@ -3062,10 +3060,9 @@ def render():
             access_hygiene=st.session_state.get("account_health_access_hygiene"),
             operability_fact=operability_gate_fact,
         )
-        account_detail = st.radio(
+        account_detail = st.selectbox(
             "Account Health detail",
             ("Checklist", "Gates", "Interventions", "Controls", "Operability"),
-            horizontal=True,
             label_visibility="collapsed",
             key="account_health_overview_detail",
         )

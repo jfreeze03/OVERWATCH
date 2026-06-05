@@ -23,6 +23,7 @@ from utils import (
     log_admin_action,
     show_to_df, first_existing_column, ensure_column_alias,
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
+    load_live_task_runs,
     load_warehouse_inventory, build_unclassified_assets_sql,
     safe_float, safe_int, render_ranked_bar_chart,
     defer_source_note,
@@ -51,7 +52,14 @@ def _load_button(label, key):
 
 def _typed_confirmation(prompt: str, expected: str, key: str) -> bool:
     entered = st.text_input(prompt, key=key, placeholder=expected)
-    return entered.strip() == expected
+    return str(st.session_state.get(key) or entered or "").strip() == expected
+
+
+def _require_typed_confirmation(confirmed: bool, expected: str) -> bool:
+    if confirmed:
+        return True
+    st.warning(f"Type `{expected}` exactly before running this action.")
+    return False
 
 
 ACCOUNT_PARAMETER_ADMIN_ROLES = {
@@ -506,13 +514,14 @@ def render():
                 "⛔ Cancel Query",
                 type="primary",
                 key="kl_kill",
-                disabled=admin_button_disabled(not kill_confirmed),
+                disabled=admin_button_disabled(),
             ):
-                try:
-                    session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_id)})").collect()
-                    st.success(f"✅ Cancel sent for `{kill_id}`")
-                except Exception as e:
-                    st.error(f"Cancel failed: {format_snowflake_error(e)}")
+                if _require_typed_confirmation(kill_confirmed, "CANCEL"):
+                    try:
+                        session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_id)})").collect()
+                        st.success(f"✅ Cancel sent for `{kill_id}`")
+                    except Exception as e:
+                        st.error(f"Cancel failed: {format_snowflake_error(e)}")
         elif st.session_state.get("dba_df_kl") is not None:
             st.success(f"✅ No queries running > {kill_min}s")
 
@@ -829,67 +838,68 @@ def render():
                                 "Apply Warehouse Change",
                                 type="primary",
                                 key=f"wh_apply_reviewed_{sel_wh}",
-                                disabled=admin_button_disabled(not wh_confirmed),
+                                disabled=admin_button_disabled(),
                             ):
-                                try:
-                                    log_admin_action(
-                                        session,
-                                        action_type="ALTER WAREHOUSE",
-                                        target_object=sel_wh,
-                                        sql_text=plan["alter_sql"],
-                                        result_status="STARTED",
-                                        result_message="Warehouse change submitted from OVERWATCH.",
-                                        confirmation_text=plan["confirmation_text"],
-                                        control_context=plan["control_context"],
-                                        company=active_company,
-                                        environment=get_active_environment(),
-                                    )
-                                    session.sql(plan["alter_sql"]).collect()
-                                    audited = log_admin_action(
-                                        session,
-                                        action_type="ALTER WAREHOUSE",
-                                        target_object=sel_wh,
-                                        sql_text=plan["alter_sql"],
-                                        result_status="SUCCESS",
-                                        result_message="Warehouse change completed.",
-                                        confirmation_text=plan["confirmation_text"],
-                                        control_context=plan["control_context"],
-                                        company=active_company,
-                                        environment=get_active_environment(),
-                                    )
-                                    st.success(f"Warehouse `{sel_wh}` updated successfully.")
-                                    if not audited:
-                                        st.warning("The change completed, but the admin audit table was unavailable or not writable.")
-                                    st.session_state.pop("dba_df_wh_cfg", None)
-                                    st.session_state.pop(plan_key, None)
-                                    st.rerun()
-                                except Exception as e:
-                                    err = format_snowflake_error(e)
-                                    log_admin_action(
-                                        session,
-                                        action_type="ALTER WAREHOUSE",
-                                        target_object=sel_wh,
-                                        sql_text=plan["alter_sql"],
-                                        result_status="FAILED",
-                                        result_message=err,
-                                        confirmation_text=plan["confirmation_text"],
-                                        control_context=plan["control_context"],
-                                        company=active_company,
-                                        environment=get_active_environment(),
-                                    )
-                                    err_str = str(e).lower()
-                                    if "insufficient privilege" in err_str or "not authorized" in err_str:
-                                        st.error(
-                                            f"Permission denied on `{sel_wh}`. "
-                                            f"ALTER WAREHOUSE requires MODIFY privilege."
+                                if _require_typed_confirmation(wh_confirmed, plan["confirmation_text"]):
+                                    try:
+                                        log_admin_action(
+                                            session,
+                                            action_type="ALTER WAREHOUSE",
+                                            target_object=sel_wh,
+                                            sql_text=plan["alter_sql"],
+                                            result_status="STARTED",
+                                            result_message="Warehouse change submitted from OVERWATCH.",
+                                            confirmation_text=plan["confirmation_text"],
+                                            control_context=plan["control_context"],
+                                            company=active_company,
+                                            environment=get_active_environment(),
                                         )
-                                    elif "enterprise" in err_str or "not supported" in err_str:
-                                        st.error(
-                                            "Feature not available in your Snowflake edition. "
-                                            "Multi-cluster and QAS require Enterprise or higher."
+                                        session.sql(plan["alter_sql"]).collect()
+                                        audited = log_admin_action(
+                                            session,
+                                            action_type="ALTER WAREHOUSE",
+                                            target_object=sel_wh,
+                                            sql_text=plan["alter_sql"],
+                                            result_status="SUCCESS",
+                                            result_message="Warehouse change completed.",
+                                            confirmation_text=plan["confirmation_text"],
+                                            control_context=plan["control_context"],
+                                            company=active_company,
+                                            environment=get_active_environment(),
                                         )
-                                    else:
-                                        st.error(f"ALTER failed: {err}")
+                                        st.success(f"Warehouse `{sel_wh}` updated successfully.")
+                                        if not audited:
+                                            st.warning("The change completed, but the admin audit table was unavailable or not writable.")
+                                        st.session_state.pop("dba_df_wh_cfg", None)
+                                        st.session_state.pop(plan_key, None)
+                                        st.rerun()
+                                    except Exception as e:
+                                        err = format_snowflake_error(e)
+                                        log_admin_action(
+                                            session,
+                                            action_type="ALTER WAREHOUSE",
+                                            target_object=sel_wh,
+                                            sql_text=plan["alter_sql"],
+                                            result_status="FAILED",
+                                            result_message=err,
+                                            confirmation_text=plan["confirmation_text"],
+                                            control_context=plan["control_context"],
+                                            company=active_company,
+                                            environment=get_active_environment(),
+                                        )
+                                        err_str = str(e).lower()
+                                        if "insufficient privilege" in err_str or "not authorized" in err_str:
+                                            st.error(
+                                                f"Permission denied on `{sel_wh}`. "
+                                                f"ALTER WAREHOUSE requires MODIFY privilege."
+                                            )
+                                        elif "enterprise" in err_str or "not supported" in err_str:
+                                            st.error(
+                                                "Feature not available in your Snowflake edition. "
+                                                "Multi-cluster and QAS require Enterprise or higher."
+                                            )
+                                        else:
+                                            st.error(f"ALTER failed: {err}")
                         with col_audit:
                             st.caption(
                                 "Audit path: OVERWATCH_ADMIN_ACTION_AUDIT captures company, environment, "
@@ -1510,39 +1520,40 @@ ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
                     "APPLY",
                     "cortex_apply_confirm",
                 )
-                if st.button("✅ Apply Parameters", type="primary", key="cortex_apply", disabled=admin_button_disabled(not cortex_confirmed)):
-                    # CALLER MODE GUARD: ALTER ACCOUNT SET requires ACCOUNTADMIN.
-                    # Since execute_as=CALLER, the caller's role must have this privilege.
-                    # SNOW_SYSADMIN cannot run ALTER ACCOUNT; keep this blocked
-                    # before Snowflake receives account-level parameter SQL.
-                    _caller_role = str(st.session_state.get("_overwatch_current_role", "") or "").strip()
-                    if not _current_role_allows_alter_account(_caller_role):
-                        st.error(
-                            f"⛔ **ALTER ACCOUNT requires ACCOUNTADMIN.** "
-                            f"Your current role is `{_caller_role or 'unknown'}`. "
-                            f"Switch to ACCOUNTADMIN in Snowflake and reload OVERWATCH, "
-                            f"or copy the generated SQL below and run it in a Worksheet."
-                        )
-                    else:
-                        applied = []
-                        failed  = []
-                        for stmt in [
-                            f"ALTER ACCOUNT SET ENABLE_CORTEX_CODE_INLINE = {cortex_enabled}",
-                            f"ALTER ACCOUNT SET ENABLE_CORTEX_SEARCH = {search_enabled}",
-                            f"ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled}",
-                        ] + ([f"ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT = {cortex_daily_limit}"] if cortex_daily_limit > 0 else []):
-                            try:
-                                session.sql(stmt).collect()
-                                applied.append(stmt)
-                            except Exception as e:
-                                failed.append(f"{stmt} -> {format_snowflake_error(e)}")
+                if st.button("✅ Apply Parameters", type="primary", key="cortex_apply", disabled=admin_button_disabled()):
+                    if _require_typed_confirmation(cortex_confirmed, "APPLY"):
+                        # CALLER MODE GUARD: ALTER ACCOUNT SET requires ACCOUNTADMIN.
+                        # Since execute_as=CALLER, the caller's role must have this privilege.
+                        # SNOW_SYSADMIN cannot run ALTER ACCOUNT; keep this blocked
+                        # before Snowflake receives account-level parameter SQL.
+                        _caller_role = str(st.session_state.get("_overwatch_current_role", "") or "").strip()
+                        if not _current_role_allows_alter_account(_caller_role):
+                            st.error(
+                                f"⛔ **ALTER ACCOUNT requires ACCOUNTADMIN.** "
+                                f"Your current role is `{_caller_role or 'unknown'}`. "
+                                f"Switch to ACCOUNTADMIN in Snowflake and reload OVERWATCH, "
+                                f"or copy the generated SQL below and run it in a Worksheet."
+                            )
+                        else:
+                            applied = []
+                            failed  = []
+                            for stmt in [
+                                f"ALTER ACCOUNT SET ENABLE_CORTEX_CODE_INLINE = {cortex_enabled}",
+                                f"ALTER ACCOUNT SET ENABLE_CORTEX_SEARCH = {search_enabled}",
+                                f"ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled}",
+                            ] + ([f"ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT = {cortex_daily_limit}"] if cortex_daily_limit > 0 else []):
+                                try:
+                                    session.sql(stmt).collect()
+                                    applied.append(stmt)
+                                except Exception as e:
+                                    failed.append(f"{stmt} -> {format_snowflake_error(e)}")
 
-                        if applied:
-                            st.success(f"✅ {len(applied)} parameter(s) updated successfully.")
-                        if failed:
-                            for f_msg in failed:
-                                st.warning(f"⚠️ {f_msg}")
-                            st.info("Some parameters may not exist in your Snowflake edition or region. Check with SHOW PARAMETERS IN ACCOUNT first.")
+                            if applied:
+                                st.success(f"✅ {len(applied)} parameter(s) updated successfully.")
+                            if failed:
+                                for f_msg in failed:
+                                    st.warning(f"⚠️ {f_msg}")
+                                st.info("Some parameters may not exist in your Snowflake edition or region. Check with SHOW PARAMETERS IN ACCOUNT first.")
             with col_dl:
                 st.download_button(
                     "📥 Download SQL",
@@ -1658,13 +1669,14 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         "⛔ Cancel This Query",
                         type="primary",
                         key="tg_cancel_q",
-                        disabled=admin_button_disabled(not cancel_confirmed),
+                        disabled=admin_button_disabled(),
                     ):
-                        try:
-                            session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(cancel_qid)})").collect()
-                            st.success(f"✅ Cancel sent for `{cancel_qid}`")
-                        except Exception as e:
-                            st.error(f"Cancel failed: {format_snowflake_error(e)}")
+                        if _require_typed_confirmation(cancel_confirmed, "CANCEL"):
+                            try:
+                                session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(cancel_qid)})").collect()
+                                st.success(f"✅ Cancel sent for `{cancel_qid}`")
+                            except Exception as e:
+                                st.error(f"Cancel failed: {format_snowflake_error(e)}")
                 else:
                     st.success("No task-related queries currently running.")
 
@@ -1679,11 +1691,14 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             # Load recent task runs to get graph_run_id
             if st.button("Load Recent Task Runs", key="tg_runs_load"):
                 try:
-                    df_runs = run_query_or_raise(_task_history_sql(
-                        session,
-                        "scheduled_time >= DATEADD('hours', -6, CURRENT_TIMESTAMP())",
-                        limit=200,
-                    ))
+                    df_tasks = _load_task_inventory(session, force_refresh=True)
+                    df_runs = load_live_task_runs(session, df_tasks, hours_back=6)
+                    if df_runs.empty:
+                        df_runs = run_query_or_raise(_task_history_sql(
+                            session,
+                            "scheduled_time >= DATEADD('hours', -6, CURRENT_TIMESTAMP())",
+                            limit=200,
+                        ))
                     st.session_state["dba_df_task_runs"] = df_runs
                 except Exception as e:
                     st.warning(f"Task run history unavailable: {format_snowflake_error(e)}")
@@ -1692,7 +1707,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 df_r = st.session_state["dba_df_task_runs"]
 
                 # Filter to running only
-                running_runs = df_r[df_r["STATE"].isin(["EXECUTING","RUNNING","SCHEDULED"])] if "STATE" in df_r.columns else pd.DataFrame()
+                running_runs = df_r[df_r["STATE"].isin(["EXECUTING","RUNNING"])] if "STATE" in df_r.columns else pd.DataFrame()
 
                 if not running_runs.empty:
                     st.warning(f"⚠️ {len(running_runs)} task run(s) currently executing or scheduled.")
@@ -1721,30 +1736,33 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                             )
                             col_cg1, col_cg2 = st.columns([1,3])
                             with col_cg1:
-                                graph_confirmed = _typed_confirmation(
-                                    "Type CANCEL to enable graph cancellation",
-                                    "CANCEL",
-                                    f"tg_graph_confirm_{sel_graph}",
-                                )
-                                if st.button(
-                                    "⛔ Cancel Graph Run",
-                                    type="primary",
-                                    key="tg_cancel_graph",
-                                    disabled=admin_button_disabled(not graph_confirmed),
-                                ):
-                                    try:
-                                        session.sql(
-                                            f"SELECT SYSTEM$CANCEL_TASK_GRAPH({sql_literal(str(sel_graph))})"
-                                        ).collect()
-                                        st.success(f"✅ Graph run `{sel_graph}` cancelled.")
-                                        st.session_state.pop("dba_df_task_runs", None)
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Cancel graph failed: {format_snowflake_error(e)}")
-                                        st.info(
-                                            "SYSTEM$CANCEL_TASK_GRAPH requires the task to be running and the caller to have "
-                                            "OPERATE privilege on the root task, or ACCOUNTADMIN."
-                                        )
+                                with st.form(f"tg_cancel_graph_form_{sel_graph}"):
+                                    graph_confirm_text = st.text_input(
+                                        "Type CANCEL to enable graph cancellation",
+                                        key=f"tg_graph_confirm_{sel_graph}",
+                                        placeholder="CANCEL",
+                                    )
+                                    submitted = st.form_submit_button(
+                                        "⛔ Cancel Graph Run",
+                                        type="primary",
+                                        disabled=admin_button_disabled(),
+                                    )
+                                if submitted:
+                                    graph_confirmed = str(graph_confirm_text or "").strip() == "CANCEL"
+                                    if _require_typed_confirmation(graph_confirmed, "CANCEL"):
+                                        try:
+                                            session.sql(
+                                                f"SELECT SYSTEM$CANCEL_TASK_GRAPH({sql_literal(str(sel_graph))})"
+                                            ).collect()
+                                            st.success(f"✅ Graph run `{sel_graph}` cancelled.")
+                                            st.session_state.pop("dba_df_task_runs", None)
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Cancel graph failed: {format_snowflake_error(e)}")
+                                            st.info(
+                                                "SYSTEM$CANCEL_TASK_GRAPH requires the task to be running and the caller to have "
+                                                "OPERATE privilege on the root task, or ACCOUNTADMIN."
+                                            )
 
                     # Cancel individual query from a task run
                     st.markdown("**Cancel individual task run query**")
@@ -1752,21 +1770,24 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         query_ids = running_runs["QUERY_ID"].dropna().unique().tolist()
                         if query_ids:
                             sel_qid = st.selectbox("Select Query ID", query_ids, key="tg_cancel_run_qid")
-                            run_confirmed = _typed_confirmation(
-                                "Type CANCEL to enable run-query cancellation",
-                                "CANCEL",
-                                f"tg_run_confirm_{sel_qid}",
-                            ) if sel_qid else False
-                            if sel_qid and st.button(
-                                "⛔ Cancel Query",
-                                key="tg_cancel_run_q",
-                                disabled=admin_button_disabled(not run_confirmed),
-                            ):
-                                try:
-                                    session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(str(sel_qid))})").collect()
-                                    st.success(f"✅ Cancel sent for `{sel_qid}`")
-                                except Exception as e:
-                                    st.error(f"Cancel failed: {format_snowflake_error(e)}")
+                            with st.form(f"tg_cancel_run_query_form_{sel_qid}"):
+                                run_confirm_text = st.text_input(
+                                    "Type CANCEL to enable run-query cancellation",
+                                    key=f"tg_run_confirm_{sel_qid}",
+                                    placeholder="CANCEL",
+                                )
+                                submitted = st.form_submit_button(
+                                    "⛔ Cancel Query",
+                                    disabled=admin_button_disabled(),
+                                )
+                            if sel_qid and submitted:
+                                run_confirmed = str(run_confirm_text or "").strip() == "CANCEL"
+                                if _require_typed_confirmation(run_confirmed, "CANCEL"):
+                                    try:
+                                        session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(str(sel_qid))})").collect()
+                                        st.success(f"✅ Cancel sent for `{sel_qid}`")
+                                    except Exception as e:
+                                        st.error(f"Cancel failed: {format_snowflake_error(e)}")
                 else:
                     st.success("No task runs currently executing.")
                     st.subheader("Recent History (last 6h)")
@@ -1851,46 +1872,50 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
                     with col_s1:
-                        if st.button("⏸ Suspend", key="tg_suspend", disabled=admin_button_disabled(state=="suspended" or not task_confirmed)):
-                            try:
-                                session.sql(f"ALTER TASK {full_n} SUSPEND").collect()
-                                st.success(f"✅ `{sel_task}` suspended.")
-                                st.session_state.pop("dba_df_tg_tasks", None)
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Suspend failed: {format_snowflake_error(e)}")
+                        if st.button("⏸ Suspend", key="tg_suspend", disabled=admin_button_disabled(state=="suspended")):
+                            if _require_typed_confirmation(task_confirmed, sel_task):
+                                try:
+                                    session.sql(f"ALTER TASK {full_n} SUSPEND").collect()
+                                    st.success(f"✅ `{sel_task}` suspended.")
+                                    st.session_state.pop("dba_df_tg_tasks", None)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Suspend failed: {format_snowflake_error(e)}")
 
                     with col_s2:
-                        if st.button("▶ Resume", key="tg_resume", disabled=admin_button_disabled(state=="started" or not task_confirmed)):
-                            try:
-                                session.sql(f"ALTER TASK {full_n} RESUME").collect()
-                                st.success(f"✅ `{sel_task}` resumed.")
-                                st.session_state.pop("dba_df_tg_tasks", None)
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Resume failed: {format_snowflake_error(e)}")
+                        if st.button("▶ Resume", key="tg_resume", disabled=admin_button_disabled(state=="started")):
+                            if _require_typed_confirmation(task_confirmed, sel_task):
+                                try:
+                                    session.sql(f"ALTER TASK {full_n} RESUME").collect()
+                                    st.success(f"✅ `{sel_task}` resumed.")
+                                    st.session_state.pop("dba_df_tg_tasks", None)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Resume failed: {format_snowflake_error(e)}")
 
                     with col_s3:
-                        if st.button("▶▶ Execute Now", key="tg_execute", disabled=admin_button_disabled(not task_confirmed)):
-                            try:
-                                session.sql(f"EXECUTE TASK {full_n}").collect()
-                                st.success(f"✅ `{sel_task}` triggered.")
-                            except Exception as e:
-                                st.error(f"Execute failed: {format_snowflake_error(e)}")
+                        if st.button("▶▶ Execute Now", key="tg_execute", disabled=admin_button_disabled()):
+                            if _require_typed_confirmation(task_confirmed, sel_task):
+                                try:
+                                    session.sql(f"EXECUTE TASK {full_n}").collect()
+                                    st.success(f"✅ `{sel_task}` triggered.")
+                                except Exception as e:
+                                    st.error(f"Execute failed: {format_snowflake_error(e)}")
 
                     with col_s4:
-                        if st.button("🔁 Retry Last Failed", key="tg_retry", disabled=admin_button_disabled(not task_confirmed)):
+                        if st.button("🔁 Retry Last Failed", key="tg_retry", disabled=admin_button_disabled()):
                             # EXECUTE TASK WITH LAST_ERROR retry pattern
-                            try:
-                                session.sql(f"EXECUTE TASK {full_n}").collect()
-                                st.success(f"✅ Retry triggered for `{sel_task}`.")
-                                st.caption(
-                                    "Note: Snowflake does not have a native RETRY_LAST_FAILED command. "
-                                    "This re-executes the task immediately. "
-                                    "For DAG-level retry, use EXECUTE TASK on the root task."
-                                )
-                            except Exception as e:
-                                st.error(f"Retry failed: {format_snowflake_error(e)}")
+                            if _require_typed_confirmation(task_confirmed, sel_task):
+                                try:
+                                    session.sql(f"EXECUTE TASK {full_n}").collect()
+                                    st.success(f"✅ Retry triggered for `{sel_task}`.")
+                                    st.caption(
+                                        "Note: Snowflake does not have a native RETRY_LAST_FAILED command. "
+                                        "This re-executes the task immediately. "
+                                        "For DAG-level retry, use EXECUTE TASK on the root task."
+                                    )
+                                except Exception as e:
+                                    st.error(f"Retry failed: {format_snowflake_error(e)}")
 
                 st.divider()
 
@@ -1934,41 +1959,43 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 
                         b1, b2 = st.columns(2)
                         with b1:
-                            if st.button("⏸ Suspend Entire Graph", type="primary", key="tg_bulk_suspend", disabled=admin_button_disabled(not graph_confirmed)):
-                                try:
-                                    session.sql(f"ALTER TASK {root_full} SUSPEND").collect()
-                                    st.success(f"✅ Root task `{sel_root}` suspended — entire graph will stop scheduling.")
+                            if st.button("⏸ Suspend Entire Graph", type="primary", key="tg_bulk_suspend", disabled=admin_button_disabled()):
+                                if _require_typed_confirmation(graph_confirmed, sel_root):
+                                    try:
+                                        session.sql(f"ALTER TASK {root_full} SUSPEND").collect()
+                                        st.success(f"✅ Root task `{sel_root}` suspended — entire graph will stop scheduling.")
+                                        st.session_state.pop("dba_df_tg_tasks", None)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Suspend failed: {format_snowflake_error(e)}")
+                        with b2:
+                            if st.button("▶ Resume Entire Graph", type="primary", key="tg_bulk_resume", disabled=admin_button_disabled()):
+                                if _require_typed_confirmation(graph_confirmed, sel_root):
+                                    errors_seen = []
+                                    # Resume children first, then root
+                                    for _, child in children.iterrows():
+                                        full_child = _qualified_name(
+                                            child.get("DATABASE_NAME", ""),
+                                            child.get("SCHEMA_NAME", ""),
+                                            child.get("NAME", ""),
+                                        )
+                                        try:
+                                            session.sql(f"ALTER TASK {full_child} RESUME").collect()
+                                        except Exception as e:
+                                            errors_seen.append(f"{full_child}: {format_snowflake_error(e)}")
+                                    try:
+                                        session.sql(f"ALTER TASK {root_full} RESUME").collect()
+                                    except Exception as e:
+                                        errors_seen.append(f"{root_full}: {format_snowflake_error(e)}")
+
+                                    if errors_seen:
+                                        st.warning(f"Resumed with {len(errors_seen)} error(s):")
+                                        for err in errors_seen:
+                                            st.caption(err)
+                                    else:
+                                        st.success(f"✅ Entire graph resumed. {len(children)+1} task(s) active.")
                                     st.session_state.pop("dba_df_tg_tasks", None)
                                     st.rerun()
-                                except Exception as e:
-                                    st.error(f"Suspend failed: {format_snowflake_error(e)}")
-                        with b2:
-                            if st.button("▶ Resume Entire Graph", type="primary", key="tg_bulk_resume", disabled=admin_button_disabled(not graph_confirmed)):
-                                errors_seen = []
-                                # Resume children first, then root
-                                for _, child in children.iterrows():
-                                    full_child = _qualified_name(
-                                        child.get("DATABASE_NAME", ""),
-                                        child.get("SCHEMA_NAME", ""),
-                                        child.get("NAME", ""),
-                                    )
-                                    try:
-                                        session.sql(f"ALTER TASK {full_child} RESUME").collect()
-                                    except Exception as e:
-                                        errors_seen.append(f"{full_child}: {format_snowflake_error(e)}")
-                                try:
-                                    session.sql(f"ALTER TASK {root_full} RESUME").collect()
-                                except Exception as e:
-                                    errors_seen.append(f"{root_full}: {format_snowflake_error(e)}")
-
-                                if errors_seen:
-                                    st.warning(f"Resumed with {len(errors_seen)} error(s):")
-                                    for err in errors_seen:
-                                        st.caption(err)
-                                else:
-                                    st.success(f"✅ Entire graph resumed. {len(children)+1} task(s) active.")
-                                st.session_state.pop("dba_df_tg_tasks", None)
-                                st.rerun()
 
         # ── DAG Inspector ─────────────────────────────────────────────────────
         elif task_graph_view == "DAG Inspector":

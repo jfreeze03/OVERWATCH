@@ -114,7 +114,8 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "metadata": (
         "show_to_df", "clear_show_statement_cache", "first_existing_column",
         "ensure_column_alias", "scope_warehouse_names", "scope_metadata_df",
-        "load_task_inventory", "load_warehouse_inventory", "build_unclassified_assets_sql",
+        "load_task_inventory", "load_live_task_runs", "load_warehouse_inventory",
+        "build_unclassified_assets_sql",
     ),
     "futures_governance": (
         "PLATFORM_FUTURES_CONTROL_TABLE", "PLATFORM_FUTURES_EVIDENCE_TABLE",

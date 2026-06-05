@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT
+from .company_filter import get_environment_db_patterns
 from .query import run_query, safe_identifier, sql_literal
 
 
@@ -1043,20 +1044,17 @@ def _mart_environment_column(column: str = "ENVIRONMENT") -> str:
 
 
 def _mart_environment_filter(column: str = "ENVIRONMENT", company: str = "ALFA") -> str:
-    if str(company or "").upper() == "TREXIS":
-        return ""
     environment = _active_environment()
     if environment.upper() == "ALL":
         return ""
     env_col = _mart_environment_column(column)
+    values = [environment]
+    values.extend(get_environment_db_patterns(environment, company))
     if environment == "DEV_ALL":
-        values = ENVIRONMENT_CONFIG.get(environment, {}).get("db_patterns", [])
-    else:
-        cfg = ENVIRONMENT_CONFIG.get(environment, ENVIRONMENT_CONFIG[DEFAULT_ENVIRONMENT])
-        values = [environment] if environment == "PROD" else cfg.get("db_patterns", [])
+        values.extend(["ALL DEV/SIT", "OTHER ALFA NON-PROD"])
     if not values:
         return ""
-    parts = [f"{env_col} = {sql_literal(value, 300)}" for value in values]
+    parts = [f"UPPER({env_col}) = {sql_literal(str(value).upper(), 300)}" for value in dict.fromkeys(values)]
     return "AND (" + " OR ".join(parts) + ")"
 
 

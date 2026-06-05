@@ -8,7 +8,7 @@ cost defaults should stay here instead of being repeated in section modules.
 from dataclasses import dataclass
 
 
-CONFIG_VERSION = "2026-06-05-role-access-v2"
+CONFIG_VERSION = "2026-06-05-trexis-scope-v1"
 
 
 DEFAULTS = {
@@ -21,6 +21,36 @@ DEFAULTS = {
 
 DAY_WINDOW_OPTIONS = (1, 7, 14, 30, 60, 90)
 DEFAULT_DAY_WINDOW = 7
+
+TREXIS_WAREHOUSES = (
+    "WH_TRXS_LOAD",
+    "WH_TRXS_QUERY",
+    "WH_TRXS_TRANSFORM",
+    "WH_TRXS_UNLOAD",
+)
+
+TREXIS_DATABASES = (
+    "TRXS_ABC_METADATA_DEV",
+    "TRXS_ABC_METADATA_PRD",
+    "TRXS_ABC_METADATA_SIT",
+    "TRXS_EDW_DEV",
+    "TRXS_EDW_PRD",
+    "TRXS_EDW_SIT",
+    "TRXS_GW_DATA_DEV",
+    "TRXS_GW_DATA_PRD",
+    "TRXS_GW_DATA_SIT",
+)
+TREXIS_PROD_DATABASES = tuple(db for db in TREXIS_DATABASES if db.endswith("_PRD"))
+TREXIS_DEV_DATABASES = tuple(db for db in TREXIS_DATABASES if db.endswith(("_DEV", "_SIT")))
+
+ALFA_PROD_DATABASES = ("ALFA_EDW_PROD", "ALFA_EDW_MGM")
+ALFA_DEV_DATABASES = (
+    "ALFA_EDW_DEV",
+    "ALFA_EDW_SAN",
+    "ALFA_EDW_PHX",
+    "ALFA_EDW_SEA",
+    "ALFA_EDW_SIT",
+)
 
 THRESHOLDS = {
     "idle_warehouse_minutes": 10,
@@ -79,26 +109,36 @@ ENVIRONMENT_CONFIG = {
     "ALL": {
         "label": "All environments",
         "db_patterns": [],
+        "company_db_patterns": {},
     },
     "PROD": {
         "label": "PROD",
-        "db_patterns": ["ALFA_EDW_PROD"],
+        "db_patterns": list(ALFA_PROD_DATABASES),
+        "company_db_patterns": {
+            "ALFA": list(ALFA_PROD_DATABASES),
+            "Trexis": list(TREXIS_PROD_DATABASES),
+        },
     },
     "DEV_ALL": {
         "label": "All DEV/Sandbox",
-        "db_patterns": [
-            "ALFA_EDW_DEV",
-            "ALFA_EDW_SAN",
-            "ALFA_EDW_PHX",
-            "ALFA_EDW_SEA",
-            "ALFA_EDW_SIT",
-        ],
+        "trexis_label": "All DEV/SIT",
+        "db_patterns": list(ALFA_DEV_DATABASES),
+        "company_db_patterns": {
+            "ALFA": list(ALFA_DEV_DATABASES),
+            "Trexis": list(TREXIS_DEV_DATABASES),
+        },
     },
     "ALFA_EDW_DEV": {"label": "ALFA_EDW_DEV", "db_patterns": ["ALFA_EDW_DEV"]},
     "ALFA_EDW_SAN": {"label": "ALFA_EDW_SAN", "db_patterns": ["ALFA_EDW_SAN"]},
     "ALFA_EDW_PHX": {"label": "ALFA_EDW_PHX", "db_patterns": ["ALFA_EDW_PHX"]},
     "ALFA_EDW_SEA": {"label": "ALFA_EDW_SEA", "db_patterns": ["ALFA_EDW_SEA"]},
     "ALFA_EDW_SIT": {"label": "ALFA_EDW_SIT", "db_patterns": ["ALFA_EDW_SIT"]},
+}
+
+ENVIRONMENT_OPTIONS_BY_COMPANY = {
+    "ALFA": tuple(ENVIRONMENT_CONFIG.keys()),
+    "Trexis": ("ALL", "PROD", "DEV_ALL"),
+    "ALL": tuple(ENVIRONMENT_CONFIG.keys()),
 }
 
 # Manual architecture objectives used by Architecture Readiness. These are not
@@ -208,6 +248,46 @@ ARCHITECTURE_OBJECTIVES = (
         "DR_POLICY": "Document refresh and recovery path for release-critical SIT data.",
         "MATCH_PRIORITY": 185,
     },
+    *(
+        {
+            "COMPANY": "Trexis",
+            "ENTITY_TYPE": "DATABASE",
+            "ENTITY_PATTERN": database,
+            "EXPECTED_ENVIRONMENT": "PROD",
+            "WORKLOAD_CLASS": "Trexis production data",
+            "SERVICE_TIER": "Tier 1",
+            "OWNER": "Trexis Data Owner",
+            "APPROVAL_GROUP": "Trexis Owner / DBA Lead",
+            "RPO_MINUTES": 240,
+            "RTO_MINUTES": 480,
+            "ISOLATION_POLICY": "Route Trexis production data through approved Trexis PROD warehouses and owner-approved access paths.",
+            "CACHE_POLICY": "Tune cache only from repeated Trexis production workload evidence.",
+            "CLUSTERING_POLICY": "Use production query predicates and owner approval before clustering changes.",
+            "DR_POLICY": "Confirm Trexis production data has documented recovery ownership and drill evidence.",
+            "MATCH_PRIORITY": 205,
+        }
+        for database in TREXIS_PROD_DATABASES
+    ),
+    *(
+        {
+            "COMPANY": "Trexis",
+            "ENTITY_TYPE": "DATABASE",
+            "ENTITY_PATTERN": database,
+            "EXPECTED_ENVIRONMENT": "DEV_ALL",
+            "WORKLOAD_CLASS": "Trexis DEV/SIT data",
+            "SERVICE_TIER": "Tier 2",
+            "OWNER": "Trexis Development Data Owner",
+            "APPROVAL_GROUP": "Trexis Owner / DBA Lead",
+            "RPO_MINUTES": 1440,
+            "RTO_MINUTES": 2880,
+            "ISOLATION_POLICY": "Keep Trexis DEV and SIT data on approved non-production routes unless an owner-approved exception exists.",
+            "CACHE_POLICY": "Do not tune cache for one-off DEV/SIT queries unless repeated workload evidence exists.",
+            "CLUSTERING_POLICY": "Avoid clustering DEV/SIT tables without production-like predicate proof and cost review.",
+            "DR_POLICY": "Document refresh or restore path before treating DEV/SIT data as protected production data.",
+            "MATCH_PRIORITY": 175,
+        }
+        for database in TREXIS_DEV_DATABASES
+    ),
     {
         "COMPANY": "ALFA",
         "ENTITY_TYPE": "WAREHOUSE",
@@ -276,23 +356,26 @@ ARCHITECTURE_OBJECTIVES = (
         "DR_POLICY": "Link critical workload compute to protected database/object recovery expectations.",
         "MATCH_PRIORITY": 150,
     },
-    {
-        "COMPANY": "Trexis",
-        "ENTITY_TYPE": "WAREHOUSE",
-        "ENTITY_PATTERN": "WH_TRXS_%",
-        "EXPECTED_ENVIRONMENT": "ALL",
-        "WORKLOAD_CLASS": "Trexis workload compute",
-        "SERVICE_TIER": "Tier 1",
-        "OWNER": "Trexis Workload Owner",
-        "APPROVAL_GROUP": "Trexis Owner / DBA Lead",
-        "RPO_MINUTES": 240,
-        "RTO_MINUTES": 480,
-        "ISOLATION_POLICY": "Keep Trexis compute isolated from ALFA routes unless an owner-approved exception exists.",
-        "CACHE_POLICY": "Tune cache only from Trexis repeated workload evidence.",
-        "CLUSTERING_POLICY": "Use Trexis query predicates and owner approval before clustering changes.",
-        "DR_POLICY": "Confirm Trexis critical data has documented recovery ownership.",
-        "MATCH_PRIORITY": 180,
-    },
+    *(
+        {
+            "COMPANY": "Trexis",
+            "ENTITY_TYPE": "WAREHOUSE",
+            "ENTITY_PATTERN": warehouse,
+            "EXPECTED_ENVIRONMENT": "ALL",
+            "WORKLOAD_CLASS": "Trexis workload compute",
+            "SERVICE_TIER": "Tier 1",
+            "OWNER": "Trexis Workload Owner",
+            "APPROVAL_GROUP": "Trexis Owner / DBA Lead",
+            "RPO_MINUTES": 240,
+            "RTO_MINUTES": 480,
+            "ISOLATION_POLICY": "Keep Trexis compute isolated from ALFA routes unless an owner-approved exception exists.",
+            "CACHE_POLICY": "Tune cache only from Trexis repeated workload evidence.",
+            "CLUSTERING_POLICY": "Use Trexis query predicates and owner approval before clustering changes.",
+            "DR_POLICY": "Confirm Trexis critical data has documented recovery ownership.",
+            "MATCH_PRIORITY": 180,
+        }
+        for warehouse in TREXIS_WAREHOUSES
+    ),
     {
         "COMPANY": "ALL",
         "ENTITY_TYPE": "DATABASE",
@@ -497,32 +580,24 @@ FORWARD_PLATFORM_CONTROLS = (
 )
 
 # Warehouse inventory confirmed from Snowflake UI:
-# ALFA uses non-TRXS warehouses; Trexis uses WH_TRXS_* only.
+# Trexis uses only the four WH_TRXS_* warehouses below; every other warehouse belongs to ALFA.
 COMPANY_CONFIG = {
     "ALFA": {
-        "wh_patterns": [
-            "WH_ALFA_%",
-            "BI_COMPUTE_WH",
-            "OVERWATCH_WH",
-            "COMPUTE_WH",
-            "CROWDSTRIKE_WH",
-            "DOC_AI_WH",
-            "POSIT_WORKBENCH",
-            "SNOWFLAKE_LEARNING_WH",
-            "SYSTEM$STREAMLIT%",
-        ],
-        "wh_exclude_patterns": ["WH_TRXS_%"],
+        "wh_patterns": [],
+        "wh_exclude_patterns": list(TREXIS_WAREHOUSES),
         "db_patterns": ["ADMIN", "ALFA%"],
-        "exclude_db_pattern": "TRXS_%",
+        "db_exclude_patterns": list(TREXIS_DATABASES),
+        "exclude_db_pattern": "",
         "user_patterns": [],
         "user_exclude_patterns": ["TRXS_%"],
         "label": "ALFA",
         "color": "#34d399",
     },
     "Trexis": {
-        "wh_patterns": ["WH_TRXS_%"],
+        "wh_patterns": list(TREXIS_WAREHOUSES),
         "wh_exclude_patterns": [],
-        "db_patterns": ["TRXS_%"],
+        "db_patterns": list(TREXIS_DATABASES),
+        "db_exclude_patterns": [],
         "exclude_db_pattern": "",
         "user_patterns": ["TRXS_%"],
         "user_exclude_patterns": [],
@@ -533,6 +608,7 @@ COMPANY_CONFIG = {
         "wh_patterns": [],
         "wh_exclude_patterns": [],
         "db_patterns": [],
+        "db_exclude_patterns": [],
         "exclude_db_pattern": "",
         "user_patterns": [],
         "user_exclude_patterns": [],

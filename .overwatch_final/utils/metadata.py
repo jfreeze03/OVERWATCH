@@ -286,7 +286,16 @@ def build_unclassified_assets_sql(days_back: int = 30) -> str:
     for cfg in company_configs:
         wh_patterns.extend([p for p in cfg.get("wh_patterns", []) if p and p != "%"])
         db_patterns.extend([p for p in cfg.get("db_patterns", []) if p and p != "%"])
-    wh_unmatched = _like_predicate("warehouse_name", wh_patterns, negate=True) or "1=1"
+    alfa_catches_remaining_warehouses = any(
+        not cfg.get("wh_patterns") and cfg.get("wh_exclude_patterns")
+        for name, cfg in COMPANY_CONFIG.items()
+        if name.upper() == "ALFA"
+    )
+    wh_unmatched = (
+        "1=0"
+        if alfa_catches_remaining_warehouses
+        else (_like_predicate("warehouse_name", wh_patterns, negate=True) or "1=1")
+    )
     db_unmatched = _like_predicate("database_name", db_patterns, negate=True) or "1=1"
     return f"""
     WITH warehouse_usage AS (

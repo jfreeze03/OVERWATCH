@@ -21,6 +21,7 @@ from .company_filter import (
     company_value_allowed,
     environment_value_allowed,
     get_active_environment,
+    get_environment_db_patterns,
 )
 from .owner_directory import (
     OWNER_DIRECTORY_VIEW,
@@ -249,17 +250,11 @@ def alert_environment_values(environment: str | None) -> list[str]:
     env = str(environment or get_active_environment() or "ALL").upper()
     if env == "ALL":
         return []
+    values = [env]
+    values.extend(str(value).upper() for value in get_environment_db_patterns(env))
     if env == "DEV_ALL":
-        return [
-            "DEV_ALL",
-            "ALFA_EDW_DEV",
-            "ALFA_EDW_SAN",
-            "ALFA_EDW_PHX",
-            "ALFA_EDW_SEA",
-            "ALFA_EDW_SIT",
-            "OTHER ALFA NON-PROD",
-        ]
-    return [str(environment or "").strip()]
+        values.extend(["ALL DEV/SIT", "OTHER ALFA NON-PROD"])
+    return list(dict.fromkeys(value for value in values if value))
 
 
 def normalize_alert_severity(value: Any) -> str:

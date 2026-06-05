@@ -10,12 +10,16 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
-from config import COMPANY_CONFIG  # noqa: E402
+from config import COMPANY_CONFIG, TREXIS_DATABASES, TREXIS_DEV_DATABASES, TREXIS_PROD_DATABASES, TREXIS_WAREHOUSES  # noqa: E402
 from utils.company_filter import (  # noqa: E402
     company_value_allowed,
     environment_value_allowed,
     get_combined_filter_clause,
+    get_company_case_expr,
     get_db_filter_clause,
+    get_environment_filter_clause,
+    get_environment_label,
+    get_environment_options_for_company,
     get_global_filter_clause,
     get_wh_filter_clause,
 )
@@ -46,17 +50,25 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             st.session_state.update(previous)
 
     def test_alfa_warehouse_scope_is_not_broad_match_all(self):
+        self.assertEqual(COMPANY_CONFIG["Trexis"]["wh_patterns"], list(TREXIS_WAREHOUSES))
+        self.assertEqual(COMPANY_CONFIG["ALFA"]["wh_exclude_patterns"], list(TREXIS_WAREHOUSES))
+        self.assertEqual(COMPANY_CONFIG["Trexis"]["db_patterns"], list(TREXIS_DATABASES))
         self.assertNotIn("%", COMPANY_CONFIG["ALFA"]["wh_patterns"])
         self.assertTrue(company_value_allowed("WH_ALFA_ADHOC", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("BI_COMPUTE_WH", "warehouse", "ALFA"))
         self.assertTrue(company_value_allowed("OVERWATCH_WH", "warehouse", "ALFA"))
-        self.assertFalse(company_value_allowed("WH_TRXS_REPORTING", "warehouse", "ALFA"))
-        self.assertFalse(company_value_allowed("WH_RANDOM_VENDOR", "warehouse", "ALFA"))
+        self.assertTrue(company_value_allowed("WH_TRXS_REPORTING", "warehouse", "ALFA"))
+        self.assertTrue(company_value_allowed("WH_RANDOM_VENDOR", "warehouse", "ALFA"))
+        self.assertFalse(company_value_allowed("WH_TRXS_LOAD", "warehouse", "ALFA"))
+        self.assertTrue(company_value_allowed("WH_TRXS_LOAD", "warehouse", "Trexis"))
+        self.assertFalse(company_value_allowed("WH_TRXS_REPORTING", "warehouse", "Trexis"))
 
     def test_company_scope_sql_excludes_trexis_for_alfa(self):
         clause = get_wh_filter_clause("warehouse_name", company="ALFA")
-        self.assertIn("WH_TRXS_%", clause)
+        self.assertIn("WH_TRXS_LOAD", clause)
+        self.assertIn("WH_TRXS_UNLOAD", clause)
         self.assertIn("NOT", clause.upper())
+        self.assertNotIn("WH_TRXS_%", clause)
         self.assertNotIn("LIKE '%'", clause.upper())
 
     def test_combined_scope_uses_any_company_signal_with_exclusions(self):
@@ -65,8 +77,34 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn(" OR ", upper)
         self.assertIn("Q.WAREHOUSE_NAME IS NOT NULL", upper)
         self.assertIn("Q.DATABASE_NAME IS NOT NULL", upper)
-        self.assertIn("WH_TRXS_%", upper)
+        self.assertIn("WH_TRXS_LOAD", upper)
+        self.assertNotIn("WH_TRXS_%", upper)
         self.assertIn("TRXS_%", upper)
+
+    def test_company_case_uses_exact_trexis_warehouse_list(self):
+        expr = get_company_case_expr("q.warehouse_name", "q.database_name", "q.user_name").upper()
+        self.assertIn("WH_TRXS_LOAD", expr)
+        self.assertIn("WH_TRXS_UNLOAD", expr)
+        self.assertIn("TRXS_EDW_PRD", expr)
+        self.assertIn("TRXS_GW_DATA_SIT", expr)
+        self.assertIn("UPPER(Q.WAREHOUSE_NAME)", expr)
+        self.assertIn("UPPER(Q.DATABASE_NAME)", expr)
+        self.assertIn("NULLIF(TRIM(TO_VARCHAR(Q.WAREHOUSE_NAME))", expr)
+        self.assertNotIn("Q.DATABASE_NAME ILIKE 'TRXS_%'", expr)
+        self.assertNotIn("WH_TRXS_%", expr)
+
+    def test_mart_setup_uses_exact_trexis_warehouse_list(self):
+        sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        self.assertIn("('TREXIS', 'WAREHOUSE', 'WH_TRXS_LOAD'", sql)
+        self.assertIn("('TREXIS', 'WAREHOUSE', 'WH_TRXS_UNLOAD'", sql)
+        self.assertIn("('TREXIS', 'DATABASE',  'TRXS_EDW_PRD'", sql)
+        self.assertIn("('TREXIS', 'DATABASE',  'TRXS_GW_DATA_SIT'", sql)
+        self.assertIn("SCOPE_PATTERN = 'WH_TRXS_%'", sql)
+        self.assertIn("SCOPE_PATTERN = 'TRXS_%'", sql)
+        self.assertNotIn("WAREHOUSE_NAME ILIKE 'WH_TRXS_%'", sql)
+        self.assertNotIn("Q.WAREHOUSE_NAME ILIKE 'WH_TRXS_%'", sql)
+        self.assertNotIn("DATABASE_NAME ILIKE 'TRXS_%'", sql)
+        self.assertNotIn("Q.DATABASE_NAME ILIKE 'TRXS_%'", sql)
 
     def test_global_filter_clause_can_avoid_duplicate_scope_predicates(self):
         previous = dict(st.session_state)
@@ -93,10 +131,10 @@ class CompanyScopeAndCostTests(unittest.TestCase):
                 include_environment_scope=False,
             ).upper()
 
-            self.assertIn("WH_TRXS_%", scoped)
-            self.assertIn("UPPER(Q.DATABASE_NAME) = 'ALFA_EDW_PROD'", scoped)
+            self.assertIn("WH_TRXS_LOAD", scoped)
+            self.assertIn("ALFA_EDW_PROD", scoped)
             self.assertIn("Q.USER_NAME ILIKE '%ETL%'", scoped)
-            self.assertNotIn("WH_TRXS_%", ui_only)
+            self.assertNotIn("WH_TRXS_LOAD", ui_only)
             self.assertNotIn("ALFA_EDW_PROD", ui_only)
             self.assertIn("Q.USER_NAME ILIKE '%ETL%'", ui_only)
         finally:
@@ -120,7 +158,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             ).upper()
 
             self.assertIn("Q.DATABASE_NAME IS NULL", clause)
-            self.assertIn("UPPER(Q.DATABASE_NAME) = 'ALFA_EDW_PROD'", clause)
+            self.assertIn("ALFA_EDW_PROD", clause)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -133,15 +171,33 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             st.session_state["global_environment"] = "PROD"
 
             clause = get_db_filter_clause("database_name", company="ALFA").upper()
-            self.assertIn("UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD'", clause)
+            self.assertIn("ALFA_EDW_PROD", clause)
             self.assertTrue(environment_value_allowed("ALFA_EDW_PROD", company="ALFA"))
             self.assertFalse(environment_value_allowed("ALFA_EDW_DEV", company="ALFA"))
 
             trexis_clause = get_db_filter_clause("database_name", company="Trexis").upper()
             self.assertNotIn("ALFA_EDW_PROD", trexis_clause)
+            self.assertIn("TRXS_EDW_PRD", trexis_clause)
+            trexis_prod_env_clause = get_environment_filter_clause("database_name", company="Trexis").upper()
+            self.assertIn("TRXS_EDW_PRD", trexis_prod_env_clause)
+            self.assertNotIn("TRXS_EDW_DEV", trexis_prod_env_clause)
+
+            st.session_state["global_environment"] = "DEV_ALL"
+            trexis_dev_clause = get_environment_filter_clause("database_name", company="Trexis").upper()
+            for db_name in TREXIS_DEV_DATABASES:
+                self.assertIn(db_name, trexis_dev_clause)
+            for db_name in TREXIS_PROD_DATABASES:
+                self.assertNotIn(db_name, trexis_dev_clause)
+            self.assertTrue(environment_value_allowed("TRXS_EDW_DEV", company="Trexis"))
+            self.assertTrue(environment_value_allowed("TRXS_EDW_SIT", company="Trexis"))
+            self.assertFalse(environment_value_allowed("TRXS_EDW_PRD", company="Trexis"))
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
+
+    def test_trexis_environment_options_are_prod_and_dev_sit_only(self):
+        self.assertEqual(get_environment_options_for_company("Trexis"), ("ALL", "PROD", "DEV_ALL"))
+        self.assertEqual(get_environment_label("DEV_ALL", "Trexis"), "All DEV/SIT")
 
     def test_cost_reconciliation_sql_uses_metering_and_variance(self):
         sql = build_cost_reconciliation_sql(30).upper()
@@ -156,12 +212,14 @@ class CompanyScopeAndCostTests(unittest.TestCase):
                 {"COMPANY": "ALFA", "ENVIRONMENT": "PROD", "DATABASE_NAME": "ALFA_EDW_PROD"},
                 {"COMPANY": "ALFA", "ENVIRONMENT": "ALFA_EDW_DEV", "DATABASE_NAME": "ALFA_EDW_DEV"},
                 {"COMPANY": "ALFA", "ENVIRONMENT": "ALFA_EDW_SAN", "DATABASE_NAME": "ALFA_EDW_SAN"},
+                {"COMPANY": "Trexis", "ENVIRONMENT": "PROD", "DATABASE_NAME": "TRXS_EDW_PRD"},
+                {"COMPANY": "Trexis", "ENVIRONMENT": "DEV_ALL", "DATABASE_NAME": "TRXS_EDW_SIT"},
             ]
         )
 
         annotated = _annotate_allocation_quality(rows)
 
-        self.assertEqual(annotated["ENVIRONMENT_ROLLUP"].tolist(), ["PROD", "DEV_ALL", "DEV_ALL"])
+        self.assertEqual(annotated["ENVIRONMENT_ROLLUP"].tolist(), ["PROD", "DEV_ALL", "DEV_ALL", "PROD", "DEV_ALL"])
         self.assertEqual(set(annotated["ALLOCATION_CONFIDENCE"]), {"Allocated / Estimated"})
         self.assertEqual(set(annotated["CHARGEBACK_READY"]), {"Directional"})
 
@@ -223,6 +281,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         self.assertIn("WAREHOUSE_METERING_HISTORY", sql)
         self.assertIn("DATABASES", sql)
         self.assertIn("DOES NOT MATCH ANY COMPANY ALLOWLIST", sql)
+        self.assertIn("AND 1=0", sql)
         self.assertNotIn("ILIKE '%'", sql)
 
     def test_optional_column_probe_degrades_when_view_is_unavailable(self):
@@ -319,18 +378,18 @@ class CompanyScopeAndCostTests(unittest.TestCase):
         previous_company = st.session_state.get("active_company")
         st.session_state["active_company"] = "Trexis"
         try:
-            warehouses = pd.DataFrame({"NAME": ["BI_COMPUTE_WH", "WH_TRXS_REPORTING"]})
+            warehouses = pd.DataFrame({"NAME": ["BI_COMPUTE_WH", "WH_TRXS_LOAD", "WH_TRXS_REPORTING"]})
             scoped_warehouses = scope_warehouse_names(warehouses, "NAME")
-            self.assertEqual(scoped_warehouses["NAME"].tolist(), ["WH_TRXS_REPORTING"])
+            self.assertEqual(scoped_warehouses["NAME"].tolist(), ["WH_TRXS_LOAD"])
 
             objects = pd.DataFrame(
                 {
-                    "DATABASE_NAME": ["ALFA_EDW_DEV_BI", "TRXS_ANALYTICS"],
-                    "WAREHOUSE_NAME": ["BI_COMPUTE_WH", "WH_TRXS_REPORTING"],
+                    "DATABASE_NAME": ["ALFA_EDW_DEV_BI", "TRXS_EDW_PRD", "ALFA_EDW_PROD"],
+                    "WAREHOUSE_NAME": ["BI_COMPUTE_WH", "WH_TRXS_LOAD", "WH_TRXS_REPORTING"],
                 }
             )
             scoped_objects = scope_metadata_df(objects)
-            self.assertEqual(scoped_objects["DATABASE_NAME"].tolist(), ["TRXS_ANALYTICS"])
+            self.assertEqual(scoped_objects["DATABASE_NAME"].tolist(), ["TRXS_EDW_PRD"])
         finally:
             if previous_company is None:
                 st.session_state.pop("active_company", None)

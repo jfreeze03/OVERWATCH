@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
-from .company_filter import get_active_company, get_active_environment, get_environment_cfg
+from .company_filter import get_active_company, get_active_environment, get_environment_db_patterns
 from .query import run_query, safe_identifier, sql_literal
 
 
@@ -517,8 +517,11 @@ def action_queue_environment_values(environment: str | None = None) -> list[str]
     if env in ("", "ALL"):
         return common
     values = common + [env]
+    patterns = get_environment_db_patterns(env)
+    if patterns:
+        values.extend(str(value).upper() for value in patterns)
     if env == "DEV_ALL":
-        values.extend(str(value).upper() for value in get_environment_cfg("DEV_ALL").get("db_patterns", []))
+        values.append("ALL DEV/SIT")
     elif env.startswith("ALFA_EDW_"):
         values.append("DEV_ALL")
     return list(dict.fromkeys(values))

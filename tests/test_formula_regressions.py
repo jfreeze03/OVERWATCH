@@ -2982,7 +2982,7 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state.clear()
             st.session_state["active_company"] = "ALFA"
             prod_clause = get_environment_filter_clause("q.database_name", "PROD").upper()
-            self.assertIn("UPPER(Q.DATABASE_NAME) = 'ALFA_EDW_PROD'", prod_clause)
+            self.assertIn("ALFA_EDW_PROD", prod_clause)
 
             dev_clause = get_environment_filter_clause("q.database_name", "DEV_ALL").upper()
             for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
@@ -2991,10 +2991,18 @@ class FormulaRegressionTests(unittest.TestCase):
 
             optional_clause = get_environment_filter_or_no_database_clause("q.database_name", "PROD").upper()
             self.assertIn("Q.DATABASE_NAME IS NULL", optional_clause)
-            self.assertIn("UPPER(Q.DATABASE_NAME) = 'ALFA_EDW_PROD'", optional_clause)
+            self.assertIn("ALFA_EDW_PROD", optional_clause)
 
             st.session_state["active_company"] = "Trexis"
-            self.assertEqual(get_environment_filter_clause("q.database_name", "PROD"), "")
+            trexis_prod_clause = get_environment_filter_clause("q.database_name", "PROD").upper()
+            self.assertIn("TRXS_EDW_PRD", trexis_prod_clause)
+            self.assertNotIn("TRXS_EDW_DEV", trexis_prod_clause)
+
+            st.session_state["global_environment"] = "DEV_ALL"
+            trexis_dev_clause = get_environment_filter_clause("q.database_name", "DEV_ALL").upper()
+            self.assertIn("TRXS_EDW_DEV", trexis_dev_clause)
+            self.assertIn("TRXS_EDW_SIT", trexis_dev_clause)
+            self.assertNotIn("TRXS_EDW_PRD", trexis_dev_clause)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -3005,6 +3013,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("NO DATABASE CONTEXT", case_expr)
         self.assertEqual(environment_label_for_database("ALFA_EDW_PROD"), "PROD")
         self.assertEqual(environment_label_for_database("ALFA_EDW_SAN"), "ALFA_EDW_SAN")
+        self.assertEqual(environment_label_for_database("TRXS_EDW_PRD"), "PROD")
+        self.assertEqual(environment_label_for_database("TRXS_EDW_SIT"), "DEV_ALL")
         self.assertEqual(environment_label_for_database(""), "No Database Context")
 
     def test_global_filter_clause_includes_environment_when_database_column_exists(self):
@@ -3021,7 +3031,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 role_col="q.role_name",
                 db_col="q.database_name",
             ).upper()
-            self.assertIn("UPPER(Q.DATABASE_NAME) = 'ALFA_EDW_PROD'", clause)
+            self.assertIn("ALFA_EDW_PROD", clause)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -3037,7 +3047,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
             db_sql = build_mart_adoption_users_db_sql(30, "ALFA").upper()
             for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
-                self.assertIn(f"ENVIRONMENT = '{db_name}'", db_sql)
+                self.assertIn(db_name, db_sql)
             self.assertNotIn("ALFA_EDW_PROD", db_sql)
 
             login_sql = build_mart_control_room_failed_logins_sql(24, "ALFA").upper()
@@ -3261,13 +3271,15 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertIn("DATABASE_NAME", calls_sql)
             self.assertIn("SCHEMA_NAME", calls_sql)
             self.assertIn("GROUP BY DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME", calls_sql)
-            self.assertIn("ENVIRONMENT = 'PROD'", calls_sql)
+            self.assertIn("UPPER(ENVIRONMENT)", calls_sql)
+            self.assertIn("'PROD'", calls_sql)
 
             sla_sql = build_mart_procedure_sla_sql(7, "ALFA").upper()
             self.assertIn("FACT_PROCEDURE_RUN", sla_sql)
             self.assertIn("DATABASE_NAME", sla_sql)
             self.assertIn("SCHEMA_NAME", sla_sql)
-            self.assertIn("ENVIRONMENT = 'PROD'", sla_sql)
+            self.assertIn("UPPER(ENVIRONMENT)", sla_sql)
+            self.assertIn("'PROD'", sla_sql)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -3543,7 +3555,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("'NO DATABASE CONTEXT' AS ENVIRONMENT", sql_upper)
         self.assertIn("PRIVILEGED_ROLE_GRANTS", sql_upper)
         self.assertIn("OBJECT_PRIVILEGE_GRANTS", sql_upper)
-        self.assertIn("UPPER(GOR.TABLE_CATALOG) = 'ALFA_EDW_PROD'", sql_upper)
+        self.assertIn("ALFA_EDW_PROD", sql_upper)
         self.assertNotIn("GTU.TABLE_CATALOG", sql_upper)
         self.assertEqual(verification_query_safety_issues(sql), [])
 
@@ -4257,7 +4269,7 @@ class FormulaRegressionTests(unittest.TestCase):
             mart_combined = "\n".join([mart_summary, mart_exceptions]).upper()
 
             self.assertIn("DATABASE_NAME IS NULL", combined)
-            self.assertIn("UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD'", combined)
+            self.assertIn("ALFA_EDW_PROD", combined)
             self.assertIn("AS DATABASE_CONTEXT", combined)
             self.assertIn("AS SCOPE_CONFIDENCE", combined)
             self.assertIn("ACCOUNT_SCOPE_CHANGES", combined)

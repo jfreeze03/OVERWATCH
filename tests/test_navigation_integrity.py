@@ -27,6 +27,10 @@ from config import (  # noqa: E402
     SECTION_REDIRECTS,
     EXPERIENCE_VIEW_SECTIONS,
     ROLE_EXPERIENCE_VIEWS,
+    TREXIS_DATABASES,
+    TREXIS_DEV_DATABASES,
+    TREXIS_PROD_DATABASES,
+    TREXIS_WAREHOUSES,
     normalize_section_name,
     resolve_allowed_experience_views,
     resolve_role_profile,
@@ -335,6 +339,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Dedicated Streamlit app execution warehouse", objectives[("WAREHOUSE", "OVERWATCH_WH")]["ISOLATION_POLICY"])
         self.assertEqual(objectives[("WAREHOUSE", "COMPUTE_WH")]["WORKLOAD_CLASS"], "OVERWATCH mart refresh and utility compute")
         self.assertIn("monitor cost separately", objectives[("WAREHOUSE", "COMPUTE_WH")]["ISOLATION_POLICY"])
+        for database in TREXIS_PROD_DATABASES:
+            self.assertEqual(objectives[("DATABASE", database)]["EXPECTED_ENVIRONMENT"], "PROD")
+        for database in TREXIS_DEV_DATABASES:
+            self.assertEqual(objectives[("DATABASE", database)]["EXPECTED_ENVIRONMENT"], "DEV_ALL")
+        self.assertEqual(len([db for db in TREXIS_DATABASES if ("DATABASE", db) in objectives]), len(TREXIS_DATABASES))
+        for warehouse in TREXIS_WAREHOUSES:
+            self.assertEqual(objectives[("WAREHOUSE", warehouse)]["WORKLOAD_CLASS"], "Trexis workload compute")
+        self.assertNotIn(("WAREHOUSE", "WH_TRXS_%"), objectives)
 
     def test_workflow_hubs_expose_expected_subworkflows(self):
         from sections import change_drift, cost_contract, security_posture, workload_operations

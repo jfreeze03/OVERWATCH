@@ -24,7 +24,7 @@ import theme as theme_module
 from theme import inject_theme, render_theme_picker
 import config as config_module
 
-if getattr(config_module, "CONFIG_VERSION", "") != "2026-06-05-role-access-v2":
+if getattr(config_module, "CONFIG_VERSION", "") != "2026-06-05-trexis-scope-v1":
     config_module = importlib.reload(config_module)
 
 from config import (
@@ -44,7 +44,11 @@ if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-02-guardrails-
 from utils.cache import clear_all_cache
 from utils.session import get_session
 from utils.logging import log_section_load
-from utils.company_filter import invalidate_company_cache
+from utils.company_filter import (
+    get_environment_label,
+    get_environment_options_for_company,
+    invalidate_company_cache,
+)
 from utils.admin import clamp_global_date_range, render_admin_mode_control
 import utils.section_guidance as section_guidance
 
@@ -397,7 +401,7 @@ def _chip(label: str, value: object, *, muted: bool = False) -> str:
 
 def _active_scope_chips(company: str) -> str:
     env_key = st.session_state.get("global_environment", DEFAULT_ENVIRONMENT)
-    env_label = ENVIRONMENT_CONFIG.get(env_key, ENVIRONMENT_CONFIG[DEFAULT_ENVIRONMENT])["label"]
+    env_label = get_environment_label(env_key, company)
     chips = [
         _chip("Company", company),
         _chip("Environment", env_label),
@@ -547,6 +551,9 @@ with st.sidebar:
     )
     if _prev_company != active_company:
         invalidate_company_cache()
+    environment_options = list(get_environment_options_for_company(active_company))
+    if st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) not in environment_options:
+        st.session_state["global_environment"] = DEFAULT_ENVIRONMENT
     st.session_state["_prev_active_company"] = active_company
 
     if _sidebar_panel_toggle("Global Filters", "global_filters"):
@@ -600,17 +607,21 @@ with st.sidebar:
         st.text_input("Database contains", key="global_database")
         st.selectbox(
             "Environment",
-            list(ENVIRONMENT_CONFIG.keys()),
-            index=list(ENVIRONMENT_CONFIG.keys()).index(
+            environment_options,
+            index=environment_options.index(
                 st.session_state.get("global_environment", DEFAULT_ENVIRONMENT)
-                if st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) in ENVIRONMENT_CONFIG
+                if st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) in environment_options
                 else DEFAULT_ENVIRONMENT
             ),
-            format_func=lambda key: ENVIRONMENT_CONFIG[key]["label"],
+            format_func=lambda key: get_environment_label(key, active_company),
             key="global_environment",
             help=(
-                "Splits ALFA_EDW_PROD from DEV/SAN/PHX/SEA/SIT. "
-                "Cost split is allocated by query database when warehouses are shared."
+                "Trexis PROD uses _PRD databases; All DEV/SIT uses _DEV and _SIT."
+                if str(active_company).upper() == "TREXIS"
+                else (
+                    "Splits ALFA_EDW_PROD from DEV/SAN/PHX/SEA/SIT. "
+                    "Cost split is allocated by query database when warehouses are shared."
+                )
             ),
         )
 

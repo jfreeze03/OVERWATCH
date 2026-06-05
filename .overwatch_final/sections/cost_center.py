@@ -4,6 +4,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+from config import ALFA_DEV_DATABASES, TREXIS_DEV_DATABASES, TREXIS_PROD_DATABASES
 from utils.workflows import render_workflow_selector
 from utils import (
     get_session, format_credits, credits_to_dollars,
@@ -52,14 +53,6 @@ COST_CENTER_VIEW_DETAILS = {
     "Attribution": "Role, schema, client, and lineage cost views.",
     "Chargeback": "ALFA/Trexis company allocation output.",
     "Contract Utilization": "Committed-use utilization and risk.",
-}
-
-ALFA_DEV_DATABASES = {
-    "ALFA_EDW_DEV",
-    "ALFA_EDW_SAN",
-    "ALFA_EDW_PHX",
-    "ALFA_EDW_SEA",
-    "ALFA_EDW_SIT",
 }
 
 NO_DATABASE_CONTEXT_VALUES = {
@@ -122,9 +115,15 @@ def _environment_rollup_for_cost(row) -> str:
     db = _row_text(row, "DATABASE_NAME").upper()
     if db in NO_DATABASE_CONTEXT_VALUES or env in NO_DATABASE_CONTEXT_VALUES:
         return "No Database Context"
-    if db == "ALFA_EDW_PROD" or env == "PROD":
+    if db == "ALFA_EDW_PROD" or db in TREXIS_PROD_DATABASES or env == "PROD":
         return "PROD"
-    if db in ALFA_DEV_DATABASES or env in ALFA_DEV_DATABASES or env == "DEV_ALL":
+    if (
+        db in ALFA_DEV_DATABASES
+        or db in TREXIS_DEV_DATABASES
+        or env in ALFA_DEV_DATABASES
+        or env in TREXIS_DEV_DATABASES
+        or env == "DEV_ALL"
+    ):
         return "DEV_ALL"
     if db.startswith("ALFA_EDW_") or env == "OTHER ALFA NON-PROD":
         return "Other ALFA Non-Prod"

@@ -24,7 +24,7 @@ import theme as theme_module
 from theme import inject_theme, render_theme_picker
 import config as config_module
 
-if getattr(config_module, "CONFIG_VERSION", "") != "2026-06-01-platform-futures-v1":
+if getattr(config_module, "CONFIG_VERSION", "") != "2026-06-05-role-access-v2":
     config_module = importlib.reload(config_module)
 
 from config import (
@@ -33,6 +33,8 @@ from config import (
     SECTION_BY_TITLE, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
     SECTION_ICONS, DEFAULT_ALERT_EMAIL, EXPERIENCE_VIEW_SECTIONS,
     normalize_section_name,
+    resolve_allowed_experience_views,
+    resolve_role_profile,
 )
 import utils as utils_package
 
@@ -195,21 +197,29 @@ def _get_current_role() -> str:
     return str(st.session_state.get("_overwatch_current_role", "") or "").upper()
 
 
+def _allowed_experience_options() -> list[str]:
+    return list(resolve_allowed_experience_views(_get_current_role()))
+
+
+def _current_experience_view() -> str:
+    allowed = _allowed_experience_options()
+    current = str(st.session_state.get("overwatch_experience_view", "") or allowed[0])
+    if current not in allowed:
+        current = allowed[0]
+        st.session_state["overwatch_experience_view"] = current
+    return current
+
+
 def _resolve_visible_sections() -> list[str]:
-    return _resolve_visible_sections_for_experience(
-        str(st.session_state.get("overwatch_experience_view", "DBA") or "DBA")
-    )
+    return _resolve_visible_sections_for_experience(_current_experience_view())
 
 
 def _resolve_visible_sections_for_experience(experience: str) -> list[str]:
-    role = _get_current_role()
-    for key, sec_list in ROLE_SECTIONS.items():
-        if key in role:
-            base_sections = list(sec_list)
-            break
-    else:
-        base_sections = list(ALL_SECTIONS)
-    profile_sections = EXPERIENCE_VIEW_SECTIONS.get(experience, EXPERIENCE_VIEW_SECTIONS["DBA"])
+    role_profile = resolve_role_profile(_get_current_role())
+    base_sections = list(ROLE_SECTIONS.get(role_profile, ALL_SECTIONS))
+    allowed = _allowed_experience_options()
+    selected_experience = experience if experience in allowed else allowed[0]
+    profile_sections = EXPERIENCE_VIEW_SECTIONS.get(selected_experience, EXPERIENCE_VIEW_SECTIONS["DBA"])
     visible = [section for section in profile_sections if section in base_sections]
     return visible or base_sections
 
@@ -234,7 +244,7 @@ def _queue_section_navigation(section: str) -> None:
 
 def _sync_experience_navigation() -> None:
     """Keep the active section valid when the persona filter changes."""
-    selected = str(st.session_state.get("overwatch_experience_view", "DBA") or "DBA")
+    selected = _current_experience_view()
     visible = _resolve_visible_sections_for_experience(selected)
     current = _normalize_nav_section(st.session_state.get("nav_section", visible[0]))
     if current not in visible:
@@ -636,12 +646,9 @@ with st.sidebar:
 
     # Navigation.
     current_role     = _get_current_role()
-    matched_profile  = next((k for k in ROLE_SECTIONS if k in current_role), "DBA")
-    experience_options = list(EXPERIENCE_VIEW_SECTIONS.keys())
-    current_experience = st.session_state.get("overwatch_experience_view", "DBA")
-    if current_experience not in experience_options:
-        current_experience = "DBA"
-        st.session_state["overwatch_experience_view"] = current_experience
+    matched_profile  = resolve_role_profile(current_role)
+    experience_options = _allowed_experience_options()
+    current_experience = _current_experience_view()
     selected_experience = st.selectbox(
         "Experience View",
         experience_options,

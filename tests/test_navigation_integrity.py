@@ -1,8 +1,10 @@
 from pathlib import Path
 import ast
 import importlib.util
+import json
 import sys
 import unittest
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -22,7 +24,10 @@ from config import (  # noqa: E402
     SECTION_MODULES,
     SECTION_REDIRECTS,
     EXPERIENCE_VIEW_SECTIONS,
+    ROLE_EXPERIENCE_VIEWS,
     normalize_section_name,
+    resolve_allowed_experience_views,
+    resolve_role_profile,
 )
 from utils.section_guidance import (  # noqa: E402
     SECTION_EVIDENCE_CONTRACT,
@@ -75,6 +80,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("from utils", shell_import_block)
         self.assertNotIn("import utils", shell_import_block)
         self.assertNotIn("st.number_input", shell_text)
+        self.assertIn("def _render_action_brief", shell_text)
+        self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn('st.markdown("**Operating Snapshot**")', shell_text)
+        self.assertIn("cols = st.columns(4)", shell_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS = 24", full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS", full_workspace_text)
         self.assertIn("Use live 24h checks when needed", full_workspace_text)
@@ -85,6 +94,39 @@ class NavigationIntegrityTests(unittest.TestCase):
             with self.subTest(role=role):
                 self.assertTrue(sections)
                 self.assertLessEqual(set(sections), set(ALL_SECTIONS))
+        self.assertIn("Workload Operations", ROLE_SECTIONS["ANALYST"])
+        self.assertIn("Workload Operations", ROLE_SECTIONS["MANAGER"])
+        self.assertNotIn("Security Posture", ROLE_SECTIONS["ANALYST"])
+        self.assertNotIn("Change & Drift", ROLE_SECTIONS["ANALYST"])
+        self.assertEqual(ROLE_SECTIONS["MANAGER"], ALL_SECTIONS)
+        self.assertEqual(ROLE_SECTIONS["DBA"], ALL_SECTIONS)
+
+        role_profile_cases = {
+            "SNOW_PRI_GFR_PRD_ALFA_PDMWMGMT": "EXECUTIVE",
+            "SNOW_PRI_GFR_PRD_ALFA_DSA": "MANAGER",
+            "SNOW_PRI_GFR_PRD_ALFA_DTI": "ANALYST",
+            "SNOW_PRI_GFR_NONPRD_ALFA_PDMWMGMT": "EXECUTIVE",
+            "SNOW_PRI_GFR_NONPRD_ALFA_DSA": "MANAGER",
+            "SNOW_PRI_GFR_NONPRD_ALFA_DTI": "ANALYST",
+            "SNOW_ACCOUNTADMINS": "DBA",
+            "SNOW_SYSADMINS": "DBA",
+            "ACCOUNTADMIN": "DBA",
+        }
+        for role, expected_profile in role_profile_cases.items():
+            with self.subTest(role_profile=role):
+                self.assertEqual(resolve_role_profile(role), expected_profile)
+        self.assertIn("Workload Operations", ROLE_SECTIONS[resolve_role_profile("SNOW_PRI_GFR_PRD_ALFA_DTI")])
+        self.assertEqual(ROLE_SECTIONS[resolve_role_profile("SNOW_PRI_GFR_PRD_ALFA_DSA")], ALL_SECTIONS)
+        self.assertEqual(resolve_allowed_experience_views("SNOW_PRI_GFR_PRD_ALFA_PDMWMGMT"), ("Executive",))
+        self.assertEqual(
+            resolve_allowed_experience_views("SNOW_PRI_GFR_PRD_ALFA_DSA"),
+            ("Executive", "FinOps", "Security", "Platform"),
+        )
+        self.assertEqual(resolve_allowed_experience_views("SNOW_PRI_GFR_PRD_ALFA_DTI"), ("Platform",))
+        self.assertEqual(resolve_allowed_experience_views("SNOW_ACCOUNTADMINS"), tuple(EXPERIENCE_VIEW_SECTIONS.keys()))
+        self.assertEqual(resolve_allowed_experience_views("SNOW_SYSADMINS"), tuple(EXPERIENCE_VIEW_SECTIONS.keys()))
+        self.assertEqual(resolve_allowed_experience_views("ACCOUNTADMIN"), tuple(EXPERIENCE_VIEW_SECTIONS.keys()))
+        self.assertIn("Workload Operations", EXPERIENCE_VIEW_SECTIONS["Platform"])
 
         self.assertEqual(set(SECTION_BY_TITLE), set(ALL_SECTIONS))
         self.assertLessEqual(set(SECTION_ALIASES.values()), set(ALL_SECTIONS))
@@ -111,7 +153,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Executive Landing", ALL_SECTIONS)
         self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
         self.assertIn("EXPERIENCE_VIEW_SECTIONS", config_text)
+        self.assertIn("ROLE_EXPERIENCE_VIEWS", config_text)
+        self.assertIn("resolve_allowed_experience_views", config_text)
         self.assertIn("Experience View", app_text)
+        self.assertIn("def _allowed_experience_options", app_text)
+        self.assertIn("def _current_experience_view", app_text)
         self.assertIn("_sync_experience_navigation", app_text)
         self.assertIn("on_change=_sync_experience_navigation", app_text)
         for profile, sections in EXPERIENCE_VIEW_SECTIONS.items():
@@ -121,6 +167,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Executive Landing", EXPERIENCE_VIEW_SECTIONS["Executive"])
         self.assertIn("Cost & Contract", EXPERIENCE_VIEW_SECTIONS["FinOps"])
         self.assertIn("Security Posture", EXPERIENCE_VIEW_SECTIONS["Security"])
+        for profile, views in ROLE_EXPERIENCE_VIEWS.items():
+            with self.subTest(role_experience=profile):
+                self.assertTrue(views)
+                self.assertLessEqual(set(views), set(EXPERIENCE_VIEW_SECTIONS))
 
     def test_executive_landing_routes_to_workflow_panes(self):
         executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
@@ -290,6 +340,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Stored procedures", workload_operations.WORKFLOWS)
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Query diagnosis"], "sections.query_analysis")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Task graphs"], "sections.task_management")
+        self.assertEqual(
+            cost_contract.WORKFLOWS[:4],
+            (
+                "Explain bill / attribution / contract",
+                "Budget governance",
+                "Recommendations and action queue",
+                "FinOps Control Center",
+            ),
+        )
         self.assertIn("Recommendations and action queue", cost_contract.WORKFLOWS)
         self.assertIn("Budget governance", cost_contract.WORKFLOWS)
         self.assertEqual(cost_contract.WORKFLOW_MODULES["Budget governance"], "sections.budget_governance")
@@ -303,7 +362,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Data movement and replication", change_drift.WORKFLOWS)
         self.assertIn("Controlled DBA actions", change_drift.WORKFLOWS)
         self.assertEqual(change_drift.WORKFLOW_MODULES["Controlled DBA actions"], "sections.dba_tools")
-        self.assertEqual(change_drift.WORKFLOWS[-1], "Controlled DBA actions")
+        self.assertEqual(
+            change_drift.WORKFLOWS[:5],
+            (
+                "Object and access changes",
+                "Schema and object drift",
+                "Terraform evidence",
+                "Jira evidence",
+                "Controlled DBA actions",
+            ),
+        )
 
     def test_workflow_hubs_lazy_load_specialist_modules(self):
         hub_files = {
@@ -400,6 +468,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _seed_current_role_from_secrets", app_text)
         self.assertIn('snowflake_cfg.get("role")', app_text)
         self.assertIn("_seed_current_role_from_secrets()", app_text)
+        self.assertIn("resolve_role_profile(_get_current_role())", app_text)
+        self.assertIn("resolve_allowed_experience_views(_get_current_role())", app_text)
+        self.assertIn("matched_profile  = resolve_role_profile(current_role)", app_text)
 
     def test_sidebar_saved_views_are_explicit_load_only(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -411,7 +482,22 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('bookmark_name = str(st.session_state.get("bm_name_input") or new_bm_name or "").strip()', app_text)
         self.assertIn("Enter a bookmark name before saving.", app_text)
         self.assertNotIn("disabled=not new_bm_name", app_text)
+        self.assertIn("def _bookmark_json_default", bookmarks_text)
+        self.assertIn("json.dumps(state, default=_bookmark_json_default)", bookmarks_text)
         self.assertIn("raise", bookmarks_text.split("def load_bookmarks", 1)[1].split("def apply_bookmark", 1)[0])
+
+    def test_saved_view_state_serializes_date_filters(self):
+        from utils.bookmarks import _bookmark_json_default
+
+        payload = json.dumps(
+            {
+                "global_start_date": date(2026, 6, 5),
+                "global_end_date": datetime(2026, 6, 5, 10, 24, 40),
+            },
+            default=_bookmark_json_default,
+        )
+        self.assertIn('"global_start_date": "2026-06-05"', payload)
+        self.assertIn('"global_end_date": "2026-06-05T10:24:40"', payload)
 
     def test_section_switches_clear_stale_body_during_render(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -780,7 +866,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("from utils import (", executive_landing_import_block)
         self.assertNotIn("from utils.workflows import render_priority_dataframe", executive_landing_import_block)
         self.assertIn("class _LazyPandas", executive_landing_text)
+        self.assertIn("def _render_executive_action_brief", executive_landing_text)
+        self.assertIn("def _render_executive_operating_snapshot", executive_landing_text)
+        self.assertIn('st.markdown("**Operating Snapshot**")', executive_landing_text)
         self.assertIn('st.button("Load Executive Snapshot"', executive_landing_text)
+        self.assertNotIn("Use this page for the first leadership question", executive_landing_text)
+        self.assertNotIn("Load the executive snapshot when you need a board-ready status view.", executive_landing_text)
         self.assertIn("cc_user_profile_requested", cost_center_text)
         self.assertIn('"Cost Explorer"', cost_center_text)
         self.assertIn("COST_EXPLORER_LENSES", cost_center_text)
@@ -851,6 +942,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('key=f"{key}_{start}_{workflow}"', change_drift_text)
         self.assertIn("def _change_action_brief", change_drift_text)
         self.assertIn("def _render_change_action_brief", change_drift_text)
+        self.assertIn("def _render_change_operating_snapshot", change_drift_text)
+        self.assertIn('st.markdown("**Operating Snapshot**")', change_drift_text)
+        self.assertIn('cols = st.columns(4)', change_drift_text)
         self.assertIn("def _looks_like_frame", cost_contract_text)
         self.assertIn("data_is_frame = _looks_like_frame(data)", cost_contract_text)
         cost_contract_import_block = cost_contract_text.split("WORKFLOWS", 1)[0]
@@ -865,14 +959,31 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _cost_action_brief", cost_contract_text)
         self.assertIn("def _render_cost_action_brief", cost_contract_text)
         self.assertIn("def _render_cost_operating_snapshot", cost_contract_text)
+        self.assertIn("def _ensure_cost_splash", cost_contract_text)
+        self.assertIn("def _render_cost_splash", cost_contract_text)
+        self.assertIn("Cost Overview", cost_contract_text)
+        self.assertIn("Warehouse Ranking", cost_contract_text)
         self.assertIn('st.markdown("**Operating Snapshot**")', cost_contract_text)
         self.assertIn('cols = st.columns(4)', cost_contract_text)
         self.assertIn('key="cost_contract_cockpit_window"', cost_contract_text)
         cost_watch_preload = cost_contract_text.split("def _render_cost_watch_floor", 1)[1].split(
-            "if st.button(\"Load Cost Cockpit\"",
+            "if st.button(\"Load Full Cost Proof\"",
             1,
         )[0]
-        self.assertNotIn("pd.DataFrame", cost_watch_preload)
+        self.assertIn("_ensure_cost_splash(company, int(days), credit_price)", cost_watch_preload)
+        self.assertNotIn("load_action_queue(session)", cost_watch_preload)
+        for label, shell_text in (
+            ("Executive Landing", executive_landing_text),
+            ("Alert Center", alert_center_text),
+            ("Change & Drift", change_drift_text),
+            ("Cost & Contract", cost_contract_text),
+            ("Security Posture", security_posture_text),
+            ("Warehouse Health", warehouse_health_text),
+            ("Workload Operations", workload_operations_text),
+        ):
+            with self.subTest(first_click_placeholder=label):
+                self.assertNotIn('pending = "Pending"', shell_text)
+                self.assertNotIn("loaded else pending", shell_text)
         self.assertIn('st.button("Load Operability Mart"', account_health_text)
         self.assertIn("_account_health_operator_next_moves", account_health_text)
         self.assertIn("Account Health operator next-move gates", account_health_text)

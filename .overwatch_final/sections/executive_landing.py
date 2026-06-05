@@ -165,6 +165,80 @@ def _decision_rows(summary: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _executive_action_brief(summary: dict | None) -> dict[str, str]:
+    if not summary:
+        return {
+            "state": "Ready",
+            "headline": "Open a board-ready snapshot when leadership evidence is needed.",
+            "detail": "Risk, spend movement, closure work, and deployment trust stay behind one explicit load.",
+        }
+    if summary["critical_high_alerts"] or summary["high_actions"] or summary["migration_blockers"]:
+        return {
+            "state": str(summary["state"]),
+            "headline": "Review the top exception before briefing leaders.",
+            "detail": (
+                f"{summary['critical_high_alerts']:,} Critical/High alert(s), "
+                f"{summary['high_actions']:,} high-priority action(s), "
+                f"{summary['migration_blockers']:,} deployment blocker(s)."
+            ),
+        }
+    if summary["cost_delta"] > 0:
+        return {
+            "state": str(summary["state"]),
+            "headline": "Spend increased; validate the top mover before the summary.",
+            "detail": f"{summary['top_cost_driver']} moved {summary['cost_delta']:+,.2f} credits in the loaded window.",
+        }
+    return {
+        "state": str(summary["state"]),
+        "headline": "No executive blocker is visible in the loaded window.",
+        "detail": "Use the decision rows to route any follow-up before sending the leadership brief.",
+    }
+
+
+def _render_executive_action_brief(summary: dict | None, days: int) -> bool:
+    brief = _executive_action_brief(summary)
+    with st.container(border=True):
+        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption(str(brief["state"]))
+        with detail_col:
+            st.markdown(f"**{brief['headline']}**")
+            st.caption(str(brief["detail"]))
+        with action_col:
+            st.caption(f"{int(days)}-day window")
+            return bool(st.button("Load Executive Snapshot", key="executive_landing_load", type="primary", width="stretch"))
+    return False
+
+
+def _render_executive_operating_snapshot(
+    summary: dict | None,
+    *,
+    credit_price: float,
+    company: str,
+    days: int,
+) -> None:
+    if not summary:
+        metrics = (
+            ("Scope", company),
+            ("Window", f"{int(days)}d"),
+            ("Rate", f"${safe_float(credit_price):,.2f}"),
+            ("Evidence", "On demand"),
+        )
+    else:
+        metrics = (
+            ("State", str(summary["state"])),
+            ("Spend", f"${credits_to_dollars(summary['current_credits'], credit_price):,.0f}"),
+            ("Alerts", f"{summary['critical_high_alerts']:,}"),
+            ("Deploy", f"{summary['migration_blockers']:,}"),
+        )
+    st.markdown("**Operating Snapshot**")
+    cols = st.columns(4)
+    for col, (label, value) in zip(cols, metrics):
+        with col:
+            st.metric(label, value)
+
+
 def _source_health_rows(snapshot: dict) -> pd.DataFrame:
     errors = [str(err) for err in snapshot.get("errors", [])]
 
@@ -221,18 +295,24 @@ def render() -> None:
     company = _active_company()
     environment = _active_environment()
     credit_price = _credit_price()
-    st.caption("Board-ready view of risk, spend movement, closure work, and deployment trust.")
     defer_source_note(
         "Executive Landing loads only on demand and uses OVERWATCH marts, alert/action evidence, and migration status."
     )
 
-    c1, c2, c3 = st.columns([1, 1, 2])
-    with c1:
+    window_col, _window_spacer = st.columns([1.2, 3.0])
+    with window_col:
         days = st.selectbox("Executive window", [1, 3, 7, 14, 30], index=2, format_func=lambda value: f"{value} days")
-    with c2:
-        load = st.button("Load Executive Snapshot", key="executive_landing_load", type="primary", width="stretch")
-    with c3:
-        st.info("Use this page for the first leadership question: are we safe, on budget, and deployed correctly?")
+    snapshot = st.session_state.get("executive_landing_snapshot")
+    summary = None
+    if isinstance(snapshot, dict):
+        summary = _snapshot_state(
+            snapshot.get("cost", pd.DataFrame()),
+            snapshot.get("alerts", pd.DataFrame()),
+            snapshot.get("queue", pd.DataFrame()),
+            snapshot.get("migration", pd.DataFrame()),
+        )
+    load = _render_executive_action_brief(summary, int(days))
+    _render_executive_operating_snapshot(summary, credit_price=credit_price, company=company, days=int(days))
 
     if load:
         session = get_session_for_action(
@@ -275,27 +355,14 @@ def render() -> None:
             snapshot["errors"].append(f"Migration ledger unavailable: {format_snowflake_error(exc)}")
         snapshot["meta"] = {"company": company, "environment": environment, "days": int(days)}
         st.session_state["executive_landing_snapshot"] = snapshot
+        st.rerun()
 
     snapshot = st.session_state.get("executive_landing_snapshot")
     if not isinstance(snapshot, dict):
-        st.info("Load the executive snapshot when you need a board-ready status view.")
         return
 
     for err in snapshot.get("errors", []):
         defer_source_note(err)
-
-    summary = _snapshot_state(
-        snapshot.get("cost", pd.DataFrame()),
-        snapshot.get("alerts", pd.DataFrame()),
-        snapshot.get("queue", pd.DataFrame()),
-        snapshot.get("migration", pd.DataFrame()),
-    )
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Executive State", summary["state"])
-    k2.metric("Current Spend", f"${credits_to_dollars(summary['current_credits'], credit_price):,.0f}")
-    k3.metric("Credit Delta", f"{summary['cost_delta']:+,.2f}", delta_color="inverse")
-    k4.metric("Critical / High Alerts", f"{summary['critical_high_alerts']:,}", delta_color="inverse")
-    k5.metric("Migration Blockers", f"{summary['migration_blockers']:,}", delta_color="inverse")
 
     source_health = _source_health_rows(snapshot)
     loaded_sources = int(source_health["STATE"].eq("Loaded").sum())

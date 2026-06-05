@@ -289,12 +289,17 @@ def _render_workload_action_brief(company: str, brief: dict) -> None:
 
 def _render_workload_metric_rows(summary: dict) -> None:
     loaded = bool(summary.get("loaded"))
-    pending = "Pending"
     cols = st.columns(4)
-    cols[0].metric("Queries", f"{safe_int(summary.get('queries')):,}" if loaded else pending)
-    cols[1].metric("Failed", f"{safe_int(summary.get('failed')):,}" if loaded else pending, delta_color="inverse")
-    cols[2].metric("Queued", f"{safe_int(summary.get('queued')):,}" if loaded else pending, delta_color="inverse")
-    cols[3].metric("P95", f"{safe_float(summary.get('p95')):,.1f}s" if loaded else pending)
+    if not loaded:
+        cols[0].metric("Scope", "Company")
+        cols[1].metric("Window", "24h")
+        cols[2].metric("Evidence", "Refresh")
+        cols[3].metric("Route", "Live triage")
+        return
+    cols[0].metric("Queries", f"{safe_int(summary.get('queries')):,}")
+    cols[1].metric("Failed", f"{safe_int(summary.get('failed')):,}", delta_color="inverse")
+    cols[2].metric("Queued", f"{safe_int(summary.get('queued')):,}", delta_color="inverse")
+    cols[3].metric("P95", f"{safe_float(summary.get('p95')):,.1f}s")
 
 
 def _render_workload_snapshot(company: str) -> None:

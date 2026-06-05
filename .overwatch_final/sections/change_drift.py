@@ -154,22 +154,22 @@ CHANGE_DRIFT_VIEWS = ("Change Brief", "Change Workflows")
 
 WORKFLOWS = (
     "Object and access changes",
-    "Stored procedure lineage",
+    "Schema and object drift",
     "Terraform evidence",
     "Jira evidence",
-    "Schema and object drift",
-    "Data movement and replication",
     "Controlled DBA actions",
+    "Data movement and replication",
+    "Stored procedure lineage",
 )
 
 WORKFLOW_DETAILS = {
     "Object and access changes": "Who changed what, access movement, destructive DDL, and policy changes.",
-    "Stored procedure lineage": "Procedure ownership, child SQL, downstream objects, and runtime/cost drift.",
+    "Schema and object drift": "Schema compare, object inventory, unused objects, and Terraform drift signals.",
     "Terraform evidence": "Source-control and Terraform deploy evidence linked to Snowflake drift and Jira approval.",
     "Jira evidence": "Jira/ITSM approvals, status, owner, and change-window evidence linked to deployments and Snowflake activity.",
-    "Schema and object drift": "Schema compare, object inventory, unused objects, and Terraform drift signals.",
-    "Data movement and replication": "Replication, dynamic tables, Snowpipe, data loading, and freshness risk.",
     "Controlled DBA actions": "Guarded admin actions, generated SQL, and operational controls.",
+    "Data movement and replication": "Replication, dynamic tables, Snowpipe, data loading, and freshness risk.",
+    "Stored procedure lineage": "Procedure ownership, child SQL, downstream objects, and runtime/cost drift.",
 }
 
 WORKFLOW_MODULES = {
@@ -2029,6 +2029,51 @@ def _render_change_action_brief(brief: dict) -> None:
             st.caption(str(brief.get("detail") or ""))
 
 
+def _change_operating_snapshot(summary, exceptions, meta: dict, company: str, environment: str, days: int) -> dict:
+    loaded = (
+        _change_looks_like_frame(summary)
+        and not summary.empty
+        and _change_meta_matches(meta, _change_scope_meta(company, environment, days))
+    )
+    if not loaded:
+        return {
+            "loaded": False,
+            "scope": str(company or "All"),
+            "window": f"{safe_int(days, 14):d}d",
+            "evidence": "Load brief",
+            "risk": "On demand",
+        }
+
+    row = summary.iloc[0]
+    policy_owner = safe_int(row.get("POLICY_CHANGES", 0)) + safe_int(row.get("OWNER_CHANGES", 0))
+    high_risk = 0
+    if _change_looks_like_frame(exceptions) and not exceptions.empty and "SEVERITY" in exceptions.columns:
+        high_risk = int(exceptions["SEVERITY"].isin(["Critical", "High"]).sum())
+    return {
+        "loaded": True,
+        "object_changes": safe_int(row.get("OBJECT_CHANGES", 0)),
+        "access_changes": safe_int(row.get("ACCESS_CHANGES", 0)),
+        "policy_owner": policy_owner,
+        "high_risk": high_risk,
+    }
+
+
+def _render_change_operating_snapshot(snapshot: dict) -> None:
+    st.markdown("**Operating Snapshot**")
+    loaded = bool(snapshot.get("loaded"))
+    cols = st.columns(4)
+    if not loaded:
+        cols[0].metric("Scope", str(snapshot.get("scope") or "All"))
+        cols[1].metric("Window", str(snapshot.get("window") or "14d"))
+        cols[2].metric("Evidence", str(snapshot.get("evidence") or "Load brief"))
+        cols[3].metric("Risk", str(snapshot.get("risk") or "On demand"))
+        return
+    cols[0].metric("Objects", f"{safe_int(snapshot.get('object_changes')):,}")
+    cols[1].metric("Access", f"{safe_int(snapshot.get('access_changes')):,}")
+    cols[2].metric("Policy", f"{safe_int(snapshot.get('policy_owner')):,}", delta_color="inverse")
+    cols[3].metric("High Risk", f"{safe_int(snapshot.get('high_risk')):,}", delta_color="inverse")
+
+
 def _build_change_drift_markdown(
     *,
     company: str,
@@ -3825,6 +3870,9 @@ def render() -> None:
     _render_change_action_brief(
         _change_action_brief(summary, exceptions, meta, company, environment, days)
     )
+    _render_change_operating_snapshot(
+        _change_operating_snapshot(summary, exceptions, meta, company, environment, days)
+    )
 
     days = st.slider("Change brief lookback (days)", 1, 90, 14, key="change_drift_brief_days")
     active_view = st.selectbox(
@@ -3958,11 +4006,6 @@ def render() -> None:
             destructive_changes=safe_int(row.get("DESTRUCTIVE_CHANGES", 0)),
             manual_drift=safe_int(row.get("MANUAL_DRIFT", 0)),
         )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Object Changes", f"{safe_int(row.get('OBJECT_CHANGES', 0)):,}")
-        c2.metric("Access Changes", f"{safe_int(row.get('ACCESS_CHANGES', 0)):,}")
-        c3.metric("Policy/Owner", f"{safe_int(row.get('POLICY_CHANGES', 0)) + safe_int(row.get('OWNER_CHANGES', 0)):,}", delta_color="inverse")
-        c4.metric("Manual Drift", f"{safe_int(row.get('MANUAL_DRIFT', 0)):,}", delta_color="inverse")
         if score < 85:
             st.warning("Change control needs DBA review; high-risk changes or drift indicators are present.")
         elif score < 95:

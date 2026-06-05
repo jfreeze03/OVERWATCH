@@ -414,7 +414,13 @@ def _warehouse_operating_snapshot(company: str, environment: str, days: int) -> 
         st.session_state.get("wh_df_wh_meta"),
         expected_meta,
     ):
-        return {"loaded": False, "warehouses": 0, "queries": 0, "spill_gb": 0.0, "avg_queue": 0.0}
+        return {
+            "loaded": False,
+            "scope": str(company or "All"),
+            "window": f"{safe_int(days, 14):d}d",
+            "evidence": "Load overview",
+            "focus": "Pressure",
+        }
     return {
         "loaded": True,
         "warehouses": _warehouse_frame_len(overview),
@@ -427,12 +433,17 @@ def _warehouse_operating_snapshot(company: str, environment: str, days: int) -> 
 def _render_warehouse_operating_snapshot(snapshot: dict) -> None:
     st.markdown("**Operating Snapshot**")
     loaded = bool(snapshot.get("loaded"))
-    pending = "Pending"
     cols = st.columns(4)
-    cols[0].metric("Warehouses", f"{safe_int(snapshot.get('warehouses')):,}" if loaded else pending)
-    cols[1].metric("Queries", f"{safe_int(snapshot.get('queries')):,}" if loaded else pending)
-    cols[2].metric("Spill GB", f"{safe_float(snapshot.get('spill_gb')):,.1f}" if loaded else pending)
-    cols[3].metric("Avg Queue", f"{safe_float(snapshot.get('avg_queue')):,.1f}s" if loaded else pending)
+    if not loaded:
+        cols[0].metric("Scope", str(snapshot.get("scope") or "All"))
+        cols[1].metric("Window", str(snapshot.get("window") or "14d"))
+        cols[2].metric("Evidence", str(snapshot.get("evidence") or "Load overview"))
+        cols[3].metric("Focus", str(snapshot.get("focus") or "Pressure"))
+        return
+    cols[0].metric("Warehouses", f"{safe_int(snapshot.get('warehouses')):,}")
+    cols[1].metric("Queries", f"{safe_int(snapshot.get('queries')):,}")
+    cols[2].metric("Spill GB", f"{safe_float(snapshot.get('spill_gb')):,.1f}")
+    cols[3].metric("Avg Queue", f"{safe_float(snapshot.get('avg_queue')):,.1f}s")
 
 
 def _warehouse_sql_exprs(session) -> dict[str, str]:

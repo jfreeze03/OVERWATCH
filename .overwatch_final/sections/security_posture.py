@@ -1347,7 +1347,13 @@ def _security_operating_snapshot(summary, meta: dict, company: str, environment:
         and _security_meta_matches(meta, _security_scope_meta(company, environment, days))
     )
     if not loaded:
-        return {"loaded": False}
+        return {
+            "loaded": False,
+            "scope": str(company or "All"),
+            "window": f"{safe_int(days, 30):d}d",
+            "evidence": "Load brief",
+            "focus": "Access",
+        }
     row = summary.iloc[0]
     return {
         "loaded": True,
@@ -1361,12 +1367,17 @@ def _security_operating_snapshot(summary, meta: dict, company: str, environment:
 def _render_security_operating_snapshot(snapshot: dict) -> None:
     st.markdown("**Operating Snapshot**")
     loaded = bool(snapshot.get("loaded"))
-    pending = "Pending"
     cols = st.columns(4)
-    cols[0].metric("Failed", f"{safe_int(snapshot.get('failed')):,}" if loaded else pending, delta_color="inverse")
-    cols[1].metric("MFA Gaps", f"{safe_int(snapshot.get('mfa_gaps')):,}" if loaded else pending, delta_color="inverse")
-    cols[2].metric("Grant Chg", f"{safe_int(snapshot.get('grant_changes')):,}" if loaded else pending)
-    cols[3].metric("Shared DBs", f"{safe_int(snapshot.get('shared_databases')):,}" if loaded else pending)
+    if not loaded:
+        cols[0].metric("Scope", str(snapshot.get("scope") or "All"))
+        cols[1].metric("Window", str(snapshot.get("window") or "30d"))
+        cols[2].metric("Evidence", str(snapshot.get("evidence") or "Load brief"))
+        cols[3].metric("Focus", str(snapshot.get("focus") or "Access"))
+        return
+    cols[0].metric("Failed", f"{safe_int(snapshot.get('failed')):,}", delta_color="inverse")
+    cols[1].metric("MFA Gaps", f"{safe_int(snapshot.get('mfa_gaps')):,}", delta_color="inverse")
+    cols[2].metric("Grant Chg", f"{safe_int(snapshot.get('grant_changes')):,}")
+    cols[3].metric("Shared DBs", f"{safe_int(snapshot.get('shared_databases')):,}")
 
 
 def _build_security_brief_markdown(

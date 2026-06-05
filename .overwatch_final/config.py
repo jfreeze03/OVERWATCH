@@ -8,7 +8,7 @@ cost defaults should stay here instead of being repeated in section modules.
 from dataclasses import dataclass
 
 
-CONFIG_VERSION = "2026-06-01-platform-futures-v1"
+CONFIG_VERSION = "2026-06-05-role-access-v2"
 
 
 DEFAULTS = {
@@ -634,6 +634,13 @@ def _sections_by_title(*titles: str) -> list[str]:
 # Mission Control keeps all roles on the same simplified shell. Role-based
 # limits still apply by reducing access to governance workflows where needed.
 ROLE_SECTIONS = {
+    "EXECUTIVE": _sections_by_title(
+        "Executive Landing",
+        "DBA Control Room",
+        "Alert Center",
+        "Cost & Contract",
+        "Account Health",
+    ),
     "ANALYST": _sections_by_title(
         "Executive Landing",
         "DBA Control Room",
@@ -659,6 +666,43 @@ ROLE_SECTIONS = {
     "SYSADMIN": list(ALL_SECTIONS),
     "ACCOUNTADMIN": list(ALL_SECTIONS),
 }
+
+ROLE_PROFILE_OVERRIDES = {
+    # ALFA production access roles.
+    "SNOW_PRI_GFR_PRD_ALFA_PDMWMGMT": "EXECUTIVE",
+    "SNOW_PRI_GFR_PRD_ALFA_DSA": "MANAGER",
+    "SNOW_PRI_GFR_PRD_ALFA_DTI": "ANALYST",
+    # ALFA non-production access roles.
+    "SNOW_PRI_GFR_NONPRD_ALFA_PDMWMGMT": "EXECUTIVE",
+    "SNOW_PRI_GFR_NONPRD_ALFA_DSA": "MANAGER",
+    "SNOW_PRI_GFR_NONPRD_ALFA_DTI": "ANALYST",
+    # DBA/admin deployment roles.
+    "SNOW_ACCOUNTADMINS": "DBA",
+    "SNOW_SYSADMINS": "DBA",
+    "ACCOUNTADMIN": "DBA",
+}
+
+
+def resolve_role_profile(role: str) -> str:
+    """Return the OVERWATCH navigation profile for a Snowflake role name."""
+    normalized = str(role or "").strip().upper()
+    if not normalized:
+        return "DBA"
+    if normalized in ROLE_PROFILE_OVERRIDES:
+        return ROLE_PROFILE_OVERRIDES[normalized]
+    if normalized.endswith("_DSA") or "_DSA_" in normalized:
+        return "MANAGER"
+    if normalized.endswith("_DTI") or "_DTI_" in normalized:
+        return "ANALYST"
+    if normalized.endswith("_PDMWMGMT") or "_PDMWMGMT_" in normalized:
+        return "EXECUTIVE"
+    if "ACCOUNTADMIN" in normalized or "SYSADMIN" in normalized or "DBA" in normalized:
+        return "DBA"
+    for profile in ROLE_SECTIONS:
+        if profile in normalized:
+            return profile
+    return "DBA"
+
 
 EXPERIENCE_VIEW_SECTIONS = {
     "DBA": list(ALL_SECTIONS),
@@ -692,6 +736,24 @@ EXPERIENCE_VIEW_SECTIONS = {
         "Change & Drift",
     ),
 }
+
+ROLE_EXPERIENCE_VIEWS = {
+    "EXECUTIVE": ("Executive",),
+    "ANALYST": ("Platform",),
+    "MANAGER": ("Executive", "FinOps", "Security", "Platform"),
+    "REPORT": ("Executive",),
+    "DBA": tuple(EXPERIENCE_VIEW_SECTIONS.keys()),
+    "SYSADMIN": tuple(EXPERIENCE_VIEW_SECTIONS.keys()),
+    "ACCOUNTADMIN": tuple(EXPERIENCE_VIEW_SECTIONS.keys()),
+}
+
+
+def resolve_allowed_experience_views(role: str) -> tuple[str, ...]:
+    """Return the Experience View choices allowed for a Snowflake role."""
+    profile = resolve_role_profile(role)
+    allowed = ROLE_EXPERIENCE_VIEWS.get(profile, ROLE_EXPERIENCE_VIEWS["DBA"])
+    return tuple(view for view in allowed if view in EXPERIENCE_VIEW_SECTIONS) or ("DBA",)
+
 
 ETL_AUDIT_DB = "DBA_MAINT_DB"
 ETL_AUDIT_SCHEMA = "OVERWATCH"

@@ -56,18 +56,34 @@ def _delegate_full_workspace() -> None:
     dba_control_room.render()
 
 
-def _render_briefing() -> None:
-    rows = (
-        ("Scope", f"{_active_company()} / {ENVIRONMENT_CONFIG[_active_environment()]['label']}"),
-        ("Default window", "24-hour triage"),
-        ("Evidence mode", "Snapshot first"),
-        ("Credit rate", f"${_credit_price():.2f}/credit"),
+def _render_action_brief() -> None:
+    with st.container(border=True):
+        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption("Snapshot first")
+        with detail_col:
+            st.markdown("**Open the workspace when a signal needs live triage or export-ready evidence.**")
+            st.caption("The shell keeps startup light; the workspace handles snapshot checks, source health, and routed actions.")
+        with action_col:
+            if st.button("Open DBA workspace", key="dba_control_room_open_full_workspace", type="primary", width="stretch"):
+                st.session_state[_FULL_WORKSPACE_KEY] = True
+                st.rerun()
+
+
+def _render_operating_snapshot() -> None:
+    metrics = (
+        ("Scope", f"{_active_company()} / {_active_environment()}"),
+        ("Window", "24h"),
+        ("Evidence", "Snapshot"),
+        ("Budget", f"${_cortex_budget():,.0f}"),
     )
-    cols = st.columns(len(rows))
-    for col, (label, detail) in zip(cols, rows):
+    st.markdown("**Operating Snapshot**")
+    cols = st.columns(4)
+    for col, (label, value) in zip(cols, metrics):
         with col:
-            st.caption(label)
-            st.write(detail)
+            st.metric(label, value)
+    st.caption(f"Credit rate: ${_credit_price():.2f}/credit.")
 
 
 def render() -> None:
@@ -77,15 +93,5 @@ def render() -> None:
 
     st.session_state.setdefault("dba_control_room_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
 
-    _render_briefing()
-    c1, c2, c3 = st.columns([1, 1, 2])
-    with c1:
-        st.metric("Scope", f"{_active_company()} / {_active_environment()}")
-    with c2:
-        st.metric("Cortex Budget", f"${_cortex_budget():,.0f}")
-    with c3:
-        st.info("DBA Control Room evidence is available on demand for live triage, snapshot checks, source health, and exports.")
-
-    if st.button("Open DBA Control Room workspace", key="dba_control_room_open_full_workspace", type="primary"):
-        st.session_state[_FULL_WORKSPACE_KEY] = True
-        st.rerun()
+    _render_action_brief()
+    _render_operating_snapshot()

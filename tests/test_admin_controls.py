@@ -52,7 +52,14 @@ class AdminControlTests(unittest.TestCase):
     def test_admin_actions_default_on_for_full_privilege_roles(self):
         previous = dict(st.session_state)
         try:
-            for role in ("ACCOUNTADMIN", "SYSADMIN", "SNOW_ACCOUNTADMIN", "SNOW_ACCOUNTADMINS", "SNOW_SYSADMIN"):
+            for role in (
+                "ACCOUNTADMIN",
+                "SYSADMIN",
+                "SNOW_ACCOUNTADMIN",
+                "SNOW_ACCOUNTADMINS",
+                "SNOW_SYSADMIN",
+                "SNOW_SYSADMINS",
+            ):
                 with self.subTest(role=role):
                     st.session_state.clear()
                     st.session_state["_overwatch_current_role"] = role

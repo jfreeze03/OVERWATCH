@@ -8,6 +8,7 @@
 #   db_filter, global_start_date, global_end_date
 # ─────────────────────────────────────────────────────────────────────────────
 import json
+from datetime import date, datetime
 import streamlit as st
 from config import ALERT_DB, ALERT_SCHEMA, normalize_section_name
 from .query import format_snowflake_error, safe_identifier, sql_literal
@@ -62,6 +63,13 @@ def _capture_state() -> dict:
     return state
 
 
+def _bookmark_json_default(value):
+    """Serialize Streamlit filter values such as date inputs into bookmark JSON."""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def _restore_state(state: dict) -> None:
     """Write a saved state dict back into session state and rerun."""
     for k, v in state.items():
@@ -82,7 +90,7 @@ def save_bookmark(session, name: str, shared: bool = False) -> bool:
         sf_user = sql_literal(_safe_actor(session), max_len=200)
         bookmark_name = sql_literal(name, max_len=200)
         section_name = sql_literal(section, max_len=200)
-        state_json = sql_literal(json.dumps(state), max_len=8000)
+        state_json = sql_literal(json.dumps(state, default=_bookmark_json_default), max_len=8000)
         session.sql(f"""
             INSERT INTO {BOOKMARK_TABLE}
                 (SF_USER, BOOKMARK_NAME, SECTION, STATE_JSON, IS_SHARED)

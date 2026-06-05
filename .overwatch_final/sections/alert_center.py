@@ -779,12 +779,17 @@ def _render_alert_center_metric_rows(
     loaded: bool = True,
 ) -> None:
     st.markdown("**Operating Snapshot**")
-    pending = "Pending"
     cols = st.columns(4)
-    cols[0].metric("Issues", f"{open_issues:,}" if loaded else pending)
-    cols[1].metric("Alerts", f"{open_alerts:,}" if loaded else pending)
-    cols[2].metric("Critical", f"{critical_high:,}" if loaded else pending, delta_color="inverse")
-    cols[3].metric("Overdue", f"{overdue:,}" if loaded else pending, delta_color="inverse")
+    if not loaded:
+        cols[0].metric("Scope", "Company")
+        cols[1].metric("Window", "Selected")
+        cols[2].metric("Evidence", "Load view")
+        cols[3].metric("Route", "Issue Inbox")
+        return
+    cols[0].metric("Issues", f"{open_issues:,}")
+    cols[1].metric("Alerts", f"{open_alerts:,}")
+    cols[2].metric("Critical", f"{critical_high:,}", delta_color="inverse")
+    cols[3].metric("Overdue", f"{overdue:,}", delta_color="inverse")
     if loaded:
         with st.expander("Delivery and queue counts", expanded=False):
             detail_cols = st.columns(3)

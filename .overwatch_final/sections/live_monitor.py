@@ -38,6 +38,39 @@ QUERY_HISTORY_OPTIONAL_COLUMNS = (
 )
 
 
+def _query_context_expr() -> str:
+    return """
+        CASE
+            WHEN database_name IS NULL OR TRIM(database_name) = '' THEN 'NO DATABASE CONTEXT'
+            WHEN schema_name IS NULL OR TRIM(schema_name) = '' THEN database_name
+            ELSE database_name || '.' || schema_name
+        END AS query_context
+    """
+
+
+def _prioritize_query_context(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep query database/schema context visible near the row identity."""
+    if df is None or df.empty:
+        return df
+    frame = df.copy()
+    if "QUERY_CONTEXT" not in frame.columns and "DATABASE_NAME" in frame.columns:
+        db = frame["DATABASE_NAME"].fillna("").astype(str).str.strip()
+        schema = (
+            frame["SCHEMA_NAME"].fillna("").astype(str).str.strip()
+            if "SCHEMA_NAME" in frame.columns else pd.Series([""] * len(frame), index=frame.index)
+        )
+        frame["QUERY_CONTEXT"] = db.where(db != "", "NO DATABASE CONTEXT")
+        both = (db != "") & (schema != "")
+        frame.loc[both, "QUERY_CONTEXT"] = db[both] + "." + schema[both]
+    first_cols = [
+        "QUERY_ID", "QUERY_CONTEXT", "DATABASE_NAME", "SCHEMA_NAME",
+        "EXECUTION_STATUS", "USER_NAME", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
+    ]
+    ordered = [col for col in first_cols if col in frame.columns]
+    ordered.extend([col for col in frame.columns if col not in ordered])
+    return frame[ordered]
+
+
 def _live_query_history_function(warehouse_filter: str = "") -> str:
     """Return the most selective INFORMATION_SCHEMA query history function."""
     warehouse = str(warehouse_filter or "").strip()
@@ -168,8 +201,10 @@ def render():
             # -- Live - INFORMATION_SCHEMA (0-latency) ------------------------
             st.subheader("Currently Running")
             live_history_fn = _live_query_history_function(wh_filter_clean)
+            query_context_expr = _query_context_expr()
             live_sql = f"""
             SELECT query_id, SUBSTR(query_text,1,300) AS query_text,
+                   database_name, schema_name, {query_context_expr},
                    user_name, warehouse_name, warehouse_size, execution_status, start_time,
                    DATEDIFF('second',start_time,CURRENT_TIMESTAMP()) AS elapsed_sec,
                    bytes_scanned/POWER(1024,2) AS mb_scanned, rows_produced
@@ -194,6 +229,7 @@ def render():
                 try:
                     df_live = run_query(f"""
                         SELECT query_id, SUBSTR(query_text,1,300) AS query_text,
+                               database_name, schema_name, {query_context_expr},
                                user_name, warehouse_name, {fallback_wh_size_expr},
                                execution_status, start_time,
                                total_elapsed_time/1000 AS elapsed_sec,
@@ -209,6 +245,7 @@ def render():
                     st.warning(f"Live query data unavailable: {format_snowflake_error(fallback_err)}")
 
             if not df_live.empty:
+                df_live = _prioritize_query_context(df_live)
                 df_live["EST_COMPUTE_CREDITS"] = df_live.apply(estimate_live_credits, axis=1)
                 df_live["EST_DOLLARS"]          = df_live["EST_COMPUTE_CREDITS"].apply(credits_to_dollars)
                 c_a, c_b, c_c = st.columns(3)
@@ -281,7 +318,8 @@ def render():
             st.subheader("Recent (last 4h, ACCOUNT_USAGE)")
             try:
                 df_recent = run_query(f"""
-                    SELECT query_id, user_name, warehouse_name, {warehouse_size_expr}, execution_status,
+                    SELECT query_id, database_name, schema_name, {query_context_expr},
+                           user_name, warehouse_name, {warehouse_size_expr}, execution_status,
                            start_time, total_elapsed_time/1000 AS elapsed_sec,
                            {bytes_scanned_expr},
                            {rows_produced_expr}, {cloud_credits_expr},
@@ -292,11 +330,15 @@ def render():
                     ORDER BY start_time DESC LIMIT 500
                 """, ttl_key=f"live_recent_{company}_{wh_filter}_{status_filter}", tier="live")
                 if not df_recent.empty:
+                    df_recent = _prioritize_query_context(df_recent)
                     render_priority_dataframe(
                         df_recent,
                         title="Recent queries to inspect first",
                         priority_columns=[
                             "QUERY_ID",
+                            "QUERY_CONTEXT",
+                            "DATABASE_NAME",
+                            "SCHEMA_NAME",
                             "EXECUTION_STATUS",
                             "USER_NAME",
                             "WAREHOUSE_NAME",
@@ -398,7 +440,8 @@ def render():
                             if "WAREHOUSE_SIZE" in lock_cols else "NULL::VARCHAR AS warehouse_size"
                         )
                         df_lock = run_query(f"""
-                            SELECT query_id, user_name, warehouse_name, {lock_wh_size_expr},
+                            SELECT query_id, database_name, schema_name, {_query_context_expr()},
+                                   user_name, warehouse_name, {lock_wh_size_expr},
                                    start_time,
                                    transaction_blocked_time / 1000  AS blocked_sec,
                                    SUBSTR(query_text, 1, 300)       AS query_text
@@ -458,12 +501,16 @@ def render():
             st.divider()
             st.subheader("Lock Wait History (last 24h, >5s blocked)")
             if not df_lk.empty:
+                df_lk = _prioritize_query_context(df_lk)
                 st.warning(f"{len(df_lk)} queries were blocked by lock contention.")
                 render_priority_dataframe(
                     df_lk,
                     title="Lock waits to investigate first",
                     priority_columns=[
                         "QUERY_ID",
+                        "QUERY_CONTEXT",
+                        "DATABASE_NAME",
+                        "SCHEMA_NAME",
                         "USER_NAME",
                         "WAREHOUSE_NAME",
                         "WAREHOUSE_SIZE",

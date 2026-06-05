@@ -108,6 +108,38 @@ def _as_int(value, default: int) -> int:
         return default
 
 
+def _query_context_expr() -> str:
+    return """
+        CASE
+            WHEN database_name IS NULL OR TRIM(database_name) = '' THEN 'NO DATABASE CONTEXT'
+            WHEN schema_name IS NULL OR TRIM(schema_name) = '' THEN database_name
+            ELSE database_name || '.' || schema_name
+        END AS query_context
+    """
+
+
+def _prioritize_query_context(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    frame = df.copy()
+    if "QUERY_CONTEXT" not in frame.columns and "DATABASE_NAME" in frame.columns:
+        db = frame["DATABASE_NAME"].fillna("").astype(str).str.strip()
+        schema = (
+            frame["SCHEMA_NAME"].fillna("").astype(str).str.strip()
+            if "SCHEMA_NAME" in frame.columns else pd.Series([""] * len(frame), index=frame.index)
+        )
+        frame["QUERY_CONTEXT"] = db.where(db != "", "NO DATABASE CONTEXT")
+        both = (db != "") & (schema != "")
+        frame.loc[both, "QUERY_CONTEXT"] = db[both] + "." + schema[both]
+    first_cols = [
+        "QUERY_ID", "QUERY_CONTEXT", "DATABASE_NAME", "SCHEMA_NAME",
+        "EXECUTION_STATUS", "USER_NAME", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
+    ]
+    ordered = [col for col in first_cols if col in frame.columns]
+    ordered.extend([col for col in frame.columns if col not in ordered])
+    return frame[ordered]
+
+
 def _is_unknown_setting(value) -> bool:
     return value is None or str(value).strip().lower() in ("", "nan", "none", "null")
 
@@ -1621,7 +1653,8 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
             if st.button("Load Running Task Queries", key="tg_run_load"):
                 try:
                     df_tq = run_query_or_raise(f"""
-                        SELECT query_id, user_name, warehouse_name, {qh_warehouse_size_expr}, execution_status,
+                        SELECT query_id, database_name, schema_name, {_query_context_expr()},
+                               user_name, warehouse_name, {qh_warehouse_size_expr}, execution_status,
                                start_time,
                                DATEDIFF('second', start_time, COALESCE(end_time, CURRENT_TIMESTAMP())) AS elapsed_sec,
                                {qh_query_tag_expr},
@@ -1635,6 +1668,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         ORDER BY start_time DESC
                         LIMIT 200
                     """)
+                    df_tq = _prioritize_query_context(df_tq)
                     st.session_state["dba_df_tg_running"] = df_tq
                 except Exception as e:
                     st.info(f"Task query activity is unavailable in this role/context: {format_snowflake_error(e)}")
@@ -1647,7 +1681,8 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         df_tq,
                         title="Running task-spawned queries",
                         priority_columns=[
-                            "QUERY_ID", "USER_NAME", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
+                            "QUERY_ID", "QUERY_CONTEXT", "DATABASE_NAME", "SCHEMA_NAME",
+                            "USER_NAME", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
                             "EXECUTION_STATUS", "START_TIME", "ELAPSED_SEC",
                             "QUERY_TAG", "QUERY_TEXT",
                         ],

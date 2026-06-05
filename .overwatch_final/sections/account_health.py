@@ -1651,6 +1651,50 @@ def _render_account_health_action_brief(checklist: pd.DataFrame | None) -> None:
                 st.rerun()
 
 
+def _render_account_health_operating_snapshot(
+    *,
+    health_score: float,
+    score_label: str,
+    live_val: int,
+    queued: int,
+    err_count: int,
+    last24: float,
+    pct_delta: float,
+    cost24: float,
+    stor_tb: float,
+    failed_tasks: int,
+    hd: dict,
+    live_source: str,
+    control_mart_used: bool,
+    control_mart_row,
+) -> None:
+    """Render the Account Health first-screen metrics without crowding the page."""
+    with st.container(border=True):
+        st.markdown("**Operating Snapshot**")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Health", f"{health_score:.0f}", score_label)
+        m2.metric("Failures", f"{err_count:,}", delta_color="inverse")
+        m3.metric("Queue", f"{queued:,}", delta_color="inverse")
+        m4.metric("Cost 24h", f"${cost24:,.0f}", delta=f"{pct_delta:+.1f}%")
+        with st.expander("Secondary metrics and source", expanded=False):
+            s1, s2, s3, s4 = st.columns(4)
+            s1.metric("Active", f"{live_val:,}")
+            s2.metric("Credits 24h", format_credits(last24))
+            s3.metric("Storage", f"{stor_tb:.1f} TB")
+            s4.metric("Failed Tasks", f"{failed_tasks:,}", delta_color="inverse")
+            st.caption(
+                " | ".join([
+                    metric_confidence_label("composite"),
+                    metric_confidence_label("exact") + " for source counts",
+                    hd.get("_control_mart_source", "Live source"),
+                    freshness_note(live_source),
+                ])
+            )
+            if control_mart_used:
+                st.caption(f"Mart snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
+            st.caption(f"Signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
+
+
 def _account_health_intervention_matrix(
     *,
     checklist: pd.DataFrame | None,
@@ -2575,13 +2619,13 @@ def _render_account_health_access_hygiene(company: str, environment: str) -> Non
                 )
         elif hygiene is not None and not hygiene.empty:
             h1, h2, h3, h4 = st.columns(4)
-            h1.metric("Users to Review", f"{len(hygiene):,}")
+            h1.metric("Users Review", f"{len(hygiene):,}")
             high = int((hygiene.get("SEVERITY", pd.Series(dtype=str)).astype(str).str.upper() == "HIGH").sum())
             h2.metric("High Risk", f"{high:,}", delta_color="inverse")
             failed = int((pd.to_numeric(hygiene.get("FAILED_LOGINS", pd.Series(dtype=float)), errors="coerce").fillna(0) > 0).sum())
-            h3.metric("Failed Login Users", f"{failed:,}")
+            h3.metric("Failed Logins", f"{failed:,}")
             admins = int((pd.to_numeric(hygiene.get("ADMIN_ROLE_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0) > 0).sum())
-            h4.metric("Admin Role Reviews", f"{admins:,}")
+            h4.metric("Admin Reviews", f"{admins:,}")
             render_priority_dataframe(
                 hygiene,
                 title="Account-level user/auth hygiene candidates",
@@ -2645,8 +2689,8 @@ def _render_account_health_source_health(company: str, environment: str) -> None
             ].shape[0]
         )
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
-        c2.metric("Mart-Backed", f"{mart_backed:,}")
+        c1.metric("Current", f"{current}/{len(source_health)}")
+        c2.metric("Mart Backed", f"{mart_backed:,}")
         c3.metric("Stale", f"{stale:,}", delta_color="inverse")
         c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
         st.caption(
@@ -2972,27 +3016,6 @@ def render():
             score_label = health["label"]
             health_components = pd.DataFrame(health["components"])
 
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Active", live_val)
-        k2.metric("Queued", queued)
-        k3.metric("Failed", err_count, delta_color="inverse")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Credits", f"{last24:,.0f}", delta=f"{pct_delta:+.1f}%")
-        c2.metric("Cost", f"${cost24:,.0f}")
-        c3.metric("Storage", f"{stor_tb:.1f} TB")
-        with st.expander("Evidence details", expanded=False):
-            st.caption(
-                " | ".join([
-                    f"Health state: {score_label}",
-                    metric_confidence_label("composite"),
-                    metric_confidence_label("exact") + " for source counts",
-                    hd.get("_control_mart_source", "Live source"),
-                    freshness_note(live_source),
-                ])
-            )
-            if control_mart_used:
-                st.caption(f"Mart snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
-            st.caption(f"Signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
         checklist = _build_account_health_dba_checklist(
             health_score=health_score,
             score_label=score_label,
@@ -3011,6 +3034,22 @@ def render():
             environment=get_active_environment(),
         )
         _render_account_health_action_brief(checklist)
+        _render_account_health_operating_snapshot(
+            health_score=health_score,
+            score_label=score_label,
+            live_val=live_val,
+            queued=queued,
+            err_count=err_count,
+            last24=last24,
+            pct_delta=pct_delta,
+            cost24=cost24,
+            stor_tb=stor_tb,
+            failed_tasks=failed_tasks,
+            hd=hd,
+            live_source=live_source,
+            control_mart_used=control_mart_used,
+            control_mart_row=control_mart_row,
+        )
         if st.button("Load Operability Mart", key="account_health_load_operability_fact"):
             try:
                 operability_sql = _account_health_operability_fact_sql(30, company, get_active_environment())
@@ -3140,10 +3179,10 @@ def render():
                 blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
                     "Blocked|Overdue|Required|Review", case=False, na=False
                 )
-                f1.metric("Fact Rows", f"{len(operability_fact):,}")
-                f2.metric("Blocked / Review", f"{int(blocked_states.sum()):,}", delta_color="inverse")
+                f1.metric("Rows", f"{len(operability_fact):,}")
+                f2.metric("Blocked Review", f"{int(blocked_states.sum()):,}", delta_color="inverse")
                 f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-                f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+                f4.metric("Verified", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
                 render_priority_dataframe(
                     operability_fact,
                     title="Pre-aggregated Account Health blockers",
@@ -3372,6 +3411,18 @@ def render():
             ]:
                 st.button(lbl, key=f"jump_{lbl}", on_click=_jump, args=(tgt, workflow))
 
+        secondary_sig = f"{filter_sig}|{environment}"
+        secondary_loaded = st.session_state.get("_account_health_secondary_sig") == secondary_sig
+        if st.button("Load Secondary Evidence", key="account_health_load_secondary_evidence"):
+            st.session_state["_account_health_secondary_sig"] = secondary_sig
+            secondary_loaded = True
+        if not secondary_loaded:
+            st.caption(
+                "Secondary cost slices, monitoring-cost evidence, and warehouse-pressure charts stay unloaded "
+                "until they are needed for the current investigation."
+            )
+            return
+
         st.divider()
         st.markdown("**Executive Landing Signals**")
         e1, e2, e3, e4 = st.columns(4)
@@ -3470,9 +3521,9 @@ def render():
             mon_df = mon_df.copy()
             mon_df["EST_COST"] = mon_df["CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
             m1, m2, m3 = st.columns(3)
-            m1.metric("Observed Components", len(mon_df))
+            m1.metric("Components", len(mon_df))
             m2.metric("Credits", format_credits(safe_float(mon_df["CREDITS"].sum())))
-            m3.metric("Estimated Cost", f"${safe_float(mon_df['EST_COST'].sum()):,.2f}")
+            m3.metric("Est. Cost", f"${safe_float(mon_df['EST_COST'].sum()):,.2f}")
             st.caption("Keeps the monitor honest: app-tagged queries, Streamlit warehouse, Cortex, and alert task cost.")
             render_priority_dataframe(
                 mon_df,
@@ -3604,9 +3655,9 @@ def render():
             total_quota = df_rm["CREDIT_QUOTA"].sum()
             total_used  = df_rm["USED_CREDITS"].sum()
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total Quota",   format_credits(total_quota))
-            c2.metric("Total Used",    format_credits(total_used))
-            c3.metric("Overall Usage", f"{(total_used/total_quota*100) if total_quota else 0:.1f}%")
+            c1.metric("Quota",   format_credits(total_quota))
+            c2.metric("Used",    format_credits(total_used))
+            c3.metric("Usage", f"{(total_used/total_quota*100) if total_quota else 0:.1f}%")
 
             for _, row in df_rm.iterrows():
                 quota   = safe_float(row.get("CREDIT_QUOTA",0))
@@ -3616,7 +3667,8 @@ def render():
                 suspend = row.get("SUSPEND","")
                 s_imm   = row.get("SUSPEND_IMMEDIATE","")
                 cols = st.columns(5)
-                cols[0].metric(f"{name} Quota", format_credits(quota))
+                st.markdown(f"**{html.escape(str(name))}**")
+                cols[0].metric("Quota", format_credits(quota))
                 cols[1].metric("Used",          format_credits(used))
                 cols[2].metric("Remaining",     format_credits(safe_float(row.get("REMAINING_CREDITS",0))))
                 cols[3].metric("Usage %",       f"{pct:.1f}%")
@@ -3709,7 +3761,7 @@ def render():
             overnight_cr = safe_float(
                 md["credits"].iloc[0].get("OVERNIGHT_CREDITS", md["credits"].iloc[0].get("PERIOD_CREDITS", 0))
             ) if not md["credits"].empty else 0
-            st.metric("Overnight Credits (12h)", format_credits(overnight_cr))
+            st.metric("Credits 12h", format_credits(overnight_cr))
             if md.get("_source"):
                 st.caption(f"Source: {md['_source']}")
             if not md["failures"].empty:

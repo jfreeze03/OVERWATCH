@@ -799,7 +799,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("if not refresh_health:", account_health_text)
         self.assertNotIn("or cache_age > 300", account_health_text)
         self.assertIn("def _render_account_health_action_brief", account_health_text)
-        self.assertIn("Evidence details", account_health_text)
+        self.assertIn("def _render_account_health_operating_snapshot", account_health_text)
+        self.assertIn("Operating Snapshot", account_health_text)
+        self.assertIn("Secondary metrics and source", account_health_text)
+        self.assertIn('st.button("Load Secondary Evidence"', account_health_text)
+        self.assertNotIn("Evidence details", account_health_text)
+        self.assertNotIn("Current Surfaces", account_health_text)
+        self.assertNotIn("Failed Login Users", account_health_text)
+        self.assertNotIn("Admin Role Reviews", account_health_text)
+        self.assertNotIn("Observed Components", account_health_text)
         self.assertIn('"Account Health detail"', account_health_text)
         self.assertIn('st.selectbox(\n            "Account Health detail"', account_health_text)
         self.assertNotIn('st.radio(\n            "Account Health detail"', account_health_text)
@@ -861,6 +869,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_account_health_intervention_matrix", account_health_text)
         self.assertIn("Account Health DBA intervention matrix", account_health_text)
         self.assertIn('sort_by=["DBA_PRIORITY", "COUNT", "SURFACE"]', account_health_text)
+        account_health_before_secondary = account_health_text.split('if active_view == "Overview":', 1)[1].split(
+            'st.button("Load Secondary Evidence"',
+            1,
+        )[0]
+        self.assertNotIn("build_mart_control_room_warehouse_pressure_sql", account_health_before_secondary)
         account_health_render_preload = account_health_text.split("def render():", 1)[1].split(
             "active_view = st.selectbox",
             1,
@@ -930,7 +943,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("build_forward_platform_control_register()", architecture_render_preload)
         self.assertNotIn("_architecture_source_health_rows(", architecture_render_preload)
         architecture_top_import_block = architecture_text.split("def build_agentic_ai_surface_scorecard", 1)[0]
+        self.assertIn("class _LazyPandas", architecture_top_import_block)
+        self.assertNotIn("import pandas as pd", architecture_top_import_block)
         self.assertNotIn("from utils.futures_governance import", architecture_top_import_block)
+        architecture_platform_futures_preload = architecture_text.split("def _render_platform_futures(company", 1)[1].split(
+            'if futures_view == "Overview":',
+            1,
+        )[0]
+        self.assertNotIn("_ensure_architecture_forward_controls_state(", architecture_platform_futures_preload)
+        self.assertNotIn("_refresh_architecture_source_health_state(", architecture_platform_futures_preload)
+        self.assertNotIn("build_agentic_ai_surface_scorecard(", architecture_platform_futures_preload)
         security_posture_render_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
             'if st.button("Load Security Brief"',
             1,
@@ -1165,6 +1187,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.button("Load Clustering Candidates"', architecture_text)
         self.assertIn('st.button("Load Cache Evidence"', architecture_text)
         self.assertIn('st.button("Load DR Readiness"', architecture_text)
+        self.assertIn('st.button("Load Objective Register"', architecture_text)
+        self.assertIn('st.button("Load Architecture Source Health"', architecture_text)
+        self.assertIn('st.button("Load Futures Control Board"', architecture_text)
+        self.assertIn('st.button("Load Agentic AI Cockpit"', architecture_text)
+        self.assertIn('st.button("Load Control Register"', architecture_text)
         self.assertIn('st.button("Load Agents and MCP Inventory"', architecture_text)
         self.assertIn('st.button("Load Adaptive Compute Advisor"', architecture_text)
         self.assertIn('st.button("Load AI Usage Guardrails"', architecture_text)
@@ -1177,6 +1204,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Agentic AI governance cockpit", architecture_text)
         self.assertIn("Adaptive Compute transition advisor", architecture_text)
         self.assertIn("AI security guardrails to close first", architecture_text)
+        self.assertNotIn("_render_platform_futures(get_session()", architecture_text)
+        self.assertNotIn('c2.metric("Loaded Surfaces"', architecture_text)
+        self.assertNotIn('c2.metric("Evidence Gaps"', architecture_text)
+        self.assertNotIn('c5.metric("Control Areas"', architecture_text)
         self.assertIn("Run-Rate and YOY", cost_contract_text)
         self.assertIn("FinOps Control Center", cost_contract_text)
         self.assertIn('"sections.finops_control"', cost_contract_text)

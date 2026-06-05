@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 
-import pandas as pd
 import streamlit as st
 
 from config import ARCHITECTURE_OBJECTIVES, THRESHOLDS
@@ -29,6 +28,29 @@ from utils import (
 )
 from utils.workflows import render_operator_briefing, render_priority_dataframe
 from utils.section_guidance import defer_section_note
+
+
+class _LazyPandas:
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            import pandas as pandas_module
+
+            self._module = pandas_module
+        return self._module
+
+    def __getattr__(self, name):
+        return getattr(self._load(), name)
+
+
+pd = _LazyPandas()
+
+
+def _is_dataframe(value: object) -> bool:
+    if value is None:
+        return False
+    return isinstance(value, pd.DataFrame)
 
 
 def build_agentic_ai_surface_scorecard(*args, **kwargs):
@@ -569,7 +591,7 @@ def _architecture_source_health_rows(
 def _ensure_architecture_objectives_state(company: str, environment: str) -> pd.DataFrame:
     expected = _architecture_scope_meta(company, environment, "Architecture objectives")
     current = st.session_state.get("arch_objectives_df")
-    if isinstance(current, pd.DataFrame) and _architecture_meta_matches(st.session_state.get("arch_objectives_meta"), expected):
+    if _is_dataframe(current) and _architecture_meta_matches(st.session_state.get("arch_objectives_meta"), expected):
         return current
     objectives = _architecture_objectives_frame(company)
     st.session_state["arch_objectives_df"] = objectives
@@ -580,7 +602,7 @@ def _ensure_architecture_objectives_state(company: str, environment: str) -> pd.
 def _ensure_architecture_forward_controls_state(company: str, environment: str) -> pd.DataFrame:
     expected = _architecture_scope_meta(company, environment, "Forward platform controls")
     current = st.session_state.get("arch_forward_controls")
-    if isinstance(current, pd.DataFrame) and _architecture_meta_matches(st.session_state.get("arch_forward_controls_meta"), expected):
+    if _is_dataframe(current) and _architecture_meta_matches(st.session_state.get("arch_forward_controls_meta"), expected):
         return current
     controls = build_forward_platform_control_register()
     st.session_state["arch_forward_controls"] = controls
@@ -591,6 +613,11 @@ def _ensure_architecture_forward_controls_state(company: str, environment: str) 
 def _refresh_architecture_source_health_state(company: str, environment: str) -> pd.DataFrame:
     source_health = _architecture_source_health_rows(st.session_state, company, environment)
     st.session_state["arch_source_health"] = source_health
+    st.session_state["arch_source_health_meta"] = _architecture_scope_meta(
+        company,
+        environment,
+        "Architecture source health",
+    )
     return source_health
 
 
@@ -1188,10 +1215,10 @@ def _render_platform_futures_adoption_gate(controls: pd.DataFrame) -> None:
     if gate is None or gate.empty:
         return
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Blocked Areas", f"{int((gate['ADOPTION_STATE'] == 'Blocked').sum()):,}", delta_color="inverse")
-    c2.metric("Evidence Gaps", f"{int((gate['ADOPTION_STATE'] == 'Evidence Gaps').sum()):,}", delta_color="inverse")
+    c1.metric("Blocked", f"{int((gate['ADOPTION_STATE'] == 'Blocked').sum()):,}", delta_color="inverse")
+    c2.metric("Gaps", f"{int((gate['ADOPTION_STATE'] == 'Evidence Gaps').sum()):,}", delta_color="inverse")
     c3.metric("Critical/High", f"{int(gate['CRITICAL_HIGH_FINDINGS'].sum()):,}", delta_color="inverse")
-    c4.metric("Control Areas", f"{len(gate):,}")
+    c4.metric("Areas", f"{len(gate):,}")
     render_priority_dataframe(
         gate,
         title="Expert adoption gate",
@@ -1214,10 +1241,10 @@ def _render_agentic_ai_cockpit(summary: dict, scorecard: pd.DataFrame) -> None:
         return
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Blocked", f"{safe_int(summary.get('BLOCKED')):,}", delta_color="inverse")
-    c2.metric("Evidence Gaps", f"{safe_int(summary.get('EVIDENCE_GAPS')):,}", delta_color="inverse")
-    c3.metric("Pilot Only", f"{safe_int(summary.get('CONTROLLED_PILOT')):,}")
+    c2.metric("Gaps", f"{safe_int(summary.get('EVIDENCE_GAPS')):,}", delta_color="inverse")
+    c3.metric("Pilots", f"{safe_int(summary.get('CONTROLLED_PILOT')):,}")
     c4.metric("Critical/High", f"{safe_int(summary.get('CRITICAL_HIGH')):,}", delta_color="inverse")
-    c5.metric("Control Areas", f"{len(scorecard):,}")
+    c5.metric("Areas", f"{len(scorecard):,}")
     render_priority_dataframe(
         scorecard,
         title="Agentic AI governance cockpit",
@@ -1235,20 +1262,46 @@ def _render_agentic_ai_cockpit(summary: dict, scorecard: pd.DataFrame) -> None:
     download_csv(scorecard, "architecture_agentic_ai_cockpit.csv")
 
 
-def _render_platform_futures(session, company: str, environment: str) -> None:
+def _get_valid_architecture_forward_controls(company: str, environment: str) -> pd.DataFrame | None:
+    current = st.session_state.get("arch_forward_controls")
+    if current is None:
+        return None
+    expected = _architecture_scope_meta(company, environment, "Forward platform controls")
+    if _is_dataframe(current) and _architecture_meta_matches(st.session_state.get("arch_forward_controls_meta"), expected):
+        return current
+    return None
+
+
+def _get_valid_architecture_source_health(company: str, environment: str) -> pd.DataFrame | None:
+    current = st.session_state.get("arch_source_health")
+    if current is None:
+        return None
+    expected = _architecture_scope_meta(company, environment, "Architecture source health")
+    if _is_dataframe(current) and _architecture_meta_matches(st.session_state.get("arch_source_health_meta"), expected):
+        return current
+    return None
+
+
+def _refresh_platform_futures_summary(company: str, environment: str) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame]:
+    controls = _ensure_architecture_forward_controls_state(company, environment)
+    source_health = _refresh_architecture_source_health_state(company, environment)
+    agentic_summary, agentic_scorecard = build_agentic_ai_surface_scorecard(
+        controls,
+        _platform_futures_frames(),
+        source_health=source_health,
+    )
+    board = build_platform_futures_board(_platform_futures_frames())
+    st.session_state["arch_agentic_ai_summary"] = agentic_summary
+    st.session_state["arch_agentic_ai_scorecard"] = agentic_scorecard
+    st.session_state["arch_futures_board"] = board
+    return controls, agentic_summary, agentic_scorecard, board
+
+
+def _render_platform_futures(company: str, environment: str) -> None:
     st.subheader("AI & Platform Futures")
     defer_section_note(
         "Forward Snowflake controls for Adaptive Compute, CoWork Artifacts, Cortex Sense, agents, MCP servers, AI spend, AI security, Openflow, Horizon governance, semantic trust, DR drills, and AI-assisted change."
     )
-    controls = _ensure_architecture_forward_controls_state(company, environment)
-    _refresh_architecture_source_health_state(company, environment)
-    agentic_summary, agentic_scorecard = build_agentic_ai_surface_scorecard(
-        controls,
-        _platform_futures_frames(),
-        source_health=st.session_state.get("arch_source_health"),
-    )
-    st.session_state["arch_agentic_ai_summary"] = agentic_summary
-    st.session_state["arch_agentic_ai_scorecard"] = agentic_scorecard
 
     futures_view = st.selectbox(
         "AI platform futures view",
@@ -1268,29 +1321,39 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
     )
 
     if futures_view == "Overview":
-        board = build_platform_futures_board(_platform_futures_frames())
-        st.session_state["arch_futures_board"] = board
-        c1, c2, c3, c4 = st.columns(4)
-        loaded_surfaces = sum(1 for frame in _platform_futures_frames() if isinstance(frame, pd.DataFrame))
-        c1.metric("Controls", f"{len(controls):,}")
-        c2.metric("Loaded Surfaces", f"{loaded_surfaces:,}/6")
-        c3.metric("Open Futures", f"{len(board):,}" if isinstance(board, pd.DataFrame) else "0")
-        high_count = (
-            int(board["SEVERITY"].isin(["Critical", "High"]).sum())
-            if isinstance(board, pd.DataFrame) and not board.empty and "SEVERITY" in board.columns
-            else 0
-        )
-        c4.metric("Critical/High", f"{high_count:,}")
-        if isinstance(agentic_scorecard, pd.DataFrame) and not agentic_scorecard.empty:
-            defer_section_note(
-                f"Agentic AI top risk: {agentic_summary.get('TOP_RISK', 'Agentic AI readiness')}. "
-                f"Blocked areas: {safe_int(agentic_summary.get('BLOCKED')):,}; "
-                f"evidence gaps: {safe_int(agentic_summary.get('EVIDENCE_GAPS')):,}."
-            )
-        _render_platform_futures_adoption_gate(controls)
-        if board is None or board.empty:
-            st.info("Load one of the futures evidence surfaces to build the prioritized board.")
+        if st.button("Load Futures Control Board", key="arch_futures_board_load"):
+            _refresh_platform_futures_summary(company, environment)
+
+        controls = _get_valid_architecture_forward_controls(company, environment)
+        board = st.session_state.get("arch_futures_board")
+        agentic_summary = st.session_state.get("arch_agentic_ai_summary", {})
+        agentic_scorecard = st.session_state.get("arch_agentic_ai_scorecard")
+        loaded_surfaces = sum(1 for frame in _platform_futures_frames() if _is_dataframe(frame))
+        if controls is None:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Loaded", f"{loaded_surfaces:,}/6")
+            c2.metric("Controls", "Load")
+            c3.metric("Open", "Load")
+            st.info("Load the futures board after choosing any evidence surfaces you want included.")
         else:
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Controls", f"{len(controls):,}")
+            c2.metric("Loaded", f"{loaded_surfaces:,}/6")
+            c3.metric("Open", f"{len(board):,}" if _is_dataframe(board) else "0")
+            high_count = (
+                int(board["SEVERITY"].isin(["Critical", "High"]).sum())
+                if _is_dataframe(board) and not board.empty and "SEVERITY" in board.columns
+                else 0
+            )
+            c4.metric("Critical/High", f"{high_count:,}")
+            if _is_dataframe(agentic_scorecard) and not agentic_scorecard.empty:
+                defer_section_note(
+                    f"Agentic AI top risk: {agentic_summary.get('TOP_RISK', 'Agentic AI readiness')}. "
+                    f"Blocked areas: {safe_int(agentic_summary.get('BLOCKED')):,}; "
+                    f"evidence gaps: {safe_int(agentic_summary.get('EVIDENCE_GAPS')):,}."
+                )
+            _render_platform_futures_adoption_gate(controls)
+        if _is_dataframe(board) and not board.empty:
             render_priority_dataframe(
                 board,
                 title="Forward platform actions to review first",
@@ -1306,27 +1369,21 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
             )
             if st.button("Queue Platform Futures Findings", key="arch_futures_queue"):
                 _queue_architecture_findings(
-                    session,
+                    get_session(),
                     board,
                     "Architecture Readiness - AI Platform Futures",
                     "ENTITY_NAME",
                     "AI & Platform Futures",
                 )
             download_csv(board, "architecture_platform_futures_board.csv")
-        render_priority_dataframe(
-            controls,
-            title="Forward platform control register",
-            priority_columns=[
-                "CONTROL_AREA", "OWNER", "APPROVAL_GROUP", "PRIMARY_EVIDENCE",
-                "DBA_DECISION", "AUTOMATION_BOUNDARY",
-            ],
-            sort_by=["MATCH_PRIORITY", "CONTROL_AREA"],
-            ascending=[False, True],
-            raw_label="All forward platform controls",
-            height=300,
-        )
+        elif controls is not None:
+            st.info("Load one of the futures evidence surfaces to build the prioritized board.")
 
     elif futures_view == "Agentic AI Cockpit":
+        if st.button("Load Agentic AI Cockpit", key="arch_agentic_cockpit_load"):
+            _refresh_platform_futures_summary(company, environment)
+        agentic_summary = st.session_state.get("arch_agentic_ai_summary", {})
+        agentic_scorecard = st.session_state.get("arch_agentic_ai_scorecard")
         _render_agentic_ai_cockpit(agentic_summary, agentic_scorecard)
 
     elif futures_view == "Adaptive Compute":
@@ -1339,7 +1396,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
             with st.spinner("Loading Adaptive Compute advisor..."):
                 try:
                     st.session_state["arch_adaptive_compute"] = load_adaptive_compute_readiness(
-                        session,
+                        get_session(),
                         days=days,
                         row_limit=row_limit,
                         company=company,
@@ -1355,15 +1412,15 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 except Exception as exc:
                     st.warning(f"Adaptive Compute advisor unavailable: {format_snowflake_error(exc)}")
         df = st.session_state.get("arch_adaptive_compute")
-        if isinstance(df, pd.DataFrame):
+        if _is_dataframe(df):
             _render_loaded_metrics(df, "Adaptive Compute")
             if df.empty:
                 st.info("No warehouse workload rows are visible for this Adaptive Compute review scope.")
             else:
                 decisions = df.get("ADAPTIVE_DECISION", pd.Series(dtype=str)).fillna("").astype(str)
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Pilot Candidates", f"{int(decisions.str.contains('Pilot Candidate', case=False, regex=False).sum()):,}")
-                c2.metric("Hold Decisions", f"{int(decisions.str.contains('Hold', case=False, regex=False).sum()):,}")
+                c1.metric("Pilots", f"{int(decisions.str.contains('Pilot Candidate', case=False, regex=False).sum()):,}")
+                c2.metric("Holds", f"{int(decisions.str.contains('Hold', case=False, regex=False).sum()):,}")
                 c3.metric("Credits", f"{safe_float(df.get('CREDITS_30D', pd.Series(dtype=float)).sum()):,.1f}")
                 c4.metric("Workloads", f"{len(df):,}")
                 render_priority_dataframe(
@@ -1382,7 +1439,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 )
                 if st.button("Queue Adaptive Compute Findings", key="arch_adaptive_compute_queue"):
                     _queue_architecture_findings(
-                        session,
+                        get_session(),
                         df,
                         "Architecture Readiness - Adaptive Compute",
                         "ENTITY_NAME",
@@ -1394,7 +1451,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
         if st.button("Load Agents and MCP Inventory", key="arch_ai_inventory_load"):
             with st.spinner("Loading Cortex Agent and MCP inventory..."):
                 try:
-                    st.session_state["arch_ai_inventory"] = load_agent_mcp_inventory(session, company, environment)
+                    st.session_state["arch_ai_inventory"] = load_agent_mcp_inventory(get_session(), company, environment)
                     st.session_state["arch_ai_inventory_meta"] = _architecture_scope_meta(
                         company,
                         environment,
@@ -1403,7 +1460,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 except Exception as exc:
                     st.warning(f"Agent and MCP inventory unavailable: {format_snowflake_error(exc)}")
         df = st.session_state.get("arch_ai_inventory")
-        if isinstance(df, pd.DataFrame):
+        if _is_dataframe(df):
             _render_loaded_metrics(df, "agent and MCP")
             if df.empty:
                 st.info("No Cortex Agents or MCP servers are visible to the active role.")
@@ -1426,7 +1483,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 )
                 if st.button("Queue Agent and MCP Findings", key="arch_ai_inventory_queue"):
                     _queue_architecture_findings(
-                        session,
+                        get_session(),
                         df,
                         "Architecture Readiness - Agent & MCP Governance",
                         "ENTITY_NAME",
@@ -1444,7 +1501,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
             with st.spinner("Loading AI usage guardrails..."):
                 try:
                     st.session_state["arch_ai_usage"] = load_ai_usage_guardrails(
-                        session,
+                        get_session(),
                         days=days,
                         row_limit=row_limit,
                         company=company,
@@ -1460,7 +1517,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 except Exception as exc:
                     st.warning(f"AI usage guardrails unavailable: {format_snowflake_error(exc)}")
         df = st.session_state.get("arch_ai_usage")
-        if isinstance(df, pd.DataFrame):
+        if _is_dataframe(df):
             _render_loaded_metrics(df, "AI usage")
             if df.empty:
                 st.info("No Cortex Agent or Snowflake Intelligence usage rows are visible for this scope.")
@@ -1480,7 +1537,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 )
                 if st.button("Queue AI Usage Findings", key="arch_ai_usage_queue"):
                     _queue_architecture_findings(
-                        session,
+                        get_session(),
                         df,
                         "Architecture Readiness - AI Spend & Token Guardrails",
                         "ENTITY_NAME",
@@ -1492,7 +1549,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
         if st.button("Load AI Security Guardrails", key="arch_ai_security_guardrails_load"):
             with st.spinner("Loading AI security guardrails..."):
                 try:
-                    st.session_state["arch_ai_security_guardrails"] = load_ai_security_guardrails(session)
+                    st.session_state["arch_ai_security_guardrails"] = load_ai_security_guardrails(get_session())
                     st.session_state["arch_ai_security_guardrails_meta"] = _architecture_scope_meta(
                         company,
                         environment,
@@ -1501,7 +1558,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 except Exception as exc:
                     st.warning(f"AI security guardrails unavailable: {format_snowflake_error(exc)}")
         df = st.session_state.get("arch_ai_security_guardrails")
-        if isinstance(df, pd.DataFrame):
+        if _is_dataframe(df):
             _render_loaded_metrics(df, "AI security")
             if df.empty:
                 st.info("No AI security guardrail rows were produced for the active role.")
@@ -1514,8 +1571,8 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 )
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Critical/High", f"{high_risk:,}")
-                c2.metric("Report Proofs", f"{report_ready:,}/2")
-                c3.metric("Queue Ready", f"{int((df.get('QUEUE_READINESS', pd.Series(dtype=str)) == 'Ready to Queue').sum()):,}")
+                c2.metric("Proofs", f"{report_ready:,}/2")
+                c3.metric("Queue", f"{int((df.get('QUEUE_READINESS', pd.Series(dtype=str)) == 'Ready to Queue').sum()):,}")
                 render_priority_dataframe(
                     df,
                     title="AI security guardrails to close first",
@@ -1531,7 +1588,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 )
                 if st.button("Queue AI Security Guardrails", key="arch_ai_security_guardrails_queue"):
                     _queue_architecture_findings(
-                        session,
+                        get_session(),
                         df,
                         "Architecture Readiness - AI Security Guardrails",
                         "ENTITY_NAME",
@@ -1549,7 +1606,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
             with st.spinner("Loading Openflow operations..."):
                 try:
                     st.session_state["arch_openflow_usage"] = load_openflow_operations(
-                        session,
+                        get_session(),
                         days=days,
                         row_limit=row_limit,
                         company=company,
@@ -1565,7 +1622,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 except Exception as exc:
                     st.warning(f"Openflow operations unavailable: {format_snowflake_error(exc)}")
         df = st.session_state.get("arch_openflow_usage")
-        if isinstance(df, pd.DataFrame):
+        if _is_dataframe(df):
             _render_loaded_metrics(df, "Openflow")
             if df.empty:
                 st.info("No Openflow usage rows are visible to the active role.")
@@ -1585,7 +1642,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 )
                 if st.button("Queue Openflow Findings", key="arch_openflow_queue"):
                     _queue_architecture_findings(
-                        session,
+                        get_session(),
                         df,
                         "Architecture Readiness - Openflow Operations",
                         "ENTITY_NAME",
@@ -1597,7 +1654,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
         if st.button("Load Horizon and Semantic Readiness", key="arch_horizon_load"):
             with st.spinner("Probing Horizon, semantic, and AI change readiness..."):
                 try:
-                    st.session_state["arch_horizon_readiness"] = load_horizon_semantic_readiness(session)
+                    st.session_state["arch_horizon_readiness"] = load_horizon_semantic_readiness(get_session())
                     st.session_state["arch_horizon_meta"] = _architecture_scope_meta(
                         company,
                         environment,
@@ -1606,7 +1663,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 except Exception as exc:
                     st.warning(f"Horizon and semantic readiness unavailable: {format_snowflake_error(exc)}")
         df = st.session_state.get("arch_horizon_readiness")
-        if isinstance(df, pd.DataFrame):
+        if _is_dataframe(df):
             _render_loaded_metrics(df, "Horizon and semantic")
             if df.empty:
                 st.info("No Horizon or semantic readiness rows were produced.")
@@ -1619,8 +1676,8 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 )
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Ready", f"{ready_count:,}")
-                c2.metric("Not Visible", f"{max(len(df) - ready_count, 0):,}")
-                c3.metric("Mandatory Gaps", f"{mandatory_gaps:,}")
+                c2.metric("Hidden", f"{max(len(df) - ready_count, 0):,}")
+                c3.metric("Gaps", f"{mandatory_gaps:,}")
                 render_priority_dataframe(
                     df,
                     title="Horizon, semantic, and AI-change readiness gaps",
@@ -1635,7 +1692,7 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 )
                 if st.button("Queue Horizon and Semantic Gaps", key="arch_horizon_queue"):
                     _queue_architecture_findings(
-                        session,
+                        get_session(),
                         df,
                         "Architecture Readiness - Horizon & Semantic Trust",
                         "ENTITY_NAME",
@@ -1644,26 +1701,32 @@ def _render_platform_futures(session, company: str, environment: str) -> None:
                 download_csv(df, "architecture_horizon_semantic_readiness.csv")
 
     elif futures_view == "Control Register":
-        render_priority_dataframe(
-            controls,
-            title="Forward platform control register",
-            priority_columns=[
-                "CONTROL_AREA", "CONTROL_ID", "OWNER", "APPROVAL_GROUP",
-                "PRIMARY_EVIDENCE", "RISK_IF_MISSING", "DBA_DECISION",
-                "AUTOMATION_BOUNDARY",
-            ],
-            sort_by=["MATCH_PRIORITY", "CONTROL_AREA"],
-            ascending=[False, True],
-            raw_label="All forward platform controls",
-            height=460,
-        )
-        with st.expander("Platform futures evidence ledger setup SQL", expanded=False):
-            st.caption(
-                "Creates the durable control register, evidence ledger, latest-evidence view, and coverage view. "
-                "Run through Snowflake change control with the approved app owner role."
+        if st.button("Load Control Register", key="arch_control_register_load"):
+            _ensure_architecture_forward_controls_state(company, environment)
+        controls = _get_valid_architecture_forward_controls(company, environment)
+        if controls is None:
+            st.info("Load the control register when you need the durable futures-control definitions.")
+        else:
+            render_priority_dataframe(
+                controls,
+                title="Forward platform control register",
+                priority_columns=[
+                    "CONTROL_AREA", "CONTROL_ID", "OWNER", "APPROVAL_GROUP",
+                    "PRIMARY_EVIDENCE", "RISK_IF_MISSING", "DBA_DECISION",
+                    "AUTOMATION_BOUNDARY",
+                ],
+                sort_by=["MATCH_PRIORITY", "CONTROL_AREA"],
+                ascending=[False, True],
+                raw_label="All forward platform controls",
+                height=460,
             )
-            st.code(build_platform_futures_evidence_ddl(), language="sql")
-        download_csv(controls, "architecture_forward_platform_controls.csv")
+            with st.expander("Platform futures evidence ledger setup SQL", expanded=False):
+                st.caption(
+                    "Creates the durable control register, evidence ledger, latest-evidence view, and coverage view. "
+                    "Run through Snowflake change control with the approved app owner role."
+                )
+                st.code(build_platform_futures_evidence_ddl(), language="sql")
+            download_csv(controls, "architecture_forward_platform_controls.csv")
 
 
 def render():
@@ -1833,17 +1896,27 @@ def render():
                 download_csv(df, "architecture_cache_optimization.csv")
 
     elif active_pane == "Objectives & Owners":
-        objectives = _ensure_architecture_objectives_state(company, environment)
         st.subheader("Architecture Objective Register")
         defer_section_note("Manual DBA control objectives cover database families, execution warehouses, workload classes, and RPO/RTO targets.")
-        if objectives.empty:
+        if st.button("Load Objective Register", key="arch_objective_register_load"):
+            _ensure_architecture_objectives_state(company, environment)
+
+        objective_expected = _architecture_scope_meta(company, environment, "Architecture objectives")
+        objectives = st.session_state.get("arch_objectives_df")
+        objectives_ready = (
+            _is_dataframe(objectives)
+            and _architecture_meta_matches(st.session_state.get("arch_objectives_meta"), objective_expected)
+        )
+        if not objectives_ready:
+            st.info("Load objectives when you need owner, RPO/RTO, and policy context.")
+        elif objectives.empty:
             st.warning("No architecture objectives are configured for the active company.")
         else:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Objectives", f"{len(objectives):,}")
             c2.metric("Tier 0", f"{int((objectives['SERVICE_TIER'] == 'Tier 0').sum()):,}")
-            c3.metric("Databases", f"{int((objectives['ENTITY_TYPE'] == 'DATABASE').sum()):,}")
-            c4.metric("Warehouses", f"{int((objectives['ENTITY_TYPE'] == 'WAREHOUSE').sum()):,}")
+            c3.metric("DB", f"{int((objectives['ENTITY_TYPE'] == 'DATABASE').sum()):,}")
+            c4.metric("WH", f"{int((objectives['ENTITY_TYPE'] == 'WAREHOUSE').sum()):,}")
             render_priority_dataframe(
                 objectives,
                 title="Configured architecture objectives",
@@ -1858,16 +1931,20 @@ def render():
                 height=420,
             )
             download_csv(objectives, "architecture_objectives.csv")
-        source_health = _refresh_architecture_source_health_state(company, environment)
-        render_priority_dataframe(
-            source_health,
-            title="Architecture evidence source health",
-            priority_columns=["STATE", "SURFACE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION"],
-            sort_by=["STATE_RANK", "SURFACE"],
-            ascending=[True, True],
-            raw_label="All architecture source-health rows",
-            height=300,
-        )
+
+        if st.button("Load Architecture Source Health", key="arch_source_health_load"):
+            _refresh_architecture_source_health_state(company, environment)
+        source_health = _get_valid_architecture_source_health(company, environment)
+        if source_health is not None:
+            render_priority_dataframe(
+                source_health,
+                title="Architecture evidence source health",
+                priority_columns=["STATE", "SURFACE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION"],
+                sort_by=["STATE_RANK", "SURFACE"],
+                ascending=[True, True],
+                raw_label="All architecture source-health rows",
+                height=300,
+            )
 
     elif active_pane == "DR Readiness":
         st.subheader("Disaster Recovery Readiness")
@@ -1925,7 +2002,7 @@ def render():
             download_csv(readiness, "architecture_dr_readiness.csv")
 
     elif active_pane == "AI & Platform Futures":
-        _render_platform_futures(get_session(), company, environment)
+        _render_platform_futures(company, environment)
 
     elif active_pane == "Forward Watchlist":
         _render_forward_watchlist()

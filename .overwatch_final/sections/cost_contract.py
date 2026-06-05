@@ -211,7 +211,7 @@ def _render_warehouse_ranking_chart(warehouse_delta: pd.DataFrame, credit_price:
                 alt.Tooltip("WAREHOUSE_NAME:N", title="Warehouse"),
                 alt.Tooltip("CURRENT_SPEND_USD:Q", title="Current spend", format="$,.2f"),
                 alt.Tooltip("PRIOR_SPEND_USD:Q", title="Prior spend", format="$,.2f"),
-                alt.Tooltip("DELTA_SPEND_USD:Q", title="Spend delta", format="$+,.2f"),
+                alt.Tooltip("DELTA_SPEND_USD:Q", title="Spend delta", format="+$,.2f"),
                 alt.Tooltip("PCT_DELTA:Q", title="Delta %", format="+.1f"),
             ],
         )
@@ -1419,7 +1419,7 @@ def _render_service_cost_movement_chart(service_lens: pd.DataFrame, credit_price
             alt.Tooltip("SERVICE_TYPE:N", title="Service"),
             alt.Tooltip("CURRENT_SPEND_USD:Q", title="Current", format="$,.2f"),
             alt.Tooltip("PRIOR_SPEND_USD:Q", title="Prior", format="$,.2f"),
-            alt.Tooltip("COST_DELTA_USD:Q", title="Delta", format="$+,.2f"),
+            alt.Tooltip("COST_DELTA_USD:Q", title="Delta", format="+$,.2f"),
             alt.Tooltip("CREDIT_DELTA:Q", title="Credit delta", format="+,.2f"),
         ],
     )

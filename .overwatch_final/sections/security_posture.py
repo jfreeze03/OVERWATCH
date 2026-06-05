@@ -182,10 +182,11 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
 
 SECURITY_POSTURE_VIEWS = ("Security Brief", "Evidence Readiness", "Access Workflows")
 
-WORKFLOWS = ("Access posture", "Data sharing exposure")
+WORKFLOWS = ("Access posture", "Privilege sprawl", "Data sharing exposure")
 
 WORKFLOW_DETAILS = {
     "Access posture": "Failed logins, MFA gaps, grants, role risk, and security exceptions.",
+    "Privilege sprawl": "Admin roles, ownership grants, grant-option exposure, and owner approval gaps.",
     "Data sharing exposure": "Shares, imported databases, exposed datasets, and owner follow-up.",
 }
 
@@ -951,6 +952,8 @@ def _security_privileged_grant_review_sql(days: int, company: str, environment: 
         IFF(UPPER(gtu.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN'), 'Critical', 'High') AS severity,
         gtu.grantee_name AS entity,
         gtu.role AS role_name,
+        NULL::VARCHAR AS privilege,
+        FALSE AS grant_option,
         NULL::VARCHAR AS object_name,
         NULL::VARCHAR AS database_name,
         FALSE AS database_context,
@@ -958,11 +961,11 @@ def _security_privileged_grant_review_sql(days: int, company: str, environment: 
         'ACCOUNT_USAGE.GRANTS_TO_USERS privileged role grants' AS proof_query,
         gtu.granted_by,
         gtu.created_on,
+        DATEDIFF('day', gtu.created_on, CURRENT_TIMESTAMP()) AS grant_age_days,
         'Role owner approval, business justification, ticket, review-by date, and rollback plan required.' AS proof_required,
         'Review account-level privileged role grant; do not hide this row behind a database environment filter.' AS next_action
     FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS gtu
     WHERE gtu.deleted_on IS NULL
-      AND gtu.created_on >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
       AND (
           UPPER(gtu.role) IN ('ACCOUNTADMIN', 'ORGADMIN', 'SECURITYADMIN', 'SYSADMIN', 'USERADMIN')
           OR UPPER(gtu.role) ILIKE '%ADMIN%'
@@ -981,6 +984,8 @@ object_privilege_grants AS (
         ) AS severity,
         gor.grantee_name AS entity,
         NULL::VARCHAR AS role_name,
+        gor.privilege AS privilege,
+        COALESCE(TO_VARCHAR(gor.grant_option), 'false') = 'true' AS grant_option,
         gor.name AS object_name,
         gor.table_catalog AS database_name,
         TRUE AS database_context,
@@ -988,6 +993,7 @@ object_privilege_grants AS (
         'ACCOUNT_USAGE.GRANTS_TO_ROLES privileged object grants' AS proof_query,
         gor.granted_by,
         gor.created_on,
+        DATEDIFF('day', gor.created_on, CURRENT_TIMESTAMP()) AS grant_age_days,
         'Object owner approval, privilege justification, ticket, review-by date, and rollback verification required.' AS proof_required,
         'Review database-scoped object privilege before revoke/narrowing action.' AS next_action
     FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
@@ -1014,6 +1020,8 @@ SELECT
     severity,
     entity,
     role_name,
+    privilege,
+    grant_option,
     object_name,
     database_name,
     database_context,
@@ -1021,6 +1029,7 @@ SELECT
     proof_query,
     granted_by,
     created_on,
+    grant_age_days,
     proof_required,
     next_action
 FROM privileged_role_grants
@@ -1030,6 +1039,8 @@ SELECT
     severity,
     entity,
     role_name,
+    privilege,
+    grant_option,
     object_name,
     database_name,
     database_context,
@@ -1037,6 +1048,7 @@ SELECT
     proof_query,
     granted_by,
     created_on,
+    grant_age_days,
     proof_required,
     next_action
 FROM object_privilege_grants
@@ -1107,6 +1119,57 @@ def _annotate_security_privileged_grant_readiness(grants: pd.DataFrame) -> pd.Da
         ["GRANT_REVIEW_RANK", "SEVERITY", "CREATED_ON"],
         ascending=[True, True, False],
     )
+
+
+def _privilege_sprawl_summary(grants: pd.DataFrame | None) -> dict:
+    """Summarize privileged access sprawl without requiring another Snowflake query."""
+    if grants is None or not isinstance(grants, pd.DataFrame) or grants.empty:
+        return {
+            "total": 0,
+            "tier0": 0,
+            "admin_role_grants": 0,
+            "object_privileges": 0,
+            "ownership_or_grant_option": 0,
+            "owner_approval_required": 0,
+            "route_blocked": 0,
+            "account_scope": 0,
+            "stale_admin_grants": 0,
+        }
+    frame = grants.copy()
+    frame.columns = [str(col).upper() for col in frame.columns]
+    def _column(name: str, default=None) -> pd.Series:
+        value = frame.get(name)
+        if isinstance(value, pd.DataFrame):
+            return value.iloc[:, -1]
+        if isinstance(value, pd.Series):
+            return value
+        return pd.Series([default] * len(frame))
+
+    role = _column("ROLE_NAME", "").fillna("").astype(str).str.upper()
+    privilege = _column("PRIVILEGE", "").fillna("").astype(str).str.upper()
+    grant_option = _column("GRANT_OPTION", False).fillna(False)
+    if not isinstance(grant_option, pd.Series):
+        grant_option = pd.Series(dtype=bool)
+    grant_option_flag = grant_option.astype(str).str.lower().isin(["true", "1", "yes"])
+    readiness = _column("GRANT_REVIEW_READINESS", "").fillna("").astype(str)
+    database_context = _column("DATABASE_CONTEXT", False).fillna(False)
+    age_days = pd.to_numeric(_column("GRANT_AGE_DAYS", 0), errors="coerce").fillna(0)
+    tier0_roles = {"ACCOUNTADMIN", "ORGADMIN", "SECURITYADMIN"}
+    admin_role_mask = role.ne("")
+    object_privilege_mask = privilege.ne("")
+    tier0_mask = role.isin(tier0_roles)
+    ownership_or_grant_option = privilege.isin(["OWNERSHIP", "MANAGE GRANTS"]) | grant_option_flag
+    return {
+        "total": int(len(frame)),
+        "tier0": int(tier0_mask.sum()),
+        "admin_role_grants": int(admin_role_mask.sum()),
+        "object_privileges": int(object_privilege_mask.sum()),
+        "ownership_or_grant_option": int(ownership_or_grant_option.sum()),
+        "owner_approval_required": int(readiness.eq("Owner Approval Required").sum()),
+        "route_blocked": int(readiness.eq("Owner Route Blocked").sum()),
+        "account_scope": int((~database_context.astype(bool)).sum()),
+        "stale_admin_grants": int((admin_role_mask & (age_days >= 90)).sum()),
+    }
 
 
 def _privileged_grant_verification_sql(row: pd.Series | dict) -> str:
@@ -1230,6 +1293,8 @@ def _security_workflow_for(finding_type: str) -> str:
     value = str(finding_type or "").lower()
     if "shared" in value or "exposure" in value:
         return "Data sharing exposure"
+    if "privileged" in value or "grant" in value:
+        return "Privilege sprawl"
     return "Access posture"
 
 
@@ -2377,8 +2442,18 @@ def _queue_privileged_grant_actions(
         st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
 
 
-def _render_privileged_grant_readiness(company: str, environment: str, days: int) -> None:
-    with st.expander("Privileged Grant Readiness", expanded=False):
+def _render_privileged_grant_readiness(
+    company: str,
+    environment: str,
+    days: int,
+    *,
+    as_expander: bool = True,
+    expanded: bool = False,
+    title: str = "Privileged Grant Readiness",
+    load_label: str = "Load Privileged Grant Readiness",
+    load_key: str = "security_priv_grant_load",
+) -> None:
+    def _body() -> None:
         st.caption(
             "Reviews account-level admin role grants and database-scoped object privileges before DBA grant/revoke work. "
             "Account-role grants stay visible under PROD/DEV filters because they have no database context."
@@ -2390,7 +2465,7 @@ def _render_privileged_grant_readiness(company: str, environment: str, days: int
             max(7, int(days or 30)),
             key="security_priv_grant_days",
         )
-        if st.button("Load Privileged Grant Readiness", key="security_priv_grant_load"):
+        if st.button(load_label, key=load_key, type="primary" if not as_expander else "secondary"):
             try:
                 grant_sql = _security_privileged_grant_review_sql(grant_days, company, environment)
                 grant_rows = run_query(
@@ -2426,6 +2501,7 @@ def _render_privileged_grant_readiness(company: str, environment: str, days: int
             st.success("No privileged grant rows found for the selected scope and lookback.")
             return
 
+        summary = _privilege_sprawl_summary(grants)
         blocked = grants[grants["GRANT_REVIEW_READINESS"] == "Owner Route Blocked"]
         approval = grants[grants["GRANT_REVIEW_READINESS"] == "Owner Approval Required"]
         account_scope = grants[~grants["DATABASE_CONTEXT"]]
@@ -2434,13 +2510,20 @@ def _render_privileged_grant_readiness(company: str, environment: str, days: int
         g2.metric("Owner Approval", f"{len(approval):,}", delta_color="inverse")
         g3.metric("Route Blocked", f"{len(blocked):,}", delta_color="inverse")
         g4.metric("Account Scope", f"{len(account_scope):,}")
+        if not as_expander:
+            r1, r2, r3, r4 = st.columns(4)
+            r1.metric("Tier 0", f"{summary['tier0']:,}", delta_color="inverse")
+            r2.metric("Admin Roles", f"{summary['admin_role_grants']:,}", delta_color="inverse")
+            r3.metric("Grant Option", f"{summary['ownership_or_grant_option']:,}", delta_color="inverse")
+            r4.metric("Stale Admin", f"{summary['stale_admin_grants']:,}", delta_color="inverse")
 
         render_priority_dataframe(
             grants,
             title="Privileged grant review before access changes",
             priority_columns=[
                 "SEVERITY", "GRANT_REVIEW_READINESS", "GRANT_REVIEW_STATE",
-                "FINDING_TYPE", "ENTITY", "ROLE_NAME", "OBJECT_NAME", "DATABASE_NAME",
+                "FINDING_TYPE", "ENTITY", "ROLE_NAME", "PRIVILEGE", "GRANT_OPTION",
+                "OBJECT_NAME", "DATABASE_NAME", "GRANT_AGE_DAYS",
                 "ENVIRONMENT", "SCOPE_CONFIDENCE", "OWNER", "OWNER_ROUTE_READY",
                 "ONCALL_PRIMARY", "APPROVAL_GROUP", "GRANTED_BY", "CREATED_ON",
                 "PROOF_REQUIRED", "NEXT_GRANT_ACTION",
@@ -2454,6 +2537,25 @@ def _render_privileged_grant_readiness(company: str, environment: str, days: int
             _queue_privileged_grant_actions(get_session(), grants, company=company, environment=environment)
         with st.expander("Privileged grant readiness query", expanded=False):
             st.code(st.session_state.get("security_privileged_grants_sql", ""), language="sql")
+
+    if as_expander:
+        with st.expander(title, expanded=expanded):
+            _body()
+    else:
+        st.markdown(f"**{title}**")
+        _body()
+
+
+def _render_privilege_sprawl_workflow(company: str, environment: str, days: int) -> None:
+    _render_privileged_grant_readiness(
+        company,
+        environment,
+        days,
+        as_expander=False,
+        title="Privilege Sprawl",
+        load_label="Load Privilege Sprawl",
+        load_key="security_privilege_sprawl_load",
+    )
 
 
 def _render_security_source_health(company: str, environment: str) -> None:
@@ -2518,10 +2620,11 @@ def render() -> None:
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Exceptions-only mode: prioritize failed logins, MFA gaps, risky grants, and external exposure.")
     render_workflow_guide(
-        "Start with identity/access posture, then inspect data sharing when the question "
-        "is exposure, external access, or audit evidence.",
+        "Start with identity/access posture, open privilege sprawl for high-risk grants, "
+        "then inspect data sharing when the question is external exposure or audit evidence.",
         [
             ("Login failures, MFA, grants, or risky access", "Use Access posture."),
+            ("Admin roles, ownership, grant option, or route blockers", "Use Privilege sprawl."),
             ("External consumers or shared data exposure", "Use Data sharing exposure."),
         ],
     )
@@ -2553,8 +2656,11 @@ def render() -> None:
             "security_posture_workflow",
             WORKFLOWS,
             WORKFLOW_DETAILS,
-            columns=2,
+            columns=3,
         )
+        if workflow == "Privilege sprawl":
+            _render_privilege_sprawl_workflow(company, environment, days)
+            return
         render_workflow_module(workflow, WORKFLOW_MODULES)
         return
 

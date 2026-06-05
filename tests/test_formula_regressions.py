@@ -220,6 +220,7 @@ from sections.security_posture import (  # noqa: E402
     _annotate_security_privileged_grant_readiness,
     _privileged_grant_action_payload,
     _privileged_grant_verification_sql,
+    _privilege_sprawl_summary,
     _build_security_access_review,
     _build_security_brief_markdown,
     _build_security_mart_brief_sql,
@@ -233,6 +234,7 @@ from sections.security_posture import (  # noqa: E402
     _security_action_for,
     _security_exception_verification_sql,
     _security_rating,
+    _security_workflow_for,
     _security_score,
     build_security_access_review_ddl,
     build_security_access_review_migration_sql,
@@ -3741,6 +3743,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("'NO DATABASE CONTEXT' AS ENVIRONMENT", sql_upper)
         self.assertIn("PRIVILEGED_ROLE_GRANTS", sql_upper)
         self.assertIn("OBJECT_PRIVILEGE_GRANTS", sql_upper)
+        self.assertIn("GOR.PRIVILEGE AS PRIVILEGE", sql_upper)
+        self.assertIn("AS GRANT_OPTION", sql_upper)
+        self.assertIn("GRANT_AGE_DAYS", sql_upper)
         self.assertIn("ALFA_EDW_PROD", sql_upper)
         self.assertNotIn("GTU.TABLE_CATALOG", sql_upper)
         self.assertEqual(verification_query_safety_issues(sql), [])
@@ -3752,12 +3757,15 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SEVERITY": "Critical",
                 "ENTITY": "JDOE",
                 "ROLE_NAME": "ACCOUNTADMIN",
+                "PRIVILEGE": "",
+                "GRANT_OPTION": False,
                 "OBJECT_NAME": "",
                 "DATABASE_NAME": "",
                 "DATABASE_CONTEXT": False,
                 "ENVIRONMENT": "No Database Context",
                 "GRANTED_BY": "SECURITYADMIN",
                 "CREATED_ON": "2026-05-01",
+                "GRANT_AGE_DAYS": 120,
                 "PROOF_REQUIRED": "ticket and owner approval",
             },
             {
@@ -3765,18 +3773,22 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SEVERITY": "High",
                 "ENTITY": "ETL_RUNNER",
                 "ROLE_NAME": "",
+                "PRIVILEGE": "OWNERSHIP",
+                "GRANT_OPTION": True,
                 "OBJECT_NAME": "ALFA_EDW_DEV.PUBLIC.POLICY_FACT",
                 "DATABASE_NAME": "ALFA_EDW_DEV",
                 "DATABASE_CONTEXT": True,
                 "ENVIRONMENT": "ALFA_EDW_DEV",
                 "GRANTED_BY": "SYSADMIN",
                 "CREATED_ON": "2026-05-02",
+                "GRANT_AGE_DAYS": 10,
                 "PROOF_REQUIRED": "object owner approval",
             },
         ])
 
         readiness = _annotate_security_privileged_grant_readiness(grants)
         by_entity = {row["ENTITY"]: row for _, row in readiness.iterrows()}
+        summary = _privilege_sprawl_summary(readiness)
 
         self.assertEqual(by_entity["JDOE"]["GRANT_REVIEW_STATE"], "Tier 0 role grant")
         self.assertEqual(by_entity["JDOE"]["GRANT_REVIEW_READINESS"], "Owner Approval Required")
@@ -3785,6 +3797,15 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_entity["ETL_RUNNER"]["GRANT_REVIEW_STATE"], "Privileged object grant")
         self.assertEqual(by_entity["ETL_RUNNER"]["SCOPE_CONFIDENCE"], "Database Context")
         self.assertIn("OWNER_DIRECTORY", by_entity["ETL_RUNNER"]["OWNER_SOURCE"])
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["tier0"], 1)
+        self.assertEqual(summary["admin_role_grants"], 1)
+        self.assertEqual(summary["object_privileges"], 1)
+        self.assertEqual(summary["ownership_or_grant_option"], 1)
+        self.assertEqual(summary["owner_approval_required"], 2)
+        self.assertEqual(summary["stale_admin_grants"], 1)
+        self.assertEqual(_security_workflow_for("Privileged Object Grant"), "Privilege sprawl")
+        self.assertEqual(_security_workflow_for("MFA Gap"), "Access posture")
 
     def test_privileged_grant_action_payload_is_review_only_and_closure_tracked(self):
         row = {

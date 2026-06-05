@@ -1,7 +1,11 @@
 # sections/cost_contract.py - Consolidated cost and contract workflow
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
+import zipfile
 
 import streamlit as st
 from importlib import import_module
@@ -56,6 +60,8 @@ build_mart_cost_service_lens_sql = _lazy_util("build_mart_cost_service_lens_sql"
 build_snowflake_service_cost_lens_sql = _lazy_util("build_snowflake_service_cost_lens_sql")
 credits_to_dollars = _lazy_util("credits_to_dollars")
 format_snowflake_error = _lazy_util("format_snowflake_error")
+get_active_environment = _lazy_util("get_active_environment")
+get_environment_label = _lazy_util("get_environment_label")
 get_session_for_action = _lazy_util("get_session_for_action")
 get_user_filter_clause = _lazy_util("get_user_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
@@ -1345,6 +1351,88 @@ def _build_service_cost_lens_summary(service_lens: pd.DataFrame) -> dict:
     }
 
 
+def _service_lens_movement_rows(service_lens: pd.DataFrame | None, credit_price: float, limit: int = 8) -> pd.DataFrame:
+    columns = [
+        "SERVICE_CATEGORY", "SERVICE_TYPE", "CURRENT_SPEND_USD", "PRIOR_SPEND_USD",
+        "COST_DELTA_USD", "CREDIT_DELTA", "DELTA_LABEL", "SORT_VALUE",
+    ]
+    if not _looks_like_frame(service_lens) or service_lens.empty:
+        return pd.DataFrame(columns=columns)
+
+    view = service_lens.copy()
+    if "SERVICE_TYPE" not in view.columns:
+        return pd.DataFrame(columns=columns)
+    for column in ("SERVICE_CATEGORY",):
+        if column not in view.columns:
+            view[column] = "Other"
+
+    def numeric_column(name: str) -> pd.Series:
+        return pd.to_numeric(view.get(name, pd.Series([0] * len(view), index=view.index)), errors="coerce").fillna(0)
+
+    current_credits = numeric_column("CREDITS_BILLED")
+    prior_credits = numeric_column("CREDITS_BILLED_PRIOR")
+    credit_delta = numeric_column("CREDIT_DELTA")
+    current_spend = numeric_column("ESTIMATED_COST_USD")
+    prior_spend = numeric_column("PRIOR_ESTIMATED_COST_USD")
+    cost_delta = numeric_column("COST_DELTA_USD")
+
+    current_spend = current_spend.where(current_spend.abs() > 0, current_credits * safe_float(credit_price, 3.68))
+    prior_spend = prior_spend.where(prior_spend.abs() > 0, prior_credits * safe_float(credit_price, 3.68))
+    cost_delta = cost_delta.where(cost_delta.abs() > 0, current_spend - prior_spend)
+    credit_delta = credit_delta.where(credit_delta.abs() > 0, current_credits - prior_credits)
+
+    movement = pd.DataFrame({
+        "SERVICE_CATEGORY": view["SERVICE_CATEGORY"].fillna("Other").astype(str),
+        "SERVICE_TYPE": view["SERVICE_TYPE"].fillna("Unknown").astype(str),
+        "CURRENT_SPEND_USD": current_spend,
+        "PRIOR_SPEND_USD": prior_spend,
+        "COST_DELTA_USD": cost_delta,
+        "CREDIT_DELTA": credit_delta,
+    })
+    movement["DELTA_LABEL"] = movement["COST_DELTA_USD"].apply(lambda value: _slide_money(value, signed=True))
+    movement["SORT_VALUE"] = movement["COST_DELTA_USD"].abs()
+    movement = movement[
+        (movement["CURRENT_SPEND_USD"].abs() + movement["PRIOR_SPEND_USD"].abs() + movement["COST_DELTA_USD"].abs()) > 0
+    ].sort_values(["SORT_VALUE", "CURRENT_SPEND_USD"], ascending=[False, False])
+    return movement.head(max(1, int(limit or 8)))[columns].reset_index(drop=True)
+
+
+def _render_service_cost_movement_chart(service_lens: pd.DataFrame, credit_price: float) -> None:
+    movement = _service_lens_movement_rows(service_lens, credit_price, limit=8)
+    if movement.empty:
+        st.caption("No service movement rows loaded for this scope.")
+        return
+    palette = _cost_chart_palette()
+    alt = _altair()
+    base = alt.Chart(movement).encode(
+        y=alt.Y(
+            "SERVICE_TYPE:N",
+            sort=alt.SortField(field="SORT_VALUE", order="descending"),
+            title=None,
+            axis=alt.Axis(labelLimit=190),
+        )
+    )
+    bars = base.mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, opacity=0.72).encode(
+        x=alt.X("CURRENT_SPEND_USD:Q", title="Current spend", axis=alt.Axis(format="$,.0f")),
+        color=alt.condition("datum.COST_DELTA_USD > 0", alt.value(palette["risk"]), alt.value(palette["bar"])),
+        tooltip=[
+            alt.Tooltip("SERVICE_TYPE:N", title="Service"),
+            alt.Tooltip("CURRENT_SPEND_USD:Q", title="Current", format="$,.2f"),
+            alt.Tooltip("PRIOR_SPEND_USD:Q", title="Prior", format="$,.2f"),
+            alt.Tooltip("COST_DELTA_USD:Q", title="Delta", format="$+,.2f"),
+            alt.Tooltip("CREDIT_DELTA:Q", title="Credit delta", format="+,.2f"),
+        ],
+    )
+    prior_ticks = base.mark_tick(color=palette["line"], thickness=3, size=20).encode(
+        x=alt.X("PRIOR_SPEND_USD:Q", title="Current spend"),
+    )
+    labels = base.mark_text(align="left", dx=6).encode(
+        x="CURRENT_SPEND_USD:Q",
+        text="DELTA_LABEL:N",
+    )
+    st.altair_chart((bars + prior_ticks + labels).properties(height=max(210, min(360, 34 * len(movement) + 58))), width="stretch")
+
+
 def _render_cost_source_health(
     *,
     cockpit: pd.DataFrame,
@@ -1455,6 +1543,8 @@ def _render_account_service_cost_lens(service_lens: pd.DataFrame, credit_price: 
         f"Top service: {summary['top_service']}. "
         f"Estimated dollars use the configured ${credit_price:,.2f}/credit display rate unless official currency data is loaded."
     )
+    st.markdown("**Service Spend Movement**")
+    _render_service_cost_movement_chart(service_lens, credit_price)
     render_priority_dataframe(
         service_lens,
         title="Cost by Snowflake service type",
@@ -3715,35 +3805,823 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     trend = splash.get("trend", pd.DataFrame())
     warehouse_delta = splash.get("warehouse_delta", pd.DataFrame())
     cortex = splash.get("cortex", pd.DataFrame())
+    run_rate = splash.get("run_rate", pd.DataFrame())
     row = cockpit.iloc[0] if _looks_like_frame(cockpit) and not cockpit.empty else {}
     cortex_row = cortex.iloc[0] if _looks_like_frame(cortex) and not cortex.empty else {}
+    run_rate_row = run_rate.iloc[0] if _looks_like_frame(run_rate) and not run_rate.empty else {}
     current_credits = safe_float(row.get("CURRENT_CREDITS", 0))
     prior_credits = safe_float(row.get("PRIOR_CREDITS", 0))
-    delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
+    spend_delta_credits = current_credits - prior_credits
+    delta_pct = (spend_delta_credits / prior_credits * 100) if prior_credits > 0 else 0.0
     active_warehouses = safe_int(row.get("ACTIVE_WAREHOUSES", 0))
     top_wh = str(row.get("TOP_INCREASE_WAREHOUSE") or "")
+    top_wh_delta = safe_float(row.get("TOP_INCREASE_CREDITS", 0))
+    top_wh_current_credits = 0.0
     if not top_wh and _looks_like_frame(warehouse_delta) and not warehouse_delta.empty:
         top_wh = str(warehouse_delta.iloc[0].get("WAREHOUSE_NAME") or "")
+    if _looks_like_frame(warehouse_delta) and not warehouse_delta.empty:
+        top_wh_delta = top_wh_delta or safe_float(warehouse_delta.iloc[0].get("CREDIT_DELTA", 0))
+        top_wh_current_credits = safe_float(warehouse_delta.iloc[0].get("CURRENT_CREDITS", 0))
     peak_credits = 0.0
     if _looks_like_frame(trend) and not trend.empty and "DAILY_CREDITS" in trend.columns:
         peak_credits = safe_float(trend["DAILY_CREDITS"].max())
     cortex_spend = safe_float(cortex_row.get("CORTEX_SPEND_USD", 0))
+    projected_30d_credits = safe_float(run_rate_row.get("PROJECTED_30D_FROM_7D", 0))
+    avg_7d_credits = safe_float(run_rate_row.get("AVG_DAILY_7D", 0))
     return {
         "has_data": current_credits > 0 or (_looks_like_frame(trend) and not trend.empty) or cortex_spend > 0,
         "current_credits": current_credits,
         "prior_credits": prior_credits,
+        "spend_delta_credits": spend_delta_credits,
         "spend": credits_to_dollars(current_credits, credit_price),
+        "prior_spend": credits_to_dollars(prior_credits, credit_price),
+        "spend_delta": credits_to_dollars(spend_delta_credits, credit_price),
         "avg_daily": credits_to_dollars(current_credits / max(int(days), 1), credit_price),
         "peak_day": credits_to_dollars(peak_credits, credit_price),
         "delta_pct": delta_pct,
         "active_warehouses": active_warehouses,
         "top_warehouse": top_wh or "No warehouse",
+        "top_warehouse_delta_credits": top_wh_delta,
+        "top_warehouse_delta_spend": credits_to_dollars(top_wh_delta, credit_price),
+        "top_warehouse_current_spend": credits_to_dollars(top_wh_current_credits, credit_price),
         "cortex_spend": cortex_spend,
         "cortex_credits": safe_float(cortex_row.get("CORTEX_CREDITS", 0)),
         "cortex_requests": safe_int(cortex_row.get("CORTEX_REQUESTS", 0)),
         "top_cortex_user": str(cortex_row.get("TOP_CORTEX_USER") or "No Cortex user"),
         "top_cortex_user_spend": safe_float(cortex_row.get("TOP_CORTEX_USER_SPEND_USD", 0)),
+        "projected_30d_spend": credits_to_dollars(projected_30d_credits, credit_price),
+        "avg_7d_spend": credits_to_dollars(avg_7d_credits, credit_price),
+        "run_rate_state": str(run_rate_row.get("RUN_RATE_STATE") or "Not loaded"),
+        "yoy_state": str(run_rate_row.get("YOY_STATE") or "Not loaded"),
+        "yoy_7d_pct": _nullable_float(run_rate_row, "YOY_7D_PCT") if _looks_like_frame(run_rate) and not run_rate.empty else None,
     }
+
+
+def _slide_money(value: float, *, signed: bool = False) -> str:
+    amount = safe_float(value)
+    if signed:
+        sign = "+" if amount >= 0 else "-"
+        return f"{sign}${abs(amount):,.0f}"
+    return f"${amount:,.0f}"
+
+
+def _slide_number(value: float, suffix: str = "") -> str:
+    return f"{safe_float(value):,.0f}{suffix}"
+
+
+def _safe_filename_piece(value: object) -> str:
+    text = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value or "").strip())
+    while "__" in text:
+        text = text.replace("__", "_")
+    return text.strip("_") or "scope"
+
+
+def _cost_snapshot_action_summary(queue: pd.DataFrame | None) -> dict:
+    open_cost_queue = _open_cost_action_frame(queue)
+    if open_cost_queue.empty:
+        return {"open_actions": 0, "high_actions": 0, "estimated_savings": 0.0}
+    severity = open_cost_queue.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.title()
+    savings = pd.to_numeric(open_cost_queue.get("EST_MONTHLY_SAVINGS", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    return {
+        "open_actions": int(len(open_cost_queue)),
+        "high_actions": int(severity.isin(["Critical", "High"]).sum()),
+        "estimated_savings": safe_float(savings.sum()),
+    }
+
+
+def _cost_snapshot_kpi_rows(
+    summary: dict,
+    service_summary: dict,
+    action_summary: dict,
+    *,
+    company: str,
+    environment_label: str,
+    days: int,
+) -> pd.DataFrame:
+    rows = [
+        ("Scope", f"{company} / {environment_label} / {int(days)} days", "Company, environment, and window."),
+        ("Current spend", _slide_money(summary.get("spend")), "Warehouse spend for the selected window."),
+        ("Prior spend", _slide_money(summary.get("prior_spend")), "Prior window baseline."),
+        ("Spend delta", _slide_money(summary.get("spend_delta"), signed=True), f"{safe_float(summary.get('delta_pct')):+.1f}% versus prior."),
+        ("Top warehouse", str(summary.get("top_warehouse") or "No warehouse"), _slide_money(summary.get("top_warehouse_delta_spend"), signed=True)),
+        ("Cortex spend", _slide_money(summary.get("cortex_spend")), f"Top user: {summary.get('top_cortex_user')}."),
+        ("30d run-rate", _slide_money(summary.get("projected_30d_spend")), str(summary.get("run_rate_state") or "Not loaded")),
+        ("Open actions", _slide_number(action_summary.get("open_actions")), f"{safe_int(action_summary.get('high_actions')):,} high-priority."),
+    ]
+    if safe_float(service_summary.get("top_moving_delta")):
+        rows.append((
+            "Service move",
+            str(service_summary.get("top_moving_service") or "No movement"),
+            f"{safe_float(service_summary.get('top_moving_delta')):+,.2f} credits versus prior.",
+        ))
+    return pd.DataFrame(rows, columns=["KPI", "VALUE", "SLIDE_NOTE"])
+
+
+def _cost_snapshot_chart_rows(
+    summary: dict,
+    action_summary: dict,
+    service_lens: pd.DataFrame | None = None,
+    credit_price: float = 3.68,
+) -> pd.DataFrame:
+    rows = [
+        ("Spend bridge", "Current spend", safe_float(summary.get("spend")), _slide_money(summary.get("spend"))),
+        ("Spend bridge", "Prior spend", safe_float(summary.get("prior_spend")), _slide_money(summary.get("prior_spend"))),
+        ("Spend bridge", "Spend delta", safe_float(summary.get("spend_delta")), _slide_money(summary.get("spend_delta"), signed=True)),
+        ("Driver dollars", "Top warehouse move", safe_float(summary.get("top_warehouse_delta_spend")), _slide_money(summary.get("top_warehouse_delta_spend"), signed=True)),
+        ("Driver dollars", "Cortex spend", safe_float(summary.get("cortex_spend")), _slide_money(summary.get("cortex_spend"))),
+        ("Driver dollars", "Top AI user", safe_float(summary.get("top_cortex_user_spend")), _slide_money(summary.get("top_cortex_user_spend"))),
+        ("Driver dollars", "Peak day", safe_float(summary.get("peak_day")), _slide_money(summary.get("peak_day"))),
+        ("Work queue", "Open actions", safe_float(action_summary.get("open_actions")), _slide_number(action_summary.get("open_actions"))),
+        ("Work queue", "High-priority", safe_float(action_summary.get("high_actions")), _slide_number(action_summary.get("high_actions"))),
+        ("Work queue", "Savings queue", safe_float(action_summary.get("estimated_savings")), _slide_money(action_summary.get("estimated_savings")) + "/mo"),
+    ]
+    movement = _service_lens_movement_rows(service_lens, credit_price, limit=5)
+    if not movement.empty:
+        rows.extend(
+            ("Service movement", str(row["SERVICE_TYPE"]), safe_float(row["COST_DELTA_USD"]), str(row["DELTA_LABEL"]))
+            for _, row in movement.iterrows()
+        )
+    return pd.DataFrame(rows, columns=["CHART", "METRIC", "VALUE", "LABEL"])
+
+
+def _cost_snapshot_slide_brief(
+    summary: dict,
+    service_summary: dict,
+    action_summary: dict,
+    *,
+    company: str,
+    environment_label: str,
+    days: int,
+) -> str:
+    top_service = str(service_summary.get("top_moving_service") or "No service movement")
+    service_delta = safe_float(service_summary.get("top_moving_delta"))
+    service_line = (
+        f"- Service movement: {top_service} moved {service_delta:+,.2f} credits versus prior."
+        if service_delta
+        else "- Service movement: service-level current/prior deltas are not loaded."
+    )
+    action_line = (
+        f"- Actions: {safe_int(action_summary.get('open_actions')):,} open cost actions, "
+            f"{safe_int(action_summary.get('high_actions')):,} high-priority, "
+            f"{_slide_money(action_summary.get('estimated_savings'))}/mo estimated savings."
+        if safe_int(action_summary.get("open_actions"))
+        else "- Actions: action queue and verified savings context are not loaded."
+    )
+    yoy_pct = summary.get("yoy_7d_pct")
+    yoy_line = (
+        f"- Run-rate: projected 30d spend is {_slide_money(summary.get('projected_30d_spend'))}; 7d YOY is {_format_optional_pct(yoy_pct)}."
+        if yoy_pct is not None
+        else f"- Run-rate: projected 30d spend is {_slide_money(summary.get('projected_30d_spend'))}; {summary.get('run_rate_state')}."
+    )
+    return "\n".join([
+        f"OVERWATCH Cost Snapshot - {company} / {environment_label} / {int(days)} days",
+        f"Headline: spend is {_slide_money(summary.get('spend'))}, {_slide_money(summary.get('spend_delta'), signed=True)} versus prior ({safe_float(summary.get('delta_pct')):+.1f}%).",
+        "",
+        "Slide bullets:",
+        f"- Spend: {_slide_money(summary.get('spend'))} current window versus {_slide_money(summary.get('prior_spend'))} prior.",
+        f"- Warehouse driver: {summary.get('top_warehouse')} moved {safe_float(summary.get('top_warehouse_delta_credits')):+,.2f} credits ({_slide_money(summary.get('top_warehouse_delta_spend'), signed=True)}).",
+        f"- Cortex: {_slide_money(summary.get('cortex_spend'))} total; top user {summary.get('top_cortex_user')} at {_slide_money(summary.get('top_cortex_user_spend'))}.",
+        yoy_line,
+        service_line,
+        action_line,
+        "",
+        "Next decision:",
+        "Explain the top warehouse or service movement first, then convert confirmed findings into owned actions.",
+    ])
+
+
+def _render_cost_snapshot_bar_chart(chart_rows: pd.DataFrame, chart_name: str) -> None:
+    if not _looks_like_frame(chart_rows) or chart_rows.empty:
+        st.caption("No chart rows loaded for this snapshot.")
+        return
+    data = chart_rows[chart_rows["CHART"].astype(str) == chart_name].copy()
+    if data.empty:
+        st.caption("No chart rows loaded for this snapshot.")
+        return
+    data["VALUE"] = pd.to_numeric(data["VALUE"], errors="coerce").fillna(0)
+    max_abs = max(abs(float(data["VALUE"].min())), abs(float(data["VALUE"].max())), 1.0)
+    palette = _cost_chart_palette()
+    alt = _altair()
+    bars = (
+        alt.Chart(data)
+        .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3)
+        .encode(
+            x=alt.X("VALUE:Q", title=None, scale=alt.Scale(domain=[min(0, -max_abs if data["VALUE"].min() < 0 else 0), max_abs])),
+            y=alt.Y("METRIC:N", sort=None, title=None, axis=alt.Axis(labelLimit=180)),
+            color=alt.condition("datum.VALUE < 0", alt.value(palette["line"]), alt.value(palette["bar"])),
+            tooltip=[
+                alt.Tooltip("METRIC:N", title="Metric"),
+                alt.Tooltip("LABEL:N", title="Value"),
+            ],
+        )
+    )
+    labels = alt.Chart(data).mark_text(align="left", dx=5).encode(
+        x="VALUE:Q",
+        y=alt.Y("METRIC:N", sort=None),
+        text="LABEL:N",
+    )
+    st.altair_chart((bars + labels).properties(height=max(145, 36 * len(data) + 30)), width="stretch")
+
+
+_PPTX_EMU_PER_INCH = 914400
+_PPTX_SLIDE_WIDTH = 12192000
+_PPTX_SLIDE_HEIGHT = 6858000
+_PPTX_TEXT_COLOR = "F8FAFC"
+_PPTX_MUTED_COLOR = "B8C7D8"
+_PPTX_PANEL_FILL = "0B1721"
+_PPTX_CARD_FILL = "13283A"
+_PPTX_GRID_FILL = "1D3346"
+_PPTX_ACCENT = "29B5E8"
+_PPTX_RISK = "F97316"
+
+
+def _pptx_emu(inches: float) -> int:
+    return int(float(inches) * _PPTX_EMU_PER_INCH)
+
+
+def _pptx_color(value: str | None, fallback: str = _PPTX_TEXT_COLOR) -> str:
+    text = str(value or fallback).strip().lstrip("#")
+    return text.upper()[:6] if len(text) >= 6 else fallback
+
+
+def _pptx_escape(value: object) -> str:
+    return xml_escape(str(value or ""), {'"': "&quot;", "'": "&apos;"})
+
+
+def _pptx_text_lines(value: object, *, max_lines: int | None = None) -> list[str]:
+    lines = [line.strip() for line in str(value or "").replace("\r\n", "\n").split("\n") if line.strip()]
+    return lines[:max_lines] if max_lines is not None else lines
+
+
+def _pptx_paragraphs(lines: list[str], *, font_size: int, color: str, bold: bool = False) -> str:
+    size = max(800, int(font_size * 100))
+    bold_attr = ' b="1"' if bold else ""
+    color = _pptx_color(color)
+    if not lines:
+        lines = [""]
+    paragraphs = []
+    for line in lines:
+        paragraphs.append(
+            f'<a:p><a:r><a:rPr lang="en-US" sz="{size}"{bold_attr}>'
+            f'<a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:rPr>'
+            f"<a:t>{_pptx_escape(line)}</a:t></a:r>"
+            f'<a:endParaRPr lang="en-US" sz="{size}"/></a:p>'
+        )
+    return "".join(paragraphs)
+
+
+def _pptx_shape(
+    shape_id: int,
+    name: str,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    lines: list[str] | str,
+    *,
+    font_size: int = 18,
+    color: str = _PPTX_TEXT_COLOR,
+    bold: bool = False,
+    fill: str | None = None,
+    line: str | None = None,
+    radius: bool = False,
+    margin: int = 91440,
+) -> str:
+    if isinstance(lines, str):
+        lines = _pptx_text_lines(lines)
+    fill_xml = (
+        f'<a:solidFill><a:srgbClr val="{_pptx_color(fill)}"/></a:solidFill>'
+        if fill
+        else "<a:noFill/>"
+    )
+    line_xml = (
+        f'<a:ln><a:solidFill><a:srgbClr val="{_pptx_color(line)}"/></a:solidFill></a:ln>'
+        if line
+        else "<a:ln><a:noFill/></a:ln>"
+    )
+    geometry = "roundRect" if radius else "rect"
+    return (
+        "<p:sp>"
+        "<p:nvSpPr>"
+        f'<p:cNvPr id="{shape_id}" name="{_pptx_escape(name)}"/>'
+        '<p:cNvSpPr txBox="1"/><p:nvPr/>'
+        "</p:nvSpPr>"
+        "<p:spPr>"
+        f'<a:xfrm><a:off x="{_pptx_emu(x)}" y="{_pptx_emu(y)}"/>'
+        f'<a:ext cx="{_pptx_emu(width)}" cy="{_pptx_emu(height)}"/></a:xfrm>'
+        f'<a:prstGeom prst="{geometry}"><a:avLst/></a:prstGeom>'
+        f"{fill_xml}{line_xml}"
+        "</p:spPr>"
+        f'<p:txBody><a:bodyPr wrap="square" anchor="t" lIns="{margin}" tIns="{margin}" rIns="{margin}" bIns="{margin}"/>'
+        f"<a:lstStyle/>{_pptx_paragraphs(lines, font_size=font_size, color=color, bold=bold)}</p:txBody>"
+        "</p:sp>"
+    )
+
+
+def _pptx_slide_xml(shapes: list[str], *, background: str = "07111A") -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
+        "<p:cSld>"
+        f'<p:bg><p:bgPr><a:solidFill><a:srgbClr val="{_pptx_color(background)}"/></a:solidFill></p:bgPr></p:bg>'
+        "<p:spTree>"
+        "<p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>"
+        "<p:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/>"
+        "<a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"0\" cy=\"0\"/></a:xfrm></p:grpSpPr>"
+        f"{''.join(shapes)}"
+        "</p:spTree>"
+        "</p:cSld>"
+        "<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>"
+        "</p:sld>"
+    )
+
+
+def _pptx_slide_brief_parts(slide_brief: str) -> tuple[str, list[str]]:
+    lines = _pptx_text_lines(slide_brief)
+    headline = next((line.replace("Headline:", "").strip() for line in lines if line.startswith("Headline:")), "")
+    bullets = [line[2:].strip() for line in lines if line.startswith("- ")]
+    return headline, bullets[:6]
+
+
+def _pptx_kpi_lookup(kpi_rows: pd.DataFrame) -> dict[str, tuple[str, str]]:
+    if not _looks_like_frame(kpi_rows) or kpi_rows.empty:
+        return {}
+    lookup: dict[str, tuple[str, str]] = {}
+    for _, row in kpi_rows.iterrows():
+        key = str(row.get("KPI") or "").strip()
+        if key:
+            lookup[key] = (str(row.get("VALUE") or ""), str(row.get("SLIDE_NOTE") or ""))
+    return lookup
+
+
+def _build_cost_snapshot_title_slide(
+    slide_brief: str,
+    kpi_rows: pd.DataFrame,
+    *,
+    company: str,
+    environment_label: str,
+    days: int,
+) -> str:
+    headline, bullets = _pptx_slide_brief_parts(slide_brief)
+    kpis = _pptx_kpi_lookup(kpi_rows)
+    cards = [
+        ("Current spend", *kpis.get("Current spend", ("$0", ""))),
+        ("Spend delta", *kpis.get("Spend delta", ("$0", ""))),
+        ("Top warehouse", *kpis.get("Top warehouse", ("No warehouse", ""))),
+        ("Cortex spend", *kpis.get("Cortex spend", ("$0", ""))),
+    ]
+    shapes = [
+        _pptx_shape(2, "Title", 0.55, 0.35, 7.4, 0.55, "OVERWATCH Cost Snapshot", font_size=28, bold=True),
+        _pptx_shape(
+            3,
+            "Scope",
+            0.58,
+            0.95,
+            7.9,
+            0.35,
+            f"{company} / {environment_label} / {int(days)} days",
+            font_size=13,
+            color=_PPTX_MUTED_COLOR,
+        ),
+        _pptx_shape(4, "Headline", 0.58, 1.45, 7.4, 0.72, headline, font_size=18, bold=True, color="FFFFFF"),
+        _pptx_shape(5, "Bullets", 0.58, 2.35, 7.2, 3.0, [f"- {line}" for line in bullets], font_size=15, color=_PPTX_TEXT_COLOR),
+    ]
+    x = 8.35
+    y = 1.15
+    for offset, (label, value, note) in enumerate(cards):
+        shapes.append(_pptx_shape(10 + offset, f"Card {label}", x, y + offset * 1.25, 4.15, 0.94, "", fill=_PPTX_CARD_FILL, radius=True))
+        shapes.append(_pptx_shape(20 + offset, f"Card label {label}", x + 0.18, y + offset * 1.25 + 0.08, 3.7, 0.2, label, font_size=9, color=_PPTX_MUTED_COLOR, bold=True))
+        shapes.append(_pptx_shape(30 + offset, f"Card value {label}", x + 0.18, y + offset * 1.25 + 0.32, 3.7, 0.32, value, font_size=20, color="FFFFFF", bold=True))
+        shapes.append(_pptx_shape(40 + offset, f"Card note {label}", x + 0.18, y + offset * 1.25 + 0.66, 3.7, 0.18, note, font_size=8, color=_PPTX_MUTED_COLOR))
+    return _pptx_slide_xml(shapes)
+
+
+def _build_cost_snapshot_kpi_slide(kpi_rows: pd.DataFrame, *, company: str, environment_label: str) -> str:
+    shapes = [
+        _pptx_shape(2, "Title", 0.55, 0.35, 7.2, 0.5, "KPI Readout", font_size=26, bold=True),
+        _pptx_shape(3, "Scope", 0.58, 0.9, 7.5, 0.3, f"{company} / {environment_label}", font_size=12, color=_PPTX_MUTED_COLOR),
+    ]
+    rows = kpi_rows.head(9).copy() if _looks_like_frame(kpi_rows) and not kpi_rows.empty else pd.DataFrame()
+    headers = [("KPI", 0.7, 1.45, 2.1), ("Value", 2.85, 1.45, 2.15), ("Slide note", 5.1, 1.45, 7.0)]
+    for idx, (label, x, y, width) in enumerate(headers):
+        shapes.append(_pptx_shape(10 + idx, f"Header {label}", x, y, width, 0.35, label, font_size=11, color="FFFFFF", bold=True, fill=_PPTX_GRID_FILL))
+    for row_idx, (_, row) in enumerate(rows.iterrows()):
+        y = 1.86 + row_idx * 0.55
+        fill = _PPTX_PANEL_FILL if row_idx % 2 else "102335"
+        cells = [
+            (str(row.get("KPI") or ""), 0.7, 2.1, 13, True),
+            (str(row.get("VALUE") or ""), 2.85, 2.15, 13, True),
+            (str(row.get("SLIDE_NOTE") or ""), 5.1, 7.0, 11, False),
+        ]
+        for cell_idx, (text, x, width, font_size, bold) in enumerate(cells):
+            shapes.append(
+                _pptx_shape(
+                    30 + row_idx * 4 + cell_idx,
+                    f"KPI {row_idx} {cell_idx}",
+                    x,
+                    y,
+                    width,
+                    0.44,
+                    text,
+                    font_size=font_size,
+                    color=_PPTX_TEXT_COLOR,
+                    bold=bold,
+                    fill=fill,
+                    margin=64008,
+                )
+            )
+    return _pptx_slide_xml(shapes)
+
+
+def _pptx_bar_chart_shapes(
+    chart_rows: pd.DataFrame,
+    chart_name: str,
+    *,
+    start_id: int,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+) -> list[str]:
+    if not _looks_like_frame(chart_rows) or chart_rows.empty:
+        return [
+            _pptx_shape(start_id, f"{chart_name} empty", x, y, width, height, "No chart rows loaded.", font_size=12, color=_PPTX_MUTED_COLOR, fill=_PPTX_PANEL_FILL, radius=True)
+        ]
+    data = chart_rows[chart_rows["CHART"].astype(str) == chart_name].copy()
+    if data.empty:
+        return [
+            _pptx_shape(start_id, f"{chart_name} empty", x, y, width, height, "No chart rows loaded.", font_size=12, color=_PPTX_MUTED_COLOR, fill=_PPTX_PANEL_FILL, radius=True)
+        ]
+    data["VALUE"] = pd.to_numeric(data["VALUE"], errors="coerce").fillna(0)
+    max_abs = max(abs(float(data["VALUE"].min())), abs(float(data["VALUE"].max())), 1.0)
+    has_negative = bool((data["VALUE"] < 0).any())
+    label_width = min(2.2, width * 0.36)
+    value_width = width - label_width - 0.25
+    row_height = max(0.35, min(0.55, (height - 0.55) / max(1, len(data))))
+    shapes = [
+        _pptx_shape(start_id, f"{chart_name} panel", x, y, width, height, "", fill=_PPTX_PANEL_FILL, radius=True),
+        _pptx_shape(start_id + 1, f"{chart_name} title", x + 0.18, y + 0.12, width - 0.36, 0.28, chart_name, font_size=14, color="FFFFFF", bold=True),
+    ]
+    for row_idx, (_, row) in enumerate(data.head(6).iterrows()):
+        value = safe_float(row.get("VALUE"))
+        label = str(row.get("METRIC") or "")
+        display = str(row.get("LABEL") or _slide_number(value))
+        row_y = y + 0.55 + row_idx * row_height
+        shapes.append(
+            _pptx_shape(
+                start_id + 10 + row_idx * 4,
+                f"{chart_name} label {row_idx}",
+                x + 0.18,
+                row_y,
+                label_width,
+                row_height * 0.78,
+                label,
+                font_size=9,
+                color=_PPTX_MUTED_COLOR,
+                margin=45720,
+            )
+        )
+        track_x = x + 0.22 + label_width
+        track_y = row_y + 0.06
+        track_h = row_height * 0.44
+        shapes.append(
+            _pptx_shape(
+                start_id + 11 + row_idx * 4,
+                f"{chart_name} track {row_idx}",
+                track_x,
+                track_y,
+                value_width,
+                track_h,
+                "",
+                fill=_PPTX_GRID_FILL,
+            )
+        )
+        if has_negative:
+            half = value_width / 2
+            bar_w = max(0.05, half * min(1.0, abs(value) / max_abs))
+            bar_x = track_x + half - bar_w if value < 0 else track_x + half
+        else:
+            bar_w = max(0.05, value_width * min(1.0, abs(value) / max_abs))
+            bar_x = track_x
+        color = _PPTX_RISK if value < 0 else _PPTX_ACCENT
+        shapes.append(
+            _pptx_shape(
+                start_id + 12 + row_idx * 4,
+                f"{chart_name} bar {row_idx}",
+                bar_x,
+                track_y,
+                bar_w,
+                track_h,
+                "",
+                fill=color,
+            )
+        )
+        shapes.append(
+            _pptx_shape(
+                start_id + 13 + row_idx * 4,
+                f"{chart_name} value {row_idx}",
+                track_x + value_width + 0.08,
+                row_y,
+                max(0.6, width - label_width - value_width - 0.55),
+                row_height * 0.78,
+                display,
+                font_size=9,
+                color=_PPTX_TEXT_COLOR,
+                bold=True,
+                margin=45720,
+            )
+        )
+    return shapes
+
+
+def _build_cost_snapshot_chart_slide(chart_rows: pd.DataFrame) -> str:
+    chart_names = ["Spend bridge", "Driver dollars", "Work queue"]
+    if _looks_like_frame(chart_rows) and "Service movement" in set(chart_rows.get("CHART", pd.Series(dtype=str)).astype(str)):
+        chart_names.append("Service movement")
+    shapes = [
+        _pptx_shape(2, "Title", 0.55, 0.35, 7.2, 0.5, "Chart-Ready Drivers", font_size=26, bold=True),
+        _pptx_shape(3, "Subtitle", 0.58, 0.9, 9.0, 0.3, "Bars are generated from the same rows available in the app download.", font_size=12, color=_PPTX_MUTED_COLOR),
+    ]
+    panels = [
+        (chart_names[0], 0.65, 1.45, 5.95, 2.25),
+        (chart_names[1], 6.85, 1.45, 5.65, 2.25),
+        (chart_names[2], 0.65, 4.05, 5.95, 1.95),
+    ]
+    if len(chart_names) > 3:
+        panels.append((chart_names[3], 6.85, 4.05, 5.65, 1.95))
+    for idx, (chart_name, x, y, width, height) in enumerate(panels):
+        shapes.extend(_pptx_bar_chart_shapes(chart_rows, chart_name, start_id=20 + idx * 50, x=x, y=y, width=width, height=height))
+    return _pptx_slide_xml(shapes)
+
+
+def _pptx_rels(entries: list[tuple[str, str, str]]) -> str:
+    relationships = "".join(
+        f'<Relationship Id="{rel_id}" Type="{rel_type}" Target="{_pptx_escape(target)}"/>'
+        for rel_id, rel_type, target in entries
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f"{relationships}</Relationships>"
+    )
+
+
+def _pptx_content_types(slide_count: int) -> str:
+    slide_overrides = "".join(
+        f'<Override PartName="/ppt/slides/slide{idx}.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+        for idx in range(1, slide_count + 1)
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+        '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
+        '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>'
+        '<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>'
+        '<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>'
+        '<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>'
+        f"{slide_overrides}</Types>"
+    )
+
+
+def _pptx_presentation_xml(slide_count: int) -> str:
+    slide_ids = "".join(f'<p:sldId id="{255 + idx}" r:id="rId{idx + 1}"/>' for idx in range(1, slide_count + 1))
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
+        '<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>'
+        f"<p:sldIdLst>{slide_ids}</p:sldIdLst>"
+        f'<p:sldSz cx="{_PPTX_SLIDE_WIDTH}" cy="{_PPTX_SLIDE_HEIGHT}" type="wide"/>'
+        '<p:notesSz cx="6858000" cy="9144000"/>'
+        "</p:presentation>"
+    )
+
+
+def _pptx_slide_master_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
+        '<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
+        '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/>'
+        '<a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld>'
+        '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" '
+        'accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>'
+        '<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst>'
+        '<p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles>'
+        "</p:sldMaster>"
+    )
+
+
+def _pptx_slide_layout_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1">'
+        '<p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
+        '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/>'
+        '<a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld>'
+        '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>'
+        "</p:sldLayout>"
+    )
+
+
+def _pptx_theme_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="OVERWATCH">'
+        '<a:themeElements><a:clrScheme name="OVERWATCH">'
+        '<a:dk1><a:srgbClr val="07111A"/></a:dk1><a:lt1><a:srgbClr val="F8FAFC"/></a:lt1>'
+        '<a:dk2><a:srgbClr val="13283A"/></a:dk2><a:lt2><a:srgbClr val="B8C7D8"/></a:lt2>'
+        '<a:accent1><a:srgbClr val="29B5E8"/></a:accent1><a:accent2><a:srgbClr val="71D3DC"/></a:accent2>'
+        '<a:accent3><a:srgbClr val="F97316"/></a:accent3><a:accent4><a:srgbClr val="10B981"/></a:accent4>'
+        '<a:accent5><a:srgbClr val="EAB308"/></a:accent5><a:accent6><a:srgbClr val="8B5CF6"/></a:accent6>'
+        '<a:hlink><a:srgbClr val="29B5E8"/></a:hlink><a:folHlink><a:srgbClr val="71D3DC"/></a:folHlink>'
+        '</a:clrScheme><a:fontScheme name="OVERWATCH"><a:majorFont><a:latin typeface="Aptos Display"/>'
+        '<a:ea typeface=""/><a:cs typeface=""/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/>'
+        '<a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme><a:fmtScheme name="OVERWATCH">'
+        '<a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'
+        '<a:solidFill><a:schemeClr val="phClr"><a:tint val="95000"/></a:schemeClr></a:solidFill>'
+        '<a:solidFill><a:schemeClr val="phClr"><a:shade val="85000"/></a:schemeClr></a:solidFill></a:fillStyleLst>'
+        '<a:lnStyleLst><a:ln w="6350" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/>'
+        '</a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="12700" cap="flat" cmpd="sng" algn="ctr">'
+        '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln>'
+        '<a:ln w="19050" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/>'
+        '</a:solidFill><a:prstDash val="solid"/></a:ln></a:lnStyleLst>'
+        '<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/>'
+        '</a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>'
+        '<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'
+        '<a:solidFill><a:schemeClr val="phClr"><a:tint val="95000"/></a:schemeClr></a:solidFill>'
+        '<a:solidFill><a:schemeClr val="phClr"><a:shade val="85000"/></a:schemeClr></a:solidFill></a:bgFillStyleLst>'
+        "</a:fmtScheme></a:themeElements>"
+        "</a:theme>"
+    )
+
+
+def _pptx_doc_props(slide_count: int) -> tuple[str, str]:
+    timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    core = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+        'xmlns:dcterms="http://purl.org/dc/terms/" '
+        'xmlns:dcmitype="http://purl.org/dc/dcmitype/" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+        '<dc:title>OVERWATCH Cost Snapshot</dc:title><dc:creator>OVERWATCH</dc:creator>'
+        f'<dcterms:created xsi:type="dcterms:W3CDTF">{timestamp}</dcterms:created>'
+        f'<dcterms:modified xsi:type="dcterms:W3CDTF">{timestamp}</dcterms:modified>'
+        "</cp:coreProperties>"
+    )
+    app = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" '
+        'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+        '<Application>OVERWATCH</Application><PresentationFormat>On-screen Show (16:9)</PresentationFormat>'
+        f"<Slides>{int(slide_count)}</Slides></Properties>"
+    )
+    return core, app
+
+
+def _build_cost_snapshot_pptx(
+    slide_brief: str,
+    kpi_rows: pd.DataFrame,
+    chart_rows: pd.DataFrame,
+    *,
+    company: str,
+    environment_label: str,
+    days: int,
+) -> bytes:
+    slides = [
+        _build_cost_snapshot_title_slide(slide_brief, kpi_rows, company=company, environment_label=environment_label, days=days),
+        _build_cost_snapshot_kpi_slide(kpi_rows, company=company, environment_label=environment_label),
+        _build_cost_snapshot_chart_slide(chart_rows),
+    ]
+    core_props, app_props = _pptx_doc_props(len(slides))
+    presentation_rels = [(
+        "rId1",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster",
+        "slideMasters/slideMaster1.xml",
+    )]
+    presentation_rels.extend(
+        (
+            f"rId{idx + 1}",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
+            f"slides/slide{idx}.xml",
+        )
+        for idx in range(1, len(slides) + 1)
+    )
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", _pptx_content_types(len(slides)))
+        archive.writestr("_rels/.rels", _pptx_rels([
+            ("rId1", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", "ppt/presentation.xml"),
+            ("rId2", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml"),
+            ("rId3", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties", "docProps/app.xml"),
+        ]))
+        archive.writestr("docProps/core.xml", core_props)
+        archive.writestr("docProps/app.xml", app_props)
+        archive.writestr("ppt/presentation.xml", _pptx_presentation_xml(len(slides)))
+        archive.writestr("ppt/_rels/presentation.xml.rels", _pptx_rels(presentation_rels))
+        archive.writestr("ppt/slideMasters/slideMaster1.xml", _pptx_slide_master_xml())
+        archive.writestr("ppt/slideMasters/_rels/slideMaster1.xml.rels", _pptx_rels([
+            ("rId1", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout", "../slideLayouts/slideLayout1.xml"),
+            ("rId2", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme", "../theme/theme1.xml"),
+        ]))
+        archive.writestr("ppt/slideLayouts/slideLayout1.xml", _pptx_slide_layout_xml())
+        archive.writestr("ppt/slideLayouts/_rels/slideLayout1.xml.rels", _pptx_rels([
+            ("rId1", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster", "../slideMasters/slideMaster1.xml"),
+        ]))
+        archive.writestr("ppt/theme/theme1.xml", _pptx_theme_xml())
+        for idx, slide_xml in enumerate(slides, start=1):
+            archive.writestr(f"ppt/slides/slide{idx}.xml", slide_xml)
+            archive.writestr(f"ppt/slides/_rels/slide{idx}.xml.rels", _pptx_rels([
+                ("rId1", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout", "../slideLayouts/slideLayout1.xml"),
+            ]))
+    return buffer.getvalue()
+
+
+def _render_powerpoint_cost_snapshot(splash: dict, *, company: str, days: int, credit_price: float) -> None:
+    summary = _cost_splash_summary(splash, credit_price, days)
+    environment = get_active_environment()
+    environment_label = get_environment_label(environment, company)
+    service_lens = st.session_state.get("cost_contract_service_lens", pd.DataFrame())
+    service_summary = _build_service_cost_lens_summary(service_lens)
+    action_summary = _cost_snapshot_action_summary(st.session_state.get("cost_contract_queue", pd.DataFrame()))
+    kpi_rows = _cost_snapshot_kpi_rows(
+        summary,
+        service_summary,
+        action_summary,
+        company=company,
+        environment_label=environment_label,
+        days=days,
+    )
+    chart_rows = _cost_snapshot_chart_rows(summary, action_summary, service_lens=service_lens, credit_price=credit_price)
+    slide_brief = _cost_snapshot_slide_brief(
+        summary,
+        service_summary,
+        action_summary,
+        company=company,
+        environment_label=environment_label,
+        days=days,
+    )
+    st.markdown("**PowerPoint Cost Snapshot**")
+    st.text_area("Slide bullets", value=slide_brief, height=210, key="cost_contract_powerpoint_slide_bullets")
+    file_scope = f"{_safe_filename_piece(company)}_{_safe_filename_piece(environment_label)}_{int(days)}d"
+    deck_bytes = _build_cost_snapshot_pptx(
+        slide_brief,
+        kpi_rows,
+        chart_rows,
+        company=company,
+        environment_label=environment_label,
+        days=days,
+    )
+    dl_cols = st.columns([1.0, 1.0, 1.0, 1.0])
+    dl_cols[0].download_button(
+        "Download slide bullets",
+        slide_brief,
+        file_name=f"overwatch_cost_snapshot_{file_scope}.txt",
+        mime="text/plain",
+        key="cost_contract_powerpoint_bullets_download",
+    )
+    dl_cols[1].download_button(
+        "Download chart data",
+        chart_rows.to_csv(index=False, sep="\t"),
+        file_name=f"overwatch_cost_snapshot_{file_scope}_chart_data.tsv",
+        mime="text/tab-separated-values",
+        key="cost_contract_powerpoint_chart_download",
+    )
+    dl_cols[2].download_button(
+        "Download PowerPoint",
+        deck_bytes,
+        file_name=f"overwatch_cost_snapshot_{file_scope}.pptx",
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        key="cost_contract_powerpoint_deck_download",
+    )
+    render_priority_dataframe(
+        kpi_rows,
+        title="Slide KPI rows",
+        priority_columns=["KPI", "VALUE", "SLIDE_NOTE"],
+        raw_label="All PowerPoint KPI rows",
+        height=250,
+        max_rows=10,
+    )
+    chart_names = ["Spend bridge", "Driver dollars"]
+    if "Service movement" in set(chart_rows["CHART"].astype(str)):
+        chart_names.append("Service movement")
+    chart_cols = st.columns(len(chart_names))
+    for column, chart_name in zip(chart_cols, chart_names):
+        with column:
+            st.markdown(f"**{chart_name.title()}**")
+            _render_cost_snapshot_bar_chart(chart_rows, chart_name)
 
 
 def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: float) -> None:
@@ -3799,6 +4677,7 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
     with chart_cols[1]:
         st.markdown("**Warehouse Ranking**")
         _render_warehouse_ranking_chart(warehouse_delta, credit_price)
+    _render_powerpoint_cost_snapshot(splash, company=company, days=int(days), credit_price=credit_price)
 
 
 def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:

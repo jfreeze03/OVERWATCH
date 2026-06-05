@@ -1,11 +1,13 @@
 from pathlib import Path
 from datetime import datetime
+from io import BytesIO
 import inspect
 import math
 import re
 import sys
 import unittest
 from unittest.mock import patch
+import zipfile
 
 import pandas as pd
 
@@ -96,11 +98,17 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_splash_cortex_sql,
     _build_cost_source_health_board,
     _build_cost_spike_root_cause_board,
+    _build_cost_snapshot_pptx,
     _build_native_cost_control_inventory,
     _build_resource_monitor_guardrail_sql,
     _build_savings_verification_task_summary,
     _build_attribution_gap_summary,
     _build_service_cost_lens_summary,
+    _cost_snapshot_chart_rows,
+    _cost_snapshot_kpi_rows,
+    _cost_snapshot_slide_brief,
+    _cost_splash_summary,
+    _service_lens_movement_rows,
     build_cost_governance_mart_sql,
 )
 from sections.budget_governance import (  # noqa: E402
@@ -643,6 +651,122 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(service_summary["serverless_credits"], 1.0)
         self.assertEqual(service_summary["top_moving_service"], "SERVERLESS_TASK")
         self.assertAlmostEqual(service_summary["top_moving_delta"], -3.25)
+
+    def test_cost_contract_powerpoint_snapshot_builds_slide_ready_rows(self):
+        splash = {
+            "cockpit": pd.DataFrame([{
+                "CURRENT_CREDITS": 100.0,
+                "PRIOR_CREDITS": 80.0,
+                "ACTIVE_WAREHOUSES": 4,
+                "TOP_INCREASE_WAREHOUSE": "WH_TRXS_LOAD",
+                "TOP_INCREASE_CREDITS": 12.5,
+            }]),
+            "trend": pd.DataFrame([
+                {"USAGE_DATE": "2026-06-01", "DAILY_CREDITS": 10.0},
+                {"USAGE_DATE": "2026-06-02", "DAILY_CREDITS": 20.0},
+            ]),
+            "warehouse_delta": pd.DataFrame([{
+                "WAREHOUSE_NAME": "WH_TRXS_LOAD",
+                "CURRENT_CREDITS": 50.0,
+                "PRIOR_CREDITS": 37.5,
+                "CREDIT_DELTA": 12.5,
+            }]),
+            "cortex": pd.DataFrame([{
+                "CORTEX_SPEND_USD": 42.0,
+                "CORTEX_CREDITS": 19.0,
+                "CORTEX_REQUESTS": 7,
+                "TOP_CORTEX_USER": "SNOW_DTI_ANALYST",
+                "TOP_CORTEX_USER_SPEND_USD": 25.0,
+            }]),
+            "run_rate": pd.DataFrame([{
+                "PROJECTED_30D_FROM_7D": 450.0,
+                "AVG_DAILY_7D": 15.0,
+                "RUN_RATE_STATE": "Rising",
+                "YOY_STATE": "YOY baseline ready",
+                "YOY_7D_PCT": 8.5,
+            }]),
+        }
+        summary = _cost_splash_summary(splash, DEFAULTS["credit_price"], 7)
+        service_summary = {"top_moving_service": "CORTEX", "top_moving_delta": 4.25}
+        service_lens = pd.DataFrame([
+            {
+                "SERVICE_CATEGORY": "AI / Cortex",
+                "SERVICE_TYPE": "CORTEX",
+                "CREDITS_BILLED": 5.0,
+                "CREDITS_BILLED_PRIOR": 2.0,
+                "CREDIT_DELTA": 3.0,
+                "ESTIMATED_COST_USD": 18.40,
+                "PRIOR_ESTIMATED_COST_USD": 7.36,
+                "COST_DELTA_USD": 11.04,
+            }
+        ])
+        action_summary = {"open_actions": 3, "high_actions": 1, "estimated_savings": 250.0}
+
+        kpi_rows = _cost_snapshot_kpi_rows(
+            summary,
+            service_summary,
+            action_summary,
+            company="TREXIS",
+            environment_label="All Dev",
+            days=7,
+        )
+        movement = _service_lens_movement_rows(service_lens, DEFAULTS["credit_price"])
+        chart_rows = _cost_snapshot_chart_rows(
+            summary,
+            action_summary,
+            service_lens=service_lens,
+            credit_price=DEFAULTS["credit_price"],
+        )
+        brief = _cost_snapshot_slide_brief(
+            summary,
+            service_summary,
+            action_summary,
+            company="TREXIS",
+            environment_label="All Dev",
+            days=7,
+        )
+
+        self.assertIn("OVERWATCH Cost Snapshot - TREXIS / All Dev / 7 days", brief)
+        self.assertIn("WH_TRXS_LOAD", brief)
+        self.assertIn("SNOW_DTI_ANALYST", brief)
+        self.assertIn("CORTEX moved +4.25 credits", brief)
+        self.assertIn("Current spend", set(kpi_rows["KPI"]))
+        self.assertIn("Service move", set(kpi_rows["KPI"]))
+        self.assertEqual(movement.iloc[0]["SERVICE_TYPE"], "CORTEX")
+        self.assertAlmostEqual(float(movement.iloc[0]["COST_DELTA_USD"]), 11.04)
+        self.assertEqual(set(chart_rows["CHART"]), {"Spend bridge", "Driver dollars", "Work queue", "Service movement"})
+        spend_delta = chart_rows.loc[
+            (chart_rows["CHART"] == "Spend bridge") & (chart_rows["METRIC"] == "Spend delta"),
+            "VALUE",
+        ].iloc[0]
+        self.assertAlmostEqual(float(spend_delta), 73.6)
+        service_delta = chart_rows.loc[
+            (chart_rows["CHART"] == "Service movement") & (chart_rows["METRIC"] == "CORTEX"),
+            "VALUE",
+        ].iloc[0]
+        self.assertAlmostEqual(float(service_delta), 11.04)
+
+        deck = _build_cost_snapshot_pptx(
+            brief,
+            kpi_rows,
+            chart_rows,
+            company="TREXIS",
+            environment_label="All Dev",
+            days=7,
+        )
+        self.assertGreater(len(deck), 1000)
+        with zipfile.ZipFile(BytesIO(deck)) as archive:
+            names = set(archive.namelist())
+            self.assertIn("[Content_Types].xml", names)
+            self.assertIn("ppt/presentation.xml", names)
+            self.assertIn("ppt/slides/slide1.xml", names)
+            self.assertIn("ppt/slides/slide2.xml", names)
+            self.assertIn("ppt/slides/slide3.xml", names)
+            slide1 = archive.read("ppt/slides/slide1.xml").decode("utf-8")
+            slide3 = archive.read("ppt/slides/slide3.xml").decode("utf-8")
+        self.assertIn("OVERWATCH Cost Snapshot", slide1)
+        self.assertIn("TREXIS / All Dev / 7 days", slide1)
+        self.assertIn("Service movement", slide3)
 
     def test_query_attribution_support_requires_all_generated_sql_columns(self):
         import streamlit as st

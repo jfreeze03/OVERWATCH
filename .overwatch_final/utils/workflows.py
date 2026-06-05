@@ -188,7 +188,11 @@ def render_priority_dataframe(
             view = view.drop(columns=severity_rank_cols, errors="ignore")
 
     if priority_columns:
-        columns = [column for column in priority_columns if column in view.columns]
+        context_columns = [
+            column for column in ("DATABASE_NAME", "SCHEMA_NAME")
+            if column in view.columns and column not in priority_columns
+        ]
+        columns = context_columns + [column for column in priority_columns if column in view.columns]
         if columns:
             view = view[columns]
 

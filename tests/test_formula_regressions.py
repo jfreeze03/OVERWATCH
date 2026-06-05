@@ -3058,6 +3058,7 @@ class FormulaRegressionTests(unittest.TestCase):
             ("DIM_PROCEDURE_SNAPSHOT", "ENVIRONMENT"),
             ("FACT_PROCEDURE_RUN", "DATABASE_NAME"),
             ("FACT_PROCEDURE_RUN", "ENVIRONMENT"),
+            ("FACT_PROCEDURE_RUN", "SCHEMA_NAME"),
             ("FACT_OBJECT_CHANGE", "ENVIRONMENT"),
             ("FACT_STORAGE_DAILY", "ENVIRONMENT"),
             ("FACT_GRANT_DAILY", "CREATED_ON"),
@@ -3075,6 +3076,7 @@ class FormulaRegressionTests(unittest.TestCase):
         proc_start = setup_sql.index("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_PROCEDURE_RUN")
         proc_end = setup_sql.index(");", proc_start)
         self.assertIn("DATABASE_NAME", setup_sql[proc_start:proc_end])
+        self.assertIn("SCHEMA_NAME", setup_sql[proc_start:proc_end])
 
         expected_loads = [
             "OVERWATCH_DATABASE_ENVIRONMENT(DATABASE_NAME) AS ENVIRONMENT",
@@ -3222,11 +3224,15 @@ class FormulaRegressionTests(unittest.TestCase):
 
             calls_sql = build_mart_procedure_calls_sql(7, "ALFA").upper()
             self.assertIn("FACT_PROCEDURE_RUN", calls_sql)
+            self.assertIn("DATABASE_NAME", calls_sql)
+            self.assertIn("SCHEMA_NAME", calls_sql)
+            self.assertIn("GROUP BY DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME", calls_sql)
             self.assertIn("ENVIRONMENT = 'PROD'", calls_sql)
 
             sla_sql = build_mart_procedure_sla_sql(7, "ALFA").upper()
             self.assertIn("FACT_PROCEDURE_RUN", sla_sql)
             self.assertIn("DATABASE_NAME", sla_sql)
+            self.assertIn("SCHEMA_NAME", sla_sql)
             self.assertIn("ENVIRONMENT = 'PROD'", sla_sql)
         finally:
             st.session_state.clear()
@@ -5533,7 +5539,13 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Orphan Procedure Candidate", set(exceptions["SIGNAL"]))
         self.assertIn("TASK_COUNT", joined.columns)
         self.assertIn("ORCHESTRATION_STATUS", joined.columns)
+        self.assertIn("DATABASE_NAME", joined.columns)
+        self.assertIn("SCHEMA_NAME", joined.columns)
+        self.assertIn("PROCEDURE_CONTEXT", joined.columns)
         unused = joined[joined["PROC_KEY"] == "SP_UNUSED"].iloc[0]
+        self.assertEqual(unused["DATABASE_NAME"], "ALFA_EDW_DEV")
+        self.assertEqual(unused["SCHEMA_NAME"], "PUBLIC")
+        self.assertEqual(unused["PROCEDURE_CONTEXT"], "ALFA_EDW_DEV.PUBLIC.SP_UNUSED")
         self.assertEqual(unused["ORCHESTRATION_STATUS"], "No recent execution evidence")
         self.assertEqual(unused["OWNER_REVIEW"], "Required")
 
@@ -5560,6 +5572,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["COST_BREACHES"], 1)
         self.assertIn("Procedure Runtime SLA Breach", set(exceptions["SIGNAL"]))
         self.assertIn("Procedure Cost Regression", set(exceptions["SIGNAL"]))
+        self.assertIn("DATABASE_NAME", latest.columns)
+        self.assertIn("SCHEMA_NAME", latest.columns)
+        self.assertEqual(latest.iloc[0]["DATABASE_NAME"], "ALFA_EDW_DEV")
+        self.assertEqual(latest.iloc[0]["SCHEMA_NAME"], "PUBLIC")
+        self.assertEqual(latest.iloc[0]["PROCEDURE_CONTEXT"], "ALFA_EDW_DEV.PUBLIC.SP_LOAD_POLICY")
         self.assertGreater(latest.iloc[0]["RUNTIME_CHANGE_PCT"], 0)
 
     def test_procedure_mart_sql_qualifies_snapshot_timestamp(self):

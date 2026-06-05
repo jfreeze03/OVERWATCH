@@ -13,6 +13,19 @@ from .helpers import safe_float
 DISPLAY_VERSION = "2026-06-01-explicit-drilldowns-v1"
 
 
+def _prioritize_context_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep database/schema context visible in query drill-down grids."""
+    if df is None or df.empty:
+        return df
+    context = [
+        column for column in ("QUERY_ID", "DATABASE_NAME", "SCHEMA_NAME")
+        if column in df.columns
+    ]
+    if not context:
+        return df
+    return df[context + [column for column in df.columns if column not in context]]
+
+
 def _altair():
     """Import Altair only when a chart path actually needs it."""
     import altair as alt
@@ -149,7 +162,7 @@ def render_query_drilldown(
         return
 
     st.subheader(title)
-    grid_df = df.head(1000)
+    grid_df = _prioritize_context_columns(df.head(1000))
     if len(df) > len(grid_df):
         st.caption(f"Showing the first {len(grid_df):,} rows for fast selection. Narrow filters to inspect deeper rows.")
     try:
@@ -222,7 +235,8 @@ def render_warehouse_drilldown(
     ]))
     qh_expr = _query_history_detail_exprs()
     df_wh = run_query(f"""
-        SELECT query_id, user_name, warehouse_name, {qh_expr["warehouse_size"]}, execution_status, start_time,
+        SELECT query_id, user_name, warehouse_name, {qh_expr["warehouse_size"]}, database_name, schema_name,
+               execution_status, start_time,
                total_elapsed_time/1000          AS elapsed_sec,
                compilation_time/1000            AS compile_sec,
                execution_time/1000              AS exec_sec,

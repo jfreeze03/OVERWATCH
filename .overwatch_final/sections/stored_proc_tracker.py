@@ -61,6 +61,8 @@ PROCEDURE_SIGNAL_ROUTES = {
 
 
 def _procedure_key(value: object) -> str:
+    if pd.isna(value):
+        return ""
     text = str(value or "").replace('"', "").upper().strip()
     if not text:
         return ""
@@ -72,32 +74,116 @@ def _procedure_from_task_definition(definition: object) -> str:
     return match.group(1).replace('"', "") if match else ""
 
 
+def _procedure_name_parts(value: object) -> tuple[str, str, str]:
+    if pd.isna(value):
+        return "", "", ""
+    text = str(value or "").replace('"', "").strip()
+    text = text.split("(")[0].strip()
+    parts = [part.strip() for part in text.split(".") if part.strip()]
+    if len(parts) >= 3:
+        return parts[-3].upper(), parts[-2].upper(), parts[-1].upper()
+    if len(parts) == 2:
+        return "", parts[-2].upper(), parts[-1].upper()
+    return "", "", (parts[-1].upper() if parts else "")
+
+
+def _add_procedure_context_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    frame = df.copy()
+    name_source = "PROCEDURE_NAME" if "PROCEDURE_NAME" in frame.columns else "NAME" if "NAME" in frame.columns else ""
+    parsed = frame[name_source].apply(_procedure_name_parts) if name_source else pd.Series([("", "", "")] * len(frame), index=frame.index)
+    parsed_db = parsed.apply(lambda item: item[0])
+    parsed_schema = parsed.apply(lambda item: item[1])
+    parsed_name = parsed.apply(lambda item: item[2])
+
+    if "DATABASE_NAME" not in frame.columns:
+        if "PROCEDURE_CATALOG" in frame.columns:
+            frame["DATABASE_NAME"] = frame["PROCEDURE_CATALOG"]
+        else:
+            frame["DATABASE_NAME"] = parsed_db
+    else:
+        frame["DATABASE_NAME"] = frame["DATABASE_NAME"].fillna("")
+        frame.loc[frame["DATABASE_NAME"].astype(str).str.strip().eq("") & parsed_db.astype(str).str.strip().ne(""), "DATABASE_NAME"] = parsed_db
+
+    if "SCHEMA_NAME" not in frame.columns:
+        if "PROCEDURE_SCHEMA" in frame.columns:
+            frame["SCHEMA_NAME"] = frame["PROCEDURE_SCHEMA"]
+        else:
+            frame["SCHEMA_NAME"] = parsed_schema
+    else:
+        frame["SCHEMA_NAME"] = frame["SCHEMA_NAME"].fillna("")
+        frame.loc[frame["SCHEMA_NAME"].astype(str).str.strip().eq("") & parsed_schema.astype(str).str.strip().ne(""), "SCHEMA_NAME"] = parsed_schema
+
+    if "PROCEDURE_CATALOG" not in frame.columns:
+        frame["PROCEDURE_CATALOG"] = frame["DATABASE_NAME"]
+    if "PROCEDURE_SCHEMA" not in frame.columns:
+        frame["PROCEDURE_SCHEMA"] = frame["SCHEMA_NAME"]
+    if name_source and "PROCEDURE_NAME" in frame.columns:
+        blank_names = frame["PROCEDURE_NAME"].fillna("").astype(str).str.strip().eq("")
+        frame.loc[blank_names & parsed_name.astype(str).str.strip().ne(""), "PROCEDURE_NAME"] = parsed_name
+
+    db = frame["DATABASE_NAME"].fillna("").astype(str).str.strip()
+    schema = frame["SCHEMA_NAME"].fillna("").astype(str).str.strip()
+    proc = frame.get("PROCEDURE_NAME", pd.Series([""] * len(frame), index=frame.index)).fillna("").astype(str).str.strip()
+    context_proc = parsed_name.where(parsed_name.astype(str).str.strip().ne(""), proc).astype(str).str.strip()
+    has_proc = context_proc.ne("")
+    frame["PROCEDURE_CONTEXT"] = context_proc.where(has_proc, "")
+    has_db = db.ne("")
+    has_schema = schema.ne("")
+    full_context = has_db & has_schema & has_proc
+    db_only_context = has_db & ~has_schema & has_proc
+    schema_only_context = ~has_db & has_schema & has_proc
+    frame.loc[full_context, "PROCEDURE_CONTEXT"] = db[full_context] + "." + schema[full_context] + "." + context_proc[full_context]
+    frame.loc[db_only_context, "PROCEDURE_CONTEXT"] = db[db_only_context] + "." + context_proc[db_only_context]
+    frame.loc[schema_only_context, "PROCEDURE_CONTEXT"] = schema[schema_only_context] + "." + context_proc[schema_only_context]
+    return frame
+
+
+def _procedure_scope_key(row: pd.Series) -> str:
+    proc = _procedure_key(row.get("PROCEDURE_NAME") or row.get("NAME"))
+    db = str(row.get("DATABASE_NAME") or row.get("PROCEDURE_CATALOG") or "").replace('"', "").upper().strip()
+    schema = str(row.get("SCHEMA_NAME") or row.get("PROCEDURE_SCHEMA") or "").replace('"', "").upper().strip()
+    if db or schema:
+        return ".".join(part for part in [db, schema, proc] if part)
+    return proc
+
+
 def _build_procedure_ops_frames(
     procedures: pd.DataFrame,
     task_inventory: pd.DataFrame,
     call_usage: pd.DataFrame,
 ) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
-    procs = procedures.copy() if procedures is not None else pd.DataFrame()
-    tasks = task_inventory.copy() if task_inventory is not None else pd.DataFrame()
-    calls = call_usage.copy() if call_usage is not None else pd.DataFrame()
+    procs = _add_procedure_context_columns(procedures.copy()) if procedures is not None else pd.DataFrame()
+    tasks = _add_procedure_context_columns(task_inventory.copy()) if task_inventory is not None else pd.DataFrame()
+    calls = _add_procedure_context_columns(call_usage.copy()) if call_usage is not None else pd.DataFrame()
 
     if not tasks.empty:
         if "PROCEDURE_NAME" not in tasks.columns:
             tasks["PROCEDURE_NAME"] = tasks.get("DEFINITION", pd.Series([""] * len(tasks), index=tasks.index)).apply(
                 _procedure_from_task_definition
             )
-        tasks["PROC_KEY"] = tasks["PROCEDURE_NAME"].apply(_procedure_key)
-        tasks_by_proc = tasks.groupby("PROC_KEY", dropna=False).agg(
+        tasks = _add_procedure_context_columns(tasks)
+        tasks["PROC_SCOPE_KEY"] = tasks.apply(_procedure_scope_key, axis=1)
+        tasks_by_proc = tasks.groupby("PROC_SCOPE_KEY", dropna=False).agg(
+            DATABASE_NAME=("DATABASE_NAME", lambda s: next((str(v) for v in s if str(v or "").strip()), "")),
+            SCHEMA_NAME=("SCHEMA_NAME", lambda s: next((str(v) for v in s if str(v or "").strip()), "")),
+            PROCEDURE_NAME=("PROCEDURE_NAME", lambda s: next((str(v) for v in s if str(v or "").strip()), "")),
+            PROCEDURE_CONTEXT=("PROCEDURE_CONTEXT", lambda s: next((str(v) for v in s if str(v or "").strip()), "")),
             TASK_COUNT=("NAME", "nunique"),
             TASKS=("NAME", lambda s: ", ".join(sorted(set(s.astype(str)))[:8])),
             SUSPENDED_TASKS=("STATE", lambda s: int((s.astype(str).str.upper() == "SUSPENDED").sum())),
         ).reset_index()
     else:
-        tasks_by_proc = pd.DataFrame(columns=["PROC_KEY", "TASK_COUNT", "TASKS", "SUSPENDED_TASKS"])
+        tasks_by_proc = pd.DataFrame(columns=["PROC_SCOPE_KEY", "TASK_COUNT", "TASKS", "SUSPENDED_TASKS"])
 
     if not calls.empty:
-        calls["PROC_KEY"] = calls.get("PROCEDURE_NAME", pd.Series([""] * len(calls), index=calls.index)).apply(_procedure_key)
+        calls["PROC_SCOPE_KEY"] = calls.apply(_procedure_scope_key, axis=1)
         call_aggs = {
+            "DATABASE_NAME": ("DATABASE_NAME", lambda s: next((str(v) for v in s if str(v or "").strip()), "")),
+            "SCHEMA_NAME": ("SCHEMA_NAME", lambda s: next((str(v) for v in s if str(v or "").strip()), "")),
+            "PROCEDURE_NAME": ("PROCEDURE_NAME", lambda s: next((str(v) for v in s if str(v or "").strip()), "")),
+            "PROCEDURE_CONTEXT": ("PROCEDURE_CONTEXT", lambda s: next((str(v) for v in s if str(v or "").strip()), "")),
             "CALL_COUNT": ("CALL_COUNT", "sum"),
             "DOWNSTREAM_QUERY_COUNT": ("DOWNSTREAM_QUERY_COUNT", "sum"),
             "LAST_CALL": ("LAST_CALL", "max"),
@@ -106,16 +192,35 @@ def _build_procedure_ops_frames(
             call_aggs["TOTAL_CREDITS"] = ("TOTAL_CREDITS", "sum")
         if "CLOUD_CREDITS" in calls.columns:
             call_aggs["CLOUD_CREDITS"] = ("CLOUD_CREDITS", "sum")
-        calls_by_proc = calls.groupby("PROC_KEY", dropna=False).agg(**call_aggs).reset_index()
+        calls_by_proc = calls.groupby("PROC_SCOPE_KEY", dropna=False).agg(**call_aggs).reset_index()
     else:
-        calls_by_proc = pd.DataFrame(columns=["PROC_KEY", "CALL_COUNT", "DOWNSTREAM_QUERY_COUNT", "TOTAL_CREDITS", "CLOUD_CREDITS", "LAST_CALL"])
+        calls_by_proc = pd.DataFrame(columns=["PROC_SCOPE_KEY", "CALL_COUNT", "DOWNSTREAM_QUERY_COUNT", "TOTAL_CREDITS", "CLOUD_CREDITS", "LAST_CALL"])
 
     if not procs.empty:
         name_col = "PROCEDURE_NAME" if "PROCEDURE_NAME" in procs.columns else "NAME"
-        procs["PROC_KEY"] = procs.get(name_col, pd.Series([""] * len(procs), index=procs.index)).apply(_procedure_key)
-        joined = procs.merge(tasks_by_proc, on="PROC_KEY", how="left").merge(calls_by_proc, on="PROC_KEY", how="left")
+        procs["PROCEDURE_NAME"] = procs.get(name_col, pd.Series([""] * len(procs), index=procs.index))
+        procs["PROC_SCOPE_KEY"] = procs.apply(_procedure_scope_key, axis=1)
+        context_cols = ["DATABASE_NAME", "SCHEMA_NAME", "PROCEDURE_NAME", "PROCEDURE_CONTEXT"]
+        task_join = tasks_by_proc.drop(columns=context_cols, errors="ignore")
+        call_join = calls_by_proc.drop(columns=context_cols, errors="ignore")
+        joined = procs.merge(task_join, on="PROC_SCOPE_KEY", how="left").merge(call_join, on="PROC_SCOPE_KEY", how="left")
     else:
-        joined = tasks_by_proc.merge(calls_by_proc, on="PROC_KEY", how="outer")
+        if tasks_by_proc.empty:
+            joined = calls_by_proc
+        elif calls_by_proc.empty:
+            joined = tasks_by_proc
+        else:
+            call_join = calls_by_proc.drop(
+                columns=["DATABASE_NAME", "SCHEMA_NAME", "PROCEDURE_NAME", "PROCEDURE_CONTEXT"],
+                errors="ignore",
+            )
+            joined = tasks_by_proc.merge(call_join, on="PROC_SCOPE_KEY", how="outer")
+    joined = _add_procedure_context_columns(joined)
+    if "PROC_KEY" not in joined.columns:
+        joined["PROC_KEY"] = joined.get(
+            "PROCEDURE_NAME",
+            pd.Series([""] * len(joined), index=joined.index),
+        ).apply(_procedure_key)
 
     for col in ["TASK_COUNT", "SUSPENDED_TASKS", "CALL_COUNT", "DOWNSTREAM_QUERY_COUNT"]:
         if col not in joined.columns:
@@ -152,13 +257,16 @@ def _build_procedure_ops_frames(
 
     exceptions = []
     for _, row in joined.iterrows():
-        proc = str(row.get("PROC_KEY") or row.get("PROCEDURE_NAME") or "UNKNOWN_PROCEDURE")
+        proc = str(row.get("PROCEDURE_CONTEXT") or row.get("PROCEDURE_NAME") or row.get("PROC_SCOPE_KEY") or "UNKNOWN_PROCEDURE")
         if safe_int(row.get("TASK_COUNT")) == 0 and safe_int(row.get("CALL_COUNT")) == 0:
             exceptions.append({
                 "SEVERITY": "Medium",
                 "SIGNAL": "Orphan Procedure Candidate",
                 "PROCEDURE": proc,
                 "PROCEDURE_NAME": proc,
+                "DATABASE_NAME": row.get("DATABASE_NAME", ""),
+                "SCHEMA_NAME": row.get("SCHEMA_NAME", ""),
+                "PROCEDURE_CONTEXT": row.get("PROCEDURE_CONTEXT", proc),
                 "DETAIL": "Procedure has no detected task link and no recent CALL history in the selected lookback.",
                 "ORCHESTRATION_STATUS": row.get("ORCHESTRATION_STATUS", ""),
                 "OWNER_REVIEW": row.get("OWNER_REVIEW", ""),
@@ -173,6 +281,9 @@ def _build_procedure_ops_frames(
                 "SIGNAL": "Procedure Runs Outside Task Graph",
                 "PROCEDURE": proc,
                 "PROCEDURE_NAME": proc,
+                "DATABASE_NAME": row.get("DATABASE_NAME", ""),
+                "SCHEMA_NAME": row.get("SCHEMA_NAME", ""),
+                "PROCEDURE_CONTEXT": row.get("PROCEDURE_CONTEXT", proc),
                 "DETAIL": "Recent CALL history exists but no task definition references this procedure.",
                 "ORCHESTRATION_STATUS": row.get("ORCHESTRATION_STATUS", ""),
                 "OWNER_REVIEW": row.get("OWNER_REVIEW", ""),
@@ -187,6 +298,9 @@ def _build_procedure_ops_frames(
                 "SIGNAL": "Procedure Behind Suspended Task",
                 "PROCEDURE": proc,
                 "PROCEDURE_NAME": proc,
+                "DATABASE_NAME": row.get("DATABASE_NAME", ""),
+                "SCHEMA_NAME": row.get("SCHEMA_NAME", ""),
+                "PROCEDURE_CONTEXT": row.get("PROCEDURE_CONTEXT", proc),
                 "DETAIL": f"{safe_int(row.get('SUSPENDED_TASKS'))} linked task(s) are suspended.",
                 "ORCHESTRATION_STATUS": row.get("ORCHESTRATION_STATUS", ""),
                 "OWNER_REVIEW": row.get("OWNER_REVIEW", ""),
@@ -237,6 +351,8 @@ def _build_procedure_inventory_sql(days: int) -> tuple[str, str]:
     call_sql = f"""
         WITH calls AS (
             SELECT REGEXP_SUBSTR(query_text, 'CALL\\\\s+([^\\\\(]+)', 1, 1, 'i', 1) AS procedure_name,
+                   database_name,
+                   schema_name,
                    query_id,
                    start_time,
                    total_elapsed_time,
@@ -246,14 +362,16 @@ def _build_procedure_inventory_sql(days: int) -> tuple[str, str]:
               AND start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
               {call_scope}
         )
-        SELECT procedure_name,
+        SELECT database_name,
+               schema_name,
+               procedure_name,
                COUNT(*) AS call_count,
                COUNT(DISTINCT query_id) AS downstream_query_count,
                ROUND(SUM(COALESCE(credits_used_cloud_services, 0)), 4) AS cloud_credits,
                MAX(start_time) AS last_call,
                AVG(total_elapsed_time) / 1000 AS avg_elapsed_sec
         FROM calls
-        GROUP BY procedure_name
+        GROUP BY database_name, schema_name, procedure_name
         ORDER BY call_count DESC
         LIMIT 500
     """
@@ -291,6 +409,8 @@ def _build_procedure_sla_sql(session, days: int, has_root_query_id: bool) -> str
         WITH calls AS (
             SELECT query_id AS root_query_id,
                    REGEXP_SUBSTR(query_text, 'CALL\\\\s+([^\\\\(]+)', 1, 1, 'i', 1) AS procedure_name,
+                   database_name,
+                   schema_name,
                    user_name,
                    role_name,
                    warehouse_name,
@@ -313,6 +433,8 @@ def _build_procedure_sla_sql(session, days: int, has_root_query_id: bool) -> str
               {proc_filters_q}
         )
         SELECT c.procedure_name,
+               c.database_name,
+               c.schema_name,
                c.root_query_id,
                c.user_name,
                c.role_name,
@@ -326,7 +448,7 @@ def _build_procedure_sla_sql(session, days: int, has_root_query_id: bool) -> str
         FROM calls c
         LEFT JOIN children ch ON c.root_query_id = ch.root_query_id
         GROUP BY c.procedure_name, c.root_query_id, c.user_name, c.role_name,
-                 c.warehouse_name, c.start_time, c.call_text
+                 c.database_name, c.schema_name, c.warehouse_name, c.start_time, c.call_text
         ORDER BY c.start_time DESC
         LIMIT 1000
     """
@@ -344,6 +466,7 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
     if df.empty:
         return {"RUNS": 0, "PROCEDURES": 0, "SLA_BREACHES": 0, "COST_BREACHES": 0}, pd.DataFrame(), pd.DataFrame()
     df.columns = [str(col).upper() for col in df.columns]
+    df = _add_procedure_context_columns(df)
     df["TOTAL_ELAPSED_SEC"] = pd.to_numeric(df.get("TOTAL_ELAPSED_SEC", 0), errors="coerce").fillna(0)
     df["CLOUD_CREDITS"] = pd.to_numeric(df.get("CLOUD_CREDITS", 0), errors="coerce").fillna(0)
     df["START_TIME"] = pd.to_datetime(df.get("START_TIME"), errors="coerce")
@@ -353,18 +476,18 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
             df["EST_TOTAL_CREDITS"] = df.apply(_procedure_run_estimated_credits, axis=1)
     else:
         df["EST_TOTAL_CREDITS"] = df.apply(_procedure_run_estimated_credits, axis=1)
-    df["PROC_KEY"] = df.get("PROCEDURE_NAME", pd.Series([""] * len(df), index=df.index)).apply(_procedure_key)
+    df["PROC_SCOPE_KEY"] = df.apply(_procedure_scope_key, axis=1)
 
-    latest_idx = df.groupby("PROC_KEY")["START_TIME"].idxmax()
+    latest_idx = df.groupby("PROC_SCOPE_KEY")["START_TIME"].idxmax()
     latest = df.loc[latest_idx].copy() if len(latest_idx) else pd.DataFrame()
-    baselines = df.groupby("PROC_KEY", dropna=False).agg(
+    baselines = df.groupby("PROC_SCOPE_KEY", dropna=False).agg(
         RUNS=("ROOT_QUERY_ID", "nunique"),
         AVG_ELAPSED_SEC=("TOTAL_ELAPSED_SEC", "mean"),
         MAX_ELAPSED_SEC=("TOTAL_ELAPSED_SEC", "max"),
         AVG_EST_CREDITS=("EST_TOTAL_CREDITS", "mean"),
         MAX_EST_CREDITS=("EST_TOTAL_CREDITS", "max"),
     ).reset_index()
-    latest = latest.merge(baselines, on="PROC_KEY", how="left") if not latest.empty else pd.DataFrame()
+    latest = latest.merge(baselines, on="PROC_SCOPE_KEY", how="left") if not latest.empty else pd.DataFrame()
     if not latest.empty:
         latest["RUNTIME_CHANGE_PCT"] = latest.apply(
             lambda row: round(((safe_float(row.get("TOTAL_ELAPSED_SEC")) - safe_float(row.get("AVG_ELAPSED_SEC"))) / safe_float(row.get("AVG_ELAPSED_SEC")) * 100), 1)
@@ -387,6 +510,9 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
         cost_change = ((credits - avg_credits) / avg_credits * 100) if avg_credits > 0 else 0
         common = {
             "PROCEDURE_NAME": row.get("PROCEDURE_NAME", ""),
+            "DATABASE_NAME": row.get("DATABASE_NAME", ""),
+            "SCHEMA_NAME": row.get("SCHEMA_NAME", ""),
+            "PROCEDURE_CONTEXT": row.get("PROCEDURE_CONTEXT", ""),
             "ROOT_QUERY_ID": row.get("ROOT_QUERY_ID", ""),
             "WAREHOUSE_NAME": row.get("WAREHOUSE_NAME", ""),
             "WAREHOUSE_SIZE": row.get("WAREHOUSE_SIZE", ""),
@@ -415,7 +541,7 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
     exception_df = add_signal_routes(pd.DataFrame(exceptions), PROCEDURE_SIGNAL_ROUTES)
     summary = {
         "RUNS": len(df),
-        "PROCEDURES": df["PROC_KEY"].nunique(),
+        "PROCEDURES": df["PROC_SCOPE_KEY"].nunique(),
         "SLA_BREACHES": int((exception_df.get("SIGNAL", pd.Series(dtype=str)) == "Procedure Runtime SLA Breach").sum()) if not exception_df.empty else 0,
         "COST_BREACHES": int((exception_df.get("SIGNAL", pd.Series(dtype=str)) == "Procedure Cost Regression").sum()) if not exception_df.empty else 0,
     }
@@ -683,14 +809,14 @@ def render():
                         company=company,
                         database_contains=str(st.session_state.get("global_database", "") or "").strip(),
                     ),
-                    ttl_key=f"procedure_inventory_mart_{company}_{sp_days}",
+                    ttl_key=f"procedure_inventory_mart_schema_context_v1_{company}_{sp_days}",
                     tier="metadata",
                 )
                 if df_procs.empty:
                     procedure_sql, _ = _build_procedure_inventory_sql(sp_days)
                     df_procs = run_query(
                         procedure_sql,
-                        ttl_key=f"procedure_inventory_live_{company}_{sp_days}",
+                        ttl_key=f"procedure_inventory_live_schema_context_v1_{company}_{sp_days}",
                         tier="metadata",
                     )
                     proc_inventory_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.PROCEDURES"
@@ -706,14 +832,14 @@ def render():
             try:
                 df_calls = run_query(
                     build_mart_procedure_calls_sql(sp_days, company=company),
-                    ttl_key=f"procedure_recent_calls_mart_{company}_{sp_days}",
+                    ttl_key=f"procedure_recent_calls_mart_schema_context_v1_{company}_{sp_days}",
                     tier="standard",
                 )
                 if df_calls.empty:
                     _, call_sql = _build_procedure_inventory_sql(sp_days)
                     df_calls = run_query(
                         call_sql,
-                        ttl_key=f"procedure_recent_calls_live_{company}_{sp_days}",
+                        ttl_key=f"procedure_recent_calls_live_schema_context_v1_{company}_{sp_days}",
                         tier="standard",
                     )
                     proc_call_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
@@ -772,7 +898,8 @@ def render():
                     exceptions,
                     title="Procedure operations exceptions",
                     priority_columns=[
-                        "OPERATING_RISK", "SIGNAL", "SEVERITY", "PROCEDURE_NAME", "PROCEDURE_SCHEMA",
+                        "OPERATING_RISK", "SIGNAL", "SEVERITY", "DATABASE_NAME", "SCHEMA_NAME",
+                        "PROCEDURE_CONTEXT", "PROCEDURE_NAME", "PROCEDURE_SCHEMA",
                         "ORCHESTRATION_STATUS", "OWNER_REVIEW",
                         "TASK_COUNT", "SUSPENDED_TASKS", "CALL_COUNT",
                         "NEXT_WORKFLOW", "NEXT_ACTION",
@@ -797,6 +924,7 @@ def render():
             if not joined.empty:
                 display_cols = [
                     col for col in [
+                        "DATABASE_NAME", "SCHEMA_NAME", "PROCEDURE_CONTEXT",
                         "PROCEDURE_CATALOG", "PROCEDURE_SCHEMA", "PROCEDURE_NAME",
                         "PROCEDURE_OWNER", "PROCEDURE_LANGUAGE", "LAST_ALTERED",
                         "ORCHESTRATION_STATUS", "OWNER_REVIEW", "OPERATING_RISK", "OPERATING_RISK_RANK",
@@ -808,6 +936,7 @@ def render():
                     joined[display_cols],
                     title="Procedure inventory and task linkage",
                     priority_columns=[
+                        "DATABASE_NAME", "SCHEMA_NAME", "PROCEDURE_CONTEXT",
                         "PROCEDURE_CATALOG", "PROCEDURE_SCHEMA", "PROCEDURE_NAME",
                         "ORCHESTRATION_STATUS", "OWNER_REVIEW", "OPERATING_RISK",
                         "TASK_COUNT", "SUSPENDED_TASKS", "CALL_COUNT",
@@ -829,7 +958,7 @@ def render():
             try:
                 df_proc_runs = run_query(
                     build_mart_procedure_sla_sql(sp_days, company=company),
-                    ttl_key=f"procedure_sla_watch_mart_{company}_{sp_days}",
+                    ttl_key=f"procedure_sla_watch_mart_schema_context_v1_{company}_{sp_days}",
                     tier="standard",
                 )
                 proc_sla_source = "OVERWATCH mart: FACT_PROCEDURE_RUN"
@@ -838,7 +967,7 @@ def render():
                     has_root_query_id = _query_history_has_root_query_id(session)
                     df_proc_runs = run_query(
                         _build_procedure_sla_sql(session, sp_days, has_root_query_id),
-                        ttl_key=f"procedure_sla_watch_live_{company}_{sp_days}_{has_root_query_id}",
+                        ttl_key=f"procedure_sla_watch_live_schema_context_v1_{company}_{sp_days}_{has_root_query_id}",
                         tier="standard",
                     )
                     proc_sla_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
@@ -877,7 +1006,8 @@ def render():
                     exceptions,
                     title="Procedure SLA and cost regressions",
                     priority_columns=[
-                        "SIGNAL", "SEVERITY", "PROCEDURE_NAME", "ROOT_QUERY_ID",
+                        "SIGNAL", "SEVERITY", "DATABASE_NAME", "SCHEMA_NAME",
+                        "PROCEDURE_CONTEXT", "PROCEDURE_NAME", "ROOT_QUERY_ID",
                         "TOTAL_ELAPSED_SEC", "AVG_ELAPSED_SEC", "RUNTIME_CHANGE_PCT",
                         "EST_TOTAL_CREDITS", "COST_CHANGE_PCT", "NEXT_WORKFLOW", "NEXT_ACTION",
                     ],
@@ -900,6 +1030,7 @@ def render():
             if not latest.empty and not st.session_state.get("exceptions_only_mode"):
                 latest_cols = [
                     col for col in [
+                        "DATABASE_NAME", "SCHEMA_NAME", "PROCEDURE_CONTEXT",
                         "PROCEDURE_NAME", "ROOT_QUERY_ID", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
                         "TOTAL_ELAPSED_SEC", "AVG_ELAPSED_SEC", "RUNTIME_CHANGE_PCT",
                         "EST_TOTAL_CREDITS", "AVG_EST_CREDITS", "COST_CHANGE_PCT",
@@ -910,6 +1041,7 @@ def render():
                     latest[latest_cols],
                     title="Latest procedure runs",
                     priority_columns=[
+                        "DATABASE_NAME", "SCHEMA_NAME", "PROCEDURE_CONTEXT",
                         "PROCEDURE_NAME", "ROOT_QUERY_ID", "WAREHOUSE_NAME",
                         "TOTAL_ELAPSED_SEC", "AVG_ELAPSED_SEC", "RUNTIME_CHANGE_PCT",
                         "EST_TOTAL_CREDITS", "COST_CHANGE_PCT", "START_TIME",
@@ -948,6 +1080,8 @@ def render():
                            user_name,
                            role_name,
                            warehouse_name,
+                           database_name,
+                           schema_name,
                            {call_wh_size_expr},
                            start_time,
                            REGEXP_SUBSTR(query_text, 'CALL\\\\s+([^\\\\(]+)', 1, 1, 'i', 1) AS procedure_name,
@@ -972,6 +1106,8 @@ def render():
                       {proc_filters_q}
                 )
                 SELECT c.procedure_name,
+                       c.database_name,
+                       c.schema_name,
                        c.user_name,
                        c.role_name,
                        c.warehouse_name,
@@ -987,11 +1123,11 @@ def render():
                        MAX(c.start_time) AS last_call
                 FROM calls c
                 LEFT JOIN children ch ON c.root_query_id = ch.root_query_id
-                GROUP BY c.procedure_name, c.user_name, c.role_name, c.warehouse_name,
+                GROUP BY c.procedure_name, c.database_name, c.schema_name, c.user_name, c.role_name, c.warehouse_name,
                          c.call_text
                 ORDER BY metered_credits DESC, total_elapsed_sec DESC
                 LIMIT 200
-            """, ttl_key=f"stored_proc_usage_{company}_{sp_days}_{has_root_query_id}", tier="standard")
+            """, ttl_key=f"stored_proc_usage_schema_context_v1_{company}_{sp_days}_{has_root_query_id}", tier="standard")
             st.session_state["spt_df_sp_tracker"] = df_sp
             st.session_state["spt_has_root_query_id"] = has_root_query_id
         except Exception as e:
@@ -1016,10 +1152,12 @@ def render():
         df_sp["EST_COST"] = (df_sp["METERED_CREDITS"] + df_sp["CLOUD_CREDITS"]).apply(
             lambda x: credits_to_dollars(x, credit_price)
         )
+        df_sp = _add_procedure_context_columns(df_sp)
         render_priority_dataframe(
             df_sp,
             title="Stored procedure cost drivers",
             priority_columns=[
+                "DATABASE_NAME", "SCHEMA_NAME", "PROCEDURE_CONTEXT",
                 "PROCEDURE_NAME", "USER_NAME", "WAREHOUSE_NAME", "CALL_COUNT",
                 "DOWNSTREAM_QUERY_COUNT", "TOTAL_ELAPSED_SEC", "METERED_CREDITS",
                 "CLOUD_CREDITS", "EST_COST", "LAST_CALL",
@@ -1066,7 +1204,7 @@ def render():
                            OR query_text ILIKE {proc_like})
                 )
                 SELECT q.query_id, q.user_name, q.warehouse_name, {child_wh_size_expr}, q.execution_status,
-                       q.query_type, q.start_time,
+                       q.database_name, q.schema_name, q.query_type, q.start_time,
                        q.total_elapsed_time/1000 AS elapsed_sec,
                        {child_gb_expr},
                        SUBSTR(q.query_text,1,4000) AS query_text
@@ -1076,7 +1214,7 @@ def render():
                   {proc_filters_q}
                 ORDER BY q.start_time
                 LIMIT 500
-                """, ttl_key=f"stored_proc_child_{company}_{sp_days}_{selected_proc}", tier="standard")
+                """, ttl_key=f"stored_proc_child_schema_context_v1_{company}_{sp_days}_{selected_proc}", tier="standard")
                 render_query_drilldown(df_child, key="sp_child_queries", title="Stored procedure child-query drill-down")
             except Exception as e:
                 st.info(f"Downstream detail unavailable: {format_snowflake_error(e)}")

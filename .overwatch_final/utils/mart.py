@@ -2244,6 +2244,8 @@ def build_mart_procedure_calls_sql(
     env_filter = _mart_environment_filter("ENVIRONMENT", company)
     return f"""
         SELECT
+            database_name,
+            schema_name,
             procedure_name,
             COUNT(*) AS call_count,
             SUM(COALESCE(child_query_count, 0)) AS downstream_query_count,
@@ -2255,7 +2257,7 @@ def build_mart_procedure_calls_sql(
         WHERE start_time >= DATEADD('DAY', -{int(days_back)}, CURRENT_TIMESTAMP())
           {company_filter}
           {env_filter}
-        GROUP BY procedure_name
+        GROUP BY database_name, schema_name, procedure_name
         ORDER BY call_count DESC
         LIMIT 500
     """
@@ -2271,8 +2273,9 @@ def build_mart_procedure_sla_sql(
     env_filter = _mart_environment_filter("ENVIRONMENT", company)
     return f"""
         SELECT
-            procedure_name,
             database_name,
+            schema_name,
+            procedure_name,
             root_query_id,
             NULL::VARCHAR AS user_name,
             NULL::VARCHAR AS role_name,

@@ -9,12 +9,13 @@ from collections.abc import Mapping, Sequence
 
 import streamlit as st
 
-from .cost import freshness_note, metric_confidence_label
+from .cost import freshness_note, get_credit_price, metric_confidence_label
 from .section_guidance import defer_section_note, defer_source_note
 
 
 WORKFLOWS_VERSION = "2026-06-03-bottom-notes-v1"
 CONTEXT_PRIORITY_COLUMNS = ("ENVIRONMENT", "DATABASE_NAME", "SCHEMA_NAME")
+_CREDIT_COST_COMPANION_LIMIT = 6
 
 
 def prioritize_context_columns(
@@ -35,6 +36,46 @@ def prioritize_context_columns(
         return df
     ordered = leading + context
     return df[ordered + [column for column in df.columns if column not in ordered]]
+
+
+def _credit_metric_column(column: str) -> bool:
+    upper = str(column or "").upper()
+    if "CREDIT" not in upper:
+        return False
+    if any(token in upper for token in ("PRICE", "RATE", "PCT", "PERCENT", "COST", "USD", "DOLLAR")):
+        return False
+    return True
+
+
+def add_cost_companion_columns(df, *, credit_price: float | None = None, max_columns: int = _CREDIT_COST_COMPANION_LIMIT):
+    """Add cost-dollar companions for obvious credit metrics in display tables."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    frame = df.copy()
+    try:
+        import pandas as pd
+    except Exception:
+        return frame
+    try:
+        price = float(get_credit_price() if credit_price is None else credit_price)
+    except Exception:
+        return frame
+    added = 0
+    for column in list(frame.columns):
+        if added >= int(max_columns or _CREDIT_COST_COMPANION_LIMIT):
+            break
+        if not _credit_metric_column(str(column)):
+            continue
+        cost_column = f"{str(column).upper()}_COST_USD"
+        if cost_column in frame.columns:
+            continue
+        values = pd.to_numeric(frame[column], errors="coerce")
+        if values.notna().sum() == 0:
+            continue
+        insert_at = min(len(frame.columns), list(frame.columns).index(column) + 1)
+        frame.insert(insert_at, cost_column, (values.fillna(0) * price).round(2))
+        added += 1
+    return frame
 
 
 def coerce_workflow_state(key: str, workflows: Sequence[str]) -> str:
@@ -218,6 +259,7 @@ def render_priority_dataframe(
         if columns:
             view = view[columns]
     view = prioritize_context_columns(view)
+    view = add_cost_companion_columns(view)
 
     visible_rows = min(len(view), int(max_rows or 25))
     st.markdown(
@@ -270,7 +312,7 @@ def render_priority_dataframe(
                 raw_kwargs = {"use_container_width": True, "hide_index": True}
                 if active_column_config:
                     raw_kwargs["column_config"] = active_column_config
-                st.dataframe(prioritize_context_columns(df), **raw_kwargs)
+                st.dataframe(add_cost_companion_columns(prioritize_context_columns(df)), **raw_kwargs)
 
 
 def render_signal_confidence(

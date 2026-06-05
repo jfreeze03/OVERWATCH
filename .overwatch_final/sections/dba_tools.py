@@ -23,7 +23,7 @@ from utils import (
     log_admin_action,
     show_to_df, first_existing_column, ensure_column_alias,
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
-    load_live_task_runs,
+    load_live_task_runs, load_database_options, load_schema_options,
     load_warehouse_inventory, build_unclassified_assets_sql,
     safe_float, safe_int, render_ranked_bar_chart,
     defer_source_note,
@@ -85,6 +85,17 @@ def _scope_warehouse_names(df: pd.DataFrame, name_col: str = "name") -> pd.DataF
 def _scope_metadata_df(df: pd.DataFrame) -> pd.DataFrame:
     """Apply ALFA/Trexis visibility to SHOW-style metadata result sets."""
     return scope_metadata_df(df, company=get_active_company())
+
+
+def _select_option(label: str, options: list[str], key: str, fallback: str = "") -> str:
+    choices = list(options or [])
+    current = str(st.session_state.get(key) or fallback or "").strip()
+    if choices:
+        if current and current not in choices:
+            choices = [current] + choices
+        index = choices.index(current) if current in choices else 0
+        return str(st.selectbox(label, choices, index=index, key=key))
+    return str(st.text_input(label, value=current or fallback, key=key))
 
 
 def _quote_identifier(name: str) -> str:
@@ -1087,13 +1098,50 @@ def render():
 
     if selected_tool == "Schema Compare":
         st.header("📐 Schema Compare")
+        st.caption("Choose source and target databases first; schema choices are loaded from the selected database.")
+        refresh_schema_meta = st.button("Refresh database and schema choices", key="sc_refresh_metadata")
+        if refresh_schema_meta or "sc_database_options" not in st.session_state:
+            st.session_state["sc_database_options"] = load_database_options(
+                session,
+                company=get_active_company(),
+                force_refresh=bool(refresh_schema_meta),
+            )
+        database_options = list(st.session_state.get("sc_database_options") or [])
+        if not database_options:
+            st.info("No scoped databases were returned by SHOW DATABASES. Enter database names manually or refresh after changing role.")
         c1, c2 = st.columns(2)
         with c1:
-            dev_db  = st.text_input("Dev Database",  value="DEV_DB",  key="sc_dev")
-            dev_sch = st.text_input("Dev Schema",    value="PUBLIC",  key="sc_devsch")
+            dev_db = _select_option("Source database", database_options, "sc_dev", "DEV_DB")
+            source_schema_cache_key = f"sc_schema_options_source_{dev_db}"
+            if refresh_schema_meta or source_schema_cache_key not in st.session_state:
+                st.session_state[source_schema_cache_key] = load_schema_options(
+                    session,
+                    dev_db,
+                    company=get_active_company(),
+                    force_refresh=bool(refresh_schema_meta),
+                )
+            dev_sch = _select_option(
+                "Source schema",
+                list(st.session_state.get(source_schema_cache_key) or []),
+                "sc_devsch",
+                "PUBLIC",
+            )
         with c2:
-            prod_db  = st.text_input("Prod Database", value="PROD_DB", key="sc_prod")
-            prod_sch = st.text_input("Prod Schema",   value="PUBLIC",  key="sc_prodsch")
+            prod_db = _select_option("Target database", database_options, "sc_prod", "PROD_DB")
+            target_schema_cache_key = f"sc_schema_options_target_{prod_db}"
+            if refresh_schema_meta or target_schema_cache_key not in st.session_state:
+                st.session_state[target_schema_cache_key] = load_schema_options(
+                    session,
+                    prod_db,
+                    company=get_active_company(),
+                    force_refresh=bool(refresh_schema_meta),
+                )
+            prod_sch = _select_option(
+                "Target schema",
+                list(st.session_state.get(target_schema_cache_key) or []),
+                "sc_prodsch",
+                "PUBLIC",
+            )
         if st.button("Compare Schemas", key="sc_run"):
             try:
                 dev_db_safe = safe_identifier(dev_db)
@@ -1134,11 +1182,38 @@ def render():
     if selected_tool == "Recent Objects":
         st.header("🔎 Recent Objects")
         obj_days = st.slider("Created/altered within (days)", 1, 90, 30, key="obj_days")
-        obj_db_filter = st.text_input("Database filter", key="obj_db_filter")
-        obj_db_clause = (
-            f"AND table_catalog ILIKE {sql_literal('%' + obj_db_filter + '%')}"
-            if obj_db_filter else ""
-        )
+        refresh_obj_meta = st.button("Refresh database choices", key="obj_refresh_metadata")
+        if refresh_obj_meta or "obj_database_options" not in st.session_state:
+            st.session_state["obj_database_options"] = load_database_options(
+                session,
+                company=get_active_company(),
+                force_refresh=bool(refresh_obj_meta),
+            )
+        obj_database_options = list(st.session_state.get("obj_database_options") or [])
+        if obj_database_options:
+            obj_database_choices = ["All scoped databases"] + obj_database_options
+            if st.session_state.get("obj_database_filter") not in obj_database_choices:
+                st.session_state["obj_database_filter"] = "All scoped databases"
+            obj_database = st.selectbox(
+                "Database",
+                obj_database_choices,
+                key="obj_database_filter",
+            )
+            obj_db_clause = (
+                f"AND table_catalog = {sql_literal(obj_database)}"
+                if obj_database != "All scoped databases"
+                else ""
+            )
+            obj_filter_key = obj_database
+        else:
+            obj_db_filter = st.text_input("Database contains", key="obj_db_filter")
+            if obj_db_filter and not company_value_allowed(obj_db_filter, "database"):
+                st.caption("Entered database text is outside the active company/environment scope and will only match if visible.")
+            obj_db_clause = (
+                f"AND table_catalog ILIKE {sql_literal('%' + obj_db_filter + '%')}"
+                if obj_db_filter else ""
+            )
+            obj_filter_key = obj_db_filter
         if st.button("Load Recent Objects", key="obj_load"):
             try:
                 st.session_state["dba_df_recent_objects"] = run_query(f"""
@@ -1151,7 +1226,7 @@ def render():
                       {obj_db_clause}
                       {get_db_filter_clause("table_catalog")}
                     ORDER BY GREATEST(created, last_altered) DESC LIMIT 500
-                """, ttl_key=f"dba_recent_objects_{company}_{obj_days}_{st.session_state.get('obj_db_filter', '')}", tier="metadata")
+                """, ttl_key=f"dba_recent_objects_{company}_{obj_days}_{obj_filter_key}", tier="metadata")
             except Exception as e:
                 st.warning(f"Recent objects unavailable: {format_snowflake_error(e)}")
         if st.session_state.get("dba_df_recent_objects") is not None:
@@ -1497,53 +1572,54 @@ def render():
         # ── Modify parameters ─────────────────────────────────────────────────
         st.subheader("Modify Cortex AI Account Parameters")
         st.caption(
-            "These ALTER ACCOUNT SET commands control Cortex AI behaviour across the account. "
-            "Requires ACCOUNTADMIN. Changes take effect immediately."
+            "Only account parameters returned by Snowflake can be applied here. "
+            "Cortex Search, Analyst, and Intelligence access are managed through feature availability, "
+            "roles, databases, services, and Snowflake setup SQL rather than generic account toggles."
         )
 
-        with st.expander("🔧 Set Cortex Parameters", expanded=True):
-            st.markdown("**Cortex Code Inline (Snowsight / VS Code)**")
-            col_c1, col_c2 = st.columns(2)
-            with col_c1:
-                cortex_enabled = st.selectbox(
-                    "ENABLE_CORTEX_CODE_INLINE",
-                    ["TRUE","FALSE"],
-                    key="cortex_enable_sel",
-                    help="Enables/disables Cortex Code inline AI in Snowsight for all users.",
+        with st.expander("Set Cortex Code quota", expanded=True):
+            cortex_daily_limit = st.number_input(
+                "CORTEX_CODE_DAILY_CREDIT_LIMIT",
+                min_value=0, max_value=100000, value=0, step=100,
+                key="cortex_daily_limit",
+                help="Maximum Cortex Code credits per day across all users. Use 0 to skip SQL generation.",
+            )
+            generated_sql = (
+                "-- Cortex Code quota\n"
+                "-- Run as ACCOUNTADMIN\n"
+                f"ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT = {int(cortex_daily_limit)};"
+                if cortex_daily_limit > 0
+                else (
+                    "-- Cortex Code quota\n"
+                    "-- No ALTER ACCOUNT statement generated. Set a positive daily limit to generate quota SQL."
                 )
-            with col_c2:
-                cortex_daily_limit = st.number_input(
-                    "CORTEX_CODE_DAILY_CREDIT_LIMIT (0 = no limit)",
-                    min_value=0, max_value=100000, value=0, step=100,
-                    key="cortex_daily_limit",
-                    help="Maximum AI credits per day across all users. 0 = unrestricted.",
-                )
-
-            st.markdown("**Cortex Search & Analyst**")
-            col_s1, col_s2 = st.columns(2)
-            with col_s1:
-                search_enabled = st.selectbox(
-                    "ENABLE_CORTEX_SEARCH",
-                    ["TRUE","FALSE"],
-                    key="cortex_search_sel",
-                    help="Enables Cortex Search (semantic document search).",
-                )
-            with col_s2:
-                analyst_enabled = st.selectbox(
-                    "ENABLE_SNOWFLAKE_INTELLIGENCE",
-                    ["TRUE","FALSE"],
-                    key="cortex_analyst_sel",
-                    help="Enables Snowflake Intelligence / Cortex Analyst (natural language to SQL).",
-                )
-
-            generated_sql = f"""-- Cortex AI parameter changes
--- Run as ACCOUNTADMIN
-ALTER ACCOUNT SET ENABLE_CORTEX_CODE_INLINE = {cortex_enabled};
-{f'ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT = {cortex_daily_limit};' if cortex_daily_limit > 0 else '-- CORTEX_CODE_DAILY_CREDIT_LIMIT: no limit set'}
-ALTER ACCOUNT SET ENABLE_CORTEX_SEARCH = {search_enabled};
-ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
+            )
 
             st.code(generated_sql, language="sql")
+
+            setup_rows = pd.DataFrame([
+                {
+                    "CAPABILITY": "Cortex Code",
+                    "DASHBOARD_ACTION": "Set daily account credit limit",
+                    "SETUP_PATH": "ACCOUNT parameter when available in SHOW PARAMETERS",
+                },
+                {
+                    "CAPABILITY": "Cortex Search",
+                    "DASHBOARD_ACTION": "Review setup, grants, and service objects",
+                    "SETUP_PATH": "Create/search service setup and role grants outside generic account parameters",
+                },
+                {
+                    "CAPABILITY": "Cortex Analyst / Intelligence",
+                    "DASHBOARD_ACTION": "Review semantic model, object grants, and approved roles",
+                    "SETUP_PATH": "Feature and object setup outside generic account parameters",
+                },
+            ])
+            render_priority_dataframe(
+                setup_rows,
+                title="Cortex feature setup guidance",
+                priority_columns=["CAPABILITY", "DASHBOARD_ACTION", "SETUP_PATH"],
+                raw_label="All Cortex setup guidance",
+            )
 
             col_apply, col_dl = st.columns([1, 2])
             with col_apply:
@@ -1552,8 +1628,11 @@ ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
                     "APPLY",
                     "cortex_apply_confirm",
                 )
-                if st.button("✅ Apply Parameters", type="primary", key="cortex_apply", disabled=admin_button_disabled()):
+                if st.button("✅ Apply Limit", type="primary", key="cortex_apply", disabled=admin_button_disabled()):
                     if _require_typed_confirmation(cortex_confirmed, "APPLY"):
+                        if cortex_daily_limit <= 0:
+                            st.info("Set a positive Cortex Code daily credit limit before applying.")
+                            st.stop()
                         # CALLER MODE GUARD: ALTER ACCOUNT SET requires ACCOUNTADMIN.
                         # Since execute_as=CALLER, the caller's role must have this privilege.
                         # SNOW_SYSADMIN cannot run ALTER ACCOUNT; keep this blocked
@@ -1569,11 +1648,7 @@ ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
                         else:
                             applied = []
                             failed  = []
-                            for stmt in [
-                                f"ALTER ACCOUNT SET ENABLE_CORTEX_CODE_INLINE = {cortex_enabled}",
-                                f"ALTER ACCOUNT SET ENABLE_CORTEX_SEARCH = {search_enabled}",
-                                f"ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled}",
-                            ] + ([f"ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT = {cortex_daily_limit}"] if cortex_daily_limit > 0 else []):
+                            for stmt in [f"ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT = {int(cortex_daily_limit)}"]:
                                 try:
                                     session.sql(stmt).collect()
                                     applied.append(stmt)
@@ -1585,7 +1660,7 @@ ALTER ACCOUNT SET ENABLE_SNOWFLAKE_INTELLIGENCE = {analyst_enabled};"""
                             if failed:
                                 for f_msg in failed:
                                     st.warning(f"⚠️ {f_msg}")
-                                st.info("Some parameters may not exist in your Snowflake edition or region. Check with SHOW PARAMETERS IN ACCOUNT first.")
+                                st.info("Check SHOW PARAMETERS IN ACCOUNT and confirm the current role can modify account parameters.")
             with col_dl:
                 st.download_button(
                     "📥 Download SQL",

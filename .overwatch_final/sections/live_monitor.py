@@ -19,6 +19,7 @@ from utils import (
     get_global_filter_clause, get_wh_filter_clause, run_query, run_query_or_raise, sql_literal,
     safe_identifier, format_snowflake_error, filter_existing_columns,
     admin_button_disabled, log_admin_action, require_admin_enabled,
+    load_warehouse_options,
 )
 from utils.workflows import render_priority_dataframe
 from config import THRESHOLDS
@@ -128,7 +129,27 @@ def render():
                 help="Off by default because Snowflake can block INFORMATION_SCHEMA table functions in hosted Streamlit.",
             )
         with c4:
-            wh_filter = st.text_input("Warehouse filter", key="lm_wh")
+            if "lm_warehouse_options" not in st.session_state:
+                try:
+                    st.session_state["lm_warehouse_options"] = load_warehouse_options(
+                        get_session(),
+                        company=company,
+                    )
+                except Exception:
+                    st.session_state["lm_warehouse_options"] = []
+            warehouse_options = list(st.session_state.get("lm_warehouse_options") or [])
+            if warehouse_options:
+                warehouse_choices = ["All scoped warehouses"] + warehouse_options
+                if st.session_state.get("lm_wh_select") not in warehouse_choices:
+                    st.session_state["lm_wh_select"] = "All scoped warehouses"
+                selected_warehouse = st.selectbox(
+                    "Warehouse",
+                    warehouse_choices,
+                    key="lm_wh_select",
+                )
+                wh_filter = "" if selected_warehouse == "All scoped warehouses" else selected_warehouse
+            else:
+                wh_filter = st.text_input("Warehouse contains", key="lm_wh")
         with c5:
             status_filter = st.selectbox(
                 "Status",

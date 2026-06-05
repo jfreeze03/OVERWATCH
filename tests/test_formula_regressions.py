@@ -62,6 +62,12 @@ from sections.workload_operations import (  # noqa: E402
     _workload_action_brief,
     _workload_snapshot_summary,
 )
+from sections.executive_landing import (  # noqa: E402
+    _powerpoint_chart_rows,
+    _powerpoint_kpi_rows,
+    _powerpoint_slide_brief,
+    _snapshot_matches_scope,
+)
 from sections.cost_center import (  # noqa: E402
     _bill_driver_summary,
     _build_bill_waterfall,
@@ -290,10 +296,6 @@ from sections.warehouse_health import (  # noqa: E402
     build_warehouse_setting_review_migration_sql,
 )
 from utils.cost import (  # noqa: E402
-    build_snowflake_billed_credit_reconciliation_sql,
-    build_snowflake_cost_management_account_sql,
-    build_snowflake_org_currency_cost_sql,
-    build_snowflake_rate_sheet_reconciliation_sql,
     build_snowflake_service_cost_lens_sql,
     build_cost_reconciliation_sql,
     build_idle_warehouse_sql,
@@ -429,39 +431,83 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("credit_price := COALESCE(credit_price, 3.68)", setup_sql)
         self.assertEqual(credits_to_dollars(10, DEFAULTS["credit_price"]), 36.8)
 
-    def test_snowflake_cost_management_parity_sql_keeps_alfa_rate_and_official_sources(self):
-        account_sql = build_snowflake_cost_management_account_sql(
-            7,
+    def test_executive_powerpoint_pack_is_scope_bound_and_chart_ready(self):
+        summary = {
+            "score": 86,
+            "state": "Watch",
+            "current_credits": 125.0,
+            "prior_credits": 100.0,
+            "cost_delta": 25.0,
+            "top_increase_credits": 12.5,
+            "critical_high_alerts": 2,
+            "open_actions": 7,
+            "high_actions": 3,
+            "migration_blockers": 1,
+            "top_cost_driver": "WH_TRXS_TRANSFORM",
+        }
+        source_health = pd.DataFrame(
+            [
+                {"SOURCE": "Cost cockpit", "STATE": "Loaded"},
+                {"SOURCE": "Alert evidence", "STATE": "Loaded"},
+                {"SOURCE": "Action queue", "STATE": "No Rows"},
+                {"SOURCE": "Migration ledger", "STATE": "Loaded"},
+            ]
+        )
+
+        self.assertTrue(_snapshot_matches_scope({"meta": {"company": "Trexis", "environment": "DEV_ALL", "days": 30}}, "Trexis", "DEV_ALL", 30))
+        self.assertFalse(_snapshot_matches_scope({"meta": {"company": "Trexis", "environment": "PROD", "days": 30}}, "Trexis", "DEV_ALL", 30))
+
+        kpi_rows = _powerpoint_kpi_rows(
+            summary,
+            company="Trexis",
+            environment_label="All DEV/SIT",
+            days=30,
             credit_price=DEFAULTS["credit_price"],
-            wh_filter="AND WAREHOUSE_NAME = 'COMPUTE_WH'",
-        ).upper()
-        billed_sql = build_snowflake_billed_credit_reconciliation_sql(7).upper()
-        currency_sql = build_snowflake_org_currency_cost_sql(7).upper()
+            source_health=source_health,
+        )
+        by_kpi = dict(zip(kpi_rows["KPI"], kpi_rows["VALUE"]))
+        self.assertEqual(by_kpi["Scope"], "Trexis / All DEV/SIT")
+        self.assertEqual(by_kpi["Sources loaded"], "3/4")
+        self.assertIn("$460", by_kpi["Current spend"])
+        self.assertIn("Watch", by_kpi["Executive state"])
 
-        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY", account_sql)
-        self.assertIn("3.6800::FLOAT AS CONFIGURED_CREDIT_PRICE_USD", account_sql)
-        self.assertIn("COMPUTE_PRICE_PER_CREDIT_USD", account_sql)
-        self.assertIn("SPEND_IN_CURRENCY_EST_USD", account_sql)
-        self.assertIn("AVERAGE_DAILY_CREDITS", account_sql)
-        self.assertIn("TOP_WAREHOUSES_BY_COST", account_sql)
-        self.assertIn("WAREHOUSE_NAME = 'COMPUTE_WH'", account_sql)
+        chart_rows = _powerpoint_chart_rows(summary, credit_price=DEFAULTS["credit_price"])
+        self.assertEqual(set(chart_rows["CHART"]), {"Cost movement", "Risk and work"})
+        self.assertIn("Spend delta", set(chart_rows["METRIC"]))
+        self.assertAlmostEqual(
+            float(chart_rows.loc[chart_rows["METRIC"].eq("Spend delta"), "VALUE"].iloc[0]),
+            92.0,
+        )
 
-        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", billed_sql)
-        self.assertIn("CREDITS_BILLED", billed_sql)
-        self.assertIn("CREDITS_ADJUSTMENT_CLOUD_SERVICES", billed_sql)
-        self.assertIn("SERVICE_TYPE) = 'WAREHOUSE_METERING'", billed_sql)
+        brief = _powerpoint_slide_brief(
+            summary,
+            company="Trexis",
+            environment_label="All DEV/SIT",
+            days=30,
+            credit_price=DEFAULTS["credit_price"],
+        )
+        self.assertIn("OVERWATCH Executive KPI Brief - Trexis / All DEV/SIT / 30 days", brief)
+        self.assertIn("WH_TRXS_TRANSFORM", brief)
+        self.assertIn("Slide bullets:", brief)
 
-        self.assertIn("SNOWFLAKE.ORGANIZATION_USAGE.USAGE_IN_CURRENCY_DAILY", currency_sql)
-        self.assertIn("USAGE_IN_CURRENCY", currency_sql)
-        self.assertIn("BALANCE_SOURCE", currency_sql)
-        self.assertIn("RATING_TYPE) = 'COMPUTE'", currency_sql)
-        self.assertIn("CURRENT_ACCOUNT_NAME()", currency_sql)
+    def test_priority_tables_add_cost_companions_for_credit_metrics(self):
+        from utils.workflows import add_cost_companion_columns
 
-    def test_cost_contract_official_rate_and_service_lens_sql_are_bounded(self):
-        rate_sql = build_snowflake_rate_sheet_reconciliation_sql(
-            14,
-            configured_credit_price=DEFAULTS["credit_price"],
-        ).upper()
+        frame = pd.DataFrame({
+            "WAREHOUSE_NAME": ["WH_TRXS_LOAD"],
+            "CREDITS_USED": [10],
+            "CREDIT_PRICE": [3.68],
+            "TOTAL_COST_USD": [36.80],
+        })
+        with patch("utils.workflows.get_credit_price", return_value=3.68):
+            enriched = add_cost_companion_columns(frame)
+
+        self.assertIn("CREDITS_USED_COST_USD", enriched.columns)
+        self.assertAlmostEqual(float(enriched["CREDITS_USED_COST_USD"].iloc[0]), 36.80)
+        self.assertNotIn("CREDIT_PRICE_COST_USD", enriched.columns)
+        self.assertNotIn("TOTAL_COST_USD_COST_USD", enriched.columns)
+
+    def test_cost_contract_service_lens_sql_is_bounded(self):
         service_sql = build_snowflake_service_cost_lens_sql(
             14,
             credit_price=DEFAULTS["credit_price"],
@@ -470,12 +516,6 @@ class FormulaRegressionTests(unittest.TestCase):
             14,
             credit_price=DEFAULTS["credit_price"],
         ).upper()
-
-        self.assertIn("SNOWFLAKE.ORGANIZATION_USAGE.RATE_SHEET_DAILY", rate_sql)
-        self.assertIn("EFFECTIVE_RATE", rate_sql)
-        self.assertIn("CONFIGURED_CREDIT_PRICE_USD", rate_sql)
-        self.assertIn("DATE >= START_DATE", rate_sql)
-        self.assertIn("SERVICE_TYPE) = 'WAREHOUSE_METERING'", rate_sql)
 
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", service_sql)
         self.assertIn("SERVICE_CATEGORY", service_sql)
@@ -546,13 +586,7 @@ class FormulaRegressionTests(unittest.TestCase):
             {"SERVICE_CATEGORY": "AI / Cortex", "SERVICE_TYPE": "CORTEX", "CREDITS_BILLED": 2.0},
             {"SERVICE_CATEGORY": "Serverless / Managed Compute", "SERVICE_TYPE": "SERVERLESS_TASK", "CREDITS_BILLED": 1.0},
         ])
-        state = {
-            "cost_contract_service_lens_source": "OVERWATCH mart: FACT_COST_DAILY",
-            "_cost_contract_snowflake_cost_parity": {
-                "rate": pd.DataFrame([{"OFFICIAL_EFFECTIVE_RATE": 3.68}]),
-                "currency": pd.DataFrame([{"OFFICIAL_COMPUTE_CREDITS": 10.0}]),
-            },
-        }
+        state = {"cost_contract_service_lens_source": "OVERWATCH mart: FACT_COST_DAILY"}
 
         source_summary, source_board = _build_cost_source_health_board(
             cockpit=cockpit,
@@ -567,7 +601,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_source["Warehouse metering"], "Ready")
         self.assertEqual(by_source["Query attribution gap"], "Ready")
         self.assertEqual(by_source["Account service lens"], "Ready")
-        self.assertEqual(by_source["Organization rate and currency"], "Ready")
+        self.assertNotIn("Organization rate and currency", by_source)
         self.assertGreaterEqual(source_summary["score"], 90)
 
         gap = _build_attribution_gap_summary(attribution, DEFAULTS["credit_price"])

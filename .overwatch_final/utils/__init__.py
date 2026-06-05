@@ -30,10 +30,8 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "credits_to_dollars", "estimate_live_credits", "query_attribution_supported",
         "build_metered_credit_cte", "build_idle_warehouse_sql",
         "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
-        "build_cost_reconciliation_sql", "build_snowflake_cost_management_account_sql",
-        "build_snowflake_billed_credit_reconciliation_sql",
-        "build_snowflake_org_currency_cost_sql", "build_snowflake_rate_sheet_reconciliation_sql",
-        "build_snowflake_service_cost_lens_sql", "metric_confidence_label",
+        "build_cost_reconciliation_sql", "build_snowflake_service_cost_lens_sql",
+        "metric_confidence_label",
         "freshness_note", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
     ),
     "scorecards": (
@@ -115,6 +113,8 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "metadata": (
         "show_to_df", "clear_show_statement_cache", "first_existing_column",
         "ensure_column_alias", "scope_warehouse_names", "scope_metadata_df",
+        "metadata_name_options", "load_database_options", "load_schema_options",
+        "load_warehouse_options",
         "load_task_inventory", "load_live_task_runs", "load_warehouse_inventory",
         "build_unclassified_assets_sql",
     ),
@@ -190,8 +190,9 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "workflows": (
         "coerce_workflow_state", "render_workflow_selector", "render_workflow_guide",
-        "render_signal_confidence", "add_signal_routes", "render_priority_dataframe",
-        "prioritize_context_columns", "migrate_legacy_workflow_state", "render_workflow_module",
+        "render_signal_confidence", "add_signal_routes", "add_cost_companion_columns",
+        "render_priority_dataframe", "prioritize_context_columns", "migrate_legacy_workflow_state",
+        "render_workflow_module",
     ),
     "section_guidance": (
         "defer_section_note", "defer_source_note",

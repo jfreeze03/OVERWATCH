@@ -39,6 +39,7 @@ build_mart_cost_cockpit_sql = _lazy_util("build_mart_cost_cockpit_sql")
 build_schema_migration_status_sql = _lazy_util("build_schema_migration_status_sql")
 credits_to_dollars = _lazy_util("credits_to_dollars")
 format_snowflake_error = _lazy_util("format_snowflake_error")
+get_environment_label = _lazy_util("get_environment_label")
 get_session_for_action = _lazy_util("get_session_for_action")
 load_action_queue = _lazy_util("load_action_queue")
 load_alert_history = _lazy_util("load_alert_history")
@@ -46,7 +47,14 @@ render_priority_dataframe = _lazy_util("render_priority_dataframe")
 run_query = _lazy_util("run_query")
 
 
-EXECUTIVE_LANDING_VERSION = "2026-06-03-operating-surfaces"
+EXECUTIVE_LANDING_VERSION = "2026-06-05-powerpoint-brief"
+
+
+def _altair():
+    """Load Altair only when the slide chart pack is shown."""
+    import altair as alt
+
+    return alt
 
 
 def safe_float(value, default: float = 0.0) -> float:
@@ -122,7 +130,9 @@ def _snapshot_state(cost: pd.DataFrame, alerts: pd.DataFrame, queue: pd.DataFram
         "score": score,
         "state": state,
         "current_credits": current_credits,
+        "prior_credits": prior_credits,
         "cost_delta": cost_delta,
+        "top_increase_credits": safe_float(cost_row.get("TOP_INCREASE_CREDITS")),
         "critical_high_alerts": critical_high_alerts,
         "open_actions": int(action_mask.sum()) if len(action_mask) else 0,
         "high_actions": high_actions,
@@ -193,6 +203,186 @@ def _executive_action_brief(summary: dict | None) -> dict[str, str]:
         "headline": "No executive blocker is visible in the loaded window.",
         "detail": "Use the decision rows to route any follow-up before sending the leadership brief.",
     }
+
+
+def _snapshot_matches_scope(snapshot: dict, company: str, environment: str, days: int) -> bool:
+    meta = snapshot.get("meta", {}) if isinstance(snapshot, dict) else {}
+    try:
+        loaded_days = int(meta.get("days") or 0)
+    except (TypeError, ValueError):
+        loaded_days = 0
+    return (
+        str(meta.get("company") or "") == str(company or "")
+        and str(meta.get("environment") or "") == str(environment or "")
+        and loaded_days == int(days or 0)
+    )
+
+
+def _money(value: float, *, signed: bool = False) -> str:
+    number = safe_float(value)
+    prefix = "+" if signed and number > 0 else ""
+    if abs(number) >= 1000:
+        return f"{prefix}${number:,.0f}"
+    return f"{prefix}${number:,.2f}"
+
+
+def _powerpoint_kpi_rows(
+    summary: dict,
+    *,
+    company: str,
+    environment_label: str,
+    days: int,
+    credit_price: float,
+    source_health: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    current_spend = credits_to_dollars(safe_float(summary.get("current_credits")), credit_price)
+    prior_spend = credits_to_dollars(safe_float(summary.get("prior_credits")), credit_price)
+    spend_delta = current_spend - prior_spend
+    source_rows = source_health if isinstance(source_health, pd.DataFrame) else pd.DataFrame()
+    loaded_sources = int(source_rows["STATE"].eq("Loaded").sum()) if "STATE" in source_rows.columns else 0
+    rows = [
+        ("Scope", f"{company} / {environment_label}", "Company and environment currently selected."),
+        ("Window", f"{int(days)} days", "Executive snapshot window."),
+        ("Executive state", f"{summary.get('state')} ({safe_float(summary.get('score')):.0f}/100)", "Composite operating signal."),
+        ("Current spend", _money(current_spend), f"{safe_float(summary.get('current_credits')):,.2f} credits at ${safe_float(credit_price):,.2f}/credit."),
+        ("Spend delta", _money(spend_delta, signed=True), f"Prior window: {_money(prior_spend)}."),
+        ("Top cost mover", str(summary.get("top_cost_driver") or "No loaded driver"), f"{safe_float(summary.get('top_increase_credits')):+,.2f} credits."),
+        ("Critical/High alerts", f"{safe_float(summary.get('critical_high_alerts')):,.0f}", "Open leadership-visible risk."),
+        ("Open actions", f"{safe_float(summary.get('open_actions')):,.0f}", f"{safe_float(summary.get('high_actions')):,.0f} high-priority."),
+        ("Deployment blockers", f"{safe_float(summary.get('migration_blockers')):,.0f}", "Setup or migration blockers."),
+        ("Sources loaded", f"{loaded_sources}/4", "Cost, alerts, action queue, migration ledger."),
+    ]
+    return pd.DataFrame(rows, columns=["KPI", "VALUE", "SLIDE_NOTE"])
+
+
+def _powerpoint_chart_rows(summary: dict, *, credit_price: float) -> pd.DataFrame:
+    current_spend = credits_to_dollars(safe_float(summary.get("current_credits")), credit_price)
+    prior_spend = credits_to_dollars(safe_float(summary.get("prior_credits")), credit_price)
+    spend_delta = current_spend - prior_spend
+    rows = [
+        ("Cost movement", "Current spend", current_spend, _money(current_spend)),
+        ("Cost movement", "Prior spend", prior_spend, _money(prior_spend)),
+        ("Cost movement", "Spend delta", spend_delta, _money(spend_delta, signed=True)),
+        ("Risk and work", "Critical/High alerts", safe_float(summary.get("critical_high_alerts")), f"{safe_float(summary.get('critical_high_alerts')):,.0f}"),
+        ("Risk and work", "High-priority actions", safe_float(summary.get("high_actions")), f"{safe_float(summary.get('high_actions')):,.0f}"),
+        ("Risk and work", "Deployment blockers", safe_float(summary.get("migration_blockers")), f"{safe_float(summary.get('migration_blockers')):,.0f}"),
+        ("Risk and work", "Open actions", safe_float(summary.get("open_actions")), f"{safe_float(summary.get('open_actions')):,.0f}"),
+    ]
+    return pd.DataFrame(rows, columns=["CHART", "METRIC", "VALUE", "LABEL"])
+
+
+def _powerpoint_slide_brief(
+    summary: dict,
+    *,
+    company: str,
+    environment_label: str,
+    days: int,
+    credit_price: float,
+) -> str:
+    current_spend = credits_to_dollars(safe_float(summary.get("current_credits")), credit_price)
+    prior_spend = credits_to_dollars(safe_float(summary.get("prior_credits")), credit_price)
+    spend_delta = current_spend - prior_spend
+    return "\n".join(
+        [
+            f"OVERWATCH Executive KPI Brief - {company} / {environment_label} / {int(days)} days",
+            f"Headline: {summary.get('state')} ({safe_float(summary.get('score')):.0f}/100)",
+            "",
+            "Slide bullets:",
+            f"- Spend: {_money(current_spend)} current window, {_money(spend_delta, signed=True)} versus prior window.",
+            f"- Cost driver: {summary.get('top_cost_driver')} ({safe_float(summary.get('top_increase_credits')):+,.2f} credits).",
+            f"- Risk: {safe_float(summary.get('critical_high_alerts')):,.0f} Critical/High open alerts.",
+            f"- Work queue: {safe_float(summary.get('open_actions')):,.0f} open actions, {safe_float(summary.get('high_actions')):,.0f} high-priority.",
+            f"- Deployment trust: {safe_float(summary.get('migration_blockers')):,.0f} setup or migration blockers.",
+            "",
+            "Next decision:",
+            _executive_action_brief(summary)["headline"],
+        ]
+    )
+
+
+def _render_slide_bar_chart(chart_rows: pd.DataFrame, chart_name: str) -> None:
+    if chart_rows is None or chart_rows.empty:
+        st.caption("No chart rows loaded for this slide.")
+        return
+    data = chart_rows[chart_rows["CHART"].astype(str) == chart_name].copy()
+    if data.empty:
+        st.caption("No chart rows loaded for this slide.")
+        return
+    data["VALUE"] = pd.to_numeric(data["VALUE"], errors="coerce").fillna(0)
+    max_abs = max(abs(float(data["VALUE"].min())), abs(float(data["VALUE"].max())), 1.0)
+    alt = _altair()
+    bars = (
+        alt.Chart(data)
+        .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3)
+        .encode(
+            x=alt.X("VALUE:Q", title=None, scale=alt.Scale(domain=[min(0, -max_abs if data["VALUE"].min() < 0 else 0), max_abs])),
+            y=alt.Y("METRIC:N", sort=None, title=None, axis=alt.Axis(labelLimit=180)),
+            color=alt.value("#29B5E8"),
+            tooltip=[
+                alt.Tooltip("METRIC:N", title="Metric"),
+                alt.Tooltip("LABEL:N", title="Value"),
+            ],
+        )
+    )
+    labels = (
+        alt.Chart(data)
+        .mark_text(align="left", dx=5)
+        .encode(x="VALUE:Q", y=alt.Y("METRIC:N", sort=None), text="LABEL:N")
+    )
+    st.altair_chart((bars + labels).properties(height=max(150, 42 * len(data))), width="stretch")
+
+
+def _render_powerpoint_slide_pack(
+    summary: dict,
+    source_health: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    days: int,
+    credit_price: float,
+) -> None:
+    environment_label = get_environment_label(environment, company)
+    kpi_rows = _powerpoint_kpi_rows(
+        summary,
+        company=company,
+        environment_label=environment_label,
+        days=days,
+        credit_price=credit_price,
+        source_health=source_health,
+    )
+    chart_rows = _powerpoint_chart_rows(summary, credit_price=credit_price)
+    slide_brief = _powerpoint_slide_brief(
+        summary,
+        company=company,
+        environment_label=environment_label,
+        days=days,
+        credit_price=credit_price,
+    )
+    st.markdown("**PowerPoint Slide Brief**")
+    st.text_area("Slide bullets", value=slide_brief, height=230, key="executive_powerpoint_slide_bullets")
+    dl_cols = st.columns([1.0, 1.0, 2.0])
+    dl_cols[0].download_button(
+        "Download bullets",
+        slide_brief,
+        file_name=f"overwatch_{company.lower()}_{environment.lower()}_{int(days)}d_slide_brief.txt",
+        mime="text/plain",
+        key="executive_powerpoint_bullets_download",
+    )
+    dl_cols[1].download_button(
+        "Download chart data",
+        chart_rows.to_csv(index=False, sep="\t"),
+        file_name=f"overwatch_{company.lower()}_{environment.lower()}_{int(days)}d_chart_data.tsv",
+        mime="text/tab-separated-values",
+        key="executive_powerpoint_chart_data_download",
+    )
+    st.dataframe(kpi_rows, hide_index=True, width="stretch")
+    chart_cols = st.columns(2)
+    with chart_cols[0]:
+        st.markdown("**Cost Movement**")
+        _render_slide_bar_chart(chart_rows, "Cost movement")
+    with chart_cols[1]:
+        st.markdown("**Risk and Work**")
+        _render_slide_bar_chart(chart_rows, "Risk and work")
 
 
 def _render_executive_action_brief(summary: dict | None, days: int) -> bool:
@@ -308,6 +498,9 @@ def render() -> None:
             format_func=lambda value: f"{value} days",
         )
     snapshot = st.session_state.get("executive_landing_snapshot")
+    if isinstance(snapshot, dict) and not _snapshot_matches_scope(snapshot, company, environment, int(days)):
+        defer_source_note("Loaded Executive Landing snapshot is for another scope. Reload the snapshot for the selected company, environment, and window.")
+        snapshot = None
     summary = None
     if isinstance(snapshot, dict):
         summary = _snapshot_state(
@@ -363,7 +556,7 @@ def render() -> None:
         st.rerun()
 
     snapshot = st.session_state.get("executive_landing_snapshot")
-    if not isinstance(snapshot, dict):
+    if not isinstance(snapshot, dict) or not _snapshot_matches_scope(snapshot, company, environment, int(days)):
         return
 
     for err in snapshot.get("errors", []):
@@ -385,6 +578,15 @@ def render() -> None:
         ascending=[True, True],
         raw_label="All executive source health rows",
         height=220,
+    )
+
+    _render_powerpoint_slide_pack(
+        summary,
+        source_health,
+        company=company,
+        environment=environment,
+        days=int(days),
+        credit_price=credit_price,
     )
 
     render_priority_dataframe(

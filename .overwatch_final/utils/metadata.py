@@ -132,6 +132,72 @@ def scope_metadata_df(df: pd.DataFrame, company: str | None = None) -> pd.DataFr
     return scoped.copy()
 
 
+def metadata_name_options(df: pd.DataFrame, candidates: list[str]) -> list[str]:
+    """Return sorted unique names from a SHOW-style metadata frame."""
+    if df is None or df.empty:
+        return []
+    col = first_existing_column(df, candidates)
+    if not col:
+        return []
+    names = [
+        str(value or "").strip()
+        for value in df[col].tolist()
+        if str(value or "").strip()
+    ]
+    return sorted(dict.fromkeys(names), key=str.upper)
+
+
+def load_database_options(
+    session,
+    company: str | None = None,
+    force_refresh: bool = False,
+) -> list[str]:
+    """Load scoped database names for metadata-driven filters."""
+    df = show_to_df(session, "SHOW DATABASES", force_refresh=force_refresh)
+    if df is None or df.empty:
+        return []
+    db_col = first_existing_column(df, ["NAME", "DATABASE_NAME"])
+    if not db_col:
+        return []
+    view = df.copy()
+    view["DATABASE_NAME"] = view[db_col]
+    return metadata_name_options(scope_metadata_df(view, company), ["DATABASE_NAME", "NAME"])
+
+
+def load_schema_options(
+    session,
+    database_name: str,
+    company: str | None = None,
+    force_refresh: bool = False,
+) -> list[str]:
+    """Load schema names from one scoped database for cascading selectors."""
+    db = str(database_name or "").strip()
+    if not db or not company_value_allowed(db, "database", company):
+        return []
+    df = show_to_df(
+        session,
+        f"SHOW SCHEMAS IN DATABASE {safe_identifier(db)}",
+        force_refresh=force_refresh,
+    )
+    if df is None or df.empty:
+        return []
+    return [
+        name
+        for name in metadata_name_options(df, ["NAME", "SCHEMA_NAME"])
+        if name.upper() != "INFORMATION_SCHEMA"
+    ]
+
+
+def load_warehouse_options(
+    session,
+    company: str | None = None,
+    force_refresh: bool = False,
+) -> list[str]:
+    """Load scoped warehouse names for metadata-driven filters."""
+    df = load_warehouse_inventory(session, company=company, force_refresh=force_refresh)
+    return metadata_name_options(df, ["NAME", "WAREHOUSE_NAME"])
+
+
 def load_warehouse_inventory(
     session,
     company: str | None = None,

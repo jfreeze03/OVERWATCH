@@ -49,6 +49,7 @@ from utils.company_filter import (
     get_environment_options_for_company,
     invalidate_company_cache,
 )
+from utils.metadata import load_database_options, load_warehouse_options
 from utils.admin import clamp_global_date_range, render_admin_mode_control
 import utils.section_guidance as section_guidance
 
@@ -601,10 +602,6 @@ with st.sidebar:
                     st.session_state["_global_date_clamp_notice_key"] = clamp_key
             else:
                 st.session_state.pop("_global_date_clamp_notice_key", None)
-        st.text_input("Warehouse contains", key="global_warehouse")
-        st.text_input("User contains", key="global_user")
-        st.text_input("Role contains", key="global_role")
-        st.text_input("Database contains", key="global_database")
         st.selectbox(
             "Environment",
             environment_options,
@@ -624,6 +621,60 @@ with st.sidebar:
                 )
             ),
         )
+        filter_choice_scope = (
+            active_company,
+            st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
+        )
+        if st.session_state.get("_global_filter_choice_scope") != filter_choice_scope:
+            st.session_state["_global_filter_choice_scope"] = filter_choice_scope
+            try:
+                session_for_filters = get_session()
+                st.session_state["global_warehouse_options"] = load_warehouse_options(
+                    session_for_filters,
+                    company=active_company,
+                )
+                st.session_state["global_database_options"] = load_database_options(
+                    session_for_filters,
+                    company=active_company,
+                )
+            except Exception:
+                st.session_state["global_warehouse_options"] = []
+                st.session_state["global_database_options"] = []
+
+        global_warehouse_options = list(st.session_state.get("global_warehouse_options") or [])
+        if global_warehouse_options:
+            warehouse_choices = ["All scoped warehouses"] + global_warehouse_options
+            if st.session_state.get("global_warehouse_select") not in warehouse_choices:
+                st.session_state["global_warehouse_select"] = "All scoped warehouses"
+            selected_global_warehouse = st.selectbox(
+                "Warehouse",
+                warehouse_choices,
+                key="global_warehouse_select",
+            )
+            st.session_state["global_warehouse"] = (
+                "" if selected_global_warehouse == "All scoped warehouses" else selected_global_warehouse
+            )
+        else:
+            st.text_input("Warehouse contains", key="global_warehouse")
+
+        st.text_input("User contains", key="global_user")
+        st.text_input("Role contains", key="global_role")
+
+        global_database_options = list(st.session_state.get("global_database_options") or [])
+        if global_database_options:
+            database_choices = ["All scoped databases"] + global_database_options
+            if st.session_state.get("global_database_select") not in database_choices:
+                st.session_state["global_database_select"] = "All scoped databases"
+            selected_global_database = st.selectbox(
+                "Database",
+                database_choices,
+                key="global_database_select",
+            )
+            st.session_state["global_database"] = (
+                "" if selected_global_database == "All scoped databases" else selected_global_database
+            )
+        else:
+            st.text_input("Database contains", key="global_database")
 
         current_filter_signature = _global_filter_signature()
         previous_filter_signature = st.session_state.get("_prev_global_filter_signature")
@@ -637,6 +688,9 @@ with st.sidebar:
             for _k in [
                 "global_start_date", "global_end_date", "global_warehouse",
                 "global_user", "global_role", "global_database", "global_environment",
+                "global_warehouse_select", "global_database_select",
+                "global_warehouse_options", "global_database_options",
+                "_global_filter_choice_scope",
                 "_global_date_range_input",
                 "_global_date_clamp_notice_key",
             ]:

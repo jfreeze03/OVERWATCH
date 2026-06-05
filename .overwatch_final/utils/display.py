@@ -8,10 +8,10 @@ from .downloads import download_csv, mark_loaded, show_loaded_time
 from .query import format_snowflake_error, run_query, run_query_or_raise, sql_literal
 from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause
 from .helpers import safe_float
-from .workflows import prioritize_context_columns
+from .workflows import add_cost_companion_columns, prioritize_context_columns
 
 
-DISPLAY_VERSION = "2026-06-01-explicit-drilldowns-v1"
+DISPLAY_VERSION = "2026-06-05-chart-drillback-cost-v1"
 
 
 def _altair():
@@ -54,13 +54,17 @@ def render_ranked_bar_chart(
     color: str = "#38bdf8",
 ) -> pd.DataFrame:
     """Render a horizontal top-to-bottom ranked bar chart and return plotted rows."""
-    chart_df = rank_chart_frame(df, dimension, measure, top_n=top_n)
+    chart_df = add_cost_companion_columns(rank_chart_frame(df, dimension, measure, top_n=top_n))
     if chart_df.empty:
         return chart_df
     if title:
         st.subheader(title)
 
     alt = _altair()
+    tooltips = [alt.Tooltip(f"{dimension}:N"), alt.Tooltip(f"{measure}:Q", format=",.2f")]
+    cost_column = f"{str(measure).upper()}_COST_USD"
+    if cost_column in chart_df.columns:
+        tooltips.append(alt.Tooltip(f"{cost_column}:Q", title="Cost USD", format="$,.2f"))
     chart = (
         alt.Chart(chart_df)
         .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3, color=color)
@@ -72,7 +76,7 @@ def render_ranked_bar_chart(
                 title=None,
                 axis=alt.Axis(labelLimit=260),
             ),
-            tooltip=[alt.Tooltip(f"{dimension}:N"), alt.Tooltip(f"{measure}:Q", format=",.2f")],
+            tooltip=tooltips,
         )
         .properties(height=_ranked_chart_height(len(chart_df)))
     )
@@ -150,7 +154,9 @@ def render_query_drilldown(
         return
 
     st.subheader(title)
-    grid_df = prioritize_context_columns(df.head(1000), leading_columns=("QUERY_ID",))
+    grid_df = add_cost_companion_columns(
+        prioritize_context_columns(df.head(1000), leading_columns=("QUERY_ID",))
+    )
     if len(df) > len(grid_df):
         st.caption(f"Showing the first {len(grid_df):,} rows for fast selection. Narrow filters to inspect deeper rows.")
     try:
@@ -201,7 +207,7 @@ def render_query_drilldown(
                 ops_df = run_query_or_raise(
                     f"SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS({sql_literal(qid)}))"
                 )
-                st.dataframe(ops_df, width="stretch", height=350)
+                st.dataframe(add_cost_companion_columns(ops_df), width="stretch", height=350)
             except Exception as e:
                 st.info(f"Operator stats unavailable: {format_snowflake_error(e)}")
 
@@ -363,7 +369,7 @@ def render_drillable_bar_chart(
     if df is None or df.empty or dimension not in df.columns or measure not in df.columns:
         return None
 
-    chart_df = rank_chart_frame(df, dimension, measure, top_n=top_n)
+    chart_df = add_cost_companion_columns(rank_chart_frame(df, dimension, measure, top_n=top_n))
     if chart_df.empty:
         return None
 
@@ -371,6 +377,10 @@ def render_drillable_bar_chart(
         st.subheader(title)
 
     alt = _altair()
+    tooltips = [alt.Tooltip(f"{dimension}:N"), alt.Tooltip(f"{measure}:Q", format=",.2f")]
+    cost_column = f"{str(measure).upper()}_COST_USD"
+    if cost_column in chart_df.columns:
+        tooltips.append(alt.Tooltip(f"{cost_column}:Q", title="Cost USD", format="$,.2f"))
     selection_name    = f"{key}_select"
     selection_factory = getattr(alt, "selection_point", alt.selection_single)
     selection         = selection_factory(fields=[dimension], name=selection_name, empty=False)
@@ -386,7 +396,7 @@ def render_drillable_bar_chart(
                 axis=alt.Axis(labelLimit=260),
             ),
             color=alt.condition(selection, alt.value("#38bdf8"), alt.value("#475569")),
-            tooltip=[alt.Tooltip(f"{dimension}:N"), alt.Tooltip(f"{measure}:Q", format=",.2f")],
+            tooltip=tooltips,
         )
     )
     chart = (
@@ -428,6 +438,14 @@ def render_drillable_bar_chart(
         requested = None
     if requested != selected:
         return selected
+
+    back_col, selected_col = st.columns([1, 4])
+    with back_col:
+        if st.button("Back to chart", key=f"{key}_drill_back", width="stretch"):
+            st.session_state.pop(requested_key, None)
+            st.rerun()
+    with selected_col:
+        st.caption(f"Showing loaded detail for `{requested}`.")
 
     drill_col = drilldown_column or dimension.lower()
     if drill_col.lower() == "warehouse_name":

@@ -583,12 +583,6 @@ def build_cost_formula_audit() -> pd.DataFrame:
             "Primary source for warehouse burn-rate views. Snowflake documents this as hourly metering, but final billed credits can differ because cloud-services adjustments are reconciled separately.",
         ),
         (
-            "Snowflake Account Overview parity",
-            "WAREHOUSE_METERING_HISTORY by selected period and warehouse, dollarized with configured ALFA credit rate",
-            "Snowflake source / ALFA dollar estimate",
-            "Matches Snowflake Cost Management Account Overview warehouse-source semantics while keeping ALFA's intended $3.68 compute price per credit.",
-        ),
-        (
             "Billed warehouse credits",
             "METERING_DAILY_HISTORY.CREDITS_BILLED for SERVICE_TYPE = 'WAREHOUSE_METERING'",
             "Official billed-credit reconciliation",

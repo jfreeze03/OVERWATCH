@@ -364,13 +364,14 @@ footer {
     border-radius: 0 6px 6px 0;
 }
 
-/* ── Metric cards ── */
+/* Metric cards */
 [data-testid="stMetric"] {
     background: var(--bg-card) !important;
     backdrop-filter: blur(12px);
     border: 1px solid var(--border-subtle) !important;
     border-radius: 8px !important;
     padding: 12px 14px !important;
+    min-height: 86px;
     box-shadow: var(--metric-shadow) !important;
     transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
@@ -384,6 +385,16 @@ footer {
     text-transform: uppercase;
     letter-spacing: 0;
     font-family: var(--font-body) !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    text-overflow: clip !important;
+    line-height: 1.15 !important;
+}
+[data-testid="stMetricLabel"] * {
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    text-overflow: clip !important;
+    line-height: 1.15 !important;
 }
 [data-testid="stMetricValue"] {
     color: var(--text-primary) !important;
@@ -392,7 +403,7 @@ footer {
     font-family: var(--font-body) !important;
 }
 
-/* ── Headings ── */
+/* Headings */
 h1 {
     background: var(--h1-gradient) !important;
     -webkit-background-clip: text !important;
@@ -416,14 +427,14 @@ p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
     font-family: var(--font-body);
 }
 
-/* ── DataFrames ── */
+/* DataFrames */
 [data-testid="stDataFrame"] {
     border: 1px solid var(--border-subtle) !important;
     border-radius: 8px;
     overflow: hidden;
 }
 
-/* ── Buttons ── */
+/* Buttons */
 .stButton > button {
     background: var(--btn-bg) !important;
     border: 1px solid var(--btn-border) !important;

@@ -14,6 +14,27 @@ from .section_guidance import defer_section_note, defer_source_note
 
 
 WORKFLOWS_VERSION = "2026-06-03-bottom-notes-v1"
+CONTEXT_PRIORITY_COLUMNS = ("ENVIRONMENT", "DATABASE_NAME", "SCHEMA_NAME")
+
+
+def prioritize_context_columns(
+    df,
+    *,
+    leading_columns: Sequence[str] = (),
+    context_columns: Sequence[str] = CONTEXT_PRIORITY_COLUMNS,
+):
+    """Keep scope columns visible before wide operational evidence."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    leading = [column for column in leading_columns if column in df.columns]
+    context = [
+        column for column in context_columns
+        if column in df.columns and column not in leading
+    ]
+    if not leading and not context:
+        return df
+    ordered = leading + context
+    return df[ordered + [column for column in df.columns if column not in ordered]]
 
 
 def coerce_workflow_state(key: str, workflows: Sequence[str]) -> str:
@@ -188,13 +209,15 @@ def render_priority_dataframe(
             view = view.drop(columns=severity_rank_cols, errors="ignore")
 
     if priority_columns:
+        priority = [column for column in priority_columns if column in view.columns]
         context_columns = [
-            column for column in ("DATABASE_NAME", "SCHEMA_NAME")
-            if column in view.columns and column not in priority_columns
+            column for column in CONTEXT_PRIORITY_COLUMNS
+            if column in view.columns and column not in priority
         ]
-        columns = context_columns + [column for column in priority_columns if column in view.columns]
+        columns = context_columns + priority
         if columns:
             view = view[columns]
+    view = prioritize_context_columns(view)
 
     visible_rows = min(len(view), int(max_rows or 25))
     st.markdown(
@@ -247,7 +270,7 @@ def render_priority_dataframe(
                 raw_kwargs = {"use_container_width": True, "hide_index": True}
                 if active_column_config:
                     raw_kwargs["column_config"] = active_column_config
-                st.dataframe(df, **raw_kwargs)
+                st.dataframe(prioritize_context_columns(df), **raw_kwargs)
 
 
 def render_signal_confidence(

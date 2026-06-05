@@ -190,7 +190,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "workflows": (
         "coerce_workflow_state", "render_workflow_selector", "render_workflow_guide",
         "render_signal_confidence", "add_signal_routes", "render_priority_dataframe",
-        "migrate_legacy_workflow_state", "render_workflow_module",
+        "prioritize_context_columns", "migrate_legacy_workflow_state", "render_workflow_module",
     ),
     "section_guidance": (
         "defer_section_note", "defer_source_note",

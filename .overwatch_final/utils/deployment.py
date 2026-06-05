@@ -54,6 +54,13 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "READY_CRITERIA": "Daily service-cost mart and source-health mart exist.",
         },
         {
+            "COMPONENT": "Procedure runtime context",
+            "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
+            "REQUIRED_OBJECT": "FACT_PROCEDURE_RUN",
+            "WHY_IT_MATTERS": "Keeps stored procedure failures, runtime spikes, and child-query evidence scoped to database and schema.",
+            "READY_CRITERIA": "Procedure run fact exists with DATABASE_NAME, SCHEMA_NAME, ENVIRONMENT, and PROCEDURE_NAME.",
+        },
+        {
             "COMPONENT": "Change evidence integration",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_SOURCE_CONTROL_CHANGE",
@@ -99,6 +106,7 @@ WITH required_objects AS (
         ('FinOps verification', 'OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V', 'VIEW', '{version}'),
         ('Cost proof mart', 'FACT_COST_DAILY', 'TABLE', '{version}'),
         ('Cost proof mart', 'FACT_COST_SOURCE_HEALTH_DAILY', 'TABLE', '{version}'),
+        ('Procedure runtime context', 'FACT_PROCEDURE_RUN', 'TABLE', '{version}'),
         ('Change evidence integration', 'OVERWATCH_SOURCE_CONTROL_CHANGE', 'TABLE', '{version}'),
         ('Change evidence integration', 'OVERWATCH_ITSM_TICKET', 'TABLE', '{version}'),
         ('Change evidence feed ingress', 'OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT', 'FILE FORMAT', '{version}'),
@@ -173,9 +181,9 @@ MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
 USING (
   SELECT
     '{version}' AS MIGRATION_VERSION,
-    'Cost proof mart, evidence feed health, alert automation, and migration ledger' AS MIGRATION_NAME,
+    'Cost proof mart, procedure context, evidence feed health, alert automation, and migration ledger' AS MIGRATION_NAME,
     'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
-    'Baseline setup ledger row for the app release, including cost proof marts and Terraform/Jira evidence feed ingress.' AS NOTES
+    'Baseline setup ledger row for the app release, including cost proof marts, procedure database/schema context, and Terraform/Jira evidence feed ingress.' AS NOTES
 ) src
 ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
 WHEN MATCHED THEN UPDATE SET

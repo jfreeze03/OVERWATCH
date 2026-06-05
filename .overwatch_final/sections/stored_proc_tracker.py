@@ -1139,10 +1139,10 @@ def render():
             st.info("ROOT_QUERY_ID is not available in this Snowflake account. Showing outer CALL cost only.")
         total_credits = df_sp["METERED_CREDITS"].sum() + df_sp["CLOUD_CREDITS"].sum()
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Unique Proc Signatures", df_sp["QUERY_TEXT"].nunique())
-        c2.metric("Total Calls", f"{int(df_sp['CALL_COUNT'].sum()):,}")
-        c3.metric("Downstream Queries", f"{int(df_sp['DOWNSTREAM_QUERY_COUNT'].sum()):,}")
-        c4.metric("Total Credits", format_credits(total_credits))
+        c1.metric("Proc Signatures", df_sp["QUERY_TEXT"].nunique())
+        c2.metric("Calls", f"{int(df_sp['CALL_COUNT'].sum()):,}")
+        c3.metric("Child Queries", f"{int(df_sp['DOWNSTREAM_QUERY_COUNT'].sum()):,}")
+        c4.metric("Credits", format_credits(total_credits))
         lineage_confidence = "allocated" if st.session_state.get("spt_has_root_query_id", False) else "estimated"
         defer_source_note(
             metric_confidence_label(lineage_confidence),

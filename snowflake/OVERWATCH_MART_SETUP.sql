@@ -94,9 +94,9 @@ MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
 USING (
   SELECT
     '2026.06.04-cost-proof-mart' AS MIGRATION_VERSION,
-    'Cost proof mart, evidence feed health, alert automation, and migration ledger' AS MIGRATION_NAME,
+    'Cost proof mart, procedure context, evidence feed health, alert automation, and migration ledger' AS MIGRATION_NAME,
     'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
-    'Baseline setup ledger row for the app release, including cost proof marts and Terraform/Jira evidence feed ingress.' AS NOTES
+    'Baseline setup ledger row for the app release, including cost proof marts, procedure database/schema context, and Terraform/Jira evidence feed ingress.' AS NOTES
 ) src
 ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
 WHEN MATCHED THEN UPDATE SET
@@ -4126,32 +4126,33 @@ cost_savings_verifier_failures AS (
 ),
 proc_recent AS (
   SELECT
-    COMPANY, ENVIRONMENT, DATABASE_NAME, PROCEDURE_NAME,
+    COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME,
     COUNT(*) AS CALL_COUNT,
     SUM(CASE WHEN STATUS ILIKE '%FAIL%' OR ERROR_MESSAGE IS NOT NULL THEN 1 ELSE 0 END) AS FAILURES,
     AVG(TOTAL_DURATION_MS) AS AVG_DURATION_MS,
     MAX(LEFT(ERROR_MESSAGE, 500)) AS SAMPLE_ERROR
   FROM FACT_PROCEDURE_RUN
   WHERE START_TIME >= DATEADD('hour', -24, CURRENT_TIMESTAMP())
-  GROUP BY COMPANY, ENVIRONMENT, DATABASE_NAME, PROCEDURE_NAME
+  GROUP BY COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME
 ),
 proc_baseline AS (
   SELECT
-    COMPANY, DATABASE_NAME, PROCEDURE_NAME,
+    COMPANY, DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME,
     AVG(TOTAL_DURATION_MS) AS BASELINE_DURATION_MS
   FROM FACT_PROCEDURE_RUN
   WHERE START_TIME >= DATEADD('day', -8, CURRENT_TIMESTAMP())
     AND START_TIME < DATEADD('hour', -24, CURRENT_TIMESTAMP())
-  GROUP BY COMPANY, DATABASE_NAME, PROCEDURE_NAME
+  GROUP BY COMPANY, DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME
 ),
 procedure_risk AS (
   SELECT
-    r.COMPANY, r.ENVIRONMENT, r.DATABASE_NAME, r.PROCEDURE_NAME,
+    r.COMPANY, r.ENVIRONMENT, r.DATABASE_NAME, r.SCHEMA_NAME, r.PROCEDURE_NAME,
     r.CALL_COUNT, r.FAILURES, r.AVG_DURATION_MS, b.BASELINE_DURATION_MS, r.SAMPLE_ERROR
   FROM proc_recent r
   LEFT JOIN proc_baseline b
     ON COALESCE(r.COMPANY, '') = COALESCE(b.COMPANY, '')
    AND COALESCE(r.DATABASE_NAME, '') = COALESCE(b.DATABASE_NAME, '')
+   AND COALESCE(r.SCHEMA_NAME, '') = COALESCE(b.SCHEMA_NAME, '')
    AND r.PROCEDURE_NAME = b.PROCEDURE_NAME
   WHERE r.FAILURES > 0
      OR (r.AVG_DURATION_MS >= 60000 AND b.BASELINE_DURATION_MS > 0 AND r.AVG_DURATION_MS > b.BASELINE_DURATION_MS * 1.5)
@@ -4263,12 +4264,12 @@ candidates AS (
   UNION ALL
 
   SELECT
-    COMPANY, ENVIRONMENT, DATABASE_NAME, NULL, NULL,
+    COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, NULL,
     'Reliability',
     CASE WHEN FAILURES > 0 THEN 'Stored Procedure Failure' ELSE 'Stored Procedure Runtime Spike' END,
     CASE WHEN FAILURES > 0 OR AVG_DURATION_MS >= 300000 THEN 'High' ELSE 'Medium' END,
-    DATABASE_NAME || '.' || PROCEDURE_NAME,
-    DATABASE_NAME || '.' || PROCEDURE_NAME,
+    COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME || '.', DATABASE_NAME || '.', '') || PROCEDURE_NAME,
+    COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME || '.', DATABASE_NAME || '.', '') || PROCEDURE_NAME,
     CASE
       WHEN FAILURES > 0 THEN FAILURES || ' failed CALL(s) in the last 24 hours. Sample: ' || COALESCE(SAMPLE_ERROR, 'No sample error captured.')
       ELSE 'Average CALL duration ' || ROUND(AVG_DURATION_MS / 1000, 1) || 's vs baseline ' || ROUND(BASELINE_DURATION_MS / 1000, 1) || 's.'
@@ -4278,7 +4279,10 @@ candidates AS (
       ELSE 'Average CALL duration ' || ROUND(AVG_DURATION_MS / 1000, 1) || 's vs baseline ' || ROUND(BASELINE_DURATION_MS / 1000, 1) || 's.'
     END,
     'Open Workload Operations stored procedures, compare release windows, and assign remediation.',
-    'SELECT * FROM FACT_PROCEDURE_RUN WHERE PROCEDURE_NAME = ''' || PROCEDURE_NAME || ''' ORDER BY START_TIME DESC LIMIT 100;',
+    'SELECT * FROM FACT_PROCEDURE_RUN WHERE PROCEDURE_NAME = ''' || PROCEDURE_NAME || ''''
+      || ' AND COALESCE(DATABASE_NAME, '''') = ''' || COALESCE(DATABASE_NAME, '') || ''''
+      || ' AND COALESCE(SCHEMA_NAME, '''') = ''' || COALESCE(SCHEMA_NAME, '') || ''''
+      || ' ORDER BY START_TIME DESC LIMIT 100;',
     'DBA'
   FROM procedure_risk
 

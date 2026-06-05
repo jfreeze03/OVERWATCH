@@ -8,22 +8,10 @@ from .downloads import download_csv, mark_loaded, show_loaded_time
 from .query import format_snowflake_error, run_query, run_query_or_raise, sql_literal
 from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause
 from .helpers import safe_float
+from .workflows import prioritize_context_columns
 
 
 DISPLAY_VERSION = "2026-06-01-explicit-drilldowns-v1"
-
-
-def _prioritize_context_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep database/schema context visible in query drill-down grids."""
-    if df is None or df.empty:
-        return df
-    context = [
-        column for column in ("QUERY_ID", "DATABASE_NAME", "SCHEMA_NAME")
-        if column in df.columns
-    ]
-    if not context:
-        return df
-    return df[context + [column for column in df.columns if column not in context]]
 
 
 def _altair():
@@ -162,7 +150,7 @@ def render_query_drilldown(
         return
 
     st.subheader(title)
-    grid_df = _prioritize_context_columns(df.head(1000))
+    grid_df = prioritize_context_columns(df.head(1000), leading_columns=("QUERY_ID",))
     if len(df) > len(grid_df):
         st.caption(f"Showing the first {len(grid_df):,} rows for fast selection. Narrow filters to inspect deeper rows.")
     try:

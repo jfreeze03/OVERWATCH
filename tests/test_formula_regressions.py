@@ -1769,14 +1769,17 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_ITSM_TICKET_STAGE", status_sql)
         self.assertIn("FACT_COST_DAILY", status_sql)
         self.assertIn("FACT_COST_SOURCE_HEALTH_DAILY", status_sql)
+        self.assertIn("FACT_PROCEDURE_RUN", status_sql)
         self.assertIn("OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT", status_sql)
         self.assertIn("INFORMATION_SCHEMA.STAGES", status_sql)
         self.assertIn("INFORMATION_SCHEMA.FILE_FORMATS", status_sql)
         self.assertIn("VERSION DRIFT", status_sql)
         self.assertIn("Schema migration ledger", set(contract["COMPONENT"]))
         self.assertIn("Change evidence feed ingress", set(contract["COMPONENT"]))
+        self.assertIn("Procedure runtime context", set(contract["COMPONENT"]))
         self.assertIn("OVERWATCH_SCHEMA_MIGRATION", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("FACT_COST_DAILY", set(contract["REQUIRED_OBJECT"]))
+        self.assertIn("FACT_PROCEDURE_RUN", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("OVERWATCH_ANNOTATIONS", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("Cost proof mart", set(contract["COMPONENT"]))
 
@@ -3077,6 +3080,17 @@ class FormulaRegressionTests(unittest.TestCase):
         proc_end = setup_sql.index(");", proc_start)
         self.assertIn("DATABASE_NAME", setup_sql[proc_start:proc_end])
         self.assertIn("SCHEMA_NAME", setup_sql[proc_start:proc_end])
+        self.assertIn("PROCEDURE DATABASE/SCHEMA CONTEXT", setup_sql)
+        self.assertIn(
+            "GROUP BY COMPANY, ENVIRONMENT, DATABASE_NAME, SCHEMA_NAME, PROCEDURE_NAME",
+            setup_sql,
+        )
+        self.assertIn("COALESCE(R.SCHEMA_NAME, '') = COALESCE(B.SCHEMA_NAME, '')", setup_sql)
+        self.assertIn(
+            "COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME || '.', DATABASE_NAME || '.', '') || PROCEDURE_NAME",
+            setup_sql,
+        )
+        self.assertIn("AND COALESCE(SCHEMA_NAME, '''')", setup_sql)
 
         expected_loads = [
             "OVERWATCH_DATABASE_ENVIRONMENT(DATABASE_NAME) AS ENVIRONMENT",

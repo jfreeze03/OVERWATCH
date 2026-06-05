@@ -309,6 +309,16 @@ def _warehouse_column_sum(frame, column: str) -> float:
         return sum(safe_float(value) for value in frame[column].tolist())
 
 
+def _warehouse_column_average(frame, column: str) -> float:
+    if not _warehouse_frame_has_rows(frame) or column not in frame.columns:
+        return 0.0
+    try:
+        return float(frame[column].fillna(0).mean())
+    except Exception:
+        values = [safe_float(value) for value in frame[column].tolist()]
+        return sum(values) / len(values) if values else 0.0
+
+
 def _warehouse_value_count(frame, column: str, values: set[str]) -> int:
     if not _warehouse_frame_has_rows(frame) or column not in frame.columns:
         return 0
@@ -395,6 +405,34 @@ def _render_warehouse_action_brief(brief: dict) -> None:
         with detail_col:
             st.markdown(f"**{brief.get('headline') or 'Review warehouse evidence.'}**")
             st.caption(str(brief.get("detail") or ""))
+
+
+def _warehouse_operating_snapshot(company: str, environment: str, days: int) -> dict:
+    overview = st.session_state.get("wh_df_wh")
+    expected_meta = _warehouse_scope_meta(company, environment, days)
+    if not _warehouse_looks_like_frame(overview) or not _warehouse_meta_matches(
+        st.session_state.get("wh_df_wh_meta"),
+        expected_meta,
+    ):
+        return {"loaded": False, "warehouses": 0, "queries": 0, "spill_gb": 0.0, "avg_queue": 0.0}
+    return {
+        "loaded": True,
+        "warehouses": _warehouse_frame_len(overview),
+        "queries": safe_int(_warehouse_column_sum(overview, "TOTAL_QUERIES")),
+        "spill_gb": _warehouse_column_sum(overview, "TOTAL_REMOTE_SPILL_GB"),
+        "avg_queue": _warehouse_column_average(overview, "AVG_QUEUED_SEC"),
+    }
+
+
+def _render_warehouse_operating_snapshot(snapshot: dict) -> None:
+    st.markdown("**Operating Snapshot**")
+    loaded = bool(snapshot.get("loaded"))
+    pending = "Pending"
+    cols = st.columns(4)
+    cols[0].metric("Warehouses", f"{safe_int(snapshot.get('warehouses')):,}" if loaded else pending)
+    cols[1].metric("Queries", f"{safe_int(snapshot.get('queries')):,}" if loaded else pending)
+    cols[2].metric("Spill GB", f"{safe_float(snapshot.get('spill_gb')):,.1f}" if loaded else pending)
+    cols[3].metric("Avg Queue", f"{safe_float(snapshot.get('avg_queue')):,.1f}s" if loaded else pending)
 
 
 def _warehouse_sql_exprs(session) -> dict[str, str]:
@@ -3433,6 +3471,7 @@ def render():
     if selected_days < 1 or selected_days > 30:
         selected_days = 7
     _render_warehouse_action_brief(_warehouse_action_brief(company, environment, selected_days))
+    _render_warehouse_operating_snapshot(_warehouse_operating_snapshot(company, environment, selected_days))
 
     render_operator_briefing(
         [

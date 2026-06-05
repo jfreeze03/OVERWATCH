@@ -288,13 +288,13 @@ def _render_workload_action_brief(company: str, brief: dict) -> None:
 
 
 def _render_workload_metric_rows(summary: dict) -> None:
-    row1 = st.columns(3)
-    row1[0].metric("Queries 24h", f"{safe_int(summary.get('queries')):,}")
-    row1[1].metric("Failed 24h", f"{safe_int(summary.get('failed')):,}", delta_color="inverse")
-    row1[2].metric("Queued 24h", f"{safe_int(summary.get('queued')):,}", delta_color="inverse")
-    row2 = st.columns(2)
-    row2[0].metric("Spill 24h", f"{safe_int(summary.get('spill')):,}", delta_color="inverse")
-    row2[1].metric("P95 Elapsed", f"{safe_float(summary.get('p95')):,.1f}s")
+    loaded = bool(summary.get("loaded"))
+    pending = "Pending"
+    cols = st.columns(4)
+    cols[0].metric("Queries", f"{safe_int(summary.get('queries')):,}" if loaded else pending)
+    cols[1].metric("Failed", f"{safe_int(summary.get('failed')):,}" if loaded else pending, delta_color="inverse")
+    cols[2].metric("Queued", f"{safe_int(summary.get('queued')):,}" if loaded else pending, delta_color="inverse")
+    cols[3].metric("P95", f"{safe_float(summary.get('p95')):,.1f}s" if loaded else pending)
 
 
 def _render_workload_snapshot(company: str) -> None:
@@ -304,14 +304,11 @@ def _render_workload_snapshot(company: str) -> None:
     snapshot_current = st.session_state.get("workload_operations_snapshot_meta") == expected_meta
     err = st.session_state.get("workload_operations_snapshot_error", "")
     summary = _workload_snapshot_summary(snapshot if snapshot_current else None)
-    if snapshot is None or getattr(snapshot, "empty", True) or not snapshot_current:
-        _render_workload_action_brief(
-            company,
-            _workload_action_brief(summary, snapshot_current=snapshot_current, error=str(err or "")),
-        )
-        return
-
-    _render_workload_action_brief(company, _workload_action_brief(summary, snapshot_current=True))
+    _render_workload_action_brief(
+        company,
+        _workload_action_brief(summary, snapshot_current=snapshot_current, error=str(err or "")),
+    )
+    st.markdown("**Operating Snapshot**")
     _render_workload_metric_rows(summary)
 
 

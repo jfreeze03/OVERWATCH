@@ -901,9 +901,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('key=f"{key}_{start}_{workflow}"', warehouse_health_text)
         self.assertIn("def _warehouse_action_brief", warehouse_health_text)
         self.assertIn("def _render_warehouse_action_brief", warehouse_health_text)
+        self.assertIn("def _render_warehouse_operating_snapshot", warehouse_health_text)
         self.assertIn('st.markdown("**Action Brief**")', warehouse_health_text)
+        self.assertIn('st.markdown("**Operating Snapshot**")', warehouse_health_text)
+        self.assertIn('cols = st.columns(4)', warehouse_health_text)
         self.assertIn(
             "_render_warehouse_action_brief(_warehouse_action_brief(company, environment, selected_days))",
+            warehouse_health_text,
+        )
+        self.assertIn(
+            "_render_warehouse_operating_snapshot(_warehouse_operating_snapshot(company, environment, selected_days))",
             warehouse_health_text,
         )
         warehouse_action_brief = warehouse_health_text.split("def _warehouse_action_brief", 1)[1].split(
@@ -1026,6 +1033,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("render_workflow_module(", security_posture_view_preload)
         self.assertIn("def _security_action_brief", security_posture_text)
         self.assertIn('st.markdown("**Action Brief**")', security_posture_text)
+        self.assertIn("def _render_security_operating_snapshot", security_posture_text)
+        self.assertIn('st.markdown("**Operating Snapshot**")', security_posture_text)
+        self.assertIn('cols[2].metric("Grant Chg"', security_posture_text)
         self.assertNotIn("get_session()", security_access_render_preload)
         self.assertNotIn("get_session()", change_drift_render_preload)
         self.assertNotIn("render_workflow_module(", change_drift_default_preload)
@@ -1068,7 +1078,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _pd()", alert_center_text)
         self.assertIn("def _render_priority_dataframe", alert_center_text)
         self.assertIn("def _alert_center_action_session", alert_center_text)
+        self.assertIn("def _alert_center_pending_brief", alert_center_text)
         self.assertIn("def _render_alert_center_action_brief", alert_center_text)
+        self.assertIn('st.markdown("**Operating Snapshot**")', alert_center_text)
+        self.assertIn("cols = st.columns(4)", alert_center_text)
+        self.assertNotIn("row2 = st.columns(3)", alert_center_text)
         self.assertIn("ALERT_CENTER_HEALTH_DETAIL_OPTIONS", alert_center_text)
         self.assertIn('"Alert health detail"', alert_center_text)
         self.assertIn('st.selectbox(\n            "Alert health detail"', alert_center_text)
@@ -1161,6 +1175,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Specialist Workflows"', workload_operations_text)
         self.assertIn("def _render_workload_action_brief", workload_operations_text)
         self.assertIn("def _render_workload_metric_rows", workload_operations_text)
+        self.assertIn('st.markdown("**Operating Snapshot**")', workload_operations_text)
+        self.assertIn('cols = st.columns(4)', workload_operations_text)
+        self.assertNotIn('row2 = st.columns(2)', workload_operations_text)
         self.assertNotIn("c1, c2, c3, c4, c5 = st.columns(5)", workload_operations_text)
         self.assertIn("SECURITY_POSTURE_VIEWS", security_posture_text)
         self.assertIn('st.selectbox(\n        "Security posture view"', security_posture_text)

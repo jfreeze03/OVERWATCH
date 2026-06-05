@@ -671,9 +671,8 @@ def _alert_center_action_brief(
     open_queue: int,
     readiness_rows: pd.DataFrame | None = None,
 ) -> dict:
-    pd = _pd()
-    rows = readiness_rows if isinstance(readiness_rows, pd.DataFrame) else pd.DataFrame()
-    if not rows.empty and "STATE" in rows.columns:
+    rows = readiness_rows
+    if rows is not None and not getattr(rows, "empty", True) and "STATE" in getattr(rows, "columns", []):
         state_text = rows["STATE"].fillna("").astype(str).str.upper()
         blockers = rows[state_text.isin({"NEEDS SETUP", "DEGRADED", "SCOPE STALE"})]
         if not blockers.empty:
@@ -738,6 +737,14 @@ def _alert_center_action_brief(
     }
 
 
+def _alert_center_pending_brief(active_view: str, required_sources: set[str]) -> dict:
+    return {
+        "state": "Ready",
+        "headline": f"Load {active_view} before routing alert work.",
+        "detail": f"Sources on load: {_alert_center_source_summary(required_sources)}.",
+    }
+
+
 def _render_alert_center_action_brief(brief: dict) -> None:
     with st.container(border=True):
         label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
@@ -748,12 +755,13 @@ def _render_alert_center_action_brief(brief: dict) -> None:
             st.markdown(f"**{brief.get('headline') or 'Review Alert Center evidence.'}**")
             st.caption(str(brief.get("detail") or ""))
         with action_col:
+            primary_label = str(brief.get("primary_label") or "").strip()
             target = str(brief.get("target") or "Issue Inbox")
-            if st.button(str(brief.get("primary_label") or "Open Inbox"), key="alert_center_action_brief_primary", width="stretch"):
+            if primary_label and st.button(primary_label, key="alert_center_action_brief_primary", width="stretch"):
                 if target in ALERT_CENTER_PANES:
                     st.session_state["alert_center_active_view"] = target
                     st.rerun()
-            if target != "Issue Inbox":
+            if primary_label and target != "Issue Inbox":
                 if st.button("Issue Inbox", key="alert_center_action_brief_inbox", width="stretch"):
                     st.session_state["alert_center_active_view"] = "Issue Inbox"
                     st.rerun()
@@ -768,17 +776,21 @@ def _render_alert_center_metric_rows(
     email_ready: int,
     email_logged: int,
     open_queue: int,
+    loaded: bool = True,
 ) -> None:
-    row1 = st.columns(4)
-    row1[0].metric("Open Issues", f"{open_issues:,}")
-    row1[1].metric("Open Alerts", f"{open_alerts:,}")
-    row1[2].metric("Critical / High", f"{critical_high:,}", delta_color="inverse")
-    row1[3].metric("Overdue", f"{overdue:,}", delta_color="inverse")
-
-    row2 = st.columns(3)
-    row2[0].metric("Email Ready", f"{email_ready:,}")
-    row2[1].metric("Delivery Logged", f"{email_logged:,}")
-    row2[2].metric("Open Queue", f"{open_queue:,}")
+    st.markdown("**Operating Snapshot**")
+    pending = "Pending"
+    cols = st.columns(4)
+    cols[0].metric("Issues", f"{open_issues:,}" if loaded else pending)
+    cols[1].metric("Alerts", f"{open_alerts:,}" if loaded else pending)
+    cols[2].metric("Critical", f"{critical_high:,}" if loaded else pending, delta_color="inverse")
+    cols[3].metric("Overdue", f"{overdue:,}" if loaded else pending, delta_color="inverse")
+    if loaded:
+        with st.expander("Delivery and queue counts", expanded=False):
+            detail_cols = st.columns(3)
+            detail_cols[0].metric("Email Ready", f"{email_ready:,}")
+            detail_cols[1].metric("Delivered", f"{email_logged:,}")
+            detail_cols[2].metric("Open Queue", f"{open_queue:,}")
 
 
 def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
@@ -1081,6 +1093,17 @@ def render() -> None:
 
     data = st.session_state.get("alert_center_data")
     if not isinstance(data, dict):
+        _render_alert_center_action_brief(_alert_center_pending_brief(active_view, required_sources))
+        _render_alert_center_metric_rows(
+            open_issues=0,
+            open_alerts=0,
+            critical_high=0,
+            overdue=0,
+            email_ready=0,
+            email_logged=0,
+            open_queue=0,
+            loaded=False,
+        )
         st.info(f"Load {active_view} when ready.")
         defer_source_note(f"Sources on load: {_alert_center_source_summary(required_sources)}")
         return
@@ -1091,6 +1114,17 @@ def render() -> None:
     loaded_sources = set(data.get("_loaded_sources") or [])
     missing_sources = sorted(required_sources - loaded_sources)
     if missing_sources:
+        _render_alert_center_action_brief(_alert_center_pending_brief(active_view, required_sources))
+        _render_alert_center_metric_rows(
+            open_issues=0,
+            open_alerts=0,
+            critical_high=0,
+            overdue=0,
+            email_ready=0,
+            email_logged=0,
+            open_queue=0,
+            loaded=False,
+        )
         st.info(f"Load {active_view} to fetch missing source(s).")
         defer_source_note(f"Missing Alert Center source(s): {_alert_center_source_summary(set(missing_sources))}")
         return
@@ -1157,15 +1191,6 @@ def render() -> None:
             loaded_scope=loaded_scope,
         )
 
-    _render_alert_center_metric_rows(
-        open_issues=open_issue_count,
-        open_alerts=open_alert_count,
-        critical_high=critical_high_count,
-        overdue=overdue_count,
-        email_ready=email_ready_count,
-        email_logged=email_logged_count,
-        open_queue=open_queue_count,
-    )
     _render_alert_center_action_brief(
         _alert_center_action_brief(
             open_issues=open_issue_count,
@@ -1177,6 +1202,15 @@ def render() -> None:
             open_queue=open_queue_count,
             readiness_rows=readiness_rows,
         )
+    )
+    _render_alert_center_metric_rows(
+        open_issues=open_issue_count,
+        open_alerts=open_alert_count,
+        critical_high=critical_high_count,
+        overdue=overdue_count,
+        email_ready=email_ready_count,
+        email_logged=email_logged_count,
+        open_queue=open_queue_count,
     )
 
     if active_view == "Control Health":

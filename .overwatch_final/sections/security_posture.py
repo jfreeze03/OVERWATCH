@@ -1340,6 +1340,35 @@ def _render_security_action_brief(brief: dict) -> None:
             st.caption(str(brief.get("detail") or ""))
 
 
+def _security_operating_snapshot(summary, meta: dict, company: str, environment: str, days: int) -> dict:
+    loaded = (
+        summary is not None
+        and not getattr(summary, "empty", True)
+        and _security_meta_matches(meta, _security_scope_meta(company, environment, days))
+    )
+    if not loaded:
+        return {"loaded": False}
+    row = summary.iloc[0]
+    return {
+        "loaded": True,
+        "failed": safe_int(row.get("FAILED_LOGINS", 0)),
+        "mfa_gaps": safe_int(row.get("USERS_WITHOUT_MFA", 0)),
+        "grant_changes": safe_int(row.get("RECENT_GRANTS", 0)),
+        "shared_databases": safe_int(row.get("SHARED_DATABASES", 0)),
+    }
+
+
+def _render_security_operating_snapshot(snapshot: dict) -> None:
+    st.markdown("**Operating Snapshot**")
+    loaded = bool(snapshot.get("loaded"))
+    pending = "Pending"
+    cols = st.columns(4)
+    cols[0].metric("Failed", f"{safe_int(snapshot.get('failed')):,}" if loaded else pending, delta_color="inverse")
+    cols[1].metric("MFA Gaps", f"{safe_int(snapshot.get('mfa_gaps')):,}" if loaded else pending, delta_color="inverse")
+    cols[2].metric("Grant Chg", f"{safe_int(snapshot.get('grant_changes')):,}" if loaded else pending)
+    cols[3].metric("Shared DBs", f"{safe_int(snapshot.get('shared_databases')):,}" if loaded else pending)
+
+
 def _build_security_brief_markdown(
     *,
     company: str,
@@ -2467,6 +2496,9 @@ def render() -> None:
     _render_security_action_brief(
         _security_action_brief(summary, exceptions, meta, company, environment, days)
     )
+    _render_security_operating_snapshot(
+        _security_operating_snapshot(summary, meta, company, environment, days)
+    )
 
     days = st.slider("Security brief lookback (days)", 1, 90, 30, key="security_posture_brief_days")
     active_view = st.selectbox(
@@ -2589,11 +2621,6 @@ def render() -> None:
             recent_grants=recent_grants,
             shared_databases=shared_databases,
         )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Failed", f"{failed_logins:,}", delta_color="inverse")
-        c2.metric("MFA Gaps", f"{users_without_mfa:,}", delta_color="inverse")
-        c3.metric("Grant Changes", f"{recent_grants:,}")
-        c4.metric("Shared DBs", f"{shared_databases:,}")
         if score < 85:
             st.warning("Security posture needs DBA review before this can be called clean.")
         elif score < 95:

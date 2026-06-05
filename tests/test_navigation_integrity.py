@@ -639,6 +639,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         alert_center_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
         dba_control_text = (APP_ROOT / "sections" / "dba_control_room.py").read_text(encoding="utf-8")
         security_posture_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
+        security_posture_import_block = security_posture_text.split("SECURITY_POSTURE_VIEWS", 1)[0]
         security_access_text = (APP_ROOT / "sections" / "security_access.py").read_text(encoding="utf-8")
         recommendations_text = (APP_ROOT / "sections" / "recommendations.py").read_text(encoding="utf-8")
         live_monitor_text = (APP_ROOT / "sections" / "live_monitor.py").read_text(encoding="utf-8")
@@ -647,6 +648,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         query_search_text = (APP_ROOT / "sections" / "query_search.py").read_text(encoding="utf-8")
         pipeline_health_text = (APP_ROOT / "sections" / "pipeline_health.py").read_text(encoding="utf-8")
         workload_operations_text = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
+        workload_operations_import_block = workload_operations_text.split("WORKLOAD_OPERATIONS_VIEWS", 1)[0]
         spcs_text = (APP_ROOT / "sections" / "spcs_tracker.py").read_text(encoding="utf-8")
         data_sharing_text = (APP_ROOT / "sections" / "data_sharing.py").read_text(encoding="utf-8")
         object_change_text = (APP_ROOT / "sections" / "object_change_monitor.py").read_text(encoding="utf-8")
@@ -847,6 +849,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', change_drift_text)
         self.assertIn("return str(st.selectbox(label, list(workflows), key=key))", change_drift_text)
         self.assertNotIn('key=f"{key}_{start}_{workflow}"', change_drift_text)
+        self.assertIn("def _change_action_brief", change_drift_text)
+        self.assertIn("def _render_change_action_brief", change_drift_text)
         self.assertIn("def _looks_like_frame", cost_contract_text)
         self.assertIn("data_is_frame = _looks_like_frame(data)", cost_contract_text)
         cost_contract_import_block = cost_contract_text.split("WORKFLOWS", 1)[0]
@@ -858,6 +862,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', cost_contract_text)
         self.assertIn("return str(st.selectbox(label, list(workflows), key=key))", cost_contract_text)
         self.assertNotIn('key=f"{key}_{start}_{workflow}"', cost_contract_text)
+        self.assertIn("def _cost_action_brief", cost_contract_text)
+        self.assertIn("def _render_cost_action_brief", cost_contract_text)
+        self.assertIn('key="cost_contract_cockpit_window"', cost_contract_text)
         cost_watch_preload = cost_contract_text.split("def _render_cost_watch_floor", 1)[1].split(
             "if st.button(\"Load Cost Cockpit\"",
             1,
@@ -892,6 +899,18 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('sort_by=["DBA_PRIORITY", "METERED_CREDITS"]', warehouse_health_text)
         self.assertIn("return str(st.selectbox(label, list(workflows), key=key))", warehouse_health_text)
         self.assertNotIn('key=f"{key}_{start}_{workflow}"', warehouse_health_text)
+        self.assertIn("def _warehouse_action_brief", warehouse_health_text)
+        self.assertIn("def _render_warehouse_action_brief", warehouse_health_text)
+        self.assertIn('st.markdown("**Action Brief**")', warehouse_health_text)
+        self.assertIn(
+            "_render_warehouse_action_brief(_warehouse_action_brief(company, environment, selected_days))",
+            warehouse_health_text,
+        )
+        warehouse_action_brief = warehouse_health_text.split("def _warehouse_action_brief", 1)[1].split(
+            "def _render_warehouse_action_brief",
+            1,
+        )[0]
+        self.assertNotIn("pd.DataFrame", warehouse_action_brief)
         warehouse_render_preload = warehouse_health_text.split("def render():", 1)[1].split(
             "warehouse_view = render_workflow_selector",
             1,
@@ -945,6 +964,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         architecture_top_import_block = architecture_text.split("def build_agentic_ai_surface_scorecard", 1)[0]
         self.assertIn("class _LazyPandas", architecture_top_import_block)
         self.assertNotIn("import pandas as pd", architecture_top_import_block)
+        self.assertNotIn("from utils import", architecture_top_import_block)
+        self.assertNotIn("from utils.workflows import", architecture_top_import_block)
         self.assertNotIn("from utils.futures_governance import", architecture_top_import_block)
         architecture_platform_futures_preload = architecture_text.split("def _render_platform_futures(company", 1)[1].split(
             'if futures_view == "Overview":',
@@ -995,13 +1016,20 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("get_session()", live_monitor_render_preload)
         self.assertNotIn("render_workflow_module(", workload_render_default)
         self.assertNotIn("get_session()", architecture_render_preload)
+        self.assertIn("class _LazyPandas", security_posture_import_block)
+        self.assertNotIn("import pandas as pd", security_posture_import_block)
+        self.assertNotIn("from utils import", security_posture_import_block)
+        self.assertNotIn("from utils.workflows import", security_posture_import_block)
         self.assertNotIn("get_session()", security_posture_render_preload)
         self.assertNotIn("_render_privileged_grant_readiness(", security_posture_default_preload)
         self.assertNotIn("_render_security_source_health(", security_posture_default_preload)
         self.assertNotIn("render_workflow_module(", security_posture_view_preload)
+        self.assertIn("def _security_action_brief", security_posture_text)
+        self.assertIn('st.markdown("**Action Brief**")', security_posture_text)
         self.assertNotIn("get_session()", security_access_render_preload)
         self.assertNotIn("get_session()", change_drift_render_preload)
         self.assertNotIn("render_workflow_module(", change_drift_default_preload)
+        self.assertIn('st.markdown("**Action Brief**")', change_drift_text)
         self.assertNotIn("get_session()", object_change_render_preload)
         self.assertIn("Recovery readiness", change_drift_text)
         self.assertIn("CHANGE_DRIFT_VIEWS", change_drift_text)
@@ -1125,6 +1153,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("from sections import detailed_diagnosis", query_workbench_text)
         self.assertIn("_query_history_exprs()", query_analysis_text)
         self.assertIn("workload_operations_snapshot", workload_operations_text)
+        self.assertNotIn("from utils import", workload_operations_import_block)
+        self.assertNotIn("from utils.workflows import", workload_operations_import_block)
         self.assertIn("build_mart_control_room_summary_sql", workload_operations_text)
         self.assertIn("WORKLOAD_OPERATIONS_VIEWS", workload_operations_text)
         self.assertIn('"Workload Brief"', workload_operations_text)

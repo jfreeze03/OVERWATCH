@@ -5,28 +5,8 @@ import re
 
 import streamlit as st
 
-from config import ARCHITECTURE_OBJECTIVES, THRESHOLDS
-from utils import (
-    download_csv,
-    filter_existing_columns,
-    format_snowflake_error,
-    freshness_note,
-    get_active_company,
-    get_active_environment,
-    get_global_filter_clause,
-    get_session,
-    load_owner_directory,
-    load_warehouse_inventory,
-    metric_confidence_label,
-    resolve_owner_context,
-    run_query,
-    safe_float,
-    safe_int,
-    sql_literal,
-    show_to_df,
-    upsert_actions,
-)
-from utils.workflows import render_operator_briefing, render_priority_dataframe
+from config import ARCHITECTURE_OBJECTIVES, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, THRESHOLDS
+import utils as _utils
 from utils.section_guidance import defer_section_note
 
 
@@ -45,6 +25,63 @@ class _LazyPandas:
 
 
 pd = _LazyPandas()
+
+
+def _lazy_util(name: str):
+    def _call(*args, **kwargs):
+        return getattr(_utils, name)(*args, **kwargs)
+
+    _call.__name__ = name
+    return _call
+
+
+download_csv = _lazy_util("download_csv")
+filter_existing_columns = _lazy_util("filter_existing_columns")
+format_snowflake_error = _lazy_util("format_snowflake_error")
+freshness_note = _lazy_util("freshness_note")
+get_global_filter_clause = _lazy_util("get_global_filter_clause")
+get_session = _lazy_util("get_session")
+load_owner_directory = _lazy_util("load_owner_directory")
+load_warehouse_inventory = _lazy_util("load_warehouse_inventory")
+metric_confidence_label = _lazy_util("metric_confidence_label")
+render_priority_dataframe = _lazy_util("render_priority_dataframe")
+resolve_owner_context = _lazy_util("resolve_owner_context")
+run_query = _lazy_util("run_query")
+show_to_df = _lazy_util("show_to_df")
+sql_literal = _lazy_util("sql_literal")
+upsert_actions = _lazy_util("upsert_actions")
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value != value:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value != value:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_active_company() -> str:
+    return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+
+
+def get_active_environment() -> str:
+    return str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+
+
+def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
+    _ = columns
+    for label, detail in items:
+        defer_section_note(f"{label}: {detail}")
 
 
 def _is_dataframe(value: object) -> bool:

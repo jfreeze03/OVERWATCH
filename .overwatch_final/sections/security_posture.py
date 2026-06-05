@@ -2,42 +2,155 @@
 from __future__ import annotations
 
 from datetime import datetime
+from importlib import import_module
 
-import pandas as pd
 import streamlit as st
 
-from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE
-from utils import (
-    defer_source_note,
-    filter_existing_columns,
-    format_snowflake_error,
-    get_active_company,
-    get_active_environment,
-    get_db_filter_clause,
-    get_environment_case_expr,
-    get_environment_filter_clause,
-    environment_label_for_database,
-    get_session,
-    get_user_filter_clause,
-    mart_object_name,
-    make_action_id,
-    resolve_owner_context,
-    run_query,
-    safe_float,
-    safe_identifier,
-    safe_int,
-    sql_literal,
-    action_queue_environment_clause,
-    upsert_actions,
-)
-from utils.workflows import (
-    render_operator_briefing,
-    render_priority_dataframe,
-    render_signal_confidence,
-    render_workflow_module,
-    render_workflow_guide,
-    render_workflow_selector,
-)
+from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
+import utils as _utils
+from utils.section_guidance import defer_section_note, defer_source_note
+
+
+class _LazyPandas:
+    """Load pandas only after Security Posture needs dataframe work."""
+
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            import pandas as pandas_module
+
+            self._module = pandas_module
+        return self._module
+
+    def __getattr__(self, name: str):
+        return getattr(self._load(), name)
+
+
+pd = _LazyPandas()
+
+
+def _lazy_util(name: str):
+    def _call(*args, **kwargs):
+        return getattr(_utils, name)(*args, **kwargs)
+
+    _call.__name__ = name
+    return _call
+
+
+action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
+environment_label_for_database = _lazy_util("environment_label_for_database")
+filter_existing_columns = _lazy_util("filter_existing_columns")
+format_snowflake_error = _lazy_util("format_snowflake_error")
+get_db_filter_clause = _lazy_util("get_db_filter_clause")
+get_environment_case_expr = _lazy_util("get_environment_case_expr")
+get_environment_filter_clause = _lazy_util("get_environment_filter_clause")
+get_session = _lazy_util("get_session")
+get_user_filter_clause = _lazy_util("get_user_filter_clause")
+mart_object_name = _lazy_util("mart_object_name")
+make_action_id = _lazy_util("make_action_id")
+render_priority_dataframe = _lazy_util("render_priority_dataframe")
+resolve_owner_context = _lazy_util("resolve_owner_context")
+run_query = _lazy_util("run_query")
+safe_identifier = _lazy_util("safe_identifier")
+sql_literal = _lazy_util("sql_literal")
+upsert_actions = _lazy_util("upsert_actions")
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value != value:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value != value:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_active_company() -> str:
+    return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+
+
+def get_active_environment() -> str:
+    return str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+
+
+def _freshness_note(source: str) -> str:
+    source_key = str(source or "").lower()
+    if "information_schema" in source_key or source_key in {"live", "is"}:
+        return "Freshness: live INFORMATION_SCHEMA view"
+    if "account_usage" in source_key:
+        return "Freshness: ACCOUNT_USAGE can lag up to about 45-90 minutes"
+    if "mart" in source_key or "overwatch" in source_key:
+        return "Freshness: OVERWATCH mart refresh cadence"
+    return "Freshness: depends on source view availability"
+
+
+def _metric_confidence_label(kind: str) -> str:
+    labels = {
+        "exact": "Source basis: Exact",
+        "allocated": "Source basis: Allocated / estimated from exact source records",
+        "estimated": "Source basis: Estimated",
+    }
+    return labels.get(str(kind or "").lower(), "Source basis: Calculation depends on available account metadata")
+
+
+def render_signal_confidence(*, source: str = "ACCOUNT_USAGE", confidence: str = "exact", scope_note: str = "") -> None:
+    parts = [_freshness_note(source), _metric_confidence_label(confidence)]
+    if scope_note:
+        parts.append(scope_note)
+    defer_source_note(*parts)
+
+
+def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
+    _ = columns
+    for label, detail in items:
+        defer_section_note(f"{label}: {detail}")
+
+
+def render_workflow_guide(summary: str, rows) -> None:
+    defer_section_note(summary)
+    for trigger, action in rows:
+        defer_section_note(f"{trigger}: {action}")
+
+
+def render_workflow_selector(
+    label: str,
+    key: str,
+    workflows,
+    details: dict[str, str] | None = None,
+    *,
+    columns: int = 4,
+    show_label: bool = False,
+) -> str:
+    selected = st.session_state.get(key, workflows[0] if workflows else "")
+    if selected not in workflows:
+        selected = workflows[0] if workflows else ""
+        st.session_state[key] = selected
+    if label and show_label:
+        st.caption(label)
+    return str(st.selectbox(label, list(workflows), key=key))
+
+
+def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> None:
+    module_name = workflow_modules.get(str(workflow))
+    if not module_name:
+        st.warning(f"No module registered for workflow: {workflow}")
+        return
+    module = import_module(module_name)
+    render = getattr(module, "render", None)
+    if not callable(render):
+        st.warning(f"Workflow module has no render() function: {module_name}")
+        return
+    render()
 
 SECURITY_POSTURE_VIEWS = ("Security Brief", "Evidence Readiness", "Access Workflows")
 
@@ -1165,6 +1278,68 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
                 st.rerun()
 
 
+def _security_action_brief(summary, exceptions, meta: dict, company: str, environment: str, days: int) -> dict:
+    expected_meta = _security_scope_meta(company, environment, days)
+    loaded = (
+        summary is not None
+        and not getattr(summary, "empty", True)
+        and _security_meta_matches(meta, expected_meta)
+    )
+    if not loaded:
+        if summary is not None and not getattr(summary, "empty", True):
+            return {
+                "state": "Stale",
+                "headline": "Reload the security brief before acting.",
+                "detail": "Loaded evidence does not match the active company, environment, filters, or lookback.",
+            }
+        return {
+            "state": "Ready",
+            "headline": "Load identity, grant, MFA, and sharing evidence.",
+            "detail": "The brief stays quiet until you request the selected scope.",
+        }
+
+    row = summary.iloc[0]
+    failed_logins = safe_int(row.get("FAILED_LOGINS", 0))
+    users_without_mfa = safe_int(row.get("USERS_WITHOUT_MFA", 0))
+    recent_grants = safe_int(row.get("RECENT_GRANTS", 0))
+    shared_databases = safe_int(row.get("SHARED_DATABASES", 0))
+    priority_count = len(_security_priority_view(exceptions).head(3))
+    if users_without_mfa:
+        return {
+            "state": "MFA Watch",
+            "headline": "Review users without MFA before calling posture clean.",
+            "detail": f"{users_without_mfa:,} MFA gap(s), {failed_logins:,} failed login(s), and {recent_grants:,} recent grant change(s).",
+        }
+    if priority_count:
+        return {
+            "state": "Review",
+            "headline": "Validate priority security exceptions.",
+            "detail": f"{priority_count:,} priority finding(s) surfaced across access, login, grant, or sharing evidence.",
+        }
+    if shared_databases:
+        return {
+            "state": "Exposure Check",
+            "headline": "Validate shared database ownership and consumers.",
+            "detail": f"{shared_databases:,} shared database(s) present in the selected window.",
+        }
+    return {
+        "state": "Clear",
+        "headline": "No immediate security blocker in the loaded brief.",
+        "detail": f"{failed_logins:,} failed login(s) and {recent_grants:,} recent grant change(s) in scope.",
+    }
+
+
+def _render_security_action_brief(brief: dict) -> None:
+    with st.container(border=True):
+        label_col, detail_col = st.columns([1.1, 4.6])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption(str(brief.get("state") or "Review"))
+        with detail_col:
+            st.markdown(f"**{brief.get('headline') or 'Review security evidence.'}**")
+            st.caption(str(brief.get("detail") or ""))
+
+
 def _build_security_brief_markdown(
     *,
     company: str,
@@ -2283,6 +2458,14 @@ def render() -> None:
             ("Login failures, MFA, grants, or risky access", "Use Access posture."),
             ("External consumers or shared data exposure", "Use Data sharing exposure."),
         ],
+    )
+
+    days = safe_int(st.session_state.get("security_posture_brief_days", 30), 30)
+    summary = st.session_state.get("security_posture_summary")
+    exceptions = st.session_state.get("security_posture_exceptions")
+    meta = st.session_state.get("security_posture_meta", {})
+    _render_security_action_brief(
+        _security_action_brief(summary, exceptions, meta, company, environment, days)
     )
 
     days = st.slider("Security brief lookback (days)", 1, 90, 30, key="security_posture_brief_days")

@@ -283,6 +283,120 @@ def _warehouse_meta_matches(meta: dict | None, expected: dict | None) -> bool:
     return True
 
 
+def _warehouse_looks_like_frame(frame) -> bool:
+    return hasattr(frame, "empty") and hasattr(frame, "columns")
+
+
+def _warehouse_frame_has_rows(frame) -> bool:
+    return _warehouse_looks_like_frame(frame) and not frame.empty
+
+
+def _warehouse_frame_len(frame) -> int:
+    if not _warehouse_looks_like_frame(frame):
+        return 0
+    try:
+        return int(len(frame))
+    except TypeError:
+        return 0
+
+
+def _warehouse_column_sum(frame, column: str) -> float:
+    if not _warehouse_frame_has_rows(frame) or column not in frame.columns:
+        return 0.0
+    try:
+        return float(frame[column].fillna(0).sum())
+    except Exception:
+        return sum(safe_float(value) for value in frame[column].tolist())
+
+
+def _warehouse_value_count(frame, column: str, values: set[str]) -> int:
+    if not _warehouse_frame_has_rows(frame) or column not in frame.columns:
+        return 0
+    normalized = {str(value).upper() for value in values}
+    try:
+        return int(frame[column].fillna("").astype(str).str.upper().isin(normalized).sum())
+    except Exception:
+        return sum(1 for value in frame[column].tolist() if str(value).upper() in normalized)
+
+
+def _warehouse_action_brief(company: str, environment: str, days: int) -> dict:
+    overview = st.session_state.get("wh_df_wh")
+    overview_meta = st.session_state.get("wh_df_wh_meta")
+    overview_expected = _warehouse_scope_meta(company, environment, days)
+    overview_loaded = _warehouse_looks_like_frame(overview)
+    overview_current = overview_loaded and _warehouse_meta_matches(overview_meta, overview_expected)
+
+    capacity_days = safe_int(st.session_state.get("wh_capacity_days", 7), 7) or 7
+    capacity_meta = st.session_state.get("wh_capacity_meta")
+    capacity_expected = _warehouse_scope_meta(company, environment, capacity_days)
+    capacity_current = _warehouse_meta_matches(capacity_meta, capacity_expected)
+    summary = st.session_state.get("wh_capacity_summary")
+    exceptions = st.session_state.get("wh_capacity_exceptions")
+    high_risk = _warehouse_value_count(exceptions, "SEVERITY", {"Critical", "High"}) if capacity_current else 0
+
+    if overview_loaded and not overview_current:
+        return {
+            "state": "Stale",
+            "headline": "Reload Warehouse Data before acting.",
+            "detail": "Loaded warehouse evidence does not match the active company, environment, lookback, or global filters.",
+        }
+    if high_risk:
+        queued = 0
+        spill = 0
+        if _warehouse_frame_has_rows(summary):
+            row = summary.iloc[0]
+            queued = safe_int(row.get("QUEUED_QUERIES", 0))
+            spill = safe_int(row.get("SPILL_QUERIES", 0))
+        return {
+            "state": "Capacity Review",
+            "headline": "Review high-risk warehouse pressure first.",
+            "detail": (
+                f"{high_risk:,} Critical/High exception(s); verify "
+                f"{queued:,} queued and {spill:,} spill signal(s) before settings changes."
+            ),
+        }
+    if overview_current and _warehouse_frame_has_rows(overview):
+        warehouses = _warehouse_frame_len(overview)
+        total_queries = int(_warehouse_column_sum(overview, "TOTAL_QUERIES"))
+        remote_spill = _warehouse_column_sum(overview, "TOTAL_REMOTE_SPILL_GB")
+        return {
+            "state": "Loaded",
+            "headline": "Use the loaded overview before changing warehouse controls.",
+            "detail": (
+                f"{warehouses:,} warehouse(s), {total_queries:,} queries, "
+                f"and {remote_spill:,.1f} GB remote spill in the selected window."
+            ),
+        }
+    if overview_current and overview_loaded:
+        return {
+            "state": "No Rows",
+            "headline": "No warehouse activity found for this scope.",
+            "detail": "Confirm filters before opening specialist warehouse workflows.",
+        }
+    if st.session_state.get("wh_settings_inventory_error"):
+        return {
+            "state": "Metadata Gap",
+            "headline": "Warehouse metadata needs access before guardrails are complete.",
+            "detail": "Load overview evidence when Snowflake grants are ready; specialist workflows stay gated.",
+        }
+    return {
+        "state": "Ready",
+        "headline": "Load Warehouse Data before changing size, clusters, or suspend policy.",
+        "detail": "The overview stays quiet until the selected DBA scope is requested.",
+    }
+
+
+def _render_warehouse_action_brief(brief: dict) -> None:
+    with st.container(border=True):
+        label_col, detail_col = st.columns([1.1, 4.6])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption(str(brief.get("state") or "Review"))
+        with detail_col:
+            st.markdown(f"**{brief.get('headline') or 'Review warehouse evidence.'}**")
+            st.caption(str(brief.get("detail") or ""))
+
+
 def _warehouse_sql_exprs(session) -> dict[str, str]:
     """Resolve optional ACCOUNT_USAGE columns only when a live query is requested."""
     qh_cols = set(filter_existing_columns(
@@ -3314,6 +3428,11 @@ def render():
         role_col="role_name",
         db_col="database_name",
     )
+
+    selected_days = safe_int(st.session_state.get("wh_days", 7), 7) or 7
+    if selected_days < 1 or selected_days > 30:
+        selected_days = 7
+    _render_warehouse_action_brief(_warehouse_action_brief(company, environment, selected_days))
 
     render_operator_briefing(
         [

@@ -1,25 +1,121 @@
 # sections/workload_operations.py - consolidated DBA workload command center
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from importlib import import_module
+
 import streamlit as st
 
-from utils import (
-    build_mart_control_room_summary_sql,
-    defer_source_note,
-    format_snowflake_error,
-    get_active_company,
-    run_query,
-    safe_float,
-    safe_int,
-)
-from utils.workflows import (
-    migrate_legacy_workflow_state,
-    render_operator_briefing,
-    render_signal_confidence,
-    render_workflow_module,
-    render_workflow_guide,
-    render_workflow_selector,
-)
+from config import DEFAULT_COMPANY
+import utils as _utils
+from utils.section_guidance import defer_section_note, defer_source_note
+
+
+def _lazy_util(name: str):
+    def _call(*args, **kwargs):
+        return getattr(_utils, name)(*args, **kwargs)
+
+    _call.__name__ = name
+    return _call
+
+
+build_mart_control_room_summary_sql = _lazy_util("build_mart_control_room_summary_sql")
+format_snowflake_error = _lazy_util("format_snowflake_error")
+run_query = _lazy_util("run_query")
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or value != value:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value != value:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_active_company() -> str:
+    return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+
+
+def migrate_legacy_workflow_state(
+    legacy_key: str,
+    target_key: str,
+    mapping: Mapping[str, str],
+    *,
+    remove_legacy: bool = True,
+) -> None:
+    legacy_value = st.session_state.pop(legacy_key, None) if remove_legacy else st.session_state.get(legacy_key)
+    mapped = mapping.get(str(legacy_value or ""))
+    if mapped:
+        st.session_state[target_key] = mapped
+
+
+def render_workflow_module(workflow: str, workflow_modules: Mapping[str, str]) -> None:
+    module_name = workflow_modules.get(str(workflow))
+    if not module_name:
+        st.warning(f"No module registered for workflow: {workflow}")
+        return
+    module = import_module(module_name)
+    render = getattr(module, "render", None)
+    if not callable(render):
+        st.warning(f"Workflow module has no render() function: {module_name}")
+        return
+    render()
+
+
+def render_workflow_guide(summary: str, rows: Sequence[tuple[str, str]]) -> None:
+    defer_section_note(summary)
+    for trigger, action in rows:
+        defer_section_note(f"{trigger}: {action}")
+
+
+def render_operator_briefing(rows: Sequence[tuple[str, str]], *, columns: int = 4) -> None:
+    _ = columns
+    for label, detail in rows:
+        defer_section_note(f"{label}: {detail}")
+
+
+def render_workflow_selector(
+    label: str,
+    key: str,
+    workflows: Sequence[str],
+    details: Mapping[str, str] | None = None,
+    *,
+    columns: int = 4,
+) -> str:
+    selected = str(st.session_state.get(key, workflows[0] if workflows else "") or "")
+    if selected not in workflows:
+        selected = workflows[0] if workflows else ""
+        st.session_state[key] = selected
+
+    details = details or {}
+    items = list(workflows)
+    columns = max(1, min(int(columns or 4), 5))
+    for start in range(0, len(items), columns):
+        row = items[start:start + columns]
+        cols = st.columns(len(row))
+        for col, workflow in zip(cols, row):
+            with col:
+                is_selected = workflow == selected
+                if st.button(
+                    workflow,
+                    key=f"{key}_{start}_{workflow}",
+                    type="primary" if is_selected else "secondary",
+                    width="stretch",
+                    help=details.get(workflow) or None,
+                ):
+                    st.session_state[key] = workflow
+                    st.rerun()
+    return str(st.session_state.get(key, selected))
 
 
 WORKLOAD_OPERATIONS_VIEWS = ("Workload Brief", "Specialist Workflows")
@@ -233,11 +329,6 @@ def render() -> None:
         LEGACY_WORKFLOW_MAP,
     )
 
-    render_signal_confidence(
-        source="ACCOUNT_USAGE",
-        confidence="allocated",
-        scope_note="Task and procedure cost estimates use runtime plus available warehouse size and cloud-services credits.",
-    )
     _render_workload_snapshot(company)
     render_operator_briefing(
         [

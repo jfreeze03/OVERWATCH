@@ -3536,11 +3536,98 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
             )
 
 
+def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
+    data = st.session_state.get("cost_contract_cockpit")
+    meta = st.session_state.get("cost_contract_cockpit_meta", {})
+    err = str(st.session_state.get("cost_contract_cockpit_error", "") or "")
+    data_loaded = _looks_like_frame(data) and not data.empty
+    scope_matches = meta.get("company") == company and meta.get("days") == int(days)
+
+    if err:
+        return {
+            "state": "Unavailable",
+            "headline": "Cost cockpit did not load for this role or source.",
+            "detail": "Specialist cost workflows remain available; reload the cockpit when Snowflake access is ready.",
+        }
+    if not data_loaded:
+        return {
+            "state": "Ready",
+            "headline": "Load the cost cockpit before explaining bill movement.",
+            "detail": "The cockpit stays quiet until you request warehouse, contract, action, and savings proof.",
+        }
+    if not scope_matches:
+        return {
+            "state": "Stale",
+            "headline": "Reload Cost Cockpit before acting.",
+            "detail": "Loaded cost evidence does not match the active company or cockpit window.",
+        }
+
+    row = data.iloc[0]
+    current_credits = safe_float(row.get("CURRENT_CREDITS", 0))
+    prior_credits = safe_float(row.get("PRIOR_CREDITS", 0))
+    delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
+    top_wh = str(row.get("TOP_INCREASE_WAREHOUSE") or "No increase")
+    top_delta = safe_float(row.get("TOP_INCREASE_CREDITS", 0))
+    queue = st.session_state.get("cost_contract_queue")
+    open_actions = high_actions = 0
+    if _looks_like_frame(queue) and not queue.empty and "STATUS" in queue.columns:
+        open_mask = ~queue["STATUS"].isin(["Fixed", "Ignored"])
+        open_actions = int(open_mask.sum())
+        if "SEVERITY" in queue.columns:
+            high_actions = int((queue["SEVERITY"].isin(["Critical", "High"]) & open_mask).sum())
+
+    if delta_pct >= 20 or top_delta > 0:
+        return {
+            "state": "Bill Move",
+            "headline": "Explain the top warehouse movement first.",
+            "detail": f"{top_wh} moved {top_delta:+,.2f} credits; selected window is {delta_pct:+.1f}% versus prior.",
+        }
+    if high_actions:
+        return {
+            "state": "Action Queue",
+            "headline": "Work high-priority savings or cost-control actions.",
+            "detail": f"{high_actions:,} high-priority action(s) across {open_actions:,} open cost action(s).",
+        }
+    if current_credits > 0:
+        return {
+            "state": "Loaded",
+            "headline": "No dominant cost incident in the loaded cockpit.",
+            "detail": f"Selected window spend is about ${current_credits * credit_price:,.0f}; use workflows for attribution or value proof.",
+        }
+    return {
+        "state": "Clear",
+        "headline": "No warehouse spend surfaced in the loaded cockpit.",
+        "detail": "Use specialist workflows only if a chargeback, contract, or savings question remains.",
+    }
+
+
+def _render_cost_action_brief(brief: dict) -> None:
+    with st.container(border=True):
+        label_col, detail_col = st.columns([1.1, 4.6])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption(str(brief.get("state") or "Review"))
+        with detail_col:
+            st.markdown(f"**{brief.get('headline') or 'Review cost evidence.'}**")
+            st.caption(str(brief.get("detail") or ""))
+
+
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
+    selected_days = safe_int(st.session_state.get("cost_contract_cockpit_window", 7), 7)
+    if selected_days not in {7, 14, 30}:
+        selected_days = 7
+    _render_cost_action_brief(_cost_action_brief(company, selected_days, credit_price))
+
     st.subheader("Cost Control Cockpit")
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
-        days = st.selectbox("Cost cockpit window", [7, 14, 30], index=0, format_func=lambda d: f"{d} days")
+        days = st.selectbox(
+            "Cost cockpit window",
+            [7, 14, 30],
+            index=[7, 14, 30].index(selected_days),
+            format_func=lambda d: f"{d} days",
+            key="cost_contract_cockpit_window",
+        )
     with c2:
         if st.button("Load Cost Cockpit", key="cost_contract_cockpit_load", type="primary"):
             st.session_state.pop(_FULL_COCKPIT_BOARDS_KEY, None)

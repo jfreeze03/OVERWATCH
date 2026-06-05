@@ -785,6 +785,11 @@ def _change_meta_matches(meta: dict | None, expected: dict | None) -> bool:
     return True
 
 
+def _change_looks_like_frame(value) -> bool:
+    """Return True for dataframe-like values without forcing pandas import."""
+    return hasattr(value, "empty") and hasattr(value, "iloc") and hasattr(value, "columns")
+
+
 def _change_row_count(frame) -> int:
     return len(frame) if isinstance(frame, pd.DataFrame) else 0
 
@@ -1941,6 +1946,87 @@ def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> Non
                 st.session_state["change_drift_view"] = "Change Workflows"
                 st.session_state["change_drift_workflow"] = workflow
                 st.rerun()
+
+
+def _change_action_brief(summary, exceptions, meta: dict, company: str, environment: str, days: int) -> dict:
+    expected_meta = _change_scope_meta(company, environment, days)
+    loaded = (
+        _change_looks_like_frame(summary)
+        and not summary.empty
+        and _change_meta_matches(meta, expected_meta)
+    )
+    if not loaded:
+        if _change_looks_like_frame(summary) and not summary.empty:
+            return {
+                "state": "Stale",
+                "headline": "Reload the change brief before acting.",
+                "detail": "Loaded change evidence does not match the active company, environment, filters, or lookback.",
+            }
+        return {
+            "state": "Ready",
+            "headline": "Load recent DDL, grant, owner, policy, and drift evidence.",
+            "detail": "No Snowflake change evidence loads until you request the selected scope.",
+        }
+
+    row = summary.iloc[0]
+    object_changes = safe_int(row.get("OBJECT_CHANGES", 0))
+    access_changes = safe_int(row.get("ACCESS_CHANGES", 0))
+    policy_changes = safe_int(row.get("POLICY_CHANGES", 0))
+    owner_changes = safe_int(row.get("OWNER_CHANGES", 0))
+    destructive_changes = safe_int(row.get("DESTRUCTIVE_CHANGES", 0))
+    manual_drift = safe_int(row.get("MANUAL_DRIFT", 0))
+    score = _change_drift_score(
+        object_changes=object_changes,
+        access_changes=access_changes,
+        policy_changes=policy_changes,
+        owner_changes=owner_changes,
+        destructive_changes=destructive_changes,
+        manual_drift=manual_drift,
+    )
+    high_risk = 0
+    if _change_looks_like_frame(exceptions) and not exceptions.empty and "SEVERITY" in exceptions.columns:
+        high_risk = int(exceptions["SEVERITY"].isin(["Critical", "High"]).sum())
+
+    if destructive_changes or policy_changes or owner_changes:
+        return {
+            "state": "Control Review",
+            "headline": "Validate recovery-sensitive changes first.",
+            "detail": f"{destructive_changes:,} destructive, {policy_changes:,} policy, and {owner_changes:,} ownership change(s) need approval proof.",
+        }
+    if high_risk:
+        return {
+            "state": "Verify Now",
+            "headline": "Review high-priority change exceptions.",
+            "detail": f"{high_risk:,} Critical/High exception(s) across {object_changes + access_changes:,} object/access change(s).",
+        }
+    if manual_drift:
+        return {
+            "state": "Drift Watch",
+            "headline": "Compare manual changes against deployment evidence.",
+            "detail": f"{manual_drift:,} manual drift indicator(s) need source-control or ticket reconciliation.",
+        }
+    if score < 95:
+        return {
+            "state": _change_drift_rating(score),
+            "headline": "Review change volume before closing the window.",
+            "detail": f"{object_changes + access_changes:,} object/access change(s) loaded for the selected scope.",
+        }
+    return {
+        "state": "Controlled",
+        "headline": "No immediate change-control blocker in the loaded brief.",
+        "detail": f"{object_changes + access_changes:,} object/access change(s), {manual_drift:,} drift indicator(s).",
+    }
+
+
+def _render_change_action_brief(brief: dict) -> None:
+    with st.container(border=True):
+        label_col, detail_col = st.columns([1.1, 4.6])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption(str(brief.get("state") or "Review"))
+        with detail_col:
+            st.markdown(f"**{brief.get('headline') or 'Review change evidence.'}**")
+            st.caption(str(brief.get("detail") or ""))
 
 
 def _build_change_drift_markdown(
@@ -3728,6 +3814,16 @@ def render() -> None:
             ("Loads, pipes, dynamic tables, or replication are suspect", "Use Data movement and replication."),
             ("A query, task, warehouse, or setup action is required", "Use Controlled DBA actions."),
         ],
+    )
+
+    days = safe_int(st.session_state.get("change_drift_brief_days", 14), 14)
+    if days < 1 or days > 90:
+        days = 14
+    summary = st.session_state.get("change_drift_summary")
+    exceptions = st.session_state.get("change_drift_exceptions")
+    meta = st.session_state.get("change_drift_meta", {})
+    _render_change_action_brief(
+        _change_action_brief(summary, exceptions, meta, company, environment, days)
     )
 
     days = st.slider("Change brief lookback (days)", 1, 90, 14, key="change_drift_brief_days")

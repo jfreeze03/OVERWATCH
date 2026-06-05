@@ -5,7 +5,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from config import ALERT_DB, ALERT_SCHEMA, DEFAULT_ALERT_EMAIL
+from config import ALERT_DB, ALERT_SCHEMA, DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
 from utils import (
     defer_source_note,
     get_active_company,
@@ -1078,7 +1078,12 @@ def render() -> None:
 
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
-        days = st.selectbox("Alert window", [1, 3, 7, 14, 30], index=2, format_func=lambda value: f"{value} days")
+        days = st.selectbox(
+            "Alert window",
+            DAY_WINDOW_OPTIONS,
+            index=DAY_WINDOW_OPTIONS.index(DEFAULT_DAY_WINDOW),
+            format_func=lambda value: f"{value} days",
+        )
     with c2:
         limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
     with c3:

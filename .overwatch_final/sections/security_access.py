@@ -39,6 +39,49 @@ SECURITY_ACCESS_PANES = (
 )
 
 
+def _user_mfa_column_exprs(user_cols: set[str]) -> dict[str, str]:
+    """Return USERS projections that work across old and new Snowflake accounts."""
+    normalized = {str(col or "").upper() for col in user_cols}
+    if "HAS_MFA" in normalized:
+        mfa_expr = "COALESCE(TRY_TO_BOOLEAN(u.has_mfa), FALSE) AS has_mfa"
+        mfa_source_expr = "'HAS_MFA' AS mfa_source"
+    elif "EXT_AUTHN_DUO" in normalized:
+        mfa_expr = "COALESCE(TRY_TO_BOOLEAN(u.ext_authn_duo), FALSE) AS has_mfa"
+        mfa_source_expr = "'EXT_AUTHN_DUO' AS mfa_source"
+    else:
+        mfa_expr = "NULL::BOOLEAN AS has_mfa"
+        mfa_source_expr = "'UNAVAILABLE' AS mfa_source"
+    return {
+        "last_success_login_expr": (
+            "u.last_success_login"
+            if "LAST_SUCCESS_LOGIN" in normalized else "NULL::TIMESTAMP_NTZ"
+        ),
+        "has_password_expr": (
+            "COALESCE(TRY_TO_BOOLEAN(u.has_password), FALSE) AS has_password"
+            if "HAS_PASSWORD" in normalized else "NULL::BOOLEAN AS has_password"
+        ),
+        "mfa_expr": mfa_expr,
+        "mfa_source_expr": mfa_source_expr,
+    }
+
+
+def _build_mfa_coverage_sql(user_exprs: dict[str, str], user_filter_u: str = "") -> str:
+    return f"""
+        SELECT
+            u.name AS user_name,
+            {user_exprs["has_password_expr"]},
+            {user_exprs["mfa_expr"]},
+            {user_exprs["mfa_source_expr"]},
+            u.disabled,
+            COALESCE({user_exprs["last_success_login_expr"]}, u.created_on) AS last_login
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
+        WHERE u.deleted_on IS NULL
+          AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
+          {user_filter_u}
+        ORDER BY has_mfa, user_name
+    """
+
+
 def _mart_company_filter(alias: str, company: str) -> str:
     if str(company or "ALL").upper() == "ALL":
         return ""
@@ -1150,22 +1193,9 @@ def render():
             user_cols = set(filter_existing_columns(
                 get_session(),
                 "SNOWFLAKE.ACCOUNT_USAGE.USERS",
-                ["LAST_SUCCESS_LOGIN", "HAS_PASSWORD", "EXT_AUTHN_DUO"],
+                ["LAST_SUCCESS_LOGIN", "HAS_PASSWORD", "HAS_MFA", "EXT_AUTHN_DUO"],
             ))
-        return {
-            "last_success_login_expr": (
-                "u.last_success_login"
-                if "LAST_SUCCESS_LOGIN" in user_cols else "NULL::TIMESTAMP_NTZ"
-            ),
-            "has_password_expr": (
-                "u.has_password AS has_password"
-                if "HAS_PASSWORD" in user_cols else "NULL::BOOLEAN AS has_password"
-            ),
-            "mfa_expr": (
-                "u.ext_authn_duo AS has_mfa"
-                if "EXT_AUTHN_DUO" in user_cols else "NULL::BOOLEAN AS has_mfa"
-            ),
-        }
+        return _user_mfa_column_exprs(user_cols)
 
     active_view = st.radio(
         "Security Access view",
@@ -1675,27 +1705,41 @@ def render():
         if st.button("Check MFA", key="mfa_check"):
             try:
                 user_exprs = _user_column_exprs()
-                has_password_expr = user_exprs["has_password_expr"]
-                mfa_expr = user_exprs["mfa_expr"]
-                df_mfa = run_query(f"""
-                    SELECT u.name AS user_name, {has_password_expr},
-                           {mfa_expr}, u.disabled,
-                           MAX(l.event_timestamp) AS last_login
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
-                    LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY l ON u.name = l.user_name
-                    WHERE u.deleted_on IS NULL AND u.disabled = 'false'
-                      {user_filter_u}
-                    GROUP BY u.name, has_password, has_mfa, u.disabled
-                    ORDER BY has_mfa, user_name
-                """, ttl_key=f"security_mfa_{company}", tier="standard")
+                df_mfa = run_query(
+                    _build_mfa_coverage_sql(user_exprs, user_filter_u),
+                    ttl_key=f"security_mfa_{company}",
+                    tier="standard",
+                )
                 st.session_state["sec_df_mfa"] = df_mfa
             except Exception as e:
                 st.warning(f"MFA check unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_mfa") is not None and not st.session_state["sec_df_mfa"].empty:
             df_m = st.session_state["sec_df_mfa"]
-            mfa_col = "HAS_MFA" if "HAS_MFA" in df_m.columns else "EXT_AUTHN_DUO"
-            no_mfa = df_m[df_m[mfa_col].astype(str).str.lower() != "true"] if mfa_col in df_m.columns else df_m
+            if "HAS_MFA" not in df_m.columns:
+                st.info("Snowflake did not expose an MFA signal column to this role. Active users are listed for IAM follow-up.")
+                render_priority_dataframe(
+                    df_m,
+                    title="Active users without an exposed MFA signal",
+                    priority_columns=["USER_NAME", "HAS_PASSWORD", "MFA_SOURCE", "LAST_LOGIN"],
+                    sort_by=["LAST_LOGIN"],
+                    ascending=True,
+                    raw_label="All active user rows",
+                )
+                return
+            mfa_source = df_m.get("MFA_SOURCE")
+            if mfa_source is not None and mfa_source.astype(str).str.upper().eq("UNAVAILABLE").all():
+                st.info("Snowflake did not expose HAS_MFA or EXT_AUTHN_DUO to this role. Confirm MFA posture in IAM.")
+                render_priority_dataframe(
+                    df_m,
+                    title="Active users without an exposed MFA signal",
+                    priority_columns=["USER_NAME", "HAS_PASSWORD", "MFA_SOURCE", "LAST_LOGIN"],
+                    sort_by=["LAST_LOGIN"],
+                    ascending=True,
+                    raw_label="All active user rows",
+                )
+                return
+            no_mfa = df_m[df_m["HAS_MFA"].astype(str).str.lower() != "true"]
             c1, c2 = st.columns(2)
             c1.metric("Users Without MFA",  len(no_mfa),    delta_color="inverse")
             c2.metric("MFA Coverage",       f"{(1-len(no_mfa)/max(len(df_m),1))*100:.0f}%")

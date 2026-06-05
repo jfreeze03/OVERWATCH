@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from config import DAY_WINDOW_OPTIONS, DEFAULT_DAY_WINDOW
 from utils import (
     build_cost_formula_audit,
     build_schema_migration_contract,
@@ -92,7 +93,12 @@ def render() -> None:
 
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
-        days = st.selectbox("FinOps window", [1, 3, 7, 14, 30], index=2, format_func=lambda value: f"{value} days")
+        days = st.selectbox(
+            "FinOps window",
+            DAY_WINDOW_OPTIONS,
+            index=DAY_WINDOW_OPTIONS.index(DEFAULT_DAY_WINDOW),
+            format_func=lambda value: f"{value} days",
+        )
     with c2:
         if st.button("Load FinOps Controls", key="finops_control_load", type="primary", width="stretch"):
             session = get_session_for_action(

@@ -6,7 +6,15 @@ from pathlib import Path
 import streamlit as st
 from importlib import import_module
 
-from config import DEFAULT_ALERT_EMAIL, DEFAULT_COMPANY, DEFAULTS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
+from config import (
+    DAY_WINDOW_OPTIONS,
+    DEFAULT_ALERT_EMAIL,
+    DEFAULT_COMPANY,
+    DEFAULTS,
+    DEFAULT_DAY_WINDOW,
+    ETL_AUDIT_DB,
+    ETL_AUDIT_SCHEMA,
+)
 import utils as _utils
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -53,6 +61,7 @@ build_snowflake_service_cost_lens_sql = _lazy_util("build_snowflake_service_cost
 credits_to_dollars = _lazy_util("credits_to_dollars")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 get_session_for_action = _lazy_util("get_session_for_action")
+get_user_filter_clause = _lazy_util("get_user_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
 run_query = _lazy_util("run_query")
@@ -86,6 +95,127 @@ def get_active_company() -> str:
 
 def get_credit_price() -> float:
     return safe_float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)), 3.68)
+
+
+def _altair():
+    """Import Altair only when the cost splash actually renders charts."""
+    import altair as alt
+
+    return alt
+
+
+def _cost_chart_palette() -> dict[str, str]:
+    theme_key = str(st.session_state.get("active_theme", "carbon") or "carbon")
+    palettes = {
+        "carbon": {"bar": "#29B5E8", "line": "#71D3DC", "risk": "#F97316"},
+        "terminal": {"bar": "#0068B7", "line": "#29B5E8", "risk": "#B45309"},
+        "corporate": {"bar": "#B00020", "line": "#0F7894", "risk": "#D97706"},
+        "roll_tide": {"bar": "#981D32", "line": "#74645D", "risk": "#B45309"},
+        "war_eagle": {"bar": "#DD550C", "line": "#71D3DC", "risk": "#F97316"},
+    }
+    return palettes.get(theme_key, palettes["carbon"])
+
+
+def _render_spend_trend_chart(trend: pd.DataFrame, credit_price: float) -> None:
+    if not _looks_like_frame(trend) or trend.empty or not {"USAGE_DATE", "DAILY_CREDITS"}.issubset(set(trend.columns)):
+        st.caption("No daily spend trend rows loaded for this scope.")
+        return
+
+    trend_plot = trend[["USAGE_DATE", "DAILY_CREDITS"]].copy()
+    trend_plot["USAGE_DATE"] = pd.to_datetime(trend_plot["USAGE_DATE"], errors="coerce")
+    trend_plot["SPEND_USD"] = pd.to_numeric(trend_plot["DAILY_CREDITS"], errors="coerce").fillna(0).apply(
+        lambda value: credits_to_dollars(safe_float(value), credit_price)
+    )
+    trend_plot = trend_plot.dropna(subset=["USAGE_DATE"]).sort_values("USAGE_DATE")
+    if trend_plot.empty:
+        st.caption("No daily spend trend rows loaded for this scope.")
+        return
+    trend_plot["ROLLING_SPEND_USD"] = trend_plot["SPEND_USD"].rolling(
+        window=min(7, max(1, len(trend_plot))),
+        min_periods=1,
+    ).mean()
+
+    palette = _cost_chart_palette()
+    alt = _altair()
+    base = alt.Chart(trend_plot).encode(
+        x=alt.X(
+            "USAGE_DATE:T",
+            title=None,
+            axis=alt.Axis(format="%b %d", labelAngle=-35, labelOverlap=True),
+        )
+    )
+    bars = base.mark_bar(color=palette["bar"], opacity=0.62, cornerRadiusTopLeft=2, cornerRadiusTopRight=2).encode(
+        y=alt.Y("SPEND_USD:Q", title="Spend", axis=alt.Axis(format="$,.0f")),
+        tooltip=[
+            alt.Tooltip("USAGE_DATE:T", title="Date", format="%Y-%m-%d"),
+            alt.Tooltip("SPEND_USD:Q", title="Daily spend", format="$,.2f"),
+            alt.Tooltip("ROLLING_SPEND_USD:Q", title="Rolling avg", format="$,.2f"),
+        ],
+    )
+    line = base.mark_line(color=palette["line"], strokeWidth=3).encode(
+        y=alt.Y("ROLLING_SPEND_USD:Q", title="Spend"),
+    )
+    points = base.mark_point(color=palette["line"], filled=True, size=42).encode(
+        y="ROLLING_SPEND_USD:Q",
+    )
+    st.altair_chart((bars + line + points).properties(height=265), width="stretch")
+
+
+def _render_warehouse_ranking_chart(warehouse_delta: pd.DataFrame, credit_price: float) -> None:
+    required = {"WAREHOUSE_NAME", "CURRENT_CREDITS"}
+    if not _looks_like_frame(warehouse_delta) or warehouse_delta.empty or not required.issubset(set(warehouse_delta.columns)):
+        st.caption("No warehouse ranking rows loaded for this scope.")
+        return
+
+    ranking = warehouse_delta.copy()
+    for column in ("CURRENT_CREDITS", "PRIOR_CREDITS", "CREDIT_DELTA", "PCT_DELTA"):
+        if column not in ranking.columns:
+            ranking[column] = 0
+        ranking[column] = pd.to_numeric(ranking[column], errors="coerce").fillna(0)
+    ranking["CURRENT_SPEND_USD"] = ranking["CURRENT_CREDITS"].apply(
+        lambda value: credits_to_dollars(safe_float(value), credit_price)
+    )
+    ranking["PRIOR_SPEND_USD"] = ranking["PRIOR_CREDITS"].apply(
+        lambda value: credits_to_dollars(safe_float(value), credit_price)
+    )
+    ranking["DELTA_SPEND_USD"] = ranking["CREDIT_DELTA"].apply(
+        lambda value: credits_to_dollars(safe_float(value), credit_price)
+    )
+    ranking["WAREHOUSE_NAME"] = ranking["WAREHOUSE_NAME"].astype(str)
+    ranking = ranking.sort_values(["CURRENT_SPEND_USD", "DELTA_SPEND_USD"], ascending=[False, False]).head(8)
+    if ranking.empty:
+        st.caption("No warehouse ranking rows loaded for this scope.")
+        return
+
+    palette = _cost_chart_palette()
+    alt = _altair()
+    chart = (
+        alt.Chart(ranking)
+        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4)
+        .encode(
+            x=alt.X("CURRENT_SPEND_USD:Q", title="Current spend", axis=alt.Axis(format="$,.0f")),
+            y=alt.Y(
+                "WAREHOUSE_NAME:N",
+                sort=alt.SortField(field="CURRENT_SPEND_USD", order="descending"),
+                title=None,
+                axis=alt.Axis(labelLimit=210),
+            ),
+            color=alt.condition(
+                "datum.DELTA_SPEND_USD > 0",
+                alt.value(palette["risk"]),
+                alt.value(palette["bar"]),
+            ),
+            tooltip=[
+                alt.Tooltip("WAREHOUSE_NAME:N", title="Warehouse"),
+                alt.Tooltip("CURRENT_SPEND_USD:Q", title="Current spend", format="$,.2f"),
+                alt.Tooltip("PRIOR_SPEND_USD:Q", title="Prior spend", format="$,.2f"),
+                alt.Tooltip("DELTA_SPEND_USD:Q", title="Spend delta", format="$+,.2f"),
+                alt.Tooltip("PCT_DELTA:Q", title="Delta %", format="+.1f"),
+            ],
+        )
+        .properties(height=max(230, min(360, 34 * len(ranking) + 54)))
+    )
+    st.altair_chart(chart, width="stretch")
 
 
 def _freshness_note(source: str) -> str:
@@ -341,6 +471,10 @@ def _warehouse_hourly_table() -> str:
     return f"{safe_identifier(ETL_AUDIT_DB)}.{safe_identifier(ETL_AUDIT_SCHEMA)}.{safe_identifier('FACT_WAREHOUSE_HOURLY')}"
 
 
+def _cortex_daily_table() -> str:
+    return f"{safe_identifier(ETL_AUDIT_DB)}.{safe_identifier(ETL_AUDIT_SCHEMA)}.{safe_identifier('FACT_CORTEX_DAILY')}"
+
+
 def _build_cost_splash_daily_trend_sql(company: str, days: int, *, mart: bool = True) -> str:
     table = _warehouse_hourly_table() if mart else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
     ts_col = "hour_start" if mart else "start_time"
@@ -406,6 +540,105 @@ def _build_cost_splash_warehouse_delta_sql(company: str, days: int, *, mart: boo
         FULL OUTER JOIN prior_wh p ON c.warehouse_name = p.warehouse_name
         ORDER BY ABS(COALESCE(c.credits, 0) - COALESCE(p.credits, 0)) DESC
         LIMIT 25
+    """
+
+
+def _build_cost_splash_cortex_sql(company: str, days: int, credit_price: float, *, mart: bool = True) -> str:
+    days_int = max(int(days), 1)
+    ai_credit_rate = safe_float(DEFAULTS.get("ai_credit_price"), 2.20)
+    if mart:
+        table = _cortex_daily_table()
+        company_filter = (
+            ""
+            if str(company or "").upper() == "ALL"
+            else f"AND UPPER(COALESCE(company, '')) = UPPER({sql_literal(company, 100)})"
+        )
+        return f"""
+            WITH user_rollup AS (
+                SELECT
+                    COALESCE(NULLIF(user_id, ''), 'Unknown user') AS user_name,
+                    SUM(COALESCE(credits_used, 0)) AS total_credits,
+                    SUM(COALESCE(est_cost_usd, COALESCE(credits_used, 0) * {ai_credit_rate})) AS spend_usd,
+                    SUM(COALESCE(request_count, 0)) AS requests
+                FROM {table}
+                WHERE usage_date >= DATEADD('DAY', -{days_int}, CURRENT_DATE())
+                  AND usage_date < CURRENT_DATE()
+                  {company_filter}
+                GROUP BY COALESCE(NULLIF(user_id, ''), 'Unknown user')
+            ),
+            totals AS (
+                SELECT
+                    SUM(total_credits) AS cortex_credits,
+                    SUM(spend_usd) AS cortex_spend_usd,
+                    SUM(requests) AS cortex_requests
+                FROM user_rollup
+            ),
+            top_user AS (
+                SELECT
+                    user_name AS top_cortex_user,
+                    spend_usd AS top_cortex_user_spend_usd
+                FROM user_rollup
+                QUALIFY ROW_NUMBER() OVER (ORDER BY spend_usd DESC, user_name) = 1
+            )
+            SELECT
+                ROUND(COALESCE(t.cortex_spend_usd, 0), 2) AS cortex_spend_usd,
+                ROUND(COALESCE(t.cortex_credits, 0), 6) AS cortex_credits,
+                COALESCE(t.cortex_requests, 0) AS cortex_requests,
+                COALESCE(u.top_cortex_user, 'No Cortex user') AS top_cortex_user,
+                ROUND(COALESCE(u.top_cortex_user_spend_usd, 0), 2) AS top_cortex_user_spend_usd,
+                'OVERWATCH mart: FACT_CORTEX_DAILY' AS cortex_source
+            FROM totals t
+            LEFT JOIN top_user u ON TRUE
+        """
+
+    user_expr = "COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), 'Unknown user')"
+    user_filter = get_user_filter_clause("COALESCE(u.NAME, TO_VARCHAR(c.USER_ID), '')", company)
+    return f"""
+        WITH combined AS (
+            SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, 'SNOWSIGHT' AS source
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
+            WHERE USAGE_TIME >= DATEADD('DAY', -{days_int}, CURRENT_TIMESTAMP())
+              AND USAGE_TIME < CURRENT_TIMESTAMP()
+            UNION ALL
+            SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, 'CLI' AS source
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+            WHERE USAGE_TIME >= DATEADD('DAY', -{days_int}, CURRENT_TIMESTAMP())
+              AND USAGE_TIME < CURRENT_TIMESTAMP()
+        ),
+        user_rollup AS (
+            SELECT
+                {user_expr} AS user_name,
+                SUM(COALESCE(c.TOKEN_CREDITS, 0)) AS total_credits,
+                SUM(COALESCE(c.TOKEN_CREDITS, 0)) * {ai_credit_rate} AS spend_usd,
+                COUNT(*) AS requests
+            FROM combined c
+            LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
+            WHERE 1=1 {user_filter}
+            GROUP BY {user_expr}
+        ),
+        totals AS (
+            SELECT
+                SUM(total_credits) AS cortex_credits,
+                SUM(spend_usd) AS cortex_spend_usd,
+                SUM(requests) AS cortex_requests
+            FROM user_rollup
+        ),
+        top_user AS (
+            SELECT
+                user_name AS top_cortex_user,
+                spend_usd AS top_cortex_user_spend_usd
+            FROM user_rollup
+            QUALIFY ROW_NUMBER() OVER (ORDER BY spend_usd DESC, user_name) = 1
+        )
+        SELECT
+            ROUND(COALESCE(t.cortex_spend_usd, 0), 2) AS cortex_spend_usd,
+            ROUND(COALESCE(t.cortex_credits, 0), 6) AS cortex_credits,
+            COALESCE(t.cortex_requests, 0) AS cortex_requests,
+            COALESCE(u.top_cortex_user, 'No Cortex user') AS top_cortex_user,
+            ROUND(COALESCE(u.top_cortex_user_spend_usd, 0), 2) AS top_cortex_user_spend_usd,
+            'Live fallback: CORTEX_CODE usage history' AS cortex_source
+        FROM totals t
+        LEFT JOIN top_user u ON TRUE
     """
 
 
@@ -3511,24 +3744,25 @@ def _render_snowflake_cost_management_parity(company: str, days: int, credit_pri
             top = str(row.get("TOP_WAREHOUSES_BY_COST") or "").strip()
             if top:
                 st.caption(f"Top warehouses by cost: {top}")
-            render_priority_dataframe(
-                account,
-                title="Snowflake Account Overview parity summary",
-                priority_columns=[
-                    "SPEND_IN_CURRENCY_EST_USD",
-                    "SPEND_IN_CREDITS",
-                    "COMPUTE_PRICE_PER_CREDIT_USD",
-                    "AVERAGE_DAILY_COST_EST_USD",
-                    "AVERAGE_DAILY_CREDITS",
-                    "COMPUTE_CREDITS",
-                    "CLOUD_SERVICES_CREDITS",
-                    "ACTIVE_WAREHOUSES",
-                    "OBSERVED_DAYS",
-                ],
-                raw_label="All Snowflake Account Overview parity columns",
-                height=180,
-                max_rows=1,
-            )
+            with st.expander("Parity row details", expanded=False):
+                render_priority_dataframe(
+                    account,
+                    title="Snowflake Account Overview parity summary",
+                    priority_columns=[
+                        "SPEND_IN_CURRENCY_EST_USD",
+                        "SPEND_IN_CREDITS",
+                        "COMPUTE_PRICE_PER_CREDIT_USD",
+                        "AVERAGE_DAILY_COST_EST_USD",
+                        "AVERAGE_DAILY_CREDITS",
+                        "COMPUTE_CREDITS",
+                        "CLOUD_SERVICES_CREDITS",
+                        "ACTIVE_WAREHOUSES",
+                        "OBSERVED_DAYS",
+                    ],
+                    raw_label="All Snowflake Account Overview parity columns",
+                    height=180,
+                    max_rows=1,
+                )
 
         billed = result.get("billed")
         if result.get("billed_error"):
@@ -3666,18 +3900,24 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
         _build_cost_splash_warehouse_delta_sql(company, int(days), mart=False),
         f"cost_splash_warehouse_delta_{company}_{days}",
     )
+    cortex, cortex_source, cortex_error = _load_cost_splash_query(
+        _build_cost_splash_cortex_sql(company, int(days), credit_price, mart=True),
+        _build_cost_splash_cortex_sql(company, int(days), credit_price, mart=False),
+        f"cost_splash_cortex_{company}_{days}",
+    )
     run_rate, run_rate_source, run_rate_error = _load_cost_splash_query(
         build_mart_cost_run_rate_sql(company),
         _build_cost_run_rate_sql(company),
         f"cost_splash_run_rate_{company}",
     )
-    errors = [err for err in (cockpit_error, trend_error, delta_error, run_rate_error) if err]
-    source_parts = [src for src in (cockpit_source, trend_source, delta_source, run_rate_source) if src]
+    errors = [err for err in (cockpit_error, trend_error, delta_error, cortex_error, run_rate_error) if err]
+    source_parts = [src for src in (cockpit_source, trend_source, delta_source, cortex_source, run_rate_source) if src]
     splash = {
         "meta": meta,
         "cockpit": cockpit,
         "trend": trend,
         "warehouse_delta": warehouse_delta,
+        "cortex": cortex,
         "run_rate": run_rate,
         "source": " + ".join(dict.fromkeys(source_parts)),
         "errors": errors,
@@ -3690,7 +3930,9 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     cockpit = splash.get("cockpit", pd.DataFrame())
     trend = splash.get("trend", pd.DataFrame())
     warehouse_delta = splash.get("warehouse_delta", pd.DataFrame())
+    cortex = splash.get("cortex", pd.DataFrame())
     row = cockpit.iloc[0] if _looks_like_frame(cockpit) and not cockpit.empty else {}
+    cortex_row = cortex.iloc[0] if _looks_like_frame(cortex) and not cortex.empty else {}
     current_credits = safe_float(row.get("CURRENT_CREDITS", 0))
     prior_credits = safe_float(row.get("PRIOR_CREDITS", 0))
     delta_pct = ((current_credits - prior_credits) / prior_credits * 100) if prior_credits > 0 else 0.0
@@ -3701,8 +3943,9 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     peak_credits = 0.0
     if _looks_like_frame(trend) and not trend.empty and "DAILY_CREDITS" in trend.columns:
         peak_credits = safe_float(trend["DAILY_CREDITS"].max())
+    cortex_spend = safe_float(cortex_row.get("CORTEX_SPEND_USD", 0))
     return {
-        "has_data": current_credits > 0 or (_looks_like_frame(trend) and not trend.empty),
+        "has_data": current_credits > 0 or (_looks_like_frame(trend) and not trend.empty) or cortex_spend > 0,
         "current_credits": current_credits,
         "prior_credits": prior_credits,
         "spend": credits_to_dollars(current_credits, credit_price),
@@ -3711,6 +3954,11 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
         "delta_pct": delta_pct,
         "active_warehouses": active_warehouses,
         "top_warehouse": top_wh or "No warehouse",
+        "cortex_spend": cortex_spend,
+        "cortex_credits": safe_float(cortex_row.get("CORTEX_CREDITS", 0)),
+        "cortex_requests": safe_int(cortex_row.get("CORTEX_REQUESTS", 0)),
+        "top_cortex_user": str(cortex_row.get("TOP_CORTEX_USER") or "No Cortex user"),
+        "top_cortex_user_spend": safe_float(cortex_row.get("TOP_CORTEX_USER_SPEND_USD", 0)),
     }
 
 
@@ -3735,6 +3983,15 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
         with col:
             st.metric(label, value, delta=delta, delta_color="inverse" if delta else "normal")
 
+    top_ai_user = str(summary["top_cortex_user"] or "No Cortex user")
+    top_ai_user_display = top_ai_user if len(top_ai_user) <= 34 else top_ai_user[:31] + "..."
+    ai_cols = st.columns([1.0, 1.3, 1.0])
+    ai_cols[0].metric("Cortex Spend", f"${summary['cortex_spend']:,.2f}")
+    ai_cols[1].metric("Top AI User", top_ai_user_display, delta=f"${summary['top_cortex_user_spend']:,.2f}")
+    ai_cols[2].metric("AI Requests", f"{summary['cortex_requests']:,}")
+    if top_ai_user != top_ai_user_display:
+        st.caption(f"Top Cortex user: {top_ai_user}")
+
     if summary["delta_pct"] >= 20:
         st.warning(
             "Spend is moving materially above the prior window. "
@@ -3754,20 +4011,10 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
     chart_cols = st.columns([1.35, 1.0])
     with chart_cols[0]:
         st.markdown("**Spend Trend**")
-        if _looks_like_frame(trend) and not trend.empty and {"USAGE_DATE", "DAILY_CREDITS"}.issubset(set(trend.columns)):
-            trend_plot = trend[["USAGE_DATE", "DAILY_CREDITS"]].copy()
-            trend_plot["Spend"] = trend_plot["DAILY_CREDITS"].apply(lambda value: credits_to_dollars(safe_float(value), credit_price))
-            st.line_chart(trend_plot.set_index("USAGE_DATE")[["Spend"]], height=240)
-        else:
-            st.caption("No daily spend trend rows loaded for this scope.")
+        _render_spend_trend_chart(trend, credit_price)
     with chart_cols[1]:
         st.markdown("**Warehouse Ranking**")
-        if _looks_like_frame(warehouse_delta) and not warehouse_delta.empty and {"WAREHOUSE_NAME", "CURRENT_CREDITS"}.issubset(set(warehouse_delta.columns)):
-            ranking = warehouse_delta[["WAREHOUSE_NAME", "CURRENT_CREDITS"]].copy().head(8)
-            ranking["Spend"] = ranking["CURRENT_CREDITS"].apply(lambda value: credits_to_dollars(safe_float(value), credit_price))
-            st.bar_chart(ranking.set_index("WAREHOUSE_NAME")[["Spend"]], height=240)
-        else:
-            st.caption("No warehouse ranking rows loaded for this scope.")
+        _render_warehouse_ranking_chart(warehouse_delta, credit_price)
 
 
 def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
@@ -3894,16 +4141,19 @@ def _render_cost_operating_snapshot(snapshot: dict) -> None:
 
 
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
-    selected_days = safe_int(st.session_state.get("cost_contract_cockpit_window", 7), 7)
-    if selected_days not in {7, 14, 30}:
-        selected_days = 7
+    selected_days = safe_int(
+        st.session_state.get("cost_contract_cockpit_window", DEFAULT_DAY_WINDOW),
+        DEFAULT_DAY_WINDOW,
+    )
+    if selected_days not in DAY_WINDOW_OPTIONS:
+        selected_days = DEFAULT_DAY_WINDOW
 
     controls = st.columns([1.0, 1.0, 2.6])
     with controls[0]:
         days = st.selectbox(
             "Cost window",
-            [7, 14, 30],
-            index=[7, 14, 30].index(selected_days),
+            DAY_WINDOW_OPTIONS,
+            index=DAY_WINDOW_OPTIONS.index(selected_days),
             format_func=lambda d: f"{d} days",
             key="cost_contract_cockpit_window",
         )

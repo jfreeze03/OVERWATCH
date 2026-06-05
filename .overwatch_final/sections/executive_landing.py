@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS
+from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DEFAULTS, DAY_WINDOW_OPTIONS
 import utils as _utils
 from utils.section_guidance import defer_source_note
 
@@ -301,7 +301,12 @@ def render() -> None:
 
     window_col, _window_spacer = st.columns([1.2, 3.0])
     with window_col:
-        days = st.selectbox("Executive window", [1, 3, 7, 14, 30], index=2, format_func=lambda value: f"{value} days")
+        days = st.selectbox(
+            "Executive window",
+            DAY_WINDOW_OPTIONS,
+            index=DAY_WINDOW_OPTIONS.index(DEFAULT_DAY_WINDOW),
+            format_func=lambda value: f"{value} days",
+        )
     snapshot = st.session_state.get("executive_landing_snapshot")
     summary = None
     if isinstance(snapshot, dict):

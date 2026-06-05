@@ -16,6 +16,8 @@ sys.path.insert(0, str(APP_ROOT))
 from config import (  # noqa: E402
     ALL_SECTIONS,
     ARCHITECTURE_OBJECTIVES,
+    DAY_WINDOW_OPTIONS,
+    DEFAULT_DAY_WINDOW,
     NAV_GROUPS,
     ROLE_SECTIONS,
     SECTION_ALIASES,
@@ -49,6 +51,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         )
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
         self.assertEqual(config_text.count("ROLE_SECTIONS = {"), 1)
+        self.assertEqual(DAY_WINDOW_OPTIONS, (1, 7, 14, 30, 60, 90))
+        self.assertEqual(DEFAULT_DAY_WINDOW, 7)
 
     def test_section_definitions_are_complete(self):
         for section in SECTION_DEFINITIONS:
@@ -961,7 +965,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _render_cost_operating_snapshot", cost_contract_text)
         self.assertIn("def _ensure_cost_splash", cost_contract_text)
         self.assertIn("def _render_cost_splash", cost_contract_text)
+        self.assertIn("def _build_cost_splash_cortex_sql", cost_contract_text)
+        self.assertIn("def _render_spend_trend_chart", cost_contract_text)
+        self.assertIn("def _render_warehouse_ranking_chart", cost_contract_text)
+        self.assertIn("st.altair_chart((bars + line + points)", cost_contract_text)
+        self.assertIn("Parity row details", cost_contract_text)
+        self.assertNotIn("st.line_chart(trend_plot", cost_contract_text)
+        self.assertNotIn("st.bar_chart(ranking", cost_contract_text)
         self.assertIn("Cost Overview", cost_contract_text)
+        self.assertIn("Cortex Spend", cost_contract_text)
+        self.assertIn("Top AI User", cost_contract_text)
         self.assertIn("Warehouse Ranking", cost_contract_text)
         self.assertIn('st.markdown("**Operating Snapshot**")', cost_contract_text)
         self.assertIn('cols = st.columns(4)', cost_contract_text)
@@ -972,6 +985,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         )[0]
         self.assertIn("_ensure_cost_splash(company, int(days), credit_price)", cost_watch_preload)
         self.assertNotIn("load_action_queue(session)", cost_watch_preload)
+        for label, shell_text in (
+            ("Alert Center", alert_center_text),
+            ("Cost & Contract", cost_contract_text),
+            ("Executive Landing", executive_landing_text),
+            ("FinOps Control", (APP_ROOT / "sections" / "finops_control.py").read_text(encoding="utf-8")),
+        ):
+            with self.subTest(day_window_options=label):
+                self.assertIn("DAY_WINDOW_OPTIONS", shell_text)
+                self.assertNotIn("[1, 3, 7, 14, 30]", shell_text)
+                self.assertNotIn("[7, 14, 30]", shell_text)
         for label, shell_text in (
             ("Executive Landing", executive_landing_text),
             ("Alert Center", alert_center_text),

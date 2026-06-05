@@ -83,6 +83,34 @@ def get_active_environment() -> str:
     return str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
 
 
+def _mfa_count_expr(user_cols: set[str]) -> str:
+    normalized = {str(col or "").upper() for col in user_cols}
+    if "HAS_MFA" in normalized:
+        return "COUNT_IF(COALESCE(TO_VARCHAR(has_mfa), 'false') <> 'true')"
+    if "EXT_AUTHN_DUO" in normalized:
+        return "COUNT_IF(COALESCE(TO_VARCHAR(ext_authn_duo), 'false') <> 'true')"
+    return "NULL::NUMBER"
+
+
+def _mfa_gap_predicate(user_cols: set[str], alias: str = "u") -> str:
+    normalized = {str(col or "").upper() for col in user_cols}
+    prefix = f"{alias}." if alias else ""
+    if "HAS_MFA" in normalized:
+        return f"AND COALESCE(TO_VARCHAR({prefix}has_mfa), 'false') <> 'true'"
+    if "EXT_AUTHN_DUO" in normalized:
+        return f"AND COALESCE(TO_VARCHAR({prefix}ext_authn_duo), 'false') <> 'true'"
+    return "AND 1 = 0"
+
+
+def _mfa_proof_label(user_cols: set[str]) -> str:
+    normalized = {str(col or "").upper() for col in user_cols}
+    if "HAS_MFA" in normalized:
+        return "ACCOUNT_USAGE.USERS HAS_MFA signal"
+    if "EXT_AUTHN_DUO" in normalized:
+        return "ACCOUNT_USAGE.USERS EXT_AUTHN_DUO signal"
+    return "ACCOUNT_USAGE.USERS MFA signal unavailable"
+
+
 def _freshness_note(source: str) -> str:
     source_key = str(source or "").lower()
     if "information_schema" in source_key or source_key in {"live", "is"}:
@@ -1435,12 +1463,11 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
     user_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.USERS",
-        ["EXT_AUTHN_DUO", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
+        ["HAS_MFA", "EXT_AUTHN_DUO", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
     ))
-    mfa_count_expr = (
-        "COUNT_IF(COALESCE(TO_VARCHAR(ext_authn_duo), 'false') <> 'true')"
-        if "EXT_AUTHN_DUO" in user_cols else "NULL::NUMBER"
-    )
+    mfa_count_expr = _mfa_count_expr(user_cols)
+    mfa_gap_predicate = _mfa_gap_predicate(user_cols)
+    mfa_proof = _mfa_proof_label(user_cols)
     password_count_expr = (
         "COUNT_IF(COALESCE(TO_VARCHAR(has_password), 'false') = 'true')"
         if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
@@ -1533,13 +1560,13 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
             1 AS event_count,
             0 AS distinct_sources,
             COALESCE({last_seen_expr}, u.created_on) AS last_seen,
-            'ACCOUNT_USAGE.USERS ext_authn_duo signal' AS proof_query,
+            '{mfa_proof}' AS proof_query,
             NULL::VARCHAR AS database_name
         FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
         WHERE u.deleted_on IS NULL
           AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
           {user_filter_u}
-          {"AND COALESCE(TO_VARCHAR(u.ext_authn_duo), 'false') <> 'true'" if "EXT_AUTHN_DUO" in user_cols else "AND 1 = 0"}
+          {mfa_gap_predicate}
     ),
     recent_grants AS (
         SELECT
@@ -1614,12 +1641,11 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
     user_cols = set(filter_existing_columns(
         session,
         "SNOWFLAKE.ACCOUNT_USAGE.USERS",
-        ["EXT_AUTHN_DUO", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
+        ["HAS_MFA", "EXT_AUTHN_DUO", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"],
     ))
-    mfa_count_expr = (
-        "COUNT_IF(COALESCE(TO_VARCHAR(ext_authn_duo), 'false') <> 'true')"
-        if "EXT_AUTHN_DUO" in user_cols else "NULL::NUMBER"
-    )
+    mfa_count_expr = _mfa_count_expr(user_cols)
+    mfa_gap_predicate = _mfa_gap_predicate(user_cols)
+    mfa_proof = _mfa_proof_label(user_cols)
     password_count_expr = (
         "COUNT_IF(COALESCE(TO_VARCHAR(has_password), 'false') = 'true')"
         if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
@@ -1721,13 +1747,13 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
             1 AS event_count,
             0 AS distinct_sources,
             COALESCE({last_seen_expr}, u.created_on) AS last_seen,
-            'ACCOUNT_USAGE.USERS ext_authn_duo signal' AS proof_query,
+            '{mfa_proof}' AS proof_query,
             NULL::VARCHAR AS database_name
         FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
         WHERE u.deleted_on IS NULL
           AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
           {user_filter_u}
-          {"AND COALESCE(TO_VARCHAR(u.ext_authn_duo), 'false') <> 'true'" if "EXT_AUTHN_DUO" in user_cols else "AND 1 = 0"}
+          {mfa_gap_predicate}
     ),
     recent_grants AS (
         SELECT

@@ -19,6 +19,9 @@ DEFAULTS = {
     "rt_interval_sec": 30,
 }
 
+DAY_WINDOW_OPTIONS = (1, 7, 14, 30, 60, 90)
+DEFAULT_DAY_WINDOW = 7
+
 THRESHOLDS = {
     "idle_warehouse_minutes": 10,
     "spill_warning_gb": 1.0,

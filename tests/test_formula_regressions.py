@@ -87,6 +87,7 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_governance_alert_rows,
     _build_cost_incident_timeline,
     _build_cost_run_rate_sql,
+    _build_cost_splash_cortex_sql,
     _build_cost_source_health_board,
     _build_cost_spike_root_cause_board,
     _build_native_cost_control_inventory,
@@ -198,6 +199,8 @@ from sections.recommendations import (  # noqa: E402
 )
 from sections.service_health import _value as service_value  # noqa: E402
 from sections.security_posture import (  # noqa: E402
+    _mfa_count_expr,
+    _mfa_gap_predicate,
     _security_action_queue_closure_sql,
     _security_access_review_readiness_for_row,
     _annotate_security_privileged_grant_readiness,
@@ -223,8 +226,10 @@ from sections.security_posture import (  # noqa: E402
     build_security_operability_fact_migration_sql,
 )
 from sections.security_access import (  # noqa: E402
+    _build_mfa_coverage_sql,
     _build_role_grant_change_plan,
     _build_role_grant_control_board,
+    _user_mfa_column_exprs,
 )
 from sections.stored_proc_tracker import (  # noqa: E402
     _build_procedure_reliability_action,
@@ -1094,6 +1099,21 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SUM(COALESCE(F.CREDITS, 0))", sql)
         self.assertIn("COUNT(DISTINCT F.QUERY_ID)", sql)
         self.assertIn("LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS", sql)
+
+    def test_cost_splash_cortex_sql_tracks_spend_and_top_user(self):
+        mart_sql = _build_cost_splash_cortex_sql("ALFA", 90, 3.68, mart=True).upper()
+        live_sql = _build_cost_splash_cortex_sql("Trexis", 60, 3.68, mart=False).upper()
+
+        self.assertIn("FACT_CORTEX_DAILY", mart_sql)
+        self.assertIn("CORTEX_SPEND_USD", mart_sql)
+        self.assertIn("TOP_CORTEX_USER", mart_sql)
+        self.assertIn("TOP_CORTEX_USER_SPEND_USD", mart_sql)
+        self.assertIn("DATEADD('DAY', -90", mart_sql)
+        self.assertIn("CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY", live_sql)
+        self.assertIn("CORTEX_CODE_CLI_USAGE_HISTORY", live_sql)
+        self.assertIn("TOKEN_CREDITS", live_sql)
+        self.assertIn("COALESCE(U.NAME, TO_VARCHAR(C.USER_ID), '') ILIKE 'TRXS_%'", live_sql)
+        self.assertIn("DATEADD('DAY', -60", live_sql)
 
     def test_recommendation_mart_sql_uses_preaggregated_facts(self):
         idle_sql = build_mart_recommendation_idle_sql("ALFA").upper()
@@ -3354,6 +3374,29 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(_security_action_for("MFA Gap")[0], "User/Auth")
         self.assertEqual(_security_action_for("Recent Grant")[0], "Grant/Role")
         self.assertEqual(_security_action_for("Shared Database Exposure")[0], "Shared Data")
+
+    def test_security_mfa_coverage_sql_prefers_has_mfa_and_avoids_alias_grouping(self):
+        exprs = _user_mfa_column_exprs({"HAS_MFA", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"})
+        sql = _build_mfa_coverage_sql(exprs, "AND u.name LIKE 'ALFA_%'").upper()
+
+        self.assertIn("TRY_TO_BOOLEAN(U.HAS_MFA)", sql)
+        self.assertIn("'HAS_MFA' AS MFA_SOURCE", sql)
+        self.assertIn("COALESCE(U.LAST_SUCCESS_LOGIN, U.CREATED_ON) AS LAST_LOGIN", sql)
+        self.assertIn("COALESCE(TO_VARCHAR(U.DISABLED), 'FALSE') = 'FALSE'", sql)
+        self.assertIn("AND U.NAME LIKE 'ALFA_%'", sql)
+        self.assertNotIn("LOGIN_HISTORY", sql)
+        self.assertNotIn("GROUP BY U.NAME, HAS_PASSWORD, HAS_MFA", sql)
+
+    def test_security_mfa_helpers_fallback_to_duo_and_block_when_unavailable(self):
+        duo_exprs = _user_mfa_column_exprs({"EXT_AUTHN_DUO"})
+        missing_exprs = _user_mfa_column_exprs(set())
+
+        self.assertIn("TRY_TO_BOOLEAN(u.ext_authn_duo)", duo_exprs["mfa_expr"])
+        self.assertIn("'EXT_AUTHN_DUO' AS mfa_source", duo_exprs["mfa_source_expr"])
+        self.assertIn("NULL::BOOLEAN AS has_mfa", missing_exprs["mfa_expr"])
+        self.assertEqual(_mfa_count_expr({"HAS_MFA"}), "COUNT_IF(COALESCE(TO_VARCHAR(has_mfa), 'false') <> 'true')")
+        self.assertEqual(_mfa_gap_predicate({"HAS_MFA"}), "AND COALESCE(TO_VARCHAR(u.has_mfa), 'false') <> 'true'")
+        self.assertEqual(_mfa_gap_predicate(set()), "AND 1 = 0")
 
     def test_security_brief_markdown_contains_evidence_summary(self):
         summary_row = {

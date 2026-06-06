@@ -50,6 +50,7 @@ get_user_filter_clause = _lazy_util("get_user_filter_clause")
 mart_object_name = _lazy_util("mart_object_name")
 make_action_id = _lazy_util("make_action_id")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+day_window_selectbox = _lazy_util("day_window_selectbox")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
@@ -1390,6 +1391,93 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
                 st.rerun()
 
 
+def _security_exception_strip_rows(summary, exceptions, meta: dict, company: str, environment: str, days: int) -> list[dict]:
+    expected_meta = _security_scope_meta(company, environment, days)
+    loaded = (
+        summary is not None
+        and not getattr(summary, "empty", True)
+        and _security_meta_matches(meta, expected_meta)
+    )
+    if not loaded:
+        return []
+    priority = _security_priority_view(exceptions).head(4)
+    if priority is not None and not priority.empty:
+        rows = []
+        for _, finding in priority.iterrows():
+            rows.append({
+                "severity": str(finding.get("SEVERITY") or "Medium"),
+                "signal": str(finding.get("FINDING_TYPE") or "Security finding"),
+                "entity": str(finding.get("ENTITY") or "unknown"),
+                "detail": (
+                    f"{safe_int(finding.get('EVENT_COUNT', 0)):,} event(s); "
+                    f"{finding.get('NEXT_ACTION') or _security_action_for(finding.get('FINDING_TYPE', ''))[1]}"
+                ),
+                "route": str(finding.get("NEXT_WORKFLOW") or _security_workflow_for(finding.get("FINDING_TYPE", ""))),
+            })
+        return rows
+
+    row = summary.iloc[0]
+    failed_logins = safe_int(row.get("FAILED_LOGINS", 0))
+    failed_users = safe_int(row.get("FAILED_USERS", 0))
+    users_without_mfa = safe_int(row.get("USERS_WITHOUT_MFA", 0))
+    recent_grants = safe_int(row.get("RECENT_GRANTS", 0))
+    shared_databases = safe_int(row.get("SHARED_DATABASES", 0))
+    rows: list[dict] = []
+    if users_without_mfa:
+        rows.append({
+            "severity": "High",
+            "signal": "MFA gaps",
+            "entity": "Users",
+            "detail": f"{users_without_mfa:,} user(s) missing MFA signal in the selected scope.",
+            "route": "Access posture",
+        })
+    if failed_logins:
+        rows.append({
+            "severity": "High" if failed_logins >= 25 or failed_users >= 5 else "Medium",
+            "signal": "Failed logins",
+            "entity": "Identity",
+            "detail": f"{failed_logins:,} failed login(s) across {failed_users:,} user(s).",
+            "route": "Access posture",
+        })
+    if recent_grants >= 25:
+        rows.append({
+            "severity": "Medium",
+            "signal": "Grant-change volume",
+            "entity": "Roles",
+            "detail": f"{recent_grants:,} grant change(s) in the lookback window.",
+            "route": "Privilege sprawl",
+        })
+    if shared_databases:
+        rows.append({
+            "severity": "Watch",
+            "signal": "Shared data exposure",
+            "entity": "Databases",
+            "detail": f"{shared_databases:,} shared/imported database(s) need owner and consumer validation.",
+            "route": "Data sharing exposure",
+        })
+    return rows[:4]
+
+
+def _render_security_exception_strip(rows: list[dict], *, loaded: bool = False) -> None:
+    st.markdown("**Exception Strip**")
+    if not loaded:
+        st.caption("Load the security brief to populate exception signals.")
+        return
+    if not rows:
+        st.success("No immediate security exceptions in the loaded summary.")
+        return
+    for row in rows[:4]:
+        severity = str(row.get("severity") or "Watch")
+        signal = str(row.get("signal") or "Security signal")
+        entity = str(row.get("entity") or "Scope")
+        detail = str(row.get("detail") or "")
+        route = str(row.get("route") or "Security Posture")
+        if severity.lower() in {"critical", "high"}:
+            st.warning(f"{severity}: {signal} - {entity}. {detail} Route: {route}.")
+        else:
+            st.info(f"{severity}: {signal} - {entity}. {detail} Route: {route}.")
+
+
 def _security_action_brief(summary, exceptions, meta: dict, company: str, environment: str, days: int) -> dict:
     expected_meta = _security_scope_meta(company, environment, days)
     loaded = (
@@ -1495,6 +1583,7 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
 def _paint_security_brief_chrome(
     brief_slot,
     snapshot_slot,
+    exception_slot,
     summary,
     exceptions,
     meta: dict,
@@ -1510,6 +1599,17 @@ def _paint_security_brief_chrome(
         _render_security_operating_snapshot(
             _security_operating_snapshot(summary, meta, company, environment, days)
         )
+    if exception_slot is not None:
+        loaded = (
+            summary is not None
+            and not getattr(summary, "empty", True)
+            and _security_meta_matches(meta, _security_scope_meta(company, environment, days))
+        )
+        with exception_slot.container():
+            _render_security_exception_strip(
+                _security_exception_strip_rows(summary, exceptions, meta, company, environment, days),
+                loaded=loaded,
+            )
 
 
 def _render_security_operability_fact_gate(company: str, environment: str, days: int) -> None:
@@ -2607,12 +2707,10 @@ def _render_privileged_grant_readiness(
             "Reviews account-level admin role grants and database-scoped object privileges before DBA grant/revoke work. "
             "Account-role grants stay visible under PROD/DEV filters because they have no database context."
         )
-        grant_days = st.slider(
-            "Privileged grant lookback (days)",
-            7,
-            90,
-            max(7, int(days or 30)),
+        grant_days = day_window_selectbox(
+            "Privileged grant lookback",
             key="security_priv_grant_days",
+            default=max(7, int(days or 30)),
         )
         if st.button(load_label, key=load_key, type="primary" if not as_expander else "secondary"):
             try:
@@ -2784,9 +2882,11 @@ def render() -> None:
     meta = st.session_state.get("security_posture_meta", {})
     brief_slot = st.empty()
     snapshot_slot = st.empty()
+    exception_slot = st.empty()
     _paint_security_brief_chrome(
         brief_slot,
         snapshot_slot,
+        exception_slot,
         summary,
         exceptions,
         meta,
@@ -2795,7 +2895,11 @@ def render() -> None:
         days,
     )
 
-    days = st.slider("Security brief lookback (days)", 1, 90, 30, key="security_posture_brief_days")
+    days = day_window_selectbox(
+        "Security brief lookback",
+        key="security_posture_brief_days",
+        default=30,
+    )
     active_view = st.selectbox(
         "Security posture view",
         SECURITY_POSTURE_VIEWS,
@@ -2879,6 +2983,7 @@ def render() -> None:
         _paint_security_brief_chrome(
             brief_slot,
             snapshot_slot,
+            exception_slot,
             summary,
             exceptions,
             meta,
@@ -2917,11 +3022,16 @@ def render() -> None:
         else:
             st.success("Security posture is strong for the selected window.")
         defer_source_note(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE"))
-        _render_security_watch_floor(score, exceptions, row)
         st.divider()
-        _render_security_operability_fact_gate(company, environment, days)
-        _render_security_exceptions_gate(company, environment, days)
+        with st.expander("Load Secondary Security Evidence", expanded=False):
+            _render_security_operability_fact_gate(company, environment, days)
+            _render_security_exceptions_gate(company, environment, days)
         exceptions = st.session_state.get("security_posture_exceptions")
+        with exception_slot.container():
+            _render_security_exception_strip(
+                _security_exception_strip_rows(summary, exceptions, meta, company, environment, days),
+                loaded=True,
+            )
         if exceptions is not None and not exceptions.empty:
             st.subheader("Security Exceptions")
             priority_exceptions = _security_priority_view(exceptions)
@@ -3011,12 +3121,10 @@ def render() -> None:
                     )
 
                 with st.expander("Security Access Review Trend", expanded=False):
-                    trend_days = st.slider(
-                        "Access review history lookback (days)",
-                        7,
-                        120,
-                        30,
+                    trend_days = day_window_selectbox(
+                        "Access review history lookback",
                         key="security_access_review_trend_days",
+                        default=30,
                     )
                     if st.button("Load Access Review Trend", key="security_access_review_trend_load"):
                         try:
@@ -3073,12 +3181,10 @@ def render() -> None:
                         "Uses Security Posture action-queue rows to show open, overdue, unapproved, "
                         "or closed-without-verification security work."
                     )
-                    closure_days = st.slider(
-                        "Security closure days",
-                        7,
-                        180,
-                        30,
+                    closure_days = day_window_selectbox(
+                        "Security closure window",
                         key="security_action_closure_days",
+                        default=30,
                     )
                     if st.button("Load Security Closure Analytics", key="security_action_closure_load"):
                         try:

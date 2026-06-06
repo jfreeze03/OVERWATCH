@@ -48,6 +48,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         defined = [section.label for section in SECTION_DEFINITIONS]
         self.assertEqual(ALL_SECTIONS, flattened)
         self.assertEqual(ALL_SECTIONS, defined)
+        self.assertEqual(
+            list(NAV_GROUPS),
+            ["COMMAND CENTER", "FINANCIAL CONTROL", "OPERATIONS", "GOVERNANCE", "ARCHITECTURE"],
+        )
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_MODULES))
         self.assertEqual(
             SECTION_MODULES,
@@ -57,6 +61,24 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(config_text.count("ROLE_SECTIONS = {"), 1)
         self.assertEqual(DAY_WINDOW_OPTIONS, (1, 7, 14, 30, 60, 90))
         self.assertEqual(DEFAULT_DAY_WINDOW, 7)
+
+    def test_calendar_day_windows_use_standard_dropdowns(self):
+        display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
+        init_text = (APP_ROOT / "utils" / "__init__.py").read_text(encoding="utf-8")
+        self.assertIn("def day_window_selectbox", display_text)
+        self.assertIn("DAY_WINDOW_OPTIONS", display_text)
+        self.assertIn('"day_window_selectbox"', init_text)
+
+        offenders = []
+        scanned_roots = [APP_ROOT / "sections", APP_ROOT / "utils"]
+        for root in scanned_roots:
+            for path in root.glob("*.py"):
+                if path.name == "display.py":
+                    continue
+                for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                    if "st.slider" in line and "day" in line.lower():
+                        offenders.append(f"{path.relative_to(APP_ROOT)}:{line_no}:{line.strip()}")
+        self.assertEqual(offenders, [])
 
     def test_section_definitions_are_complete(self):
         for section in SECTION_DEFINITIONS:
@@ -219,12 +241,20 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_ask_overwatch_is_evidence_grounded_without_raw_cortex_call(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
-        self.assertIn('"ask_overwatch_panel_toggle"', app_text)
-        self.assertIn('st.expander("Ask OVERWATCH", expanded=True)', app_text)
-        self.assertIn("answer_ask_overwatch(", app_text)
-        self.assertIn('"rec_automation_board"', (APP_ROOT / "utils" / "ask_overwatch.py").read_text(encoding="utf-8"))
-        self.assertIn('"arch_futures_board"', (APP_ROOT / "utils" / "ask_overwatch.py").read_text(encoding="utf-8"))
-        self.assertNotIn("Ask OVERWATCH (Evidence Mode)", app_text)
+        ask_text = (APP_ROOT / "utils" / "ask_overwatch.py").read_text(encoding="utf-8")
+        self.assertIn("Top Priority Brief", app_text)
+        self.assertIn('"top_priority_brief_domain"', app_text)
+        self.assertIn("build_top_priority_brief_cards(", app_text)
+        self.assertIn("_render_top_priority_brief(active_section, active_company, current_role or \"\")", app_text)
+        self.assertIn('"rec_automation_board"', ask_text)
+        self.assertIn('"arch_futures_board"', ask_text)
+        self.assertIn('"security_posture_summary"', app_text)
+        self.assertIn('"security_posture_summary"', ask_text)
+        self.assertIn('"security_posture_exceptions"', app_text)
+        self.assertIn('"security_posture_exceptions"', ask_text)
+        self.assertNotIn('"ask_overwatch_panel_toggle"', app_text)
+        self.assertNotIn('st.expander("Ask OVERWATCH", expanded=True)', app_text)
+        self.assertNotIn('"Ask a specific DBA operating question..."', app_text)
         self.assertNotIn("SNOWFLAKE.CORTEX.COMPLETE", app_text)
 
     def test_workflow_hubs_replace_scattered_operational_pages(self):
@@ -457,6 +487,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("load_schema_options", app_text)
         self.assertIn("_global_schema_choice_scope", app_text)
         self.assertIn("Schema contains", app_text)
+        self.assertIn("def _render_topbar_filter_strip", app_text)
+        self.assertIn("def _maybe_clear_scope_cache_on_filter_change", app_text)
+        self.assertIn("_maybe_clear_scope_cache_on_filter_change()", app_text)
+        self.assertIn("global_filters_clear_topbar", app_text)
+        self.assertIn("Topbar owns date, company, environment, warehouse, and user filters.", app_text)
         self.assertIn('"global_schema"', bookmarks_text)
         self.assertIn("get_global_schema_filter_clause", company_filter_text)
         self.assertIn("schema_col", company_filter_text)
@@ -556,11 +591,18 @@ class NavigationIntegrityTests(unittest.TestCase):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
 
         header_index = app_text.index("_render_app_header(active_section, active_company, credit_price, current_role)")
+        topbar_index = app_text.index("active_company = _render_topbar_filter_strip(active_company)")
         sidebar_index = app_text.index("with st.sidebar:")
         self.assertLess(header_index, sidebar_index)
+        self.assertLess(header_index, topbar_index)
+        self.assertLess(topbar_index, sidebar_index)
         self.assertIn("def _current_active_section", app_text)
         self.assertIn("def _current_credit_price", app_text)
         self.assertIn("def _sidebar_panel_toggle", app_text)
+        self.assertIn("ow-filter-strip-kicker", app_text)
+        self.assertIn('"Date range"', app_text)
+        self.assertIn('"Warehouse"', app_text)
+        self.assertIn('"User contains"', app_text)
         self.assertIn('if _sidebar_panel_toggle("Saved Views", "saved_views")', app_text)
         self.assertIn('if _sidebar_panel_toggle("Global Filters", "global_filters")', app_text)
         self.assertIn('if _sidebar_panel_toggle("Settings", "settings")', app_text)
@@ -570,7 +612,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('with st.expander("Saved Views", expanded=False)', app_text)
         self.assertNotIn('with st.expander("Global Filters", expanded=False)', app_text)
         self.assertNotIn('with st.expander("Settings", expanded=False)', app_text)
-        self.assertLess(app_text.index('"Company view"'), app_text.index('if _sidebar_panel_toggle("Global Filters", "global_filters")'))
+        self.assertLess(app_text.index("def _render_topbar_filter_strip"), app_text.index('if _sidebar_panel_toggle("Global Filters", "global_filters")'))
         self.assertLess(app_text.index('if _sidebar_panel_toggle("Global Filters", "global_filters")'), app_text.index('"Exceptions-only mode"'))
         self.assertLess(app_text.index('"Exceptions-only mode"'), app_text.index('if _sidebar_panel_toggle("Saved Views", "saved_views")'))
         self.assertLess(app_text.index('if _sidebar_panel_toggle("Saved Views", "saved_views")'), app_text.index('if _sidebar_panel_toggle("Settings", "settings")'))
@@ -788,8 +830,8 @@ class NavigationIntegrityTests(unittest.TestCase):
 
         self.assertIn("Query activity summaries are rendered on demand", app_text)
         self.assertIn('st.button("Render query activity summary"', app_text)
-        self.assertNotIn("from utils.ask_overwatch import answer_ask_overwatch", top_import_block)
-        self.assertIn("from utils.ask_overwatch import answer_ask_overwatch", app_text)
+        self.assertNotIn("from utils.ask_overwatch import build_top_priority_brief_cards", top_import_block)
+        self.assertIn("from utils.ask_overwatch import build_top_priority_brief_cards", app_text)
         self.assertNotIn("from utils.bookmarks import (", top_import_block)
         self.assertIn("def _load_bookmark_helpers", app_text)
         self.assertNotIn("import utils.display as display_module", top_import_block)
@@ -894,8 +936,6 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("render_section_confidence_meter(active_section, st.session_state)", app_text)
         self.assertNotIn("render_section_operating_guide(active_section)", app_text)
         self.assertIn("render_deferred_section_notes(active_section)", app_text)
-        self.assertIn('secondary_chrome_ready = bool(st.session_state.get("_overwatch_secondary_chrome_ready"))', app_text)
-        self.assertIn("if secondary_chrome_ready:", app_text)
         self.assertIn('st.session_state["_overwatch_secondary_chrome_ready"] = True', app_text)
         self.assertNotIn("render_section_confidence_meter(active_section, dict(st.session_state))", app_text)
         self.assertNotIn("dict(state).items()", (APP_ROOT / "utils" / "section_guidance.py").read_text(encoding="utf-8"))
@@ -1278,6 +1318,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('cols[2].metric("Grant Chg"', security_posture_text)
         self.assertIn("def _paint_security_brief_chrome", security_posture_text)
         self.assertIn("brief_slot = st.empty()", security_posture_text)
+        self.assertIn("exception_slot = st.empty()", security_posture_text)
+        self.assertIn('st.markdown("**Exception Strip**")', security_posture_text)
+        self.assertIn('with st.expander("Load Secondary Security Evidence", expanded=False):', security_posture_text)
         self.assertGreaterEqual(security_posture_text.count("_paint_security_brief_chrome("), 3)
         self.assertIn("Load Security Control Facts", security_posture_text)
         self.assertIn("Load Security Exceptions", security_posture_text)

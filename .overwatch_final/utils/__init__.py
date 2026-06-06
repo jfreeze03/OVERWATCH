@@ -9,7 +9,7 @@ from __future__ import annotations
 from importlib import import_module
 
 
-UTILS_EXPORT_VERSION = "2026-06-02-guardrails-v1"
+UTILS_EXPORT_VERSION = "2026-06-06-day-window-export-v1"
 
 
 _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
@@ -58,6 +58,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "download_csv", "show_loaded_time", "mark_loaded",
     ),
     "display": (
+        "day_window_selectbox",
         "render_query_drilldown", "render_warehouse_drilldown",
         "render_drillable_bar_chart", "render_entity_query_drilldown",
         "rank_chart_frame", "render_ranked_bar_chart",
@@ -216,8 +217,10 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "harden_recommendation_rows", "warehouse_sizing_decision",
     ),
     "ask_overwatch": (
-        "answer_ask_overwatch", "build_ask_overwatch_context",
-        "build_grounded_cortex_prompt", "snapshot_ask_overwatch_state",
+        "TOP_PRIORITY_BRIEF_DOMAINS", "answer_ask_overwatch",
+        "build_ask_overwatch_context", "build_grounded_cortex_prompt",
+        "build_top_priority_brief_cards", "filter_ask_overwatch_cards_by_domain",
+        "snapshot_ask_overwatch_state",
     ),
 }
 

@@ -21,6 +21,7 @@ from utils import (
     filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown, render_priority_dataframe,
     render_ranked_bar_chart,
+    day_window_selectbox,
     make_action_id, upsert_actions,
     run_query, sql_literal, format_snowflake_error,
     resolve_owner_context,
@@ -1448,7 +1449,7 @@ def render():
 
         c1, c2, c3, c4 = st.columns([1, 1.35, 1, 1.2])
         with c1:
-            explorer_days = st.slider("Lookback", 1, 90, 30, key="cc_explorer_days")
+            explorer_days = day_window_selectbox("Lookback", key="cc_explorer_days", default=30)
         with c2:
             explorer_lens = st.selectbox("Break down by", COST_EXPLORER_LENSES, key="cc_explorer_lens")
         with c3:
@@ -2298,7 +2299,7 @@ def render():
 
     elif cost_view == "User Leaderboard":
         st.header("Credit Cost by User / Warehouse")
-        days = st.slider("Lookback (days)", 1, 90, 30, key="cc_lead_days")
+        days = day_window_selectbox("Lookback", key="cc_lead_days", default=30)
         gf = get_global_filter_clause(
             "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name", "q.schema_name"
         )
@@ -2406,7 +2407,7 @@ def render():
     # -- BURN RATE -------------------------------------------------------------
     elif cost_view == "Burn Rate":
         st.header("Credit Burn Rate")
-        br_days = st.slider("Lookback (days)", 1, 90, 30, key="br_days")
+        br_days = day_window_selectbox("Lookback", key="br_days", default=30)
         if st.button("Load Burn Rate", key="br_load"):
             try:
                 df_br = run_query(f"""
@@ -2467,7 +2468,7 @@ def render():
             "Compares exact warehouse metering to query-level allocated credits. "
             "Large variances usually mean idle warehouse time, non-query activity, latency, or chargeback assumptions need review."
         )
-        recon_days = st.slider("Reconciliation window (days)", 7, 90, 30, key="cc_recon_days")
+        recon_days = day_window_selectbox("Reconciliation window", key="cc_recon_days", default=30)
         if st.button("Load Reconciliation", key="cc_recon_load"):
             try:
                 use_official_attribution = query_attribution_supported(session)
@@ -2618,7 +2619,7 @@ def render():
     # -- ATTRIBUTION -----------------------------------------------------------
     elif cost_view == "Attribution":
         st.header("Cost Attribution")
-        attr_days = st.slider("Lookback (days)", 1, 90, 30, key="cc_attr_days")
+        attr_days = day_window_selectbox("Lookback", key="cc_attr_days", default=30)
         attr_mode = st.selectbox(
             "Attribution dimension",
             ["Role", "Database / Schema", "Application / Client", "Stored Procedure / Task Lineage"],
@@ -2703,7 +2704,7 @@ def render():
         defer_source_note(
             "Database-attributed cost is directional because shared warehouses cannot be exactly split by PROD/DEV."
         )
-        cb_days = st.slider("Lookback (days)", 1, 90, 30, key="cc_cb_days")
+        cb_days = day_window_selectbox("Lookback", key="cc_cb_days", default=30)
 
         if st.button("Load Chargeback", key="cc_cb_load"):
             try:

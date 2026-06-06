@@ -54,6 +54,7 @@ sql_literal = _lazy_util("sql_literal")
 action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
 upsert_actions = _lazy_util("upsert_actions")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+day_window_selectbox = _lazy_util("day_window_selectbox")
 
 
 def safe_float(value, default: float = 0.0) -> float:
@@ -3630,14 +3631,10 @@ def _render_change_external_integrations(company: str, environment: str, default
 
     st.subheader(cfg["title"])
     st.caption(cfg["caption"])
-    slider_default = safe_int(st.session_state.get(f"{prefix}_days", default_days)) or default_days
-    slider_default = max(1, min(90, int(slider_default)))
-    integration_days = st.slider(
+    integration_days = day_window_selectbox(
         cfg["lookback_label"],
-        1,
-        90,
-        slider_default,
         key=f"{prefix}_days",
+        default=default_days,
     )
     if st.button(cfg["load_label"], key=f"{prefix}_load", width="stretch"):
         try:
@@ -3882,7 +3879,11 @@ def render() -> None:
         _change_operating_snapshot(summary, exceptions, meta, company, environment, days)
     )
 
-    days = st.slider("Change brief lookback (days)", 1, 90, 14, key="change_drift_brief_days")
+    days = day_window_selectbox(
+        "Change brief lookback",
+        key="change_drift_brief_days",
+        default=14,
+    )
     active_view = st.selectbox(
         "Change & Drift view",
         CHANGE_DRIFT_VIEWS,
@@ -4194,7 +4195,11 @@ def render() -> None:
                     "Snapshot stores ticket, IaC, owner, approver, query-id, and blast-radius requirements for audit trend review."
                 )
             with st.expander("Change Control Evidence Trend", expanded=False):
-                trend_days = st.slider("Change evidence trend days", 7, 180, 30, key="change_drift_evidence_trend_days")
+                trend_days = day_window_selectbox(
+                    "Change evidence trend window",
+                    key="change_drift_evidence_trend_days",
+                    default=30,
+                )
                 if st.button("Load Change Evidence Trend", key="change_drift_evidence_trend_load"):
                     try:
                         trend_sql = _change_control_evidence_history_sql(trend_days, company, environment)
@@ -4246,7 +4251,11 @@ def render() -> None:
                     "Uses Change & Drift action-queue rows to show open, overdue, unapproved, "
                     "or closed-without-verification change-control work."
                 )
-                closure_days = st.slider("Change closure days", 7, 180, 30, key="change_action_closure_days")
+                closure_days = day_window_selectbox(
+                    "Change closure window",
+                    key="change_action_closure_days",
+                    default=30,
+                )
                 if st.button("Load Change Closure Analytics", key="change_action_closure_load"):
                     try:
                         closure_sql = _change_action_queue_closure_sql(closure_days, company, environment)

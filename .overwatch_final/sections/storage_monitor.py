@@ -4,6 +4,7 @@ from config import DEFAULTS
 from utils import (
     build_mart_storage_db_detail_sql,
     build_mart_storage_trend_sql,
+    day_window_selectbox,
     defer_source_note,
     get_active_company,
     get_db_filter_clause,
@@ -44,7 +45,7 @@ def render():
     st.header("Storage Monitor")
     st.caption("Database & stage storage with cost estimates ($23/TB/month default).")
 
-    stor_days = st.slider("Lookback (days)", 7, 180, 90, key="stor_days")
+    stor_days = day_window_selectbox("Lookback", key="stor_days", default=90)
     stor_meta = {"company": company, "days": int(stor_days)}
 
     if (

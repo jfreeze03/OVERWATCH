@@ -25,7 +25,7 @@ from utils import (
     scope_warehouse_names, scope_metadata_df, load_task_inventory,
     load_live_task_runs, load_database_options, load_schema_options,
     load_warehouse_inventory, build_unclassified_assets_sql,
-    safe_float, safe_int, render_ranked_bar_chart,
+    safe_float, safe_int, render_ranked_bar_chart, day_window_selectbox,
     defer_source_note,
     build_schema_migration_contract, build_schema_migration_status_sql,
 )
@@ -962,7 +962,7 @@ def render():
 
     if selected_tool == "Data Loading":
         st.header("📦 Data Loading Monitor")
-        load_days = st.slider("Lookback (days)", 1, 30, 7, key="dl_days")
+        load_days = day_window_selectbox("Lookback", key="dl_days", default=7)
         if _load_button("Load Copy History", "dl_load"):
             try:
                 st.session_state["dba_df_copy"] = run_query(f"""
@@ -1046,7 +1046,7 @@ def render():
 
     if selected_tool == "Snowpipe Monitor":
         st.header("🔧 Snowpipe Monitor")
-        sp_days = st.slider("Lookback (days)", 1, 14, 3, key="spipe_days")
+        sp_days = day_window_selectbox("Lookback", key="spipe_days", default=7)
         if _load_button("Load Pipe Usage", "spipe_load"):
             try:
                 st.session_state["dba_df_pipe"] = run_query(f"""
@@ -1072,7 +1072,7 @@ def render():
 
     if selected_tool == "QAS Monitor":
         st.header("⚡ QAS Monitor")
-        qas_days = st.slider("Lookback (days)", 1, 30, 7, key="qas_days")
+        qas_days = day_window_selectbox("Lookback", key="qas_days", default=7)
         if _load_button("Load QAS Data", "qas_load"):
             try:
                 st.session_state["dba_df_qas"] = run_query(f"""
@@ -1208,7 +1208,7 @@ def render():
 
     if selected_tool == "Recent Objects":
         st.header("🔎 Recent Objects")
-        obj_days = st.slider("Created/altered within (days)", 1, 90, 30, key="obj_days")
+        obj_days = day_window_selectbox("Created/altered within", key="obj_days", default=30)
         refresh_obj_meta = st.button("Refresh database choices", key="obj_refresh_metadata")
         if refresh_obj_meta or "obj_database_options" not in st.session_state:
             st.session_state["obj_database_options"] = load_database_options(
@@ -1407,7 +1407,7 @@ def render():
 
     if selected_tool == "Replication":
         st.header("🔁 Replication")
-        repl_days = st.slider("Lookback (days)", 1, 90, 30, key="repl_days")
+        repl_days = day_window_selectbox("Lookback", key="repl_days", default=30)
         if st.button("Load Replication History", key="repl_load"):
             repl_sql_primary = f"""
                 SELECT database_name,
@@ -1476,7 +1476,7 @@ def render():
                 "Company View to ALL to review account-wide serverless costs."
             )
         else:
-            sv_days = st.slider("Lookback (days)", 7, 90, 30, key="sv_days")
+            sv_days = day_window_selectbox("Lookback", key="sv_days", default=30)
             if st.button("Load Serverless Costs", key="sv_load"):
                 try:
                     st.session_state["dba_df_serverless"] = run_query(f"""
@@ -2252,7 +2252,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
         logging_on = st.toggle("Enable logging", value=is_logging_enabled(), key="ul_toggle")
         set_logging_enabled(logging_on)
 
-        ul_days  = st.slider("Report window (days)", 1, 90, 30, key="ul_days")
+        ul_days = day_window_selectbox("Report window", key="ul_days", default=30)
         ul_group = st.selectbox("Group by", ["Section","User","Role","Company","Day"], key="ul_group")
         if st.button("Load Usage Data", key="ul_load"):
             try:

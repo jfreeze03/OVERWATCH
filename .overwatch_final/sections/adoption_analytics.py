@@ -9,6 +9,7 @@ from utils import (
     build_mart_adoption_users_wh_sql,
     build_mart_adoption_warehouse_size_sql,
     defer_source_note,
+    day_window_selectbox,
     download_csv,
     filter_existing_columns,
     get_active_company,
@@ -275,7 +276,7 @@ def render():
     st.header("Adoption Analytics")
     st.caption("Track which teams, warehouses, databases, roles, and clients are actually using Snowflake.")
 
-    days = st.slider("Lookback days", 7, 180, 30, key="aa_days")
+    days = day_window_selectbox("Lookback", key="aa_days", default=30)
     if st.button("Load Adoption Analytics", key="aa_load"):
         with st.spinner("Loading adoption analytics..."):
             try:

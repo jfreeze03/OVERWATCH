@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from utils import (
+    day_window_selectbox,
     defer_source_note,
     filter_existing_columns,
     format_snowflake_error,
@@ -692,7 +693,7 @@ def render_root_cause_brief(session) -> None:
     with st.expander("Root-Cause Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
         c1, c2 = st.columns([1, 1])
         with c1:
-            days = st.slider("Root-cause lookback (days)", 1, 30, 7, key="qw_rc_days")
+            days = day_window_selectbox("Root-cause lookback", key="qw_rc_days", default=7)
         with c2:
             limit = st.slider("Exception rows", 25, 250, 100, step=25, key="qw_rc_limit")
 

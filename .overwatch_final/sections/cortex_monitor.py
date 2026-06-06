@@ -16,6 +16,7 @@ from utils import (
     download_csv,
     get_user_filter_clause,
     filter_existing_columns,
+    day_window_selectbox,
     make_action_id,
     render_ranked_bar_chart,
     run_query,
@@ -333,7 +334,7 @@ def _render_cortex_control_brief(session, company: str) -> None:
     with st.expander("Cortex Cost Control Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
         c1, c2 = st.columns(2)
         with c1:
-            days = st.slider("Cortex control lookback (days)", 7, 90, 30, key="cortex_control_days")
+            days = day_window_selectbox("Cortex control lookback", key="cortex_control_days", default=30)
         with c2:
             budget_usd = st.number_input(
                 "Monthly Cortex Code budget ($)",
@@ -557,7 +558,7 @@ def render():
             f"AI Credits billed at **${_ai_credit_rate()}/credit** (Table 6(d) regional inference)."
         )
 
-        cc_days = st.slider("Lookback (days)", 7, 90, 30, key="cc_days_users")
+        cc_days = day_window_selectbox("Lookback", key="cc_days_users", default=30)
         if st.button("Load User Data", key="cc_users_load"):
             with st.spinner("Loading Cortex Code user data..."):
                 try:
@@ -747,7 +748,7 @@ def render():
         st.header("Cortex Code Daily Trends")
         st.caption("Daily credits, request volume, and active users - Snowsight vs CLI split.")
 
-        cc_trend_days = st.slider("Lookback (days)", 7, 90, 30, key="cc_trend_days")
+        cc_trend_days = day_window_selectbox("Lookback", key="cc_trend_days", default=30)
         if st.button("Load Trends", key="cc_trends_load"):
             with st.spinner("Loading trends..."):
                 try:
@@ -825,7 +826,7 @@ def render():
         st.header("Cortex Code Anomaly Detection")
         st.caption("Flags unusual daily per-user Cortex spend against the recent baseline.")
 
-        cc_anom_days = st.slider("Detection window (days)", 14, 90, 30, key="cc_anom_days")
+        cc_anom_days = day_window_selectbox("Detection window", key="cc_anom_days", default=30)
         if st.button("Detect Anomalies", key="cc_anom_load"):
             with st.spinner("Running anomaly detection..."):
                 try:

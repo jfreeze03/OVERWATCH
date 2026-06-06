@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 from config import DEFAULTS
 from utils import (
+    day_window_selectbox,
     format_snowflake_error,
     get_active_company,
     format_credits,
@@ -63,7 +64,7 @@ def render():
     st.header("SPCS Cost Tracker")
     st.caption("Snowpark Container Services credit usage and cost breakdown.")
 
-    spcs_days = st.slider("Lookback (days)", 1, 90, 30, key="spcs_days")
+    spcs_days = day_window_selectbox("Lookback", key="spcs_days", default=30)
 
     expected_meta = _spcs_scope_meta(company, spcs_days)
     current_meta = st.session_state.get("spcs_meta", {})

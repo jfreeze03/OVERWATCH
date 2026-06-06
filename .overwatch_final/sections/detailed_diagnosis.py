@@ -2,6 +2,7 @@
 import streamlit as st
 
 from utils import (
+    day_window_selectbox,
     defer_source_note,
     download_csv,
     format_snowflake_error,
@@ -256,7 +257,7 @@ def render():
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        days = st.slider("Lookback days", 1, 30, 7, key="dd_days")
+        days = day_window_selectbox("Lookback", key="dd_days", default=7)
     with c2:
         mode = st.selectbox("Diagnosis type", list(DIAG_MODES.keys()), key="dd_mode")
     with c3:

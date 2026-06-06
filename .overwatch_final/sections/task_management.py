@@ -30,6 +30,7 @@ from utils import (
     safe_identifier,
     safe_float,
     safe_int,
+    day_window_selectbox,
     render_ranked_bar_chart,
     sql_literal,
     upsert_actions,
@@ -57,6 +58,7 @@ TASK_CONTROL_DETAILS = {
 
 TASK_FAILURE_STATES = {"FAILED", "FAILED_WITH_ERROR"}
 TASK_SUCCESS_STATES = {"SUCCEEDED", "SUCCESS", "COMPLETED"}
+TASK_RUNNING_STATES = {"EXECUTING", "RUNNING"}
 TASK_RECOVERY_SLA_HOURS = 4
 
 
@@ -1473,12 +1475,17 @@ def _build_task_ops_markdown(
     summary: dict,
     exceptions: pd.DataFrame,
 ) -> str:
+    handoff_state, handoff_note = _task_controlm_handoff_state(summary)
     lines = [
         f"# OVERWATCH Task Graph Operations Brief - {company}",
         "",
         f"- Lookback: {days} days",
+        f"- Control-M handoff state: {handoff_state}",
+        f"- Handoff note: {handoff_note}",
         f"- Task graphs/tasks: {safe_int(summary.get('TOTAL_TASKS')):,}",
         f"- Task runs: {safe_int(summary.get('TOTAL_RUNS')):,}",
+        f"- Running tasks: {safe_int(summary.get('RUNNING_TASKS')):,}",
+        f"- Latest failed tasks: {safe_int(summary.get('LATEST_FAILED_TASKS')):,}",
         f"- Failed runs: {safe_int(summary.get('FAILED_RUNS')):,}",
         f"- Suspended tasks: {safe_int(summary.get('SUSPENDED_TASKS')):,}",
         f"- Long-running/SLA candidates: {safe_int(summary.get('LONG_RUNNING_TASKS')):,}",
@@ -1493,7 +1500,8 @@ def _build_task_ops_markdown(
         (
             "This is the Informatica Monitor replacement view: use it to find broken task graphs, "
             "failed sessions, suspended jobs, slow runs, linked procedures, and retry candidates. "
-            "It should be the first stop before manually executing or resuming task graphs."
+            "It should be the first stop before manually executing, resuming task graphs, or handing "
+            "job status to Control-M."
         ),
         "",
         "## Top Operational Exceptions",
@@ -1841,10 +1849,14 @@ def _build_task_ops_frames(
         exceptions["NEXT_ACTION"] = exceptions["SIGNAL"].apply(lambda signal: _task_action_for(signal)[0])
     history_state = history.get("STATE", pd.Series(dtype=str)).astype(str).str.upper() if not history.empty else pd.Series(dtype=str)
     inventory_state = inventory.get("STATE", pd.Series(dtype=str)).astype(str).str.upper() if not inventory.empty else pd.Series(dtype=str)
+    latest_state = latest.get("STATE", pd.Series(dtype=str)).astype(str).str.upper() if not latest.empty else pd.Series(dtype=str)
     summary = {
         "TOTAL_TASKS": len(inventory),
         "TOTAL_RUNS": len(history),
         "FAILED_RUNS": int(history_state.isin(TASK_FAILURE_STATES).sum()) if not history_state.empty else 0,
+        "LATEST_FAILED_TASKS": int(latest_state.isin(TASK_FAILURE_STATES).sum()) if not latest_state.empty else 0,
+        "RUNNING_TASKS": int(latest_state.isin(TASK_RUNNING_STATES).sum()) if not latest_state.empty else 0,
+        "LATEST_SUCCESS_TASKS": int(latest_state.isin(TASK_SUCCESS_STATES).sum()) if not latest_state.empty else 0,
         "SUSPENDED_TASKS": int((inventory_state == "SUSPENDED").sum()),
         "LONG_RUNNING_TASKS": int((exceptions.get("SIGNAL", pd.Series(dtype=str)) == "Long Running / SLA Risk").sum()) if not exceptions.empty else 0,
         "COST_DRIFT_TASKS": int((exceptions.get("SIGNAL", pd.Series(dtype=str)) == "Cost Drift / Release Regression").sum()) if not exceptions.empty else 0,
@@ -1854,6 +1866,188 @@ def _build_task_ops_frames(
         **_task_recovery_sla_summary(recovery),
     }
     return summary, exceptions, latest
+
+
+def _task_controlm_handoff_state(summary: dict) -> tuple[str, str]:
+    if safe_int(summary.get("P1_INCIDENTS")) or safe_int(summary.get("LATEST_FAILED_TASKS")):
+        return "Needs Triage", "Latest task job status includes failed production evidence."
+    if safe_int(summary.get("FAILED_RUNS")) or safe_int(summary.get("BLOCKED_RECOVERIES")):
+        return "Needs Triage", "Recent failures or blocked recoveries need owner-ready proof before Control-M handoff."
+    if (
+        safe_int(summary.get("SUSPENDED_TASKS"))
+        or safe_int(summary.get("LONG_RUNNING_TASKS"))
+        or safe_int(summary.get("COST_DRIFT_TASKS"))
+        or safe_int(summary.get("RECOVERY_SLA_BREACHES"))
+    ):
+        return "Watch", "Task jobs are running, but performance, suspension, or recovery indicators need review."
+    return "Ready", "Task jobs are ready for Control-M handoff in this scope."
+
+
+def _state_distribution_text(df: pd.DataFrame, *, limit: int = 4) -> str:
+    if df is None or df.empty or "STATE" not in df.columns:
+        return "No live task status rows loaded."
+    counts = df["STATE"].fillna("UNKNOWN").astype(str).str.upper().value_counts()
+    return "; ".join(f"{state}: {count:,}" for state, count in counts.head(limit).items())
+
+
+def _latest_task_timestamp(latest: pd.DataFrame) -> str:
+    if latest is None or latest.empty:
+        return ""
+    for column in ["SCHEDULED_TIME", "QUERY_START_TIME", "COMPLETED_TIME"]:
+        if column not in latest.columns:
+            continue
+        values = pd.to_datetime(latest[column], errors="coerce").dropna()
+        if not values.empty:
+            return str(values.max())
+    return ""
+
+
+def _first_task_value(row: pd.Series, *columns: str) -> object:
+    for column in columns:
+        value = row.get(column)
+        if value is None:
+            continue
+        try:
+            if pd.isna(value):
+                continue
+        except (TypeError, ValueError):
+            pass
+        if str(value).strip().upper() not in {"", "NONE", "NULL", "NAN", "NAT"}:
+            return value
+    return ""
+
+
+def _build_controlm_job_status_board(
+    summary: dict,
+    latest: pd.DataFrame,
+    exceptions: pd.DataFrame,
+) -> pd.DataFrame:
+    handoff_state, handoff_note = _task_controlm_handoff_state(summary)
+    perf_indicators = safe_int(summary.get("LONG_RUNNING_TASKS")) + safe_int(summary.get("COST_DRIFT_TASKS"))
+    error_rows = _build_controlm_error_board(exceptions, latest)
+    latest_timestamp = _latest_task_timestamp(latest)
+    running = safe_int(summary.get("RUNNING_TASKS"))
+    state_rank = {
+        "Needs Triage": 0,
+        "Alert": 0,
+        "Watch": 1,
+        "Running": 2,
+        "Ready": 3,
+    }
+    rows = [
+        {
+            "CONTROL_M_VIEW": "Job Status",
+            "STATE": handoff_state,
+            "INDICATOR": "Latest task job state",
+            "COUNT": safe_int(summary.get("TOTAL_TASKS")),
+            "EVIDENCE": _state_distribution_text(latest),
+            "LAST_SEEN": latest_timestamp,
+            "NEXT_ACTION": handoff_note,
+        },
+        {
+            "CONTROL_M_VIEW": "Performance Indicators",
+            "STATE": "Watch" if perf_indicators else ("Running" if running else "Ready"),
+            "INDICATOR": "Runtime or estimated-credit drift",
+            "COUNT": perf_indicators,
+            "EVIDENCE": (
+                f"Long-running={safe_int(summary.get('LONG_RUNNING_TASKS')):,}; "
+                f"cost drift={safe_int(summary.get('COST_DRIFT_TASKS')):,}; "
+                f"running={running:,}."
+            ),
+            "LAST_SEEN": latest_timestamp,
+            "NEXT_ACTION": "Review latest duration, query profile, warehouse, and release changes before handoff.",
+        },
+        {
+            "CONTROL_M_VIEW": "Errors",
+            "STATE": "Alert" if not error_rows.empty else "Ready",
+            "INDICATOR": "Recent task errors",
+            "COUNT": len(error_rows),
+            "EVIDENCE": (
+                "; ".join(error_rows["ERROR_SIGNATURE"].dropna().astype(str).head(3).tolist())
+                if not error_rows.empty
+                else "No failed latest-run or exception error signatures loaded."
+            ),
+            "LAST_SEEN": latest_timestamp,
+            "NEXT_ACTION": "Open Failure Console, verify root cause, then attach successful TASK_HISTORY proof.",
+        },
+        {
+            "CONTROL_M_VIEW": "Recovery",
+            "STATE": "Alert" if safe_int(summary.get("BLOCKED_RECOVERIES")) else (
+                "Watch" if safe_int(summary.get("OPEN_RECOVERIES")) or safe_int(summary.get("RECOVERY_SLA_BREACHES")) else "Ready"
+            ),
+            "INDICATOR": "Open or blocked recovery",
+            "COUNT": safe_int(summary.get("OPEN_RECOVERIES")),
+            "EVIDENCE": (
+                f"Blocked={safe_int(summary.get('BLOCKED_RECOVERIES')):,}; "
+                f"SLA breaches={safe_int(summary.get('RECOVERY_SLA_BREACHES')):,}; "
+                f"target={safe_int(summary.get('RECOVERY_SLA_TARGET_HOURS')):,}h."
+            ),
+            "LAST_SEEN": latest_timestamp,
+            "NEXT_ACTION": "Keep Control-M closure blocked until recovery evidence and owner approval are visible.",
+        },
+    ]
+    board = pd.DataFrame(rows)
+    board["_RANK"] = board["STATE"].map(state_rank).fillna(9)
+    return board.sort_values(["_RANK", "CONTROL_M_VIEW"]).drop(columns=["_RANK"], errors="ignore")
+
+
+def _build_controlm_error_board(exceptions: pd.DataFrame, latest: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add_row(row: pd.Series, *, source: str) -> None:
+        task_name = str(row.get("TASK_NAME") or row.get("NAME") or "").strip()
+        state = str(row.get("STATE") or "").strip().upper()
+        detail = str(row.get("ERROR_MESSAGE") or row.get("DETAIL") or "").strip()
+        signal = str(row.get("SIGNAL") or "").strip()
+        if not detail and state not in TASK_FAILURE_STATES and "FAILED" not in signal.upper():
+            return
+        signature = _failure_signature(detail or signal or state)
+        query_id = str(row.get("QUERY_ID") or row.get("FAILURE_QUERY_ID") or "").strip()
+        key = (task_name.upper(), query_id.upper(), signature.upper())
+        if key in seen:
+            return
+        seen.add(key)
+        rows.append({
+            "SOURCE": source,
+            "SEVERITY": row.get("SEVERITY", "High" if state in TASK_FAILURE_STATES else "Medium"),
+            "INCIDENT_PRIORITY": row.get("INCIDENT_PRIORITY", ""),
+            "TASK_NAME": task_name,
+            "ROOT_TASK_NAME": row.get("ROOT_TASK_NAME", ""),
+            "STATE": state,
+            "ERROR_SIGNATURE": signature,
+            "ERROR_MESSAGE": detail[:500],
+            "QUERY_ID": query_id,
+            "LAST_SEEN": _first_task_value(row, "SCHEDULED_TIME", "LAST_FAILURE_AT", "COMPLETED_TIME"),
+            "EST_TOTAL_CREDITS": safe_float(row.get("EST_TOTAL_CREDITS")),
+            "NEXT_ACTION": row.get("NEXT_ACTION") or _task_action_for(signal or state)[0],
+        })
+
+    if exceptions is not None and not exceptions.empty:
+        for _, row in _task_ops_priority_view(exceptions).head(100).iterrows():
+            add_row(row, source="Task exceptions")
+
+    if latest is not None and not latest.empty:
+        latest_errors = latest[_task_failure_mask(latest)]
+        for _, row in latest_errors.head(100).iterrows():
+            add_row(row, source="Latest task run")
+
+    board = pd.DataFrame(rows)
+    if board.empty:
+        return board
+    priority_rank = board["INCIDENT_PRIORITY"].astype(str).str.extract(r"P(\d)", expand=False).fillna("9").astype(int)
+    severity_rank = board["SEVERITY"].astype(str).str.upper().map({
+        "CRITICAL": 0,
+        "HIGH": 1,
+        "MEDIUM": 2,
+        "LOW": 3,
+    }).fillna(4)
+    board["_PRIORITY_RANK"] = priority_rank
+    board["_SEVERITY_RANK"] = severity_rank
+    return board.sort_values(
+        ["_PRIORITY_RANK", "_SEVERITY_RANK", "LAST_SEEN", "TASK_NAME"],
+        ascending=[True, True, False, True],
+    ).drop(columns=["_PRIORITY_RANK", "_SEVERITY_RANK"], errors="ignore").reset_index(drop=True)
 
 
 def _build_task_reliability_slo_board(summary: dict, exceptions: pd.DataFrame, recovery_sla: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
@@ -1938,6 +2132,7 @@ def _load_task_ops_scope(
     days: int,
     ttl_prefix: str,
     force_inventory_refresh: bool = False,
+    include_live_runs: bool = False,
 ) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
     company = get_active_company()
     database_contains = str(st.session_state.get("global_database", "") or "").strip()
@@ -1945,23 +2140,30 @@ def _load_task_ops_scope(
     history_source = "Live: SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY"
     query_detail_source = "Live: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
     critical_path_source = "Computed: task inventory + task history"
-    try:
-        inventory = run_query(
-            build_mart_task_inventory_sql(company=company, database_contains=database_contains),
-            ttl_key=f"{ttl_prefix}_inventory_mart_{company}",
-            tier="metadata",
-            section="Task Management",
-        )
-        if inventory.empty:
-            inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
-        else:
-            inventory_source = "OVERWATCH mart: DIM_TASK_SNAPSHOT"
-    except Exception as e:
+    inventory = pd.DataFrame()
+    if include_live_runs:
         try:
-            inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
+            inventory = _show_tasks(session, force_refresh=True)
         except Exception:
-            st.info(f"Task inventory unavailable in this role/context: {format_snowflake_error(e)}")
             inventory = pd.DataFrame()
+    if inventory.empty:
+        try:
+            inventory = run_query(
+                build_mart_task_inventory_sql(company=company, database_contains=database_contains),
+                ttl_key=f"{ttl_prefix}_inventory_mart_{company}",
+                tier="metadata",
+                section="Task Management",
+            )
+            if inventory.empty:
+                inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
+            else:
+                inventory_source = "OVERWATCH mart: DIM_TASK_SNAPSHOT"
+        except Exception as e:
+            try:
+                inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
+            except Exception:
+                st.info(f"Task inventory unavailable in this role/context: {format_snowflake_error(e)}")
+                inventory = pd.DataFrame()
     try:
         history = run_query(
             build_mart_task_history_sql(
@@ -1986,6 +2188,26 @@ def _load_task_ops_scope(
     except Exception as e:
         st.info(f"Task history unavailable in this role/context: {format_snowflake_error(e)}")
         history = pd.DataFrame()
+    if include_live_runs and not inventory.empty:
+        try:
+            live_runs = load_live_task_runs(
+                session,
+                inventory,
+                hours_back=6,
+                result_limit_per_task=3,
+                max_tasks=80,
+            )
+            if not live_runs.empty:
+                history = pd.concat([live_runs, history], ignore_index=True)
+                dedupe_cols = [
+                    col for col in ["TASK_NAME", "QUERY_ID", "SCHEDULED_TIME"]
+                    if col in history.columns
+                ]
+                if dedupe_cols:
+                    history = history.drop_duplicates(dedupe_cols, keep="first")
+                history_source = f"{history_source} + Live: INFORMATION_SCHEMA.TASK_HISTORY running jobs"
+        except Exception as e:
+            st.info(f"Live running task status unavailable: {format_snowflake_error(e)}")
     query_details = pd.DataFrame()
     if not history.empty and "QUERY_ID" in history.columns:
         qids = history["QUERY_ID"].dropna().astype(str).tolist()
@@ -2043,14 +2265,14 @@ def _render_task_ops_brief(session) -> None:
     company = get_active_company()
     st.subheader("Task Graph Operations Cockpit")
     st.caption(
-        "First-stop DBA view for Snowflake task graphs: health, failures, suspended tasks, SLA drift, "
-        "procedure links, impact hints, and the next operational workflow."
+        "Control-M handoff view for Snowflake task graphs: live job status, performance indicators, "
+        "errors, suspended tasks, recovery proof, and the next operational workflow."
     )
     with st.container():
-        days = st.slider("Task graph lookback (days)", 1, 30, 7, key="task_ops_days")
-        if st.button("Load Task Graph Operations", key="task_ops_load"):
+        days = day_window_selectbox("Task graph lookback", key="task_ops_days", default=7)
+        if st.button("Refresh Live Task Job Status", key="task_ops_load"):
             summary, exceptions, latest, inventory, critical_paths, recovery_sla, details_loaded = _load_task_ops_scope(
-                session, days, "task_ops", force_inventory_refresh=True
+                session, days, "task_ops", force_inventory_refresh=True, include_live_runs=True
             )
             st.session_state["task_ops_summary"] = summary
             st.session_state["task_ops_exceptions"] = exceptions
@@ -2059,9 +2281,11 @@ def _render_task_ops_brief(session) -> None:
             st.session_state["task_ops_critical_paths"] = critical_paths
             st.session_state["task_ops_recovery_sla"] = recovery_sla
             st.session_state["task_ops_query_details_loaded"] = details_loaded
+            st.session_state["task_ops_loaded_at"] = time.time()
 
         summary = st.session_state.get("task_ops_summary")
         if not summary:
+            st.info("Refresh live task job status to load Control-M handoff, performance, and error evidence.")
             return
         exceptions = st.session_state.get("task_ops_exceptions", pd.DataFrame())
         latest = st.session_state.get("task_ops_latest", pd.DataFrame())
@@ -2110,6 +2334,49 @@ def _render_task_ops_brief(session) -> None:
             st.info("Watch: task graph operations are mostly stable with exceptions to review.")
         else:
             st.success("Operational: no dominant task graph risk signal in this scope.")
+
+        controlm_state, controlm_note = _task_controlm_handoff_state(summary)
+        controlm_board = _build_controlm_job_status_board(summary, latest, exceptions)
+        controlm_errors = _build_controlm_error_board(exceptions, latest)
+        st.subheader("Control-M Job Status")
+        cm1, cm2, cm3, cm4 = st.columns(4)
+        cm1.metric("Handoff State", controlm_state)
+        cm2.metric("Running", f"{safe_int(summary.get('RUNNING_TASKS')):,}")
+        cm3.metric("Job Errors", f"{len(controlm_errors):,}", delta_color="inverse")
+        cm4.metric(
+            "Perf Indicators",
+            f"{safe_int(summary.get('LONG_RUNNING_TASKS')) + safe_int(summary.get('COST_DRIFT_TASKS')):,}",
+            delta_color="inverse",
+        )
+        loaded_at = safe_float(st.session_state.get("task_ops_loaded_at"))
+        if loaded_at:
+            st.caption(f"Last live refresh: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(loaded_at))} | {controlm_note}")
+        else:
+            st.caption(controlm_note)
+        render_priority_dataframe(
+            controlm_board,
+            title="Control-M handoff status by operating lane",
+            priority_columns=["STATE", "CONTROL_M_VIEW", "INDICATOR", "COUNT", "EVIDENCE", "LAST_SEEN", "NEXT_ACTION"],
+            raw_label="All Control-M handoff rows",
+            height=220,
+            max_rows=8,
+        )
+        if controlm_errors.empty:
+            st.success("No recent task error signatures loaded for this scope.")
+        else:
+            render_priority_dataframe(
+                controlm_errors,
+                title="Recent task errors for Control-M",
+                priority_columns=[
+                    "INCIDENT_PRIORITY", "SEVERITY", "SOURCE", "TASK_NAME", "ROOT_TASK_NAME",
+                    "STATE", "ERROR_SIGNATURE", "ERROR_MESSAGE", "QUERY_ID", "LAST_SEEN",
+                    "EST_TOTAL_CREDITS", "NEXT_ACTION",
+                ],
+                sort_by=["INCIDENT_PRIORITY", "SEVERITY", "LAST_SEEN"],
+                ascending=[True, True, False],
+                raw_label="All Control-M task error rows",
+                max_rows=20,
+            )
 
         slo_summary, slo_board = _build_task_reliability_slo_board(summary, exceptions, recovery_sla)
         st.subheader("Task Reliability SLO Board")
@@ -2307,7 +2574,7 @@ def _render_sla_cost_drift_console(session) -> None:
     )
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        days = st.slider("Lookback (days)", 3, 45, 14, key="task_sla_days")
+        days = day_window_selectbox("Lookback", key="task_sla_days", default=14)
     with c2:
         duration_pct = st.slider("Duration drift threshold (%)", 10, 300, 50, key="task_sla_duration_pct")
     with c3:
@@ -2534,7 +2801,7 @@ def render():
     # -- TASK HISTORY ----------------------------------------------------------
     if task_view == "Task History":
         st.header("Task Execution History")
-        th_days = st.slider("Lookback (days)", 1, 30, 7, key="th_days")
+        th_days = day_window_selectbox("Lookback", key="th_days", default=7)
 
         if st.button("Load Task Data", key="th_load"):
             # Task list
@@ -2613,7 +2880,7 @@ def render():
             "Diagnose failed task graph runs, link failures to query history and stored procedures, "
             "classify probable cause, and export a DBA handoff runbook."
         )
-        fc_days = st.slider("Failure lookback (days)", 1, 30, 7, key="tm_failure_days")
+        fc_days = day_window_selectbox("Failure lookback", key="tm_failure_days", default=7)
         if st.button("Load Failure Console", key="tm_failure_load"):
             try:
                 inventory = _show_tasks(session, force_refresh=True)

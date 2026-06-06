@@ -4,6 +4,7 @@ import streamlit as st
 from config import DEFAULTS
 from utils import (
     get_active_company,
+    day_window_selectbox,
     get_db_filter_clause,
     format_credits,
     credits_to_dollars,
@@ -83,7 +84,7 @@ def render():
     st.header("Data Sharing Monitor")
     st.caption("DATA_TRANSFER_HISTORY credit consumption and shared database visibility.")
 
-    ds_days = st.slider("Lookback (days)", 1, 90, 30, key="ds_days")
+    ds_days = day_window_selectbox("Lookback", key="ds_days", default=30)
 
     transfer_meta = _sharing_scope_meta(company, ds_days)
     shared_meta = _sharing_scope_meta(company)

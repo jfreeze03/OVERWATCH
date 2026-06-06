@@ -20,6 +20,7 @@ from config import DEFAULTS, DEFAULT_ALERT_EMAIL, FORWARD_PLATFORM_CONTROLS  # n
 from sections.account_health import (  # noqa: E402
     _account_health_action_brief,
     _account_health_actionable_checklist,
+    _account_health_visible_checklist,
     _account_health_access_hygiene_action_payload,
     _account_health_access_hygiene_sql,
     _account_health_access_hygiene_verification_sql,
@@ -40,6 +41,7 @@ from sections.account_health import (  # noqa: E402
     build_account_health_checklist_history_migration_sql,
     build_account_health_operability_fact_ddl,
     build_account_health_operability_fact_migration_sql,
+    _load_live_query_status,
     _live_query_status_sql,
 )
 from sections.adoption_analytics import (  # noqa: E402
@@ -240,7 +242,9 @@ from sections.security_posture import (  # noqa: E402
     _security_access_review_insert_sql,
     _security_action_for,
     _security_exception_verification_sql,
+    _security_exception_strip_rows,
     _security_rating,
+    _security_scope_meta,
     _security_workflow_for,
     _security_score,
     build_security_access_review_ddl,
@@ -269,6 +273,8 @@ from sections.task_management import (  # noqa: E402
     _build_failure_console_frames,
     _build_failure_runbook_markdown,
     _build_task_critical_path_snapshot,
+    _build_controlm_error_board,
+    _build_controlm_job_status_board,
     _build_task_reliability_action,
     _build_task_graph_dot,
     _build_task_ops_frames,
@@ -332,6 +338,8 @@ from utils.ask_overwatch import (  # noqa: E402
     answer_ask_overwatch,
     build_ask_overwatch_context,
     build_grounded_cortex_prompt,
+    build_top_priority_brief_cards,
+    filter_ask_overwatch_cards_by_domain,
     snapshot_ask_overwatch_state,
 )
 from utils.futures_governance import (  # noqa: E402
@@ -950,6 +958,25 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("QUEUED_REPAIR_TIME", sql)
         self.assertIn("RESUMING_WAREHOUSE", sql)
 
+    def test_account_health_live_loader_runs_information_schema_before_lagged_fallback(self):
+        calls = []
+
+        def fake_run(sql):
+            calls.append(sql.upper())
+            return pd.DataFrame({
+                "ACTIVE_COUNT": [1],
+                "QUEUED_COUNT": [0],
+                "BLOCKED_COUNT": [0],
+            })
+
+        with patch("sections.account_health.run_query_or_raise", side_effect=fake_run):
+            df, source = _load_live_query_status("", "", "")
+
+        self.assertEqual(source, "INFORMATION_SCHEMA")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("INFORMATION_SCHEMA.QUERY_HISTORY", calls[0])
+        self.assertEqual(int(df["ACTIVE_COUNT"].iloc[0]), 1)
+
     def test_account_health_builds_daily_dba_checklist(self):
         checklist = _build_account_health_dba_checklist(
             health_score=68,
@@ -1051,6 +1078,41 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Scope evidence", action["Recovery Evidence"])
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
         self.assertNotIn("ALTER", action["Generated SQL Fix"].upper())
+
+    def test_account_health_visible_checklist_defaults_to_exceptions(self):
+        checklist = pd.DataFrame([
+            {
+                "CHECK": "Healthy login posture",
+                "STATUS": "OK",
+                "SEVERITY": "Info",
+                "EVIDENCE": "No action",
+            },
+            {
+                "CHECK": "Query failure review",
+                "STATUS": "Needs DBA",
+                "SEVERITY": "High",
+                "EVIDENCE": "14 failed queries",
+            },
+            {
+                "CHECK": "Queue pressure review",
+                "STATUS": "Watch",
+                "SEVERITY": "Medium",
+                "EVIDENCE": "7 queued queries",
+            },
+        ])
+
+        default_view, title, raw_label = _account_health_visible_checklist(checklist)
+        full_view, full_title, full_raw_label = _account_health_visible_checklist(
+            checklist,
+            show_full=True,
+        )
+
+        self.assertEqual(title, "Daily DBA checklist exceptions")
+        self.assertEqual(raw_label, "Full daily DBA checklist rows")
+        self.assertEqual(set(default_view["CHECK"]), {"Query failure review", "Queue pressure review"})
+        self.assertEqual(full_title, "Daily DBA checklist")
+        self.assertEqual(full_raw_label, "All daily DBA checklist rows")
+        self.assertEqual(len(full_view), 3)
 
     def test_account_health_checklist_has_owner_and_escalation_context(self):
         checklist = pd.DataFrame([
@@ -3768,6 +3830,57 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("MFA Gap", md)
         self.assertIn("Company scope uses user/database naming", md)
 
+    def test_security_exception_strip_prioritizes_loaded_exceptions_then_summary(self):
+        meta = _security_scope_meta("ALFA", "PROD", 30, state={})
+        summary = pd.DataFrame([{
+            "FAILED_LOGINS": 8,
+            "FAILED_USERS": 2,
+            "USERS_WITHOUT_MFA": 3,
+            "RECENT_GRANTS": 40,
+            "SHARED_DATABASES": 1,
+        }])
+        priority_exceptions = pd.DataFrame([{
+            "SEVERITY": "High",
+            "FINDING_TYPE": "MFA Gap",
+            "ENTITY": "USER_A",
+            "EVENT_COUNT": 1,
+            "LAST_SEEN": "2026-06-01",
+            "NEXT_ACTION": "Confirm MFA enforcement path.",
+        }])
+
+        exception_rows = _security_exception_strip_rows(
+            summary,
+            priority_exceptions,
+            meta,
+            company="ALFA",
+            environment="PROD",
+            days=30,
+        )
+        summary_rows = _security_exception_strip_rows(
+            summary,
+            pd.DataFrame(),
+            meta,
+            company="ALFA",
+            environment="PROD",
+            days=30,
+        )
+        stale_rows = _security_exception_strip_rows(
+            summary,
+            pd.DataFrame(),
+            _security_scope_meta("ALFA", "PROD", 14, state={}),
+            company="ALFA",
+            environment="PROD",
+            days=30,
+        )
+
+        self.assertEqual(exception_rows[0]["signal"], "MFA Gap")
+        self.assertEqual(exception_rows[0]["entity"], "USER_A")
+        self.assertEqual(
+            [row["signal"] for row in summary_rows],
+            ["MFA gaps", "Failed logins", "Grant-change volume", "Shared data exposure"],
+        )
+        self.assertEqual(stale_rows, [])
+
     def test_security_access_review_marks_login_only_rows_no_database_context(self):
         exceptions = pd.DataFrame(
             {
@@ -5690,6 +5803,87 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("POLICY_FACT", str(latest.iloc[0]["IMPACT_OBJECTS"]))
         self.assertIn("INCIDENT_PRIORITY", exceptions.columns)
 
+    def test_task_ops_frames_count_live_running_job_status(self):
+        inventory = pd.DataFrame(
+            {
+                "DATABASE_NAME": ["ALFA_EDW_DEV"],
+                "SCHEMA_NAME": ["PUBLIC"],
+                "NAME": ["ROOT_TASK"],
+                "STATE": ["STARTED"],
+                "PREDECESSORS": ["[]"],
+                "DEFINITION": ["CALL ALFA_EDW_DEV.PUBLIC.SP_ROOT();"],
+            }
+        )
+        history = pd.DataFrame(
+            {
+                "TASK_NAME": ["ROOT_TASK", "ROOT_TASK"],
+                "SCHEDULED_TIME": pd.to_datetime(["2026-05-01 00:00", "2026-05-01 01:00"]),
+                "STATE": ["SUCCEEDED", "RUNNING"],
+                "DURATION_SEC": [90, 180],
+                "QUERY_ID": ["q_success", "q_running"],
+                "ERROR_MESSAGE": ["", ""],
+            }
+        )
+
+        summary, _exceptions, latest = _build_task_ops_frames(inventory, history)
+
+        self.assertEqual(summary["RUNNING_TASKS"], 1)
+        self.assertEqual(summary["LATEST_SUCCESS_TASKS"], 0)
+        self.assertEqual(summary["LATEST_FAILED_TASKS"], 0)
+        self.assertEqual(str(latest.iloc[0]["STATE"]), "RUNNING")
+
+    def test_controlm_job_status_board_surfaces_performance_and_errors(self):
+        summary = {
+            "TOTAL_TASKS": 4,
+            "TOTAL_RUNS": 12,
+            "FAILED_RUNS": 2,
+            "LATEST_FAILED_TASKS": 1,
+            "RUNNING_TASKS": 1,
+            "LONG_RUNNING_TASKS": 1,
+            "COST_DRIFT_TASKS": 1,
+            "OPEN_RECOVERIES": 1,
+            "BLOCKED_RECOVERIES": 1,
+            "RECOVERY_SLA_BREACHES": 1,
+            "RECOVERY_SLA_TARGET_HOURS": 4,
+            "P1_INCIDENTS": 0,
+        }
+        latest = pd.DataFrame(
+            {
+                "TASK_NAME": ["ROOT_TASK", "CHILD_TASK"],
+                "ROOT_TASK_NAME": ["ROOT_TASK", "ROOT_TASK"],
+                "STATE": ["FAILED_WITH_ERROR", "RUNNING"],
+                "SCHEDULED_TIME": pd.to_datetime(["2026-05-01 10:00", "2026-05-01 10:05"]),
+                "QUERY_ID": ["q_failed", "q_running"],
+                "ERROR_MESSAGE": ["SQL compilation error: missing table", ""],
+                "EST_TOTAL_CREDITS": [0.25, 0.0],
+            }
+        )
+        exceptions = pd.DataFrame(
+            {
+                "INCIDENT_PRIORITY": ["P2 - Production Risk"],
+                "SEVERITY": ["High"],
+                "SIGNAL": ["Failed Task Run"],
+                "TASK_NAME": ["ROOT_TASK"],
+                "ROOT_TASK_NAME": ["ROOT_TASK"],
+                "STATE": ["FAILED_WITH_ERROR"],
+                "DETAIL": ["SQL compilation error: missing table"],
+                "QUERY_ID": ["q_failed"],
+                "EST_TOTAL_CREDITS": [0.25],
+            }
+        )
+
+        board = _build_controlm_job_status_board(summary, latest, exceptions)
+        errors = _build_controlm_error_board(exceptions, latest)
+        by_view = {row["CONTROL_M_VIEW"]: row for _, row in board.iterrows()}
+
+        self.assertEqual(by_view["Job Status"]["STATE"], "Needs Triage")
+        self.assertEqual(by_view["Performance Indicators"]["COUNT"], 2)
+        self.assertEqual(by_view["Errors"]["COUNT"], 1)
+        self.assertIn("FAILED_WITH_ERROR", by_view["Job Status"]["EVIDENCE"])
+        self.assertFalse(errors.empty)
+        self.assertIn("missing table", errors.iloc[0]["ERROR_SIGNATURE"])
+        self.assertIn("EST_TOTAL_CREDITS", errors.columns)
+
     def test_task_recovery_sla_frame_tracks_open_and_late_recoveries(self):
         inventory = pd.DataFrame(
             {
@@ -5854,6 +6048,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         self.assertIn("OVERWATCH Task Graph Operations Brief - ALFA", md)
         self.assertIn("Informatica Monitor replacement", md)
+        self.assertIn("Control-M handoff state", md)
         self.assertIn("Failed Task Run", md)
         self.assertIn("Cost drift/release-regression candidates", md)
         self.assertIn("Admin actions require", md)
@@ -6074,9 +6269,11 @@ class FormulaRegressionTests(unittest.TestCase):
             account_text.index("DEF _CAN_USE_CONTROL_ROOM_MART")
         ]
         self.assertLess(
-            loader_block.index("RETURN RUN_QUERY_OR_RAISE(FALLBACK_SQL)"),
             loader_block.index("RETURN RUN_QUERY_OR_RAISE(_LIVE_QUERY_STATUS_SQL"),
+            loader_block.index("RETURN RUN_QUERY_OR_RAISE(FALLBACK_SQL)"),
         )
+        self.assertIn('"INFORMATION_SCHEMA"', loader_block)
+        self.assertIn('"ACCOUNT_USAGE"', loader_block)
 
     def test_connected_program_tracking_uses_auth_event_before_query_tag_fallback(self):
         security_text = (APP_ROOT / "sections" / "security_access.py").read_text(encoding="utf-8").upper()
@@ -6529,6 +6726,126 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("not have enough loaded OVERWATCH evidence", result["answer"])
         self.assertIn("will not invent best-practice advice", result["answer"])
 
+    def test_top_priority_brief_cards_are_ranked_and_domain_filtered(self):
+        state = {
+            "rec_recommendations": [{
+                "Source": "Idle warehouse detector",
+                "Severity": "High",
+                "Category": "Cost Control",
+                "Entity Type": "Warehouse",
+                "Entity": "COMPUTE_WH",
+                "Finding": "COMPUTE_WH idle 12h, wasting 4.5 credits",
+                "Action": "Reduce AUTO_SUSPEND",
+                "Estimated Monthly Savings": 72.5,
+                "Proof Query": _idle_warehouse_verification_sql("COMPUTE_WH"),
+            }],
+            "dba_control_room_data": {
+                "summary": pd.DataFrame([{
+                    "FAILED_QUERIES": 0,
+                    "QUEUED_QUERIES": 24,
+                    "REMOTE_SPILL_QUERIES": 3,
+                    "P95_ELAPSED_SEC": 95,
+                }])
+            },
+        }
+
+        all_cards = build_top_priority_brief_cards(state, limit=5)
+        cost_cards = build_top_priority_brief_cards(state, domain="Cost", limit=5)
+        warehouse_cards = build_top_priority_brief_cards(
+            {"dba_control_room_data": state["dba_control_room_data"]},
+            domain="Warehouse",
+            limit=5,
+        )
+
+        self.assertEqual(all_cards[0]["rank"], 1)
+        self.assertLessEqual(len(all_cards), 5)
+        self.assertIn("COMPUTE_WH", cost_cards[0]["entity"])
+        self.assertIn("credit", cost_cards[0]["evidence"].lower())
+        self.assertIn("Control-room workload risk", warehouse_cards[0]["signal"])
+        self.assertIn("queued", warehouse_cards[0]["evidence"])
+        self.assertEqual(build_top_priority_brief_cards({}, domain="All"), [])
+
+    def test_top_priority_brief_reads_security_posture_summary(self):
+        state = {
+            "security_posture_summary": pd.DataFrame([{
+                "FAILED_LOGINS": 42,
+                "FAILED_USERS": 6,
+                "USERS_WITHOUT_MFA": 2,
+                "RECENT_GRANTS": 31,
+                "SHARED_DATABASES": 1,
+            }]),
+        }
+
+        security_cards = build_top_priority_brief_cards(state, domain="Security", limit=5)
+        signals = [card["signal"] for card in security_cards]
+
+        self.assertIn("MFA gaps", signals)
+        self.assertIn("Failed logins", signals)
+        self.assertIn("Grant-change volume", signals)
+        self.assertIn("Shared data exposure", signals)
+        self.assertEqual(security_cards[0]["surface"], "Security Posture")
+        mfa_card = next(card for card in security_cards if card["signal"] == "MFA gaps")
+        self.assertIn("MFA", mfa_card["evidence"])
+
+    def test_top_priority_brief_prioritizes_loaded_security_exceptions(self):
+        state = {
+            "security_posture_summary": pd.DataFrame([{
+                "FAILED_LOGINS": 4,
+                "FAILED_USERS": 1,
+                "USERS_WITHOUT_MFA": 0,
+                "RECENT_GRANTS": 0,
+                "SHARED_DATABASES": 0,
+            }]),
+            "security_posture_exceptions": pd.DataFrame([
+                {
+                    "SEVERITY": "Medium",
+                    "FINDING_TYPE": "Failed Login",
+                    "ENTITY": "USER_LOW",
+                    "EVENT_COUNT": 4,
+                    "LAST_SEEN": "2026-06-01",
+                },
+                {
+                    "SEVERITY": "High",
+                    "FINDING_TYPE": "MFA Gap",
+                    "ENTITY": "USER_HIGH",
+                    "DATABASE_NAME": "NO DATABASE CONTEXT",
+                    "EVENT_COUNT": 1,
+                    "LAST_SEEN": "2026-06-02",
+                    "NEXT_ACTION": "Confirm MFA enrollment.",
+                },
+            ]),
+        }
+
+        security_cards = build_top_priority_brief_cards(state, domain="Security", limit=3)
+
+        self.assertEqual(security_cards[0]["surface"], "Security Posture - Exceptions")
+        self.assertEqual(security_cards[0]["signal"], "MFA Gap")
+        self.assertEqual(security_cards[0]["entity"], "USER_HIGH")
+        self.assertIn("No Database Context", security_cards[0]["evidence"])
+        self.assertIn("Confirm MFA enrollment", security_cards[0]["next_action"])
+
+    def test_priority_brief_domain_filter_preserves_loaded_cards_when_no_domain_match(self):
+        cards = [
+            {
+                "surface": "Cost & Contract",
+                "signal": "Credit spike",
+                "entity": "WH_LOAD",
+                "evidence": "credits increased",
+                "next_action": "Open cost attribution",
+            },
+            {
+                "surface": "Warehouse Health",
+                "signal": "Queue pressure",
+                "entity": "WH_QUERY",
+                "evidence": "queue and spill",
+                "next_action": "Review capacity",
+            },
+        ]
+
+        self.assertEqual(filter_ask_overwatch_cards_by_domain(cards, "Cost"), [cards[0]])
+        self.assertEqual(filter_ask_overwatch_cards_by_domain(cards, "Warehouse"), [cards[1]])
+        self.assertEqual(filter_ask_overwatch_cards_by_domain(cards, "Unknown"), cards)
+
     def test_ask_overwatch_answers_from_specific_recommendation_evidence(self):
         result = answer_ask_overwatch(
             "What should I do first for cost?",
@@ -6596,6 +6913,8 @@ class FormulaRegressionTests(unittest.TestCase):
             "unrelated_large_frame": huge_frame,
             "dba_control_room_data": {"summary": pd.DataFrame()},
             "arch_agentic_ai_scorecard": pd.DataFrame([{"CONTROL_AREA": "CoWork Artifact Governance"}]),
+            "security_posture_summary": pd.DataFrame([{"FAILED_LOGINS": 3}]),
+            "security_posture_exceptions": pd.DataFrame([{"FINDING_TYPE": "Failed Login"}]),
         }
         snapshot = snapshot_ask_overwatch_state(state)
 
@@ -6605,6 +6924,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("rec_automation_board", snapshot)
         self.assertIn("dba_control_room_data", snapshot)
         self.assertIn("arch_agentic_ai_scorecard", snapshot)
+        self.assertIn("security_posture_summary", snapshot)
+        self.assertIn("security_posture_exceptions", snapshot)
         self.assertNotIn("unrelated_large_frame", snapshot)
 
     def test_grounded_cortex_prompt_for_future_use_is_strict(self):

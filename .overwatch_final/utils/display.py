@@ -1,6 +1,7 @@
 # utils/display.py - chart and drill-down rendering helpers
 import streamlit as st
 import pandas as pd
+from config import DAY_WINDOW_OPTIONS, DEFAULT_DAY_WINDOW
 from .cache import clear_all_cache
 from .cost import format_credits
 from .compatibility import filter_existing_columns
@@ -12,6 +13,44 @@ from .workflows import add_cost_companion_columns, prioritize_context_columns
 
 
 DISPLAY_VERSION = "2026-06-05-chart-drillback-cost-v1"
+
+
+def day_window_selectbox(
+    label: str,
+    *,
+    key: str,
+    default: int = DEFAULT_DAY_WINDOW,
+    options: tuple[int, ...] = DAY_WINDOW_OPTIONS,
+    help: str | None = None,
+) -> int:
+    """Render a standard DBA lookback selector using approved day windows."""
+    valid_options = tuple(int(value) for value in options)
+    if not valid_options:
+        valid_options = tuple(int(value) for value in DAY_WINDOW_OPTIONS)
+    requested_default = int(default)
+    fallback = (
+        requested_default
+        if requested_default in valid_options
+        else min(valid_options, key=lambda value: (abs(value - requested_default), value))
+    )
+    current = st.session_state.get(key, fallback)
+    try:
+        current = int(current)
+    except (TypeError, ValueError):
+        current = fallback
+    if current not in valid_options:
+        current = fallback
+        st.session_state[key] = current
+    return int(
+        st.selectbox(
+            label,
+            valid_options,
+            index=valid_options.index(current),
+            key=key,
+            format_func=lambda value: f"{int(value)} days",
+            help=help,
+        )
+    )
 
 
 def _altair():

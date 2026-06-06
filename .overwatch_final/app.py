@@ -38,7 +38,7 @@ from config import (
 )
 import utils as utils_package
 
-if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-02-guardrails-v1":
+if getattr(utils_package, "UTILS_EXPORT_VERSION", "") != "2026-06-06-day-window-export-v1":
     utils_package = importlib.reload(utils_package)
 
 from utils.cache import clear_all_cache
@@ -111,6 +111,8 @@ _ASK_OVERWATCH_STATE_KEYS = (
     "cost_contract_incident_timeline",
     "cost_contract_mart_operability_summary",
     "cost_contract_mart_operability",
+    "security_posture_summary",
+    "security_posture_exceptions",
     "alert_center_data",
     "dba_control_room_data",
     "dba_control_room_incident_board",
@@ -179,7 +181,7 @@ def _maybe_reload_dev_helpers() -> None:
     import utils.display as display_module
     import utils.workflows as workflows_module
 
-    if getattr(display_module, "DISPLAY_VERSION", "") != "2026-06-01-explicit-drilldowns-v1":
+    if getattr(display_module, "DISPLAY_VERSION", "") != "2026-06-05-chart-drillback-cost-v1":
         importlib.reload(display_module)
 
     if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-03-bottom-notes-v1":
@@ -369,6 +371,297 @@ def _sidebar_panel_toggle(label: str, panel_key: str) -> bool:
     return is_active
 
 
+def _sync_company_environment_state(company: str) -> list[str]:
+    """Keep company/environment state valid before section queries hydrate."""
+    _prev_company = st.session_state.get("_prev_active_company", DEFAULT_COMPANY)
+    if _prev_company != company:
+        invalidate_company_cache()
+    environment_options = list(get_environment_options_for_company(company))
+    if st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) not in environment_options:
+        st.session_state["global_environment"] = DEFAULT_ENVIRONMENT
+    st.session_state["_prev_active_company"] = company
+    return environment_options
+
+
+def _render_global_date_range_control(*, label: str = "Date range") -> None:
+    default_end = datetime.now().date()
+    default_start = default_end - timedelta(days=7)
+    date_input_key = "_global_date_range_input"
+    existing_date_range = st.session_state.get(date_input_key)
+    if isinstance(existing_date_range, tuple) and len(existing_date_range) == 2:
+        clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(
+            existing_date_range[0],
+            existing_date_range[1],
+        )
+        if was_clamped:
+            st.session_state[date_input_key] = (clamped_start, clamped_end)
+            st.session_state["global_start_date"] = clamped_start
+            st.session_state["global_end_date"] = clamped_end
+            clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
+            st.session_state["_global_date_clamp_pending_warning"] = (clamp_key, max_days)
+    date_range = st.date_input(
+        label,
+        value=(
+            st.session_state.get("global_start_date", default_start),
+            st.session_state.get("global_end_date", default_end),
+        ),
+        key=date_input_key,
+    )
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(date_range[0], date_range[1])
+        st.session_state["global_start_date"] = clamped_start
+        st.session_state["global_end_date"] = clamped_end
+        pending_clamp_warning = st.session_state.pop("_global_date_clamp_pending_warning", None)
+        if pending_clamp_warning:
+            clamp_key, max_days = pending_clamp_warning
+            if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
+                st.warning(
+                    f"Global date range was clamped to the most recent {max_days} days to keep dashboard scans bounded."
+                )
+                st.session_state["_global_date_clamp_notice_key"] = clamp_key
+        elif was_clamped:
+            clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
+            if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
+                st.warning(
+                    f"Global date range was clamped to the most recent {max_days} days to keep dashboard scans bounded."
+                )
+                st.session_state["_global_date_clamp_notice_key"] = clamp_key
+        else:
+            st.session_state.pop("_global_date_clamp_notice_key", None)
+
+
+def _ensure_global_warehouse_options(company: str) -> None:
+    filter_choice_scope = (
+        company,
+        st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
+    )
+    if st.session_state.get("_global_warehouse_choice_scope") == filter_choice_scope:
+        return
+    st.session_state["_global_warehouse_choice_scope"] = filter_choice_scope
+    try:
+        st.session_state["global_warehouse_options"] = load_warehouse_options(
+            get_session(),
+            company=company,
+        )
+    except Exception:
+        st.session_state["global_warehouse_options"] = []
+
+
+def _ensure_global_database_options(company: str) -> None:
+    filter_choice_scope = (
+        company,
+        st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
+    )
+    if st.session_state.get("_global_database_choice_scope") == filter_choice_scope:
+        return
+    st.session_state["_global_database_choice_scope"] = filter_choice_scope
+    try:
+        st.session_state["global_database_options"] = load_database_options(
+            get_session(),
+            company=company,
+        )
+    except Exception:
+        st.session_state["global_database_options"] = []
+
+
+def _render_global_environment_control(active_company: str) -> list[str]:
+    environment_options = _sync_company_environment_state(active_company)
+    st.selectbox(
+        "Environment",
+        environment_options,
+        index=environment_options.index(
+            st.session_state.get("global_environment", DEFAULT_ENVIRONMENT)
+            if st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) in environment_options
+            else DEFAULT_ENVIRONMENT
+        ),
+        format_func=lambda key: get_environment_label(key, active_company),
+        key="global_environment",
+        help=(
+            "Trexis PROD uses _PRD databases; All DEV/SIT uses _DEV and _SIT."
+            if str(active_company).upper() == "TREXIS"
+            else (
+                "Splits ALFA_EDW_PROD from DEV/SAN/PHX/SEA/SIT. "
+                "Cost split is allocated by query database when warehouses are shared."
+            )
+        ),
+    )
+    return environment_options
+
+
+def _render_global_warehouse_control(active_company: str) -> None:
+    _ensure_global_warehouse_options(active_company)
+    global_warehouse_options = list(st.session_state.get("global_warehouse_options") or [])
+    if global_warehouse_options:
+        warehouse_choices = ["All scoped warehouses"] + global_warehouse_options
+        current_wh = str(st.session_state.get("global_warehouse", "") or "")
+        desired_select = current_wh if current_wh in global_warehouse_options else "All scoped warehouses"
+        if st.session_state.get("global_warehouse_select") not in warehouse_choices:
+            st.session_state["global_warehouse_select"] = desired_select
+        elif current_wh and st.session_state.get("global_warehouse_select") != current_wh:
+            st.session_state["global_warehouse_select"] = desired_select
+        selected_global_warehouse = st.selectbox(
+            "Warehouse",
+            warehouse_choices,
+            key="global_warehouse_select",
+        )
+        st.session_state["global_warehouse"] = (
+            "" if selected_global_warehouse == "All scoped warehouses" else selected_global_warehouse
+        )
+    else:
+        st.text_input("Warehouse contains", key="global_warehouse")
+
+
+def _clear_global_filters() -> None:
+    for _k in [
+        "global_start_date", "global_end_date", "global_warehouse",
+        "global_user", "global_role", "global_database", "global_schema", "global_environment",
+        "global_warehouse_select", "global_database_select", "global_schema_select",
+        "global_warehouse_options", "global_database_options", "global_schema_options",
+        "_global_filter_choice_scope", "_global_warehouse_choice_scope", "_global_database_choice_scope",
+        "_global_schema_choice_scope", "_global_date_range_input", "_global_date_clamp_notice_key",
+        "_global_date_clamp_pending_warning",
+    ]:
+        st.session_state.pop(_k, None)
+    clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
+    st.rerun()
+
+
+def _maybe_clear_scope_cache_on_filter_change() -> None:
+    current_filter_signature = _global_filter_signature()
+    previous_filter_signature = st.session_state.get("_prev_global_filter_signature")
+    if previous_filter_signature is None:
+        st.session_state["_prev_global_filter_signature"] = current_filter_signature
+    elif previous_filter_signature != current_filter_signature:
+        clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
+        st.session_state["_prev_global_filter_signature"] = current_filter_signature
+
+
+def _render_topbar_filter_strip(active_company: str) -> str:
+    """Render the high-use operator filters above every section."""
+    st.markdown(
+        """
+        <div class="ow-filter-strip-shell">
+            <div class="ow-filter-strip-kicker">Triage Filters</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c_company, c_env, c_date = st.columns([1.2, 1.35, 2.45])
+    with c_company:
+        selected_company = st.selectbox(
+            "Company view",
+            list(COMPANY_CONFIG.keys()),
+            index=list(COMPANY_CONFIG.keys()).index(active_company)
+            if active_company in COMPANY_CONFIG else 0,
+            key="active_company",
+        )
+    with c_env:
+        _render_global_environment_control(selected_company)
+    with c_date:
+        _render_global_date_range_control()
+    c_wh, c_user, c_clear = st.columns([2.5, 1.7, 0.75])
+    with c_wh:
+        _render_global_warehouse_control(selected_company)
+    with c_user:
+        st.text_input("User contains", key="global_user")
+    with c_clear:
+        st.write("")
+        if st.button("Clear", key="global_filters_clear_topbar", width="stretch"):
+            _clear_global_filters()
+    return str(selected_company or active_company)
+
+
+_TOP_PRIORITY_BRIEF_DOMAINS = (
+    "All",
+    "Cost",
+    "Warehouse",
+    "Reliability",
+    "Alerts",
+    "Security",
+    "Change",
+    "Automation",
+    "AI Platform",
+)
+
+
+def _priority_brief_scope_label(active_section: str, company: str) -> str:
+    environment = get_environment_label(
+        st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
+        company,
+    )
+    return " / ".join(part for part in [company, environment, active_section] if part)
+
+
+def _priority_brief_row(card: dict) -> str:
+    rank = html.escape(str(card.get("rank", "")))
+    severity = html.escape(str(card.get("severity", "Medium")))
+    entity = html.escape(str(card.get("entity", "Snowflake")))
+    signal = html.escape(str(card.get("signal", "Priority finding")))
+    evidence = html.escape(str(card.get("evidence", ""))[:280])
+    next_action = html.escape(str(card.get("next_action", ""))[:240])
+    route = html.escape(str(card.get("route", card.get("surface", "OVERWATCH"))))
+    return f"""
+    <div class="ow-priority-brief-row">
+        <div class="ow-priority-brief-head">
+            <span class="ow-priority-rank">{rank}</span>
+            <span class="ow-priority-severity">{severity}</span>
+            <strong>{entity}</strong>
+            <span>{signal}</span>
+        </div>
+        <div class="ow-priority-evidence">{evidence}</div>
+        <div class="ow-priority-next">{next_action}</div>
+        <div class="ow-priority-route">{route}</div>
+    </div>
+    """
+
+
+def _render_top_priority_brief(active_section: str, company: str, role: str) -> None:
+    """Render loaded evidence as a deterministic morning-priority brief."""
+    st.markdown(
+        """
+        <div class="ow-priority-brief-shell">
+            <div class="ow-filter-strip-kicker">Top Priority Brief</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    brief_col, domain_col = st.columns([5.2, 1.4])
+    with domain_col:
+        selected_domain = st.selectbox(
+            "Brief domain",
+            _TOP_PRIORITY_BRIEF_DOMAINS,
+            key="top_priority_brief_domain",
+        )
+
+    loaded_state = _snapshot_ask_overwatch_state(st.session_state)
+    with brief_col:
+        st.caption(
+            f"{_priority_brief_scope_label(active_section, company)}"
+            + (f" / {role}" if role else "")
+        )
+        if not loaded_state:
+            st.info("No loaded priority evidence yet.")
+            return
+        try:
+            from utils.ask_overwatch import build_top_priority_brief_cards
+
+            cards = build_top_priority_brief_cards(
+                loaded_state,
+                domain=selected_domain,
+                limit=5,
+            )
+        except Exception:
+            st.warning("Priority brief could not read loaded evidence.")
+            return
+        if not cards:
+            st.info("No loaded priority evidence for this domain.")
+            return
+        st.markdown(
+            "".join(_priority_brief_row(card) for card in cards),
+            unsafe_allow_html=True,
+        )
+
+
 def _mark_section_rendered(section: str, signature: tuple) -> None:
     st.session_state["_overwatch_last_rendered_section"] = _normalize_nav_section(section)
     st.session_state["_overwatch_last_section_render_signature"] = signature
@@ -551,6 +844,7 @@ st.session_state["_overwatch_active_section"] = active_section
 # Paint the main app shell before the sidebar and selected section hydrate. During
 # high-concurrency startup this gives users an immediate, stable command-center frame.
 _render_app_header(active_section, active_company, credit_price, current_role)
+active_company = _render_topbar_filter_strip(active_company)
 
 connection_available = _probe_snowflake_available()
 
@@ -570,123 +864,10 @@ with st.sidebar:
     if "_overwatch_current_role" not in st.session_state:
         st.session_state.setdefault("_overwatch_current_role", "")
 
-    # Company filter.
-    _prev_company = st.session_state.get("_prev_active_company", DEFAULT_COMPANY)
-    active_company = st.radio(
-        "Company view",
-        list(COMPANY_CONFIG.keys()),
-        horizontal=True,
-        key="active_company",
-    )
-    if _prev_company != active_company:
-        invalidate_company_cache()
-    environment_options = list(get_environment_options_for_company(active_company))
-    if st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) not in environment_options:
-        st.session_state["global_environment"] = DEFAULT_ENVIRONMENT
-    st.session_state["_prev_active_company"] = active_company
-
     if _sidebar_panel_toggle("Global Filters", "global_filters"):
-        default_end = datetime.now().date()
-        default_start = default_end - timedelta(days=7)
-        date_input_key = "_global_date_range_input"
-        existing_date_range = st.session_state.get(date_input_key)
-        if isinstance(existing_date_range, tuple) and len(existing_date_range) == 2:
-            clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(
-                existing_date_range[0],
-                existing_date_range[1],
-            )
-            if was_clamped:
-                st.session_state[date_input_key] = (clamped_start, clamped_end)
-                st.session_state["global_start_date"] = clamped_start
-                st.session_state["global_end_date"] = clamped_end
-                clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
-                st.session_state["_global_date_clamp_pending_warning"] = (clamp_key, max_days)
-        date_range = st.date_input(
-            "Date range",
-            value=(
-                st.session_state.get("global_start_date", default_start),
-                st.session_state.get("global_end_date", default_end),
-            ),
-            key=date_input_key,
-        )
-        if isinstance(date_range, tuple) and len(date_range) == 2:
-            clamped_start, clamped_end, was_clamped, max_days = clamp_global_date_range(date_range[0], date_range[1])
-            st.session_state["global_start_date"] = clamped_start
-            st.session_state["global_end_date"] = clamped_end
-            pending_clamp_warning = st.session_state.pop("_global_date_clamp_pending_warning", None)
-            if pending_clamp_warning:
-                clamp_key, max_days = pending_clamp_warning
-                if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
-                    st.warning(
-                        f"Global date range was clamped to the most recent {max_days} days to keep dashboard scans bounded."
-                    )
-                    st.session_state["_global_date_clamp_notice_key"] = clamp_key
-            elif was_clamped:
-                clamp_key = f"{clamped_start}|{clamped_end}|{max_days}"
-                if st.session_state.get("_global_date_clamp_notice_key") != clamp_key:
-                    st.warning(
-                        f"Global date range was clamped to the most recent {max_days} days to keep dashboard scans bounded."
-                    )
-                    st.session_state["_global_date_clamp_notice_key"] = clamp_key
-            else:
-                st.session_state.pop("_global_date_clamp_notice_key", None)
-        st.selectbox(
-            "Environment",
-            environment_options,
-            index=environment_options.index(
-                st.session_state.get("global_environment", DEFAULT_ENVIRONMENT)
-                if st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) in environment_options
-                else DEFAULT_ENVIRONMENT
-            ),
-            format_func=lambda key: get_environment_label(key, active_company),
-            key="global_environment",
-            help=(
-                "Trexis PROD uses _PRD databases; All DEV/SIT uses _DEV and _SIT."
-                if str(active_company).upper() == "TREXIS"
-                else (
-                    "Splits ALFA_EDW_PROD from DEV/SAN/PHX/SEA/SIT. "
-                    "Cost split is allocated by query database when warehouses are shared."
-                )
-            ),
-        )
-        filter_choice_scope = (
-            active_company,
-            st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
-        )
-        if st.session_state.get("_global_filter_choice_scope") != filter_choice_scope:
-            st.session_state["_global_filter_choice_scope"] = filter_choice_scope
-            try:
-                session_for_filters = get_session()
-                st.session_state["global_warehouse_options"] = load_warehouse_options(
-                    session_for_filters,
-                    company=active_company,
-                )
-                st.session_state["global_database_options"] = load_database_options(
-                    session_for_filters,
-                    company=active_company,
-                )
-            except Exception:
-                st.session_state["global_warehouse_options"] = []
-                st.session_state["global_database_options"] = []
-
-        global_warehouse_options = list(st.session_state.get("global_warehouse_options") or [])
-        if global_warehouse_options:
-            warehouse_choices = ["All scoped warehouses"] + global_warehouse_options
-            if st.session_state.get("global_warehouse_select") not in warehouse_choices:
-                st.session_state["global_warehouse_select"] = "All scoped warehouses"
-            selected_global_warehouse = st.selectbox(
-                "Warehouse",
-                warehouse_choices,
-                key="global_warehouse_select",
-            )
-            st.session_state["global_warehouse"] = (
-                "" if selected_global_warehouse == "All scoped warehouses" else selected_global_warehouse
-            )
-        else:
-            st.text_input("Warehouse contains", key="global_warehouse")
-
-        st.text_input("User contains", key="global_user")
+        st.caption("Topbar owns date, company, environment, warehouse, and user filters.")
         st.text_input("Role contains", key="global_role")
+        _ensure_global_database_options(active_company)
 
         global_database_options = list(st.session_state.get("global_database_options") or [])
         if global_database_options:
@@ -740,27 +921,8 @@ with st.sidebar:
         else:
             st.text_input("Schema contains", key="global_schema")
 
-        current_filter_signature = _global_filter_signature()
-        previous_filter_signature = st.session_state.get("_prev_global_filter_signature")
-        if previous_filter_signature is None:
-            st.session_state["_prev_global_filter_signature"] = current_filter_signature
-        elif previous_filter_signature != current_filter_signature:
-            clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
-            st.session_state["_prev_global_filter_signature"] = current_filter_signature
-
         if st.button("Clear Global Filters", key="global_filters_clear"):
-            for _k in [
-                "global_start_date", "global_end_date", "global_warehouse",
-                "global_user", "global_role", "global_database", "global_schema", "global_environment",
-                "global_warehouse_select", "global_database_select", "global_schema_select",
-                "global_warehouse_options", "global_database_options", "global_schema_options",
-                "_global_filter_choice_scope", "_global_schema_choice_scope",
-                "_global_date_range_input",
-                "_global_date_clamp_notice_key",
-            ]:
-                st.session_state.pop(_k, None)
-            clear_all_cache(clear_streamlit_cache=False, clear_metadata=False)
-            st.rerun()
+            _clear_global_filters()
 
     st.toggle(
         "Exceptions-only mode",
@@ -1041,44 +1203,9 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+_maybe_clear_scope_cache_on_filter_change()
 active_section = _current_active_section(visible_sections)
-secondary_chrome_ready = bool(st.session_state.get("_overwatch_secondary_chrome_ready"))
-if secondary_chrome_ready:
-    if st.button("Ask OVERWATCH", key="ask_overwatch_panel_toggle", type="secondary"):
-        st.session_state["_overwatch_show_ask_overwatch"] = not bool(
-            st.session_state.get("_overwatch_show_ask_overwatch")
-        )
-
-    if st.session_state.get("_overwatch_show_ask_overwatch"):
-        with st.expander("Ask OVERWATCH", expanded=True):
-            with st.form("ask_overwatch_form", clear_on_submit=False):
-                ask_q = st.text_input(
-                    "Ask a specific DBA operating question...",
-                    placeholder="e.g. What should I work first for cost or task reliability?",
-                    key="ask_overwatch_input",
-                    max_chars=500,
-                )
-                ask_submitted = st.form_submit_button("Ask")
-            if ask_submitted:
-                ask_text = str(st.session_state.get("ask_overwatch_input") or ask_q or "").strip()
-                if not ask_text:
-                    st.info("Type a specific DBA operating question first.")
-                else:
-                    from utils.ask_overwatch import answer_ask_overwatch
-
-                    result = answer_ask_overwatch(
-                        ask_text[:500],
-                        _snapshot_ask_overwatch_state(st.session_state),
-                        active_section=active_section,
-                        company=active_company,
-                        environment=st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
-                        role=current_role or "",
-                    )
-                    st.markdown(result["answer"])
-                    cards = result.get("cards") or []
-                    if cards:
-                        with st.expander("Evidence used", expanded=False):
-                            st.dataframe(cards, width="stretch", hide_index=True, height=260)
+priority_brief_slot = st.empty()
 
 # Section dispatch.
 active_section = _current_active_section(visible_sections)
@@ -1121,6 +1248,8 @@ try:
                 )
             _mark_section_rendered(active_section, section_signature)
 finally:
+    with priority_brief_slot.container():
+        _render_top_priority_brief(active_section, active_company, current_role or "")
     duration_ms = int((time.perf_counter() - section_render_started) * 1000)
     st.session_state["_overwatch_last_section_render_ms"] = duration_ms
     st.session_state["_overwatch_secondary_chrome_ready"] = True

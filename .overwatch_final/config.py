@@ -638,12 +638,12 @@ SECTION_DEFINITIONS = (
     SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room_shell"),
     SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center"),
     SectionDefinition("COMMAND CENTER", "home", "Account Health", "sections.account_health"),
+    SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract"),
     SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations"),
     SectionDefinition("OPERATIONS", "warehouse", "Warehouse Health", "sections.warehouse_health"),
-    SectionDefinition("ARCHITECTURE", "map", "Architecture Readiness", "sections.architecture_readiness"),
-    SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract"),
     SectionDefinition("GOVERNANCE", "security", "Security Posture", "sections.security_posture"),
     SectionDefinition("GOVERNANCE", "change", "Change & Drift", "sections.change_drift"),
+    SectionDefinition("ARCHITECTURE", "map", "Architecture Readiness", "sections.architecture_readiness"),
 )
 
 NAV_GROUPS: dict[str, list[str]] = {}

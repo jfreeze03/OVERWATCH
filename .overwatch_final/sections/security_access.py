@@ -6,6 +6,7 @@ from utils import (
     defer_source_note,
     download_csv,
     filter_existing_columns,
+    day_window_selectbox,
     get_active_company,
     get_active_environment,
     get_db_filter_clause,
@@ -1208,7 +1209,7 @@ def render():
     # -- LOGIN AUDIT -----------------------------------------------------------
     if active_view == "Login Audit":
         st.header("Login Audit")
-        sec_days = st.slider("Lookback (days)", 1, 90, 30, key="sec_days")
+        sec_days = day_window_selectbox("Lookback", key="sec_days", default=30)
 
         if st.button("Load Login Data", key="sec_load"):
             try:
@@ -1292,7 +1293,7 @@ def render():
 
     elif active_view == "Login Posture":
         st.header("Login Posture")
-        posture_days = st.slider("Posture lookback (days)", 1, 90, 30, key="sec_posture_days")
+        posture_days = day_window_selectbox("Posture lookback", key="sec_posture_days", default=30)
         if st.button("Load Login Posture", key="sec_posture_load"):
             try:
                 for key, df in _load_login_posture_mart(company, posture_days).items():
@@ -1450,7 +1451,7 @@ def render():
     # Connected programs
     elif active_view == "Connected Programs":
         st.header("Connected Programs")
-        program_days = st.slider("Program lookback (days)", 1, 90, 30, key="sec_connected_program_days")
+        program_days = day_window_selectbox("Program lookback", key="sec_connected_program_days", default=30)
         if st.button("Load Connected Programs", key="sec_connected_programs_load"):
             with st.spinner("Tracing connected programs..."):
                 try:
@@ -1843,7 +1844,7 @@ def render():
     elif active_view == "Data Lineage":
         st.header("Data Lineage (ACCESS_HISTORY)")
         defer_source_note("Object-level access lineage from ACCOUNT_USAGE.ACCESS_HISTORY.")
-        lin_days = st.slider("Lookback (days)", 1, 30, 7, key="lin_days")
+        lin_days = day_window_selectbox("Lookback", key="lin_days", default=7)
 
         if st.button("Load Access History", key="lin_load"):
             try:

@@ -775,6 +775,18 @@ code, pre, .stCodeBlock {
     padding-top: 0.45rem;
     margin-bottom: 0.5rem;
 }
+.ow-filter-strip-shell {
+    border-bottom: 1px solid var(--border-subtle);
+    margin: -0.2rem 0 0.35rem;
+    padding-bottom: 0.2rem;
+}
+.ow-filter-strip-kicker {
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
 .ow-empty-state {
     max-width: 780px;
     margin: 2.25rem 0;
@@ -865,6 +877,53 @@ code, pre, .stCodeBlock {
     border-bottom: 1px solid var(--border-subtle);
     margin: 0.85rem 0 1rem;
     padding: 0.65rem 0;
+}
+.ow-priority-brief-shell {
+    border-top: 1px solid var(--border-subtle);
+    margin: 0.85rem 0 0.25rem;
+    padding-top: 0.65rem;
+}
+.ow-priority-brief-row {
+    border-left: 3px solid var(--accent);
+    border-top: 1px solid var(--border-subtle);
+    margin: 0.35rem 0;
+    padding: 0.48rem 0.65rem;
+    background: rgba(var(--accent-rgb), 0.05);
+}
+.ow-priority-brief-head {
+    align-items: center;
+    color: var(--text-primary);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.55rem;
+    font-size: 0.82rem;
+    line-height: 1.3;
+}
+.ow-priority-rank,
+.ow-priority-severity {
+    border: 1px solid rgba(var(--accent-rgb), 0.28);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    font-size: 0.64rem;
+    font-weight: 850;
+    padding: 0.08rem 0.42rem;
+    text-transform: uppercase;
+}
+.ow-priority-evidence,
+.ow-priority-next,
+.ow-priority-route {
+    color: var(--text-secondary);
+    font-size: 0.79rem;
+    line-height: 1.35;
+    margin-top: 0.2rem;
+}
+.ow-priority-next {
+    color: var(--text-primary);
+}
+.ow-priority-route {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 750;
 }
 .ow-table-heading span:first-child {
     color: var(--text-primary);
@@ -1001,6 +1060,7 @@ code, pre, .stCodeBlock {
     color: var(--text-secondary) !important;
 }
 [data-testid="stMarkdownContainer"] .ow-section-kicker,
+[data-testid="stMarkdownContainer"] .ow-filter-strip-kicker,
 [data-testid="stMarkdownContainer"] .ow-scope-chip span,
 [data-testid="stMarkdownContainer"] .ow-run-context,
 [data-testid="stMarkdownContainer"] .ow-section-notes-title,

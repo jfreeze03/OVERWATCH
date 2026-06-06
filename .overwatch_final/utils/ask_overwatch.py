@@ -1,4 +1,4 @@
-# utils/ask_overwatch.py - deterministic, evidence-grounded Ask OVERWATCH answers
+# utils/ask_overwatch.py - deterministic, evidence-grounded priority brief helpers
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -18,6 +18,47 @@ SEVERITY_RANK = {
     "LOW": 4,
     "INFO": 5,
 }
+
+DOMAIN_TERMS = {
+    "cost": (
+        "cost", "credit", "spend", "budget", "quota", "savings", "contract",
+        "idle", "cortex", "resource monitor", "root cause", "cost spike",
+    ),
+    "warehouse": (
+        "warehouse", "queue", "spill", "capacity", "sizing", "suspend", "auto_suspend",
+    ),
+    "reliability": (
+        "task", "procedure", "failure", "failed", "runtime", "sla", "graph",
+    ),
+    "alert": (
+        "alert", "incident", "email", "overdue", "issue",
+    ),
+    "security": (
+        "security", "grant", "role", "login", "mfa", "access",
+    ),
+    "change": (
+        "change", "drift", "ddl", "owner", "approval",
+    ),
+    "automation": (
+        "automation", "automate", "auto", "guided", "approval", "manual only", "blocker",
+    ),
+    "ai_platform": (
+        "agent", "mcp", "intelligence", "openflow", "horizon", "semantic",
+        "aisql", "cortex code", "cortex sense", "cowork", "artifact", "context", "ai",
+    ),
+}
+
+TOP_PRIORITY_BRIEF_DOMAINS = (
+    "All",
+    "Cost",
+    "Warehouse",
+    "Reliability",
+    "Alerts",
+    "Security",
+    "Change",
+    "Automation",
+    "AI Platform",
+)
 
 ASK_OVERWATCH_STATE_KEYS = (
     "rec_recommendations",
@@ -50,11 +91,13 @@ ASK_OVERWATCH_STATE_KEYS = (
     "cost_contract_incident_timeline",
     "cost_contract_mart_operability_summary",
     "cost_contract_mart_operability",
+    "security_posture_summary",
+    "security_posture_exceptions",
 )
 
 
 def snapshot_ask_overwatch_state(state: Mapping) -> dict:
-    """Return only the loaded evidence surfaces Ask OVERWATCH reads."""
+    """Return only the loaded evidence surfaces the priority brief reads."""
     snapshot: dict = {}
     for key in ASK_OVERWATCH_STATE_KEYS:
         try:
@@ -689,6 +732,123 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
                 })
 
 
+def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
+    exceptions = state.get("security_posture_exceptions")
+    if _is_df(exceptions):
+        view = exceptions.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        view["_RANK"] = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).apply(_rank)
+        if "EVENT_COUNT" not in view.columns:
+            view["EVENT_COUNT"] = 0
+        sort_columns = ["_RANK", "EVENT_COUNT"]
+        ascending = [True, False]
+        if "LAST_SEEN" in view.columns:
+            sort_columns.append("LAST_SEEN")
+            ascending.append(False)
+        view = view.sort_values(sort_columns, ascending=ascending).drop(columns=["_RANK"], errors="ignore")
+        for _, row in view.head(8).iterrows():
+            finding = _text(row, "FINDING_TYPE", default="Security exception")
+            entity = _text(row, "ENTITY", default="security scope")
+            database = _text(row, "DATABASE_NAME")
+            if database.upper().replace("_", " ") == "NO DATABASE CONTEXT":
+                database = "No Database Context"
+            next_action = _text(row, "NEXT_ACTION")
+            if not next_action:
+                if "mfa" in finding.lower():
+                    next_action = "Confirm the authentication path and enforce MFA through Snowflake or the identity provider."
+                elif "login" in finding.lower():
+                    next_action = "Validate source IP, IAM context, and recent user changes before disabling or locking the user."
+                elif "grant" in finding.lower():
+                    next_action = "Confirm owner, ticket, and business justification before revoking or narrowing access."
+                elif "shared" in finding.lower():
+                    next_action = "Validate consumer, owner, contract, and classification before leaving the share active."
+                else:
+                    next_action = "Open Security Posture and validate owner, approval, ticket, and proof evidence."
+            _append_card(cards, {
+                "surface": "Security Posture - Exceptions",
+                "severity": _text(row, "SEVERITY", default="High"),
+                "signal": finding,
+                "entity": entity,
+                "evidence": (
+                    f"{safe_int(_value(row, 'EVENT_COUNT', default=0)):,} event(s); "
+                    f"database={database or 'No Database Context'}; "
+                    f"last_seen={_text(row, 'LAST_SEEN', default='not recorded')}."
+                ),
+                "next_action": next_action,
+                "proof": _text(row, "PROOF_QUERY", "PROOF_REQUIRED", default="Attach Security Posture proof SQL and owner review before closure."),
+                "do_not": "Do not revoke, disable, or suppress security findings without owner, ticket, approval, and verification proof.",
+                "route": _text(row, "NEXT_WORKFLOW", default="Security Posture"),
+                "category": "Security",
+                "value": _text(row, "EVENT_COUNT", default="0"),
+            })
+
+    summary = state.get("security_posture_summary")
+    if not _is_df(summary):
+        return
+    row = summary.iloc[0]
+    failed_logins = safe_int(_value(row, "FAILED_LOGINS", default=0))
+    failed_users = safe_int(_value(row, "FAILED_USERS", default=0))
+    users_without_mfa = safe_int(_value(row, "USERS_WITHOUT_MFA", default=0))
+    recent_grants = safe_int(_value(row, "RECENT_GRANTS", default=0))
+    shared_databases = safe_int(_value(row, "SHARED_DATABASES", default=0))
+    if users_without_mfa:
+        _append_card(cards, {
+            "surface": "Security Posture",
+            "severity": "High",
+            "signal": "MFA gaps",
+            "entity": "Users",
+            "evidence": f"{users_without_mfa:,} user(s) missing MFA signal in the loaded scope.",
+            "next_action": "Confirm each authentication path and enforce MFA through Snowflake or the identity provider.",
+            "proof": "ACCOUNT_USAGE.USERS MFA/EXT_AUTHN_DUO evidence plus IAM/security approval.",
+            "do_not": "Do not mark Security Posture clean until MFA exceptions are approved or remediated.",
+            "route": "Security Posture > Access posture",
+            "category": "Security",
+            "value": str(users_without_mfa),
+        })
+    if failed_logins:
+        _append_card(cards, {
+            "surface": "Security Posture",
+            "severity": "High" if failed_logins >= 25 or failed_users >= 5 else "Medium",
+            "signal": "Failed logins",
+            "entity": "Identity",
+            "evidence": f"{failed_logins:,} failed login(s) across {failed_users:,} user(s).",
+            "next_action": "Validate source IP, IAM context, and recent user changes before locking or disabling users.",
+            "proof": "LOGIN_HISTORY grouped by user, source IP, client, and error code.",
+            "do_not": "Do not disable users from aggregate failure volume alone.",
+            "route": "Security Posture > Access posture",
+            "category": "Security",
+            "value": str(failed_logins),
+        })
+    if recent_grants >= 25:
+        _append_card(cards, {
+            "surface": "Security Posture",
+            "severity": "Medium",
+            "signal": "Grant-change volume",
+            "entity": "Roles",
+            "evidence": f"{recent_grants:,} grant change(s) in the loaded lookback window.",
+            "next_action": "Load privilege sprawl and confirm owner, approval, ticket, and role capability evidence.",
+            "proof": "GRANTS_TO_USERS and GRANTS_TO_ROLES owner-review evidence.",
+            "do_not": "Do not revoke or narrow grants without business owner review.",
+            "route": "Security Posture > Privilege sprawl",
+            "category": "Security",
+            "value": str(recent_grants),
+        })
+    if shared_databases:
+        _append_card(cards, {
+            "surface": "Security Posture",
+            "severity": "Watch",
+            "signal": "Shared data exposure",
+            "entity": "Databases",
+            "evidence": f"{shared_databases:,} shared/imported database(s) in the loaded scope.",
+            "next_action": "Validate consumer, owner, contract, and classification before leaving the share active.",
+            "proof": "ACCOUNT_USAGE.DATABASES share/import metadata plus owner approval.",
+            "do_not": "Do not assume every share is approved without owner and contract evidence.",
+            "route": "Security Posture > Data sharing exposure",
+            "category": "Security",
+            "value": str(shared_databases),
+        })
+
+
 def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[dict]:
     """Collect loaded app evidence into cards that can safely answer operator questions."""
     cards: list[dict] = []
@@ -701,6 +861,7 @@ def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[
     _cards_from_queue(state.get("cost_contract_queue"), cards, surface="Cost & Contract action queue")
     _cards_from_alert_center(state, cards)
     _cards_from_dba_control_room(state, cards)
+    _cards_from_security_posture(state, cards)
 
     if not cards:
         return []
@@ -714,33 +875,82 @@ def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[
     return cards[:max_cards]
 
 
+def _card_search_blob(card: Mapping) -> str:
+    return " ".join(
+        str(card.get(key, ""))
+        for key in ["surface", "signal", "entity", "evidence", "next_action", "route", "category"]
+    ).lower()
+
+
+def _normalize_domain(domain: object) -> str:
+    clean = str(domain or "").strip().lower().replace(" ", "_")
+    if clean in {"", "all"}:
+        return "all"
+    if clean in {"alerts", "alert_center"}:
+        return "alert"
+    if clean in {"ai", "ai_platform", "platform_ai"}:
+        return "ai_platform"
+    return clean
+
+
+def filter_ask_overwatch_cards_by_domain(cards: list[dict], domain: str) -> list[dict]:
+    """Return loaded evidence cards matching one operator domain."""
+    normalized = _normalize_domain(domain)
+    if normalized == "all":
+        return cards
+    terms = DOMAIN_TERMS.get(normalized)
+    if not terms:
+        return cards
+    filtered = [
+        card for card in cards
+        if any(term in _card_search_blob(card) for term in terms)
+    ]
+    return filtered or cards
+
+
 def _domain_filter(question: str, cards: list[dict]) -> list[dict]:
     q = question.lower()
-    domain_terms = {
-        "cost": ("cost", "credit", "spend", "budget", "quota", "savings", "contract", "idle", "cortex", "resource monitor", "root cause", "cost spike"),
-        "warehouse": ("warehouse", "queue", "spill", "capacity", "sizing", "suspend", "auto_suspend"),
-        "reliability": ("task", "procedure", "failure", "failed", "runtime", "sla", "graph"),
-        "alert": ("alert", "incident", "email", "overdue", "issue"),
-        "security": ("security", "grant", "role", "login", "mfa", "access"),
-        "change": ("change", "drift", "ddl", "owner", "approval"),
-        "automation": ("automation", "automate", "auto", "guided", "approval", "manual only", "blocker"),
-        "ai_platform": (
-            "agent", "mcp", "intelligence", "openflow", "horizon", "semantic",
-            "aisql", "cortex code", "cortex sense", "cowork", "artifact", "context", "ai",
-        ),
-    }
     matched_domains = [
-        domain for domain, terms in domain_terms.items()
+        domain for domain, terms in DOMAIN_TERMS.items()
         if any(term in q for term in terms)
     ]
     if not matched_domains:
         return cards
     filtered = []
     for card in cards:
-        blob = " ".join(str(card.get(key, "")) for key in ["surface", "signal", "entity", "evidence", "next_action", "route", "category"]).lower()
-        if any(any(term in blob for term in domain_terms[domain]) for domain in matched_domains):
+        blob = _card_search_blob(card)
+        if any(any(term in blob for term in DOMAIN_TERMS[domain]) for domain in matched_domains):
             filtered.append(card)
     return filtered or cards
+
+
+def build_top_priority_brief_cards(
+    state: Mapping,
+    *,
+    domain: str = "All",
+    limit: int = 5,
+) -> list[dict]:
+    """Build compact severity-ranked cards for the persistent operator brief."""
+    safe_limit = max(1, min(int(limit or 5), 8))
+    cards = build_ask_overwatch_context(state, max_cards=max(30, safe_limit * 6))
+    if not cards:
+        return []
+    selected = filter_ask_overwatch_cards_by_domain(cards, domain)
+    brief_cards: list[dict] = []
+    for idx, card in enumerate(selected[:safe_limit], start=1):
+        brief_cards.append({
+            "rank": idx,
+            "severity": card.get("severity", "Medium"),
+            "surface": card.get("surface", "OVERWATCH"),
+            "signal": card.get("signal", "Priority finding"),
+            "entity": card.get("entity", "Snowflake"),
+            "evidence": card.get("evidence", ""),
+            "next_action": card.get("next_action", ""),
+            "route": card.get("route", card.get("surface", "OVERWATCH")),
+            "proof": card.get("proof", "Attach verification evidence before closure."),
+            "domain": _normalize_domain(domain),
+        })
+    return brief_cards
 
 
 def answer_ask_overwatch(
@@ -756,7 +966,7 @@ def answer_ask_overwatch(
     clean_question = str(question or "").strip()
     if not clean_question:
         return {
-            "answer": "Ask a specific DBA operating question after loading evidence.",
+            "answer": "Choose a Top Priority Brief domain after loading evidence.",
             "cards": [],
             "confidence": "No question",
         }
@@ -768,7 +978,7 @@ def answer_ask_overwatch(
                 "**Answer:** I do not have enough loaded OVERWATCH evidence to give a specific recommendation.\n\n"
                 "**Load first:** DBA Control Room for top incidents, Alert Center for active issues, or Cost & Contract > "
                 "Recommendations for owned cost/reliability actions.\n\n"
-                "**Why:** Ask OVERWATCH is evidence-grounded now. It will not invent best-practice advice without loaded facts."
+                "**Why:** Top Priority Brief is evidence-grounded. It will not invent best-practice advice without loaded facts."
             ),
             "cards": [],
             "confidence": "No loaded evidence",

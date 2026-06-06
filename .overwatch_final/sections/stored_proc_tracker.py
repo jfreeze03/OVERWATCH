@@ -5,6 +5,7 @@ import streamlit as st
 import pandas as pd
 from config import DEFAULTS
 from utils import (
+    day_window_selectbox,
     get_session,
     filter_existing_columns,
     run_query,
@@ -783,7 +784,7 @@ def render():
     st.header("Stored Proc & UDF Cost Tracker")
     st.caption("CALL queries plus downstream child SQL where ROOT_QUERY_ID is populated.")
 
-    sp_days = st.slider("Lookback (days)", 1, 30, 7, key="sp_tracker_days")
+    sp_days = day_window_selectbox("Lookback", key="sp_tracker_days", default=7)
     proc_filters_plain = get_global_filter_clause(
         date_col="start_time",
         wh_col="warehouse_name",

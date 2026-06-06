@@ -6,6 +6,7 @@ from config import DEFAULTS
 from utils import (
     build_task_health_sql,
     credits_to_dollars,
+    day_window_selectbox,
     download_csv,
     executive_health_score,
     format_credits,
@@ -641,7 +642,7 @@ def render():
 
     c1, c2 = st.columns([1, 2])
     with c1:
-        days = st.slider("Lookback days", 1, 90, 30, key="uo_days")
+        days = day_window_selectbox("Lookback", key="uo_days", default=30)
     with c2:
         st.info("Charts are sorted largest-to-smallest and drill into recent query detail where Snowflake query history is available.")
 

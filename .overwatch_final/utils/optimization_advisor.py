@@ -12,7 +12,7 @@ from .cost import (
     format_credits,
     metric_confidence_label,
 )
-from .display import download_csv, render_drillable_bar_chart
+from .display import day_window_selectbox, download_csv, render_drillable_bar_chart
 from .helpers import safe_float
 from .recommendation_intelligence import duplicate_query_decision, warehouse_sizing_decision
 from .query import format_snowflake_error, run_query
@@ -96,7 +96,7 @@ def render_optimization_advisor():
     if active_view == "Idle Warehouse Costs":
         st.header("Idle Warehouse Cost Detection")
         st.caption("Identifies credit spend during hours with zero query activity.")
-        idle_days = st.slider("Lookback (days)", 1, 30, 7, key="idle_days")
+        idle_days = day_window_selectbox("Lookback", key="idle_days", default=7)
 
         if st.button("Find Idle Credits", key="idle_load"):
             try:
@@ -165,7 +165,7 @@ def render_optimization_advisor():
             "Same query text executed multiple times within a time window - "
             "candidates for result caching or materialization."
         )
-        dup_days = st.slider("Lookback (days)", 1, 14, 7, key="dup_days")
+        dup_days = day_window_selectbox("Lookback", key="dup_days", default=7)
 
         if st.button("Find Duplicates", key="dup_load"):
             try:
@@ -222,7 +222,7 @@ def render_optimization_advisor():
     elif active_view == "Right-Sizing Advisor":
         st.header("Warehouse Right-Sizing Advisor")
         st.caption("Warehouses with low utilization or persistent spill - downsize or upsize candidates.")
-        sz_days = st.slider("Lookback (days)", 7, 30, 14, key="sz_days")
+        sz_days = day_window_selectbox("Lookback", key="sz_days", default=14)
 
         if st.button("Analyze Sizing", key="sz_load"):
             try:

@@ -45,6 +45,7 @@ load_owner_directory = _lazy_util("load_owner_directory")
 load_warehouse_inventory = _lazy_util("load_warehouse_inventory")
 metric_confidence_label = _lazy_util("metric_confidence_label")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+day_window_selectbox = _lazy_util("day_window_selectbox")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
 show_to_df = _lazy_util("show_to_df")
@@ -1506,7 +1507,7 @@ def _render_platform_futures(company: str, environment: str) -> None:
     elif futures_view == "Adaptive Compute":
         c1, c2 = st.columns(2)
         with c1:
-            days = st.slider("Adaptive lookback days", 7, 90, 14, key="arch_adaptive_compute_days")
+            days = day_window_selectbox("Adaptive lookback", key="arch_adaptive_compute_days", default=14)
         with c2:
             row_limit = st.slider("Max warehouse rows", 25, 500, 100, step=25, key="arch_adaptive_compute_limit")
         if st.button("Load Adaptive Compute Advisor", key="arch_adaptive_compute_load"):
@@ -1625,7 +1626,7 @@ def _render_platform_futures(company: str, environment: str) -> None:
     elif futures_view == "AI Usage":
         c1, c2 = st.columns(2)
         with c1:
-            days = st.slider("AI usage lookback days", 1, 90, 7, key="arch_ai_usage_days")
+            days = day_window_selectbox("AI usage lookback", key="arch_ai_usage_days", default=7)
         with c2:
             row_limit = st.slider("Max AI usage rows", 25, 500, 100, step=25, key="arch_ai_usage_limit")
         if st.button("Load AI Usage Guardrails", key="arch_ai_usage_load"):
@@ -1744,7 +1745,7 @@ def _render_platform_futures(company: str, environment: str) -> None:
     elif futures_view == "Openflow":
         c1, c2 = st.columns(2)
         with c1:
-            days = st.slider("Openflow lookback days", 1, 90, 7, key="arch_openflow_days")
+            days = day_window_selectbox("Openflow lookback", key="arch_openflow_days", default=7)
         with c2:
             row_limit = st.slider("Max Openflow rows", 25, 500, 100, step=25, key="arch_openflow_limit")
         if st.button("Load Openflow Operations", key="arch_openflow_load"):
@@ -1922,7 +1923,7 @@ def render():
         st.subheader("Workload Isolation Matrix")
         c1, c2 = st.columns(2)
         with c1:
-            days = st.slider("Lookback days", 1, 90, 30, key="arch_iso_days")
+            days = day_window_selectbox("Workload isolation lookback", key="arch_iso_days", default=30)
         with c2:
             row_limit = st.slider("Max rows", 50, 1000, 300, step=50, key="arch_iso_limit")
         if st.button("Load Isolation Matrix", key="arch_iso_load"):
@@ -2031,7 +2032,7 @@ def render():
         st.subheader("Cache Optimization Advisor")
         c1, c2 = st.columns(2)
         with c1:
-            days = st.slider("Lookback days", 1, 90, 30, key="arch_cache_days")
+            days = day_window_selectbox("Cache lookback", key="arch_cache_days", default=30)
         with c2:
             row_limit = st.slider("Max rows", 50, 1000, 300, step=50, key="arch_cache_limit")
         if st.button("Load Cache Evidence", key="arch_cache_load"):
@@ -2130,7 +2131,7 @@ def render():
 
     elif active_pane == "DR Readiness":
         st.subheader("Disaster Recovery Readiness")
-        days = st.slider("Replication usage lookback days", 1, 90, 30, key="arch_dr_days")
+        days = day_window_selectbox("Replication usage lookback", key="arch_dr_days", default=30)
         defer_section_note(f"Replication lag warning threshold: {THRESHOLDS.get('replication_lag_warn_min', 120)} minutes.")
         if st.button("Load DR Readiness", key="arch_dr_load"):
             with st.spinner("Loading DR and replication metadata..."):

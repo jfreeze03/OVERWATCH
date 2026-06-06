@@ -2,6 +2,7 @@
 import streamlit as st
 
 from utils import (
+    day_window_selectbox,
     download_csv,
     filter_existing_columns,
     format_snowflake_error,
@@ -103,7 +104,7 @@ def render():
     with c1:
         search_text = st.text_input("Search query text or query ID", key="qs_text")
     with c2:
-        days_back = st.slider("Days back", 1, 30, 7, key="qs_days")
+        days_back = day_window_selectbox("Days back", key="qs_days", default=7)
     with c3:
         user_filter = st.text_input("User (optional)", key="qs_user")
     with c4:

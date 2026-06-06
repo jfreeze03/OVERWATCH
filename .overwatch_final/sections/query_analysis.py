@@ -2,6 +2,7 @@
 import streamlit as st
 from utils import (
     defer_source_note,
+    day_window_selectbox,
     get_session, run_query, sql_literal,
     format_credits, download_csv,
     render_query_drilldown, build_metered_credit_cte, get_active_company, get_global_filter_clause,
@@ -125,7 +126,7 @@ def render():
     # ── BOTTLENECKS ───────────────────────────────────────────────────────────
     if active_view == "Bottlenecks":
         st.header("🔍 Query Bottleneck Analysis")
-        days = st.slider("Lookback (days)", 1, 30, 7, key="qa_days")
+        days = day_window_selectbox("Lookback", key="qa_days", default=7)
         qa_filters = get_global_filter_clause(
             date_col="q.start_time",
             wh_col="q.warehouse_name",

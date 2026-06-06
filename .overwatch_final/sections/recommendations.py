@@ -12,6 +12,7 @@ from utils import (
     build_safe_verification_query,
     build_task_failure_summary_sql,
     credits_to_dollars,
+    day_window_selectbox,
     defer_source_note,
     download_csv,
     filter_existing_columns,
@@ -874,7 +875,7 @@ def render():
     elif active_view == "Anomaly Log":
         st.header("Anomaly Log")
         st.caption("Flags warehouse credit spikes against a rolling 7-day baseline.")
-        anom_days = st.slider("Detection window (days)", 14, 90, 30, key="anom_days")
+        anom_days = day_window_selectbox("Detection window", key="anom_days", default=30)
 
         if st.button("Detect Anomalies", key="anom_detect"):
             try:

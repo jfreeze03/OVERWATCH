@@ -2,6 +2,7 @@
 import streamlit as st
 from utils import (
     defer_source_note,
+    day_window_selectbox,
     download_csv,
     format_snowflake_error,
     filter_existing_columns,
@@ -212,7 +213,7 @@ def render():
     st.header("Who Changed What?")
     st.caption("DDL, grants, roles, policy changes, owner changes, and Terraform drift indicators.")
 
-    days = st.slider("Lookback (days)", 1, 90, 14, key="ocm_days")
+    days = day_window_selectbox("Lookback", key="ocm_days", default=14)
     row_limit = st.slider("Max rows per scan", 100, 1000, 250, step=50, key="ocm_row_limit")
     text_filter = st.text_input("Filter query/object text", key="ocm_filter")
     if days > 30 and not text_filter:

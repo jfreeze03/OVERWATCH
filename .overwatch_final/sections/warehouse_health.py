@@ -63,6 +63,7 @@ safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
 action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+day_window_selectbox = _lazy_util("day_window_selectbox")
 
 
 def safe_float(value, default: float = 0.0) -> float:
@@ -2814,7 +2815,7 @@ def _queue_capacity_findings(session, exceptions: pd.DataFrame) -> int:
 
 def _render_capacity_brief(company: str, environment: str) -> None:
     with st.expander("Capacity Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
-        days = st.slider("Capacity lookback (days)", 1, 30, 7, key="wh_capacity_days")
+        days = day_window_selectbox("Capacity lookback", key="wh_capacity_days", default=7)
         if st.button("Load Capacity Brief", key="wh_capacity_load"):
             with st.spinner("Building warehouse capacity brief..."):
                 try:
@@ -3065,7 +3066,11 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     "Snapshot stores owner approval path, rollback requirement, baseline pressure, and post-change verification SQL."
                 )
             with st.expander("Warehouse Setting Review Trend", expanded=False):
-                trend_days = st.slider("Setting review trend days", 7, 180, 30, key="wh_setting_review_trend_days")
+                trend_days = day_window_selectbox(
+                    "Setting review trend window",
+                    key="wh_setting_review_trend_days",
+                    default=30,
+                )
                 if st.button("Load Setting Review Trend", key="wh_setting_review_trend_load"):
                     try:
                         trend_sql = _warehouse_setting_review_history_sql(trend_days, company, environment)
@@ -3104,7 +3109,11 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                     "Uses Warehouse Health action-queue rows to show which capacity or efficiency actions are open, "
                     "overdue, missing owner approval, or closed without verification evidence."
                 )
-                closure_days = st.slider("Warehouse closure days", 7, 180, 30, key="wh_action_closure_days")
+                closure_days = day_window_selectbox(
+                    "Warehouse closure window",
+                    key="wh_action_closure_days",
+                    default=30,
+                )
                 if st.button("Load Warehouse Closure Analytics", key="wh_action_closure_load"):
                     try:
                         closure_sql = _warehouse_action_queue_closure_sql(closure_days, company, environment)
@@ -3308,7 +3317,7 @@ def _render_warehouse_ownership_panel(company: str, environment: str) -> None:
         defer_source_note(
             "Checks recent warehouse usage against warehouse tags and the owner directory before DBA setting changes are approved."
         )
-        owner_days = st.slider("Ownership usage days", 7, 90, 30, key="wh_owner_inventory_days")
+        owner_days = day_window_selectbox("Ownership usage window", key="wh_owner_inventory_days", default=30)
         owner_query_days = min(int(owner_days), 30)
         if owner_query_days < int(owner_days):
             st.warning("Warehouse ownership readiness live fallback is capped at 30 days to avoid broad usage scans.")
@@ -3518,7 +3527,7 @@ def render():
     # -- OVERVIEW --------------------------------------------------------------
     if warehouse_view == "Overview & Scaling":
         st.header("Warehouse Health Overview")
-        wh_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_days")
+        wh_days = day_window_selectbox("Lookback", key="wh_days", default=7)
 
         if st.button("Load Warehouse Data", key="wh_load"):
             try:
@@ -3818,7 +3827,7 @@ def render():
 
     elif warehouse_view == "Efficiency":
         st.header("Warehouse Efficiency Risks")
-        eff_days = st.slider("Lookback (days)", 1, 30, 7, key="wh_eff_days")
+        eff_days = day_window_selectbox("Lookback", key="wh_eff_days", default=7)
         if st.button("Load Efficiency Metrics", key="wh_eff_load"):
             try:
                 session = _warehouse_action_session("load warehouse efficiency metrics")
@@ -3905,7 +3914,7 @@ def render():
     # -- SPILL -----------------------------------------------------------------
     elif warehouse_view == "Spill & Memory":
         st.header("Spill & Memory Pressure")
-        sp_days = st.slider("Lookback (days)", 1, 30, 7, key="sp_days")
+        sp_days = day_window_selectbox("Lookback", key="sp_days", default=7)
 
         if st.button("Load Spill Data", key="sp_load"):
             try:
@@ -3978,7 +3987,7 @@ def render():
     # -- HEATMAP ---------------------------------------------------------------
     elif warehouse_view == "Workload Heatmap":
         st.header("Workload Concurrency Heatmap")
-        hm_days = st.slider("Lookback (days)", 7, 90, 30, key="hm_days")
+        hm_days = day_window_selectbox("Lookback", key="hm_days", default=30)
 
         if st.button("Build Heatmap", key="hm_build"):
             try:

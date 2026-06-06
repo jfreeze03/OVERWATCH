@@ -82,6 +82,7 @@ action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 mart_object_name = _lazy_util("mart_object_name")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+day_window_selectbox = _lazy_util("day_window_selectbox")
 
 
 def safe_float(value, default: float = 0.0) -> float:
@@ -578,9 +579,9 @@ def _live_query_status_sql(wh_filter: str, db_filter: str, user_filter: str) -> 
 
 
 def _load_live_query_status(wh_filter: str, db_filter: str, user_filter: str) -> tuple[pd.DataFrame, str]:
-    # Snowflake-hosted Streamlit can reject INFORMATION_SCHEMA table functions
-    # that reveal current-user session details. ACCOUNT_USAGE is lagged, but it
-    # is the safer default for the landing page and avoids noisy startup errors.
+    # Prefer INFORMATION_SCHEMA for the morning triage counters. ACCOUNT_USAGE
+    # remains a fallback only because Snowflake-hosted Streamlit can reject some
+    # table-function calls depending on role/session permissions.
     fallback_sql = f"""
         SELECT COUNT(*) AS active_count,
                SUM(CASE WHEN execution_status ILIKE '%QUEUED%' THEN 1 ELSE 0 END) AS queued_count,
@@ -591,10 +592,10 @@ def _load_live_query_status(wh_filter: str, db_filter: str, user_filter: str) ->
           {wh_filter} {db_filter} {user_filter}
     """
     try:
-        return run_query_or_raise(fallback_sql), "ACCOUNT_USAGE"
+        return run_query_or_raise(_live_query_status_sql(wh_filter, db_filter, user_filter)), "INFORMATION_SCHEMA"
     except Exception:
         try:
-            return run_query_or_raise(_live_query_status_sql(wh_filter, db_filter, user_filter)), "INFORMATION_SCHEMA"
+            return run_query_or_raise(fallback_sql), "ACCOUNT_USAGE"
         except Exception:
             return pd.DataFrame(), "ACCOUNT_USAGE"
 
@@ -1121,6 +1122,19 @@ def _account_health_actionable_checklist(checklist: pd.DataFrame) -> pd.DataFram
     status = view.get("STATUS", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
     severity = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
     return view[(status != "OK") & (severity != "INFO")].copy()
+
+
+def _account_health_visible_checklist(
+    checklist: pd.DataFrame,
+    *,
+    show_full: bool = False,
+) -> tuple[pd.DataFrame, str, str]:
+    """Return the default Account Health checklist view for DBA triage."""
+    full = pd.DataFrame() if checklist is None else checklist.copy()
+    if show_full:
+        return full, "Daily DBA checklist", "All daily DBA checklist rows"
+    actionable = _account_health_actionable_checklist(full)
+    return actionable, "Daily DBA checklist exceptions", "Full daily DBA checklist rows"
 
 
 def _account_health_scope_context(check: object, route: object = "", environment: str = "") -> dict:
@@ -2566,7 +2580,11 @@ def _render_account_health_access_hygiene(company: str, environment: str) -> Non
             "Account-level user/auth posture is intentionally not database-filtered. "
             "Rows are labeled No Database Context so PROD/DEV selections do not imply false precision."
         )
-        days = st.slider("Access hygiene lookback days", 7, 120, 30, key="account_health_access_hygiene_days")
+        days = day_window_selectbox(
+            "Access hygiene lookback",
+            key="account_health_access_hygiene_days",
+            default=30,
+        )
         if st.button("Load Access Hygiene", key="account_health_access_hygiene_load"):
             action_session = _account_health_action_session("load Account Access Hygiene")
             if action_session is None:
@@ -3106,22 +3124,36 @@ def render():
             key="account_health_overview_detail",
         )
         if account_detail == "Checklist":
-            render_priority_dataframe(
-                checklist,
-                title="Daily DBA checklist",
-                priority_columns=[
-                    "SEVERITY", "STATUS", "CHECK", "EVIDENCE", "OWNER",
-                    "ESCALATION_TARGET", "ROUTE", "ENVIRONMENT_SCOPE",
-                    "DATABASE_CONTEXT", "SCOPE_CONFIDENCE", "QUEUE_READINESS",
-                    "QUEUE_BLOCKERS", "APPROVAL_REQUIRED", "RECOVERY_SLA_TARGET_HOURS",
-                    "NEXT_ACTION", "PROOF_REQUIRED",
-                ],
-                sort_by=["SEVERITY", "CHECK"],
-                ascending=[True, True],
-                raw_label="All daily DBA checklist rows",
-                height=300,
-                max_rows=12,
+            actionable_checklist = _account_health_actionable_checklist(checklist)
+            show_full_checklist = st.toggle(
+                "Show full checklist",
+                key="account_health_show_full_checklist",
+                value=False,
+                help="Default keeps morning triage focused on checklist rows that need DBA action.",
             )
+            checklist_view, checklist_title, checklist_raw_label = _account_health_visible_checklist(
+                checklist,
+                show_full=show_full_checklist,
+            )
+            if checklist_view.empty and not show_full_checklist:
+                st.success("No Account Health checklist exceptions for this loaded snapshot.")
+            else:
+                render_priority_dataframe(
+                    checklist_view,
+                    title=checklist_title,
+                    priority_columns=[
+                        "SEVERITY", "STATUS", "CHECK", "EVIDENCE", "OWNER",
+                        "ESCALATION_TARGET", "ROUTE", "ENVIRONMENT_SCOPE",
+                        "DATABASE_CONTEXT", "SCOPE_CONFIDENCE", "QUEUE_READINESS",
+                        "QUEUE_BLOCKERS", "APPROVAL_REQUIRED", "RECOVERY_SLA_TARGET_HOURS",
+                        "NEXT_ACTION", "PROOF_REQUIRED",
+                    ],
+                    sort_by=["SEVERITY", "CHECK"],
+                    ascending=[True, True],
+                    raw_label=checklist_raw_label,
+                    height=300,
+                    max_rows=12,
+                )
         elif account_detail == "Gates":
             render_priority_dataframe(
                 account_operator_gates,
@@ -3212,7 +3244,6 @@ def render():
         elif account_detail in {"Interventions", "Controls"}:
             st.success(f"No {account_detail.lower()} rows for the loaded scope.")
         if account_detail == "Checklist":
-            actionable_checklist = _account_health_actionable_checklist(checklist)
             q1, q2, q3 = st.columns([1, 1, 3])
             with q1:
                 if st.button(
@@ -3259,7 +3290,11 @@ def render():
             environment=get_active_environment(),
         )
         with st.expander("Daily DBA Checklist Trend", expanded=False):
-            trend_days = st.slider("Checklist trend days", 7, 90, 30, key="account_health_checklist_trend_days")
+            trend_days = day_window_selectbox(
+                "Checklist trend window",
+                key="account_health_checklist_trend_days",
+                default=30,
+            )
             if st.button("Load Checklist Trend", key="account_health_load_checklist_trend"):
                 try:
                     trend_sql = _account_health_checklist_history_sql(
@@ -3312,7 +3347,11 @@ def render():
                 "Uses Account Health action-queue rows to show whether checklist issues are still open, "
                 "overdue, or closed without verification evidence."
             )
-            closure_days = st.slider("Closure analytics days", 7, 120, 30, key="account_health_closure_days")
+            closure_days = day_window_selectbox(
+                "Closure analytics window",
+                key="account_health_closure_days",
+                default=30,
+            )
             if st.button("Load Closure Analytics", key="account_health_load_closure_analytics"):
                 try:
                     closure_sql = _account_health_closure_analytics_sql(
@@ -3507,7 +3546,11 @@ def render():
 
         st.divider()
         st.markdown("**OVERWATCH Cost of Monitoring**")
-        mon_days = st.slider("Monitoring cost lookback days", 1, 30, 7, key="ah_monitoring_cost_days")
+        mon_days = day_window_selectbox(
+            "Monitoring cost window",
+            key="ah_monitoring_cost_days",
+            default=7,
+        )
         if st.button("Load monitoring cost", key="ah_monitoring_cost_load"):
             mon_df = run_query(
                 build_monitoring_cost_sql(mon_days),

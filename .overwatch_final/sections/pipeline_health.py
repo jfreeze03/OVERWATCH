@@ -6,6 +6,7 @@ from utils import (
     build_mart_pipeline_freshness_sql,
     build_mart_pipeline_load_failures_sql,
     build_mart_pipeline_volume_sql,
+    day_window_selectbox,
     defer_source_note,
     download_csv,
     ensure_column_alias,
@@ -290,7 +291,7 @@ def render():
 
     elif active_view == "Load Failures":
         st.header("Load Failure Monitor")
-        load_days = st.slider("Lookback days", 1, 30, 7, key="pipe_load_days")
+        load_days = day_window_selectbox("Lookback", key="pipe_load_days", default=7)
         if st.button("Load Copy History Failures", key="pipe_load_failures"):
             try:
                 df_loads = run_query(
@@ -419,7 +420,7 @@ def render():
     elif active_view == "Snowpipe Usage":
         st.header("Snowpipe Usage")
         defer_source_note("Snowpipe credit and file-volume monitoring from ACCOUNT_USAGE.PIPE_USAGE_HISTORY.")
-        pipe_days = st.slider("Lookback days", 1, 14, 3, key="pipe_snowpipe_days")
+        pipe_days = day_window_selectbox("Lookback", key="pipe_snowpipe_days", default=7)
         if st.button("Load Snowpipe Usage", key="pipe_snowpipe_load"):
             try:
                 df_pipe = run_query(f"""
@@ -470,7 +471,7 @@ def render():
     elif active_view == "Dynamic Tables":
         st.header("Dynamic Table Refresh Health")
         st.caption("Inventory and latest refresh state for Snowflake dynamic tables.")
-        dyn_days = st.slider("Refresh lookback days", 1, 30, 7, key="pipe_dynamic_days")
+        dyn_days = day_window_selectbox("Refresh lookback", key="pipe_dynamic_days", default=7)
         if st.button("Load Dynamic Tables", key="pipe_dynamic_load"):
             try:
                 df_dyn = _load_dynamic_table_inventory(session, company, dyn_days)

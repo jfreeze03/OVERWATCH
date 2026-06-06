@@ -331,7 +331,10 @@ def _render_cost_splash_narrative(summary: dict, *, days: int) -> None:
     detail_cols[1].metric("Peak Day", f"${safe_float(summary.get('peak_day')):,.0f}")
     detail_cols[2].metric("Cortex Spend", f"${safe_float(summary.get('cortex_spend')):,.0f}", f"{safe_int(summary.get('cortex_requests')):,} req")
     detail_cols[3].metric("Top AI User", top_user_display, f"${safe_float(summary.get('top_cortex_user_spend')):,.0f}")
-    notes = [f"{int(days)}-day window", f"{safe_int(summary.get('active_warehouses')):,} active warehouse(s)"]
+    notes = [f"{int(days)}-day window", str(summary.get("cost_basis") or "Warehouse metering total")]
+    if safe_int(summary.get("active_services")):
+        notes.append(f"{safe_int(summary.get('active_services')):,} active service(s)")
+    notes.append(f"{safe_int(summary.get('active_warehouses')):,} active warehouse(s)")
     if top_wh_display != str(summary.get("top_warehouse")):
         notes.append(f"Top warehouse: {summary.get('top_warehouse')}")
     if top_user_display != top_user:
@@ -615,6 +618,39 @@ def _build_cost_splash_daily_trend_sql(company: str, days: int, *, mart: bool = 
           AND warehouse_name IS NOT NULL
           {company_filter}
         GROUP BY TO_DATE({ts_col})
+        ORDER BY usage_date
+    """
+
+
+def _build_cost_monitor_service_trend_sql(days: int) -> str:
+    days_int = max(int(days or 7), 1)
+    return f"""
+        WITH period_data AS (
+            SELECT
+                DATE(start_time) AS usage_date,
+                UPPER(COALESCE(service_type, 'UNKNOWN')) AS service_type,
+                SUM(COALESCE(credits_used_compute, 0)) AS compute_credits,
+                SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits,
+                SUM(COALESCE(credits_used, 0)) AS total_credits,
+                CASE
+                    WHEN DATE(start_time) > DATEADD('day', -{days_int}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
+                        THEN 'CURRENT'
+                    ELSE 'PRIOR'
+                END AS period
+            FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+            WHERE start_time >= DATEADD('day', -{days_int * 2}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
+              AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
+            GROUP BY DATE(start_time), UPPER(COALESCE(service_type, 'UNKNOWN'))
+        )
+        SELECT
+            usage_date,
+            ROUND(SUM(total_credits), 4) AS daily_credits,
+            ROUND(SUM(compute_credits), 4) AS compute_credits,
+            ROUND(SUM(cloud_services_credits), 4) AS cloud_services_credits,
+            COUNT(DISTINCT service_type) AS active_services
+        FROM period_data
+        WHERE period = 'CURRENT'
+        GROUP BY usage_date
         ORDER BY usage_date
     """
 
@@ -1352,9 +1388,9 @@ def _build_cost_source_health_board(
         "Warehouse, AI, serverless, storage, network",
         _source_state(service_lens, service_error, empty_state="No Rows"),
         _loaded_rows(service_lens),
-        "Service-type cost rows are available for non-warehouse surfaces." if _loaded_rows(service_lens) else "No service-type rows loaded.",
+        "Official account service cost rows are available." if _loaded_rows(service_lens) else "No service-type rows loaded.",
         "Use Budgets for AI/serverless and resource monitors for warehouses only.",
-        str(state.get("cost_contract_service_lens_source") or "METERING_DAILY_HISTORY / FACT_COST_DAILY"),
+        str(state.get("cost_contract_service_lens_source") or "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY"),
     )
     _add_source_health_row(
         rows,
@@ -1630,7 +1666,7 @@ def _render_account_service_cost_lens(service_lens: pd.DataFrame, credit_price: 
     summary = _build_service_cost_lens_summary(service_lens)
     st.markdown("**Account Service Cost Lens**")
     metrics = [
-        {"label": "Total Billed Credits", "value": f"{summary['total_credits']:,.2f}"},
+        {"label": "Total Credits", "value": f"{summary['total_credits']:,.2f}"},
         {
             "label": "Non-Warehouse Credits",
             "value": f"{summary['non_warehouse_credits']:,.2f}",
@@ -1660,7 +1696,8 @@ def _render_account_service_cost_lens(service_lens: pd.DataFrame, credit_price: 
     _render_metric_items(metrics)
     st.caption(
         f"Top service: {summary['top_service']}. "
-        f"Estimated dollars use the configured ${credit_price:,.2f}/credit display rate unless official currency data is loaded."
+        f"Official Cost Monitor formula: METERING_HISTORY total credits through the completed 24-hour window, "
+        f"displayed at ${credit_price:,.2f}/credit."
     )
     st.markdown("**Service Spend Movement**")
     _render_service_cost_movement_chart(service_lens, credit_price)
@@ -3864,6 +3901,19 @@ def _load_cost_splash_query(mart_sql: str, live_sql: str, ttl_key: str, *, secti
             )
 
 
+def _load_cost_splash_live_query(sql: str, ttl_key: str, source_label: str, *, section: str = "Cost & Contract") -> tuple[pd.DataFrame, str, str]:
+    try:
+        frame = run_query_or_raise(
+            sql,
+            ttl_key=ttl_key,
+            tier="historical",
+            section=section,
+        )
+        return frame, source_label, ""
+    except Exception as exc:
+        return pd.DataFrame(), "", format_snowflake_error(exc)
+
+
 def _cost_splash_meta(company: str, days: int, credit_price: float) -> dict:
     return {"company": company, "days": int(days), "credit_price": float(credit_price)}
 
@@ -3878,6 +3928,7 @@ def _empty_cost_splash(company: str, days: int, credit_price: float) -> dict:
         "cockpit": pd.DataFrame(),
         "trend": pd.DataFrame(),
         "warehouse_delta": pd.DataFrame(),
+        "service_costs": pd.DataFrame(),
         "cortex": pd.DataFrame(),
         "run_rate": pd.DataFrame(),
     }
@@ -3911,10 +3962,10 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
         _build_cost_cockpit_sql(company, int(days)),
         f"cost_splash_cockpit_{company}_{days}",
     )
-    trend, trend_source, trend_error = _load_cost_splash_query(
-        _build_cost_splash_daily_trend_sql(company, int(days), mart=True),
-        _build_cost_splash_daily_trend_sql(company, int(days), mart=False),
-        f"cost_splash_trend_{company}_{days}",
+    trend, trend_source, trend_error = _load_cost_splash_live_query(
+        _build_cost_monitor_service_trend_sql(int(days)),
+        f"cost_splash_official_service_trend_{company}_{days}",
+        "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
     )
     warehouse_delta, delta_source, delta_error = _load_cost_splash_query(
         _build_cost_splash_warehouse_delta_sql(company, int(days), mart=True),
@@ -3926,19 +3977,25 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
         _build_cost_splash_cortex_sql(company, int(days), credit_price, mart=False),
         f"cost_splash_cortex_{company}_{days}",
     )
+    service_costs, service_source, service_error = _load_cost_splash_live_query(
+        build_snowflake_service_cost_lens_sql(int(days), credit_price),
+        f"cost_splash_official_service_lens_{company}_{days}_{credit_price}",
+        "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
+    )
     run_rate, run_rate_source, run_rate_error = _load_cost_splash_query(
         build_mart_cost_run_rate_sql(company),
         _build_cost_run_rate_sql(company),
         f"cost_splash_run_rate_{company}",
     )
-    errors = [err for err in (cockpit_error, trend_error, delta_error, cortex_error, run_rate_error) if err]
-    source_parts = [src for src in (cockpit_source, trend_source, delta_source, cortex_source, run_rate_source) if src]
+    errors = [err for err in (cockpit_error, trend_error, delta_error, cortex_error, service_error, run_rate_error) if err]
+    source_parts = [src for src in (service_source, trend_source, cockpit_source, delta_source, cortex_source, run_rate_source) if src]
     splash = {
         "meta": meta,
         "loaded": True,
         "cockpit": cockpit,
         "trend": trend,
         "warehouse_delta": warehouse_delta,
+        "service_costs": service_costs,
         "cortex": cortex,
         "run_rate": run_rate,
         "source": " + ".join(dict.fromkeys(source_parts)),
@@ -3952,13 +4009,29 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     cockpit = splash.get("cockpit", pd.DataFrame())
     trend = splash.get("trend", pd.DataFrame())
     warehouse_delta = splash.get("warehouse_delta", pd.DataFrame())
+    service_costs = splash.get("service_costs", pd.DataFrame())
     cortex = splash.get("cortex", pd.DataFrame())
     run_rate = splash.get("run_rate", pd.DataFrame())
     row = cockpit.iloc[0] if _looks_like_frame(cockpit) and not cockpit.empty else {}
     cortex_row = cortex.iloc[0] if _looks_like_frame(cortex) and not cortex.empty else {}
     run_rate_row = run_rate.iloc[0] if _looks_like_frame(run_rate) and not run_rate.empty else {}
-    current_credits = safe_float(row.get("CURRENT_CREDITS", 0))
-    prior_credits = safe_float(row.get("PRIOR_CREDITS", 0))
+    service_current = service_prior = 0.0
+    service_compute = service_cloud = 0.0
+    active_services = 0
+    top_service = "No service"
+    if _looks_like_frame(service_costs) and not service_costs.empty and "CREDITS_BILLED" in service_costs.columns:
+        credits = pd.to_numeric(service_costs.get("CREDITS_BILLED", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        prior = pd.to_numeric(service_costs.get("CREDITS_BILLED_PRIOR", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        service_current = safe_float(credits.sum())
+        service_prior = safe_float(prior.sum())
+        service_compute = safe_float(pd.to_numeric(service_costs.get("CREDITS_USED_COMPUTE", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        service_cloud = safe_float(pd.to_numeric(service_costs.get("CREDITS_USED_CLOUD_SERVICES", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        active_services = int((credits > 0).sum())
+        if active_services:
+            top_service = str(service_costs.assign(_CREDITS=credits).sort_values("_CREDITS", ascending=False).iloc[0].get("SERVICE_TYPE") or "Unknown")
+    official_service_loaded = _looks_like_frame(service_costs) and not service_costs.empty
+    current_credits = service_current if official_service_loaded else safe_float(row.get("CURRENT_CREDITS", 0))
+    prior_credits = service_prior if official_service_loaded else safe_float(row.get("PRIOR_CREDITS", 0))
     spend_delta_credits = current_credits - prior_credits
     delta_pct = (spend_delta_credits / prior_credits * 100) if prior_credits > 0 else 0.0
     active_warehouses = safe_int(row.get("ACTIVE_WAREHOUSES", 0))
@@ -3987,6 +4060,11 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
         "avg_daily": credits_to_dollars(current_credits / max(int(days), 1), credit_price),
         "peak_day": credits_to_dollars(peak_credits, credit_price),
         "delta_pct": delta_pct,
+        "cost_basis": "Official account service total" if official_service_loaded else "Warehouse metering total",
+        "active_services": active_services,
+        "compute_credits": service_compute,
+        "cloud_services_credits": service_cloud,
+        "top_service": top_service,
         "active_warehouses": active_warehouses,
         "top_warehouse": top_wh or "No warehouse",
         "top_warehouse_delta_credits": top_wh_delta,
@@ -4048,7 +4126,7 @@ def _cost_snapshot_kpi_rows(
 ) -> pd.DataFrame:
     rows = [
         ("Scope", f"{company} / {environment_label} / {int(days)} days", "Company, environment, and window."),
-        ("Current spend", _slide_money(summary.get("spend")), "Warehouse spend for the selected window."),
+        ("Current spend", _slide_money(summary.get("spend")), str(summary.get("cost_basis") or "Warehouse spend for the selected window.")),
         ("Prior spend", _slide_money(summary.get("prior_spend")), "Prior window baseline."),
         ("Spend delta", _slide_money(summary.get("spend_delta"), signed=True), f"{safe_float(summary.get('delta_pct')):+.1f}% versus prior."),
         ("Top warehouse", str(summary.get("top_warehouse") or "No warehouse"), _slide_money(summary.get("top_warehouse_delta_spend"), signed=True)),
@@ -4702,6 +4780,8 @@ def _render_powerpoint_cost_snapshot(splash: dict, *, company: str, days: int, c
     environment = get_active_environment()
     environment_label = get_environment_label(environment, company)
     service_lens = st.session_state.get("cost_contract_service_lens", pd.DataFrame())
+    if not _looks_like_frame(service_lens) or service_lens.empty:
+        service_lens = splash.get("service_costs", pd.DataFrame())
     service_summary = _build_service_cost_lens_summary(service_lens)
     action_summary = _cost_snapshot_action_summary(st.session_state.get("cost_contract_queue", pd.DataFrame()))
     kpi_rows = _cost_snapshot_kpi_rows(
@@ -5077,32 +5157,19 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                 st.session_state["cost_contract_attribution_source"] = ""
             try:
                 st.session_state["cost_contract_service_lens"] = run_query_or_raise(
-                    build_mart_cost_service_lens_sql(int(days), credit_price),
-                    ttl_key=f"cost_contract_service_lens_mart_{company}_{days}_{credit_price}",
+                    build_snowflake_service_cost_lens_sql(int(days), credit_price),
+                    ttl_key=f"cost_contract_service_lens_official_{company}_{days}_{credit_price}",
                     tier="historical",
                     section="Cost & Contract",
                 )
                 st.session_state["cost_contract_service_lens_error"] = ""
-                st.session_state["cost_contract_service_lens_source"] = "OVERWATCH mart: FACT_COST_DAILY"
-            except Exception as mart_exc:
-                try:
-                    st.session_state["cost_contract_service_lens"] = run_query_or_raise(
-                        build_snowflake_service_cost_lens_sql(int(days), credit_price),
-                        ttl_key=f"cost_contract_service_lens_live_{company}_{days}_{credit_price}",
-                        tier="historical",
-                        section="Cost & Contract",
-                    )
-                    st.session_state["cost_contract_service_lens_error"] = ""
-                    st.session_state["cost_contract_service_lens_source"] = (
-                        "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY"
-                    )
-                except Exception as exc:
-                    st.session_state["cost_contract_service_lens"] = pd.DataFrame()
-                    st.session_state["cost_contract_service_lens_error"] = (
-                        f"Mart unavailable: {format_snowflake_error(mart_exc)}; "
-                        f"live fallback failed: {format_snowflake_error(exc)}"
-                    )
-                    st.session_state["cost_contract_service_lens_source"] = ""
+                st.session_state["cost_contract_service_lens_source"] = (
+                    "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY"
+                )
+            except Exception as exc:
+                st.session_state["cost_contract_service_lens"] = pd.DataFrame()
+                st.session_state["cost_contract_service_lens_error"] = format_snowflake_error(exc)
+                st.session_state["cost_contract_service_lens_source"] = ""
     defer_section_note(
         "Cost cockpit: Load it to decide whether to explain the bill, work the action queue, inspect Cortex spend, or log verified savings."
     )

@@ -1,5 +1,6 @@
 # sections/storage_monitor.py - Storage overview, data freshness, iceberg, egress
 import streamlit as st
+from config import DEFAULTS
 from utils import (
     build_mart_storage_db_detail_sql,
     build_mart_storage_trend_sql,
@@ -36,8 +37,8 @@ def _load_storage_trend_from_mart(stor_days: int, company: str) -> bool:
 
 def render():
     session = get_session()
-    credit_price = st.session_state.get("credit_price", 3.00)
-    storage_cost_per_tb = st.session_state.get("storage_cost_per_tb", 23.00)
+    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
+    storage_cost_per_tb = st.session_state.get("storage_cost_per_tb", DEFAULTS["storage_cost_per_tb"])
     company = get_active_company()
 
     st.header("Storage Monitor")

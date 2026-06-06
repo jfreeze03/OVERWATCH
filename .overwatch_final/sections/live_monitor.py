@@ -22,7 +22,7 @@ from utils import (
     load_warehouse_options,
 )
 from utils.workflows import render_priority_dataframe
-from config import THRESHOLDS
+from config import DEFAULTS, THRESHOLDS
 
 
 LIVE_MONITOR_PANES = (
@@ -94,7 +94,7 @@ def _live_query_history_function(warehouse_filter: str = "") -> str:
 
 
 def render():
-    credit_price = st.session_state.get("credit_price", 3.00)
+    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     rt_interval  = st.session_state.get("rt_interval", 30)
     company      = get_active_company()
 

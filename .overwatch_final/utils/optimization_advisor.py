@@ -2,7 +2,7 @@
 import pandas as pd
 import streamlit as st
 
-from config import THRESHOLDS
+from config import DEFAULTS, THRESHOLDS
 
 from .compatibility import filter_existing_columns
 from .company_filter import get_active_company, get_global_filter_clause, get_wh_filter_clause
@@ -29,7 +29,7 @@ OPTIMIZATION_ADVISOR_PANES = (
 
 def render_optimization_advisor():
     session = get_session()
-    credit_price = st.session_state.get("credit_price", 3.00)
+    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
     qh_caps = None
 

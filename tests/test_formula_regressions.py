@@ -61,7 +61,9 @@ from sections.architecture_readiness import (  # noqa: E402
     _enrich_architecture_context,
 )
 from sections.workload_operations import (  # noqa: E402
+    _build_workload_runbook_markdown,
     _workload_action_brief,
+    _workload_runbook_filename,
     _workload_snapshot_summary,
 )
 from sections.executive_landing import (  # noqa: E402
@@ -91,6 +93,7 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_closure_analytics,
     _build_cost_control_coverage_board,
     _build_cost_decomposition_board,
+    _build_cost_monitor_service_trend_sql,
     _build_cost_drilldown_command_map,
     _build_cost_governance_alert_rows,
     _build_cost_incident_timeline,
@@ -440,9 +443,19 @@ class FormulaRegressionTests(unittest.TestCase):
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
 
         self.assertEqual(DEFAULTS["credit_price"], 3.68)
+        self.assertEqual(DEFAULTS["ai_credit_price"], 2.20)
         self.assertIn("('CREDIT_PRICE_USD', '3.68'", setup_sql)
+        self.assertIn("('AI_CREDIT_PRICE_USD', '2.20'", setup_sql)
         self.assertIn("credit_price := COALESCE(credit_price, 3.68)", setup_sql)
+        self.assertIn("ai_credit_price := COALESCE(ai_credit_price, 2.20)", setup_sql)
         self.assertEqual(credits_to_dollars(10, DEFAULTS["credit_price"]), 36.8)
+        stale_fallbacks = []
+        pattern = re.compile(r"session_state\.get\(\s*['\"]credit_price['\"]\s*,\s*3\.0+")
+        for path in _python_sources():
+            text = path.read_text(encoding="utf-8")
+            if pattern.search(text):
+                stale_fallbacks.append(str(path.relative_to(ROOT)))
+        self.assertEqual(stale_fallbacks, [])
 
     def test_executive_powerpoint_pack_is_scope_bound_and_chart_ready(self):
         summary = {
@@ -525,22 +538,32 @@ class FormulaRegressionTests(unittest.TestCase):
             14,
             credit_price=DEFAULTS["credit_price"],
         ).upper()
+        trend_sql = _build_cost_monitor_service_trend_sql(14).upper()
         mart_sql = build_mart_cost_service_lens_sql(
             14,
             credit_price=DEFAULTS["credit_price"],
         ).upper()
 
-        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", service_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", service_sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", service_sql)
         self.assertIn("SERVICE_CATEGORY", service_sql)
         self.assertIn("AI / CORTEX", service_sql)
         self.assertIn("SERVERLESS / MANAGED COMPUTE", service_sql)
+        self.assertIn("SUM(COALESCE(CREDITS_USED, 0)) AS TOTAL_CREDITS", service_sql)
+        self.assertIn("SUM(COALESCE(CREDITS_USED_COMPUTE, 0)) AS COMPUTE_CREDITS", service_sql)
+        self.assertIn("SUM(COALESCE(CREDITS_USED_CLOUD_SERVICES, 0)) AS CLOUD_SERVICES_CREDITS", service_sql)
         self.assertIn("CREDITS_BILLED", service_sql)
         self.assertIn("CREDITS_BILLED_PRIOR", service_sql)
         self.assertIn("CREDIT_DELTA", service_sql)
         self.assertIn("PCT_DELTA", service_sql)
         self.assertIn("COST_DELTA_USD", service_sql)
-        self.assertIn("USAGE_DATE >= DATEADD('DAY', -28", service_sql)
-        self.assertIn("WHEN USAGE_DATE >= DATEADD('DAY', -14", service_sql)
+        self.assertIn("START_TIME >= DATEADD('DAY', -28, DATEADD('HOUR', -24, CURRENT_TIMESTAMP()))", service_sql)
+        self.assertIn("START_TIME < DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", service_sql)
+        self.assertIn("WHEN DATE(START_TIME) > DATEADD('DAY', -14, DATEADD('HOUR', -24, CURRENT_TIMESTAMP()))", service_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", trend_sql)
+        self.assertIn("SUM(COALESCE(CREDITS_USED, 0)) AS TOTAL_CREDITS", trend_sql)
+        self.assertIn("WHERE PERIOD = 'CURRENT'", trend_sql)
+        self.assertIn("START_TIME < DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", trend_sql)
 
         self.assertIn("FACT_COST_DAILY", mart_sql)
         self.assertIn("SERVICE_CATEGORY", mart_sql)
@@ -625,7 +648,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "CREDIT_DELTA": -3.25,
             },
         ])
-        state = {"cost_contract_service_lens_source": "OVERWATCH mart: FACT_COST_DAILY"}
+        state = {"cost_contract_service_lens_source": "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY"}
 
         source_summary, source_board = _build_cost_source_health_board(
             cockpit=cockpit,
@@ -676,6 +699,32 @@ class FormulaRegressionTests(unittest.TestCase):
                 "PRIOR_CREDITS": 37.5,
                 "CREDIT_DELTA": 12.5,
             }]),
+            "service_costs": pd.DataFrame([
+                {
+                    "SERVICE_CATEGORY": "Warehouse",
+                    "SERVICE_TYPE": "WAREHOUSE_METERING",
+                    "CREDITS_BILLED": 100.0,
+                    "CREDITS_BILLED_PRIOR": 80.0,
+                    "CREDIT_DELTA": 20.0,
+                    "CREDITS_USED_COMPUTE": 90.0,
+                    "CREDITS_USED_CLOUD_SERVICES": 10.0,
+                    "ESTIMATED_COST_USD": 368.0,
+                    "PRIOR_ESTIMATED_COST_USD": 294.4,
+                    "COST_DELTA_USD": 73.6,
+                },
+                {
+                    "SERVICE_CATEGORY": "Other",
+                    "SERVICE_TYPE": "CLOUD_SERVICES",
+                    "CREDITS_BILLED": 5.0,
+                    "CREDITS_BILLED_PRIOR": 5.0,
+                    "CREDIT_DELTA": 0.0,
+                    "CREDITS_USED_COMPUTE": 0.0,
+                    "CREDITS_USED_CLOUD_SERVICES": 5.0,
+                    "ESTIMATED_COST_USD": 18.4,
+                    "PRIOR_ESTIMATED_COST_USD": 18.4,
+                    "COST_DELTA_USD": 0.0,
+                },
+            ]),
             "cortex": pd.DataFrame([{
                 "CORTEX_SPEND_USD": 42.0,
                 "CORTEX_CREDITS": 19.0,
@@ -692,6 +741,12 @@ class FormulaRegressionTests(unittest.TestCase):
             }]),
         }
         summary = _cost_splash_summary(splash, DEFAULTS["credit_price"], 7)
+        self.assertEqual(summary["cost_basis"], "Official account service total")
+        self.assertAlmostEqual(summary["current_credits"], 105.0)
+        self.assertAlmostEqual(summary["prior_credits"], 85.0)
+        self.assertAlmostEqual(summary["compute_credits"], 90.0)
+        self.assertAlmostEqual(summary["cloud_services_credits"], 15.0)
+        self.assertEqual(summary["active_services"], 2)
         service_summary = {"top_moving_service": "CORTEX", "top_moving_delta": 4.25}
         service_lens = pd.DataFrame([
             {
@@ -7473,6 +7528,28 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         self.assertTrue(missing["refresh"])
         self.assertEqual(missing["workflow"], "Live triage")
+
+    def test_workload_runbook_markdown_is_copy_ready_and_evidence_bounded(self):
+        summary = {
+            "loaded": True,
+            "queries": 100,
+            "failed": 3,
+            "queued": 7,
+            "spill": 2,
+            "p95": 18.5,
+        }
+        brief = _workload_action_brief(summary)
+        markdown = _build_workload_runbook_markdown("Trexis", summary, brief)
+
+        self.assertIn("# OVERWATCH Workload Operations Runbook", markdown)
+        self.assertIn("- Scope: Trexis", markdown)
+        self.assertIn("100 queries, 3 failed, 7 queued, 2 remote-spill, p95 18.5s", markdown)
+        self.assertIn("## Slide Bullets", markdown)
+        self.assertIn("## Triage Order", markdown)
+        self.assertIn("Query diagnosis: capture query ID", markdown)
+        self.assertIn("## Evidence Checklist", markdown)
+        self.assertIn("Warehouse, user, role, database, and schema", markdown)
+        self.assertEqual(_workload_runbook_filename("Trexis Corp"), "overwatch_workload_runbook_trexis_corp.md")
 
     def test_workload_recovery_audit_ddl_captures_owner_and_verification_evidence(self):
         sql = build_workload_recovery_audit_ddl().upper()

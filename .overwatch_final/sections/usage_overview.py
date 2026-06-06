@@ -1,6 +1,7 @@
 # sections/usage_overview.py - executive Snowflake usage overview
 import pandas as pd
 import streamlit as st
+from config import DEFAULTS
 
 from utils import (
     build_task_health_sql,
@@ -623,7 +624,7 @@ def _queue_top_warehouses(session, df):
             "Owner": "DBA",
             "Finding": f"{wh} is one of the top credit drivers in the selected usage window.",
             "Action": "Review workload mix, auto-suspend policy, and high-cost users before the next billing cycle.",
-            "Estimated Monthly Savings": round(credits * st.session_state.get("credit_price", 3.0) * 0.15, 2),
+            "Estimated Monthly Savings": round(credits * st.session_state.get("credit_price", DEFAULTS["credit_price"]) * 0.15, 2),
             "Generated SQL Fix": f"-- Inspect warehouse settings\nSHOW WAREHOUSES LIKE {sql_literal(wh)};",
             "Proof Query": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY "
                            f"WHERE warehouse_name = {sql_literal(wh)} ORDER BY start_time DESC;",
@@ -698,7 +699,7 @@ def render():
 
     st.subheader("Why Did Usage Change?")
     render_priority_dataframe(
-        _build_usage_change_explanation(data, days, st.session_state.get("credit_price", 3.0)),
+        _build_usage_change_explanation(data, days, st.session_state.get("credit_price", DEFAULTS["credit_price"])),
         title="Executive movement summary",
         priority_columns=["SIGNAL", "STATE", "MOVEMENT", "DOLLAR_IMPACT", "EVIDENCE", "NEXT_ACTION"],
         raw_label="All usage movement signals",

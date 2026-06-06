@@ -2,7 +2,7 @@
 import pandas as pd
 import streamlit as st
 
-from config import THRESHOLDS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
+from config import DEFAULTS, THRESHOLDS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
 from utils import (
     build_idle_warehouse_sql,
     build_mart_recommendation_failed_tasks_sql,
@@ -544,7 +544,7 @@ def _render_queue(session):
         st.divider()
         st.subheader("Log Fixed Action to Snowflake Value")
         monthly_savings = safe_float(row.get("EST_MONTHLY_SAVINGS"))
-        savings_credits = monthly_savings / 30 / max(st.session_state.get("credit_price", 3.00), 0.01)
+        savings_credits = monthly_savings / 30 / max(st.session_state.get("credit_price", DEFAULTS["credit_price"]), 0.01)
         if st.button("Create Snowflake Value entry", key="queue_log_value"):
             try:
                 value_table = (
@@ -573,7 +573,7 @@ def _render_queue(session):
 
 def render():
     session = get_session()
-    credit_price = st.session_state.get("credit_price", 3.00)
+    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
 
     active_view = st.radio(
         "Recommendation view",

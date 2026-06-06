@@ -1,7 +1,7 @@
 # sections/snowflake_value.py - Snowflake optimization value scorecard
 import streamlit as st
 
-from config import ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
+from config import DEFAULTS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
 from utils import (
     build_app_runtime_cost_sql,
     format_snowflake_error,
@@ -95,7 +95,7 @@ def _load_snowflake_value_state(session, company: str, *, show_errors: bool = Tr
 
 def render():
     session = get_session()
-    credit_price = st.session_state.get("credit_price", 3.00)
+    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
     st.header("Snowflake Value")

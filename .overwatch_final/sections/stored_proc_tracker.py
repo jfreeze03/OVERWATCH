@@ -3,6 +3,7 @@ import re
 
 import streamlit as st
 import pandas as pd
+from config import DEFAULTS
 from utils import (
     get_session,
     filter_existing_columns,
@@ -776,7 +777,7 @@ def _query_history_has_root_query_id(session) -> bool:
 
 def render():
     session = get_session()
-    credit_price = st.session_state.get("credit_price", 3.00)
+    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
     st.header("Stored Proc & UDF Cost Tracker")

@@ -1,6 +1,7 @@
 # sections/spcs_tracker.py - Snowpark Container Services cost tracking
 import streamlit as st
 import pandas as pd
+from config import DEFAULTS
 from utils import (
     format_snowflake_error,
     get_active_company,
@@ -56,7 +57,7 @@ def _load_spcs_usage(company: str, days: int, *, show_errors: bool = True) -> bo
 
 
 def render():
-    credit_price = st.session_state.get("credit_price", 3.00)
+    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
     st.header("SPCS Cost Tracker")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from importlib import import_module
 
 import streamlit as st
@@ -262,6 +263,66 @@ def _workload_action_brief(summary: dict, *, snapshot_current: bool = True, erro
     }
 
 
+def _workload_runbook_filename(company: str) -> str:
+    scope = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(company or "all").strip())
+    while "__" in scope:
+        scope = scope.replace("__", "_")
+    return f"overwatch_workload_runbook_{scope.strip('_') or 'scope'}.md"
+
+
+def _build_workload_runbook_markdown(company: str, summary: dict, brief: dict) -> str:
+    loaded = bool(summary.get("loaded"))
+    generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    if loaded:
+        kpi_line = (
+            f"{safe_int(summary.get('queries')):,} queries, "
+            f"{safe_int(summary.get('failed')):,} failed, "
+            f"{safe_int(summary.get('queued')):,} queued, "
+            f"{safe_int(summary.get('spill')):,} remote-spill, "
+            f"p95 {safe_float(summary.get('p95')):,.1f}s"
+        )
+    else:
+        kpi_line = "Snapshot not loaded. Refresh the workload snapshot or start live triage."
+
+    lines = [
+        "# OVERWATCH Workload Operations Runbook",
+        "",
+        f"- Scope: {company}",
+        "- Window: 24 hours",
+        f"- Generated: {generated_at}",
+        f"- Snapshot: {kpi_line}",
+        f"- Current signal: {brief.get('state') or 'Review'}",
+        f"- Operator move: {brief.get('headline') or 'Review workload evidence.'}",
+        f"- Detail: {brief.get('detail') or 'No detail loaded.'}",
+        "",
+        "## Slide Bullets",
+        f"- Workload posture: {brief.get('state') or 'Review'} for {company}.",
+        f"- KPI line: {kpi_line}",
+        f"- First action: {brief.get('primary_label') or 'Open Live Triage'}.",
+        f"- Evidence owner: route to {brief.get('workflow') or 'Live triage'} in Workload Operations.",
+        "",
+        "## Triage Order",
+        "1. Live triage: identify running, queued, blocked, or cancellable work.",
+        "2. Query diagnosis: capture query ID, warehouse, user, role, database, schema, elapsed time, spill, and error text.",
+        "3. Task graphs: confirm root task, failed run, retry state, downstream blast radius, and owner.",
+        "4. Stored procedures: tie CALL history to query IDs, runtime drift, and cost attribution.",
+        "5. Pipeline health: check load backlog, copy errors, task lag, and dynamic table refresh state.",
+        "",
+        "## Evidence Checklist",
+        "- Query ID or task graph run ID",
+        "- Warehouse, user, role, database, and schema",
+        "- Start time, elapsed time, queue time, spill, and credits where available",
+        "- Error text or blocking session when applicable",
+        "- Owner, approval path, rollback option, and post-change verification query",
+        "",
+        "## Guardrails",
+        "- Prefer evidence capture before cancel, retry, suspend, or resume actions.",
+        "- Use DBA Control Room release compare when a deployment changed runtime or failures.",
+        "- Queue an action only when the owner, proof query, and verification path are clear.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def _render_workload_action_brief(company: str, brief: dict) -> None:
     with st.container(border=True):
         label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
@@ -309,12 +370,19 @@ def _render_workload_snapshot(company: str) -> None:
     snapshot_current = st.session_state.get("workload_operations_snapshot_meta") == expected_meta
     err = st.session_state.get("workload_operations_snapshot_error", "")
     summary = _workload_snapshot_summary(snapshot if snapshot_current else None)
-    _render_workload_action_brief(
-        company,
-        _workload_action_brief(summary, snapshot_current=snapshot_current, error=str(err or "")),
-    )
+    brief = _workload_action_brief(summary, snapshot_current=snapshot_current, error=str(err or ""))
+    _render_workload_action_brief(company, brief)
     st.markdown("**Operating Snapshot**")
     _render_workload_metric_rows(summary)
+    with st.expander("Runbook export", expanded=False):
+        st.caption("Download a copy-ready DBA runbook for the selected company and workload snapshot state.")
+        st.download_button(
+            "Download DBA runbook",
+            data=_build_workload_runbook_markdown(company, summary, brief),
+            file_name=_workload_runbook_filename(company),
+            mime="text/markdown",
+            key="workload_ops_runbook_download",
+        )
 
 
 def render() -> None:

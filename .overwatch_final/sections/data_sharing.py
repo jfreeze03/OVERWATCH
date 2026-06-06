@@ -1,6 +1,7 @@
 # sections/data_sharing.py - Data transfer credits and shared databases
 import pandas as pd
 import streamlit as st
+from config import DEFAULTS
 from utils import (
     get_active_company,
     get_db_filter_clause,
@@ -76,7 +77,7 @@ def _load_shared_databases(company: str, *, show_errors: bool = True) -> bool:
 
 
 def render():
-    credit_price = st.session_state.get("credit_price", 3.00)
+    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
     st.header("Data Sharing Monitor")

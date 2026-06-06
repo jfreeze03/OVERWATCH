@@ -7,7 +7,7 @@ import streamlit as st
 import utils as _utils
 from utils.section_guidance import defer_section_note, defer_source_note
 from utils.admin import ADMIN_AUDIT_FQN
-from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, THRESHOLDS
+from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULTS, DEFAULT_ENVIRONMENT, THRESHOLDS
 
 
 class _LazyPandas:
@@ -3454,7 +3454,7 @@ def _warehouse_period_movement(df: pd.DataFrame | None) -> pd.DataFrame:
 
 
 def render():
-    credit_price = st.session_state.get("credit_price", 3.00)
+    credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
     environment = get_active_environment()
     global_warehouse = str(st.session_state.get("global_warehouse", "") or "").strip()

@@ -32,6 +32,7 @@ from sections.account_health import (  # noqa: E402
     _account_health_closure_analytics_sql,
     _account_health_control_board,
     _account_health_intervention_matrix,
+    _account_health_morning_exception_rows,
     _account_health_operability_fact_sql,
     _account_health_operator_next_moves,
     _account_health_source_health_rows,
@@ -1285,6 +1286,66 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Refresh source readiness"]["INTERVENTION_STATE"], "Route Block")
         self.assertEqual(by_surface["Refresh source readiness"]["DBA_PRIORITY"], "P1")
         self.assertEqual(by_surface["Account access hygiene"]["SCOPE_CONFIDENCE"], "Account-Level Control")
+
+    def test_account_health_morning_exception_rows_put_closure_and_failures_first(self):
+        checklist = pd.DataFrame([
+            {
+                "CHECK": "Query failure review",
+                "STATUS": "Needs DBA",
+                "SEVERITY": "High",
+                "EVIDENCE": "12 failed queries",
+                "ROUTE": "Workload Operations",
+                "NEXT_ACTION": "Open query diagnosis.",
+            }
+        ])
+        gates = pd.DataFrame([
+            {
+                "GATE": "Closure proof",
+                "STATE": "Closure Blocked",
+                "COUNT": 2,
+                "PROOF_REQUIRED": "verification result",
+                "NEXT_ACTION": "Escalate overdue closures.",
+                "GATE_RANK": 0,
+            },
+            {
+                "GATE": "Source readiness",
+                "STATE": "Current",
+                "COUNT": 0,
+                "PROOF_REQUIRED": "fresh source state",
+                "NEXT_ACTION": "Loaded sources are current.",
+                "GATE_RANK": 8,
+            },
+        ])
+        interventions = pd.DataFrame([
+            {
+                "DBA_PRIORITY": "P1",
+                "INTERVENTION_STATE": "Route Block",
+                "SURFACE": "Refresh source readiness",
+                "ROUTE": "Account Health",
+                "COUNT": 1,
+                "NEXT_DECISION": "Reload source evidence before queueing.",
+                "PROOF_REQUIRED": "fresh source state",
+            }
+        ])
+
+        rows = _account_health_morning_exception_rows(
+            checklist=checklist,
+            gates=gates,
+            interventions=interventions,
+            control_board=pd.DataFrame(),
+            health_score=92,
+            err_count=12,
+            queued=3,
+            pct_delta=35,
+            failed_tasks=1,
+        )
+
+        self.assertEqual(rows.iloc[0]["SIGNAL"], "Closure Blocked")
+        self.assertIn("Query failures", set(rows["SIGNAL"]))
+        self.assertIn("Task failures", set(rows["SIGNAL"]))
+        self.assertIn("Credit spike", set(rows["SIGNAL"]))
+        self.assertNotIn("Current", set(rows["SIGNAL"]))
+        self.assertLessEqual(len(rows), 6)
 
     def test_account_health_closure_analytics_sql_scores_action_queue_evidence(self):
         sql = _account_health_closure_analytics_sql(45, "ALFA", "PROD").upper()
@@ -6553,6 +6614,37 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_id["COST_OPEN"]["CLOSURE_STATE"], "Approval pending")
         self.assertEqual(by_id["CHARGEBACK_OPEN"]["CLOSURE_STATE"], "Chargeback evidence pending")
 
+    def test_cost_contract_closure_analytics_recognizes_verified_no_change(self):
+        queue = pd.DataFrame([
+            {
+                "ACTION_ID": "COST_NO_CHANGE",
+                "SOURCE": "Cost & Contract - Explain This Bill",
+                "CATEGORY": "Cost Control",
+                "SEVERITY": "High",
+                "ENTITY_NAME": "WH_ALFA_BATCH",
+                "OWNER": "BATCH_OWNER",
+                "STATUS": "Fixed",
+                "EST_MONTHLY_SAVINGS": 500,
+                "OWNER_APPROVAL_STATUS": "Approved",
+                "VERIFICATION_STATUS": "VERIFIED_NO_CHANGE",
+                "VERIFICATION_RESULT": "Automated post-period verification found no measured savings.",
+                "BASELINE_VALUE": 100,
+                "CURRENT_VALUE": 125,
+                "MEASURED_DELTA": 25,
+                "RECOVERY_SLA_STATE": "Verified No Change",
+                "QUEUE_PRIORITY": 1,
+            },
+        ])
+
+        summary, detail = _build_cost_closure_analytics(queue, 3.0)
+
+        self.assertEqual(summary["verified_savings_actions"], 0)
+        self.assertEqual(summary["verified_no_change_actions"], 1)
+        self.assertEqual(summary["fixed_without_verification"], 0)
+        self.assertEqual(summary["audit_ready_pct"], 100.0)
+        self.assertEqual(detail.iloc[0]["CLOSURE_STATE"], "Verified no savings")
+        self.assertEqual(detail.iloc[0]["VERIFIED_PERIOD_DELTA_DOLLARS"], 0.0)
+
     def test_cost_contract_verification_health_surfaces_task_and_evidence_issues(self):
         health = pd.DataFrame([
             {
@@ -6578,6 +6670,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["issue_count"], 3)
         self.assertEqual(summary["ledger_rows_7d"], 12)
         self.assertEqual(summary["verified_last_run"], 1)
+        self.assertEqual(summary["verified_no_change_last_run"], 0)
         self.assertEqual(summary["evidence_required_last_run"], 3)
         self.assertEqual(detail.iloc[0]["ISSUE_SEVERITY"], "Medium")
         self.assertIn("Review evidence-required", detail.iloc[0]["ISSUE_DETAIL"])
@@ -6824,6 +6917,45 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("No Database Context", security_cards[0]["evidence"])
         self.assertIn("Confirm MFA enrollment", security_cards[0]["next_action"])
 
+    def test_top_priority_brief_reads_account_health_morning_exceptions(self):
+        state = {
+            "account_health_morning_exceptions": pd.DataFrame([
+                {
+                    "PRIORITY": 0,
+                    "SEVERITY": "High",
+                    "SIGNAL": "Closure Blocked",
+                    "ENTITY": "Closure proof",
+                    "EVIDENCE": "2 row(s) need attention.",
+                    "NEXT_ACTION": "Escalate overdue closures.",
+                    "ROUTE": "Account Health",
+                },
+                {
+                    "PRIORITY": 20,
+                    "SEVERITY": "Medium",
+                    "SIGNAL": "Queue pressure",
+                    "ENTITY": "Warehouses",
+                    "EVIDENCE": "3 queued workload signals.",
+                    "NEXT_ACTION": "Review warehouse pressure.",
+                    "ROUTE": "Warehouse Health",
+                },
+            ]),
+            "account_health_operator_gates": pd.DataFrame([{
+                "GATE": "Checklist route",
+                "STATE": "Route Blocked",
+                "COUNT": 4,
+                "PROOF_REQUIRED": "owner and verification SQL",
+                "NEXT_ACTION": "Complete route metadata.",
+                "GATE_RANK": 1,
+            }]),
+        }
+
+        cards = build_top_priority_brief_cards(state, domain="Reliability", limit=4)
+
+        self.assertEqual(cards[0]["surface"], "Account Health - Morning Exceptions")
+        self.assertEqual(cards[0]["signal"], "Closure Blocked")
+        self.assertIn("Escalate overdue closures", cards[0]["next_action"])
+        self.assertIn("Route Blocked", {card["signal"] for card in cards})
+
     def test_priority_brief_domain_filter_preserves_loaded_cards_when_no_domain_match(self):
         cards = [
             {
@@ -6915,6 +7047,8 @@ class FormulaRegressionTests(unittest.TestCase):
             "arch_agentic_ai_scorecard": pd.DataFrame([{"CONTROL_AREA": "CoWork Artifact Governance"}]),
             "security_posture_summary": pd.DataFrame([{"FAILED_LOGINS": 3}]),
             "security_posture_exceptions": pd.DataFrame([{"FINDING_TYPE": "Failed Login"}]),
+            "account_health_morning_exceptions": pd.DataFrame([{"SIGNAL": "Closure Blocked"}]),
+            "account_health_operator_gates": pd.DataFrame([{"GATE": "Closure proof"}]),
         }
         snapshot = snapshot_ask_overwatch_state(state)
 
@@ -6926,6 +7060,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("arch_agentic_ai_scorecard", snapshot)
         self.assertIn("security_posture_summary", snapshot)
         self.assertIn("security_posture_exceptions", snapshot)
+        self.assertIn("account_health_morning_exceptions", snapshot)
+        self.assertIn("account_health_operator_gates", snapshot)
         self.assertNotIn("unrelated_large_frame", snapshot)
 
     def test_grounded_cortex_prompt_for_future_use_is_strict(self):

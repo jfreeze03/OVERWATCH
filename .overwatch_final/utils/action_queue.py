@@ -168,6 +168,7 @@ def build_cost_savings_verification_sql(
     run_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_COST_SAVINGS_VERIFICATION_RUN"
     view_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_COST_SAVINGS_VERIFICATION_V"
     health_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V"
+    audit_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_WORKLOAD_RECOVERY_AUDIT"
     proc_fqn = f"{db_safe}.{schema_safe}.SP_OVERWATCH_VERIFY_COST_SAVINGS"
     task_fqn = f"{db_safe}.{schema_safe}.OVERWATCH_COST_SAVINGS_VERIFY"
     return f"""-- OVERWATCH scheduled post-period cost savings verification.
@@ -204,6 +205,7 @@ $$
 DECLARE
   candidate_count NUMBER DEFAULT 0;
   verified_count NUMBER DEFAULT 0;
+  no_change_count NUMBER DEFAULT 0;
   evidence_required_count NUMBER DEFAULT 0;
 BEGIN
   CREATE OR REPLACE TEMPORARY TABLE TMP_OVERWATCH_COST_SAVINGS_VERIFY AS
@@ -217,6 +219,8 @@ BEGIN
       ENTITY_NAME,
       OWNER,
       OWNER_APPROVAL_STATUS,
+      TICKET_ID,
+      APPROVER,
       STATUS,
       BASELINE_VALUE,
       CURRENT_VALUE,
@@ -231,7 +235,7 @@ BEGIN
       )
       AND UPPER(COALESCE(ENTITY_TYPE, '')) = 'WAREHOUSE'
       AND COALESCE(EST_MONTHLY_SAVINGS, 0) > 0
-      AND UPPER(COALESCE(VERIFICATION_STATUS, 'PENDING')) IN ('', 'PENDING', 'EVIDENCE REQUIRED')
+      AND UPPER(COALESCE(VERIFICATION_STATUS, 'PENDING')) NOT IN ('VERIFIED', 'VERIFIED_SAVED', 'VERIFIED_NO_CHANGE')
   ),
   post_period AS (
     SELECT
@@ -273,6 +277,8 @@ BEGIN
     ENTITY_NAME,
     OWNER,
     OWNER_APPROVAL_STATUS,
+    TICKET_ID,
+    APPROVER,
     STATUS AS STATUS_BEFORE,
     BASELINE_VALUE,
     CURRENT_VALUE AS DETECTION_CURRENT_VALUE,
@@ -291,7 +297,9 @@ BEGIN
   SELECT COUNT(*) INTO :candidate_count FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
   SELECT COUNT_IF(VERIFICATION_OUTCOME = 'Verified Savings') INTO :verified_count
   FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
-  SELECT COUNT_IF(VERIFICATION_OUTCOME <> 'Verified Savings') INTO :evidence_required_count
+  SELECT COUNT_IF(VERIFICATION_OUTCOME = 'No Savings Yet') INTO :no_change_count
+  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
+  SELECT COUNT_IF(VERIFICATION_OUTCOME NOT IN ('Verified Savings', 'No Savings Yet')) INTO :evidence_required_count
   FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
 
   INSERT INTO {run_fqn} (
@@ -312,21 +320,77 @@ BEGIN
     UPDATED_AT = CURRENT_TIMESTAMP(),
     CURRENT_VALUE = v.POST_PERIOD_VALUE,
     MEASURED_DELTA = v.MEASURED_DELTA,
-    VERIFICATION_STATUS = IFF(v.VERIFICATION_OUTCOME = 'Verified Savings', 'Verified', 'Evidence Required'),
+    VERIFICATION_STATUS = IFF(
+      v.VERIFICATION_OUTCOME = 'Verified Savings',
+      'VERIFIED_SAVED',
+      IFF(v.VERIFICATION_OUTCOME = 'No Savings Yet', 'VERIFIED_NO_CHANGE', 'EVIDENCE_REQUIRED')
+    ),
     VERIFICATION_RESULT = v.VERIFICATION_RESULT,
-    VERIFIED_BY = IFF(v.VERIFICATION_OUTCOME = 'Verified Savings', 'SP_OVERWATCH_VERIFY_COST_SAVINGS', q.VERIFIED_BY),
-    VERIFIED_AT = IFF(v.VERIFICATION_OUTCOME = 'Verified Savings', CURRENT_TIMESTAMP(), q.VERIFIED_AT),
+    VERIFIED_BY = IFF(v.VERIFICATION_OUTCOME IN ('Verified Savings', 'No Savings Yet'), 'SP_OVERWATCH_VERIFY_COST_SAVINGS', q.VERIFIED_BY),
+    VERIFIED_AT = IFF(v.VERIFICATION_OUTCOME IN ('Verified Savings', 'No Savings Yet'), CURRENT_TIMESTAMP(), q.VERIFIED_AT),
     RECOVERY_SLA_STATE = CASE
       WHEN v.VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Savings Verified'
+      WHEN v.VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'Verified No Change'
       WHEN v.VERIFICATION_OUTCOME = 'Improvement Needs Review' THEN 'Savings Improvement Needs Review'
       ELSE 'Savings Evidence Required'
     END,
-    RECOVERY_EVIDENCE = IFF(v.VERIFICATION_OUTCOME = 'Verified Savings', v.VERIFICATION_RESULT, q.RECOVERY_EVIDENCE)
+    RECOVERY_AUDIT_STATE = IFF(
+      v.VERIFICATION_OUTCOME = 'Verified Savings',
+      'VERIFIED_SAVED',
+      IFF(v.VERIFICATION_OUTCOME = 'No Savings Yet', 'VERIFIED_NO_CHANGE', q.RECOVERY_AUDIT_STATE)
+    ),
+    RECOVERY_EVIDENCE = IFF(v.VERIFICATION_OUTCOME IN ('Verified Savings', 'No Savings Yet'), v.VERIFICATION_RESULT, q.RECOVERY_EVIDENCE)
   FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY v
   WHERE q.ACTION_ID = v.ACTION_ID;
 
+  INSERT INTO {audit_fqn} (
+    ACTION_ID, COMPANY, ENVIRONMENT, ENTITY_TYPE, ENTITY_NAME,
+    INCIDENT_TYPE, INCIDENT_PRIORITY, OWNER, APPROVER, OWNER_APPROVAL_STATUS,
+    RECOVERY_SLA_STATE, TICKET_ID, ACTION_TAKEN, BEFORE_STATE, AFTER_STATE,
+    VERIFICATION_QUERY, VERIFICATION_RESULT, RECOVERY_EVIDENCE, SOURCE, NOTES
+  )
+  SELECT
+    ACTION_ID,
+    COMPANY,
+    ENVIRONMENT,
+    ENTITY_TYPE,
+    ENTITY_NAME,
+    'Cost Savings Verification' AS INCIDENT_TYPE,
+    CASE
+      WHEN VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Info'
+      WHEN VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'High'
+      ELSE 'Medium'
+    END AS INCIDENT_PRIORITY,
+    OWNER,
+    APPROVER,
+    OWNER_APPROVAL_STATUS,
+    CASE
+      WHEN VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Savings Verified'
+      WHEN VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'Verified No Change'
+      WHEN VERIFICATION_OUTCOME = 'Improvement Needs Review' THEN 'Savings Improvement Needs Review'
+      ELSE 'Savings Evidence Required'
+    END AS RECOVERY_SLA_STATE,
+    TICKET_ID,
+    CASE
+      WHEN VERIFICATION_OUTCOME = 'Verified Savings' THEN 'Closed-loop verifier recorded measured savings.'
+      WHEN VERIFICATION_OUTCOME = 'No Savings Yet' THEN 'Closed-loop verifier recorded no measured savings.'
+      ELSE 'Closed-loop verifier recorded evidence still required.'
+    END AS ACTION_TAKEN,
+    'status_before=' || COALESCE(STATUS_BEFORE, 'unknown') ||
+      '; baseline=' || COALESCE(TO_VARCHAR(BASELINE_VALUE), 'missing') ||
+      '; detection_current=' || COALESCE(TO_VARCHAR(DETECTION_CURRENT_VALUE), 'missing') AS BEFORE_STATE,
+    'post_period=' || COALESCE(TO_VARCHAR(POST_PERIOD_VALUE), 'missing') ||
+      '; measured_delta=' || COALESCE(TO_VARCHAR(MEASURED_DELTA), 'missing') AS AFTER_STATE,
+    SOURCE_QUERY AS VERIFICATION_QUERY,
+    VERIFICATION_RESULT,
+    VERIFICATION_RESULT AS RECOVERY_EVIDENCE,
+    'SP_OVERWATCH_VERIFY_COST_SAVINGS' AS SOURCE,
+    'Automated verifier outcome=' || VERIFICATION_OUTCOME AS NOTES
+  FROM TMP_OVERWATCH_COST_SAVINGS_VERIFY;
+
   RETURN 'OVERWATCH cost savings verification complete. candidates=' || candidate_count ||
          ', verified=' || verified_count ||
+         ', verified_no_change=' || no_change_count ||
          ', evidence_required=' || evidence_required_count;
 END;
 $$;
@@ -359,7 +423,8 @@ latest_outcome AS (
     RUN_TS,
     COUNT(*) AS CANDIDATES_LAST_RUN,
     COUNT_IF(VERIFICATION_OUTCOME = 'Verified Savings') AS VERIFIED_LAST_RUN,
-    COUNT_IF(VERIFICATION_OUTCOME <> 'Verified Savings') AS EVIDENCE_REQUIRED_LAST_RUN
+    COUNT_IF(VERIFICATION_OUTCOME = 'No Savings Yet') AS NO_CHANGE_LAST_RUN,
+    COUNT_IF(VERIFICATION_OUTCOME NOT IN ('Verified Savings', 'No Savings Yet')) AS EVIDENCE_REQUIRED_LAST_RUN
   FROM {run_fqn}
   WHERE RUN_TS = (SELECT MAX(RUN_TS) FROM {run_fqn})
   GROUP BY RUN_TS
@@ -383,6 +448,7 @@ SELECT
   latest_run.LEDGER_RUN_ROWS_7D,
   COALESCE(latest_outcome.CANDIDATES_LAST_RUN, 0) AS CANDIDATES_LAST_RUN,
   COALESCE(latest_outcome.VERIFIED_LAST_RUN, 0) AS VERIFIED_LAST_RUN,
+  COALESCE(latest_outcome.NO_CHANGE_LAST_RUN, 0) AS NO_CHANGE_LAST_RUN,
   COALESCE(latest_outcome.EVIDENCE_REQUIRED_LAST_RUN, 0) AS EVIDENCE_REQUIRED_LAST_RUN,
   CASE
     WHEN latest_task.LAST_TASK_SCHEDULED_AT IS NULL THEN 'Deploy and resume OVERWATCH_COST_SAVINGS_VERIFY after review.'
@@ -431,6 +497,7 @@ def build_cost_savings_verification_health_sql(
       LEDGER_RUN_ROWS_7D,
       CANDIDATES_LAST_RUN,
       VERIFIED_LAST_RUN,
+      NO_CHANGE_LAST_RUN,
       EVIDENCE_REQUIRED_LAST_RUN,
       NEXT_ACTION
     FROM {fqn}
@@ -599,7 +666,7 @@ def _row_evidence_gap(row: pd.Series) -> str:
     verification_query = str(row.get("VERIFICATION_QUERY") or row.get("PROOF_QUERY") or "").strip()
 
     if status_upper == "FIXED":
-        if verification_status == "VERIFIED" and _text_present(row.get("VERIFICATION_RESULT")):
+        if verification_status in {"VERIFIED", "VERIFIED_SAVED", "VERIFIED_NO_CHANGE"} and _text_present(row.get("VERIFICATION_RESULT")):
             return "Verified closure"
         return "Fixed without verification"
     if status_upper == "IGNORED":

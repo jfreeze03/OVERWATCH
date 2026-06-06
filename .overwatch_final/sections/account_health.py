@@ -1594,6 +1594,202 @@ def _account_health_operator_next_moves(
     return pd.DataFrame(rows).sort_values(["GATE_RANK", "COUNT"], ascending=[True, False]).reset_index(drop=True)
 
 
+def _account_health_morning_exception_rows(
+    *,
+    checklist: pd.DataFrame | None,
+    gates: pd.DataFrame | None,
+    interventions: pd.DataFrame | None,
+    control_board: pd.DataFrame | None,
+    health_score: float,
+    err_count: int,
+    queued: int,
+    pct_delta: float,
+    failed_tasks: int,
+) -> pd.DataFrame:
+    """Return the compact first-screen exceptions a DBA should triage first."""
+    rows: list[dict] = []
+
+    def _add(
+        severity: str,
+        signal: str,
+        entity: str,
+        evidence: str,
+        next_action: str,
+        route: str = "Account Health",
+        priority: int = 50,
+    ) -> None:
+        rows.append({
+            "PRIORITY": priority,
+            "SEVERITY": severity,
+            "SIGNAL": signal,
+            "ENTITY": entity,
+            "EVIDENCE": evidence,
+            "NEXT_ACTION": next_action,
+            "ROUTE": route,
+        })
+
+    if safe_float(health_score) < 75:
+        _add(
+            "High",
+            "Health score pressure",
+            "Account",
+            f"Health score is {safe_float(health_score):.0f}; review blockers before publishing a clean brief.",
+            "Work the highest-ranked Account Health gate before lower-priority dashboard review.",
+            priority=0,
+        )
+    if safe_int(err_count) > 0:
+        _add(
+            "High" if safe_int(err_count) >= 10 else "Medium",
+            "Query failures",
+            "Workload",
+            f"{safe_int(err_count):,} failed query signal(s) in the loaded Account Health snapshot.",
+            "Open Workload Operations query diagnosis and validate owner, query text, and recovery evidence.",
+            route="Workload Operations",
+            priority=5 if safe_int(err_count) >= 10 else 18,
+        )
+    if safe_int(failed_tasks) > 0:
+        _add(
+            "High",
+            "Task failures",
+            "Task graph",
+            f"{safe_int(failed_tasks):,} failed task signal(s) in the loaded Account Health snapshot.",
+            "Open Workload Operations task graphs and capture Control-M/task recovery status.",
+            route="Workload Operations",
+            priority=6,
+        )
+    if safe_int(queued) > 0:
+        _add(
+            "Medium",
+            "Queue pressure",
+            "Warehouses",
+            f"{safe_int(queued):,} queued workload signal(s) are visible in the loaded snapshot.",
+            "Review warehouse pressure before resizing or changing workload routing.",
+            route="Warehouse Health",
+            priority=20,
+        )
+    if safe_float(pct_delta) > 30:
+        _add(
+            "Medium",
+            "Credit spike",
+            "Cost",
+            f"24-hour credit movement is +{safe_float(pct_delta):.0f}%.",
+            "Open Cost & Contract attribution before treating the account as cost-stable.",
+            route="Cost & Contract",
+            priority=22,
+        )
+
+    gate_view = pd.DataFrame() if gates is None else gates.copy()
+    if not gate_view.empty:
+        gate_view.columns = [str(col).upper() for col in gate_view.columns]
+        if "GATE_RANK" in gate_view.columns:
+            gate_view["_RANK"] = pd.to_numeric(gate_view["GATE_RANK"], errors="coerce").fillna(99)
+        else:
+            gate_view["_RANK"] = 99
+        gate_state = gate_view.get("STATE", pd.Series([""] * len(gate_view), index=gate_view.index)).fillna("").astype(str)
+        gate_focus = gate_view[
+            ~gate_state.str.upper().isin(["CLEAR", "CURRENT", "CONTROLLED"])
+        ].sort_values(["_RANK", "COUNT"], ascending=[True, False])
+        for _, row in gate_focus.head(3).iterrows():
+            rank = safe_int(row.get("_RANK", 9))
+            _add(
+                "High" if rank <= 1 else "Medium",
+                str(row.get("STATE") or "Gate review"),
+                str(row.get("GATE") or "Account Health gate"),
+                f"{safe_int(row.get('COUNT', 0)):,} row(s) need attention. Proof: {row.get('PROOF_REQUIRED', '')}",
+                str(row.get("NEXT_ACTION") or "Open the Account Health gate and validate evidence."),
+                route="Account Health",
+                priority=2 + rank,
+            )
+
+    intervention_view = pd.DataFrame() if interventions is None else interventions.copy()
+    if not intervention_view.empty:
+        intervention_view.columns = [str(col).upper() for col in intervention_view.columns]
+        priority_series = intervention_view.get("DBA_PRIORITY", pd.Series([""] * len(intervention_view), index=intervention_view.index))
+        focus = intervention_view[priority_series.fillna("").astype(str).str.upper().isin(["P0", "P1"])].copy()
+        priority_rank = {"P0": 0, "P1": 1}
+        if not focus.empty:
+            focus["_RANK"] = focus["DBA_PRIORITY"].astype(str).str.upper().map(priority_rank).fillna(9)
+            for _, row in focus.sort_values(["_RANK", "COUNT"], ascending=[True, False]).head(3).iterrows():
+                _add(
+                    "High" if str(row.get("DBA_PRIORITY", "")).upper() == "P0" else "Medium",
+                    str(row.get("INTERVENTION_STATE") or "Intervention"),
+                    str(row.get("SURFACE") or row.get("ROUTE") or "Account Health"),
+                    str(row.get("NEXT_DECISION") or row.get("NEXT_CONTROL_ACTION") or "DBA intervention required."),
+                    str(row.get("PROOF_REQUIRED") or "Attach owner, ticket, approval, and verification evidence."),
+                    route=str(row.get("ROUTE") or "Account Health"),
+                    priority=12 + safe_int(row.get("_RANK", 9)),
+                )
+
+    control_view = pd.DataFrame() if control_board is None else control_board.copy()
+    if not control_view.empty:
+        control_view.columns = [str(col).upper() for col in control_view.columns]
+        if "CONTROL_RANK" in control_view.columns:
+            control_view["_RANK"] = pd.to_numeric(control_view["CONTROL_RANK"], errors="coerce").fillna(99)
+            focus = control_view[control_view["_RANK"] <= 3].copy()
+        else:
+            focus = pd.DataFrame()
+        for _, row in focus.sort_values(["_RANK", "OVERDUE_OPEN", "OPEN_ACTIONS"], ascending=[True, False, False]).head(3).iterrows():
+            _add(
+                "High" if safe_int(row.get("_RANK", 9)) <= 1 else "Medium",
+                str(row.get("CONTROL_STATE") or "Control review"),
+                str(row.get("CHECK_NAME") or "Account Health control"),
+                str(row.get("NEXT_CONTROL_ACTION") or row.get("QUEUE_BLOCKERS") or "Control board review required."),
+                str(row.get("PROOF_REQUIRED") or "Attach source and closure proof."),
+                route=str(row.get("ROUTE") or "Account Health"),
+                priority=16 + safe_int(row.get("_RANK", 9)),
+            )
+
+    checklist_view = _account_health_actionable_checklist(checklist)
+    if not checklist_view.empty:
+        checklist_view = checklist_view.copy()
+        checklist_view.columns = [str(col).upper() for col in checklist_view.columns]
+        severity_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        checklist_view["_RANK"] = checklist_view.get("SEVERITY", pd.Series([""] * len(checklist_view), index=checklist_view.index)).fillna("").astype(str).str.upper().map(severity_rank).fillna(9)
+        for _, row in checklist_view.sort_values(["_RANK", "CHECK"], ascending=[True, True]).head(4).iterrows():
+            severity = str(row.get("SEVERITY") or "Medium")
+            _add(
+                severity if severity.upper() in {"CRITICAL", "HIGH", "MEDIUM"} else "Medium",
+                str(row.get("CHECK") or "Checklist issue"),
+                str(row.get("ROUTE") or row.get("OWNER") or "Account Health"),
+                str(row.get("EVIDENCE") or "Checklist exception needs review."),
+                str(row.get("NEXT_ACTION") or "Queue or resolve the checklist exception with proof."),
+                route=str(row.get("ROUTE") or "Account Health"),
+                priority=24 + safe_int(row.get("_RANK", 9)),
+            )
+
+    if not rows:
+        return pd.DataFrame(columns=["PRIORITY", "SEVERITY", "SIGNAL", "ENTITY", "EVIDENCE", "NEXT_ACTION", "ROUTE"])
+
+    frame = pd.DataFrame(rows)
+    frame["_DEDUP"] = (
+        frame["SIGNAL"].fillna("").astype(str).str.upper()
+        + "|"
+        + frame["ENTITY"].fillna("").astype(str).str.upper()
+    )
+    frame = frame.sort_values(["PRIORITY", "SEVERITY", "SIGNAL"], ascending=[True, True, True])
+    frame = frame.drop_duplicates("_DEDUP", keep="first").drop(columns=["_DEDUP"])
+    return frame.head(6).reset_index(drop=True)
+
+
+def _render_account_health_exception_strip(rows: pd.DataFrame | None) -> None:
+    st.markdown("**Morning Exceptions**")
+    if rows is None or rows.empty:
+        st.success("No immediate Account Health exceptions in the loaded snapshot.")
+        return
+    for _, row in rows.head(5).iterrows():
+        severity = str(row.get("SEVERITY") or "Medium")
+        signal = str(row.get("SIGNAL") or "Account Health signal")
+        entity = str(row.get("ENTITY") or "Account")
+        evidence = str(row.get("EVIDENCE") or "")
+        next_action = str(row.get("NEXT_ACTION") or "")
+        route = str(row.get("ROUTE") or "Account Health")
+        message = f"{severity}: {signal} - {entity}. {evidence} Next: {next_action} Route: {route}."
+        if severity.upper() in {"CRITICAL", "HIGH"}:
+            st.warning(message)
+        else:
+            st.info(message)
+
+
 def _account_health_action_brief(checklist: pd.DataFrame | None) -> dict:
     """Choose the single Account Health move to show above detailed evidence."""
     if checklist is None or checklist.empty:
@@ -3117,6 +3313,23 @@ def render():
             access_hygiene=st.session_state.get("account_health_access_hygiene"),
             operability_fact=operability_gate_fact,
         )
+        account_morning_exceptions = _account_health_morning_exception_rows(
+            checklist=checklist,
+            gates=account_operator_gates,
+            interventions=account_intervention_matrix,
+            control_board=account_control_board,
+            health_score=health_score,
+            err_count=err_count,
+            queued=queued,
+            pct_delta=pct_delta,
+            failed_tasks=failed_tasks,
+        )
+        st.session_state["account_health_checklist"] = checklist
+        st.session_state["account_health_operator_gates"] = account_operator_gates
+        st.session_state["account_health_control_board"] = account_control_board
+        st.session_state["account_health_intervention_matrix"] = account_intervention_matrix
+        st.session_state["account_health_morning_exceptions"] = account_morning_exceptions
+        _render_account_health_exception_strip(account_morning_exceptions)
         account_detail = st.selectbox(
             "Account Health detail",
             ("Checklist", "Gates", "Interventions", "Controls", "Operability"),
@@ -3417,38 +3630,22 @@ def render():
         st.divider()
         show_loaded_time("account_health")
 
-        r1, r2 = st.columns([2, 1])
-        with r1:
-            st.markdown("**Exception Signals**")
-            alerts = []
-            if err_count > 10:  alerts.append({"Severity": "High", "Alert": "High error rate",  "Detail": f"{err_count} failures"})
-            if pct_delta > 30:  alerts.append({"Severity": "Medium", "Alert": "Credit spike",      "Detail": f"+{pct_delta:.0f}%"})
-            if queued > 5:      alerts.append({"Severity": "Medium", "Alert": "Queue pressure",    "Detail": f"{queued} queued"})
-            if alerts:
-                render_priority_dataframe(
-                    pd.DataFrame(alerts),
-                    title="Active exception signals",
-                    priority_columns=["Severity", "Alert", "Detail"],
-                    sort_by=["Severity", "Alert"],
-                    ascending=[True, True],
-                    raw_label="All active signals",
-                )
-            else:
-                st.success("No active alerts")
+        st.markdown("**Quick Nav**")
+        qnav_cols = st.columns(4)
 
-        with r2:
-            st.markdown("**Quick Nav**")
-            def _jump(tgt, workflow=None):
-                st.session_state["nav_section"] = tgt
-                if workflow:
-                    st.session_state["workload_operations_workflow"] = workflow
-            for lbl, tgt, workflow in [
-                ("Live",  "Workload Operations", "Live triage"),
-                ("Query", "Workload Operations", "Query diagnosis"),
-                ("Cost",  "Cost & Contract", None),
-                ("DBA",  "Change & Drift", None),
-            ]:
-                st.button(lbl, key=f"jump_{lbl}", on_click=_jump, args=(tgt, workflow))
+        def _jump(tgt, workflow=None):
+            st.session_state["nav_section"] = tgt
+            if workflow:
+                st.session_state["workload_operations_workflow"] = workflow
+
+        for idx, (lbl, tgt, workflow) in enumerate([
+            ("Live", "Workload Operations", "Live triage"),
+            ("Query", "Workload Operations", "Query diagnosis"),
+            ("Cost", "Cost & Contract", None),
+            ("DBA", "Change & Drift", None),
+        ]):
+            with qnav_cols[idx]:
+                st.button(lbl, key=f"jump_{lbl}", on_click=_jump, args=(tgt, workflow), width="stretch")
 
         secondary_sig = f"{filter_sig}|{environment}"
         secondary_loaded = st.session_state.get("_account_health_secondary_sig") == secondary_sig

@@ -904,6 +904,7 @@ def _build_cost_closure_analytics(queue: pd.DataFrame, credit_price: float) -> t
         "post_period_pending_actions": 0,
         "fixed_without_verification": 0,
         "verified_savings_actions": 0,
+        "verified_no_change_actions": 0,
         "open_estimated_monthly_savings": 0.0,
         "blocked_estimated_monthly_savings": 0.0,
         "verified_estimated_monthly_savings": 0.0,
@@ -933,10 +934,15 @@ def _build_cost_closure_analytics(queue: pd.DataFrame, credit_price: float) -> t
     open_mask = ~fixed & ~ignored
     approved = approval.isin(["APPROVED", "NOT REQUIRED"])
     approval_pending = ~approved & ~ignored
-    verified = verification.eq("VERIFIED") & verification_result
+    verified = verification.isin(["VERIFIED", "VERIFIED_SAVED"]) & verification_result
+    verified_no_change = verification.eq("VERIFIED_NO_CHANGE") & verification_result & approved
     improved = measured_delta.lt(0) | (current.notna() & baseline.notna() & current.lt(baseline))
-    verified_savings = fixed & verified & approved & improved
-    fixed_without_verification = fixed & ~verified_savings
+    verified_savings = fixed & approved & (
+        (verification.eq("VERIFIED_SAVED") & verification_result)
+        | (verification.eq("VERIFIED") & verification_result & improved)
+    )
+    verified_no_change_closure = fixed & verified_no_change & ~verified_savings
+    fixed_without_verification = fixed & ~(verified_savings | verified_no_change_closure)
     post_period_pending = open_mask & recovery.str.contains("SAVINGS VERIFICATION PENDING|POST-PERIOD", na=False)
     chargeback_pending = open_mask & (
         category.str.contains("CHARGEBACK", na=False)
@@ -951,6 +957,10 @@ def _build_cost_closure_analytics(queue: pd.DataFrame, credit_price: float) -> t
             closure_states.append("Verified savings")
             evidence_notes.append("Fixed, verified, approved, and measured lower than baseline.")
             verified_period_values.append(round(credits_to_dollars(abs(safe_float(measured_delta.loc[idx])), credit_price), 2))
+        elif bool(verified_no_change_closure.loc[idx]):
+            closure_states.append("Verified no savings")
+            evidence_notes.append("Automated verifier measured the post-period and found no savings to claim.")
+            verified_period_values.append(0.0)
         elif bool(fixed_without_verification.loc[idx]):
             closure_states.append("Fixed without verified savings")
             evidence_notes.append("Do not count savings until verification result, approval, and lower post-period usage are attached.")
@@ -982,6 +992,7 @@ def _build_cost_closure_analytics(queue: pd.DataFrame, credit_price: float) -> t
     blocked = open_mask & (approval_pending | post_period_pending | chargeback_pending)
     fixed_count = int(fixed.sum())
     audit_ready = int(verified_savings.sum())
+    no_change_count = int(verified_no_change_closure.sum())
     summary = {
         "cost_actions": int(len(view)),
         "open_actions": int(open_mask.sum()),
@@ -989,11 +1000,12 @@ def _build_cost_closure_analytics(queue: pd.DataFrame, credit_price: float) -> t
         "post_period_pending_actions": int(post_period_pending.sum()),
         "fixed_without_verification": int(fixed_without_verification.sum()),
         "verified_savings_actions": audit_ready,
+        "verified_no_change_actions": no_change_count,
         "open_estimated_monthly_savings": round(safe_float(estimated_savings[open_mask].sum()), 2),
         "blocked_estimated_monthly_savings": round(safe_float(estimated_savings[blocked].sum()), 2),
         "verified_estimated_monthly_savings": round(safe_float(estimated_savings[verified_savings].sum()), 2),
         "verified_period_delta_dollars": round(safe_float(sum(verified_period_values)), 2),
-        "audit_ready_pct": round((audit_ready / fixed_count) * 100, 1) if fixed_count else 0.0,
+        "audit_ready_pct": round(((audit_ready + no_change_count) / fixed_count) * 100, 1) if fixed_count else 0.0,
     }
     return summary, view
 
@@ -1016,6 +1028,7 @@ def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tup
         "ledger_rows_7d": 0,
         "candidates_last_run": 0,
         "verified_last_run": 0,
+        "verified_no_change_last_run": 0,
         "evidence_required_last_run": 0,
         "issue_count": 1,
         "issue_severity": "High",
@@ -1039,6 +1052,7 @@ def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tup
         "CANDIDATES_LAST_RUN": 0,
         "VERIFIED_LAST_RUN": 0,
         "EVIDENCE_REQUIRED_LAST_RUN": 0,
+        "NO_CHANGE_LAST_RUN": 0,
         "NEXT_ACTION": "Review the verifier health row and cost action evidence.",
     }
     for column, default in expected_defaults.items():
@@ -1052,6 +1066,7 @@ def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tup
     ledger_rows = safe_int(row.get("LEDGER_RUN_ROWS_7D"))
     candidates = safe_int(row.get("CANDIDATES_LAST_RUN"))
     verified = safe_int(row.get("VERIFIED_LAST_RUN"))
+    no_change = safe_int(row.get("NO_CHANGE_LAST_RUN"))
     evidence_required = safe_int(row.get("EVIDENCE_REQUIRED_LAST_RUN"))
     next_action = str(row.get("NEXT_ACTION") or "Review the verifier health row and cost action evidence.").strip()
 
@@ -1084,6 +1099,7 @@ def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tup
         "ledger_rows_7d": ledger_rows,
         "candidates_last_run": candidates,
         "verified_last_run": verified,
+        "verified_no_change_last_run": no_change,
         "evidence_required_last_run": evidence_required,
         "issue_count": issue_count,
         "issue_severity": issue_severity,
@@ -1100,10 +1116,11 @@ def _render_savings_verification_task_health(health: pd.DataFrame | None, error:
     )
     h1, h2, h3, h4, h5 = st.columns(5)
     h1.metric("Task Health", summary["health_state"])
-    h2.metric("Failed Runs 7d", f"{summary['failed_runs_7d']:,}", delta_color="inverse")
-    h3.metric("Evidence Required", f"{summary['evidence_required_last_run']:,}", delta_color="inverse")
-    h4.metric("Ledger Rows 7d", f"{summary['ledger_rows_7d']:,}")
-    h5.metric("Last Ledger Run", summary["last_run"])
+    h2.metric("Failed 7d", f"{summary['failed_runs_7d']:,}", delta_color="inverse")
+    h3.metric("Verified Saved", f"{summary['verified_last_run']:,}")
+    h4.metric("No Change", f"{summary['verified_no_change_last_run']:,}", delta_color="inverse")
+    h5.metric("Needs Evidence", f"{summary['evidence_required_last_run']:,}", delta_color="inverse")
+    st.caption(f"Last ledger run: {summary['last_run']} | Ledger rows 7d: {summary['ledger_rows_7d']:,}")
 
     if error:
         st.warning(f"Verification task health view unavailable: {error}")
@@ -1125,7 +1142,7 @@ def _render_savings_verification_task_health(health: pd.DataFrame | None, error:
             "ISSUE_SEVERITY", "TASK_HEALTH_STATE", "LAST_TASK_STATE",
             "LAST_TASK_SCHEDULED_AT", "LAST_TASK_COMPLETED_AT", "FAILED_RUNS_7D",
             "LAST_VERIFICATION_RUN_AT", "LEDGER_RUN_ROWS_7D",
-            "CANDIDATES_LAST_RUN", "VERIFIED_LAST_RUN", "EVIDENCE_REQUIRED_LAST_RUN",
+            "CANDIDATES_LAST_RUN", "VERIFIED_LAST_RUN", "NO_CHANGE_LAST_RUN", "EVIDENCE_REQUIRED_LAST_RUN",
             "LAST_TASK_ERROR", "ISSUE_DETAIL",
         ],
         sort_by=["FAILED_RUNS_7D", "EVIDENCE_REQUIRED_LAST_RUN"],

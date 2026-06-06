@@ -91,6 +91,11 @@ ASK_OVERWATCH_STATE_KEYS = (
     "cost_contract_incident_timeline",
     "cost_contract_mart_operability_summary",
     "cost_contract_mart_operability",
+    "account_health_morning_exceptions",
+    "account_health_operator_gates",
+    "account_health_control_board",
+    "account_health_intervention_matrix",
+    "account_health_checklist",
     "security_posture_summary",
     "security_posture_exceptions",
 )
@@ -732,6 +737,131 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
                 })
 
 
+def _cards_from_account_health(state: Mapping, cards: list[dict]) -> None:
+    exceptions = state.get("account_health_morning_exceptions")
+    if _is_df(exceptions):
+        view = exceptions.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        if "PRIORITY" in view.columns:
+            view["_RANK"] = pd.to_numeric(view["PRIORITY"], errors="coerce").fillna(99)
+        else:
+            view["_RANK"] = 99
+        for _, row in view.sort_values(["_RANK", "SEVERITY", "SIGNAL"], ascending=[True, True, True]).head(8).iterrows():
+            _append_card(cards, {
+                "surface": "Account Health - Morning Exceptions",
+                "severity": _text(row, "SEVERITY", default="Medium"),
+                "signal": _text(row, "SIGNAL", default="Account Health exception"),
+                "entity": _text(row, "ENTITY", default="Account Health"),
+                "evidence": _text(row, "EVIDENCE", default="Loaded Account Health exception."),
+                "next_action": _text(row, "NEXT_ACTION", default="Open Account Health and validate the exception evidence."),
+                "proof": "Attach owner, ticket, source query, scope basis, verification result, and recovery evidence before closure.",
+                "do_not": "Do not publish Account Health as clean while morning exceptions remain unresolved or unverified.",
+                "route": _text(row, "ROUTE", default="Account Health"),
+                "category": "Reliability",
+                "value": str(100 - safe_int(_value(row, "PRIORITY", default=50))),
+            })
+
+    gates = state.get("account_health_operator_gates")
+    if _is_df(gates):
+        view = gates.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        if "GATE_RANK" in view.columns:
+            view["_RANK"] = pd.to_numeric(view["GATE_RANK"], errors="coerce").fillna(99)
+        else:
+            view["_RANK"] = 99
+        state_text = view.get("STATE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
+        view = view[~state_text.isin(["CLEAR", "CURRENT", "CONTROLLED"])]
+        for _, row in view.sort_values(["_RANK", "COUNT"], ascending=[True, False]).head(6).iterrows():
+            rank = safe_int(row.get("_RANK", 9))
+            _append_card(cards, {
+                "surface": "Account Health - Gates",
+                "severity": "High" if rank <= 1 else "Medium",
+                "signal": _text(row, "STATE", default="Account Health gate"),
+                "entity": _text(row, "GATE", default="Account Health"),
+                "evidence": f"{safe_int(_value(row, 'COUNT', default=0)):,} row(s); proof={_text(row, 'PROOF_REQUIRED', default='owner and verification evidence')}.",
+                "next_action": _text(row, "NEXT_ACTION", default="Open Account Health gates and validate source evidence."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Attach owner, ticket, source evidence, and verification result."),
+                "do_not": "Do not close or suppress Account Health gates without proof and owner approval.",
+                "route": "Account Health > Gates",
+                "category": "Reliability",
+                "value": _text(row, "COUNT", default="0"),
+            })
+
+    interventions = state.get("account_health_intervention_matrix")
+    if _is_df(interventions):
+        view = interventions.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        priority = view.get("DBA_PRIORITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
+        view = view[priority.isin(["P0", "P1"])]
+        priority_rank = {"P0": 0, "P1": 1}
+        if not view.empty:
+            view["_RANK"] = view["DBA_PRIORITY"].astype(str).str.upper().map(priority_rank).fillna(9)
+        for _, row in view.sort_values(["_RANK", "COUNT"], ascending=[True, False]).head(6).iterrows():
+            _append_card(cards, {
+                "surface": "Account Health - Interventions",
+                "severity": "High" if _text(row, "DBA_PRIORITY").upper() == "P0" else "Medium",
+                "signal": _text(row, "INTERVENTION_STATE", default="DBA intervention"),
+                "entity": _text(row, "SURFACE", "ROUTE", default="Account Health"),
+                "evidence": _text(row, "NEXT_DECISION", "NEXT_CONTROL_ACTION", default="DBA intervention row is loaded."),
+                "next_action": _text(row, "NEXT_DECISION", "NEXT_CONTROL_ACTION", default="Work the P0/P1 intervention row first."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Attach owner, ticket, approval, and verification evidence."),
+                "do_not": "Do not move to secondary evidence until P0/P1 Account Health intervention rows are routed.",
+                "route": _text(row, "ROUTE", default="Account Health"),
+                "category": "Reliability",
+                "value": _text(row, "COUNT", default="0"),
+            })
+
+    controls = state.get("account_health_control_board")
+    if _is_df(controls):
+        view = controls.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        if "CONTROL_RANK" in view.columns:
+            view["_RANK"] = pd.to_numeric(view["CONTROL_RANK"], errors="coerce").fillna(99)
+            view = view[view["_RANK"] <= 3]
+        else:
+            view = pd.DataFrame()
+        for _, row in view.sort_values(["_RANK", "OVERDUE_OPEN", "OPEN_ACTIONS"], ascending=[True, False, False]).head(6).iterrows():
+            rank = safe_int(row.get("_RANK", 9))
+            _append_card(cards, {
+                "surface": "Account Health - Control Board",
+                "severity": "High" if rank <= 1 else "Medium",
+                "signal": _text(row, "CONTROL_STATE", default="Control blocker"),
+                "entity": _text(row, "CHECK_NAME", default="Account Health control"),
+                "evidence": _text(row, "NEXT_CONTROL_ACTION", "QUEUE_BLOCKERS", default="Control board row needs evidence review."),
+                "next_action": _text(row, "NEXT_CONTROL_ACTION", default="Open Account Health control board and route the blocker."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Attach source verification and closure proof."),
+                "do_not": "Do not call Account Health controlled while control-board blockers remain.",
+                "route": _text(row, "ROUTE", default="Account Health"),
+                "category": "Reliability",
+                "value": str(safe_int(row.get("OPEN_ACTIONS", 0)) + safe_int(row.get("OVERDUE_OPEN", 0)) + safe_int(row.get("FIXED_WITHOUT_VERIFICATION", 0))),
+            })
+
+    checklist = state.get("account_health_checklist")
+    if _is_df(checklist):
+        view = checklist.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        status = view.get("STATUS", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
+        severity = view.get("SEVERITY", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str).str.upper()
+        view = view[(status != "OK") & (severity != "INFO")]
+        severity_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        if not view.empty:
+            view["_RANK"] = view["SEVERITY"].astype(str).str.upper().map(severity_rank).fillna(9)
+        for _, row in view.sort_values(["_RANK", "CHECK"], ascending=[True, True]).head(6).iterrows():
+            _append_card(cards, {
+                "surface": "Account Health - Checklist",
+                "severity": _text(row, "SEVERITY", default="Medium"),
+                "signal": _text(row, "CHECK", default="Checklist issue"),
+                "entity": _text(row, "ROUTE", "OWNER", default="Account Health"),
+                "evidence": _text(row, "EVIDENCE", default="Loaded checklist exception."),
+                "next_action": _text(row, "NEXT_ACTION", default="Queue or resolve this checklist exception with proof."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Attach verification SQL and owner approval evidence."),
+                "do_not": "Do not ignore checklist exceptions without verification and scope evidence.",
+                "route": _text(row, "ROUTE", default="Account Health"),
+                "category": "Reliability",
+                "value": str(10 - safe_int(row.get("_RANK", 9))),
+            })
+
+
 def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
     exceptions = state.get("security_posture_exceptions")
     if _is_df(exceptions):
@@ -861,6 +991,7 @@ def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[
     _cards_from_queue(state.get("cost_contract_queue"), cards, surface="Cost & Contract action queue")
     _cards_from_alert_center(state, cards)
     _cards_from_dba_control_room(state, cards)
+    _cards_from_account_health(state, cards)
     _cards_from_security_posture(state, cards)
 
     if not cards:

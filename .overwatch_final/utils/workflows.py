@@ -72,8 +72,13 @@ def add_cost_companion_columns(df, *, credit_price: float | None = None, max_col
         values = pd.to_numeric(frame[column], errors="coerce")
         if values.notna().sum() == 0:
             continue
+        if "RATE_USD" in frame.columns:
+            rates = pd.to_numeric(frame["RATE_USD"], errors="coerce").fillna(price)
+            cost_values = (values.fillna(0) * rates).round(2)
+        else:
+            cost_values = (values.fillna(0) * price).round(2)
         insert_at = min(len(frame.columns), list(frame.columns).index(column) + 1)
-        frame.insert(insert_at, cost_column, (values.fillna(0) * price).round(2))
+        frame.insert(insert_at, cost_column, cost_values)
         added += 1
     return frame
 

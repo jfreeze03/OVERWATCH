@@ -2309,17 +2309,16 @@ WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
 GROUP BY warehouse_name, usage_day
 ORDER BY usage_day DESC, total_warehouse_credits DESC;
 
--- Billed warehouse credits after cloud-services adjustment
-SELECT usage_date,
+-- Official account service credits for completed Cost Monitor windows
+SELECT DATE(start_time) AS usage_date,
        SUM(COALESCE(credits_used_compute, 0)) AS account_compute_credits,
        SUM(COALESCE(credits_used_cloud_services, 0)) AS account_cloud_services_credits,
-       SUM(COALESCE(credits_adjustment_cloud_services, 0)) AS account_cloud_services_adjustment,
-       SUM(COALESCE(credits_billed, 0)) AS account_billed_warehouse_credits
-FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
-WHERE usage_date >= DATEADD('day', -30, CURRENT_DATE())
-  AND usage_date < CURRENT_DATE()
+       SUM(COALESCE(credits_used, 0)) AS account_total_credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+WHERE start_time >= DATEADD('day', -30, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
+  AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
   AND UPPER(service_type) = 'WAREHOUSE_METERING'
-GROUP BY usage_date
+GROUP BY DATE(start_time)
 ORDER BY usage_date DESC;
 
 -- Official organization currency spend when billing access is available

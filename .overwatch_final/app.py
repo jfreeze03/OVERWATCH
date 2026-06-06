@@ -301,6 +301,10 @@ def _metric_settings_signature() -> tuple:
     """Return settings that change dollarized metrics and derived evidence."""
     return (
         float(st.session_state.get("credit_price", DEFAULTS["credit_price"])),
+        float(st.session_state.get(
+            "_ai_credit_price_input",
+            st.session_state.get("ai_credit_price", DEFAULTS["ai_credit_price"]),
+        )),
         float(st.session_state.get("storage_cost_per_tb", DEFAULTS["storage_cost_per_tb"])),
     )
 
@@ -923,6 +927,14 @@ with st.sidebar:
             step=0.10, key="_credit_price_input",
         )
         st.session_state["credit_price"] = credit_price
+
+        ai_credit_price = st.number_input(
+            "$/AI credit (Cortex)",
+            min_value=0.50, max_value=20.00,
+            value=st.session_state.get("ai_credit_price", DEFAULTS["ai_credit_price"]),
+            step=0.10, key="_ai_credit_price_input",
+        )
+        st.session_state["ai_credit_price"] = ai_credit_price
 
         storage_cost = st.number_input(
             "$/TB/month (storage)",

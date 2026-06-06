@@ -61,6 +61,7 @@ build_snowflake_service_cost_lens_sql = _lazy_util("build_snowflake_service_cost
 credits_to_dollars = _lazy_util("credits_to_dollars")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 get_active_environment = _lazy_util("get_active_environment")
+get_ai_credit_price = _lazy_util("get_ai_credit_price")
 get_environment_label = _lazy_util("get_environment_label")
 get_session_for_action = _lazy_util("get_session_for_action")
 get_user_filter_clause = _lazy_util("get_user_filter_clause")
@@ -99,6 +100,13 @@ def get_credit_price() -> float:
     return safe_float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)), 3.68)
 
 
+def get_current_ai_credit_price() -> float:
+    try:
+        return safe_float(get_ai_credit_price(), 2.20)
+    except Exception:
+        return safe_float(st.session_state.get("ai_credit_price", DEFAULTS.get("ai_credit_price", 2.20)), 2.20)
+
+
 def _altair():
     """Import Altair only when the cost splash actually renders charts."""
     import altair as alt
@@ -127,12 +135,19 @@ def _cost_spend_trend_rows(trend: pd.DataFrame | None, credit_price: float) -> p
     if not _looks_like_frame(trend) or trend.empty or not {"USAGE_DATE", "DAILY_CREDITS"}.issubset(set(trend.columns)):
         return pd.DataFrame(columns=["USAGE_DATE", "DAILY_CREDITS", "SPEND_USD", "ROLLING_SPEND_USD"])
 
-    rows = trend[["USAGE_DATE", "DAILY_CREDITS"]].copy()
+    columns = ["USAGE_DATE", "DAILY_CREDITS"]
+    if "DAILY_SPEND_USD" in trend.columns:
+        columns.append("DAILY_SPEND_USD")
+    rows = trend[columns].copy()
     rows["USAGE_DATE"] = pd.to_datetime(rows["USAGE_DATE"], errors="coerce")
     rows["DAILY_CREDITS"] = pd.to_numeric(rows["DAILY_CREDITS"], errors="coerce").fillna(0)
-    rows["SPEND_USD"] = rows["DAILY_CREDITS"].apply(
-        lambda value: credits_to_dollars(safe_float(value), credit_price)
-    )
+    if "DAILY_SPEND_USD" in rows.columns:
+        rows["SPEND_USD"] = pd.to_numeric(rows["DAILY_SPEND_USD"], errors="coerce").fillna(0)
+        rows = rows.drop(columns=["DAILY_SPEND_USD"])
+    else:
+        rows["SPEND_USD"] = rows["DAILY_CREDITS"].apply(
+            lambda value: credits_to_dollars(safe_float(value), credit_price)
+        )
     rows = rows.dropna(subset=["USAGE_DATE"]).sort_values("USAGE_DATE")
     if rows.empty:
         return rows
@@ -622,8 +637,10 @@ def _build_cost_splash_daily_trend_sql(company: str, days: int, *, mart: bool = 
     """
 
 
-def _build_cost_monitor_service_trend_sql(days: int) -> str:
+def _build_cost_monitor_service_trend_sql(days: int, credit_price: float | None = None, ai_credit_price: float | None = None) -> str:
     days_int = max(int(days or 7), 1)
+    credit_rate = safe_float(credit_price, safe_float(DEFAULTS.get("credit_price"), 3.68))
+    ai_rate = safe_float(ai_credit_price, safe_float(DEFAULTS.get("ai_credit_price"), 2.20))
     return f"""
         WITH period_data AS (
             SELECT
@@ -632,6 +649,13 @@ def _build_cost_monitor_service_trend_sql(days: int) -> str:
                 SUM(COALESCE(credits_used_compute, 0)) AS compute_credits,
                 SUM(COALESCE(credits_used_cloud_services, 0)) AS cloud_services_credits,
                 SUM(COALESCE(credits_used, 0)) AS total_credits,
+                CASE
+                    WHEN UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%CORTEX%'
+                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%AI%'
+                      OR UPPER(COALESCE(service_type, 'UNKNOWN')) ILIKE '%INTELLIGENCE%'
+                        THEN {ai_rate:.4f}
+                    ELSE {credit_rate:.4f}
+                END AS rate_usd,
                 CASE
                     WHEN DATE(start_time) > DATEADD('day', -{days_int}, DATEADD('hour', -24, CURRENT_TIMESTAMP()))
                         THEN 'CURRENT'
@@ -645,6 +669,7 @@ def _build_cost_monitor_service_trend_sql(days: int) -> str:
         SELECT
             usage_date,
             ROUND(SUM(total_credits), 4) AS daily_credits,
+            ROUND(SUM(total_credits * rate_usd), 2) AS daily_spend_usd,
             ROUND(SUM(compute_credits), 4) AS compute_credits,
             ROUND(SUM(cloud_services_credits), 4) AS cloud_services_credits,
             COUNT(DISTINCT service_type) AS active_services
@@ -699,9 +724,9 @@ def _build_cost_splash_warehouse_delta_sql(company: str, days: int, *, mart: boo
     """
 
 
-def _build_cost_splash_cortex_sql(company: str, days: int, credit_price: float, *, mart: bool = True) -> str:
+def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: float, *, mart: bool = True) -> str:
     days_int = max(int(days), 1)
-    ai_credit_rate = safe_float(DEFAULTS.get("ai_credit_price"), 2.20)
+    ai_credit_rate = safe_float(ai_credit_price, safe_float(DEFAULTS.get("ai_credit_price"), 2.20))
     if mart:
         table = _cortex_daily_table()
         company_filter = (
@@ -3785,6 +3810,7 @@ def _render_governed_admin_action_pack(
                 policy = _build_budget_policy_frame(
                     company,
                     credit_price,
+                    ai_credit_price=get_current_ai_credit_price(),
                     ai_budget_usd=_default_ai_budget_usd(company),
                     per_user_limit_usd=250.0,
                     email_target=DEFAULT_ALERT_EMAIL,
@@ -3792,7 +3818,13 @@ def _render_governed_admin_action_pack(
                 if package == "Native budgets":
                     st.code(_build_native_budget_sql(policy, email_target=DEFAULT_ALERT_EMAIL), language="sql")
                 elif package == "Per-user AI quota":
-                    st.code(_build_per_user_quota_sql(default_limit_usd=250.0, credit_price=credit_price), language="sql")
+                    st.code(
+                        _build_per_user_quota_sql(
+                            default_limit_usd=250.0,
+                            ai_credit_price=get_current_ai_credit_price(),
+                        ),
+                        language="sql",
+                    )
                 elif package == "Budget custom actions":
                     st.code(_build_budget_custom_action_sql(policy, email_target=DEFAULT_ALERT_EMAIL), language="sql")
                 else:
@@ -3963,7 +3995,11 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
         f"cost_splash_cockpit_{company}_{days}",
     )
     trend, trend_source, trend_error = _load_cost_splash_live_query(
-        _build_cost_monitor_service_trend_sql(int(days)),
+        _build_cost_monitor_service_trend_sql(
+            int(days),
+            credit_price=credit_price,
+            ai_credit_price=get_current_ai_credit_price(),
+        ),
         f"cost_splash_official_service_trend_{company}_{days}",
         "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
     )
@@ -3973,12 +4009,16 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
         f"cost_splash_warehouse_delta_{company}_{days}",
     )
     cortex, cortex_source, cortex_error = _load_cost_splash_query(
-        _build_cost_splash_cortex_sql(company, int(days), credit_price, mart=True),
-        _build_cost_splash_cortex_sql(company, int(days), credit_price, mart=False),
+        _build_cost_splash_cortex_sql(company, int(days), get_current_ai_credit_price(), mart=True),
+        _build_cost_splash_cortex_sql(company, int(days), get_current_ai_credit_price(), mart=False),
         f"cost_splash_cortex_{company}_{days}",
     )
     service_costs, service_source, service_error = _load_cost_splash_live_query(
-        build_snowflake_service_cost_lens_sql(int(days), credit_price),
+        build_snowflake_service_cost_lens_sql(
+            int(days),
+            credit_price,
+            ai_credit_price=get_current_ai_credit_price(),
+        ),
         f"cost_splash_official_service_lens_{company}_{days}_{credit_price}",
         "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
     )
@@ -4016,14 +4056,19 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     cortex_row = cortex.iloc[0] if _looks_like_frame(cortex) and not cortex.empty else {}
     run_rate_row = run_rate.iloc[0] if _looks_like_frame(run_rate) and not run_rate.empty else {}
     service_current = service_prior = 0.0
+    service_current_spend = service_prior_spend = 0.0
     service_compute = service_cloud = 0.0
     active_services = 0
     top_service = "No service"
     if _looks_like_frame(service_costs) and not service_costs.empty and "CREDITS_BILLED" in service_costs.columns:
         credits = pd.to_numeric(service_costs.get("CREDITS_BILLED", pd.Series(dtype=float)), errors="coerce").fillna(0)
         prior = pd.to_numeric(service_costs.get("CREDITS_BILLED_PRIOR", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        current_spend = pd.to_numeric(service_costs.get("ESTIMATED_COST_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        prior_spend = pd.to_numeric(service_costs.get("PRIOR_ESTIMATED_COST_USD", pd.Series(dtype=float)), errors="coerce").fillna(0)
         service_current = safe_float(credits.sum())
         service_prior = safe_float(prior.sum())
+        service_current_spend = safe_float(current_spend.sum())
+        service_prior_spend = safe_float(prior_spend.sum())
         service_compute = safe_float(pd.to_numeric(service_costs.get("CREDITS_USED_COMPUTE", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
         service_cloud = safe_float(pd.to_numeric(service_costs.get("CREDITS_USED_CLOUD_SERVICES", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
         active_services = int((credits > 0).sum())
@@ -4033,6 +4078,9 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     current_credits = service_current if official_service_loaded else safe_float(row.get("CURRENT_CREDITS", 0))
     prior_credits = service_prior if official_service_loaded else safe_float(row.get("PRIOR_CREDITS", 0))
     spend_delta_credits = current_credits - prior_credits
+    spend = service_current_spend if official_service_loaded else credits_to_dollars(current_credits, credit_price)
+    prior_spend = service_prior_spend if official_service_loaded else credits_to_dollars(prior_credits, credit_price)
+    spend_delta = spend - prior_spend if official_service_loaded else credits_to_dollars(spend_delta_credits, credit_price)
     delta_pct = (spend_delta_credits / prior_credits * 100) if prior_credits > 0 else 0.0
     active_warehouses = safe_int(row.get("ACTIVE_WAREHOUSES", 0))
     top_wh = str(row.get("TOP_INCREASE_WAREHOUSE") or "")
@@ -4046,6 +4094,9 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     peak_credits = 0.0
     if _looks_like_frame(trend) and not trend.empty and "DAILY_CREDITS" in trend.columns:
         peak_credits = safe_float(trend["DAILY_CREDITS"].max())
+    peak_spend = 0.0
+    if _looks_like_frame(trend) and not trend.empty and "DAILY_SPEND_USD" in trend.columns:
+        peak_spend = safe_float(pd.to_numeric(trend["DAILY_SPEND_USD"], errors="coerce").fillna(0).max())
     cortex_spend = safe_float(cortex_row.get("CORTEX_SPEND_USD", 0))
     projected_30d_credits = safe_float(run_rate_row.get("PROJECTED_30D_FROM_7D", 0))
     avg_7d_credits = safe_float(run_rate_row.get("AVG_DAILY_7D", 0))
@@ -4054,11 +4105,11 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
         "current_credits": current_credits,
         "prior_credits": prior_credits,
         "spend_delta_credits": spend_delta_credits,
-        "spend": credits_to_dollars(current_credits, credit_price),
-        "prior_spend": credits_to_dollars(prior_credits, credit_price),
-        "spend_delta": credits_to_dollars(spend_delta_credits, credit_price),
-        "avg_daily": credits_to_dollars(current_credits / max(int(days), 1), credit_price),
-        "peak_day": credits_to_dollars(peak_credits, credit_price),
+        "spend": spend,
+        "prior_spend": prior_spend,
+        "spend_delta": spend_delta,
+        "avg_daily": spend / max(int(days), 1),
+        "peak_day": peak_spend if peak_spend else credits_to_dollars(peak_credits, credit_price),
         "delta_pct": delta_pct,
         "cost_basis": "Official account service total" if official_service_loaded else "Warehouse metering total",
         "active_services": active_services,
@@ -5157,7 +5208,11 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                 st.session_state["cost_contract_attribution_source"] = ""
             try:
                 st.session_state["cost_contract_service_lens"] = run_query_or_raise(
-                    build_snowflake_service_cost_lens_sql(int(days), credit_price),
+                    build_snowflake_service_cost_lens_sql(
+                        int(days),
+                        credit_price,
+                        ai_credit_price=get_current_ai_credit_price(),
+                    ),
                     ttl_key=f"cost_contract_service_lens_official_{company}_{days}_{credit_price}",
                     tier="historical",
                     section="Cost & Contract",

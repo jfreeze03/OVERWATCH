@@ -5,6 +5,7 @@ from utils.workflows import render_priority_dataframe, render_workflow_selector
 from utils import (
     format_snowflake_error,
     get_active_company,
+    get_ai_credit_price,
     get_db_filter_clause,
     get_session,
     safe_strip_tz,
@@ -25,7 +26,11 @@ from utils import (
 from config import DEFAULTS
 
 
-AI_CREDIT_RATE = DEFAULTS["ai_credit_price"]  # $2.20/AI credit (Table 6(d))
+DEFAULT_AI_CREDIT_RATE = DEFAULTS["ai_credit_price"]  # $2.20/AI credit (Table 6(d))
+
+
+def _ai_credit_rate() -> float:
+    return safe_float(get_ai_credit_price(), DEFAULT_AI_CREDIT_RATE)
 
 
 CORTEX_VIEWS = (
@@ -140,7 +145,7 @@ def _build_cortex_control_markdown(
 
 def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
     user_filter = get_user_filter_clause("u.NAME")
-    budget_credits = safe_float(budget_usd) / max(AI_CREDIT_RATE, 0.01)
+    budget_credits = safe_float(budget_usd) / max(_ai_credit_rate(), 0.01)
     base = f"""
         WITH combined AS (
             SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS, 'Snowsight' AS SOURCE
@@ -177,7 +182,7 @@ def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
                 SUM(credits) / NULLIF(SUM(requests), 0) AS credits_per_request,
                 SUM(credits) / NULLIF(COUNT(DISTINCT usage_date), 0) AS avg_daily_credits,
                 SUM(credits) / NULLIF(COUNT(DISTINCT usage_date), 0) * 30 AS projected_30d_credits,
-                SUM(credits) / NULLIF(COUNT(DISTINCT usage_date), 0) * 30 * {AI_CREDIT_RATE} AS projected_30d_cost
+                SUM(credits) / NULLIF(COUNT(DISTINCT usage_date), 0) * 30 * {_ai_credit_rate()} AS projected_30d_cost
             FROM user_daily
             GROUP BY user_name, email, SOURCE
         )
@@ -191,7 +196,7 @@ def _build_cortex_control_sql(days: int, budget_usd: float) -> tuple[str, str]:
             SUM(total_tokens) AS total_tokens,
             SUM(total_credits) / NULLIF(SUM(total_requests), 0) AS credits_per_request,
             SUM(total_credits) / NULLIF({int(days)}, 0) * 30 AS projected_30d_credits,
-            SUM(total_credits) / NULLIF({int(days)}, 0) * 30 * {AI_CREDIT_RATE} AS projected_30d_cost,
+            SUM(total_credits) / NULLIF({int(days)}, 0) * 30 * {_ai_credit_rate()} AS projected_30d_cost,
             SUM(IFF(projected_30d_credits > {budget_credits} * 0.25, 1, 0)) AS heavy_users
         FROM user_rollup
     """
@@ -251,7 +256,7 @@ def _build_cortex_daily_sql(days: int) -> str:
             COUNT(*) AS total_requests,
             SUM(c.TOKEN_CREDITS) AS total_credits,
             SUM(c.TOKENS) AS total_tokens,
-            ROUND(SUM(c.TOKEN_CREDITS) * {AI_CREDIT_RATE}, 2) AS cost_usd
+            ROUND(SUM(c.TOKEN_CREDITS) * {_ai_credit_rate()}, 2) AS cost_usd
         FROM combined c
         LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS u ON c.USER_ID = u.USER_ID
         WHERE 1=1 {user_filter}
@@ -282,7 +287,7 @@ def _build_cortex_ai_functions_daily_sql(
             {request_expr} AS total_requests,
             SUM(COALESCE(f.CREDITS, 0)) AS total_credits,
             0 AS total_tokens,
-            ROUND(SUM(COALESCE(f.CREDITS, 0)) * {AI_CREDIT_RATE}, 2) AS cost_usd
+            ROUND(SUM(COALESCE(f.CREDITS, 0)) * {_ai_credit_rate()}, 2) AS cost_usd
         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY f
         {user_join}
         WHERE f.START_TIME >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
@@ -428,7 +433,7 @@ def _render_cortex_control_brief(session, company: str) -> None:
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Daily Budget", f"${daily_budget:,.2f}")
         k2.metric("Avg Daily Burn", f"${avg_daily_cost:,.2f}", delta=f"{(avg_daily_cost - daily_budget):+,.2f} vs budget" if daily_budget else None)
-        k3.metric("Code AI Credits", format_credits(safe_float(row.get("TOTAL_CREDITS")), AI_CREDIT_RATE))
+        k3.metric("Code AI Credits", format_credits(safe_float(row.get("TOTAL_CREDITS")), _ai_credit_rate()))
         k4.metric("AI Function Projection", f"${ai_projected_cost:,.2f}")
         ai_note = st.session_state.get("cortex_control_ai_note", "")
         if ai_note:
@@ -549,7 +554,7 @@ def render():
         st.header("Cortex Code User Breakdown")
         st.caption(
             "Cortex Code usage (Snowsight + CLI) by user. "
-            f"AI Credits billed at **${AI_CREDIT_RATE}/credit** (Table 6(d) regional inference)."
+            f"AI Credits billed at **${_ai_credit_rate()}/credit** (Table 6(d) regional inference)."
         )
 
         cc_days = st.slider("Lookback (days)", 7, 90, 30, key="cc_days_users")
@@ -592,7 +597,7 @@ def render():
             c1.metric("Active Users",           df_cc["USER_NAME"].nunique())
             c2.metric("Total Requests",         f"{int(df_cc['TOTAL_REQUESTS'].sum()):,}")
             c3.metric("Total AI Credits",       f"{total_credits:.4f}")
-            c4.metric(f"Est. Cost (${AI_CREDIT_RATE}/AI cr)", f"${total_credits * AI_CREDIT_RATE:,.2f}")
+            c4.metric(f"Est. Cost (${_ai_credit_rate()}/AI cr)", f"${total_credits * _ai_credit_rate():,.2f}")
             defer_source_note(metric_confidence_label("account-wide"), freshness_note("ACCOUNT_USAGE"))
 
             # Cost column
@@ -601,7 +606,7 @@ def render():
                 df_cc["FIRST_USAGE"] = safe_strip_tz(df_cc["FIRST_USAGE"])
             if "LAST_USAGE" in df_cc.columns:
                 df_cc["LAST_USAGE"] = safe_strip_tz(df_cc["LAST_USAGE"])
-            df_cc["COST_USD"] = df_cc["TOTAL_CREDITS"].apply(lambda x: round(x * AI_CREDIT_RATE, 4))
+            df_cc["COST_USD"] = df_cc["TOTAL_CREDITS"].apply(lambda x: round(x * _ai_credit_rate(), 4))
             df_cc["COST_PER_REQUEST_USD"] = df_cc.apply(
                 lambda row: round(safe_float(row.get("COST_USD")) / max(safe_int(row.get("TOTAL_REQUESTS")), 1), 6),
                 axis=1,
@@ -982,7 +987,7 @@ def render():
             avg_daily = float(df_p["DAILY_CREDITS"].mean())
             days_in_month = 30
             projected_month = avg_daily * days_in_month
-            projected_cost  = projected_month * AI_CREDIT_RATE
+            projected_cost  = projected_month * _ai_credit_rate()
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Avg Daily AI Credits", f"{avg_daily:.4f}")
@@ -994,7 +999,7 @@ def render():
                 overage = projected_month - monthly_ai_budget
                 st.error(
                     f"On track to exceed budget by {overage:.2f} AI credits "
-                    f"(${overage * AI_CREDIT_RATE:,.2f})**. "
+                    f"(${overage * _ai_credit_rate():,.2f})**. "
                     f"Consider setting user-level quotas or reviewing heavy users."
                 )
             else:

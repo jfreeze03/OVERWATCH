@@ -5,7 +5,7 @@ from config import CREDIT_RATES, COMPUTE_CREDIT_CASE, DEFAULTS
 
 # Re-export for convenience
 __all__ = [
-    "get_credit_price", "get_storage_cost_per_tb",
+    "get_credit_price", "get_ai_credit_price", "get_storage_cost_per_tb",
     "format_credits", "credits_to_dollars", "estimate_live_credits",
     "query_attribution_supported",
     "build_metered_credit_cte", "build_idle_warehouse_sql",
@@ -19,6 +19,11 @@ __all__ = [
 def get_credit_price() -> float:
     """Return the active credit price, defaulting to the mart contract setting."""
     return float(st.session_state.get("credit_price", DEFAULTS["credit_price"]))
+
+
+def get_ai_credit_price() -> float:
+    """Return the active Cortex AI credit price."""
+    return float(st.session_state.get("ai_credit_price", DEFAULTS["ai_credit_price"]))
 
 
 def get_storage_cost_per_tb() -> float:
@@ -64,6 +69,7 @@ def credits_to_dollars(credits: float, credit_price: float = None) -> float:
 def build_snowflake_service_cost_lens_sql(
     days_back: int = 7,
     credit_price: float = None,
+    ai_credit_price: float = None,
 ) -> str:
     """Return account service cost by official Snowflake service type.
 
@@ -75,6 +81,9 @@ def build_snowflake_service_cost_lens_sql(
     if credit_price is None:
         credit_price = DEFAULTS["credit_price"]
     credit_price = float(credit_price or DEFAULTS["credit_price"])
+    if ai_credit_price is None:
+        ai_credit_price = DEFAULTS["ai_credit_price"]
+    ai_credit_price = float(ai_credit_price or DEFAULTS["ai_credit_price"])
     return f"""
     WITH period_data AS (
         SELECT
@@ -115,6 +124,11 @@ def build_snowflake_service_cost_lens_sql(
                 WHEN service_type = 'WAREHOUSE_METERING' THEN 'Warehouse'
                 ELSE 'Other'
             END AS service_category,
+            CASE
+                WHEN service_type ILIKE '%CORTEX%' OR service_type ILIKE '%AI%' OR service_type ILIKE '%INTELLIGENCE%'
+                    THEN {ai_credit_price:.4f}
+                ELSE {credit_price:.4f}
+            END AS rate_usd,
             compute_credits,
             cloud_services_credits,
             total_credits,
@@ -124,6 +138,7 @@ def build_snowflake_service_cost_lens_sql(
     SELECT
         service_category,
         service_type,
+        MAX(rate_usd) AS rate_usd,
         ROUND(SUM(IFF(period = 'CURRENT', total_credits, 0)), 4) AS credits_billed,
         ROUND(SUM(IFF(period = 'PRIOR', total_credits, 0)), 4) AS credits_billed_prior,
         ROUND(
@@ -144,13 +159,11 @@ def build_snowflake_service_cost_lens_sql(
         ROUND(SUM(IFF(period = 'CURRENT', compute_credits, 0)), 4) AS credits_used_compute,
         ROUND(SUM(IFF(period = 'CURRENT', cloud_services_credits, 0)), 4) AS credits_used_cloud_services,
         0::NUMBER(18,4) AS credits_adjustment_cloud_services,
-        ROUND(SUM(IFF(period = 'CURRENT', total_credits, 0)) * {credit_price:.4f}, 2) AS estimated_cost_usd,
-        ROUND(SUM(IFF(period = 'PRIOR', total_credits, 0)) * {credit_price:.4f}, 2) AS prior_estimated_cost_usd,
+        ROUND(SUM(IFF(period = 'CURRENT', total_credits * rate_usd, 0)), 2) AS estimated_cost_usd,
+        ROUND(SUM(IFF(period = 'PRIOR', total_credits * rate_usd, 0)), 2) AS prior_estimated_cost_usd,
         ROUND(
-            (
-                SUM(IFF(period = 'CURRENT', total_credits, 0))
-                - SUM(IFF(period = 'PRIOR', total_credits, 0))
-            ) * {credit_price:.4f},
+            SUM(IFF(period = 'CURRENT', total_credits * rate_usd, 0))
+            - SUM(IFF(period = 'PRIOR', total_credits * rate_usd, 0)),
             2
         ) AS cost_delta_usd,
         COUNT(DISTINCT IFF(period = 'CURRENT', usage_date, NULL)) AS observed_days,

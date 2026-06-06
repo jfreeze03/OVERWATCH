@@ -882,16 +882,28 @@ def build_mart_cost_cockpit_sql(company: str = "ALFA", days: int = 7) -> str:
     """
 
 
-def build_mart_cost_service_lens_sql(days_back: int = 7, credit_price: float = 3.68) -> str:
+def build_mart_cost_service_lens_sql(
+    days_back: int = 7,
+    credit_price: float = 3.68,
+    ai_credit_price: float = 2.20,
+) -> str:
     """Build account service-cost lens from the daily cost mart."""
     table = mart_object_name("FACT_COST_DAILY")
     days_back = max(1, int(days_back or 7))
     credit_price = float(credit_price or 3.68)
+    ai_credit_price = float(ai_credit_price or 2.20)
     return f"""
         WITH perioded AS (
             SELECT
                 SERVICE_CATEGORY,
                 SERVICE_TYPE,
+                CASE
+                    WHEN UPPER(COALESCE(SERVICE_TYPE, 'UNKNOWN')) ILIKE '%CORTEX%'
+                      OR UPPER(COALESCE(SERVICE_TYPE, 'UNKNOWN')) ILIKE '%AI%'
+                      OR UPPER(COALESCE(SERVICE_TYPE, 'UNKNOWN')) ILIKE '%INTELLIGENCE%'
+                        THEN {ai_credit_price:.4f}
+                    ELSE {credit_price:.4f}
+                END AS RATE_USD,
                 CASE
                     WHEN USAGE_DATE >= DATEADD('DAY', -{days_back}, CURRENT_DATE()) THEN 'CURRENT'
                     ELSE 'PRIOR'
@@ -900,7 +912,16 @@ def build_mart_cost_service_lens_sql(days_back: int = 7, credit_price: float = 3
                 COALESCE(CREDITS_USED_COMPUTE, 0) AS CREDITS_USED_COMPUTE,
                 COALESCE(CREDITS_USED_CLOUD_SERVICES, 0) AS CREDITS_USED_CLOUD_SERVICES,
                 COALESCE(CREDITS_ADJUSTMENT_CLOUD_SERVICES, 0) AS CREDITS_ADJUSTMENT_CLOUD_SERVICES,
-                COALESCE(EST_COST_USD, CREDITS_BILLED * {credit_price:.4f}) AS EST_COST_USD,
+                COALESCE(
+                    EST_COST_USD,
+                    CREDITS_BILLED * CASE
+                        WHEN UPPER(COALESCE(SERVICE_TYPE, 'UNKNOWN')) ILIKE '%CORTEX%'
+                          OR UPPER(COALESCE(SERVICE_TYPE, 'UNKNOWN')) ILIKE '%AI%'
+                          OR UPPER(COALESCE(SERVICE_TYPE, 'UNKNOWN')) ILIKE '%INTELLIGENCE%'
+                            THEN {ai_credit_price:.4f}
+                        ELSE {credit_price:.4f}
+                    END
+                ) AS EST_COST_USD,
                 USAGE_DATE
             FROM {table}
             WHERE USAGE_DATE >= DATEADD('DAY', -{days_back * 2}, CURRENT_DATE())
@@ -909,6 +930,7 @@ def build_mart_cost_service_lens_sql(days_back: int = 7, credit_price: float = 3
         SELECT
             SERVICE_CATEGORY,
             SERVICE_TYPE,
+            MAX(RATE_USD) AS RATE_USD,
             ROUND(SUM(IFF(PERIOD = 'CURRENT', CREDITS_BILLED, 0)), 4) AS CREDITS_BILLED,
             ROUND(SUM(IFF(PERIOD = 'PRIOR', CREDITS_BILLED, 0)), 4) AS CREDITS_BILLED_PRIOR,
             ROUND(

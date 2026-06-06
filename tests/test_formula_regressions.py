@@ -533,15 +533,30 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("CREDIT_PRICE_COST_USD", enriched.columns)
         self.assertNotIn("TOTAL_COST_USD_COST_USD", enriched.columns)
 
+        mixed_rates = pd.DataFrame({
+            "CREDIT_TYPE": ["Snowflake credits", "Cortex AI credits"],
+            "RATE_USD": [3.68, 2.20],
+            "MONTHLY_LIMIT_CREDITS": [10.0, 10.0],
+        })
+        enriched_mixed = add_cost_companion_columns(mixed_rates)
+        self.assertAlmostEqual(float(enriched_mixed["MONTHLY_LIMIT_CREDITS_COST_USD"].iloc[0]), 36.80)
+        self.assertAlmostEqual(float(enriched_mixed["MONTHLY_LIMIT_CREDITS_COST_USD"].iloc[1]), 22.00)
+
     def test_cost_contract_service_lens_sql_is_bounded(self):
         service_sql = build_snowflake_service_cost_lens_sql(
             14,
             credit_price=DEFAULTS["credit_price"],
+            ai_credit_price=DEFAULTS["ai_credit_price"],
         ).upper()
-        trend_sql = _build_cost_monitor_service_trend_sql(14).upper()
+        trend_sql = _build_cost_monitor_service_trend_sql(
+            14,
+            credit_price=DEFAULTS["credit_price"],
+            ai_credit_price=DEFAULTS["ai_credit_price"],
+        ).upper()
         mart_sql = build_mart_cost_service_lens_sql(
             14,
             credit_price=DEFAULTS["credit_price"],
+            ai_credit_price=DEFAULTS["ai_credit_price"],
         ).upper()
 
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", service_sql)
@@ -557,11 +572,18 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CREDIT_DELTA", service_sql)
         self.assertIn("PCT_DELTA", service_sql)
         self.assertIn("COST_DELTA_USD", service_sql)
+        self.assertIn("MAX(RATE_USD) AS RATE_USD", service_sql)
+        self.assertIn("THEN 2.2000", service_sql)
+        self.assertIn("ELSE 3.6800", service_sql)
+        self.assertIn("TOTAL_CREDITS * RATE_USD", service_sql)
         self.assertIn("START_TIME >= DATEADD('DAY', -28, DATEADD('HOUR', -24, CURRENT_TIMESTAMP()))", service_sql)
         self.assertIn("START_TIME < DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", service_sql)
         self.assertIn("WHEN DATE(START_TIME) > DATEADD('DAY', -14, DATEADD('HOUR', -24, CURRENT_TIMESTAMP()))", service_sql)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", trend_sql)
         self.assertIn("SUM(COALESCE(CREDITS_USED, 0)) AS TOTAL_CREDITS", trend_sql)
+        self.assertIn("DAILY_SPEND_USD", trend_sql)
+        self.assertIn("TOTAL_CREDITS * RATE_USD", trend_sql)
+        self.assertIn("THEN 2.2000", trend_sql)
         self.assertIn("WHERE PERIOD = 'CURRENT'", trend_sql)
         self.assertIn("START_TIME < DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", trend_sql)
 
@@ -572,6 +594,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CREDIT_DELTA", mart_sql)
         self.assertIn("PCT_DELTA", mart_sql)
         self.assertIn("COST_DELTA_USD", mart_sql)
+        self.assertIn("MAX(RATE_USD) AS RATE_USD", mart_sql)
+        self.assertIn("THEN 2.2000", mart_sql)
+        self.assertIn("ELSE 3.6800", mart_sql)
         self.assertIn("USAGE_DATE >= DATEADD('DAY', -28", mart_sql)
         self.assertIn("WHEN USAGE_DATE >= DATEADD('DAY', -14", mart_sql)
         self.assertIn("OVERWATCH MART: FACT_COST_DAILY", mart_sql)
@@ -690,8 +715,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "TOP_INCREASE_CREDITS": 12.5,
             }]),
             "trend": pd.DataFrame([
-                {"USAGE_DATE": "2026-06-01", "DAILY_CREDITS": 10.0},
-                {"USAGE_DATE": "2026-06-02", "DAILY_CREDITS": 20.0},
+                {"USAGE_DATE": "2026-06-01", "DAILY_CREDITS": 10.0, "DAILY_SPEND_USD": 30.0},
+                {"USAGE_DATE": "2026-06-02", "DAILY_CREDITS": 20.0, "DAILY_SPEND_USD": 55.0},
             ]),
             "warehouse_delta": pd.DataFrame([{
                 "WAREHOUSE_NAME": "WH_TRXS_LOAD",
@@ -713,15 +738,15 @@ class FormulaRegressionTests(unittest.TestCase):
                     "COST_DELTA_USD": 73.6,
                 },
                 {
-                    "SERVICE_CATEGORY": "Other",
-                    "SERVICE_TYPE": "CLOUD_SERVICES",
+                    "SERVICE_CATEGORY": "AI / Cortex",
+                    "SERVICE_TYPE": "CORTEX",
                     "CREDITS_BILLED": 5.0,
                     "CREDITS_BILLED_PRIOR": 5.0,
                     "CREDIT_DELTA": 0.0,
                     "CREDITS_USED_COMPUTE": 0.0,
                     "CREDITS_USED_CLOUD_SERVICES": 5.0,
-                    "ESTIMATED_COST_USD": 18.4,
-                    "PRIOR_ESTIMATED_COST_USD": 18.4,
+                    "ESTIMATED_COST_USD": 11.0,
+                    "PRIOR_ESTIMATED_COST_USD": 11.0,
                     "COST_DELTA_USD": 0.0,
                 },
             ]),
@@ -746,6 +771,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(summary["prior_credits"], 85.0)
         self.assertAlmostEqual(summary["compute_credits"], 90.0)
         self.assertAlmostEqual(summary["cloud_services_credits"], 15.0)
+        self.assertAlmostEqual(summary["spend"], 379.0)
+        self.assertAlmostEqual(summary["prior_spend"], 305.4)
+        self.assertAlmostEqual(summary["spend_delta"], 73.6)
         self.assertEqual(summary["active_services"], 2)
         service_summary = {"top_moving_service": "CORTEX", "top_moving_delta": 4.25}
         service_lens = pd.DataFrame([
@@ -755,9 +783,9 @@ class FormulaRegressionTests(unittest.TestCase):
                 "CREDITS_BILLED": 5.0,
                 "CREDITS_BILLED_PRIOR": 2.0,
                 "CREDIT_DELTA": 3.0,
-                "ESTIMATED_COST_USD": 18.40,
-                "PRIOR_ESTIMATED_COST_USD": 7.36,
-                "COST_DELTA_USD": 11.04,
+                "ESTIMATED_COST_USD": 11.0,
+                "PRIOR_ESTIMATED_COST_USD": 4.4,
+                "COST_DELTA_USD": 6.6,
             }
         ])
         action_summary = {"open_actions": 3, "high_actions": 1, "estimated_savings": 250.0}
@@ -795,11 +823,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Current spend", set(kpi_rows["KPI"]))
         self.assertIn("Service move", set(kpi_rows["KPI"]))
         self.assertEqual(movement.iloc[0]["SERVICE_TYPE"], "CORTEX")
-        self.assertAlmostEqual(float(movement.iloc[0]["COST_DELTA_USD"]), 11.04)
+        self.assertAlmostEqual(float(movement.iloc[0]["COST_DELTA_USD"]), 6.6)
         self.assertEqual(set(chart_rows["CHART"]), {"Spend bridge", "Driver dollars", "Work queue", "Service movement"})
         self.assertIn("SPEND_USD", trend_rows.columns)
         self.assertIn("ROLLING_SPEND_USD", trend_rows.columns)
-        self.assertAlmostEqual(float(trend_rows.iloc[1]["SPEND_USD"]), 73.6)
+        self.assertAlmostEqual(float(trend_rows.iloc[1]["SPEND_USD"]), 55.0)
         self.assertIn("CURRENT_SPEND_USD", ranking_rows.columns)
         self.assertIn("DELTA_SPEND_USD", ranking_rows.columns)
         self.assertEqual(ranking_rows.iloc[0]["CURRENT_SPEND_LABEL"], "$184")
@@ -813,7 +841,7 @@ class FormulaRegressionTests(unittest.TestCase):
             (chart_rows["CHART"] == "Service movement") & (chart_rows["METRIC"] == "CORTEX"),
             "VALUE",
         ].iloc[0]
-        self.assertAlmostEqual(float(service_delta), 11.04)
+        self.assertAlmostEqual(float(service_delta), 6.6)
 
         deck = _build_cost_snapshot_pptx(
             brief,
@@ -1356,17 +1384,19 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.USERS", sql)
 
     def test_cost_splash_cortex_sql_tracks_spend_and_top_user(self):
-        mart_sql = _build_cost_splash_cortex_sql("ALFA", 90, 3.68, mart=True).upper()
-        live_sql = _build_cost_splash_cortex_sql("Trexis", 60, 3.68, mart=False).upper()
+        mart_sql = _build_cost_splash_cortex_sql("ALFA", 90, DEFAULTS["ai_credit_price"], mart=True).upper()
+        live_sql = _build_cost_splash_cortex_sql("Trexis", 60, DEFAULTS["ai_credit_price"], mart=False).upper()
 
         self.assertIn("FACT_CORTEX_DAILY", mart_sql)
         self.assertIn("CORTEX_SPEND_USD", mart_sql)
         self.assertIn("TOP_CORTEX_USER", mart_sql)
         self.assertIn("TOP_CORTEX_USER_SPEND_USD", mart_sql)
+        self.assertIn("* 2.2", mart_sql)
         self.assertIn("DATEADD('DAY', -90", mart_sql)
         self.assertIn("CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY", live_sql)
         self.assertIn("CORTEX_CODE_CLI_USAGE_HISTORY", live_sql)
         self.assertIn("TOKEN_CREDITS", live_sql)
+        self.assertIn("* 2.2", live_sql)
         self.assertIn("COALESCE(U.NAME, TO_VARCHAR(C.USER_ID), '') ILIKE 'TRXS_%'", live_sql)
         self.assertIn("DATEADD('DAY', -60", live_sql)
 
@@ -2007,7 +2037,13 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_INCIDENT_TIMELINE", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_DAILY", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_SOURCE_HEALTH_DAILY", setup_upper)
-        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", setup_upper)
+        self.assertIn("ALTER TABLE IF EXISTS FACT_COST_DAILY ADD COLUMN IF NOT EXISTS RATE_USD", setup_upper)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", setup_upper)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", setup_upper)
+        self.assertIn("AI_CREDIT_PRICE_USD", setup_upper)
+        self.assertIn("AI_CREDIT_PRICE := COALESCE(AI_CREDIT_PRICE, 2.20)", setup_upper)
+        self.assertIn("DATEADD('HOUR', -24, CURRENT_TIMESTAMP())", setup_upper)
+        self.assertIn("ROUND(SUM(TOTAL_CREDITS * RATE_USD), 2) AS EST_COST_USD", setup_upper)
         self.assertIn("SERVICE_CATEGORY", setup_upper)
         self.assertIn("CREATE WAREHOUSE IF NOT EXISTS OVERWATCH_WH", setup_upper)
         self.assertIn("STATEMENT_TIMEOUT_IN_SECONDS = 600", setup_upper)
@@ -2107,6 +2143,7 @@ class FormulaRegressionTests(unittest.TestCase):
         policy = _build_budget_policy_frame(
             "ALL",
             4.0,
+            ai_credit_price=2.0,
             ai_budget_usd=8000.0,
             per_user_limit_usd=400.0,
             email_target="dba-alerts@example.com",
@@ -2119,7 +2156,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ALFA_AI", set(policy["TAG_VALUE"]))
         self.assertIn("TREXIS_AI", set(policy["TAG_VALUE"]))
         self.assertTrue(policy["ALERT_TARGET"].eq("dba-alerts@example.com").all())
-        self.assertTrue((policy.loc[policy["CONTROL_TYPE"].eq("PER_USER_AI_QUOTA"), "MONTHLY_LIMIT_CREDITS"] == 100.0).all())
+        self.assertTrue((policy.loc[policy["CONTROL_TYPE"].eq("PER_USER_AI_QUOTA"), "MONTHLY_LIMIT_CREDITS"] == 200.0).all())
+        self.assertTrue((policy.loc[policy["CONTROL_TYPE"].eq("PER_USER_AI_QUOTA"), "RATE_USD"] == 2.0).all())
+        self.assertTrue((policy.loc[policy["CONTROL_TYPE"].eq("ACCOUNT_ROOT_BUDGET"), "RATE_USD"] == 4.0).all())
 
     def test_native_budget_sql_uses_snowflake_budget_shared_resource_methods(self):
         policy = _build_budget_policy_frame("ALFA", 4.0, ai_budget_usd=4000.0, email_target="dba-alerts@example.com")
@@ -2138,7 +2177,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SNOWFLAKE.LOCAL.ACCOUNT_ROOT_BUDGET", sql)
 
     def test_per_user_quota_sql_is_dry_run_role_based_cortex_control(self):
-        sql = _build_per_user_quota_sql(default_limit_usd=300.0, credit_price=3.0).upper()
+        sql = _build_per_user_quota_sql(default_limit_usd=300.0, ai_credit_price=2.20).upper()
         self.assertIn("OVERWATCH_AI_USER_QUOTA", sql)
         self.assertIn("OVERWATCH_AI_USER_MONTHLY_USAGE_V", sql)
         self.assertIn("CORTEX_AI_FUNCTIONS_USAGE_HISTORY", sql)
@@ -2149,6 +2188,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("RESTORE_SQL", sql)
         self.assertIn("CREATE OR REPLACE TASK", sql)
         self.assertIn("OVERWATCH_ACTION_QUEUE", sql)
+        self.assertIn("MONTHLY_LIMIT_CREDITS FLOAT DEFAULT 136.3636", sql)
+        self.assertIn("ROUND(SUM(CREDITS_USED) * 2.2000, 2) AS MONTHLY_COST_USD", sql)
 
     def test_budget_custom_action_sql_bridges_native_budget_events_to_action_queue(self):
         policy = _build_budget_policy_frame("ALFA", 4.0, ai_budget_usd=4000.0, email_target="dba-alerts@example.com")

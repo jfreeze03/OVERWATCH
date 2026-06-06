@@ -8,6 +8,7 @@ from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_ALERT_EMA
 from utils import (
     get_active_company,
     get_active_environment,
+    get_ai_credit_price,
     get_credit_price,
     run_query,
     safe_float,
@@ -156,12 +157,14 @@ def _build_budget_policy_frame(
     company: str,
     credit_price: float,
     *,
+    ai_credit_price: float | None = None,
     ai_budget_usd: float | None = None,
     per_user_limit_usd: float = 250.0,
     account_budget_usd: float | None = None,
     email_target: str = DEFAULT_ALERT_EMAIL,
 ) -> pd.DataFrame:
     credits_per_dollar = 1 / max(safe_float(credit_price), 0.01)
+    ai_credits_per_dollar = 1 / max(safe_float(ai_credit_price, 2.20), 0.01)
     ai_budget = safe_float(ai_budget_usd) or _default_ai_budget_usd(company)
     per_user = max(safe_float(per_user_limit_usd), 1.0)
     account_budget = safe_float(account_budget_usd) if account_budget_usd is not None else max(ai_budget * 10, 25000.0)
@@ -179,7 +182,9 @@ def _build_budget_policy_frame(
             "TAG_VALUE": tag_value,
             "CONTROL_TYPE": "SHARED_AI_RESOURCE_BUDGET",
             "MONTHLY_LIMIT_USD": round(ai_budget / len(_company_targets(company)), 2),
-            "MONTHLY_LIMIT_CREDITS": round((ai_budget / len(_company_targets(company))) * credits_per_dollar, 2),
+            "MONTHLY_LIMIT_CREDITS": round((ai_budget / len(_company_targets(company))) * ai_credits_per_dollar, 2),
+            "CREDIT_TYPE": "Cortex AI credits",
+            "RATE_USD": round(1 / ai_credits_per_dollar, 2),
             "TRIGGER": "Projected 75%, actual 90%",
             "SNOWFLAKE_NATIVE_METHOD": "CREATE BUDGET, SET_USER_TAGS, ADD_SHARED_RESOURCE",
             "OVERWATCH_ACTION": "Route threshold event to action queue and Cortex spend cockpit.",
@@ -195,7 +200,9 @@ def _build_budget_policy_frame(
             "TAG_VALUE": tag_value,
             "CONTROL_TYPE": "PER_USER_AI_QUOTA",
             "MONTHLY_LIMIT_USD": round(per_user, 2),
-            "MONTHLY_LIMIT_CREDITS": round(per_user * credits_per_dollar, 2),
+            "MONTHLY_LIMIT_CREDITS": round(per_user * ai_credits_per_dollar, 2),
+            "CREDIT_TYPE": "Cortex AI credits",
+            "RATE_USD": round(1 / ai_credits_per_dollar, 2),
             "TRIGGER": "User actual usage over monthly quota",
             "SNOWFLAKE_NATIVE_METHOD": "Cortex usage history plus controlled SNOWFLAKE.CORTEX_USER grants",
             "OVERWATCH_ACTION": "Queue revoke/restore review SQL; enforcement stays dry-run until approved.",
@@ -213,6 +220,8 @@ def _build_budget_policy_frame(
         "CONTROL_TYPE": "ACCOUNT_ROOT_BUDGET",
         "MONTHLY_LIMIT_USD": round(account_budget, 2),
         "MONTHLY_LIMIT_CREDITS": round(account_budget * credits_per_dollar, 2),
+        "CREDIT_TYPE": "Snowflake credits",
+        "RATE_USD": round(1 / credits_per_dollar, 2),
         "TRIGGER": "Projected 75%",
         "SNOWFLAKE_NATIVE_METHOD": "ACCOUNT_ROOT_BUDGET SET_SPENDING_LIMIT",
         "OVERWATCH_ACTION": "Use Cost & Contract 7d/YOY and queue to explain movement.",
@@ -229,6 +238,8 @@ def _build_budget_policy_frame(
         "CONTROL_TYPE": "CUSTOM_ACTION_BRIDGE",
         "MONTHLY_LIMIT_USD": 0.0,
         "MONTHLY_LIMIT_CREDITS": 0.0,
+        "CREDIT_TYPE": "N/A",
+        "RATE_USD": 0.0,
         "TRIGGER": "Budget projected/actual threshold",
         "SNOWFLAKE_NATIVE_METHOD": "ADD_CUSTOM_ACTION",
         "OVERWATCH_ACTION": "Insert budget event into OVERWATCH_ACTION_QUEUE with proof query.",
@@ -313,7 +324,8 @@ def _build_per_user_quota_sql(
     quota_table: str = AI_QUOTA_TABLE,
     ai_role: str = "OVERWATCH_AI_FUNCTIONS_USER_ROLE",
     default_limit_usd: float = 250.0,
-    credit_price: float = 3.68,
+    credit_price: float | None = None,
+    ai_credit_price: float | None = None,
 ) -> str:
     db_safe, schema_safe = _budget_db_schema(db, schema)
     quota_fqn = _object_fqn(db_safe, schema_safe, quota_table)
@@ -322,8 +334,9 @@ def _build_per_user_quota_sql(
     queue_fqn = _object_fqn(db_safe, schema_safe, ACTION_QUEUE_TABLE)
     role_safe = safe_identifier(ai_role)
     task_fqn = _object_fqn(db_safe, schema_safe, AI_QUOTA_TASK)
+    ai_rate = safe_float(ai_credit_price, safe_float(credit_price, 2.20))
     limit_usd = max(safe_float(default_limit_usd), 1.0)
-    limit_credits = limit_usd / max(safe_float(credit_price), 0.01)
+    limit_credits = limit_usd / max(ai_rate, 0.01)
     return f"""-- Per-user Cortex AI monthly quota pattern.
 -- Dry-run first. Enforcement only works if PUBLIC no longer has blanket Cortex access.
 CREATE DATABASE IF NOT EXISTS {db_safe};
@@ -376,7 +389,7 @@ SELECT
     MAX(USAGE_TS) AS LAST_USAGE_TS,
     COUNT(*) AS REQUESTS,
     ROUND(SUM(CREDITS_USED), 6) AS MONTHLY_CREDITS,
-    ROUND(SUM(CREDITS_USED) * {safe_float(credit_price):.4f}, 2) AS MONTHLY_COST_USD,
+    ROUND(SUM(CREDITS_USED) * {ai_rate:.4f}, 2) AS MONTHLY_COST_USD,
     LISTAGG(DISTINCT USAGE_SOURCE, ', ') WITHIN GROUP (ORDER BY USAGE_SOURCE) AS USAGE_SOURCES
 FROM (
     SELECT * FROM cortex_code
@@ -588,6 +601,7 @@ def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
     credit_price = safe_float(get_credit_price()) or 3.68
+    ai_credit_price = safe_float(get_ai_credit_price()) or 2.20
     summary, board = _build_budget_governance_board()
 
     render_signal_confidence(
@@ -642,6 +656,7 @@ def render() -> None:
     policy = _build_budget_policy_frame(
         company,
         credit_price,
+        ai_credit_price=ai_credit_price,
         ai_budget_usd=safe_float(ai_budget_usd),
         per_user_limit_usd=safe_float(per_user_limit_usd),
         email_target=budget_email,
@@ -664,6 +679,7 @@ def render() -> None:
         title=f"{company} budget policy map ({environment})",
         priority_columns=[
             "STATUS", "CONTROL", "SCOPE", "MONTHLY_LIMIT_USD", "MONTHLY_LIMIT_CREDITS",
+            "CREDIT_TYPE", "RATE_USD",
             "TRIGGER", "SNOWFLAKE_NATIVE_METHOD", "OVERWATCH_ACTION",
         ],
         sort_by=["PRIORITY"],
@@ -685,7 +701,7 @@ def render() -> None:
             st.code(
                 _build_per_user_quota_sql(
                     default_limit_usd=safe_float(per_user_limit_usd),
-                    credit_price=credit_price,
+                    ai_credit_price=ai_credit_price,
                 ),
                 language="sql",
             )

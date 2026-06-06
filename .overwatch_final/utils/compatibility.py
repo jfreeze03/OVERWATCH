@@ -583,10 +583,10 @@ def build_cost_formula_audit() -> pd.DataFrame:
             "Primary source for warehouse burn-rate views. Snowflake documents this as hourly metering, but final billed credits can differ because cloud-services adjustments are reconciled separately.",
         ),
         (
-            "Billed warehouse credits",
-            "METERING_DAILY_HISTORY.CREDITS_BILLED for SERVICE_TYPE = 'WAREHOUSE_METERING'",
-            "Official billed-credit reconciliation",
-            "Use this for account-level invoice reconciliation because it includes the cloud-services adjustment that hourly warehouse metering does not apply.",
+            "Account service credits",
+            "METERING_HISTORY.CREDITS_USED for completed 24-hour-lag Cost Monitor windows",
+            "Official Cost Monitor basis",
+            "Use this for account-level service reconciliation. OVERWATCH applies the configured compute rate for Snowflake services and the AI rate for Cortex services.",
         ),
         (
             "Official currency spend",

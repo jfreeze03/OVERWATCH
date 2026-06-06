@@ -722,7 +722,14 @@ def _change_environment(row: pd.Series | dict, fallback: str = "ALL") -> str:
     return "No Database Context" if not str(row.get("DATABASE_NAME") or "").strip() else str(fallback or "ALL")
 
 
-def _change_scope_clause(date_col: str, wh_col: str, user_col: str, role_col: str, db_col: str) -> str:
+def _change_scope_clause(
+    date_col: str,
+    wh_col: str,
+    user_col: str,
+    role_col: str,
+    db_col: str,
+    schema_col: str = "schema_name",
+) -> str:
     """Apply company/global filters while keeping account-level changes under environment scopes."""
     return get_global_filter_clause(
         date_col=date_col,
@@ -730,6 +737,7 @@ def _change_scope_clause(date_col: str, wh_col: str, user_col: str, role_col: st
         user_col=user_col,
         role_col=role_col,
         db_col=db_col,
+        schema_col=schema_col,
         preserve_no_database_context=True,
     )
 

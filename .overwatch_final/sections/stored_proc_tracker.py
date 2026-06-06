@@ -347,6 +347,7 @@ def _build_procedure_inventory_sql(days: int) -> tuple[str, str]:
         user_col="user_name",
         role_col="role_name",
         db_col="database_name",
+        schema_col="schema_name",
     )
     call_sql = f"""
         WITH calls AS (
@@ -397,6 +398,7 @@ def _build_procedure_sla_sql(session, days: int, has_root_query_id: bool) -> str
         user_col="user_name",
         role_col="role_name",
         db_col="database_name",
+        schema_col="schema_name",
     )
     proc_filters_q = get_global_filter_clause(
         date_col="q.start_time",
@@ -404,6 +406,7 @@ def _build_procedure_sla_sql(session, days: int, has_root_query_id: bool) -> str
         user_col="q.user_name",
         role_col="q.role_name",
         db_col="q.database_name",
+        schema_col="q.schema_name",
     )
     return f"""
         WITH calls AS (
@@ -786,6 +789,7 @@ def render():
         user_col="user_name",
         role_col="role_name",
         db_col="database_name",
+        schema_col="schema_name",
     )
     proc_filters_q = get_global_filter_clause(
         date_col="q.start_time",
@@ -793,6 +797,7 @@ def render():
         user_col="q.user_name",
         role_col="q.role_name",
         db_col="q.database_name",
+        schema_col="q.schema_name",
     )
 
     with st.expander("Procedure Operations Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):

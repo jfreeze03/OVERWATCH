@@ -443,11 +443,20 @@ class NavigationIntegrityTests(unittest.TestCase):
 
     def test_global_filter_and_metric_changes_clear_loaded_state(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
+        bookmarks_text = (APP_ROOT / "utils" / "bookmarks.py").read_text(encoding="utf-8")
         cache_text = (APP_ROOT / "utils" / "cache.py").read_text(encoding="utf-8")
+        company_filter_text = (APP_ROOT / "utils" / "company_filter.py").read_text(encoding="utf-8")
         query_text = (APP_ROOT / "utils" / "query.py").read_text(encoding="utf-8")
         state_keys_text = (APP_ROOT / "utils" / "state_keys.py").read_text(encoding="utf-8")
         self.assertIn("def _global_filter_signature", app_text)
         self.assertIn("def _metric_settings_signature", app_text)
+        self.assertIn('str(st.session_state.get("global_schema", ""))', app_text)
+        self.assertIn("load_schema_options", app_text)
+        self.assertIn("_global_schema_choice_scope", app_text)
+        self.assertIn("Schema contains", app_text)
+        self.assertIn('"global_schema"', bookmarks_text)
+        self.assertIn("get_global_schema_filter_clause", company_filter_text)
+        self.assertIn("schema_col", company_filter_text)
         self.assertIn("previous_filter_signature != current_filter_signature", app_text)
         self.assertIn("previous_metric_signature != current_metric_signature", app_text)
         self.assertIn("clear_all_cache()", app_text)
@@ -987,10 +996,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _ensure_cost_splash", cost_contract_text)
         self.assertIn("def _render_cost_splash", cost_contract_text)
         self.assertIn("def _build_cost_splash_cortex_sql", cost_contract_text)
+        self.assertIn("def _cost_spend_trend_rows", cost_contract_text)
+        self.assertIn("def _cost_warehouse_ranking_rows", cost_contract_text)
         self.assertIn("def _render_spend_trend_chart", cost_contract_text)
         self.assertIn("def _render_warehouse_ranking_chart", cost_contract_text)
         self.assertIn("st.altair_chart((bars + line + points)", cost_contract_text)
         self.assertNotIn("$+,.2f", cost_contract_text)
+        self.assertNotIn("+$,.2f", cost_contract_text)
         self.assertNotIn("Parity row details", cost_contract_text)
         self.assertNotIn("Snowflake Cost Management Parity", cost_contract_text)
         self.assertNotIn('st.button("Load Snowflake Cost Parity"', cost_contract_text)
@@ -1000,6 +1012,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Cortex Spend", cost_contract_text)
         self.assertIn("Top AI User", cost_contract_text)
         self.assertIn("Warehouse Ranking", cost_contract_text)
+        self.assertIn("Cost evidence view", cost_contract_text)
+        self.assertIn("Cost overview table data", cost_contract_text)
+        self.assertIn("PowerPoint-ready snapshot", cost_contract_text)
+        self.assertIn("PowerPoint support data", cost_contract_text)
         self.assertIn("PowerPoint Cost Snapshot", cost_contract_text)
         self.assertIn("def _cost_snapshot_slide_brief", cost_contract_text)
         self.assertIn("def _build_cost_snapshot_pptx", cost_contract_text)
@@ -1015,7 +1031,15 @@ class NavigationIntegrityTests(unittest.TestCase):
             "if st.button(\"Load Full Cost Proof\"",
             1,
         )[0]
-        self.assertIn("_ensure_cost_splash(company, int(days), credit_price)", cost_watch_preload)
+        self.assertIn("def _cached_cost_splash", cost_contract_text)
+        self.assertIn("Load Cost Overview", cost_watch_preload)
+        self.assertIn("if load_overview:", cost_watch_preload)
+        self.assertIn("_cached_cost_splash(company, int(days), credit_price)", cost_watch_preload)
+        self.assertNotIn(
+            "splash = _ensure_cost_splash(company, int(days), credit_price)\n"
+            "    _render_cost_splash",
+            cost_watch_preload,
+        )
         self.assertNotIn("load_action_queue(session)", cost_watch_preload)
         for label, shell_text in (
             ("Alert Center", alert_center_text),
@@ -1329,6 +1353,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Live query polling is paused", live_monitor_text)
         self.assertIn("QUERY_ANALYSIS_PANES", query_analysis_text)
         self.assertIn('"Root-Cause Brief"', query_analysis_text)
+        self.assertIn("def _root_cause_cortex_prompt", query_workbench_text)
+        self.assertIn("def _generate_root_cause_cortex_narrative", query_workbench_text)
+        self.assertIn("Generate Cortex Root-Cause Narrative", query_workbench_text)
+        self.assertIn("SNOWFLAKE.CORTEX.COMPLETE('mistral-large2'", query_workbench_text)
+        self.assertIn("Runs one Cortex completion against the loaded root-cause evidence.", query_workbench_text)
         self.assertIn('"Detailed Diagnosis"', query_analysis_text)
         self.assertIn('importlib.import_module("sections.query_workbench")', query_analysis_text)
         self.assertIn('importlib.import_module("sections.detailed_diagnosis")', query_analysis_text)

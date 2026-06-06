@@ -1340,6 +1340,7 @@ def _build_procedure_release_sql(session, company: str, start: date, end: date, 
         user_col="user_name",
         role_col="role_name",
         db_col="database_name",
+        schema_col="schema_name",
     )
     child_filters = get_global_filter_clause(
         date_col="",
@@ -1347,6 +1348,7 @@ def _build_procedure_release_sql(session, company: str, start: date, end: date, 
         user_col="q.user_name",
         role_col="q.role_name",
         db_col="q.database_name",
+        schema_col="q.schema_name",
     )
     call_window = _release_window_predicate("start_time", start, end)
     child_window = _release_window_predicate("q.start_time", start, end)
@@ -1586,7 +1588,7 @@ def _load_control_room(
     db_q = get_db_filter_clause("q.database_name", company)
     user_q = get_user_filter_clause("q.user_name", company)
     global_q = get_global_filter_clause(
-        "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+        "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name", "q.schema_name"
     )
     live_lookback_hours = min(int(lookback_hours), DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS)
 

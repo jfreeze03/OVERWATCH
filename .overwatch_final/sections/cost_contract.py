@@ -118,24 +118,75 @@ def _cost_chart_palette() -> dict[str, str]:
     return palettes.get(theme_key, palettes["carbon"])
 
 
-def _render_spend_trend_chart(trend: pd.DataFrame, credit_price: float) -> None:
-    if not _looks_like_frame(trend) or trend.empty or not {"USAGE_DATE", "DAILY_CREDITS"}.issubset(set(trend.columns)):
-        st.caption("No daily spend trend rows loaded for this scope.")
-        return
+def _short_label(value: object, limit: int = 28) -> str:
+    text = str(value or "").strip()
+    return text if len(text) <= limit else text[: max(0, limit - 3)] + "..."
 
-    trend_plot = trend[["USAGE_DATE", "DAILY_CREDITS"]].copy()
-    trend_plot["USAGE_DATE"] = pd.to_datetime(trend_plot["USAGE_DATE"], errors="coerce")
-    trend_plot["SPEND_USD"] = pd.to_numeric(trend_plot["DAILY_CREDITS"], errors="coerce").fillna(0).apply(
+
+def _cost_spend_trend_rows(trend: pd.DataFrame | None, credit_price: float) -> pd.DataFrame:
+    if not _looks_like_frame(trend) or trend.empty or not {"USAGE_DATE", "DAILY_CREDITS"}.issubset(set(trend.columns)):
+        return pd.DataFrame(columns=["USAGE_DATE", "DAILY_CREDITS", "SPEND_USD", "ROLLING_SPEND_USD"])
+
+    rows = trend[["USAGE_DATE", "DAILY_CREDITS"]].copy()
+    rows["USAGE_DATE"] = pd.to_datetime(rows["USAGE_DATE"], errors="coerce")
+    rows["DAILY_CREDITS"] = pd.to_numeric(rows["DAILY_CREDITS"], errors="coerce").fillna(0)
+    rows["SPEND_USD"] = rows["DAILY_CREDITS"].apply(
         lambda value: credits_to_dollars(safe_float(value), credit_price)
     )
-    trend_plot = trend_plot.dropna(subset=["USAGE_DATE"]).sort_values("USAGE_DATE")
+    rows = rows.dropna(subset=["USAGE_DATE"]).sort_values("USAGE_DATE")
+    if rows.empty:
+        return rows
+    rows["ROLLING_SPEND_USD"] = rows["SPEND_USD"].rolling(
+        window=min(7, max(1, len(rows))),
+        min_periods=1,
+    ).mean()
+    return rows
+
+
+def _cost_warehouse_ranking_rows(
+    warehouse_delta: pd.DataFrame | None,
+    credit_price: float,
+    *,
+    limit: int = 8,
+) -> pd.DataFrame:
+    required = {"WAREHOUSE_NAME", "CURRENT_CREDITS"}
+    if (
+        not _looks_like_frame(warehouse_delta)
+        or warehouse_delta.empty
+        or not required.issubset(set(warehouse_delta.columns))
+    ):
+        return pd.DataFrame(
+            columns=[
+                "WAREHOUSE_NAME", "CURRENT_CREDITS", "PRIOR_CREDITS", "CREDIT_DELTA",
+                "CURRENT_SPEND_USD", "PRIOR_SPEND_USD", "DELTA_SPEND_USD", "CURRENT_SPEND_LABEL",
+            ]
+        )
+
+    rows = warehouse_delta.copy()
+    for column in ("CURRENT_CREDITS", "PRIOR_CREDITS", "CREDIT_DELTA", "PCT_DELTA"):
+        if column not in rows.columns:
+            rows[column] = 0
+        rows[column] = pd.to_numeric(rows[column], errors="coerce").fillna(0)
+    rows["CURRENT_SPEND_USD"] = rows["CURRENT_CREDITS"].apply(
+        lambda value: credits_to_dollars(safe_float(value), credit_price)
+    )
+    rows["PRIOR_SPEND_USD"] = rows["PRIOR_CREDITS"].apply(
+        lambda value: credits_to_dollars(safe_float(value), credit_price)
+    )
+    rows["DELTA_SPEND_USD"] = rows["CREDIT_DELTA"].apply(
+        lambda value: credits_to_dollars(safe_float(value), credit_price)
+    )
+    rows["WAREHOUSE_NAME"] = rows["WAREHOUSE_NAME"].astype(str)
+    rows["CURRENT_SPEND_LABEL"] = rows["CURRENT_SPEND_USD"].apply(lambda value: f"${safe_float(value):,.0f}")
+    rows["DELTA_SPEND_LABEL"] = rows["DELTA_SPEND_USD"].apply(lambda value: _slide_money(value, signed=True))
+    return rows.sort_values(["CURRENT_SPEND_USD", "DELTA_SPEND_USD"], ascending=[False, False]).head(limit)
+
+
+def _render_spend_trend_chart(trend: pd.DataFrame, credit_price: float) -> None:
+    trend_plot = _cost_spend_trend_rows(trend, credit_price)
     if trend_plot.empty:
         st.caption("No daily spend trend rows loaded for this scope.")
         return
-    trend_plot["ROLLING_SPEND_USD"] = trend_plot["SPEND_USD"].rolling(
-        window=min(7, max(1, len(trend_plot))),
-        min_periods=1,
-    ).mean()
 
     palette = _cost_chart_palette()
     alt = _altair()
@@ -164,44 +215,26 @@ def _render_spend_trend_chart(trend: pd.DataFrame, credit_price: float) -> None:
 
 
 def _render_warehouse_ranking_chart(warehouse_delta: pd.DataFrame, credit_price: float) -> None:
-    required = {"WAREHOUSE_NAME", "CURRENT_CREDITS"}
-    if not _looks_like_frame(warehouse_delta) or warehouse_delta.empty or not required.issubset(set(warehouse_delta.columns)):
-        st.caption("No warehouse ranking rows loaded for this scope.")
-        return
-
-    ranking = warehouse_delta.copy()
-    for column in ("CURRENT_CREDITS", "PRIOR_CREDITS", "CREDIT_DELTA", "PCT_DELTA"):
-        if column not in ranking.columns:
-            ranking[column] = 0
-        ranking[column] = pd.to_numeric(ranking[column], errors="coerce").fillna(0)
-    ranking["CURRENT_SPEND_USD"] = ranking["CURRENT_CREDITS"].apply(
-        lambda value: credits_to_dollars(safe_float(value), credit_price)
-    )
-    ranking["PRIOR_SPEND_USD"] = ranking["PRIOR_CREDITS"].apply(
-        lambda value: credits_to_dollars(safe_float(value), credit_price)
-    )
-    ranking["DELTA_SPEND_USD"] = ranking["CREDIT_DELTA"].apply(
-        lambda value: credits_to_dollars(safe_float(value), credit_price)
-    )
-    ranking["WAREHOUSE_NAME"] = ranking["WAREHOUSE_NAME"].astype(str)
-    ranking = ranking.sort_values(["CURRENT_SPEND_USD", "DELTA_SPEND_USD"], ascending=[False, False]).head(8)
+    ranking = _cost_warehouse_ranking_rows(warehouse_delta, credit_price)
     if ranking.empty:
         st.caption("No warehouse ranking rows loaded for this scope.")
         return
 
     palette = _cost_chart_palette()
     alt = _altair()
-    chart = (
-        alt.Chart(ranking)
+    base = alt.Chart(ranking).encode(
+        y=alt.Y(
+            "WAREHOUSE_NAME:N",
+            sort=alt.SortField(field="CURRENT_SPEND_USD", order="descending"),
+            title=None,
+            axis=alt.Axis(labelLimit=210),
+        )
+    )
+    bars = (
+        base
         .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4)
         .encode(
             x=alt.X("CURRENT_SPEND_USD:Q", title="Current spend", axis=alt.Axis(format="$,.0f")),
-            y=alt.Y(
-                "WAREHOUSE_NAME:N",
-                sort=alt.SortField(field="CURRENT_SPEND_USD", order="descending"),
-                title=None,
-                axis=alt.Axis(labelLimit=210),
-            ),
             color=alt.condition(
                 "datum.DELTA_SPEND_USD > 0",
                 alt.value(palette["risk"]),
@@ -211,13 +244,99 @@ def _render_warehouse_ranking_chart(warehouse_delta: pd.DataFrame, credit_price:
                 alt.Tooltip("WAREHOUSE_NAME:N", title="Warehouse"),
                 alt.Tooltip("CURRENT_SPEND_USD:Q", title="Current spend", format="$,.2f"),
                 alt.Tooltip("PRIOR_SPEND_USD:Q", title="Prior spend", format="$,.2f"),
-                alt.Tooltip("DELTA_SPEND_USD:Q", title="Spend delta", format="+$,.2f"),
+                alt.Tooltip("DELTA_SPEND_USD:Q", title="Spend delta ($)", format="+,.2f"),
                 alt.Tooltip("PCT_DELTA:Q", title="Delta %", format="+.1f"),
             ],
         )
-        .properties(height=max(230, min(360, 34 * len(ranking) + 54)))
     )
+    labels = base.mark_text(align="left", dx=6, baseline="middle", color=palette["line"], fontWeight="bold").encode(
+        x=alt.X("CURRENT_SPEND_USD:Q"),
+        text="CURRENT_SPEND_LABEL:N",
+    )
+    chart = (
+        bars + labels
+    ).properties(height=max(230, min(360, 34 * len(ranking) + 54)))
     st.altair_chart(chart, width="stretch")
+
+
+def _render_cost_splash_data_view(trend: pd.DataFrame, warehouse_delta: pd.DataFrame, credit_price: float) -> None:
+    trend_rows = _cost_spend_trend_rows(trend, credit_price)
+    warehouse_rows = _cost_warehouse_ranking_rows(warehouse_delta, credit_price, limit=12)
+    left, right = st.columns([1.2, 1.0])
+    with left:
+        render_priority_dataframe(
+            trend_rows,
+            title="Spend trend data",
+            priority_columns=["USAGE_DATE", "DAILY_CREDITS", "SPEND_USD", "ROLLING_SPEND_USD"],
+            raw_label="All spend trend rows",
+            height=280,
+            max_rows=12,
+        )
+    with right:
+        render_priority_dataframe(
+            warehouse_rows,
+            title="Warehouse ranking data",
+            priority_columns=[
+                "WAREHOUSE_NAME", "CURRENT_SPEND_USD", "PRIOR_SPEND_USD", "DELTA_SPEND_USD",
+                "CURRENT_CREDITS", "CREDIT_DELTA", "PCT_DELTA",
+            ],
+            raw_label="All warehouse ranking rows",
+            height=280,
+            max_rows=12,
+        )
+
+
+def _cost_splash_status(summary: dict) -> tuple[str, str, str]:
+    delta_pct = safe_float(summary.get("delta_pct"))
+    top_wh = str(summary.get("top_warehouse") or "No warehouse")
+    top_delta = safe_float(summary.get("top_warehouse_delta_spend"))
+    if delta_pct >= 20:
+        return (
+            "Attention",
+            "Spend is materially above the prior window.",
+            f"Start with {top_wh}; loaded movement is {_slide_money(top_delta, signed=True)}.",
+        )
+    if delta_pct <= -10:
+        return (
+            "Improving",
+            "Spend is below the prior window.",
+            "Verify the reduction is expected before claiming savings.",
+        )
+    return (
+        "Stable",
+        "Spend is within the current operating range.",
+        f"Keep the first explanation on {top_wh}.",
+    )
+
+
+def _render_cost_splash_narrative(summary: dict, *, days: int) -> None:
+    state, headline, detail = _cost_splash_status(summary)
+    top_wh_display = _short_label(summary.get("top_warehouse"), 24)
+    top_user = str(summary.get("top_cortex_user") or "No Cortex user")
+    top_user_display = _short_label(top_user, 26)
+    st.markdown(f"**{state}: {headline}**")
+    st.caption(detail)
+    metrics = [
+        ("Spend", f"${safe_float(summary.get('spend')):,.0f}", _slide_money(summary.get("spend_delta"), signed=True)),
+        ("Change", _slide_money(summary.get("spend_delta"), signed=True), f"{safe_float(summary.get('delta_pct')):+.1f}%"),
+        ("Driver", top_wh_display, _slide_money(summary.get("top_warehouse_delta_spend"), signed=True)),
+        ("30d Run", _slide_money(summary.get("projected_30d_spend")), str(summary.get("run_rate_state") or "")),
+    ]
+    cols = st.columns(4)
+    for col, (label, value, delta) in zip(cols, metrics):
+        col.metric(label, value, delta=delta, delta_color="inverse" if label in {"Change", "Driver"} else "normal")
+
+    detail_cols = st.columns(4)
+    detail_cols[0].metric("Avg / Day", f"${safe_float(summary.get('avg_daily')):,.0f}")
+    detail_cols[1].metric("Peak Day", f"${safe_float(summary.get('peak_day')):,.0f}")
+    detail_cols[2].metric("Cortex Spend", f"${safe_float(summary.get('cortex_spend')):,.0f}", f"{safe_int(summary.get('cortex_requests')):,} req")
+    detail_cols[3].metric("Top AI User", top_user_display, f"${safe_float(summary.get('top_cortex_user_spend')):,.0f}")
+    notes = [f"{int(days)}-day window", f"{safe_int(summary.get('active_warehouses')):,} active warehouse(s)"]
+    if top_wh_display != str(summary.get("top_warehouse")):
+        notes.append(f"Top warehouse: {summary.get('top_warehouse')}")
+    if top_user_display != top_user:
+        notes.append(f"Top Cortex user: {top_user}")
+    st.caption(" | ".join(notes))
 
 
 def _freshness_note(source: str) -> str:
@@ -1419,7 +1538,7 @@ def _render_service_cost_movement_chart(service_lens: pd.DataFrame, credit_price
             alt.Tooltip("SERVICE_TYPE:N", title="Service"),
             alt.Tooltip("CURRENT_SPEND_USD:Q", title="Current", format="$,.2f"),
             alt.Tooltip("PRIOR_SPEND_USD:Q", title="Prior", format="$,.2f"),
-            alt.Tooltip("COST_DELTA_USD:Q", title="Delta", format="+$,.2f"),
+            alt.Tooltip("COST_DELTA_USD:Q", title="Delta ($)", format="+,.2f"),
             alt.Tooltip("CREDIT_DELTA:Q", title="Credit delta", format="+,.2f"),
         ],
     )
@@ -2331,12 +2450,13 @@ def _build_budget_anomaly_command_center(
     add(
         "Anomaly explanation",
         baseline_severity,
-        "7d / YOY pace",
-        "OVERWATCH Anomaly Explanation",
+        "Predictive 7d / 30d / YOY pace",
+        "OVERWATCH Predictive Cost Anomaly",
         (
             f"{run_state}; {yoy_state}; 7d avg {avg_7d:,.2f} credits/day vs 30d avg {avg_30d:,.2f}; "
             f"7d vs 30d {pct_vs_30d_float:+.1f}%; YOY7 {yoy_7d_float:+.1f}%; "
-            f"top YOY increase {top_yoy_wh} {top_yoy_delta:+,.2f} credits."
+            f"top YOY increase {top_yoy_wh} {top_yoy_delta:+,.2f} credits. "
+            "Alert Center also runs a complete-day 30-day baseline plus sigma anomaly model."
         ),
         "Use complete-day run-rate and prior-year comparison before declaring an incident or savings win.",
         "If the 7d or YOY move is high, queue a bill-explanation action for the top warehouse and owner.",
@@ -3744,10 +3864,37 @@ def _load_cost_splash_query(mart_sql: str, live_sql: str, ttl_key: str, *, secti
             )
 
 
-def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
-    meta = {"company": company, "days": int(days), "credit_price": float(credit_price)}
+def _cost_splash_meta(company: str, days: int, credit_price: float) -> dict:
+    return {"company": company, "days": int(days), "credit_price": float(credit_price)}
+
+
+def _empty_cost_splash(company: str, days: int, credit_price: float) -> dict:
+    meta = _cost_splash_meta(company, days, credit_price)
+    return {
+        "meta": meta,
+        "loaded": False,
+        "errors": [],
+        "source": "",
+        "cockpit": pd.DataFrame(),
+        "trend": pd.DataFrame(),
+        "warehouse_delta": pd.DataFrame(),
+        "cortex": pd.DataFrame(),
+        "run_rate": pd.DataFrame(),
+    }
+
+
+def _cached_cost_splash(company: str, days: int, credit_price: float) -> dict:
+    meta = _cost_splash_meta(company, days, credit_price)
     cached = st.session_state.get(_COST_SPLASH_KEY)
-    if isinstance(cached, dict) and cached.get("meta") == meta:
+    if isinstance(cached, dict) and cached.get("meta") == meta and cached.get("loaded"):
+        return cached
+    return _empty_cost_splash(company, days, credit_price)
+
+
+def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
+    meta = _cost_splash_meta(company, days, credit_price)
+    cached = st.session_state.get(_COST_SPLASH_KEY)
+    if isinstance(cached, dict) and cached.get("meta") == meta and cached.get("loaded"):
         return cached
 
     if get_session_for_action(
@@ -3755,7 +3902,7 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
         surface="Cost & Contract",
         offline_note="Cost workflow navigation remains available without a live Snowflake connection.",
     ) is None:
-        splash = {"meta": meta, "errors": ["Snowflake connection unavailable."], "source": ""}
+        splash = {"meta": meta, "loaded": False, "errors": ["Snowflake connection unavailable."], "source": ""}
         st.session_state[_COST_SPLASH_KEY] = splash
         return splash
 
@@ -3788,6 +3935,7 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
     source_parts = [src for src in (cockpit_source, trend_source, delta_source, cortex_source, run_rate_source) if src]
     splash = {
         "meta": meta,
+        "loaded": True,
         "cockpit": cockpit,
         "trend": trend,
         "warehouse_delta": warehouse_delta,
@@ -4606,78 +4754,72 @@ def _render_powerpoint_cost_snapshot(splash: dict, *, company: str, days: int, c
         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         key="cost_contract_powerpoint_deck_download",
     )
-    render_priority_dataframe(
-        kpi_rows,
-        title="Slide KPI rows",
-        priority_columns=["KPI", "VALUE", "SLIDE_NOTE"],
-        raw_label="All PowerPoint KPI rows",
-        height=250,
-        max_rows=10,
-    )
-    chart_names = ["Spend bridge", "Driver dollars"]
-    if "Service movement" in set(chart_rows["CHART"].astype(str)):
-        chart_names.append("Service movement")
-    chart_cols = st.columns(len(chart_names))
-    for column, chart_name in zip(chart_cols, chart_names):
-        with column:
-            st.markdown(f"**{chart_name.title()}**")
-            _render_cost_snapshot_bar_chart(chart_rows, chart_name)
+    with st.expander("PowerPoint support data", expanded=False):
+        render_priority_dataframe(
+            kpi_rows,
+            title="Slide KPI rows",
+            priority_columns=["KPI", "VALUE", "SLIDE_NOTE"],
+            raw_label="All PowerPoint KPI rows",
+            height=250,
+            max_rows=10,
+        )
+        chart_names = ["Spend bridge", "Driver dollars"]
+        if "Service movement" in set(chart_rows["CHART"].astype(str)):
+            chart_names.append("Service movement")
+        chart_cols = st.columns(len(chart_names))
+        for column, chart_name in zip(chart_cols, chart_names):
+            with column:
+                st.markdown(f"**{chart_name.title()}**")
+                _render_cost_snapshot_bar_chart(chart_rows, chart_name)
 
 
 def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: float) -> None:
     summary = _cost_splash_summary(splash, credit_price, days)
     st.markdown("**Cost Overview**")
+    if not splash.get("loaded"):
+        st.caption("Load Cost Overview to bring in spend trend, warehouse ranking, Cortex spend, and slide-ready evidence.")
+        cols = st.columns(4)
+        cols[0].metric("Spend", "On demand")
+        cols[1].metric("Change", "On demand")
+        cols[2].metric("Driver", "On demand")
+        cols[3].metric("30d Run", "On demand")
+        if splash.get("errors"):
+            for err in splash.get("errors", [])[:2]:
+                defer_source_note(str(err))
+        return
+
     if splash.get("errors") and not summary["has_data"]:
         st.warning("Cost splash could not load from the mart or live fallback for this role.")
         for err in splash.get("errors", [])[:2]:
             defer_source_note(str(err))
         return
 
-    metrics = (
-        ("Total Spend", f"${summary['spend']:,.2f}", f"{summary['delta_pct']:+.1f}%"),
-        ("Avg Daily", f"${summary['avg_daily']:,.2f}", None),
-        ("Peak Day", f"${summary['peak_day']:,.2f}", None),
-        ("Credits", f"{summary['current_credits']:,.2f}", None),
-        ("Warehouses", f"{summary['active_warehouses']:,}", None),
-    )
-    cols = st.columns(5)
-    for col, (label, value, delta) in zip(cols, metrics):
-        with col:
-            st.metric(label, value, delta=delta, delta_color="inverse" if delta else "normal")
-
-    top_ai_user = str(summary["top_cortex_user"] or "No Cortex user")
-    top_ai_user_display = top_ai_user if len(top_ai_user) <= 34 else top_ai_user[:31] + "..."
-    ai_cols = st.columns([1.0, 1.3, 1.0])
-    ai_cols[0].metric("Cortex Spend", f"${summary['cortex_spend']:,.2f}")
-    ai_cols[1].metric("Top AI User", top_ai_user_display, delta=f"${summary['top_cortex_user_spend']:,.2f}")
-    ai_cols[2].metric("AI Requests", f"{summary['cortex_requests']:,}")
-    if top_ai_user != top_ai_user_display:
-        st.caption(f"Top Cortex user: {top_ai_user}")
-
-    if summary["delta_pct"] >= 20:
-        st.warning(
-            "Spend is moving materially above the prior window. "
-            f"Start with {summary['top_warehouse']} and budget controls."
-        )
-    elif summary["delta_pct"] <= -10:
-        st.success("Spend is below the prior window. Verify whether the reduction is expected before claiming savings.")
-    else:
-        st.success("Spend is within the current operating range.")
-    st.caption(f"Top warehouse: {summary['top_warehouse']}.")
+    _render_cost_splash_narrative(summary, days=int(days))
 
     if splash.get("source"):
         defer_source_note(f"Cost splash source: {splash['source']}. Cached query results keep this page fast.")
 
     trend = splash.get("trend", pd.DataFrame())
     warehouse_delta = splash.get("warehouse_delta", pd.DataFrame())
-    chart_cols = st.columns([1.35, 1.0])
-    with chart_cols[0]:
+    evidence_view = st.radio(
+        "Cost evidence view",
+        ("Charts", "Data"),
+        horizontal=True,
+        key="cost_contract_splash_evidence_view",
+    )
+    if evidence_view == "Data":
+        _render_cost_splash_data_view(trend, warehouse_delta, credit_price)
+    else:
         st.markdown("**Spend Trend**")
         _render_spend_trend_chart(trend, credit_price)
-    with chart_cols[1]:
         st.markdown("**Warehouse Ranking**")
         _render_warehouse_ranking_chart(warehouse_delta, credit_price)
-    _render_powerpoint_cost_snapshot(splash, company=company, days=int(days), credit_price=credit_price)
+
+    with st.expander("Cost overview table data", expanded=False):
+        _render_cost_splash_data_view(trend, warehouse_delta, credit_price)
+
+    with st.expander("PowerPoint-ready snapshot", expanded=False):
+        _render_powerpoint_cost_snapshot(splash, company=company, days=int(days), credit_price=credit_price)
 
 
 def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
@@ -4811,7 +4953,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     if selected_days not in DAY_WINDOW_OPTIONS:
         selected_days = DEFAULT_DAY_WINDOW
 
-    controls = st.columns([1.0, 1.0, 2.6])
+    controls = st.columns([1.0, 1.0, 1.0, 1.6])
     with controls[0]:
         days = st.selectbox(
             "Cost window",
@@ -4821,10 +4963,16 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             key="cost_contract_cockpit_window",
         )
     with controls[1]:
+        load_overview = st.button("Load Cost Overview", key="cost_contract_splash_load", type="primary", width="stretch")
+    with controls[2]:
         if st.button("Refresh Cost", key="cost_contract_splash_refresh", width="stretch"):
             st.session_state.pop(_COST_SPLASH_KEY, None)
             st.rerun()
-    splash = _ensure_cost_splash(company, int(days), credit_price)
+
+    if load_overview:
+        splash = _ensure_cost_splash(company, int(days), credit_price)
+    else:
+        splash = _cached_cost_splash(company, int(days), credit_price)
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
 
     st.markdown("**Cost Proof Workspace**")

@@ -21,6 +21,7 @@ from utils.company_filter import (  # noqa: E402
     get_environment_label,
     get_environment_options_for_company,
     get_global_filter_clause,
+    get_global_schema_filter_clause,
     get_wh_filter_clause,
 )
 from utils.cost import build_cost_reconciliation_sql  # noqa: E402
@@ -113,6 +114,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             st.session_state["active_company"] = "ALFA"
             st.session_state["global_environment"] = "PROD"
             st.session_state["global_user"] = "ETL"
+            st.session_state["global_schema"] = "PUBLIC"
 
             scoped = get_global_filter_clause(
                 "q.start_time",
@@ -120,6 +122,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
                 "q.user_name",
                 "q.role_name",
                 "q.database_name",
+                "q.schema_name",
             ).upper()
             ui_only = get_global_filter_clause(
                 "q.start_time",
@@ -127,6 +130,7 @@ class CompanyScopeAndCostTests(unittest.TestCase):
                 "q.user_name",
                 "q.role_name",
                 "q.database_name",
+                "q.schema_name",
                 include_company_scope=False,
                 include_environment_scope=False,
             ).upper()
@@ -134,9 +138,12 @@ class CompanyScopeAndCostTests(unittest.TestCase):
             self.assertIn("WH_TRXS_LOAD", scoped)
             self.assertIn("ALFA_EDW_PROD", scoped)
             self.assertIn("Q.USER_NAME ILIKE '%ETL%'", scoped)
+            self.assertIn("Q.SCHEMA_NAME ILIKE '%PUBLIC%'", scoped)
             self.assertNotIn("WH_TRXS_LOAD", ui_only)
             self.assertNotIn("ALFA_EDW_PROD", ui_only)
             self.assertIn("Q.USER_NAME ILIKE '%ETL%'", ui_only)
+            self.assertIn("Q.SCHEMA_NAME ILIKE '%PUBLIC%'", ui_only)
+            self.assertEqual(get_global_schema_filter_clause("q.schema_name").upper(), "AND Q.SCHEMA_NAME ILIKE '%PUBLIC%'")
         finally:
             st.session_state.clear()
             st.session_state.update(previous)

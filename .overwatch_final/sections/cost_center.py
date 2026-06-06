@@ -456,7 +456,7 @@ def _cost_explorer_live_sql(
     company_expr = get_company_case_expr("q.warehouse_name", "q.database_name", "q.user_name")
     environment_expr = get_environment_case_expr("q.database_name")
     scope = get_global_filter_clause(
-        "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+        "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name", "q.schema_name"
     )
     dept_filter = (
         f"AND COALESCE(t.cost_center_tag, t.owner_tag, '') ILIKE '%' || {sql_literal(department_contains, 300)} || '%'"
@@ -1660,6 +1660,7 @@ def render():
             st.session_state.get("global_user"),
             st.session_state.get("global_role"),
             st.session_state.get("global_database"),
+            st.session_state.get("global_schema"),
         ])
         warehouse_contains = str(st.session_state.get("global_warehouse") or "").strip()
         wh_filter_meter = " ".join(filter(None, [
@@ -1672,18 +1673,20 @@ def render():
             "q.user_name",
             "q.role_name",
             "q.database_name",
+            "q.schema_name",
         )
         attribution_only_filters = [
             name for name, value in {
                 "user": st.session_state.get("global_user"),
                 "role": st.session_state.get("global_role"),
                 "database": st.session_state.get("global_database"),
+                "schema": st.session_state.get("global_schema"),
             }.items()
             if value
         ]
         if attribution_only_filters:
             st.warning(
-                "User, role, and database filters narrow attribution rows only. "
+                "User, role, database, and schema filters narrow attribution rows only. "
                 "Exact warehouse metering can be scoped only by company and warehouse."
             )
         explain_filter_signature = (
@@ -1691,6 +1694,7 @@ def render():
             st.session_state.get("global_user"),
             st.session_state.get("global_role"),
             st.session_state.get("global_database"),
+            st.session_state.get("global_schema"),
         )
 
         if st.button("Explain Bill", key="cc_explain_load", type="primary"):
@@ -2296,7 +2300,7 @@ def render():
         st.header("Credit Cost by User / Warehouse")
         days = st.slider("Lookback (days)", 1, 90, 30, key="cc_lead_days")
         gf = get_global_filter_clause(
-            "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+            "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name", "q.schema_name"
         )
 
         if st.button("Load Leaderboard", key="cc_lead_load"):
@@ -2727,7 +2731,7 @@ def render():
                     )
                     environment_expr = get_environment_case_expr("q.database_name")
                     cb_scope = get_global_filter_clause(
-                        "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name"
+                        "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name", "q.schema_name"
                     )
                     live_chargeback_sql = f"""
                 WITH {build_metered_credit_cte(days_back=cb_days)},

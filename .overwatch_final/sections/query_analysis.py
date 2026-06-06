@@ -132,6 +132,7 @@ def render():
             user_col="q.user_name",
             role_col="q.role_name",
             db_col="q.database_name",
+            schema_col="q.schema_name",
         )
 
         if st.button("Load Bottlenecks", key="qa_load"):
@@ -223,6 +224,7 @@ def render():
                     user_col="q.user_name",
                     role_col="q.role_name",
                     db_col="q.database_name",
+                    schema_col="q.schema_name",
                 )
                 try:
                     df_deg = run_query(

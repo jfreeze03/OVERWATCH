@@ -78,4 +78,8 @@ class GuardrailTests(unittest.TestCase):
 
         self.assertIn('date_input_key = "_global_date_range_input"', app_text)
         self.assertIn("key=date_input_key", app_text)
+        self.assertIn("from utils.admin import render_admin_mode_control", app_text)
+        self.assertIn("try:\n    from utils.admin import clamp_global_date_range", app_text)
+        self.assertIn("Fallback for Snowflake stages that refresh app.py before utils.admin", app_text)
+        self.assertNotIn("from utils.admin import clamp_global_date_range, render_admin_mode_control", app_text)
         self.assertNotIn('st.session_state["_global_date_range_input"] =', app_text)

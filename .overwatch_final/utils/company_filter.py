@@ -426,6 +426,10 @@ def get_global_db_filter_clause(column: str = "database_name") -> str:
     return _text_filter_clause(st.session_state.get("global_database"), column)
 
 
+def get_global_schema_filter_clause(column: str = "schema_name") -> str:
+    return _text_filter_clause(st.session_state.get("global_schema"), column)
+
+
 def get_environment_filter_clause(
     column: str = "database_name",
     environment: str = None,
@@ -497,6 +501,7 @@ def get_global_filter_clause(
     user_col: str = "user_name",
     role_col: str = "role_name",
     db_col: str = "database_name",
+    schema_col: str = "",
     *,
     include_company_scope: bool = True,
     include_environment_scope: bool = True,
@@ -525,6 +530,7 @@ def get_global_filter_clause(
         get_global_user_filter_clause(user_col) if user_col else "",
         get_global_role_filter_clause(role_col) if role_col else "",
         get_global_db_filter_clause(db_col)   if db_col    else "",
+        get_global_schema_filter_clause(schema_col) if schema_col else "",
     ])).strip()
 
 
@@ -539,6 +545,7 @@ def get_company_scope_key(prefix: str, *parts: object) -> str:
         str(st.session_state.get("global_user", "")),
         str(st.session_state.get("global_role", "")),
         str(st.session_state.get("global_database", "")),
+        str(st.session_state.get("global_schema", "")),
         str(get_active_environment()),
         *[str(part) for part in parts],
     ])
@@ -557,6 +564,7 @@ def company_scoped_query(
     user_col: str = "user_name",
     role_col: str = "role_name",
     db_col: str = "database_name",
+    schema_col: str = "",
     include_global_filters: bool = True,
     section: str = "",
     extra_cache_parts: tuple = (),
@@ -576,6 +584,7 @@ def company_scoped_query(
             user_col=user_col,
             role_col=role_col,
             db_col=db_col,
+            schema_col=schema_col,
         )
         if include_global_filters
         else get_combined_filter_clause(db_col=db_col, wh_col=wh_col, user_col=user_col)

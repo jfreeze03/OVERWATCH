@@ -49,8 +49,31 @@ from utils.company_filter import (
     get_environment_options_for_company,
     invalidate_company_cache,
 )
-from utils.metadata import load_database_options, load_warehouse_options
-from utils.admin import clamp_global_date_range, render_admin_mode_control
+from utils.metadata import load_database_options, load_schema_options, load_warehouse_options
+from utils.admin import render_admin_mode_control
+try:
+    from utils.admin import clamp_global_date_range
+except ImportError:
+    def clamp_global_date_range(
+        start_date,
+        end_date,
+        standard_days: int = 35,
+        admin_days: int = 90,
+    ) -> tuple:
+        """Fallback for Snowflake stages that refresh app.py before utils.admin."""
+        if not start_date or not end_date:
+            return start_date, end_date, False, int(standard_days)
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+        try:
+            from utils.admin import admin_actions_enabled
+            max_days = int(admin_days if admin_actions_enabled() else standard_days)
+        except Exception:
+            max_days = int(standard_days)
+        span_days = (end_date - start_date).days + 1
+        if span_days <= max_days:
+            return start_date, end_date, False, max_days
+        return end_date - timedelta(days=max_days - 1), end_date, True, max_days
 import utils.section_guidance as section_guidance
 
 
@@ -268,6 +291,7 @@ def _global_filter_signature() -> tuple:
         str(st.session_state.get("global_user", "")),
         str(st.session_state.get("global_role", "")),
         str(st.session_state.get("global_database", "")),
+        str(st.session_state.get("global_schema", "")),
         str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT)),
         str(date_input),
     )
@@ -676,6 +700,42 @@ with st.sidebar:
         else:
             st.text_input("Database contains", key="global_database")
 
+        selected_database = str(st.session_state.get("global_database", "") or "").strip()
+        schema_choice_scope = (
+            active_company,
+            st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
+            selected_database,
+        )
+        if selected_database and st.session_state.get("_global_schema_choice_scope") != schema_choice_scope:
+            st.session_state["_global_schema_choice_scope"] = schema_choice_scope
+            try:
+                st.session_state["global_schema_options"] = load_schema_options(
+                    get_session(),
+                    selected_database,
+                    company=active_company,
+                )
+            except Exception:
+                st.session_state["global_schema_options"] = []
+        elif not selected_database:
+            st.session_state.pop("_global_schema_choice_scope", None)
+            st.session_state.pop("global_schema_options", None)
+
+        global_schema_options = list(st.session_state.get("global_schema_options") or [])
+        if selected_database and global_schema_options:
+            schema_choices = ["All schemas in database"] + global_schema_options
+            if st.session_state.get("global_schema_select") not in schema_choices:
+                st.session_state["global_schema_select"] = "All schemas in database"
+            selected_global_schema = st.selectbox(
+                "Schema",
+                schema_choices,
+                key="global_schema_select",
+            )
+            st.session_state["global_schema"] = (
+                "" if selected_global_schema == "All schemas in database" else selected_global_schema
+            )
+        else:
+            st.text_input("Schema contains", key="global_schema")
+
         current_filter_signature = _global_filter_signature()
         previous_filter_signature = st.session_state.get("_prev_global_filter_signature")
         if previous_filter_signature is None:
@@ -687,10 +747,10 @@ with st.sidebar:
         if st.button("Clear Global Filters", key="global_filters_clear"):
             for _k in [
                 "global_start_date", "global_end_date", "global_warehouse",
-                "global_user", "global_role", "global_database", "global_environment",
-                "global_warehouse_select", "global_database_select",
-                "global_warehouse_options", "global_database_options",
-                "_global_filter_choice_scope",
+                "global_user", "global_role", "global_database", "global_schema", "global_environment",
+                "global_warehouse_select", "global_database_select", "global_schema_select",
+                "global_warehouse_options", "global_database_options", "global_schema_options",
+                "_global_filter_choice_scope", "_global_schema_choice_scope",
                 "_global_date_range_input",
                 "_global_date_clamp_notice_key",
             ]:

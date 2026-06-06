@@ -23,7 +23,7 @@ BOOKMARK_TABLE = (
 _CAPTURED_KEYS = [
     "nav_section", "active_company",
     "global_start_date", "global_end_date",
-    "global_warehouse", "global_user", "global_role", "global_database",
+    "global_warehouse", "global_user", "global_role", "global_database", "global_schema",
 ]
 
 

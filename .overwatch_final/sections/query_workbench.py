@@ -221,6 +221,71 @@ def _build_root_cause_markdown(
     return "\n".join(lines)
 
 
+def _root_cause_cortex_prompt(
+    company: str,
+    days: int,
+    score: int,
+    summary_row: dict,
+    exceptions: pd.DataFrame,
+) -> str:
+    """Build a bounded Cortex prompt from loaded root-cause evidence."""
+    top = _root_cause_priority_view(exceptions).head(5)
+    evidence_lines = []
+    for _, row in top.iterrows():
+        evidence_lines.append(
+            "- "
+            f"severity={row.get('SEVERITY', 'Medium')}; "
+            f"root_cause={row.get('ROOT_CAUSE', 'Unknown')}; "
+            f"query_id={row.get('QUERY_ID', '')}; "
+            f"warehouse={row.get('WAREHOUSE_NAME', '')}; "
+            f"database={row.get('DATABASE_NAME', '')}; "
+            f"schema={row.get('SCHEMA_NAME', '')}; "
+            f"elapsed_sec={safe_float(row.get('ELAPSED_SEC')):.2f}; "
+            f"queued_sec={safe_float(row.get('QUEUED_SEC')):.2f}; "
+            f"remote_spill_gb={safe_float(row.get('REMOTE_SPILL_GB')):.2f}; "
+            f"gb_scanned={safe_float(row.get('GB_SCANNED')):.2f}; "
+            f"partition_pct={safe_float(row.get('PARTITION_PCT')):.2f}; "
+            f"next_action={row.get('NEXT_ACTION', '')}"
+        )
+    if not evidence_lines:
+        evidence_lines.append("- No root-cause exceptions crossed the configured thresholds.")
+
+    return "\n".join([
+        "You are OVERWATCH, a Snowflake DBA command-center assistant.",
+        "Use only the evidence below. Do not invent tables, users, tickets, or causes.",
+        "Write exactly 3 concise sentences for a DBA: likely root cause, evidence, and single best next action.",
+        "",
+        f"Scope: company={company}; lookback_days={int(days)}; root_cause_score={int(score)}.",
+        (
+            "Summary: "
+            f"total_queries={safe_int(summary_row.get('TOTAL_QUERIES'))}; "
+            f"failed={safe_int(summary_row.get('FAILED_QUERIES'))}; "
+            f"queued={safe_int(summary_row.get('QUEUED_QUERIES'))}; "
+            f"spill={safe_int(summary_row.get('SPILL_QUERIES'))}; "
+            f"full_scan={safe_int(summary_row.get('FULL_SCAN_QUERIES'))}; "
+            f"slow={safe_int(summary_row.get('SLOW_QUERIES'))}; "
+            f"affected_warehouses={safe_int(summary_row.get('AFFECTED_WAREHOUSES'))}; "
+            f"affected_users={safe_int(summary_row.get('AFFECTED_USERS'))}."
+        ),
+        "Top loaded exceptions:",
+        *evidence_lines,
+    ])
+
+
+def _generate_root_cause_cortex_narrative(session, prompt: str) -> str:
+    """Run one Cortex completion for a loaded root-cause brief."""
+    result = session.sql(
+        f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', {sql_literal(prompt, 16000)}) AS narrative"
+    ).collect()
+    if not result:
+        return ""
+    first = result[0]
+    try:
+        return str(first["NARRATIVE"] or "").strip()
+    except Exception:
+        return str(getattr(first, "NARRATIVE", "") or "").strip()
+
+
 def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
     qh_cols = set(filter_existing_columns(
         session,
@@ -250,6 +315,7 @@ def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
         user_col="q.user_name",
         role_col="q.role_name",
         db_col="q.database_name",
+        schema_col="q.schema_name",
     )
 
     def col_expr(name: str, default: str = "0") -> str:
@@ -415,6 +481,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
         user_col="user_name",
         role_col="role_name",
         db_col="database_name",
+        schema_col="schema_name",
     )
     detail_filters = get_global_filter_clause(
         date_col="start_time",
@@ -422,6 +489,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
         user_col="user_name",
         role_col="role_name",
         db_col="database_name",
+        schema_col="schema_name",
     )
     summary_sql = f"""
         WITH hourly_summary AS (
@@ -749,6 +817,34 @@ def render_root_cause_brief(session) -> None:
                 except Exception as e:
                     st.error(f"Could not save to action queue: {format_snowflake_error(e)}")
                     st.info("Deploy the Action Queue table from `snowflake/OVERWATCH_MART_SETUP.sql`, then retry this save.")
+            narrative_meta = {
+                "company": company,
+                "days": int(days),
+                "limit": int(limit),
+                "score": int(score),
+                "top_query": str(exceptions.iloc[0].get("QUERY_ID", "")) if not exceptions.empty else "",
+            }
+            with st.expander("Cortex Root-Cause Narrative"):
+                st.caption("Runs one Cortex completion against the loaded root-cause evidence.")
+                if st.button("Generate Cortex Root-Cause Narrative", key="qw_rc_cortex_narrative"):
+                    prompt = _root_cause_cortex_prompt(company, days, score, summary_row, exceptions)
+                    try:
+                        with st.spinner("Generating DBA root-cause narrative..."):
+                            st.session_state["qw_root_cortex_narrative"] = _generate_root_cause_cortex_narrative(
+                                session,
+                                prompt,
+                            )
+                            st.session_state["qw_root_cortex_meta"] = narrative_meta
+                    except Exception as e:
+                        st.info(
+                            "Cortex root-cause narrative unavailable. "
+                            f"{format_snowflake_error(e)} Ensure Cortex functions are enabled in this account."
+                        )
+                if (
+                    st.session_state.get("qw_root_cortex_narrative")
+                    and st.session_state.get("qw_root_cortex_meta") == narrative_meta
+                ):
+                    st.markdown(st.session_state["qw_root_cortex_narrative"])
             render_query_drilldown(exceptions, key="qw_root_cause_drilldown", title="Root-Cause Query Drilldown")
         else:
             st.success("No query root-cause exceptions found for this scope.")

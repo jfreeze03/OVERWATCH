@@ -104,10 +104,12 @@ from sections.cost_contract import (  # noqa: E402
     _build_savings_verification_task_summary,
     _build_attribution_gap_summary,
     _build_service_cost_lens_summary,
+    _cost_spend_trend_rows,
     _cost_snapshot_chart_rows,
     _cost_snapshot_kpi_rows,
     _cost_snapshot_slide_brief,
     _cost_splash_summary,
+    _cost_warehouse_ranking_rows,
     _service_lens_movement_rows,
     build_cost_governance_mart_sql,
 )
@@ -202,6 +204,7 @@ from sections.change_drift import (  # noqa: E402
 from sections.query_workbench import (  # noqa: E402
     _build_mart_root_cause_sql,
     _build_root_cause_markdown,
+    _root_cause_cortex_prompt,
     _root_cause_action_for,
     _root_cause_score,
 )
@@ -719,6 +722,8 @@ class FormulaRegressionTests(unittest.TestCase):
             service_lens=service_lens,
             credit_price=DEFAULTS["credit_price"],
         )
+        trend_rows = _cost_spend_trend_rows(splash["trend"], DEFAULTS["credit_price"])
+        ranking_rows = _cost_warehouse_ranking_rows(splash["warehouse_delta"], DEFAULTS["credit_price"])
         brief = _cost_snapshot_slide_brief(
             summary,
             service_summary,
@@ -737,6 +742,13 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(movement.iloc[0]["SERVICE_TYPE"], "CORTEX")
         self.assertAlmostEqual(float(movement.iloc[0]["COST_DELTA_USD"]), 11.04)
         self.assertEqual(set(chart_rows["CHART"]), {"Spend bridge", "Driver dollars", "Work queue", "Service movement"})
+        self.assertIn("SPEND_USD", trend_rows.columns)
+        self.assertIn("ROLLING_SPEND_USD", trend_rows.columns)
+        self.assertAlmostEqual(float(trend_rows.iloc[1]["SPEND_USD"]), 73.6)
+        self.assertIn("CURRENT_SPEND_USD", ranking_rows.columns)
+        self.assertIn("DELTA_SPEND_USD", ranking_rows.columns)
+        self.assertEqual(ranking_rows.iloc[0]["CURRENT_SPEND_LABEL"], "$184")
+        self.assertEqual(ranking_rows.iloc[0]["DELTA_SPEND_LABEL"], "+$46")
         spend_delta = chart_rows.loc[
             (chart_rows["CHART"] == "Spend bridge") & (chart_rows["METRIC"] == "Spend delta"),
             "VALUE",
@@ -1577,7 +1589,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Resource Monitor", by_lane["Warehouse guardrail"]["NATIVE_CONTROL"])
         self.assertIn("Snowflake Budget", by_lane["AI budget and quota"]["NATIVE_CONTROL"])
         self.assertIn("Budget Custom Action", by_lane["Budget custom action bridge"]["NATIVE_CONTROL"])
+        self.assertIn("Predictive Cost Anomaly", by_lane["Anomaly explanation"]["NATIVE_CONTROL"])
         self.assertIn("7d avg", by_lane["Anomaly explanation"]["EVIDENCE"])
+        self.assertIn("30-day baseline plus sigma", by_lane["Anomaly explanation"]["EVIDENCE"])
         self.assertIn("Do not use resource monitors as AI/serverless", by_lane["Warehouse guardrail"]["DO_NOT_DO"])
         self.assertGreaterEqual(summary["budget_controls"], 4)
         self.assertEqual(summary["warehouse_only_controls"], 1)
@@ -4595,6 +4609,48 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Failed queries: 2", md)
         self.assertIn("Warehouse Queue", md)
         self.assertIn("QUERY_HISTORY can lag", md)
+
+    def test_query_root_cause_cortex_prompt_is_evidence_bounded(self):
+        summary_row = {
+            "TOTAL_QUERIES": 100,
+            "FAILED_QUERIES": 2,
+            "QUEUED_QUERIES": 4,
+            "SPILL_QUERIES": 1,
+            "FULL_SCAN_QUERIES": 8,
+            "SLOW_QUERIES": 12,
+            "AFFECTED_WAREHOUSES": 2,
+            "AFFECTED_USERS": 3,
+        }
+        exceptions = pd.DataFrame(
+            {
+                "SEVERITY": ["High"],
+                "ROOT_CAUSE": ["Warehouse Queue"],
+                "QUERY_ID": ["01abc"],
+                "WAREHOUSE_NAME": ["BI_COMPUTE_WH"],
+                "DATABASE_NAME": ["ALFA_EDW_PROD"],
+                "SCHEMA_NAME": ["PUBLIC"],
+                "ELAPSED_SEC": [91.2],
+                "QUEUED_SEC": [45.0],
+                "REMOTE_SPILL_GB": [0.0],
+                "GB_SCANNED": [12.5],
+                "PARTITION_PCT": [40.0],
+                "IMPACT_VALUE": [45.0],
+                "IMPACT_UNIT": ["seconds queued"],
+            }
+        )
+        prompt = _root_cause_cortex_prompt(
+            company="ALFA",
+            days=7,
+            score=82,
+            summary_row=summary_row,
+            exceptions=exceptions,
+        )
+        self.assertIn("Write exactly 3 concise sentences", prompt)
+        self.assertIn("Use only the evidence below", prompt)
+        self.assertIn("Do not invent", prompt)
+        self.assertIn("query_id=01abc", prompt)
+        self.assertIn("warehouse=BI_COMPUTE_WH", prompt)
+        self.assertIn("queued_sec=45.00", prompt)
 
     def test_warehouse_capacity_score_weights_queue_spill_and_credit_spikes(self):
         healthy = _warehouse_capacity_score(

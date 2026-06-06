@@ -7,22 +7,45 @@ import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
 from utils import (
-    defer_source_note,
     get_active_company,
     get_active_environment,
 )
 
 
 ANNOTATION_TABLE = "OVERWATCH_ANNOTATIONS"
+_DEFERRED_NOTES_PREFIX = "_overwatch_deferred_section_notes"
+
+
+def _deferred_notes_key(section: str) -> str:
+    safe_section = str(section or "section").strip() or "section"
+    return f"{_DEFERRED_NOTES_PREFIX}:{safe_section}"
+
+
+def defer_source_note(*parts: object, section: str | None = None) -> None:
+    """Collect Alert Center source notes without importing the full playbook module on first paint."""
+    clean_parts = [
+        " ".join(str(part or "").split())
+        for part in parts
+        if str(part or "").strip()
+    ]
+    if not clean_parts:
+        return
+    active_section = section or st.session_state.get("_overwatch_active_section", "")
+    key = _deferred_notes_key(active_section)
+    clean_note = " | ".join(clean_parts)
+    notes = list(st.session_state.get(key, []))
+    if clean_note not in notes:
+        notes.append(clean_note)
+    st.session_state[key] = notes
 
 ALERT_CENTER_PANES = [
-    "Control Health",
-    "Automation Readiness",
     "Issue Inbox",
     "Triage Digest",
     "Alert History",
     "Email Delivery",
     "Action Queue Routing",
+    "Control Health",
+    "Automation Readiness",
     "Rules & SLAs",
     "Suppression Windows",
 ]
@@ -1119,8 +1142,22 @@ def render() -> None:
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
-    if loaded_scope != (company, environment, int(days), int(limit)):
+    expected_scope = (company, environment, int(days), int(limit))
+    if loaded_scope != expected_scope:
+        _render_alert_center_action_brief(_alert_center_pending_brief(active_view, required_sources))
+        _render_alert_center_metric_rows(
+            open_issues=0,
+            open_alerts=0,
+            critical_high=0,
+            overdue=0,
+            email_ready=0,
+            email_logged=0,
+            open_queue=0,
+            loaded=False,
+        )
         st.warning("Company, environment, or window changed after this load. Reload before triaging alerts.")
+        defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
+        return
     loaded_sources = set(data.get("_loaded_sources") or [])
     missing_sources = sorted(required_sources - loaded_sources)
     if missing_sources:

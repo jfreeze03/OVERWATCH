@@ -229,6 +229,47 @@ def _render_spend_trend_chart(trend: pd.DataFrame, credit_price: float) -> None:
     st.altair_chart((bars + line + points).properties(height=265), width="stretch")
 
 
+def _render_cost_chart_with_data_toggle(
+    title: str,
+    key: str,
+    chart_renderer,
+    data_rows: pd.DataFrame,
+    *,
+    priority_columns: list[str] | None = None,
+    sort_by: list[str] | None = None,
+    max_rows: int = 25,
+) -> None:
+    """Render a cost chart with an in-place table mode and a clear return path."""
+    st.markdown(f"**{title}**")
+    mode_key = f"{key}_chart_data_mode"
+    mode = st.radio(
+        "Cost chart view",
+        ("Chart", "Data"),
+        horizontal=True,
+        key=mode_key,
+        label_visibility="collapsed",
+    )
+    if mode == "Data":
+        back_col, note_col = st.columns([1, 4])
+        with back_col:
+            if st.button("Back to chart", key=f"{key}_back_to_chart", width="stretch"):
+                st.session_state[mode_key] = "Chart"
+                st.rerun()
+        with note_col:
+            st.caption(f"Showing table rows behind {title}.")
+        render_priority_dataframe(
+            data_rows,
+            title=f"{title} data",
+            priority_columns=priority_columns,
+            sort_by=sort_by,
+            max_rows=max_rows,
+            raw_label=f"{title} full data",
+            height=260,
+        )
+        return
+    chart_renderer()
+
+
 def _render_warehouse_ranking_chart(warehouse_delta: pd.DataFrame, credit_price: float) -> None:
     ranking = _cost_warehouse_ranking_rows(warehouse_delta, credit_price)
     if ranking.empty:
@@ -1722,10 +1763,20 @@ def _render_account_service_cost_lens(service_lens: pd.DataFrame, credit_price: 
     st.caption(
         f"Top service: {summary['top_service']}. "
         f"Official Cost Monitor formula: METERING_HISTORY total credits through the completed 24-hour window, "
-        f"displayed at ${credit_price:,.2f}/credit."
+        f"with Snowflake services at ${credit_price:,.2f}/credit and Cortex/AI at ${get_current_ai_credit_price():,.2f}/AI credit."
     )
-    st.markdown("**Service Spend Movement**")
-    _render_service_cost_movement_chart(service_lens, credit_price)
+    _render_cost_chart_with_data_toggle(
+        "Service Spend Movement",
+        "cost_contract_service_movement",
+        lambda: _render_service_cost_movement_chart(service_lens, credit_price),
+        _service_lens_movement_rows(service_lens, credit_price, limit=16),
+        priority_columns=[
+            "SERVICE_CATEGORY", "SERVICE_TYPE", "CURRENT_SPEND_USD",
+            "PRIOR_SPEND_USD", "COST_DELTA_USD", "CREDIT_DELTA",
+        ],
+        sort_by=["COST_DELTA_USD"],
+        max_rows=16,
+    )
     render_priority_dataframe(
         service_lens,
         title="Cost by Snowflake service type",
@@ -3957,12 +4008,12 @@ def _empty_cost_splash(company: str, days: int, credit_price: float) -> dict:
         "loaded": False,
         "errors": [],
         "source": "",
-        "cockpit": pd.DataFrame(),
-        "trend": pd.DataFrame(),
-        "warehouse_delta": pd.DataFrame(),
-        "service_costs": pd.DataFrame(),
-        "cortex": pd.DataFrame(),
-        "run_rate": pd.DataFrame(),
+        "cockpit": None,
+        "trend": None,
+        "warehouse_delta": None,
+        "service_costs": None,
+        "cortex": None,
+        "run_rate": None,
     }
 
 
@@ -4905,7 +4956,6 @@ def _render_powerpoint_cost_snapshot(splash: dict, *, company: str, days: int, c
 
 
 def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: float) -> None:
-    summary = _cost_splash_summary(splash, credit_price, days)
     st.markdown("**Cost Overview**")
     if not splash.get("loaded"):
         st.caption("Load Cost Overview to bring in spend trend, warehouse ranking, Cortex spend, and slide-ready evidence.")
@@ -4919,6 +4969,7 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
                 defer_source_note(str(err))
         return
 
+    summary = _cost_splash_summary(splash, credit_price, days)
     if splash.get("errors") and not summary["has_data"]:
         st.warning("Cost splash could not load from the mart or live fallback for this role.")
         for err in splash.get("errors", [])[:2]:
@@ -4941,10 +4992,27 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
     if evidence_view == "Data":
         _render_cost_splash_data_view(trend, warehouse_delta, credit_price)
     else:
-        st.markdown("**Spend Trend**")
-        _render_spend_trend_chart(trend, credit_price)
-        st.markdown("**Warehouse Ranking**")
-        _render_warehouse_ranking_chart(warehouse_delta, credit_price)
+        _render_cost_chart_with_data_toggle(
+            "Spend Trend",
+            "cost_contract_spend_trend",
+            lambda: _render_spend_trend_chart(trend, credit_price),
+            _cost_spend_trend_rows(trend, credit_price),
+            priority_columns=["USAGE_DATE", "DAILY_CREDITS", "SPEND_USD", "ROLLING_SPEND_USD"],
+            sort_by=["USAGE_DATE"],
+            max_rows=30,
+        )
+        _render_cost_chart_with_data_toggle(
+            "Warehouse Ranking",
+            "cost_contract_warehouse_ranking",
+            lambda: _render_warehouse_ranking_chart(warehouse_delta, credit_price),
+            _cost_warehouse_ranking_rows(warehouse_delta, credit_price, limit=24),
+            priority_columns=[
+                "WAREHOUSE_NAME", "CURRENT_SPEND_USD", "PRIOR_SPEND_USD",
+                "DELTA_SPEND_USD", "CURRENT_CREDITS", "PRIOR_CREDITS", "PCT_DELTA",
+            ],
+            sort_by=["CURRENT_SPEND_USD"],
+            max_rows=24,
+        )
 
     with st.expander("Cost overview table data", expanded=False):
         _render_cost_splash_data_view(trend, warehouse_delta, credit_price)

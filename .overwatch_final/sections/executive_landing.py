@@ -1,6 +1,11 @@
 # sections/executive_landing.py - executive landing page
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from io import BytesIO
+from xml.sax.saxutils import escape as xml_escape
+import zipfile
+
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DEFAULTS, DAY_WINDOW_OPTIONS
@@ -47,7 +52,19 @@ render_priority_dataframe = _lazy_util("render_priority_dataframe")
 run_query = _lazy_util("run_query")
 
 
-EXECUTIVE_LANDING_VERSION = "2026-06-05-powerpoint-brief"
+EXECUTIVE_LANDING_VERSION = "2026-06-05-boardroom-pptx-v1"
+
+_PPTX_EMU_PER_INCH = 914400
+_PPTX_SLIDE_WIDTH = 12192000
+_PPTX_SLIDE_HEIGHT = 6858000
+_PPTX_BG = "07111A"
+_PPTX_PANEL = "0D2233"
+_PPTX_CARD = "132D40"
+_PPTX_GRID = "1D3346"
+_PPTX_TEXT = "E8F3FF"
+_PPTX_MUTED = "A9BED0"
+_PPTX_ACCENT = "29B5E8"
+_PPTX_RISK = "F97316"
 
 
 def _altair():
@@ -332,6 +349,413 @@ def _render_slide_bar_chart(chart_rows: pd.DataFrame, chart_name: str) -> None:
     st.altair_chart((bars + labels).properties(height=max(150, 42 * len(data))), width="stretch")
 
 
+def _safe_filename_piece(value: object) -> str:
+    text = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value or "").strip())
+    text = "_".join(part for part in text.split("_") if part)
+    return text[:80] or "scope"
+
+
+def _pptx_emu(inches: float) -> int:
+    return int(float(inches) * _PPTX_EMU_PER_INCH)
+
+
+def _pptx_color(value: str | None, fallback: str = _PPTX_TEXT) -> str:
+    text = str(value or fallback).strip().lstrip("#")
+    return text.upper()[:6] if len(text) >= 6 else fallback
+
+
+def _pptx_escape(value: object) -> str:
+    return xml_escape(str(value or ""), {'"': "&quot;", "'": "&apos;"})
+
+
+def _pptx_text_lines(value: object, *, max_lines: int | None = None) -> list[str]:
+    lines = [line.strip() for line in str(value or "").replace("\r\n", "\n").split("\n") if line.strip()]
+    return lines[:max_lines] if max_lines is not None else lines
+
+
+def _pptx_paragraphs(lines: list[str], *, font_size: int, color: str, bold: bool = False) -> str:
+    size = max(800, int(font_size * 100))
+    bold_attr = ' b="1"' if bold else ""
+    color = _pptx_color(color)
+    if not lines:
+        lines = [""]
+    return "".join(
+        f'<a:p><a:r><a:rPr lang="en-US" sz="{size}"{bold_attr}>'
+        f'<a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:rPr>'
+        f"<a:t>{_pptx_escape(line)}</a:t></a:r>"
+        f'<a:endParaRPr lang="en-US" sz="{size}"/></a:p>'
+        for line in lines
+    )
+
+
+def _pptx_shape(
+    shape_id: int,
+    name: str,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    lines: list[str] | str,
+    *,
+    font_size: int = 16,
+    color: str = _PPTX_TEXT,
+    bold: bool = False,
+    fill: str | None = None,
+    line: str | None = None,
+    radius: bool = False,
+    margin: int = 91440,
+) -> str:
+    if isinstance(lines, str):
+        lines = _pptx_text_lines(lines)
+    fill_xml = (
+        f'<a:solidFill><a:srgbClr val="{_pptx_color(fill)}"/></a:solidFill>'
+        if fill
+        else "<a:noFill/>"
+    )
+    line_xml = (
+        f'<a:ln><a:solidFill><a:srgbClr val="{_pptx_color(line)}"/></a:solidFill></a:ln>'
+        if line
+        else "<a:ln><a:noFill/></a:ln>"
+    )
+    geometry = "roundRect" if radius else "rect"
+    return (
+        "<p:sp><p:nvSpPr>"
+        f'<p:cNvPr id="{shape_id}" name="{_pptx_escape(name)}"/>'
+        '<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>'
+        f'<a:xfrm><a:off x="{_pptx_emu(x)}" y="{_pptx_emu(y)}"/>'
+        f'<a:ext cx="{_pptx_emu(width)}" cy="{_pptx_emu(height)}"/></a:xfrm>'
+        f'<a:prstGeom prst="{geometry}"><a:avLst/></a:prstGeom>'
+        f"{fill_xml}{line_xml}</p:spPr>"
+        f'<p:txBody><a:bodyPr wrap="square" anchor="t" lIns="{margin}" tIns="{margin}" rIns="{margin}" bIns="{margin}"/>'
+        f"<a:lstStyle/>{_pptx_paragraphs(lines, font_size=font_size, color=color, bold=bold)}</p:txBody></p:sp>"
+    )
+
+
+def _pptx_slide_xml(shapes: list[str], *, background: str = _PPTX_BG) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld>'
+        f'<p:bg><p:bgPr><a:solidFill><a:srgbClr val="{_pptx_color(background)}"/></a:solidFill></p:bgPr></p:bg>'
+        '<p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
+        '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>'
+        '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>'
+        f"{''.join(shapes)}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"
+    )
+
+
+def _pptx_slide_brief_parts(slide_brief: str) -> tuple[str, list[str]]:
+    lines = _pptx_text_lines(slide_brief)
+    headline = next((line.replace("Headline:", "").strip() for line in lines if line.startswith("Headline:")), "")
+    bullets = [line[2:].strip() for line in lines if line.startswith("- ")]
+    return headline or "Executive KPI brief loaded.", bullets[:6]
+
+
+def _pptx_kpi_lookup(kpi_rows: pd.DataFrame) -> dict[str, tuple[str, str]]:
+    if not isinstance(kpi_rows, pd.DataFrame) or kpi_rows.empty:
+        return {}
+    lookup: dict[str, tuple[str, str]] = {}
+    for _, row in kpi_rows.iterrows():
+        key = str(row.get("KPI") or "").strip()
+        if key:
+            lookup[key] = (str(row.get("VALUE") or ""), str(row.get("SLIDE_NOTE") or ""))
+    return lookup
+
+
+def _pptx_bar_panel(
+    chart_rows: pd.DataFrame,
+    chart_name: str,
+    *,
+    start_id: int,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+) -> list[str]:
+    if not isinstance(chart_rows, pd.DataFrame) or chart_rows.empty:
+        data = pd.DataFrame()
+    else:
+        data = chart_rows[chart_rows["CHART"].astype(str) == chart_name].copy()
+    shapes = [
+        _pptx_shape(start_id, f"{chart_name} panel", x, y, width, height, "", fill=_PPTX_PANEL, radius=True),
+        _pptx_shape(start_id + 1, f"{chart_name} title", x + 0.18, y + 0.12, width - 0.35, 0.28, chart_name, font_size=15, color="FFFFFF", bold=True),
+    ]
+    if data.empty:
+        shapes.append(_pptx_shape(start_id + 2, f"{chart_name} empty", x + 0.2, y + 0.62, width - 0.4, 0.35, "No chart rows loaded.", font_size=11, color=_PPTX_MUTED))
+        return shapes
+    data["VALUE"] = pd.to_numeric(data["VALUE"], errors="coerce").fillna(0)
+    max_abs = max(abs(float(data["VALUE"].min())), abs(float(data["VALUE"].max())), 1.0)
+    has_negative = bool((data["VALUE"] < 0).any())
+    label_width = min(2.0, width * 0.34)
+    track_x = x + label_width + 0.45
+    track_width = max(0.8, width - label_width - 1.15)
+    row_height = max(0.36, min(0.58, (height - 0.72) / max(1, len(data.head(6)))))
+    for row_idx, (_, row) in enumerate(data.head(6).iterrows()):
+        value = safe_float(row.get("VALUE"))
+        label = str(row.get("METRIC") or "")
+        display = str(row.get("LABEL") or f"{value:,.0f}")
+        row_y = y + 0.58 + row_idx * row_height
+        shapes.append(_pptx_shape(start_id + 10 + row_idx * 5, f"{chart_name} label {row_idx}", x + 0.18, row_y, label_width, row_height * 0.75, label, font_size=9, color=_PPTX_MUTED, margin=45720))
+        shapes.append(_pptx_shape(start_id + 11 + row_idx * 5, f"{chart_name} track {row_idx}", track_x, row_y + 0.08, track_width, row_height * 0.42, "", fill=_PPTX_GRID))
+        if has_negative:
+            half = track_width / 2
+            bar_width = max(0.05, half * min(1.0, abs(value) / max_abs))
+            bar_x = track_x + half - bar_width if value < 0 else track_x + half
+        else:
+            bar_width = max(0.05, track_width * min(1.0, abs(value) / max_abs))
+            bar_x = track_x
+        shapes.append(_pptx_shape(start_id + 12 + row_idx * 5, f"{chart_name} bar {row_idx}", bar_x, row_y + 0.08, bar_width, row_height * 0.42, "", fill=_PPTX_RISK if value < 0 else _PPTX_ACCENT))
+        shapes.append(_pptx_shape(start_id + 13 + row_idx * 5, f"{chart_name} value {row_idx}", track_x + track_width + 0.08, row_y, 0.8, row_height * 0.75, display, font_size=9, color=_PPTX_TEXT, bold=True, margin=45720))
+    return shapes
+
+
+def _build_executive_snapshot_title_slide(
+    slide_brief: str,
+    kpi_rows: pd.DataFrame,
+    *,
+    company: str,
+    environment_label: str,
+    days: int,
+) -> str:
+    headline, bullets = _pptx_slide_brief_parts(slide_brief)
+    kpis = _pptx_kpi_lookup(kpi_rows)
+    cards = [
+        ("Current spend", *kpis.get("Current spend", ("$0", ""))),
+        ("Spend delta", *kpis.get("Spend delta", ("$0", ""))),
+        ("Critical/High alerts", *kpis.get("Critical/High alerts", ("0", ""))),
+        ("Open actions", *kpis.get("Open actions", ("0", ""))),
+    ]
+    shapes = [
+        _pptx_shape(2, "Title", 0.55, 0.34, 8.4, 0.55, "OVERWATCH Executive Snapshot", font_size=28, bold=True),
+        _pptx_shape(3, "Scope", 0.58, 0.9, 7.9, 0.3, f"{company} / {environment_label} / {int(days)} days", font_size=12, color=_PPTX_MUTED),
+        _pptx_shape(4, "Headline", 0.58, 1.35, 7.35, 0.72, headline, font_size=18, color="FFFFFF", bold=True),
+        _pptx_shape(5, "Bullets", 0.58, 2.18, 7.2, 3.72, [f"- {line}" for line in bullets], font_size=15, color=_PPTX_TEXT),
+    ]
+    for idx, (label, value, note) in enumerate(cards):
+        y = 1.12 + idx * 1.24
+        shapes.append(_pptx_shape(10 + idx, f"Card {label}", 8.35, y, 4.25, 0.95, "", fill=_PPTX_CARD, radius=True))
+        shapes.append(_pptx_shape(20 + idx, f"Card label {label}", 8.52, y + 0.08, 3.8, 0.2, label, font_size=9, color=_PPTX_MUTED, bold=True))
+        shapes.append(_pptx_shape(30 + idx, f"Card value {label}", 8.52, y + 0.31, 3.8, 0.34, value, font_size=20, color="FFFFFF", bold=True))
+        shapes.append(_pptx_shape(40 + idx, f"Card note {label}", 8.52, y + 0.67, 3.85, 0.2, note, font_size=8, color=_PPTX_MUTED))
+    return _pptx_slide_xml(shapes)
+
+
+def _build_executive_snapshot_chart_slide(chart_rows: pd.DataFrame, kpi_rows: pd.DataFrame, *, company: str, environment_label: str) -> str:
+    kpis = _pptx_kpi_lookup(kpi_rows)
+    score = kpis.get("Executive state", ("Not loaded", ""))[0]
+    sources = kpis.get("Sources loaded", ("0/4", ""))[0]
+    shapes = [
+        _pptx_shape(2, "Title", 0.55, 0.34, 8.0, 0.55, "Boardroom KPI Drivers", font_size=27, bold=True),
+        _pptx_shape(3, "Scope", 0.58, 0.92, 7.5, 0.3, f"{company} / {environment_label}", font_size=12, color=_PPTX_MUTED),
+        _pptx_shape(4, "Score", 8.25, 0.42, 2.0, 0.62, [score, "Executive state"], font_size=14, color="FFFFFF", bold=True, fill=_PPTX_CARD, radius=True),
+        _pptx_shape(5, "Sources", 10.45, 0.42, 2.0, 0.62, [sources, "Sources loaded"], font_size=14, color="FFFFFF", bold=True, fill=_PPTX_CARD, radius=True),
+    ]
+    shapes.extend(_pptx_bar_panel(chart_rows, "Cost movement", start_id=20, x=0.65, y=1.45, width=5.95, height=4.65))
+    shapes.extend(_pptx_bar_panel(chart_rows, "Risk and work", start_id=90, x=6.85, y=1.45, width=5.85, height=4.65))
+    return _pptx_slide_xml(shapes)
+
+
+def _pptx_rels(entries: list[tuple[str, str, str]]) -> str:
+    relationships = "".join(
+        f'<Relationship Id="{rel_id}" Type="{rel_type}" Target="{_pptx_escape(target)}"/>'
+        for rel_id, rel_type, target in entries
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f"{relationships}</Relationships>"
+    )
+
+
+def _pptx_content_types(slide_count: int) -> str:
+    slide_overrides = "".join(
+        f'<Override PartName="/ppt/slides/slide{idx}.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+        for idx in range(1, slide_count + 1)
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+        '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
+        '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>'
+        '<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>'
+        '<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>'
+        '<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>'
+        f"{slide_overrides}</Types>"
+    )
+
+
+def _pptx_presentation_xml(slide_count: int) -> str:
+    slide_ids = "".join(f'<p:sldId id="{255 + idx}" r:id="rId{idx + 1}"/>' for idx in range(1, slide_count + 1))
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
+        '<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>'
+        f"<p:sldIdLst>{slide_ids}</p:sldIdLst>"
+        f'<p:sldSz cx="{_PPTX_SLIDE_WIDTH}" cy="{_PPTX_SLIDE_HEIGHT}" type="wide"/>'
+        '<p:notesSz cx="6858000" cy="9144000"/></p:presentation>'
+    )
+
+
+def _pptx_slide_master_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
+        '<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
+        '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/>'
+        '<a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld>'
+        '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" '
+        'accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>'
+        '<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst>'
+        '<p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>'
+    )
+
+
+def _pptx_slide_layout_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1">'
+        '<p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
+        '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/>'
+        '<a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld>'
+        '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>'
+    )
+
+
+def _pptx_theme_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="OVERWATCH">'
+        '<a:themeElements><a:clrScheme name="OVERWATCH">'
+        '<a:dk1><a:srgbClr val="07111A"/></a:dk1><a:lt1><a:srgbClr val="F8FAFC"/></a:lt1>'
+        '<a:dk2><a:srgbClr val="13283A"/></a:dk2><a:lt2><a:srgbClr val="B8C7D8"/></a:lt2>'
+        '<a:accent1><a:srgbClr val="29B5E8"/></a:accent1><a:accent2><a:srgbClr val="71D3DC"/></a:accent2>'
+        '<a:accent3><a:srgbClr val="F97316"/></a:accent3><a:accent4><a:srgbClr val="10B981"/></a:accent4>'
+        '<a:accent5><a:srgbClr val="EAB308"/></a:accent5><a:accent6><a:srgbClr val="8B5CF6"/></a:accent6>'
+        '<a:hlink><a:srgbClr val="29B5E8"/></a:hlink><a:folHlink><a:srgbClr val="71D3DC"/></a:folHlink>'
+        '</a:clrScheme><a:fontScheme name="OVERWATCH"><a:majorFont><a:latin typeface="Aptos Display"/>'
+        '<a:ea typeface=""/><a:cs typeface=""/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/>'
+        '<a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme><a:fmtScheme name="OVERWATCH">'
+        '<a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'
+        '<a:solidFill><a:schemeClr val="phClr"><a:tint val="95000"/></a:schemeClr></a:solidFill>'
+        '<a:solidFill><a:schemeClr val="phClr"><a:shade val="85000"/></a:schemeClr></a:solidFill></a:fillStyleLst>'
+        '<a:lnStyleLst><a:ln w="6350" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/>'
+        '</a:solidFill><a:prstDash val="solid"/></a:ln><a:ln w="12700" cap="flat" cmpd="sng" algn="ctr">'
+        '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln>'
+        '<a:ln w="19050" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/>'
+        '</a:solidFill><a:prstDash val="solid"/></a:ln></a:lnStyleLst>'
+        '<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/>'
+        '</a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>'
+        '<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'
+        '<a:solidFill><a:schemeClr val="phClr"><a:tint val="95000"/></a:schemeClr></a:solidFill>'
+        '<a:solidFill><a:schemeClr val="phClr"><a:shade val="85000"/></a:schemeClr></a:solidFill></a:bgFillStyleLst>'
+        "</a:fmtScheme></a:themeElements></a:theme>"
+    )
+
+
+def _pptx_doc_props(slide_count: int) -> tuple[str, str]:
+    timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    core = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" '
+        'xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+        '<dc:title>OVERWATCH Executive Snapshot</dc:title><dc:creator>OVERWATCH</dc:creator>'
+        f'<dcterms:created xsi:type="dcterms:W3CDTF">{timestamp}</dcterms:created>'
+        f'<dcterms:modified xsi:type="dcterms:W3CDTF">{timestamp}</dcterms:modified>'
+        "</cp:coreProperties>"
+    )
+    app = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" '
+        'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+        '<Application>OVERWATCH</Application><PresentationFormat>On-screen Show (16:9)</PresentationFormat>'
+        f"<Slides>{int(slide_count)}</Slides></Properties>"
+    )
+    return core, app
+
+
+def _build_executive_snapshot_pptx(
+    slide_brief: str,
+    kpi_rows: pd.DataFrame,
+    chart_rows: pd.DataFrame,
+    *,
+    company: str,
+    environment_label: str,
+    days: int,
+) -> bytes:
+    slides = [
+        _build_executive_snapshot_title_slide(slide_brief, kpi_rows, company=company, environment_label=environment_label, days=days),
+        _build_executive_snapshot_chart_slide(chart_rows, kpi_rows, company=company, environment_label=environment_label),
+    ]
+    core_props, app_props = _pptx_doc_props(len(slides))
+    presentation_rels = [(
+        "rId1",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster",
+        "slideMasters/slideMaster1.xml",
+    )]
+    presentation_rels.extend(
+        (
+            f"rId{idx + 1}",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
+            f"slides/slide{idx}.xml",
+        )
+        for idx in range(1, len(slides) + 1)
+    )
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", _pptx_content_types(len(slides)))
+        archive.writestr("_rels/.rels", _pptx_rels([
+            ("rId1", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", "ppt/presentation.xml"),
+            ("rId2", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml"),
+            ("rId3", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties", "docProps/app.xml"),
+        ]))
+        archive.writestr("docProps/core.xml", core_props)
+        archive.writestr("docProps/app.xml", app_props)
+        archive.writestr("ppt/presentation.xml", _pptx_presentation_xml(len(slides)))
+        archive.writestr("ppt/_rels/presentation.xml.rels", _pptx_rels(presentation_rels))
+        archive.writestr("ppt/slideMasters/slideMaster1.xml", _pptx_slide_master_xml())
+        archive.writestr("ppt/slideMasters/_rels/slideMaster1.xml.rels", _pptx_rels([
+            ("rId1", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout", "../slideLayouts/slideLayout1.xml"),
+            ("rId2", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme", "../theme/theme1.xml"),
+        ]))
+        archive.writestr("ppt/slideLayouts/slideLayout1.xml", _pptx_slide_layout_xml())
+        archive.writestr("ppt/slideLayouts/_rels/slideLayout1.xml.rels", _pptx_rels([
+            ("rId1", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster", "../slideMasters/slideMaster1.xml"),
+        ]))
+        archive.writestr("ppt/theme/theme1.xml", _pptx_theme_xml())
+        for idx, slide_xml in enumerate(slides, start=1):
+            archive.writestr(f"ppt/slides/slide{idx}.xml", slide_xml)
+            archive.writestr(f"ppt/slides/_rels/slide{idx}.xml.rels", _pptx_rels([
+                ("rId1", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout", "../slideLayouts/slideLayout1.xml"),
+            ]))
+    return buffer.getvalue()
+
+
+def _render_powerpoint_kpi_strip(kpi_rows: pd.DataFrame) -> None:
+    lookup = _pptx_kpi_lookup(kpi_rows)
+    cards = [
+        ("Current Spend", lookup.get("Current spend", ("$0", ""))[0]),
+        ("Spend Delta", lookup.get("Spend delta", ("$0", ""))[0]),
+        ("Critical / High", lookup.get("Critical/High alerts", ("0", ""))[0]),
+        ("Open Actions", lookup.get("Open actions", ("0", ""))[0]),
+    ]
+    cols = st.columns(4)
+    for col, (label, value) in zip(cols, cards):
+        with col:
+            st.metric(label, value)
+
+
 def _render_powerpoint_slide_pack(
     summary: dict,
     source_health: pd.DataFrame,
@@ -358,24 +782,40 @@ def _render_powerpoint_slide_pack(
         days=days,
         credit_price=credit_price,
     )
-    st.markdown("**PowerPoint Slide Brief**")
+    file_scope = f"{_safe_filename_piece(company)}_{_safe_filename_piece(environment_label)}_{int(days)}d"
+    deck_bytes = _build_executive_snapshot_pptx(
+        slide_brief,
+        kpi_rows,
+        chart_rows,
+        company=company,
+        environment_label=environment_label,
+        days=days,
+    )
+    st.markdown("**PowerPoint Executive Snapshot**")
     st.text_area("Slide bullets", value=slide_brief, height=230, key="executive_powerpoint_slide_bullets")
-    dl_cols = st.columns([1.0, 1.0, 2.0])
+    _render_powerpoint_kpi_strip(kpi_rows)
+    dl_cols = st.columns([1.0, 1.0, 1.0, 1.0])
     dl_cols[0].download_button(
         "Download bullets",
         slide_brief,
-        file_name=f"overwatch_{company.lower()}_{environment.lower()}_{int(days)}d_slide_brief.txt",
+        file_name=f"overwatch_executive_snapshot_{file_scope}.txt",
         mime="text/plain",
         key="executive_powerpoint_bullets_download",
     )
     dl_cols[1].download_button(
         "Download chart data",
         chart_rows.to_csv(index=False, sep="\t"),
-        file_name=f"overwatch_{company.lower()}_{environment.lower()}_{int(days)}d_chart_data.tsv",
+        file_name=f"overwatch_executive_snapshot_{file_scope}_chart_data.tsv",
         mime="text/tab-separated-values",
         key="executive_powerpoint_chart_data_download",
     )
-    st.dataframe(kpi_rows, hide_index=True, width="stretch")
+    dl_cols[2].download_button(
+        "Download PowerPoint",
+        deck_bytes,
+        file_name=f"overwatch_executive_snapshot_{file_scope}.pptx",
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        key="executive_powerpoint_deck_download",
+    )
     chart_cols = st.columns(2)
     with chart_cols[0]:
         st.markdown("**Cost Movement**")
@@ -383,6 +823,23 @@ def _render_powerpoint_slide_pack(
     with chart_cols[1]:
         st.markdown("**Risk and Work**")
         _render_slide_bar_chart(chart_rows, "Risk and work")
+    with st.expander("PowerPoint support data", expanded=False):
+        render_priority_dataframe(
+            kpi_rows,
+            title="Slide KPI rows",
+            priority_columns=["KPI", "VALUE", "SLIDE_NOTE"],
+            raw_label="All executive slide KPI rows",
+            height=250,
+            max_rows=10,
+        )
+        render_priority_dataframe(
+            chart_rows,
+            title="Slide chart rows",
+            priority_columns=["CHART", "METRIC", "VALUE", "LABEL"],
+            raw_label="All executive slide chart rows",
+            height=240,
+            max_rows=12,
+        )
 
 
 def _render_executive_action_brief(summary: dict | None, days: int) -> bool:
@@ -570,15 +1027,16 @@ def render() -> None:
     s1.metric("Sources Loaded", f"{loaded_sources}/4")
     s2.metric("Limited Sources", f"{limited_sources}", delta_color="inverse")
     s3.metric("No-Row Sources", f"{no_row_sources}")
-    render_priority_dataframe(
-        source_health,
-        title="Executive source health",
-        priority_columns=["SOURCE", "STATE", "EVIDENCE", "NEXT_ACTION"],
-        sort_by=["STATE", "SOURCE"],
-        ascending=[True, True],
-        raw_label="All executive source health rows",
-        height=220,
-    )
+    with st.expander("Executive source health", expanded=False):
+        render_priority_dataframe(
+            source_health,
+            title="Executive source health",
+            priority_columns=["SOURCE", "STATE", "EVIDENCE", "NEXT_ACTION"],
+            sort_by=["STATE", "SOURCE"],
+            ascending=[True, True],
+            raw_label="All executive source health rows",
+            height=220,
+        )
 
     _render_powerpoint_slide_pack(
         summary,

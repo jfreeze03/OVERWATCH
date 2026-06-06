@@ -150,22 +150,23 @@ DBA_CONTROL_SCOPE_FILTER_KEYS = (
 )
 DBA_CONTROL_ROOM_PANES = (
     "Fast Watch",
-    "Release Gate",
     "Operations Board",
     "Triage",
     "Drill Routes",
-    "Release Compare",
-    "Executive Evidence",
+    "Release Gate",
     "Source Health",
+    "Executive Evidence",
+    "Release Compare",
 )
 DBA_CONTROL_ROOM_PANE_LABELS = {
     "Fast Watch": "Watch",
-    "Release Gate": "Gate",
     "Operations Board": "Ops",
+    "Triage": "Triage",
     "Drill Routes": "Routes",
-    "Release Compare": "Compare",
-    "Executive Evidence": "Evidence",
+    "Release Gate": "Gate",
     "Source Health": "Sources",
+    "Executive Evidence": "Evidence",
+    "Release Compare": "Compare",
 }
 DBA_CONTROL_ROOM_DETAIL_PANES = (
     "Failed Queries",
@@ -4075,26 +4076,16 @@ def _render_watch_floor(
     regression_count: int,
     cortex_exception_count: int,
 ) -> None:
-    score = _control_room_score(exceptions, row, credit_delta, regression_count, cortex_exception_count)
     priority = _priority_exceptions(exceptions).head(3)
-    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.2])
-    c1.metric("Critical Moves", f"{len(priority):,}", delta_color="inverse")
-    c2.metric("Cost Window", f"${credits_to_dollars(period_credits, credit_price):,.0f}", f"{credit_delta:+.1f}%", delta_color="inverse")
-    c3.metric("Regression / AI", f"{safe_int(regression_count) + safe_int(cortex_exception_count):,}", delta_color="inverse")
-    with c4:
-        if priority.empty:
-            st.success("Watch floor is clear. Use Release Compare or Source Health if you are validating a recent deployment.")
-        else:
-            first = priority.iloc[0]
-            st.warning(
-                f"First move: {first.get('Signal', 'Exception')} -> {first.get('Action', 'Review the routed workflow.')}"
-            )
-
     st.markdown("**DBA Watch Floor**")
     if priority.empty:
-        st.caption("No immediate exception cards. Keep this page as the morning triage and evidence export point.")
+        st.success("Watch floor is clear. Use Release Compare or Source Health if you are validating a recent deployment.")
         return
 
+    first = priority.iloc[0]
+    st.warning(
+        f"First move: {first.get('Signal', 'Exception')} -> {first.get('Action', 'Review the routed workflow.')}"
+    )
     cols = st.columns(len(priority))
     for idx, (_, item) in enumerate(priority.iterrows()):
         route = str(item.get("Route", "") or "")
@@ -4212,6 +4203,40 @@ def _render_dba_action_brief(
             if st.button("Alert Center", key="dba_control_room_action_brief_alerts", width="stretch"):
                 _jump("Alert Center")
                 st.rerun()
+
+
+def _render_loaded_operating_snapshot(
+    *,
+    exception_count: int,
+    release_blocks: int,
+    release_reviews: int,
+    failed_queries: int,
+    queued_queries: int,
+    p95_runtime: float,
+    period_credits: float,
+    credit_delta: float,
+    credit_price: float,
+    drift_ai_count: int,
+) -> None:
+    """Show the loaded Control Room scope without repeating Fast Watch counters."""
+    st.markdown("**Operating Snapshot**")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Exceptions", f"{safe_int(exception_count):,}", delta_color="inverse")
+    m2.metric(
+        "Release Blocks",
+        f"{safe_int(release_blocks):,}",
+        f"{safe_int(release_reviews):,} review",
+        delta_color="inverse",
+    )
+    m3.metric("Failed Queries", f"{safe_int(failed_queries):,}", delta_color="inverse")
+    m4.metric("Est. Cost", f"${credits_to_dollars(period_credits, credit_price):,.0f}")
+
+    with st.expander("More loaded metrics", expanded=False):
+        n1, n2, n3, n4 = st.columns(4)
+        n1.metric("Queued", f"{safe_int(queued_queries):,}", delta_color="inverse")
+        n2.metric("p95 Runtime", f"{safe_float(p95_runtime):,.0f}s")
+        n3.metric("Credits", f"{safe_float(period_credits):,.2f}", f"{safe_float(credit_delta):+.1f}%", delta_color="inverse")
+        n4.metric("Drift / AI", f"{safe_int(drift_ai_count):,}", delta_color="inverse")
 
 
 def _dba_handoff_rows(
@@ -5194,16 +5219,18 @@ def render() -> None:
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
     p95_runtime = safe_float(row.get("P95_ELAPSED_SEC", 0))
     cortex_issue_count = 0 if cortex_exceptions.empty else len(cortex_exceptions)
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Exceptions", f"{len(exceptions):,}", delta_color="inverse")
-    m2.metric("Release Blocks", f"{release_blocks:,}", f"{release_reviews:,} review", delta_color="inverse")
-    m3.metric("Queued", f"{queued_queries:,}", delta_color="inverse")
-    m4.metric("p95 Runtime", f"{p95_runtime:,.0f}s")
-    n1, n2, n3, n4 = st.columns(4)
-    n1.metric("Failed Queries", f"{failed_queries:,}", delta_color="inverse")
-    n2.metric("Credits", f"{period_credits:,.2f}", f"{credit_delta:+.1f}%", delta_color="inverse")
-    n3.metric("Est. Cost", f"${credits_to_dollars(period_credits, credit_price):,.0f}")
-    n4.metric("Drift / AI", f"{regression_count + cortex_issue_count:,}", delta_color="inverse")
+    _render_loaded_operating_snapshot(
+        exception_count=len(exceptions),
+        release_blocks=release_blocks,
+        release_reviews=release_reviews,
+        failed_queries=failed_queries,
+        queued_queries=queued_queries,
+        p95_runtime=p95_runtime,
+        period_credits=period_credits,
+        credit_delta=credit_delta,
+        credit_price=credit_price,
+        drift_ai_count=regression_count + cortex_issue_count,
+    )
     _render_dba_action_brief(
         release_gate_summary,
         exceptions,

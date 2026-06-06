@@ -86,9 +86,9 @@ def get_active_environment() -> str:
 def _mfa_count_expr(user_cols: set[str]) -> str:
     normalized = {str(col or "").upper() for col in user_cols}
     if "HAS_MFA" in normalized:
-        return "COUNT_IF(COALESCE(TO_VARCHAR(has_mfa), 'false') <> 'true')"
+        return "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_mfa)), FALSE) = FALSE)"
     if "EXT_AUTHN_DUO" in normalized:
-        return "COUNT_IF(COALESCE(TO_VARCHAR(ext_authn_duo), 'false') <> 'true')"
+        return "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(ext_authn_duo)), FALSE) = FALSE)"
     return "NULL::NUMBER"
 
 
@@ -96,9 +96,9 @@ def _mfa_gap_predicate(user_cols: set[str], alias: str = "u") -> str:
     normalized = {str(col or "").upper() for col in user_cols}
     prefix = f"{alias}." if alias else ""
     if "HAS_MFA" in normalized:
-        return f"AND COALESCE(TO_VARCHAR({prefix}has_mfa), 'false') <> 'true'"
+        return f"AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR({prefix}has_mfa)), FALSE) = FALSE"
     if "EXT_AUTHN_DUO" in normalized:
-        return f"AND COALESCE(TO_VARCHAR({prefix}ext_authn_duo), 'false') <> 'true'"
+        return f"AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR({prefix}ext_authn_duo)), FALSE) = FALSE"
     return "AND 1 = 0"
 
 
@@ -204,6 +204,8 @@ SECURITY_SCOPE_FILTER_KEYS = (
     "global_start_date",
     "global_end_date",
 )
+_SECURITY_PROOF_TABLES_KEY = "security_posture_show_proof_tables"
+_SECURITY_PROOF_TABLES_SCOPE_KEY = "security_posture_proof_tables_scope"
 
 
 def security_access_review_fqn(
@@ -327,6 +329,23 @@ def _security_meta_matches(meta: dict | None, expected: dict | None) -> bool:
         elif _security_scope_value(actual) != _security_scope_value(expected_value):
             return False
     return True
+
+
+def _security_proof_tables_visible(company: str, environment: str, days: int) -> bool:
+    return bool(st.session_state.get(_SECURITY_PROOF_TABLES_KEY)) and _security_meta_matches(
+        st.session_state.get(_SECURITY_PROOF_TABLES_SCOPE_KEY),
+        _security_scope_meta(company, environment, days),
+    )
+
+
+def _show_security_proof_tables(company: str, environment: str, days: int) -> None:
+    st.session_state[_SECURITY_PROOF_TABLES_KEY] = True
+    st.session_state[_SECURITY_PROOF_TABLES_SCOPE_KEY] = _security_scope_meta(company, environment, days)
+
+
+def _hide_security_proof_tables() -> None:
+    st.session_state[_SECURITY_PROOF_TABLES_KEY] = False
+    st.session_state.pop(_SECURITY_PROOF_TABLES_SCOPE_KEY, None)
 
 
 def _security_frame_rows(frame) -> int:
@@ -1473,6 +1492,152 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
     cols[3].metric("Shared DBs", f"{safe_int(snapshot.get('shared_databases')):,}")
 
 
+def _paint_security_brief_chrome(
+    brief_slot,
+    snapshot_slot,
+    summary,
+    exceptions,
+    meta: dict,
+    company: str,
+    environment: str,
+    days: int,
+) -> None:
+    with brief_slot.container():
+        _render_security_action_brief(
+            _security_action_brief(summary, exceptions, meta, company, environment, days)
+        )
+    with snapshot_slot.container():
+        _render_security_operating_snapshot(
+            _security_operating_snapshot(summary, meta, company, environment, days)
+        )
+
+
+def _render_security_operability_fact_gate(company: str, environment: str, days: int) -> None:
+    fact_meta_expected = _security_scope_meta(company, environment, days)
+    fact_col, note_col = st.columns([1.3, 3.7])
+    with fact_col:
+        if st.button("Load Security Control Facts", key="security_operability_fact_load"):
+            try:
+                operability_sql = _security_operability_fact_sql(days, company, environment)
+                st.session_state["security_operability_fact_sql"] = operability_sql
+                st.session_state["security_operability_fact"] = run_query(
+                    operability_sql,
+                    ttl_key=f"security_operability_fact_{company}_{environment}_{days}",
+                    tier="standard",
+                    section="Security Posture",
+                )
+                st.session_state["security_operability_fact_meta"] = fact_meta_expected
+                st.session_state.pop("security_operability_fact_error", None)
+            except Exception as fact_exc:
+                st.session_state["security_operability_fact"] = pd.DataFrame()
+                st.session_state["security_operability_fact_error"] = format_snowflake_error(fact_exc)
+    with note_col:
+        st.caption(
+            "Security control facts stay unloaded until you need audit-ready blocker, closure, or verification evidence."
+        )
+
+    operability_fact = st.session_state.get("security_operability_fact")
+    if (
+        operability_fact is not None
+        and not _security_meta_matches(
+            st.session_state.get("security_operability_fact_meta"),
+            fact_meta_expected,
+        )
+    ):
+        st.info("Loaded security control facts are stale for the active scope. Reload before acting.")
+        return
+    if operability_fact is not None and not operability_fact.empty:
+        st.subheader("Security Operability Mart")
+        f1, f2, f3, f4 = st.columns(4)
+        blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
+            "Blocked|Overdue|Required", case=False, na=False
+        )
+        f1.metric("Fact Rows", f"{len(operability_fact):,}")
+        f2.metric("Blocked", f"{int(blocked_states.sum()):,}", delta_color="inverse")
+        f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+        f4.metric("Verified", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+        render_priority_dataframe(
+            operability_fact,
+            title="Pre-aggregated security blockers",
+            priority_columns=[
+                "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "SEVERITY",
+                "FINDING_TYPE", "ENTITY", "ENTITY_TYPE", "ENVIRONMENT",
+                "EVENT_ROWS", "REVIEW_ROWS", "REVIEW_BLOCKER_ROWS",
+                "TICKET_REQUIRED_ROWS", "REVIEW_BY_REQUIRED_ROWS",
+                "CAPABILITY_PROOF_ROWS", "NO_DATABASE_CONTEXT_ROWS",
+                "OPEN_ACTIONS", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION",
+                "VERIFIED_CLOSURES", "OWNER_APPROVAL_GAP_ROWS", "NEXT_CONTROL_ACTION",
+            ],
+            sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "REVIEW_BLOCKER_ROWS"],
+            ascending=[True, False, False, False],
+            raw_label="All security operability facts",
+            height=320,
+        )
+        with st.expander("Security operability fact query", expanded=False):
+            st.code(st.session_state.get("security_operability_fact_sql", ""), language="sql")
+    elif st.session_state.get("security_operability_fact_error"):
+        defer_source_note(
+            "Security operability mart not available yet; deploy or refresh "
+            "`FACT_SECURITY_OPERABILITY_DAILY` to enable the fast blocker surface."
+        )
+
+
+def _render_security_exceptions_gate(company: str, environment: str, days: int) -> None:
+    exceptions_loaded = "security_posture_exceptions" in st.session_state
+    exceptions = st.session_state.get("security_posture_exceptions")
+    if not exceptions_loaded:
+        load_col, note_col = st.columns([1.2, 3.8])
+        with load_col:
+            if st.button("Load Security Exceptions", key="security_posture_load_exceptions"):
+                session = None
+                try:
+                    session = get_session()
+                    proof_sql = st.session_state.get("security_posture_proof_sql") or {}
+                    exceptions_sql = str(proof_sql.get("exceptions") or "")
+                    preferred_source = str(st.session_state.get("security_posture_source") or "")
+                    if not exceptions_sql:
+                        _, exceptions_sql = _build_security_mart_brief_sql(session, days, company)
+                        preferred_source = "OVERWATCH mart: FACT_LOGIN_DAILY + FACT_GRANT_DAILY; MFA/sharing: ACCOUNT_USAGE"
+                    source_kind = "live" if "live" in preferred_source.lower() else "mart"
+                    st.session_state["security_posture_exceptions"] = run_query(
+                        exceptions_sql,
+                        ttl_key=f"security_posture_exceptions_{source_kind}_{company}_{environment}_{days}",
+                        tier="standard",
+                    )
+                    st.session_state["security_posture_exception_source"] = preferred_source
+                    st.session_state.pop("security_posture_exception_error", None)
+                    proof_sql["exceptions"] = exceptions_sql
+                    st.session_state["security_posture_proof_sql"] = proof_sql
+                except Exception as exc:
+                    try:
+                        session = session or get_session()
+                        _, exceptions_sql = _build_security_summary_sql(session, days, company)
+                        st.session_state["security_posture_exceptions"] = run_query(
+                            exceptions_sql,
+                            ttl_key=f"security_posture_exceptions_live_{company}_{environment}_{days}",
+                            tier="standard",
+                        )
+                        st.session_state["security_posture_exception_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE"
+                        st.session_state.pop("security_posture_exception_error", None)
+                        proof_sql = st.session_state.get("security_posture_proof_sql") or {}
+                        proof_sql["exceptions"] = exceptions_sql
+                        st.session_state["security_posture_proof_sql"] = proof_sql
+                        st.info(f"Security mart exceptions unavailable; used live ACCOUNT_USAGE fallback. {format_snowflake_error(exc)}")
+                    except Exception as live_exc:
+                        st.session_state.pop("security_posture_exceptions", None)
+                        st.session_state["security_posture_exception_error"] = format_snowflake_error(live_exc)
+        with note_col:
+            st.caption("Security exceptions stay unloaded until you need user/IP, MFA, grant, or sharing proof rows.")
+        if st.session_state.get("security_posture_exception_error"):
+            st.warning(f"Unable to load security exceptions: {st.session_state['security_posture_exception_error']}")
+        return
+
+    if exceptions is not None and getattr(exceptions, "empty", True):
+        st.success("No security exceptions crossed the loaded thresholds for this scope.")
+    if st.session_state.get("security_posture_exception_source"):
+        defer_source_note(str(st.session_state.get("security_posture_exception_source")))
+
+
 def _build_security_brief_markdown(
     *,
     company: str,
@@ -1534,7 +1699,7 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
     mfa_gap_predicate = _mfa_gap_predicate(user_cols)
     mfa_proof = _mfa_proof_label(user_cols)
     password_count_expr = (
-        "COUNT_IF(COALESCE(TO_VARCHAR(has_password), 'false') = 'true')"
+        "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_password)), FALSE) = TRUE)"
         if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
     )
     last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
@@ -1561,7 +1726,7 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
             {password_count_expr} AS password_users
         FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
         WHERE u.deleted_on IS NULL
-          AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
+          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
           {user_filter_u}
     ),
     recent_grants AS (
@@ -1570,14 +1735,6 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
         WHERE g.deleted_on IS NULL
           AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
           {user_filter_g}
-    ),
-    object_grants AS (
-        SELECT COUNT(*) AS object_grants
-        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
-        WHERE gor.deleted_on IS NULL
-          AND gor.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          AND gor.table_catalog IS NOT NULL
-          {object_grant_db_filter}
     ),
     shared_dbs AS (
         SELECT COUNT(*) AS shared_databases
@@ -1595,9 +1752,9 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
         users.active_users,
         users.users_without_mfa,
         users.password_users,
-        recent_grants.recent_grants + object_grants.object_grants AS recent_grants,
+        recent_grants.recent_grants AS recent_grants,
         shared_dbs.shared_databases
-    FROM login_events, users, recent_grants, object_grants, shared_dbs
+    FROM login_events, users, recent_grants, shared_dbs
     """
     exceptions_sql = f"""
     WITH failed_logins AS (
@@ -1629,7 +1786,7 @@ def _build_security_summary_sql(session, days: int, company: str) -> tuple[str, 
             NULL::VARCHAR AS database_name
         FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
         WHERE u.deleted_on IS NULL
-          AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
+          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
           {user_filter_u}
           {mfa_gap_predicate}
     ),
@@ -1712,7 +1869,7 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
     mfa_gap_predicate = _mfa_gap_predicate(user_cols)
     mfa_proof = _mfa_proof_label(user_cols)
     password_count_expr = (
-        "COUNT_IF(COALESCE(TO_VARCHAR(has_password), 'false') = 'true')"
+        "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_password)), FALSE) = TRUE)"
         if "HAS_PASSWORD" in user_cols else "NULL::NUMBER"
     )
     last_seen_expr = "u.last_success_login" if "LAST_SUCCESS_LOGIN" in user_cols else "u.created_on"
@@ -1745,7 +1902,7 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
             {password_count_expr} AS password_users
         FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
         WHERE u.deleted_on IS NULL
-          AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
+          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
           {user_filter_u}
     ),
     recent_grants AS (
@@ -1756,14 +1913,6 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
           AND g.deleted_on IS NULL
           AND g.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
           {user_filter_g}
-    ),
-    object_grants AS (
-        SELECT COUNT(*) AS object_grants
-        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES gor
-        WHERE gor.deleted_on IS NULL
-          AND gor.created_on >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          AND gor.table_catalog IS NOT NULL
-          {object_grant_db_filter}
     ),
     shared_dbs AS (
         SELECT COUNT(*) AS shared_databases
@@ -1781,9 +1930,9 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
         users.active_users,
         users.users_without_mfa,
         users.password_users,
-        recent_grants.recent_grants + object_grants.object_grants AS recent_grants,
+        recent_grants.recent_grants AS recent_grants,
         shared_dbs.shared_databases
-    FROM login_events, users, recent_grants, object_grants, shared_dbs
+    FROM login_events, users, recent_grants, shared_dbs
     """
     exceptions_sql = f"""
     WITH failed_logins AS (
@@ -1816,7 +1965,7 @@ def _build_security_mart_brief_sql(session, days: int, company: str) -> tuple[st
             NULL::VARCHAR AS database_name
         FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
         WHERE u.deleted_on IS NULL
-          AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
+          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
           {user_filter_u}
           {mfa_gap_predicate}
     ),
@@ -2633,11 +2782,17 @@ def render() -> None:
     summary = st.session_state.get("security_posture_summary")
     exceptions = st.session_state.get("security_posture_exceptions")
     meta = st.session_state.get("security_posture_meta", {})
-    _render_security_action_brief(
-        _security_action_brief(summary, exceptions, meta, company, environment, days)
-    )
-    _render_security_operating_snapshot(
-        _security_operating_snapshot(summary, meta, company, environment, days)
+    brief_slot = st.empty()
+    snapshot_slot = st.empty()
+    _paint_security_brief_chrome(
+        brief_slot,
+        snapshot_slot,
+        summary,
+        exceptions,
+        meta,
+        company,
+        environment,
+        days,
     )
 
     days = st.slider("Security brief lookback (days)", 1, 90, 30, key="security_posture_brief_days")
@@ -2674,17 +2829,16 @@ def render() -> None:
                 ttl_key=f"security_posture_summary_mart_{company}_{environment}_{days}",
                 tier="standard",
             )
-            st.session_state["security_posture_exceptions"] = run_query(
-                exceptions_sql,
-                ttl_key=f"security_posture_exceptions_mart_{company}_{environment}_{days}",
-                tier="standard",
-            )
             source = "OVERWATCH mart: FACT_LOGIN_DAILY + FACT_GRANT_DAILY; MFA/sharing: ACCOUNT_USAGE"
             st.session_state["security_posture_meta"] = {
                 **_security_scope_meta(company, environment, days),
                 "source": source,
             }
             st.session_state["security_posture_source"] = source
+            st.session_state.pop("security_posture_exceptions", None)
+            st.session_state.pop("security_posture_exception_source", None)
+            st.session_state.pop("security_posture_exception_error", None)
+            _hide_security_proof_tables()
             st.session_state["security_posture_proof_sql"] = {
                 "summary": summary_sql,
                 "exceptions": exceptions_sql,
@@ -2698,17 +2852,16 @@ def render() -> None:
                     ttl_key=f"security_posture_summary_live_{company}_{environment}_{days}",
                     tier="standard",
                 )
-                st.session_state["security_posture_exceptions"] = run_query(
-                    exceptions_sql,
-                    ttl_key=f"security_posture_exceptions_live_{company}_{environment}_{days}",
-                    tier="standard",
-                )
                 source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE"
                 st.session_state["security_posture_meta"] = {
                     **_security_scope_meta(company, environment, days),
                     "source": source,
                 }
                 st.session_state["security_posture_source"] = source
+                st.session_state.pop("security_posture_exceptions", None)
+                st.session_state.pop("security_posture_exception_source", None)
+                st.session_state.pop("security_posture_exception_error", None)
+                _hide_security_proof_tables()
                 st.session_state["security_posture_proof_sql"] = {
                     "summary": summary_sql,
                     "exceptions": exceptions_sql,
@@ -2716,30 +2869,23 @@ def render() -> None:
                 st.info(f"Security mart unavailable; used live ACCOUNT_USAGE fallback. {format_snowflake_error(exc)}")
             except Exception as live_exc:
                 st.session_state["security_posture_summary"] = pd.DataFrame()
-                st.session_state["security_posture_exceptions"] = pd.DataFrame()
+                st.session_state.pop("security_posture_exceptions", None)
+                st.session_state.pop("security_posture_exception_source", None)
+                st.session_state.pop("security_posture_exception_error", None)
                 st.error(f"Unable to load security brief: {format_snowflake_error(live_exc)}")
-        fact_meta = st.session_state.get("security_posture_meta", {})
-        if (
-            fact_meta.get("company") == company
-            and fact_meta.get("environment") == environment
-            and fact_meta.get("days") == days
-        ):
-            try:
-                operability_sql = _security_operability_fact_sql(days, company, environment)
-                st.session_state["security_operability_fact_sql"] = operability_sql
-                st.session_state["security_operability_fact"] = run_query(
-                    operability_sql,
-                    ttl_key=f"security_operability_fact_{company}_{environment}_{days}",
-                    tier="standard",
-                    section="Security Posture",
-                )
-                st.session_state["security_operability_fact_meta"] = _security_scope_meta(
-                    company, environment, days
-                )
-                st.session_state.pop("security_operability_fact_error", None)
-            except Exception as fact_exc:
-                st.session_state["security_operability_fact"] = pd.DataFrame()
-                st.session_state["security_operability_fact_error"] = format_snowflake_error(fact_exc)
+        summary = st.session_state.get("security_posture_summary")
+        exceptions = st.session_state.get("security_posture_exceptions")
+        meta = st.session_state.get("security_posture_meta", {})
+        _paint_security_brief_chrome(
+            brief_slot,
+            snapshot_slot,
+            summary,
+            exceptions,
+            meta,
+            company,
+            environment,
+            days,
+        )
 
     summary = st.session_state.get("security_posture_summary")
     exceptions = st.session_state.get("security_posture_exceptions")
@@ -2773,41 +2919,9 @@ def render() -> None:
         defer_source_note(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE"))
         _render_security_watch_floor(score, exceptions, row)
         st.divider()
-        operability_fact = st.session_state.get("security_operability_fact")
-        if operability_fact is not None and not operability_fact.empty:
-            st.subheader("Security Operability Mart")
-            f1, f2, f3, f4 = st.columns(4)
-            blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
-                "Blocked|Overdue|Required", case=False, na=False
-            )
-            f1.metric("Fact Rows", f"{len(operability_fact):,}")
-            f2.metric("Blocked", f"{int(blocked_states.sum()):,}", delta_color="inverse")
-            f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-            f4.metric("Verified", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
-            render_priority_dataframe(
-                operability_fact,
-                title="Pre-aggregated security blockers",
-                priority_columns=[
-                    "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "SEVERITY",
-                    "FINDING_TYPE", "ENTITY", "ENTITY_TYPE", "ENVIRONMENT",
-                    "EVENT_ROWS", "REVIEW_ROWS", "REVIEW_BLOCKER_ROWS",
-                    "TICKET_REQUIRED_ROWS", "REVIEW_BY_REQUIRED_ROWS",
-                    "CAPABILITY_PROOF_ROWS", "NO_DATABASE_CONTEXT_ROWS",
-                    "OPEN_ACTIONS", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION",
-                    "VERIFIED_CLOSURES", "OWNER_APPROVAL_GAP_ROWS", "NEXT_CONTROL_ACTION",
-                ],
-                sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "REVIEW_BLOCKER_ROWS"],
-                ascending=[True, False, False, False],
-                raw_label="All security operability facts",
-                height=320,
-            )
-            with st.expander("Security operability fact query", expanded=False):
-                st.code(st.session_state.get("security_operability_fact_sql", ""), language="sql")
-        elif st.session_state.get("security_operability_fact_error"):
-            defer_source_note(
-                "Security operability mart not available yet; deploy or refresh "
-                "`FACT_SECURITY_OPERABILITY_DAILY` to enable the fast blocker surface."
-            )
+        _render_security_operability_fact_gate(company, environment, days)
+        _render_security_exceptions_gate(company, environment, days)
+        exceptions = st.session_state.get("security_posture_exceptions")
         if exceptions is not None and not exceptions.empty:
             st.subheader("Security Exceptions")
             priority_exceptions = _security_priority_view(exceptions)
@@ -2824,55 +2938,69 @@ def render() -> None:
                 raw_label="All security exceptions",
             )
 
-            access_review = _build_security_access_review(exceptions, environment)
-            security_board = _security_control_board(
-                access_review,
-                closure=st.session_state.get("security_action_closure"),
-                trend=st.session_state.get("security_access_review_trend"),
-                environment=environment,
-            )
-            if not security_board.empty:
-                st.subheader("Security Control Board")
-                b1, b2, b3, b4 = st.columns(4)
-                blocked_states = security_board["CONTROL_STATE"].astype(str).str.contains("Blocked|Overdue|Required", case=False, na=False)
-                b1.metric("Control Rows", f"{len(security_board):,}")
-                b2.metric("Blocked", f"{int(blocked_states.sum()):,}", delta_color="inverse")
-                b3.metric("Overdue", f"{int(security_board.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-                b4.metric("Verified", f"{int(security_board.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
-                render_priority_dataframe(
-                    security_board,
-                    title="Security issues blocking DBA closure",
-                    priority_columns=[
-                        "CONTROL_STATE", "SEVERITY", "FINDING_TYPE", "ENTITY",
-                        "ENVIRONMENT", "DATABASE_CONTEXT", "OWNER", "APPROVER",
-                        "REVIEW_READINESS", "REVIEW_BLOCKERS", "ACCESS_TICKET_ID",
-                        "REVIEW_BY_DATE", "IAM_APPROVAL_STATE", "REVIEW_SLA_HOURS",
-                        "OPEN_ACTIONS", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION",
-                        "VERIFIED_CLOSURES", "CONTROL_BLOCKERS", "NEXT_CONTROL_ACTION",
-                    ],
-                    sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS"],
-                    ascending=[True, False, False, False],
-                    raw_label="All security control rows",
-                    height=340,
+            queue_col, proof_col, _spacer_col = st.columns([1.25, 1.25, 2.5])
+            with queue_col:
+                if st.button("Save Security Exceptions to Action Queue", key="security_posture_queue"):
+                    _queue_security_exceptions(get_session(), exceptions)
+            proof_tables_visible = _security_proof_tables_visible(company, environment, days)
+            with proof_col:
+                if proof_tables_visible:
+                    if st.button("Hide Security Proof Tables", key="security_posture_hide_proof_tables"):
+                        _hide_security_proof_tables()
+                        st.rerun()
+                elif st.button("Load Security Proof Tables", key="security_posture_load_proof_tables"):
+                    _show_security_proof_tables(company, environment, days)
+                    st.rerun()
+            if not proof_tables_visible:
+                st.caption("Security proof tables stay unloaded until you need owner readiness, control closure, or audit support detail.")
+            else:
+                access_review = _build_security_access_review(exceptions, environment)
+                security_board = _security_control_board(
+                    access_review,
+                    closure=st.session_state.get("security_action_closure"),
+                    trend=st.session_state.get("security_access_review_trend"),
+                    environment=environment,
                 )
-            render_priority_dataframe(
-                access_review,
-                title="Security access-review readiness before queueing",
-                priority_columns=[
-                    "SEVERITY", "REVIEW_READINESS", "ACCESS_REVIEW_STATE", "FINDING_TYPE", "ENTITY",
-                    "OWNER", "ESCALATION_TARGET", "APPROVER", "ROLE_CAPABILITY_STATE",
-                    "ACCESS_TICKET_ID", "REVIEW_BY_DATE", "IAM_APPROVAL_STATE",
-                    "REVIEW_BLOCKERS", "REVIEW_SLA_HOURS", "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "DATABASE_CONTEXT",
-                    "DATABASE_NAME", "ENVIRONMENT", "SCOPE_CONFIDENCE", "SCOPE_EVIDENCE",
-                    "PROOF_REQUIRED", "NEXT_CONTROL_ACTION",
-                ],
-                sort_by=["REVIEW_RANK", "SEVERITY", "ENTITY"],
-                ascending=[True, True, True],
-                raw_label="Full security access review",
-            )
+                if not security_board.empty:
+                    st.subheader("Security Control Board")
+                    b1, b2, b3, b4 = st.columns(4)
+                    blocked_states = security_board["CONTROL_STATE"].astype(str).str.contains("Blocked|Overdue|Required", case=False, na=False)
+                    b1.metric("Control Rows", f"{len(security_board):,}")
+                    b2.metric("Blocked", f"{int(blocked_states.sum()):,}", delta_color="inverse")
+                    b3.metric("Overdue", f"{int(security_board.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+                    b4.metric("Verified", f"{int(security_board.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+                    render_priority_dataframe(
+                        security_board,
+                        title="Security issues blocking DBA closure",
+                        priority_columns=[
+                            "CONTROL_STATE", "SEVERITY", "FINDING_TYPE", "ENTITY",
+                            "ENVIRONMENT", "DATABASE_CONTEXT", "OWNER", "APPROVER",
+                            "REVIEW_READINESS", "REVIEW_BLOCKERS", "ACCESS_TICKET_ID",
+                            "REVIEW_BY_DATE", "IAM_APPROVAL_STATE", "REVIEW_SLA_HOURS",
+                            "OPEN_ACTIONS", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION",
+                            "VERIFIED_CLOSURES", "CONTROL_BLOCKERS", "NEXT_CONTROL_ACTION",
+                        ],
+                        sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS"],
+                        ascending=[True, False, False, False],
+                        raw_label="All security control rows",
+                        height=340,
+                    )
+                render_priority_dataframe(
+                    access_review,
+                    title="Security access-review readiness before queueing",
+                    priority_columns=[
+                        "SEVERITY", "REVIEW_READINESS", "ACCESS_REVIEW_STATE", "FINDING_TYPE", "ENTITY",
+                        "OWNER", "ESCALATION_TARGET", "APPROVER", "ROLE_CAPABILITY_STATE",
+                        "ACCESS_TICKET_ID", "REVIEW_BY_DATE", "IAM_APPROVAL_STATE",
+                        "REVIEW_BLOCKERS", "REVIEW_SLA_HOURS", "TICKET_REQUIRED", "REVIEW_BY_REQUIRED", "DATABASE_CONTEXT",
+                        "DATABASE_NAME", "ENVIRONMENT", "SCOPE_CONFIDENCE", "SCOPE_EVIDENCE",
+                        "PROOF_REQUIRED", "NEXT_CONTROL_ACTION",
+                    ],
+                    sort_by=["REVIEW_RANK", "SEVERITY", "ENTITY"],
+                    ascending=[True, True, True],
+                    raw_label="Full security access review",
+                )
 
-            review_col, queue_col = st.columns(2)
-            with review_col:
                 if st.button("Save Access Review Snapshot", key="security_posture_access_review_snapshot"):
                     _save_security_access_review_snapshot(
                         get_session(),
@@ -2881,126 +3009,123 @@ def render() -> None:
                         environment=environment,
                         source=meta.get("source", ""),
                     )
-            with queue_col:
-                if st.button("Save Security Exceptions to Action Queue", key="security_posture_queue"):
-                    _queue_security_exceptions(get_session(), exceptions)
 
-            with st.expander("Security Access Review Trend", expanded=False):
-                trend_days = st.slider(
-                    "Access review history lookback (days)",
-                    7,
-                    120,
-                    30,
-                    key="security_access_review_trend_days",
-                )
-                if st.button("Load Access Review Trend", key="security_access_review_trend_load"):
-                    try:
-                        trend_sql = _security_access_review_history_sql(trend_days, company, environment)
-                        st.session_state["security_access_review_trend_sql"] = trend_sql
-                        st.session_state["security_access_review_trend"] = run_query(
-                            trend_sql,
-                            ttl_key=f"security_access_review_trend_{company}_{environment}_{trend_days}",
-                            tier="standard",
-                            section="Security Posture",
-                        )
-                        st.session_state["security_access_review_trend_meta"] = _security_scope_meta(
-                            company, environment, trend_days
-                        )
-                    except Exception as exc:
-                        st.session_state["security_access_review_trend"] = pd.DataFrame()
-                        st.error(f"Could not load security access-review history: {format_snowflake_error(exc)}")
-                        st.info("Deploy the access-review table from `snowflake/OVERWATCH_MART_SETUP.sql`, then reload.")
-                trend = st.session_state.get("security_access_review_trend")
-                if (
-                    trend is not None
-                    and not _security_meta_matches(
-                        st.session_state.get("security_access_review_trend_meta"),
-                        _security_scope_meta(company, environment, trend_days),
+                with st.expander("Security Access Review Trend", expanded=False):
+                    trend_days = st.slider(
+                        "Access review history lookback (days)",
+                        7,
+                        120,
+                        30,
+                        key="security_access_review_trend_days",
                     )
-                ):
-                    st.info("Loaded security access-review trend is stale for the active scope. Reload before acting.")
-                elif trend is not None and not trend.empty:
-                    render_priority_dataframe(
-                        trend,
-                        title="Security review findings still needing DBA evidence",
-                        priority_columns=[
-                            "FINDING_TYPE", "SEVERITY", "OWNER", "ESCALATION_TARGET",
-                            "REVIEW_ROWS", "TOTAL_EVENTS", "TICKET_REQUIRED_ROWS",
-                            "REVIEW_BY_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS",
-                            "REVIEW_BLOCKER_ROWS", "VERIFIED_REVIEW_ROWS",
-                            "NO_DATABASE_CONTEXT_ROWS", "LAST_ACCESS_REVIEW_STATE",
-                            "LAST_REVIEW_READINESS", "LAST_CONTROL_READINESS",
-                            "LAST_ROLE_CAPABILITY_STATE", "NEXT_CONTROL_ACTION",
-                        ],
-                        sort_by=["REVIEW_BLOCKER_ROWS", "TICKET_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS", "TOTAL_EVENTS"],
-                        ascending=[False, False, False, False],
-                        raw_label="Access review history",
-                    )
-                    with st.expander("Trend Query", expanded=False):
-                        st.code(st.session_state.get("security_access_review_trend_sql", ""), language="sql")
-                elif trend is not None:
-                    st.info("No saved security access-review snapshots found for the selected scope.")
-                defer_source_note(
-                    "Access-review DDL is managed by snowflake/OVERWATCH_MART_SETUP.sql; do not deploy setup SQL from the dashboard."
-                )
-            with st.expander("Security Action Closure Analytics", expanded=False):
-                defer_source_note(
-                    "Uses Security Posture action-queue rows to show open, overdue, unapproved, "
-                    "or closed-without-verification security work."
-                )
-                closure_days = st.slider(
-                    "Security closure days",
-                    7,
-                    180,
-                    30,
-                    key="security_action_closure_days",
-                )
-                if st.button("Load Security Closure Analytics", key="security_action_closure_load"):
-                    try:
-                        closure_sql = _security_action_queue_closure_sql(closure_days, company, environment)
-                        st.session_state["security_action_closure_sql"] = closure_sql
-                        st.session_state["security_action_closure"] = run_query(
-                            closure_sql,
-                            ttl_key=f"security_action_closure_{company}_{environment}_{closure_days}",
-                            tier="standard",
-                            section="Security Posture",
+                    if st.button("Load Access Review Trend", key="security_access_review_trend_load"):
+                        try:
+                            trend_sql = _security_access_review_history_sql(trend_days, company, environment)
+                            st.session_state["security_access_review_trend_sql"] = trend_sql
+                            st.session_state["security_access_review_trend"] = run_query(
+                                trend_sql,
+                                ttl_key=f"security_access_review_trend_{company}_{environment}_{trend_days}",
+                                tier="standard",
+                                section="Security Posture",
+                            )
+                            st.session_state["security_access_review_trend_meta"] = _security_scope_meta(
+                                company, environment, trend_days
+                            )
+                        except Exception as exc:
+                            st.session_state["security_access_review_trend"] = pd.DataFrame()
+                            st.error(f"Could not load security access-review history: {format_snowflake_error(exc)}")
+                            st.info("Deploy the access-review table from `snowflake/OVERWATCH_MART_SETUP.sql`, then reload.")
+                    trend = st.session_state.get("security_access_review_trend")
+                    if (
+                        trend is not None
+                        and not _security_meta_matches(
+                            st.session_state.get("security_access_review_trend_meta"),
+                            _security_scope_meta(company, environment, trend_days),
                         )
-                        st.session_state["security_action_closure_meta"] = _security_scope_meta(
-                            company, environment, closure_days
+                    ):
+                        st.info("Loaded security access-review trend is stale for the active scope. Reload before acting.")
+                    elif trend is not None and not trend.empty:
+                        render_priority_dataframe(
+                            trend,
+                            title="Security review findings still needing DBA evidence",
+                            priority_columns=[
+                                "FINDING_TYPE", "SEVERITY", "OWNER", "ESCALATION_TARGET",
+                                "REVIEW_ROWS", "TOTAL_EVENTS", "TICKET_REQUIRED_ROWS",
+                                "REVIEW_BY_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS",
+                                "REVIEW_BLOCKER_ROWS", "VERIFIED_REVIEW_ROWS",
+                                "NO_DATABASE_CONTEXT_ROWS", "LAST_ACCESS_REVIEW_STATE",
+                                "LAST_REVIEW_READINESS", "LAST_CONTROL_READINESS",
+                                "LAST_ROLE_CAPABILITY_STATE", "NEXT_CONTROL_ACTION",
+                            ],
+                            sort_by=["REVIEW_BLOCKER_ROWS", "TICKET_REQUIRED_ROWS", "CAPABILITY_PROOF_ROWS", "TOTAL_EVENTS"],
+                            ascending=[False, False, False, False],
+                            raw_label="Access review history",
                         )
-                    except Exception as exc:
-                        st.session_state["security_action_closure"] = pd.DataFrame()
-                        st.warning(f"Security closure analytics unavailable: {format_snowflake_error(exc)}")
-                closure = st.session_state.get("security_action_closure")
-                if (
-                    closure is not None
-                    and not _security_meta_matches(
-                        st.session_state.get("security_action_closure_meta"),
-                        _security_scope_meta(company, environment, closure_days),
+                        with st.expander("Trend Query", expanded=False):
+                            st.code(st.session_state.get("security_access_review_trend_sql", ""), language="sql")
+                    elif trend is not None:
+                        st.info("No saved security access-review snapshots found for the selected scope.")
+                    defer_source_note(
+                        "Access-review DDL is managed by snowflake/OVERWATCH_MART_SETUP.sql; do not deploy setup SQL from the dashboard."
                     )
-                ):
-                    st.info("Loaded security closure analytics are stale for the active scope. Reload before acting.")
-                elif closure is not None and not closure.empty:
-                    render_priority_dataframe(
-                        closure,
-                        title="Security closure evidence gaps",
-                        priority_columns=[
-                            "CATEGORY", "ENTITY_TYPE", "ENTITY", "CLOSURE_READINESS",
-                            "OWNER", "APPROVER", "TOTAL_ACTIONS", "OPEN_ACTIONS",
-                            "OVERDUE_OPEN", "VERIFIED_CLOSURES", "FIXED_WITHOUT_VERIFICATION",
-                            "OWNER_GAP_ROWS", "TICKET_GAP_ROWS", "APPROVER_GAP_ROWS",
-                            "OWNER_APPROVAL_GAP_ROWS", "VERIFICATION_QUERY_GAP_ROWS",
-                            "RECOVERY_RISK_ROWS", "NEXT_DUE_DATE", "LAST_STATUS", "NEXT_ACTION",
-                        ],
-                        sort_by=["CLOSURE_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS"],
-                        ascending=[True, False, False, False],
-                        raw_label="All security closure rows",
-                        height=300,
+                with st.expander("Security Action Closure Analytics", expanded=False):
+                    defer_source_note(
+                        "Uses Security Posture action-queue rows to show open, overdue, unapproved, "
+                        "or closed-without-verification security work."
                     )
-                    with st.expander("Security Closure Query", expanded=False):
-                        st.code(st.session_state.get("security_action_closure_sql", ""), language="sql")
-                elif closure is not None:
-                    st.info("No Security Posture action-queue rows found for the selected scope.")
+                    closure_days = st.slider(
+                        "Security closure days",
+                        7,
+                        180,
+                        30,
+                        key="security_action_closure_days",
+                    )
+                    if st.button("Load Security Closure Analytics", key="security_action_closure_load"):
+                        try:
+                            closure_sql = _security_action_queue_closure_sql(closure_days, company, environment)
+                            st.session_state["security_action_closure_sql"] = closure_sql
+                            st.session_state["security_action_closure"] = run_query(
+                                closure_sql,
+                                ttl_key=f"security_action_closure_{company}_{environment}_{closure_days}",
+                                tier="standard",
+                                section="Security Posture",
+                            )
+                            st.session_state["security_action_closure_meta"] = _security_scope_meta(
+                                company, environment, closure_days
+                            )
+                        except Exception as exc:
+                            st.session_state["security_action_closure"] = pd.DataFrame()
+                            st.warning(f"Security closure analytics unavailable: {format_snowflake_error(exc)}")
+                    closure = st.session_state.get("security_action_closure")
+                    if (
+                        closure is not None
+                        and not _security_meta_matches(
+                            st.session_state.get("security_action_closure_meta"),
+                            _security_scope_meta(company, environment, closure_days),
+                        )
+                    ):
+                        st.info("Loaded security closure analytics are stale for the active scope. Reload before acting.")
+                    elif closure is not None and not closure.empty:
+                        render_priority_dataframe(
+                            closure,
+                            title="Security closure evidence gaps",
+                            priority_columns=[
+                                "CATEGORY", "ENTITY_TYPE", "ENTITY", "CLOSURE_READINESS",
+                                "OWNER", "APPROVER", "TOTAL_ACTIONS", "OPEN_ACTIONS",
+                                "OVERDUE_OPEN", "VERIFIED_CLOSURES", "FIXED_WITHOUT_VERIFICATION",
+                                "OWNER_GAP_ROWS", "TICKET_GAP_ROWS", "APPROVER_GAP_ROWS",
+                                "OWNER_APPROVAL_GAP_ROWS", "VERIFICATION_QUERY_GAP_ROWS",
+                                "RECOVERY_RISK_ROWS", "NEXT_DUE_DATE", "LAST_STATUS", "NEXT_ACTION",
+                            ],
+                            sort_by=["CLOSURE_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "OPEN_ACTIONS"],
+                            ascending=[True, False, False, False],
+                            raw_label="All security closure rows",
+                            height=300,
+                        )
+                        with st.expander("Security Closure Query", expanded=False):
+                            st.code(st.session_state.get("security_action_closure_sql", ""), language="sql")
+                    elif closure is not None:
+                        st.info("No Security Posture action-queue rows found for the selected scope.")
         elif exceptions is not None:
             st.success("No security exceptions crossed the default thresholds.")
         brief_md = _build_security_brief_markdown(

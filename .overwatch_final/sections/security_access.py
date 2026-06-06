@@ -43,10 +43,10 @@ def _user_mfa_column_exprs(user_cols: set[str]) -> dict[str, str]:
     """Return USERS projections that work across old and new Snowflake accounts."""
     normalized = {str(col or "").upper() for col in user_cols}
     if "HAS_MFA" in normalized:
-        mfa_expr = "COALESCE(TRY_TO_BOOLEAN(u.has_mfa), FALSE) AS has_mfa"
+        mfa_expr = "COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.has_mfa)), FALSE) AS has_mfa"
         mfa_source_expr = "'HAS_MFA' AS mfa_source"
     elif "EXT_AUTHN_DUO" in normalized:
-        mfa_expr = "COALESCE(TRY_TO_BOOLEAN(u.ext_authn_duo), FALSE) AS has_mfa"
+        mfa_expr = "COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.ext_authn_duo)), FALSE) AS has_mfa"
         mfa_source_expr = "'EXT_AUTHN_DUO' AS mfa_source"
     else:
         mfa_expr = "NULL::BOOLEAN AS has_mfa"
@@ -57,7 +57,7 @@ def _user_mfa_column_exprs(user_cols: set[str]) -> dict[str, str]:
             if "LAST_SUCCESS_LOGIN" in normalized else "NULL::TIMESTAMP_NTZ"
         ),
         "has_password_expr": (
-            "COALESCE(TRY_TO_BOOLEAN(u.has_password), FALSE) AS has_password"
+            "COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.has_password)), FALSE) AS has_password"
             if "HAS_PASSWORD" in normalized else "NULL::BOOLEAN AS has_password"
         ),
         "mfa_expr": mfa_expr,
@@ -76,7 +76,7 @@ def _build_mfa_coverage_sql(user_exprs: dict[str, str], user_filter_u: str = "")
             COALESCE({user_exprs["last_success_login_expr"]}, u.created_on) AS last_login
         FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
         WHERE u.deleted_on IS NULL
-          AND COALESCE(TO_VARCHAR(u.disabled), 'false') = 'false'
+          AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.disabled)), FALSE) = FALSE
           {user_filter_u}
         ORDER BY has_mfa, user_name
     """

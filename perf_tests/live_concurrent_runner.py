@@ -36,7 +36,7 @@ DEFAULT_SECTIONS = [
 # drilldown buttons can still be tested with section-specific browser scripts,
 # but they should not appear as skipped work in the broad concurrency profile.
 DEFAULT_LOAD_BUTTONS = {
-    "Alert Center": "Load Full Control Health",
+    "Alert Center": "Load Issue Inbox",
     "Cost & Contract": "Load Cost Cockpit",
 }
 

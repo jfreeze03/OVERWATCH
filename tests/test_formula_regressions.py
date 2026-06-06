@@ -67,6 +67,7 @@ from sections.workload_operations import (  # noqa: E402
     _workload_snapshot_summary,
 )
 from sections.executive_landing import (  # noqa: E402
+    _build_executive_snapshot_pptx,
     _powerpoint_chart_rows,
     _powerpoint_kpi_rows,
     _powerpoint_slide_brief,
@@ -516,6 +517,28 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("WH_TRXS_TRANSFORM", brief)
         self.assertIn("Slide bullets:", brief)
 
+        deck = _build_executive_snapshot_pptx(
+            brief,
+            kpi_rows,
+            chart_rows,
+            company="Trexis",
+            environment_label="All DEV/SIT",
+            days=30,
+        )
+        self.assertGreater(len(deck), 1000)
+        with zipfile.ZipFile(BytesIO(deck)) as archive:
+            names = set(archive.namelist())
+            self.assertIn("[Content_Types].xml", names)
+            self.assertIn("ppt/presentation.xml", names)
+            self.assertIn("ppt/slides/slide1.xml", names)
+            self.assertIn("ppt/slides/slide2.xml", names)
+            slide1 = archive.read("ppt/slides/slide1.xml").decode("utf-8")
+            slide2 = archive.read("ppt/slides/slide2.xml").decode("utf-8")
+        self.assertIn("OVERWATCH Executive Snapshot", slide1)
+        self.assertIn("Trexis / All DEV/SIT / 30 days", slide1)
+        self.assertIn("Boardroom KPI Drivers", slide2)
+        self.assertIn("Risk and work", slide2)
+
     def test_priority_tables_add_cost_companions_for_credit_metrics(self):
         from utils.workflows import add_cost_companion_columns
 
@@ -524,6 +547,8 @@ class FormulaRegressionTests(unittest.TestCase):
             "CREDITS_USED": [10],
             "CREDIT_PRICE": [3.68],
             "TOTAL_COST_USD": [36.80],
+            "QUEUE_SEC_PER_CREDIT": [12.5],
+            "CREDIT_ALLOCATION_METHOD": ["exact metering"],
         })
         with patch("utils.workflows.get_credit_price", return_value=3.68):
             enriched = add_cost_companion_columns(frame)
@@ -532,6 +557,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(float(enriched["CREDITS_USED_COST_USD"].iloc[0]), 36.80)
         self.assertNotIn("CREDIT_PRICE_COST_USD", enriched.columns)
         self.assertNotIn("TOTAL_COST_USD_COST_USD", enriched.columns)
+        self.assertNotIn("QUEUE_SEC_PER_CREDIT_COST_USD", enriched.columns)
+        self.assertNotIn("CREDIT_ALLOCATION_METHOD_COST_USD", enriched.columns)
 
         mixed_rates = pd.DataFrame({
             "CREDIT_TYPE": ["Snowflake credits", "Cortex AI credits"],
@@ -3689,10 +3716,10 @@ class FormulaRegressionTests(unittest.TestCase):
         exprs = _user_mfa_column_exprs({"HAS_MFA", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"})
         sql = _build_mfa_coverage_sql(exprs, "AND u.name LIKE 'ALFA_%'").upper()
 
-        self.assertIn("TRY_TO_BOOLEAN(U.HAS_MFA)", sql)
+        self.assertIn("TRY_TO_BOOLEAN(TO_VARCHAR(U.HAS_MFA))", sql)
         self.assertIn("'HAS_MFA' AS MFA_SOURCE", sql)
         self.assertIn("COALESCE(U.LAST_SUCCESS_LOGIN, U.CREATED_ON) AS LAST_LOGIN", sql)
-        self.assertIn("COALESCE(TO_VARCHAR(U.DISABLED), 'FALSE') = 'FALSE'", sql)
+        self.assertIn("COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(U.DISABLED)), FALSE) = FALSE", sql)
         self.assertIn("AND U.NAME LIKE 'ALFA_%'", sql)
         self.assertNotIn("LOGIN_HISTORY", sql)
         self.assertNotIn("GROUP BY U.NAME, HAS_PASSWORD, HAS_MFA", sql)
@@ -3701,11 +3728,13 @@ class FormulaRegressionTests(unittest.TestCase):
         duo_exprs = _user_mfa_column_exprs({"EXT_AUTHN_DUO"})
         missing_exprs = _user_mfa_column_exprs(set())
 
-        self.assertIn("TRY_TO_BOOLEAN(u.ext_authn_duo)", duo_exprs["mfa_expr"])
+        self.assertIn("TRY_TO_BOOLEAN(TO_VARCHAR(u.ext_authn_duo))", duo_exprs["mfa_expr"])
         self.assertIn("'EXT_AUTHN_DUO' AS mfa_source", duo_exprs["mfa_source_expr"])
         self.assertIn("NULL::BOOLEAN AS has_mfa", missing_exprs["mfa_expr"])
-        self.assertEqual(_mfa_count_expr({"HAS_MFA"}), "COUNT_IF(COALESCE(TO_VARCHAR(has_mfa), 'false') <> 'true')")
-        self.assertEqual(_mfa_gap_predicate({"HAS_MFA"}), "AND COALESCE(TO_VARCHAR(u.has_mfa), 'false') <> 'true'")
+        self.assertEqual(_mfa_count_expr({"HAS_MFA"}), "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(has_mfa)), FALSE) = FALSE)")
+        self.assertEqual(_mfa_count_expr({"EXT_AUTHN_DUO"}), "COUNT_IF(COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(ext_authn_duo)), FALSE) = FALSE)")
+        self.assertEqual(_mfa_gap_predicate({"HAS_MFA"}), "AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.has_mfa)), FALSE) = FALSE")
+        self.assertEqual(_mfa_gap_predicate({"EXT_AUTHN_DUO"}), "AND COALESCE(TRY_TO_BOOLEAN(TO_VARCHAR(u.ext_authn_duo)), FALSE) = FALSE")
         self.assertEqual(_mfa_gap_predicate(set()), "AND 1 = 0")
 
     def test_security_brief_markdown_contains_evidence_summary(self):
@@ -3831,15 +3860,18 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state["active_company"] = "ALFA"
             st.session_state["global_environment"] = "DEV_ALL"
 
-            _, live_exceptions = _build_security_summary_sql(None, 14, "ALFA")
-            _, mart_exceptions = _build_security_mart_brief_sql(None, 14, "ALFA")
+            live_summary, live_exceptions = _build_security_summary_sql(None, 14, "ALFA")
+            mart_summary, mart_exceptions = _build_security_mart_brief_sql(None, 14, "ALFA")
             combined = "\n".join([live_exceptions, mart_exceptions]).upper()
+            summary_sql = "\n".join([live_summary, mart_summary]).upper()
 
             self.assertIn("GRANTS_TO_ROLES", combined)
             self.assertIn("'OBJECT GRANT'", combined)
             self.assertIn("GOR.TABLE_CATALOG AS DATABASE_NAME", combined)
             self.assertIn("ALFA_EDW_DEV", combined)
             self.assertNotIn("UPPER(LH.DATABASE_NAME)", combined)
+            self.assertNotIn("GRANTS_TO_ROLES", summary_sql)
+            self.assertNotIn("OBJECT_GRANTS.OBJECT_GRANTS", summary_sql)
         finally:
             st.session_state.clear()
             st.session_state.update(previous)
@@ -7580,17 +7612,20 @@ class FormulaRegressionTests(unittest.TestCase):
             "p95": 18.5,
         }
         brief = _workload_action_brief(summary)
-        markdown = _build_workload_runbook_markdown("Trexis", summary, brief)
+        markdown = _build_workload_runbook_markdown("Trexis", "DEV_ALL", summary, brief)
 
         self.assertIn("# OVERWATCH Workload Operations Runbook", markdown)
-        self.assertIn("- Scope: Trexis", markdown)
+        self.assertIn("- Scope: Trexis / DEV_ALL", markdown)
         self.assertIn("100 queries, 3 failed, 7 queued, 2 remote-spill, p95 18.5s", markdown)
         self.assertIn("## Slide Bullets", markdown)
         self.assertIn("## Triage Order", markdown)
         self.assertIn("Query diagnosis: capture query ID", markdown)
         self.assertIn("## Evidence Checklist", markdown)
         self.assertIn("Warehouse, user, role, database, and schema", markdown)
-        self.assertEqual(_workload_runbook_filename("Trexis Corp"), "overwatch_workload_runbook_trexis_corp.md")
+        self.assertEqual(
+            _workload_runbook_filename("Trexis Corp", "DEV_ALL"),
+            "overwatch_workload_runbook_trexis_corp_dev_all.md",
+        )
 
     def test_workload_recovery_audit_ddl_captures_owner_and_verification_evidence(self):
         sql = build_workload_recovery_audit_ddl().upper()

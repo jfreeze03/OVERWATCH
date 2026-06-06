@@ -13,9 +13,9 @@ from .cost import freshness_note, get_credit_price, metric_confidence_label
 from .section_guidance import defer_section_note, defer_source_note
 
 
-WORKFLOWS_VERSION = "2026-06-03-bottom-notes-v1"
+WORKFLOWS_VERSION = "2026-06-05-cost-companion-guard-v1"
 CONTEXT_PRIORITY_COLUMNS = ("ENVIRONMENT", "DATABASE_NAME", "SCHEMA_NAME")
-_CREDIT_COST_COMPANION_LIMIT = 6
+_CREDIT_COST_COMPANION_LIMIT = 10
 
 
 def prioritize_context_columns(
@@ -42,7 +42,10 @@ def _credit_metric_column(column: str) -> bool:
     upper = str(column or "").upper()
     if "CREDIT" not in upper:
         return False
-    if any(token in upper for token in ("PRICE", "RATE", "PCT", "PERCENT", "COST", "USD", "DOLLAR")):
+    if any(token in upper for token in (
+        "PRICE", "RATE", "PCT", "PERCENT", "COST", "USD", "DOLLAR",
+        "PER_CREDIT", "CREDIT_TYPE", "METHOD", "SCORE", "RANK",
+    )):
         return False
     return True
 

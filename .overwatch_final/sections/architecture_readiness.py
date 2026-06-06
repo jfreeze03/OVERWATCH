@@ -241,6 +241,44 @@ def _architecture_meta_matches(meta: dict | None, expected: dict | None) -> bool
     return True
 
 
+def _get_valid_architecture_frame(
+    frame_key: str,
+    meta_key: str,
+    company: str,
+    environment: str,
+    surface: str,
+    *,
+    days: int | None = None,
+    row_limit: int | None = None,
+) -> pd.DataFrame | None:
+    frame = st.session_state.get(frame_key)
+    if not _is_dataframe(frame):
+        return None
+    expected = _architecture_scope_meta(company, environment, surface, days=days, row_limit=row_limit)
+    if _architecture_meta_matches(st.session_state.get(meta_key), expected):
+        return frame
+    return None
+
+
+def _get_valid_architecture_data(
+    data_key: str,
+    meta_key: str,
+    company: str,
+    environment: str,
+    surface: str,
+    *,
+    days: int | None = None,
+    row_limit: int | None = None,
+) -> dict | None:
+    data = st.session_state.get(data_key)
+    if not isinstance(data, dict):
+        return None
+    expected = _architecture_scope_meta(company, environment, surface, days=days, row_limit=row_limit)
+    if _architecture_meta_matches(st.session_state.get(meta_key), expected):
+        return data
+    return None
+
+
 def _wildcard_match(pattern: object, value: object) -> tuple[bool, int]:
     pat = str(pattern or "*").strip().upper().replace("%", "*")
     val = str(value or "").strip().upper()
@@ -1231,7 +1269,16 @@ def _render_forward_watchlist() -> None:
     download_csv(rows, "architecture_forward_watchlist.csv")
 
 
-def _platform_futures_frames() -> list[pd.DataFrame]:
+def _platform_futures_frames(company: str | None = None, environment: str | None = None) -> list[pd.DataFrame]:
+    if company is not None and environment is not None:
+        return [
+            _get_valid_architecture_frame("arch_adaptive_compute", "arch_adaptive_compute_meta", company, environment, "Adaptive compute advisor"),
+            _get_valid_architecture_frame("arch_ai_inventory", "arch_ai_inventory_meta", company, environment, "AI agent and MCP inventory"),
+            _get_valid_architecture_frame("arch_ai_usage", "arch_ai_usage_meta", company, environment, "AI usage guardrails"),
+            _get_valid_architecture_frame("arch_ai_security_guardrails", "arch_ai_security_guardrails_meta", company, environment, "AI security guardrails"),
+            _get_valid_architecture_frame("arch_openflow_usage", "arch_openflow_meta", company, environment, "Openflow operations"),
+            _get_valid_architecture_frame("arch_horizon_readiness", "arch_horizon_meta", company, environment, "Horizon and semantic trust"),
+        ]
     return [
         st.session_state.get("arch_adaptive_compute"),
         st.session_state.get("arch_ai_inventory"),
@@ -1242,11 +1289,11 @@ def _platform_futures_frames() -> list[pd.DataFrame]:
     ]
 
 
-def _render_platform_futures_adoption_gate(controls: pd.DataFrame) -> None:
+def _render_platform_futures_adoption_gate(controls: pd.DataFrame, company: str, environment: str) -> None:
     gate = build_platform_futures_adoption_gate(
         controls,
-        _platform_futures_frames(),
-        source_health=st.session_state.get("arch_source_health"),
+        _platform_futures_frames(company, environment),
+        source_health=_get_valid_architecture_source_health(company, environment),
     )
     st.session_state["arch_futures_adoption_gate"] = gate
     if gate is None or gate.empty:
@@ -1324,13 +1371,16 @@ def _refresh_platform_futures_summary(company: str, environment: str) -> tuple[p
     source_health = _refresh_architecture_source_health_state(company, environment)
     agentic_summary, agentic_scorecard = build_agentic_ai_surface_scorecard(
         controls,
-        _platform_futures_frames(),
+        _platform_futures_frames(company, environment),
         source_health=source_health,
     )
-    board = build_platform_futures_board(_platform_futures_frames())
+    board = build_platform_futures_board(_platform_futures_frames(company, environment))
+    summary_meta = _architecture_scope_meta(company, environment, "Platform futures summary")
     st.session_state["arch_agentic_ai_summary"] = agentic_summary
     st.session_state["arch_agentic_ai_scorecard"] = agentic_scorecard
+    st.session_state["arch_agentic_ai_meta"] = summary_meta
     st.session_state["arch_futures_board"] = board
+    st.session_state["arch_futures_board_meta"] = summary_meta
     return controls, agentic_summary, agentic_scorecard, board
 
 
@@ -1362,10 +1412,28 @@ def _render_platform_futures(company: str, environment: str) -> None:
             _refresh_platform_futures_summary(company, environment)
 
         controls = _get_valid_architecture_forward_controls(company, environment)
-        board = st.session_state.get("arch_futures_board")
-        agentic_summary = st.session_state.get("arch_agentic_ai_summary", {})
-        agentic_scorecard = st.session_state.get("arch_agentic_ai_scorecard")
-        loaded_surfaces = sum(1 for frame in _platform_futures_frames() if _is_dataframe(frame))
+        board = _get_valid_architecture_frame(
+            "arch_futures_board",
+            "arch_futures_board_meta",
+            company,
+            environment,
+            "Platform futures summary",
+        )
+        agentic_summary = _get_valid_architecture_data(
+            "arch_agentic_ai_summary",
+            "arch_agentic_ai_meta",
+            company,
+            environment,
+            "Platform futures summary",
+        ) or {}
+        agentic_scorecard = _get_valid_architecture_frame(
+            "arch_agentic_ai_scorecard",
+            "arch_agentic_ai_meta",
+            company,
+            environment,
+            "Platform futures summary",
+        )
+        loaded_surfaces = sum(1 for frame in _platform_futures_frames(company, environment) if _is_dataframe(frame))
         if controls is None:
             c1, c2, c3 = st.columns(3)
             c1.metric("Loaded", f"{loaded_surfaces:,}/6")
@@ -1389,7 +1457,7 @@ def _render_platform_futures(company: str, environment: str) -> None:
                     f"Blocked areas: {safe_int(agentic_summary.get('BLOCKED')):,}; "
                     f"evidence gaps: {safe_int(agentic_summary.get('EVIDENCE_GAPS')):,}."
                 )
-            _render_platform_futures_adoption_gate(controls)
+            _render_platform_futures_adoption_gate(controls, company, environment)
         if _is_dataframe(board) and not board.empty:
             render_priority_dataframe(
                 board,
@@ -1419,8 +1487,20 @@ def _render_platform_futures(company: str, environment: str) -> None:
     elif futures_view == "Agentic AI Cockpit":
         if st.button("Load Agentic AI Cockpit", key="arch_agentic_cockpit_load"):
             _refresh_platform_futures_summary(company, environment)
-        agentic_summary = st.session_state.get("arch_agentic_ai_summary", {})
-        agentic_scorecard = st.session_state.get("arch_agentic_ai_scorecard")
+        agentic_summary = _get_valid_architecture_data(
+            "arch_agentic_ai_summary",
+            "arch_agentic_ai_meta",
+            company,
+            environment,
+            "Platform futures summary",
+        ) or {}
+        agentic_scorecard = _get_valid_architecture_frame(
+            "arch_agentic_ai_scorecard",
+            "arch_agentic_ai_meta",
+            company,
+            environment,
+            "Platform futures summary",
+        )
         _render_agentic_ai_cockpit(agentic_summary, agentic_scorecard)
 
     elif futures_view == "Adaptive Compute":
@@ -1448,7 +1528,15 @@ def _render_platform_futures(company: str, environment: str) -> None:
                     )
                 except Exception as exc:
                     st.warning(f"Adaptive Compute advisor unavailable: {format_snowflake_error(exc)}")
-        df = st.session_state.get("arch_adaptive_compute")
+        df = _get_valid_architecture_frame(
+            "arch_adaptive_compute",
+            "arch_adaptive_compute_meta",
+            company,
+            environment,
+            "Adaptive compute advisor",
+            days=days,
+            row_limit=row_limit,
+        )
         if _is_dataframe(df):
             _render_loaded_metrics(df, "Adaptive Compute")
             if df.empty:
@@ -1496,7 +1584,13 @@ def _render_platform_futures(company: str, environment: str) -> None:
                     )
                 except Exception as exc:
                     st.warning(f"Agent and MCP inventory unavailable: {format_snowflake_error(exc)}")
-        df = st.session_state.get("arch_ai_inventory")
+        df = _get_valid_architecture_frame(
+            "arch_ai_inventory",
+            "arch_ai_inventory_meta",
+            company,
+            environment,
+            "AI agent and MCP inventory",
+        )
         if _is_dataframe(df):
             _render_loaded_metrics(df, "agent and MCP")
             if df.empty:
@@ -1553,7 +1647,15 @@ def _render_platform_futures(company: str, environment: str) -> None:
                     )
                 except Exception as exc:
                     st.warning(f"AI usage guardrails unavailable: {format_snowflake_error(exc)}")
-        df = st.session_state.get("arch_ai_usage")
+        df = _get_valid_architecture_frame(
+            "arch_ai_usage",
+            "arch_ai_usage_meta",
+            company,
+            environment,
+            "AI usage guardrails",
+            days=days,
+            row_limit=row_limit,
+        )
         if _is_dataframe(df):
             _render_loaded_metrics(df, "AI usage")
             if df.empty:
@@ -1594,7 +1696,13 @@ def _render_platform_futures(company: str, environment: str) -> None:
                     )
                 except Exception as exc:
                     st.warning(f"AI security guardrails unavailable: {format_snowflake_error(exc)}")
-        df = st.session_state.get("arch_ai_security_guardrails")
+        df = _get_valid_architecture_frame(
+            "arch_ai_security_guardrails",
+            "arch_ai_security_guardrails_meta",
+            company,
+            environment,
+            "AI security guardrails",
+        )
         if _is_dataframe(df):
             _render_loaded_metrics(df, "AI security")
             if df.empty:
@@ -1658,7 +1766,15 @@ def _render_platform_futures(company: str, environment: str) -> None:
                     )
                 except Exception as exc:
                     st.warning(f"Openflow operations unavailable: {format_snowflake_error(exc)}")
-        df = st.session_state.get("arch_openflow_usage")
+        df = _get_valid_architecture_frame(
+            "arch_openflow_usage",
+            "arch_openflow_meta",
+            company,
+            environment,
+            "Openflow operations",
+            days=days,
+            row_limit=row_limit,
+        )
         if _is_dataframe(df):
             _render_loaded_metrics(df, "Openflow")
             if df.empty:
@@ -1699,7 +1815,13 @@ def _render_platform_futures(company: str, environment: str) -> None:
                     )
                 except Exception as exc:
                     st.warning(f"Horizon and semantic readiness unavailable: {format_snowflake_error(exc)}")
-        df = st.session_state.get("arch_horizon_readiness")
+        df = _get_valid_architecture_frame(
+            "arch_horizon_readiness",
+            "arch_horizon_meta",
+            company,
+            environment,
+            "Horizon and semantic trust",
+        )
         if _is_dataframe(df):
             _render_loaded_metrics(df, "Horizon and semantic")
             if df.empty:
@@ -1816,7 +1938,15 @@ def render():
                     )
                 except Exception as exc:
                     st.warning(f"Isolation matrix unavailable: {format_snowflake_error(exc)}")
-        df = st.session_state.get("arch_iso_df")
+        df = _get_valid_architecture_frame(
+            "arch_iso_df",
+            "arch_iso_meta",
+            company,
+            environment,
+            "Workload isolation",
+            days=days,
+            row_limit=row_limit,
+        )
         if df is not None:
             _render_loaded_metrics(df, "workload isolation")
             if not df.empty:
@@ -1859,7 +1989,14 @@ def render():
                     )
                 except Exception as exc:
                     st.warning(f"Clustering strategy unavailable: {format_snowflake_error(exc)}")
-        df = st.session_state.get("arch_cluster_df")
+        df = _get_valid_architecture_frame(
+            "arch_cluster_df",
+            "arch_cluster_meta",
+            company,
+            environment,
+            "Clustering strategy",
+            row_limit=row_limit,
+        )
         if df is not None:
             _render_loaded_metrics(df, "clustering")
             if not df.empty:
@@ -1910,7 +2047,15 @@ def render():
                     )
                 except Exception as exc:
                     st.warning(f"Cache evidence unavailable: {format_snowflake_error(exc)}")
-        df = st.session_state.get("arch_cache_df")
+        df = _get_valid_architecture_frame(
+            "arch_cache_df",
+            "arch_cache_meta",
+            company,
+            environment,
+            "Cache optimization",
+            days=days,
+            row_limit=row_limit,
+        )
         if df is not None:
             _render_loaded_metrics(df, "cache")
             if not df.empty:
@@ -2001,7 +2146,14 @@ def render():
                     )
                 except Exception as exc:
                     st.warning(f"DR readiness unavailable: {format_snowflake_error(exc)}")
-        data = st.session_state.get("arch_dr_data")
+        data = _get_valid_architecture_data(
+            "arch_dr_data",
+            "arch_dr_meta",
+            company,
+            environment,
+            "DR readiness",
+            days=days,
+        )
         if data:
             readiness = data.get("readiness", pd.DataFrame())
             _render_loaded_metrics(readiness, "DR")

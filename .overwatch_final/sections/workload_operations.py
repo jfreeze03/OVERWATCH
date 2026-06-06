@@ -7,7 +7,7 @@ from importlib import import_module
 
 import streamlit as st
 
-from config import DEFAULT_COMPANY
+from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
 import utils as _utils
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -45,6 +45,10 @@ def safe_int(value, default: int = 0) -> int:
 
 def get_active_company() -> str:
     return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+
+
+def get_active_environment() -> str:
+    return str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
 
 
 def migrate_legacy_workflow_state(
@@ -158,24 +162,24 @@ LEGACY_WORKFLOW_MAP = {
 }
 
 
-def _snapshot_meta(company: str, hours: int = 24) -> dict:
-    return {"company": company, "hours": int(hours)}
+def _snapshot_meta(company: str, environment: str, hours: int = 24) -> dict:
+    return {"company": company, "environment": environment, "hours": int(hours)}
 
 
-def _load_workload_snapshot(company: str, *, hours: int = 24, show_errors: bool = False) -> None:
+def _load_workload_snapshot(company: str, environment: str, *, hours: int = 24, show_errors: bool = False) -> None:
     try:
         snapshot = run_query(
             build_mart_control_room_summary_sql(hours, company),
-            ttl_key=f"workload_operations_snapshot_{company}_{hours}",
+            ttl_key=f"workload_operations_snapshot_{company}_{environment}_{hours}",
             tier="historical",
             section="Workload Operations",
         )
         st.session_state["workload_operations_snapshot"] = snapshot
-        st.session_state["workload_operations_snapshot_meta"] = _snapshot_meta(company, hours)
+        st.session_state["workload_operations_snapshot_meta"] = _snapshot_meta(company, environment, hours)
         st.session_state["workload_operations_snapshot_error"] = ""
     except Exception as exc:
         st.session_state["workload_operations_snapshot"] = None
-        st.session_state["workload_operations_snapshot_meta"] = _snapshot_meta(company, hours)
+        st.session_state["workload_operations_snapshot_meta"] = _snapshot_meta(company, environment, hours)
         st.session_state["workload_operations_snapshot_error"] = format_snowflake_error(exc)
         if show_errors:
             st.info("Workload snapshot unavailable. Start with live triage or retry after source access is available.")
@@ -263,14 +267,15 @@ def _workload_action_brief(summary: dict, *, snapshot_current: bool = True, erro
     }
 
 
-def _workload_runbook_filename(company: str) -> str:
-    scope = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(company or "all").strip())
+def _workload_runbook_filename(company: str, environment: str = "ALL") -> str:
+    scope_text = f"{company}_{environment}"
+    scope = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(scope_text or "all").strip())
     while "__" in scope:
         scope = scope.replace("__", "_")
     return f"overwatch_workload_runbook_{scope.strip('_') or 'scope'}.md"
 
 
-def _build_workload_runbook_markdown(company: str, summary: dict, brief: dict) -> str:
+def _build_workload_runbook_markdown(company: str, environment: str, summary: dict, brief: dict) -> str:
     loaded = bool(summary.get("loaded"))
     generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     if loaded:
@@ -287,7 +292,7 @@ def _build_workload_runbook_markdown(company: str, summary: dict, brief: dict) -
     lines = [
         "# OVERWATCH Workload Operations Runbook",
         "",
-        f"- Scope: {company}",
+        f"- Scope: {company} / {environment}",
         "- Window: 24 hours",
         f"- Generated: {generated_at}",
         f"- Snapshot: {kpi_line}",
@@ -296,7 +301,7 @@ def _build_workload_runbook_markdown(company: str, summary: dict, brief: dict) -
         f"- Detail: {brief.get('detail') or 'No detail loaded.'}",
         "",
         "## Slide Bullets",
-        f"- Workload posture: {brief.get('state') or 'Review'} for {company}.",
+        f"- Workload posture: {brief.get('state') or 'Review'} for {company} / {environment}.",
         f"- KPI line: {kpi_line}",
         f"- First action: {brief.get('primary_label') or 'Open Live Triage'}.",
         f"- Evidence owner: route to {brief.get('workflow') or 'Live triage'} in Workload Operations.",
@@ -323,7 +328,7 @@ def _build_workload_runbook_markdown(company: str, summary: dict, brief: dict) -
     return "\n".join(lines) + "\n"
 
 
-def _render_workload_action_brief(company: str, brief: dict) -> None:
+def _render_workload_action_brief(company: str, environment: str, brief: dict) -> None:
     with st.container(border=True):
         label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
         with label_col:
@@ -335,7 +340,7 @@ def _render_workload_action_brief(company: str, brief: dict) -> None:
         with action_col:
             if st.button(str(brief.get("primary_label") or "Open Live Triage"), key="workload_ops_action_brief_primary", width="stretch"):
                 if bool(brief.get("refresh")):
-                    _load_workload_snapshot(company, show_errors=True)
+                    _load_workload_snapshot(company, environment, show_errors=True)
                 else:
                     workflow = str(brief.get("workflow") or "Live triage")
                     if workflow in WORKFLOWS:
@@ -344,7 +349,7 @@ def _render_workload_action_brief(company: str, brief: dict) -> None:
                 st.rerun()
             if not bool(brief.get("refresh")):
                 if st.button("Refresh Snapshot", key="workload_ops_action_brief_refresh", width="stretch"):
-                    _load_workload_snapshot(company, show_errors=True)
+                    _load_workload_snapshot(company, environment, show_errors=True)
                     st.rerun()
 
 
@@ -363,23 +368,23 @@ def _render_workload_metric_rows(summary: dict) -> None:
     cols[3].metric("P95", f"{safe_float(summary.get('p95')):,.1f}s")
 
 
-def _render_workload_snapshot(company: str) -> None:
+def _render_workload_snapshot(company: str, environment: str) -> None:
     hours = 24
-    expected_meta = _snapshot_meta(company, hours)
+    expected_meta = _snapshot_meta(company, environment, hours)
     snapshot = st.session_state.get("workload_operations_snapshot")
     snapshot_current = st.session_state.get("workload_operations_snapshot_meta") == expected_meta
     err = st.session_state.get("workload_operations_snapshot_error", "")
     summary = _workload_snapshot_summary(snapshot if snapshot_current else None)
     brief = _workload_action_brief(summary, snapshot_current=snapshot_current, error=str(err or ""))
-    _render_workload_action_brief(company, brief)
+    _render_workload_action_brief(company, environment, brief)
     st.markdown("**Operating Snapshot**")
     _render_workload_metric_rows(summary)
     with st.expander("Runbook export", expanded=False):
         st.caption("Download a copy-ready DBA runbook for the selected company and workload snapshot state.")
         st.download_button(
             "Download DBA runbook",
-            data=_build_workload_runbook_markdown(company, summary, brief),
-            file_name=_workload_runbook_filename(company),
+            data=_build_workload_runbook_markdown(company, environment, summary, brief),
+            file_name=_workload_runbook_filename(company, environment),
             mime="text/markdown",
             key="workload_ops_runbook_download",
         )
@@ -387,6 +392,7 @@ def _render_workload_snapshot(company: str) -> None:
 
 def render() -> None:
     company = get_active_company()
+    environment = get_active_environment()
     if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
         st.session_state["workload_operations_workflow"] = "Live triage"
     if st.session_state.get("exceptions_only_mode") and "workload_operations_view" not in st.session_state:
@@ -399,7 +405,7 @@ def render() -> None:
         LEGACY_WORKFLOW_MAP,
     )
 
-    _render_workload_snapshot(company)
+    _render_workload_snapshot(company, environment)
     render_operator_briefing(
         [
             ("First move", "Find running, queued, failed, or late work."),

@@ -92,6 +92,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _render_operating_snapshot", shell_text)
         self.assertIn('st.markdown("**Operating Snapshot**")', shell_text)
         self.assertIn("cols = st.columns(4)", shell_text)
+        self.assertIn('("Evidence", "On demand")', shell_text)
+        self.assertIn('("Rate", f"${_credit_price():.2f}")', shell_text)
+        self.assertNotIn('("Budget"', shell_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS = 24", full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS", full_workspace_text)
         self.assertIn("Use live 24h checks when needed", full_workspace_text)
@@ -841,12 +844,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Check Fast Snapshot"', dba_control_text)
         self.assertIn("Fast mart snapshot lookup is on demand", dba_control_text)
         self.assertNotIn("load_latest_control_room_mart(company, max_age_hours=6) if snapshot_scope_ok else None", dba_control_text)
+        self.assertIn('DBA_CONTROL_ROOM_PANES = (\n    "Fast Watch",\n    "Operations Board",\n    "Triage"', dba_control_text)
         self.assertIn('"Fast Watch"', dba_control_text)
         self.assertIn('"Operations Board"', dba_control_text)
         self.assertNotIn('"App Operations"', dba_control_text)
         self.assertIn('"Load Operations Board"', dba_control_text)
         self.assertIn("Use Operations Board when you need route priority", dba_control_text)
         self.assertIn("Action Brief", dba_control_text)
+        self.assertIn("def _render_loaded_operating_snapshot", dba_control_text)
+        self.assertIn("More loaded metrics", dba_control_text)
+        self.assertNotIn('"Cost Window"', dba_control_text)
         self.assertNotIn("All alert history, email-ready messages, suppression windows", dba_control_text)
         self.assertIn("def _render_app_performance_guardrail", dba_control_text)
         self.assertIn("def _running_in_streamlit_in_snowflake", dba_control_text)
@@ -902,8 +909,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.markdown("**Operating Snapshot**")', executive_landing_text)
         self.assertIn('st.button("Load Executive Snapshot"', executive_landing_text)
         self.assertIn("def _render_powerpoint_slide_pack", executive_landing_text)
-        self.assertIn('st.markdown("**PowerPoint Slide Brief**")', executive_landing_text)
+        self.assertIn('st.markdown("**PowerPoint Executive Snapshot**")', executive_landing_text)
+        self.assertIn("def _build_executive_snapshot_pptx", executive_landing_text)
         self.assertIn('download_button(', executive_landing_text)
+        self.assertIn('"Download PowerPoint"', executive_landing_text)
+        self.assertIn("PowerPoint support data", executive_landing_text)
+        self.assertIn('with st.expander("Executive source health"', executive_landing_text)
         self.assertNotIn("Use this page for the first leadership question", executive_landing_text)
         self.assertNotIn("Load the executive snapshot when you need a board-ready status view.", executive_landing_text)
         self.assertIn("cc_user_profile_requested", cost_center_text)
@@ -995,11 +1006,20 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _render_cost_operating_snapshot", cost_contract_text)
         self.assertIn("def _ensure_cost_splash", cost_contract_text)
         self.assertIn("def _render_cost_splash", cost_contract_text)
+        self.assertIn('"cockpit": None', cost_contract_text)
+        self.assertIn('if not splash.get("loaded"):', cost_contract_text)
+        self.assertNotIn('"cockpit": pd.DataFrame()', cost_contract_text)
         self.assertIn("def _build_cost_splash_cortex_sql", cost_contract_text)
         self.assertIn("def _cost_spend_trend_rows", cost_contract_text)
         self.assertIn("def _cost_warehouse_ranking_rows", cost_contract_text)
         self.assertIn("def _render_spend_trend_chart", cost_contract_text)
         self.assertIn("def _render_warehouse_ranking_chart", cost_contract_text)
+        self.assertIn("def _render_cost_chart_with_data_toggle", cost_contract_text)
+        self.assertIn('"Cost chart view"', cost_contract_text)
+        self.assertIn('st.button("Back to chart"', cost_contract_text)
+        self.assertIn('"cost_contract_spend_trend"', cost_contract_text)
+        self.assertIn('"cost_contract_warehouse_ranking"', cost_contract_text)
+        self.assertIn('"cost_contract_service_movement"', cost_contract_text)
         self.assertIn("st.altair_chart((bars + line + points)", cost_contract_text)
         self.assertNotIn("$+,.2f", cost_contract_text)
         self.assertNotIn("+$,.2f", cost_contract_text)
@@ -1167,6 +1187,25 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("from utils import", architecture_top_import_block)
         self.assertNotIn("from utils.workflows import", architecture_top_import_block)
         self.assertNotIn("from utils.futures_governance import", architecture_top_import_block)
+        self.assertIn("def _get_valid_architecture_frame", architecture_text)
+        self.assertIn("def _get_valid_architecture_data", architecture_text)
+        for stale_architecture_read in (
+            'df = st.session_state.get("arch_iso_df")',
+            'df = st.session_state.get("arch_cluster_df")',
+            'df = st.session_state.get("arch_cache_df")',
+            'data = st.session_state.get("arch_dr_data")',
+            'df = st.session_state.get("arch_adaptive_compute")',
+            'df = st.session_state.get("arch_ai_inventory")',
+            'df = st.session_state.get("arch_ai_usage")',
+            'df = st.session_state.get("arch_ai_security_guardrails")',
+            'df = st.session_state.get("arch_openflow_usage")',
+            'df = st.session_state.get("arch_horizon_readiness")',
+            'board = st.session_state.get("arch_futures_board")',
+            'agentic_scorecard = st.session_state.get("arch_agentic_ai_scorecard")',
+        ):
+            self.assertNotIn(stale_architecture_read, architecture_text)
+        self.assertIn('"arch_futures_board_meta"', architecture_text)
+        self.assertIn('"arch_agentic_ai_meta"', architecture_text)
         architecture_platform_futures_preload = architecture_text.split("def _render_platform_futures(company", 1)[1].split(
             'if futures_view == "Overview":',
             1,
@@ -1184,6 +1223,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         )[0]
         security_posture_view_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
             'if active_view == "Access Workflows":',
+            1,
+        )[0]
+        security_posture_loaded_preproof = security_posture_text.split("def render() -> None:", 1)[1].split(
+            "if not proof_tables_visible:",
+            1,
+        )[0]
+        security_posture_proof_block = security_posture_text.split("if not proof_tables_visible:", 1)[1].split(
+            "elif exceptions is not None:",
             1,
         )[0]
         security_access_render_preload = security_access_text.split("def render():", 1)[1].split(
@@ -1229,6 +1276,28 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _render_security_operating_snapshot", security_posture_text)
         self.assertIn('st.markdown("**Operating Snapshot**")', security_posture_text)
         self.assertIn('cols[2].metric("Grant Chg"', security_posture_text)
+        self.assertIn("def _paint_security_brief_chrome", security_posture_text)
+        self.assertIn("brief_slot = st.empty()", security_posture_text)
+        self.assertGreaterEqual(security_posture_text.count("_paint_security_brief_chrome("), 3)
+        self.assertIn("Load Security Control Facts", security_posture_text)
+        self.assertIn("Load Security Exceptions", security_posture_text)
+        self.assertIn("Security exceptions stay unloaded", security_posture_text)
+        security_brief_load_block = security_posture_text.split('if st.button("Load Security Brief"', 1)[1].split(
+            "_paint_security_brief_chrome(",
+            1,
+        )[0]
+        self.assertNotIn("_security_operability_fact_sql(", security_brief_load_block)
+        self.assertNotIn('st.session_state["security_operability_fact"]', security_brief_load_block)
+        self.assertNotIn('st.session_state["security_posture_exceptions"] = run_query', security_brief_load_block)
+        self.assertNotIn("security_posture_exceptions_mart", security_brief_load_block)
+        self.assertNotIn("security_posture_exceptions_live", security_brief_load_block)
+        self.assertIn("_SECURITY_PROOF_TABLES_SCOPE_KEY", security_posture_text)
+        self.assertIn('st.button("Load Security Proof Tables"', security_posture_text)
+        self.assertIn('st.button("Hide Security Proof Tables"', security_posture_text)
+        self.assertNotIn("_build_security_access_review(exceptions, environment)", security_posture_loaded_preproof)
+        self.assertNotIn("_security_control_board(", security_posture_loaded_preproof)
+        self.assertIn("_build_security_access_review(exceptions, environment)", security_posture_proof_block)
+        self.assertIn("_security_control_board(", security_posture_proof_block)
         self.assertNotIn("get_session()", security_access_render_preload)
         self.assertNotIn("get_session()", change_drift_render_preload)
         self.assertNotIn("render_workflow_module(", change_drift_default_preload)
@@ -1252,6 +1321,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn('st.button("Load Jira / Terraform Evidence"', change_drift_text)
         self.assertIn('sort_by=["DBA_PRIORITY", "SEVERITY", "FINDING_TYPE"]', change_drift_text)
         self.assertIn("ALERT_CENTER_SOURCES_BY_PANE", alert_center_text)
+        self.assertIn('ALERT_CENTER_PANES = [\n    "Issue Inbox",\n    "Triage Digest",\n    "Alert History"', alert_center_text)
         self.assertIn('"Automation Readiness"', alert_center_text)
         self.assertIn("_alert_center_sources_for_view(active_view)", alert_center_text)
         self.assertIn("ALERT_CENTER_SOURCE_PLAN", alert_center_text)
@@ -1262,12 +1332,21 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.selectbox(\n        "Alert Center view"', alert_center_text)
         self.assertNotIn('st.radio(\n        "Alert Center view"', alert_center_text)
         self.assertNotIn("st.tabs(", alert_center_text)
+        self.assertIn("expected_scope = (company, environment, int(days), int(limit))", alert_center_text)
+        stale_alert_scope_block = alert_center_text.split("if loaded_scope != expected_scope:", 1)[1].split(
+            "loaded_sources = set(data.get",
+            1,
+        )[0]
+        self.assertIn("Reload before triaging alerts.", stale_alert_scope_block)
+        self.assertIn("return", stale_alert_scope_block)
         alert_center_import_block = alert_center_text.split("ALERT_CENTER_PANES", 1)[0]
         self.assertNotIn("build_alert_task_sql", alert_center_import_block)
         self.assertNotIn("load_alert_history", alert_center_import_block)
         self.assertNotIn("from utils.alerts import", alert_center_import_block)
         self.assertNotIn("import pandas as pd", alert_center_import_block)
         self.assertNotIn("from utils.workflows import", alert_center_import_block)
+        self.assertNotIn("defer_source_note,", alert_center_import_block)
+        self.assertIn("def defer_source_note", alert_center_text)
         self.assertIn("def _pd()", alert_center_text)
         self.assertIn("def _render_priority_dataframe", alert_center_text)
         self.assertIn("def _alert_center_action_session", alert_center_text)
@@ -1367,6 +1446,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("workload_operations_snapshot", workload_operations_text)
         self.assertNotIn("from utils import", workload_operations_import_block)
         self.assertNotIn("from utils.workflows import", workload_operations_import_block)
+        self.assertIn("def get_active_environment", workload_operations_text)
+        self.assertIn('return {"company": company, "environment": environment, "hours": int(hours)}', workload_operations_text)
+        self.assertIn("workload_operations_snapshot_{company}_{environment}_{hours}", workload_operations_text)
         self.assertIn("build_mart_control_room_summary_sql", workload_operations_text)
         self.assertIn("WORKLOAD_OPERATIONS_VIEWS", workload_operations_text)
         self.assertIn('"Workload Brief"', workload_operations_text)
@@ -1502,6 +1584,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("load_database_options", dba_tools_text)
         self.assertIn("load_schema_options", dba_tools_text)
         self.assertIn("Refresh database and schema choices", dba_tools_text)
+        self.assertIn("allow_current_outside_options: bool = True", dba_tools_text)
+        self.assertIn("allow_current_outside_options=False", dba_tools_text)
+        self.assertIn('scope_key = f"{get_active_company()}_{get_active_environment()}"', dba_tools_text)
+        self.assertIn('database_cache_key = f"sc_database_options_{scope_key}"', dba_tools_text)
+        self.assertIn('source_schema_cache_key = f"sc_schema_options_source_{scope_key}_{dev_db}"', dba_tools_text)
+        self.assertIn('target_schema_cache_key = f"sc_schema_options_target_{scope_key}_{prod_db}"', dba_tools_text)
         self.assertIn("Cortex feature setup guidance", dba_tools_text)
         self.assertIn("ALTER ACCOUNT SET CORTEX_CODE_DAILY_CREDIT_LIMIT", dba_tools_text)
         self.assertNotIn("ENABLE_CORTEX_CODE_INLINE", dba_tools_text)

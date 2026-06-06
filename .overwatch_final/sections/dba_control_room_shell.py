@@ -40,10 +40,6 @@ def _credit_price() -> float:
     return _safe_float(st.session_state.get("credit_price", DEFAULTS["credit_price"]), DEFAULTS["credit_price"])
 
 
-def _cortex_budget() -> float:
-    return _safe_float(st.session_state.get("dba_control_room_cortex_budget_usd", 5000.0), 5000.0)
-
-
 def _full_workspace_requested() -> bool:
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
@@ -61,10 +57,10 @@ def _render_action_brief() -> None:
         label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
         with label_col:
             st.markdown("**Action Brief**")
-            st.caption("Snapshot first")
+            st.caption("Ready")
         with detail_col:
-            st.markdown("**Open the workspace when a signal needs live triage or export-ready evidence.**")
-            st.caption("The shell keeps startup light; the workspace handles snapshot checks, source health, and routed actions.")
+            st.markdown("**Open the DBA workspace when a signal needs triage or proof.**")
+            st.caption("Snapshot checks, source health, routed actions, and exports stay on demand.")
         with action_col:
             if st.button("Open DBA workspace", key="dba_control_room_open_full_workspace", type="primary", width="stretch"):
                 st.session_state[_FULL_WORKSPACE_KEY] = True
@@ -75,15 +71,14 @@ def _render_operating_snapshot() -> None:
     metrics = (
         ("Scope", f"{_active_company()} / {_active_environment()}"),
         ("Window", "24h"),
-        ("Evidence", "Snapshot"),
-        ("Budget", f"${_cortex_budget():,.0f}"),
+        ("Evidence", "On demand"),
+        ("Rate", f"${_credit_price():.2f}"),
     )
     st.markdown("**Operating Snapshot**")
     cols = st.columns(4)
     for col, (label, value) in zip(cols, metrics):
         with col:
             st.metric(label, value)
-    st.caption(f"Credit rate: ${_credit_price():.2f}/credit.")
 
 
 def render() -> None:

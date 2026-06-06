@@ -87,12 +87,23 @@ def _scope_metadata_df(df: pd.DataFrame) -> pd.DataFrame:
     return scope_metadata_df(df, company=get_active_company())
 
 
-def _select_option(label: str, options: list[str], key: str, fallback: str = "") -> str:
+def _select_option(
+    label: str,
+    options: list[str],
+    key: str,
+    fallback: str = "",
+    *,
+    allow_current_outside_options: bool = True,
+) -> str:
     choices = list(options or [])
     current = str(st.session_state.get(key) or fallback or "").strip()
     if choices:
         if current and current not in choices:
-            choices = [current] + choices
+            if allow_current_outside_options:
+                choices = [current] + choices
+            else:
+                current = fallback if fallback in choices else choices[0]
+                st.session_state[key] = current
         index = choices.index(current) if current in choices else 0
         return str(st.selectbox(label, choices, index=index, key=key))
     return str(st.text_input(label, value=current or fallback, key=key))
@@ -1100,19 +1111,27 @@ def render():
         st.header("📐 Schema Compare")
         st.caption("Choose source and target databases first; schema choices are loaded from the selected database.")
         refresh_schema_meta = st.button("Refresh database and schema choices", key="sc_refresh_metadata")
-        if refresh_schema_meta or "sc_database_options" not in st.session_state:
-            st.session_state["sc_database_options"] = load_database_options(
+        scope_key = f"{get_active_company()}_{get_active_environment()}"
+        database_cache_key = f"sc_database_options_{scope_key}"
+        if refresh_schema_meta or database_cache_key not in st.session_state:
+            st.session_state[database_cache_key] = load_database_options(
                 session,
                 company=get_active_company(),
                 force_refresh=bool(refresh_schema_meta),
             )
-        database_options = list(st.session_state.get("sc_database_options") or [])
+        database_options = list(st.session_state.get(database_cache_key) or [])
         if not database_options:
             st.info("No scoped databases were returned by SHOW DATABASES. Enter database names manually or refresh after changing role.")
         c1, c2 = st.columns(2)
         with c1:
-            dev_db = _select_option("Source database", database_options, "sc_dev", "DEV_DB")
-            source_schema_cache_key = f"sc_schema_options_source_{dev_db}"
+            dev_db = _select_option(
+                "Source database",
+                database_options,
+                "sc_dev",
+                "DEV_DB",
+                allow_current_outside_options=False,
+            )
+            source_schema_cache_key = f"sc_schema_options_source_{scope_key}_{dev_db}"
             if refresh_schema_meta or source_schema_cache_key not in st.session_state:
                 st.session_state[source_schema_cache_key] = load_schema_options(
                     session,
@@ -1125,10 +1144,17 @@ def render():
                 list(st.session_state.get(source_schema_cache_key) or []),
                 "sc_devsch",
                 "PUBLIC",
+                allow_current_outside_options=False,
             )
         with c2:
-            prod_db = _select_option("Target database", database_options, "sc_prod", "PROD_DB")
-            target_schema_cache_key = f"sc_schema_options_target_{prod_db}"
+            prod_db = _select_option(
+                "Target database",
+                database_options,
+                "sc_prod",
+                "PROD_DB",
+                allow_current_outside_options=False,
+            )
+            target_schema_cache_key = f"sc_schema_options_target_{scope_key}_{prod_db}"
             if refresh_schema_meta or target_schema_cache_key not in st.session_state:
                 st.session_state[target_schema_cache_key] = load_schema_options(
                     session,
@@ -1141,6 +1167,7 @@ def render():
                 list(st.session_state.get(target_schema_cache_key) or []),
                 "sc_prodsch",
                 "PUBLIC",
+                allow_current_outside_options=False,
             )
         if st.button("Compare Schemas", key="sc_run"):
             try:

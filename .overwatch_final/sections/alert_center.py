@@ -59,7 +59,7 @@ ALERT_CENTER_HEALTH_DETAIL_OPTIONS = (
 
 ALERT_CENTER_SOURCES_BY_PANE = {
     "Control Health": {"alerts", "action_queue", "delivery_log", "rules", "rule_audit", "owner_directory"},
-    "Automation Readiness": {"alerts", "action_queue", "delivery_log", "rules", "owner_directory"},
+    "Automation Readiness": {"alerts", "action_queue", "delivery_log", "rules", "owner_directory", "automation_health"},
     "Issue Inbox": {"alerts", "action_queue"},
     "Triage Digest": {"alerts"},
     "Alert History": {"alerts"},
@@ -105,6 +105,12 @@ ALERT_CENTER_SOURCE_PLAN = {
         "OBJECT": "Owner/on-call routing directory",
         "WHY": "Named owner, email, approval, and escalation readiness",
         "COST_GUARDRAIL": "Small configuration read with built-in fallback",
+    },
+    "automation_health": {
+        "SOURCE": "No-touch automation health",
+        "OBJECT": "OVERWATCH_AUTOMATION_HEALTH_V",
+        "WHY": "Scheduled run state and Control-M/Jira/Terraform/Flyway feed freshness",
+        "COST_GUARDRAIL": "Single-row health view",
     },
 }
 
@@ -212,12 +218,14 @@ def _load_center_data(
         "rules": pd.DataFrame(),
         "rule_audit": pd.DataFrame(),
         "owner_directory": pd.DataFrame(),
+        "automation_health": pd.DataFrame(),
         "alerts_error": "",
         "queue_error": "",
         "delivery_error": "",
         "rule_error": "",
         "rule_audit_error": "",
         "owner_directory_error": "",
+        "automation_health_error": "",
         "loaded_at": datetime.now().isoformat(timespec="seconds"),
         "_loaded_sources": sorted(sources),
     }
@@ -262,6 +270,42 @@ def _load_center_data(
             data["owner_directory"] = load_owner_directory(section="Alert Center")
         except Exception as exc:
             data["owner_directory_error"] = _format_snowflake_error(exc)
+    if "automation_health" in sources:
+        try:
+            from utils import run_query_or_raise
+
+            data["automation_health"] = run_query_or_raise(
+                """
+                SELECT
+                  RUN_TS,
+                  COMPANY,
+                  ENVIRONMENT,
+                  PRIMARY_EVIDENCE_STATE,
+                  ACTION_QUEUE_SEEDED,
+                  OWNER_ROUTES_UPDATED,
+                  VERIFIED_SAVINGS_STATE,
+                  ALERT_DIGEST_STATE,
+                  EXTERNAL_FEED_ROWS,
+                  OPEN_ACTIONS,
+                  VERIFIED_ACTIONS,
+                  CONTROL_M_ROWS,
+                  TERRAFORM_ROWS,
+                  FLYWAY_ROWS,
+                  GIT_ROWS,
+                  JIRA_ROWS,
+                  LAST_DIGEST_TS,
+                  TERRAFORM_DRIFT_MODE,
+                  NEXT_ACTION
+                FROM OVERWATCH_AUTOMATION_HEALTH_V
+                LIMIT 1
+                """,
+                section="Alert Center",
+                ttl_key=f"alert_center_automation_health_{company}_{environment}",
+                tier="standard",
+                max_rows=5,
+            )
+        except Exception as exc:
+            data["automation_health_error"] = _format_snowflake_error(exc)
     data["issues"] = build_dashboard_issue_rows(
         alerts=data["alerts"] if isinstance(data["alerts"], pd.DataFrame) else pd.DataFrame(),
         queue=data["action_queue"] if isinstance(data["action_queue"], pd.DataFrame) else pd.DataFrame(),
@@ -1084,6 +1128,116 @@ def _alert_integration_readiness_board(
     return board.sort_values(["_STATE_RANK", "CONTROL"]).drop(columns=["_STATE_RANK"], errors="ignore")
 
 
+def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
+    pd = _pd()
+    st.markdown("**No-Touch Automation Health**")
+    if automation_health is None or automation_health.empty:
+        st.info("No automation health row loaded yet. Deploy the automation task and run the Alert Center refresh.")
+        return
+
+    row = automation_health.iloc[0]
+
+    def text_value(column: str, default: str = "") -> str:
+        value = row.get(column, default)
+        if pd.isna(value):
+            return default
+        return str(value or default).strip()
+
+    def int_value(column: str) -> int:
+        try:
+            value = row.get(column, 0)
+            if pd.isna(value):
+                return 0
+            return int(float(value))
+        except Exception:
+            return 0
+
+    primary_state = text_value("PRIMARY_EVIDENCE_STATE", "Not Run")
+    digest_state = text_value("ALERT_DIGEST_STATE", "Not Run")
+    savings_state = text_value("VERIFIED_SAVINGS_STATE", "Verifier scheduled")
+    run_scope = " / ".join(
+        part for part in [text_value("COMPANY", "ALL"), text_value("ENVIRONMENT", "ALL")] if part
+    ) or "ALL / ALL"
+    run_ts = text_value("RUN_TS", "Not Run")[:19]
+    feed_total = int_value("EXTERNAL_FEED_ROWS")
+    open_actions = int_value("OPEN_ACTIONS")
+    verified_actions = int_value("VERIFIED_ACTIONS")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Last Run", run_ts)
+    c2.metric("External Rows", f"{feed_total:,}")
+    c3.metric("Open Actions", f"{open_actions:,}", delta_color="inverse")
+    c4.metric("Verified", f"{verified_actions:,}")
+
+    rows = [
+        {
+            "STATE": "Ready" if primary_state.upper() in {"READY", "PRIMARY_EVIDENCE_READY"} else "Review",
+            "CONTROL": "Primary evidence refresh",
+            "EVIDENCE": f"{primary_state} for {run_scope}.",
+            "NEXT_ACTION": text_value("NEXT_ACTION", "Review the latest automation run."),
+            "OWNER": "DBA On-Call",
+        },
+        {
+            "STATE": "Ready" if int_value("ACTION_QUEUE_SEEDED") > 0 else "Review",
+            "CONTROL": "Action queue seeding",
+            "EVIDENCE": f"{int_value('ACTION_QUEUE_SEEDED'):,} row(s) seeded in the latest run.",
+            "NEXT_ACTION": "Review open action queue rows and close only after owner/proof evidence is present.",
+            "OWNER": "DBA Lead",
+        },
+        {
+            "STATE": "Ready" if int_value("OWNER_ROUTES_UPDATED") > 0 else "Review",
+            "CONTROL": "Owner route update",
+            "EVIDENCE": f"{int_value('OWNER_ROUTES_UPDATED'):,} owner route row(s) updated.",
+            "NEXT_ACTION": "Keep owner directory mapped to named teams, email routes, and approval groups.",
+            "OWNER": "Platform DBA",
+        },
+        {
+            "STATE": "Ready" if "VERIFIED" in savings_state.upper() or "SCHEDULED" in savings_state.upper() else "Review",
+            "CONTROL": "Savings verification",
+            "EVIDENCE": savings_state,
+            "NEXT_ACTION": "Let the verifier close savings outcomes from metering proof instead of manual notes.",
+            "OWNER": "Cost Owner",
+        },
+        {
+            "STATE": "Ready" if "READY" in digest_state.upper() or "PREPARED" in digest_state.upper() or "SENT" in digest_state.upper() else "Review",
+            "CONTROL": "Alert digest",
+            "EVIDENCE": f"{digest_state}; last delivery {text_value('LAST_DIGEST_TS', 'not logged')[:19]}.",
+            "NEXT_ACTION": "Enable Snowflake email delivery only after the approved notification integration is available.",
+            "OWNER": "DBA On-Call",
+        },
+    ]
+
+    for feed, column, owner in [
+        ("Control-M", "CONTROL_M_ROWS", "Job Scheduler Owner"),
+        ("Jira", "JIRA_ROWS", "ITSM Owner"),
+        ("Terraform", "TERRAFORM_ROWS", "DevOps Owner"),
+        ("Flyway", "FLYWAY_ROWS", "DevOps Owner"),
+        ("Git", "GIT_ROWS", "DevOps Owner"),
+    ]:
+        count = int_value(column)
+        rows.append({
+            "STATE": "Ready" if count > 0 else "Needs Setup",
+            "CONTROL": f"{feed} evidence feed",
+            "EVIDENCE": f"{count:,} row(s) ingested.",
+            "NEXT_ACTION": (
+                f"Feed {feed} evidence into OVERWATCH_EXTERNAL_CONTROL_FEED."
+                if count == 0 else f"Keep {feed} evidence synchronized for drift and closure checks."
+            ),
+            "OWNER": owner,
+        })
+
+    board = pd.DataFrame(rows)
+    board["_STATE_RANK"] = board["STATE"].map({"Needs Setup": 0, "Review": 1, "Ready": 2}).fillna(9)
+    board = board.sort_values(["_STATE_RANK", "CONTROL"]).drop(columns=["_STATE_RANK"], errors="ignore")
+    _render_priority_dataframe(
+        board,
+        title="No-touch automation run controls",
+        priority_columns=["STATE", "CONTROL", "EVIDENCE", "NEXT_ACTION", "OWNER"],
+        raw_label="All no-touch automation controls",
+        height=320,
+    )
+
+
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -1184,6 +1338,7 @@ def render() -> None:
     rules = data.get("rules") if isinstance(data.get("rules"), pd.DataFrame) else pd.DataFrame()
     rule_audit = data.get("rule_audit") if isinstance(data.get("rule_audit"), pd.DataFrame) else pd.DataFrame()
     owner_directory = data.get("owner_directory") if isinstance(data.get("owner_directory"), pd.DataFrame) else pd.DataFrame()
+    automation_health = data.get("automation_health") if isinstance(data.get("automation_health"), pd.DataFrame) else pd.DataFrame()
     if data.get("alerts_error"):
         st.info("Alert history unavailable.")
         defer_source_note(
@@ -1200,6 +1355,8 @@ def render() -> None:
         defer_source_note("Alert rule audit unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["rule_audit_error"])
     if data.get("owner_directory_error"):
         defer_source_note("Owner directory unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["owner_directory_error"])
+    if data.get("automation_health_error"):
+        defer_source_note("No-touch automation health unavailable until snowflake/OVERWATCH_MART_SETUP.sql is deployed.", data["automation_health_error"])
     defer_source_note(f"Loaded {data.get('loaded_at', '')}. Email target defaults to {_alert_email_target()}.")
 
     open_alerts = _open_alert_mask(alerts)
@@ -1366,6 +1523,8 @@ def render() -> None:
         st.subheader("Alert Automation Readiness")
         from utils import owner_directory_readiness_board
         from utils.alerts import build_alert_digest_summary
+
+        _render_no_touch_automation_health(automation_health)
 
         digest_summary = build_alert_digest_summary(alerts)
         owner_summary, owner_board = _alert_owner_route_board(alerts, queue)

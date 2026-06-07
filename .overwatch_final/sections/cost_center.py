@@ -1432,7 +1432,7 @@ def render():
     )
 
     cost_view = render_workflow_selector(
-        "Cost Center workflow",
+        "Cost allocation workflow",
         "cost_center_view",
         COST_CENTER_VIEWS,
         COST_CENTER_VIEW_DETAILS,
@@ -2915,7 +2915,7 @@ def render():
         st.caption("Track consumption against the annual Snowflake committed-use contract.")
         defer_source_note(
             "Projects burn rate to flag over- and under-utilization risk. "
-            "This is the canonical contract view; the standalone Credit Contract page has been consolidated here."
+            "This is the canonical contract view; contract evidence is consolidated in Cost & Contract."
         )
 
         col_ct1, col_ct2, col_ct3 = st.columns(3)

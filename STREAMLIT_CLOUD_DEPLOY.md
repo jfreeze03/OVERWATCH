@@ -1,66 +1,111 @@
-# OVERWATCH Streamlit Cloud Deployment
+# OVERWATCH Streamlit Deployment Guide
 
-Use this repository with Streamlit Community Cloud:
+Last updated: June 6, 2026
 
-- Repository: `jfreeze03/OVERWATCH`
-- Branch: `main`
+This guide covers the public Streamlit Community Cloud entry point and the
+Snowflake Streamlit-in-Snowflake entry point.
+
+## Community Cloud
+
+Use these settings:
+
 - Main file path: `streamlit_app.py`
-- Tracked config: `.streamlit/config.toml`
 
-Community Cloud installs dependencies from the root `requirements.txt`.
-The Snowflake-in-Snowflake deployment still uses `.overwatch_final/environment.yml`.
-Using the root `streamlit_app.py` wrapper keeps Community Cloud from selecting
-the Snowflake-specific conda manifest under `.overwatch_final/`.
+| Setting | Value |
+|---|---|
+| Repository | `jfreeze03/OVERWATCH` |
+| Branch | `main` |
+| Main file path | `streamlit_app.py` |
+| Config path | `.streamlit/config.toml` |
 
-## Preflight
+Do not commit secrets:
 
-Before promoting a release:
+- `.streamlit/secrets.toml`
+- `.env`
+- `.env.*`
+- `*.pem`
+- `*.key`
+- local credential exports
 
-- Confirm Streamlit Community Cloud points to `streamlit_app.py`.
-- Confirm `.overwatch_final/snowflake.yml` still uses `main_file: app.py` and
-  `query_warehouse: OVERWATCH_WH` for Streamlit-in-Snowflake.
-- Confirm `.streamlit/secrets.toml`, `.env*`, `*.pem`, and `*.key` are local-only
-  and ignored by Git.
-- Run `python -m unittest discover -s tests`, then the section smoke runner
-  against the local app.
+## Streamlit In Snowflake
 
-## Snowflake Connection
+Use `.overwatch_final/snowflake.yml`.
 
-Do not commit Snowflake credentials to GitHub. In Streamlit Cloud, configure
-the Snowflake connection in **Advanced settings** or **App settings > Secrets**
-using your organization's approved authentication method. Keep all account,
-user, password, token, private-key, and SSO settings in Streamlit Cloud or your
-Snowflake-managed secret store, not in this repository.
+Expected values:
 
-## Required Snowflake Grants
+| Setting | Value |
+|---|---|
+| Main file | `app.py` |
+| Query warehouse | `OVERWATCH_WH` |
+| App package root | `.overwatch_final` |
 
-The running role needs:
+`OVERWATCH_WH` is the dedicated app runtime warehouse. The current mart task
+graph runs on `COMPUTE_WH`.
+
+## Snowflake Setup
+
+Run:
 
 ```sql
-GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE <role>;
-GRANT MONITOR ON ACCOUNT TO ROLE <role>;
-GRANT USAGE ON WAREHOUSE OVERWATCH_WH TO ROLE <role>;
-GRANT USAGE ON DATABASE DBA_MAINT_DB TO ROLE <role>;
-GRANT USAGE ON SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
-GRANT SELECT, INSERT, UPDATE, DELETE ON FUTURE TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
+-- snowflake/OVERWATCH_MART_SETUP.sql
 ```
 
-For existing deployments, review and run
-`snowflake/OVERWATCH_RELEASE_REMEDIATION.sql` when `OVERWATCH_ANNOTATIONS`
-or the `OVERWATCH_WH_RM` warehouse guardrail is missing.
+The setup creates:
 
-## Local Run
+- OVERWATCH app database/schema objects
+- `OVERWATCH_WH`
+- `OVERWATCH_WH_RM`
+- mart facts and views
+- owner, alert, action, audit, automation, and external feed tables
+- refresh procedures
+- scheduled tasks
 
-From the repository root:
+## Local Validation Before Release
+
+Run from:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-streamlit run streamlit_app.py
+cd C:\Users\jfree\Desktop\overwatchv3\_deploy_OVERWATCH
 ```
 
-Local development can run without Snowflake credentials. In that mode, the app
-loads the interface and shows offline notices for live data panels until it is
-deployed to a host with a configured Snowflake connection.
+Focused hot-path guard:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests.test_navigation_integrity.NavigationIntegrityTests.test_app_performance_hot_paths_are_deferred_or_cached
+```
+
+Full suite:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+```
+
+Section smoke:
+
+```powershell
+.\.venv\Scripts\python.exe .\perf_tests\section_smoke_runner.py --url http://localhost:8501/ --timeout-ms 30000 --initial-wait-ms 1500 --run-id PERF_TEST_SECTION_SMOKE_RELEASE
+```
+
+Compile changed Python files when code changed:
+
+```powershell
+.\.venv\Scripts\python.exe -m compileall .overwatch_final tests
+```
+
+## Browser Sanity Check
+
+After deployment, open the app and confirm:
+
+1. the app starts without import errors
+2. topbar filters render
+3. DBA Control Room renders quickly
+4. Cost & Contract opens without auto-loading heavy detail
+5. Workload Operations opens with live status and no visible errors
+6. Security Posture opens without source/report errors
+7. Change & Drift schema compare dropdowns cascade by selected database
+8. Executive Landing can produce copyable summary evidence
+
+## Release Rule
+
+Only commit and push when explicitly instructed. Keep local validation results
+with the release notes or final response so the deployment state is clear.

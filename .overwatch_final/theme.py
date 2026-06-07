@@ -574,7 +574,7 @@ code, pre, .stCodeBlock {
 }
 .live-indicator { animation: pulse 2s ease-in-out infinite; }
 
-/* Mission Control shell */
+/* Production navigation shell */
 .ow-sidebar-brand {
     padding: 8px 4px 6px;
     text-align: center;

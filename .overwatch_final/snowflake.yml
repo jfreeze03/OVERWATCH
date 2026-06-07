@@ -26,7 +26,7 @@ definition_version: 1
 #     GRANT SELECT, INSERT, UPDATE, DELETE
 #       ON ALL TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
 #
-#     -- Required for DBA Tools: SHOW WAREHOUSES, IS.QUERY_HISTORY
+#     -- Required for guarded admin workflows: SHOW WAREHOUSES, IS.QUERY_HISTORY
 #     GRANT MONITOR ON ACCOUNT TO ROLE <role>;
 #
 #     -- Required to run the Streamlit app and its Snowflake queries

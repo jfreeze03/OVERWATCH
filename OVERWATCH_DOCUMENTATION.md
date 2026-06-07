@@ -1,485 +1,219 @@
-# OVERWATCH Documentation
-
-Last updated: May 29, 2026
-
-OVERWATCH is a Snowflake usage, cost, performance, security, and DBA operations
-dashboard built with Streamlit. The active application lives in
-`.overwatch_final/app.py` and is deployed from the `main` branch.
-
-## Operating Surfaces
-
-- Executive Landing: board-ready status for risk, cost movement, open DBA work,
-  and setup/mart trust.
-- Experience View: sidebar navigation filter for DBA, Executive, FinOps,
-  Security, and Platform personas. It changes density and routing, not
-  Snowflake privileges.
-- Alert Automation Readiness: Alert Center pane for digest readiness, delivery
-  proof, route ownership, and email-first escalation controls.
-- FinOps Control Center: Cost & Contract workflow for Snowflake Cost Management
-  parity, resource monitors, formula validation, and migration status.
-- Schema / Mart Migration Status: Setup Status panel that compares the expected
-  app setup contract to the deployed OVERWATCH mart ledger.
-
-## Deployment Targets
-
-The repository supports two primary runtimes:
-
-- Streamlit Community Cloud, using root `requirements.txt`
-- Snowflake Streamlit-in-Snowflake, using `.overwatch_final/environment.yml`
-
-Streamlit Community Cloud settings:
-
-```text
-Repository: jfreeze03/OVERWATCH
-Branch: main
-Main file path: streamlit_app.py
-Tracked config: .streamlit/config.toml
-```
-
-Community Cloud must use the root wrapper `streamlit_app.py`. That wrapper runs
-`.overwatch_final/app.py` while keeping dependency installation on the root
-`requirements.txt`; pointing Cloud directly at `.overwatch_final/app.py` can make
-it select the Snowflake-only `.overwatch_final/environment.yml`.
-
-Local Windows run:
-
-```powershell
-.\run_overwatch_local.ps1
-```
-
-Deployment preflight:
-
-```text
-1. Confirm Community Cloud points to streamlit_app.py.
-2. Confirm .overwatch_final/snowflake.yml uses main_file: app.py and query_warehouse: OVERWATCH_WH.
-3. Confirm .streamlit/secrets.toml, .env*, *.pem, and *.key are ignored and not tracked.
-4. Run the regression suite and section smoke against the local app.
-```
-
-Manual local run:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-streamlit run streamlit_app.py
-```
-
-## Snowflake Connection
-
-Do not commit Snowflake credentials. The preferred runtime is
-Streamlit-in-Snowflake, where Snowflake injects the active user session and no
-local credential file is required.
-
-For Streamlit Community Cloud, configure the Snowflake connection in Streamlit
-secrets. Keep credentials outside the repository and outside `.overwatch_final/`.
-Local development can run the interface without committed credentials.
-
-## Required Snowflake Access
-
-The runtime role needs visibility into Snowflake account usage and access to the
-OVERWATCH persistence schema.
-
-```sql
-GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE <role>;
-GRANT MONITOR ON ACCOUNT TO ROLE <role>;
-GRANT USAGE ON DATABASE DBA_MAINT_DB TO ROLE <role>;
-GRANT USAGE ON SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
-GRANT SELECT, INSERT, UPDATE, DELETE ON FUTURE TABLES IN SCHEMA DBA_MAINT_DB.OVERWATCH TO ROLE <role>;
-```
-
-Some DBA actions, such as warehouse setting changes, query cancellation, task
-control, and account parameter changes, require elevated Snowflake privileges.
-
-## Production Mart Architecture
-
-The recommended production architecture is to keep the Streamlit app thin and
-move expensive account-wide scans into a small Snowflake mart. The setup script
-is `snowflake/OVERWATCH_MART_SETUP.sql`.
-Alert Center DDL is deployed from the same setup script; the app does not expose
-a separate setup SQL pane.
-
-The detailed table inventory, refresh flow, cost controls, and migration
-strategy are documented in `SNOWFLAKE_ARCHITECTURE.md`.
-
-Manual inputs that must stay synchronized between the app and Snowflake DDL are
-tracked in `OVERWATCH_MANUAL_INPUTS_AND_DDL_RUNBOOK.md`. Use that runbook before
-adding warehouses, databases, environment selectors, app roles, cost defaults,
-alert emails, owner routes, alert rules, or task/warehouse DDL.
-
-Run the script in Snowflake with a platform-admin role that can create the
-database/schema, warehouse, procedures, and tasks:
-
-```sql
-USE ROLE ACCOUNTADMIN;
--- Run the contents of snowflake/OVERWATCH_MART_SETUP.sql in Snowsight.
-```
-
-The script creates:
-
-- `DBA_MAINT_DB.OVERWATCH` for app-owned state and marts
-- `OVERWATCH_WH`, an X-Small support warehouse with 60-second auto-suspend and
-  the `OVERWATCH_WH_RM` 50-credit monthly resource monitor
-- configuration tables for company scope, settings, alerts, action queue,
-  usage logging, admin action audit, and ROI tracking
-- compact fact/dimension tables for warehouse credits, query history, recent
-  query details, task runs, procedure runs, logins, grants, object changes,
-  storage, Cortex usage, and monitoring cost
-- `MART_DBA_CONTROL_ROOM`, a compact command-center table for Account Health
-  and exceptions-only views
-- hourly and daily tasks that refresh only recent windows, then prune old rows
-
-Current setup SQL uses `COMPUTE_WH` to run the main load/anomaly task graph and
-`OVERWATCH_WH` to run `OVERWATCH_COST_SAVINGS_VERIFY`. These are app execution
-warehouses, not the set of warehouses being monitored. OVERWATCH monitors ALFA
-and Trexis warehouses from company scope plus Snowflake account-usage history.
-Treat task warehouse names as manual inputs; update the setup SQL,
-monitoring-cost logic, docs, and tests together if ALFA moves the task graph to
-another execution warehouse later.
-
-Refresh cadence:
-
-- `OVERWATCH_LOAD_HOURLY`: hourly at minute 25, after most `ACCOUNT_USAGE`
-  latency has settled
-- `OVERWATCH_LOAD_CORTEX`: chained after the hourly load and skipped gracefully
-  when Cortex Code usage views are unavailable
-- `OVERWATCH_REFRESH_CONTROL_ROOM`: chained after Cortex to update DBA summary
-  exceptions
-- `OVERWATCH_LOAD_DAILY`: daily at 6:15 AM Central for login, grants, storage,
-  object-change, and monitoring-cost snapshots
-
-Cost model:
-
-- Task warehouse choice is explicit in `OVERWATCH_MART_SETUP.sql`; the current
-  main load/anomaly tasks execute on `COMPUTE_WH`, while the cost-savings
-  verifier executes on `OVERWATCH_WH`.
-- Monitored warehouses are not limited to the execution warehouse. ALFA and
-  Trexis monitoring comes from company scope and Snowflake account-usage
-  history.
-- The app should prefer mart reads for KPIs, charts, and summary pages, then use
-  direct Snowflake history only for live drilldowns or admin-control screens.
-- `FACT_MONITORING_COST_DAILY` tracks OVERWATCH task/app/tagged query spend so
-  the monitor can report its own operating cost.
-- `FACT_COST_DAILY` tracks account billed credits by Snowflake service type from
-  `SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY`; Cost & Contract uses it for
-  the account service-cost lens before falling back to the live history view.
-- `FACT_COST_SOURCE_HEALTH_DAILY` records whether the main cost proof sources
-  have recent rows so Cost & Contract can show source-health issues separately
-  from actual spend anomalies.
-
-After running setup, resume the root task:
-
-```sql
-ALTER TASK DBA_MAINT_DB.OVERWATCH.OVERWATCH_LOAD_HOURLY RESUME;
-ALTER TASK DBA_MAINT_DB.OVERWATCH.OVERWATCH_LOAD_DAILY RESUME;
-```
-
-Child tasks are created and resumed by the script, but validating task state in
-Snowsight after deployment is still recommended.
-
-## Application Structure
-
-```text
-.overwatch_final/
-  app.py                 Main Streamlit entry point
-  config.py              Defaults, thresholds, company filters, role navigation
-  theme.py               Theme engine and theme picker
-  sections/              Feature modules
-  utils/                 Session, SQL, display, bookmarks, alerts, cost helpers
-  util/                  Legacy compatibility helpers
-  environment.yml        Snowflake Streamlit package list
-streamlit_app.py         Streamlit Community Cloud wrapper
-runtime.txt              Community Cloud Python runtime pin
-```
-
-## Navigation
-
-Navigation is grouped in `config.py` and filtered by current Snowflake role.
-The default company view is `ALFA`.
-
-Monitoring:
-
-- Account Health
-- Usage Overview
-- Adoption Analytics
-- Service Health
-- Live Monitor
-- Detailed Diagnosis
-- Query Analysis
-- Query Search & History
-- Warehouse Health
-
-Infrastructure:
-
-- Storage Monitor
-- Pipeline Health
-- Platform Topology
-- SPCS Tracker
-- Task Management
-
-Cost & Performance:
-
-- Cost Center
-- Recommendations & Anomalies
-- Snowflake Value
-- AI & Cortex Monitor
-
-Security & Ops:
-
-- Security & Access
-- Who Changed What?
-- Stored Proc Tracker
-- Data Sharing
-- DBA Tools
-
-## Major Capabilities
-
-Account Health is the executive landing page. It includes an overview, resource
-monitor view, morning report, executive briefing export, exceptions-only mode,
-and an OVERWATCH cost-of-monitoring panel.
-
-Warehouse Health combines warehouse utilization, cache efficiency, scaling
-events, spill pressure, concurrency heatmaps, and optimization guidance.
-The former standalone Optimization page is retired; shared advisor logic now
-lives in `utils/optimization_advisor.py` and renders only inside Warehouse
-Health.
-
-Cost Center includes cost by user, warehouse, role, database, schema,
-application/client, chargeback by company view, budget tracking, burn rate, and
-the canonical contract utilization view.
-The former standalone Credit Contract page is retired; old navigation aliases
-route to Cost Center so contract math has one source of truth.
-
-Recommendations & Anomalies provides an action queue with severity, owner,
-status, proof SQL, generated fixes, and alert setup.
-
-Security & Access includes login audit, login posture, roles and grants, dormant
-user detection, MFA coverage, exfiltration signals, and access-history lineage.
-
-DBA Tools is consolidated into four grouped work areas: Warehouse Ops, Data
-Movement, Governance, and Cost & Setup. It includes query kill list, warehouse
-settings manager, data loading, network and sessions, unused objects, Snowpipe,
-QAS, schema compare, recent objects, pre-aggregation DDL, dynamic tables,
-replication, serverless costs, Cortex limits, task graph control, OVERWATCH
-usage log, first-time setup, and cost formula audit.
-
-DBA metadata tabs prefer `SHOW` output or defensive `SELECT *` patterns where
-Snowflake account-usage column names vary by edition or release. Optional
-metadata failures are shown as warnings or empty-state messages, while
-destructive actions such as cancel, suspend, resume, and execute still surface
-explicit errors.
-
-Live task controls and account-wide Cortex parameter changes require typed
-confirmation before the action buttons are enabled. This reduces the chance of
-accidental task execution, DAG suspension, or account-level AI setting changes
-from the Streamlit UI.
-
-Object Change Monitoring answers "who changed what" across DDL, access grants,
-policy changes, ownership changes, and drift indicators.
-
-Stored Proc Tracker attributes stored procedure and downstream child-query cost
-where Snowflake query lineage is available.
-
-## Company Filtering
-
-Company filtering is centralized in `COMPANY_CONFIG` in `config.py`.
-
-- `ALFA` excludes Trexis warehouses and focuses on ALFA/Admin database patterns.
-- `Trexis` focuses on `WH_TRXS_%`, `TRXS_%` database patterns, and Trexis users.
-- `ALL` removes company-specific filters.
-
-When changing company view, cached datasets are invalidated so each section
-re-runs with the selected company scope.
-
-Company scope is also included in section cache keys for cost, adoption,
-diagnosis, search, security, service health, warehouse health, DBA, topology,
-stored procedure, and object-change screens. Persistent action-queue reads are
-filtered to the selected company unless Company View is set to `ALL`.
-
-Cost allocation uses warehouse metering as the credit source of truth. Company
-scope is applied at the warehouse boundary inside metered-credit CTEs, then
-user/database/role filters are applied to query history before reporting. This
-prevents a filtered user or database view from being charged for the full
-warehouse-hour spend of unrelated workloads.
-
-Cost & Contract includes a Snowflake Cost Management parity check. It mirrors
-the documented Account Overview warehouse source, keeps ALFA's configured
-`$3.68` compute credit rate for estimated dollars, and separately attempts
-Snowflake billed-credit and organization-currency reconciliation when those
-views are visible to the active role.
-
-`company_scoped_query()` centralizes company/global filter injection and cache
-key construction for new section SQL. Use `{company_scope}` or `{global_scope}`
-placeholders in SQL instead of hand-building company filters in every section.
-
-Idle warehouse recommendations use finalized compute credits, not total
-warehouse credits, so cloud-services overhead is not overstated as idle
-compute waste.
-
-Cost Center forecast, contract utilization, and Cortex forecast fill missing
-calendar days with zero credits before calculating run rates. This avoids
-overstating usage when Snowflake metering returns only days with activity.
-
-DBA Tools > Cost & Setup > Cost Formula Audit documents each cost calculation,
-its source table, source basis, and reconciliation SQL. This separates
-exact billed metrics from allocated query estimates and forecast projections.
-
-OVERWATCH query telemetry records query hash, section, elapsed time, row count,
-and estimated result size. The budget guardrail warns when the same section
-repeatedly runs a slow or large-result query pattern.
-OVERWATCH also applies section-level Snowflake `QUERY_TAG` values in the form
-`OVERWATCH:v3|<company>|<section>|<cache tier>`. This lets the cost-of-monitoring
-panel separate Account Health, Cost Center, DBA Tools, and other section spend
-instead of treating every app query as one generic workload.
-
-High fan-out screens such as Platform Topology, Query Search, and Object Change
-Monitoring use smaller default result limits and user-controlled row caps.
-Prefer the KPI and summary views first, then raise limits only for exports or
-deep investigations.
-
-Health scores use shared weighted scorecards rather than a single success-rate
-formula. Executive health combines query failures, queue pressure, latency,
-task reliability, warehouse pressure, credit spikes, and storage growth. Service
-Health uses category-specific weights so warehouse, task, query, login, and load
-events do not carry the same severity by default. Composite score panels include
-source-basis captions and contributor tables.
-
-Snowflake Value uses measured OVERWATCH runtime cost from Snowflake metering
-where available: tagged OVERWATCH queries, Streamlit warehouses, Cortex usage,
-and alert-task activity. It no longer assumes a fixed 24x7 X-Small warehouse
-cost when metering is unavailable.
-
-Cost Center contract utilization projects commitment burn four ways: average
-daily rate, 7-day trend, 30-day trend, and business-day adjusted run rate. Trend
-labels call out accelerating, stable, or cooling burn so leadership can see
-whether the contract forecast is changing.
+# OVERWATCH Production Documentation
+
+Last updated: June 6, 2026
+
+This is the production operating guide for OVERWATCH, a Snowflake DBA command
+center built with Streamlit, Snowflake account telemetry, and a low-cost
+OVERWATCH mart.
+
+## Purpose
+
+OVERWATCH gives DBAs one place to answer five production questions:
+
+1. What needs attention right now?
+2. What is driving Snowflake cost?
+3. Which workloads, tasks, warehouses, or procedures are failing or slowing
+   down?
+4. Which security, access, and change-control risks need owner action?
+5. What can be summarized for executives without manually rebuilding a slide
+   deck?
+
+The product goal is not just dashboard visibility. The goal is closed-loop DBA
+operations: detect, route, act, verify, and retain evidence.
+
+## Production Navigation
+
+| Group | Section | What it is for |
+|---|---|---|
+| Command Center | Executive Landing | Executive-ready summary, KPI packet, cost movement, risk movement, and presentation notes. |
+| Command Center | DBA Control Room | Morning triage, top priority brief, open work, live status, and action queue routing. |
+| Command Center | Alert Center | Alert rules, alert history, delivery preparation, digest evidence, and alert health. |
+| Command Center | Account Health | Account-level exception checklist, service health, source freshness, and DBA next actions. |
+| Financial Control | Cost & Contract | Cost overview, warehouse/user/role attribution, Cortex spend, contract pacing, savings verification, and RCA narrative. |
+| Operations | Workload Operations | Live query/task/procedure status, Control-M style job evidence, performance indicators, and errors. |
+| Operations | Warehouse Health | Warehouse pressure, queue/spill/latency evidence, setting review, resize/suspend/resume guardrails, and verification proof. |
+| Governance | Security Posture | MFA, login posture, role/grant posture, dormant/high-risk access, sharing exposure, and security evidence. |
+| Governance | Change & Drift | Object changes, schema compare, Terraform evidence, Jira evidence, Flyway/Git evidence, and drift context. |
+| Architecture | Architecture Readiness | Ownership, objectives, platform futures, source health, control register, and readiness evidence. |
+
+Legacy bookmarks and saved views may still redirect to the current sections, but
+production documentation and navigation should use only the names above.
+
+## User Roles And Experience Views
+
+The app uses experience views to reduce risk and noise:
+
+| Experience view | Intended audience | Access intent |
+|---|---|---|
+| DBA | Full DBA/admin operator | Full enabled admin control, action routing, evidence, and guarded execution paths. |
+| Manager | DSA-style manager | Broad health, cost, security, governance, and action status without needing every admin control first. |
+| Analyst | DTI-style analyst | Workload Operations and analysis surfaces needed to investigate query, task, and warehouse behavior. |
+| Executive | Leadership | Executive Landing, high-level health, cost, open risk, and report-ready evidence. |
+
+The DBA role must retain the strongest confirmation, audit, rollback, and
+verification requirements because it can trigger production-impacting actions.
 
 ## Global Filters
 
-The sidebar supports shared filters for:
+Production filters are exposed as a persistent topbar so DBAs do not have to
+dig through a long sidebar during morning triage.
 
-- Date range
-- Warehouse contains
-- User contains
-- Role contains
-- Database contains
+| Filter | Purpose |
+|---|---|
+| Company | `ALFA`, `Trexis`, or account-wide view. |
+| Environment | Production, all development/test, individual database environments, or all environments. |
+| Cost/date window | Standard windows: `1`, `7`, `14`, `30`, `60`, and `90` days. |
+| Warehouse | Metadata/static warehouse options scoped to the selected company/environment where possible. |
+| User | Optional user-level workload or cost focus. |
+| Exceptions-only | Keeps first-load views focused on failing or high-risk evidence. |
 
-Sections use these where supported. Some specialized DBA tools use their own
-section-local controls because they target administrative operations.
+For Trexis, production databases end in `_PRD`; development/test databases end
+in `_DEV` or `_SIT`. For ALFA, configured production and development database
+families are defined in `.overwatch_final/config.py` and mirrored in the mart
+setup SQL.
 
-Optimization, recommendation, stored procedure, diagnosis, query analysis, and
-warehouse-health scans honor the same global filters where the underlying
-Snowflake view exposes matching columns.
+## Company And Environment Scope
 
-Account-level Snowflake views that do not expose reliable company, database,
-warehouse, or user dimensions are explicitly labeled as account-level. In those
-cases OVERWATCH either requires `ALL` view or applies the strongest available
-post-load scoping to avoid implying false precision.
+Trexis warehouses are explicitly hardcoded:
 
-Snowflake Value stores a `COMPANY` column for newly logged optimization wins.
-Legacy value rows without that column are treated as ALFA until the generated
-setup DDL is applied. SPCS cost tracking is scoped by compute pool naming where
-available, using Trexis-style names for Trexis and excluding those names from
-ALFA.
+- `WH_TRXS_LOAD`
+- `WH_TRXS_QUERY`
+- `WH_TRXS_TRANSFORM`
+- `WH_TRXS_UNLOAD`
 
-## Themes
+All other listed account warehouses are treated as ALFA unless a future scope
+entry explicitly assigns them elsewhere.
 
-The theme picker lives under sidebar Settings. Available themes:
+Trexis databases are explicitly hardcoded:
 
-- Midnight: dark glassmorphism with cyan accents
-- ALFA: light ALFA-inspired theme with red and teal accents
-- Terminal: green-on-black operations theme
-- Aurora: dark teal/emerald theme
-- Carbon: dark charcoal and orange operations theme
+- `TRXS_ABC_METADATA_DEV`
+- `TRXS_ABC_METADATA_PRD`
+- `TRXS_ABC_METADATA_SIT`
+- `TRXS_EDW_DEV`
+- `TRXS_EDW_PRD`
+- `TRXS_EDW_SIT`
+- `TRXS_GW_DATA_DEV`
+- `TRXS_GW_DATA_PRD`
+- `TRXS_GW_DATA_SIT`
 
-The former Corporate theme has been replaced by the ALFA theme. Shared tab
-styling now supports horizontal scrolling so long tab sets remain readable.
+Environment classification is evidence-sensitive. Rows with no reliable
+database context should remain `No Database Context`; they should not be forced
+into production or development.
 
-## Test Harness
+## Mart-First Architecture
 
-Lightweight tests live under `tests/`. They are intentionally focused on shared
-formula behavior that can be validated without a Snowflake connection.
+The Snowflake setup file creates the OVERWATCH database, schema, tables,
+procedures, tasks, and dedicated app warehouse. The Streamlit app runs on
+`OVERWATCH_WH`. The current mart task graph runs on `COMPUTE_WH`.
 
-```powershell
-python -m unittest discover -s tests
-```
+Core mart facts include:
 
-Current coverage includes executive and service scorecard formulas so future
-health-score changes do not accidentally flatten risk weighting.
+- `FACT_WAREHOUSE_HOURLY`
+- `FACT_QUERY_HOURLY`
+- `FACT_QUERY_DETAIL_RECENT`
+- `FACT_TASK_DAILY`
+- `FACT_OBJECT_CHANGE`
+- `FACT_COST_DAILY`
+- `FACT_CORTEX_DAILY`
+- `FACT_CHARGEBACK_DAILY`
+- `FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY`
+- `FACT_WAREHOUSE_OPERABILITY_DAILY`
+- `FACT_SECURITY_OPERABILITY_DAILY`
 
-## Persistence Tables
+Core durable evidence tables include:
 
-OVERWATCH uses the configured `DBA_MAINT_DB.OVERWATCH` schema for app-owned
-state such as:
+- `OVERWATCH_ACTION_QUEUE`
+- `OVERWATCH_ALERTS`
+- `OVERWATCH_OWNER_DIRECTORY`
+- `OVERWATCH_ADMIN_ACTION_AUDIT`
+- `OVERWATCH_WORKLOAD_RECOVERY_AUDIT`
+- `OVERWATCH_WAREHOUSE_SETTING_REVIEW`
+- `OVERWATCH_AUTOMATION_RUN`
+- `OVERWATCH_EXECUTIVE_PACKET`
+- `OVERWATCH_EXTERNAL_CONTROL_FEED`
 
-- Saved views/bookmarks
-- Alert history
-- Recommendation action queue
-- Snowflake value log
-- Source-control/Terraform deployment evidence for Change & Drift, including feed health for the Snowflake evidence tables and optional CSV stage/load SQL for CI and Jira exports
-- Jira/ITSM ticket and approval evidence for Change & Drift
+## Cost And Credit Rules
 
-The app can generate setup DDL for saved views from the sidebar Saved Views
-panel.
+Cost metrics must stay aligned across sections.
 
-## Alerts
+| Metric | Rule |
+|---|---|
+| Warehouse total credits | Sum `CREDITS_USED` from `WAREHOUSE_METERING_HISTORY`. |
+| Warehouse compute credits | Sum `CREDITS_USED_COMPUTE` when available; otherwise fall back to `CREDITS_USED`. |
+| Warehouse dollar estimate | Warehouse credits multiplied by `$3.68`. |
+| Cortex AI dollar estimate | Cortex AI credits multiplied by `$2.20`. |
+| Official billed service credits | Use `METERING_DAILY_HISTORY`. |
+| Official currency reconciliation | Use organization usage/rate-sheet views only when the active role can see them. |
+| User/role/schema/database attribution | Allocate exact metered warehouse-hour credits by query evidence when direct billing is unavailable. |
 
-Alerting is designed for Microsoft Teams/webhook and email-oriented workflows.
-Slack webhook language has been removed from the current direction.
+All sections should distinguish exact Snowflake metering from allocated
+attribution. Cost tables should include dollars when the metric represents
+credits, spend, savings, or forecast.
 
-Recommendations and alert setup should write actionable items into the action
-queue with status values such as New, Acknowledged, Fixed, and Ignored.
+## Admin Safety
 
-## Runtime Notes
+Any production-impacting admin control must follow this pattern:
 
-- `SNOWFLAKE.ACCOUNT_USAGE` can lag by up to roughly 45 minutes.
-- `INFORMATION_SCHEMA` views are used for fresher operational detail where
-  practical.
-- Some features are best-effort because Snowflake account history availability
-  depends on edition, privileges, retention, and account settings.
-- Metrics that mix service costs, allocated query cost, storage, Cortex, or
-  procedure attribution should show source-basis labels such as Exact,
-  Allocated, Estimated, or Account-wide.
-- ACCOUNT_USAGE-backed metrics should show freshness context because source
-  latency can make "live" and "last 24h" numbers differ.
-- Keep credentials in Streamlit or Snowflake-managed secrets, never in the repo.
-- Do not commit Streamlit log files or Python cache directories.
+1. Show the current value.
+2. Generate changed-only SQL.
+3. Require typed confirmation or explicit approval.
+4. Capture owner, ticket, reason, rollback SQL, and proof query.
+5. Write an audit row even when the action fails.
+6. Keep the action open until verification evidence exists.
 
-## Recent Design Updates
+Warehouse setting changes, query cancellation, task execution, account
+parameter changes, and security/role changes should never be treated as simple
+button clicks.
 
-- Corporate theme replaced by ALFA theme based on ALFA brand colors.
-- Sidebar icon text leaks were fixed by protecting Streamlit Material icon
-  ligatures from broad font overrides.
-- Navigation labels were standardized with native Streamlit captions where
-  possible.
-- DBA Tools tabs were consolidated into Warehouse Ops, Data Movement,
-  Governance, and Cost & Setup groups.
-- Optimization was consolidated under Warehouse Health.
-- Credit Contract was consolidated into Cost Center contract utilization.
-- Usage Overview now loads KPIs first and defers chart/drilldown panels until
-  requested.
-- OVERWATCH cost-of-monitoring, query budget guardrails, source-basis labels,
-  source freshness notes, and leadership exceptions-only mode were
-  added.
-- Dormant Users was removed from DBA Tools and remains available in Security &
-  Access.
-- Migration score language and Teradata-oriented executive language were removed.
+## Integrations
 
-## Troubleshooting
+OVERWATCH supports evidence surfaces for:
 
-If the app fails at startup, check that all support modules are present:
+- Control-M style task/job status, performance indicators, and errors.
+- Jira approval and issue evidence.
+- Terraform plan/apply/drift evidence.
+- Flyway migration evidence.
+- Git/source-control evidence.
+- Snowflake email notification integration for digest and critical alerts.
 
-- `theme.py`
-- `config.py`
-- `utils/`
-- `sections/`
+These integrations should land in durable evidence tables or external feed
+tables before they become trusted production signals.
 
-If a section fails with an invalid identifier, the Snowflake view in that account
-may not expose the same column names as another Snowflake release or view family.
-Prefer defensive SQL patterns using available `ACCOUNT_USAGE` columns and avoid
-assuming optional columns exist everywhere.
+## Alerting And Executive Reporting
 
-If Streamlit Community Cloud fails during install, confirm `requirements.txt`
-contains only PyPI packages and Snowflake Streamlit-specific packages remain in
-`.overwatch_final/environment.yml`.
+Alert Center prepares alert content with severity, owner, route, proof query,
+and delivery state. When the Snowflake email notification integration is
+approved, alert digest procedures can call Snowflake email delivery instead of
+remaining dry-run packaging.
+
+Executive Landing and the automation objects support weekly or on-demand
+executive packets. A production packet should include cost movement, top risk,
+open actions, verified savings, incidents, governance blockers, and next steps.
+
+## UI Standards
+
+Production sections should follow these rules:
+
+- Exception-first: show urgent failures or risk before tables.
+- One navigation level: avoid tabs inside tabs.
+- Explicit load gates: heavy evidence should load only when requested.
+- Useful metrics only: no build/test/internal performance metrics in app UI.
+- Cost where it matters: credit tables should include dollar estimates.
+- Toggle chart/table state: when a chart exposes data, users need a path back
+  to the chart.
+- Compact action briefs: use short operator language and proof links.
+- Consistent labels: use current section names and remove stale terminology.
+
+## Production Release Checklist
+
+Before release:
+
+1. Run focused navigation/runtime guards.
+2. Run the full unit test suite.
+3. Run section smoke against the local app.
+4. Run the bad-character scan against app code, tests, and docs.
+5. Compile changed Python files when app code changed.
+6. Verify the browser renders primary sections without Streamlit or Python
+   errors.
+7. Confirm no production doc refers to retired navigation labels.
+8. Commit and push only after explicit user instruction.

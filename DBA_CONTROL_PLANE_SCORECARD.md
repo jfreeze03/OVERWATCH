@@ -1,138 +1,84 @@
-# DBA Control Plane Scorecard
+# OVERWATCH DBA Control Plane Scorecard
 
-## Purpose
+Last updated: June 6, 2026
 
-This scorecard is the fixed readiness standard for OVERWATCH as a Snowflake DBA
-administration control plane. It is not a feature-completeness score, a visual
-polish score, or a live account-health score.
+The scorecard is a strict production-readiness rubric. A section should not
+score as production-grade because it has many charts. It scores well when it
+has trusted evidence, owners, safe actions, verification, and low-friction DBA
+workflows.
 
-A section earns 95 only when it is ready for disciplined DBA operation: scoped
-correctly, sourced defensibly, actionable, safe for administration, auditable,
-performant, accountable, and tested. A section can look impressive and still be
-capped below 95 if it cannot safely guide cost control, access control,
-task/procedure reliability, or warehouse administration.
+## Scoring Dimensions
 
-## Rubric
-
-| Component | Weight | 95 Requirement |
-| --- | ---: | --- |
-| DBA Domain Coverage | 20 | Covers the section's assigned DBA work deeply enough to operate from it, not just observe it. |
-| Data Correctness & Scope | 15 | Uses the right Snowflake sources, company and environment scope, freshness/confidence labels, and defensible formulas. |
-| Actionability | 15 | Converts findings into clear next actions with severity, owner path, proof, and generated or suggested remediation. |
-| Admin Safety & Audit | 15 | Every state-changing path has guardrails, confirmation, before/after context, immutable audit, and rollback guidance. |
-| Performance & Mart Strategy | 10 | Reads compact mart facts by default, avoids surprise live scans, caches appropriately, and exposes source health. |
-| DBA Workflow UX | 10 | Supports observe, diagnose, act, audit, and verify without burying the first move. |
-| Governance & Ownership | 10 | Links objects, warehouses, roles, users, tasks, procedures, and findings to owners and approval context. |
-| Tests & Operability | 5 | Has regression coverage, deployment checks, role capability checks, and clear fallback behavior. |
+| Dimension | Weight | What earns credit |
+|---|---:|---|
+| Data correctness | 20 | Uses the right Snowflake source, grain, formula, freshness label, and regression coverage. |
+| Operator value | 20 | Shows the exception, owner, impact, and next action before raw detail. |
+| Admin safety | 15 | Guarded execution, typed confirmation, audit writes, rollback, and failure evidence. |
+| Closed-loop verification | 15 | Proves whether an action worked and updates the queue/reporting state. |
+| Governance and ownership | 15 | Owner, approver, ticket/control evidence, escalation path, and service tier are visible. |
+| Performance and cost | 10 | Mart-first, cached/deferred heavy loads, no unnecessary live scans, low runtime cost. |
+| UX clarity | 5 | Current labels, compact layout, no stale/internal/test language, chart/data toggle paths. |
 
 ## Hard Caps
 
-These caps make the score repeatable. They are enforced by
-`.overwatch_final/utils/scorecards.py`.
+A section cannot exceed the listed score while any cap condition is true.
 
-| Condition | Maximum Score | Reason |
-| --- | ---: | --- |
-| Any component is below 70 | 84 | The section is not a reliable DBA operating surface. |
-| Data Correctness & Scope is below 85 | 89 | The section cannot be scored as production-ready. |
-| Admin Safety & Audit is below 85 | 89 | The section cannot be trusted as a control plane. |
-| Governance & Ownership is below 80 | 92 | Findings are not consistently accountable. |
-| Raw score is at least 95 but any component is below 90 | 94 | A 95+ score requires every rubric component to be at least 90. |
-| Raw score is at least 95 but data correctness, admin safety/audit, or governance/ownership is below 95 | 94 | The critical control-plane dimensions must be excellent, not merely good. |
+| Cap | Maximum | Trigger |
+|---|---:|---|
+| Formula uncertainty | 80 | Cost, credit, freshness, or scope formula is ambiguous or untested. |
+| No owner route | 85 | High-severity rows cannot identify owner/approval/escalation. |
+| Unsafe admin action | 85 | Production-impacting action lacks audit, rollback, or failure-path evidence. |
+| No verification loop | 90 | Recommendations can be marked done without post-action proof. |
+| Heavy first load | 90 | Section performs expensive scans or renders large tables on entry. |
+| Stale UX or labels | 92 | Visible labels, help text, docs, or comments use retired terminology. |
+| Manual-only process | 94 | Required evidence exists externally but must be pasted manually. |
 
-## Current Baseline
+## Current Production Targets
 
-This is the strict DBA-control-plane baseline as of the 95% scoring reset. These
-scores should not be inflated until the missing control-plane evidence exists.
+| Section | Target behavior |
+|---|---|
+| Executive Landing | Paste-ready KPI summary with cost, risk, incidents, verified wins, and open governance blockers. |
+| DBA Control Room | Top priority brief, exception queue, live state where needed, and action routing. |
+| Alert Center | Alert rules, owner routing, digest packaging, delivery state, and escalation evidence. |
+| Account Health | Exceptions-first account checklist with source health and DBA next action. |
+| Cost & Contract | Formula-aligned cost overview, spend RCA, contract pacing, Cortex spend, and verified savings. |
+| Workload Operations | Live query/task/procedure status, Control-M style job state, errors, and performance indicators. |
+| Warehouse Health | Capacity/efficiency/settings evidence with safe changed-only admin workflows. |
+| Security Posture | MFA/login/grant/share posture with owners and remediation routes. |
+| Change & Drift | Object/schema/change evidence with Terraform, Jira, Flyway, Git, and approval context. |
+| Architecture Readiness | Objectives, source health, ownership, future-platform controls, and evidence register. |
 
-| Section | Score | Raw Score | Label | Main Score Cap Drivers |
-| --- | ---: | ---: | --- | --- |
-| DBA Control Room | 88.3 | 88.3 | Operational | Admin safety/audit |
-| Alert Center | 91.8 | 91.8 | Near Target | Still below 95 on approved Snowflake email integration, owner on-call mapping, and delivery evidence replay |
-| Workload Operations | 93.2 | 93.2 | Near Target | None below hard-cap threshold; still below 95 on owner/on-call enrichment and approved recovery execution audit |
-| Warehouse Health | 85.3 | 85.3 | Operational | Admin safety/audit |
-| Cost & Contract | 94.3 | 94.3 | Near Target | Still below 95 on CMDB/on-call owner enrichment for real named accountable owners |
-| Security Posture | 85.0 | 85.0 | Operational | Data correctness/scope, admin safety/audit |
-| Change & Drift | 85.2 | 85.2 | Operational | Data correctness, admin safety/audit, governance/ownership |
-| Account Health | 84.0 | 84.0 | Operational | Data correctness/scope, admin safety/audit |
+## Minimum Evidence For High-Risk Rows
 
-## What 95 Requires
+Every high-risk row should carry:
 
-- Every component is at least 90.
-- Data Correctness & Scope, Admin Safety & Audit, and Governance & Ownership are
-  each at least 95.
-- Every admin action is guarded, confirmed, audited, and paired with before/after
-  context plus rollback guidance.
-- Every database-context section respects company and environment scope.
-- Login-only data without database context does not receive artificial
-  environment filters.
-- Cost views label database-attributed warehouse cost as allocated or estimated
-  where Snowflake metering cannot prove exact PROD/DEV split.
-- Every important number has source, freshness, and confidence labels.
-- Mart-first queries are the default; live ACCOUNT_USAGE fallback is explicit.
-- Every finding has action, owner path, status, proof, and verification evidence.
+1. severity
+2. business impact
+3. owner or route
+4. source and freshness
+5. proof query or evidence link
+6. recommended next action
+7. rollback or non-action rationale when relevant
+8. verification method
 
-## Near-Term Priorities
+## Production Review Checklist
 
-1. Live warehouse-owner tags, approval closure, rollback execution evidence, and verified savings trends.
-2. Live IAM/access-owner inventory, ticket integration, and automated security closure evidence.
-3. Live change-ticket ingestion, source-control comparison, and approval closure automation for Change & Drift.
-4. Named owner/on-call enrichment across action queue rows.
-5. Live service/on-call owner integration and automated closure execution from verification outcomes.
+Use this checklist before calling a section production-ready:
 
-## Latest Control-Plane Improvements
+1. Are all cost formulas documented and tested?
+2. Are current-state metrics using live sources where needed?
+3. Are delayed Snowflake sources labeled by freshness?
+4. Are exceptions shown before bulk tables?
+5. Is the first render fast enough for morning triage?
+6. Are admin actions guarded and audited?
+7. Does closure require verification evidence?
+8. Are owners, approvers, and tickets visible where needed?
+9. Are old labels, aliases, and internal build/test terms absent from the UI?
+10. Can an executive summary be produced without manually reconstructing the
+    numbers?
 
-DBA Control Room now grades every open action-queue row with an execution gate:
-blocked metadata, blocked owner approval, overdue escalation, ready standard,
-or ready high risk. The command queue also exposes owner readiness, audit
-readiness, and the exact evidence required before a DBA should execute from the
-row. This improves operational discipline, but it still lacks live ticket
-integration and immutable execution audit writes, so it remains below 95.
+## Scorecard Principle
 
-Cost & Contract now queues warehouse cost increases and chargeback outliers with
-approver, owner-approval status, approval notes, recovery SLA state, and a
-seven-day post-period verification expectation. Cost claims are now closer to
-auditable savings actions rather than vanity savings estimates. The Cost &
-Contract cockpit reads cost actions back into a savings closure control so open
-estimated savings, blocked savings, fixed-without-verification rows, and
-verified period value are visible before DBAs claim a win. The mart setup now
-also includes a scheduled Snowflake procedure/task scaffold that verifies
-warehouse cost-control actions from exact WAREHOUSE_METERING_HISTORY and writes
-a verification run ledger. Cost & Contract also monitors the verifier task as a
-first-class control, surfacing stale runs, failed task history, missing ledger
-rows, evidence-required outcomes, and the next DBA action. Verifier failures now
-route into the consolidated Alert Center as email-ready Cost Control alerts and
-become governed action-queue work that requires owner approval and read-only
-TASK_HISTORY proof before savings are claimed. It remains below 95 because owner
-enrichment is still limited to Snowflake tags/free-text owners rather than a live
-CMDB/on-call accountability source.
-
-## Scope Correction
-
-Account Health is being re-scoped as a Daily DBA Checklist. It remains below
-95 because broad health and briefing panels are not enough for DBA operation.
-Failed checks now route to owned action-queue items with proof, urgency,
-approval state, verification SQL, owner/escalation hints, and persisted trend
-history. Account Health now also reads its action-queue rows back into closure
-analytics so overdue items, fixed-without-verification rows, owner/ticket gaps,
-and approval gaps are visible from the morning checklist. It still needs live
-service/on-call owner integration and automated closure execution from
-verification outcomes before it can score as a mature DBA operating surface.
-
-Change & Drift now stores change-control evidence snapshots with ticket,
-IaC/source-control, execution-audit, owner, escalation, approver, query-id,
-and blast-radius requirements. It is still capped because ticket and IaC
-status are inferred from query tags/text until integrated with the real
-change-management and source-control systems.
-
-Warehouse Health now stores setting-review snapshots with owner/escalation,
-approval path, rollback requirement, baseline pressure metrics, and
-post-change verification SQL. It remains capped because owner routing is still
-partly name/signal inferred, and rollback/savings closure is not yet proven
-from executed admin audit plus after-state trend evidence.
-
-Security Posture now separates database-context exposure from login-only and
-account-role findings, stores access-review snapshots, keeps login-only rows
-visible under environment filters, and requires owner, approver, ticket,
-review-by, capability, and verification evidence before queue closure. It
-remains capped because owner/approver routing is inferred until connected to
-live IAM/access-owner inventory, ticket workflow, and closure evidence.
+The best OVERWATCH section is not the one with the most widgets. It is the one
+that tells the DBA what matters, what proof exists, who owns it, what to do
+next, and whether the fix worked.

@@ -1,99 +1,161 @@
 # OVERWATCH DBA Control Room Roadmap
 
-## Target
+Last updated: June 6, 2026
 
-OVERWATCH is a DBA administration control plane and leadership evidence generator. Executives do not use the app directly. DBAs use it to triage Snowflake operations, investigate root cause, control cost, validate security/governance posture, manage access, watch task and stored procedure reliability, change warehouse settings, and produce report-ready leadership summaries.
+The roadmap target is a closed-loop Snowflake DBA operating platform:
 
-The 95+ target is governed by the fixed DBA Control Plane Scorecard. Feature depth alone cannot earn 95; data correctness, admin safety, auditability, ownership, and tests can cap a section below target.
+```text
+Detect -> explain -> route -> act -> verify -> report
+```
 
-## Operating Model
+OVERWATCH already has the foundations: mart-first telemetry, role-aware
+sections, action queue, alert ledger, owner routing, cost attribution, warehouse
+evidence, security posture, change evidence, executive packets, and automation
+objects. The remaining work is focused on closure and production polish.
 
-The app should route work by DBA workflow:
+## Current Foundation
 
-- Morning triage: failures, queue pressure, cost spikes, suspicious access, object changes, open recommendations.
-- Incident investigation: query, warehouse, task, stored procedure, user, role, object, and cost impact.
-- Cost control: explain spend changes, identify owners, estimate savings, and track remediation.
-- Security and audit: logins, grants, MFA, object changes, data sharing, and proof queries.
-- Admin actions: controlled warehouse, task, and query operations with confirmation and audit logging.
-- Executive evidence: concise summaries that quantify impact, risk, owner, and recommended action.
+| Capability | Current state |
+|---|---|
+| DBA triage | DBA Control Room and Account Health show exceptions, source health, and action routing. |
+| Cost governance | Cost & Contract explains spend, attributes warehouse/user/role cost, tracks Cortex spend, and supports savings verification. |
+| Workload operations | Query/task/procedure status, pipeline health, errors, and Control-M style job evidence are consolidated in Workload Operations. |
+| Warehouse governance | Warehouse Health tracks pressure, settings, rollback context, and verified action evidence. |
+| Security governance | Security Posture surfaces MFA/login/grant/sharing evidence with owner-ready rows. |
+| Change governance | Change & Drift combines object changes, schema compare, Terraform/Jira/Flyway/Git evidence, and approval context. |
+| Architecture readiness | Architecture Readiness holds objectives, source health, future Snowflake controls, and control register evidence. |
+| Executive interface | Executive Landing provides board-ready KPIs, charts, and copyable narrative. |
 
-The operating loop is:
+## Priority 1: Closed-Loop Verification
 
-1. Observe the exception.
-2. Diagnose source, blast radius, owner, and confidence.
-3. Act through a controlled DBA workflow.
-4. Audit the decision, command, before/after state, and approval context.
-5. Verify the result and close the loop.
+The highest-value improvement is automatic closure proof.
 
-The four primary DBA control domains are:
+Target behavior:
 
-- Cost Control.
-- Access Control.
-- Task & Procedure Reliability.
-- Warehouse Administration.
+1. A DBA action is created with owner, severity, proof query, and expected
+   savings or risk reduction.
+2. The action is executed through a guarded workflow.
+3. Audit rows capture success or failure.
+4. Scheduled verification compares post-action evidence to baseline.
+5. The action queue updates to `VERIFIED_SAVED`, `VERIFIED_NO_CHANGE`, or
+   `NEEDS_REVIEW`.
+6. Executive packets and cost governance include the verified result.
 
-## Current High-Value Foundation
+Primary objects:
 
-- DBA Control Room landing page.
-- Consolidated Query Workbench for live triage, diagnosis, patterns, and history search.
-- Consolidated Cost & Contract workflow for bill explanation, contract pacing, recommendations, value evidence, Cortex, and SPCS spend.
-- Consolidated Security Posture workflow for access posture and data-sharing exposure.
-- Consolidated Change & Drift workflow for object changes, stored procedure lineage, drift checks, and controlled DBA tools.
-- Exceptions-only operating mode for DBA morning triage.
-- Account Health command center and report exports.
-- Metered warehouse-credit allocation.
-- Company scoping for ALFA, Trexis, and ALL.
-- Query budget telemetry.
-- Recommendations/action queue.
-- Warehouse health and optimization advisor.
-- Security/access monitoring behind the Security Posture workflow.
-- Object-change monitoring behind the Change & Drift workflow.
-- Task management and Change & Drift controls.
-- Cost formula audit and monitoring-cost panel.
+- `OVERWATCH_ACTION_QUEUE`
+- `OVERWATCH_ADMIN_ACTION_AUDIT`
+- `OVERWATCH_WORKLOAD_RECOVERY_AUDIT`
+- `OVERWATCH_COST_SAVINGS_VERIFY`
+- `OVERWATCH_AUTOMATION_RUN`
 
-## Remaining Work To Reach 95+
+## Priority 2: Real Alert Delivery
 
-1. Continue splitting Change & Drift controls by risk level.
-   - Safe Observability.
-   - Controlled Actions.
-   - Setup and Maintenance.
-   - Add action audit logging for every destructive or state-changing command.
+Alert Center already prepares owner-routed alert content. The production gap is
+delivery.
 
-2. Build a persistent semantic mart.
-   - Task or dynamic-table aggregates for daily cost, failures, warehouse pressure, storage growth, grants, logins, and object changes.
-   - Keep live queries only for true operational needs.
+Target behavior:
 
-3. Harden company scoping.
-   - Create one reusable ownership mapping table for database, warehouse, role, user, task, and application.
-   - Stop relying only on naming conventions as the enterprise grows.
+- critical alerts send through Snowflake email notification integration
+- daily digest sends automatically
+- dry-run mode remains available for testing
+- delivery success/failure is written to `OVERWATCH_ALERTS`
+- repeated failures become action queue items
 
-4. Make recommendations operational.
-   - Every recommendation needs owner, status, severity, confidence, estimated savings, proof query, generated SQL fix, notes, and due date.
+## Priority 3: External Control Evidence
 
-5. Improve executive evidence.
-   - Add weekly cost report, incident report, optimization win report, governance change report, and contract-risk report.
-   - Keep exported language factual and source-backed.
+OVERWATCH should not require DBAs to manually paste proof when proof already
+exists in another system.
 
-6. Add confidence and freshness everywhere.
-   - Exact, Allocated, Estimated, Account-wide, Forecast.
-   - ACCOUNT_USAGE, INFORMATION_SCHEMA, ORGANIZATION_USAGE, session-local.
+Priority feeds:
 
-7. Add RCA narratives.
-   - Explain cost spikes and incidents across query, user, warehouse, task, stored procedure, object change, and time window.
+| Feed | Evidence |
+|---|---|
+| Control-M | task/job status, start/end time, duration, SLA, error text, owner, run id. |
+| Jira | ticket id, approval state, approver, closure, linked object, target release. |
+| Terraform | plan/apply state, drift result, workspace, module, resource, actor. |
+| Flyway | migration id, schema, checksum, status, installed by, execution time. |
+| Git | commit, branch, PR, reviewer, deployment tag, changed files. |
 
-8. Add test coverage.
-   - Unit tests for SQL builders, company filters, scoring formulas, route mappings, and no-HTML-leak rendering helpers.
-   - Smoke-test checklist for Snowflake role capabilities.
+These should land in `OVERWATCH_EXTERNAL_CONTROL_FEED` or a dedicated evidence
+table when the feed needs richer history.
 
-## Design Rules
+## Priority 4: Ownership Everywhere
 
-- No metric without action.
-- No chart without an owner, risk, trend, or decision.
-- No admin action without confirmation and logging.
-- No cost number without confidence.
-- No live query where a pre-aggregated mart can answer the question.
-- No executive report without proof data behind it.
-- No 95 score without admin safety, auditability, data correctness, and accountable ownership.
+Owner inference from names is useful, but production governance needs declared
+ownership.
 
-For the strict readiness rubric, caps, and current baseline, see
-[DBA_CONTROL_PLANE_SCORECARD.md](DBA_CONTROL_PLANE_SCORECARD.md).
+Target owner sources:
+
+1. Snowflake object tags
+2. `OVERWATCH_OWNER_DIRECTORY`
+3. approved external ownership feed
+4. fallback route only when no stronger owner exists
+
+The owner record should include owner email, on-call owner, backup, approval
+group, escalation target, service tier, and default route.
+
+## Priority 5: Mart-First Performance
+
+Every section should follow the same performance pattern:
+
+1. render action brief and primary metrics quickly
+2. use mart facts for default evidence
+3. use static metadata for filters where possible
+4. put heavy inventories and source health behind explicit load gates
+5. show clear load state for multi-second operations
+
+Section smoke should stay part of release validation.
+
+## Priority 6: Cost RCA Narratives
+
+Cost & Contract should explain not just what changed, but why.
+
+Target narrative inputs:
+
+- top warehouse movement
+- top user or role movement
+- top Cortex user/spend
+- query pattern movement
+- task/procedure failures or duration spikes
+- warehouse setting changes
+- schema/deployment/change evidence
+- action queue status and verification outcome
+
+The output should be paste-ready for executive updates.
+
+## Priority 7: UX Cleanup
+
+The production UI should stay compact and operator-focused.
+
+Standards:
+
+- topbar filters for common triage inputs
+- exception-first rendering
+- no deep tab nesting
+- no internal build/test metrics in user UI
+- explicit load buttons for heavy evidence
+- chart/data toggle paths
+- consistent section labels
+- current navigation group order:
+  Command Center, Financial Control, Operations, Governance, Architecture
+
+## Priority 8: Test Coverage
+
+Add or maintain tests for:
+
+- cost formula source labels
+- company and environment scope
+- role/experience view access
+- SQL builders and setup DDL
+- admin audit write behavior
+- alert digest packaging
+- external feed parsing
+- action queue verification state
+- navigation and stale label prevention
+
+## Release Principle
+
+Do not add surface area that cannot be owned, verified, or explained. OVERWATCH
+is strongest when every chart, table, action, and executive bullet can point to
+source evidence.

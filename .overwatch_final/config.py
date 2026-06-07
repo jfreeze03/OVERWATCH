@@ -29,6 +29,24 @@ TREXIS_WAREHOUSES = (
     "WH_TRXS_UNLOAD",
 )
 
+ALFA_WAREHOUSES = (
+    "BLCOMPUTE_WH",
+    "COMPUTE_WH",
+    "CROWDSTRIKE_WH",
+    "DOC_ALWH",
+    "POSIT_WORKBENCH",
+    "SNOWFLAKE_LEARNING_WH",
+    "SYSTEM$STREAMLIT_NOTEBOOK_WH",
+    "WH_ALFA_ANALYTICS",
+    "WH_ALFA_LOAD",
+    "WH_ALFA_QA",
+    "WH_ALFA_QUERY",
+    "WH_ALFA_TRANSFORM",
+    "WH_ALFA_UNLOAD",
+)
+
+ACCOUNT_WAREHOUSES = tuple(dict.fromkeys((*ALFA_WAREHOUSES, *TREXIS_WAREHOUSES)))
+
 TREXIS_DATABASES = (
     "TRXS_ABC_METADATA_DEV",
     "TRXS_ABC_METADATA_PRD",
@@ -140,6 +158,49 @@ ENVIRONMENT_OPTIONS_BY_COMPANY = {
     "Trexis": ("ALL", "PROD", "DEV_ALL"),
     "ALL": tuple(ENVIRONMENT_CONFIG.keys()),
 }
+
+
+def static_warehouse_options(company: str | None = None) -> tuple[str, ...]:
+    """Return confirmed warehouse choices without opening a Snowflake session."""
+    company_key = str(company or DEFAULT_COMPANY)
+    if company_key == "Trexis":
+        return TREXIS_WAREHOUSES
+    if company_key == "ALL":
+        return ACCOUNT_WAREHOUSES
+    return ALFA_WAREHOUSES
+
+
+def static_database_options(
+    company: str | None = None,
+    environment: str | None = None,
+) -> tuple[str, ...]:
+    """Return confirmed database choices for global filters without live metadata."""
+    company_key = str(company or DEFAULT_COMPANY)
+    env_key = str(environment or DEFAULT_ENVIRONMENT)
+
+    if company_key == "Trexis":
+        if env_key == "PROD":
+            return TREXIS_PROD_DATABASES
+        if env_key == "DEV_ALL":
+            return TREXIS_DEV_DATABASES
+        return TREXIS_DATABASES
+
+    if company_key == "ALFA":
+        if env_key == "PROD":
+            return ALFA_PROD_DATABASES
+        if env_key == "DEV_ALL":
+            return ALFA_DEV_DATABASES
+        if env_key in ALFA_PROD_DATABASES or env_key in ALFA_DEV_DATABASES:
+            return (env_key,)
+        return tuple(dict.fromkeys((*ALFA_PROD_DATABASES, *ALFA_DEV_DATABASES, "ADMIN")))
+
+    if env_key == "PROD":
+        return tuple(dict.fromkeys((*ALFA_PROD_DATABASES, *TREXIS_PROD_DATABASES)))
+    if env_key == "DEV_ALL":
+        return tuple(dict.fromkeys((*ALFA_DEV_DATABASES, *TREXIS_DEV_DATABASES)))
+    if env_key in ALFA_PROD_DATABASES or env_key in ALFA_DEV_DATABASES:
+        return (env_key,)
+    return tuple(dict.fromkeys((*ALFA_PROD_DATABASES, *ALFA_DEV_DATABASES, *TREXIS_DATABASES, "ADMIN")))
 
 # Manual architecture objectives used by Architecture Readiness. These are not
 # discovered from Snowflake; update them when ALFA/Trexis database families,
@@ -630,9 +691,9 @@ class SectionDefinition:
         return self.title
 
 
-# Mission Control navigation exposes only the current DBA workflow architecture.
-# Retired standalone pages are handled by redirect aliases below so saved views
-# and old bookmarks keep working without making legacy names first-class routes.
+# Production navigation exposes only current DBA workflow sections. Legacy
+# redirect aliases below keep saved views and old bookmarks working without
+# making retired labels first-class navigation routes.
 SECTION_DEFINITIONS = (
     SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing"),
     SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room_shell"),
@@ -710,8 +771,8 @@ def _sections_by_title(*titles: str) -> list[str]:
     return [SECTION_BY_TITLE[title] for title in titles]
 
 
-# Mission Control keeps all roles on the same simplified shell. Role-based
-# limits still apply by reducing access to governance workflows where needed.
+# Role profiles keep users on the same production shell while reducing access
+# to workflows where the selected experience view should not expose controls.
 ROLE_SECTIONS = {
     "EXECUTIVE": _sections_by_title(
         "Executive Landing",
@@ -832,6 +893,22 @@ def resolve_allowed_experience_views(role: str) -> tuple[str, ...]:
     profile = resolve_role_profile(role)
     allowed = ROLE_EXPERIENCE_VIEWS.get(profile, ROLE_EXPERIENCE_VIEWS["DBA"])
     return tuple(view for view in allowed if view in EXPERIENCE_VIEW_SECTIONS) or ("DBA",)
+
+
+def default_experience_view_for_role(role: str) -> str:
+    """Return the first useful Experience View for the current Snowflake role."""
+    profile = resolve_role_profile(role)
+    preferred = {
+        "EXECUTIVE": "Executive",
+        "MANAGER": "Executive",
+        "REPORT": "Executive",
+        "ANALYST": "Platform",
+        "DBA": "DBA",
+        "SYSADMIN": "DBA",
+        "ACCOUNTADMIN": "DBA",
+    }.get(profile, "DBA")
+    allowed = resolve_allowed_experience_views(role)
+    return preferred if preferred in allowed else allowed[0]
 
 
 ETL_AUDIT_DB = "DBA_MAINT_DB"

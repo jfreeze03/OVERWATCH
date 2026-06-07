@@ -298,7 +298,7 @@ def automation_readiness_for_row(row: Mapping | pd.Series | dict, *, source_surf
         mode = "Workflow closure"
     elif safe_guided and not blockers:
         lane = "Ready for Guided Execution"
-        next_step = "Use DBA Tools or the owning workflow to run the reviewed SQL path, then execute the verification query."
+        next_step = "Use Change & Drift controls or the owning workflow to run the reviewed SQL path, then execute the verification query."
         mode = "Guided action"
     elif safe_guided and set(blockers) <= {"owner approval", "approver"}:
         lane = "Approval Required"

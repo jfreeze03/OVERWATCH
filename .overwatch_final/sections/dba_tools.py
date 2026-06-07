@@ -459,7 +459,7 @@ def render():
     )
 
     st.caption(
-        "DBA Tools are grouped to keep the high-value controls easy to find. "
+        "Guarded admin workflows are grouped to keep the high-value controls easy to find. "
         "Open a group, then choose the specific operation."
     )
     focus = st.session_state.get("dba_tools_focus")
@@ -469,7 +469,7 @@ def render():
             "Use the matching tab group below first; other tools remain available when needed.",
         )
         st.info(f"Change & Drift focus: {focus}. {focus_hint}")
-    with st.expander("DBA Tools Operating Model", expanded=not bool(focus)):
+    with st.expander("Guarded Admin Operating Model", expanded=not bool(focus)):
         risk_a, risk_b, risk_c = st.columns(3)
         with risk_a:
             st.info(
@@ -2445,7 +2445,7 @@ ORDER BY current_tb DESC;"""
                 build_unclassified_assets_sql(30),
                 ttl_key=f"dba_scope_audit_{company}",
                 tier="standard",
-                section="DBA Tools",
+                section="Change & Drift",
             )
         unclassified = st.session_state.get("dba_unclassified_assets")
         if unclassified is not None:
@@ -2512,7 +2512,7 @@ ORDER BY current_tb DESC;"""
                         build_schema_migration_status_sql(),
                         ttl_key="dba_schema_migration_status",
                         tier="recent",
-                        section="DBA Tools",
+                        section="Change & Drift",
                     )
                     st.session_state["dba_schema_migration_status_error"] = ""
                 except Exception as exc:

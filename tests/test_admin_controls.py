@@ -414,6 +414,19 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_VERIFY_COST_SAVINGS", setup_sql)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V", setup_sql)
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_COST_SAVINGS_VERIFY", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_AUTOMATION_RUN", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_EXECUTIVE_PACKET", setup_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_EXTERNAL_CONTROL_FEED", setup_sql)
+        self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_AUTOMATION_HEALTH_V", setup_sql)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_AUTOMATION", setup_sql)
+        self.assertIn("CREATE OR REPLACE TASK OVERWATCH_AUTOMATION_REFRESH", setup_sql)
+        self.assertIn("P_SEND_EMAIL BOOLEAN DEFAULT FALSE", setup_sql)
+        self.assertIn("CONTROL_M", setup_sql)
+        self.assertIn("FLYWAY_ROWS", setup_sql)
+        self.assertIn("FLYWAY_MIGRATION", setup_sql)
+        self.assertIn("TERRAFORM_DRIFT_MODE", setup_sql)
+        self.assertIn("PRIMARY_EVIDENCE_READY", setup_sql)
+        self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY TASK HANDLES AUTO-CLOSE", setup_sql)
         self.assertIn("WAREHOUSE_METERING_HISTORY", setup_sql)
         self.assertIn("SAVINGS VERIFIED", setup_sql)
         self.assertIn("VERIFIED_SAVED", setup_sql)
@@ -596,6 +609,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_LOAD_CORTEX",
                 "OVERWATCH_REFRESH_CONTROL_ROOM",
                 "OVERWATCH_COST_GOVERNANCE_REFRESH",
+                "OVERWATCH_AUTOMATION_REFRESH",
                 "OVERWATCH_LOAD_DAILY",
             },
         )
@@ -608,6 +622,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_LOAD_CORTEX": "COMPUTE_WH",
                 "OVERWATCH_REFRESH_CONTROL_ROOM": "COMPUTE_WH",
                 "OVERWATCH_COST_GOVERNANCE_REFRESH": "COMPUTE_WH",
+                "OVERWATCH_AUTOMATION_REFRESH": "COMPUTE_WH",
                 "OVERWATCH_LOAD_DAILY": "COMPUTE_WH",
             },
         )

@@ -121,6 +121,7 @@ WAREHOUSE_HEALTH_VIEWS = (
     "Workload Heatmap",
     "Optimization Advisor",
 )
+WAREHOUSE_HEALTH_FAST_ENTRY_VERSION = "2026-06-06-support-panels-explicit-v1"
 
 WAREHOUSE_HEALTH_DETAILS = {
     "Overview & Scaling": "Warehouse volume, latency, spill, cache, and metering events.",
@@ -1198,7 +1199,7 @@ def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
     elif "change ticket" in blockers:
         next_action = "Attach the approved change ticket to the warehouse setting review."
     elif "rollback SQL" in blockers:
-        next_action = "Generate and retain rollback SQL from DBA Tools before execution."
+        next_action = "Generate and retain rollback SQL from the guarded warehouse settings workflow before execution."
     elif "post-change verification" in blockers:
         next_action = "Run queue/spill/credit verification and attach the result before closure."
     elif "verified savings" in blockers:
@@ -1206,7 +1207,7 @@ def _warehouse_setting_audit_readiness_for_row(row: pd.Series | dict) -> dict:
     elif executed:
         next_action = "Retain verified execution, rollback, and post-change evidence for audit."
     else:
-        next_action = "Route through DBA Tools > Warehouse Settings Manager for changed-only SQL and audit logging."
+        next_action = "Route through the guarded warehouse settings workflow for changed-only SQL and audit logging."
 
     return {
         "AUDIT_READINESS": readiness,
@@ -1304,7 +1305,7 @@ def _warehouse_setting_control_board(
             next_action = "Confirm post-change queue, spill, credit, and savings evidence remains attached."
         else:
             state, rank = "Ready for Controlled Change", 6
-            next_action = "Open DBA Tools > Warehouse Settings Manager, generate changed-only SQL, and capture rollback proof."
+            next_action = "Open the guarded warehouse settings workflow, generate changed-only SQL, and capture rollback proof."
 
         rows.append({
             "CONTROL_STATE": state,
@@ -1765,7 +1766,7 @@ def _warehouse_operator_next_moves(
     elif exception_count:
         state = "Ready for Review"
         rank = 6
-        next_action = "Save the setting review snapshot, then work only changed settings through DBA Tools."
+        next_action = "Save the setting review snapshot, then work only changed settings through the guarded warehouse settings workflow."
         count = exception_count
     else:
         state = "Clear"
@@ -1861,7 +1862,7 @@ def _warehouse_capacity_review_sql(row: pd.Series) -> str:
         "-- Do not execute a warehouse change from this advisory row.",
         f"-- Candidate: {candidate}",
         f"-- Safe path: {safe_path}",
-        "-- Route through DBA Tools > Warehouse Settings Manager for changed-only SQL, approval, and rollback.",
+        "-- Route through the guarded warehouse settings workflow for changed-only SQL, approval, and rollback.",
         f"-- Closure evidence: {verification}",
     ])
 
@@ -2009,7 +2010,7 @@ LIMIT 100""".strip()
 
 
 def _warehouse_setting_execution_audit_sql(days: int, company: str, environment: str = "ALL") -> str:
-    """Join persisted setting reviews to DBA Tools ALTER WAREHOUSE audit evidence."""
+    """Join persisted setting reviews to guarded ALTER WAREHOUSE audit evidence."""
     review_fqn = warehouse_setting_review_fqn()
     days = max(1, min(int(days or 30), 180))
     review_where = [f"SNAPSHOT_TS >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())"]
@@ -2102,7 +2103,7 @@ SELECT
     END AS EXECUTION_AUDIT_READINESS,
     CASE
         WHEN COALESCE(a.FAILED_CHANGES, 0) > 0 THEN 'Open failed admin audit row and verify rollback/no-op state.'
-        WHEN COALESCE(r.REVIEW_ROWS, 0) > 0 AND COALESCE(a.AUDIT_ROWS, 0) = 0 THEN 'Execute only through DBA Tools after approval, ticket, and rollback SQL are attached.'
+        WHEN COALESCE(r.REVIEW_ROWS, 0) > 0 AND COALESCE(a.AUDIT_ROWS, 0) = 0 THEN 'Execute only through the guarded warehouse settings workflow after approval, ticket, and rollback SQL are attached.'
         WHEN COALESCE(a.SUCCESSFUL_CHANGES, 0) > 0
              AND UPPER(COALESCE(r.POST_CHANGE_VERIFICATION_STATUS, '')) <> 'VERIFIED' THEN 'Run post-change verification and attach result before closure.'
         WHEN COALESCE(r.SAVINGS_VERIFICATION_REQUIRED_ROWS, 0) > 0
@@ -2535,7 +2536,7 @@ def _build_warehouse_capacity_markdown(
         "## Settings Change Readiness",
         (
             "- Warehouse Health findings are not direct change orders. Route setting changes through "
-            "DBA Tools > Warehouse Settings Manager so current values, owner approval, rollback SQL, "
+            "the guarded warehouse settings workflow so current values, owner approval, rollback SQL, "
             "and post-change verification are captured."
         ),
         "",
@@ -2951,7 +2952,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                         st.warning(f"Warehouse execution audit unavailable: {format_snowflake_error(exc)}")
             with audit_hint_col:
                 defer_source_note(
-                    "Joins setting-review snapshots to DBA Tools ALTER WAREHOUSE audit rows so changes have "
+                    "Joins setting-review snapshots to guarded ALTER WAREHOUSE audit rows so changes have "
                     "approval, rollback, SQL hash, executor, and verification evidence."
                 )
 
@@ -3427,6 +3428,14 @@ def _warehouse_support_panels_have_state() -> bool:
     )
 
 
+def _apply_warehouse_fast_entry_default() -> None:
+    """Keep first Warehouse Health navigation from replaying heavy support panels."""
+    if st.session_state.get("_warehouse_health_fast_entry_version") == WAREHOUSE_HEALTH_FAST_ENTRY_VERSION:
+        return
+    st.session_state.pop("warehouse_health_support_panels_open", None)
+    st.session_state["_warehouse_health_fast_entry_version"] = WAREHOUSE_HEALTH_FAST_ENTRY_VERSION
+
+
 def _warehouse_period_movement(df: pd.DataFrame | None) -> pd.DataFrame:
     """Return warehouse current/prior movement rows for the overview board."""
     if df is None or getattr(df, "empty", True):
@@ -3466,6 +3475,7 @@ def render():
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
     environment = get_active_environment()
+    _apply_warehouse_fast_entry_default()
     global_warehouse = str(st.session_state.get("global_warehouse", "") or "").strip()
     global_user = str(st.session_state.get("global_user", "") or "").strip()
     global_role = str(st.session_state.get("global_role", "") or "").strip()
@@ -3509,11 +3519,7 @@ def render():
         WAREHOUSE_HEALTH_DETAILS,
         columns=3,
     )
-    show_support_panels = (
-        bool(st.session_state.get("warehouse_health_support_panels_open"))
-        or bool(st.session_state.get("exceptions_only_mode"))
-        or _warehouse_support_panels_have_state()
-    )
+    show_support_panels = bool(st.session_state.get("warehouse_health_support_panels_open"))
     if show_support_panels:
         _render_capacity_brief(company, environment)
         _render_warehouse_ownership_panel(company, environment)
@@ -3522,7 +3528,7 @@ def render():
         st.session_state["warehouse_health_support_panels_open"] = True
         st.rerun()
     if st.session_state.get("exceptions_only_mode"):
-        st.stop()
+        return
 
     # -- OVERVIEW --------------------------------------------------------------
     if warehouse_view == "Overview & Scaling":

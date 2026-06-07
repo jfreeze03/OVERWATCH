@@ -1,154 +1,155 @@
 # OVERWATCH Snowflake Architecture
 
-OVERWATCH should run as a thin Streamlit command center backed by a small
-Snowflake mart. The app should not repeatedly scan broad `ACCOUNT_USAGE` views
-for every user click. Expensive account-wide history is loaded on a schedule,
-compressed into facts/dimensions, and read cheaply by the UI.
+Last updated: June 6, 2026
 
-The deployable setup script is:
+OVERWATCH is built around a low-cost Snowflake mart that turns expensive,
+high-latency account telemetry into compact DBA evidence. The Streamlit app
+uses the mart first and requests live metadata only where immediacy matters.
 
-```text
-snowflake/OVERWATCH_MART_SETUP.sql
-```
+## Runtime Layout
 
-## Runtime Shape
+| Layer | Object or path | Purpose |
+|---|---|---|
+| Streamlit app | `.overwatch_final/app.py` | User interface, navigation, filters, section routing. |
+| App runtime warehouse | `OVERWATCH_WH` | Dedicated Streamlit execution warehouse. |
+| App resource monitor | `OVERWATCH_WH_RM` | Runtime cost guardrail. |
+| Mart task warehouse | `COMPUTE_WH` | Current scheduled mart refresh warehouse. |
+| Snowflake setup | `snowflake/OVERWATCH_MART_SETUP.sql` | Creates database, schema, tables, procedures, tasks, and seed rows. |
+| Local tests | `tests/` | Formula, navigation, admin, scope, and regression coverage. |
+| Performance tests | `perf_tests/` | HTTP, live concurrency, and section smoke checks. |
 
-- `COMPUTE_WH`: current execution warehouse for the main OVERWATCH load and
-  anomaly tasks
-- `OVERWATCH_WH`: X-Small support warehouse created by setup, currently used by
-  the cost-savings verification task and available if the task graph is moved
-  to a dedicated warehouse later
-- `DBA_MAINT_DB.OVERWATCH`: app persistence schema and mart schema
-- Streamlit app: reads compact marts first, direct Snowflake metadata only for
-  live drilldowns and guarded admin actions
-- Refresh tasks: hourly for operational telemetry, daily for slower governance
-  snapshots
-- Monitored warehouses: ALFA and Trexis warehouse scope from `COMPANY_CONFIG`,
-  `OVERWATCH_COMPANY_SCOPE`, and Snowflake account-usage views. This is separate
-  from the warehouse used to execute the app/task SQL.
-
-## Cost Controls
-
-- Task warehouse is an explicit setup input; current main load/anomaly tasks run
-  on `COMPUTE_WH`, while `OVERWATCH_COST_SAVINGS_VERIFY` runs on `OVERWATCH_WH`
-- `OVERWATCH_WH` is created with `AUTO_SUSPEND = 60`
-- Cost and health monitoring still covers ALFA/Trexis warehouses through
-  `WAREHOUSE_METERING_HISTORY`, `QUERY_HISTORY`, task history, and mart facts
-- hourly refresh after likely `ACCOUNT_USAGE` latency
-- transient mart tables for history that can be rebuilt
-- short retention for query/task/procedure detail
-- daily retention for governance and storage facts
-- `FACT_MONITORING_COST_DAILY` to show what OVERWATCH itself costs
-
-## Tables
-
-| Table | Type | Purpose | Primary Sources | Cadence |
-|---|---:|---|---|---|
-| `OVERWATCH_SETTINGS` | Permanent | Credit price, retention, feature flags | Seed/config | Manual |
-| `OVERWATCH_COMPANY_SCOPE` | Permanent | ALFA/Trexis scoping rules | Seed/config | Manual |
-| `OVERWATCH_LOAD_AUDIT` | Permanent | Mart refresh audit trail | Procedures | Every load |
-| `OVERWATCH_ADMIN_ACTION_AUDIT` | Permanent | DBA action audit trail | App/admin controls | Event-driven |
-| `OVERWATCH_USAGE_LOG` | Permanent | App query telemetry and guardrails | App `run_query()` | Event-driven |
-| `OVERWATCH_ACTION_QUEUE` | Permanent | Recommendations and operational work queue | App/mart findings | Event-driven |
-| `OVERWATCH_SOURCE_CONTROL_CHANGE` | Permanent | Terraform/Git deployment evidence for change-control matching | CI/CD source-control jobs | Event-driven |
-| `OVERWATCH_ITSM_TICKET` | Permanent | Jira/change-ticket status and approval evidence | Jira export/sync job | Event-driven |
-| `OVERWATCH_ALERTS` | Permanent | Teams/email alert history | Alerts/recommendations | Event-driven |
-| `OVERWATCH_ROI_LOG` | Permanent | Optimization wins and ROI evidence | App/manual entries | Event-driven |
-| `FACT_WAREHOUSE_HOURLY` | Transient | Compute credits and warehouse cost | `WAREHOUSE_METERING_HISTORY` | Hourly |
-| `FACT_QUERY_HOURLY` | Transient | Query volume, failures, latency, queue pressure | `QUERY_HISTORY` | Hourly |
-| `FACT_QUERY_DETAIL_RECENT` | Transient | Recent drilldown query rows | `QUERY_HISTORY` | Hourly |
-| `FACT_TASK_RUN` | Transient | Task graph run status and failures | `TASK_HISTORY` | Hourly |
-| `DIM_TASK_SNAPSHOT` | Transient | Current task metadata | `TASKS` | Hourly |
-| `DIM_PROCEDURE_SNAPSHOT` | Transient | Current procedure metadata | `PROCEDURES` | Hourly |
-| `FACT_PROCEDURE_RUN` | Transient | Recent `CALL` history and procedure failures | `QUERY_HISTORY` | Hourly |
-| `FACT_LOGIN_DAILY` | Transient | Login posture and client activity | `LOGIN_HISTORY` | Daily |
-| `FACT_OBJECT_CHANGE` | Transient | DDL, object, and drift signals | `QUERY_HISTORY` | Daily |
-| `FACT_GRANT_DAILY` | Transient | Role/user grant snapshot | `GRANTS_TO_USERS` | Daily |
-| `FACT_STORAGE_DAILY` | Transient | Database storage and estimated storage cost | `DATABASE_STORAGE_USAGE_HISTORY` | Daily |
-| `FACT_CORTEX_DAILY` | Transient | Cortex Code usage where views exist | Cortex usage history views | Hourly chained |
-| `FACT_MONITORING_COST_DAILY` | Transient | Cost to operate OVERWATCH | Metering and query tags | Daily |
-| `MART_DBA_CONTROL_ROOM` | Transient | DBA command-center summary | Mart facts | Hourly chained |
-
-## Tasks and Load Flow
+## Data Flow
 
 ```text
-OVERWATCH_LOAD_HOURLY
-  -> SP_OVERWATCH_LOAD_HOURLY()
-  -> OVERWATCH_LOAD_CORTEX
-       -> SP_OVERWATCH_LOAD_CORTEX()
-       -> OVERWATCH_REFRESH_CONTROL_ROOM
-            -> SP_OVERWATCH_REFRESH_CONTROL_ROOM()
-
-OVERWATCH_LOAD_DAILY
-  -> SP_OVERWATCH_LOAD_DAILY()
+Snowflake account views
+  -> OVERWATCH stored procedures
+  -> compact fact tables and durable evidence tables
+  -> Streamlit sections
+  -> action queue, alerts, executive packets, and verification evidence
 ```
 
-`OVERWATCH_LOAD_HOURLY` runs hourly at minute 25 Central. It refreshes recent
-warehouse, query, task, procedure, and metadata snapshots.
+Live Snowflake views are still used for real-time needs, especially current
+query, task, warehouse, and security posture checks. Any live view should be
+labeled or designed with its freshness limits in mind.
 
-`OVERWATCH_LOAD_CORTEX` is chained after hourly refresh. It is best-effort and
-logs `SKIPPED` if Cortex Code usage views are unavailable in the account.
+## Core Sources
 
-`OVERWATCH_REFRESH_CONTROL_ROOM` builds compact ALFA/Trexis exception summaries
-for Account Health and DBA Control Room views.
+| Source | Used for |
+|---|---|
+| `SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY` | Exact warehouse credits by hour. |
+| `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY` | Query history, attribution, performance, errors, change evidence. |
+| `SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY` | Task status, duration, failures, pipeline facts. |
+| `SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY` | Official billed service credits. |
+| `SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY` | Access and lineage evidence where available. |
+| `SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS` and grant views | Role and security posture. |
+| `SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES` | Owner and chargeback evidence. |
+| Organization usage views | Optional currency/rate reconciliation when visible. |
+| Information Schema table functions | Live current-state query and task checks where possible. |
 
-`OVERWATCH_LOAD_DAILY` runs at 6:15 AM Central and refreshes login posture,
-grant snapshots, object changes, storage, and monitoring-cost facts.
+## Mart Facts
+
+| Fact | Purpose |
+|---|---|
+| `FACT_WAREHOUSE_HOURLY` | Warehouse credits, compute credits, cloud credits, and estimated cost. |
+| `FACT_QUERY_HOURLY` | Query counts, failures, latency, queue time, spill, user/role/database/schema scope. |
+| `FACT_QUERY_DETAIL_RECENT` | Recent query details for diagnosis and proof queries. |
+| `FACT_TASK_DAILY` | Task/pipeline status, duration, failures, ownership context. |
+| `FACT_OBJECT_CHANGE` | DDL, grants, warehouse changes, schema drift, and change-control evidence. |
+| `FACT_COST_DAILY` | Official daily service credits by service type. |
+| `FACT_CORTEX_DAILY` | Cortex AI usage and estimated spend. |
+| `FACT_CHARGEBACK_DAILY` | User/role/database/schema allocation from metered credits. |
+| `FACT_COST_INCIDENT_TIMELINE` | Cost incidents, change correlations, and alert storyline. |
+| `FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY` | Account-health checklist state. |
+| `FACT_WAREHOUSE_OPERABILITY_DAILY` | Warehouse pressure, setting-review, and action evidence. |
+| `FACT_SECURITY_OPERABILITY_DAILY` | Security posture evidence and exception state. |
+
+## Durable Evidence Objects
+
+| Object | Purpose |
+|---|---|
+| `OVERWATCH_ACTION_QUEUE` | DBA work queue with severity, owner, proof, savings, and verification status. |
+| `OVERWATCH_ALERTS` | Alert event ledger and delivery state. |
+| `OVERWATCH_ALERT_RULES` | Alert categories, severity defaults, SLA hours, routes, and runbooks. |
+| `OVERWATCH_OWNER_DIRECTORY` | Owner, on-call, approval, escalation, and default route mapping. |
+| `OVERWATCH_ADMIN_ACTION_AUDIT` | Immutable admin-action evidence. |
+| `OVERWATCH_WORKLOAD_RECOVERY_AUDIT` | Warehouse/workload recovery and savings verification evidence. |
+| `OVERWATCH_WAREHOUSE_SETTING_REVIEW` | Warehouse setting review snapshots and recommendations. |
+| `OVERWATCH_PLATFORM_FUTURES_CONTROL_REGISTER` | Future Snowflake capability control register. |
+| `OVERWATCH_PLATFORM_FUTURES_EVIDENCE` | Readiness evidence for future-platform controls. |
+| `OVERWATCH_EXECUTIVE_PACKET` | Generated executive packet ledger. |
+| `OVERWATCH_EXTERNAL_CONTROL_FEED` | Terraform, Jira, Flyway, Git, Control-M, and external control evidence. |
+| `OVERWATCH_AUTOMATION_RUN` | No-touch automation refresh and closure status. |
+
+## Key Views
+
+| View | Purpose |
+|---|---|
+| `MART_DBA_CONTROL_ROOM` | Primary control-room rollup. |
+| `MART_COST_GOVERNANCE` | Cost exceptions and governance evidence. |
+| `MART_ARCHITECTURE_READINESS` | Architecture objectives and readiness evidence. |
+| `OVERWATCH_AUTOMATION_HEALTH_V` | Latest automation state, feed freshness, and next action. |
+| `OVERWATCH_PLATFORM_FUTURES_EVIDENCE_LATEST_V` | Latest future-platform evidence per entity. |
+| `OVERWATCH_PLATFORM_FUTURES_CONTROL_COVERAGE_V` | Future-platform control coverage state. |
+| `FACT_CHARGEBACK_DAILY` | Chargeback-ready allocation view. |
+
+## Scheduled Tasks
+
+| Task | Schedule or dependency | Purpose |
+|---|---|---|
+| `OVERWATCH_LOAD_HOURLY` | Hourly at :25 | Refresh hourly warehouse, query, task, object, cost, chargeback, and operability facts. |
+| `OVERWATCH_LOAD_CORTEX` | After hourly load | Refresh Cortex AI spend facts. |
+| `OVERWATCH_REFRESH_CONTROL_ROOM` | After Cortex load | Refresh control-room mart. |
+| `OVERWATCH_COST_GOVERNANCE_REFRESH` | After control-room refresh | Refresh cost governance, RCA, and action evidence. |
+| `OVERWATCH_AUTOMATION_REFRESH` | After cost governance refresh | Refresh automation health, executive packet, and external-feed state. |
+| `OVERWATCH_ANOMALY_CHECK` | Hourly at :05 | Seed anomaly alerts and action candidates. |
+| `OVERWATCH_COST_SAVINGS_VERIFY` | Daily at 07:20 CT | Compare post-action credits to baseline and update verification status. |
+| `OVERWATCH_LOAD_DAILY` | Daily at 06:15 CT | Refresh daily history and longer-horizon facts. |
+
+## Scope Rules
+
+Trexis is explicitly scoped by warehouse and database names. ALFA covers all
+other listed account warehouses and configured ALFA databases. Rows without
+database context remain `No Database Context`.
+
+The scope classifier should be kept in sync across:
+
+1. `.overwatch_final/config.py`
+2. `OVERWATCH_COMPANY_SCOPE`
+3. environment classifier SQL
+4. navigation/filter tests
+5. cost and chargeback regression tests
+
+## Cost Rules
+
+Warehouse total credits use `CREDITS_USED`. Warehouse compute credits use
+`CREDITS_USED_COMPUTE` when Snowflake exposes it. Dollar estimates use `$3.68`
+for compute and `$2.20` for Cortex AI. Database, user, role, and schema costs
+are allocated from exact warehouse-hour metering unless the official source
+provides a direct billed value at that grain.
 
 ## App Query Strategy
 
-Use mart tables for:
+Sections should load in this order:
 
-- Account Health KPI tiles
-- DBA Control Room exception summaries
-- Cost Center warehouse/user trend panels
-- Warehouse Health hourly summaries
-- Security posture rollups
-- stored procedure and task graph summary views
-- leadership/export reports
+1. Read compact mart facts.
+2. Read durable evidence tables.
+3. Use static metadata options where the filter value is already known.
+4. Use live Information Schema only for current-state operational needs.
+5. Use Account Usage fallbacks only when the mart is unavailable or the user
+   explicitly requests secondary evidence.
 
-Use direct Snowflake views only for:
+Heavy tables, schema compare, source-health inventories, and deep diagnostic
+panels should stay behind explicit load buttons.
 
-- currently running queries
-- query cancellation
-- warehouse/task suspend or resume
-- drilldowns that need exact recent SQL text
-- setup/diagnostic screens that intentionally validate privileges
+## Production Change Rules
 
-## Retention Defaults
+Any setup or architecture change should update:
 
-- Recent query/task/procedure detail: 35 days
-- Hourly facts: 400 days
-- Daily facts: 400 days
-- App state and audit logs: permanent until manually archived
+1. setup SQL
+2. app config
+3. documentation
+4. formula/navigation/scope tests
+5. section smoke expectations when UI behavior changes
 
-These defaults are stored in `OVERWATCH_SETTINGS` and can be adjusted after
-deployment.
-
-## Deployment Steps
-
-1. Run `snowflake/OVERWATCH_MART_SETUP.sql` in Snowsight as a platform-admin
-   role.
-2. Confirm `OVERWATCH_WH` exists and is suspended after setup.
-3. Confirm the task warehouse choices in `OVERWATCH_MART_SETUP.sql` match the
-   approved production warehouse plan.
-4. Confirm `OVERWATCH_LOAD_HOURLY` and `OVERWATCH_LOAD_DAILY` are resumed.
-5. Run the smoke queries at the end of the setup script.
-6. Point the app role at `DBA_MAINT_DB.OVERWATCH`.
-7. Gradually migrate heavy app sections from direct `ACCOUNT_USAGE` scans to
-   mart reads.
-
-## Production Principle
-
-If a metric is needed on most pages or every morning, it belongs in the mart. If
-it is needed only after a DBA clicks into a specific incident, it can remain a
-live drilldown.
-
-## Snowflake References
-
-- Account Usage `TASKS` view:
-  https://docs.snowflake.com/en/sql-reference/account-usage/tasks
-- Account Usage `TASK_HISTORY` view:
-  https://docs.snowflake.com/en/sql-reference/account-usage/task_history
-- Account Usage `PROCEDURES` view:
-  https://docs.snowflake.com/en/sql-reference/account-usage/procedures
+Do not change runtime warehouse, mart task warehouse, company scope, or cost
+rates without updating this document and the manual input runbook.

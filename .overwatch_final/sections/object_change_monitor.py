@@ -21,7 +21,6 @@ OBJECT_CHANGE_PANES = (
     "Objects",
     "Grants & Roles",
     "Policies & Tags",
-    "Terraform Drift",
 )
 
 
@@ -211,7 +210,7 @@ def render():
         }
         return qh_caps
     st.header("Who Changed What?")
-    st.caption("DDL, grants, roles, policy changes, owner changes, and Terraform drift indicators.")
+    st.caption("DDL, grants, roles, policy changes, and owner changes. Terraform evidence is consolidated in Change & Drift.")
 
     days = day_window_selectbox("Lookback", key="ocm_days", default=14)
     row_limit = st.slider("Max rows per scan", 100, 1000, 250, step=50, key="ocm_row_limit")
@@ -458,61 +457,3 @@ def render():
             )
             if st.button("Save policy changes to Action Queue", key="ocm_policy_queue"):
                 _queue_changes(get_session(), df, "Policy Change Monitor", "Security", "Policy/Tag", "High")
-
-    elif active_view == "Terraform Drift":
-        if st.button("Load Drift Indicators", key="ocm_drift_load"):
-            try:
-                df, source = _load_object_change_mart(
-                    company=company,
-                    days=days,
-                    row_limit=row_limit,
-                    text_filter=text_filter,
-                    category_sql=mart_drift_category,
-                    ttl_suffix="drift",
-                )
-                st.session_state["ocm_df_drift"] = df
-                st.session_state["ocm_source_drift"] = source
-            except Exception as mart_exc:
-                try:
-                    drift_caps = _query_history_drift_caps()
-                    query_tag_select = drift_caps["query_tag_select"]
-                    drift_case = drift_caps["drift_case"]
-                    drift_exclusion = drift_caps["drift_exclusion"]
-                    st.session_state["ocm_df_drift"] = run_query(f"""
-                SELECT query_id, user_name, role_name, {query_tag_select},
-                       start_time, SUBSTR(query_text, 1, 1500) AS query_text,
-                       CASE
-                         {drift_case}
-                         ELSE 'Manual / non-IaC'
-                       END AS drift_indicator
-                FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                WHERE start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
-                  AND (query_text ILIKE 'CREATE%' OR query_text ILIKE 'ALTER%' OR query_text ILIKE 'DROP%' OR query_text ILIKE 'GRANT%' OR query_text ILIKE 'REVOKE%')
-                  {drift_exclusion}
-                  {company_filter}
-                  {filter_clause}
-                ORDER BY start_time DESC
-                LIMIT {row_limit}
-                """, ttl_key=f"ocm_drift_{company}_{days}_{text_filter}_{row_limit}", tier="standard", section="Object Change Monitor")
-                    st.session_state["ocm_source_drift"] = "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
-                    if str(mart_exc):
-                        defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
-                except Exception as e:
-                    st.warning(f"Drift scan unavailable: {format_snowflake_error(e)}")
-        if st.session_state.get("ocm_df_drift") is not None:
-            df = _annotate_change_routes(st.session_state["ocm_df_drift"], "Drift")
-            defer_source_note(st.session_state.get("ocm_source_drift", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
-            render_priority_dataframe(
-                df,
-                title="Drift indicators to review first",
-                priority_columns=[
-                    "DRIFT_INDICATOR", "USER_NAME", "ROLE_NAME", "QUERY_TAG",
-                    "START_TIME", "NEXT_WORKFLOW", "NEXT_ACTION", "QUERY_ID",
-                ],
-                sort_by=["START_TIME"],
-                ascending=False,
-                raw_label="All drift indicators",
-            )
-            download_csv(df, "terraform_drift_indicators.csv")
-            if st.button("Save drift indicators to Action Queue", key="ocm_drift_queue"):
-                _queue_changes(get_session(), df, "Terraform Drift Monitor", "Governance", "Drift", "High")

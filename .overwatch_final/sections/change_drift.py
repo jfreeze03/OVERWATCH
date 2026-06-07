@@ -166,7 +166,7 @@ WORKFLOWS = (
 WORKFLOW_DETAILS = {
     "Object and access changes": "Who changed what, access movement, destructive DDL, and policy changes.",
     "Schema and object drift": "Schema compare, object inventory, unused objects, and Terraform drift signals.",
-    "Terraform evidence": "Source-control and Terraform deploy evidence linked to Snowflake drift and Jira approval.",
+    "Terraform evidence": "Source-control, Terraform, and Flyway deploy evidence linked to Snowflake drift and Jira approval.",
     "Jira evidence": "Jira/ITSM approvals, status, owner, and change-window evidence linked to deployments and Snowflake activity.",
     "Controlled DBA actions": "Guarded admin actions, generated SQL, and operational controls.",
     "Data movement and replication": "Replication, dynamic tables, Snowpipe, data loading, and freshness risk.",
@@ -434,7 +434,7 @@ FROM (
         COALESCE(TRY_TO_TIMESTAMP_NTZ($1), CURRENT_TIMESTAMP()) AS SNAPSHOT_TS,
         $2::VARCHAR AS COMPANY,
         $3::VARCHAR AS ENVIRONMENT,
-        COALESCE($4::VARCHAR, 'Terraform/Git') AS SOURCE_SYSTEM,
+        COALESCE($4::VARCHAR, 'Terraform/Flyway/Git') AS SOURCE_SYSTEM,
         $5::VARCHAR AS REPOSITORY,
         $6::VARCHAR AS BRANCH_NAME,
         $7::VARCHAR AS COMMIT_SHA,
@@ -2514,7 +2514,7 @@ def _change_split_feed_health_sql(days: int, company: str, environment: str = "A
     return f"""
 WITH source_stats AS (
     SELECT
-        'Terraform/Git evidence' AS FEED,
+        'Terraform/Flyway/Git evidence' AS FEED,
         '{source_name}' AS TABLE_NAME,
         COUNT(*) AS "ROWS",
         COALESCE(COUNT_IF({source_scope}), 0) AS ACTIVE_SCOPE_ROWS,
@@ -2665,7 +2665,12 @@ source_control AS (
         COALESCE(APPLY_TS, SNAPSHOT_TS) AS EVENT_TS,
         COMPANY,
         COALESCE(ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
-        COALESCE(SOURCE_SYSTEM, 'Terraform/Git') AS SOURCE_SYSTEM,
+        CASE
+            WHEN UPPER(COALESCE(SOURCE_SYSTEM, '')) LIKE '%FLYWAY%' THEN 'Flyway'
+            WHEN UPPER(COALESCE(SOURCE_SYSTEM, '')) LIKE '%TERRAFORM%' THEN 'Terraform/Git'
+            WHEN UPPER(COALESCE(SOURCE_SYSTEM, '')) LIKE '%GIT%' THEN 'Terraform/Git'
+            ELSE COALESCE(SOURCE_SYSTEM, 'Terraform/Flyway/Git')
+        END AS SOURCE_SYSTEM,
         REPOSITORY,
         BRANCH_NAME,
         UPPER(COALESCE(COMMIT_SHA, '')) AS COMMIT_SHA,
@@ -2720,6 +2725,7 @@ object_flags AS (
         oc.*,
         (
             QUERY_TAG_UPPER ILIKE '%TERRAFORM%'
+            OR QUERY_TAG_UPPER ILIKE '%FLYWAY%'
             OR QUERY_TAG_UPPER ILIKE '%IAC%'
             OR QUERY_TAG_UPPER ILIKE '%DEPLOY%'
             OR QUERY_TAG_UPPER ILIKE '%RELEASE%'
@@ -2882,7 +2888,7 @@ status_rows AS (
     FROM object_changes
     UNION ALL
     SELECT
-        'Terraform/Git evidence' AS SURFACE,
+        'Terraform/Flyway/Git evidence' AS SURFACE,
         CASE
             WHEN COUNT(*) = 0 THEN 'No Rows'
             WHEN COUNT_IF(
@@ -2969,7 +2975,7 @@ status_rows AS (
     FROM object_flags
     UNION ALL
     SELECT
-        'Terraform/Git evidence' AS SURFACE,
+        'Terraform/Flyway/Git evidence' AS SURFACE,
         CASE
             WHEN COUNT(*) = 0 THEN 'No Rows'
             WHEN COUNT_IF(NOT HAS_ITSM_TICKET OR NOT HAS_OBSERVED_CHANGE) > 0 THEN 'Evidence Gaps'
@@ -2981,9 +2987,9 @@ status_rows AS (
         COUNT_IF(NOT HAS_ITSM_TICKET OR NOT HAS_OBSERVED_CHANGE) AS GAP_ROWS,
         MAX(EVENT_TS) AS LAST_ACTIVITY_TS,
         CASE
-            WHEN COUNT_IF(NOT HAS_ITSM_TICKET) > 0 THEN 'Link Terraform/Git deploy evidence to Jira ticket keys.'
+            WHEN COUNT_IF(NOT HAS_ITSM_TICKET) > 0 THEN 'Link Terraform/Flyway/Git deploy evidence to Jira ticket keys.'
             WHEN COUNT_IF(NOT HAS_OBSERVED_CHANGE) > 0 THEN 'Confirm applied source-control changes are visible in Snowflake object-change history.'
-            ELSE 'Terraform/Git evidence is linked to observed Snowflake or Jira evidence.'
+            ELSE 'Terraform/Flyway/Git evidence is linked to observed Snowflake or Jira evidence.'
         END AS NEXT_ACTION
     FROM source_flags
     UNION ALL
@@ -3001,7 +3007,7 @@ status_rows AS (
         MAX(EVENT_TS) AS LAST_ACTIVITY_TS,
         CASE
             WHEN COUNT_IF(IS_APPROVED_OR_ACTIVE AND NOT HAS_SOURCE_CONTROL AND NOT HAS_OBSERVED_CHANGE) > 0
-                THEN 'Link approved Jira changes to Terraform/Git evidence or observed Snowflake change rows.'
+                THEN 'Link approved Jira changes to Terraform/Flyway/Git evidence or observed Snowflake change rows.'
             ELSE 'Jira ticket evidence is linked to deployment or Snowflake activity.'
         END AS NEXT_ACTION
     FROM ticket_flags
@@ -3052,8 +3058,8 @@ unmatched_rows AS (
     SELECT
         SOURCE_SYSTEM AS EVIDENCE_SOURCE,
         CASE
-            WHEN NOT HAS_ITSM_TICKET THEN 'Terraform/Git deploy missing Jira ticket'
-            ELSE 'Terraform/Git deploy not observed in Snowflake change history'
+            WHEN NOT HAS_ITSM_TICKET THEN SOURCE_SYSTEM || ' deploy missing Jira ticket'
+            ELSE SOURCE_SYSTEM || ' deploy not observed in Snowflake change history'
         END AS GAP_TYPE,
         IFF(UPPER(PLANNED_ACTION) IN ('DELETE', 'DESTROY', 'DROP'), 'High', 'Medium') AS SEVERITY,
         COALESCE(NULLIF(OBJECT_MATCH_KEY, ''), TERRAFORM_ADDRESS, REPOSITORY, 'Source-control change') AS ENTITY,
@@ -3067,7 +3073,7 @@ unmatched_rows AS (
         NULL::VARCHAR AS QUERY_TAG,
         IFF(
             NOT HAS_ITSM_TICKET,
-            'Add Jira ticket key to the Terraform/Git evidence row and deployment query tag.',
+            'Add Jira ticket key to the Terraform/Flyway/Git evidence row and deployment query tag.',
             'Confirm query tag/object mapping or investigate why Snowflake did not record the applied change.'
         ) AS NEXT_ACTION
     FROM source_flags
@@ -3086,7 +3092,7 @@ unmatched_rows AS (
         NULL::VARCHAR AS QUERY_ID,
         EVENT_TS,
         NULL::VARCHAR AS QUERY_TAG,
-        'Link the approved Jira change to Terraform/Git evidence or observed Snowflake query history.' AS NEXT_ACTION
+        'Link the approved Jira change to Terraform/Flyway/Git evidence or observed Snowflake query history.' AS NEXT_ACTION
     FROM ticket_flags
     WHERE IS_APPROVED_OR_ACTIVE AND NOT HAS_SOURCE_CONTROL AND NOT HAS_OBSERVED_CHANGE
 )
@@ -3579,18 +3585,22 @@ def _integration_mode_config(mode: str) -> dict:
         "slug": "terraform",
         "title": "Terraform Evidence",
         "caption": (
-            "Load Terraform/Git deploy evidence ingested into Snowflake, then confirm each applied change "
+            "Load Terraform/Flyway/Git deploy evidence ingested into Snowflake, then confirm each applied change "
             "links to Jira approval and observed Snowflake object-change history. OVERWATCH does not need "
-            "Git or Terraform credentials at runtime."
+            "Git, Terraform, or Flyway credentials at runtime."
         ),
-        "lookback_label": "Terraform evidence lookback (days)",
+        "lookback_label": "Deployment evidence lookback (days)",
         "load_label": "Load Terraform Evidence",
-        "status_surfaces": {"Terraform/Git evidence", "Snowflake object changes"},
-        "timeline_sources": {"Terraform/Git", "Git", "Terraform", "Snowflake"},
+        "status_surfaces": {"Terraform/Flyway/Git evidence", "Terraform/Git evidence", "Flyway evidence", "Snowflake object changes"},
+        "timeline_sources": {"Terraform/Git", "Git", "Terraform", "Flyway", "Snowflake"},
         "unmatched_gap_types": {
             "Snowflake change missing external evidence",
             "Terraform/Git deploy missing Jira ticket",
             "Terraform/Git deploy not observed in Snowflake change history",
+            "Terraform/Flyway/Git deploy missing Jira ticket",
+            "Terraform/Flyway/Git deploy not observed in Snowflake change history",
+            "Flyway deploy missing Jira ticket",
+            "Flyway deploy not observed in Snowflake change history",
         },
         "setup_sql": build_change_source_control_ddl(),
         "feed_stage_sql": build_change_evidence_feed_stage_sql(),
@@ -3598,11 +3608,11 @@ def _integration_mode_config(mode: str) -> dict:
         "proof_placeholder": "-- Load Terraform Evidence first.",
         "stale_copy": "Loaded Terraform evidence is stale for the active scope. Reload before acting.",
         "unavailable_copy": (
-            "Terraform evidence is not available yet. Deploy the source-control evidence table and feed it from CI/Git, then reload."
+            "Terraform/Flyway evidence is not available yet. Deploy the source-control evidence table and feed it from CI/Git/Flyway, then reload."
         ),
-        "empty_copy": "No unmatched Terraform/Snowflake evidence rows found for the selected window.",
-        "coverage_title": "Terraform and Snowflake evidence coverage",
-        "raw_label": "All Terraform evidence coverage rows",
+        "empty_copy": "No unmatched Terraform/Flyway/Snowflake evidence rows found for the selected window.",
+        "coverage_title": "Terraform, Flyway, and Snowflake evidence coverage",
+        "raw_label": "All deployment evidence coverage rows",
     }
 
 

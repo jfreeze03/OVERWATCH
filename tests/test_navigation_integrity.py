@@ -15,6 +15,10 @@ sys.path.insert(0, str(APP_ROOT))
 
 from config import (  # noqa: E402
     ALL_SECTIONS,
+    ACCOUNT_WAREHOUSES,
+    ALFA_DEV_DATABASES,
+    ALFA_PROD_DATABASES,
+    ALFA_WAREHOUSES,
     ARCHITECTURE_OBJECTIVES,
     DAY_WINDOW_OPTIONS,
     DEFAULT_DAY_WINDOW,
@@ -31,9 +35,12 @@ from config import (  # noqa: E402
     TREXIS_DEV_DATABASES,
     TREXIS_PROD_DATABASES,
     TREXIS_WAREHOUSES,
+    default_experience_view_for_role,
     normalize_section_name,
     resolve_allowed_experience_views,
     resolve_role_profile,
+    static_database_options,
+    static_warehouse_options,
 )
 from utils.section_guidance import (  # noqa: E402
     SECTION_EVIDENCE_CONTRACT,
@@ -61,6 +68,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(config_text.count("ROLE_SECTIONS = {"), 1)
         self.assertEqual(DAY_WINDOW_OPTIONS, (1, 7, 14, 30, 60, 90))
         self.assertEqual(DEFAULT_DAY_WINDOW, 7)
+        self.assertEqual(static_warehouse_options("Trexis"), TREXIS_WAREHOUSES)
+        self.assertEqual(static_warehouse_options("ALFA"), ALFA_WAREHOUSES)
+        self.assertEqual(static_warehouse_options("ALL"), ACCOUNT_WAREHOUSES)
+        self.assertEqual(static_database_options("Trexis", "PROD"), TREXIS_PROD_DATABASES)
+        self.assertEqual(static_database_options("Trexis", "DEV_ALL"), TREXIS_DEV_DATABASES)
+        self.assertEqual(static_database_options("ALFA", "PROD"), ALFA_PROD_DATABASES)
+        self.assertEqual(static_database_options("ALFA", "DEV_ALL"), ALFA_DEV_DATABASES)
 
     def test_calendar_day_windows_use_standard_dropdowns(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
@@ -159,6 +173,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(resolve_allowed_experience_views("SNOW_ACCOUNTADMINS"), tuple(EXPERIENCE_VIEW_SECTIONS.keys()))
         self.assertEqual(resolve_allowed_experience_views("SNOW_SYSADMINS"), tuple(EXPERIENCE_VIEW_SECTIONS.keys()))
         self.assertEqual(resolve_allowed_experience_views("ACCOUNTADMIN"), tuple(EXPERIENCE_VIEW_SECTIONS.keys()))
+        self.assertEqual(default_experience_view_for_role("SNOW_PRI_GFR_PRD_ALFA_DSA"), "Executive")
+        self.assertEqual(default_experience_view_for_role("SNOW_PRI_GFR_PRD_ALFA_DTI"), "Platform")
+        self.assertEqual(default_experience_view_for_role("SNOW_ACCOUNTADMINS"), "DBA")
         self.assertIn("Workload Operations", EXPERIENCE_VIEW_SECTIONS["Platform"])
 
         self.assertEqual(set(SECTION_BY_TITLE), set(ALL_SECTIONS))
@@ -188,7 +205,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("EXPERIENCE_VIEW_SECTIONS", config_text)
         self.assertIn("ROLE_EXPERIENCE_VIEWS", config_text)
         self.assertIn("resolve_allowed_experience_views", config_text)
+        self.assertIn("default_experience_view_for_role", config_text)
         self.assertIn("Experience View", app_text)
+        self.assertIn("def _apply_role_based_defaults", app_text)
+        self.assertIn("exceptions_only_mode", app_text)
         self.assertIn("def _allowed_experience_options", app_text)
         self.assertIn("def _current_experience_view", app_text)
         self.assertIn("_sync_experience_navigation", app_text)
@@ -488,7 +508,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _global_filter_signature", app_text)
         self.assertIn("def _metric_settings_signature", app_text)
         self.assertIn('str(st.session_state.get("global_schema", ""))', app_text)
-        self.assertIn("load_schema_options", app_text)
+        self.assertNotIn("load_schema_options", app_text)
         self.assertIn("_global_schema_choice_scope", app_text)
         self.assertIn("Schema contains", app_text)
         self.assertIn("def _render_topbar_filter_strip", app_text)
@@ -840,6 +860,29 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _load_bookmark_helpers", app_text)
         self.assertNotIn("import utils.display as display_module", top_import_block)
         self.assertNotIn("import utils.workflows as workflows_module", top_import_block)
+        self.assertNotIn("from utils.metadata import", top_import_block)
+        self.assertIn("static_warehouse_options", app_text)
+        self.assertIn("static_database_options", app_text)
+        warehouse_options_block = app_text.split("def _ensure_global_warehouse_options", 1)[1].split(
+            "def _ensure_global_database_options",
+            1,
+        )[0]
+        database_options_block = app_text.split("def _ensure_global_database_options", 1)[1].split(
+            "def _render_global_environment_control",
+            1,
+        )[0]
+        schema_options_block = app_text.split("selected_database = str", 1)[1].split(
+            "global_schema_options = list",
+            1,
+        )[0]
+        self.assertIn("static_warehouse_options(company)", warehouse_options_block)
+        self.assertIn("static_database_options(", database_options_block)
+        self.assertNotIn("get_session", warehouse_options_block)
+        self.assertNotIn("load_warehouse_options", warehouse_options_block)
+        self.assertNotIn("get_session", database_options_block)
+        self.assertNotIn("load_database_options", database_options_block)
+        self.assertNotIn("get_session", schema_options_block)
+        self.assertNotIn("load_schema_options", schema_options_block)
         self.assertIn("def _maybe_reload_dev_helpers", app_text)
         self.assertIn('st.session_state.get("_overwatch_dev_reload_helpers", False)', app_text)
         self.assertIn('st.session_state["_logging_enabled"] = False', app_text)
@@ -1021,6 +1064,20 @@ class NavigationIntegrityTests(unittest.TestCase):
         warehouse_health_import_block = warehouse_health_text.split("WAREHOUSE_HEALTH_VIEWS", 1)[0]
         self.assertNotIn("from utils import (", warehouse_health_import_block)
         self.assertNotIn("from utils.workflows import", warehouse_health_import_block)
+        self.assertIn("WAREHOUSE_HEALTH_FAST_ENTRY_VERSION", warehouse_health_text)
+        self.assertIn("def _apply_warehouse_fast_entry_default", warehouse_health_text)
+        warehouse_health_render_preload = warehouse_health_text.split("def render():", 1)[1].split(
+            "if st.session_state.get(\"exceptions_only_mode\")",
+            1,
+        )[0]
+        self.assertIn("_apply_warehouse_fast_entry_default()", warehouse_health_render_preload)
+        self.assertIn(
+            'show_support_panels = bool(st.session_state.get("warehouse_health_support_panels_open"))',
+            warehouse_health_render_preload,
+        )
+        self.assertNotIn("_warehouse_support_panels_have_state()", warehouse_health_render_preload)
+        self.assertIn('if st.session_state.get("exceptions_only_mode"):', warehouse_health_text)
+        self.assertNotIn("st.stop()", warehouse_health_text)
         self.assertIn("def render_workflow_selector", warehouse_health_text)
         self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', warehouse_health_text)
         self.assertIn("def _change_has_source_state", change_drift_text)
@@ -1055,6 +1112,17 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _render_cost_operating_snapshot", cost_contract_text)
         self.assertIn("def _ensure_cost_splash", cost_contract_text)
         self.assertIn("def _render_cost_splash", cost_contract_text)
+        self.assertIn("def _maybe_autoload_cost_splash", cost_contract_text)
+        self.assertIn("full_proof: bool = True", cost_contract_text)
+        cost_autoload_block = cost_contract_text.split("def _maybe_autoload_cost_splash", 1)[1].split(
+            "def _cost_splash_summary",
+            1,
+        )[0]
+        self.assertIn("return _cached_cost_splash(company, days, credit_price)", cost_autoload_block)
+        self.assertNotIn("_ensure_cost_splash", cost_autoload_block)
+        self.assertNotIn("get_session", cost_autoload_block)
+        self.assertIn("Refresh Overview loads spend trend, full cockpit, and run-rate proof.", cost_contract_text)
+        self.assertIn("Refresh Overview loads official spend, warehouse ranking, Cortex spend", cost_contract_text)
         self.assertIn('"cockpit": None', cost_contract_text)
         self.assertIn('if not splash.get("loaded"):', cost_contract_text)
         self.assertNotIn('"cockpit": pd.DataFrame()', cost_contract_text)
@@ -1101,9 +1169,11 @@ class NavigationIntegrityTests(unittest.TestCase):
             1,
         )[0]
         self.assertIn("def _cached_cost_splash", cost_contract_text)
-        self.assertIn("Load Cost Overview", cost_watch_preload)
-        self.assertIn("if load_overview:", cost_watch_preload)
-        self.assertIn("_cached_cost_splash(company, int(days), credit_price)", cost_watch_preload)
+        self.assertIn("Refresh Overview", cost_watch_preload)
+        self.assertIn("if refresh_overview:", cost_watch_preload)
+        self.assertIn("_maybe_autoload_cost_splash(company, int(days), credit_price)", cost_watch_preload)
+        self.assertIn("_ensure_cost_splash(company, int(days), credit_price)", cost_watch_preload)
+        self.assertIn("_COST_SPLASH_AUTOLOAD_SCOPE_KEY", cost_contract_text)
         self.assertNotIn(
             "splash = _ensure_cost_splash(company, int(days), credit_price)\n"
             "    _render_cost_splash",
@@ -1362,6 +1432,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_change_intervention_matrix", change_drift_text)
         self.assertIn("Change DBA intervention matrix", change_drift_text)
         self.assertIn('"Terraform evidence"', change_drift_text)
+        self.assertIn("Flyway", change_drift_text)
         self.assertIn('"Jira evidence"', change_drift_text)
         self.assertIn('mode="Terraform"', change_drift_text)
         self.assertIn('mode="Jira"', change_drift_text)
@@ -1375,6 +1446,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("ALERT_CENTER_SOURCES_BY_PANE", alert_center_text)
         self.assertIn('ALERT_CENTER_PANES = [\n    "Issue Inbox",\n    "Triage Digest",\n    "Alert History"', alert_center_text)
         self.assertIn('"Automation Readiness"', alert_center_text)
+        self.assertIn('"automation_health"', alert_center_text)
+        self.assertIn("OVERWATCH_AUTOMATION_HEALTH_V", alert_center_text)
+        self.assertIn("No-Touch Automation Health", alert_center_text)
+        self.assertIn("Control-M/Jira/Terraform/Flyway", alert_center_text)
         self.assertIn("_alert_center_sources_for_view(active_view)", alert_center_text)
         self.assertIn("ALERT_CENTER_SOURCE_PLAN", alert_center_text)
         self.assertIn("_alert_center_source_summary(required_sources)", alert_center_text)
@@ -1496,6 +1571,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("from sections import detailed_diagnosis", query_workbench_text)
         self.assertIn("_query_history_exprs()", query_analysis_text)
         self.assertIn("workload_operations_snapshot", workload_operations_text)
+        self.assertIn("WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION", workload_operations_text)
+        self.assertIn("def _apply_fast_entry_default", workload_operations_text)
+        self.assertIn("_apply_fast_entry_default()", workload_render_default)
+        self.assertIn('st.session_state["workload_operations_workflow"] = "Live triage"', workload_render_default)
+        self.assertNotIn('st.session_state["workload_operations_view"] = "Specialist Workflows"', workload_render_default)
         self.assertNotIn("from utils import", workload_operations_import_block)
         self.assertNotIn("from utils.workflows import", workload_operations_import_block)
         self.assertIn("def get_active_environment", workload_operations_text)
@@ -1546,6 +1626,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("@yahoo.com", config_text)
         self.assertIn("OBJECT_CHANGE_PANES", object_change_text)
         self.assertIn("_query_history_drift_caps()", object_change_text)
+        self.assertNotIn('"Terraform Drift",', object_change_text)
+        self.assertIn("Terraform evidence is consolidated in Change & Drift", object_change_text)
         self.assertIn("ADOPTION_ANALYTICS_PANES", adoption_text)
         self.assertIn("PLATFORM_TOPOLOGY_PANES", platform_text)
         self.assertIn("ARCHITECTURE_READINESS_PANES", architecture_text)

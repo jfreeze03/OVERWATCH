@@ -32,9 +32,12 @@ from config import (
     DEFAULT_COMPANY, ROLE_SECTIONS,
     SECTION_BY_TITLE, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
     SECTION_ICONS, DEFAULT_ALERT_EMAIL, EXPERIENCE_VIEW_SECTIONS,
+    default_experience_view_for_role,
     normalize_section_name,
     resolve_allowed_experience_views,
     resolve_role_profile,
+    static_database_options,
+    static_warehouse_options,
 )
 import utils as utils_package
 
@@ -49,7 +52,6 @@ from utils.company_filter import (
     get_environment_options_for_company,
     invalidate_company_cache,
 )
-from utils.metadata import load_database_options, load_schema_options, load_warehouse_options
 from utils.admin import render_admin_mode_control
 try:
     from utils.admin import clamp_global_date_range
@@ -286,6 +288,22 @@ def _sync_experience_navigation() -> None:
         _queue_section_navigation(visible[0])
 
 
+def _apply_role_based_defaults() -> None:
+    """Seed no-click persona defaults for the current Snowflake role."""
+    role = _get_current_role()
+    profile = resolve_role_profile(role)
+    scope = (role, profile)
+    if st.session_state.get("_overwatch_role_defaults_scope") == scope:
+        return
+
+    default_experience = default_experience_view_for_role(role)
+    st.session_state["overwatch_experience_view"] = default_experience
+    if "exceptions_only_mode" not in st.session_state:
+        st.session_state["exceptions_only_mode"] = profile == "DBA"
+    st.session_state["_overwatch_role_defaults_scope"] = scope
+    _sync_experience_navigation()
+
+
 def _global_filter_signature() -> tuple:
     """Return the operator filter state that makes loaded evidence stale."""
     date_input = st.session_state.get("_global_date_range_input", ())
@@ -443,13 +461,7 @@ def _ensure_global_warehouse_options(company: str) -> None:
     if st.session_state.get("_global_warehouse_choice_scope") == filter_choice_scope:
         return
     st.session_state["_global_warehouse_choice_scope"] = filter_choice_scope
-    try:
-        st.session_state["global_warehouse_options"] = load_warehouse_options(
-            get_session(),
-            company=company,
-        )
-    except Exception:
-        st.session_state["global_warehouse_options"] = []
+    st.session_state["global_warehouse_options"] = list(static_warehouse_options(company))
 
 
 def _ensure_global_database_options(company: str) -> None:
@@ -460,13 +472,12 @@ def _ensure_global_database_options(company: str) -> None:
     if st.session_state.get("_global_database_choice_scope") == filter_choice_scope:
         return
     st.session_state["_global_database_choice_scope"] = filter_choice_scope
-    try:
-        st.session_state["global_database_options"] = load_database_options(
-            get_session(),
-            company=company,
+    st.session_state["global_database_options"] = list(
+        static_database_options(
+            company,
+            st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
         )
-    except Exception:
-        st.session_state["global_database_options"] = []
+    )
 
 
 def _render_global_environment_control(active_company: str) -> list[str]:
@@ -839,6 +850,7 @@ def _render_section_transition_state(section: str) -> None:
     )
 
 
+_apply_role_based_defaults()
 current_role = _get_current_role()
 visible_sections = _current_visible_sections()
 active_section = _current_active_section(visible_sections)
@@ -898,14 +910,7 @@ with st.sidebar:
         )
         if selected_database and st.session_state.get("_global_schema_choice_scope") != schema_choice_scope:
             st.session_state["_global_schema_choice_scope"] = schema_choice_scope
-            try:
-                st.session_state["global_schema_options"] = load_schema_options(
-                    get_session(),
-                    selected_database,
-                    company=active_company,
-                )
-            except Exception:
-                st.session_state["global_schema_options"] = []
+            st.session_state["global_schema_options"] = []
         elif not selected_database:
             st.session_state.pop("_global_schema_choice_scope", None)
             st.session_state.pop("global_schema_options", None)

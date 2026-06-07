@@ -503,6 +503,8 @@ WORKFLOW_MODULES = {
 _DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
 _FULL_COCKPIT_BOARDS_KEY = "_cost_contract_full_cockpit_boards"
 _COST_SPLASH_KEY = "cost_contract_splash"
+_COST_SPLASH_AUTOLOAD_SCOPE_KEY = "_cost_contract_splash_autoload_scope"
+_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY = "_cost_contract_splash_autoload_blocked_scope"
 
 
 def _build_cost_cockpit_sql(company: str, days: int) -> str:
@@ -2603,7 +2605,7 @@ def _build_budget_anomaly_command_center(
         "Resource Monitor",
         f"{top_wh} is the current top warehouse mover; resource monitors are useful only for warehouse credit control.",
         "Review warehouse-level resource monitor assignment for the top mover, but use Budgets for serverless, AI, and shared resources.",
-        "Open Warehouse Health or DBA Tools to review monitor assignment and threshold SQL after owner approval.",
+        "Open Warehouse Health or Change & Drift controls to review monitor assignment and threshold SQL after owner approval.",
         "SHOW RESOURCE MONITORS; SHOW WAREHOUSES LIKE top warehouse; WAREHOUSE_METERING_HISTORY.",
         "Do not use resource monitors as AI/serverless budget controls; Snowflake budgets are the correct surface there.",
         "Warehouse Health > Settings / Cost & Contract > Budget governance",
@@ -4042,10 +4044,15 @@ def _cached_cost_splash(company: str, days: int, credit_price: float) -> dict:
     return _empty_cost_splash(company, days, credit_price)
 
 
-def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
+def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_proof: bool = True) -> dict:
     meta = _cost_splash_meta(company, days, credit_price)
     cached = st.session_state.get(_COST_SPLASH_KEY)
-    if isinstance(cached, dict) and cached.get("meta") == meta and cached.get("loaded"):
+    if (
+        isinstance(cached, dict)
+        and cached.get("meta") == meta
+        and cached.get("loaded")
+        and (cached.get("full_proof") or not full_proof)
+    ):
         return cached
 
     if get_session_for_action(
@@ -4057,20 +4064,26 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
         st.session_state[_COST_SPLASH_KEY] = splash
         return splash
 
-    cockpit, cockpit_source, cockpit_error = _load_cost_splash_query(
-        build_mart_cost_cockpit_sql(company, int(days)),
-        _build_cost_cockpit_sql(company, int(days)),
-        f"cost_splash_cockpit_{company}_{days}",
-    )
-    trend, trend_source, trend_error = _load_cost_splash_live_query(
-        _build_cost_monitor_service_trend_sql(
-            int(days),
-            credit_price=credit_price,
-            ai_credit_price=get_current_ai_credit_price(),
-        ),
-        f"cost_splash_official_service_trend_{company}_{days}",
-        "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
-    )
+    cockpit = pd.DataFrame()
+    cockpit_source = cockpit_error = ""
+    if full_proof:
+        cockpit, cockpit_source, cockpit_error = _load_cost_splash_query(
+            build_mart_cost_cockpit_sql(company, int(days)),
+            _build_cost_cockpit_sql(company, int(days)),
+            f"cost_splash_cockpit_{company}_{days}",
+        )
+    trend = pd.DataFrame()
+    trend_source = trend_error = ""
+    if full_proof:
+        trend, trend_source, trend_error = _load_cost_splash_live_query(
+            _build_cost_monitor_service_trend_sql(
+                int(days),
+                credit_price=credit_price,
+                ai_credit_price=get_current_ai_credit_price(),
+            ),
+            f"cost_splash_official_service_trend_{company}_{days}",
+            "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
+        )
     warehouse_delta, delta_source, delta_error = _load_cost_splash_query(
         _build_cost_splash_warehouse_delta_sql(company, int(days), mart=True),
         _build_cost_splash_warehouse_delta_sql(company, int(days), mart=False),
@@ -4090,16 +4103,20 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
         f"cost_splash_official_service_lens_{company}_{days}_{credit_price}",
         "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
     )
-    run_rate, run_rate_source, run_rate_error = _load_cost_splash_query(
-        build_mart_cost_run_rate_sql(company),
-        _build_cost_run_rate_sql(company),
-        f"cost_splash_run_rate_{company}",
-    )
+    run_rate = pd.DataFrame()
+    run_rate_source = run_rate_error = ""
+    if full_proof:
+        run_rate, run_rate_source, run_rate_error = _load_cost_splash_query(
+            build_mart_cost_run_rate_sql(company),
+            _build_cost_run_rate_sql(company),
+            f"cost_splash_run_rate_{company}",
+        )
     errors = [err for err in (cockpit_error, trend_error, delta_error, cortex_error, service_error, run_rate_error) if err]
     source_parts = [src for src in (service_source, trend_source, cockpit_source, delta_source, cortex_source, run_rate_source) if src]
     splash = {
         "meta": meta,
         "loaded": True,
+        "full_proof": bool(full_proof),
         "cockpit": cockpit,
         "trend": trend,
         "warehouse_delta": warehouse_delta,
@@ -4111,6 +4128,15 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float) -> dict:
     }
     st.session_state[_COST_SPLASH_KEY] = splash
     return splash
+
+
+def _maybe_autoload_cost_splash(company: str, days: int, credit_price: float) -> dict:
+    """Use already-loaded cost overview data without starting Snowflake work on navigation."""
+    meta = _cost_splash_meta(company, days, credit_price)
+    cached = st.session_state.get(_COST_SPLASH_KEY)
+    if isinstance(cached, dict) and cached.get("meta") == meta and cached.get("loaded"):
+        return cached
+    return _cached_cost_splash(company, days, credit_price)
 
 
 def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
@@ -4143,14 +4169,36 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
         if active_services:
             top_service = str(service_costs.assign(_CREDITS=credits).sort_values("_CREDITS", ascending=False).iloc[0].get("SERVICE_TYPE") or "Unknown")
     official_service_loaded = _looks_like_frame(service_costs) and not service_costs.empty
-    current_credits = service_current if official_service_loaded else safe_float(row.get("CURRENT_CREDITS", 0))
-    prior_credits = service_prior if official_service_loaded else safe_float(row.get("PRIOR_CREDITS", 0))
+    warehouse_current = warehouse_prior = 0.0
+    warehouse_active = 0
+    if _looks_like_frame(warehouse_delta) and not warehouse_delta.empty:
+        current_series = pd.to_numeric(
+            warehouse_delta.get("CURRENT_CREDITS", pd.Series(dtype=float)),
+            errors="coerce",
+        ).fillna(0)
+        prior_series = pd.to_numeric(
+            warehouse_delta.get("PRIOR_CREDITS", pd.Series(dtype=float)),
+            errors="coerce",
+        ).fillna(0)
+        warehouse_current = safe_float(current_series.sum())
+        warehouse_prior = safe_float(prior_series.sum())
+        warehouse_active = int((current_series > 0).sum())
+    current_credits = (
+        service_current
+        if official_service_loaded
+        else safe_float(row.get("CURRENT_CREDITS", 0)) or warehouse_current
+    )
+    prior_credits = (
+        service_prior
+        if official_service_loaded
+        else safe_float(row.get("PRIOR_CREDITS", 0)) or warehouse_prior
+    )
     spend_delta_credits = current_credits - prior_credits
     spend = service_current_spend if official_service_loaded else credits_to_dollars(current_credits, credit_price)
     prior_spend = service_prior_spend if official_service_loaded else credits_to_dollars(prior_credits, credit_price)
     spend_delta = spend - prior_spend if official_service_loaded else credits_to_dollars(spend_delta_credits, credit_price)
     delta_pct = (spend_delta_credits / prior_credits * 100) if prior_credits > 0 else 0.0
-    active_warehouses = safe_int(row.get("ACTIVE_WAREHOUSES", 0))
+    active_warehouses = safe_int(row.get("ACTIVE_WAREHOUSES", 0)) or warehouse_active
     top_wh = str(row.get("TOP_INCREASE_WAREHOUSE") or "")
     top_wh_delta = safe_float(row.get("TOP_INCREASE_CREDITS", 0))
     top_wh_current_credits = 0.0
@@ -4168,6 +4216,13 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     cortex_spend = safe_float(cortex_row.get("CORTEX_SPEND_USD", 0))
     projected_30d_credits = safe_float(run_rate_row.get("PROJECTED_30D_FROM_7D", 0))
     avg_7d_credits = safe_float(run_rate_row.get("AVG_DAILY_7D", 0))
+    projected_30d_spend = credits_to_dollars(projected_30d_credits, credit_price)
+    avg_7d_spend = credits_to_dollars(avg_7d_credits, credit_price)
+    run_rate_state = str(run_rate_row.get("RUN_RATE_STATE") or "Not loaded")
+    if not projected_30d_spend and spend:
+        projected_30d_spend = safe_float(spend) / max(int(days), 1) * 30
+        avg_7d_spend = safe_float(spend) / max(int(days), 1)
+        run_rate_state = "Projected from loaded window"
     return {
         "has_data": current_credits > 0 or (_looks_like_frame(trend) and not trend.empty) or cortex_spend > 0,
         "current_credits": current_credits,
@@ -4194,9 +4249,9 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
         "cortex_requests": safe_int(cortex_row.get("CORTEX_REQUESTS", 0)),
         "top_cortex_user": str(cortex_row.get("TOP_CORTEX_USER") or "No Cortex user"),
         "top_cortex_user_spend": safe_float(cortex_row.get("TOP_CORTEX_USER_SPEND_USD", 0)),
-        "projected_30d_spend": credits_to_dollars(projected_30d_credits, credit_price),
-        "avg_7d_spend": credits_to_dollars(avg_7d_credits, credit_price),
-        "run_rate_state": str(run_rate_row.get("RUN_RATE_STATE") or "Not loaded"),
+        "projected_30d_spend": projected_30d_spend,
+        "avg_7d_spend": avg_7d_spend,
+        "run_rate_state": run_rate_state,
         "yoy_state": str(run_rate_row.get("YOY_STATE") or "Not loaded"),
         "yoy_7d_pct": _nullable_float(run_rate_row, "YOY_7D_PCT") if _looks_like_frame(run_rate) and not run_rate.empty else None,
     }
@@ -4975,7 +5030,7 @@ def _render_powerpoint_cost_snapshot(splash: dict, *, company: str, days: int, c
 def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: float) -> None:
     st.markdown("**Cost Overview**")
     if not splash.get("loaded"):
-        st.caption("Load Cost Overview to bring in spend trend, warehouse ranking, Cortex spend, and slide-ready evidence.")
+        st.caption("Refresh Overview loads official spend, warehouse ranking, Cortex spend, and slide-ready evidence.")
         cols = st.columns(4)
         cols[0].metric("Spend", "On demand")
         cols[1].metric("Change", "On demand")
@@ -4996,7 +5051,12 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
     _render_cost_splash_narrative(summary, days=int(days))
 
     if splash.get("source"):
-        defer_source_note(f"Cost splash source: {splash['source']}. Cached query results keep this page fast.")
+        proof_note = (
+            "Refresh Overview loads spend trend, full cockpit, and run-rate proof."
+            if not splash.get("full_proof")
+            else "Full overview proof is loaded."
+        )
+        defer_source_note(f"Cost splash source: {splash['source']}. {proof_note} Cached query results keep this page fast.")
 
     trend = splash.get("trend", pd.DataFrame())
     warehouse_delta = splash.get("warehouse_delta", pd.DataFrame())
@@ -5179,16 +5239,19 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             key="cost_contract_cockpit_window",
         )
     with controls[1]:
-        load_overview = st.button("Load Cost Overview", key="cost_contract_splash_load", type="primary", width="stretch")
+        refresh_overview = st.button("Refresh Overview", key="cost_contract_splash_load", type="primary", width="stretch")
     with controls[2]:
         if st.button("Refresh Cost", key="cost_contract_splash_refresh", width="stretch"):
             st.session_state.pop(_COST_SPLASH_KEY, None)
+            st.session_state.pop(_COST_SPLASH_AUTOLOAD_SCOPE_KEY, None)
+            st.session_state.pop(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, None)
             st.rerun()
 
-    if load_overview:
+    if refresh_overview:
+        st.session_state.pop(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, None)
         splash = _ensure_cost_splash(company, int(days), credit_price)
     else:
-        splash = _cached_cost_splash(company, int(days), credit_price)
+        splash = _maybe_autoload_cost_splash(company, int(days), credit_price)
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
 
     st.markdown("**Cost Proof Workspace**")

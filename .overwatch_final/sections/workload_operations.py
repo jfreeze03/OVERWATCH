@@ -124,6 +124,7 @@ def render_workflow_selector(
 
 
 WORKLOAD_OPERATIONS_VIEWS = ("Workload Brief", "Specialist Workflows")
+WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-06-fast-brief-v1"
 
 WORKFLOWS = (
     "Live triage",
@@ -160,6 +161,15 @@ LEGACY_WORKFLOW_MAP = {
     "Live Triage": "Live triage",
     "Patterns": "Query diagnosis",
 }
+
+
+def _apply_fast_entry_default() -> None:
+    """Keep first navigation fast after older sessions auto-opened live triage."""
+    if st.session_state.get("_workload_operations_fast_entry_version") == WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION:
+        return
+    if st.session_state.get("workload_operations_view") == "Specialist Workflows":
+        st.session_state["workload_operations_view"] = WORKLOAD_OPERATIONS_VIEWS[0]
+    st.session_state["_workload_operations_fast_entry_version"] = WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION
 
 
 def _snapshot_meta(company: str, environment: str, hours: int = 24) -> dict:
@@ -393,10 +403,9 @@ def _render_workload_snapshot(company: str, environment: str) -> None:
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
+    _apply_fast_entry_default()
     if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
         st.session_state["workload_operations_workflow"] = "Live triage"
-    if st.session_state.get("exceptions_only_mode") and "workload_operations_view" not in st.session_state:
-        st.session_state["workload_operations_view"] = "Specialist Workflows"
     if st.session_state.get("workload_operations_view") not in WORKLOAD_OPERATIONS_VIEWS:
         st.session_state["workload_operations_view"] = WORKLOAD_OPERATIONS_VIEWS[0]
     migrate_legacy_workflow_state(

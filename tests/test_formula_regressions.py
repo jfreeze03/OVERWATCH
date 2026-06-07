@@ -1842,7 +1842,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "VALUE_AT_RISK_USD": 220.0,
             "EVIDENCE": "ALFA_WH is the current top warehouse mover; resource monitors are useful only for warehouse credit control.",
             "DBA_DECISION": "Review warehouse-level resource monitor assignment for the top mover, but use Budgets for serverless, AI, and shared resources.",
-            "NEXT_ACTION": "Open Warehouse Health or DBA Tools to review monitor assignment and threshold SQL after owner approval.",
+            "NEXT_ACTION": "Open Warehouse Health or Change & Drift controls to review monitor assignment and threshold SQL after owner approval.",
             "PROOF_REQUIRED": "SHOW RESOURCE MONITORS; SHOW WAREHOUSES LIKE ALFA_WH;",
             "DO_NOT_DO": "Do not use resource monitors as AI/serverless budget controls; Snowflake budgets are the correct surface there.",
             "ROUTE": "Warehouse Health > Settings / Cost & Contract > Budget governance",
@@ -2225,9 +2225,14 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_SCHEMA_MIGRATION", ddl)
         self.assertIn(OVERWATCH_SCHEMA_VERSION.upper(), ddl)
         self.assertIn("OVERWATCH_COST_SAVINGS_VERIFICATION_RUN", status_sql)
+        self.assertIn("OVERWATCH_AUTOMATION_RUN", status_sql)
+        self.assertIn("OVERWATCH_AUTOMATION_HEALTH_V", status_sql)
+        self.assertIn("OVERWATCH_EXECUTIVE_PACKET", status_sql)
+        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", status_sql)
         self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", status_sql)
         self.assertIn("OVERWATCH_ANNOTATIONS", status_sql)
         self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", status_sql)
+        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", status_sql)
         self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE", status_sql)
         self.assertIn("OVERWATCH_ITSM_TICKET_STAGE", status_sql)
         self.assertIn("FACT_COST_DAILY", status_sql)
@@ -2244,6 +2249,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("FACT_COST_DAILY", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("FACT_PROCEDURE_RUN", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("OVERWATCH_ANNOTATIONS", set(contract["REQUIRED_OBJECT"]))
+        self.assertIn("OVERWATCH_AUTOMATION_RUN", set(contract["REQUIRED_OBJECT"]))
+        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", set(contract["REQUIRED_OBJECT"]))
+        self.assertIn("No-touch automation", set(contract["COMPONENT"]))
+        self.assertIn("Flyway", " ".join(contract["WHY_IT_MATTERS"].astype(str)))
         self.assertIn("Cost proof mart", set(contract["COMPONENT"]))
 
     def test_release_remediation_sql_covers_existing_deployment_drift(self):
@@ -5172,7 +5181,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Queued queries: 20", md)
         self.assertIn("Credit Spike", md)
         self.assertIn("Settings Change Readiness", md)
-        self.assertIn("Warehouse Settings Manager", md)
+        self.assertIn("guarded warehouse settings workflow", md)
         self.assertIn("ACCOUNT_USAGE can lag", md)
 
     def test_warehouse_setting_review_snapshot_sql_is_persistable_and_scoped(self):

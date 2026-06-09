@@ -115,12 +115,6 @@ def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) 
         defer_section_note(f"{label}: {detail}")
 
 
-def render_workflow_guide(summary: str, rows) -> None:
-    defer_section_note(summary)
-    for trigger, action in rows:
-        defer_section_note(f"{trigger}: {action}")
-
-
 def render_workflow_selector(
     label: str,
     key: str,
@@ -152,6 +146,7 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
     render()
 
 CHANGE_DRIFT_VIEWS = ("Change Brief", "Change Workflows")
+CHANGE_DRIFT_BRIEF_FIRST_VERSION = 2
 
 WORKFLOWS = (
     "Object and access changes",
@@ -172,6 +167,45 @@ WORKFLOW_DETAILS = {
     "Data movement and replication": "Replication, dynamic tables, Snowpipe, data loading, and freshness risk.",
     "Stored procedure lineage": "Procedure ownership, child SQL, downstream objects, and runtime/cost drift.",
 }
+
+CHANGE_BRIEF_WORKFLOWS = (
+    {
+        "WORKFLOW": "Object and access changes",
+        "BUTTON_LABEL": "Open Object Changes",
+        "DBA_MOVE": "Start with recent DDL, grants, ownership, policy, and actor evidence.",
+        "WHEN": "Unknown actor, manual DDL, access movement",
+    },
+    {
+        "WORKFLOW": "Terraform evidence",
+        "BUTTON_LABEL": "Open Terraform",
+        "DBA_MOVE": "Match deploy evidence from Terraform, Flyway, or Git to Snowflake changes.",
+        "WHEN": "IaC deploys, source-control proof, drift review",
+    },
+    {
+        "WORKFLOW": "Jira evidence",
+        "BUTTON_LABEL": "Open Jira",
+        "DBA_MOVE": "Match approved Jira/ITSM tickets to deployment and object-change evidence.",
+        "WHEN": "Approval proof, ticket status, change windows",
+    },
+    {
+        "WORKFLOW": "Schema and object drift",
+        "BUTTON_LABEL": "Open Schema Drift",
+        "DBA_MOVE": "Compare databases and schemas, then review orphaned or unmanaged objects.",
+        "WHEN": "Schema compare, object inventory, unused assets",
+    },
+    {
+        "WORKFLOW": "Data movement and replication",
+        "BUTTON_LABEL": "Open Data Movement",
+        "DBA_MOVE": "Review Snowpipe, dynamic tables, replication, and load freshness signals.",
+        "WHEN": "Pipeline freshness, replication, load issues",
+    },
+    {
+        "WORKFLOW": "Controlled DBA actions",
+        "BUTTON_LABEL": "Open DBA Actions",
+        "DBA_MOVE": "Use guarded admin workflows with audit proof and verification requirements.",
+        "WHEN": "Approved changes, recovery, controlled fixes",
+    },
+)
 
 WORKFLOW_MODULES = {
     "Object and access changes": "sections.object_change_monitor",
@@ -1952,9 +1986,7 @@ def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> Non
                     "ocm_df_drift",
                 ):
                     st.session_state.pop(stale_key, None)
-                st.session_state["change_drift_view"] = "Change Workflows"
-                st.session_state["change_drift_workflow"] = workflow
-                st.rerun()
+                _queue_change_workflow(workflow)
 
 
 def _change_action_brief(summary, exceptions, meta: dict, company: str, environment: str, days: int) -> dict:
@@ -2081,6 +2113,71 @@ def _render_change_operating_snapshot(snapshot: dict) -> None:
     cols[1].metric("Access", f"{safe_int(snapshot.get('access_changes')):,}")
     cols[2].metric("Policy", f"{safe_int(snapshot.get('policy_owner')):,}", delta_color="inverse")
     cols[3].metric("High Risk", f"{safe_int(snapshot.get('high_risk')):,}", delta_color="inverse")
+
+
+def _queue_change_workflow(workflow: str) -> None:
+    if workflow in WORKFLOWS:
+        st.session_state["change_drift_requested_view"] = "Change Workflows"
+        st.session_state["change_drift_requested_workflow"] = workflow
+        st.rerun()
+
+
+def _apply_queued_change_workflow() -> None:
+    requested_view = st.session_state.pop("change_drift_requested_view", None)
+    requested_workflow = st.session_state.pop("change_drift_requested_workflow", None)
+    if requested_view in CHANGE_DRIFT_VIEWS:
+        st.session_state["change_drift_view"] = requested_view
+    if requested_workflow in WORKFLOWS:
+        st.session_state["change_drift_workflow"] = requested_workflow
+
+
+def _apply_change_brief_first_default() -> None:
+    if st.session_state.get("_change_drift_brief_first_version") == CHANGE_DRIFT_BRIEF_FIRST_VERSION:
+        return
+    if (
+        not _change_has_source_state(st.session_state)
+        and st.session_state.get("change_drift_view") not in (None, "Change Brief")
+    ):
+        st.session_state["change_drift_view"] = "Change Brief"
+    st.session_state["_change_drift_brief_first_version"] = CHANGE_DRIFT_BRIEF_FIRST_VERSION
+
+
+def _change_brief_workflow_rows() -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in CHANGE_BRIEF_WORKFLOWS:
+        workflow = str(item["WORKFLOW"])
+        rows.append({
+            "WORKFLOW": workflow,
+            "BUTTON_LABEL": str(item["BUTTON_LABEL"]),
+            "DBA_MOVE": str(item["DBA_MOVE"]),
+            "WHEN": str(item["WHEN"]),
+            "SOURCES": WORKFLOW_DETAILS.get(workflow, "Change workflow detail"),
+        })
+    return rows
+
+
+def _render_change_brief_launchpad() -> None:
+    st.markdown("**Change Investigation Workflows**")
+    rows = _change_brief_workflow_rows()
+    show_all = bool(st.session_state.get("change_drift_show_all_workflows"))
+    visible_rows = rows if show_all else rows[:3]
+    for offset in range(0, len(visible_rows), 3):
+        cols = st.columns(3)
+        for col, row in zip(cols, visible_rows[offset:offset + 3]):
+            with col:
+                st.markdown(f"**{row['WORKFLOW']}**")
+                st.caption(row["DBA_MOVE"])
+                st.caption(row["WHEN"])
+                if st.button(row["BUTTON_LABEL"], key=f"change_brief_{row['WORKFLOW']}", width="stretch"):
+                    _queue_change_workflow(row["WORKFLOW"])
+    if len(rows) > len(visible_rows):
+        if st.button("More Change Workflows", key="change_drift_show_all_workflows_button"):
+            st.session_state["change_drift_show_all_workflows"] = True
+            st.rerun()
+    elif show_all and len(rows) > 3:
+        if st.button("Hide Change Workflows", key="change_drift_hide_all_workflows_button"):
+            st.session_state["change_drift_show_all_workflows"] = False
+            st.rerun()
 
 
 def _build_change_drift_markdown(
@@ -3846,6 +3943,8 @@ def render() -> None:
         st.session_state["change_drift_view"] = "Change Brief"
     if st.session_state.get("change_drift_view") not in CHANGE_DRIFT_VIEWS:
         st.session_state["change_drift_view"] = CHANGE_DRIFT_VIEWS[0]
+    _apply_change_brief_first_default()
+    _apply_queued_change_workflow()
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="estimated",
@@ -3862,19 +3961,6 @@ def render() -> None:
     )
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Exceptions-only mode: prioritize recent DDL, grant, owner, policy, replication, and task-control issues.")
-    render_workflow_guide(
-        "Confirm who changed what, trace stored procedure blast radius, then use DBA toolkit checks "
-        "for drift, replication, dynamic tables, and controlled actions.",
-        [
-            ("DDL, grant, owner, or policy changed", "Use Object and access changes."),
-            ("A stored procedure drove unexpected cost or changes", "Use Stored procedure lineage."),
-            ("Terraform deploy evidence exists", "Use Terraform evidence."),
-            ("Jira approval or ticket status needs review", "Use Jira evidence."),
-            ("Schemas, objects, or unused assets may have drifted", "Use Schema and object drift."),
-            ("Loads, pipes, dynamic tables, or replication are suspect", "Use Data movement and replication."),
-            ("A query, task, warehouse, or setup action is required", "Use Controlled DBA actions."),
-        ],
-    )
 
     days = safe_int(st.session_state.get("change_drift_brief_days", 14), 14)
     if days < 1 or days > 90:
@@ -3899,6 +3985,8 @@ def render() -> None:
         CHANGE_DRIFT_VIEWS,
         key="change_drift_view",
     )
+    if active_view == "Change Brief":
+        _render_change_brief_launchpad()
     if active_view == "Change Workflows":
         if _change_has_source_state(st.session_state):
             _render_change_source_health(company, environment)

@@ -39,18 +39,20 @@ from config import ALERT_DB, ALERT_SCHEMA, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA, ETL_A
 
 
 TASK_CONTROL_VIEWS = (
-    "Task History",
+    "Job Status Brief",
     "Failure Console",
     "SLA & Cost Drift",
+    "Task History",
     "ETL Audit",
     "Control Center",
     "Execute Task",
 )
 
 TASK_CONTROL_DETAILS = {
-    "Task History": "Run history, active task count, and raw task inventory.",
+    "Job Status Brief": "Live Control-M handoff, task job status, performance indicators, and errors.",
     "Failure Console": "Failure patterns, query links, runbooks, and action queue handoff.",
     "SLA & Cost Drift": "Release-sensitive task duration and estimated credit regression review.",
+    "Task History": "Run history, active task count, and raw task inventory.",
     "ETL Audit": "Custom ETL audit table setup and recent pipeline runs.",
     "Control Center": "Guarded suspend, resume, retry, execute, and cancel workflows.",
     "Execute Task": "Focused manual task execution with pre-flight checks.",
@@ -143,6 +145,22 @@ ETL_AUDIT_FQN = (
     f"{safe_identifier(ETL_AUDIT_DB)}."
     f"{safe_identifier(ETL_AUDIT_SCHEMA)}."
     f"{safe_identifier(ETL_AUDIT_TABLE)}"
+)
+
+CONTROL_FEED_FQN = (
+    f"{safe_identifier(ALERT_DB)}."
+    f"{safe_identifier(ALERT_SCHEMA)}."
+    f"{safe_identifier('OVERWATCH_EXTERNAL_CONTROL_FEED')}"
+)
+CONTROL_FEED_STAGE_FQN = (
+    f"{safe_identifier(ALERT_DB)}."
+    f"{safe_identifier(ALERT_SCHEMA)}."
+    f"{safe_identifier('OVERWATCH_CONTROL_M_FEED_STAGE')}"
+)
+CONTROL_FEED_JSON_FORMAT_FQN = (
+    f"{safe_identifier(ALERT_DB)}."
+    f"{safe_identifier(ALERT_SCHEMA)}."
+    f"{safe_identifier('OVERWATCH_CONTROL_M_JSON_FF')}"
 )
 
 ADMIN_AUDIT_FQN = (
@@ -827,7 +845,7 @@ def _task_ops_workflow_for(signal: str) -> str:
         return "SLA & Cost Drift"
     if "SUSPENDED" in signal:
         return "Control Center"
-    return "Task History"
+    return "Job Status Brief"
 
 
 def _task_action_for(signal: str) -> tuple[str, str]:
@@ -1902,6 +1920,186 @@ def _latest_task_timestamp(latest: pd.DataFrame) -> str:
     return ""
 
 
+def _build_controlm_external_feed_sql(company: str, environment: str, days: int, limit: int = 100) -> str:
+    company_filter = ""
+    if str(company or "").upper() not in {"", "ALL"}:
+        company_filter = f"AND COMPANY = {sql_literal(str(company))}"
+    environment_filter = ""
+    if str(environment or "").upper() not in {"", "ALL"}:
+        environment_filter = f"AND COALESCE(ENVIRONMENT, 'No Database Context') = {sql_literal(str(environment))}"
+    return f"""
+        SELECT
+            SOURCE_SYSTEM,
+            EXTERNAL_ID,
+            COMPANY,
+            ENVIRONMENT,
+            OBJECT_TYPE,
+            OBJECT_NAME,
+            STATUS,
+            SEVERITY,
+            OWNER,
+            TICKET_ID,
+            EVIDENCE,
+            NEXT_ACTION,
+            LAST_SEEN_AT,
+            SEEN_COUNT
+        FROM {CONTROL_FEED_FQN}
+        WHERE UPPER(COALESCE(SOURCE_SYSTEM, '')) = 'CONTROL_M'
+          AND COALESCE(LAST_SEEN_AT, FEED_TS, CURRENT_TIMESTAMP()) >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+          {company_filter}
+          {environment_filter}
+        ORDER BY
+            CASE UPPER(COALESCE(SEVERITY, ''))
+                WHEN 'CRITICAL' THEN 0
+                WHEN 'HIGH' THEN 1
+                WHEN 'MEDIUM' THEN 2
+                WHEN 'LOW' THEN 3
+                ELSE 4
+            END,
+            LAST_SEEN_AT DESC
+        LIMIT {int(limit)}
+    """
+
+
+def build_controlm_external_feed_setup_sql() -> str:
+    return f"""-- OVERWATCH external scheduler feed for Control-M job status
+-- Run once as an admin role that can create objects in {safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.
+-- Then automate the MERGE from Control-M, a REST bridge, Snowpipe, or a scheduled Snowflake task.
+
+CREATE TABLE IF NOT EXISTS {CONTROL_FEED_FQN} (
+    SOURCE_SYSTEM VARCHAR DEFAULT 'CONTROL_M',
+    EXTERNAL_ID VARCHAR NOT NULL,
+    COMPANY VARCHAR,
+    ENVIRONMENT VARCHAR,
+    OBJECT_TYPE VARCHAR,
+    OBJECT_NAME VARCHAR,
+    STATUS VARCHAR,
+    SEVERITY VARCHAR,
+    OWNER VARCHAR,
+    TICKET_ID VARCHAR,
+    EVIDENCE VARCHAR,
+    NEXT_ACTION VARCHAR,
+    LAST_SEEN_AT TIMESTAMP_LTZ,
+    SEEN_COUNT NUMBER(38, 0) DEFAULT 1,
+    FEED_TS TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP(),
+    RAW_PAYLOAD VARIANT,
+    CONSTRAINT OVERWATCH_EXTERNAL_CONTROL_FEED_PK
+        PRIMARY KEY (SOURCE_SYSTEM, EXTERNAL_ID) NOT ENFORCED
+);
+
+CREATE FILE FORMAT IF NOT EXISTS {CONTROL_FEED_JSON_FORMAT_FQN}
+    TYPE = JSON
+    STRIP_OUTER_ARRAY = TRUE;
+
+CREATE STAGE IF NOT EXISTS {CONTROL_FEED_STAGE_FQN}
+    FILE_FORMAT = {CONTROL_FEED_JSON_FORMAT_FQN};
+
+-- Expected JSON keys:
+-- job_id, company, environment, object_type, object_name, status, severity,
+-- owner, ticket_id, evidence, next_action, last_seen_at, seen_count
+
+MERGE INTO {CONTROL_FEED_FQN} AS target
+USING (
+    SELECT
+        'CONTROL_M' AS SOURCE_SYSTEM,
+        COALESCE($1:job_id::VARCHAR, $1:external_id::VARCHAR) AS EXTERNAL_ID,
+        $1:company::VARCHAR AS COMPANY,
+        $1:environment::VARCHAR AS ENVIRONMENT,
+        COALESCE($1:object_type::VARCHAR, 'TASK') AS OBJECT_TYPE,
+        $1:object_name::VARCHAR AS OBJECT_NAME,
+        $1:status::VARCHAR AS STATUS,
+        $1:severity::VARCHAR AS SEVERITY,
+        $1:owner::VARCHAR AS OWNER,
+        $1:ticket_id::VARCHAR AS TICKET_ID,
+        $1:evidence::VARCHAR AS EVIDENCE,
+        $1:next_action::VARCHAR AS NEXT_ACTION,
+        TRY_TO_TIMESTAMP_LTZ($1:last_seen_at::VARCHAR) AS LAST_SEEN_AT,
+        COALESCE(TRY_TO_NUMBER($1:seen_count::VARCHAR), 1) AS SEEN_COUNT,
+        CURRENT_TIMESTAMP() AS FEED_TS,
+        $1 AS RAW_PAYLOAD
+    FROM @{CONTROL_FEED_STAGE_FQN}/control_m/
+) AS source
+ON target.SOURCE_SYSTEM = source.SOURCE_SYSTEM
+AND target.EXTERNAL_ID = source.EXTERNAL_ID
+WHEN MATCHED THEN UPDATE SET
+    COMPANY = source.COMPANY,
+    ENVIRONMENT = source.ENVIRONMENT,
+    OBJECT_TYPE = source.OBJECT_TYPE,
+    OBJECT_NAME = source.OBJECT_NAME,
+    STATUS = source.STATUS,
+    SEVERITY = source.SEVERITY,
+    OWNER = source.OWNER,
+    TICKET_ID = source.TICKET_ID,
+    EVIDENCE = source.EVIDENCE,
+    NEXT_ACTION = source.NEXT_ACTION,
+    LAST_SEEN_AT = source.LAST_SEEN_AT,
+    SEEN_COUNT = source.SEEN_COUNT,
+    FEED_TS = source.FEED_TS,
+    RAW_PAYLOAD = source.RAW_PAYLOAD
+WHEN NOT MATCHED THEN INSERT (
+    SOURCE_SYSTEM, EXTERNAL_ID, COMPANY, ENVIRONMENT, OBJECT_TYPE, OBJECT_NAME,
+    STATUS, SEVERITY, OWNER, TICKET_ID, EVIDENCE, NEXT_ACTION,
+    LAST_SEEN_AT, SEEN_COUNT, FEED_TS, RAW_PAYLOAD
+) VALUES (
+    source.SOURCE_SYSTEM, source.EXTERNAL_ID, source.COMPANY, source.ENVIRONMENT,
+    source.OBJECT_TYPE, source.OBJECT_NAME, source.STATUS, source.SEVERITY,
+    source.OWNER, source.TICKET_ID, source.EVIDENCE, source.NEXT_ACTION,
+    source.LAST_SEEN_AT, source.SEEN_COUNT, source.FEED_TS, source.RAW_PAYLOAD
+);
+"""
+
+
+def _load_controlm_external_feed(session, company: str, environment: str, days: int, ttl_prefix: str) -> pd.DataFrame:
+    try:
+        return run_query(
+            _build_controlm_external_feed_sql(company, environment, days),
+            ttl_key=f"{ttl_prefix}_controlm_feed_{company}_{environment}_{days}",
+            tier="metadata",
+            section="Task Management",
+        )
+    except Exception:
+        return pd.DataFrame()
+
+
+def _render_controlm_feed_setup() -> None:
+    setup_sql = build_controlm_external_feed_setup_sql()
+    with st.expander("Control-M feed setup", expanded=False):
+        st.caption(
+            "Create this landing table once, then automate status upserts from Control-M or a scheduler bridge. "
+            "Rows appear in the job status brief without manual app entry."
+        )
+        st.download_button(
+            "Download Control-M Feed SQL",
+            setup_sql,
+            file_name="overwatch_control_m_feed_setup.sql",
+            mime="text/sql",
+            key="task_ops_controlm_feed_setup_download",
+        )
+        st.code(setup_sql, language="sql")
+
+
+def _controlm_feed_status_text(feed: pd.DataFrame, *, limit: int = 4) -> str:
+    if feed is None or feed.empty or "STATUS" not in feed.columns:
+        return "No imported Control-M feed rows loaded."
+    counts = feed["STATUS"].fillna("UNKNOWN").astype(str).str.upper().value_counts()
+    return "; ".join(f"{status}: {count:,}" for status, count in counts.head(limit).items())
+
+
+def _controlm_feed_state(feed: pd.DataFrame) -> tuple[str, str]:
+    if feed is None or feed.empty:
+        return "Not Loaded", "Feed Control-M evidence into OVERWATCH_EXTERNAL_CONTROL_FEED for scheduler-side proof."
+    statuses = feed.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+    severities = feed.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+    if (
+        statuses.str.contains("FAIL|ERROR|CANCEL|BLOCK|MISSED|LATE", regex=True).any()
+        or severities.isin(["CRITICAL", "HIGH"]).any()
+    ):
+        return "Alert", "Imported Control-M evidence has failed, blocked, late, or high-severity job status."
+    if statuses.str.contains("WARN|DELAY|DEGRADED|SUSPENDED|WATCH", regex=True).any() or severities.isin(["MEDIUM"]).any():
+        return "Watch", "Imported Control-M evidence needs review before closure."
+    return "Ready", "Imported Control-M evidence is present for this scope."
+
+
 def _first_task_value(row: pd.Series, *columns: str) -> object:
     for column in columns:
         value = row.get(column)
@@ -1921,6 +2119,7 @@ def _build_controlm_job_status_board(
     summary: dict,
     latest: pd.DataFrame,
     exceptions: pd.DataFrame,
+    controlm_feed: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     handoff_state, handoff_note = _task_controlm_handoff_state(summary)
     perf_indicators = safe_int(summary.get("LONG_RUNNING_TASKS")) + safe_int(summary.get("COST_DRIFT_TASKS"))
@@ -1986,6 +2185,27 @@ def _build_controlm_job_status_board(
             "NEXT_ACTION": "Keep Control-M closure blocked until recovery evidence and owner approval are visible.",
         },
     ]
+    if controlm_feed is not None and not controlm_feed.empty:
+        feed_state, feed_note = _controlm_feed_state(controlm_feed)
+        last_seen = ""
+        if "LAST_SEEN_AT" in controlm_feed.columns:
+            seen_values = pd.to_datetime(controlm_feed["LAST_SEEN_AT"], errors="coerce").dropna()
+            if not seen_values.empty:
+                last_seen = str(seen_values.max())
+        next_actions = [
+            str(value).strip()
+            for value in controlm_feed.get("NEXT_ACTION", pd.Series(dtype=str)).dropna().tolist()
+            if str(value).strip()
+        ]
+        rows.append({
+            "CONTROL_M_VIEW": "Scheduler Feed",
+            "STATE": feed_state,
+            "INDICATOR": "Imported Control-M evidence",
+            "COUNT": len(controlm_feed),
+            "EVIDENCE": _controlm_feed_status_text(controlm_feed),
+            "LAST_SEEN": last_seen,
+            "NEXT_ACTION": next_actions[0] if next_actions else feed_note,
+        })
     board = pd.DataFrame(rows)
     board["_RANK"] = board["STATE"].map(state_rank).fillna(9)
     return board.sort_values(["_RANK", "CONTROL_M_VIEW"]).drop(columns=["_RANK"], errors="ignore")
@@ -2133,6 +2353,7 @@ def _load_task_ops_scope(
     ttl_prefix: str,
     force_inventory_refresh: bool = False,
     include_live_runs: bool = False,
+    allow_live_fallback: bool = True,
 ) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
     company = get_active_company()
     database_contains = str(st.session_state.get("global_database", "") or "").strip()
@@ -2155,14 +2376,19 @@ def _load_task_ops_scope(
                 section="Task Management",
             )
             if inventory.empty:
-                inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
+                if allow_live_fallback:
+                    inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
             else:
                 inventory_source = "OVERWATCH mart: DIM_TASK_SNAPSHOT"
         except Exception as e:
-            try:
-                inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
-            except Exception:
-                st.info(f"Task inventory unavailable in this role/context: {format_snowflake_error(e)}")
+            if allow_live_fallback:
+                try:
+                    inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
+                except Exception:
+                    st.info(f"Task inventory unavailable in this role/context: {format_snowflake_error(e)}")
+                    inventory = pd.DataFrame()
+            else:
+                inventory_source = "OVERWATCH mart: DIM_TASK_SNAPSHOT unavailable"
                 inventory = pd.DataFrame()
     try:
         history = run_query(
@@ -2177,16 +2403,22 @@ def _load_task_ops_scope(
             section="Task Management",
         )
         if history.empty:
-            history = run_query_or_raise(build_task_history_sql(
-                session,
-                f"scheduled_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())",
-                limit=1000,
-                company=company,
-            ))
+            if allow_live_fallback:
+                history = run_query_or_raise(build_task_history_sql(
+                    session,
+                    f"scheduled_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())",
+                    limit=1000,
+                    company=company,
+                ))
+            else:
+                history_source = "OVERWATCH mart: FACT_TASK_RUN empty"
         else:
             history_source = "OVERWATCH mart: FACT_TASK_RUN"
     except Exception as e:
-        st.info(f"Task history unavailable in this role/context: {format_snowflake_error(e)}")
+        if allow_live_fallback:
+            st.info(f"Task history unavailable in this role/context: {format_snowflake_error(e)}")
+        else:
+            history_source = "OVERWATCH mart: FACT_TASK_RUN unavailable"
         history = pd.DataFrame()
     if include_live_runs and not inventory.empty:
         try:
@@ -2219,7 +2451,7 @@ def _load_task_ops_scope(
                     ttl_key=f"{ttl_prefix}_query_detail_mart_{company}_{days}_{len(qids)}",
                     tier="standard",
                 )
-            if query_details.empty:
+            if query_details.empty and (allow_live_fallback or include_live_runs):
                 query_sql = _query_detail_sql(session, qids)
                 if query_sql:
                     query_details = run_query(
@@ -2261,6 +2493,33 @@ def _load_task_ops_scope(
     return summary, exceptions, latest, inventory, critical_paths, recovery_sla, not query_details.empty
 
 
+def _cache_task_ops_scope(
+    summary: dict,
+    exceptions: pd.DataFrame,
+    latest: pd.DataFrame,
+    inventory: pd.DataFrame,
+    critical_paths: pd.DataFrame,
+    recovery_sla: pd.DataFrame,
+    controlm_feed: pd.DataFrame,
+    details_loaded: bool,
+    *,
+    days: int,
+    refresh_mode: str,
+) -> None:
+    st.session_state["task_ops_summary"] = summary
+    st.session_state["task_ops_exceptions"] = exceptions
+    st.session_state["task_ops_latest"] = latest
+    st.session_state["task_ops_inventory"] = inventory
+    st.session_state["task_ops_critical_paths"] = critical_paths
+    st.session_state["task_ops_recovery_sla"] = recovery_sla
+    st.session_state["task_ops_controlm_feed"] = controlm_feed
+    st.session_state["task_ops_query_details_loaded"] = details_loaded
+    st.session_state["task_ops_loaded_days"] = int(days)
+    st.session_state["task_ops_refresh_mode"] = refresh_mode
+    st.session_state["task_ops_scope_loaded"] = True
+    st.session_state["task_ops_loaded_at"] = time.time()
+
+
 def _render_task_ops_brief(session) -> None:
     company = get_active_company()
     st.subheader("Task Graph Operations Cockpit")
@@ -2270,28 +2529,81 @@ def _render_task_ops_brief(session) -> None:
     )
     with st.container():
         days = day_window_selectbox("Task graph lookback", key="task_ops_days", default=7)
+        selected_days = int(days)
+        if (
+            not st.session_state.get("task_ops_scope_loaded")
+            or st.session_state.get("task_ops_loaded_days") != selected_days
+        ):
+            with st.status("Loading latest task mart snapshot...", expanded=False) as status:
+                summary, exceptions, latest, inventory, critical_paths, recovery_sla, details_loaded = _load_task_ops_scope(
+                    session,
+                    selected_days,
+                    "task_ops",
+                    force_inventory_refresh=False,
+                    include_live_runs=False,
+                    allow_live_fallback=False,
+                )
+                controlm_feed = _load_controlm_external_feed(
+                    session,
+                    company,
+                    get_active_environment(),
+                    selected_days,
+                    "task_ops",
+                )
+                _cache_task_ops_scope(
+                    summary,
+                    exceptions,
+                    latest,
+                    inventory,
+                    critical_paths,
+                    recovery_sla,
+                    controlm_feed,
+                    details_loaded,
+                    days=selected_days,
+                    refresh_mode="mart snapshot",
+                )
+                status.update(label="Task mart snapshot loaded.", state="complete")
         if st.button("Refresh Live Task Job Status", key="task_ops_load"):
             summary, exceptions, latest, inventory, critical_paths, recovery_sla, details_loaded = _load_task_ops_scope(
-                session, days, "task_ops", force_inventory_refresh=True, include_live_runs=True
+                session, selected_days, "task_ops", force_inventory_refresh=True, include_live_runs=True
             )
-            st.session_state["task_ops_summary"] = summary
-            st.session_state["task_ops_exceptions"] = exceptions
-            st.session_state["task_ops_latest"] = latest
-            st.session_state["task_ops_inventory"] = inventory
-            st.session_state["task_ops_critical_paths"] = critical_paths
-            st.session_state["task_ops_recovery_sla"] = recovery_sla
-            st.session_state["task_ops_query_details_loaded"] = details_loaded
-            st.session_state["task_ops_loaded_at"] = time.time()
+            controlm_feed = _load_controlm_external_feed(
+                session,
+                company,
+                get_active_environment(),
+                selected_days,
+                "task_ops_live",
+            )
+            _cache_task_ops_scope(
+                summary,
+                exceptions,
+                latest,
+                inventory,
+                critical_paths,
+                recovery_sla,
+                controlm_feed,
+                details_loaded,
+                days=selected_days,
+                refresh_mode="live",
+            )
 
         summary = st.session_state.get("task_ops_summary")
         if not summary:
-            st.info("Refresh live task job status to load Control-M handoff, performance, and error evidence.")
+            if st.session_state.get("task_ops_refresh_mode") in {None, "mart snapshot"}:
+                st.info(
+                    "No task graph mart snapshot is available for this scope. "
+                    "Refresh live task job status for current Control-M handoff, performance, and error evidence."
+                )
+            else:
+                st.info("Refresh live task job status to load Control-M handoff, performance, and error evidence.")
+            _render_controlm_feed_setup()
             return
         exceptions = st.session_state.get("task_ops_exceptions", pd.DataFrame())
         latest = st.session_state.get("task_ops_latest", pd.DataFrame())
         inventory = st.session_state.get("task_ops_inventory", pd.DataFrame())
         critical_paths = st.session_state.get("task_ops_critical_paths", pd.DataFrame())
         recovery_sla = st.session_state.get("task_ops_recovery_sla", pd.DataFrame())
+        controlm_feed = st.session_state.get("task_ops_controlm_feed", pd.DataFrame())
         score = _task_ops_score(
             failed_runs=safe_int(summary.get("FAILED_RUNS")),
             suspended_tasks=safe_int(summary.get("SUSPENDED_TASKS")),
@@ -2336,7 +2648,7 @@ def _render_task_ops_brief(session) -> None:
             st.success("Operational: no dominant task graph risk signal in this scope.")
 
         controlm_state, controlm_note = _task_controlm_handoff_state(summary)
-        controlm_board = _build_controlm_job_status_board(summary, latest, exceptions)
+        controlm_board = _build_controlm_job_status_board(summary, latest, exceptions, controlm_feed)
         controlm_errors = _build_controlm_error_board(exceptions, latest)
         st.subheader("Control-M Job Status")
         cm1, cm2, cm3, cm4 = st.columns(4)
@@ -2349,8 +2661,12 @@ def _render_task_ops_brief(session) -> None:
             delta_color="inverse",
         )
         loaded_at = safe_float(st.session_state.get("task_ops_loaded_at"))
+        refresh_mode = str(st.session_state.get("task_ops_refresh_mode") or "snapshot")
         if loaded_at:
-            st.caption(f"Last live refresh: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(loaded_at))} | {controlm_note}")
+            st.caption(
+                f"Last {refresh_mode} refresh: "
+                f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(loaded_at))} | {controlm_note}"
+            )
         else:
             st.caption(controlm_note)
         render_priority_dataframe(
@@ -2361,6 +2677,22 @@ def _render_task_ops_brief(session) -> None:
             height=220,
             max_rows=8,
         )
+        if controlm_feed is not None and not controlm_feed.empty:
+            render_priority_dataframe(
+                controlm_feed,
+                title="Imported Control-M evidence",
+                priority_columns=[
+                    "SEVERITY", "STATUS", "OBJECT_NAME", "OBJECT_TYPE", "OWNER",
+                    "TICKET_ID", "EVIDENCE", "NEXT_ACTION", "LAST_SEEN_AT", "SEEN_COUNT",
+                ],
+                sort_by=["SEVERITY", "LAST_SEEN_AT"],
+                ascending=[True, False],
+                raw_label="All imported Control-M feed rows",
+                max_rows=20,
+            )
+        else:
+            st.caption("No imported Control-M feed rows found for this scope. Snowflake task status is still shown above.")
+        _render_controlm_feed_setup()
         if controlm_errors.empty:
             st.success("No recent task error signatures loaded for this scope.")
         else:
@@ -2431,7 +2763,7 @@ def _render_task_ops_brief(session) -> None:
         else:
             move_cols = st.columns(len(priority))
             for idx, (_, item) in enumerate(priority.iterrows()):
-                workflow = str(item.get("NEXT_WORKFLOW") or "Task History")
+                workflow = str(item.get("NEXT_WORKFLOW") or "Job Status Brief")
                 task_name = str(item.get("TASK_NAME") or item.get("ROOT_TASK_NAME") or "Task graph")
                 with move_cols[idx]:
                     st.markdown(f"**{item.get('SEVERITY', 'Signal')}: {task_name}**")
@@ -2786,8 +3118,8 @@ def _render_sla_cost_drift_console(session) -> None:
 def render():
     session = get_session()
 
-    _render_task_ops_brief(session)
     if st.session_state.get("exceptions_only_mode"):
+        _render_task_ops_brief(session)
         st.stop()
 
     task_view = render_workflow_selector(
@@ -2799,7 +3131,10 @@ def render():
     )
 
     # -- TASK HISTORY ----------------------------------------------------------
-    if task_view == "Task History":
+    if task_view == "Job Status Brief":
+        _render_task_ops_brief(session)
+
+    elif task_view == "Task History":
         st.header("Task Execution History")
         th_days = day_window_selectbox("Lookback", key="th_days", default=7)
 

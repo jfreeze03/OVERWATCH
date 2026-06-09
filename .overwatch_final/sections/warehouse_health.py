@@ -6,7 +6,6 @@ from datetime import datetime
 import streamlit as st
 import utils as _utils
 from utils.section_guidance import defer_section_note, defer_source_note
-from utils.admin import ADMIN_AUDIT_FQN
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULTS, DEFAULT_ENVIRONMENT, THRESHOLDS
 
 
@@ -66,6 +65,12 @@ render_priority_dataframe = _lazy_util("render_priority_dataframe")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 
 
+def _admin_audit_fqn() -> str:
+    from utils.admin import ADMIN_AUDIT_FQN
+
+    return ADMIN_AUDIT_FQN
+
+
 def safe_float(value, default: float = 0.0) -> float:
     try:
         if value is None or value != value:
@@ -122,6 +127,7 @@ WAREHOUSE_HEALTH_VIEWS = (
     "Optimization Advisor",
 )
 WAREHOUSE_HEALTH_FAST_ENTRY_VERSION = "2026-06-06-support-panels-explicit-v1"
+WAREHOUSE_HEALTH_BRIEF_FIRST_VERSION = 2
 
 WAREHOUSE_HEALTH_DETAILS = {
     "Overview & Scaling": "Warehouse volume, latency, spill, cache, and metering events.",
@@ -130,6 +136,39 @@ WAREHOUSE_HEALTH_DETAILS = {
     "Workload Heatmap": "Concurrency by warehouse, day, and hour.",
     "Optimization Advisor": "Actionable sizing, suspend, spill, and reliability recommendations.",
 }
+
+WAREHOUSE_HEALTH_BRIEF_WORKFLOWS = (
+    {
+        "VIEW": "Overview & Scaling",
+        "BUTTON_LABEL": "Open Overview",
+        "DBA_MOVE": "Start with warehouse pressure, metering movement, and guardrail coverage.",
+        "WHEN": "Morning capacity review or before size/suspend changes.",
+    },
+    {
+        "VIEW": "Efficiency",
+        "BUTTON_LABEL": "Open Efficiency",
+        "DBA_MOVE": "Rank warehouses by credits per query, queue per credit, and spill per credit.",
+        "WHEN": "Cost spike, noisy warehouse, or low-value workload review.",
+    },
+    {
+        "VIEW": "Spill & Memory",
+        "BUTTON_LABEL": "Open Spill",
+        "DBA_MOVE": "Review local and remote spill before upsizing or changing query shape.",
+        "WHEN": "Slow queries, memory pressure, or repeated remote spill.",
+    },
+    {
+        "VIEW": "Workload Heatmap",
+        "BUTTON_LABEL": "Open Heatmap",
+        "DBA_MOVE": "Find peak hours and concurrency pressure by warehouse.",
+        "WHEN": "Scheduling, Control-M windows, or workload routing questions.",
+    },
+    {
+        "VIEW": "Optimization Advisor",
+        "BUTTON_LABEL": "Open Advisor",
+        "DBA_MOVE": "Move from evidence to recommended warehouse actions.",
+        "WHEN": "After pressure evidence is loaded or a DBA change is being planned.",
+    },
+)
 
 WAREHOUSE_SETTING_REVIEW_TABLE = "OVERWATCH_WAREHOUSE_SETTING_REVIEW"
 WAREHOUSE_OPERABILITY_FACT_TABLE = "FACT_WAREHOUSE_OPERABILITY_DAILY"
@@ -458,6 +497,69 @@ def _render_warehouse_operating_snapshot(snapshot: dict) -> None:
     cols[1].metric("Queries", f"{safe_int(snapshot.get('queries')):,}")
     cols[2].metric("Spill GB", f"{safe_float(snapshot.get('spill_gb')):,.1f}")
     cols[3].metric("Avg Queue", f"{safe_float(snapshot.get('avg_queue')):,.1f}s")
+
+
+def _queue_warehouse_health_view(view: str) -> None:
+    if view in WAREHOUSE_HEALTH_VIEWS:
+        st.session_state["warehouse_health_requested_view"] = view
+        st.rerun()
+
+
+def _apply_queued_warehouse_health_view() -> None:
+    requested_view = st.session_state.pop("warehouse_health_requested_view", None)
+    if requested_view in WAREHOUSE_HEALTH_VIEWS:
+        st.session_state["warehouse_health_view"] = requested_view
+
+
+def _apply_warehouse_brief_first_default() -> None:
+    if st.session_state.get("_warehouse_health_brief_first_version") == WAREHOUSE_HEALTH_BRIEF_FIRST_VERSION:
+        return
+    has_overview_rows = _warehouse_frame_has_rows(st.session_state.get("wh_df_wh"))
+    if (
+        not has_overview_rows
+        and not _warehouse_support_panels_have_state()
+        and st.session_state.get("warehouse_health_view") not in (None, "Overview & Scaling")
+    ):
+        st.session_state["warehouse_health_view"] = "Overview & Scaling"
+    st.session_state["_warehouse_health_brief_first_version"] = WAREHOUSE_HEALTH_BRIEF_FIRST_VERSION
+
+
+def _warehouse_brief_workflow_rows() -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in WAREHOUSE_HEALTH_BRIEF_WORKFLOWS:
+        view = str(item["VIEW"])
+        rows.append({
+            "VIEW": view,
+            "BUTTON_LABEL": str(item["BUTTON_LABEL"]),
+            "DBA_MOVE": str(item["DBA_MOVE"]),
+            "WHEN": str(item["WHEN"]),
+            "SOURCES": WAREHOUSE_HEALTH_DETAILS.get(view, "Warehouse workflow detail"),
+        })
+    return rows
+
+
+def _render_warehouse_brief_launchpad() -> None:
+    st.markdown("**Warehouse Investigation Workflows**")
+    rows = _warehouse_brief_workflow_rows()
+    show_all = bool(st.session_state.get("warehouse_health_show_all_workflows"))
+    visible_rows = rows if show_all else rows[:3]
+    for offset in range(0, len(visible_rows), 3):
+        cols = st.columns(3)
+        for col, row in zip(cols, visible_rows[offset:offset + 3]):
+            with col:
+                st.markdown(f"**{row['VIEW']}**")
+                st.caption(row["DBA_MOVE"])
+                st.caption(row["WHEN"])
+                if st.button(row["BUTTON_LABEL"], key=f"warehouse_brief_{row['VIEW']}", width="stretch"):
+                    _queue_warehouse_health_view(row["VIEW"])
+    if len(rows) > len(visible_rows):
+        if st.button("More Warehouse Workflows", key="warehouse_health_show_all_workflows_button"):
+            st.session_state["warehouse_health_show_all_workflows"] = True
+            st.rerun()
+    elif show_all and len(rows) > 3:
+        if st.button("Hide Warehouse Workflows", key="warehouse_health_hide_all_workflows_button"):
+            st.session_state["warehouse_health_show_all_workflows"] = False
+            st.rerun()
 
 
 def _warehouse_sql_exprs(session) -> dict[str, str]:
@@ -2024,6 +2126,7 @@ LIMIT 100""".strip()
 def _warehouse_setting_execution_audit_sql(days: int, company: str, environment: str = "ALL") -> str:
     """Join persisted setting reviews to guarded ALTER WAREHOUSE audit evidence."""
     review_fqn = warehouse_setting_review_fqn()
+    admin_audit_fqn = _admin_audit_fqn()
     days = max(1, min(int(days or 30), 180))
     review_where = [f"SNAPSHOT_TS >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())"]
     audit_where = [
@@ -2073,7 +2176,7 @@ audit_rows AS (
         MAX_BY(RESULT_MESSAGE, ACTION_TS) AS LAST_EXECUTION_MESSAGE,
         MAX_BY(CONTROL_CONTEXT, ACTION_TS) AS LAST_CONTROL_CONTEXT,
         MAX(ACTION_TS) AS LAST_EXECUTED_AT
-    FROM {ADMIN_AUDIT_FQN}
+    FROM {admin_audit_fqn}
     WHERE {" AND ".join(audit_where)}
     GROUP BY TARGET_OBJECT
 )
@@ -2501,8 +2604,7 @@ def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_
                     st.session_state["lm_wh"] = warehouse
                     for stale_key in ["wh_df_wh", "wh_efficiency", "wh_df_sp", "wh_df_hm"]:
                         st.session_state.pop(stale_key, None)
-                st.session_state["warehouse_health_view"] = workflow
-                st.rerun()
+                _queue_warehouse_health_view(workflow)
 
 
 def _build_warehouse_capacity_markdown(
@@ -3488,6 +3590,8 @@ def render():
     company = get_active_company()
     environment = get_active_environment()
     _apply_warehouse_fast_entry_default()
+    _apply_warehouse_brief_first_default()
+    _apply_queued_warehouse_health_view()
     global_warehouse = str(st.session_state.get("global_warehouse", "") or "").strip()
     global_user = str(st.session_state.get("global_user", "") or "").strip()
     global_role = str(st.session_state.get("global_role", "") or "").strip()
@@ -3517,6 +3621,8 @@ def render():
         WAREHOUSE_HEALTH_DETAILS,
         columns=3,
     )
+    if warehouse_view == "Overview & Scaling" and not _warehouse_frame_has_rows(st.session_state.get("wh_df_wh")):
+        _render_warehouse_brief_launchpad()
     show_support_panels = bool(st.session_state.get("warehouse_health_support_panels_open"))
     if show_support_panels:
         _render_capacity_brief(company, environment)

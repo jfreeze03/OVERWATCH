@@ -6,10 +6,6 @@ from datetime import datetime
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
-from utils import (
-    get_active_company,
-    get_active_environment,
-)
 
 
 ANNOTATION_TABLE = "OVERWATCH_ANNOTATIONS"
@@ -56,6 +52,47 @@ ALERT_CENTER_HEALTH_DETAIL_OPTIONS = (
     "Owner Routes",
     "Owner Directory",
     "Delivery & ITSM",
+)
+
+ALERT_CENTER_BRIEF_FIRST_VERSION = 2
+
+ALERT_CENTER_BRIEF_WORKFLOWS = (
+    {
+        "VIEW": "Issue Inbox",
+        "BUTTON_LABEL": "Open Issue Inbox",
+        "DBA_MOVE": "Start with the combined alert and action-queue inbox.",
+        "WHEN": "Morning triage, new alerts, owner assignment",
+    },
+    {
+        "VIEW": "Triage Digest",
+        "BUTTON_LABEL": "Open Triage Digest",
+        "DBA_MOVE": "Escalate critical, high, and overdue rows first.",
+        "WHEN": "Shift handoff, incident review, email digest prep",
+    },
+    {
+        "VIEW": "Email Delivery",
+        "BUTTON_LABEL": "Open Delivery",
+        "DBA_MOVE": "Prove which alerts are email-ready or already logged.",
+        "WHEN": "Notification audit, executive proof, daily digest",
+    },
+    {
+        "VIEW": "Action Queue Routing",
+        "BUTTON_LABEL": "Open Queue Routing",
+        "DBA_MOVE": "Move alert evidence into accountable owner work.",
+        "WHEN": "Queue closure, ticket routing, DBA follow-up",
+    },
+    {
+        "VIEW": "Control Health",
+        "BUTTON_LABEL": "Open Control Health",
+        "DBA_MOVE": "Check source readiness, owner routing, and control gaps.",
+        "WHEN": "Setup validation, route gaps, delivery issues",
+    },
+    {
+        "VIEW": "Automation Readiness",
+        "BUTTON_LABEL": "Open Automation",
+        "DBA_MOVE": "Review no-touch alert, Control-M, Jira, Terraform, and Flyway health.",
+        "WHEN": "Automation checks, external feed freshness",
+    },
 )
 
 ALERT_CENTER_SOURCES_BY_PANE = {
@@ -175,6 +212,18 @@ def _pd():
     import pandas as pd
 
     return pd
+
+
+def get_active_company() -> str:
+    from utils import get_active_company as _get_active_company
+
+    return _get_active_company()
+
+
+def get_active_environment() -> str:
+    from utils import get_active_environment as _get_active_environment
+
+    return _get_active_environment()
 
 
 def _render_priority_dataframe(*args, **kwargs) -> None:
@@ -820,6 +869,68 @@ def _alert_center_pending_brief(active_view: str, required_sources: set[str]) ->
     }
 
 
+def _alert_center_brief_workflow_rows() -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in ALERT_CENTER_BRIEF_WORKFLOWS:
+        view = str(item["VIEW"])
+        sources = _alert_center_source_summary(_alert_center_sources_for_view(view))
+        rows.append({
+            "VIEW": view,
+            "BUTTON_LABEL": str(item["BUTTON_LABEL"]),
+            "DBA_MOVE": str(item["DBA_MOVE"]),
+            "WHEN": str(item["WHEN"]),
+            "SOURCES": sources,
+        })
+    return rows
+
+
+def _queue_alert_center_view(view: str) -> None:
+    if view in ALERT_CENTER_PANES:
+        st.session_state["alert_center_requested_view"] = view
+        st.rerun()
+
+
+def _apply_queued_alert_center_view() -> None:
+    requested = st.session_state.pop("alert_center_requested_view", None)
+    if requested in ALERT_CENTER_PANES:
+        st.session_state["alert_center_active_view"] = requested
+
+
+def _apply_alert_center_brief_first_default() -> None:
+    if st.session_state.get("_alert_center_brief_first_version") == ALERT_CENTER_BRIEF_FIRST_VERSION:
+        return
+    if (
+        "alert_center_data" not in st.session_state
+        and st.session_state.get("alert_center_active_view") not in (None, "Alert Brief")
+    ):
+        st.session_state["alert_center_active_view"] = "Alert Brief"
+    st.session_state["_alert_center_brief_first_version"] = ALERT_CENTER_BRIEF_FIRST_VERSION
+
+
+def _render_alert_center_brief_launchpad() -> None:
+    st.markdown("**Morning Alert Workflows**")
+    rows = _alert_center_brief_workflow_rows()
+    show_all = bool(st.session_state.get("alert_center_show_all_workflows"))
+    visible_rows = rows if show_all else rows[:3]
+    for offset in range(0, len(visible_rows), 3):
+        cols = st.columns(3)
+        for col, row in zip(cols, visible_rows[offset:offset + 3]):
+            with col:
+                st.markdown(f"**{row['VIEW']}**")
+                st.caption(row["DBA_MOVE"])
+                st.caption(row["WHEN"])
+                if st.button(row["BUTTON_LABEL"], key=f"alert_center_brief_{row['VIEW']}", width="stretch"):
+                    _queue_alert_center_view(row["VIEW"])
+    if len(rows) > len(visible_rows):
+        if st.button("More Alert Workflows", key="alert_center_show_all_workflows_button"):
+            st.session_state["alert_center_show_all_workflows"] = True
+            st.rerun()
+    elif show_all and len(rows) > 3:
+        if st.button("Hide Alert Workflows", key="alert_center_hide_all_workflows_button"):
+            st.session_state["alert_center_show_all_workflows"] = False
+            st.rerun()
+
+
 def _render_alert_center_action_brief(brief: dict) -> None:
     with st.container(border=True):
         label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
@@ -833,13 +944,10 @@ def _render_alert_center_action_brief(brief: dict) -> None:
             primary_label = str(brief.get("primary_label") or "").strip()
             target = str(brief.get("target") or "Issue Inbox")
             if primary_label and st.button(primary_label, key="alert_center_action_brief_primary", width="stretch"):
-                if target in ALERT_CENTER_PANES:
-                    st.session_state["alert_center_active_view"] = target
-                    st.rerun()
+                _queue_alert_center_view(target)
             if primary_label and target != "Issue Inbox":
                 if st.button("Issue Inbox", key="alert_center_action_brief_inbox", width="stretch"):
-                    st.session_state["alert_center_active_view"] = "Issue Inbox"
-                    st.rerun()
+                    _queue_alert_center_view("Issue Inbox")
 
 
 def _render_alert_center_metric_rows(
@@ -1249,13 +1357,8 @@ def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
-    if st.session_state.get("_alert_center_brief_first_version") != 1:
-        if (
-            "alert_center_data" not in st.session_state
-            and st.session_state.get("alert_center_active_view") == "Issue Inbox"
-        ):
-            st.session_state["alert_center_active_view"] = "Alert Brief"
-        st.session_state["_alert_center_brief_first_version"] = 1
+    _apply_alert_center_brief_first_default()
+    _apply_queued_alert_center_view()
 
     active_view = st.selectbox(
         "Alert Center view",
@@ -1276,7 +1379,8 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
-        st.caption("Choose an Alert Center view when you need live issue rows, delivery evidence, action queue routing, rules, or automation health.")
+        _render_alert_center_brief_launchpad()
+        st.caption("Each workflow loads only the sources listed on its load button; no Alert Center data is fetched by the brief itself.")
         return
 
     if active_view == "Suppression Windows":

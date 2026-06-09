@@ -51,6 +51,8 @@ from sections.adoption_analytics import (  # noqa: E402
 )
 from sections.alert_center import (  # noqa: E402
     _alert_center_action_brief,
+    _apply_alert_center_brief_first_default,
+    _alert_center_brief_workflow_rows,
     _alert_center_pending_brief,
     _alert_center_operability_rows,
     _alert_center_readiness_score,
@@ -66,11 +68,13 @@ from sections.architecture_readiness import (  # noqa: E402
     _enrich_architecture_context,
 )
 from sections.workload_operations import (  # noqa: E402
+    _build_workload_task_status_sql,
     _build_workload_runbook_markdown,
     _workload_action_brief,
     _workload_runbook_filename,
     _workload_snapshot_summary,
     _workload_status_lanes,
+    _workload_task_summary,
 )
 from sections.executive_landing import (  # noqa: E402
     _build_executive_snapshot_pptx,
@@ -179,6 +183,8 @@ from sections.change_drift import (  # noqa: E402
     _build_mart_change_drift_sql,
     _change_action_for,
     _change_action_payload,
+    _apply_change_brief_first_default,
+    _change_brief_workflow_rows,
     _change_control_evidence_history_sql,
     _change_control_evidence_insert_sql,
     _change_drift_rating,
@@ -248,6 +254,7 @@ from sections.security_posture import (  # noqa: E402
     _security_action_for,
     _security_exception_verification_sql,
     _security_exception_strip_rows,
+    _security_brief_workflow_rows,
     _security_rating,
     _security_scope_meta,
     _security_workflow_for,
@@ -278,6 +285,7 @@ from sections.task_management import (  # noqa: E402
     _build_failure_console_frames,
     _build_failure_runbook_markdown,
     _build_task_critical_path_snapshot,
+    _build_controlm_external_feed_sql,
     _build_controlm_error_board,
     _build_controlm_job_status_board,
     _build_task_reliability_action,
@@ -294,7 +302,11 @@ from sections.task_management import (  # noqa: E402
     _parse_task_predecessors,
     _procedure_from_definition,
     _task_action_for,
+    _task_ops_workflow_for,
     _task_ops_score,
+    build_controlm_external_feed_setup_sql,
+    TASK_CONTROL_DETAILS,
+    TASK_CONTROL_VIEWS,
 )
 from sections.usage_overview import _first_number as usage_first_number  # noqa: E402
 from sections.warehouse_health import (  # noqa: E402
@@ -316,6 +328,8 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_owner_inventory_sql,
     _warehouse_operability_fact_sql,
     _warehouse_source_health_rows,
+    _apply_warehouse_brief_first_default,
+    _warehouse_brief_workflow_rows,
     _warehouse_setting_review_history_sql,
     _warehouse_setting_review_insert_sql,
     build_warehouse_operability_fact_ddl,
@@ -3861,6 +3875,20 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(_security_action_for("Recent Grant")[0], "Grant/Role")
         self.assertEqual(_security_action_for("Shared Database Exposure")[0], "Shared Data")
 
+    def test_security_brief_launchpad_prioritizes_investigation_workflows(self):
+        rows = _security_brief_workflow_rows()
+
+        self.assertEqual(
+            [row["WORKFLOW"] for row in rows],
+            ["Access posture", "Privilege sprawl", "Data sharing exposure"],
+        )
+        by_workflow = {row["WORKFLOW"]: row for row in rows}
+        self.assertIn("failed logins", by_workflow["Access posture"]["DBA_MOVE"])
+        self.assertIn("admin roles", by_workflow["Privilege sprawl"]["DBA_MOVE"])
+        self.assertIn("shared databases", by_workflow["Data sharing exposure"]["DBA_MOVE"])
+        self.assertIn("Open Access", by_workflow["Access posture"]["BUTTON_LABEL"])
+        self.assertIn("MFA gaps", by_workflow["Access posture"]["SOURCES"])
+
     def test_security_mfa_coverage_sql_prefers_has_mfa_and_avoids_alias_grouping(self):
         exprs = _user_mfa_column_exprs({"HAS_MFA", "HAS_PASSWORD", "LAST_SUCCESS_LOGIN"})
         sql = _build_mfa_coverage_sql(exprs, "AND u.name LIKE 'ALFA_%'").upper()
@@ -4396,6 +4424,51 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(_change_action_for("Policy or Tag Change")[0], "Policy/Tag")
         self.assertEqual(_change_action_for("Grant or Role Change")[0], "Grant/Role")
         self.assertEqual(_change_action_for("Manual Drift")[0], "Drift")
+
+    def test_change_brief_launchpad_prioritizes_investigation_workflows(self):
+        rows = _change_brief_workflow_rows()
+        self.assertEqual(
+            [row["WORKFLOW"] for row in rows],
+            [
+                "Object and access changes",
+                "Terraform evidence",
+                "Jira evidence",
+                "Schema and object drift",
+                "Data movement and replication",
+                "Controlled DBA actions",
+            ],
+        )
+        by_workflow = {row["WORKFLOW"]: row for row in rows}
+        self.assertIn("recent DDL", by_workflow["Object and access changes"]["DBA_MOVE"])
+        self.assertIn("Terraform", by_workflow["Terraform evidence"]["DBA_MOVE"])
+        self.assertIn("Jira", by_workflow["Jira evidence"]["DBA_MOVE"])
+        self.assertIn("Open DBA Actions", by_workflow["Controlled DBA actions"]["BUTTON_LABEL"])
+        self.assertIn("Guarded admin", by_workflow["Controlled DBA actions"]["SOURCES"])
+
+    def test_change_brief_first_default_resets_stale_unloaded_workflow(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["change_drift_view"] = "Change Workflows"
+            _apply_change_brief_first_default()
+
+            self.assertEqual(st.session_state["change_drift_view"], "Change Brief")
+            self.assertEqual(st.session_state["_change_drift_brief_first_version"], 2)
+
+            st.session_state["change_drift_view"] = "Change Workflows"
+            _apply_change_brief_first_default()
+            self.assertEqual(st.session_state["change_drift_view"], "Change Workflows")
+
+            st.session_state.clear()
+            st.session_state["change_drift_view"] = "Change Workflows"
+            st.session_state["change_drift_summary"] = pd.DataFrame({"OBJECT_CHANGES": [1]})
+            _apply_change_brief_first_default()
+            self.assertEqual(st.session_state["change_drift_view"], "Change Workflows")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_change_drift_queue_payload_is_auditable_and_readonly(self):
         row = {
@@ -5959,17 +6032,66 @@ class FormulaRegressionTests(unittest.TestCase):
             }
         )
 
-        board = _build_controlm_job_status_board(summary, latest, exceptions)
+        controlm_feed = pd.DataFrame(
+            {
+                "SOURCE_SYSTEM": ["CONTROL_M"],
+                "OBJECT_NAME": ["ALFA_EDW_DEV.ROOT_TASK"],
+                "OBJECT_TYPE": ["Task graph"],
+                "STATUS": ["FAILED"],
+                "SEVERITY": ["High"],
+                "OWNER": ["Data Engineering"],
+                "TICKET_ID": ["CHG-123"],
+                "EVIDENCE": ["job_id=abc; status=FAILED"],
+                "NEXT_ACTION": ["Route failed job to recovery."],
+                "LAST_SEEN_AT": pd.to_datetime(["2026-05-01 10:15"]),
+                "SEEN_COUNT": [3],
+            }
+        )
+
+        board = _build_controlm_job_status_board(summary, latest, exceptions, controlm_feed)
         errors = _build_controlm_error_board(exceptions, latest)
         by_view = {row["CONTROL_M_VIEW"]: row for _, row in board.iterrows()}
 
         self.assertEqual(by_view["Job Status"]["STATE"], "Needs Triage")
         self.assertEqual(by_view["Performance Indicators"]["COUNT"], 2)
         self.assertEqual(by_view["Errors"]["COUNT"], 1)
+        self.assertEqual(by_view["Scheduler Feed"]["STATE"], "Alert")
+        self.assertEqual(by_view["Scheduler Feed"]["COUNT"], 1)
+        self.assertIn("FAILED", by_view["Scheduler Feed"]["EVIDENCE"])
         self.assertIn("FAILED_WITH_ERROR", by_view["Job Status"]["EVIDENCE"])
         self.assertFalse(errors.empty)
         self.assertIn("missing table", errors.iloc[0]["ERROR_SIGNATURE"])
         self.assertIn("EST_TOTAL_CREDITS", errors.columns)
+
+    def test_controlm_external_feed_sql_is_mart_scoped(self):
+        sql = _build_controlm_external_feed_sql("Trexis", "PROD", 14).upper()
+
+        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", sql)
+        self.assertIn("CONTROL_M", sql)
+        self.assertIn("COMPANY = 'TREXIS'", sql)
+        self.assertIn("COALESCE(ENVIRONMENT, 'NO DATABASE CONTEXT') = 'PROD'", sql)
+        self.assertIn("DATEADD('DAY', -14", sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", sql)
+
+    def test_controlm_external_feed_setup_sql_is_automation_ready(self):
+        sql = build_controlm_external_feed_setup_sql().upper()
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS", sql)
+        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", sql)
+        self.assertIn("SOURCE_SYSTEM VARCHAR DEFAULT 'CONTROL_M'", sql)
+        self.assertIn("EXTERNAL_ID VARCHAR NOT NULL", sql)
+        self.assertIn("RAW_PAYLOAD VARIANT", sql)
+        self.assertIn("PRIMARY KEY (SOURCE_SYSTEM, EXTERNAL_ID) NOT ENFORCED", sql)
+        self.assertIn("CREATE FILE FORMAT IF NOT EXISTS", sql)
+        self.assertIn("OVERWATCH_CONTROL_M_JSON_FF", sql)
+        self.assertIn("CREATE STAGE IF NOT EXISTS", sql)
+        self.assertIn("OVERWATCH_CONTROL_M_FEED_STAGE", sql)
+        self.assertIn("MERGE INTO", sql)
+        self.assertIn("FROM @DBA_MAINT_DB.OVERWATCH.OVERWATCH_CONTROL_M_FEED_STAGE/CONTROL_M/", sql)
+        self.assertIn("$1:JOB_ID::VARCHAR", sql)
+        self.assertIn("$1:STATUS::VARCHAR", sql)
+        self.assertIn("WHEN MATCHED THEN UPDATE SET", sql)
+        self.assertIn("WHEN NOT MATCHED THEN INSERT", sql)
 
     def test_task_recovery_sla_frame_tracks_open_and_late_recoveries(self):
         inventory = pd.DataFrame(
@@ -6144,6 +6266,13 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("retry the root task", _task_action_for("Failed Task Run")[0])
         self.assertIn("resume only after owner approval", _task_action_for("Suspended Task")[0])
         self.assertIn("historical average", _task_action_for("Long Running / SLA Risk")[0])
+
+    def test_task_management_defaults_to_controlm_job_status_brief(self):
+        self.assertEqual(TASK_CONTROL_VIEWS[0], "Job Status Brief")
+        self.assertIn("Control-M handoff", TASK_CONTROL_DETAILS["Job Status Brief"])
+        self.assertEqual(_task_ops_workflow_for("Healthy task graph"), "Job Status Brief")
+        self.assertEqual(_task_ops_workflow_for("Failed Task Run"), "Failure Console")
+        self.assertEqual(_task_ops_workflow_for("Long Running / SLA Risk"), "SLA & Cost Drift")
 
     def test_failure_diagnosis_classifies_common_task_errors(self):
         self.assertEqual(
@@ -6429,6 +6558,52 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CREDIT_DELTA", warehouse_sql)
         self.assertIn("CREDIT_DELTA_PCT", warehouse_sql)
         self.assertIn("HOUR_START >= DATEADD('DAY', -14", warehouse_sql)
+
+    def test_warehouse_brief_launchpad_prioritizes_investigation_workflows(self):
+        rows = _warehouse_brief_workflow_rows()
+
+        self.assertEqual(
+            [row["VIEW"] for row in rows],
+            [
+                "Overview & Scaling",
+                "Efficiency",
+                "Spill & Memory",
+                "Workload Heatmap",
+                "Optimization Advisor",
+            ],
+        )
+        by_view = {row["VIEW"]: row for row in rows}
+        self.assertIn("warehouse pressure", by_view["Overview & Scaling"]["DBA_MOVE"])
+        self.assertIn("credits per query", by_view["Efficiency"]["DBA_MOVE"])
+        self.assertIn("remote spill", by_view["Spill & Memory"]["WHEN"])
+        self.assertIn("Control-M", by_view["Workload Heatmap"]["WHEN"])
+        self.assertIn("Open Advisor", by_view["Optimization Advisor"]["BUTTON_LABEL"])
+        self.assertIn("Actionable sizing", by_view["Optimization Advisor"]["SOURCES"])
+
+    def test_warehouse_brief_first_default_resets_stale_unloaded_workflow(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["warehouse_health_view"] = "Efficiency"
+            _apply_warehouse_brief_first_default()
+
+            self.assertEqual(st.session_state["warehouse_health_view"], "Overview & Scaling")
+            self.assertEqual(st.session_state["_warehouse_health_brief_first_version"], 2)
+
+            st.session_state["warehouse_health_view"] = "Workload Heatmap"
+            _apply_warehouse_brief_first_default()
+            self.assertEqual(st.session_state["warehouse_health_view"], "Workload Heatmap")
+
+            st.session_state.clear()
+            st.session_state["warehouse_health_view"] = "Efficiency"
+            st.session_state["wh_df_wh"] = pd.DataFrame({"WAREHOUSE_NAME": ["WH_TRXS_LOAD"]})
+            _apply_warehouse_brief_first_default()
+            self.assertEqual(st.session_state["warehouse_health_view"], "Efficiency")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_explain_bill_driver_aliases_match_visible_columns(self):
         cost_text = (APP_ROOT / "sections" / "cost_center.py").read_text(encoding="utf-8").upper()
@@ -8118,14 +8293,78 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertTrue(missing["refresh"])
         self.assertEqual(missing["workflow"], "Live triage")
 
+        task_alert_brief = _workload_action_brief(
+            {
+                "loaded": True,
+                "queries": 100,
+                "failed": 0,
+                "queued": 0,
+                "spill": 0,
+                "p95": 18.5,
+            },
+            task_summary={
+                "loaded": True,
+                "controlm_rows": 5,
+                "controlm_alerts": 2,
+                "controlm_watch": 1,
+            },
+        )
+        self.assertEqual(task_alert_brief["workflow"], "Task graphs")
+        self.assertEqual(task_alert_brief["state"], "Job Review")
+        self.assertIn("Control-M", task_alert_brief["detail"])
+
+        task_watch_brief = _workload_action_brief(
+            {
+                "loaded": True,
+                "queries": 100,
+                "failed": 0,
+                "queued": 0,
+                "spill": 0,
+                "p95": 18.5,
+            },
+            task_summary={
+                "loaded": True,
+                "controlm_rows": 5,
+                "controlm_alerts": 0,
+                "controlm_watch": 1,
+            },
+        )
+        self.assertEqual(task_watch_brief["workflow"], "Task graphs")
+        self.assertEqual(task_watch_brief["state"], "Job Watch")
+
         lanes = _workload_status_lanes(summary)
         by_label = {lane["label"]: lane for lane in lanes}
         self.assertEqual(by_label["Task / job status"]["workflow"], "Task graphs")
-        self.assertEqual(by_label["Task / job status"]["state"], "Review")
+        self.assertEqual(by_label["Task / job status"]["state"], "Open live view")
         self.assertEqual(by_label["Performance indicators"]["workflow"], "Query diagnosis")
         self.assertIn("p95", by_label["Performance indicators"]["value"])
         self.assertEqual(by_label["Errors"]["workflow"], "Live triage")
         self.assertEqual(by_label["Errors"]["value"], "3 failed")
+
+        task_summary = _workload_task_summary(pd.DataFrame([{
+            "CONTROL_M_ROWS": 5,
+            "CONTROL_M_ALERT_ROWS": 2,
+            "CONTROL_M_WATCH_ROWS": 1,
+            "CONTROL_M_LAST_SEEN_AT": "2026-05-01 10:00:00",
+        }]))
+        task_lanes = _workload_status_lanes(summary, task_summary)
+        task_by_label = {lane["label"]: lane for lane in task_lanes}
+        self.assertEqual(task_by_label["Task / job status"]["state"], "Review")
+        self.assertEqual(task_by_label["Task / job status"]["value"], "2 scheduler alert")
+        self.assertEqual(task_summary["controlm_rows"], 5)
+        self.assertEqual(task_summary["controlm_alerts"], 2)
+
+    def test_workload_task_status_sql_reads_controlm_feed_only(self):
+        sql = _build_workload_task_status_sql("Trexis", "PROD", hours=24).upper()
+
+        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", sql)
+        self.assertIn("SOURCE_SYSTEM", sql)
+        self.assertIn("CONTROL_M", sql)
+        self.assertIn("COMPANY = 'TREXIS'", sql)
+        self.assertIn("COALESCE(ENVIRONMENT, 'NO DATABASE CONTEXT') = 'PROD'", sql)
+        self.assertIn("DATEADD('HOUR', -24", sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", sql)
 
     def test_workload_runbook_markdown_is_copy_ready_and_evidence_bounded(self):
         summary = {
@@ -8137,11 +8376,19 @@ class FormulaRegressionTests(unittest.TestCase):
             "p95": 18.5,
         }
         brief = _workload_action_brief(summary)
-        markdown = _build_workload_runbook_markdown("Trexis", "DEV_ALL", summary, brief)
+        task_summary = {
+            "loaded": True,
+            "controlm_rows": 4,
+            "controlm_alerts": 1,
+            "controlm_watch": 1,
+            "last_seen": "2026-05-01 10:00:00",
+        }
+        markdown = _build_workload_runbook_markdown("Trexis", "DEV_ALL", summary, brief, task_summary)
 
         self.assertIn("# OVERWATCH Workload Operations Runbook", markdown)
         self.assertIn("- Scope: Trexis / DEV_ALL", markdown)
         self.assertIn("100 queries, 3 failed, 7 queued, 2 remote-spill, p95 18.5s", markdown)
+        self.assertIn("Control-M feed rows=4; alerts=1; watch=1", markdown)
         self.assertIn("## Slide Bullets", markdown)
         self.assertIn("## Triage Order", markdown)
         self.assertIn("Query diagnosis: capture query ID", markdown)
@@ -8836,13 +9083,59 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Choose the alert workflow", brief["headline"])
         self.assertNotIn("Sources on load", brief["detail"])
 
+        workflows = _alert_center_brief_workflow_rows()
+        self.assertEqual(
+            [row["VIEW"] for row in workflows],
+            [
+                "Issue Inbox",
+                "Triage Digest",
+                "Email Delivery",
+                "Action Queue Routing",
+                "Control Health",
+                "Automation Readiness",
+            ],
+        )
+        by_view = {row["VIEW"]: row for row in workflows}
+        self.assertIn("Alert history", by_view["Issue Inbox"]["SOURCES"])
+        self.assertIn("Action queue", by_view["Issue Inbox"]["SOURCES"])
+        self.assertIn("Email delivery audit", by_view["Email Delivery"]["SOURCES"])
+        self.assertIn("No-touch automation health", by_view["Automation Readiness"]["SOURCES"])
+        self.assertIn("Open Issue Inbox", by_view["Issue Inbox"]["BUTTON_LABEL"])
+
+    def test_alert_center_brief_first_default_resets_stale_unloaded_subview(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            st.session_state["alert_center_active_view"] = "Control Health"
+            _apply_alert_center_brief_first_default()
+
+            self.assertEqual(st.session_state["alert_center_active_view"], "Alert Brief")
+            self.assertEqual(st.session_state["_alert_center_brief_first_version"], 2)
+
+            st.session_state["alert_center_active_view"] = "Automation Readiness"
+            _apply_alert_center_brief_first_default()
+            self.assertEqual(st.session_state["alert_center_active_view"], "Automation Readiness")
+
+            st.session_state.clear()
+            st.session_state["alert_center_active_view"] = "Control Health"
+            st.session_state["alert_center_data"] = {"_loaded_sources": []}
+            _apply_alert_center_brief_first_default()
+            self.assertEqual(st.session_state["alert_center_active_view"], "Control Health")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
+
     def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
+        shell_text = (APP_ROOT / "sections" / "alert_center_shell.py").read_text(encoding="utf-8")
         dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
         rec_text = (APP_ROOT / "sections" / "recommendations.py").read_text(encoding="utf-8")
 
         self.assertIn('"Alert Center"', config_text)
-        self.assertIn('"sections.alert_center"', config_text)
+        self.assertIn('"sections.alert_center_shell"', config_text)
+        self.assertIn("from sections import alert_center", shell_text)
         self.assertIn("consolidated Alert Center", dba_tools_text)
         self.assertNotIn("Alert Configuration", rec_text)
         self.assertNotIn("tab_alerts", rec_text)

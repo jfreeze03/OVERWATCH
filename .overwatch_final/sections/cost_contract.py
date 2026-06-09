@@ -2,10 +2,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from io import BytesIO
-from pathlib import Path
-from xml.sax.saxutils import escape as xml_escape
-import zipfile
 
 import streamlit as st
 from importlib import import_module
@@ -458,12 +454,6 @@ def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) 
         defer_section_note(f"{label}: {detail}")
 
 
-def render_workflow_guide(summary: str, rows) -> None:
-    defer_section_note(summary)
-    for trigger, action in rows:
-        defer_section_note(f"{trigger}: {action}")
-
-
 def render_workflow_selector(
     label: str,
     key: str,
@@ -529,6 +519,7 @@ _FULL_COCKPIT_BOARDS_KEY = "_cost_contract_full_cockpit_boards"
 _COST_SPLASH_KEY = "cost_contract_splash"
 _COST_SPLASH_AUTOLOAD_SCOPE_KEY = "_cost_contract_splash_autoload_scope"
 _COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY = "_cost_contract_splash_autoload_blocked_scope"
+_POWERPOINT_SNAPSHOT_KEY = "_cost_contract_powerpoint_snapshot_loaded"
 
 
 def _build_cost_cockpit_sql(company: str, days: int) -> str:
@@ -3671,6 +3662,8 @@ def build_cost_governance_mart_sql(
     email_target: str = DEFAULT_ALERT_EMAIL,
 ) -> str:
     """Return the Cost Governance deployment excerpt from OVERWATCH_MART_SETUP.sql."""
+    from pathlib import Path
+
     setup_path = Path(__file__).resolve().parents[2] / "snowflake" / "OVERWATCH_MART_SETUP.sql"
     try:
         setup_sql = setup_path.read_text(encoding="utf-8")
@@ -4469,6 +4462,8 @@ def _pptx_color(value: str | None, fallback: str = _PPTX_TEXT_COLOR) -> str:
 
 
 def _pptx_escape(value: object) -> str:
+    from xml.sax.saxutils import escape as xml_escape
+
     return xml_escape(str(value or ""), {'"': "&quot;", "'": "&apos;"})
 
 
@@ -4924,6 +4919,9 @@ def _build_cost_snapshot_pptx(
     environment_label: str,
     days: int,
 ) -> bytes:
+    from io import BytesIO
+    import zipfile
+
     slides = [
         _build_cost_snapshot_title_slide(slide_brief, kpi_rows, company=company, environment_label=environment_label, days=days),
         _build_cost_snapshot_kpi_slide(kpi_rows, company=company, environment_label=environment_label),
@@ -5051,6 +5049,38 @@ def _render_powerpoint_cost_snapshot(splash: dict, *, company: str, days: int, c
                 _render_cost_snapshot_bar_chart(chart_rows, chart_name)
 
 
+def _render_powerpoint_snapshot_gate(splash: dict, *, company: str, days: int, credit_price: float) -> None:
+    show_snapshot = bool(st.session_state.get(_POWERPOINT_SNAPSHOT_KEY))
+    action_cols = st.columns([1.1, 1.1, 3.0])
+    with action_cols[0]:
+        if not show_snapshot and st.button(
+            "Prepare PowerPoint Snapshot",
+            key="cost_contract_prepare_powerpoint_snapshot",
+            width="stretch",
+        ):
+            st.session_state[_POWERPOINT_SNAPSHOT_KEY] = True
+            st.rerun()
+    with action_cols[1]:
+        if show_snapshot and st.button(
+            "Hide Snapshot",
+            key="cost_contract_hide_powerpoint_snapshot",
+            width="stretch",
+        ):
+            st.session_state[_POWERPOINT_SNAPSHOT_KEY] = False
+            st.rerun()
+    with action_cols[2]:
+        if show_snapshot:
+            st.caption("Slide bullets, chart data, and PowerPoint export are prepared for this loaded cost window.")
+        else:
+            st.caption("Slide-ready evidence stays unloaded until leadership reporting is needed.")
+
+    if not show_snapshot:
+        return
+
+    with st.expander("PowerPoint-ready snapshot", expanded=True):
+        _render_powerpoint_cost_snapshot(splash, company=company, days=int(days), credit_price=credit_price)
+
+
 def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: float) -> None:
     st.markdown("**Cost Overview**")
     if not splash.get("loaded"):
@@ -5108,8 +5138,7 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
         max_rows=24,
     )
 
-    with st.expander("PowerPoint-ready snapshot", expanded=False):
-        _render_powerpoint_cost_snapshot(splash, company=company, days=int(days), credit_price=credit_price)
+    _render_powerpoint_snapshot_gate(splash, company=company, days=int(days), credit_price=credit_price)
 
 
 def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
@@ -5259,6 +5288,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             st.session_state.pop(_COST_SPLASH_KEY, None)
             st.session_state.pop(_COST_SPLASH_AUTOLOAD_SCOPE_KEY, None)
             st.session_state.pop(_COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY, None)
+            st.session_state.pop(_POWERPOINT_SNAPSHOT_KEY, None)
             st.rerun()
 
     if refresh_overview:
@@ -5619,18 +5649,6 @@ def render() -> None:
     )
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Exceptions-only mode: prioritize bill deltas, open action queue items, and contract risk.")
-    render_workflow_guide(
-        "Explain the bill first, convert findings into owned actions, log validated savings, "
-        "then inspect special-cost surfaces like Cortex and SPCS.",
-        [
-            ("Why did the bill move?", "Use Explain bill / attribution / contract."),
-            ("What should we fix first?", "Use Recommendations and action queue."),
-            ("How do we prove savings?", "Use Snowflake value log."),
-            ("Can Snowflake enforce budgets?", "Use Budget governance."),
-            ("Are AI costs controlled?", "Use AI and Cortex spend."),
-            ("Are container services costing us?", "Use SPCS spend."),
-        ],
-    )
     _render_cost_watch_floor(company, credit_price)
 
     workflow = render_workflow_selector(

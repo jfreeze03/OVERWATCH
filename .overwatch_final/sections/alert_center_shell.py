@@ -1,4 +1,4 @@
-"""Fast first-paint shell for the DBA Control Room route."""
+"""Fast first-paint shell for the Alert Center route."""
 
 from __future__ import annotations
 
@@ -6,60 +6,49 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, ENVIRONMENT_CONFIG
+from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
 from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, scope_label
 
 
-_FULL_WORKSPACE_KEY = "_dba_control_room_full_workspace_requested"
-_BRIEF_MODE_KEY = "_dba_control_room_brief_mode"
+_FULL_WORKSPACE_KEY = "_alert_center_full_workspace_requested"
+_BRIEF_MODE_KEY = "_alert_center_brief_mode"
 _FULL_WORKSPACE_STATE_KEYS = (
-    "dba_control_room_data",
-    "dba_control_room_snapshot_result",
-    "dba_control_room_incident_board",
-    "dba_control_room_handoff",
+    "alert_center_data",
+    "alert_center_annotations",
 )
 
 _WORKFLOWS = (
     {
-        "VIEW": "Fast Watch",
-        "BUTTON_LABEL": "Open Fast Watch",
-        "MOVE": "Start with the cheapest snapshot, failures, queue pressure, and routed exceptions.",
+        "VIEW": "Issue Inbox",
+        "BUTTON_LABEL": "Open Issue Inbox",
+        "MOVE": "Start with the combined alert and action-queue inbox for morning triage.",
     },
     {
-        "VIEW": "Operations Board",
-        "BUTTON_LABEL": "Open Ops Board",
-        "MOVE": "Build route priority, runbook, escalation, handoff, incident, and action queue detail.",
+        "VIEW": "Triage Digest",
+        "BUTTON_LABEL": "Open Triage Digest",
+        "MOVE": "Escalate critical, high, overdue, and owner-ready alert rows first.",
     },
     {
-        "VIEW": "Release Gate",
-        "BUTTON_LABEL": "Open Release Gate",
-        "MOVE": "Check deployment blockers, task recovery, schema migration, and approval evidence.",
+        "VIEW": "Email Delivery",
+        "BUTTON_LABEL": "Open Delivery",
+        "MOVE": "Prove which alerts are email-ready, sent, logged, or still waiting.",
     },
     {
-        "VIEW": "Source Health",
-        "BUTTON_LABEL": "Open Source Health",
-        "MOVE": "Review which evidence sources are fresh, stale, skipped, or missing for this scope.",
+        "VIEW": "Action Queue Routing",
+        "BUTTON_LABEL": "Open Queue Routing",
+        "MOVE": "Move alert evidence into accountable owner work and closure proof.",
     },
     {
-        "VIEW": "Executive Evidence",
-        "BUTTON_LABEL": "Open Brief Export",
-        "MOVE": "Prepare report-ready operator notes for leaders without giving them the dashboard.",
+        "VIEW": "Control Health",
+        "BUTTON_LABEL": "Open Control Health",
+        "MOVE": "Check source readiness, owner routing, alert rules, and control gaps.",
     },
     {
-        "VIEW": "Release Compare",
-        "BUTTON_LABEL": "Open Compare",
-        "MOVE": "Compare release windows for task, procedure, runtime, and cost regressions.",
+        "VIEW": "Automation Readiness",
+        "BUTTON_LABEL": "Open Automation",
+        "MOVE": "Review no-touch alert, Control-M, Jira, Terraform, and Flyway feed health.",
     },
 )
-
-
-def _safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _active_company() -> str:
@@ -71,17 +60,13 @@ def _active_environment() -> str:
     return env if env in ENVIRONMENT_CONFIG else DEFAULT_ENVIRONMENT
 
 
-def _credit_price() -> float:
-    return _safe_float(st.session_state.get("credit_price", DEFAULTS["credit_price"]), DEFAULTS["credit_price"])
-
-
 def _window_label() -> str:
     start = st.session_state.get("global_start_date")
     end = st.session_state.get("global_end_date")
     if isinstance(start, date) and isinstance(end, date):
         days = max(1, (end - start).days + 1)
         return f"{days}d"
-    return "24h"
+    return "Selected"
 
 
 def _full_workspace_requested() -> bool:
@@ -89,21 +74,24 @@ def _full_workspace_requested() -> bool:
         return False
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
-    return evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
+    if evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS):
+        return True
+    active_view = st.session_state.get("alert_center_active_view")
+    return active_view not in (None, "Alert Brief")
 
 
 def _open_workspace(view: str | None = None) -> None:
     st.session_state[_BRIEF_MODE_KEY] = False
     st.session_state[_FULL_WORKSPACE_KEY] = True
     if view:
-        st.session_state["dba_control_room_active_view"] = view
+        st.session_state["alert_center_requested_view"] = view
     st.rerun()
 
 
 def _delegate_full_workspace() -> None:
-    from sections import dba_control_room
+    from sections import alert_center
 
-    dba_control_room.render()
+    alert_center.render()
 
 
 def _return_to_brief() -> None:
@@ -115,7 +103,7 @@ def _return_to_brief() -> None:
 def _render_back_to_brief_control() -> None:
     control_col, _spacer = st.columns([1.0, 4.0])
     with control_col:
-        if st.button("Back to Brief", key="dba_control_room_shell_back_to_brief", width="stretch"):
+        if st.button("Back to Brief", key="alert_center_shell_back_to_brief", width="stretch"):
             _return_to_brief()
 
 
@@ -126,17 +114,17 @@ def _render_action_brief() -> None:
             st.markdown("**Action Brief**")
             st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
         with detail_col:
-            st.markdown("**Open the DBA workspace when a signal needs triage, release proof, or a handoff.**")
+            st.markdown("**Open Alert Center when inbox, delivery, routing, or automation proof is needed.**")
             st.caption(
                 evidence_caption(
                     st.session_state,
                     _FULL_WORKSPACE_STATE_KEYS,
-                    "Fast snapshot, source health, routed actions, and exports stay on demand.",
+                    "The shell stays zero-query; alert evidence loads only after a workflow is selected.",
                 )
             )
         with action_col:
-            if st.button("Open DBA workspace", key="dba_control_room_open_full_workspace", type="primary", width="stretch"):
-                _open_workspace()
+            if st.button("Open Alert Center", key="alert_center_shell_open", type="primary", width="stretch"):
+                _open_workspace("Alert Brief")
 
 
 def _render_operating_snapshot() -> None:
@@ -144,7 +132,7 @@ def _render_operating_snapshot() -> None:
         ("Scope", scope_label(_active_company(), _active_environment())),
         ("Window", _window_label()),
         ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-        ("Rate", f"${_credit_price():.2f}"),
+        ("Route", "Issue Inbox"),
     )
     st.markdown("**Operating Snapshot**")
     cols = st.columns(4)
@@ -154,19 +142,19 @@ def _render_operating_snapshot() -> None:
 
 
 def _render_workflow_launchpad() -> None:
-    st.markdown("**DBA Control Workflows**")
+    st.markdown("**Morning Alert Workflows**")
     visible = _WORKFLOWS[:3]
     cols = st.columns(3)
     for col, row in zip(cols, visible):
         with col:
             st.markdown(f"**{row['VIEW']}**")
             st.caption(row["MOVE"])
-            if st.button(row["BUTTON_LABEL"], key=f"dba_control_room_shell_{row['VIEW']}", width="stretch"):
+            if st.button(row["BUTTON_LABEL"], key=f"alert_center_shell_{row['VIEW']}", width="stretch"):
                 _open_workspace(str(row["VIEW"]))
 
-    show_all = bool(st.session_state.get("dba_control_room_shell_show_all"))
-    if not show_all and st.button("More DBA Workflows", key="dba_control_room_shell_more"):
-        st.session_state["dba_control_room_shell_show_all"] = True
+    show_all = bool(st.session_state.get("alert_center_shell_show_all"))
+    if not show_all and st.button("More Alert Workflows", key="alert_center_shell_more"):
+        st.session_state["alert_center_shell_show_all"] = True
         st.rerun()
 
     if show_all:
@@ -175,10 +163,10 @@ def _render_workflow_launchpad() -> None:
             with col:
                 st.markdown(f"**{row['VIEW']}**")
                 st.caption(row["MOVE"])
-                if st.button(row["BUTTON_LABEL"], key=f"dba_control_room_shell_extra_{row['VIEW']}", width="stretch"):
+                if st.button(row["BUTTON_LABEL"], key=f"alert_center_shell_extra_{row['VIEW']}", width="stretch"):
                     _open_workspace(str(row["VIEW"]))
-        if st.button("Hide DBA Workflows", key="dba_control_room_shell_hide"):
-            st.session_state["dba_control_room_shell_show_all"] = False
+        if st.button("Hide Alert Workflows", key="alert_center_shell_hide"):
+            st.session_state["alert_center_shell_show_all"] = False
             st.rerun()
 
 
@@ -188,8 +176,7 @@ def render() -> None:
         _delegate_full_workspace()
         return
 
-    st.session_state.setdefault("dba_control_room_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
-
+    st.session_state.setdefault("alert_center_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _render_action_brief()
     _render_operating_snapshot()
     _render_workflow_launchpad()

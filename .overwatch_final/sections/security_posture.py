@@ -191,6 +191,27 @@ WORKFLOW_DETAILS = {
     "Data sharing exposure": "Shares, imported databases, exposed datasets, and owner follow-up.",
 }
 
+SECURITY_BRIEF_WORKFLOWS = (
+    {
+        "WORKFLOW": "Access posture",
+        "BUTTON_LABEL": "Open Access",
+        "DBA_MOVE": "Start with failed logins, MFA gaps, and user-level access signals.",
+        "WHEN": "Morning triage, identity incidents, or audit prep.",
+    },
+    {
+        "WORKFLOW": "Privilege sprawl",
+        "BUTTON_LABEL": "Open Privileges",
+        "DBA_MOVE": "Review admin roles, ownership, grant option, and approval blockers.",
+        "WHEN": "Role cleanup, least-privilege review, or elevated-access questions.",
+    },
+    {
+        "WORKFLOW": "Data sharing exposure",
+        "BUTTON_LABEL": "Open Sharing",
+        "DBA_MOVE": "Validate shared databases, imported data, consumers, and ownership.",
+        "WHEN": "External exposure, vendor access, or data-sharing audit review.",
+    },
+)
+
 WORKFLOW_MODULES = {
     "Access posture": "sections.security_access",
     "Data sharing exposure": "sections.data_sharing",
@@ -1386,9 +1407,7 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
                         "sec_df_lin",
                         ):
                         st.session_state.pop(stale_key, None)
-                st.session_state["security_posture_view"] = "Access Workflows"
-                st.session_state["security_posture_workflow"] = workflow
-                st.rerun()
+                _queue_security_workflow(workflow)
 
 
 def _security_exception_strip_rows(summary, exceptions, meta: dict, company: str, environment: str, days: int) -> list[dict]:
@@ -1578,6 +1597,49 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
     cols[1].metric("MFA Gaps", f"{safe_int(snapshot.get('mfa_gaps')):,}", delta_color="inverse")
     cols[2].metric("Grant Chg", f"{safe_int(snapshot.get('grant_changes')):,}")
     cols[3].metric("Shared DBs", f"{safe_int(snapshot.get('shared_databases')):,}")
+
+
+def _queue_security_workflow(workflow: str) -> None:
+    if workflow in WORKFLOWS:
+        st.session_state["security_posture_requested_view"] = "Access Workflows"
+        st.session_state["security_posture_requested_workflow"] = workflow
+        st.rerun()
+
+
+def _apply_queued_security_workflow() -> None:
+    requested_view = st.session_state.pop("security_posture_requested_view", None)
+    requested_workflow = st.session_state.pop("security_posture_requested_workflow", None)
+    if requested_view in SECURITY_POSTURE_VIEWS:
+        st.session_state["security_posture_view"] = requested_view
+    if requested_workflow in WORKFLOWS:
+        st.session_state["security_posture_workflow"] = requested_workflow
+
+
+def _security_brief_workflow_rows() -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in SECURITY_BRIEF_WORKFLOWS:
+        workflow = str(item["WORKFLOW"])
+        rows.append({
+            "WORKFLOW": workflow,
+            "BUTTON_LABEL": str(item["BUTTON_LABEL"]),
+            "DBA_MOVE": str(item["DBA_MOVE"]),
+            "WHEN": str(item["WHEN"]),
+            "SOURCES": WORKFLOW_DETAILS.get(workflow, "Security workflow detail"),
+        })
+    return rows
+
+
+def _render_security_brief_launchpad() -> None:
+    st.markdown("**Security Investigation Workflows**")
+    rows = _security_brief_workflow_rows()
+    cols = st.columns(3)
+    for col, row in zip(cols, rows):
+        with col:
+            st.markdown(f"**{row['WORKFLOW']}**")
+            st.caption(row["DBA_MOVE"])
+            st.caption(row["WHEN"])
+            if st.button(row["BUTTON_LABEL"], key=f"security_brief_{row['WORKFLOW']}", width="stretch"):
+                _queue_security_workflow(row["WORKFLOW"])
 
 
 def _paint_security_brief_chrome(
@@ -2857,6 +2919,7 @@ def render() -> None:
         st.session_state["security_posture_view"] = "Security Brief"
     if st.session_state.get("security_posture_view") not in SECURITY_POSTURE_VIEWS:
         st.session_state["security_posture_view"] = SECURITY_POSTURE_VIEWS[0]
+    _apply_queued_security_workflow()
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="exact",
@@ -2912,6 +2975,8 @@ def render() -> None:
         SECURITY_POSTURE_VIEWS,
         key="security_posture_view",
     )
+    if active_view == "Security Brief":
+        _render_security_brief_launchpad()
     if active_view == "Evidence Readiness":
         _render_security_source_health(company, environment)
         _render_privileged_grant_readiness(company, environment, days)

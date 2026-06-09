@@ -1,4 +1,4 @@
-"""Fast first-paint shell for the DBA Control Room route."""
+"""Fast first-paint shell for the Warehouse Health route."""
 
 from __future__ import annotations
 
@@ -6,60 +6,53 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, ENVIRONMENT_CONFIG
+from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
 from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, scope_label
 
 
-_FULL_WORKSPACE_KEY = "_dba_control_room_full_workspace_requested"
-_BRIEF_MODE_KEY = "_dba_control_room_brief_mode"
+_FULL_WORKSPACE_KEY = "_warehouse_health_full_workspace_requested"
+_BRIEF_MODE_KEY = "_warehouse_health_brief_mode"
 _FULL_WORKSPACE_STATE_KEYS = (
-    "dba_control_room_data",
-    "dba_control_room_snapshot_result",
-    "dba_control_room_incident_board",
-    "dba_control_room_handoff",
+    "wh_df_wh",
+    "wh_capacity_summary",
+    "wh_capacity_exceptions",
+    "wh_scaling",
+    "wh_efficiency",
+    "wh_df_sp",
+    "wh_df_hm",
+    "wh_owner_inventory",
+    "wh_settings_inventory",
+    "wh_setting_execution_audit",
+    "warehouse_health_support_panels_open",
 )
 
 _WORKFLOWS = (
     {
-        "VIEW": "Fast Watch",
-        "BUTTON_LABEL": "Open Fast Watch",
-        "MOVE": "Start with the cheapest snapshot, failures, queue pressure, and routed exceptions.",
+        "VIEW": "Overview & Scaling",
+        "BUTTON_LABEL": "Open Overview",
+        "MOVE": "Start with warehouse pressure, metering movement, and guardrail coverage.",
     },
     {
-        "VIEW": "Operations Board",
-        "BUTTON_LABEL": "Open Ops Board",
-        "MOVE": "Build route priority, runbook, escalation, handoff, incident, and action queue detail.",
+        "VIEW": "Efficiency",
+        "BUTTON_LABEL": "Open Efficiency",
+        "MOVE": "Rank credits per query, queue per credit, and spill per credit.",
     },
     {
-        "VIEW": "Release Gate",
-        "BUTTON_LABEL": "Open Release Gate",
-        "MOVE": "Check deployment blockers, task recovery, schema migration, and approval evidence.",
+        "VIEW": "Spill & Memory",
+        "BUTTON_LABEL": "Open Spill",
+        "MOVE": "Check local and remote spill before changing warehouse size.",
     },
     {
-        "VIEW": "Source Health",
-        "BUTTON_LABEL": "Open Source Health",
-        "MOVE": "Review which evidence sources are fresh, stale, skipped, or missing for this scope.",
+        "VIEW": "Workload Heatmap",
+        "BUTTON_LABEL": "Open Heatmap",
+        "MOVE": "Find peak hours and concurrency pressure by warehouse.",
     },
     {
-        "VIEW": "Executive Evidence",
-        "BUTTON_LABEL": "Open Brief Export",
-        "MOVE": "Prepare report-ready operator notes for leaders without giving them the dashboard.",
-    },
-    {
-        "VIEW": "Release Compare",
-        "BUTTON_LABEL": "Open Compare",
-        "MOVE": "Compare release windows for task, procedure, runtime, and cost regressions.",
+        "VIEW": "Optimization Advisor",
+        "BUTTON_LABEL": "Open Advisor",
+        "MOVE": "Move from loaded evidence to recommended warehouse actions.",
     },
 )
-
-
-def _safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _active_company() -> str:
@@ -71,17 +64,13 @@ def _active_environment() -> str:
     return env if env in ENVIRONMENT_CONFIG else DEFAULT_ENVIRONMENT
 
 
-def _credit_price() -> float:
-    return _safe_float(st.session_state.get("credit_price", DEFAULTS["credit_price"]), DEFAULTS["credit_price"])
-
-
 def _window_label() -> str:
     start = st.session_state.get("global_start_date")
     end = st.session_state.get("global_end_date")
     if isinstance(start, date) and isinstance(end, date):
         days = max(1, (end - start).days + 1)
         return f"{days}d"
-    return "24h"
+    return "Selected"
 
 
 def _full_workspace_requested() -> bool:
@@ -92,18 +81,17 @@ def _full_workspace_requested() -> bool:
     return evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
 
 
-def _open_workspace(view: str | None = None) -> None:
+def _open_workspace(view: str = "Overview & Scaling") -> None:
     st.session_state[_BRIEF_MODE_KEY] = False
     st.session_state[_FULL_WORKSPACE_KEY] = True
-    if view:
-        st.session_state["dba_control_room_active_view"] = view
+    st.session_state["warehouse_health_view"] = view
     st.rerun()
 
 
 def _delegate_full_workspace() -> None:
-    from sections import dba_control_room
+    from sections import warehouse_health
 
-    dba_control_room.render()
+    warehouse_health.render()
 
 
 def _return_to_brief() -> None:
@@ -115,7 +103,7 @@ def _return_to_brief() -> None:
 def _render_back_to_brief_control() -> None:
     control_col, _spacer = st.columns([1.0, 4.0])
     with control_col:
-        if st.button("Back to Brief", key="dba_control_room_shell_back_to_brief", width="stretch"):
+        if st.button("Back to Brief", key="warehouse_health_shell_back_to_brief", width="stretch"):
             _return_to_brief()
 
 
@@ -126,16 +114,16 @@ def _render_action_brief() -> None:
             st.markdown("**Action Brief**")
             st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
         with detail_col:
-            st.markdown("**Open the DBA workspace when a signal needs triage, release proof, or a handoff.**")
+            st.markdown("**Open Warehouse Health when pressure evidence or setting changes need proof.**")
             st.caption(
                 evidence_caption(
                     st.session_state,
                     _FULL_WORKSPACE_STATE_KEYS,
-                    "Fast snapshot, source health, routed actions, and exports stay on demand.",
+                    "The shell stays zero-query; the full workspace loads only after a workflow is selected.",
                 )
             )
         with action_col:
-            if st.button("Open DBA workspace", key="dba_control_room_open_full_workspace", type="primary", width="stretch"):
+            if st.button("Open Warehouse Workspace", key="warehouse_health_shell_open", type="primary", width="stretch"):
                 _open_workspace()
 
 
@@ -144,7 +132,7 @@ def _render_operating_snapshot() -> None:
         ("Scope", scope_label(_active_company(), _active_environment())),
         ("Window", _window_label()),
         ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-        ("Rate", f"${_credit_price():.2f}"),
+        ("Focus", "Pressure"),
     )
     st.markdown("**Operating Snapshot**")
     cols = st.columns(4)
@@ -154,31 +142,31 @@ def _render_operating_snapshot() -> None:
 
 
 def _render_workflow_launchpad() -> None:
-    st.markdown("**DBA Control Workflows**")
+    st.markdown("**Warehouse Investigation Workflows**")
     visible = _WORKFLOWS[:3]
     cols = st.columns(3)
     for col, row in zip(cols, visible):
         with col:
             st.markdown(f"**{row['VIEW']}**")
             st.caption(row["MOVE"])
-            if st.button(row["BUTTON_LABEL"], key=f"dba_control_room_shell_{row['VIEW']}", width="stretch"):
+            if st.button(row["BUTTON_LABEL"], key=f"warehouse_health_shell_{row['VIEW']}", width="stretch"):
                 _open_workspace(str(row["VIEW"]))
 
-    show_all = bool(st.session_state.get("dba_control_room_shell_show_all"))
-    if not show_all and st.button("More DBA Workflows", key="dba_control_room_shell_more"):
-        st.session_state["dba_control_room_shell_show_all"] = True
+    show_all = bool(st.session_state.get("warehouse_health_shell_show_all"))
+    if not show_all and st.button("More Warehouse Workflows", key="warehouse_health_shell_more"):
+        st.session_state["warehouse_health_shell_show_all"] = True
         st.rerun()
 
     if show_all:
-        extra_cols = st.columns(3)
+        extra_cols = st.columns(2)
         for col, row in zip(extra_cols, _WORKFLOWS[3:]):
             with col:
                 st.markdown(f"**{row['VIEW']}**")
                 st.caption(row["MOVE"])
-                if st.button(row["BUTTON_LABEL"], key=f"dba_control_room_shell_extra_{row['VIEW']}", width="stretch"):
+                if st.button(row["BUTTON_LABEL"], key=f"warehouse_health_shell_extra_{row['VIEW']}", width="stretch"):
                     _open_workspace(str(row["VIEW"]))
-        if st.button("Hide DBA Workflows", key="dba_control_room_shell_hide"):
-            st.session_state["dba_control_room_shell_show_all"] = False
+        if st.button("Hide Warehouse Workflows", key="warehouse_health_shell_hide"):
+            st.session_state["warehouse_health_shell_show_all"] = False
             st.rerun()
 
 
@@ -188,8 +176,7 @@ def render() -> None:
         _delegate_full_workspace()
         return
 
-    st.session_state.setdefault("dba_control_room_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
-
+    st.session_state.setdefault("warehouse_health_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _render_action_brief()
     _render_operating_snapshot()
     _render_workflow_launchpad()

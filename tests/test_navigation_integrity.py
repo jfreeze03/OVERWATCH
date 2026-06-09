@@ -47,6 +47,14 @@ from utils.section_guidance import (  # noqa: E402
     SECTION_OPERATING_GUIDE,
 )
 from utils.scorecards import DBA_CONTROL_PLANE_SECTION_BASELINE  # noqa: E402
+from sections.shell_helpers import (  # noqa: E402
+    action_state_label,
+    compact_environment_label,
+    evidence_caption,
+    evidence_label,
+    evidence_loaded,
+    scope_label,
+)
 
 
 class NavigationIntegrityTests(unittest.TestCase):
@@ -75,6 +83,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(static_database_options("Trexis", "DEV_ALL"), TREXIS_DEV_DATABASES)
         self.assertEqual(static_database_options("ALFA", "PROD"), ALFA_PROD_DATABASES)
         self.assertEqual(static_database_options("ALFA", "DEV_ALL"), ALFA_DEV_DATABASES)
+        smoke_runner_text = (ROOT / "perf_tests" / "section_smoke_runner.py").read_text(encoding="utf-8")
+        self.assertIn('DEFAULT_SECTIONS = [\n    "Executive Landing",', smoke_runner_text)
 
     def test_calendar_day_windows_use_standard_dropdowns(self):
         display_text = (APP_ROOT / "utils" / "display.py").read_text(encoding="utf-8")
@@ -111,6 +121,88 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         self.assertEqual(missing, [])
 
+    def test_fast_shells_offer_back_to_brief_toggle(self):
+        shell_modules = {
+            section: module_path
+            for section, module_path in SECTION_MODULES.items()
+            if module_path.endswith("_shell")
+        }
+        self.assertEqual(set(shell_modules), set(ALL_SECTIONS))
+        for section, module_path in shell_modules.items():
+            with self.subTest(section=section):
+                shell_path = APP_ROOT / Path(*module_path.split(".")).with_suffix(".py")
+                shell_text = shell_path.read_text(encoding="utf-8")
+                self.assertIn("_BRIEF_MODE_KEY", shell_text)
+                self.assertIn("def _return_to_brief", shell_text)
+                self.assertIn("def _render_back_to_brief_control", shell_text)
+                self.assertIn('st.button("Back to Brief"', shell_text)
+                self.assertIn("if st.session_state.get(_BRIEF_MODE_KEY):\n        return False", shell_text)
+                self.assertIn("st.session_state[_BRIEF_MODE_KEY] = False", shell_text)
+                self.assertIn("st.session_state[_BRIEF_MODE_KEY] = True", shell_text)
+                self.assertIn("_render_back_to_brief_control()", shell_text)
+                self.assertIn("from sections.shell_helpers import action_state_label, evidence_caption, evidence_label", shell_text)
+                self.assertIn("st.columns([1.0, 3.0, 1.8])", shell_text)
+                self.assertNotIn("st.columns([1.1, 3.2, 1.4])", shell_text)
+                self.assertIn("evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)", shell_text)
+                self.assertIn('("Scope", scope_label(_active_company(), _active_environment()))', shell_text)
+                self.assertIn('("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))', shell_text)
+                self.assertIn("action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)", shell_text)
+                self.assertIn("evidence_caption(", shell_text)
+                self.assertNotIn('st.caption("Ready")', shell_text)
+
+    def test_shell_evidence_label_reflects_loaded_state(self):
+        keys = ("loaded_frame", "loaded_error")
+        self.assertFalse(evidence_loaded({}, keys))
+        self.assertFalse(evidence_loaded({"loaded_frame": None}, keys))
+        self.assertTrue(evidence_loaded({"loaded_error": ""}, keys))
+        self.assertTrue(evidence_loaded({"loaded_frame": object()}, keys))
+        self.assertEqual(compact_environment_label("ALL"), "All env")
+        self.assertEqual(compact_environment_label("PROD"), "Prod")
+        self.assertEqual(compact_environment_label("DEV_ALL"), "All dev")
+        self.assertEqual(compact_environment_label("ALFA_EDW_DEV"), "ALFA_EDW_DEV")
+        self.assertEqual(scope_label("Trexis", "DEV_ALL"), "Trexis / All dev")
+        self.assertEqual(evidence_label({}, keys), "On demand")
+        self.assertEqual(evidence_label({"loaded_frame": None}, keys), "On demand")
+        self.assertEqual(evidence_label({"loaded_error": ""}, keys), "Loaded")
+        self.assertEqual(evidence_label({"loaded_frame": object()}, keys), "Loaded")
+        self.assertEqual(action_state_label({}, keys), "Ready")
+        self.assertEqual(action_state_label({"loaded_frame": object()}, keys), "Loaded")
+        self.assertEqual(evidence_caption({}, keys, "Load on demand."), "Load on demand.")
+        self.assertIn(
+            "continue from the saved proof",
+            evidence_caption({"loaded_frame": object()}, keys, "Load on demand."),
+        )
+
+    def test_executive_landing_uses_fast_shell_module(self):
+        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing_shell")
+        shell_text = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+
+        self.assertIn("def _delegate_full_workspace", shell_text)
+        self.assertIn("from sections import executive_landing", shell_text)
+        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
+        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
+        self.assertNotIn("import pandas", shell_import_block)
+        self.assertNotIn("from utils", shell_import_block)
+        self.assertNotIn("import utils", shell_import_block)
+        self.assertIn("def _render_action_brief", shell_text)
+        self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn("def _render_workflow_launchpad", shell_text)
+        self.assertIn("Executive Briefing Workflows", shell_text)
+        self.assertIn("Open Executive Snapshot", shell_text)
+        self.assertIn("Open Snapshot", shell_text)
+        self.assertIn("Open PowerPoint", shell_text)
+        self.assertIn("Open Alerts", shell_text)
+        self.assertIn("Open FinOps", shell_text)
+        self.assertIn("Open DBA Queue", shell_text)
+        self.assertIn("Open Setup", shell_text)
+        self.assertIn("alert_center_requested_view", shell_text)
+        self.assertIn("cost_contract_workflow", shell_text)
+        self.assertIn("dba_control_room_active_view", shell_text)
+        self.assertIn("change_drift_workflow", shell_text)
+        self.assertIn("def _build_executive_snapshot_pptx", full_workspace_text)
+
     def test_dba_control_room_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["DBA Control Room"], "sections.dba_control_room_shell")
         shell_text = (APP_ROOT / "sections" / "dba_control_room_shell.py").read_text(encoding="utf-8")
@@ -126,15 +218,215 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("st.number_input", shell_text)
         self.assertIn("def _render_action_brief", shell_text)
         self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn("def _render_workflow_launchpad", shell_text)
+        self.assertIn("_WORKFLOWS", shell_text)
         self.assertIn('st.markdown("**Operating Snapshot**")', shell_text)
+        self.assertIn("DBA Control Workflows", shell_text)
+        self.assertIn("Open Fast Watch", shell_text)
+        self.assertIn("Open Ops Board", shell_text)
+        self.assertIn("Open Release Gate", shell_text)
+        self.assertIn("Open Source Health", shell_text)
+        self.assertIn("Open Brief Export", shell_text)
+        self.assertIn("Open Compare", shell_text)
+        self.assertIn("More DBA Workflows", shell_text)
+        self.assertIn("dba_control_room_active_view", shell_text)
         self.assertIn("cols = st.columns(4)", shell_text)
-        self.assertIn('("Evidence", "On demand")', shell_text)
+        self.assertIn('("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))', shell_text)
         self.assertIn('("Rate", f"${_credit_price():.2f}")', shell_text)
         self.assertNotIn('("Budget"', shell_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_CAP_HOURS = 24", full_workspace_text)
         self.assertIn("DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS", full_workspace_text)
         self.assertIn("Use live 24h checks when needed", full_workspace_text)
         self.assertNotIn("Allow live ACCOUNT_USAGE fallback queries", full_workspace_text)
+
+    def test_alert_center_uses_fast_shell_module(self):
+        self.assertEqual(SECTION_MODULES["Alert Center"], "sections.alert_center_shell")
+        shell_text = (APP_ROOT / "sections" / "alert_center_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "alert_center.py").read_text(encoding="utf-8")
+        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+
+        self.assertIn("def _delegate_full_workspace", shell_text)
+        self.assertIn("from sections import alert_center", shell_text)
+        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
+        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
+        self.assertNotIn("import pandas", shell_import_block)
+        self.assertNotIn("from utils", shell_import_block)
+        self.assertNotIn("import utils", shell_import_block)
+        self.assertIn("def _render_action_brief", shell_text)
+        self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn("def _render_workflow_launchpad", shell_text)
+        self.assertIn("Morning Alert Workflows", shell_text)
+        self.assertIn("Open Alert Center", shell_text)
+        self.assertIn("Open Issue Inbox", shell_text)
+        self.assertIn("Open Triage Digest", shell_text)
+        self.assertIn("Open Delivery", shell_text)
+        self.assertIn("Open Queue Routing", shell_text)
+        self.assertIn("Open Control Health", shell_text)
+        self.assertIn("Open Automation", shell_text)
+        self.assertIn("alert_center_requested_view", shell_text)
+        self.assertIn("ALERT_CENTER_PANES", full_workspace_text)
+
+    def test_warehouse_health_uses_fast_shell_module(self):
+        self.assertEqual(SECTION_MODULES["Warehouse Health"], "sections.warehouse_health_shell")
+        shell_text = (APP_ROOT / "sections" / "warehouse_health_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "warehouse_health.py").read_text(encoding="utf-8")
+        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+
+        self.assertIn("def _delegate_full_workspace", shell_text)
+        self.assertIn("from sections import warehouse_health", shell_text)
+        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
+        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
+        self.assertNotIn("import pandas", shell_import_block)
+        self.assertNotIn("from utils", shell_import_block)
+        self.assertNotIn("import utils", shell_import_block)
+        self.assertIn("def _render_action_brief", shell_text)
+        self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn("Warehouse Investigation Workflows", shell_text)
+        self.assertIn("Open Warehouse Workspace", shell_text)
+        self.assertIn("Open Efficiency", shell_text)
+        self.assertIn("Open Spill", shell_text)
+        self.assertIn("def _admin_audit_fqn", full_workspace_text)
+
+    def test_security_posture_uses_fast_shell_module(self):
+        self.assertEqual(SECTION_MODULES["Security Posture"], "sections.security_posture_shell")
+        shell_text = (APP_ROOT / "sections" / "security_posture_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
+        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+
+        self.assertIn("def _delegate_full_workspace", shell_text)
+        self.assertIn("from sections import security_posture", shell_text)
+        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
+        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
+        self.assertNotIn("import pandas", shell_import_block)
+        self.assertNotIn("from utils", shell_import_block)
+        self.assertNotIn("import utils", shell_import_block)
+        self.assertIn("def _render_action_brief", shell_text)
+        self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn("Security Investigation Workflows", shell_text)
+        self.assertIn("MFA & Login Review", shell_text)
+        self.assertIn("Open MFA Review", shell_text)
+        self.assertIn("Open Security Workspace", shell_text)
+        self.assertIn("Open Privileges", shell_text)
+        self.assertIn("Open Sharing", shell_text)
+        self.assertIn("SECURITY_POSTURE_VIEWS", full_workspace_text)
+
+    def test_architecture_readiness_uses_fast_shell_module(self):
+        self.assertEqual(SECTION_MODULES["Architecture Readiness"], "sections.architecture_readiness_shell")
+        shell_text = (APP_ROOT / "sections" / "architecture_readiness_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "architecture_readiness.py").read_text(encoding="utf-8")
+        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+
+        self.assertIn("def _delegate_full_workspace", shell_text)
+        self.assertIn("from sections import architecture_readiness", shell_text)
+        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
+        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
+        self.assertNotIn("import pandas", shell_import_block)
+        self.assertNotIn("from utils", shell_import_block)
+        self.assertNotIn("import utils", shell_import_block)
+        self.assertIn("def _render_action_brief", shell_text)
+        self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn("Architecture Investigation Workflows", shell_text)
+        self.assertIn("Open Architecture Workspace", shell_text)
+        self.assertIn("Open Isolation", shell_text)
+        self.assertIn("Open Clustering", shell_text)
+        self.assertIn("Open Cache", shell_text)
+        self.assertIn("Open AI Futures", shell_text)
+        self.assertIn("ARCHITECTURE_READINESS_PANES", full_workspace_text)
+
+    def test_change_drift_uses_fast_shell_module(self):
+        self.assertEqual(SECTION_MODULES["Change & Drift"], "sections.change_drift_shell")
+        shell_text = (APP_ROOT / "sections" / "change_drift_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "change_drift.py").read_text(encoding="utf-8")
+        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+
+        self.assertIn("def _delegate_full_workspace", shell_text)
+        self.assertIn("from sections import change_drift", shell_text)
+        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
+        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
+        self.assertNotIn("import pandas", shell_import_block)
+        self.assertNotIn("from utils", shell_import_block)
+        self.assertNotIn("import utils", shell_import_block)
+        self.assertIn("def _render_action_brief", shell_text)
+        self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn("Change Investigation Workflows", shell_text)
+        self.assertIn("Open Change Workspace", shell_text)
+        self.assertIn("Open Object Changes", shell_text)
+        self.assertIn("Open Terraform", shell_text)
+        self.assertIn("Open Jira", shell_text)
+        self.assertIn("Open Schema Drift", shell_text)
+        self.assertIn("CHANGE_DRIFT_VIEWS", full_workspace_text)
+
+    def test_workload_operations_uses_fast_shell_module(self):
+        self.assertEqual(SECTION_MODULES["Workload Operations"], "sections.workload_operations_shell")
+        shell_text = (APP_ROOT / "sections" / "workload_operations_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
+        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+
+        self.assertIn("def _delegate_full_workspace", shell_text)
+        self.assertIn("from sections import workload_operations", shell_text)
+        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
+        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
+        self.assertNotIn("import pandas", shell_import_block)
+        self.assertNotIn("from utils", shell_import_block)
+        self.assertNotIn("import utils", shell_import_block)
+        self.assertIn("def _render_action_brief", shell_text)
+        self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn("Workload Investigation Workflows", shell_text)
+        self.assertIn("Open Workload Workspace", shell_text)
+        self.assertIn("Open Task Graphs", shell_text)
+        self.assertIn("Open Query Diagnosis", shell_text)
+        self.assertIn("Open Live Triage", shell_text)
+        self.assertIn("WORKLOAD_OPERATIONS_VIEWS", full_workspace_text)
+
+    def test_account_health_uses_fast_shell_module(self):
+        self.assertEqual(SECTION_MODULES["Account Health"], "sections.account_health_shell")
+        shell_text = (APP_ROOT / "sections" / "account_health_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
+        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+
+        self.assertIn("def _delegate_full_workspace", shell_text)
+        self.assertIn("from sections import account_health", shell_text)
+        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
+        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
+        self.assertNotIn("import pandas", shell_import_block)
+        self.assertNotIn("from utils", shell_import_block)
+        self.assertNotIn("import utils", shell_import_block)
+        self.assertIn("def _render_action_brief", shell_text)
+        self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn("Account Health Workflows", shell_text)
+        self.assertIn("Open Account Health", shell_text)
+        self.assertIn("Open Health", shell_text)
+        self.assertIn("Open Morning Report", shell_text)
+        self.assertIn("Open Executive Briefing", shell_text)
+        self.assertIn("Open Resource Monitors", shell_text)
+        self.assertIn("More Account Health Workflows", shell_text)
+        self.assertIn("Hide Account Health Workflows", shell_text)
+        self.assertIn("account_health_active_view", shell_text)
+        self.assertIn("ACCOUNT_HEALTH_PANES", full_workspace_text)
+
+    def test_cost_contract_uses_fast_shell_module(self):
+        self.assertEqual(SECTION_MODULES["Cost & Contract"], "sections.cost_contract_shell")
+        shell_text = (APP_ROOT / "sections" / "cost_contract_shell.py").read_text(encoding="utf-8")
+        full_workspace_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+
+        self.assertIn("def _delegate_full_workspace", shell_text)
+        self.assertIn("from sections import cost_contract", shell_text)
+        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
+        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
+        self.assertIn("_DETAIL_WORKFLOW_KEY", shell_text)
+        self.assertNotIn("import pandas", shell_import_block)
+        self.assertNotIn("from utils", shell_import_block)
+        self.assertNotIn("import utils", shell_import_block)
+        self.assertIn("def _render_action_brief", shell_text)
+        self.assertIn("def _render_operating_snapshot", shell_text)
+        self.assertIn("Cost Investigation Workflows", shell_text)
+        self.assertIn("Open Cost Overview", shell_text)
+        self.assertIn("Open FinOps", shell_text)
+        self.assertIn("Open Cortex Spend", shell_text)
+        self.assertIn("Open Budgets", shell_text)
+        self.assertIn("cost_contract_workflow", shell_text)
+        self.assertIn("WORKFLOWS", full_workspace_text)
 
     def test_roles_and_aliases_resolve_to_visible_sections(self):
         for role, sections in ROLE_SECTIONS.items():
@@ -201,7 +493,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")
 
         self.assertIn("Executive Landing", ALL_SECTIONS)
-        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing")
+        self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing_shell")
         self.assertIn("EXPERIENCE_VIEW_SECTIONS", config_text)
         self.assertIn("ROLE_EXPERIENCE_VIEWS", config_text)
         self.assertIn("resolve_allowed_experience_views", config_text)
@@ -407,13 +699,24 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn(("WAREHOUSE", "WH_TRXS_%"), objectives)
 
     def test_workflow_hubs_expose_expected_subworkflows(self):
-        from sections import change_drift, cost_contract, security_posture, workload_operations
+        from sections import change_drift, cost_contract, security_posture, task_management, workload_operations
 
         self.assertIn("Query diagnosis", workload_operations.WORKFLOWS)
         self.assertIn("Task graphs", workload_operations.WORKFLOWS)
         self.assertIn("Stored procedures", workload_operations.WORKFLOWS)
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Query diagnosis"], "sections.query_analysis")
         self.assertEqual(workload_operations.WORKFLOW_MODULES["Task graphs"], "sections.task_management")
+        self.assertEqual(task_management.TASK_CONTROL_VIEWS[0], "Job Status Brief")
+        self.assertIn("Control-M handoff", task_management.TASK_CONTROL_DETAILS["Job Status Brief"])
+        task_management_text = (APP_ROOT / "sections" / "task_management.py").read_text(encoding="utf-8")
+        self.assertIn('allow_live_fallback=False', task_management_text)
+        self.assertIn('"Loading latest task mart snapshot..."', task_management_text)
+        self.assertIn('refresh_mode="mart snapshot"', task_management_text)
+        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", task_management_text)
+        self.assertIn("Imported Control-M evidence", task_management_text)
+        self.assertIn("Control-M feed setup", task_management_text)
+        self.assertIn("Download Control-M Feed SQL", task_management_text)
+        self.assertIn("OVERWATCH_CONTROL_M_FEED_STAGE", task_management_text)
         self.assertEqual(
             cost_contract.WORKFLOWS[:4],
             (
@@ -1062,6 +1365,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', account_health_text)
         self.assertIn("def _account_health_has_source_state", account_health_text)
         self.assertIn("if _account_health_has_source_state(st.session_state):", account_health_text)
+        alert_center_import_block = alert_center_text.split("ALERT_CENTER_PANES", 1)[0]
+        self.assertNotIn("from utils import (", alert_center_import_block)
+        self.assertNotIn("from utils import get_active_company", alert_center_import_block)
+        self.assertIn("def get_active_company", alert_center_text)
+        self.assertIn("def get_active_environment", alert_center_text)
         for label, section_text, split_marker in (
             ("Warehouse Health", warehouse_health_text, "WAREHOUSE_HEALTH_VIEWS"),
             ("Change & Drift", change_drift_text, "WORKFLOWS"),
@@ -1071,9 +1379,11 @@ class NavigationIntegrityTests(unittest.TestCase):
                 section_import_block = section_text.split(split_marker, 1)[0]
                 self.assertNotIn("import pandas as pd", section_import_block)
                 self.assertIn("class _LazyPandas", section_text)
-        warehouse_health_import_block = warehouse_health_text.split("WAREHOUSE_HEALTH_VIEWS", 1)[0]
+        warehouse_health_import_block = warehouse_health_text.split("def _admin_audit_fqn", 1)[0]
         self.assertNotIn("from utils import (", warehouse_health_import_block)
         self.assertNotIn("from utils.workflows import", warehouse_health_import_block)
+        self.assertNotIn("from utils.admin import", warehouse_health_import_block)
+        self.assertIn("def _admin_audit_fqn", warehouse_health_text)
         self.assertIn("WAREHOUSE_HEALTH_FAST_ENTRY_VERSION", warehouse_health_text)
         self.assertIn("def _apply_warehouse_fast_entry_default", warehouse_health_text)
         warehouse_health_render_preload = warehouse_health_text.split("def render():", 1)[1].split(
@@ -1114,6 +1424,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         cost_contract_import_block = cost_contract_text.split("WORKFLOWS", 1)[0]
         self.assertNotIn("from utils import (", cost_contract_import_block)
         self.assertNotIn("from utils.workflows import", cost_contract_import_block)
+        self.assertNotIn("from io import BytesIO", cost_contract_import_block)
+        self.assertNotIn("from pathlib import Path", cost_contract_import_block)
+        self.assertNotIn("from xml.sax.saxutils import", cost_contract_import_block)
+        self.assertNotIn("import zipfile", cost_contract_import_block)
         self.assertIn("def render_workflow_selector", cost_contract_text)
         self.assertIn("def render_signal_confidence", cost_contract_text)
         self.assertIn("def render_workflow_module", cost_contract_text)
@@ -1170,6 +1484,22 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("Cost evidence view", cost_contract_text)
         self.assertNotIn("Cost overview table data", cost_contract_text)
         self.assertIn("PowerPoint-ready snapshot", cost_contract_text)
+        self.assertIn("def _render_powerpoint_snapshot_gate", cost_contract_text)
+        self.assertIn("_POWERPOINT_SNAPSHOT_KEY", cost_contract_text)
+        self.assertIn("Prepare PowerPoint Snapshot", cost_contract_text)
+        powerpoint_gate = cost_contract_text.split("def _render_powerpoint_snapshot_gate", 1)[1].split(
+            "def _render_cost_splash",
+            1,
+        )[0]
+        self.assertIn("if not show_snapshot:", powerpoint_gate)
+        self.assertIn("return", powerpoint_gate)
+        self.assertIn("_render_powerpoint_cost_snapshot", powerpoint_gate)
+        cost_splash_block = cost_contract_text.split("def _render_cost_splash", 1)[1].split(
+            "def _cost_action_brief",
+            1,
+        )[0]
+        self.assertIn("_render_powerpoint_snapshot_gate", cost_splash_block)
+        self.assertNotIn('with st.expander("PowerPoint-ready snapshot", expanded=False):', cost_splash_block)
         self.assertIn("PowerPoint support data", cost_contract_text)
         self.assertIn("PowerPoint Cost Snapshot", cost_contract_text)
         self.assertIn("def _cost_snapshot_slide_brief", cost_contract_text)
@@ -1252,6 +1582,19 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _warehouse_action_brief", warehouse_health_text)
         self.assertIn("def _render_warehouse_action_brief", warehouse_health_text)
         self.assertIn("def _render_warehouse_operating_snapshot", warehouse_health_text)
+        self.assertIn("WAREHOUSE_HEALTH_BRIEF_WORKFLOWS", warehouse_health_text)
+        self.assertIn("WAREHOUSE_HEALTH_BRIEF_FIRST_VERSION = 2", warehouse_health_text)
+        self.assertIn("Warehouse Investigation Workflows", warehouse_health_text)
+        self.assertIn("More Warehouse Workflows", warehouse_health_text)
+        self.assertIn("Hide Warehouse Workflows", warehouse_health_text)
+        self.assertIn("def _queue_warehouse_health_view", warehouse_health_text)
+        self.assertIn("def _apply_queued_warehouse_health_view", warehouse_health_text)
+        self.assertIn("def _apply_warehouse_brief_first_default", warehouse_health_text)
+        self.assertIn('st.session_state["warehouse_health_view"] = "Overview & Scaling"', warehouse_health_text)
+        self.assertIn("_apply_warehouse_brief_first_default()", warehouse_health_text)
+        self.assertIn('st.session_state["warehouse_health_requested_view"] = view', warehouse_health_text)
+        self.assertIn("_apply_queued_warehouse_health_view()", warehouse_health_text)
+        self.assertIn('if warehouse_view == "Overview & Scaling" and not _warehouse_frame_has_rows', warehouse_health_text)
         self.assertIn("def _warehouse_global_filter_clause", warehouse_health_text)
         self.assertIn('st.markdown("**Action Brief**")', warehouse_health_text)
         self.assertIn('st.markdown("**Operating Snapshot**")', warehouse_health_text)
@@ -1430,6 +1773,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Load Security Control Facts", security_posture_text)
         self.assertIn("Load Security Exceptions", security_posture_text)
         self.assertIn("Security exceptions stay unloaded", security_posture_text)
+        self.assertIn("SECURITY_BRIEF_WORKFLOWS", security_posture_text)
+        self.assertIn("Security Investigation Workflows", security_posture_text)
+        self.assertIn("def _queue_security_workflow", security_posture_text)
+        self.assertIn("def _apply_queued_security_workflow", security_posture_text)
+        self.assertIn('st.session_state["security_posture_requested_view"] = "Access Workflows"', security_posture_text)
+        self.assertIn("_apply_queued_security_workflow()", security_posture_text)
+        self.assertIn('if active_view == "Security Brief":', security_posture_text)
         security_brief_load_block = security_posture_text.split('if st.button("Load Security Brief"', 1)[1].split(
             "_paint_security_brief_chrome(",
             1,
@@ -1455,10 +1805,22 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("get_session()", object_change_render_preload)
         self.assertIn("Recovery readiness", change_drift_text)
         self.assertIn("CHANGE_DRIFT_VIEWS", change_drift_text)
+        self.assertIn("CHANGE_DRIFT_BRIEF_FIRST_VERSION = 2", change_drift_text)
         self.assertIn('"Change Brief"', change_drift_text)
         self.assertIn('"Change Workflows"', change_drift_text)
         self.assertIn("_change_intervention_matrix", change_drift_text)
         self.assertIn("Change DBA intervention matrix", change_drift_text)
+        self.assertIn("CHANGE_BRIEF_WORKFLOWS", change_drift_text)
+        self.assertIn("Change Investigation Workflows", change_drift_text)
+        self.assertIn("More Change Workflows", change_drift_text)
+        self.assertIn("Hide Change Workflows", change_drift_text)
+        self.assertIn("def _queue_change_workflow", change_drift_text)
+        self.assertIn("def _apply_queued_change_workflow", change_drift_text)
+        self.assertIn("def _apply_change_brief_first_default", change_drift_text)
+        self.assertIn("not _change_has_source_state(st.session_state)", change_drift_text)
+        self.assertIn('st.session_state["change_drift_requested_view"] = "Change Workflows"', change_drift_text)
+        self.assertIn("_apply_change_brief_first_default()", change_drift_text)
+        self.assertIn("_apply_queued_change_workflow()", change_drift_text)
         self.assertIn('"Terraform evidence"', change_drift_text)
         self.assertIn("Flyway", change_drift_text)
         self.assertIn('"Jira evidence"', change_drift_text)
@@ -1489,6 +1851,19 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("st.tabs(", alert_center_text)
         self.assertIn('"Alert Brief"', alert_center_text)
         self.assertIn('if active_view == "Alert Brief":', alert_center_text)
+        self.assertIn("ALERT_CENTER_BRIEF_WORKFLOWS", alert_center_text)
+        self.assertIn("Morning Alert Workflows", alert_center_text)
+        self.assertIn("More Alert Workflows", alert_center_text)
+        self.assertIn("Hide Alert Workflows", alert_center_text)
+        self.assertIn("def _queue_alert_center_view", alert_center_text)
+        self.assertIn("def _apply_queued_alert_center_view", alert_center_text)
+        self.assertIn("ALERT_CENTER_BRIEF_FIRST_VERSION = 2", alert_center_text)
+        self.assertIn("def _apply_alert_center_brief_first_default", alert_center_text)
+        self.assertIn('st.session_state["alert_center_requested_view"] = view', alert_center_text)
+        self.assertIn("_apply_queued_alert_center_view()", alert_center_text)
+        self.assertIn("_apply_alert_center_brief_first_default()", alert_center_text)
+        self.assertIn('st.session_state["alert_center_active_view"] = "Alert Brief"', alert_center_text)
+        self.assertNotIn('st.session_state.get("alert_center_active_view") == "Issue Inbox"', alert_center_text)
         self.assertIn("_alert_center_brief_first_version", alert_center_text)
         self.assertIn("expected_scope = (company, environment, int(days), int(limit))", alert_center_text)
         stale_alert_scope_block = alert_center_text.split("if loaded_scope != expected_scope:", 1)[1].split(
@@ -1620,6 +1995,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _render_workload_metric_rows", workload_operations_text)
         self.assertIn("WORKLOAD_STATUS_LANES", workload_operations_text)
         self.assertIn("def _workload_status_lanes", workload_operations_text)
+        self.assertIn("def _build_workload_task_status_sql", workload_operations_text)
+        self.assertIn("def _workload_task_summary", workload_operations_text)
+        self.assertIn("workload_operations_task_snapshot", workload_operations_text)
+        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", workload_operations_text)
         self.assertIn("def _render_workload_status_lanes", workload_operations_text)
         self.assertIn("Live Workload Lanes", workload_operations_text)
         self.assertIn("Control-M and Snowflake task runs", workload_operations_text)

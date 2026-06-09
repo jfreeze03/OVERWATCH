@@ -695,16 +695,16 @@ class SectionDefinition:
 # redirect aliases below keep saved views and old bookmarks working without
 # making retired labels first-class navigation routes.
 SECTION_DEFINITIONS = (
-    SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing"),
+    SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing_shell"),
     SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room_shell"),
-    SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center"),
-    SectionDefinition("COMMAND CENTER", "home", "Account Health", "sections.account_health"),
-    SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract"),
-    SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations"),
-    SectionDefinition("OPERATIONS", "warehouse", "Warehouse Health", "sections.warehouse_health"),
-    SectionDefinition("GOVERNANCE", "security", "Security Posture", "sections.security_posture"),
-    SectionDefinition("GOVERNANCE", "change", "Change & Drift", "sections.change_drift"),
-    SectionDefinition("ARCHITECTURE", "map", "Architecture Readiness", "sections.architecture_readiness"),
+    SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center_shell"),
+    SectionDefinition("COMMAND CENTER", "home", "Account Health", "sections.account_health_shell"),
+    SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract_shell"),
+    SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations_shell"),
+    SectionDefinition("OPERATIONS", "warehouse", "Warehouse Health", "sections.warehouse_health_shell"),
+    SectionDefinition("GOVERNANCE", "security", "Security Posture", "sections.security_posture_shell"),
+    SectionDefinition("GOVERNANCE", "change", "Change & Drift", "sections.change_drift_shell"),
+    SectionDefinition("ARCHITECTURE", "map", "Architecture Readiness", "sections.architecture_readiness_shell"),
 )
 
 NAV_GROUPS: dict[str, list[str]] = {}

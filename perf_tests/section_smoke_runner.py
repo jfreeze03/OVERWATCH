@@ -20,6 +20,7 @@ import uuid
 
 DEFAULT_OUTPUT_DIR = pathlib.Path(__file__).resolve().parent / "results"
 DEFAULT_SECTIONS = [
+    "Executive Landing",
     "DBA Control Room",
     "Alert Center",
     "Account Health",

@@ -7,7 +7,7 @@ from importlib import import_module
 
 import streamlit as st
 
-from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
+from config import ALERT_DB, ALERT_SCHEMA, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
 import utils as _utils
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -23,6 +23,8 @@ def _lazy_util(name: str):
 build_mart_control_room_summary_sql = _lazy_util("build_mart_control_room_summary_sql")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 run_query = _lazy_util("run_query")
+safe_identifier = _lazy_util("safe_identifier")
+sql_literal = _lazy_util("sql_literal")
 
 
 def safe_float(value, default: float = 0.0) -> float:
@@ -197,6 +199,58 @@ def _snapshot_meta(company: str, environment: str, hours: int = 24) -> dict:
     return {"company": company, "environment": environment, "hours": int(hours)}
 
 
+def _control_feed_fqn() -> str:
+    return (
+        f"{safe_identifier(ALERT_DB)}."
+        f"{safe_identifier(ALERT_SCHEMA)}."
+        f"{safe_identifier('OVERWATCH_EXTERNAL_CONTROL_FEED')}"
+    )
+
+
+def _build_workload_task_status_sql(company: str, environment: str, *, hours: int = 24) -> str:
+    company_filter = ""
+    if str(company or "").upper() not in {"", "ALL"}:
+        company_filter = f"AND COMPANY = {sql_literal(str(company))}"
+    environment_filter = ""
+    if str(environment or "").upper() not in {"", "ALL"}:
+        environment_filter = f"AND COALESCE(ENVIRONMENT, 'No Database Context') = {sql_literal(str(environment))}"
+    return f"""
+        SELECT
+            COUNT(*) AS CONTROL_M_ROWS,
+            COUNT_IF(
+                UPPER(COALESCE(SEVERITY, '')) IN ('CRITICAL', 'HIGH')
+                OR REGEXP_LIKE(UPPER(COALESCE(STATUS, '')), 'FAIL|ERROR|CANCEL|BLOCK|MISSED|LATE')
+            ) AS CONTROL_M_ALERT_ROWS,
+            COUNT_IF(
+                UPPER(COALESCE(SEVERITY, '')) = 'MEDIUM'
+                OR REGEXP_LIKE(UPPER(COALESCE(STATUS, '')), 'WARN|DELAY|DEGRADED|SUSPENDED|WATCH')
+            ) AS CONTROL_M_WATCH_ROWS,
+            MAX(LAST_SEEN_AT) AS CONTROL_M_LAST_SEEN_AT
+        FROM {_control_feed_fqn()}
+        WHERE UPPER(COALESCE(SOURCE_SYSTEM, '')) = 'CONTROL_M'
+          AND COALESCE(LAST_SEEN_AT, FEED_TS, CURRENT_TIMESTAMP()) >= DATEADD('hour', -{int(hours)}, CURRENT_TIMESTAMP())
+          {company_filter}
+          {environment_filter}
+    """
+
+
+def _load_workload_task_snapshot(company: str, environment: str, *, hours: int = 24) -> None:
+    try:
+        snapshot = run_query(
+            _build_workload_task_status_sql(company, environment, hours=hours),
+            ttl_key=f"workload_operations_task_snapshot_{company}_{environment}_{hours}",
+            tier="metadata",
+            section="Workload Operations",
+        )
+        st.session_state["workload_operations_task_snapshot"] = snapshot
+        st.session_state["workload_operations_task_snapshot_meta"] = _snapshot_meta(company, environment, hours)
+        st.session_state["workload_operations_task_snapshot_error"] = ""
+    except Exception as exc:
+        st.session_state["workload_operations_task_snapshot"] = None
+        st.session_state["workload_operations_task_snapshot_meta"] = _snapshot_meta(company, environment, hours)
+        st.session_state["workload_operations_task_snapshot_error"] = format_snowflake_error(exc)
+
+
 def _load_workload_snapshot(company: str, environment: str, *, hours: int = 24, show_errors: bool = False) -> None:
     try:
         snapshot = run_query(
@@ -215,6 +269,7 @@ def _load_workload_snapshot(company: str, environment: str, *, hours: int = 24, 
         if show_errors:
             st.info("Workload snapshot unavailable. Start with live triage or retry after source access is available.")
             defer_source_note("Workload snapshot unavailable.", st.session_state["workload_operations_snapshot_error"])
+    _load_workload_task_snapshot(company, environment, hours=hours)
 
 
 def _workload_snapshot_summary(snapshot) -> dict:
@@ -238,21 +293,58 @@ def _workload_snapshot_summary(snapshot) -> dict:
     }
 
 
-def _workload_status_lanes(summary: dict) -> list[dict]:
+def _workload_task_summary(snapshot) -> dict:
+    if snapshot is None or getattr(snapshot, "empty", True):
+        return {
+            "loaded": False,
+            "controlm_rows": 0,
+            "controlm_alerts": 0,
+            "controlm_watch": 0,
+            "last_seen": "",
+        }
+    row = snapshot.iloc[0].to_dict()
+    return {
+        "loaded": True,
+        "controlm_rows": safe_int(row.get("CONTROL_M_ROWS")),
+        "controlm_alerts": safe_int(row.get("CONTROL_M_ALERT_ROWS")),
+        "controlm_watch": safe_int(row.get("CONTROL_M_WATCH_ROWS")),
+        "last_seen": str(row.get("CONTROL_M_LAST_SEEN_AT") or ""),
+    }
+
+
+def _workload_status_lanes(summary: dict, task_summary: dict | None = None) -> list[dict]:
     """Summarize the three live workload questions managers ask first."""
     loaded = bool(summary.get("loaded"))
     failed = safe_int(summary.get("failed"))
     queued = safe_int(summary.get("queued"))
     spill = safe_int(summary.get("spill"))
     p95 = safe_float(summary.get("p95"))
+    task_summary = task_summary or {}
+    task_loaded = bool(task_summary.get("loaded"))
+    controlm_rows = safe_int(task_summary.get("controlm_rows"))
+    controlm_alerts = safe_int(task_summary.get("controlm_alerts"))
+    controlm_watch = safe_int(task_summary.get("controlm_watch"))
 
     lanes = []
     for lane in WORKLOAD_STATUS_LANES:
         label = str(lane["label"])
         state = "Open live view"
         value = "Live route"
-        if loaded and label == "Task / job status":
-            state = "Review" if failed or queued else "Ready"
+        if label == "Task / job status" and task_loaded:
+            if controlm_alerts:
+                state = "Review"
+                value = f"{controlm_alerts:,} scheduler alert"
+            elif controlm_watch:
+                state = "Watch"
+                value = f"{controlm_watch:,} watch row"
+            elif controlm_rows:
+                state = "Ready"
+                value = f"{controlm_rows:,} feed rows"
+            else:
+                state = "No feed"
+                value = "Open task graph"
+        elif loaded and label == "Task / job status":
+            state = "Open live view"
             value = "Task graph"
         elif loaded and label == "Performance indicators":
             state = "Review" if queued or spill or p95 >= 60.0 else "Ready"
@@ -268,7 +360,18 @@ def _workload_status_lanes(summary: dict) -> list[dict]:
     return lanes
 
 
-def _workload_action_brief(summary: dict, *, snapshot_current: bool = True, error: str = "") -> dict:
+def _workload_action_brief(
+    summary: dict,
+    *,
+    snapshot_current: bool = True,
+    error: str = "",
+    task_summary: dict | None = None,
+) -> dict:
+    task_summary = task_summary or {}
+    task_loaded = bool(task_summary.get("loaded"))
+    task_alerts = safe_int(task_summary.get("controlm_alerts"))
+    task_watch = safe_int(task_summary.get("controlm_watch"))
+    task_rows = safe_int(task_summary.get("controlm_rows"))
     if not summary.get("loaded") or not snapshot_current:
         state = "Refresh Needed" if not snapshot_current else "Not Loaded"
         detail = "Snapshot evidence is optional; live triage remains available for current running work."
@@ -281,6 +384,24 @@ def _workload_action_brief(summary: dict, *, snapshot_current: bool = True, erro
             "primary_label": "Refresh Snapshot",
             "workflow": "Live triage",
             "refresh": True,
+        }
+    if task_loaded and task_alerts > 0:
+        return {
+            "state": "Job Review",
+            "headline": "Review Control-M task/job alerts before query drilldown.",
+            "detail": f"{task_alerts:,} Control-M alert row(s) in the loaded scheduler feed snapshot.",
+            "primary_label": "Open Task Graphs",
+            "workflow": "Task graphs",
+            "refresh": False,
+        }
+    if task_loaded and task_watch > 0 and safe_int(summary.get("failed")) == 0:
+        return {
+            "state": "Job Watch",
+            "headline": "Check scheduler watch rows and Snowflake task status.",
+            "detail": f"{task_watch:,} Control-M watch row(s) across {task_rows:,} loaded scheduler feed row(s).",
+            "primary_label": "Open Task Graphs",
+            "workflow": "Task graphs",
+            "refresh": False,
         }
     if safe_int(summary.get("failed")) > 0:
         return {
@@ -336,8 +457,15 @@ def _workload_runbook_filename(company: str, environment: str = "ALL") -> str:
     return f"overwatch_workload_runbook_{scope.strip('_') or 'scope'}.md"
 
 
-def _build_workload_runbook_markdown(company: str, environment: str, summary: dict, brief: dict) -> str:
+def _build_workload_runbook_markdown(
+    company: str,
+    environment: str,
+    summary: dict,
+    brief: dict,
+    task_summary: dict | None = None,
+) -> str:
     loaded = bool(summary.get("loaded"))
+    task_summary = task_summary or {}
     generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     if loaded:
         kpi_line = (
@@ -349,6 +477,15 @@ def _build_workload_runbook_markdown(company: str, environment: str, summary: di
         )
     else:
         kpi_line = "Snapshot not loaded. Refresh the workload snapshot or start live triage."
+    if task_summary.get("loaded"):
+        task_line = (
+            f"Control-M feed rows={safe_int(task_summary.get('controlm_rows')):,}; "
+            f"alerts={safe_int(task_summary.get('controlm_alerts')):,}; "
+            f"watch={safe_int(task_summary.get('controlm_watch')):,}; "
+            f"last_seen={task_summary.get('last_seen') or 'not reported'}"
+        )
+    else:
+        task_line = "Control-M feed snapshot not loaded; open Task graphs for Snowflake task status."
 
     lines = [
         "# OVERWATCH Workload Operations Runbook",
@@ -357,6 +494,7 @@ def _build_workload_runbook_markdown(company: str, environment: str, summary: di
         "- Window: 24 hours",
         f"- Generated: {generated_at}",
         f"- Snapshot: {kpi_line}",
+        f"- Task/job status: {task_line}",
         f"- Current signal: {brief.get('state') or 'Review'}",
         f"- Operator move: {brief.get('headline') or 'Review workload evidence.'}",
         f"- Detail: {brief.get('detail') or 'No detail loaded.'}",
@@ -364,6 +502,7 @@ def _build_workload_runbook_markdown(company: str, environment: str, summary: di
         "## Slide Bullets",
         f"- Workload posture: {brief.get('state') or 'Review'} for {company} / {environment}.",
         f"- KPI line: {kpi_line}",
+        f"- Task/job line: {task_line}",
         f"- First action: {brief.get('primary_label') or 'Open Live Triage'}.",
         f"- Evidence owner: route to {brief.get('workflow') or 'Live triage'} in Workload Operations.",
         "",
@@ -429,10 +568,10 @@ def _render_workload_metric_rows(summary: dict) -> None:
     cols[3].metric("P95", f"{safe_float(summary.get('p95')):,.1f}s")
 
 
-def _render_workload_status_lanes(summary: dict) -> None:
+def _render_workload_status_lanes(summary: dict, task_summary: dict | None = None) -> None:
     st.markdown("**Live Workload Lanes**")
     cols = st.columns(3)
-    for idx, lane in enumerate(_workload_status_lanes(summary)):
+    for idx, lane in enumerate(_workload_status_lanes(summary, task_summary)):
         with cols[idx]:
             with st.container(border=True):
                 st.markdown(f"**{lane['label']}**")
@@ -451,18 +590,26 @@ def _render_workload_snapshot(company: str, environment: str) -> None:
     expected_meta = _snapshot_meta(company, environment, hours)
     snapshot = st.session_state.get("workload_operations_snapshot")
     snapshot_current = st.session_state.get("workload_operations_snapshot_meta") == expected_meta
+    task_snapshot = st.session_state.get("workload_operations_task_snapshot")
+    task_snapshot_current = st.session_state.get("workload_operations_task_snapshot_meta") == expected_meta
     err = st.session_state.get("workload_operations_snapshot_error", "")
     summary = _workload_snapshot_summary(snapshot if snapshot_current else None)
-    brief = _workload_action_brief(summary, snapshot_current=snapshot_current, error=str(err or ""))
+    task_summary = _workload_task_summary(task_snapshot if task_snapshot_current else None)
+    brief = _workload_action_brief(
+        summary,
+        snapshot_current=snapshot_current,
+        error=str(err or ""),
+        task_summary=task_summary,
+    )
     _render_workload_action_brief(company, environment, brief)
     st.markdown("**Operating Snapshot**")
     _render_workload_metric_rows(summary)
-    _render_workload_status_lanes(summary)
+    _render_workload_status_lanes(summary, task_summary)
     with st.expander("Runbook export", expanded=False):
         st.caption("Download a copy-ready DBA runbook for the selected company and workload snapshot state.")
         st.download_button(
             "Download DBA runbook",
-            data=_build_workload_runbook_markdown(company, environment, summary, brief),
+            data=_build_workload_runbook_markdown(company, environment, summary, brief, task_summary),
             file_name=_workload_runbook_filename(company, environment),
             mime="text/markdown",
             key="workload_ops_runbook_download",

@@ -51,6 +51,7 @@ from sections.adoption_analytics import (  # noqa: E402
 )
 from sections.alert_center import (  # noqa: E402
     _alert_center_action_brief,
+    _alert_center_pending_brief,
     _alert_center_operability_rows,
     _alert_center_readiness_score,
     _alert_integration_readiness_board,
@@ -59,6 +60,7 @@ from sections.alert_center import (  # noqa: E402
 )
 from sections.architecture_readiness import (  # noqa: E402
     _architecture_objectives_frame,
+    _architecture_operating_snapshot,
     _architecture_scope_meta,
     _architecture_source_health_rows,
     _enrich_architecture_context,
@@ -68,6 +70,7 @@ from sections.workload_operations import (  # noqa: E402
     _workload_action_brief,
     _workload_runbook_filename,
     _workload_snapshot_summary,
+    _workload_status_lanes,
 )
 from sections.executive_landing import (  # noqa: E402
     _build_executive_snapshot_pptx,
@@ -7409,6 +7412,39 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ACCOUNT_USAGE.QUERY_HISTORY", by_surface["Workload isolation"]["SOURCE"])
         self.assertIn("objective register", by_surface["Architecture objectives"]["CONFIDENCE"].lower())
 
+    def test_architecture_operating_snapshot_counts_loaded_and_stale_evidence(self):
+        state = {
+            "arch_iso_days": 7,
+            "arch_iso_limit": 50,
+            "arch_iso_df": pd.DataFrame([{"DATABASE_NAME": "ALFA_EDW_PROD"}]),
+            "arch_iso_meta": _architecture_scope_meta(
+                "ALFA",
+                "PROD",
+                "Workload isolation",
+                days=7,
+                row_limit=50,
+                state={},
+            ),
+            "arch_cache_days": 30,
+            "arch_cache_limit": 300,
+            "arch_cache_df": pd.DataFrame([{"WAREHOUSE_NAME": "WH_ALFA_QUERY"}]),
+            "arch_cache_meta": _architecture_scope_meta(
+                "ALFA",
+                "DEV_ALL",
+                "Cache optimization",
+                days=30,
+                row_limit=300,
+                state={},
+            ),
+        }
+
+        snapshot = _architecture_operating_snapshot("ALFA", "PROD", state)
+
+        self.assertEqual(snapshot["loaded"], 1)
+        self.assertEqual(snapshot["stale"], 1)
+        self.assertEqual(snapshot["next_load"], "Objectives")
+        self.assertEqual(snapshot["total"], 6)
+
     def test_forward_platform_controls_cover_summit_capabilities(self):
         controls = build_forward_platform_control_register()
         areas = set(controls["CONTROL_AREA"])
@@ -8082,6 +8118,15 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertTrue(missing["refresh"])
         self.assertEqual(missing["workflow"], "Live triage")
 
+        lanes = _workload_status_lanes(summary)
+        by_label = {lane["label"]: lane for lane in lanes}
+        self.assertEqual(by_label["Task / job status"]["workflow"], "Task graphs")
+        self.assertEqual(by_label["Task / job status"]["state"], "Review")
+        self.assertEqual(by_label["Performance indicators"]["workflow"], "Query diagnosis")
+        self.assertIn("p95", by_label["Performance indicators"]["value"])
+        self.assertEqual(by_label["Errors"]["workflow"], "Live triage")
+        self.assertEqual(by_label["Errors"]["value"], "3 failed")
+
     def test_workload_runbook_markdown_is_copy_ready_and_evidence_bounded(self):
         summary = {
             "loaded": True,
@@ -8100,6 +8145,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("## Slide Bullets", markdown)
         self.assertIn("## Triage Order", markdown)
         self.assertIn("Query diagnosis: capture query ID", markdown)
+        self.assertIn("Control-M and Snowflake task status", markdown)
         self.assertIn("## Evidence Checklist", markdown)
         self.assertIn("Warehouse, user, role, database, and schema", markdown)
         self.assertEqual(
@@ -8782,6 +8828,13 @@ class FormulaRegressionTests(unittest.TestCase):
             open_queue=0,
         )
         self.assertEqual(clear["state"], "Clear")
+
+    def test_alert_center_pending_brief_keeps_alert_brief_as_workflow_chooser(self):
+        brief = _alert_center_pending_brief("Alert Brief", set())
+
+        self.assertEqual(brief["state"], "Brief Ready")
+        self.assertIn("Choose the alert workflow", brief["headline"])
+        self.assertNotIn("Sources on load", brief["detail"])
 
     def test_alert_surfaces_are_consolidated_to_alert_center(self):
         config_text = (APP_ROOT / "config.py").read_text(encoding="utf-8")

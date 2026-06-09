@@ -3843,7 +3843,7 @@ def render() -> None:
     if st.session_state.get("exceptions_only_mode") and "change_drift_workflow" not in st.session_state:
         st.session_state["change_drift_workflow"] = "Object and access changes"
     if st.session_state.get("exceptions_only_mode") and "change_drift_view" not in st.session_state:
-        st.session_state["change_drift_view"] = "Change Workflows"
+        st.session_state["change_drift_view"] = "Change Brief"
     if st.session_state.get("change_drift_view") not in CHANGE_DRIFT_VIEWS:
         st.session_state["change_drift_view"] = CHANGE_DRIFT_VIEWS[0]
     render_signal_confidence(

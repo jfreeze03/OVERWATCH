@@ -162,6 +162,27 @@ LEGACY_WORKFLOW_MAP = {
     "Patterns": "Query diagnosis",
 }
 
+WORKLOAD_STATUS_LANES = (
+    {
+        "label": "Task / job status",
+        "workflow": "Task graphs",
+        "button": "Open Task Graphs",
+        "detail": "Control-M and Snowflake task runs, retries, SLA risk, downstream impact, and owner.",
+    },
+    {
+        "label": "Performance indicators",
+        "workflow": "Query diagnosis",
+        "button": "Open Query Diagnosis",
+        "detail": "P95 runtime, queue pressure, spill, warehouse context, and high-cost SQL patterns.",
+    },
+    {
+        "label": "Errors",
+        "workflow": "Live triage",
+        "button": "Open Live Triage",
+        "detail": "Failed work, blocked work, cancellable queries, and exact error evidence.",
+    },
+)
+
 
 def _apply_fast_entry_default() -> None:
     """Keep first navigation fast after older sessions auto-opened live triage."""
@@ -215,6 +236,36 @@ def _workload_snapshot_summary(snapshot) -> dict:
         "spill": safe_int(row.get("REMOTE_SPILL_QUERIES")),
         "p95": safe_float(row.get("P95_ELAPSED_SEC")),
     }
+
+
+def _workload_status_lanes(summary: dict) -> list[dict]:
+    """Summarize the three live workload questions managers ask first."""
+    loaded = bool(summary.get("loaded"))
+    failed = safe_int(summary.get("failed"))
+    queued = safe_int(summary.get("queued"))
+    spill = safe_int(summary.get("spill"))
+    p95 = safe_float(summary.get("p95"))
+
+    lanes = []
+    for lane in WORKLOAD_STATUS_LANES:
+        label = str(lane["label"])
+        state = "Open live view"
+        value = "Live route"
+        if loaded and label == "Task / job status":
+            state = "Review" if failed or queued else "Ready"
+            value = "Task graph"
+        elif loaded and label == "Performance indicators":
+            state = "Review" if queued or spill or p95 >= 60.0 else "Ready"
+            value = f"p95 {p95:,.1f}s"
+        elif loaded and label == "Errors":
+            state = "Review" if failed else "Ready"
+            value = f"{failed:,} failed"
+        lanes.append({
+            **lane,
+            "state": state,
+            "value": value,
+        })
+    return lanes
 
 
 def _workload_action_brief(summary: dict, *, snapshot_current: bool = True, error: str = "") -> dict:
@@ -319,7 +370,7 @@ def _build_workload_runbook_markdown(company: str, environment: str, summary: di
         "## Triage Order",
         "1. Live triage: identify running, queued, blocked, or cancellable work.",
         "2. Query diagnosis: capture query ID, warehouse, user, role, database, schema, elapsed time, spill, and error text.",
-        "3. Task graphs: confirm root task, failed run, retry state, downstream blast radius, and owner.",
+        "3. Task graphs: confirm Control-M and Snowflake task status, failed run, retry state, downstream blast radius, and owner.",
         "4. Stored procedures: tie CALL history to query IDs, runtime drift, and cost attribution.",
         "5. Pipeline health: check load backlog, copy errors, task lag, and dynamic table refresh state.",
         "",
@@ -378,6 +429,23 @@ def _render_workload_metric_rows(summary: dict) -> None:
     cols[3].metric("P95", f"{safe_float(summary.get('p95')):,.1f}s")
 
 
+def _render_workload_status_lanes(summary: dict) -> None:
+    st.markdown("**Live Workload Lanes**")
+    cols = st.columns(3)
+    for idx, lane in enumerate(_workload_status_lanes(summary)):
+        with cols[idx]:
+            with st.container(border=True):
+                st.markdown(f"**{lane['label']}**")
+                st.metric(str(lane.get("state") or "Review"), str(lane.get("value") or "Live route"))
+                st.caption(str(lane.get("detail") or ""))
+                if st.button(str(lane.get("button") or "Open"), key=f"workload_ops_lane_{idx}", width="stretch"):
+                    workflow = str(lane.get("workflow") or "Live triage")
+                    if workflow in WORKFLOWS:
+                        st.session_state["workload_operations_view"] = "Specialist Workflows"
+                        st.session_state["workload_operations_workflow"] = workflow
+                        st.rerun()
+
+
 def _render_workload_snapshot(company: str, environment: str) -> None:
     hours = 24
     expected_meta = _snapshot_meta(company, environment, hours)
@@ -389,6 +457,7 @@ def _render_workload_snapshot(company: str, environment: str) -> None:
     _render_workload_action_brief(company, environment, brief)
     st.markdown("**Operating Snapshot**")
     _render_workload_metric_rows(summary)
+    _render_workload_status_lanes(summary)
     with st.expander("Runbook export", expanded=False):
         st.caption("Download a copy-ready DBA runbook for the selected company and workload snapshot state.")
         st.download_button(

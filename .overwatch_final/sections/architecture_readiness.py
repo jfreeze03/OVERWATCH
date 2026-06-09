@@ -158,6 +158,7 @@ def load_openflow_operations(*args, **kwargs):
 
 
 ARCHITECTURE_READINESS_PANES = (
+    "Architecture Brief",
     "Workload Isolation",
     "Clustering Strategy",
     "Cache Optimization",
@@ -174,6 +175,53 @@ ARCHITECTURE_SCOPE_FILTER_KEYS = (
     "global_database",
     "global_start_date",
     "global_end_date",
+)
+
+
+ARCHITECTURE_BRIEF_SURFACES = (
+    {
+        "label": "Objectives",
+        "surface": "Architecture objectives",
+        "frame_key": "arch_objectives_df",
+        "meta_key": "arch_objectives_meta",
+    },
+    {
+        "label": "Isolation",
+        "surface": "Workload isolation",
+        "frame_key": "arch_iso_df",
+        "meta_key": "arch_iso_meta",
+        "days_key": "arch_iso_days",
+        "limit_key": "arch_iso_limit",
+    },
+    {
+        "label": "Clustering",
+        "surface": "Clustering strategy",
+        "frame_key": "arch_cluster_df",
+        "meta_key": "arch_cluster_meta",
+        "limit_key": "arch_cluster_limit",
+    },
+    {
+        "label": "Cache",
+        "surface": "Cache optimization",
+        "frame_key": "arch_cache_df",
+        "meta_key": "arch_cache_meta",
+        "days_key": "arch_cache_days",
+        "limit_key": "arch_cache_limit",
+    },
+    {
+        "label": "DR",
+        "surface": "DR readiness",
+        "frame_key": "arch_dr_data",
+        "meta_key": "arch_dr_meta",
+        "days_key": "arch_dr_days",
+    },
+    {
+        "label": "AI futures",
+        "surface": "AI usage guardrails",
+        "frame_key": "arch_ai_usage",
+        "meta_key": "arch_ai_usage_meta",
+        "days_key": "arch_ai_usage_days",
+    },
 )
 
 
@@ -240,6 +288,82 @@ def _architecture_meta_matches(meta: dict | None, expected: dict | None) -> bool
         elif _scope_value(actual) != _scope_value(expected_value):
             return False
     return True
+
+
+def _architecture_frame_loaded(value: object) -> bool:
+    return value is not None and hasattr(value, "__len__") and hasattr(value, "empty")
+
+
+def _architecture_operating_snapshot(company: str, environment: str, state: dict | None = None) -> dict:
+    state = state if state is not None else st.session_state
+    loaded = 0
+    stale = 0
+    next_load = ""
+    for item in ARCHITECTURE_BRIEF_SURFACES:
+        frame = state.get(item["frame_key"])
+        days = state.get(item.get("days_key"))
+        row_limit = state.get(item.get("limit_key"))
+        expected = _architecture_scope_meta(
+            company,
+            environment,
+            item["surface"],
+            days=days,
+            row_limit=row_limit,
+            state=state,
+        )
+        has_frame = _architecture_frame_loaded(frame)
+        if has_frame and _architecture_meta_matches(state.get(item["meta_key"]), expected):
+            loaded += 1
+        elif has_frame:
+            stale += 1
+            next_load = next_load or item["label"]
+        else:
+            next_load = next_load or item["label"]
+    return {
+        "company": company,
+        "environment": environment,
+        "loaded": loaded,
+        "stale": stale,
+        "total": len(ARCHITECTURE_BRIEF_SURFACES),
+        "next_load": next_load or "Review loaded evidence",
+    }
+
+
+def _render_architecture_action_brief(snapshot: dict) -> None:
+    loaded = safe_int(snapshot.get("loaded"))
+    stale = safe_int(snapshot.get("stale"))
+    total = safe_int(snapshot.get("total"))
+    if stale:
+        state = "Reload Needed"
+        headline = "Reload stale architecture evidence before queueing action."
+        detail = f"{stale:,} loaded surface(s) no longer match the active filters."
+    elif loaded:
+        state = "Evidence Loaded"
+        headline = "Review loaded architecture evidence with owner and approval context."
+        detail = f"{loaded:,} of {total:,} primary architecture surface(s) are loaded for this scope."
+    else:
+        state = "Brief Ready"
+        headline = "Choose the architecture question before loading evidence."
+        detail = "Start with objectives, isolation, cache, clustering, or DR based on the DBA decision needed."
+
+    with st.container(border=True):
+        label_col, detail_col = st.columns([1.1, 4.6])
+        with label_col:
+            st.markdown("**Action Brief**")
+            st.caption(state)
+        with detail_col:
+            st.markdown(f"**{headline}**")
+            st.caption(detail)
+
+
+def _render_architecture_operating_snapshot(snapshot: dict) -> None:
+    st.markdown("**Operating Snapshot**")
+    cols = st.columns(4)
+    cols[0].metric("Company", str(snapshot.get("company") or "All"))
+    cols[1].metric("Env", str(snapshot.get("environment") or "ALL"))
+    cols[2].metric("Loaded", f"{safe_int(snapshot.get('loaded')):,}/{safe_int(snapshot.get('total')):,}")
+    cols[3].metric("Reload", f"{safe_int(snapshot.get('stale')):,}", delta_color="inverse")
+    st.caption(f"Next load: {snapshot.get('next_load') or 'Review loaded evidence'}")
 
 
 def _get_valid_architecture_frame(
@@ -1913,11 +2037,19 @@ def render():
         ])
     )
 
+    snapshot = _architecture_operating_snapshot(company, environment)
+    _render_architecture_action_brief(snapshot)
+    _render_architecture_operating_snapshot(snapshot)
+
     active_pane = st.selectbox(
         "Architecture readiness view",
         ARCHITECTURE_READINESS_PANES,
         key="architecture_readiness_pane",
     )
+
+    if active_pane == "Architecture Brief":
+        st.caption("Choose a readiness view when you need owner proof, isolation evidence, cache tuning, clustering review, DR posture, or AI platform futures.")
+        return
 
     if active_pane == "Workload Isolation":
         st.subheader("Workload Isolation Matrix")

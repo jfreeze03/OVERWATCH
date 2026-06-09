@@ -39,6 +39,7 @@ def defer_source_note(*parts: object, section: str | None = None) -> None:
     st.session_state[key] = notes
 
 ALERT_CENTER_PANES = [
+    "Alert Brief",
     "Issue Inbox",
     "Triage Digest",
     "Alert History",
@@ -58,6 +59,7 @@ ALERT_CENTER_HEALTH_DETAIL_OPTIONS = (
 )
 
 ALERT_CENTER_SOURCES_BY_PANE = {
+    "Alert Brief": set(),
     "Control Health": {"alerts", "action_queue", "delivery_log", "rules", "rule_audit", "owner_directory"},
     "Automation Readiness": {"alerts", "action_queue", "delivery_log", "rules", "owner_directory", "automation_health"},
     "Issue Inbox": {"alerts", "action_queue"},
@@ -805,6 +807,12 @@ def _alert_center_action_brief(
 
 
 def _alert_center_pending_brief(active_view: str, required_sources: set[str]) -> dict:
+    if active_view == "Alert Brief":
+        return {
+            "state": "Brief Ready",
+            "headline": "Choose the alert workflow before loading evidence.",
+            "detail": "Start with the issue inbox, triage digest, delivery proof, queue routing, or control health based on the operator question.",
+        }
     return {
         "state": "Ready",
         "headline": f"Load {active_view} before routing alert work.",
@@ -1241,6 +1249,13 @@ def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
+    if st.session_state.get("_alert_center_brief_first_version") != 1:
+        if (
+            "alert_center_data" not in st.session_state
+            and st.session_state.get("alert_center_active_view") == "Issue Inbox"
+        ):
+            st.session_state["alert_center_active_view"] = "Alert Brief"
+        st.session_state["_alert_center_brief_first_version"] = 1
 
     active_view = st.selectbox(
         "Alert Center view",
@@ -1248,6 +1263,21 @@ def render() -> None:
         key="alert_center_active_view",
     )
     required_sources = _alert_center_sources_for_view(active_view)
+
+    if active_view == "Alert Brief":
+        _render_alert_center_action_brief(_alert_center_pending_brief(active_view, required_sources))
+        _render_alert_center_metric_rows(
+            open_issues=0,
+            open_alerts=0,
+            critical_high=0,
+            overdue=0,
+            email_ready=0,
+            email_logged=0,
+            open_queue=0,
+            loaded=False,
+        )
+        st.caption("Choose an Alert Center view when you need live issue rows, delivery evidence, action queue routing, rules, or automation health.")
+        return
 
     if active_view == "Suppression Windows":
         _render_annotations()

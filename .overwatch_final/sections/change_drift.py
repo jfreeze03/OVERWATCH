@@ -3920,14 +3920,17 @@ def render() -> None:
             _render_change_external_integrations(company, environment, days, mode="Jira")
         elif workflow == "Schema and object drift":
             st.session_state["dba_tools_focus"] = "Governance"
+            st.session_state["dba_tools_focus_tool"] = "Schema Compare"
             st.info("Focused toolkit: schema compare, recent objects, unused objects, object inventory, and drift checks.")
             render_workflow_module(workflow, WORKFLOW_MODULES)
         elif workflow == "Data movement and replication":
             st.session_state["dba_tools_focus"] = "Data Movement"
+            st.session_state["dba_tools_focus_tool"] = "Data Loading"
             st.info("Focused toolkit: data loading, Snowpipe, dynamic tables, and replication checks.")
             render_workflow_module(workflow, WORKFLOW_MODULES)
         else:
             st.session_state["dba_tools_focus"] = "Controlled Actions"
+            st.session_state["dba_tools_focus_tool"] = "Task Graph Control"
             st.info("Focused toolkit: query cancellation, warehouse settings, task graph control, setup, and audit evidence.")
             render_workflow_module(workflow, WORKFLOW_MODULES)
         return

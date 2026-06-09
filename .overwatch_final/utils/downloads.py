@@ -10,7 +10,7 @@ def _csv_download_payload(df) -> str:
     return df.to_csv(index=False)
 
 
-def download_csv(df, filename: str, label: str = "📥 Export CSV"):
+def download_csv(df, filename: str, label: str = "Export CSV"):
     if df is not None and not getattr(df, "empty", True):
         st.download_button(
             label, _csv_download_payload(df),

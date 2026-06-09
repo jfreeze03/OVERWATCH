@@ -1,13 +1,6 @@
 ﻿# sections/dba_tools.py — DBA admin toolkit
 # ─────────────────────────────────────────────────────────────────────────────
-# NEW tabs vs prior version:
-#   Tab 1  — Auto-Suspend Audit → FULL INTERACTIVE WAREHOUSE SETTINGS MANAGER
-#             (all ALTER WAREHOUSE params: size, suspend, timeout, scaling, QAS)
-#   Tab 14 — Warehouse Settings Manager (promoted from stub)
-#   Tab 15 — ⚙️ Cortex AI Limits (SHOW AI SERVICES, ALTER ACCOUNT limits)
-#   Tab 16 — 🔀 Task Graph Control (cancel running tasks, cancel task graphs,
-#             suspend/resume task trees, restart failed tasks)
-#   Tab 17 — 📊 Usage Log (carried forward)
+# Specialist workflows are selected by group so only one guarded tool renders at a time.
 # ─────────────────────────────────────────────────────────────────────────────
 import streamlit as st
 import pandas as pd
@@ -458,72 +451,94 @@ def render():
         if "QUERY_TAG" in qh_cols else "LOWER(query_text) LIKE '%execute task%'"
     )
 
-    st.caption(
-        "Guarded admin workflows are grouped to keep the high-value controls easy to find. "
-        "Open a group, then choose the specific operation."
-    )
     focus = st.session_state.get("dba_tools_focus")
-    if focus:
+    default_group = DBA_TOOL_FOCUS_GROUPS.get(str(focus), "Warehouse Ops")
+    group_names = list(DBA_TOOL_GROUPS)
+    focus_tool = str(st.session_state.get("dba_tools_focus_tool") or "")
+    focus_tool_active = (
+        focus_tool
+        and default_group in DBA_TOOL_GROUPS
+        and focus_tool in DBA_TOOL_GROUPS[default_group]
+    )
+    if focus_tool_active:
+        selected_group = default_group
+        tool_options = DBA_TOOL_GROUPS[selected_group]
+        selected_tool = focus_tool
         focus_hint = DBA_TOOL_FOCUS_HINTS.get(
             str(focus),
-            "Use the matching tab group below first; other tools remain available when needed.",
+            "Use the matching workflow when you need additional DBA tools.",
         )
-        st.info(f"Change & Drift focus: {focus}. {focus_hint}")
-    with st.expander("Guarded Admin Operating Model", expanded=not bool(focus)):
-        risk_a, risk_b, risk_c = st.columns(3)
-        with risk_a:
-            st.info(
-                "Safe Observability\n\n"
-                "Read-only inventory, diagnostics, compatibility checks, schema compare, recent objects, "
-                "QAS visibility, replication, serverless costs, and usage logs."
+        st.caption(f"Workflow focus: {selected_tool}. {focus_hint}")
+    else:
+        st.caption(
+            "Guarded admin workflows are grouped to keep the high-value controls easy to find. "
+            "Open a group, then choose the specific operation."
+        )
+        if focus:
+            focus_hint = DBA_TOOL_FOCUS_HINTS.get(
+                str(focus),
+                "Use the matching tab group below first; other tools remain available when needed.",
             )
-        with risk_b:
-            st.warning(
-                "Controlled Actions\n\n"
-                "Query cancellation, task suspend/resume, warehouse setting changes, and Cortex limit updates. "
-                "These stay locked unless Admin actions are enabled."
-            )
-        with risk_c:
-            st.success(
-                "Setup and Maintenance\n\n"
-                "Compatibility checks, setup status, usage logging, action queue routing, and "
-                "formula audit evidence. SQL deployment lives in the Snowflake setup script, not this UI."
-            )
-    if not admin_actions_enabled():
+            st.info(f"Change & Drift focus: {focus}. {focus_hint}")
+        with st.expander("Guarded Admin Operating Model", expanded=not bool(focus)):
+            risk_a, risk_b, risk_c = st.columns(3)
+            with risk_a:
+                st.info(
+                    "Safe Observability\n\n"
+                    "Read-only inventory, diagnostics, compatibility checks, schema compare, recent objects, "
+                    "QAS visibility, replication, serverless costs, and usage logs."
+                )
+            with risk_b:
+                st.warning(
+                    "Controlled Actions\n\n"
+                    "Query cancellation, task suspend/resume, warehouse setting changes, and Cortex limit updates. "
+                    "These stay locked unless Admin actions are enabled."
+                )
+            with risk_c:
+                st.success(
+                    "Setup and Maintenance\n\n"
+                    "Compatibility checks, setup status, usage logging, action queue routing, and "
+                    "formula audit evidence. SQL deployment lives in the Snowflake setup script, not this UI."
+                )
+        group_index = group_names.index(default_group) if default_group in group_names else 0
+        selected_group = st.radio(
+            "DBA workflow",
+            group_names,
+            index=group_index,
+            horizontal=True,
+            key="dba_tools_group_selector",
+        )
+        tool_options = DBA_TOOL_GROUPS[selected_group]
+        selected_tool = st.selectbox(
+            "Open specialist tool",
+            tool_options,
+            key=f"dba_tools_tool_selector_{selected_group}",
+        )
+        st.info("Alert history, email-ready delivery rows, routing, and suppression windows now live in the consolidated Alert Center.")
+        if st.button("Open Alert Center", key="dba_tools_open_alert_center"):
+            st.session_state["nav_section"] = "Alert Center"
+            st.rerun()
+
+    if not admin_actions_enabled() and selected_tool in {
+        "Query Kill List",
+        "Warehouse Settings",
+        "Cortex AI Limits",
+        "Task Graph Control",
+    }:
         st.info(
             "Read-only mode is active. Load, inspect, compare, and export still work; "
             "ALTER, CANCEL, EXECUTE, SUSPEND, and RESUME buttons stay locked until Admin actions are enabled in Settings."
         )
-
-    st.info("Alert history, email-ready delivery rows, routing, and suppression windows now live in the consolidated Alert Center.")
-    if st.button("Open Alert Center", key="dba_tools_open_alert_center"):
-        st.session_state["nav_section"] = "Alert Center"
-        st.rerun()
     st.divider()
-
-    default_group = DBA_TOOL_FOCUS_GROUPS.get(str(focus), "Warehouse Ops")
-    group_names = list(DBA_TOOL_GROUPS)
-    group_index = group_names.index(default_group) if default_group in group_names else 0
-    selected_group = st.radio(
-        "DBA workflow",
-        group_names,
-        index=group_index,
-        horizontal=True,
-        key="dba_tools_group_selector",
-    )
-    selected_tool = st.selectbox(
-        "Open specialist tool",
-        DBA_TOOL_GROUPS[selected_group],
-        key=f"dba_tools_tool_selector_{selected_group}",
-    )
-    st.caption(
-        "Focused mode renders one specialist tool at a time. Use the workflow hubs for daily operations; "
-        "use this page when you need a specific admin utility."
-    )
+    if not focus_tool_active:
+        st.caption(
+            "Focused mode renders one specialist tool at a time. Use the workflow hubs for daily operations; "
+            "use this page when you need a specific admin utility."
+        )
 
     # ── TAB 0: QUERY KILL LIST ────────────────────────────────────────────────
     if selected_tool == "Query Kill List":
-        st.header("⛔ Long-Running Query Kill List")
+        st.header("Long-Running Query Kill List")
         kill_min = st.number_input("Flag queries running > (seconds)", 60, 3600, 300, key="kill_sec")
         if _load_button("Load Kill List", "kl_load"):
             try:
@@ -546,7 +561,7 @@ def render():
 
         if st.session_state.get("dba_df_kl") is not None and not st.session_state["dba_df_kl"].empty:
             df = st.session_state["dba_df_kl"]
-            st.warning(f"⚠️ {len(df)} queries running > {kill_min}s")
+            st.warning(f"{len(df)} queries running > {kill_min}s")
             render_priority_dataframe(
                 df,
                 title="Queries eligible for cancellation",
@@ -565,7 +580,7 @@ def render():
                 f"kl_confirm_{kill_id}",
             ) if kill_id else False
             if kill_id and st.button(
-                "⛔ Cancel Query",
+                "Cancel Query",
                 type="primary",
                 key="kl_kill",
                 disabled=admin_button_disabled(),
@@ -573,15 +588,15 @@ def render():
                 if _require_typed_confirmation(kill_confirmed, "CANCEL"):
                     try:
                         session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(kill_id)})").collect()
-                        st.success(f"✅ Cancel sent for `{kill_id}`")
+                        st.success(f"Cancel sent for `{kill_id}`")
                     except Exception as e:
                         st.error(f"Cancel failed: {format_snowflake_error(e)}")
         elif st.session_state.get("dba_df_kl") is not None:
-            st.success(f"✅ No queries running > {kill_min}s")
+            st.success(f"No queries running > {kill_min}s")
 
     # ── TAB 1: WAREHOUSE SETTINGS MANAGER ────────────────────────────────────
     if selected_tool == "Warehouse Settings":
-        st.header("⚙️ Warehouse Settings Manager")
+        st.header("Warehouse Settings Manager")
         st.caption(
             "View and interactively change all warehouse parameters — "
             "size, timeouts, auto-suspend, multi-cluster, QAS, and scaling policy. "
@@ -650,7 +665,7 @@ def render():
                 except Exception:
                     pass
             if issues:
-                with st.expander(f"⚠️ {len(issues)} configuration issue(s) detected"):
+                with st.expander(f"{len(issues)} configuration issue(s) detected"):
                     for i in issues:
                         st.markdown(i)
 
@@ -810,7 +825,7 @@ def render():
                             f"wh_confirm_{sel_wh}",
                         )
                         if st.button(
-                            "✅ Apply Now",
+                            "Apply Now",
                             type="primary",
                             key=f"wh_apply_{sel_wh}",
                             disabled=True,
@@ -820,20 +835,20 @@ def render():
                             # If a future role doesn't, this surfaces a clear error.
                             try:
                                 session.sql(alter_sql).collect()
-                                st.success(f"✅ Warehouse `{sel_wh}` updated successfully.")
+                                st.success(f"Warehouse `{sel_wh}` updated successfully.")
                                 st.session_state.pop("dba_df_wh_cfg", None)
                                 st.rerun()
                             except Exception as e:
                                 err_str = str(e).lower()
                                 if "insufficient privilege" in err_str or "not authorized" in err_str:
                                     st.error(
-                                        f"⛔ **Permission denied on `{sel_wh}`.** "
+                                        f"Permission denied on `{sel_wh}`. "
                                         f"ALTER WAREHOUSE requires MODIFY privilege. "
                                         f"Your current role may not have this on this warehouse."
                                     )
                                 elif "enterprise" in err_str or "not supported" in err_str:
                                     st.error(
-                                        f"⛔ **Feature not available in your Snowflake edition.** "
+                                        f"Feature not available in your Snowflake edition. "
                                         f"Multi-cluster and QAS require Enterprise or higher."
                                     )
                                 else:
@@ -961,7 +976,7 @@ def render():
                             )
 
     if selected_tool == "Data Loading":
-        st.header("📦 Data Loading Monitor")
+        st.header("Data Loading Monitor")
         load_days = day_window_selectbox("Lookback", key="dl_days", default=7)
         if _load_button("Load Copy History", "dl_load"):
             try:
@@ -992,7 +1007,7 @@ def render():
 
     # ── TABS 3–13: CARRIED FORWARD (abbreviated for file size) ───────────────
     if selected_tool == "Network & Sessions":
-        st.header("🌐 Network & Sessions")
+        st.header("Network & Sessions")
         if _load_button("Load Session Data", "net_load"):
             try:
                 st.session_state["dba_df_long_sess"] = run_query(f"""
@@ -1017,7 +1032,7 @@ def render():
             )
 
     if selected_tool == "Unused Objects":
-        st.header("🗑️ Unused Objects")
+        st.header("Unused Objects")
         if _load_button("Find Unused Tables", "unused_load"):
             try:
                 st.session_state["dba_df_unused"] = run_query(f"""
@@ -1045,7 +1060,7 @@ def render():
             )
 
     if selected_tool == "Snowpipe Monitor":
-        st.header("🔧 Snowpipe Monitor")
+        st.header("Snowpipe Monitor")
         sp_days = day_window_selectbox("Lookback", key="spipe_days", default=7)
         if _load_button("Load Pipe Usage", "spipe_load"):
             try:
@@ -1071,7 +1086,7 @@ def render():
             )
 
     if selected_tool == "QAS Monitor":
-        st.header("⚡ QAS Monitor")
+        st.header("QAS Monitor")
         qas_days = day_window_selectbox("Lookback", key="qas_days", default=7)
         if _load_button("Load QAS Data", "qas_load"):
             try:
@@ -1108,7 +1123,7 @@ def render():
             )
 
     if selected_tool == "Schema Compare":
-        st.header("📐 Schema Compare")
+        st.header("Schema Compare")
         st.caption("Choose source and target databases first; schema choices are loaded from the selected database.")
         refresh_schema_meta = st.button("Refresh database and schema choices", key="sc_refresh_metadata")
         scope_key = f"{get_active_company()}_{get_active_environment()}"
@@ -1207,7 +1222,7 @@ def render():
                 st.error(f"Compare failed: {format_snowflake_error(e)}")
 
     if selected_tool == "Recent Objects":
-        st.header("🔎 Recent Objects")
+        st.header("Recent Objects")
         obj_days = day_window_selectbox("Created/altered within", key="obj_days", default=30)
         refresh_obj_meta = st.button("Refresh database choices", key="obj_refresh_metadata")
         if refresh_obj_meta or "obj_database_options" not in st.session_state:
@@ -1311,7 +1326,7 @@ def render():
             st.info("Deploy or refresh `snowflake/OVERWATCH_MART_SETUP.sql` outside the dashboard, then recheck.")
 
     if selected_tool == "Dynamic Tables":
-        st.header("🔄 Dynamic Tables")
+        st.header("Dynamic Tables")
         if st.button("Load Dynamic Tables", key="dyn_load"):
             try:
                 df_dyn = _show_to_df(session, "SHOW DYNAMIC TABLES IN ACCOUNT")
@@ -1406,7 +1421,7 @@ def render():
             download_csv(df_dyn, "dynamic_tables.csv")
 
     if selected_tool == "Replication":
-        st.header("🔁 Replication")
+        st.header("Replication")
         repl_days = day_window_selectbox("Lookback", key="repl_days", default=30)
         if st.button("Load Replication History", key="repl_load"):
             repl_sql_primary = f"""
@@ -1468,7 +1483,7 @@ def render():
             download_csv(df_repl, "replication_history.csv")
 
     if selected_tool == "Serverless Costs":
-        st.header("💻 Serverless Costs")
+        st.header("Serverless Costs")
         if get_active_company() != "ALL":
             st.info(
                 "Serverless metering is account-level in Snowflake and does not expose "
@@ -1506,7 +1521,7 @@ def render():
 
     # ── TAB 14: CORTEX AI LIMITS ──────────────────────────────────────────────
     if selected_tool == "Cortex AI Limits":
-        st.header("🤖 Cortex AI Limits")
+        st.header("Cortex AI Limits")
         st.caption(
             "View and modify Cortex AI service limits for your account. "
             "These control daily token budgets, inference rate limits, and Cortex Search/Analyst access. "
@@ -1514,7 +1529,7 @@ def render():
         )
 
         # ── Current parameters ────────────────────────────────────────────────
-        if st.button("🔄 Load Current AI Parameters", key="cortex_params_load"):
+        if st.button("Load Current AI Parameters", key="cortex_params_load"):
             results = {}
 
             # SHOW PARAMETERS — account-level Cortex controls
@@ -1655,7 +1670,7 @@ def render():
                     "APPLY",
                     "cortex_apply_confirm",
                 )
-                if st.button("✅ Apply Limit", type="primary", key="cortex_apply", disabled=admin_button_disabled()):
+                if st.button("Apply Limit", type="primary", key="cortex_apply", disabled=admin_button_disabled()):
                     if _require_typed_confirmation(cortex_confirmed, "APPLY"):
                         if cortex_daily_limit <= 0:
                             st.info("Set a positive Cortex Code daily credit limit before applying.")
@@ -1667,7 +1682,7 @@ def render():
                         _caller_role = str(st.session_state.get("_overwatch_current_role", "") or "").strip()
                         if not _current_role_allows_alter_account(_caller_role):
                             st.error(
-                                f"⛔ **ALTER ACCOUNT requires ACCOUNTADMIN.** "
+                                f"ALTER ACCOUNT requires ACCOUNTADMIN. "
                                 f"Your current role is `{_caller_role or 'unknown'}`. "
                                 f"Switch to ACCOUNTADMIN in Snowflake and reload OVERWATCH, "
                                 f"or copy the generated SQL below and run it in a Worksheet."
@@ -1683,10 +1698,10 @@ def render():
                                     failed.append(f"{stmt} -> {format_snowflake_error(e)}")
 
                             if applied:
-                                st.success(f"✅ {len(applied)} parameter(s) updated successfully.")
+                                st.success(f"{len(applied)} parameter(s) updated successfully.")
                             if failed:
                                 for f_msg in failed:
-                                    st.warning(f"⚠️ {f_msg}")
+                                    st.warning(f"{f_msg}")
                                 st.info("Check SHOW PARAMETERS IN ACCOUNT and confirm the current role can modify account parameters.")
             with col_dl:
                 st.download_button(
@@ -1730,7 +1745,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 
     # ── TAB 15: TASK GRAPH CONTROL ────────────────────────────────────────────
     if selected_tool == "Task Graph Control":
-        st.header("🔀 Task Graph Control")
+        st.header("Task Graph Control")
         st.caption(
             "Cancel running queries spawned by tasks, cancel task graphs mid-run, "
             "suspend/resume individual tasks or entire DAG trees, and restart failed tasks. "
@@ -1803,7 +1818,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         f"tg_cancel_confirm_{cancel_qid}",
                     ) if cancel_qid else False
                     if cancel_qid and st.button(
-                        "⛔ Cancel This Query",
+                        "Cancel This Query",
                         type="primary",
                         key="tg_cancel_q",
                         disabled=admin_button_disabled(),
@@ -1811,7 +1826,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         if _require_typed_confirmation(cancel_confirmed, "CANCEL"):
                             try:
                                 session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(cancel_qid)})").collect()
-                                st.success(f"✅ Cancel sent for `{cancel_qid}`")
+                                st.success(f"Cancel sent for `{cancel_qid}`")
                             except Exception as e:
                                 st.error(f"Cancel failed: {format_snowflake_error(e)}")
                 else:
@@ -1847,7 +1862,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 running_runs = df_r[df_r["STATE"].isin(["EXECUTING","RUNNING"])] if "STATE" in df_r.columns else pd.DataFrame()
 
                 if not running_runs.empty:
-                    st.warning(f"⚠️ {len(running_runs)} task run(s) currently executing or scheduled.")
+                    st.warning(f"{len(running_runs)} task run(s) currently executing or scheduled.")
                     render_priority_dataframe(
                         running_runs,
                         title="Running or scheduled task runs",
@@ -1880,7 +1895,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                         placeholder="CANCEL",
                                     )
                                     submitted = st.form_submit_button(
-                                        "⛔ Cancel Graph Run",
+                                        "Cancel Graph Run",
                                         type="primary",
                                         disabled=admin_button_disabled(),
                                     )
@@ -1891,7 +1906,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                             session.sql(
                                                 f"SELECT SYSTEM$CANCEL_TASK_GRAPH({sql_literal(str(sel_graph))})"
                                             ).collect()
-                                            st.success(f"✅ Graph run `{sel_graph}` cancelled.")
+                                            st.success(f"Graph run `{sel_graph}` cancelled.")
                                             st.session_state.pop("dba_df_task_runs", None)
                                             st.rerun()
                                         except Exception as e:
@@ -1914,7 +1929,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                     placeholder="CANCEL",
                                 )
                                 submitted = st.form_submit_button(
-                                    "⛔ Cancel Query",
+                                    "Cancel Query",
                                     disabled=admin_button_disabled(),
                                 )
                             if sel_qid and submitted:
@@ -1922,7 +1937,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                 if _require_typed_confirmation(run_confirmed, "CANCEL"):
                                     try:
                                         session.sql(f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(str(sel_qid))})").collect()
-                                        st.success(f"✅ Cancel sent for `{sel_qid}`")
+                                        st.success(f"Cancel sent for `{sel_qid}`")
                                     except Exception as e:
                                         st.error(f"Cancel failed: {format_snowflake_error(e)}")
                 else:
@@ -1966,8 +1981,8 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 suspended = df_tasks[df_tasks["STATE"] == "suspended"] if "STATE" in df_tasks.columns else pd.DataFrame()
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Total Tasks",       len(df_tasks))
-                c2.metric("▶ Active",           len(started))
-                c3.metric("⏸ Suspended",        len(suspended))
+                c2.metric("Active",             len(started))
+                c3.metric("Suspended",          len(suspended))
 
                 task_display_cols = (
                     ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE"]
@@ -2009,43 +2024,43 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
                     with col_s1:
-                        if st.button("⏸ Suspend", key="tg_suspend", disabled=admin_button_disabled(state=="suspended")):
+                        if st.button("Suspend", key="tg_suspend", disabled=admin_button_disabled(state=="suspended")):
                             if _require_typed_confirmation(task_confirmed, sel_task):
                                 try:
                                     session.sql(f"ALTER TASK {full_n} SUSPEND").collect()
-                                    st.success(f"✅ `{sel_task}` suspended.")
+                                    st.success(f"`{sel_task}` suspended.")
                                     st.session_state.pop("dba_df_tg_tasks", None)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Suspend failed: {format_snowflake_error(e)}")
 
                     with col_s2:
-                        if st.button("▶ Resume", key="tg_resume", disabled=admin_button_disabled(state=="started")):
+                        if st.button("Resume", key="tg_resume", disabled=admin_button_disabled(state=="started")):
                             if _require_typed_confirmation(task_confirmed, sel_task):
                                 try:
                                     session.sql(f"ALTER TASK {full_n} RESUME").collect()
-                                    st.success(f"✅ `{sel_task}` resumed.")
+                                    st.success(f"`{sel_task}` resumed.")
                                     st.session_state.pop("dba_df_tg_tasks", None)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Resume failed: {format_snowflake_error(e)}")
 
                     with col_s3:
-                        if st.button("▶▶ Execute Now", key="tg_execute", disabled=admin_button_disabled()):
+                        if st.button("Execute Now", key="tg_execute", disabled=admin_button_disabled()):
                             if _require_typed_confirmation(task_confirmed, sel_task):
                                 try:
                                     session.sql(f"EXECUTE TASK {full_n}").collect()
-                                    st.success(f"✅ `{sel_task}` triggered.")
+                                    st.success(f"`{sel_task}` triggered.")
                                 except Exception as e:
                                     st.error(f"Execute failed: {format_snowflake_error(e)}")
 
                     with col_s4:
-                        if st.button("🔁 Retry Last Failed", key="tg_retry", disabled=admin_button_disabled()):
+                        if st.button("Retry Last Failed", key="tg_retry", disabled=admin_button_disabled()):
                             # EXECUTE TASK WITH LAST_ERROR retry pattern
                             if _require_typed_confirmation(task_confirmed, sel_task):
                                 try:
                                     session.sql(f"EXECUTE TASK {full_n}").collect()
-                                    st.success(f"✅ Retry triggered for `{sel_task}`.")
+                                    st.success(f"Retry triggered for `{sel_task}`.")
                                     st.caption(
                                         "Note: Snowflake does not have a native RETRY_LAST_FAILED command. "
                                         "This re-executes the task immediately. "
@@ -2096,17 +2111,17 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 
                         b1, b2 = st.columns(2)
                         with b1:
-                            if st.button("⏸ Suspend Entire Graph", type="primary", key="tg_bulk_suspend", disabled=admin_button_disabled()):
+                            if st.button("Suspend Entire Graph", type="primary", key="tg_bulk_suspend", disabled=admin_button_disabled()):
                                 if _require_typed_confirmation(graph_confirmed, sel_root):
                                     try:
                                         session.sql(f"ALTER TASK {root_full} SUSPEND").collect()
-                                        st.success(f"✅ Root task `{sel_root}` suspended — entire graph will stop scheduling.")
+                                        st.success(f"Root task `{sel_root}` suspended - entire graph will stop scheduling.")
                                         st.session_state.pop("dba_df_tg_tasks", None)
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"Suspend failed: {format_snowflake_error(e)}")
                         with b2:
-                            if st.button("▶ Resume Entire Graph", type="primary", key="tg_bulk_resume", disabled=admin_button_disabled()):
+                            if st.button("Resume Entire Graph", type="primary", key="tg_bulk_resume", disabled=admin_button_disabled()):
                                 if _require_typed_confirmation(graph_confirmed, sel_root):
                                     errors_seen = []
                                     # Resume children first, then root
@@ -2130,7 +2145,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                         for err in errors_seen:
                                             st.caption(err)
                                     else:
-                                        st.success(f"✅ Entire graph resumed. {len(children)+1} task(s) active.")
+                                        st.success(f"Entire graph resumed. {len(children)+1} task(s) active.")
                                     st.session_state.pop("dba_df_tg_tasks", None)
                                     st.rerun()
 
@@ -2212,8 +2227,8 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         is_root = preds.strip() in ("","[]","None","nan","")
                         indent  = "" if is_root else "↳ "
 
-                        state_icon = "▶️" if state=="started" else "⏸" if state=="suspended" else "⚪"
-                        lr_icon    = "✅" if lr_st=="SUCCEEDED" else ("❌" if lr_st=="FAILED" else "⏳")
+                        state_icon = "Started" if state=="started" else "Suspended" if state=="suspended" else "Unknown"
+                        lr_icon    = "Succeeded" if lr_st=="SUCCEEDED" else ("Failed" if lr_st=="FAILED" else "Pending")
 
                         st.markdown(
                             f"{'&nbsp;'*4 if indent else ''}{indent}"
@@ -2238,7 +2253,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 
     # ── TAB 16: USAGE LOG (carried forward) ───────────────────────────────────
     if selected_tool == "Usage Log":
-        st.header("📊 OVERWATCH Usage Log")
+        st.header("OVERWATCH Usage Log")
         st.caption("Tracks which sections are loaded, by whom, how often, and how fast.")
         from utils.logging import set_logging_enabled, is_logging_enabled
         from config import ALERT_DB, ALERT_SCHEMA
@@ -2293,7 +2308,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 
     # Cost formula audit
     if selected_tool == "Cost Formula Audit":
-        st.header("🧮 Cost Formula Audit")
+        st.header("Cost Formula Audit")
         st.caption(
             "Documents which OVERWATCH cost numbers reconcile to Snowflake billing "
             "sources and which are allocation or forecast estimates."

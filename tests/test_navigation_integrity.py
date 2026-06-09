@@ -263,6 +263,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
         ask_text = (APP_ROOT / "utils" / "ask_overwatch.py").read_text(encoding="utf-8")
         self.assertIn("Top Priority Brief", app_text)
+        self.assertIn("load or refresh a section to populate priority evidence", app_text)
         self.assertIn('"top_priority_brief_domain"', app_text)
         self.assertIn("build_top_priority_brief_cards(", app_text)
         self.assertIn("_render_top_priority_brief(active_section, active_company, current_role or \"\")", app_text)
@@ -436,6 +437,15 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Data movement and replication", change_drift.WORKFLOWS)
         self.assertIn("Controlled DBA actions", change_drift.WORKFLOWS)
         self.assertEqual(change_drift.WORKFLOW_MODULES["Controlled DBA actions"], "sections.dba_tools")
+        change_drift_text = (APP_ROOT / "sections" / "change_drift.py").read_text(encoding="utf-8")
+        dba_tools_text = (APP_ROOT / "sections" / "dba_tools.py").read_text(encoding="utf-8")
+        object_change_text = (APP_ROOT / "sections" / "object_change_monitor.py").read_text(encoding="utf-8")
+        self.assertIn('st.session_state["dba_tools_focus_tool"] = "Schema Compare"', change_drift_text)
+        self.assertIn('focus_tool = str(st.session_state.get("dba_tools_focus_tool") or "")', dba_tools_text)
+        self.assertIn("focus_tool_active = (", dba_tools_text)
+        self.assertIn("selected_tool = focus_tool", dba_tools_text)
+        self.assertIn("if not focus_tool_active:", dba_tools_text)
+        self.assertNotIn('st.header("Who Changed What?")', object_change_text)
         self.assertEqual(
             change_drift.WORKFLOWS[:5],
             (

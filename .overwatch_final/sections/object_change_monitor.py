@@ -209,7 +209,7 @@ def render():
             ),
         }
         return qh_caps
-    st.header("Who Changed What?")
+    st.header("Object Change Audit")
     st.caption("DDL, grants, roles, policy changes, and owner changes. Terraform evidence is consolidated in Change & Drift.")
 
     days = day_window_selectbox("Lookback", key="ocm_days", default=14)

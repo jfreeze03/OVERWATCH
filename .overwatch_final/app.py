@@ -633,6 +633,7 @@ def _priority_brief_row(card: dict) -> str:
 
 def _render_top_priority_brief(active_section: str, company: str, role: str) -> None:
     """Render loaded evidence as a deterministic morning-priority brief."""
+    loaded_state = _snapshot_ask_overwatch_state(st.session_state)
     st.markdown(
         """
         <div class="ow-priority-brief-shell">
@@ -641,6 +642,10 @@ def _render_top_priority_brief(active_section: str, company: str, role: str) -> 
         """,
         unsafe_allow_html=True,
     )
+    scope_label = _priority_brief_scope_label(active_section, company) + (f" / {role}" if role else "")
+    if not loaded_state:
+        st.caption(f"{scope_label} - load or refresh a section to populate priority evidence.")
+        return
     brief_col, domain_col = st.columns([5.2, 1.4])
     with domain_col:
         selected_domain = st.selectbox(
@@ -649,15 +654,8 @@ def _render_top_priority_brief(active_section: str, company: str, role: str) -> 
             key="top_priority_brief_domain",
         )
 
-    loaded_state = _snapshot_ask_overwatch_state(st.session_state)
     with brief_col:
-        st.caption(
-            f"{_priority_brief_scope_label(active_section, company)}"
-            + (f" / {role}" if role else "")
-        )
-        if not loaded_state:
-            st.info("No loaded priority evidence yet.")
-            return
+        st.caption(scope_label)
         try:
             from utils.ask_overwatch import build_top_priority_brief_cards
 
@@ -670,7 +668,7 @@ def _render_top_priority_brief(active_section: str, company: str, role: str) -> 
             st.warning("Priority brief could not read loaded evidence.")
             return
         if not cards:
-            st.info("No loaded priority evidence for this domain.")
+            st.caption("No priority evidence for the selected domain.")
             return
         st.markdown(
             "".join(_priority_brief_row(card) for card in cards),

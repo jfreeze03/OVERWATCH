@@ -2844,10 +2844,17 @@ def _render_security_source_health(company: str, environment: str) -> None:
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
+    if st.session_state.get("_security_posture_brief_first_version") != 1:
+        if (
+            st.session_state.get("exceptions_only_mode")
+            and st.session_state.get("security_posture_view") == "Access Workflows"
+        ):
+            st.session_state["security_posture_view"] = "Security Brief"
+        st.session_state["_security_posture_brief_first_version"] = 1
     if st.session_state.get("exceptions_only_mode") and "security_posture_workflow" not in st.session_state:
         st.session_state["security_posture_workflow"] = "Access posture"
     if st.session_state.get("exceptions_only_mode") and "security_posture_view" not in st.session_state:
-        st.session_state["security_posture_view"] = "Access Workflows"
+        st.session_state["security_posture_view"] = "Security Brief"
     if st.session_state.get("security_posture_view") not in SECURITY_POSTURE_VIEWS:
         st.session_state["security_posture_view"] = SECURITY_POSTURE_VIEWS[0]
     render_signal_confidence(

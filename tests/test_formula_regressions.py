@@ -115,6 +115,7 @@ from sections.cost_contract import (  # noqa: E402
     _cost_snapshot_chart_rows,
     _cost_snapshot_kpi_rows,
     _cost_snapshot_slide_brief,
+    _cost_splash_next_move,
     _cost_splash_summary,
     _cost_warehouse_ranking_rows,
     _service_lens_movement_rows,
@@ -811,6 +812,19 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(summary["prior_spend"], 305.4)
         self.assertAlmostEqual(summary["spend_delta"], 73.6)
         self.assertEqual(summary["active_services"], 2)
+
+        next_move = _cost_splash_next_move(summary)
+        self.assertEqual(next_move[0], "Explain bill / attribution / contract")
+        self.assertEqual(next_move[1], "Bill movement")
+
+        cortex_summary = dict(summary, delta_pct=0.0, top_warehouse_delta_spend=0.0)
+        cortex_move = _cost_splash_next_move(cortex_summary)
+        self.assertEqual(cortex_move[0], "AI and Cortex spend")
+
+        value_summary = dict(cortex_summary, cortex_spend=0.0, projected_30d_spend=0.0)
+        value_move = _cost_splash_next_move(value_summary)
+        self.assertEqual(value_move[0], "Snowflake value log")
+
         service_summary = {"top_moving_service": "CORTEX", "top_moving_delta": 4.25}
         service_lens = pd.DataFrame([
             {

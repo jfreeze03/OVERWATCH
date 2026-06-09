@@ -1086,7 +1086,10 @@ class NavigationIntegrityTests(unittest.TestCase):
             warehouse_health_render_preload,
         )
         self.assertNotIn("_warehouse_support_panels_have_state()", warehouse_health_render_preload)
-        self.assertIn('if st.session_state.get("exceptions_only_mode"):', warehouse_health_text)
+        self.assertIn(
+            'if st.session_state.get("exceptions_only_mode") and warehouse_view != "Overview & Scaling":',
+            warehouse_health_text,
+        )
         self.assertNotIn("st.stop()", warehouse_health_text)
         self.assertIn("def render_workflow_selector", warehouse_health_text)
         self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', warehouse_health_text)
@@ -1158,9 +1161,14 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Cost Overview", cost_contract_text)
         self.assertIn("Cortex Spend", cost_contract_text)
         self.assertIn("Top AI User", cost_contract_text)
+        self.assertIn("Next Cost Move", cost_contract_text)
+        self.assertIn("Open workflow", cost_contract_text)
+        self.assertIn("def _cost_splash_next_move", cost_contract_text)
         self.assertIn("Warehouse Ranking", cost_contract_text)
-        self.assertIn("Cost evidence view", cost_contract_text)
-        self.assertIn("Cost overview table data", cost_contract_text)
+        self.assertIn("def _render_cost_chart_with_data_toggle", cost_contract_text)
+        self.assertIn("Back to chart", cost_contract_text)
+        self.assertNotIn("Cost evidence view", cost_contract_text)
+        self.assertNotIn("Cost overview table data", cost_contract_text)
         self.assertIn("PowerPoint-ready snapshot", cost_contract_text)
         self.assertIn("PowerPoint support data", cost_contract_text)
         self.assertIn("PowerPoint Cost Snapshot", cost_contract_text)
@@ -1244,6 +1252,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _warehouse_action_brief", warehouse_health_text)
         self.assertIn("def _render_warehouse_action_brief", warehouse_health_text)
         self.assertIn("def _render_warehouse_operating_snapshot", warehouse_health_text)
+        self.assertIn("def _warehouse_global_filter_clause", warehouse_health_text)
         self.assertIn('st.markdown("**Action Brief**")', warehouse_health_text)
         self.assertIn('st.markdown("**Operating Snapshot**")', warehouse_health_text)
         self.assertIn('cols = st.columns(4)', warehouse_health_text)
@@ -1264,6 +1273,9 @@ class NavigationIntegrityTests(unittest.TestCase):
             "warehouse_view = render_workflow_selector",
             1,
         )[0]
+        self.assertNotIn("get_global_filter_clause(", warehouse_render_preload)
+        self.assertNotIn("wh_query_filters", warehouse_health_text)
+        self.assertNotIn("wh_plain_filters", warehouse_health_text)
         warehouse_render_start = warehouse_health_text.split("def render():", 1)[1].split(
             "render_operator_briefing",
             1,
@@ -1344,6 +1356,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("build_agentic_ai_surface_scorecard(", architecture_platform_futures_preload)
         security_posture_render_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
             'if st.button("Load Security Brief"',
+            1,
+        )[0]
+        security_posture_render_start = security_posture_text.split("def render() -> None:", 1)[1].split(
+            "render_signal_confidence(",
             1,
         )[0]
         security_posture_default_preload = security_posture_text.split("def render() -> None:", 1)[1].split(
@@ -1607,6 +1623,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("SECURITY_POSTURE_VIEWS", security_posture_text)
         self.assertIn('st.selectbox(\n        "Security posture view"', security_posture_text)
         self.assertNotIn('st.radio(\n        "Security posture view"', security_posture_text)
+        self.assertIn('st.session_state["security_posture_view"] = "Security Brief"', security_posture_render_start)
+        self.assertNotIn('st.session_state["security_posture_view"] = "Access Workflows"', security_posture_render_start)
         self.assertIn('"Security Brief"', security_posture_text)
         self.assertIn('"Evidence Readiness"', security_posture_text)
         self.assertIn('"Access Workflows"', security_posture_text)

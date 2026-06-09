@@ -302,6 +302,18 @@ def _warehouse_frame_len(frame) -> int:
         return 0
 
 
+def _warehouse_global_filter_clause(alias: str | None = None) -> str:
+    """Build query-history global filters only when a live SQL path is opened."""
+    prefix = f"{alias}." if alias else ""
+    return get_global_filter_clause(
+        date_col=f"{prefix}start_time",
+        wh_col=f"{prefix}warehouse_name",
+        user_col=f"{prefix}user_name",
+        role_col=f"{prefix}role_name",
+        db_col=f"{prefix}database_name",
+    )
+
+
 def _warehouse_column_sum(frame, column: str) -> float:
     if not _warehouse_frame_has_rows(frame) or column not in frame.columns:
         return 0.0
@@ -3482,20 +3494,6 @@ def render():
     global_database = str(st.session_state.get("global_database", "") or "").strip()
     global_start_date = st.session_state.get("global_start_date")
     global_end_date = st.session_state.get("global_end_date")
-    wh_query_filters = get_global_filter_clause(
-        date_col="q.start_time",
-        wh_col="q.warehouse_name",
-        user_col="q.user_name",
-        role_col="q.role_name",
-        db_col="q.database_name",
-    )
-    wh_plain_filters = get_global_filter_clause(
-        date_col="start_time",
-        wh_col="warehouse_name",
-        user_col="user_name",
-        role_col="role_name",
-        db_col="database_name",
-    )
 
     selected_days = safe_int(st.session_state.get("wh_days", 7), 7) or 7
     if selected_days < 1 or selected_days > 30:
@@ -3527,7 +3525,8 @@ def render():
     elif st.button("Support Panels", key="warehouse_health_open_support_panels"):
         st.session_state["warehouse_health_support_panels_open"] = True
         st.rerun()
-    if st.session_state.get("exceptions_only_mode"):
+    if st.session_state.get("exceptions_only_mode") and warehouse_view != "Overview & Scaling":
+        st.caption("Exceptions-only mode keeps specialist warehouse workflows gated until selected for investigation.")
         return
 
     # -- OVERVIEW --------------------------------------------------------------
@@ -3575,7 +3574,7 @@ def render():
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                         WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
                           AND q.warehouse_name IS NOT NULL
-                          {wh_query_filters}
+                          {_warehouse_global_filter_clause("q")}
                         GROUP BY q.warehouse_name
                         ORDER BY total_queries DESC
                         """, ttl_key=f"wh_overview_live_{company}_{wh_days}", tier="historical")
@@ -3780,7 +3779,7 @@ def render():
                                     FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
                                     WHERE q.start_time >= DATEADD('day', -{wh_days}, CURRENT_TIMESTAMP())
                                       AND q.warehouse_name IS NOT NULL
-                                      {wh_query_filters}
+                                      {_warehouse_global_filter_clause("q")}
                                 )
                                 WHERE rn = 1
                             )
@@ -3859,7 +3858,7 @@ def render():
                     LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
                     WHERE q.start_time >= DATEADD('day', -{eff_days}, CURRENT_TIMESTAMP())
                       AND q.warehouse_name IS NOT NULL
-                      {wh_query_filters}
+                      {_warehouse_global_filter_clause("q")}
                     GROUP BY q.warehouse_name
                     ORDER BY efficiency_score ASC, metered_credits DESC
                     LIMIT 200
@@ -3938,7 +3937,7 @@ def render():
                     WHERE start_time >= DATEADD('day', -{sp_days}, CURRENT_TIMESTAMP())
                       AND ({exprs["local_spill_row_expr"]} > 0 OR {exprs["remote_spill_row_expr"]} > 0)
                       AND warehouse_name IS NOT NULL
-                      {wh_plain_filters}
+                      {_warehouse_global_filter_clause()}
                     GROUP BY warehouse_name
                     ORDER BY local_spill_gb + remote_spill_gb DESC
                 """, ttl_key=f"wh_spill_{company}_{sp_days}", tier="historical")
@@ -4026,7 +4025,7 @@ def render():
                         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
                         WHERE start_time >= DATEADD('day', -{live_days}, CURRENT_TIMESTAMP())
                           AND warehouse_name IS NOT NULL
-                          {wh_plain_filters}
+                          {_warehouse_global_filter_clause()}
                         GROUP BY warehouse_name, day_of_week, hour_of_day
                         ORDER BY warehouse_name, day_of_week, hour_of_day
                     """, ttl_key=f"wh_heatmap_live_{company}_{live_days}", tier="historical")

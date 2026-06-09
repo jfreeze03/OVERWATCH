@@ -315,33 +315,6 @@ def _render_warehouse_ranking_chart(warehouse_delta: pd.DataFrame, credit_price:
     st.altair_chart(chart, width="stretch")
 
 
-def _render_cost_splash_data_view(trend: pd.DataFrame, warehouse_delta: pd.DataFrame, credit_price: float) -> None:
-    trend_rows = _cost_spend_trend_rows(trend, credit_price)
-    warehouse_rows = _cost_warehouse_ranking_rows(warehouse_delta, credit_price, limit=12)
-    left, right = st.columns([1.2, 1.0])
-    with left:
-        render_priority_dataframe(
-            trend_rows,
-            title="Spend trend data",
-            priority_columns=["USAGE_DATE", "DAILY_CREDITS", "SPEND_USD", "ROLLING_SPEND_USD"],
-            raw_label="All spend trend rows",
-            height=280,
-            max_rows=12,
-        )
-    with right:
-        render_priority_dataframe(
-            warehouse_rows,
-            title="Warehouse ranking data",
-            priority_columns=[
-                "WAREHOUSE_NAME", "CURRENT_SPEND_USD", "PRIOR_SPEND_USD", "DELTA_SPEND_USD",
-                "CURRENT_CREDITS", "CREDIT_DELTA", "PCT_DELTA",
-            ],
-            raw_label="All warehouse ranking rows",
-            height=280,
-            max_rows=12,
-        )
-
-
 def _cost_splash_status(summary: dict) -> tuple[str, str, str]:
     delta_pct = safe_float(summary.get("delta_pct"))
     top_wh = str(summary.get("top_warehouse") or "No warehouse")
@@ -396,6 +369,57 @@ def _render_cost_splash_narrative(summary: dict, *, days: int) -> None:
     if top_user_display != top_user:
         notes.append(f"Top Cortex user: {top_user}")
     st.caption(" | ".join(notes))
+
+
+def _cost_splash_next_move(summary: dict) -> tuple[str, str, str]:
+    delta_pct = safe_float(summary.get("delta_pct"))
+    top_wh = str(summary.get("top_warehouse") or "No warehouse")
+    top_wh_delta = safe_float(summary.get("top_warehouse_delta_spend"))
+    cortex_spend = safe_float(summary.get("cortex_spend"))
+    top_user = str(summary.get("top_cortex_user") or "No Cortex user")
+    projected_30d = safe_float(summary.get("projected_30d_spend"))
+
+    if delta_pct >= 20 or top_wh_delta > 0:
+        return (
+            "Explain bill / attribution / contract",
+            "Bill movement",
+            f"{top_wh} is the first cost driver to explain ({_slide_money(top_wh_delta, signed=True)}).",
+        )
+    if cortex_spend > 0:
+        return (
+            "AI and Cortex spend",
+            "AI spend",
+            f"Cortex spend is {_slide_money(cortex_spend)}; top user is {top_user}.",
+        )
+    if projected_30d > safe_float(summary.get("spend")):
+        return (
+            "FinOps Control Center",
+            "Run-rate check",
+            f"Projected 30-day spend is {_slide_money(projected_30d)}. Check pacing and controls.",
+        )
+    return (
+        "Snowflake value log",
+        "Value proof",
+        "No dominant cost incident is visible. Capture verified savings or review attribution.",
+    )
+
+
+def _render_cost_splash_next_move(summary: dict) -> None:
+    workflow, state, detail = _cost_splash_next_move(summary)
+    with st.container(border=True):
+        label_col, detail_col, action_col = st.columns([1.15, 4.2, 1.2])
+        with label_col:
+            st.markdown("**Next Cost Move**")
+            st.caption(state)
+        with detail_col:
+            st.markdown(f"**{workflow}**")
+            st.caption(detail)
+        with action_col:
+            st.write("")
+            if st.button("Open workflow", key="cost_contract_splash_next_workflow", width="stretch"):
+                st.session_state["cost_contract_workflow"] = workflow
+                st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
+                st.rerun()
 
 
 def _freshness_note(source: str) -> str:
@@ -5049,6 +5073,7 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
         return
 
     _render_cost_splash_narrative(summary, days=int(days))
+    _render_cost_splash_next_move(summary)
 
     if splash.get("source"):
         proof_note = (
@@ -5060,39 +5085,28 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
 
     trend = splash.get("trend", pd.DataFrame())
     warehouse_delta = splash.get("warehouse_delta", pd.DataFrame())
-    evidence_view = st.radio(
-        "Cost evidence view",
-        ("Charts", "Data"),
-        horizontal=True,
-        key="cost_contract_splash_evidence_view",
+    st.caption("Use each chart's Data view to inspect exact rows, then return to the chart.")
+    _render_cost_chart_with_data_toggle(
+        "Spend Trend",
+        "cost_contract_spend_trend",
+        lambda: _render_spend_trend_chart(trend, credit_price),
+        _cost_spend_trend_rows(trend, credit_price),
+        priority_columns=["USAGE_DATE", "DAILY_CREDITS", "SPEND_USD", "ROLLING_SPEND_USD"],
+        sort_by=["USAGE_DATE"],
+        max_rows=30,
     )
-    if evidence_view == "Data":
-        _render_cost_splash_data_view(trend, warehouse_delta, credit_price)
-    else:
-        _render_cost_chart_with_data_toggle(
-            "Spend Trend",
-            "cost_contract_spend_trend",
-            lambda: _render_spend_trend_chart(trend, credit_price),
-            _cost_spend_trend_rows(trend, credit_price),
-            priority_columns=["USAGE_DATE", "DAILY_CREDITS", "SPEND_USD", "ROLLING_SPEND_USD"],
-            sort_by=["USAGE_DATE"],
-            max_rows=30,
-        )
-        _render_cost_chart_with_data_toggle(
-            "Warehouse Ranking",
-            "cost_contract_warehouse_ranking",
-            lambda: _render_warehouse_ranking_chart(warehouse_delta, credit_price),
-            _cost_warehouse_ranking_rows(warehouse_delta, credit_price, limit=24),
-            priority_columns=[
-                "WAREHOUSE_NAME", "CURRENT_SPEND_USD", "PRIOR_SPEND_USD",
-                "DELTA_SPEND_USD", "CURRENT_CREDITS", "PRIOR_CREDITS", "PCT_DELTA",
-            ],
-            sort_by=["CURRENT_SPEND_USD"],
-            max_rows=24,
-        )
-
-    with st.expander("Cost overview table data", expanded=False):
-        _render_cost_splash_data_view(trend, warehouse_delta, credit_price)
+    _render_cost_chart_with_data_toggle(
+        "Warehouse Ranking",
+        "cost_contract_warehouse_ranking",
+        lambda: _render_warehouse_ranking_chart(warehouse_delta, credit_price),
+        _cost_warehouse_ranking_rows(warehouse_delta, credit_price, limit=24),
+        priority_columns=[
+            "WAREHOUSE_NAME", "CURRENT_SPEND_USD", "PRIOR_SPEND_USD",
+            "DELTA_SPEND_USD", "CURRENT_CREDITS", "PRIOR_CREDITS", "PCT_DELTA",
+        ],
+        sort_by=["CURRENT_SPEND_USD"],
+        max_rows=24,
+    )
 
     with st.expander("PowerPoint-ready snapshot", expanded=False):
         _render_powerpoint_cost_snapshot(splash, company=company, days=int(days), credit_price=credit_price)

@@ -157,11 +157,14 @@ class PerformanceFrameworkTests(unittest.TestCase):
     def test_live_concurrent_runner_uses_only_safe_load_buttons(self):
         runner = load_live_runner()
         runner_text = (PERF_ROOT / "live_concurrent_runner.py").read_text(encoding="utf-8")
+        readme = (PERF_ROOT / "README.md").read_text(encoding="utf-8")
         unsafe_tokens = ("Grant", "Save", "Queue", "Send", "Retry", "Suspend", "Resume", "Cancel", "Drop", "Alter")
 
         self.assertIn("DEFAULT_LOAD_BUTTONS", runner_text)
         self.assertEqual(runner.DEFAULT_LOAD_BUTTONS["Cost & Contract"], "Load Cost Cockpit")
         self.assertEqual(runner.DEFAULT_LOAD_BUTTONS["Alert Center"], "Load Issue Inbox")
+        self.assertIn("Alert Center: `Load Issue Inbox`", readme)
+        self.assertIn("Cost & Contract: `Load Cost Cockpit`", readme)
         self.assertNotIn("Account Health", runner.DEFAULT_LOAD_BUTTONS)
         self.assertNotIn("Warehouse Health", runner.DEFAULT_LOAD_BUTTONS)
         self.assertNotIn("Change & Drift", runner.DEFAULT_LOAD_BUTTONS)

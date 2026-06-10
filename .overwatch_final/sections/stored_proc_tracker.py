@@ -808,8 +808,8 @@ def render():
             "and orphan/suspended-task risk."
         )
         if st.button("Load Procedure Operations", key="sp_ops_load"):
-            proc_inventory_source = "OVERWATCH mart: DIM_PROCEDURE_SNAPSHOT"
-            proc_call_source = "OVERWATCH mart: FACT_PROCEDURE_RUN"
+            proc_inventory_source = "Fast procedure inventory"
+            proc_call_source = "Fast procedure run summary"
             try:
                 df_procs = run_query(
                     build_mart_procedure_inventory_sql(
@@ -968,7 +968,7 @@ def render():
                     ttl_key=f"procedure_sla_watch_mart_schema_context_v1_{company}_{sp_days}",
                     tier="standard",
                 )
-                proc_sla_source = "OVERWATCH mart: FACT_PROCEDURE_RUN"
+                proc_sla_source = "Fast procedure SLA summary"
                 has_root_query_id = True
                 if df_proc_runs.empty:
                     has_root_query_id = _query_history_has_root_query_id(session)
@@ -997,10 +997,10 @@ def render():
             c3.metric("Runtime SLA Breaches", f"{safe_int(summary.get('SLA_BREACHES')):,}", delta_color="inverse")
             c4.metric("Cost Regressions", f"{safe_int(summary.get('COST_BREACHES')):,}", delta_color="inverse")
             sla_source = str(st.session_state.get("sp_sla_source", "Source unavailable"))
-            using_mart_sla = "mart:" in sla_source.lower()
+            using_mart_sla = "fast" in sla_source.lower() and "summary" in sla_source.lower()
             confidence = "allocated" if using_mart_sla or st.session_state.get("sp_sla_root_available") else "estimated"
             credit_note = (
-                "credits come from FACT_PROCEDURE_RUN procedure attribution"
+                "credits come from procedure attribution"
                 if using_mart_sla
                 else "credits are estimated from warehouse size, elapsed seconds, and cloud services credits"
             )

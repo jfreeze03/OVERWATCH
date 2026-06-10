@@ -2379,7 +2379,7 @@ def _load_task_ops_scope(
                 if allow_live_fallback:
                     inventory = _show_tasks(session, force_refresh=force_inventory_refresh)
             else:
-                inventory_source = "OVERWATCH mart: DIM_TASK_SNAPSHOT"
+                inventory_source = "Fast task inventory"
         except Exception as e:
             if allow_live_fallback:
                 try:
@@ -2388,7 +2388,7 @@ def _load_task_ops_scope(
                     st.info(f"Task inventory unavailable in this role/context: {format_snowflake_error(e)}")
                     inventory = pd.DataFrame()
             else:
-                inventory_source = "OVERWATCH mart: DIM_TASK_SNAPSHOT unavailable"
+                inventory_source = "Fast task inventory unavailable"
                 inventory = pd.DataFrame()
     try:
         history = run_query(
@@ -2411,14 +2411,14 @@ def _load_task_ops_scope(
                     company=company,
                 ))
             else:
-                history_source = "OVERWATCH mart: FACT_TASK_RUN empty"
+                history_source = "Fast task run summary empty"
         else:
-            history_source = "OVERWATCH mart: FACT_TASK_RUN"
+            history_source = "Fast task run summary"
     except Exception as e:
         if allow_live_fallback:
             st.info(f"Task history unavailable in this role/context: {format_snowflake_error(e)}")
         else:
-            history_source = "OVERWATCH mart: FACT_TASK_RUN unavailable"
+            history_source = "Fast task run summary unavailable"
         history = pd.DataFrame()
     if include_live_runs and not inventory.empty:
         try:
@@ -2460,7 +2460,7 @@ def _load_task_ops_scope(
                         tier="standard",
                     )
             else:
-                query_detail_source = "OVERWATCH mart: FACT_QUERY_DETAIL_RECENT"
+                query_detail_source = "Fast query detail summary"
         except Exception as e:
             st.info(f"Linked query cost/detail unavailable: {format_snowflake_error(e)}")
     summary, exceptions, latest = _build_task_ops_frames(inventory, history, query_details)
@@ -2480,7 +2480,7 @@ def _load_task_ops_scope(
         if critical_paths.empty:
             critical_paths = _build_task_critical_path_snapshot(inventory, history)
         else:
-            critical_path_source = "OVERWATCH mart: FACT_TASK_CRITICAL_PATH"
+            critical_path_source = "Fast task critical-path summary"
     except Exception:
         critical_paths = _build_task_critical_path_snapshot(inventory, history)
     recovery_sla = _build_task_recovery_sla_frame(history, inventory)
@@ -2534,7 +2534,7 @@ def _render_task_ops_brief(session) -> None:
             not st.session_state.get("task_ops_scope_loaded")
             or st.session_state.get("task_ops_loaded_days") != selected_days
         ):
-            with st.status("Loading latest task mart snapshot...", expanded=False) as status:
+            with st.status("Loading latest task summary snapshot...", expanded=False) as status:
                 summary, exceptions, latest, inventory, critical_paths, recovery_sla, details_loaded = _load_task_ops_scope(
                     session,
                     selected_days,
@@ -2560,9 +2560,9 @@ def _render_task_ops_brief(session) -> None:
                     controlm_feed,
                     details_loaded,
                     days=selected_days,
-                    refresh_mode="mart snapshot",
+                    refresh_mode="summary snapshot",
                 )
-                status.update(label="Task mart snapshot loaded.", state="complete")
+                status.update(label="Task summary snapshot loaded.", state="complete")
         if st.button("Refresh Live Task Job Status", key="task_ops_load"):
             summary, exceptions, latest, inventory, critical_paths, recovery_sla, details_loaded = _load_task_ops_scope(
                 session, selected_days, "task_ops", force_inventory_refresh=True, include_live_runs=True
@@ -2589,9 +2589,9 @@ def _render_task_ops_brief(session) -> None:
 
         summary = st.session_state.get("task_ops_summary")
         if not summary:
-            if st.session_state.get("task_ops_refresh_mode") in {None, "mart snapshot"}:
+            if st.session_state.get("task_ops_refresh_mode") in {None, "summary snapshot"}:
                 st.info(
-                    "No task graph mart snapshot is available for this scope. "
+                    "No task graph summary snapshot is available for this scope. "
                     "Refresh live task job status for current Control-M handoff, performance, and error evidence."
                 )
             else:
@@ -2656,7 +2656,7 @@ def _render_task_ops_brief(session) -> None:
         cm2.metric("Running", f"{safe_int(summary.get('RUNNING_TASKS')):,}")
         cm3.metric("Job Errors", f"{len(controlm_errors):,}", delta_color="inverse")
         cm4.metric(
-            "Perf Indicators",
+            "Performance Indicators",
             f"{safe_int(summary.get('LONG_RUNNING_TASKS')) + safe_int(summary.get('COST_DRIFT_TASKS')):,}",
             delta_color="inverse",
         )

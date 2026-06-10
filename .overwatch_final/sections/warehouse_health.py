@@ -342,7 +342,7 @@ def _warehouse_frame_len(frame) -> int:
 
 
 def _warehouse_global_filter_clause(alias: str | None = None) -> str:
-    """Build query-history global filters only when a live SQL path is opened."""
+    """Build query-history triage filters only when a live SQL path is opened."""
     prefix = f"{alias}." if alias else ""
     return get_global_filter_clause(
         date_col=f"{prefix}start_time",
@@ -401,7 +401,7 @@ def _warehouse_action_brief(company: str, environment: str, days: int) -> dict:
         return {
             "state": "Stale",
             "headline": "Reload Warehouse Data before acting.",
-            "detail": "Loaded warehouse evidence does not match the active company, environment, lookback, or global filters.",
+            "detail": "Loaded warehouse evidence does not match the active company, environment, lookback, or triage filters.",
         }
     if high_risk:
         queued = 0
@@ -625,8 +625,8 @@ def _frame_row_count(frame) -> int:
 
 def _source_confidence(source: str, default: str) -> str:
     source_lower = str(source or "").lower()
-    if "mart" in source_lower or "fact_" in source_lower:
-        return "Pre-aggregated"
+    if ("fast" in source_lower and "summary" in source_lower) or "mart" in source_lower or "fact_" in source_lower:
+        return "Fast summary"
     if "fallback" in source_lower:
         return "Live fallback"
     if "account_usage" in source_lower:
@@ -637,15 +637,15 @@ def _source_confidence(source: str, default: str) -> str:
 def _source_next_action(state: str, source: str) -> str:
     source_lower = str(source or "").lower()
     if state == "Stale":
-        return "Reload after changing company, environment, lookback, or global filters."
+        return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
-        return "Deploy or refresh the mart/grants before relying on this surface."
+        return "Deploy or refresh the summary/grants before relying on this surface."
     if state == "Not Loaded":
         return "Load only when this workflow is part of the current DBA investigation."
     if state == "No Rows":
-        return "Confirm the selected scope has recent warehouse activity or mart rows."
+        return "Confirm the selected scope has recent warehouse activity or summary rows."
     if "fallback" in source_lower:
-        return "Use for investigation; prefer mart refresh for repeated daily control."
+        return "Use for investigation; prefer summary refresh for repeated daily control."
     return "Current for the active DBA scope."
 
 
@@ -666,13 +666,13 @@ def _warehouse_source_health_rows(
             "confidence": "Live aggregate",
         },
         {
-            "surface": "Operability fact",
+            "surface": "Control summary",
             "frame_key": "wh_operability_fact",
             "meta_key": "wh_capacity_meta",
             "days_key": "wh_capacity_days",
             "default_days": 7,
-            "source": f"OVERWATCH mart: {WAREHOUSE_OPERABILITY_FACT_TABLE}",
-            "confidence": "Pre-aggregated",
+            "source": "Fast warehouse control summary",
+            "confidence": "Fast summary",
             "error_key": "wh_operability_fact_error",
         },
         {
@@ -682,7 +682,7 @@ def _warehouse_source_health_rows(
             "meta_key": "wh_df_wh_meta",
             "days_key": "wh_days",
             "default_days": 7,
-            "source": "OVERWATCH mart or live warehouse overview",
+            "source": "Fast warehouse summary or live warehouse overview",
             "confidence": "Mixed",
         },
         {
@@ -692,7 +692,7 @@ def _warehouse_source_health_rows(
             "meta_key": "wh_scaling_meta",
             "days_key": "wh_days",
             "default_days": 7,
-            "source": "OVERWATCH mart or live WAREHOUSE_METERING_HISTORY",
+            "source": "Fast warehouse summary or live metering history",
             "confidence": "Mixed",
         },
         {
@@ -2368,7 +2368,7 @@ LIMIT 100""".strip()
 
 
 def _warehouse_operability_fact_sql(days: int, company: str, environment: str = "ALL") -> str:
-    """Read pre-aggregated warehouse capacity, setting-review, and closure blockers."""
+    """Read warehouse capacity, setting-review, and closure blockers from the fast summary."""
     table = warehouse_operability_fact_fqn()
     where = [f"SNAPSHOT_DATE >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_DATE())"]
     if str(company or "").upper() != "ALL":
@@ -3008,9 +3008,9 @@ def _render_capacity_brief(company: str, environment: str) -> None:
 
         operability_fact = st.session_state.get("wh_operability_fact")
         if operability_fact is not None and not operability_fact.empty:
-            st.subheader("Warehouse Operability Mart")
+            st.subheader("Warehouse Control Summary")
             f1, f2, f3, f4 = st.columns(4)
-            f1.metric("Fact Rows", f"{len(operability_fact):,}")
+            f1.metric("Rows", f"{len(operability_fact):,}")
             f2.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
             f3.metric(
                 "Pressure Signals",
@@ -3020,7 +3020,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
             f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
             render_priority_dataframe(
                 operability_fact,
-                title="Pre-aggregated warehouse blockers",
+                title="Warehouse blockers",
                 priority_columns=[
                     "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "ENVIRONMENT",
                     "WAREHOUSE_NAME", "SEVERITY", "SIGNAL",
@@ -3032,14 +3032,14 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                 ],
                 sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "METERED_CREDITS"],
                 ascending=[True, False, False, False],
-                raw_label="All warehouse operability facts",
+                raw_label="All warehouse control rows",
                 height=300,
             )
-            with st.expander("Warehouse operability fact query", expanded=False):
+            with st.expander("Warehouse control summary SQL", expanded=False):
                 st.code(st.session_state.get("wh_operability_fact_sql", ""), language="sql")
         elif st.session_state.get("wh_operability_fact_error"):
             defer_source_note(
-                "Warehouse operability mart not available yet; deploy or refresh "
+                "Warehouse control summary is not available yet; deploy or refresh "
                 "`FACT_WAREHOUSE_OPERABILITY_DAILY` to enable the fast blocker surface."
             )
 
@@ -3496,24 +3496,24 @@ def _render_warehouse_source_health(company: str, environment: str) -> None:
     source_health = _warehouse_source_health_rows(st.session_state, company, environment)
     if source_health.empty:
         return
-    with st.expander("Warehouse Source Health", expanded=False):
+    with st.expander("Warehouse Evidence Health", expanded=False):
         loaded = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
         stale = int(source_health["STATE"].eq("Stale").sum())
         unavailable = int(source_health["STATE"].eq("Unavailable").sum())
-        mart_backed = int(
+        fast_summary = int(
             source_health[
                 source_health["STATE"].isin(["Loaded", "No Rows"])
-                & source_health["SOURCE"].astype(str).str.contains("mart|FACT_", case=False, regex=True)
+                & source_health["CONFIDENCE"].astype(str).str.contains("Fast summary", case=False, regex=False)
             ].shape[0]
         )
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Current Surfaces", f"{loaded}/{len(source_health)}")
-        c2.metric("Mart-Backed", f"{mart_backed:,}")
+        c2.metric("Fast Summary", f"{fast_summary:,}")
         c3.metric("Stale", f"{stale:,}", delta_color="inverse")
         c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
         defer_source_note(
             "Use this before acting on warehouse findings. Stale rows mean the data was loaded under a different "
-            "company, environment, lookback, or global filter."
+            "company, environment, lookback, or triage filter."
         )
         render_priority_dataframe(
             source_health,
@@ -3585,6 +3585,69 @@ def _warehouse_period_movement(df: pd.DataFrame | None) -> pd.DataFrame:
     return movement.sort_values(sort_cols, ascending=[False, False]).drop(columns=["CREDIT_DELTA_ABS"], errors="ignore")
 
 
+def _warehouse_overview_exceptions(df: pd.DataFrame | None) -> list[dict[str, str]]:
+    """Return the short list of warehouse overview issues worth showing first."""
+    if df is None or getattr(df, "empty", True):
+        return []
+    rows: list[dict[str, str]] = []
+    spill_threshold = safe_float(THRESHOLDS.get("spill_warning_gb"), 5.0)
+    for _, row in df.iterrows():
+        warehouse = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
+        queued = safe_float(row.get("AVG_QUEUED_SEC"))
+        remote_spill = safe_float(row.get("TOTAL_REMOTE_SPILL_GB"))
+        p95_elapsed = safe_float(row.get("P95_ELAPSED_SEC"))
+        credit_delta = safe_float(row.get("CREDIT_DELTA"))
+        issues: list[str] = []
+        rank = 4
+        if queued > 10:
+            issues.append(f"queue average {queued:,.1f}s")
+            rank = min(rank, 1)
+        elif queued > 2:
+            issues.append(f"queue average {queued:,.1f}s")
+            rank = min(rank, 2)
+        if remote_spill > max(10.0, spill_threshold):
+            issues.append(f"remote spill {remote_spill:,.1f} GB")
+            rank = min(rank, 1)
+        elif remote_spill > spill_threshold:
+            issues.append(f"remote spill {remote_spill:,.1f} GB")
+            rank = min(rank, 2)
+        if p95_elapsed > 300:
+            issues.append(f"p95 elapsed {p95_elapsed:,.0f}s")
+            rank = min(rank, 2)
+        if credit_delta > 25:
+            issues.append(f"credit movement +{credit_delta:,.1f}")
+            rank = min(rank, 3)
+        if issues:
+            rows.append({
+                "rank": rank,
+                "warehouse": warehouse,
+                "severity": "Critical" if rank == 1 else "High" if rank == 2 else "Review",
+                "signal": " | ".join(issues),
+                "next_action": "Open detailed evidence before resizing, suspending, or changing clusters.",
+            })
+    rows.sort(key=lambda item: (safe_int(item.get("rank"), 9), item.get("warehouse", "")))
+    return rows[:4]
+
+
+def _render_warehouse_overview_exception_strip(df: pd.DataFrame | None) -> None:
+    exceptions = _warehouse_overview_exceptions(df)
+    st.markdown("**Exception Strip**")
+    if not exceptions:
+        st.success("No urgent warehouse queue, spill, latency, or credit movement exceptions in the loaded overview.")
+        return
+    for item in exceptions:
+        message = (
+            f"{item['severity']}: {item['warehouse']} - {item['signal']}. "
+            f"{item['next_action']}"
+        )
+        if item["severity"] == "Critical":
+            st.error(message)
+        elif item["severity"] == "High":
+            st.warning(message)
+        else:
+            st.info(message)
+
+
 def render():
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
@@ -3625,10 +3688,13 @@ def render():
         _render_warehouse_brief_launchpad()
     show_support_panels = bool(st.session_state.get("warehouse_health_support_panels_open"))
     if show_support_panels:
+        if st.button("Hide Evidence Panels", key="warehouse_health_hide_support_panels"):
+            st.session_state["warehouse_health_support_panels_open"] = False
+            st.rerun()
         _render_capacity_brief(company, environment)
         _render_warehouse_ownership_panel(company, environment)
         _render_warehouse_source_health(company, environment)
-    elif st.button("Support Panels", key="warehouse_health_open_support_panels"):
+    elif st.button("Evidence Panels", key="warehouse_health_open_support_panels"):
         st.session_state["warehouse_health_support_panels_open"] = True
         st.rerun()
     if st.session_state.get("exceptions_only_mode") and warehouse_view != "Overview & Scaling":
@@ -3658,7 +3724,7 @@ def render():
                     tier="historical",
                 )
                 source = (
-                    "OVERWATCH mart: FACT_QUERY_HOURLY + FACT_WAREHOUSE_HOURLY "
+                    "Fast warehouse summary "
                     "(cache and warehouse size require live ACCOUNT_USAGE)"
                 )
                 if df_w.empty:
@@ -3726,8 +3792,23 @@ def render():
             c3.metric("Total Remote Spill", f"{df_w['TOTAL_REMOTE_SPILL_GB'].sum():.1f} GB")
             c4.metric("Credit Delta", format_credits(float(df_w.get("CREDIT_DELTA", pd.Series(dtype=float)).sum())))
             wh_source = st.session_state.get("wh_df_wh_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
-            confidence = "estimated" if "mart:" in str(wh_source).lower() else "exact"
+            wh_source_lower = str(wh_source).lower()
+            confidence = "estimated" if "fast" in wh_source_lower and "summary" in wh_source_lower else "exact"
             defer_source_note(metric_confidence_label(confidence), wh_source)
+            _render_warehouse_overview_exception_strip(df_w)
+            detail_key = "warehouse_health_show_overview_evidence"
+            detail_open = bool(st.session_state.get(detail_key))
+            detail_col, _ = st.columns([1.2, 4.0])
+            with detail_col:
+                if detail_open:
+                    if st.button("Hide Warehouse Evidence", key="warehouse_health_hide_overview_evidence", width="stretch"):
+                        st.session_state[detail_key] = False
+                        st.rerun()
+                elif st.button("Show Warehouse Evidence", key="warehouse_health_show_overview_evidence_button", width="stretch"):
+                    st.session_state[detail_key] = True
+                    st.rerun()
+            if not detail_open:
+                return
 
             movement = _warehouse_period_movement(df_w)
             if not movement.empty:
@@ -3746,7 +3827,7 @@ def render():
                     height=320,
                 )
             else:
-                defer_source_note("Current/prior warehouse movement appears when the OVERWATCH mart overview is available.")
+                defer_source_note("Current/prior warehouse movement appears when the fast warehouse summary is available.")
 
             settings_inventory = st.session_state.get("wh_settings_inventory")
             if not _warehouse_meta_matches(
@@ -3802,16 +3883,6 @@ def render():
                 if owner_inventory is None or owner_inventory.empty:
                     defer_source_note("Owner-route readiness appears after Warehouse Ownership Readiness has loaded.")
 
-            # Flag warehouses needing attention
-            for _, row in df_w.iterrows():
-                issues = []
-                if row.get("AVG_QUEUED_SEC", 0) > 2:
-                    issues.append(f"Queue avg {row['AVG_QUEUED_SEC']:.1f}s - consider multi-cluster or upsize")
-                if row.get("TOTAL_REMOTE_SPILL_GB", 0) > THRESHOLDS["spill_warning_gb"]:
-                    issues.append(f"Remote spill {row['TOTAL_REMOTE_SPILL_GB']:.1f} GB - upsize")
-                if issues:
-                    st.warning(f"**{row['WAREHOUSE_NAME']}** ({row.get('WAREHOUSE_SIZE','')}): {' | '.join(issues)}")
-
             render_priority_dataframe(
                 df_w,
                 title="Warehouse overview ranked by pressure",
@@ -3850,7 +3921,7 @@ def render():
                     lookback_hours=wh_days * 24,
                 )
             else:
-                defer_source_note("Cache hit percentage is a live ACCOUNT_USAGE-only metric and is not stored in the hourly mart.")
+                defer_source_note("Cache hit percentage is a live ACCOUNT_USAGE-only metric and is not included in the fast warehouse summary.")
 
             download_csv(df_w, "warehouse_health.csv")
 
@@ -3870,7 +3941,7 @@ def render():
                         ttl_key=f"wh_scaling_mart_{company}_{wh_days}",
                         tier="historical",
                     )
-                    scale_source = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+                    scale_source = "Fast warehouse summary"
                     if df_scale.empty:
                         session = _warehouse_action_session("load live warehouse scaling fallback")
                         if session is None:
@@ -4117,7 +4188,7 @@ def render():
                     ttl_key=f"wh_heatmap_mart_{company}_{hm_days}",
                     tier="historical",
                 )
-                source = "OVERWATCH mart: FACT_QUERY_HOURLY"
+                source = "Fast warehouse summary"
                 if df_hm.empty:
                     live_days = min(int(hm_days), 30)
                     if live_days < int(hm_days):

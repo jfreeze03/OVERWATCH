@@ -93,7 +93,7 @@ def _load_service_health(session, hours: int) -> dict:
         ttl_key=f"svc_query_mart_{company}_{hours}",
         tier="recent",
     )
-    query_source = "OVERWATCH mart: FACT_QUERY_HOURLY"
+    query_source = "Fast query summary"
     if query_health.empty or _value(query_health, "TOTAL_QUERIES") <= 0:
         query_health = run_query(live_query_sql, ttl_key=f"svc_query_live_{company}_{hours}", tier="recent")
         query_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
@@ -120,7 +120,7 @@ def _load_service_health(session, hours: int) -> dict:
         ttl_key=f"svc_warehouse_mart_{company}_{hours}",
         tier="recent",
     )
-    warehouse_source = "OVERWATCH mart: FACT_QUERY_HOURLY"
+    warehouse_source = "Fast warehouse pressure summary"
     if warehouse_health.empty:
         warehouse_health = run_query(live_warehouse_sql, ttl_key=f"svc_warehouse_live_{company}_{hours}", tier="recent")
         warehouse_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
@@ -141,7 +141,7 @@ def _load_service_health(session, hours: int) -> dict:
             ttl_key=f"svc_login_mart_{company}_{hours}",
             tier="recent",
         )
-        login_source = "OVERWATCH mart: FACT_LOGIN_DAILY"
+        login_source = "Fast login summary"
     else:
         login_health = pd.DataFrame()
         login_source = "Live fallback: daily mart grain is too coarse for sub-day windows"
@@ -155,7 +155,7 @@ def _load_service_health(session, hours: int) -> dict:
             ttl_key=f"svc_task_mart_{company}_{hours}",
             tier="recent",
         )
-        task_source = "OVERWATCH mart: FACT_TASK_RUN"
+        task_source = "Fast task summary"
         if task_health.empty:
             task_health = run_query(
                 build_task_health_sql(

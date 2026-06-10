@@ -1215,11 +1215,11 @@ def render():
             try:
                 for key, df in _load_login_audit_mart(company, sec_days).items():
                     st.session_state[key] = df
-                st.session_state["sec_login_source"] = "OVERWATCH mart: FACT_LOGIN_DAILY"
+                st.session_state["sec_login_source"] = "Fast login summary"
             except Exception as mart_exc:
                 st.session_state["sec_login_source"] = "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"
-                defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
-            if st.session_state.get("sec_login_source") != "OVERWATCH mart: FACT_LOGIN_DAILY":
+                defer_source_note(f"Fast summary path skipped: {format_snowflake_error(mart_exc)}")
+            if st.session_state.get("sec_login_source") != "Fast login summary":
                 for key, sql in [
                     ("sec_df_login_sum", f"""
                         SELECT is_success, COUNT(*) AS event_count,
@@ -1298,14 +1298,14 @@ def render():
             try:
                 for key, df in _load_login_posture_mart(company, posture_days).items():
                     st.session_state[key] = df
-                st.session_state["sec_login_posture_source"] = "OVERWATCH mart: FACT_LOGIN_DAILY"
+                st.session_state["sec_login_posture_source"] = "Fast login summary"
             except Exception as mart_exc:
                 st.session_state["sec_login_posture_source"] = "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY"
-                defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                defer_source_note(f"Fast summary path skipped: {format_snowflake_error(mart_exc)}")
                 for key in ("sec_login_ips", "sec_login_clients"):
                     st.session_state[key] = pd.DataFrame()
             for key, sql in [
-                *([] if st.session_state.get("sec_login_posture_source") == "OVERWATCH mart: FACT_LOGIN_DAILY" else [("sec_login_ips", f"""
+                *([] if st.session_state.get("sec_login_posture_source") == "Fast login summary" else [("sec_login_ips", f"""
                     SELECT client_ip, COUNT(*) AS login_events,
                            COUNT(DISTINCT user_name) AS users,
                            SUM(IFF(is_success = 'YES', 1, 0)) AS success_events,
@@ -1602,10 +1602,10 @@ def render():
         if st.button("Load Grants", key="grants_load"):
             try:
                 st.session_state["sec_df_grants"] = _load_grants_mart(company)
-                st.session_state["sec_grants_source"] = "OVERWATCH mart: FACT_GRANT_DAILY"
+                st.session_state["sec_grants_source"] = "Fast grant summary"
             except Exception as mart_exc:
                 st.session_state["sec_grants_source"] = "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"
-                defer_source_note(f"Mart path skipped: {format_snowflake_error(mart_exc)}")
+                defer_source_note(f"Fast summary path skipped: {format_snowflake_error(mart_exc)}")
                 try:
                     df_grants = run_query(f"""
                         SELECT grantee_name, role, granted_to, granted_by,

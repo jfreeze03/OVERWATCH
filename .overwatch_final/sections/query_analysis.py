@@ -149,7 +149,7 @@ def render():
                         ttl_key=f"query_analysis_bottlenecks_mart_{company}_{days}",
                         tier="historical",
                     )
-                    st.session_state["qa_bottleneck_source"] = "OVERWATCH mart: FACT_QUERY_DETAIL_RECENT"
+                    st.session_state["qa_bottleneck_source"] = "Fast query detail summary"
                 except Exception:
                     exprs = _query_history_exprs()
                     wh_size_expr = exprs["wh_size_expr"]
@@ -233,7 +233,7 @@ def render():
                         ttl_key=f"query_analysis_degradation_mart_{company}",
                         tier="historical",
                     )
-                    st.session_state["qa_degradation_source"] = "OVERWATCH mart: FACT_QUERY_DETAIL_RECENT"
+                    st.session_state["qa_degradation_source"] = "Fast query detail summary"
                 except Exception:
                     df_deg = run_query(f"""
                     WITH sig_recent AS (

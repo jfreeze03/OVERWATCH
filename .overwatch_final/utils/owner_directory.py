@@ -168,7 +168,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "DEFAULT_ROUTE": "Architecture Readiness",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 205,
-        "NOTES": "Legacy OVERWATCH mart task and utility warehouse; monitor separately from business workload warehouses.",
+        "NOTES": "Legacy OVERWATCH summary task and utility warehouse; monitor separately from business workload warehouses.",
     },
     {
         "OWNER_KEY": "ADAPTIVE_COMPUTE_DEFAULT",

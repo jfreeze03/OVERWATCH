@@ -229,7 +229,7 @@ def render():
                     tier="historical",
                     section="Pipeline Health",
                 )
-                st.session_state["pipe_freshness_source"] = "OVERWATCH mart: DIM_TABLE_SNAPSHOT"
+                st.session_state["pipe_freshness_source"] = "Fast table freshness summary"
             except Exception:
                 try:
                     df_fresh = run_query(f"""
@@ -300,7 +300,7 @@ def render():
                     tier="historical",
                     section="Pipeline Health",
                 )
-                st.session_state["pipe_load_failures_source"] = "OVERWATCH mart: FACT_COPY_LOAD_DAILY"
+                st.session_state["pipe_load_failures_source"] = "Fast load history summary"
             except Exception:
                 try:
                     df_loads = run_query(f"""
@@ -362,7 +362,7 @@ def render():
                     tier="historical",
                     section="Pipeline Health",
                 )
-                st.session_state["pipe_volume_source"] = "OVERWATCH mart: DIM_TABLE_SNAPSHOT"
+                st.session_state["pipe_volume_source"] = "Fast table volume summary"
             except Exception:
                 try:
                     df_volume = run_query(f"""

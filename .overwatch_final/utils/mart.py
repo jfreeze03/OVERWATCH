@@ -47,7 +47,7 @@ def load_mart_table(
             section="Mart",
         )
         if df.empty:
-            return MartResult(data=df, available=False, source=source, message="No mart rows returned.")
+            return MartResult(data=df, available=False, source=source, message="No summary rows returned.")
         return MartResult(data=df, available=True, source=source)
     except Exception as exc:
         return MartResult(data=pd.DataFrame(), available=False, source=source, message=str(exc))
@@ -139,7 +139,7 @@ def build_mart_control_room_credits_sql(hours_back: int, company: str = "ALFA") 
 
 
 def build_mart_control_room_cost_drivers_sql(hours_back: int, company: str = "ALFA") -> str:
-    """Build top DBA Control Room cost drivers from mart facts.
+    """Build top DBA Control Room cost drivers from fast summary facts.
 
     Warehouse credits are exact at the warehouse/hour level, then allocated to
     users by elapsed-time share inside each warehouse for the selected window.
@@ -352,7 +352,7 @@ def build_mart_account_health_storage_sql(company: str = "ALFA") -> str:
 
 
 def build_mart_account_health_cost_drivers_sql(hours_back: int, company: str = "ALFA") -> str:
-    """Build Account Health top cost drivers from mart facts.
+    """Build Account Health top cost drivers from fast summary facts.
 
     This returns the legacy Account Health column names so the UI can remain
     stable while the source moves from live ACCOUNT_USAGE to preloaded facts.
@@ -578,7 +578,7 @@ def build_mart_account_health_queued_sql(hours_back: int, company: str = "ALFA")
 
 
 def build_mart_account_health_ytd_credits_sql(company: str = "ALFA") -> str:
-    """Build YTD credits from warehouse hourly mart for contract pacing."""
+    """Build YTD credits from warehouse hourly summaries for contract pacing."""
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter = _mart_company_filter(company).replace("COMPANY", "w.company")
     return f"""
@@ -599,7 +599,7 @@ def build_mart_bill_summary_sql(
     company: str = "ALFA",
     warehouse_contains: str = "",
 ) -> str:
-    """Build a bill-summary query from hourly warehouse mart facts."""
+    """Build a bill-summary query from hourly warehouse summary facts."""
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter = "" if str(company or "").upper() == "ALL" else f"AND COMPANY = {sql_literal(company, 100)}"
     warehouse_filter = (
@@ -648,7 +648,7 @@ def build_mart_bill_warehouse_delta_sql(
     company: str = "ALFA",
     warehouse_contains: str = "",
 ) -> str:
-    """Build warehouse-period delta query from hourly warehouse mart facts."""
+    """Build warehouse-period delta query from hourly warehouse summary facts."""
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter = "" if str(company or "").upper() == "ALL" else f"AND COMPANY = {sql_literal(company, 100)}"
     warehouse_filter = (
@@ -959,7 +959,7 @@ def build_mart_cost_service_lens_sql(
                 2
             ) AS COST_DELTA_USD,
             COUNT(DISTINCT IFF(PERIOD = 'CURRENT', USAGE_DATE, NULL)) AS OBSERVED_DAYS,
-            'OVERWATCH mart: FACT_COST_DAILY' AS SNOWFLAKE_SOURCE
+            'Fast cost summary' AS SNOWFLAKE_SOURCE
         FROM perioded
         GROUP BY SERVICE_CATEGORY, SERVICE_TYPE
         HAVING ABS(SUM(CREDITS_BILLED)) > 0
@@ -970,7 +970,7 @@ def build_mart_cost_service_lens_sql(
 
 
 def build_mart_cost_run_rate_sql(company: str = "ALFA") -> str:
-    """Build complete-day 7d/30d run-rate and YOY cost trend from mart facts."""
+    """Build complete-day 7d/30d run-rate and YOY cost trend from fast summary facts."""
     table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     company_filter = _mart_company_filter(company)
     return f"""
@@ -1155,7 +1155,7 @@ def build_mart_warehouse_overview_sql(
     start_date: object = None,
     end_date: object = None,
 ) -> str:
-    """Build a warehouse health overview from hourly mart facts.
+    """Build a warehouse health overview from hourly summary facts.
 
     The mart does not store query cache percentage, so callers should label
     cache as unavailable/estimated instead of an exact live fact.
@@ -1888,7 +1888,7 @@ def build_mart_pipeline_volume_sql(min_gb: float, company: str = "ALFA") -> str:
 
 
 def build_mart_recommendation_idle_sql(company: str = "ALFA") -> str:
-    """Build idle warehouse recommendation candidates from hourly mart facts."""
+    """Build idle warehouse recommendation candidates from hourly summary facts."""
     wh_table = mart_object_name("FACT_WAREHOUSE_HOURLY")
     q_table = mart_object_name("FACT_QUERY_HOURLY")
     company_filter = _mart_company_filter(company)
@@ -2438,7 +2438,7 @@ def build_mart_service_task_health_sql(hours_back: int, company: str = "ALFA") -
 
 
 def mart_source_caption(result: MartResult, fallback_source: str = "ACCOUNT_USAGE") -> str:
-    """Human-readable mart/fallback source label for captions."""
+    """Human-readable fast-summary/fallback source label for captions."""
     if result.available and not result.data.empty:
-        return f"OVERWATCH mart: {result.source}"
+        return "Fast summary"
     return fallback_source

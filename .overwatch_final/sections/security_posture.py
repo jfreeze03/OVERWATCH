@@ -119,7 +119,7 @@ def _freshness_note(source: str) -> str:
     if "account_usage" in source_key:
         return "Freshness: ACCOUNT_USAGE can lag up to about 45-90 minutes"
     if "mart" in source_key or "overwatch" in source_key:
-        return "Freshness: OVERWATCH mart refresh cadence"
+        return "Freshness: fast summary refresh cadence"
     return "Freshness: depends on source view availability"
 
 
@@ -376,8 +376,8 @@ def _security_frame_rows(frame) -> int:
 
 def _security_source_confidence(source: str, default: str) -> str:
     source_lower = str(source or "").lower()
-    if "mart" in source_lower or "fact_" in source_lower:
-        return "Pre-aggregated"
+    if ("fast" in source_lower and "summary" in source_lower) or "mart" in source_lower or "fact_" in source_lower:
+        return "Fast summary"
     if "fallback" in source_lower:
         return "Live fallback"
     if "account_usage" in source_lower:
@@ -388,15 +388,15 @@ def _security_source_confidence(source: str, default: str) -> str:
 def _security_source_next_action(state: str, source: str) -> str:
     source_lower = str(source or "").lower()
     if state == "Stale":
-        return "Reload after changing company, environment, lookback, or global filters."
+        return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
-        return "Deploy or refresh the mart/grants before relying on this surface."
+        return "Deploy or refresh the summary/grants before relying on this surface."
     if state == "Not Loaded":
         return "Load only when this workflow is part of the current security investigation."
     if state == "No Rows":
-        return "Confirm the selected scope has recent security events, review rows, or mart facts."
+        return "Confirm the selected scope has recent security events, review rows, or summary rows."
     if "fallback" in source_lower:
-        return "Use for investigation; prefer mart refresh for repeated daily access control."
+        return "Use for investigation; prefer summary refresh for repeated daily access control."
     return "Current for the active security scope."
 
 
@@ -414,7 +414,7 @@ def _security_source_health_rows(
             "meta_key": "security_posture_meta",
             "days_key": "security_posture_brief_days",
             "default_days": 30,
-            "source": "OVERWATCH mart or live ACCOUNT_USAGE security brief",
+            "source": "Fast security summary or live account history",
             "confidence": "Mixed",
         },
         {
@@ -424,17 +424,17 @@ def _security_source_health_rows(
             "meta_key": "security_posture_meta",
             "days_key": "security_posture_brief_days",
             "default_days": 30,
-            "source": "OVERWATCH mart or live ACCOUNT_USAGE exception set",
+            "source": "Fast security summary or live account history",
             "confidence": "Mixed",
         },
         {
-            "surface": "Operability fact",
+            "surface": "Control summary",
             "frame_key": "security_operability_fact",
             "meta_key": "security_operability_fact_meta",
             "days_key": "security_posture_brief_days",
             "default_days": 30,
-            "source": f"OVERWATCH mart: {SECURITY_OPERABILITY_FACT_TABLE}",
-            "confidence": "Pre-aggregated",
+            "source": "Fast security control summary",
+            "confidence": "Fast summary",
             "error_key": "security_operability_fact_error",
         },
         {
@@ -452,7 +452,7 @@ def _security_source_health_rows(
             "meta_key": "security_access_review_trend_meta",
             "days_key": "security_access_review_trend_days",
             "default_days": 30,
-            "source": f"Workflow mart: {SECURITY_ACCESS_REVIEW_TABLE}",
+            "source": "Workflow evidence",
             "confidence": "Workflow evidence",
         },
         {
@@ -1595,7 +1595,7 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
         return
     cols[0].metric("Failed", f"{safe_int(snapshot.get('failed')):,}", delta_color="inverse")
     cols[1].metric("MFA Gaps", f"{safe_int(snapshot.get('mfa_gaps')):,}", delta_color="inverse")
-    cols[2].metric("Grant Chg", f"{safe_int(snapshot.get('grant_changes')):,}")
+    cols[2].metric("Grant Changes", f"{safe_int(snapshot.get('grant_changes')):,}")
     cols[3].metric("Shared DBs", f"{safe_int(snapshot.get('shared_databases')):,}")
 
 
@@ -1709,18 +1709,18 @@ def _render_security_operability_fact_gate(company: str, environment: str, days:
         st.info("Loaded security control facts are stale for the active scope. Reload before acting.")
         return
     if operability_fact is not None and not operability_fact.empty:
-        st.subheader("Security Operability Mart")
+        st.subheader("Security Control Summary")
         f1, f2, f3, f4 = st.columns(4)
         blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
             "Blocked|Overdue|Required", case=False, na=False
         )
-        f1.metric("Fact Rows", f"{len(operability_fact):,}")
+        f1.metric("Rows", f"{len(operability_fact):,}")
         f2.metric("Blocked", f"{int(blocked_states.sum()):,}", delta_color="inverse")
         f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
         f4.metric("Verified", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
         render_priority_dataframe(
             operability_fact,
-            title="Pre-aggregated security blockers",
+            title="Security blockers",
             priority_columns=[
                 "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "SEVERITY",
                 "FINDING_TYPE", "ENTITY", "ENTITY_TYPE", "ENVIRONMENT",
@@ -1732,14 +1732,14 @@ def _render_security_operability_fact_gate(company: str, environment: str, days:
             ],
             sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "REVIEW_BLOCKER_ROWS"],
             ascending=[True, False, False, False],
-            raw_label="All security operability facts",
+            raw_label="All security control rows",
             height=320,
         )
-        with st.expander("Security operability fact query", expanded=False):
+        with st.expander("Security control summary SQL", expanded=False):
             st.code(st.session_state.get("security_operability_fact_sql", ""), language="sql")
     elif st.session_state.get("security_operability_fact_error"):
         defer_source_note(
-            "Security operability mart not available yet; deploy or refresh "
+            "Security control summary is not available yet; deploy or refresh "
             "`FACT_SECURITY_OPERABILITY_DAILY` to enable the fast blocker surface."
         )
 
@@ -1759,7 +1759,7 @@ def _render_security_exceptions_gate(company: str, environment: str, days: int) 
                     preferred_source = str(st.session_state.get("security_posture_source") or "")
                     if not exceptions_sql:
                         _, exceptions_sql = _build_security_mart_brief_sql(session, days, company)
-                        preferred_source = "OVERWATCH mart: FACT_LOGIN_DAILY + FACT_GRANT_DAILY; MFA/sharing: ACCOUNT_USAGE"
+                        preferred_source = "Fast security summary; MFA/sharing: account history"
                     source_kind = "live" if "live" in preferred_source.lower() else "mart"
                     st.session_state["security_posture_exceptions"] = run_query(
                         exceptions_sql,
@@ -1784,7 +1784,7 @@ def _render_security_exceptions_gate(company: str, environment: str, days: int) 
                         proof_sql = st.session_state.get("security_posture_proof_sql") or {}
                         proof_sql["exceptions"] = exceptions_sql
                         st.session_state["security_posture_proof_sql"] = proof_sql
-                        st.info(f"Security mart exceptions unavailable; used live ACCOUNT_USAGE fallback. {format_snowflake_error(exc)}")
+                        st.info(f"Security summary unavailable from the fast source; used live ACCOUNT_USAGE fallback. {format_snowflake_error(exc)}")
                     except Exception as live_exc:
                         st.session_state.pop("security_posture_exceptions", None)
                         st.session_state["security_posture_exception_error"] = format_snowflake_error(live_exc)
@@ -2450,7 +2450,7 @@ LIMIT 100""".strip()
 
 
 def _security_operability_fact_sql(days: int, company: str, environment: str = "ALL") -> str:
-    """Read pre-aggregated security review and action-queue control blockers."""
+    """Read security review and action-queue control blockers from the fast summary."""
     table = security_operability_fact_fqn()
     where = [f"SNAPSHOT_DATE >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_DATE())"]
     if str(company or "").upper() != "ALL":
@@ -2875,15 +2875,15 @@ def _render_security_source_health(company: str, environment: str) -> None:
         current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
         stale = int(source_health["STATE"].eq("Stale").sum())
         unavailable = int(source_health["STATE"].eq("Unavailable").sum())
-        mart_backed = int(
+        fast_summary = int(
             source_health[
                 source_health["STATE"].isin(["Loaded", "No Rows"])
-                & source_health["SOURCE"].astype(str).str.contains("mart|FACT_", case=False, regex=True)
+                & source_health["CONFIDENCE"].astype(str).str.contains("Fast summary", case=False, regex=False)
             ].shape[0]
         )
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
-        c2.metric("Mart-Backed", f"{mart_backed:,}")
+        c2.metric("Fast Summary", f"{fast_summary:,}")
         c3.metric("Stale", f"{stale:,}", delta_color="inverse")
         c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
         defer_source_note(
@@ -3005,7 +3005,7 @@ def render() -> None:
                 ttl_key=f"security_posture_summary_mart_{company}_{environment}_{days}",
                 tier="standard",
             )
-            source = "OVERWATCH mart: FACT_LOGIN_DAILY + FACT_GRANT_DAILY; MFA/sharing: ACCOUNT_USAGE"
+            source = "Fast security summary; MFA/sharing: account history"
             st.session_state["security_posture_meta"] = {
                 **_security_scope_meta(company, environment, days),
                 "source": source,
@@ -3042,7 +3042,7 @@ def render() -> None:
                     "summary": summary_sql,
                     "exceptions": exceptions_sql,
                 }
-                st.info(f"Security mart unavailable; used live ACCOUNT_USAGE fallback. {format_snowflake_error(exc)}")
+                st.info(f"Security summary unavailable from the fast source; used live ACCOUNT_USAGE fallback. {format_snowflake_error(exc)}")
             except Exception as live_exc:
                 st.session_state["security_posture_summary"] = pd.DataFrame()
                 st.session_state.pop("security_posture_exceptions", None)

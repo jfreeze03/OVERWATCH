@@ -88,9 +88,6 @@ def _lazy_query_call(name: str):
     return _call
 
 
-get_query_telemetry = _lazy_query_call("get_query_telemetry")
-get_query_budget_summary = _lazy_query_call("get_query_budget_summary")
-clear_query_telemetry = _lazy_query_call("clear_query_telemetry")
 format_snowflake_error = _lazy_query_call("format_snowflake_error")
 
 
@@ -631,6 +628,20 @@ def _priority_brief_row(card: dict) -> str:
     """
 
 
+def _render_priority_brief_empty_state(scope_label: str) -> None:
+    safe_scope = html.escape(scope_label)
+    st.markdown(
+        f"""
+        <div class="ow-priority-empty">
+            <strong>Standing by</strong>
+            <span>{safe_scope}</span>
+            <span>Load a workflow to rank evidence.</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_top_priority_brief(active_section: str, company: str, role: str) -> None:
     """Render loaded evidence as a deterministic morning-priority brief."""
     loaded_state = _snapshot_ask_overwatch_state(st.session_state)
@@ -644,7 +655,7 @@ def _render_top_priority_brief(active_section: str, company: str, role: str) -> 
     )
     scope_label = _priority_brief_scope_label(active_section, company) + (f" / {role}" if role else "")
     if not loaded_state:
-        st.caption(f"{scope_label} - load or refresh a section to populate priority evidence.")
+        _render_priority_brief_empty_state(scope_label)
         return
     brief_col, domain_col = st.columns([5.2, 1.4])
     with domain_col:
@@ -879,8 +890,8 @@ with st.sidebar:
     if "_overwatch_current_role" not in st.session_state:
         st.session_state.setdefault("_overwatch_current_role", "")
 
-    if _sidebar_panel_toggle("Global Filters", "global_filters"):
-        st.caption("Topbar owns date, company, environment, warehouse, and user filters.")
+    if _sidebar_panel_toggle("Advanced Scope", "advanced_scope"):
+        st.caption("Optional role, database, and schema narrowing. Primary triage filters live above the page.")
         st.text_input("Role contains", key="global_role")
         _ensure_global_database_options(active_company)
 
@@ -929,7 +940,7 @@ with st.sidebar:
         else:
             st.text_input("Schema contains", key="global_schema")
 
-        if st.button("Clear Global Filters", key="global_filters_clear"):
+        if st.button("Clear All Filters", key="global_filters_clear"):
             _clear_global_filters()
 
     st.toggle(
@@ -1139,66 +1150,7 @@ with st.sidebar:
             format_func=lambda x: f"{x}s",
             key="rt_interval",
         )
-        st.toggle(
-            "Record section runtime",
-            key="_logging_enabled",
-            help=(
-                "Writes one lightweight usage row per completed section render when the usage log is available."
-            ),
-        )
-        st.toggle(
-            "Record query activity",
-            key="_query_logging_enabled",
-            help="Writes query hash, section, elapsed time, row count, and result size to the OVERWATCH usage log when that table exists.",
-        )
-        st.toggle(
-            "Detailed Snowflake query tags",
-            key="_detailed_query_tags_enabled",
-            help=(
-                "Optional cost-forensics mode: updates QUERY_TAG with section-level context. "
-                "Leave off during normal use to avoid extra ALTER SESSION statements."
-            ),
-        )
         render_admin_mode_control()
-
-        telemetry_count = len(st.session_state.get("_overwatch_query_telemetry", []))
-        if telemetry_count:
-            st.divider()
-            with st.expander(f"OVERWATCH query activity ({telemetry_count:,})", expanded=False):
-                st.caption("Query activity summaries are rendered on demand to keep normal sidebar reruns light.")
-                if st.button("Render query activity summary", key="render_query_telemetry"):
-                    telemetry = get_query_telemetry()
-                    total_calls = len(telemetry)
-                    total_elapsed = float(telemetry["elapsed_ms"].fillna(0).sum()) / 1000
-                    avg_elapsed = float(telemetry["elapsed_ms"].fillna(0).mean())
-                    t1, t2 = st.columns(2)
-                    t1.metric("App Queries This Session", f"{total_calls:,}")
-                    t2.metric("Observed Wait", f"{total_elapsed:,.1f}s", f"{avg_elapsed:,.0f} ms avg")
-                    budget_summary = get_query_budget_summary()
-                    if not budget_summary.empty:
-                        st.caption(
-                            "Risk is session-based: High means repeated heavy calls, long total wait, "
-                            "or very large result sets."
-                        )
-                        st.dataframe(
-                            budget_summary,
-                            width="stretch",
-                            height=220,
-                            column_config={
-                                "section": "Section",
-                                "budget_risk": "Budget Risk",
-                                "calls": "Calls",
-                                "unique_queries": "Unique Queries",
-                                "expensive_calls": "Expensive Calls",
-                                "elapsed_sec": st.column_config.NumberColumn("Elapsed Sec", format="%.2f"),
-                                "max_rows": st.column_config.NumberColumn("Max Rows", format="%d"),
-                                "max_result_mb": st.column_config.NumberColumn("Max MB", format="%.1f"),
-                            },
-                        )
-                    st.dataframe(telemetry.tail(50), width="stretch", height=220)
-                if st.button("Clear query activity", key="clear_query_telemetry"):
-                    clear_query_telemetry()
-                    st.rerun()
 
     st.divider()
 
@@ -1207,7 +1159,7 @@ with st.sidebar:
     <div style="font-size:0.65rem; color:#475569; text-align:center;">
         <div style="color:{company_color}; font-weight:700; margin-bottom:4px;">{active_company} view</div>
         <div>${credit_price:.2f}/credit</div>
-        <div style="margin-top:4px;">ACCOUNT_USAGE <=45min lag - IS: live</div>
+        <div style="margin-top:4px;">Live metadata is current; account history may lag up to 45 minutes.</div>
     </div>
     """, unsafe_allow_html=True)
 

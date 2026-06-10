@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import re
 from functools import lru_cache
 
 import streamlit as st
@@ -329,12 +330,28 @@ def defer_section_note(note: str, *, section: str | None = None) -> None:
 def defer_source_note(*parts: object, section: str | None = None) -> None:
     """Collect source/freshness text without adding visual noise near metrics."""
     clean_parts = [
-        " ".join(str(part or "").split())
+        _humanize_source_note(" ".join(str(part or "").split()))
         for part in parts
         if str(part or "").strip()
     ]
     if clean_parts:
         defer_section_note(" | ".join(clean_parts), section=section)
+
+
+def _humanize_source_note(note: str) -> str:
+    """Keep source notes operator-facing instead of exposing internal table names."""
+    text = str(note or "")
+    if not text:
+        return ""
+    text = re.sub(r"OVERWATCH\s+mart\s+snapshot", "Fast summary snapshot", text, flags=re.IGNORECASE)
+    text = re.sub(r"OVERWATCH\s+mart\s*:\s*(FACT|DIM)_[A-Z0-9_]+", "Fast summary", text, flags=re.IGNORECASE)
+    text = re.sub(r"Workflow\s+mart\s*:\s*[A-Z0-9_]+", "Workflow evidence", text, flags=re.IGNORECASE)
+    text = re.sub(r"OVERWATCH\s+mart", "Fast summary", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bmart\s+refresh\b", "summary refresh", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bmart\s+unavailable\b", "fast summary unavailable", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bmart\s+schema\b", "summary schema", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bmart\s+facts\b", "summary rows", text, flags=re.IGNORECASE)
+    return text
 
 
 def render_deferred_section_notes(section: str) -> None:

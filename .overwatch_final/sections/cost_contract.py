@@ -427,7 +427,7 @@ def _freshness_note(source: str) -> str:
     if "account_usage" in source_key or "warehouse_metering_history" in source_key:
         return "Freshness: ACCOUNT_USAGE can lag up to about 45-90 minutes"
     if "mart" in source_key or "overwatch" in source_key:
-        return "Freshness: OVERWATCH mart refresh cadence"
+        return "Freshness: fast summary refresh cadence"
     return "Freshness: depends on source view availability"
 
 
@@ -825,7 +825,7 @@ def _build_cost_splash_cortex_sql(company: str, days: int, ai_credit_price: floa
                 COALESCE(t.cortex_requests, 0) AS cortex_requests,
                 COALESCE(u.top_cortex_user, 'No Cortex user') AS top_cortex_user,
                 ROUND(COALESCE(u.top_cortex_user_spend_usd, 0), 2) AS top_cortex_user_spend_usd,
-                'OVERWATCH mart: FACT_CORTEX_DAILY' AS cortex_source
+                'Fast Cortex summary' AS cortex_source
             FROM totals t
             LEFT JOIN top_user u ON TRUE
         """
@@ -1049,7 +1049,7 @@ def _build_savings_verification_task_summary(health: pd.DataFrame | None) -> tup
         "evidence_required_last_run": 0,
         "issue_count": 1,
         "issue_severity": "High",
-        "next_action": "Deploy the latest OVERWATCH mart setup, then resume the savings verification task.",
+        "next_action": "Deploy the latest OVERWATCH setup, then resume the savings verification task.",
     }
     if health is None or getattr(health, "empty", True):
         return empty_summary, pd.DataFrame()
@@ -1141,7 +1141,7 @@ def _render_savings_verification_task_health(health: pd.DataFrame | None, error:
 
     if error:
         st.warning(f"Verification task health view unavailable: {error}")
-        st.info("Deploy the latest OVERWATCH mart setup SQL to create OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V.")
+        st.info("Deploy the latest OVERWATCH setup SQL to create OVERWATCH_COST_SAVINGS_VERIFICATION_HEALTH_V.")
         return
     if detail.empty:
         st.info("Load the cockpit after deploying the verifier health view to monitor savings task failures and stale runs.")
@@ -1187,7 +1187,7 @@ def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) ->
     if detail.empty:
         st.info("No cost-control or chargeback actions are currently visible in the loaded action queue scope.")
         with st.expander("Deploy scheduled savings verification", expanded=False):
-            defer_source_note("Install scheduled savings verification once in the OVERWATCH mart schema, review the task, then resume it.")
+            defer_source_note("Install scheduled savings verification once in the OVERWATCH summary schema, review the task, then resume it.")
             st.code(build_cost_savings_verification_sql(), language="sql")
         return
 
@@ -1456,10 +1456,10 @@ def _build_cost_source_health_board(
         "Exact warehouse spend",
         _source_state(cockpit, cockpit_error, empty_state="Load Needed"),
         _loaded_rows(cockpit),
-        "Current/prior movement loaded from warehouse metering mart or live Account Usage."
+        "Current/prior movement loaded from fast warehouse metering summary or live Account Usage."
         if _loaded_rows(cockpit) else "Cost cockpit has not loaded warehouse movement proof.",
         "Load Cost Cockpit before explaining bill movement.",
-        "ACCOUNT_USAGE warehouse metering latency applies; mart refresh is preferred.",
+        "ACCOUNT_USAGE warehouse metering latency applies; summary refresh is preferred.",
     )
     _add_source_health_row(
         rows,
@@ -1469,7 +1469,7 @@ def _build_cost_source_health_board(
         _loaded_rows(run_rate),
         "7d, 30d, and prior-year complete-day windows are loaded." if _loaded_rows(run_rate) else "Run-rate lens has not loaded complete-day trend proof.",
         "Use complete-day trend before declaring spikes or savings.",
-        "Uses mart first, then bounded live warehouse metering fallback.",
+        "Uses the fast summary first, then bounded live warehouse metering fallback.",
     )
     _add_source_health_row(
         rows,
@@ -1500,7 +1500,7 @@ def _build_cost_source_health_board(
         _loaded_rows(queue) + _loaded_rows(verification_health),
         "Action queue or savings verifier evidence is loaded." if _loaded_rows(queue) or _loaded_rows(verification_health) else "No queue/verifier rows loaded for this role.",
         "Keep savings estimated until verifier evidence is attached.",
-        "OVERWATCH mart and action tables; no direct Snowflake billing scan.",
+        "OVERWATCH summary and action evidence; no direct Snowflake billing scan.",
     )
 
     board = pd.DataFrame(rows)
@@ -3329,13 +3329,13 @@ def _build_change_cost_correlation_board(
         add(
             "High" if blocked + closure > 0 and spike_signal else "Info",
             "Change-control closure blocker",
-            "Change operability mart",
+            "Change control summary",
             f"Cost movement active={spike_signal}.",
             f"{blocked:,} route blocker(s); {closure:,} closure blocker(s).",
             "Do not close a cost incident as remediated while related change-control routes or closures are blocked.",
             "Work change-control blockers before declaring the cost spike explained or resolved.",
             "FACT_CHANGE_CONTROL_OPERABILITY_DAILY with route/closure blocked counts and verified closures.",
-            "Change & Drift > Change Control Operability Mart",
+            "Change & Drift > Change Control Summary",
             3,
         )
 
@@ -3810,7 +3810,7 @@ def _render_cost_governance_mart_and_incident_timeline(
         height=280,
         max_rows=6,
     )
-    with st.expander("Cost Governance Mart SQL", expanded=False):
+    with st.expander("Cost Governance SQL", expanded=False):
         st.dataframe(mart_board, hide_index=True, width="stretch")
         st.code(sql_text, language="sql")
 
@@ -4002,7 +4002,7 @@ def _load_cost_splash_query(mart_sql: str, live_sql: str, ttl_key: str, *, secti
             tier="historical",
             section=section,
         )
-        return frame, "OVERWATCH mart", ""
+        return frame, "Fast summary", ""
     except Exception as mart_exc:
         try:
             frame = run_query_or_raise(
@@ -4016,7 +4016,7 @@ def _load_cost_splash_query(mart_sql: str, live_sql: str, ttl_key: str, *, secti
             return (
                 pd.DataFrame(),
                 "",
-                f"Mart unavailable: {format_snowflake_error(mart_exc)}; live fallback failed: {format_snowflake_error(live_exc)}",
+                f"Fast summary unavailable: {format_snowflake_error(mart_exc)}; live fallback failed: {format_snowflake_error(live_exc)}",
             )
 
 
@@ -5315,7 +5315,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                     tier="historical",
                     section="Cost & Contract",
                 )
-                st.session_state["cost_contract_cockpit_source"] = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+                st.session_state["cost_contract_cockpit_source"] = "Fast warehouse cost summary"
                 st.session_state["cost_contract_cockpit_meta"] = {"company": company, "days": int(days)}
                 st.session_state["cost_contract_cockpit_error"] = ""
             except Exception as mart_exc:
@@ -5333,7 +5333,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                     st.session_state["cost_contract_cockpit_error"] = ""
                 except Exception as exc:
                     st.session_state["cost_contract_cockpit_error"] = (
-                        f"Mart unavailable: {format_snowflake_error(mart_exc)}; "
+                        f"Fast summary unavailable: {format_snowflake_error(mart_exc)}; "
                         f"live fallback failed: {format_snowflake_error(exc)}"
                     )
                     st.session_state["cost_contract_cockpit"] = pd.DataFrame()
@@ -5345,7 +5345,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                     tier="historical",
                     section="Cost & Contract",
                 )
-                st.session_state["cost_contract_run_rate_source"] = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+                st.session_state["cost_contract_run_rate_source"] = "Fast run-rate summary"
                 st.session_state["cost_contract_run_rate_error"] = ""
             except Exception as mart_exc:
                 try:
@@ -5363,7 +5363,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                     st.session_state["cost_contract_run_rate"] = pd.DataFrame()
                     st.session_state["cost_contract_run_rate_source"] = ""
                     st.session_state["cost_contract_run_rate_error"] = (
-                        f"Mart unavailable: {format_snowflake_error(mart_exc)}; "
+                        f"Fast summary unavailable: {format_snowflake_error(mart_exc)}; "
                         f"live fallback failed: {format_snowflake_error(exc)}"
                     )
             try:

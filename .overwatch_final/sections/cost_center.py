@@ -1506,7 +1506,7 @@ def render():
                     )
                     fallback_note = ""
                     if mart_result.message:
-                        fallback_note = f" Mart unavailable: {mart_result.message[:160]}"
+                        fallback_note = f" Fast summary unavailable: {mart_result.message[:160]}"
                     elif mart_result.available:
                         fallback_note = " Mart returned no rows for the selected scope."
                     explorer_source = (
@@ -1784,7 +1784,7 @@ def render():
                         company=company,
                         warehouse_contains=warehouse_contains,
                     )
-                    bill_summary_source = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+                    bill_summary_source = "Fast billing summary"
                 else:
                     summary_sql = live_summary_sql
                     wh_delta_sql = live_wh_delta_sql
@@ -1905,7 +1905,7 @@ def render():
                     tier="standard",
                 )
                 if use_mart_summary and st.session_state["cc_explain_summary"].empty:
-                    bill_summary_source = "Live fallback: mart unavailable or stale"
+                    bill_summary_source = "Live fallback: fast summary unavailable or stale"
                     st.session_state["cc_explain_summary"] = run_query(
                         live_summary_sql,
                         ttl_key=f"cc_explain_summary_{company}_{explain_period}_fallback",
@@ -2766,7 +2766,7 @@ def render():
                     )
                     fallback_note = ""
                     if mart_result.message:
-                        fallback_note = f" Mart unavailable: {mart_result.message[:160]}"
+                        fallback_note = f" Fast summary unavailable: {mart_result.message[:160]}"
                     elif mart_result.available:
                         fallback_note = " Mart returned no chargeback rows for the selected scope."
                     source_caption = (

@@ -90,7 +90,7 @@ def _freshness_note(source: str) -> str:
     if "account_usage" in source_key or "query_history" in source_key:
         return "Freshness: ACCOUNT_USAGE can lag up to about 45-90 minutes"
     if "mart" in source_key or "overwatch" in source_key:
-        return "Freshness: OVERWATCH mart refresh cadence"
+        return "Freshness: fast summary refresh cadence"
     return "Freshness: depends on source view availability"
 
 
@@ -765,7 +765,7 @@ def _change_scope_clause(
     db_col: str,
     schema_col: str = "schema_name",
 ) -> str:
-    """Apply company/global filters while keeping account-level changes under environment scopes."""
+    """Apply company and triage filters while keeping account-level changes under environment scopes."""
     return get_global_filter_clause(
         date_col=date_col,
         wh_col=wh_col,
@@ -839,8 +839,8 @@ def _change_row_count(frame) -> int:
 
 def _change_source_confidence(source: str, default: str) -> str:
     source_lower = str(source or "").lower()
-    if "mart" in source_lower or "fact_" in source_lower:
-        return "Pre-aggregated"
+    if ("fast" in source_lower and "summary" in source_lower) or "mart" in source_lower or "fact_" in source_lower:
+        return "Fast summary"
     if "fallback" in source_lower:
         return "Live fallback"
     if "account_usage" in source_lower:
@@ -853,15 +853,15 @@ def _change_source_confidence(source: str, default: str) -> str:
 def _change_source_next_action(state: str, source: str) -> str:
     source_lower = str(source or "").lower()
     if state == "Stale":
-        return "Reload after changing company, environment, lookback, or global filters."
+        return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
-        return "Deploy or refresh the mart/evidence tables before relying on this surface."
+        return "Deploy or refresh the summary/evidence tables before relying on this surface."
     if state == "Not Loaded":
         return "Load only when this workflow is part of the current change investigation."
     if state == "No Rows":
         return "Confirm the selected scope has recent change events, evidence, or action rows."
     if "fallback" in source_lower:
-        return "Use for investigation; prefer mart refresh for repeated daily change control."
+        return "Use for investigation; prefer summary refresh for repeated daily change control."
     return "Current for the active DBA change scope."
 
 
@@ -906,7 +906,7 @@ def _change_source_health_rows(
             "meta_key": "change_drift_meta",
             "days_key": "change_drift_brief_days",
             "default_days": 14,
-            "source": "OVERWATCH mart or live QUERY_HISTORY change brief",
+            "source": "Fast change summary or live query history",
             "confidence": "Mixed",
             "error_key": "change_drift_error",
         },
@@ -917,18 +917,18 @@ def _change_source_health_rows(
             "meta_key": "change_drift_meta",
             "days_key": "change_drift_brief_days",
             "default_days": 14,
-            "source": "OVERWATCH mart or live QUERY_HISTORY exception set",
+            "source": "Fast change summary or live query history",
             "confidence": "Mixed",
             "error_key": "change_drift_error",
         },
         {
-            "surface": "Operability fact",
+            "surface": "Control summary",
             "frame_key": "change_control_operability_fact",
             "meta_key": "change_control_operability_fact_meta",
             "days_key": "change_drift_brief_days",
             "default_days": 14,
-            "source": f"OVERWATCH mart: {CHANGE_CONTROL_OPERABILITY_FACT_TABLE}",
-            "confidence": "Pre-aggregated",
+            "source": "Fast change-control summary",
+            "confidence": "Fast summary",
             "error_key": "change_control_operability_fact_error",
         },
         {
@@ -937,7 +937,7 @@ def _change_source_health_rows(
             "meta_key": "change_drift_evidence_trend_meta",
             "days_key": "change_drift_evidence_trend_days",
             "default_days": 30,
-            "source": f"Workflow mart: {CHANGE_CONTROL_EVIDENCE_TABLE}",
+            "source": "Workflow evidence",
             "confidence": "Workflow evidence",
             "error_key": "change_drift_evidence_trend_error",
         },
@@ -3535,7 +3535,7 @@ LIMIT 100""".strip()
 
 
 def _change_control_operability_fact_sql(days: int, company: str, environment: str = "ALL") -> str:
-    """Read pre-aggregated change-control blockers from the mart fact."""
+    """Read change-control blockers from the fast summary."""
     table = change_control_operability_fact_fqn()
     where = [f"SNAPSHOT_DATE >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_DATE())"]
     if str(company or "").upper() != "ALL":
@@ -3619,15 +3619,15 @@ def _render_change_source_health(company: str, environment: str) -> None:
         current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
         stale = int(source_health["STATE"].eq("Stale").sum())
         unavailable = int(source_health["STATE"].eq("Unavailable").sum())
-        mart_backed = int(
+        fast_summary = int(
             source_health[
                 source_health["STATE"].isin(["Loaded", "No Rows"])
-                & source_health["SOURCE"].astype(str).str.contains("mart|FACT_", case=False, regex=True)
+                & source_health["CONFIDENCE"].astype(str).str.contains("Fast summary", case=False, regex=False)
             ].shape[0]
         )
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
-        c2.metric("Mart-Backed", f"{mart_backed:,}")
+        c2.metric("Fast Summary", f"{fast_summary:,}")
         c3.metric("Stale", f"{stale:,}", delta_color="inverse")
         c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
         defer_source_note(
@@ -4026,7 +4026,7 @@ def render() -> None:
     if st.button("Load Change & Drift Brief", key="change_drift_brief_load", type="primary"):
         try:
             summary_sql, exceptions_sql = _build_mart_change_drift_sql(days, company)
-            source_label = "OVERWATCH mart: FACT_OBJECT_CHANGE"
+            source_label = "Fast change summary"
             st.session_state["change_drift_summary"] = run_query(
                 summary_sql,
                 ttl_key=f"change_drift_summary_mart_{company}_{environment}_{days}",
@@ -4072,7 +4072,7 @@ def render() -> None:
                     "source": source_label,
                 }
                 st.session_state.pop("change_drift_error", None)
-                st.info(f"Change mart unavailable; used live QUERY_HISTORY fallback. {format_snowflake_error(exc)}")
+                st.info(f"Change summary unavailable from the fast source; used live QUERY_HISTORY fallback. {format_snowflake_error(exc)}")
             except Exception as live_exc:
                 st.session_state["change_drift_summary"] = pd.DataFrame()
                 st.session_state["change_drift_exceptions"] = pd.DataFrame()
@@ -4130,9 +4130,9 @@ def render() -> None:
             expected_brief_meta,
         )
         if operability_fact is not None and not operability_fact.empty and operability_fact_current:
-            st.subheader("Change Control Operability Mart")
+            st.subheader("Change Control Summary")
             f1, f2, f3, f4 = st.columns(4)
-            f1.metric("Fact Rows", f"{len(operability_fact):,}")
+            f1.metric("Rows", f"{len(operability_fact):,}")
             f2.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
             f3.metric(
                 "Route / Closure Blocks",
@@ -4142,7 +4142,7 @@ def render() -> None:
             f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
             render_priority_dataframe(
                 operability_fact,
-                title="Pre-aggregated change-control blockers",
+                title="Change-control blockers",
                 priority_columns=[
                     "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "ENVIRONMENT",
                     "FINDING_TYPE", "ENTITY", "OWNER", "SEVERITY", "HIGH_RISK_CHANGES",
@@ -4153,16 +4153,16 @@ def render() -> None:
                 ],
                 sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "HIGH_RISK_CHANGES"],
                 ascending=[True, False, False, False],
-                raw_label="All change-control operability facts",
+                raw_label="All change-control summary rows",
                 height=300,
             )
-            with st.expander("Operability fact query", expanded=False):
+            with st.expander("Change control summary SQL", expanded=False):
                 st.code(st.session_state.get("change_control_operability_fact_sql", ""), language="sql")
         elif operability_fact is not None and not operability_fact.empty and not operability_fact_current:
-            st.info("Loaded change-control operability facts are stale for the active scope. Reload the brief before acting.")
+            st.info("Loaded change-control summary is stale for the active scope. Reload the brief before acting.")
         elif st.session_state.get("change_control_operability_fact_error"):
             defer_source_note(
-                "Change-control operability mart not available yet; deploy or refresh "
+                "Change-control summary is not available yet; deploy or refresh "
                 "`FACT_CHANGE_CONTROL_OPERABILITY_DAILY` to enable the fast blocker surface."
             )
 

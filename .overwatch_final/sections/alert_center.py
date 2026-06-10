@@ -981,6 +981,156 @@ def _render_alert_center_metric_rows(
             detail_cols[2].metric("Open Queue", f"{open_queue:,}")
 
 
+def _alert_center_exception_rows(
+    *,
+    alerts: pd.DataFrame,
+    queue: pd.DataFrame,
+    issues: pd.DataFrame,
+    delivery_log: pd.DataFrame,
+    readiness_rows: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    pd = _pd()
+    rows: list[dict] = []
+
+    def add(
+        signal: str,
+        severity: str,
+        count: int,
+        state: str,
+        next_action: str,
+        owner: str = "DBA On-Call",
+        route: str = "Issue Inbox",
+    ) -> None:
+        if count <= 0:
+            return
+        rows.append({
+            "SIGNAL": signal,
+            "SEVERITY": severity,
+            "COUNT": int(count),
+            "STATE": state,
+            "NEXT_ACTION": next_action,
+            "OWNER": owner,
+            "ROUTE": route,
+        })
+
+    if alerts is not None and not alerts.empty:
+        open_alerts = _open_alert_mask(alerts)
+        severity = alerts.get("SEVERITY", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str)
+        add(
+            "Critical/high alerts",
+            "High",
+            int((severity.isin(["Critical", "High"]) & open_alerts).sum()),
+            "Escalate",
+            "Review owner, SLA state, and delivery proof for critical/high alerts.",
+            route="Triage Digest",
+        )
+        if "SLA_STATE" in alerts.columns:
+            sla_state = alerts["SLA_STATE"].fillna("").astype(str)
+            add(
+                "Overdue alert SLAs",
+                "High",
+                int((sla_state.eq("Overdue") & open_alerts).sum()),
+                "Overdue",
+                "Send overdue alert rows through the digest and confirm owner response.",
+                route="Triage Digest",
+            )
+        owner = alerts.get("OWNER", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str).str.upper()
+        add(
+            "Generic alert owners",
+            "Medium",
+            int((owner.isin(["", "DBA", "OVERWATCH"]) & open_alerts).sum()),
+            "Route owner",
+            "Replace generic owners with named owner-directory routes before escalation.",
+            owner="Platform DBA",
+            route="Control Health",
+        )
+        delivery_status = alerts.get("DELIVERY_STATUS", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str).str.upper()
+        ready_count = int(delivery_status.str.contains("EMAIL_READY").sum())
+        logged_count = int(delivery_status.str.contains("EMAIL_LOGGED").sum())
+        add(
+            "Delivery proof gap",
+            "Medium",
+            max(0, ready_count - logged_count),
+            "Log delivery",
+            "Log digest/email delivery evidence for ready alerts.",
+            route="Email Delivery",
+        )
+
+    if queue is not None and not queue.empty:
+        if "STATUS" in queue.columns:
+            open_queue = ~queue["STATUS"].fillna("New").astype(str).str.title().isin(["Fixed", "Ignored"])
+            add(
+                "Open action queue",
+                "Medium",
+                int(open_queue.sum()),
+                "Work queue",
+                "Confirm owner, due date, ticket, and closure proof on open queue rows.",
+                owner="DBA Lead",
+                route="Action Queue Routing",
+            )
+
+    if readiness_rows is not None and not readiness_rows.empty and "STATE" in readiness_rows.columns:
+        blockers = readiness_rows["STATE"].fillna("").astype(str).str.upper().isin({"NEEDS SETUP", "DEGRADED", "SCOPE STALE"})
+        add(
+            "Alert control blockers",
+            "High",
+            int(blockers.sum()),
+            "Fix control",
+            "Restore alert source, owner, route, or delivery controls before relying on automation.",
+            owner="Platform DBA",
+            route="Control Health",
+        )
+
+    if issues is not None and not issues.empty:
+        severity = issues.get("SEVERITY", pd.Series(index=issues.index, dtype=str)).fillna("").astype(str)
+        add(
+            "High-priority issue rows",
+            "High",
+            int(severity.isin(["Critical", "High"]).sum()),
+            "Review first",
+            "Open issue detail only when the exception strip needs row-level proof.",
+            route="Issue Inbox",
+        )
+
+    if delivery_log is not None and not delivery_log.empty:
+        status = delivery_log.get("DELIVERY_STATUS", pd.Series(index=delivery_log.index, dtype=str)).fillna("").astype(str).str.upper()
+        failed = status.str.contains("FAILED|ERROR|BOUNCED", regex=True)
+        add(
+            "Delivery failures",
+            "High",
+            int(failed.sum()),
+            "Retry delivery",
+            "Review failed notification attempts and route to the email integration owner.",
+            owner="DBA On-Call",
+            route="Email Delivery",
+        )
+
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    severity_rank = {"High": 0, "Medium": 1, "Low": 2}
+    result["_SORT"] = result["SEVERITY"].map(severity_rank).fillna(9)
+    result = result.sort_values(["_SORT", "COUNT", "SIGNAL"], ascending=[True, False, True])
+    return result.drop(columns=["_SORT"]).reset_index(drop=True)
+
+
+def _render_alert_center_exception_strip(exceptions: pd.DataFrame) -> None:
+    st.markdown("**Exception Strip**")
+    if exceptions is None or exceptions.empty:
+        st.success("No alert exceptions found for the loaded scope.")
+        return
+    _render_priority_dataframe(
+        exceptions,
+        title="Alert exceptions to work first",
+        priority_columns=["SEVERITY", "SIGNAL", "COUNT", "STATE", "NEXT_ACTION", "OWNER", "ROUTE"],
+        sort_by=["SEVERITY", "COUNT", "SIGNAL"],
+        ascending=[True, False, True],
+        max_rows=5,
+        raw_label="All alert exceptions",
+        height=220,
+    )
+
+
 def _alert_owner_route_board(alerts: pd.DataFrame, queue: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     pd = _pd()
     generic_owners = {
@@ -1528,6 +1678,13 @@ def render() -> None:
             limit=int(limit),
             loaded_scope=loaded_scope,
         )
+    exception_rows = _alert_center_exception_rows(
+        alerts=alerts,
+        queue=queue,
+        issues=issues,
+        delivery_log=delivery_log,
+        readiness_rows=readiness_rows,
+    )
 
     _render_alert_center_action_brief(
         _alert_center_action_brief(
@@ -1550,6 +1707,7 @@ def render() -> None:
         email_logged=email_logged_count,
         open_queue=open_queue_count,
     )
+    _render_alert_center_exception_strip(exception_rows)
 
     if active_view == "Control Health":
         st.subheader("Alert Control Health")
@@ -1745,20 +1903,30 @@ def render() -> None:
         if visible.empty:
             st.success("No active alert or action queue issues found for this scope.")
         else:
-            _render_priority_dataframe(
-                visible,
-                title="Unified DBA issue inbox",
-                priority_columns=[
-                    "ISSUE_SOURCE", "SEVERITY", "STATUS", "DOMAIN", "SIGNAL",
-                    "ENTITY", "DETAIL", "NEXT_ACTION", "OWNER", "EMAIL_TARGET",
-                    "DELIVERY_STATUS", "ROUTE",
-                ],
-                sort_by=["SEVERITY", "ISSUE_SOURCE", "SIGNAL"],
-                ascending=[True, True, True],
-                raw_label="All active issues",
-                height=420,
+            st.caption(
+                f"{len(visible):,} issue row(s) match the filters. "
+                "Use the exception strip first; render row-level proof only when needed."
             )
-            _download_csv(visible, "overwatch_alert_center_issues.csv")
+            detail_visible = bool(st.session_state.get("alert_center_issue_detail_visible"))
+            detail_label = "Hide Issue Detail" if detail_visible else "Show Issue Detail"
+            if st.button(detail_label, key="alert_center_toggle_issue_detail", width="stretch"):
+                detail_visible = not detail_visible
+                st.session_state["alert_center_issue_detail_visible"] = detail_visible
+            if st.session_state.get("alert_center_issue_detail_visible"):
+                _render_priority_dataframe(
+                    visible,
+                    title="Unified DBA issue inbox",
+                    priority_columns=[
+                        "ISSUE_SOURCE", "SEVERITY", "STATUS", "DOMAIN", "SIGNAL",
+                        "ENTITY", "DETAIL", "NEXT_ACTION", "OWNER", "EMAIL_TARGET",
+                        "DELIVERY_STATUS", "ROUTE",
+                    ],
+                    sort_by=["SEVERITY", "ISSUE_SOURCE", "SIGNAL"],
+                    ascending=[True, True, True],
+                    raw_label="All active issues",
+                    height=420,
+                )
+                _download_csv(visible, "overwatch_alert_center_issues.csv")
 
     elif active_view == "Triage Digest":
         st.subheader("DBA Triage Digest")

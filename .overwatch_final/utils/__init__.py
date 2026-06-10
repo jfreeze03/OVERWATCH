@@ -192,7 +192,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "workflows": (
         "coerce_workflow_state", "render_workflow_selector", "render_workflow_guide",
         "render_signal_confidence", "add_signal_routes", "add_cost_companion_columns",
-        "render_priority_dataframe", "prioritize_context_columns", "migrate_legacy_workflow_state",
+        "apply_operator_status_labels", "render_priority_dataframe", "prioritize_context_columns", "migrate_legacy_workflow_state",
         "render_workflow_module",
     ),
     "section_guidance": (

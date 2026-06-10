@@ -607,7 +607,7 @@ def render():
                         ttl_key=f"rec_idle_mart_{company}",
                         tier="historical",
                     )
-                    source_notes.append("Idle warehouses: OVERWATCH mart")
+                    source_notes.append("Idle warehouses: Fast summary")
                 except Exception:
                     df_idle = run_query(
                         build_idle_warehouse_sql(
@@ -653,7 +653,7 @@ def render():
                         ttl_key=f"rec_spill_mart_{company}",
                         tier="historical",
                     )
-                    source_notes.append("Remote spill: OVERWATCH mart")
+                    source_notes.append("Remote spill: Fast summary")
                 except Exception:
                     qh_cols = set(filter_existing_columns(
                         session,
@@ -710,7 +710,7 @@ def render():
                         ttl_key=f"rec_failed_tasks_mart_{company}",
                         tier="historical",
                     )
-                    source_notes.append("Failed tasks: OVERWATCH mart")
+                    source_notes.append("Failed tasks: Fast summary")
                 except Exception:
                     failed_task_sql = build_task_failure_summary_sql(
                         session,
@@ -760,7 +760,7 @@ def render():
                         ttl_key=f"rec_query_errors_mart_{company}",
                         tier="historical",
                     )
-                    source_notes.append("Query failures: OVERWATCH mart")
+                    source_notes.append("Query failures: Fast summary")
                 except Exception:
                     df_err = run_query(f"""
                         SELECT warehouse_name, COUNT(*) AS failures

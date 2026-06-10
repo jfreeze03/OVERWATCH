@@ -53,6 +53,7 @@ from sections.alert_center import (  # noqa: E402
     _alert_center_action_brief,
     _apply_alert_center_brief_first_default,
     _alert_center_brief_workflow_rows,
+    _alert_center_exception_rows,
     _alert_center_pending_brief,
     _alert_center_operability_rows,
     _alert_center_readiness_score,
@@ -142,12 +143,12 @@ from sections.dba_control_room import (  # noqa: E402
     _command_queue_closure_readiness,
     _command_queue_summary,
     _command_queue_route_readiness,
-    _build_dba_autopilot_flight_plan_markdown,
+    _build_dba_operator_runbook_markdown,
     _build_dba_escalation_packet_markdown,
     _dba_action_brief,
-    _dba_autopilot_flight_plan,
-    _dba_control_tower_priority_index,
     _dba_escalation_packet,
+    _dba_operator_runbook,
+    _dba_operations_priority_index,
     _dba_section_operability_board,
     _dba_section_proof_required,
     _dba_incident_board,
@@ -596,6 +597,31 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(float(enriched_mixed["MONTHLY_LIMIT_CREDITS_COST_USD"].iloc[0]), 36.80)
         self.assertAlmostEqual(float(enriched_mixed["MONTHLY_LIMIT_CREDITS_COST_USD"].iloc[1]), 22.00)
 
+    def test_priority_tables_use_operator_status_labels_for_display_only(self):
+        from utils.workflows import apply_operator_status_labels
+
+        raw = pd.DataFrame({
+            "SURFACE": ["Source health", "Action closure", "Control review"],
+            "STATE": ["Not Loaded", "Refresh Needed", "Loaded"],
+            "VERIFICATION_STATUS": ["Pending", "Verified", ""],
+            "OWNER_APPROVAL_STATUS": ["Pending", "", "Approved"],
+            "RECOVERY_AUDIT_STATE": [
+                "Checklist Verification Pending",
+                "Closed",
+                "Architecture Review Pending",
+            ],
+        })
+        display = apply_operator_status_labels(raw)
+
+        self.assertEqual(display.loc[0, "STATE"], "Load on demand")
+        self.assertEqual(display.loc[1, "STATE"], "Refresh available")
+        self.assertEqual(display.loc[0, "VERIFICATION_STATUS"], "Awaiting verification")
+        self.assertEqual(display.loc[0, "OWNER_APPROVAL_STATUS"], "Awaiting approval")
+        self.assertEqual(display.loc[0, "RECOVERY_AUDIT_STATE"], "Checklist Verification Needed")
+        self.assertEqual(display.loc[2, "RECOVERY_AUDIT_STATE"], "Architecture Review Needed")
+        self.assertEqual(raw.loc[0, "STATE"], "Not Loaded")
+        self.assertEqual(raw.loc[0, "VERIFICATION_STATUS"], "Pending")
+
     def test_cost_contract_service_lens_sql_is_bounded(self):
         service_sql = build_snowflake_service_cost_lens_sql(
             14,
@@ -653,7 +679,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ELSE 3.6800", mart_sql)
         self.assertIn("USAGE_DATE >= DATEADD('DAY', -28", mart_sql)
         self.assertIn("WHEN USAGE_DATE >= DATEADD('DAY', -14", mart_sql)
-        self.assertIn("OVERWATCH MART: FACT_COST_DAILY", mart_sql)
+        self.assertIn("FAST COST SUMMARY", mart_sql)
 
     def test_metered_credit_cte_uses_compute_credits_with_total_fallback(self):
         sql = build_metered_credit_cte(hours_back=24, include_recent=True).upper()
@@ -1053,7 +1079,7 @@ class FormulaRegressionTests(unittest.TestCase):
             failed_tasks=0,
             object_changes=0,
             control_mart_used=True,
-            detail_source="OVERWATCH mart facts",
+            detail_source="Fast summary",
         )
         brief = _account_health_action_brief(checklist)
         self.assertEqual(brief["target"], "Warehouse Health")
@@ -1426,8 +1452,8 @@ class FormulaRegressionTests(unittest.TestCase):
             "global_role": "",
             "global_database": "",
             "health_data": {
-                "_account_health_detail_source": "OVERWATCH mart facts",
-                "_control_mart_source": "OVERWATCH mart: MART_DBA_CONTROL_ROOM",
+                "_account_health_detail_source": "Fast summary",
+                "_control_mart_source": "Fast control-room summary",
                 "_control_mart": pd.DataFrame({"SNAPSHOT_TS": ["2026-05-31"]}),
                 "_live_source": "ACCOUNT_USAGE",
                 "live": pd.DataFrame({"ACTIVE_COUNT": [1]}),
@@ -1459,9 +1485,9 @@ class FormulaRegressionTests(unittest.TestCase):
         by_surface = {row["SURFACE"]: row for _, row in rows.iterrows()}
 
         self.assertEqual(by_surface["Overview snapshot"]["STATE"], "Loaded")
-        self.assertEqual(by_surface["Overview snapshot"]["CONFIDENCE"], "Pre-aggregated")
+        self.assertEqual(by_surface["Overview snapshot"]["CONFIDENCE"], "Fast summary")
         self.assertEqual(by_surface["Live status probe"]["STATE"], "Stale")
-        self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
+        self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Access hygiene"]["STATE"], "Loaded")
         self.assertEqual(by_surface["Access hygiene"]["SCOPE"], "ALFA / No Database Context / 30d")
         self.assertEqual(by_surface["Access hygiene"]["CONFIDENCE"], "Live Snowflake metadata")
@@ -2449,7 +2475,7 @@ class FormulaRegressionTests(unittest.TestCase):
             )
 
         self.assertIn("_source_modes", data)
-        self.assertTrue(any(row.get("Mode") == "Mart unavailable" for _, row in data["_source_modes"].iterrows()))
+        self.assertTrue(any(row.get("Mode") == "Fast summary unavailable" for _, row in data["_source_modes"].iterrows()))
         self.assertFalse(any("SNOWFLAKE.ACCOUNT_USAGE" in sql for sql in called_sql))
 
     def test_control_room_live_fallback_defers_heavy_account_scans(self):
@@ -2509,12 +2535,12 @@ class FormulaRegressionTests(unittest.TestCase):
             "cortex_summary": pd.DataFrame(),
             "cortex_summary_error": pd.DataFrame({"ERROR": ["Cortex mart missing"]}),
             "_source_modes": pd.DataFrame([
-                {"Source": "summary", "Mode": "OVERWATCH mart"},
-                {"Source": "credits", "Mode": "OVERWATCH mart"},
+                {"Source": "summary", "Mode": "Fast summary"},
+                {"Source": "credits", "Mode": "Fast summary"},
                 {"Source": "task_sla_history", "Mode": "Deferred"},
                 {"Source": "procedure_sla", "Mode": "Deferred"},
-                {"Source": "warehouse_pressure", "Mode": "Live fallback", "Message": "mart unavailable"},
-                {"Source": "cortex_cost", "Mode": "Mart unavailable"},
+                {"Source": "warehouse_pressure", "Mode": "Live fallback", "Message": "fast summary unavailable"},
+                {"Source": "cortex_cost", "Mode": "Fast summary unavailable"},
             ]),
         }
         state = {
@@ -2548,7 +2574,7 @@ class FormulaRegressionTests(unittest.TestCase):
         by_surface = {row["SURFACE"]: row for _, row in rows.iterrows()}
 
         self.assertEqual(by_surface["summary"]["STATE"], "Stale")
-        self.assertEqual(by_surface["credits"]["MODE"], "OVERWATCH mart")
+        self.assertEqual(by_surface["credits"]["MODE"], "Fast summary")
         self.assertEqual(by_surface["task_sla_cost"]["STATE"], "Deferred")
         self.assertEqual(by_surface["procedure_sla_cost"]["STATE"], "Deferred")
         self.assertEqual(by_surface["warehouse_pressure"]["MODE"], "Live fallback")
@@ -2561,7 +2587,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 {
                     "SURFACE": "summary",
                     "STATE": "Unavailable",
-                    "MODE": "Mart unavailable",
+                    "MODE": "Fast summary unavailable",
                     "ROWS": 0,
                     "SCOPE": "ALFA / PROD / 24h",
                     "MESSAGE": "summary mart missing",
@@ -2570,7 +2596,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 {
                     "SURFACE": "credits",
                     "STATE": "Stale",
-                    "MODE": "OVERWATCH mart",
+                    "MODE": "Fast summary",
                     "ROWS": 1,
                     "SCOPE": "ALFA / PROD / 24h",
                     "MESSAGE": "",
@@ -2588,7 +2614,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 {
                     "SURFACE": "cortex_summary",
                     "STATE": "Unavailable",
-                    "MODE": "Mart unavailable",
+                    "MODE": "Fast summary unavailable",
                     "ROWS": 0,
                     "SCOPE": "ALFA / PROD / 24h",
                     "MESSAGE": "cortex mart missing",
@@ -3018,7 +3044,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Connect IAM", by_section["Security Posture"]["NEXT_CONTROL_ACTION"])
         self.assertIn("least-privilege", by_section["Security Posture"]["PROOF_REQUIRED"])
 
-    def test_dba_control_tower_priority_index_ranks_hot_route_first(self):
+    def test_dba_operations_priority_index_ranks_hot_route_first(self):
         raw_queue = pd.DataFrame([
             {
                 "ACTION_ID": "W1",
@@ -3084,26 +3110,26 @@ class FormulaRegressionTests(unittest.TestCase):
         section_board = _dba_section_operability_board(section_rows, command_queue, closure)
         incident_board = _dba_incident_board(exceptions, command_queue, closure, pd.DataFrame())
 
-        tower = _dba_control_tower_priority_index(
+        priority_index = _dba_operations_priority_index(
             section_board,
             incident_board,
             command_queue,
             pd.DataFrame(),
         )
-        top = tower.iloc[0]
+        top = priority_index.iloc[0]
 
         self.assertEqual(top["SECTION"], "Warehouse Health")
-        self.assertEqual(top["CONTROL_TOWER_STATE"], "Contain Now")
-        self.assertGreater(top["PRIORITY_SCORE"], tower.iloc[1]["PRIORITY_SCORE"])
+        self.assertEqual(top["OPERATIONS_PRIORITY_STATE"], "Contain Now")
+        self.assertGreater(top["PRIORITY_SCORE"], priority_index.iloc[1]["PRIORITY_SCORE"])
         self.assertIn("Queue or warehouse pressure", top["WHY_NOW"])
         self.assertIn("Stabilize", top["FIRST_MOVE"])
         self.assertIn("rollback SQL", top["PROOF_REQUIRED"])
 
-    def test_dba_autopilot_flight_plan_builds_route_specific_runbook(self):
-        tower = pd.DataFrame([
+    def test_dba_operator_runbook_builds_route_specific_steps(self):
+        priority_index = pd.DataFrame([
             {
                 "SECTION": "Warehouse Health",
-                "CONTROL_TOWER_STATE": "Contain Now",
+                "OPERATIONS_PRIORITY_STATE": "Contain Now",
                 "PRIORITY_SCORE": 88.5,
                 "WHY_NOW": "Queue or warehouse pressure; 1 overdue",
                 "FIRST_MOVE": "Stabilize queue/spill pressure first.",
@@ -3111,14 +3137,14 @@ class FormulaRegressionTests(unittest.TestCase):
             }
         ])
 
-        plan = _dba_autopilot_flight_plan(
-            tower,
+        plan = _dba_operator_runbook(
+            priority_index,
             company="ALFA",
             environment="PROD",
             lookback_hours=24,
             generated_at=datetime(2026, 6, 1, 17, 30),
         )
-        markdown = _build_dba_autopilot_flight_plan_markdown(
+        markdown = _build_dba_operator_runbook_markdown(
             plan,
             company="ALFA",
             environment="PROD",
@@ -3126,8 +3152,9 @@ class FormulaRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(len(plan), 6)
-        self.assertEqual(plan.iloc[0]["MISSION_ID"], "DBA-AUTO-202606011730")
-        self.assertEqual(plan.iloc[0]["AUTOPILOT_MODE"], "Advisory Only")
+        self.assertEqual(plan.iloc[0]["RUNBOOK_ID"], "DBA-RUNBOOK-202606011730")
+        self.assertEqual(plan.iloc[0]["RUNBOOK_MODE"], "Advisory Only")
+        self.assertEqual(plan.iloc[0]["RUNBOOK_STEP"], "Evidence Check")
         self.assertIn("Evidence current", plan["GO_NO_GO_GATE"].tolist())
         self.assertIn("Advisory only", plan["GO_NO_GO_GATE"].tolist())
         self.assertTrue(plan["PROOF_SQL"].str.contains("WAREHOUSE_METERING_HISTORY|QUERY_HISTORY", regex=True).any())
@@ -3224,7 +3251,7 @@ class FormulaRegressionTests(unittest.TestCase):
             company="ALFA",
             environment="PROD",
             lookback_hours=24,
-            source_mode="Fast triage mart queries",
+            source_mode="Fast triage summary",
         )
 
         self.assertIn("# OVERWATCH DBA Incident Board", markdown)
@@ -3298,7 +3325,7 @@ class FormulaRegressionTests(unittest.TestCase):
             company="ALFA",
             environment="PROD",
             lookback_hours=24,
-            source_mode="Fast triage mart queries",
+            source_mode="Fast triage summary",
         )
 
         self.assertIn("# OVERWATCH DBA Shift Handoff", markdown)
@@ -3307,10 +3334,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Closure Standard", markdown)
 
     def test_dba_escalation_packet_merges_owner_routes_from_loaded_evidence(self):
-        control_tower = pd.DataFrame([
+        priority_index = pd.DataFrame([
             {
                 "SECTION": "Warehouse Health",
-                "CONTROL_TOWER_STATE": "Owner Review",
+                "OPERATIONS_PRIORITY_STATE": "Owner Review",
                 "PRIORITY_SCORE": 62,
                 "WHY_NOW": "2 proof blockers",
                 "WORST_SIGNAL": "Warehouse guardrail review",
@@ -3358,7 +3385,7 @@ class FormulaRegressionTests(unittest.TestCase):
         ])
 
         packet = _dba_escalation_packet(
-            control_tower,
+            priority_index,
             incident_board,
             handoff,
             release_gate,
@@ -4392,7 +4419,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Security brief"]["STATE"], "Loaded")
         self.assertEqual(by_surface["Security brief"]["CONFIDENCE"], "Live fallback")
         self.assertEqual(by_surface["Security exceptions"]["ROWS"], 1)
-        self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
+        self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Privileged grants"]["STATE"], "Stale")
         self.assertEqual(by_surface["Access review trend"]["STATE"], "Not Loaded")
         self.assertIn("Reload", by_surface["Privileged grants"]["NEXT_ACTION"])
@@ -4743,7 +4770,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "change_drift_brief_days": 14,
             "change_drift_summary": pd.DataFrame({"OBJECT_CHANGES": [3]}),
             "change_drift_exceptions": pd.DataFrame({"FINDING_TYPE": ["Manual Drift"]}),
-            "change_drift_source": "OVERWATCH mart: FACT_OBJECT_CHANGE",
+            "change_drift_source": "Fast change summary",
             "change_drift_meta": {
                 "company": "ALFA",
                 "environment": "PROD",
@@ -4778,9 +4805,9 @@ class FormulaRegressionTests(unittest.TestCase):
         by_surface = {row["SURFACE"]: row for _, row in rows.iterrows()}
 
         self.assertEqual(by_surface["Change brief"]["STATE"], "Loaded")
-        self.assertEqual(by_surface["Change brief"]["CONFIDENCE"], "Pre-aggregated")
+        self.assertEqual(by_surface["Change brief"]["CONFIDENCE"], "Fast summary")
         self.assertEqual(by_surface["Change exceptions"]["ROWS"], 1)
-        self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
+        self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Evidence trend"]["STATE"], "Stale")
         self.assertEqual(by_surface["Closure analytics"]["STATE"], "Not Loaded")
         self.assertEqual(by_surface["Terraform evidence"]["STATE"], "Not Loaded")
@@ -5431,7 +5458,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "wh_operability_fact_error": "FACT_WAREHOUSE_OPERABILITY_DAILY does not exist",
             "wh_days": 7,
             "wh_df_wh": pd.DataFrame({"WAREHOUSE_NAME": ["ALFA_WH"]}),
-            "wh_df_wh_source": "OVERWATCH mart: FACT_QUERY_HOURLY + FACT_WAREHOUSE_HOURLY",
+            "wh_df_wh_source": "Fast warehouse summary",
             "wh_df_wh_meta": {
                 "company": "ALFA",
                 "environment": "DEV_ALL",
@@ -5450,9 +5477,9 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(by_surface["Capacity brief"]["STATE"], "Loaded")
         self.assertEqual(by_surface["Capacity brief"]["ROWS"], 1)
-        self.assertEqual(by_surface["Operability fact"]["STATE"], "Unavailable")
+        self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Overview"]["STATE"], "Stale")
-        self.assertEqual(by_surface["Overview"]["CONFIDENCE"], "Pre-aggregated")
+        self.assertEqual(by_surface["Overview"]["CONFIDENCE"], "Fast summary")
         self.assertEqual(by_surface["Scaling events"]["STATE"], "Not Loaded")
         self.assertIn("Reload", by_surface["Overview"]["NEXT_ACTION"])
 
@@ -8158,10 +8185,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("blanket AI/Cortex access", cards[0]["evidence"])
         self.assertIn("Do not change account parameters", cards[0]["do_not"])
 
-    def test_ask_overwatch_reads_dba_control_tower_priority(self):
-        tower = pd.DataFrame([
+    def test_ask_overwatch_reads_dba_operations_priority(self):
+        priority_index = pd.DataFrame([
             {
-                "CONTROL_TOWER_STATE": "Contain Now",
+                "OPERATIONS_PRIORITY_STATE": "Contain Now",
                 "PRIORITY_SCORE": 88.5,
                 "SECTION": "Warehouse Health",
                 "WHY_NOW": "Queue or warehouse pressure; 1 overdue",
@@ -8169,21 +8196,21 @@ class FormulaRegressionTests(unittest.TestCase):
                 "PROOF_REQUIRED": "capacity evidence, owner approval, rollback SQL",
             }
         ])
-        cards = build_ask_overwatch_context({"dba_control_tower_priority_index": tower})
+        cards = build_ask_overwatch_context({"dba_operations_priority_index": priority_index})
 
         self.assertEqual(cards[0]["surface"], "DBA Operations Priority")
         self.assertEqual(cards[0]["entity"], "Warehouse Health")
         self.assertIn("Queue or warehouse pressure", cards[0]["evidence"])
         self.assertIn("Stabilize", cards[0]["next_action"])
 
-    def test_ask_overwatch_reads_dba_autopilot_flight_plan(self):
+    def test_ask_overwatch_reads_dba_operator_runbook(self):
         plan = pd.DataFrame([
             {
-                "MISSION_ID": "DBA-AUTO-202606011730",
+                "RUNBOOK_ID": "DBA-RUNBOOK-202606011730",
                 "PHASE_RANK": 1,
-                "FLIGHT_PHASE": "Preflight",
+                "RUNBOOK_STEP": "Evidence Check",
                 "SECTION": "Warehouse Health",
-                "CONTROL_TOWER_STATE": "Contain Now",
+                "OPERATIONS_PRIORITY_STATE": "Contain Now",
                 "PRIORITY_SCORE": 88.5,
                 "GO_NO_GO_GATE": "Evidence current",
                 "DBA_MOVE": "Confirm operations route Warehouse Health.",
@@ -8191,11 +8218,11 @@ class FormulaRegressionTests(unittest.TestCase):
                 "STOP_CONDITION": "Stop if source evidence is stale.",
             },
             {
-                "MISSION_ID": "DBA-AUTO-202606011730",
+                "RUNBOOK_ID": "DBA-RUNBOOK-202606011730",
                 "PHASE_RANK": 2,
-                "FLIGHT_PHASE": "Containment",
+                "RUNBOOK_STEP": "Containment",
                 "SECTION": "Warehouse Health",
-                "CONTROL_TOWER_STATE": "Contain Now",
+                "OPERATIONS_PRIORITY_STATE": "Contain Now",
                 "PRIORITY_SCORE": 88.5,
                 "GO_NO_GO_GATE": "No irreversible changes",
                 "DBA_MOVE": "Stabilize queue/spill pressure first.",
@@ -8203,7 +8230,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "STOP_CONDITION": "Stop if source evidence is stale.",
             },
         ])
-        cards = build_ask_overwatch_context({"dba_autopilot_flight_plan": plan})
+        cards = build_ask_overwatch_context({"dba_operator_runbook": plan})
 
         self.assertEqual(cards[0]["surface"], "DBA Operator Runbook")
         self.assertEqual(cards[0]["entity"], "Warehouse Health")
@@ -9075,6 +9102,48 @@ class FormulaRegressionTests(unittest.TestCase):
             open_queue=0,
         )
         self.assertEqual(clear["state"], "Clear")
+
+    def test_alert_center_exception_rows_prioritize_loaded_issue_signals(self):
+        alerts = pd.DataFrame([
+            {
+                "SEVERITY": "Critical",
+                "STATUS": "New",
+                "SLA_STATE": "Overdue",
+                "OWNER": "DBA",
+                "DELIVERY_STATUS": "EMAIL_READY",
+            },
+            {
+                "SEVERITY": "Low",
+                "STATUS": "Closed",
+                "SLA_STATE": "Ready",
+                "OWNER": "Named Owner",
+                "DELIVERY_STATUS": "EMAIL_LOGGED",
+            },
+        ])
+        queue = pd.DataFrame([{"STATUS": "New"}])
+        issues = pd.DataFrame([
+            {"SEVERITY": "Critical"},
+            {"SEVERITY": "Medium"},
+        ])
+        delivery_log = pd.DataFrame([{"DELIVERY_STATUS": "FAILED"}])
+        readiness_rows = pd.DataFrame([{"STATE": "Needs Setup"}])
+
+        rows = _alert_center_exception_rows(
+            alerts=alerts,
+            queue=queue,
+            issues=issues,
+            delivery_log=delivery_log,
+            readiness_rows=readiness_rows,
+        )
+        by_signal = {row["SIGNAL"]: row for _, row in rows.iterrows()}
+
+        self.assertEqual(rows.iloc[0]["SEVERITY"], "High")
+        self.assertEqual(by_signal["Critical/high alerts"]["COUNT"], 1)
+        self.assertEqual(by_signal["Overdue alert SLAs"]["ROUTE"], "Triage Digest")
+        self.assertEqual(by_signal["Generic alert owners"]["OWNER"], "Platform DBA")
+        self.assertEqual(by_signal["Open action queue"]["COUNT"], 1)
+        self.assertEqual(by_signal["Alert control blockers"]["ROUTE"], "Control Health")
+        self.assertEqual(by_signal["Delivery failures"]["COUNT"], 1)
 
     def test_alert_center_pending_brief_keeps_alert_brief_as_workflow_chooser(self):
         brief = _alert_center_pending_brief("Alert Brief", set())

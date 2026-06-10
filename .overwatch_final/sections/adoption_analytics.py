@@ -49,7 +49,7 @@ def _load_adoption_mart(days: int) -> dict:
         "users_db": run_query(build_mart_adoption_users_db_sql(days, company), ttl_key=f"aa_users_db_mart_{company}_{days}", tier="historical"),
         "by_role_type": run_query(build_mart_adoption_role_type_sql(days, company), ttl_key=f"aa_role_type_mart_{company}_{days}", tier="historical"),
         "applications": None,
-        "source": "OVERWATCH mart: FACT_QUERY_HOURLY",
+        "source": "Fast adoption summary",
     }
 
 

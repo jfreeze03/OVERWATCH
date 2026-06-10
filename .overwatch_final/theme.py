@@ -890,6 +890,26 @@ code, pre, .stCodeBlock {
     padding: 0.48rem 0.65rem;
     background: rgba(var(--accent-rgb), 0.05);
 }
+.ow-priority-empty {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.65rem;
+    margin: 0.25rem 0 0.45rem;
+    padding: 0.48rem 0;
+    font-size: 0.78rem;
+}
+.ow-priority-empty strong {
+    color: var(--text-primary);
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.ow-priority-empty span:last-child {
+    color: var(--text-muted);
+}
 .ow-priority-brief-head {
     align-items: center;
     color: var(--text-primary);

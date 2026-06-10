@@ -361,8 +361,8 @@ def _render_architecture_operating_snapshot(snapshot: dict) -> None:
     cols = st.columns(4)
     cols[0].metric("Company", str(snapshot.get("company") or "All"))
     cols[1].metric("Env", str(snapshot.get("environment") or "ALL"))
-    cols[2].metric("Loaded", f"{safe_int(snapshot.get('loaded')):,}/{safe_int(snapshot.get('total')):,}")
-    cols[3].metric("Reload", f"{safe_int(snapshot.get('stale')):,}", delta_color="inverse")
+    cols[2].metric("Evidence", f"{safe_int(snapshot.get('loaded')):,}/{safe_int(snapshot.get('total')):,}")
+    cols[3].metric("Stale", f"{safe_int(snapshot.get('stale')):,}", delta_color="inverse")
     st.caption(f"Next load: {snapshot.get('next_load') or 'Review loaded evidence'}")
 
 
@@ -1561,14 +1561,14 @@ def _render_platform_futures(company: str, environment: str) -> None:
         loaded_surfaces = sum(1 for frame in _platform_futures_frames(company, environment) if _is_dataframe(frame))
         if controls is None:
             c1, c2, c3 = st.columns(3)
-            c1.metric("Loaded", f"{loaded_surfaces:,}/6")
+            c1.metric("Evidence", f"{loaded_surfaces:,}/6")
             c2.metric("Controls", "Load")
             c3.metric("Open", "Load")
             st.info("Load the futures board after choosing any evidence surfaces you want included.")
         else:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Controls", f"{len(controls):,}")
-            c2.metric("Loaded", f"{loaded_surfaces:,}/6")
+            c2.metric("Evidence", f"{loaded_surfaces:,}/6")
             c3.metric("Open", f"{len(board):,}" if _is_dataframe(board) else "0")
             high_count = (
                 int(board["SEVERITY"].isin(["Critical", "High"]).sum())

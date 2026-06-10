@@ -31,7 +31,7 @@ def _load_storage_trend_from_mart(stor_days: int, company: str) -> bool:
     if df_stor.empty:
         return False
     st.session_state["stor_df_stor"] = df_stor
-    st.session_state["stor_source"] = "OVERWATCH mart: FACT_STORAGE_DAILY"
+    st.session_state["stor_source"] = "Fast storage summary"
     st.session_state["stor_meta"] = {"company": company, "days": int(stor_days)}
     return True
 
@@ -72,7 +72,7 @@ def render():
                 if int(stor_days) > fallback_days:
                     st.info(
                         f"Live storage fallback is capped at {fallback_days} days. "
-                        "Use the OVERWATCH mart for longer storage trends."
+                        "Use the fast storage summary for longer trends."
                     )
                 stage_storage_cte = (
                     f"""
@@ -149,7 +149,7 @@ def render():
                     ttl_key=f"storage_db_detail_mart_{get_active_company()}",
                     tier="standard",
                 )
-                source = "OVERWATCH mart: FACT_STORAGE_DAILY"
+                source = "Fast storage summary"
                 if df_db.empty:
                     raise RuntimeError("Storage mart returned no database detail.")
             except Exception:

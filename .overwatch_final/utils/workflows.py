@@ -16,6 +16,24 @@ from .section_guidance import defer_section_note, defer_source_note
 WORKFLOWS_VERSION = "2026-06-05-cost-companion-guard-v1"
 CONTEXT_PRIORITY_COLUMNS = ("ENVIRONMENT", "DATABASE_NAME", "SCHEMA_NAME")
 _CREDIT_COST_COMPANION_LIMIT = 10
+STATUS_DISPLAY_COLUMNS = (
+    "STATE",
+    "STATUS",
+    "READINESS",
+    "CONTROL_STATE",
+    "AUDIT_READINESS",
+    "CLOSURE_READINESS",
+    "VERIFICATION_STATUS",
+    "POST_CHANGE_VERIFICATION_STATUS",
+    "RECOVERY_AUDIT_STATE",
+    "RECOVERY_SLA_STATE",
+    "APPROVAL_STATE",
+    "OWNER_APPROVAL_STATUS",
+)
+_EXACT_STATUS_DISPLAY_LABELS = {
+    "Not Loaded": "Load on demand",
+    "Refresh Needed": "Refresh available",
+}
 
 
 def prioritize_context_columns(
@@ -83,6 +101,41 @@ def add_cost_companion_columns(df, *, credit_price: float | None = None, max_col
         insert_at = min(len(frame.columns), list(frame.columns).index(column) + 1)
         frame.insert(insert_at, cost_column, cost_values)
         added += 1
+    return frame
+
+
+def _operator_status_label(value, column: str = ""):
+    if value is None:
+        return value
+    text = str(value).strip()
+    if not text:
+        return value
+    if text in _EXACT_STATUS_DISPLAY_LABELS:
+        return _EXACT_STATUS_DISPLAY_LABELS[text]
+    if text == "Pending":
+        column_upper = str(column or "").upper()
+        if "VERIFICATION" in column_upper:
+            return "Awaiting verification"
+        if "APPROVAL" in column_upper:
+            return "Awaiting approval"
+        return "Awaiting action"
+    if text.lower().endswith(" pending"):
+        return f"{text[:-8].rstrip()} Needed"
+    return value
+
+
+def apply_operator_status_labels(df, *, columns: Sequence[str] = STATUS_DISPLAY_COLUMNS):
+    """Use calm operator-facing labels for display-only status/readiness tables."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    frame = df.copy()
+    status_columns = {
+        column
+        for column in frame.columns
+        if any(token in str(column).upper() for token in columns)
+    }
+    for column in status_columns:
+        frame[column] = frame[column].map(lambda value: _operator_status_label(value, str(column)))
     return frame
 
 
@@ -268,6 +321,7 @@ def render_priority_dataframe(
             view = view[columns]
     view = prioritize_context_columns(view)
     view = add_cost_companion_columns(view)
+    display_view = apply_operator_status_labels(view)
 
     visible_rows = min(len(view), int(max_rows or 25))
     st.markdown(
@@ -300,12 +354,11 @@ def render_priority_dataframe(
         active_column_config.update(column_config)
     if active_column_config:
         dataframe_kwargs["column_config"] = active_column_config
-    st.dataframe(view.head(max_rows), **dataframe_kwargs)
+    st.dataframe(display_view.head(max_rows), **dataframe_kwargs)
     if len(df) > max_rows:
         with st.expander(f"{raw_label} ({len(df):,} rows)", expanded=False):
             st.caption(
-                "Full detail rendering is deferred to keep page navigation fast. "
-                "Load it only when you need raw row-level evidence."
+                "Full detail is loaded only when requested so page navigation stays fast."
             )
             frame = inspect.currentframe()
             caller = frame.f_back if frame is not None else None
@@ -316,11 +369,16 @@ def render_priority_dataframe(
                 str(raw_label),
             ])
             button_key = f"ow_raw_detail_{hashlib.sha1(key_basis.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
-            if st.button("Render full detail", key=button_key):
+            if st.button("Show full detail", key=button_key):
                 raw_kwargs = {"use_container_width": True, "hide_index": True}
                 if active_column_config:
                     raw_kwargs["column_config"] = active_column_config
-                st.dataframe(add_cost_companion_columns(prioritize_context_columns(df)), **raw_kwargs)
+                st.dataframe(
+                    apply_operator_status_labels(
+                        add_cost_companion_columns(prioritize_context_columns(df))
+                    ),
+                    **raw_kwargs,
+                )
 
 
 def render_signal_confidence(

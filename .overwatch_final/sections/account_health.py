@@ -204,8 +204,8 @@ def _account_health_is_empty(value) -> bool:
 
 def _account_health_source_confidence(source: str, default: str) -> str:
     source_lower = str(source or "").lower()
-    if "mart" in source_lower or "fact_" in source_lower:
-        return "Pre-aggregated"
+    if ("fast" in source_lower and "summary" in source_lower) or "mart" in source_lower or "fact_" in source_lower:
+        return "Fast summary"
     if "fallback" in source_lower:
         return "Live fallback"
     if "account_usage" in source_lower or "information_schema" in source_lower:
@@ -216,15 +216,15 @@ def _account_health_source_confidence(source: str, default: str) -> str:
 def _account_health_source_next_action(state: str, source: str) -> str:
     source_lower = str(source or "").lower()
     if state == "Stale":
-        return "Reload after changing company, environment, lookback, or global filters."
+        return "Reload after changing company, environment, lookback, or triage filters."
     if state == "Unavailable":
-        return "Deploy or refresh the mart/grants before relying on this surface."
+        return "Deploy or refresh the summary/grants before relying on this surface."
     if state == "Not Loaded":
         return "Load only when this workflow is part of the current DBA investigation."
     if state == "No Rows":
         return "Confirm the selected scope has recent account activity or persisted evidence."
     if "fallback" in source_lower:
-        return "Use for investigation; prefer mart refresh for repeated morning control."
+        return "Use for investigation; prefer summary refresh for repeated morning control."
     return "Current for the active Account Health scope."
 
 
@@ -270,18 +270,18 @@ def _account_health_source_health_rows(
         {
             "surface": "Overview snapshot",
             "value": health_data,
-            "source": health_data.get("_account_health_detail_source", "OVERWATCH mart or live ACCOUNT_USAGE"),
+            "source": health_data.get("_account_health_detail_source", "Fast summary or live account history"),
             "meta_key": "account_health_overview_meta",
             "window": "24h",
             "confidence": "Mixed",
         },
         {
-            "surface": "Control-room mart",
+            "surface": "Control-room summary",
             "value": health_data.get("_control_mart"),
-            "source": health_data.get("_control_mart_source", "OVERWATCH control-room mart"),
+            "source": health_data.get("_control_mart_source", "Fast control-room summary"),
             "meta_key": "account_health_overview_meta",
             "window": "24h",
-            "confidence": "Pre-aggregated",
+            "confidence": "Fast summary",
         },
         {
             "surface": "Live status probe",
@@ -292,12 +292,12 @@ def _account_health_source_health_rows(
             "confidence": "Live Snowflake metadata",
         },
         {
-            "surface": "Operability fact",
+            "surface": "Control summary",
             "value": state.get("account_health_operability_fact"),
-            "source": f"OVERWATCH mart: {ACCOUNT_HEALTH_OPERABILITY_FACT_TABLE}",
+            "source": "Fast Account Health control summary",
             "meta_key": "account_health_operability_fact_meta",
             "window": "30d",
-            "confidence": "Pre-aggregated",
+            "confidence": "Fast summary",
             "error_key": "account_health_operability_fact_error",
         },
         {
@@ -314,7 +314,7 @@ def _account_health_source_health_rows(
         {
             "surface": "Checklist trend",
             "value": state.get("account_health_checklist_trend"),
-            "source": f"Workflow mart: {CHECKLIST_HISTORY_TABLE}",
+            "source": "Workflow evidence",
             "meta_key": "account_health_checklist_trend_meta",
             "window_key": "account_health_checklist_trend_days",
             "default_window": "30d",
@@ -332,7 +332,7 @@ def _account_health_source_health_rows(
         {
             "surface": "Morning report",
             "value": state.get("morning_data"),
-            "source": state.get("morning_data_source", "OVERWATCH mart or live ACCOUNT_USAGE"),
+            "source": state.get("morning_data_source", "Fast summary or live account history"),
             "meta_key": "morning_data_meta",
             "window": "12h",
             "confidence": "Mixed",
@@ -340,7 +340,7 @@ def _account_health_source_health_rows(
         {
             "surface": "Executive briefing",
             "value": state.get("ah_briefing_text"),
-            "source": state.get("ah_briefing_source", "OVERWATCH mart or live ACCOUNT_USAGE"),
+            "source": state.get("ah_briefing_source", "Fast summary or live account history"),
             "meta_key": "ah_briefing_meta",
             "window_key": "ah_briefing_window",
             "default_window": "24h",
@@ -901,7 +901,7 @@ def _build_account_health_dba_checklist(
             "CHECK": "Refresh source readiness",
             "STATUS": "OK" if control_mart_used else "Verify source",
             "SEVERITY": "Low" if control_mart_used else "Medium",
-            "EVIDENCE": detail_source or ("OVERWATCH mart facts" if control_mart_used else "Current account evidence"),
+            "EVIDENCE": detail_source or ("Fast summary" if control_mart_used else "Current account evidence"),
             "OWNER": "DBA",
             "ROUTE": "DBA Control Room",
             "NEXT_ACTION": "Use the latest evidence snapshot for morning control; document source state before acting.",
@@ -1901,7 +1901,7 @@ def _render_account_health_operating_snapshot(
                 ])
             )
             if control_mart_used:
-                st.caption(f"Mart snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
+                st.caption(f"Snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
             st.caption(f"Signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
 
 
@@ -2008,11 +2008,11 @@ def _account_health_intervention_matrix(
             rows.append({
                 "DBA_PRIORITY": "P3",
                 "INTERVENTION_STATE": "Fact Review",
-                "SURFACE": "Account Health operability mart",
+                "SURFACE": "Account Health control summary",
                 "SEVERITY": "Medium",
                 "ROUTE": "Account Health",
                 "OWNER": "DBA",
-                "CONTROL_STATE": "Pre-aggregated blocker",
+                "CONTROL_STATE": "Summary blocker",
                 "QUEUE_READINESS": "Review",
                 "CLOSURE_READINESS": "Review",
                 "SCOPE_CONFIDENCE": "Mixed",
@@ -2470,7 +2470,7 @@ LIMIT 100""".strip()
 
 
 def _account_health_operability_fact_sql(days: int, company: str, environment: str = "ALL") -> str:
-    """Read pre-aggregated Account Health checklist, hygiene, and closure blockers."""
+    """Read Account Health checklist, hygiene, and closure blockers from the fast summary."""
     table = account_health_operability_fact_fqn()
     where = [f"SNAPSHOT_DATE >= DATEADD('day', -{max(1, int(days or 30))}, CURRENT_DATE())"]
     if str(company or "").upper() != "ALL":
@@ -3023,7 +3023,7 @@ def render():
                     ("failed_jobs", build_mart_control_room_task_failures_sql(24, company)),
                     ("what_changed", build_mart_account_health_change_sql(24, company)),
                 ]
-                hd["_account_health_detail_source"] = "OVERWATCH mart facts"
+                hd["_account_health_detail_source"] = "Fast summary"
             else:
                 qh = _query_history_capabilities(action_session)
                 cost_wh_size_expr = qh["cost_wh_size_expr"]
@@ -3264,7 +3264,7 @@ def render():
             control_mart_used=control_mart_used,
             control_mart_row=control_mart_row,
         )
-        if st.button("Load Operability Mart", key="account_health_load_operability_fact"):
+        if st.button("Load Control Summary", key="account_health_load_operability_fact"):
             try:
                 operability_sql = _account_health_operability_fact_sql(30, company, get_active_environment())
                 st.session_state["account_health_operability_fact_sql"] = operability_sql
@@ -3418,7 +3418,7 @@ def render():
                     _account_health_scope_meta(company, environment, window="30d"),
                 )
             ):
-                st.info("Loaded Account Health operability mart is stale for the active scope. Reload before acting.")
+                st.info("Loaded Account Health control summary is stale for the active scope. Reload before acting.")
             elif operability_fact is not None and not operability_fact.empty:
                 f1, f2, f3, f4 = st.columns(4)
                 blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
@@ -3430,7 +3430,7 @@ def render():
                 f4.metric("Verified", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
                 render_priority_dataframe(
                     operability_fact,
-                    title="Pre-aggregated Account Health blockers",
+                    title="Account Health blockers",
                     priority_columns=[
                         "SNAPSHOT_DATE", "CONTROL_STATE", "CONTROL_SOURCE", "CHECK_NAME",
                         "ROUTE", "SEVERITY", "ENVIRONMENT", "HEALTH_SCORE", "ISSUE_ROWS",
@@ -3441,19 +3441,19 @@ def render():
                     ],
                     sort_by=["CONTROL_RANK", "OVERDUE_OPEN", "FIXED_WITHOUT_VERIFICATION", "ISSUE_ROWS"],
                     ascending=[True, False, False, False],
-                    raw_label="All Account Health operability facts",
+                    raw_label="All Account Health control rows",
                     height=320,
                     max_rows=12,
                 )
-                with st.expander("Account Health operability fact query", expanded=False):
+                with st.expander("Account Health control summary SQL", expanded=False):
                     st.code(st.session_state.get("account_health_operability_fact_sql", ""), language="sql")
             elif st.session_state.get("account_health_operability_fact_error"):
                 st.caption(
-                    "Account Health operability mart not available yet; deploy or refresh "
+                    "Account Health control summary is not available yet; deploy or refresh "
                     "`FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY` to enable the fast blocker surface."
                 )
             else:
-                st.caption("Load the operability mart when you need the pre-aggregated blocker surface.")
+                st.caption("Load the control summary when you need blocker, owner, and verification evidence.")
         elif account_detail in {"Interventions", "Controls"}:
             st.success(f"No {account_detail.lower()} rows for the loaded scope.")
         if account_detail == "Checklist":
@@ -3965,7 +3965,7 @@ def render():
                     "long_queries": build_mart_account_health_long_queries_sql(12, company, limit=10),
                     "credits": build_mart_account_health_credits_sql(12, company),
                 }
-                morning_source = "OVERWATCH mart facts" if morning_mart_ok else f"Live fallback: {morning_mart_reason}"
+                morning_source = "Fast summary" if morning_mart_ok else f"Live fallback: {morning_mart_reason}"
                 for key, live_sql in morning_live_queries.items():
                     try:
                         if morning_mart_ok:
@@ -4143,7 +4143,7 @@ def render():
                     "storage": build_mart_account_health_storage_sql(company),
                     "queued": build_mart_account_health_queued_sql(1, company),
                 }
-                briefing_source = "OVERWATCH mart facts" if briefing_mart_ok else f"Live fallback: {briefing_mart_reason}"
+                briefing_source = "Fast summary" if briefing_mart_ok else f"Live fallback: {briefing_mart_reason}"
 
                 for k, sql in metric_queries.items():
                     try:

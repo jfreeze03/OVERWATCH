@@ -43,7 +43,7 @@ def _load_object_change_mart(
     category_sql: str,
     ttl_suffix: str,
 ) -> tuple[object, str]:
-    """Load change rows from the pre-aggregated mart when its retention covers the request."""
+    """Load change rows from the fast summary when its retention covers the request."""
     if days > 35:
         raise ValueError("Object-change mart keeps the most recent 35 days; using live history for this wider lookback.")
 
@@ -98,7 +98,7 @@ def _load_object_change_mart(
         tier="standard",
         section="Object Change Monitor",
     )
-    return df, "OVERWATCH mart: FACT_OBJECT_CHANGE"
+    return df, "Fast change summary"
 
 
 def _change_route(change_type: object, category: str = "") -> tuple[str, str]:

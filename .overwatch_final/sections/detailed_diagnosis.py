@@ -120,7 +120,7 @@ def _load_diagnosis(session, days: int, mode: str, limit: int):
             ORDER BY q.{order_col} DESC
             LIMIT {int(limit)}
         """, ttl_key=f"dd_mart_{company}_{mode}_{days}_{limit}", tier="historical")
-        st.session_state["dd_source"] = "OVERWATCH mart: FACT_QUERY_DETAIL_RECENT"
+        st.session_state["dd_source"] = "Fast query detail summary"
         return df
     except Exception:
         st.session_state["dd_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"

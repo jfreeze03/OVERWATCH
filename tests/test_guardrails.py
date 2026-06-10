@@ -44,7 +44,7 @@ class GuardrailTests(unittest.TestCase):
         self.assertFalse(result.available)
         self.assertTrue(result.data.empty)
         self.assertEqual(result.source, "DBA mart")
-        self.assertEqual(result.message, "No mart rows returned.")
+        self.assertEqual(result.message, "No summary rows returned.")
         mock_run.assert_called_once()
         _, kwargs = mock_run.call_args
         self.assertEqual(kwargs["tier"], "historical")
@@ -57,7 +57,7 @@ class GuardrailTests(unittest.TestCase):
         adoption_text = (APP_ROOT / "sections" / "adoption_analytics.py").read_text(encoding="utf-8").upper()
 
         self.assertIn("BUILD_MART_USAGE_STORAGE_SQL", usage_text)
-        self.assertIn("FACT_STORAGE_DAILY", usage_text)
+        self.assertIn("BUILD_MART_USAGE_METERING_SQL", usage_text)
         self.assertIn("LIVE FALLBACK: SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY", usage_text)
         self.assertIn("BUILD_MART_WAREHOUSE_HEATMAP_SQL", heatmap_text)
         self.assertIn("WORKLOAD HEATMAP LIVE FALLBACK IS CAPPED AT 30 DAYS", heatmap_text)

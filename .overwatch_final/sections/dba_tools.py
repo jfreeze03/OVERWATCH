@@ -1289,7 +1289,7 @@ def render():
     if selected_tool == "Mart Readiness":
         st.header("Mart Readiness")
         st.caption(
-            "Checks whether the deployed OVERWATCH mart objects are present. "
+            "Checks whether the deployed OVERWATCH summary objects are present. "
             "Pre-aggregation DDL is no longer generated from the dashboard."
         )
         mart_objects = [
@@ -1316,7 +1316,7 @@ def render():
         c_mart2.metric("Missing", f"{missing_count:,}")
         render_priority_dataframe(
             mart_df,
-            title="OVERWATCH mart readiness",
+            title="OVERWATCH summary readiness",
             priority_columns=["FEATURE", "STATUS", "OBJECT_NAME"],
             sort_by=["STATUS", "FEATURE"],
             ascending=[True, True],
@@ -2517,7 +2517,7 @@ ORDER BY current_tb DESC;"""
         st.divider()
         st.subheader("Schema / Mart Migration Status")
         defer_source_note(
-            "The migration ledger lets the app compare its expected setup contract to the deployed OVERWATCH mart version."
+            "The migration ledger lets the app compare its expected setup contract to the deployed OVERWATCH summary version."
         )
         c_mig_load, c_mig_hint = st.columns([1, 2])
         with c_mig_load:

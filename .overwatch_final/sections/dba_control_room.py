@@ -115,8 +115,6 @@ filter_existing_columns = _lazy_util("filter_existing_columns")
 get_db_filter_clause = _lazy_util("get_db_filter_clause")
 get_active_company = _lazy_util("get_active_company")
 get_global_filter_clause = _lazy_util("get_global_filter_clause")
-get_query_telemetry = _lazy_util("get_query_telemetry")
-get_query_budget_summary = _lazy_util("get_query_budget_summary")
 get_session = _lazy_util("get_session")
 get_user_filter_clause = _lazy_util("get_user_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
@@ -184,9 +182,9 @@ DBA_CONTROL_ROOM_DERIVED_STATE_KEYS = (
     "dba_control_room_handoff",
     "dba_control_room_escalation_packet",
     "dba_control_room_escalation_packet_markdown",
-    "dba_control_tower_priority_index",
-    "dba_autopilot_flight_plan",
-    "dba_autopilot_flight_plan_markdown",
+    "dba_operations_priority_index",
+    "dba_operator_runbook",
+    "dba_operator_runbook_markdown",
     "dba_control_room_ops_scope_key",
     "dba_control_room_ops_ready",
 )
@@ -200,10 +198,10 @@ DBA_CONTROL_ROOM_LIVE_FALLBACK_KEYS = {
 
 def _live_fallback_deferred_message(source: str, mart_exc: Exception | None = None) -> str:
     detail = format_snowflake_error(mart_exc) if mart_exc is not None else ""
-    suffix = f" Mart error: {detail}" if detail else ""
+    suffix = f" Summary error: {detail}" if detail else ""
     return (
         f"{source} evidence is unavailable for the loaded scope. "
-        f"Use the owning workflow or refresh the OVERWATCH mart for this surface.{suffix}"
+        f"Use the owning workflow or refresh the fast summary for this surface.{suffix}"
     )
 
 
@@ -443,15 +441,15 @@ def _dba_control_source_health_rows(
         else:
             state_label = "Loaded"
         if state_label == "Stale":
-            next_action = "Reload DBA Control Room after changing company, environment, lookback, budget, or global filters."
+            next_action = "Reload DBA Control Room after changing company, environment, lookback, budget, or triage filters."
         elif state_label == "Unavailable":
-            next_action = "Deploy or refresh the mart/source before relying on this surface."
+            next_action = "Deploy or refresh the summary/source before relying on this surface."
         elif state_label == "Deferred":
             next_action = "Load deep evidence only when this source is needed for the current investigation."
         elif state_label == "No Rows":
-            next_action = "Confirm the selected scope has relevant events or mart rows."
+            next_action = "Confirm the selected scope has relevant events or summary rows."
         elif "fallback" in mode_lower:
-            next_action = "Use for investigation; prefer mart refresh for repeated morning triage."
+            next_action = "Use for investigation; prefer summary refresh for repeated morning triage."
         else:
             next_action = "Current for the active DBA control-room scope."
         rows.append({
@@ -746,7 +744,7 @@ def _build_auto_release_readiness_gate(
             "EVIDENCE": f"{failure_total:,} failed task run(s) across {len(failures):,} grouped task(s). {names}",
             "NEXT_ACTION": "Use the task root-cause timeline, verify a clean rerun, then decide whether schedules can resume.",
             "ROUTE": "Workload Operations",
-            "PROOF_REQUIRED": "TASK_HISTORY success after the latest failure and downstream mart refresh proof",
+            "PROOF_REQUIRED": "TASK_HISTORY success after the latest failure and downstream summary refresh proof",
         })
 
     task_sla_cost = _frame_or_empty(data, "task_sla_cost")
@@ -1019,9 +1017,9 @@ def _snapshot_metric(df: pd.DataFrame, column: str) -> float:
 
 
 def _control_room_snapshot_to_data(snapshot: pd.DataFrame) -> dict:
-    """Convert the lightweight mart snapshot into the data shape used by the page.
+    """Convert the lightweight summary snapshot into the data shape used by the page.
 
-    The mart snapshot is intentionally small: it supports the watch floor and
+    The summary snapshot is intentionally small: it supports the watch floor and
     morning triage metrics, while deep evidence tables still load on demand.
     """
     if snapshot is None or snapshot.empty:
@@ -1079,15 +1077,15 @@ def _control_room_snapshot_to_data(snapshot: pd.DataFrame) -> dict:
         "_source_modes": pd.DataFrame([
             {
                 "Source": "mart_snapshot",
-                "Mode": "OVERWATCH mart snapshot",
-                "Message": "Company-level snapshot; use scoped detail load when environment or global filters are active.",
+                "Mode": "Fast summary snapshot",
+                "Message": "Company-level snapshot; use scoped detail load when environment or triage filters are active.",
             },
-            {"Source": "summary", "Mode": "OVERWATCH mart snapshot"},
-            {"Source": "credits", "Mode": "OVERWATCH mart snapshot"},
-            {"Source": "task_failures", "Mode": "OVERWATCH mart snapshot"},
-            {"Source": "failed_logins", "Mode": "OVERWATCH mart snapshot"},
-            {"Source": "object_changes", "Mode": "OVERWATCH mart snapshot"},
-            {"Source": "cortex_cost", "Mode": "OVERWATCH mart snapshot"},
+            {"Source": "summary", "Mode": "Fast summary snapshot"},
+            {"Source": "credits", "Mode": "Fast summary snapshot"},
+            {"Source": "task_failures", "Mode": "Fast summary snapshot"},
+            {"Source": "failed_logins", "Mode": "Fast summary snapshot"},
+            {"Source": "object_changes", "Mode": "Fast summary snapshot"},
+            {"Source": "cortex_cost", "Mode": "Fast summary snapshot"},
         ]),
     }
 
@@ -1745,14 +1743,14 @@ def _load_control_room(
                     tier="historical",
                     section="DBA Control Room",
                 )
-                source_rows.append({"Source": key, "Mode": "OVERWATCH mart"})
+                source_rows.append({"Source": key, "Mode": "Fast summary"})
             except Exception as mart_exc:
                 if not allow_live_fallback:
                     data[key] = _empty_df()
                     data[f"{key}_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(mart_exc)]})
                     source_rows.append({
                         "Source": key,
-                        "Mode": "Mart unavailable",
+                        "Mode": "Fast summary unavailable",
                         "Message": "Live fallback skipped to keep DBA Control Room responsive.",
                     })
                     continue
@@ -1775,7 +1773,7 @@ def _load_control_room(
                     "Source": key,
                     "Mode": "Limited live fallback",
                     "Message": (
-                        f"Mart unavailable; ran a bounded ACCOUNT_USAGE probe capped at "
+                        f"Fast summary unavailable; ran a bounded ACCOUNT_USAGE probe capped at "
                         f"{live_lookback_hours}h. {format_snowflake_error(mart_exc)}"
                     ),
                 })
@@ -1791,14 +1789,14 @@ def _load_control_room(
                 tier="historical",
                 section="DBA Control Room",
             )
-            source_rows.append({"Source": "task_failures", "Mode": "OVERWATCH mart"})
+            source_rows.append({"Source": "task_failures", "Mode": "Fast summary"})
         except Exception as mart_exc:
             if not allow_live_fallback:
                 data["task_failures"] = _empty_df()
                 data["task_failures_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(mart_exc)]})
                 source_rows.append({
                     "Source": "task_failures",
-                    "Mode": "Mart unavailable",
+                    "Mode": "Fast summary unavailable",
                     "Message": "Live fallback skipped to keep DBA Control Room responsive.",
                 })
             else:
@@ -1863,7 +1861,7 @@ def _load_control_room(
 
     try:
         task_inventory = load_task_inventory(session, company)
-        task_history_source = "OVERWATCH mart"
+        task_history_source = "Fast summary"
         try:
             task_history = run_query(
                 build_mart_task_history_sql(max(1, int((lookback_hours + 23) / 24)), company=company, limit=1000),
@@ -1873,7 +1871,7 @@ def _load_control_room(
             )
         except Exception as mart_exc:
             if not allow_live_fallback:
-                task_history_source = "Mart unavailable"
+                task_history_source = "Fast summary unavailable"
                 task_history = _empty_df()
             else:
                 task_history_source = "Live fallback deferred"
@@ -1887,7 +1885,7 @@ def _load_control_room(
                     else _live_fallback_deferred_message("task_sla_history", mart_exc)
                 ),
             })
-        if task_history_source == "OVERWATCH mart":
+        if task_history_source == "Fast summary":
             source_rows.append({"Source": "task_sla_history", "Mode": task_history_source})
         task_query_details = _empty_df()
         if not task_history.empty and "QUERY_ID" in task_history.columns:
@@ -1901,7 +1899,7 @@ def _load_control_room(
                         tier="historical",
                         section="DBA Control Room",
                     )
-                    source_rows.append({"Source": "task_query_detail", "Mode": "OVERWATCH mart"})
+                    source_rows.append({"Source": "task_query_detail", "Mode": "Fast summary"})
             except Exception as mart_exc:
                 source_rows.append({
                     "Source": "task_query_detail",
@@ -1929,12 +1927,12 @@ def _load_control_room(
                 tier="historical",
                 section="DBA Control Room",
             )
-            source_rows.append({"Source": "procedure_sla", "Mode": "OVERWATCH mart"})
+            source_rows.append({"Source": "procedure_sla", "Mode": "Fast summary"})
         except Exception as mart_exc:
             proc_runs = _empty_df()
             source_rows.append({
                 "Source": "procedure_sla",
-                "Mode": "Live fallback deferred" if allow_live_fallback else "Mart unavailable",
+                "Mode": "Live fallback deferred" if allow_live_fallback else "Fast summary unavailable",
                 "Message": (
                     _live_fallback_deferred_message("procedure_sla", mart_exc)
                     if allow_live_fallback
@@ -3108,7 +3106,7 @@ def _dba_section_operability_board(
     ).reset_index(drop=True)
 
 
-def _dba_control_tower_state(row: pd.Series | dict) -> tuple[str, str]:
+def _dba_operations_priority_state(row: pd.Series | dict) -> tuple[str, str]:
     """Return a concise operating state and first move for a section priority row."""
     overdue = safe_int(row.get("OVERDUE", 0))
     proof_blocks = safe_int(row.get("PROOF_BLOCKS", 0))
@@ -3141,7 +3139,7 @@ def _dba_control_tower_state(row: pd.Series | dict) -> tuple[str, str]:
     return "Monitor", "Maintain source health, owner route, and verified closure evidence."
 
 
-def _dba_control_tower_priority_index(
+def _dba_operations_priority_index(
     section_board: pd.DataFrame | None,
     incident_board: pd.DataFrame | None,
     command_queue: pd.DataFrame | None,
@@ -3271,8 +3269,8 @@ def _dba_control_tower_priority_index(
             "NEXT_99_MOVE": str(item.get("NEXT_95_MOVE") or item.get("NEXT_CONTROL_ACTION") or ""),
             "PROOF_REQUIRED": str(item.get("PROOF_REQUIRED") or _dba_section_proof_required(section)),
         }
-        state, first_move = _dba_control_tower_state(row)
-        row["CONTROL_TOWER_STATE"] = state
+        state, first_move = _dba_operations_priority_state(row)
+        row["OPERATIONS_PRIORITY_STATE"] = state
         row["FIRST_MOVE"] = first_move
         rows.append(row)
 
@@ -3285,10 +3283,10 @@ def _dba_control_tower_priority_index(
     ).head(max_rows).reset_index(drop=True)
 
 
-def _render_control_tower_priority_index(tower: pd.DataFrame) -> None:
-    if tower is None or tower.empty:
+def _render_operations_priority_index(priority_index: pd.DataFrame) -> None:
+    if priority_index is None or priority_index.empty:
         return
-    hot = tower.iloc[0]
+    hot = priority_index.iloc[0]
     st.markdown("**Operations Priority**")
     first_move = str(hot.get("FIRST_MOVE") or "Review the top routed workflow.").strip()
     top_route = str(hot.get("SECTION") or "DBA Control Room").strip()
@@ -3302,9 +3300,9 @@ def _render_control_tower_priority_index(tower: pd.DataFrame) -> None:
     c1, c2, c3 = st.columns(3)
     c1.metric("Top Route", top_route)
     c2.metric("Open Blocks", f"{open_blocks:,}", delta_color="inverse")
-    c3.metric("Routes Reviewed", f"{len(tower):,}")
-    view = tower.rename(columns={
-        "CONTROL_TOWER_STATE": "State",
+    c3.metric("Routes Reviewed", f"{len(priority_index):,}")
+    view = priority_index.rename(columns={
+        "OPERATIONS_PRIORITY_STATE": "State",
         "SECTION": "Route",
         "WORST_SIGNAL": "Signal",
         "OVERDUE": "Overdue",
@@ -3333,7 +3331,7 @@ def _render_control_tower_priority_index(tower: pd.DataFrame) -> None:
     download_csv(view, "dba_operations_priority.csv")
 
 
-def _dba_autopilot_route_templates(section: object, lookback_hours: int) -> dict:
+def _dba_runbook_route_templates(section: object, lookback_hours: int) -> dict:
     """Return advisory-only route playbook templates for the top operations lane."""
     route = str(section or "").upper()
     hours = max(1, min(safe_int(lookback_hours, 24), 168))
@@ -3455,8 +3453,8 @@ LIMIT 100;""",
     }
 
 
-def _dba_autopilot_flight_plan(
-    tower: pd.DataFrame | None,
+def _dba_operator_runbook(
+    priority_index: pd.DataFrame | None,
     *,
     company: str,
     environment: str,
@@ -3465,22 +3463,22 @@ def _dba_autopilot_flight_plan(
 ) -> pd.DataFrame:
     """Build an advisory DBA runbook from the hottest operations route."""
     generated_at = generated_at or datetime.now()
-    if tower is None or tower.empty:
+    if priority_index is None or priority_index.empty:
         section = "DBA Control Room"
         hot = {
             "SECTION": section,
-            "CONTROL_TOWER_STATE": "Monitor",
+            "OPERATIONS_PRIORITY_STATE": "Monitor",
             "PRIORITY_SCORE": 0,
             "WHY_NOW": "No active operations priority row.",
             "FIRST_MOVE": "Keep fast snapshot current and review Alert Center.",
             "PROOF_REQUIRED": "fresh Control Room load and Alert Center review",
         }
     else:
-        ordered = tower.sort_values("PRIORITY_SCORE", ascending=False) if "PRIORITY_SCORE" in tower.columns else tower
+        ordered = priority_index.sort_values("PRIORITY_SCORE", ascending=False) if "PRIORITY_SCORE" in priority_index.columns else priority_index
         hot = ordered.iloc[0].to_dict()
         section = str(hot.get("SECTION") or "DBA Control Room")
-    templates = _dba_autopilot_route_templates(section, lookback_hours)
-    mission_id = f"DBA-AUTO-{generated_at.strftime('%Y%m%d%H%M')}"
+    templates = _dba_runbook_route_templates(section, lookback_hours)
+    runbook_id = f"DBA-RUNBOOK-{generated_at.strftime('%Y%m%d%H%M')}"
     priority_score = safe_float(hot.get("PRIORITY_SCORE", 0))
     scope = f"{company} / {environment} / {safe_int(lookback_hours, 24)}h"
     stop_condition = (
@@ -3490,7 +3488,7 @@ def _dba_autopilot_flight_plan(
     stages = [
         (
             1,
-            "Preflight",
+            "Evidence Check",
             "Evidence current",
             f"Confirm operations route {section}, active scope, source freshness, and impacted entity.",
             str(hot.get("WHY_NOW") or "Operations route selected."),
@@ -3538,13 +3536,13 @@ def _dba_autopilot_flight_plan(
         ),
     ]
     rows = []
-    for rank, phase, gate, move, evidence, proof_sql in stages:
+    for rank, step, gate, move, evidence, proof_sql in stages:
         rows.append({
-            "MISSION_ID": mission_id,
+            "RUNBOOK_ID": runbook_id,
             "PHASE_RANK": rank,
-            "FLIGHT_PHASE": phase,
+            "RUNBOOK_STEP": step,
             "SECTION": section,
-            "CONTROL_TOWER_STATE": str(hot.get("CONTROL_TOWER_STATE") or "Monitor"),
+            "OPERATIONS_PRIORITY_STATE": str(hot.get("OPERATIONS_PRIORITY_STATE") or "Monitor"),
             "PRIORITY_SCORE": priority_score,
             "SCOPE": scope,
             "GO_NO_GO_GATE": gate,
@@ -3553,12 +3551,12 @@ def _dba_autopilot_flight_plan(
             "PROOF_SQL": proof_sql,
             "STOP_CONDITION": stop_condition,
             "OWNER_ROUTE": templates["owner_route"],
-            "AUTOPILOT_MODE": "Advisory Only",
+            "RUNBOOK_MODE": "Advisory Only",
         })
     return pd.DataFrame(rows)
 
 
-def _build_dba_autopilot_flight_plan_markdown(
+def _build_dba_operator_runbook_markdown(
     plan: pd.DataFrame,
     *,
     company: str,
@@ -3567,7 +3565,6 @@ def _build_dba_autopilot_flight_plan_markdown(
 ) -> str:
     """Create an exportable operator packet for the guided runbook."""
     rows = plan if plan is not None and not plan.empty else _empty_df()
-    mission_id = str(rows.iloc[0].get("MISSION_ID")) if not rows.empty else "DBA-AUTO"
     section = str(rows.iloc[0].get("SECTION")) if not rows.empty else "DBA Control Room"
     lines = [
         "# OVERWATCH DBA Operator Runbook",
@@ -3577,12 +3574,12 @@ def _build_dba_autopilot_flight_plan_markdown(
         "",
     ]
     if rows.empty:
-        lines.append("No flight-plan stages were available.")
+        lines.append("No runbook steps were available.")
     else:
         for _, row in rows.sort_values("PHASE_RANK").iterrows():
             proof = str(row.get("PROOF_SQL") or "").strip()
             lines.extend([
-                f"## {safe_int(row.get('PHASE_RANK'))}. {row.get('FLIGHT_PHASE', '')}",
+                f"## {safe_int(row.get('PHASE_RANK'))}. {row.get('RUNBOOK_STEP', '')}",
                 f"Gate: {row.get('GO_NO_GO_GATE', '')}",
                 f"Move: {row.get('DBA_MOVE', '')}",
                 f"Evidence: {row.get('EVIDENCE_REQUIRED', '')}",
@@ -3595,7 +3592,7 @@ def _build_dba_autopilot_flight_plan_markdown(
     return "\n".join(lines).strip()
 
 
-def _render_dba_autopilot_flight_plan(plan: pd.DataFrame, markdown: str) -> None:
+def _render_dba_operator_runbook(plan: pd.DataFrame, markdown: str) -> None:
     if plan is None or plan.empty:
         return
     hot = plan.iloc[0]
@@ -3603,14 +3600,28 @@ def _render_dba_autopilot_flight_plan(plan: pd.DataFrame, markdown: str) -> None
     c1, c2 = st.columns(2)
     c1.metric("Route", str(hot.get("SECTION") or "DBA Control Room"))
     c2.metric("Steps", f"{len(plan):,}")
+    view = plan.rename(columns={
+        "PHASE_RANK": "Rank",
+        "RUNBOOK_STEP": "Step",
+        "GO_NO_GO_GATE": "Gate",
+        "DBA_MOVE": "Move",
+        "EVIDENCE_REQUIRED": "Evidence",
+        "OWNER_ROUTE": "Owner",
+        "STOP_CONDITION": "Stop Rule",
+        "PROOF_SQL": "Proof SQL",
+        "SECTION": "Route",
+        "OPERATIONS_PRIORITY_STATE": "State",
+        "PRIORITY_SCORE": "Priority",
+        "RUNBOOK_MODE": "Mode",
+        "RUNBOOK_ID": "Runbook ID",
+    })
     render_priority_dataframe(
-        plan,
+        view,
         title="Operator runbook",
         priority_columns=[
-            "FLIGHT_PHASE", "GO_NO_GO_GATE", "DBA_MOVE",
-            "EVIDENCE_REQUIRED", "OWNER_ROUTE", "STOP_CONDITION",
+            "Step", "Gate", "Move", "Evidence", "Owner", "Stop Rule",
         ],
-        sort_by=["PHASE_RANK"],
+        sort_by=["Rank"],
         ascending=[True],
         raw_label="All operator runbook rows",
         height=300,
@@ -3625,7 +3636,7 @@ def _render_dba_autopilot_flight_plan(plan: pd.DataFrame, markdown: str) -> None
             mime="text/markdown",
             width="stretch",
         )
-    download_csv(plan, "dba_operator_runbook.csv")
+    download_csv(view, "dba_operator_runbook.csv")
 
 
 def _dba_escalation_priority_level(priority: float, state: object = "") -> str:
@@ -3653,7 +3664,7 @@ def _dba_escalation_go_no_go(level: str, source_signals: list[str]) -> str:
 
 
 def _dba_escalation_packet(
-    control_tower: pd.DataFrame | None,
+    priority_index: pd.DataFrame | None,
     incident_board: pd.DataFrame | None,
     handoff_rows: pd.DataFrame | None,
     release_gate: pd.DataFrame | None = None,
@@ -3682,7 +3693,7 @@ def _dba_escalation_packet(
     ) -> None:
         route_text = str(route or "DBA Control Room").strip() or "DBA Control Room"
         key = route_text.upper()
-        templates = _dba_autopilot_route_templates(route_text, hours)
+        templates = _dba_runbook_route_templates(route_text, hours)
         source_text = str(source_signal or "").strip()
         incoming_priority = safe_float(priority)
         current = rows_by_route.get(key)
@@ -3713,15 +3724,15 @@ def _dba_escalation_packet(
             current["SLA_TARGET"] = str(sla_target or current.get("SLA_TARGET") or "")
             current["WORKFLOW"] = str(workflow or current.get("WORKFLOW") or route_text)
 
-    tower = control_tower.copy() if control_tower is not None and not control_tower.empty else _empty_df()
-    if not tower.empty:
-        tower.columns = [str(col).upper() for col in tower.columns]
-        for _, item in tower.iterrows():
+    priority = priority_index.copy() if priority_index is not None and not priority_index.empty else _empty_df()
+    if not priority.empty:
+        priority.columns = [str(col).upper() for col in priority.columns]
+        for _, item in priority.iterrows():
             route = str(item.get("SECTION") or "DBA Control Room")
             upsert(
                 route,
                 priority=safe_float(item.get("PRIORITY_SCORE")),
-                state=item.get("CONTROL_TOWER_STATE") or "Operations Priority",
+                state=item.get("OPERATIONS_PRIORITY_STATE") or "Operations Priority",
                 why_now=item.get("WHY_NOW") or item.get("WORST_SIGNAL"),
                 first_move=item.get("FIRST_MOVE") or item.get("SECTION_NEXT_ACTION"),
                 proof_required=item.get("PROOF_REQUIRED"),
@@ -4334,7 +4345,7 @@ def _dba_handoff_rows(
                 "EVIDENCE": f"{surface}; rows={safe_int(item.get('ROWS')):,}; scope={item.get('SCOPE', '')}",
                 "OWNER_OR_ROUTE": "DBA / Platform",
                 "NEXT_ACTION": str(item.get("NEXT_ACTION") or "Reload or refresh this evidence before acting."),
-                "PROOF_REQUIRED": "current source health for active company, environment, lookback, budget, and global filters",
+                "PROOF_REQUIRED": "current source health for active company, environment, lookback, budget, and triage filters",
                 "SOURCE": "Source Health",
             })
 
@@ -4390,7 +4401,7 @@ def _build_dba_shift_handoff_markdown(
         "## Closure Standard",
         "- Do not mark work done unless owner, ticket/change ID, approval, verification result, and recovery evidence are present where applicable.",
         "- Treat shared warehouse cost attribution as allocated/estimated unless verified against billing or finance evidence.",
-        "- Reload stale evidence after changing company, environment, lookback, budget, or global filters.",
+        "- Reload stale evidence after changing company, environment, lookback, budget, or triage filters.",
     ])
     return "\n".join(lines)
 
@@ -4548,20 +4559,20 @@ def _render_control_room_source_health(
     current = int(source_health["STATE"].isin(["Loaded", "No Rows"]).sum())
     stale = int(source_health["STATE"].eq("Stale").sum())
     unavailable = int(source_health["STATE"].eq("Unavailable").sum())
-    mart_backed = int(
+    fast_summary = int(
         source_health[
             source_health["STATE"].isin(["Loaded", "No Rows"])
-            & source_health["MODE"].astype(str).str.contains("mart", case=False, regex=True)
+            & source_health["MODE"].astype(str).str.contains("fast summary", case=False, regex=False)
         ].shape[0]
     )
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
-    c2.metric("Mart-Backed", f"{mart_backed:,}")
+    c2.metric("Fast Summary", f"{fast_summary:,}")
     c3.metric("Stale", f"{stale:,}", delta_color="inverse")
     c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
     st.caption(
         "Use this before acting from the Control Room. Stale rows mean evidence was loaded under a different "
-        "company, environment, lookback, budget, fallback mode, or global filter scope."
+        "company, environment, lookback, budget, fallback mode, or triage filter scope."
     )
     render_priority_dataframe(
         source_health,
@@ -4665,187 +4676,6 @@ def _render_release_readiness_gate(
             st.session_state["dba_control_room_active_view"] = "Source Health"
             st.rerun()
     return summary, gate, timeline
-
-
-def _latest_local_perf_result(*, sections: bool = False) -> dict:
-    """Read the latest local release-check JSON result when available."""
-    try:
-        import json
-        from pathlib import Path
-
-        root = Path(__file__).resolve().parents[2]
-        results_dir = root / "perf_tests" / "results"
-        if not results_dir.exists():
-            return {}
-        pattern = "*_sections.json" if sections else "*.json"
-        candidates = [
-            path for path in results_dir.glob(pattern)
-            if path.is_file() and (sections or not path.name.endswith("_sections.json"))
-        ]
-        if not candidates:
-            return {}
-        latest = max(candidates, key=lambda path: path.stat().st_mtime)
-        with latest.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        payload["_report_path"] = str(latest)
-        return payload if isinstance(payload, dict) else {}
-    except Exception:
-        return {}
-
-
-def _latest_local_snowflake_suite_result() -> dict:
-    """Read the latest guarded Snowflake release-check JSON result when available."""
-    try:
-        import json
-        from pathlib import Path
-
-        root = Path(__file__).resolve().parents[2]
-        results_dir = root / "perf_tests" / "results"
-        if not results_dir.exists():
-            return {}
-        candidates = [path for path in results_dir.glob("*_snowflake_safe_suite.json") if path.is_file()]
-        if not candidates:
-            return {}
-        latest = max(candidates, key=lambda path: path.stat().st_mtime)
-        with latest.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        payload["_report_path"] = str(latest)
-        return payload if isinstance(payload, dict) else {}
-    except Exception:
-        return {}
-
-
-def _running_in_streamlit_in_snowflake() -> bool:
-    """Return True when the app is using Snowflake's injected Streamlit session."""
-    if "_overwatch_is_sis" in st.session_state:
-        return bool(st.session_state.get("_overwatch_is_sis"))
-    try:
-        from snowflake.snowpark.context import get_active_session
-
-        get_active_session()
-        is_sis = True
-    except Exception:
-        is_sis = False
-    st.session_state["_overwatch_is_sis"] = is_sis
-    return is_sis
-
-
-def _render_app_performance_guardrail() -> None:
-    """Internal-only runtime guardrail retained for local validation."""
-    telemetry = get_query_telemetry()
-    budget_summary = get_query_budget_summary()
-    is_sis = _running_in_streamlit_in_snowflake()
-    http_result = {} if is_sis else _latest_local_perf_result(sections=False)
-    section_result = {} if is_sis else _latest_local_perf_result(sections=True)
-    snowflake_result = {} if is_sis else _latest_local_snowflake_suite_result()
-    http_summary = http_result.get("summary", {}) if isinstance(http_result.get("summary"), dict) else http_result
-    section_summary = section_result.get("summary", {}) if isinstance(section_result.get("summary"), dict) else section_result
-    telemetry_count = 0 if telemetry is None or telemetry.empty else len(telemetry)
-    budget_watch = 0
-    budget_high = 0
-    if budget_summary is not None and not budget_summary.empty and "budget_risk" in budget_summary.columns:
-        risk = budget_summary["budget_risk"].fillna("").astype(str).str.upper()
-        budget_watch = int(risk.isin(["WATCH", "HIGH"]).sum())
-        budget_high = int(risk.eq("HIGH").sum())
-
-    st.markdown("**OVERWATCH Internal Runtime Guardrail**")
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Last Render", f"{safe_int(st.session_state.get('_overwatch_last_section_render_ms')):,} ms")
-    c2.metric("Session Queries", f"{telemetry_count:,}")
-    c3.metric("Budget Watch", f"{budget_watch:,}", f"{budget_high:,} High", delta_color="inverse")
-    c4.metric("HTTP p95", f"{safe_float(http_summary.get('p95_ms')):,.0f} ms")
-    c5.metric("Section p95", f"{safe_float(section_summary.get('p95_ms')):,.0f} ms")
-    c6.metric("Slowest", str(section_summary.get("slowest_section") or "n/a"))
-    if is_sis:
-        st.info(
-            "External release-check files are not available inside Streamlit-in-Snowflake. "
-            "Use live render and query-budget signals here, and complete deployment validation from the release workstation."
-        )
-
-    readiness_rows = []
-    for label, payload, summary in [
-        ("App shell load", http_result, http_summary),
-        ("Section render path", section_result, section_summary),
-    ]:
-        if not payload:
-            readiness_rows.append({
-                "GATE": label,
-                "STATE": "External validation not loaded",
-                "P95_MS": 0,
-                "ERROR_RATE": 0,
-                "NEXT_ACTION": "Complete release validation from the deployment workstation before changing production.",
-            })
-            continue
-        state = str(summary.get("readiness_state") or payload.get("readiness_state") or "UNKNOWN")
-        error_rate = safe_float(summary.get("error_rate", payload.get("error_rate", 0)))
-        p95_ms = safe_float(summary.get("p95_ms", payload.get("p95_ms", 0)))
-        if state.upper() != "PASS":
-            next_action = "Block release until p95/error-rate regression is explained."
-        elif p95_ms >= 5000 or error_rate > 0:
-            next_action = "Investigate slow or failing paths before release."
-        else:
-            next_action = "Keep as baseline and compare next run before committing performance-sensitive changes."
-        readiness_rows.append({
-            "GATE": label,
-            "STATE": state,
-            "P95_MS": round(p95_ms, 2),
-            "ERROR_RATE": round(error_rate, 4),
-            "NEXT_ACTION": next_action,
-        })
-
-    snowflake_suite = snowflake_result or st.session_state.get("perf_sql_last_run", {})
-    readiness_rows.append({
-        "GATE": "Snowflake metadata safety",
-        "STATE": str(snowflake_suite.get("state") or "Not run from this session"),
-        "P95_MS": 0,
-        "ERROR_RATE": 0,
-        "NEXT_ACTION": str(
-            snowflake_suite.get("next_action")
-            or "Run the guarded Snowflake validation before approving warehouse-side release changes."
-        ),
-    })
-    readiness = pd.DataFrame(readiness_rows)
-    render_priority_dataframe(
-        readiness,
-        title="Deployment runtime gates",
-        priority_columns=["GATE", "STATE", "P95_MS", "ERROR_RATE", "NEXT_ACTION"],
-        sort_by=["STATE", "P95_MS"],
-        ascending=[True, False],
-        raw_label="All deployment runtime gate rows",
-        height=220,
-    )
-
-    if budget_summary is None or budget_summary.empty:
-        st.info("No query budget telemetry has been recorded in this Streamlit session yet.")
-    else:
-        render_priority_dataframe(
-            budget_summary,
-            title="Current session query-budget pressure",
-            priority_columns=[
-                "section", "budget_risk", "calls", "unique_queries",
-                "expensive_calls", "elapsed_sec", "max_rows", "max_result_mb",
-            ],
-            sort_by=["budget_risk", "expensive_calls", "elapsed_sec"],
-            ascending=[False, False, False],
-            raw_label="All query budget rows",
-            height=260,
-        )
-        download_csv(budget_summary, "overwatch_query_budget_summary.csv")
-
-    if telemetry is not None and not telemetry.empty:
-        tail = telemetry.tail(50)
-        render_priority_dataframe(
-            tail,
-            title="Latest app query events",
-            priority_columns=[
-                "timestamp", "section", "tier", "elapsed_ms",
-                "rows", "result_mb", "ttl_key", "query_hash",
-            ],
-            sort_by=["elapsed_ms", "rows", "result_mb"],
-            ascending=[False, False, False],
-            raw_label="All latest query events",
-            height=260,
-        )
 
 
 def _render_route_buttons(exceptions: pd.DataFrame) -> None:
@@ -5046,9 +4876,9 @@ def render() -> None:
         st.session_state.pop("dba_control_room_snapshot_result", None)
 
     if snapshot_scope_ok:
-        st.caption("Fast mart snapshot lookup is on demand to avoid startup Snowflake queries.")
+        st.caption("Fast snapshot lookup is on demand to avoid startup Snowflake queries.")
         if st.button("Check Fast Snapshot", key="dba_control_room_check_snapshot"):
-            with st.spinner("Checking latest control-room mart snapshot..."):
+            with st.spinner("Checking latest control-room summary snapshot..."):
                 snapshot_result = load_latest_control_room_mart(company, max_age_hours=6)
                 st.session_state["dba_control_room_snapshot_scope_key"] = snapshot_scope_key
                 st.session_state["dba_control_room_snapshot_result"] = snapshot_result
@@ -5064,7 +4894,7 @@ def render() -> None:
             st.session_state["dba_control_room_data"] = _control_room_snapshot_to_data(snapshot)
             st.session_state["dba_control_room_company"] = company
             st.session_state["dba_control_room_lookback"] = 24
-            st.session_state["dba_control_room_source_mode"] = "OVERWATCH mart snapshot"
+            st.session_state["dba_control_room_source_mode"] = "Fast summary snapshot"
             st.session_state["dba_control_room_meta"] = _dba_control_scope_meta(
                 company,
                 environment,
@@ -5076,7 +4906,7 @@ def render() -> None:
             _clear_dba_control_room_derived_state()
             st.rerun()
     elif snapshot_result is not None and not snapshot_result.available:
-        st.caption("Fast mart snapshot unavailable. Install/run OVERWATCH_MART_SETUP.sql to enable cheap control-room triage.")
+        st.caption("Fast snapshot unavailable. Install/run OVERWATCH_MART_SETUP.sql to enable cheap control-room triage.")
     elif not snapshot_scope_ok:
         st.caption(
             "Snapshot is company-level. Clear filters or load triage for this scoped view."
@@ -5105,7 +4935,7 @@ def render() -> None:
             value=False,
             key="dba_control_room_allow_live_fallback",
             help=(
-                "Runs bounded 24h checks for credits, failed queries, and failed logins when mart evidence "
+                "Runs bounded 24h checks for credits, failed queries, and failed logins when summary evidence "
                 "is incomplete."
             ),
         )
@@ -5127,13 +4957,13 @@ def render() -> None:
             st.session_state["dba_control_room_company"] = company
             st.session_state["dba_control_room_lookback"] = int(lookback_hours)
             st.session_state["dba_control_room_source_mode"] = (
-                "Deep evidence mart + limited live fallback"
+                "Deep evidence summary + limited live fallback"
                 if include_deep_evidence and allow_live_fallback
-                else "Deep evidence mart-only"
+                else "Deep evidence summary-only"
                 if include_deep_evidence
-                else "Fast triage mart + limited live fallback"
+                else "Fast triage summary + limited live fallback"
                 if allow_live_fallback
-                else "Fast triage mart queries"
+                else "Fast triage summary"
             )
             st.session_state["dba_control_room_live_fallback"] = bool(allow_live_fallback)
             st.session_state["dba_control_room_meta"] = _dba_control_scope_meta(
@@ -5153,7 +4983,7 @@ def render() -> None:
         return
 
     loaded_lookback = st.session_state.get("dba_control_room_lookback", lookback_hours)
-    source_mode = st.session_state.get("dba_control_room_source_mode", "Fast triage mart queries")
+    source_mode = st.session_state.get("dba_control_room_source_mode", "Fast triage summary")
     expected_meta = _dba_control_scope_meta(
         company,
         environment,
@@ -5179,9 +5009,9 @@ def render() -> None:
             bool(allow_live_fallback),
         )
         return
-    if source_mode == "OVERWATCH mart snapshot":
+    if source_mode == "Fast summary snapshot":
         st.caption("Snapshot loaded. Load triage when you need full exception detail.")
-    elif source_mode == "Fast triage mart queries":
+    elif source_mode == "Fast triage summary":
         st.caption("Triage loaded. Use Evidence options when you need a deeper evidence packet.")
     elif "limited live fallback" in source_mode:
         st.caption("Triage loaded with bounded 24-hour live checks.")
@@ -5330,32 +5160,32 @@ def render() -> None:
                 closure_rollup_for_handoff,
                 source_health_for_handoff,
             )
-            section_board_for_tower = _dba_section_operability_board(
+            section_board_for_priority = _dba_section_operability_board(
                 command_queue=command_queue,
                 closure_rollup=closure_rollup_for_handoff,
                 source_health=source_health_for_handoff,
             )
-            control_tower = _dba_control_tower_priority_index(
-                section_board_for_tower,
+            operations_priority = _dba_operations_priority_index(
+                section_board_for_priority,
                 incident_board,
                 command_queue,
                 source_health_for_handoff,
             )
-            st.session_state["dba_control_tower_priority_index"] = control_tower
-            autopilot_plan = _dba_autopilot_flight_plan(
-                control_tower,
+            st.session_state["dba_operations_priority_index"] = operations_priority
+            operator_runbook = _dba_operator_runbook(
+                operations_priority,
                 company=company,
                 environment=environment,
                 lookback_hours=int(lookback_hours),
             )
-            autopilot_md = _build_dba_autopilot_flight_plan_markdown(
-                autopilot_plan,
+            operator_runbook_md = _build_dba_operator_runbook_markdown(
+                operator_runbook,
                 company=company,
                 environment=environment,
                 lookback_hours=int(lookback_hours),
             )
-            st.session_state["dba_autopilot_flight_plan"] = autopilot_plan
-            st.session_state["dba_autopilot_flight_plan_markdown"] = autopilot_md
+            st.session_state["dba_operator_runbook"] = operator_runbook
+            st.session_state["dba_operator_runbook_markdown"] = operator_runbook_md
             incident_md = _build_dba_incident_markdown(
                 incident_board,
                 company=company,
@@ -5379,7 +5209,7 @@ def render() -> None:
             )
             st.session_state["dba_control_room_handoff"] = handoff_rows
             escalation_packet = _dba_escalation_packet(
-                control_tower,
+                operations_priority,
                 incident_board,
                 handoff_rows,
                 release_gate_rows,
@@ -5403,9 +5233,9 @@ def render() -> None:
                 key="dba_operations_board_detail",
             )
             if ops_detail == "Priority":
-                _render_control_tower_priority_index(control_tower)
+                _render_operations_priority_index(operations_priority)
             elif ops_detail == "Runbook":
-                _render_dba_autopilot_flight_plan(autopilot_plan, autopilot_md)
+                _render_dba_operator_runbook(operator_runbook, operator_runbook_md)
             elif ops_detail == "Escalations":
                 _render_dba_escalation_packet(escalation_packet, escalation_md)
             elif ops_detail == "Handoff":
@@ -5427,7 +5257,7 @@ def render() -> None:
                     command_queue,
                     action_queue,
                     closure_rollup=closure_rollup_for_handoff,
-                    section_board=section_board_for_tower,
+                    section_board=section_board_for_priority,
                 )
 
     elif active_view == "Triage":

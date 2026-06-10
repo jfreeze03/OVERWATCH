@@ -67,8 +67,8 @@ ASK_OVERWATCH_STATE_KEYS = (
     "cost_contract_queue",
     "alert_center_data",
     "dba_control_room_data",
-    "dba_control_tower_priority_index",
-    "dba_autopilot_flight_plan",
+    "dba_operations_priority_index",
+    "dba_operator_runbook",
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
     "arch_adaptive_compute",
@@ -409,13 +409,13 @@ def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> No
                 "surface": "Cost & Contract - Governance Mart Operability",
                 "severity": "Medium",
                 "signal": _text(row, "STATE", default="Install Ready"),
-                "entity": _text(row, "COMPONENT", default="Cost governance mart"),
-                "evidence": _text(row, "PROOF", default="Cost governance mart setup evidence."),
-                "next_action": _text(row, "DBA_USE", default="Install or verify the cost governance mart object."),
+                "entity": _text(row, "COMPONENT", default="Cost governance summary"),
+                "evidence": _text(row, "PROOF", default="Cost governance setup evidence."),
+                "next_action": _text(row, "DBA_USE", default="Install or verify the cost governance summary object."),
                 "proof": "snowflake/OVERWATCH_MART_SETUP.sql contains the clean object DDL, procedure, task, and smoke checks.",
                 "do_not": "Do not treat app-only generated SQL as the deploy source of truth.",
-                "route": "Cost & Contract > Cost Governance Mart SQL",
-                "category": "Cost Governance Mart",
+                "route": "Cost & Contract > Cost Governance SQL",
+                "category": "Cost Governance",
                 "value": _text(row, "STATE", default="Install Ready"),
             })
 
@@ -666,9 +666,9 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
         if _is_df(queue):
             _cards_from_queue(queue, cards, surface="DBA Control Room action queue")
 
-    tower = state.get("dba_control_tower_priority_index")
-    if _is_df(tower):
-        frame = tower.copy()
+    priority_index = state.get("dba_operations_priority_index")
+    if _is_df(priority_index):
+        frame = priority_index.copy()
         frame.columns = [str(col).upper() for col in frame.columns]
         if "PRIORITY_SCORE" in frame.columns:
             frame = frame.sort_values(["PRIORITY_SCORE"], ascending=False)
@@ -676,7 +676,7 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
             _append_card(cards, {
                 "surface": "DBA Operations Priority",
                 "severity": "High" if safe_float(_value(row, "PRIORITY_SCORE", default=0)) >= 50 else "Medium",
-                "signal": _text(row, "CONTROL_TOWER_STATE", default="DBA priority route"),
+                "signal": _text(row, "OPERATIONS_PRIORITY_STATE", default="DBA priority route"),
                 "entity": _text(row, "SECTION", default="DBA Control Room"),
                 "evidence": _text(row, "WHY_NOW", default="Loaded DBA evidence ranked this route for operator review."),
                 "next_action": _text(row, "FIRST_MOVE", default="Open the routed section and attach proof before closure."),
@@ -687,9 +687,9 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
                 "value": _text(row, "PRIORITY_SCORE", default="0"),
             })
 
-    autopilot = state.get("dba_autopilot_flight_plan")
-    if _is_df(autopilot):
-        frame = autopilot.copy()
+    runbook = state.get("dba_operator_runbook")
+    if _is_df(runbook):
+        frame = runbook.copy()
         frame.columns = [str(col).upper() for col in frame.columns]
         if "PHASE_RANK" in frame.columns:
             frame = frame.sort_values("PHASE_RANK")
@@ -704,7 +704,7 @@ def _cards_from_dba_control_room(state: Mapping, cards: list[dict]) -> None:
         _append_card(cards, {
             "surface": "DBA Operator Runbook",
             "severity": "High",
-            "signal": _text(first, "CONTROL_TOWER_STATE", default="Guided runbook"),
+            "signal": _text(first, "OPERATIONS_PRIORITY_STATE", default="Guided runbook"),
             "entity": section,
             "evidence": f"gates={gates}",
             "next_action": moves or _text(first, "DBA_MOVE", default="Follow the staged DBA runbook."),

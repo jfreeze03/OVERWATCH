@@ -40,11 +40,11 @@ def _global_date_label() -> str:
     start = st.session_state.get("global_start_date")
     end = st.session_state.get("global_end_date")
     if start and end:
-        return f"Global Filters date range: {start} to {end}"
+        return f"Triage Filters date range: {start} to {end}"
     if start:
-        return f"Global Filters date range: from {start}"
+        return f"Triage Filters date range: from {start}"
     if end:
-        return f"Global Filters date range: through {end}"
+        return f"Triage Filters date range: through {end}"
     return ""
 
 
@@ -127,7 +127,7 @@ def render():
     )
     global_date_label = _global_date_label()
     if global_date_label:
-        st.caption(f"Using {global_date_label}; the Days back slider applies only when Global Filters dates are cleared.")
+        st.caption(f"Using {global_date_label}; the Days back slider applies only when Triage Filter dates are cleared.")
 
     autorun = bool(st.session_state.pop("qs_autorun", False))
     if (st.button("Search", key="qs_run") or autorun) and search_text:

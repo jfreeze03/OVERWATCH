@@ -10,6 +10,7 @@ from .query import format_snowflake_error, run_query, run_query_or_raise, sql_li
 from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh_filter_clause
 from .helpers import safe_float
 from .workflows import add_cost_companion_columns, prioritize_context_columns
+from .workflows import apply_operator_status_labels
 
 
 DISPLAY_VERSION = "2026-06-05-chart-drillback-cost-v1"
@@ -196,6 +197,7 @@ def render_query_drilldown(
     grid_df = add_cost_companion_columns(
         prioritize_context_columns(df.head(1000), leading_columns=("QUERY_ID",))
     )
+    grid_df = apply_operator_status_labels(grid_df)
     if len(df) > len(grid_df):
         st.caption(f"Showing the first {len(grid_df):,} rows for fast selection. Narrow filters to inspect deeper rows.")
     try:
@@ -246,7 +248,11 @@ def render_query_drilldown(
                 ops_df = run_query_or_raise(
                     f"SELECT * FROM TABLE(GET_QUERY_OPERATOR_STATS({sql_literal(qid)}))"
                 )
-                st.dataframe(add_cost_companion_columns(ops_df), width="stretch", height=350)
+                st.dataframe(
+                    apply_operator_status_labels(add_cost_companion_columns(ops_df)),
+                    width="stretch",
+                    height=350,
+                )
             except Exception as e:
                 st.info(f"Operator stats unavailable: {format_snowflake_error(e)}")
 

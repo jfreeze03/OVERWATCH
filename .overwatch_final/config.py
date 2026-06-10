@@ -174,7 +174,7 @@ def static_database_options(
     company: str | None = None,
     environment: str | None = None,
 ) -> tuple[str, ...]:
-    """Return confirmed database choices for global filters without live metadata."""
+    """Return confirmed database choices for the topbar triage scope without live metadata."""
     company_key = str(company or DEFAULT_COMPANY)
     env_key = str(environment or DEFAULT_ENVIRONMENT)
 
@@ -371,7 +371,7 @@ ARCHITECTURE_OBJECTIVES = (
         "ENTITY_TYPE": "WAREHOUSE",
         "ENTITY_PATTERN": "COMPUTE_WH",
         "EXPECTED_ENVIRONMENT": "No Database Context",
-        "WORKLOAD_CLASS": "OVERWATCH mart refresh and utility compute",
+        "WORKLOAD_CLASS": "OVERWATCH summary refresh and utility compute",
         "SERVICE_TIER": "Tier 1",
         "OWNER": "OVERWATCH Platform Owner",
         "APPROVAL_GROUP": "DBA Lead / OVERWATCH Platform Owner",

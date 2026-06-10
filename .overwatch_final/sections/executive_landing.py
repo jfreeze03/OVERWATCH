@@ -913,7 +913,7 @@ def _source_health_rows(snapshot: dict) -> pd.DataFrame:
 
     return pd.DataFrame(
         [
-            _state("Cost mart unavailable", "Cost cockpit", "cost"),
+            _state("Cost summary unavailable", "Cost cockpit", "cost"),
             _state("Alert evidence unavailable", "Alert evidence", "alerts"),
             _state("Action queue unavailable", "Action queue", "queue"),
             _state("Migration ledger unavailable", "Migration ledger", "migration"),
@@ -943,7 +943,7 @@ def render() -> None:
     environment = _active_environment()
     credit_price = _credit_price()
     defer_source_note(
-        "Executive Landing loads only on demand and uses OVERWATCH marts, alert/action evidence, and migration status."
+        "Executive Landing loads only on demand and uses fast summaries, alert/action evidence, and migration status."
     )
 
     window_col, _window_spacer = st.columns([1.2, 3.0])
@@ -987,7 +987,7 @@ def render() -> None:
             )
         except Exception as exc:
             snapshot["cost"] = pd.DataFrame()
-            snapshot["errors"].append(f"Cost mart unavailable: {format_snowflake_error(exc)}")
+            snapshot["errors"].append(f"Cost summary unavailable: {format_snowflake_error(exc)}")
         try:
             snapshot["alerts"] = _load_alerts(session, company, environment, int(days))
         except Exception as exc:

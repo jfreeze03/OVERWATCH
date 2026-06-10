@@ -472,7 +472,7 @@ def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
 
 
 def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str, str]:
-    """Build root-cause brief SQL from OVERWATCH mart facts."""
+    """Build root-cause brief SQL from OVERWATCH fast summary facts."""
     hourly = mart_object_name("FACT_QUERY_HOURLY")
     detail = mart_object_name("FACT_QUERY_DETAIL_RECENT")
     company_filter = "" if str(company or "").upper() == "ALL" else f"AND company = {sql_literal(company, 100)}"
@@ -723,7 +723,7 @@ def render_root_cause_brief(session) -> None:
                         "company": company,
                         "days": int(days),
                         "limit": int(limit),
-                        "source": "OVERWATCH mart: FACT_QUERY_HOURLY + FACT_QUERY_DETAIL_RECENT",
+                        "source": "Fast root-cause summary",
                     }
                 except Exception as e:
                     try:
@@ -752,7 +752,7 @@ def render_root_cause_brief(session) -> None:
                             "limit": int(limit),
                             "source": "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
                         }
-                        st.info(f"Query mart unavailable; used live QUERY_HISTORY fallback. {format_snowflake_error(e)}")
+                        st.info(f"Fast query summary unavailable; used live QUERY_HISTORY fallback. {format_snowflake_error(e)}")
                     except Exception as live_exc:
                         st.warning(f"Root-cause brief unavailable: {format_snowflake_error(live_exc)}")
 

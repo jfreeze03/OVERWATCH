@@ -145,7 +145,7 @@ def invalidate_company_cache(
     """
     Clear all section data from session_state when the company filter changes.
     Without this, stale Trexis data lingers in ALFA view (and vice versa).
-    Preserves settings, theme, navigation, and global filters.
+    Preserves settings, theme, navigation, and triage filters.
 
     The query cache already includes active company in its context, so normal
     company switches only drop loaded panel state. A hard refresh can still

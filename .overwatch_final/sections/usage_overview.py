@@ -152,7 +152,7 @@ def _load_overview(session, days: int) -> dict:
         ttl_key=f"uo_overview_mart_{company}_{days}",
         tier="historical",
     )
-    overview_source = "OVERWATCH mart: FACT_QUERY_HOURLY"
+    overview_source = "Fast usage summary"
     if overview.empty or _first_number(overview, "TOTAL_QUERIES") <= 0:
         overview = run_query(live_overview_sql, ttl_key=f"uo_overview_live_{company}_{days}", tier="historical")
         overview_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
@@ -180,7 +180,7 @@ def _load_overview(session, days: int) -> dict:
         ttl_key=f"uo_metering_mart_{company}_{days}",
         tier="historical",
     )
-    metering_source = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+    metering_source = "Fast metering summary"
     if metering.empty:
         metering = run_query(live_metering_sql, ttl_key=f"uo_metering_live_{company}_{days}", tier="historical")
         metering_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
@@ -194,7 +194,7 @@ def _load_overview(session, days: int) -> dict:
         ttl_key=f"uo_storage_mart_{company}_{days}",
         tier="historical",
     )
-    storage_source = "OVERWATCH mart: FACT_STORAGE_DAILY"
+    storage_source = "Fast storage summary"
     if storage.empty:
         storage = run_query(f"""
             WITH scoped AS (
@@ -279,7 +279,7 @@ def _load_overview(session, days: int) -> dict:
         tier="historical",
         section="Usage Overview",
     )
-    pressure_source = "OVERWATCH mart: FACT_QUERY_HOURLY"
+    pressure_source = "Fast warehouse pressure summary"
     if warehouse_pressure.empty:
         warehouse_pressure = run_query(
             live_pressure_sql,
@@ -290,7 +290,7 @@ def _load_overview(session, days: int) -> dict:
         pressure_source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
 
     driver_preview = pd.DataFrame()
-    driver_preview_source = "Deferred: warehouse movement preview needs the OVERWATCH mart"
+    driver_preview_source = "Deferred: warehouse movement preview needs the fast summary"
     try:
         driver_preview = run_query(
             build_mart_usage_cost_drivers_sql(
@@ -304,7 +304,7 @@ def _load_overview(session, days: int) -> dict:
             tier="historical",
             section="Usage Overview",
         )
-        driver_preview_source = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+        driver_preview_source = "Fast warehouse movement summary"
     except Exception:
         driver_preview = pd.DataFrame()
 
@@ -342,7 +342,7 @@ def _load_cost_drivers(session, days: int):
         section="Usage Overview",
     )
     if not mart_df.empty:
-        st.session_state["uo_top_wh_source"] = "OVERWATCH mart: FACT_WAREHOUSE_HOURLY"
+        st.session_state["uo_top_wh_source"] = "Fast warehouse summary"
         return mart_df
 
     wm_cols = set(filter_existing_columns(
@@ -416,7 +416,7 @@ def _load_query_mix(session, days: int):
         section="Usage Overview",
     )
     if not mart_df.empty:
-        st.session_state["uo_query_types_source"] = "OVERWATCH mart: FACT_QUERY_HOURLY"
+        st.session_state["uo_query_types_source"] = "Fast query summary"
         return mart_df
 
     qh_cols = set(filter_existing_columns(
@@ -477,7 +477,7 @@ def _load_database_adoption(days: int):
         section="Usage Overview",
     )
     if not mart_df.empty:
-        st.session_state["uo_users_by_db_source"] = "OVERWATCH mart: FACT_QUERY_HOURLY"
+        st.session_state["uo_users_by_db_source"] = "Fast database adoption summary"
         return mart_df
 
     live_df = company_scoped_query(
@@ -565,14 +565,14 @@ def _build_usage_change_explanation(data: dict, days: int, credit_price: float) 
             "STATE": _movement_label(top_pct),
             "MOVEMENT": f"{top.get('WAREHOUSE_NAME', 'Unknown')} moved {top_delta:+,.2f} credits ({_format_pct_delta(top_pct)})",
             "DOLLAR_IMPACT": f"${credits_to_dollars(top_delta, credit_price):+,.0f}",
-            "EVIDENCE": "Warehouse-level current/prior movement from the OVERWATCH hourly mart.",
+            "EVIDENCE": "Warehouse-level current/prior movement from the fast hourly summary.",
             "NEXT_ACTION": "Open Warehouse Health for queue, spill, p95, and setting evidence before changing capacity.",
         })
     else:
         rows.append({
             "SIGNAL": "Top warehouse movement",
             "STATE": "Detail deferred",
-            "MOVEMENT": "Warehouse movement preview is not loaded from the mart.",
+            "MOVEMENT": "Warehouse movement preview is not loaded from the fast summary.",
             "DOLLAR_IMPACT": "$0",
             "EVIDENCE": "Cost Driver Chart can load the detailed warehouse list on demand.",
             "NEXT_ACTION": "Load Cost Driver Chart only when the aggregate movement needs warehouse-level proof.",

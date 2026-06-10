@@ -1171,6 +1171,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("if requested != selected:", display_text)
         self.assertIn("chart_df = add_cost_companion_columns(rank_chart_frame", display_text)
         self.assertIn('title="Cost USD"', display_text)
+        self.assertIn("def render_chart_with_data_toggle(", display_text)
+        self.assertIn("render_mode_selector(", display_text)
+        self.assertIn('st.button("Back to chart"', display_text)
         self.assertIn("def add_cost_companion_columns", workflows_text)
         self.assertIn("view = add_cost_companion_columns(view)", workflows_text)
         self.assertIn("display_view = apply_operator_status_labels(view)", workflows_text)
@@ -1487,6 +1490,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.button("Load"', cost_center_text)
         self.assertIn("from sections.shell_helpers import render_shell_snapshot", cost_center_text)
         self.assertIn("render_shell_snapshot(tuple(bill_metrics))", cost_center_text)
+        self.assertIn("render_chart_with_data_toggle(", cost_center_text)
+        self.assertIn("cc_explorer_", cost_center_text)
+        self.assertIn("cc_user_cost_driver", cost_center_text)
         self.assertIn('("Review Status", narrative["severity"])', cost_center_text)
         self.assertNotIn("st.metric(", cost_center_text)
         self.assertIn("_build_cost_allocation_trust_board", cost_contract_text)
@@ -2160,11 +2166,17 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertIn("active_view = render_workflow_selector", text)
                 self.assertNotIn(f'st.radio(\n        "{label}"', text)
         compact_metric_sections = {
+            "account_health.py": account_health_text,
             "adoption_analytics.py": adoption_text,
+            "alert_center.py": alert_center_text,
+            "change_drift.py": change_drift_text,
+            "cost_center.py": cost_center_text,
             "cost_contract.py": cost_contract_text,
             "cortex_monitor.py": cortex_text,
             "dba_control_room.py": dba_control_text,
+            "dba_tools.py": dba_tools_text,
             "recommendations.py": recommendations_text,
+            "security_posture.py": security_posture_text,
             "service_health.py": service_health_text,
             "spcs_tracker.py": spcs_text,
             "storage_monitor.py": storage_text,
@@ -2176,6 +2188,13 @@ class NavigationIntegrityTests(unittest.TestCase):
             with self.subTest(compact_metric_cards=name):
                 self.assertIn("render_shell_snapshot", text)
                 self.assertNotIn(".metric(", text)
+        metric_free_paths = list((APP_ROOT / "sections").glob("*.py")) + [
+            APP_ROOT / "utils" / "display.py",
+            APP_ROOT / "utils" / "optimization_advisor.py",
+        ]
+        for path in metric_free_paths:
+            with self.subTest(no_direct_metric_widgets=path.name):
+                self.assertNotIn(".metric(", path.read_text(encoding="utf-8"))
         for name, text in {
             "account_health.py": account_health_text,
             "adoption_analytics.py": adoption_text,
@@ -2540,6 +2559,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"render_workflow_module"', utils_text)
         self.assertIn('"migrate_legacy_workflow_state"', utils_text)
         self.assertIn('"render_ranked_bar_chart"', utils_text)
+        self.assertIn('"render_chart_with_data_toggle"', utils_text)
         self.assertIn('"rank_chart_frame"', utils_text)
         self.assertIn('"build_platform_futures_evidence_ddl"', utils_text)
         self.assertIn('"build_mart_cost_run_rate_sql"', utils_text)

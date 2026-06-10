@@ -1313,9 +1313,10 @@ def render():
         mart_df = pd.DataFrame(rows)
         present_count = int((mart_df["STATUS"] == "Present").sum())
         missing_count = int((mart_df["STATUS"] == "Missing").sum())
-        c_mart1, c_mart2 = st.columns(2)
-        c_mart1.metric("Present", f"{present_count:,}")
-        c_mart2.metric("Missing", f"{missing_count:,}")
+        render_shell_snapshot((
+            ("Present", f"{present_count:,}"),
+            ("Missing", f"{missing_count:,}"),
+        ))
         render_priority_dataframe(
             mart_df,
             title="OVERWATCH summary readiness",
@@ -1579,11 +1580,12 @@ def render():
         df_u = res.get("usage_today", pd.DataFrame())
         if not df_u.empty:
             st.subheader("Today's Cortex Usage")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Requests Today",    f"{safe_int(df_u['REQUESTS_TODAY'].iloc[0]):,}")
-            c2.metric("AI Credits Today",  f"{safe_float(df_u['CREDITS_TODAY'].iloc[0]):.4f}")
-            c3.metric("Tokens Today",      f"{safe_int(df_u['TOKENS_TODAY'].iloc[0]):,}")
-            c4.metric("Active Users",      f"{safe_int(df_u['ACTIVE_USERS'].iloc[0])}")
+            render_shell_snapshot((
+                ("Requests Today", f"{safe_int(df_u['REQUESTS_TODAY'].iloc[0]):,}"),
+                ("AI Credits Today", f"{safe_float(df_u['CREDITS_TODAY'].iloc[0]):.4f}"),
+                ("Tokens Today", f"{safe_int(df_u['TOKENS_TODAY'].iloc[0]):,}"),
+                ("Active Users", f"{safe_int(df_u['ACTIVE_USERS'].iloc[0])}"),
+            ))
 
         # Current parameters
         df_cp = res.get("cortex_params", pd.DataFrame())
@@ -1981,10 +1983,11 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 # Metrics
                 started   = df_tasks[df_tasks["STATE"] == "started"]  if "STATE" in df_tasks.columns else pd.DataFrame()
                 suspended = df_tasks[df_tasks["STATE"] == "suspended"] if "STATE" in df_tasks.columns else pd.DataFrame()
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Total Tasks",       len(df_tasks))
-                c2.metric("Active",             len(started))
-                c3.metric("Suspended",          len(suspended))
+                render_shell_snapshot((
+                    ("Total Tasks", f"{len(df_tasks):,}"),
+                    ("Active", f"{len(started):,}"),
+                    ("Suspended", f"{len(suspended):,}"),
+                ))
 
                 task_display_cols = (
                     ["NAME", "DATABASE_NAME", "SCHEMA_NAME", "STATE", "SCHEDULE", "WAREHOUSE"]
@@ -2320,10 +2323,11 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
         exact_count = int(audit_df["CONFIDENCE"].str.contains("Exact", case=False, na=False).sum())
         estimate_count = int(audit_df["CONFIDENCE"].str.contains("estimate|forecast|mixed|allocated", case=False, na=False).sum())
         rows_count = len(audit_df)
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Formula Checks", f"{rows_count:,}")
-        c2.metric("Exact / Source-of-Truth", f"{exact_count:,}")
-        c3.metric("Estimated / Allocated", f"{estimate_count:,}")
+        render_shell_snapshot((
+            ("Formula Checks", f"{rows_count:,}"),
+            ("Source-of-Truth", f"{exact_count:,}"),
+            ("Estimated / Allocated", f"{estimate_count:,}"),
+        ))
 
         audit_view = audit_df.rename(columns={"CONFIDENCE": "SOURCE_BASIS"})
         render_priority_dataframe(
@@ -2430,10 +2434,11 @@ ORDER BY current_tb DESC;"""
                 ready_count = int((compat_df["STATUS"] == "Ready").sum())
                 limited_count = int((compat_df["STATUS"] == "Limited").sum())
                 blocked_count = int((~compat_df["STATUS"].isin(["Ready", "Limited"])).sum())
-                c_ready, c_limited, c_blocked = st.columns(3)
-                c_ready.metric("Ready", f"{ready_count:,}")
-                c_limited.metric("Limited", f"{limited_count:,}")
-                c_blocked.metric("Blocked", f"{blocked_count:,}")
+                render_shell_snapshot((
+                    ("Ready", f"{ready_count:,}"),
+                    ("Limited", f"{limited_count:,}"),
+                    ("Blocked", f"{blocked_count:,}"),
+                ))
                 render_priority_dataframe(
                     compat_df,
                     title="Compatibility checks needing attention",
@@ -2471,9 +2476,10 @@ ORDER BY current_tb DESC;"""
             else:
                 wh_count = int((unclassified["OBJECT_TYPE"] == "WAREHOUSE").sum()) if "OBJECT_TYPE" in unclassified.columns else 0
                 db_count = int((unclassified["OBJECT_TYPE"] == "DATABASE").sum()) if "OBJECT_TYPE" in unclassified.columns else 0
-                c_wh, c_db = st.columns(2)
-                c_wh.metric("Unclassified Warehouses", f"{wh_count:,}")
-                c_db.metric("Unclassified Databases", f"{db_count:,}")
+                render_shell_snapshot((
+                    ("Unclassified Warehouses", f"{wh_count:,}"),
+                    ("Unclassified Databases", f"{db_count:,}"),
+                ))
                 render_priority_dataframe(
                     unclassified,
                     title="Unclassified scope assets",
@@ -2503,10 +2509,11 @@ ORDER BY current_tb DESC;"""
             missing_count = int((status_df["STATUS"] == "Missing").sum())
             unknown_count = int((status_df["STATUS"] == "Unknown").sum())
 
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Objects Checked", f"{len(status_df):,}")
-            m2.metric("Missing", f"{missing_count:,}")
-            m3.metric("Unknown", f"{unknown_count:,}")
+            render_shell_snapshot((
+                ("Objects Checked", f"{len(status_df):,}"),
+                ("Missing", f"{missing_count:,}"),
+                ("Unknown", f"{unknown_count:,}"),
+            ))
             render_priority_dataframe(
                 status_df,
                 title="Persistent setup readiness",
@@ -2545,9 +2552,10 @@ ORDER BY current_tb DESC;"""
             defer_source_note(migration_error)
         if isinstance(migration_status, pd.DataFrame) and not migration_status.empty:
             blockers = int(migration_status["MIGRATION_STATE"].astype(str).isin(["Blocked", "Version Drift"]).sum())
-            m_ready, m_blocked = st.columns(2)
-            m_ready.metric("Migration Rows", f"{len(migration_status):,}")
-            m_blocked.metric("Blockers", f"{blockers:,}", delta_color="inverse")
+            render_shell_snapshot((
+                ("Migration Rows", f"{len(migration_status):,}"),
+                ("Blockers", f"{blockers:,}"),
+            ))
             render_priority_dataframe(
                 migration_status,
                 title="Deployed mart migration status",

@@ -930,10 +930,11 @@ def _render_role_grant_change_control(session, company: str) -> None:
 
     st.markdown(f"**Reviewed Access Change Plan: {plan['risk_level']} Risk**")
     board_summary, board = _build_role_grant_control_board(plan)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Ready", f"{board_summary['ready']:,}")
-    c2.metric("Review", f"{board_summary['review']:,}", delta_color="inverse")
-    c3.metric("Blocked", f"{board_summary['blocked']:,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Ready", f"{board_summary['ready']:,}"),
+        ("Review", f"{board_summary['review']:,}"),
+        ("Blocked", f"{board_summary['blocked']:,}"),
+    ))
     render_priority_dataframe(
         board,
         title="Role grant control plane",
@@ -1264,11 +1265,12 @@ def render():
             ok  = df_ls.loc[df_ls["IS_SUCCESS"] == "YES", "EVENT_COUNT"].sum() if "YES" in df_ls["IS_SUCCESS"].values else 0
             fail= df_ls.loc[df_ls["IS_SUCCESS"] == "NO",  "EVENT_COUNT"].sum() if "NO"  in df_ls["IS_SUCCESS"].values else 0
             tot = ok + fail
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Total Logins",    f"{int(tot):,}")
-            c2.metric("Successful",      f"{int(ok):,}")
-            c3.metric("Failed",          f"{int(fail):,}",   delta_color="inverse")
-            c4.metric("Failure Rate",    f"{(fail/tot*100) if tot else 0:.2f}%")
+            render_shell_snapshot((
+                ("Total Logins", f"{int(tot):,}"),
+                ("Successful", f"{int(ok):,}"),
+                ("Failed", f"{int(fail):,}"),
+                ("Failure Rate", f"{(fail/tot*100) if tot else 0:.2f}%"),
+            ))
 
         if st.session_state.get("sec_df_failed_logins") is not None and not st.session_state["sec_df_failed_logins"].empty:
             st.subheader("Failed Login Attempts")
@@ -1509,12 +1511,13 @@ def render():
                 if distinct_programs else 0
             )
             failure_rate = failed_queries / max(total_queries, 1) * 100
-            c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("Programs Seen", f"{distinct_programs:,}")
-            c2.metric("Open Sessions", f"{open_sessions:,}")
-            c3.metric("Query/Login Events", f"{total_queries:,} / {total_logins:,}")
-            c4.metric("Need Owner", f"{unknown_rows:,}", delta=f"{governed_pct:.0f}% governed", delta_color="inverse")
-            c5.metric("Program Failure Rate", f"{failure_rate:.1f}%", delta=f"{failed_queries:,} failed", delta_color="inverse")
+            render_shell_snapshot((
+                ("Programs Seen", f"{distinct_programs:,}"),
+                ("Open Sessions", f"{open_sessions:,}"),
+                ("Query/Login Events", f"{total_queries:,} / {total_logins:,}"),
+                ("Need Owner", f"{unknown_rows:,} ({governed_pct:.0f}% governed)"),
+                ("Program Failure Rate", f"{failure_rate:.1f}% ({failed_queries:,} failed)"),
+            ))
 
         if session_programs is not None and not session_programs.empty:
             st.subheader("Session Program Inventory")
@@ -1747,9 +1750,10 @@ def render():
                 )
                 return
             no_mfa = df_m[df_m["HAS_MFA"].astype(str).str.lower() != "true"]
-            c1, c2 = st.columns(2)
-            c1.metric("Users Without MFA",  len(no_mfa),    delta_color="inverse")
-            c2.metric("MFA Coverage",       f"{(1-len(no_mfa)/max(len(df_m),1))*100:.0f}%")
+            render_shell_snapshot((
+                ("Users Without MFA", f"{len(no_mfa):,}"),
+                ("MFA Coverage", f"{(1-len(no_mfa)/max(len(df_m),1))*100:.0f}%"),
+            ))
             if not no_mfa.empty:
                 st.warning(f"{len(no_mfa)} active user(s) without MFA enabled.")
                 no_mfa = _annotate_security_routes(no_mfa, "No MFA")

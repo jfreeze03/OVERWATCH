@@ -1,6 +1,7 @@
 # sections/detailed_diagnosis.py - detailed operational diagnosis for query issues
 import streamlit as st
 
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     day_window_selectbox,
     defer_source_note,
@@ -281,11 +282,12 @@ def render():
         return
 
     _, metric_col, _ = DIAG_MODES.get(loaded_mode, DIAG_MODES["Execution Time"])
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Findings", f"{len(df):,}")
-    c2.metric("Worst", f"{safe_float(df[metric_col].max()):,.2f}")
-    c3.metric("Affected Warehouses", f"{df['WAREHOUSE_NAME'].nunique():,}")
-    c4.metric("Affected Users", f"{df['USER_NAME'].nunique():,}")
+    render_shell_snapshot((
+        ("Findings", f"{len(df):,}"),
+        ("Worst", f"{safe_float(df[metric_col].max()):,.2f}"),
+        ("Affected Warehouses", f"{df['WAREHOUSE_NAME'].nunique():,}"),
+        ("Affected Users", f"{df['USER_NAME'].nunique():,}"),
+    ))
     defer_source_note(st.session_state.get("dd_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
     if st.button("Send diagnosis findings to Action Queue", key="dd_queue"):

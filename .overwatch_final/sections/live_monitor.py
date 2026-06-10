@@ -12,6 +12,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     get_session,
     credits_to_dollars, estimate_live_credits, download_csv,
@@ -269,12 +270,13 @@ def render():
                 df_live = _prioritize_query_context(df_live)
                 df_live["EST_COMPUTE_CREDITS"] = df_live.apply(estimate_live_credits, axis=1)
                 df_live["EST_DOLLARS"]          = df_live["EST_COMPUTE_CREDITS"].apply(credits_to_dollars)
-                c_a, c_b, c_c = st.columns(3)
-                c_a.metric("Active Queries", len(df_live))
                 queued = int((df_live["EXECUTION_STATUS"] == "QUEUED").sum()) \
                          if "EXECUTION_STATUS" in df_live.columns else 0
-                c_b.metric("Queued",      queued)
-                c_c.metric("Est. Live Cost", f"${df_live['EST_DOLLARS'].sum():,.4f}")
+                render_shell_snapshot((
+                    ("Active Queries", f"{len(df_live):,}"),
+                    ("Queued", f"{queued:,}"),
+                    ("Est. Live Cost", f"${df_live['EST_DOLLARS'].sum():,.4f}"),
+                ))
                 render_query_drilldown(df_live, key="lm_live")
 
                 # Kill query
@@ -480,9 +482,10 @@ def render():
             df_s = st.session_state["lm_df_sessions"]
             threshold_min = THRESHOLDS.get("long_session_hours", 8) * 60
             long_s = df_s[df_s["SESSION_MIN"] > threshold_min] if "SESSION_MIN" in df_s.columns else pd.DataFrame()
-            c1, c2 = st.columns(2)
-            c1.metric("Total Sessions",       len(df_s))
-            c2.metric("Long Sessions (>8h)",  len(long_s), delta_color="inverse")
+            render_shell_snapshot((
+                ("Total Sessions", f"{len(df_s):,}"),
+                ("Long Sessions (>8h)", f"{len(long_s):,}"),
+            ))
             if not long_s.empty:
                 st.warning(f"{len(long_s)} session(s) active > 8 hours.")
                 render_priority_dataframe(

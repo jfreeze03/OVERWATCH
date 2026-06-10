@@ -61,7 +61,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "day_window_selectbox",
         "render_query_drilldown", "render_warehouse_drilldown",
         "render_drillable_bar_chart", "render_entity_query_drilldown",
-        "rank_chart_frame", "render_ranked_bar_chart",
+        "rank_chart_frame", "render_ranked_bar_chart", "render_chart_with_data_toggle",
     ),
     "company_filter": (
         "get_active_company", "get_db_filter_clause", "get_wh_filter_clause",

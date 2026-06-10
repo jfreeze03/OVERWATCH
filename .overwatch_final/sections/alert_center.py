@@ -1453,11 +1453,12 @@ def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
     open_actions = int_value("OPEN_ACTIONS")
     verified_actions = int_value("VERIFIED_ACTIONS")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Last Run", run_ts)
-    c2.metric("External Rows", f"{feed_total:,}")
-    c3.metric("Open Actions", f"{open_actions:,}", delta_color="inverse")
-    c4.metric("Verified", f"{verified_actions:,}")
+    render_shell_snapshot((
+        ("Last Run", run_ts),
+        ("External Rows", f"{feed_total:,}"),
+        ("Open Actions", f"{open_actions:,}"),
+        ("Verified", f"{verified_actions:,}"),
+    ))
 
     rows = [
         {
@@ -1741,11 +1742,12 @@ def render() -> None:
         blocked = int(readiness_rows["STATE"].isin(["Needs Setup", "Degraded", "Scope Stale"]).sum()) if not readiness_rows.empty else 0
         review = int(readiness_rows["STATE"].eq("Review").sum()) if not readiness_rows.empty else 0
         ready = int(readiness_rows["STATE"].isin(["Ready", "No Rows"]).sum()) if not readiness_rows.empty else 0
-        h1, h2, h3, h4 = st.columns(4)
-        h1.metric("Ready Controls", f"{ready:,}")
-        h2.metric("Needs Review", f"{review:,}", delta_color="inverse")
-        h3.metric("Blocked / Setup", f"{blocked:,}", delta_color="inverse")
-        h4.metric("Controls", f"{len(readiness_rows):,}")
+        render_shell_snapshot((
+            ("Ready Controls", f"{ready:,}"),
+            ("Needs Review", f"{review:,}"),
+            ("Blocked / Setup", f"{blocked:,}"),
+            ("Controls", f"{len(readiness_rows):,}"),
+        ))
         health_detail = st.selectbox(
             "Alert health detail",
             ALERT_CENTER_HEALTH_DETAIL_OPTIONS,
@@ -1766,11 +1768,12 @@ def render() -> None:
             )
         elif health_detail == "Owner Routes":
             owner_summary, owner_board = _alert_owner_route_board(alerts, queue)
-            o1, o2, o3, o4 = st.columns(4)
-            o1.metric("Open routed items", f"{owner_summary['open_items']:,}")
-            o2.metric("Named owners", f"{owner_summary['named_owner_pct']:.0f}%")
-            o3.metric("Email routes", f"{owner_summary['email_route_pct']:.0f}%")
-            o4.metric("Route gaps", f"{owner_summary['route_gaps']:,}", delta_color="inverse")
+            render_shell_snapshot((
+                ("Open routed items", f"{owner_summary['open_items']:,}"),
+                ("Named owners", f"{owner_summary['named_owner_pct']:.0f}%"),
+                ("Email routes", f"{owner_summary['email_route_pct']:.0f}%"),
+                ("Route gaps", f"{owner_summary['route_gaps']:,}"),
+            ))
             if owner_board.empty:
                 st.success("No owner route gaps found for the loaded scope.")
             else:
@@ -1793,14 +1796,15 @@ def render() -> None:
 
             directory_summary, directory_board = owner_directory_readiness_board(owner_directory)
             st.markdown("**Owner Directory Production Readiness**")
-            d1, d2, d3, d4 = st.columns(4)
-            d1.metric("Route readiness", f"{directory_summary['readiness_pct']:.0f}%")
-            d2.metric(
-                "Production routes",
-                f"{directory_summary['production_ready']:,}/{directory_summary['total_routes']:,}",
-            )
-            d3.metric("Placeholder routes", f"{directory_summary['placeholder_routes']:,}", delta_color="inverse")
-            d4.metric("Tier 0/1 gaps", f"{directory_summary['tier0_tier1_gaps']:,}", delta_color="inverse")
+            render_shell_snapshot((
+                ("Route readiness", f"{directory_summary['readiness_pct']:.0f}%"),
+                (
+                    "Production routes",
+                    f"{directory_summary['production_ready']:,}/{directory_summary['total_routes']:,}",
+                ),
+                ("Placeholder routes", f"{directory_summary['placeholder_routes']:,}"),
+                ("Tier 0/1 gaps", f"{directory_summary['tier0_tier1_gaps']:,}"),
+            ))
             if directory_board.empty:
                 st.success("No owner-directory route rows found for the loaded scope.")
             else:
@@ -1891,11 +1895,12 @@ def render() -> None:
         blocked = int(automation_board["STATE"].astype(str).isin(["Blocked", "Needs Setup"]).sum()) if not automation_board.empty else 0
         review = int(automation_board["STATE"].astype(str).isin(["Manual", "Review"]).sum()) if not automation_board.empty else 0
         ready = int(automation_board["STATE"].astype(str).isin(["Ready", "No Open Alerts", "No Open Queue"]).sum()) if not automation_board.empty else 0
-        a1, a2, a3, a4 = st.columns(4)
-        a1.metric("Ready Controls", f"{ready:,}")
-        a2.metric("Manual / Review", f"{review:,}", delta_color="inverse")
-        a3.metric("Blocked", f"{blocked:,}", delta_color="inverse")
-        a4.metric("Controls", f"{len(automation_board):,}")
+        render_shell_snapshot((
+            ("Ready Controls", f"{ready:,}"),
+            ("Manual / Review", f"{review:,}"),
+            ("Blocked", f"{blocked:,}"),
+            ("Controls", f"{len(automation_board):,}"),
+        ))
         _render_priority_dataframe(
             automation_board,
             title="Alert automation controls",
@@ -1968,13 +1973,13 @@ def render() -> None:
             )
 
             digest_summary = build_alert_digest_summary(alerts)
-            digest_row1 = st.columns(3)
-            digest_row1[0].metric("Open", f"{digest_summary['open']:,}")
-            digest_row1[1].metric("Critical / High", f"{digest_summary['critical_high']:,}")
-            digest_row1[2].metric("Overdue", f"{digest_summary['overdue']:,}", delta_color="inverse")
-            digest_row2 = st.columns(2)
-            digest_row2[0].metric("Due Soon", f"{digest_summary['due_soon']:,}")
-            digest_row2[1].metric("Needs Owner", f"{digest_summary['needs_owner']:,}")
+            render_shell_snapshot((
+                ("Open", f"{digest_summary['open']:,}"),
+                ("Critical / High", f"{digest_summary['critical_high']:,}"),
+                ("Overdue", f"{digest_summary['overdue']:,}"),
+                ("Due Soon", f"{digest_summary['due_soon']:,}"),
+                ("Needs Owner", f"{digest_summary['needs_owner']:,}"),
+            ))
 
             digest_subject = build_alert_digest_subject(alerts, company=company, environment=environment)
             digest_body = build_alert_digest_body(
@@ -2071,23 +2076,12 @@ def render() -> None:
         else:
             lifecycle = _alert_lifecycle_board(alerts, queue)
             if not lifecycle.empty:
-                l1, l2, l3, l4 = st.columns(4)
-                l1.metric("Lifecycle Rows", f"{len(lifecycle):,}")
-                l2.metric(
-                    "Escalate Now",
-                    f"{int(lifecycle['LIFECYCLE_STATE'].eq('Escalate now').sum()):,}",
-                    delta_color="inverse",
-                )
-                l3.metric(
-                    "Needs Owner",
-                    f"{int(lifecycle['LIFECYCLE_STATE'].eq('Assign owner').sum()):,}",
-                    delta_color="inverse",
-                )
-                l4.metric(
-                    "Not Queued",
-                    f"{int(lifecycle['ACTION_QUEUE_STATE'].eq('Not queued').sum()):,}",
-                    delta_color="inverse",
-                )
+                render_shell_snapshot((
+                    ("Lifecycle Rows", f"{len(lifecycle):,}"),
+                    ("Escalate Now", f"{int(lifecycle['LIFECYCLE_STATE'].eq('Escalate now').sum()):,}"),
+                    ("Needs Owner", f"{int(lifecycle['LIFECYCLE_STATE'].eq('Assign owner').sum()):,}"),
+                    ("Not Queued", f"{int(lifecycle['ACTION_QUEUE_STATE'].eq('Not queued').sum()):,}"),
+                ))
                 _render_priority_dataframe(
                     lifecycle,
                     title="Alert lifecycle command board",

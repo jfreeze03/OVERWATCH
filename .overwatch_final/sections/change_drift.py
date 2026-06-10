@@ -1924,19 +1924,19 @@ def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> Non
     actors = safe_int(row.get("ACTORS", 0))
     affected_dbs = safe_int(row.get("AFFECTED_DATABASES", 0))
 
-    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.2])
-    c1.metric("High-Risk Changes", f"{high_risk:,}", delta_color="inverse")
-    c2.metric("Manual Drift", f"{safe_int(row.get('MANUAL_DRIFT', 0)):,}", delta_color="inverse")
-    c3.metric("Affected DBs", f"{affected_dbs:,}")
-    with c4:
-        if priority.empty:
-            st.success("No urgent change/drift exceptions crossed the brief thresholds.")
-        else:
-            first = priority.iloc[0]
-            st.warning(
-                f"First move: {first.get('FINDING_TYPE', 'Change')} by "
-                f"{first.get('USER_NAME', 'unknown')} -> {first.get('NEXT_ACTION', 'Validate the change.')}"
-            )
+    render_shell_snapshot((
+        ("High-Risk Changes", f"{high_risk:,}"),
+        ("Manual Drift", f"{safe_int(row.get('MANUAL_DRIFT', 0)):,}"),
+        ("Affected DBs", f"{affected_dbs:,}"),
+    ))
+    if priority.empty:
+        st.success("No urgent change/drift exceptions crossed the brief thresholds.")
+    else:
+        first = priority.iloc[0]
+        st.warning(
+            f"First move: {first.get('FINDING_TYPE', 'Change')} by "
+            f"{first.get('USER_NAME', 'unknown')} -> {first.get('NEXT_ACTION', 'Validate the change.')}"
+        )
 
     st.markdown("**Change Watch Floor**")
     st.caption(f"Actors: {actors:,} | Affected databases: {affected_dbs:,}")
@@ -3609,15 +3609,16 @@ def _render_change_source_health(company: str, environment: str) -> None:
         unavailable = int(source_health["STATE"].eq("Unavailable").sum())
         fast_summary = int(
             source_health[
-                source_health["STATE"].isin(["Loaded", "No Rows"])
-                & source_health["CONFIDENCE"].astype(str).str.contains("Fast summary", case=False, regex=False)
-            ].shape[0]
+            source_health["STATE"].isin(["Loaded", "No Rows"])
+            & source_health["CONFIDENCE"].astype(str).str.contains("Fast summary", case=False, regex=False)
+        ].shape[0]
         )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
-        c2.metric("Fast Summary", f"{fast_summary:,}")
-        c3.metric("Stale", f"{stale:,}", delta_color="inverse")
-        c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Current Surfaces", f"{current}/{len(source_health)}"),
+            ("Fast Summary", f"{fast_summary:,}"),
+            ("Stale", f"{stale:,}"),
+            ("Unavailable", f"{unavailable:,}"),
+        ))
         defer_source_note(
             "Use this before acting on change findings. DDL/DCL detection is text-pattern based, "
             "and account/role-only events are intentionally retained when no database context exists."
@@ -3820,14 +3821,15 @@ def _render_change_external_integrations(company: str, environment: str, default
     if mode_note and current:
         st.info(mode_note)
     if feed_health is not None and not feed_health.empty and current:
-        h1, h2, h3, h4 = st.columns(4)
-        h1.metric("Feed Surfaces", f"{len(feed_health):,}")
-        h2.metric("Feed Rows", f"{safe_int(feed_health.get('ROWS', pd.Series(dtype=int)).sum()):,}")
-        h3.metric("Active Scope Rows", f"{safe_int(feed_health.get('ACTIVE_SCOPE_ROWS', pd.Series(dtype=int)).sum()):,}")
         needs_feed = feed_health.get("FEED_STATE", pd.Series(dtype=str)).astype(str).isin(
             ["Ready - Empty", "Stale", "No Active Scope Rows"]
         ).sum()
-        h4.metric("Needs Attention", f"{safe_int(needs_feed):,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Feed Surfaces", f"{len(feed_health):,}"),
+            ("Feed Rows", f"{safe_int(feed_health.get('ROWS', pd.Series(dtype=int)).sum()):,}"),
+            ("Active Scope Rows", f"{safe_int(feed_health.get('ACTIVE_SCOPE_ROWS', pd.Series(dtype=int)).sum()):,}"),
+            ("Needs Attention", f"{safe_int(needs_feed):,}"),
+        ))
         render_priority_dataframe(
             feed_health,
             title=f"{cfg['title']} feed health",
@@ -3842,12 +3844,13 @@ def _render_change_external_integrations(company: str, environment: str, default
             height=200,
         )
     if status is not None and not status.empty and current:
-        s1, s2, s3, s4 = st.columns(4)
-        s1.metric("Evidence Surfaces", f"{len(status):,}")
-        s2.metric("Rows", f"{safe_int(status.get('ROWS', pd.Series(dtype=int)).sum()):,}")
         matched = status.get("SOURCE_MATCH_ROWS", pd.Series(dtype=int)).sum() + status.get("TICKET_MATCH_ROWS", pd.Series(dtype=int)).sum()
-        s3.metric("Matched Evidence", f"{safe_int(matched):,}")
-        s4.metric("Gaps", f"{safe_int(status.get('GAP_ROWS', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Evidence Surfaces", f"{len(status):,}"),
+            ("Rows", f"{safe_int(status.get('ROWS', pd.Series(dtype=int)).sum()):,}"),
+            ("Matched Evidence", f"{safe_int(matched):,}"),
+            ("Gaps", f"{safe_int(status.get('GAP_ROWS', pd.Series(dtype=int)).sum()):,}"),
+        ))
         render_priority_dataframe(
             status,
             title=cfg["coverage_title"],
@@ -4120,15 +4123,15 @@ def render() -> None:
         )
         if operability_fact is not None and not operability_fact.empty and operability_fact_current:
             st.subheader("Change Control Summary")
-            f1, f2, f3, f4 = st.columns(4)
-            f1.metric("Rows", f"{len(operability_fact):,}")
-            f2.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-            f3.metric(
-                "Route / Closure Blocks",
-                f"{int(operability_fact.get('ROUTE_BLOCKED', pd.Series(dtype=int)).sum() + operability_fact.get('CLOSURE_BLOCKED', pd.Series(dtype=int)).sum()):,}",
-                delta_color="inverse",
-            )
-            f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+            render_shell_snapshot((
+                ("Rows", f"{len(operability_fact):,}"),
+                ("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}"),
+                (
+                    "Route / Closure Blocks",
+                    f"{int(operability_fact.get('ROUTE_BLOCKED', pd.Series(dtype=int)).sum() + operability_fact.get('CLOSURE_BLOCKED', pd.Series(dtype=int)).sum()):,}",
+                ),
+                ("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}"),
+            ))
             render_priority_dataframe(
                 operability_fact,
                 title="Change-control blockers",
@@ -4222,22 +4225,12 @@ def render() -> None:
                     max_rows=10,
                 )
             if not readiness_summary.empty:
-                r1, r2, r3, r4 = st.columns(4)
-                r1.metric("Change Routes", f"{len(readiness_summary):,}")
-                r2.metric(
-                    "Closure Blocked",
-                    f"{int(readiness_summary['CLOSURE_BLOCKED'].sum()):,}",
-                    delta_color="inverse",
-                )
-                r3.metric(
-                    "Route Blocked",
-                    f"{int(readiness_summary['ROUTE_BLOCKED'].sum()):,}",
-                    delta_color="inverse",
-                )
-                r4.metric(
-                    "Account Scope",
-                    f"{int(readiness_summary['ACCOUNT_SCOPE_ROWS'].sum()):,}",
-                )
+                render_shell_snapshot((
+                    ("Change Routes", f"{len(readiness_summary):,}"),
+                    ("Closure Blocked", f"{int(readiness_summary['CLOSURE_BLOCKED'].sum()):,}"),
+                    ("Route Blocked", f"{int(readiness_summary['ROUTE_BLOCKED'].sum()):,}"),
+                    ("Account Scope", f"{int(readiness_summary['ACCOUNT_SCOPE_ROWS'].sum()):,}"),
+                ))
                 render_priority_dataframe(
                     readiness_summary,
                     title="Change-control blocker board",

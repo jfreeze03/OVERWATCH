@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     day_window_selectbox,
     defer_source_note,
@@ -114,19 +115,19 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
     affected_warehouses = safe_int(summary_row.get("AFFECTED_WAREHOUSES"))
     affected_users = safe_int(summary_row.get("AFFECTED_USERS"))
 
-    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.4])
-    c1.metric("High-Risk Queries", f"{high_risk:,}", delta_color="inverse")
-    c2.metric("Priority Queries", f"{len(priority):,}", delta_color="inverse")
-    c3.metric("Affected Scope", f"{affected_warehouses:,} WH / {affected_users:,} users")
-    with c4:
-        if priority.empty:
-            st.success("No urgent query root-cause exceptions crossed the selected thresholds.")
-        else:
-            first = priority.iloc[0]
-            st.warning(
-                f"First move: {first.get('ROOT_CAUSE', 'Query exception')} on "
-                f"{first.get('WAREHOUSE_NAME', 'unknown warehouse')} -> {first.get('NEXT_ACTION', 'Review query detail.')}"
-            )
+    render_shell_snapshot((
+        ("High-Risk Queries", f"{high_risk:,}"),
+        ("Priority Queries", f"{len(priority):,}"),
+        ("Affected Scope", f"{affected_warehouses:,} WH / {affected_users:,} users"),
+    ))
+    if priority.empty:
+        st.success("No urgent query root-cause exceptions crossed the selected thresholds.")
+    else:
+        first = priority.iloc[0]
+        st.warning(
+            f"First move: {first.get('ROOT_CAUSE', 'Query exception')} on "
+            f"{first.get('WAREHOUSE_NAME', 'unknown warehouse')} -> {first.get('NEXT_ACTION', 'Review query detail.')}"
+        )
 
     st.markdown("**Query Watch Floor**")
     if priority.empty:
@@ -778,11 +779,12 @@ def render_root_cause_brief(session) -> None:
             slow_queries=safe_int(summary_row.get("SLOW_QUERIES")),
             total_queries=safe_int(summary_row.get("TOTAL_QUERIES")),
         )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Failed", f"{safe_int(summary_row.get('FAILED_QUERIES')):,}", delta_color="inverse")
-        c2.metric("Queued", f"{safe_int(summary_row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
-        c3.metric("Spill", f"{safe_int(summary_row.get('SPILL_QUERIES')):,}", delta_color="inverse")
-        c4.metric("Full Scan", f"{safe_int(summary_row.get('FULL_SCAN_QUERIES')):,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Failed", f"{safe_int(summary_row.get('FAILED_QUERIES')):,}"),
+            ("Queued", f"{safe_int(summary_row.get('QUEUED_QUERIES')):,}"),
+            ("Spill", f"{safe_int(summary_row.get('SPILL_QUERIES')):,}"),
+            ("Full Scan", f"{safe_int(summary_row.get('FULL_SCAN_QUERIES')):,}"),
+        ))
 
         if score < 65:
             st.error("Incident risk: query failures, queue pressure, spill, or scan-heavy workload needs DBA action.")

@@ -1,5 +1,6 @@
 # sections/query_analysis.py - Bottlenecks, plan steps, pattern degradation, AI diagnosis
 import streamlit as st
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     defer_source_note,
     day_window_selectbox,
@@ -196,11 +197,12 @@ def render():
 
         if st.session_state.get("qa_df_qa") is not None and not st.session_state["qa_df_qa"].empty:
             df = st.session_state["qa_df_qa"]
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Slow Queries", f"{len(df):,}")
-            c2.metric("Avg Elapsed (s)", f"{df['ELAPSED_SEC'].mean():.1f}")
-            c3.metric("Total Remote Spill", f"{df['REMOTE_SPILL_GB'].sum():.1f} GB")
-            c4.metric("Total Credits", format_credits(df["METERED_CREDITS"].sum()))
+            render_shell_snapshot((
+                ("Slow Queries", f"{len(df):,}"),
+                ("Avg Elapsed (s)", f"{df['ELAPSED_SEC'].mean():.1f}"),
+                ("Total Remote Spill", f"{df['REMOTE_SPILL_GB'].sum():.1f} GB"),
+                ("Total Credits", format_credits(df["METERED_CREDITS"].sum())),
+            ))
             defer_source_note(st.session_state.get("qa_bottleneck_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
             # Flag high-impact queries

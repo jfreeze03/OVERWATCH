@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 
 from config import DEFAULTS, THRESHOLDS
+from sections.shell_helpers import render_shell_snapshot
 
 from .compatibility import filter_existing_columns
 from .company_filter import get_active_company, get_global_filter_clause, get_wh_filter_clause
@@ -116,10 +117,11 @@ def render_optimization_advisor():
         if st.session_state.get("opt_df_idle") is not None and not st.session_state["opt_df_idle"].empty:
             df_i = st.session_state["opt_df_idle"]
             total_idle = df_i["IDLE_CREDITS"].sum()
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Warehouses Wasting", len(df_i))
-            c2.metric("Total Idle Credits", format_credits(total_idle))
-            c3.metric("Idle Cost", f"${credits_to_dollars(total_idle, credit_price):,.2f}")
+            render_shell_snapshot((
+                ("Warehouses Wasting", f"{len(df_i):,}"),
+                ("Total Idle Credits", format_credits(total_idle)),
+                ("Idle Cost", f"${credits_to_dollars(total_idle, credit_price):,.2f}"),
+            ))
             st.caption(metric_confidence_label("exact"))
             render_priority_dataframe(
                 df_i,
@@ -196,7 +198,7 @@ def render_optimization_advisor():
             df_d = st.session_state["opt_df_dup"]
             decision_rows = [duplicate_query_decision(row) for _, row in df_d.iterrows()]
             df_d = pd.concat([df_d.reset_index(drop=True), pd.DataFrame(decision_rows)], axis=1)
-            st.metric("Duplicate Query Patterns", len(df_d))
+            render_shell_snapshot((("Duplicate Query Patterns", f"{len(df_d):,}"),))
             render_priority_dataframe(
                 df_d,
                 title="Duplicate query candidates",

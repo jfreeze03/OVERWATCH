@@ -4,6 +4,7 @@ import re
 import streamlit as st
 import pandas as pd
 from config import DEFAULTS
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     day_window_selectbox,
     get_session,
@@ -869,11 +870,12 @@ def render():
         if summary:
             exceptions = st.session_state.get("sp_ops_exceptions", pd.DataFrame())
             joined = st.session_state.get("sp_ops_joined", pd.DataFrame())
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Procedures", f"{safe_int(summary.get('PROCEDURES')):,}")
-            c2.metric("Linked to Tasks", f"{safe_int(summary.get('LINKED_TO_TASKS')):,}")
-            c3.metric("Recent Calls", f"{safe_int(summary.get('RECENT_CALLS')):,}")
-            c4.metric("Orphan Candidates", f"{safe_int(summary.get('ORPHAN_CANDIDATES')):,}", delta_color="inverse")
+            render_shell_snapshot((
+                ("Procedures", f"{safe_int(summary.get('PROCEDURES')):,}"),
+                ("Linked to Tasks", f"{safe_int(summary.get('LINKED_TO_TASKS')):,}"),
+                ("Recent Calls", f"{safe_int(summary.get('RECENT_CALLS')):,}"),
+                ("Orphan Candidates", f"{safe_int(summary.get('ORPHAN_CANDIDATES')):,}"),
+            ))
             if safe_int(summary.get("OWNER_REVIEW_REQUIRED")) or safe_int(summary.get("BLOCKED_BY_SUSPENDED_TASK")):
                 st.caption(
                     f"Owner review required: {safe_int(summary.get('OWNER_REVIEW_REQUIRED')):,} | "
@@ -887,10 +889,11 @@ def render():
                 st.warning("Procedure operations has exceptions to review before relying on task graphs as production workflow control.")
                 slo_summary, slo_board = _build_procedure_reliability_slo_board(summary, exceptions)
                 st.subheader("Procedure Reliability SLO Board")
-                s1, s2, s3 = st.columns(3)
-                s1.metric("Ready", f"{slo_summary['ready']:,}")
-                s2.metric("Review", f"{slo_summary['review']:,}", delta_color="inverse")
-                s3.metric("Blocked", f"{slo_summary['blocked']:,}", delta_color="inverse")
+                render_shell_snapshot((
+                    ("Ready", f"{slo_summary['ready']:,}"),
+                    ("Review", f"{slo_summary['review']:,}"),
+                    ("Blocked", f"{slo_summary['blocked']:,}"),
+                ))
                 render_priority_dataframe(
                     slo_board,
                     title="Procedure reliability SLOs and next control step",
@@ -991,11 +994,12 @@ def render():
         if summary:
             exceptions = st.session_state.get("sp_sla_exceptions", pd.DataFrame())
             latest = st.session_state.get("sp_sla_latest", pd.DataFrame())
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Procedure Runs", f"{safe_int(summary.get('RUNS')):,}")
-            c2.metric("Procedures", f"{safe_int(summary.get('PROCEDURES')):,}")
-            c3.metric("Runtime SLA Breaches", f"{safe_int(summary.get('SLA_BREACHES')):,}", delta_color="inverse")
-            c4.metric("Cost Regressions", f"{safe_int(summary.get('COST_BREACHES')):,}", delta_color="inverse")
+            render_shell_snapshot((
+                ("Procedure Runs", f"{safe_int(summary.get('RUNS')):,}"),
+                ("Procedures", f"{safe_int(summary.get('PROCEDURES')):,}"),
+                ("Runtime SLA Breaches", f"{safe_int(summary.get('SLA_BREACHES')):,}"),
+                ("Cost Regressions", f"{safe_int(summary.get('COST_BREACHES')):,}"),
+            ))
             sla_source = str(st.session_state.get("sp_sla_source", "Source unavailable"))
             using_mart_sla = "fast" in sla_source.lower() and "summary" in sla_source.lower()
             confidence = "allocated" if using_mart_sla or st.session_state.get("sp_sla_root_available") else "estimated"
@@ -1145,11 +1149,12 @@ def render():
         if not st.session_state.get("spt_has_root_query_id", False):
             st.info("ROOT_QUERY_ID is not available in this Snowflake account. Showing outer CALL cost only.")
         total_credits = df_sp["METERED_CREDITS"].sum() + df_sp["CLOUD_CREDITS"].sum()
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Proc Signatures", df_sp["QUERY_TEXT"].nunique())
-        c2.metric("Calls", f"{int(df_sp['CALL_COUNT'].sum()):,}")
-        c3.metric("Child Queries", f"{int(df_sp['DOWNSTREAM_QUERY_COUNT'].sum()):,}")
-        c4.metric("Credits", format_credits(total_credits))
+        render_shell_snapshot((
+            ("Proc Signatures", f"{df_sp['QUERY_TEXT'].nunique():,}"),
+            ("Calls", f"{int(df_sp['CALL_COUNT'].sum()):,}"),
+            ("Child Queries", f"{int(df_sp['DOWNSTREAM_QUERY_COUNT'].sum()):,}"),
+            ("Credits", format_credits(total_credits)),
+        ))
         lineage_confidence = "allocated" if st.session_state.get("spt_has_root_query_id", False) else "estimated"
         defer_source_note(
             metric_confidence_label(lineage_confidence),

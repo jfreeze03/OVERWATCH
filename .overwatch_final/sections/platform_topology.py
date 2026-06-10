@@ -1,6 +1,7 @@
 # sections/platform_topology.py - relationship maps for teams, objects, and workloads
 import streamlit as st
 
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     day_window_selectbox,
     defer_source_note,
@@ -231,11 +232,12 @@ def render():
     role_users = data["role_users"]
     app_flow = data["app_flow"]
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Warehouse/User Links", f"{len(wh_user):,}")
-    c2.metric("Database/Schema Links", f"{len(db_schema):,}")
-    c3.metric("Active Role Grants", f"{len(role_users):,}")
-    c4.metric("Application Flows", f"{len(app_flow):,}")
+    render_shell_snapshot((
+        ("Warehouse/User Links", f"{len(wh_user):,}"),
+        ("Database/Schema Links", f"{len(db_schema):,}"),
+        ("Active Role Grants", f"{len(role_users):,}"),
+        ("Application Flows", f"{len(app_flow):,}"),
+    ))
 
     active_view = render_workflow_selector(
         "Platform topology view",

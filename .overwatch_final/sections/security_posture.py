@@ -1341,19 +1341,19 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
     failed_logins = safe_int(row.get("FAILED_LOGINS", 0))
     users_without_mfa = safe_int(row.get("USERS_WITHOUT_MFA", 0))
     shared_databases = safe_int(row.get("SHARED_DATABASES", 0))
-    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.2])
-    c1.metric("Priority Findings", f"{len(priority):,}", delta_color="inverse")
-    c2.metric("Identity Signals", f"{failed_logins + users_without_mfa:,}", delta_color="inverse")
-    c3.metric("Shared DBs", f"{shared_databases:,}")
-    with c4:
-        if priority.empty:
-            st.success("No urgent security findings crossed the brief thresholds.")
-        else:
-            first = priority.iloc[0]
-            st.warning(
-                f"First move: {first.get('FINDING_TYPE', 'Security finding')} for "
-                f"{first.get('ENTITY', 'unknown')} -> {first.get('NEXT_ACTION', 'Review access evidence.')}"
-            )
+    render_shell_snapshot((
+        ("Priority Findings", f"{len(priority):,}"),
+        ("Identity Signals", f"{failed_logins + users_without_mfa:,}"),
+        ("Shared DBs", f"{shared_databases:,}"),
+    ))
+    if priority.empty:
+        st.success("No urgent security findings crossed the brief thresholds.")
+    else:
+        first = priority.iloc[0]
+        st.warning(
+            f"First move: {first.get('FINDING_TYPE', 'Security finding')} for "
+            f"{first.get('ENTITY', 'unknown')} -> {first.get('NEXT_ACTION', 'Review access evidence.')}"
+        )
 
     st.markdown("**Security Watch Floor**")
     if priority.empty:
@@ -1698,14 +1698,15 @@ def _render_security_operability_fact_gate(company: str, environment: str, days:
         return
     if operability_fact is not None and not operability_fact.empty:
         st.subheader("Security Control Summary")
-        f1, f2, f3, f4 = st.columns(4)
         blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
             "Blocked|Overdue|Required", case=False, na=False
         )
-        f1.metric("Rows", f"{len(operability_fact):,}")
-        f2.metric("Blocked", f"{int(blocked_states.sum()):,}", delta_color="inverse")
-        f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-        f4.metric("Verified", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+        render_shell_snapshot((
+            ("Rows", f"{len(operability_fact):,}"),
+            ("Blocked", f"{int(blocked_states.sum()):,}"),
+            ("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}"),
+            ("Verified", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}"),
+        ))
         render_priority_dataframe(
             operability_fact,
             title="Security blockers",
@@ -2802,17 +2803,19 @@ def _render_privileged_grant_readiness(
         blocked = grants[grants["GRANT_REVIEW_READINESS"] == "Owner Route Blocked"]
         approval = grants[grants["GRANT_REVIEW_READINESS"] == "Owner Approval Required"]
         account_scope = grants[~grants["DATABASE_CONTEXT"]]
-        g1, g2, g3, g4 = st.columns(4)
-        g1.metric("Privileged Grants", f"{len(grants):,}")
-        g2.metric("Owner Approval", f"{len(approval):,}", delta_color="inverse")
-        g3.metric("Route Blocked", f"{len(blocked):,}", delta_color="inverse")
-        g4.metric("Account Scope", f"{len(account_scope):,}")
+        render_shell_snapshot((
+            ("Privileged Grants", f"{len(grants):,}"),
+            ("Owner Approval", f"{len(approval):,}"),
+            ("Route Blocked", f"{len(blocked):,}"),
+            ("Account Scope", f"{len(account_scope):,}"),
+        ))
         if not as_expander:
-            r1, r2, r3, r4 = st.columns(4)
-            r1.metric("Tier 0", f"{summary['tier0']:,}", delta_color="inverse")
-            r2.metric("Admin Roles", f"{summary['admin_role_grants']:,}", delta_color="inverse")
-            r3.metric("Grant Option", f"{summary['ownership_or_grant_option']:,}", delta_color="inverse")
-            r4.metric("Stale Admin", f"{summary['stale_admin_grants']:,}", delta_color="inverse")
+            render_shell_snapshot((
+                ("Tier 0", f"{summary['tier0']:,}"),
+                ("Admin Roles", f"{summary['admin_role_grants']:,}"),
+                ("Grant Option", f"{summary['ownership_or_grant_option']:,}"),
+                ("Stale Admin", f"{summary['stale_admin_grants']:,}"),
+            ))
 
         render_priority_dataframe(
             grants,
@@ -2865,15 +2868,16 @@ def _render_security_source_health(company: str, environment: str) -> None:
         unavailable = int(source_health["STATE"].eq("Unavailable").sum())
         fast_summary = int(
             source_health[
-                source_health["STATE"].isin(["Loaded", "No Rows"])
-                & source_health["CONFIDENCE"].astype(str).str.contains("Fast summary", case=False, regex=False)
-            ].shape[0]
+            source_health["STATE"].isin(["Loaded", "No Rows"])
+            & source_health["CONFIDENCE"].astype(str).str.contains("Fast summary", case=False, regex=False)
+        ].shape[0]
         )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
-        c2.metric("Fast Summary", f"{fast_summary:,}")
-        c3.metric("Stale", f"{stale:,}", delta_color="inverse")
-        c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Current Surfaces", f"{current}/{len(source_health)}"),
+            ("Fast Summary", f"{fast_summary:,}"),
+            ("Stale", f"{stale:,}"),
+            ("Unavailable", f"{unavailable:,}"),
+        ))
         defer_source_note(
             "Use this before acting on access findings. Login-only evidence keeps account scope, while database-scoped "
             "evidence follows the selected company and environment."
@@ -3134,12 +3138,13 @@ def render() -> None:
                 )
                 if not security_board.empty:
                     st.subheader("Security Control Board")
-                    b1, b2, b3, b4 = st.columns(4)
                     blocked_states = security_board["CONTROL_STATE"].astype(str).str.contains("Blocked|Overdue|Required", case=False, na=False)
-                    b1.metric("Control Rows", f"{len(security_board):,}")
-                    b2.metric("Blocked", f"{int(blocked_states.sum()):,}", delta_color="inverse")
-                    b3.metric("Overdue", f"{int(security_board.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-                    b4.metric("Verified", f"{int(security_board.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+                    render_shell_snapshot((
+                        ("Control Rows", f"{len(security_board):,}"),
+                        ("Blocked", f"{int(blocked_states.sum()):,}"),
+                        ("Overdue", f"{int(security_board.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}"),
+                        ("Verified", f"{int(security_board.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}"),
+                    ))
                     render_priority_dataframe(
                         security_board,
                         title="Security issues blocking DBA closure",

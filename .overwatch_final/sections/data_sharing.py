@@ -2,6 +2,7 @@
 import pandas as pd
 import streamlit as st
 from config import DEFAULTS
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     get_active_company,
     day_window_selectbox,
@@ -120,11 +121,12 @@ def render():
         df_d = st.session_state["ds_df_dt"]
         total_cr = df_d["CREDITS"].sum()
         total_gb = df_d["GB_TRANSFERRED"].sum()
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total GB Transferred", f"{total_gb:,.1f}")
-        c2.metric("Transfer Credits", format_credits(total_cr))
-        c3.metric("Transfer Cost", f"${credits_to_dollars(total_cr, credit_price):,.2f}")
-        c4.metric("Routes", f"{len(df_d[['SOURCE_REGION', 'TARGET_REGION']].drop_duplicates()):,}")
+        render_shell_snapshot((
+            ("Total GB Transferred", f"{total_gb:,.1f}"),
+            ("Transfer Credits", format_credits(total_cr)),
+            ("Transfer Cost", f"${credits_to_dollars(total_cr, credit_price):,.2f}"),
+            ("Routes", f"{len(df_d[['SOURCE_REGION', 'TARGET_REGION']].drop_duplicates()):,}"),
+        ))
         st.subheader("Daily Transfer Trend")
         daily = df_d.groupby("DAY")[["GB_TRANSFERRED","CREDITS"]].sum().reset_index()
         st.line_chart(daily.set_index("DAY"))
@@ -157,11 +159,12 @@ def render():
         imported = int((df_shared.get("TYPE", pd.Series(dtype=str)).fillna("").astype(str).str.upper() == "IMPORTED DATABASE").sum())
         share_type = int((df_shared.get("TYPE", pd.Series(dtype=str)).fillna("").astype(str).str.upper() == "SHARE").sum())
         stale = int((df_shared.get("DAYS_SINCE_ALTERED", pd.Series(dtype=float)).fillna(0) >= 90).sum())
-        d1, d2, d3, d4 = st.columns(4)
-        d1.metric("Shared Objects", f"{len(df_shared):,}")
-        d2.metric("Imported DBs", f"{imported:,}")
-        d3.metric("Share Rows", f"{share_type:,}")
-        d4.metric("90d No Change", f"{stale:,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Shared Objects", f"{len(df_shared):,}"),
+            ("Imported DBs", f"{imported:,}"),
+            ("Share Rows", f"{share_type:,}"),
+            ("90d No Change", f"{stale:,}"),
+        ))
         st.subheader("Shared / Imported Databases")
         render_priority_dataframe(
             df_shared,

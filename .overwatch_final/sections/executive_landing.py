@@ -1018,10 +1018,11 @@ def render() -> None:
     loaded_sources = int(source_health["STATE"].eq("Loaded").sum())
     limited_sources = int(source_health["STATE"].eq("Limited").sum())
     no_row_sources = int(source_health["STATE"].eq("No Rows").sum())
-    s1, s2, s3 = st.columns(3)
-    s1.metric("Sources Loaded", f"{loaded_sources}/4")
-    s2.metric("Limited Sources", f"{limited_sources}", delta_color="inverse")
-    s3.metric("No-Row Sources", f"{no_row_sources}")
+    render_shell_snapshot((
+        ("Sources Loaded", f"{loaded_sources}/4"),
+        ("Limited Sources", f"{limited_sources}"),
+        ("No-Row Sources", f"{no_row_sources}"),
+    ))
     with st.expander("Executive source health", expanded=False):
         render_priority_dataframe(
             source_health,

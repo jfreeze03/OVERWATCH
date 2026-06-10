@@ -2837,14 +2837,15 @@ def _render_account_health_access_hygiene(company: str, environment: str) -> Non
                     language="sql",
                 )
         elif hygiene is not None and not hygiene.empty:
-            h1, h2, h3, h4 = st.columns(4)
-            h1.metric("Users Review", f"{len(hygiene):,}")
             high = int((hygiene.get("SEVERITY", pd.Series(dtype=str)).astype(str).str.upper() == "HIGH").sum())
-            h2.metric("High Risk", f"{high:,}", delta_color="inverse")
             failed = int((pd.to_numeric(hygiene.get("FAILED_LOGINS", pd.Series(dtype=float)), errors="coerce").fillna(0) > 0).sum())
-            h3.metric("Failed Logins", f"{failed:,}")
             admins = int((pd.to_numeric(hygiene.get("ADMIN_ROLE_COUNT", pd.Series(dtype=float)), errors="coerce").fillna(0) > 0).sum())
-            h4.metric("Admin Reviews", f"{admins:,}")
+            render_shell_snapshot((
+                ("Users Review", f"{len(hygiene):,}"),
+                ("High Risk", f"{high:,}"),
+                ("Failed Logins", f"{failed:,}"),
+                ("Admin Reviews", f"{admins:,}"),
+            ))
             render_priority_dataframe(
                 hygiene,
                 title="Account-level user/auth hygiene candidates",
@@ -2907,11 +2908,12 @@ def _render_account_health_source_health(company: str, environment: str) -> None
                 & source_health["SOURCE"].astype(str).str.contains("mart|FACT_", case=False, regex=True)
             ].shape[0]
         )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Current", f"{current}/{len(source_health)}")
-        c2.metric("Mart Backed", f"{mart_backed:,}")
-        c3.metric("Stale", f"{stale:,}", delta_color="inverse")
-        c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Current", f"{current}/{len(source_health)}"),
+            ("Mart Backed", f"{mart_backed:,}"),
+            ("Stale", f"{stale:,}"),
+            ("Unavailable", f"{unavailable:,}"),
+        ))
         st.caption(
             "Use this before publishing the morning report or queueing checklist work. "
             "Account-level controls stay visible under environment filters when Snowflake has no database context."
@@ -3426,14 +3428,15 @@ def render():
             ):
                 st.info("Loaded Account Health control summary is stale for the active scope. Reload before acting.")
             elif operability_fact is not None and not operability_fact.empty:
-                f1, f2, f3, f4 = st.columns(4)
                 blocked_states = operability_fact["CONTROL_STATE"].astype(str).str.contains(
                     "Blocked|Overdue|Required|Review", case=False, na=False
                 )
-                f1.metric("Rows", f"{len(operability_fact):,}")
-                f2.metric("Blocked Review", f"{int(blocked_states.sum()):,}", delta_color="inverse")
-                f3.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-                f4.metric("Verified", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+                render_shell_snapshot((
+                    ("Rows", f"{len(operability_fact):,}"),
+                    ("Blocked Review", f"{int(blocked_states.sum()):,}"),
+                    ("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}"),
+                    ("Verified", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}"),
+                ))
                 render_priority_dataframe(
                     operability_fact,
                     title="Account Health blockers",
@@ -3907,10 +3910,11 @@ def render():
             df_rm = st.session_state["ah_df_resmon"]
             total_quota = df_rm["CREDIT_QUOTA"].sum()
             total_used  = df_rm["USED_CREDITS"].sum()
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Quota",   format_credits(total_quota))
-            c2.metric("Used",    format_credits(total_used))
-            c3.metric("Usage", f"{(total_used/total_quota*100) if total_quota else 0:.1f}%")
+            render_shell_snapshot((
+                ("Quota", format_credits(total_quota)),
+                ("Used", format_credits(total_used)),
+                ("Usage", f"{(total_used/total_quota*100) if total_quota else 0:.1f}%"),
+            ))
 
             for _, row in df_rm.iterrows():
                 quota   = safe_float(row.get("CREDIT_QUOTA",0))
@@ -3919,13 +3923,14 @@ def render():
                 pct     = (used / quota * 100) if quota > 0 else 0
                 suspend = row.get("SUSPEND","")
                 s_imm   = row.get("SUSPEND_IMMEDIATE","")
-                cols = st.columns(5)
                 st.markdown(f"**{html.escape(str(name))}**")
-                cols[0].metric("Quota", format_credits(quota))
-                cols[1].metric("Used",          format_credits(used))
-                cols[2].metric("Remaining",     format_credits(safe_float(row.get("REMAINING_CREDITS",0))))
-                cols[3].metric("Usage %",       f"{pct:.1f}%")
-                cols[4].metric("Est. $",        f"${credits_to_dollars(used):,.2f}")
+                render_shell_snapshot((
+                    ("Quota", format_credits(quota)),
+                    ("Used", format_credits(used)),
+                    ("Remaining", format_credits(safe_float(row.get("REMAINING_CREDITS",0)))),
+                    ("Usage", f"{pct:.1f}%"),
+                    ("Est. $", f"${credits_to_dollars(used):,.2f}"),
+                ))
                 if pct > 100:  st.error(f"**{name}** OVER BUDGET at {pct:.0f}%")
                 elif pct > 80: st.warning(f"**{name}** at {pct:.0f}% - approaching limit")
                 else:          st.success(f"**{name}** at {pct:.0f}% - on track")

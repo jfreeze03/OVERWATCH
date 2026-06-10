@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from config import DAY_WINDOW_OPTIONS, DEFAULT_DAY_WINDOW
+from sections.shell_helpers import render_shell_snapshot
 from .cache import clear_all_cache
 from .cost import format_credits
 from .compatibility import filter_existing_columns
@@ -11,6 +12,7 @@ from .company_filter import get_db_filter_clause, get_user_filter_clause, get_wh
 from .helpers import safe_float
 from .workflows import add_cost_companion_columns, prioritize_context_columns
 from .workflows import apply_operator_status_labels
+from .workflows import render_mode_selector, render_priority_dataframe
 
 
 DISPLAY_VERSION = "2026-06-05-chart-drillback-cost-v1"
@@ -124,6 +126,54 @@ def render_ranked_bar_chart(
     return chart_df
 
 
+def render_chart_with_data_toggle(
+    title: str,
+    key: str,
+    chart_renderer,
+    data_rows: pd.DataFrame,
+    *,
+    priority_columns: list[str] | tuple[str, ...] | None = None,
+    sort_by: list[str] | tuple[str, ...] | None = None,
+    ascending: list[bool] | tuple[bool, ...] | bool = False,
+    max_rows: int = 25,
+    raw_label: str | None = None,
+) -> str:
+    """Render a chart or its backing table with a clear return path."""
+    if title:
+        st.markdown(f"**{title}**")
+    mode_key = f"{key}_chart_data_mode"
+    mode = render_mode_selector(
+        "Chart view",
+        mode_key,
+        ("Chart", "Data"),
+        default="Chart",
+    )
+    if mode == "Data":
+        back_col, note_col = st.columns([1, 4])
+        with back_col:
+            if st.button("Back to chart", key=f"{key}_back_to_chart", width="stretch"):
+                st.session_state[mode_key] = "Chart"
+                st.rerun()
+        with note_col:
+            st.caption(f"Showing table rows behind {title or 'this chart'}.")
+        if data_rows is None or getattr(data_rows, "empty", True):
+            st.info("No chart data rows are loaded for this scope.")
+        else:
+            render_priority_dataframe(
+                data_rows,
+                title=f"{title or 'Chart'} data",
+                priority_columns=priority_columns,
+                sort_by=sort_by,
+                ascending=ascending,
+                max_rows=max_rows,
+                raw_label=raw_label or f"{title or 'Chart'} full data",
+                height=260,
+            )
+        return "Data"
+    chart_renderer()
+    return "Chart"
+
+
 def _query_history_detail_exprs(prefix: str = "") -> dict:
     """Return safe query-history projection snippets for optional columns."""
     from .session import get_session
@@ -228,14 +278,15 @@ def render_query_drilldown(
     qid = str(row.get("QUERY_ID", ""))
 
     with st.expander(f"Details for `{qid}`", expanded=True):
-        m1,m2,m3,m4 = st.columns(4)
-        m1.metric("User",       str(row.get("USER_NAME","N/A")))
         wh_name = str(row.get("WAREHOUSE_NAME","N/A"))
         wh_size = str(row.get("WAREHOUSE_SIZE","") or "")
-        m2.metric("Warehouse", f"{wh_name} ({wh_size})" if wh_size else wh_name)
-        m3.metric("Elapsed Sec",f"{safe_float(row.get('ELAPSED_SEC',0)):,.1f}")
         est_cr = safe_float(row.get("TOTAL_EST_CREDITS", row.get("EST_COMPUTE_CREDITS",0)))
-        m4.metric("Est. Credits", format_credits(est_cr))
+        render_shell_snapshot((
+            ("User", str(row.get("USER_NAME","N/A"))),
+            ("Warehouse", f"{wh_name} ({wh_size})" if wh_size else wh_name),
+            ("Elapsed Sec", f"{safe_float(row.get('ELAPSED_SEC',0)):,.1f}"),
+            ("Est. Credits", format_credits(est_cr)),
+        ))
 
         st.markdown("**SQL Text**")
         st.code(str(row.get("QUERY_TEXT","")), language="sql")

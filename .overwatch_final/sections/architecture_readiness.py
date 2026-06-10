@@ -1341,11 +1341,12 @@ def _render_loaded_metrics(df: pd.DataFrame, label: str) -> None:
     if df is None or df.empty:
         st.info(f"No {label} evidence loaded for the selected scope.")
         return
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Rows", f"{len(df):,}")
-    c2.metric("Critical", f"{int((df.get('SEVERITY', pd.Series(dtype=str)) == 'Critical').sum()):,}")
-    c3.metric("High", f"{int((df.get('SEVERITY', pd.Series(dtype=str)) == 'High').sum()):,}")
-    c4.metric("Medium", f"{int((df.get('SEVERITY', pd.Series(dtype=str)) == 'Medium').sum()):,}")
+    render_shell_snapshot((
+        ("Rows", f"{len(df):,}"),
+        ("Critical", f"{int((df.get('SEVERITY', pd.Series(dtype=str)) == 'Critical').sum()):,}"),
+        ("High", f"{int((df.get('SEVERITY', pd.Series(dtype=str)) == 'High').sum()):,}"),
+        ("Medium", f"{int((df.get('SEVERITY', pd.Series(dtype=str)) == 'Medium').sum()):,}"),
+    ))
 
 
 def _render_forward_watchlist() -> None:
@@ -1427,11 +1428,12 @@ def _render_platform_futures_adoption_gate(controls: pd.DataFrame, company: str,
     st.session_state["arch_futures_adoption_gate"] = gate
     if gate is None or gate.empty:
         return
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Blocked", f"{int((gate['ADOPTION_STATE'] == 'Blocked').sum()):,}", delta_color="inverse")
-    c2.metric("Gaps", f"{int((gate['ADOPTION_STATE'] == 'Evidence Gaps').sum()):,}", delta_color="inverse")
-    c3.metric("Critical/High", f"{int(gate['CRITICAL_HIGH_FINDINGS'].sum()):,}", delta_color="inverse")
-    c4.metric("Areas", f"{len(gate):,}")
+    render_shell_snapshot((
+        ("Blocked", f"{int((gate['ADOPTION_STATE'] == 'Blocked').sum()):,}"),
+        ("Gaps", f"{int((gate['ADOPTION_STATE'] == 'Evidence Gaps').sum()):,}"),
+        ("Critical/High", f"{int(gate['CRITICAL_HIGH_FINDINGS'].sum()):,}"),
+        ("Areas", f"{len(gate):,}"),
+    ))
     render_priority_dataframe(
         gate,
         title="Expert adoption gate",
@@ -1452,12 +1454,13 @@ def _render_agentic_ai_cockpit(summary: dict, scorecard: pd.DataFrame) -> None:
     if scorecard is None or scorecard.empty:
         st.info("Load AI platform evidence surfaces to build the Agentic AI Cockpit.")
         return
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Blocked", f"{safe_int(summary.get('BLOCKED')):,}", delta_color="inverse")
-    c2.metric("Gaps", f"{safe_int(summary.get('EVIDENCE_GAPS')):,}", delta_color="inverse")
-    c3.metric("Pilots", f"{safe_int(summary.get('CONTROLLED_PILOT')):,}")
-    c4.metric("Critical/High", f"{safe_int(summary.get('CRITICAL_HIGH')):,}", delta_color="inverse")
-    c5.metric("Areas", f"{len(scorecard):,}")
+    render_shell_snapshot((
+        ("Blocked", f"{safe_int(summary.get('BLOCKED')):,}"),
+        ("Gaps", f"{safe_int(summary.get('EVIDENCE_GAPS')):,}"),
+        ("Pilots", f"{safe_int(summary.get('CONTROLLED_PILOT')):,}"),
+        ("Critical/High", f"{safe_int(summary.get('CRITICAL_HIGH')):,}"),
+        ("Areas", f"{len(scorecard):,}"),
+    ))
     render_priority_dataframe(
         scorecard,
         title="Agentic AI governance cockpit",
@@ -1564,22 +1567,24 @@ def _render_platform_futures(company: str, environment: str) -> None:
         )
         loaded_surfaces = sum(1 for frame in _platform_futures_frames(company, environment) if _is_dataframe(frame))
         if controls is None:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Evidence", f"{loaded_surfaces:,}/6")
-            c2.metric("Controls", "Load")
-            c3.metric("Open", "Load")
+            render_shell_snapshot((
+                ("Evidence", f"{loaded_surfaces:,}/6"),
+                ("Controls", "Load"),
+                ("Open", "Load"),
+            ))
             st.info("Load the futures board after choosing any evidence surfaces you want included.")
         else:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Controls", f"{len(controls):,}")
-            c2.metric("Evidence", f"{loaded_surfaces:,}/6")
-            c3.metric("Open", f"{len(board):,}" if _is_dataframe(board) else "0")
             high_count = (
                 int(board["SEVERITY"].isin(["Critical", "High"]).sum())
                 if _is_dataframe(board) and not board.empty and "SEVERITY" in board.columns
                 else 0
             )
-            c4.metric("Critical/High", f"{high_count:,}")
+            render_shell_snapshot((
+                ("Controls", f"{len(controls):,}"),
+                ("Evidence", f"{loaded_surfaces:,}/6"),
+                ("Open", f"{len(board):,}" if _is_dataframe(board) else "0"),
+                ("Critical/High", f"{high_count:,}"),
+            ))
             if _is_dataframe(agentic_scorecard) and not agentic_scorecard.empty:
                 defer_section_note(
                     f"Agentic AI top risk: {agentic_summary.get('TOP_RISK', 'Agentic AI readiness')}. "
@@ -1673,11 +1678,12 @@ def _render_platform_futures(company: str, environment: str) -> None:
                 st.info("No warehouse workload rows are visible for this Adaptive Compute review scope.")
             else:
                 decisions = df.get("ADAPTIVE_DECISION", pd.Series(dtype=str)).fillna("").astype(str)
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Pilots", f"{int(decisions.str.contains('Pilot Candidate', case=False, regex=False).sum()):,}")
-                c2.metric("Holds", f"{int(decisions.str.contains('Hold', case=False, regex=False).sum()):,}")
-                c3.metric("Credits", f"{safe_float(df.get('CREDITS_30D', pd.Series(dtype=float)).sum()):,.1f}")
-                c4.metric("Workloads", f"{len(df):,}")
+                render_shell_snapshot((
+                    ("Pilots", f"{int(decisions.str.contains('Pilot Candidate', case=False, regex=False).sum()):,}"),
+                    ("Holds", f"{int(decisions.str.contains('Hold', case=False, regex=False).sum()):,}"),
+                    ("Credits", f"{safe_float(df.get('CREDITS_30D', pd.Series(dtype=float)).sum()):,.1f}"),
+                    ("Workloads", f"{len(df):,}"),
+                ))
                 render_priority_dataframe(
                     df,
                     title="Adaptive Compute transition advisor",
@@ -1844,10 +1850,11 @@ def _render_platform_futures(company: str, environment: str) -> None:
                     if {"SOURCE_TYPE", "STATE"}.issubset(df.columns)
                     else 0
                 )
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Critical/High", f"{high_risk:,}")
-                c2.metric("Proofs", f"{report_ready:,}/2")
-                c3.metric("Queue", f"{int((df.get('QUEUE_READINESS', pd.Series(dtype=str)) == 'Ready to Queue').sum()):,}")
+                render_shell_snapshot((
+                    ("Critical/High", f"{high_risk:,}"),
+                    ("Proofs", f"{report_ready:,}/2"),
+                    ("Queue", f"{int((df.get('QUEUE_READINESS', pd.Series(dtype=str)) == 'Ready to Queue').sum()):,}"),
+                ))
                 render_priority_dataframe(
                     df,
                     title="AI security guardrails to close first",
@@ -1963,10 +1970,11 @@ def _render_platform_futures(company: str, environment: str) -> None:
                     if {"MANDATORY", "STATE"}.issubset(df.columns)
                     else 0
                 )
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Ready", f"{ready_count:,}")
-                c2.metric("Hidden", f"{max(len(df) - ready_count, 0):,}")
-                c3.metric("Gaps", f"{mandatory_gaps:,}")
+                render_shell_snapshot((
+                    ("Ready", f"{ready_count:,}"),
+                    ("Hidden", f"{max(len(df) - ready_count, 0):,}"),
+                    ("Gaps", f"{mandatory_gaps:,}"),
+                ))
                 render_priority_dataframe(
                     df,
                     title="Horizon, semantic, and AI-change readiness gaps",
@@ -2234,11 +2242,12 @@ def render():
         elif objectives.empty:
             st.warning("No architecture objectives are configured for the active company.")
         else:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Objectives", f"{len(objectives):,}")
-            c2.metric("Tier 0", f"{int((objectives['SERVICE_TIER'] == 'Tier 0').sum()):,}")
-            c3.metric("DB", f"{int((objectives['ENTITY_TYPE'] == 'DATABASE').sum()):,}")
-            c4.metric("WH", f"{int((objectives['ENTITY_TYPE'] == 'WAREHOUSE').sum()):,}")
+            render_shell_snapshot((
+                ("Objectives", f"{len(objectives):,}"),
+                ("Tier 0", f"{int((objectives['SERVICE_TIER'] == 'Tier 0').sum()):,}"),
+                ("DB", f"{int((objectives['ENTITY_TYPE'] == 'DATABASE').sum()):,}"),
+                ("WH", f"{int((objectives['ENTITY_TYPE'] == 'WAREHOUSE').sum()):,}"),
+            ))
             render_priority_dataframe(
                 objectives,
                 title="Configured architecture objectives",

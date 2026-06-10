@@ -21,7 +21,7 @@ from utils import (
     build_mart_chargeback_sql, build_mart_cost_explorer_sql, load_mart_table, mart_source_caption,
     filter_existing_columns,
     render_drillable_bar_chart, render_entity_query_drilldown, render_priority_dataframe,
-    render_ranked_bar_chart,
+    render_ranked_bar_chart, render_chart_with_data_toggle,
     day_window_selectbox,
     make_action_id, upsert_actions,
     run_query, sql_literal, format_snowflake_error,
@@ -1545,32 +1545,30 @@ def render():
                 no_context_cost = safe_float(detail.loc[no_context, "EST_COST"].sum())
                 top_share = safe_float(summary.iloc[0].get("PCT_OF_COST")) if not summary.empty else 0.0
 
-                m1, m2, m3, m4, m5, m6 = st.columns(6)
-                m1.metric("Estimated spend", f"${total_cost:,.0f}")
-                m2.metric("Allocated credits", format_credits(total_credits))
-                m3.metric("Ready cost", f"{ready_cost / denominator * 100:.0f}%")
-                m4.metric("Tag proof", f"{tag_cost / denominator * 100:.0f}%")
-                m5.metric("No DB context", f"${no_context_cost:,.0f}")
-                m6.metric("Top driver", f"{top_share:.0f}%")
+                render_shell_snapshot((
+                    ("Estimated spend", f"${total_cost:,.0f}"),
+                    ("Allocated credits", format_credits(total_credits)),
+                    ("Ready cost", f"{ready_cost / denominator * 100:.0f}%"),
+                    ("Tag proof", f"{tag_cost / denominator * 100:.0f}%"),
+                    ("No DB context", f"${no_context_cost:,.0f}"),
+                    ("Top driver", f"{top_share:.0f}%"),
+                ))
                 defer_source_note(st.session_state.get(
                     "df_cost_explorer_source",
                     "Cost Explorer source: not loaded",
                 ))
 
-                chart_rows = render_ranked_bar_chart(
+                render_chart_with_data_toggle(
+                    f"Top {explorer_lens} cost drivers",
+                    f"cc_explorer_{explorer_lens.lower().replace(' ', '_')}",
+                    lambda: render_ranked_bar_chart(
+                        summary,
+                        "DIMENSION",
+                        "EST_COST",
+                        top_n=20,
+                        color="#0ea5e9",
+                    ),
                     summary,
-                    "DIMENSION",
-                    "EST_COST",
-                    title=f"Top {explorer_lens} cost drivers",
-                    top_n=20,
-                    color="#0ea5e9",
-                )
-                if not chart_rows.empty:
-                    defer_source_note("Cost Explorer bars are sorted highest to lowest by estimated cost.")
-
-                render_priority_dataframe(
-                    summary,
-                    title=f"Cost drilldown: {explorer_lens}",
                     priority_columns=[
                         "DIMENSION",
                         "EST_COST",
@@ -1594,6 +1592,7 @@ def render():
                     max_rows=30,
                     raw_label="All cost-drilldown rows",
                 )
+                defer_source_note("Cost Explorer bars are sorted highest to lowest by estimated cost; switch to Data for exact rows.")
                 render_priority_dataframe(
                     gap_board,
                     title="Cost attribution gaps",
@@ -2134,10 +2133,20 @@ def render():
                     st.info("No warehouse delta rows available.")
                 st.stop()
 
-            st.subheader("Warehouse Deltas")
-            render_priority_dataframe(
-                _annotate_cost_routes(wh_deltas, "Warehouse Delta"),
-                title="Warehouse cost movement to explain first",
+            wh_delta_view = _annotate_cost_routes(wh_deltas, "Warehouse Delta")
+            render_chart_with_data_toggle(
+                "Warehouse cost movement to explain first",
+                "cc_explain_wh_delta",
+                lambda: render_drillable_bar_chart(
+                    wh_deltas.sort_values("CREDIT_DELTA", ascending=False).head(15)
+                    if wh_deltas is not None and not wh_deltas.empty else wh_deltas,
+                    dimension="WAREHOUSE_NAME",
+                    measure="CREDIT_DELTA",
+                    key="cc_explain_wh_delta_chart",
+                    drilldown_column="warehouse_name",
+                    lookback_hours=bounds["days_back"] * 24,
+                ),
+                wh_delta_view,
                 priority_columns=[
                     "WAREHOUSE_NAME", "CURRENT_CREDITS", "PRIOR_CREDITS",
                     "CREDIT_DELTA", "PCT_DELTA", "NEXT_WORKFLOW", "NEXT_ACTION",
@@ -2146,15 +2155,6 @@ def render():
                 ascending=[False, False],
                 raw_label="All warehouse delta rows",
             )
-            if wh_deltas is not None and not wh_deltas.empty:
-                render_drillable_bar_chart(
-                    wh_deltas.sort_values("CREDIT_DELTA", ascending=False).head(15),
-                    dimension="WAREHOUSE_NAME",
-                    measure="CREDIT_DELTA",
-                    key="cc_explain_wh_delta_chart",
-                    drilldown_column="warehouse_name",
-                    lookback_hours=bounds["days_back"] * 24,
-                )
 
             st.subheader("Top User / Warehouse Drivers")
             render_priority_dataframe(
@@ -2203,13 +2203,13 @@ def render():
                     .sum()
                     .sort_values("EST_COST", ascending=False)
                 )
-                cenv = st.columns(min(4, max(1, len(env_summary))))
-                for idx, row in env_summary.head(4).iterrows():
-                    cenv[idx % len(cenv)].metric(
+                render_shell_snapshot(tuple(
+                    (
                         str(row["ENVIRONMENT_ROLLUP"]),
-                        f"${safe_float(row['EST_COST']):,.2f}",
-                        f"{safe_float(row['ALLOCATED_CREDITS']):,.2f} cr",
+                        f"${safe_float(row['EST_COST']):,.2f} ({safe_float(row['ALLOCATED_CREDITS']):,.2f} cr)",
                     )
+                    for _, row in env_summary.head(4).iterrows()
+                ))
                 render_priority_dataframe(
                     env_summary,
                     title="Environment cost rollup",
@@ -2336,10 +2336,11 @@ def render():
         if st.session_state.get("df_lead") is not None and not st.session_state["df_lead"].empty:
             df_l = st.session_state["df_lead"]
             df_l["COST"] = df_l["TOTAL_CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Distinct Users",  df_l["USER_NAME"].nunique())
-            c2.metric("Total Credits",   format_credits(df_l["TOTAL_CREDITS"].sum()))
-            c3.metric("Total Est. Cost", f"${df_l['COST'].sum():,.2f}")
+            render_shell_snapshot((
+                ("Distinct Users", df_l["USER_NAME"].nunique()),
+                ("Total Credits", format_credits(df_l["TOTAL_CREDITS"].sum())),
+                ("Total Est. Cost", f"${df_l['COST'].sum():,.2f}"),
+            ))
             defer_source_note(metric_confidence_label("allocated"), freshness_note("ACCOUNT_USAGE"))
 
             st.subheader("Top Users by Cost")
@@ -2350,17 +2351,18 @@ def render():
                 .sort_values("COST", ascending=False)
                 .head(20)
             )
-            render_drillable_bar_chart(
-                user_agg,
-                dimension="USER_NAME",
-                measure="COST",
-                key="cc_user_cost",
-                drilldown_column="user_name",
-                lookback_hours=days * 24,
-            )
-            render_priority_dataframe(
+            render_chart_with_data_toggle(
+                "Cost leaderboard drivers",
+                "cc_user_cost_driver",
+                lambda: render_drillable_bar_chart(
+                    user_agg,
+                    dimension="USER_NAME",
+                    measure="COST",
+                    key="cc_user_cost",
+                    drilldown_column="user_name",
+                    lookback_hours=days * 24,
+                ),
                 df_l,
-                title="Cost leaderboard drivers",
                 priority_columns=[
                     "USER_NAME",
                     "WAREHOUSE_NAME",
@@ -2445,10 +2447,11 @@ def render():
         if st.session_state.get("df_br") is not None and not st.session_state["df_br"].empty:
             df_b = st.session_state["df_br"]
             total_cr = df_b["DAILY_CREDITS"].sum()
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total Credits",     format_credits(total_cr))
-            c2.metric("Total Cost",        f"${credits_to_dollars(total_cr, credit_price):,.2f}")
-            c3.metric("Avg Daily Credits", f"{total_cr / max(br_days,1):,.2f}")
+            render_shell_snapshot((
+                ("Total Credits", format_credits(total_cr)),
+                ("Total Cost", f"${credits_to_dollars(total_cr, credit_price):,.2f}"),
+                ("Avg Daily Credits", f"{total_cr / max(br_days,1):,.2f}"),
+            ))
             defer_source_note(metric_confidence_label("exact"), freshness_note("WAREHOUSE_METERING_HISTORY"))
             daily = df_b.groupby("DAY")["DAILY_CREDITS"].sum().reset_index()
             st.line_chart(daily.set_index("DAY")["DAILY_CREDITS"])
@@ -2498,10 +2501,11 @@ def render():
             total_exact = float(df_r["EXACT_METERED_CREDITS"].sum()) if "EXACT_METERED_CREDITS" in df_r.columns else 0.0
             total_alloc = float(df_r["ALLOCATED_QUERY_CREDITS"].sum()) if "ALLOCATED_QUERY_CREDITS" in df_r.columns else 0.0
             total_var = total_exact - total_alloc
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Exact Metered", format_credits(total_exact))
-            c2.metric("Allocated to Queries", format_credits(total_alloc))
-            c3.metric("Unallocated / Variance", format_credits(total_var))
+            render_shell_snapshot((
+                ("Exact Metered", format_credits(total_exact)),
+                ("Allocated to Queries", format_credits(total_alloc)),
+                ("Unallocated / Variance", format_credits(total_var)),
+            ))
             defer_source_note(
                 f"{metric_confidence_label('exact')} for metering; "
                 f"{metric_confidence_label('allocated')} for query attribution. "
@@ -2515,12 +2519,20 @@ def render():
                     .rename_axis("RECONCILIATION_STATUS")
                     .reset_index(name="WAREHOUSE_COUNT")
                 )
-                render_ranked_bar_chart(
+                render_chart_with_data_toggle(
+                    "Reconciliation Status",
+                    "cc_reconciliation_status",
+                    lambda: render_ranked_bar_chart(
+                        status_counts,
+                        "RECONCILIATION_STATUS",
+                        "WAREHOUSE_COUNT",
+                        top_n=10,
+                    ),
                     status_counts,
-                    "RECONCILIATION_STATUS",
-                    "WAREHOUSE_COUNT",
-                    title="Reconciliation Status",
-                    top_n=10,
+                    priority_columns=["RECONCILIATION_STATUS", "WAREHOUSE_COUNT"],
+                    sort_by=["WAREHOUSE_COUNT"],
+                    ascending=False,
+                    max_rows=10,
                 )
             render_priority_dataframe(
                 df_r,
@@ -2576,10 +2588,11 @@ def render():
             avg_daily = df_f["DAILY_CREDITS"].mean()
             proj_30   = avg_daily * 30
             proj_cost = credits_to_dollars(proj_30, credit_price)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Avg Daily Credits",     f"{avg_daily:.2f}")
-            c2.metric("Projected 30-day",      format_credits(proj_30))
-            c3.metric("Projected 30-day Cost", f"${proj_cost:,.2f}")
+            render_shell_snapshot((
+                ("Avg Daily Credits", f"{avg_daily:.2f}"),
+                ("Projected 30-day", format_credits(proj_30)),
+                ("Projected 30-day Cost", f"${proj_cost:,.2f}"),
+            ))
             st.area_chart(df_f.set_index("DAY")["DAILY_CREDITS"])
 
     # -- BUDGET VS ACTUAL ------------------------------------------------------
@@ -2804,14 +2817,13 @@ def render():
                 )
                 .sort_values("EST_COST", ascending=False)
             )
-            metric_cols = st.columns(min(3, max(1, len(summary))))
-            for idx, srow in summary.iterrows():
-                col = metric_cols[idx % len(metric_cols)]
-                col.metric(
-                    srow["COMPANY"],
-                    f"${srow['EST_COST']:,.2f}",
-                    f"{format_credits(srow['TOTAL_CREDITS'])}",
+            render_shell_snapshot(tuple(
+                (
+                    str(srow["COMPANY"]),
+                    f"${srow['EST_COST']:,.2f} ({format_credits(srow['TOTAL_CREDITS'])})",
                 )
+                for _, srow in summary.iterrows()
+            ))
 
             st.subheader("Summary by Company")
             render_priority_dataframe(
@@ -3028,25 +3040,24 @@ def render():
             pacing_ratio = (pct_consumed / pct_time_elapsed) if pct_time_elapsed > 0 else 1.0
             projected_pct_over = ((projected_total / committed) * 100 - 100) if committed > 0 else 0.0
 
-            # -- KPI row --------------------------------------------------------
-            k1, k2, k3, k4, k5 = st.columns(5)
-            k1.metric("YTD Consumed",         format_credits(ytd_used))
-            k2.metric("Remaining Budget",     format_credits(remaining_budget))
-            k3.metric("% Consumed",           f"{pct_consumed:.1f}%",
-                      delta=f"{pct_consumed - pct_time_elapsed:+.1f}% vs time",
-                      delta_color="inverse" if pct_consumed > pct_time_elapsed + 5 else "normal")
-            k4.metric("Daily Burn Rate",      f"{daily_rate:,.1f} cr/day")
-            k5.metric("Projected Year-End",   format_credits(projected_total))
+            render_shell_snapshot((
+                ("YTD Consumed", format_credits(ytd_used)),
+                ("Remaining Budget", format_credits(remaining_budget)),
+                ("% Consumed", f"{pct_consumed:.1f}% ({pct_consumed - pct_time_elapsed:+.1f}% vs time)"),
+                ("Daily Burn Rate", f"{daily_rate:,.1f} cr/day"),
+                ("Projected Year-End", format_credits(projected_total)),
+            ))
             defer_source_note(
                 f"{metric_confidence_label('exact')} for consumed credits | "
                 f"{metric_confidence_label('projection')} | "
                 f"{freshness_note('WAREHOUSE_METERING_HISTORY')}"
             )
 
-            p1, p2, p3 = st.columns(3)
-            p1.metric("7-Day Projection", format_credits(projected_7), trend_label)
-            p2.metric("30-Day Projection", format_credits(projected_30), burn_trend_label(last_30_avg, daily_rate))
-            p3.metric("Business-Day Adjusted", format_credits(projected_business), f"{business_avg:,.1f} cr/business day")
+            render_shell_snapshot((
+                ("7-Day Projection", f"{format_credits(projected_7)} ({trend_label})"),
+                ("30-Day Projection", f"{format_credits(projected_30)} ({burn_trend_label(last_30_avg, daily_rate)})"),
+                ("Business-Day Adjusted", f"{format_credits(projected_business)} ({business_avg:,.1f} cr/business day)"),
+            ))
 
             # -- Progress bar ---------------------------------------------------
             bar_pct = min(pct_consumed / 100, 1.0)
@@ -3144,19 +3155,19 @@ def render():
 
                 if st.session_state.get("cc_svc_data") is not None and not st.session_state["cc_svc_data"].empty:
                     df_sv = st.session_state["cc_svc_data"]
-                    render_priority_dataframe(
+                    render_chart_with_data_toggle(
+                        "Service-type contract consumption",
+                        "cc_contract_service_type",
+                        lambda: render_ranked_bar_chart(
+                            df_sv,
+                            "SERVICE_TYPE",
+                            "TOTAL_CREDITS",
+                            top_n=12,
+                        ),
                         df_sv,
-                        title="Service-type contract consumption",
                         priority_columns=["SERVICE_TYPE", "TOTAL_CREDITS", "PCT_OF_TOTAL"],
                         sort_by=["TOTAL_CREDITS", "PCT_OF_TOTAL"],
                         ascending=[False, False],
                         raw_label="All service-type rows",
-                    )
-                    render_ranked_bar_chart(
-                        df_sv,
-                        "SERVICE_TYPE",
-                        "TOTAL_CREDITS",
-                        title="Contract Consumption By Service",
-                        top_n=12,
                     )
                     download_csv(df_sv, "contract_by_service_type.csv")

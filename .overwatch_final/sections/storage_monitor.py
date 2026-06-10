@@ -14,6 +14,7 @@ from utils import (
     freshness_note,
     download_csv,
     format_snowflake_error,
+    render_chart_with_data_toggle,
     run_query,
     safe_float,
 )
@@ -138,8 +139,32 @@ def render():
                 freshness_note("ACCOUNT_USAGE"),
             )
 
-        st.subheader("Storage Trend")
-        st.area_chart(df_st.set_index("USAGE_DATE")[["STORAGE_GB","FAILSAFE_GB","STAGE_GB"]])
+        if "TOTAL_STORAGE_TB" not in df_st.columns:
+            df_st["TOTAL_STORAGE_TB"] = [
+                (
+                    safe_float(row.get("STORAGE_GB", 0))
+                    + safe_float(row.get("FAILSAFE_GB", 0))
+                    + safe_float(row.get("STAGE_GB", 0))
+                ) / 1024
+                for _, row in df_st.iterrows()
+            ]
+        df_st["EST_MONTHLY_COST"] = df_st["TOTAL_STORAGE_TB"].apply(
+            lambda value: safe_float(value) * storage_cost_per_tb
+        )
+        render_chart_with_data_toggle(
+            "Storage Trend",
+            "storage_trend",
+            lambda: st.area_chart(df_st.set_index("USAGE_DATE")[["STORAGE_GB","FAILSAFE_GB","STAGE_GB"]]),
+            df_st,
+            priority_columns=[
+                "USAGE_DATE", "STORAGE_GB", "FAILSAFE_GB", "STAGE_GB",
+                "TOTAL_STORAGE_TB", "EST_MONTHLY_COST",
+            ],
+            sort_by=["USAGE_DATE"],
+            ascending=True,
+            max_rows=90,
+            raw_label="All storage trend rows",
+        )
 
         # Per-database breakdown
         st.divider()

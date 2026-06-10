@@ -55,6 +55,7 @@ sql_literal = _lazy_util("sql_literal")
 action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
 upsert_actions = _lazy_util("upsert_actions")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+render_chart_with_data_toggle = _lazy_util("render_chart_with_data_toggle")
 render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
@@ -3894,10 +3895,11 @@ def _render_change_external_integrations(company: str, environment: str, default
             .fillna(0)
             .sort_index()
         )
-        st.bar_chart(chart)
-        render_priority_dataframe(
+        render_chart_with_data_toggle(
+            f"{cfg['title']} event timeline",
+            f"{prefix}_event_timeline",
+            lambda: st.bar_chart(chart),
             timeline,
-            title=f"{cfg['title']} event timeline",
             priority_columns=[
                 "EVENT_DATE", "EVENT_SOURCE", "EVENT_TYPE", "EVENT_STATE",
                 "EVENT_COUNT", "HIGH_RISK_COUNT", "LAST_EVENT_TS",
@@ -3905,7 +3907,6 @@ def _render_change_external_integrations(company: str, environment: str, default
             sort_by=["EVENT_DATE", "EVENT_SOURCE"],
             ascending=[False, True],
             raw_label=f"All {cfg['title'].lower()} timeline rows",
-            height=260,
         )
 
     if st.session_state.get(f"{prefix}_error"):

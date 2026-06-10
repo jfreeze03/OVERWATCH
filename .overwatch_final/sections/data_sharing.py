@@ -11,6 +11,7 @@ from utils import (
     credits_to_dollars,
     download_csv,
     format_snowflake_error,
+    render_chart_with_data_toggle,
     run_query,
 )
 from utils.workflows import render_priority_dataframe
@@ -118,7 +119,9 @@ def render():
             _load_shared_databases(company, show_errors=True)
 
     if st.session_state.get("ds_df_dt") is not None and not st.session_state["ds_df_dt"].empty:
-        df_d = st.session_state["ds_df_dt"]
+        df_d = st.session_state["ds_df_dt"].copy()
+        df_d["COST_USD"] = pd.to_numeric(df_d["CREDITS"], errors="coerce").fillna(0) * float(credit_price)
+        df_d["COST_USD"] = df_d["COST_USD"].round(2)
         total_cr = df_d["CREDITS"].sum()
         total_gb = df_d["GB_TRANSFERRED"].sum()
         render_shell_snapshot((
@@ -129,13 +132,23 @@ def render():
         ))
         st.subheader("Daily Transfer Trend")
         daily = df_d.groupby("DAY")[["GB_TRANSFERRED","CREDITS"]].sum().reset_index()
-        st.line_chart(daily.set_index("DAY"))
+        daily["COST_USD"] = (pd.to_numeric(daily["CREDITS"], errors="coerce").fillna(0) * float(credit_price)).round(2)
+        render_chart_with_data_toggle(
+            "Daily transfer trend",
+            "data_sharing_transfer_trend",
+            lambda: st.line_chart(daily.set_index("DAY")[["GB_TRANSFERRED", "CREDITS"]]),
+            daily,
+            priority_columns=["DAY", "GB_TRANSFERRED", "CREDITS", "COST_USD"],
+            sort_by=["DAY"],
+            ascending=[False],
+            raw_label="All daily transfer rows",
+        )
         render_priority_dataframe(
             df_d,
             title="Data transfer cost drivers",
             priority_columns=[
                 "SOURCE_CLOUD", "SOURCE_REGION", "TARGET_CLOUD", "TARGET_REGION",
-                "DAY", "GB_TRANSFERRED", "CREDITS",
+                "DAY", "GB_TRANSFERRED", "CREDITS", "COST_USD",
             ],
             sort_by=["CREDITS", "GB_TRANSFERRED"],
             ascending=[False, False],

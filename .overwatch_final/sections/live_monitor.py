@@ -21,6 +21,7 @@ from utils import (
     safe_identifier, format_snowflake_error, filter_existing_columns,
     admin_button_disabled, log_admin_action, require_admin_enabled,
     load_warehouse_options,
+    render_chart_with_data_toggle,
 )
 from utils.workflows import render_priority_dataframe, render_workflow_selector
 from config import DEFAULTS, THRESHOLDS
@@ -413,7 +414,16 @@ def render():
                     index="TIME_BUCKET", columns="EXECUTION_STATUS",
                     values="QUERY_COUNT", aggfunc="sum"
                 ).fillna(0)
-                st.line_chart(pivot)
+                render_chart_with_data_toggle(
+                    "Query timeline by status",
+                    "live_query_timeline",
+                    lambda: st.line_chart(pivot),
+                    df_t,
+                    priority_columns=["TIME_BUCKET", "EXECUTION_STATUS", "QUERY_COUNT", "AVG_ELAPSED_SEC"],
+                    sort_by=["TIME_BUCKET", "QUERY_COUNT"],
+                    ascending=[False, False],
+                    raw_label="All timeline rows",
+                )
             except Exception:
                 render_priority_dataframe(
                     df_t,

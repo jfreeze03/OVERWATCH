@@ -17,6 +17,7 @@ from utils import (
     download_csv,
     get_user_filter_clause,
     filter_existing_columns,
+    render_chart_with_data_toggle,
     day_window_selectbox,
     make_action_id,
     render_ranked_bar_chart,
@@ -486,8 +487,17 @@ def _render_cortex_control_brief(session, company: str) -> None:
                 .sort_values("USAGE_DATE")
             )
             daily_rollup["ROLLING_7D_COST"] = daily_rollup["COST_USD"].rolling(7, min_periods=1).mean()
-            st.subheader("Daily Cortex Burn")
-            st.line_chart(daily_rollup.set_index("USAGE_DATE")[["COST_USD", "ROLLING_7D_COST"]])
+            render_chart_with_data_toggle(
+                "Daily Cortex Burn",
+                "cortex_budget_daily_burn",
+                lambda: st.line_chart(daily_rollup.set_index("USAGE_DATE")[["COST_USD", "ROLLING_7D_COST"]]),
+                daily_rollup,
+                priority_columns=["USAGE_DATE", "COST_USD", "ROLLING_7D_COST", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
+                sort_by=["USAGE_DATE"],
+                ascending=True,
+                max_rows=90,
+                raw_label="All daily Cortex burn rows",
+            )
             source_split = (
                 daily.groupby("SOURCE", as_index=False)
                 .agg(COST_USD=("COST_USD", "sum"), TOTAL_CREDITS=("TOTAL_CREDITS", "sum"), TOTAL_REQUESTS=("TOTAL_REQUESTS", "sum"))
@@ -499,7 +509,7 @@ def _render_cortex_control_brief(session, company: str) -> None:
                 title="Cortex cost by source",
                 priority_columns=["SOURCE", "COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
                 sort_by=["COST_USD", "TOTAL_CREDITS"],
-                ascending=[False, False],
+                ascending=[False, False, False],
                 raw_label="All Cortex source rows",
             )
 
@@ -794,36 +804,75 @@ def render():
                      ACTIVE_USERS=("ACTIVE_USERS","sum"))
                 .reset_index()
             )
+            daily["AI_COST_USD"] = daily["TOTAL_CREDITS"].apply(lambda value: safe_float(value) * _ai_credit_rate())
 
             col_t1, col_t2 = st.columns(2)
             with col_t1:
-                st.caption("Daily AI Credits")
-                st.line_chart(daily.set_index("USAGE_DATE")["TOTAL_CREDITS"])
+                render_chart_with_data_toggle(
+                    "Daily AI Credits",
+                    "cortex_trends_daily_credits",
+                    lambda: st.line_chart(daily.set_index("USAGE_DATE")["TOTAL_CREDITS"]),
+                    daily,
+                    priority_columns=["USAGE_DATE", "TOTAL_CREDITS", "AI_COST_USD", "TOTAL_REQUESTS", "ACTIVE_USERS"],
+                    sort_by=["USAGE_DATE"],
+                    ascending=True,
+                    max_rows=90,
+                    raw_label="All daily AI credit rows",
+                )
             with col_t2:
-                st.caption("Daily Active Users")
-                st.line_chart(daily.set_index("USAGE_DATE")["ACTIVE_USERS"])
+                render_chart_with_data_toggle(
+                    "Daily Active Users",
+                    "cortex_trends_active_users",
+                    lambda: st.line_chart(daily.set_index("USAGE_DATE")["ACTIVE_USERS"]),
+                    daily,
+                    priority_columns=["USAGE_DATE", "ACTIVE_USERS", "TOTAL_CREDITS", "AI_COST_USD", "TOTAL_REQUESTS"],
+                    sort_by=["USAGE_DATE"],
+                    ascending=True,
+                    max_rows=90,
+                    raw_label="All daily active-user rows",
+                )
 
-            st.caption("Daily Requests")
-            st.bar_chart(daily.set_index("USAGE_DATE")["TOTAL_REQUESTS"])
+            render_chart_with_data_toggle(
+                "Daily Requests",
+                "cortex_trends_daily_requests",
+                lambda: st.bar_chart(daily.set_index("USAGE_DATE")["TOTAL_REQUESTS"]),
+                daily,
+                priority_columns=["USAGE_DATE", "TOTAL_REQUESTS", "TOTAL_CREDITS", "AI_COST_USD", "ACTIVE_USERS"],
+                sort_by=["USAGE_DATE"],
+                ascending=True,
+                max_rows=90,
+                raw_label="All daily request rows",
+            )
 
             source_agg = df_tr.groupby("SOURCE").agg(
                 TOTAL_CREDITS=("TOTAL_CREDITS","sum"),
                 TOTAL_REQUESTS=("TOTAL_REQUESTS","sum")
             ).reset_index()
+            source_agg["AI_COST_USD"] = source_agg["TOTAL_CREDITS"].apply(lambda value: safe_float(value) * _ai_credit_rate())
             st.caption("Snowsight vs CLI")
             render_priority_dataframe(
                 source_agg,
                 title="Snowsight vs CLI source split",
-                priority_columns=["SOURCE", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
-                sort_by=["TOTAL_CREDITS", "TOTAL_REQUESTS"],
+                priority_columns=["SOURCE", "TOTAL_CREDITS", "AI_COST_USD", "TOTAL_REQUESTS"],
+                sort_by=["AI_COST_USD", "TOTAL_CREDITS", "TOTAL_REQUESTS"],
                 ascending=[False, False],
                 raw_label="All Cortex trend source rows",
             )
 
             # 7-day rolling average overlay
             daily["ROLLING_7D"] = daily["TOTAL_CREDITS"].rolling(7, min_periods=1).mean()
-            st.caption("Credits + 7-day Rolling Avg")
-            st.line_chart(daily.set_index("USAGE_DATE")[["TOTAL_CREDITS","ROLLING_7D"]])
+            daily["ROLLING_7D_COST_USD"] = daily["ROLLING_7D"].apply(lambda value: safe_float(value) * _ai_credit_rate())
+            render_chart_with_data_toggle(
+                "Credits + 7-day Rolling Avg",
+                "cortex_trends_rolling_credits",
+                lambda: st.line_chart(daily.set_index("USAGE_DATE")[["TOTAL_CREDITS","ROLLING_7D"]]),
+                daily,
+                priority_columns=["USAGE_DATE", "TOTAL_CREDITS", "ROLLING_7D", "AI_COST_USD", "ROLLING_7D_COST_USD"],
+                sort_by=["USAGE_DATE"],
+                ascending=True,
+                max_rows=90,
+                raw_label="All rolling Cortex credit rows",
+            )
 
             download_csv(df_tr, "cortex_trends.csv")
 
@@ -1021,7 +1070,18 @@ def render():
 
             st.caption("Daily Credit Trend (last 30 days)")
             df_p["USAGE_DATE"] = safe_strip_tz(df_p["USAGE_DATE"])
-            st.line_chart(df_p.set_index("USAGE_DATE")["DAILY_CREDITS"])
+            df_p["DAILY_COST_USD"] = df_p["DAILY_CREDITS"].apply(lambda value: safe_float(value) * _ai_credit_rate())
+            render_chart_with_data_toggle(
+                "Daily Credit Trend (last 30 days)",
+                "cortex_predictive_daily_credits",
+                lambda: st.line_chart(df_p.set_index("USAGE_DATE")["DAILY_CREDITS"]),
+                df_p,
+                priority_columns=["USAGE_DATE", "DAILY_CREDITS", "DAILY_COST_USD"],
+                sort_by=["USAGE_DATE"],
+                ascending=True,
+                max_rows=30,
+                raw_label="All predictive daily credit rows",
+            )
 
             # MV Refresh History tab extra (bonus)
             st.divider()

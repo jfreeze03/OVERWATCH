@@ -10,9 +10,9 @@ from utils import (
     format_credits,
     credits_to_dollars,
     download_csv,
+    render_chart_with_data_toggle,
     run_query,
 )
-from utils.workflows import render_priority_dataframe
 
 
 def _spcs_pool_filter(company: str) -> str:
@@ -87,24 +87,34 @@ def render():
         ))
 
         pool_agg = df_s.groupby("COMPUTE_POOL_NAME")["DAILY_CREDITS"].sum().reset_index().sort_values("DAILY_CREDITS", ascending=False)
-        pool_agg["COST"] = pool_agg["DAILY_CREDITS"].apply(lambda x: f"${credits_to_dollars(x, credit_price):,.2f}")
+        pool_agg["COST_USD"] = pool_agg["DAILY_CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
         pool_agg["AVG_DAILY_CREDITS"] = pool_agg["DAILY_CREDITS"] / max(1, int(spcs_days))
         last_seen = df_s.groupby("COMPUTE_POOL_NAME")["LAST_SEEN_AT"].max().reset_index()
         pool_agg = pool_agg.merge(last_seen, on="COMPUTE_POOL_NAME", how="left")
-        st.subheader("Credits by Compute Pool")
-        st.bar_chart(pool_agg.set_index("COMPUTE_POOL_NAME")["DAILY_CREDITS"])
-        render_priority_dataframe(
+        render_chart_with_data_toggle(
+            "Credits by Compute Pool",
+            "spcs_credits_by_pool",
+            lambda: st.bar_chart(pool_agg.set_index("COMPUTE_POOL_NAME")["DAILY_CREDITS"]),
             pool_agg,
-            title="Compute pool cost drivers",
-            priority_columns=["COMPUTE_POOL_NAME", "DAILY_CREDITS", "AVG_DAILY_CREDITS", "COST", "LAST_SEEN_AT"],
+            priority_columns=["COMPUTE_POOL_NAME", "DAILY_CREDITS", "COST_USD", "AVG_DAILY_CREDITS", "LAST_SEEN_AT"],
             sort_by=["DAILY_CREDITS"],
             ascending=False,
             raw_label="All compute pool cost rows",
         )
 
-        st.subheader("Daily Trend")
         daily = df_s.groupby("USAGE_DATE")["DAILY_CREDITS"].sum().reset_index()
-        st.area_chart(daily.set_index("USAGE_DATE")["DAILY_CREDITS"])
+        daily["DAILY_COST_USD"] = daily["DAILY_CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
+        render_chart_with_data_toggle(
+            "Daily Trend",
+            "spcs_daily_trend",
+            lambda: st.area_chart(daily.set_index("USAGE_DATE")["DAILY_CREDITS"]),
+            daily,
+            priority_columns=["USAGE_DATE", "DAILY_CREDITS", "DAILY_COST_USD"],
+            sort_by=["USAGE_DATE"],
+            ascending=True,
+            max_rows=90,
+            raw_label="All SPCS daily trend rows",
+        )
 
         download_csv(df_s, "spcs_usage.csv")
     elif st.session_state.get("spcs_df_spcs") is not None:

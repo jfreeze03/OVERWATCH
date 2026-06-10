@@ -17,6 +17,7 @@ from utils import (
     get_global_filter_clause,
     get_session,
     format_snowflake_error,
+    render_chart_with_data_toggle,
     render_drillable_bar_chart,
     render_ranked_bar_chart,
     run_query,
@@ -323,7 +324,17 @@ def render():
                 y=alt.Y("QUERIES_PER_USER:Q", title="Queries/User"),
                 tooltip=["ACTIVITY_DAY:T", "QUERIES_PER_USER"],
             )
-            st.altair_chart(alt.layer(chart, line).resolve_scale(y="independent"), width="stretch")
+            render_chart_with_data_toggle(
+                "Adoption Trend",
+                "adoption_trend",
+                lambda: st.altair_chart(alt.layer(chart, line).resolve_scale(y="independent"), width="stretch"),
+                trend,
+                priority_columns=["ACTIVITY_DAY", "USERS", "TOTAL_QUERIES", "QUERIES_PER_USER", "ERROR_RATE"],
+                sort_by=["ACTIVITY_DAY"],
+                ascending=True,
+                max_rows=90,
+                raw_label="All adoption trend rows",
+            )
             download_csv(trend, "adoption_trend.csv")
         else:
             st.info("No adoption trend data found.")
@@ -374,6 +385,19 @@ def render():
                     tooltip=["CLIENT_APPLICATION", "CLIENT_VERSION", "QUERY_COUNT", "USERS", "ERROR_RATE", "SOURCE_CONFIDENCE"],
                     color=alt.value("#c084fc"),
                 ).properties(height=360)
-                st.altair_chart(chart, width="stretch")
+                render_chart_with_data_toggle(
+                    "Connected Programs",
+                    "adoption_connected_programs",
+                    lambda: st.altair_chart(chart, width="stretch"),
+                    apps,
+                    priority_columns=[
+                        "CLIENT_APPLICATION", "CLIENT_VERSION", "QUERY_COUNT",
+                        "USERS", "ERROR_RATE", "SOURCE_CONFIDENCE",
+                    ],
+                    sort_by=["QUERY_COUNT", "USERS", "ERROR_RATE"],
+                    ascending=[False, False, False],
+                    max_rows=25,
+                    raw_label="All connected program rows",
+                )
             if apps is not None:
                 download_csv(apps, "adoption_connected_programs.csv")

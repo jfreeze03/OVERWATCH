@@ -14,6 +14,7 @@ from utils import (
     filter_existing_columns,
     freshness_note,
     metric_confidence_label,
+    render_chart_with_data_toggle,
     render_drillable_bar_chart,
     render_ranked_bar_chart,
     run_query,
@@ -146,6 +147,7 @@ def _load_topology(session, days: int, row_limit: int) -> dict:
             COUNT(DISTINCT q.user_name) AS users,
             COUNT(DISTINCT q.role_name) AS roles,
             COUNT(*) AS query_count,
+            {gb_scanned_expr} AS gb_scanned,
             {failed_expr} AS failed_queries
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
         WHERE q.start_time >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
@@ -289,10 +291,11 @@ def render():
                 color=alt.Color("QUERY_COUNT:Q", title="Queries"),
                 tooltip=["DATABASE_NAME", "SCHEMA_NAME", "USERS", "ROLES", "QUERY_COUNT", "FAILED_QUERIES"],
             ).properties(height=420)
-            st.altair_chart(chart, width="stretch")
-            render_priority_dataframe(
+            render_chart_with_data_toggle(
+                "Database/schema query map",
+                "topology_database_schema",
+                lambda: st.altair_chart(chart, width="stretch"),
                 db_schema,
-                title="Database/schema workload relationships",
                 priority_columns=[
                     "DATABASE_NAME", "SCHEMA_NAME", "USERS", "ROLES",
                     "QUERY_COUNT", "FAILED_QUERIES", "GB_SCANNED",
@@ -300,7 +303,6 @@ def render():
                 sort_by=["QUERY_COUNT", "FAILED_QUERIES", "GB_SCANNED"],
                 ascending=[False, False, False],
                 raw_label="All database/schema rows",
-                height=360,
             )
             download_csv(db_schema, "platform_topology_database_schema.csv")
         else:

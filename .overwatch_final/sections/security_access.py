@@ -19,6 +19,7 @@ from utils import (
     format_snowflake_error,
     log_admin_action,
     render_priority_dataframe,
+    render_chart_with_data_toggle,
     render_ranked_bar_chart,
     render_load_status,
     render_workflow_selector,
@@ -1294,7 +1295,16 @@ def render():
             df_t = st.session_state["sec_df_login_trend"]
             pivot = df_t.pivot_table(index="DAY", columns="IS_SUCCESS", values="EVENT_COUNT", aggfunc="sum").fillna(0)
             st.subheader("Login Trend")
-            st.line_chart(pivot)
+            render_chart_with_data_toggle(
+                "Login trend",
+                "security_login_trend",
+                lambda: st.line_chart(pivot),
+                df_t,
+                priority_columns=["DAY", "IS_SUCCESS", "EVENT_COUNT"],
+                sort_by=["DAY", "EVENT_COUNT"],
+                ascending=[False, False],
+                raw_label="All login trend rows",
+            )
 
     elif active_view == "Login Posture":
         st.subheader("Login Posture")

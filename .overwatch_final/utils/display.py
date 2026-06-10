@@ -142,6 +142,10 @@ def render_chart_with_data_toggle(
     if title:
         st.markdown(f"**{title}**")
     mode_key = f"{key}_chart_data_mode"
+    requested_key = f"{key}_chart_data_requested"
+    requested_mode = st.session_state.pop(requested_key, None)
+    if requested_mode in {"Chart", "Data"}:
+        st.session_state[mode_key] = requested_mode
     mode = render_mode_selector(
         "Chart view",
         mode_key,
@@ -152,7 +156,7 @@ def render_chart_with_data_toggle(
         back_col, note_col = st.columns([1, 4])
         with back_col:
             if st.button("Back to chart", key=f"{key}_back_to_chart", width="stretch"):
-                st.session_state[mode_key] = "Chart"
+                st.session_state[requested_key] = "Chart"
                 st.rerun()
         with note_col:
             st.caption(f"Showing table rows behind {title or 'this chart'}.")

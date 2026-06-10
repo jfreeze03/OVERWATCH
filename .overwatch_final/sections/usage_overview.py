@@ -22,6 +22,7 @@ from utils import (
     company_scoped_query,
     filter_existing_columns,
     metric_confidence_label,
+    render_chart_with_data_toggle,
     render_drillable_bar_chart,
     build_mart_usage_overview_sql,
     build_mart_usage_metering_sql,
@@ -780,15 +781,15 @@ def render():
                 tooltip=["QUERY_TYPE", "QUERY_COUNT", "USERS", "AVG_ELAPSED_SEC", "FAILED_QUERIES"],
                 color=alt.value("#38bdf8"),
             ).properties(height=420)
-            st.altair_chart(chart, width="stretch")
-            render_priority_dataframe(
+            render_chart_with_data_toggle(
+                "Query Mix",
+                "usage_query_mix",
+                lambda: st.altair_chart(chart, width="stretch"),
                 qt,
-                title="Query mix drivers",
                 priority_columns=["QUERY_TYPE", "QUERY_COUNT", "USERS", "AVG_ELAPSED_SEC", "FAILED_QUERIES"],
                 sort_by=["QUERY_COUNT", "FAILED_QUERIES", "AVG_ELAPSED_SEC"],
                 ascending=[False, False, False],
                 raw_label="All query mix rows",
-                height=300,
             )
             download_csv(qt, "usage_overview_query_types.csv")
         else:

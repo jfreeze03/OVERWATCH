@@ -2088,15 +2088,15 @@ def render():
                 current_credits=current_credits,
                 credit_price=credit_price,
             )
-            st.subheader("Bill Movement Waterfall")
             defer_source_note(
                 "Positive bars increased the bill; negative bars reduced it. "
                 "Baseline and current total are exact warehouse-metering totals."
             )
-            st.bar_chart(waterfall, x="Driver", y="Credits", color="Type")
-            render_priority_dataframe(
+            render_chart_with_data_toggle(
+                "Bill Movement Waterfall",
+                "cc_bill_movement_waterfall",
+                lambda: st.bar_chart(waterfall, x="Driver", y="Credits", color="Type"),
                 waterfall,
-                title="Bill movement drivers",
                 priority_columns=["Driver", "Credits", "Estimated Cost", "Type"],
                 sort_by=["Credits"],
                 ascending=False,
@@ -2454,7 +2454,16 @@ def render():
             ))
             defer_source_note(metric_confidence_label("exact"), freshness_note("WAREHOUSE_METERING_HISTORY"))
             daily = df_b.groupby("DAY")["DAILY_CREDITS"].sum().reset_index()
-            st.line_chart(daily.set_index("DAY")["DAILY_CREDITS"])
+            render_chart_with_data_toggle(
+                "Daily Credit Burn",
+                "cc_burn_daily_credits",
+                lambda: st.line_chart(daily.set_index("DAY")["DAILY_CREDITS"]),
+                daily,
+                priority_columns=["DAY", "DAILY_CREDITS"],
+                sort_by=["DAY"],
+                ascending=True,
+                max_rows=30,
+            )
             by_wh = (
                 df_b.groupby("WAREHOUSE_NAME")["DAILY_CREDITS"]
                 .sum().reset_index()
@@ -2593,7 +2602,16 @@ def render():
                 ("Projected 30-day", format_credits(proj_30)),
                 ("Projected 30-day Cost", f"${proj_cost:,.2f}"),
             ))
-            st.area_chart(df_f.set_index("DAY")["DAILY_CREDITS"])
+            render_chart_with_data_toggle(
+                "Forecast Daily Credits",
+                "cc_forecast_daily_credits",
+                lambda: st.area_chart(df_f.set_index("DAY")["DAILY_CREDITS"]),
+                df_f,
+                priority_columns=["DAY", "DAILY_CREDITS"],
+                sort_by=["DAY"],
+                ascending=True,
+                max_rows=90,
+            )
 
     # -- BUDGET VS ACTUAL ------------------------------------------------------
     elif cost_view == "Budget vs Actual":
@@ -2622,15 +2640,16 @@ def render():
             df_bv["STATUS"]    = df_bv["OVER_UNDER"].apply(
                 lambda x: "Over" if x > 0 else "Under"
             )
-            render_priority_dataframe(
+            render_chart_with_data_toggle(
+                "Budget months to explain",
+                "cc_budget_vs_actual",
+                lambda: st.bar_chart(df_bv.set_index("MONTH")[["ACTUAL_CREDITS","BUDGET"]]),
                 df_bv,
-                title="Budget months to explain",
                 priority_columns=["MONTH", "ACTUAL_CREDITS", "BUDGET", "OVER_UNDER", "STATUS"],
                 sort_by=["OVER_UNDER", "ACTUAL_CREDITS"],
                 ascending=[False, False],
                 raw_label="All budget comparison rows",
             )
-            st.bar_chart(df_bv.set_index("MONTH")[["ACTUAL_CREDITS","BUDGET"]])
             download_csv(df_bv, "budget_vs_actual.csv")
 
     # -- ATTRIBUTION -----------------------------------------------------------
@@ -3123,11 +3142,27 @@ def render():
 
                 col_m1, col_m2 = st.columns(2)
                 with col_m1:
-                    st.caption("Monthly credits vs equal-share budget line")
-                    st.bar_chart(df_m.set_index("MONTH")[["MONTHLY_CREDITS","BUDGET_LINE"]])
+                    render_chart_with_data_toggle(
+                        "Monthly credits vs budget",
+                        "cc_contract_monthly_budget",
+                        lambda: st.bar_chart(df_m.set_index("MONTH")[["MONTHLY_CREDITS","BUDGET_LINE"]]),
+                        df_m,
+                        priority_columns=["MONTH", "MONTHLY_CREDITS", "BUDGET_LINE", "CUMULATIVE"],
+                        sort_by=["MONTH"],
+                        ascending=True,
+                        max_rows=24,
+                    )
                 with col_m2:
-                    st.caption("Cumulative consumption")
-                    st.line_chart(df_m.set_index("MONTH")["CUMULATIVE"])
+                    render_chart_with_data_toggle(
+                        "Cumulative consumption",
+                        "cc_contract_cumulative",
+                        lambda: st.line_chart(df_m.set_index("MONTH")["CUMULATIVE"]),
+                        df_m,
+                        priority_columns=["MONTH", "CUMULATIVE", "MONTHLY_CREDITS", "BUDGET_LINE"],
+                        sort_by=["MONTH"],
+                        ascending=True,
+                        max_rows=24,
+                    )
 
                 download_csv(df_m, "contract_utilization.csv")
 

@@ -19,6 +19,7 @@ from utils import (
     load_live_task_runs, load_database_options, load_schema_options,
     load_warehouse_inventory, build_unclassified_assets_sql,
     safe_float, safe_int, render_ranked_bar_chart, day_window_selectbox,
+    render_chart_with_data_toggle,
     defer_source_note,
     build_schema_migration_contract, build_schema_migration_status_sql,
 )
@@ -1519,7 +1520,22 @@ def render():
                     ascending=False,
                     raw_label="All serverless service totals",
                 )
-                st.area_chart(df_sv.pivot_table(index="USAGE_DATE", columns="SERVICE_TYPE", values="DAILY_CREDITS", aggfunc="sum").fillna(0))
+                serverless_trend = df_sv.pivot_table(
+                    index="USAGE_DATE",
+                    columns="SERVICE_TYPE",
+                    values="DAILY_CREDITS",
+                    aggfunc="sum",
+                ).fillna(0)
+                render_chart_with_data_toggle(
+                    "Serverless credits trend",
+                    "dba_serverless_credits_trend",
+                    lambda: st.area_chart(serverless_trend),
+                    df_sv,
+                    priority_columns=["USAGE_DATE", "SERVICE_TYPE", "DAILY_CREDITS"],
+                    sort_by=["USAGE_DATE", "DAILY_CREDITS"],
+                    ascending=[False, False],
+                    raw_label="All serverless daily rows",
+                )
                 download_csv(df_sv, "serverless_costs.csv")
 
     # -- TAB 14: CORTEX AI LIMITS ----------------------------------------------

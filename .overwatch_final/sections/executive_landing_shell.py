@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_executive_landing_full_workspace_requested"
@@ -84,7 +84,7 @@ def _full_workspace_requested() -> bool:
         return False
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
-    return evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
+    return False
 
 
 def _open_workspace() -> None:
@@ -117,7 +117,7 @@ def _open_workflow(workflow: str) -> None:
         )
         return
     if workflow == "DBA queue":
-        _navigate("DBA Control Room", {"dba_control_room_active_view": "Ops Board"})
+        _navigate("DBA Control Room", {"dba_control_room_active_view": "Operations Board"})
         return
     if workflow == "Setup status":
         _navigate(
@@ -178,10 +178,7 @@ def _render_operating_snapshot() -> None:
         ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
     )
     st.markdown("**Operating Snapshot**")
-    cols = st.columns(4)
-    for col, (label, value) in zip(cols, metrics):
-        with col:
-            st.metric(label, value)
+    render_shell_snapshot(metrics)
 
 
 def _render_workflow_launchpad() -> None:

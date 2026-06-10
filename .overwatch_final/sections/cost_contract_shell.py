@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_cost_contract_full_workspace_requested"
@@ -97,7 +97,7 @@ def _full_workspace_requested() -> bool:
         return False
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
-    return evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
+    return False
 
 
 def _open_workspace(workflow: str | None = None, *, open_detail: bool = False) -> None:
@@ -157,15 +157,12 @@ def _render_operating_snapshot() -> None:
         ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
     )
     st.markdown("**Operating Snapshot**")
-    cols = st.columns(4)
-    for col, (label, value) in zip(cols, metrics):
-        with col:
-            st.metric(label, value)
+    render_shell_snapshot(metrics)
 
 
 def _render_workflow_launchpad() -> None:
     st.markdown("**Cost Investigation Workflows**")
-    visible = _WORKFLOWS[:3]
+    visible = _WORKFLOWS[1:4]
     cols = st.columns(3)
     for col, row in zip(cols, visible):
         with col:
@@ -181,7 +178,7 @@ def _render_workflow_launchpad() -> None:
 
     if show_all:
         extra_cols = st.columns(3)
-        for col, row in zip(extra_cols, _WORKFLOWS[3:]):
+        for col, row in zip(extra_cols, _WORKFLOWS[4:]):
             with col:
                 st.markdown(f"**{row['WORKFLOW']}**")
                 st.caption(row["MOVE"])

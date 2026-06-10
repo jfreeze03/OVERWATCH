@@ -8,6 +8,7 @@ import re
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
+from sections.shell_helpers import render_shell_snapshot
 import utils as _utils
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -54,6 +55,7 @@ sql_literal = _lazy_util("sql_literal")
 action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
 upsert_actions = _lazy_util("upsert_actions")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 
@@ -2085,17 +2087,20 @@ def _change_operating_snapshot(summary, exceptions, meta: dict, company: str, en
 def _render_change_operating_snapshot(snapshot: dict) -> None:
     st.markdown("**Operating Snapshot**")
     loaded = bool(snapshot.get("loaded"))
-    cols = st.columns(4)
     if not loaded:
-        cols[0].metric("Scope", str(snapshot.get("scope") or "All"))
-        cols[1].metric("Window", str(snapshot.get("window") or "14d"))
-        cols[2].metric("Evidence", str(snapshot.get("evidence") or "Load brief"))
-        cols[3].metric("Risk", str(snapshot.get("risk") or "On demand"))
+        render_shell_snapshot((
+            ("Scope", str(snapshot.get("scope") or "All")),
+            ("Window", str(snapshot.get("window") or "14d")),
+            ("Evidence", str(snapshot.get("evidence") or "Load brief")),
+            ("Risk", str(snapshot.get("risk") or "On demand")),
+        ))
         return
-    cols[0].metric("Objects", f"{safe_int(snapshot.get('object_changes')):,}")
-    cols[1].metric("Access", f"{safe_int(snapshot.get('access_changes')):,}")
-    cols[2].metric("Policy", f"{safe_int(snapshot.get('policy_owner')):,}", delta_color="inverse")
-    cols[3].metric("High Risk", f"{safe_int(snapshot.get('high_risk')):,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Objects", f"{safe_int(snapshot.get('object_changes')):,}"),
+        ("Access", f"{safe_int(snapshot.get('access_changes')):,}"),
+        ("Policy", f"{safe_int(snapshot.get('policy_owner')):,}"),
+        ("High Risk", f"{safe_int(snapshot.get('high_risk')):,}"),
+    ))
 
 
 def _queue_change_workflow(workflow: str) -> None:
@@ -3963,10 +3968,11 @@ def render() -> None:
         key="change_drift_brief_days",
         default=14,
     )
-    active_view = st.selectbox(
+    active_view = render_mode_selector(
         "Change & Drift view",
+        "change_drift_view",
         CHANGE_DRIFT_VIEWS,
-        key="change_drift_view",
+        default=CHANGE_DRIFT_VIEWS[0],
     )
     if active_view == "Change Brief":
         _render_change_brief_launchpad()

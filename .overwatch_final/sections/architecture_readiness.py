@@ -6,6 +6,7 @@ import re
 import streamlit as st
 
 from config import ARCHITECTURE_OBJECTIVES, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, THRESHOLDS
+from sections.shell_helpers import render_shell_snapshot
 import utils as _utils
 from utils.section_guidance import defer_section_note
 
@@ -46,6 +47,7 @@ load_warehouse_inventory = _lazy_util("load_warehouse_inventory")
 metric_confidence_label = _lazy_util("metric_confidence_label")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 render_load_status = _lazy_util("render_load_status")
+render_workflow_selector = _lazy_util("render_workflow_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
@@ -359,11 +361,12 @@ def _render_architecture_action_brief(snapshot: dict) -> None:
 
 def _render_architecture_operating_snapshot(snapshot: dict) -> None:
     st.markdown("**Operating Snapshot**")
-    cols = st.columns(4)
-    cols[0].metric("Company", str(snapshot.get("company") or "All"))
-    cols[1].metric("Env", str(snapshot.get("environment") or "ALL"))
-    cols[2].metric("Evidence", f"{safe_int(snapshot.get('loaded')):,}/{safe_int(snapshot.get('total')):,}")
-    cols[3].metric("Stale", f"{safe_int(snapshot.get('stale')):,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Company", str(snapshot.get("company") or "All")),
+        ("Env", str(snapshot.get("environment") or "ALL")),
+        ("Evidence", f"{safe_int(snapshot.get('loaded')):,}/{safe_int(snapshot.get('total')):,}"),
+        ("Stale", f"{safe_int(snapshot.get('stale')):,}"),
+    ))
     st.caption(f"Next load: {snapshot.get('next_load') or 'Review loaded evidence'}")
 
 
@@ -2043,10 +2046,11 @@ def render():
     _render_architecture_action_brief(snapshot)
     _render_architecture_operating_snapshot(snapshot)
 
-    active_pane = st.selectbox(
+    active_pane = render_workflow_selector(
         "Architecture readiness view",
+        "architecture_readiness_pane",
         ARCHITECTURE_READINESS_PANES,
-        key="architecture_readiness_pane",
+        columns=4,
     )
 
     if active_pane == "Architecture Brief":

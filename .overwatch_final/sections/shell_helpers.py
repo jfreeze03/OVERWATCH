@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import html
+
+import streamlit as st
+
 
 def evidence_loaded(state, keys: tuple[str, ...]) -> bool:
     return any(state.get(key) is not None for key in keys)
@@ -34,3 +38,26 @@ def compact_environment_label(environment: str | None) -> str:
 def scope_label(company: str | None, environment: str | None) -> str:
     company_key = str(company or "ALL")
     return f"{company_key} / {compact_environment_label(environment)}"
+
+
+def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
+    """Render lightweight shell snapshot cards without the bulk of metric widgets."""
+    if not metrics:
+        return
+    cards = []
+    for label, value in metrics:
+        cards.append(
+            '<div class="ow-shell-snapshot-card">'
+            f'<span>{html.escape(str(label))}</span>'
+            f'<strong>{html.escape(str(value))}</strong>'
+            "</div>"
+        )
+    column_count = max(1, min(4, len(cards)))
+    st.markdown(
+        (
+            '<div class="ow-shell-snapshot-grid" '
+            f'style="grid-template-columns: repeat({column_count}, minmax(0, 1fr));">'
+            f'{"".join(cards)}</div>'
+        ),
+        unsafe_allow_html=True,
+    )

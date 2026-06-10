@@ -15,6 +15,7 @@ from config import (
     ETL_AUDIT_DB,
     ETL_AUDIT_SCHEMA,
 )
+from sections.shell_helpers import render_shell_snapshot
 import utils as _utils
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -346,20 +347,18 @@ def _render_cost_splash_narrative(summary: dict, *, days: int) -> None:
     st.markdown(f"**{state}: {headline}**")
     st.caption(detail)
     metrics = [
-        ("Spend", f"${safe_float(summary.get('spend')):,.0f}", _slide_money(summary.get("spend_delta"), signed=True)),
-        ("Change", _slide_money(summary.get("spend_delta"), signed=True), f"{safe_float(summary.get('delta_pct')):+.1f}%"),
-        ("Driver", top_wh_display, _slide_money(summary.get("top_warehouse_delta_spend"), signed=True)),
-        ("30d Run", _slide_money(summary.get("projected_30d_spend")), str(summary.get("run_rate_state") or "")),
+        ("Spend", f"${safe_float(summary.get('spend')):,.0f} ({_slide_money(summary.get('spend_delta'), signed=True)})"),
+        ("Change", f"{_slide_money(summary.get('spend_delta'), signed=True)} ({safe_float(summary.get('delta_pct')):+.1f}%)"),
+        ("Driver", f"{top_wh_display} ({_slide_money(summary.get('top_warehouse_delta_spend'), signed=True)})"),
+        ("30d Run", f"{_slide_money(summary.get('projected_30d_spend'))} {str(summary.get('run_rate_state') or '').strip()}".strip()),
     ]
-    cols = st.columns(4)
-    for col, (label, value, delta) in zip(cols, metrics):
-        col.metric(label, value, delta=delta, delta_color="inverse" if label in {"Change", "Driver"} else "normal")
-
-    detail_cols = st.columns(4)
-    detail_cols[0].metric("Avg / Day", f"${safe_float(summary.get('avg_daily')):,.0f}")
-    detail_cols[1].metric("Peak Day", f"${safe_float(summary.get('peak_day')):,.0f}")
-    detail_cols[2].metric("Cortex Spend", f"${safe_float(summary.get('cortex_spend')):,.0f}", f"{safe_int(summary.get('cortex_requests')):,} req")
-    detail_cols[3].metric("Top AI User", top_user_display, f"${safe_float(summary.get('top_cortex_user_spend')):,.0f}")
+    render_shell_snapshot(tuple(metrics))
+    render_shell_snapshot((
+        ("Avg / Day", f"${safe_float(summary.get('avg_daily')):,.0f}"),
+        ("Peak Day", f"${safe_float(summary.get('peak_day')):,.0f}"),
+        ("Cortex Spend", f"${safe_float(summary.get('cortex_spend')):,.0f} ({safe_int(summary.get('cortex_requests')):,} req)"),
+        ("Top AI User", f"{top_user_display} (${safe_float(summary.get('top_cortex_user_spend')):,.0f})"),
+    ))
     notes = [f"{int(days)}-day window", str(summary.get("cost_basis") or "Warehouse metering total")]
     if safe_int(summary.get("active_services")):
         notes.append(f"{safe_int(summary.get('active_services')):,} active service(s)")
@@ -1117,12 +1116,13 @@ def _render_savings_verification_task_health(health: pd.DataFrame | None, error:
     st.caption(
         "Monitors the scheduled Snowflake verifier that converts estimated cost actions into ledger-backed savings evidence."
     )
-    h1, h2, h3, h4, h5 = st.columns(5)
-    h1.metric("Task Health", summary["health_state"])
-    h2.metric("Failed 7d", f"{summary['failed_runs_7d']:,}", delta_color="inverse")
-    h3.metric("Verified Saved", f"{summary['verified_last_run']:,}")
-    h4.metric("No Change", f"{summary['verified_no_change_last_run']:,}", delta_color="inverse")
-    h5.metric("Needs Evidence", f"{summary['evidence_required_last_run']:,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Task Health", summary["health_state"]),
+        ("Failed 7d", f"{summary['failed_runs_7d']:,}"),
+        ("Verified Saved", f"{summary['verified_last_run']:,}"),
+        ("No Change", f"{summary['verified_no_change_last_run']:,}"),
+        ("Needs Evidence", f"{summary['evidence_required_last_run']:,}"),
+    ))
     st.caption(f"Last ledger run: {summary['last_run']} | Ledger rows 7d: {summary['ledger_rows_7d']:,}")
 
     if error:
@@ -1163,12 +1163,13 @@ def _render_savings_closure_control(queue: pd.DataFrame, credit_price: float) ->
         "Potential savings stay estimated until the action is fixed, owner-approved, verified, "
         "and the measured post-period usage is lower than the stored baseline."
     )
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Cost Actions", f"{summary['cost_actions']:,}")
-    c2.metric("Open Est. Savings", f"${summary['open_estimated_monthly_savings']:,.0f}/mo")
-    c3.metric("Blocked Est. Savings", f"${summary['blocked_estimated_monthly_savings']:,.0f}/mo", delta_color="inverse")
-    c4.metric("Verified Period Value", f"${summary['verified_period_delta_dollars']:,.0f}")
-    c5.metric("Fixed Audit Ready", f"{summary['audit_ready_pct']:,.1f}%")
+    render_shell_snapshot((
+        ("Cost Actions", f"{summary['cost_actions']:,}"),
+        ("Open Est. Savings", f"${summary['open_estimated_monthly_savings']:,.0f}/mo"),
+        ("Blocked Est. Savings", f"${summary['blocked_estimated_monthly_savings']:,.0f}/mo"),
+        ("Verified Period Value", f"${summary['verified_period_delta_dollars']:,.0f}"),
+        ("Fixed Audit Ready", f"{summary['audit_ready_pct']:,.1f}%"),
+    ))
 
     if detail.empty:
         st.info("No cost-control or chargeback actions are currently visible in the loaded action queue scope.")
@@ -1220,14 +1221,14 @@ def _render_metric_items(items: list[dict]) -> None:
     visible = [item for item in items if item]
     if not visible:
         return
-    columns = st.columns(len(visible))
-    for column, item in zip(columns, visible):
-        column.metric(
-            str(item.get("label") or ""),
-            str(item.get("value") or ""),
-            item.get("delta"),
-            delta_color=str(item.get("delta_color") or "normal"),
-        )
+    metrics = []
+    for item in visible:
+        value = str(item.get("value") or "")
+        delta = item.get("delta")
+        if delta:
+            value = f"{value} ({delta})"
+        metrics.append((str(item.get("label") or ""), value))
+    render_shell_snapshot(tuple(metrics))
 
 
 def _render_cost_run_rate_lens(run_rate: pd.DataFrame | None, credit_price: float, error: str = "") -> None:
@@ -1694,10 +1695,11 @@ def _render_cost_source_health(
     if board.empty:
         return
     st.markdown("**Cost Source Health**")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Ready Sources", f"{summary['ready']:,}")
-    c2.metric("Review / On Demand", f"{summary['review']:,}", delta_color="inverse")
-    c3.metric("Unavailable", f"{summary['unavailable']:,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Ready Sources", f"{summary['ready']:,}"),
+        ("Review / On Demand", f"{summary['review']:,}"),
+        ("Unavailable", f"{summary['unavailable']:,}"),
+    ))
     render_priority_dataframe(
         board,
         title="Cost source readiness",
@@ -1718,11 +1720,12 @@ def _render_query_attribution_gap(reconciliation: pd.DataFrame, credit_price: fl
         return
     summary = _build_attribution_gap_summary(reconciliation, credit_price)
     st.markdown("**Query Attribution Gap**")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Metered Credits", f"{summary['exact_credits']:,.2f}")
-    c2.metric("Query-Attributed", f"{summary['query_credits']:,.2f}")
-    c3.metric("Unallocated / Idle Gap", f"{summary['gap_credits']:,.2f}", f"{summary['gap_pct']:+.1f}%", delta_color="inverse")
-    c4.metric("Gap Dollars", f"${summary['gap_usd']:,.0f}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Metered Credits", f"{summary['exact_credits']:,.2f}"),
+        ("Query-Attributed", f"{summary['query_credits']:,.2f}"),
+        ("Unallocated / Idle Gap", f"{summary['gap_credits']:,.2f} ({summary['gap_pct']:+.1f}%)"),
+        ("Gap Dollars", f"${summary['gap_usd']:,.0f}"),
+    ))
     st.caption(
         f"Top gap warehouse: {summary['top_gap_warehouse']}. "
         "Query attribution is execution-only; idle, serverless, storage, data transfer, cloud services, and AI token costs remain outside query-level attribution."
@@ -2225,10 +2228,11 @@ def _render_cost_control_coverage_board(
     if board.empty:
         return
     st.markdown("**Cost Control Coverage**")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Ready", f"{summary['ready']:,}")
-    c2.metric("Review", f"{summary['review']:,}", delta_color="inverse")
-    c3.metric("Load Needed", f"{summary['load_needed']:,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Ready", f"{summary['ready']:,}"),
+        ("Review", f"{summary['review']:,}"),
+        ("Load Needed", f"{summary['load_needed']:,}"),
+    ))
     render_priority_dataframe(
         board,
         title="Cost evidence coverage",
@@ -2253,10 +2257,11 @@ def _render_cost_allocation_trust_board(
     if board.empty:
         return
     st.markdown("**Cost Allocation Trust**")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Exact / Ready", f"{summary['exact']:,}")
-    c2.metric("Allocated / Estimated", f"{summary['estimated']:,}")
-    c3.metric("Review / Load", f"{summary['review'] + summary['load_needed']:,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Exact / Ready", f"{summary['exact']:,}"),
+        ("Allocated / Estimated", f"{summary['estimated']:,}"),
+        ("Review / Load", f"{summary['review'] + summary['load_needed']:,}"),
+    ))
     render_priority_dataframe(
         board,
         title="Cost attribution trust states",
@@ -2281,11 +2286,12 @@ def _render_cost_drilldown_command_map(
     if board.empty:
         return
     st.markdown("**Cost Drilldown Command Map**")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Ready", f"{summary['ready']:,}")
-    c2.metric("Review", f"{summary['review']:,}", delta_color="inverse")
-    c3.metric("Load Needed", f"{summary['load_needed']:,}", delta_color="inverse")
-    c4.metric("Allocated", f"{summary['estimated']:,}")
+    render_shell_snapshot((
+        ("Ready", f"{summary['ready']:,}"),
+        ("Review", f"{summary['review']:,}"),
+        ("Load Needed", f"{summary['load_needed']:,}"),
+        ("Allocated", f"{summary['estimated']:,}"),
+    ))
     render_priority_dataframe(
         board,
         title="Cost drilldowns to trust or load next",
@@ -2430,10 +2436,11 @@ def _render_cost_decomposition_board(
     if board.empty:
         return
     st.markdown("**Cost Decomposition**")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Ready", f"{summary['ready']:,}")
-    c2.metric("Review", f"{summary['review']:,}", delta_color="inverse")
-    c3.metric("Drivers", f"{len(board):,}")
+    render_shell_snapshot((
+        ("Ready", f"{summary['ready']:,}"),
+        ("Review", f"{summary['review']:,}"),
+        ("Drivers", f"{len(board):,}"),
+    ))
     render_priority_dataframe(
         board,
         title="Cost decomposition and next trust step",
@@ -2726,10 +2733,11 @@ def _render_budget_anomaly_command_center(
         return
     st.markdown("**Budget & Anomaly Command Center**")
     value_at_risk = safe_float(pd.to_numeric(board.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Critical/High", f"{summary['critical_high']:,}", delta_color="inverse")
-    c2.metric("Value at Risk", f"${value_at_risk:,.0f}", delta_color="inverse")
-    c3.metric("Budget Controls", f"{summary['budget_controls']:,}")
+    render_shell_snapshot((
+        ("Critical/High", f"{summary['critical_high']:,}"),
+        ("Value at Risk", f"${value_at_risk:,.0f}"),
+        ("Budget Controls", f"{summary['budget_controls']:,}"),
+    ))
     st.caption(
         f"Top lane: {summary['top_lane']} | Native route: {summary['top_native_control']} | "
         f"{summary['top_next_action']}"
@@ -3762,11 +3770,12 @@ def _render_cost_governance_mart_and_incident_timeline(
     st.session_state["cost_contract_mart_operability"] = mart_board
 
     st.markdown("**Cost Governance Alerts & Timeline**")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Alert Candidates", f"{alert_summary['alert_count']:,}")
-    c2.metric("Critical/High", f"{alert_summary['critical_high']:,}", delta_color="inverse")
-    c3.metric("Timeline Events", f"{timeline_summary['event_count']:,}")
-    c4.metric("Mart Components", f"{mart_summary['components']:,}")
+    render_shell_snapshot((
+        ("Alert Candidates", f"{alert_summary['alert_count']:,}"),
+        ("Critical/High", f"{alert_summary['critical_high']:,}"),
+        ("Timeline Events", f"{timeline_summary['event_count']:,}"),
+        ("Mart Components", f"{mart_summary['components']:,}"),
+    ))
 
     if not alert_board.empty:
         render_priority_dataframe(
@@ -3823,10 +3832,11 @@ def _render_native_cost_control_inventory(
     if board.empty:
         return
     st.markdown("**Native Cost Control Inventory**")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Ready / Pattern", f"{summary['ready']:,}")
-    c2.metric("Review", f"{summary['review']:,}", delta_color="inverse")
-    c3.metric("Controls", f"{len(board):,}")
+    render_shell_snapshot((
+        ("Ready / Pattern", f"{summary['ready']:,}"),
+        ("Review", f"{summary['review']:,}"),
+        ("Controls", f"{len(board):,}"),
+    ))
     render_priority_dataframe(
         board,
         title="Native controls, strict gaps, and DBA next move",
@@ -3932,10 +3942,11 @@ def _render_cost_spike_root_cause_board(
         return
     st.markdown("**Cost Spike Root Cause Drilldown**")
     value_at_risk = safe_float(pd.to_numeric(board.get("VALUE_AT_RISK_USD", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Critical/High", f"{summary['critical_high']:,}", delta_color="inverse")
-    c2.metric("Value at Risk", f"${value_at_risk:,.0f}", delta_color="inverse")
-    c3.metric("Top Driver", summary["top_driver"])
+    render_shell_snapshot((
+        ("Critical/High", f"{summary['critical_high']:,}"),
+        ("Value at Risk", f"${value_at_risk:,.0f}"),
+        ("Top Driver", summary["top_driver"]),
+    ))
     render_priority_dataframe(
         board.rename(columns={"CONFIDENCE": "SOURCE_BASIS"}),
         title="Cost root-cause candidates ranked by risk and value",
@@ -3964,10 +3975,11 @@ def _render_change_cost_correlation_board(
     if board.empty:
         return
     st.markdown("**Change + Cost Correlation**")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("High", f"{summary['high']:,}", delta_color="inverse")
-    c2.metric("Medium", f"{summary['medium']:,}", delta_color="inverse")
-    c3.metric("Top Correlation", summary["top_correlation"])
+    render_shell_snapshot((
+        ("High", f"{summary['high']:,}"),
+        ("Medium", f"{summary['medium']:,}"),
+        ("Top Correlation", summary["top_correlation"]),
+    ))
     render_priority_dataframe(
         board,
         title="Recent changes that may explain cost movement",
@@ -5074,11 +5086,12 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
     st.markdown("**Cost Overview**")
     if not splash.get("loaded"):
         st.caption("Refresh Overview loads official spend, warehouse ranking, Cortex spend, and slide-ready evidence.")
-        cols = st.columns(4)
-        cols[0].metric("Spend", "On demand")
-        cols[1].metric("Change", "On demand")
-        cols[2].metric("Driver", "On demand")
-        cols[3].metric("30d Run", "On demand")
+        render_shell_snapshot((
+            ("Spend", "On demand"),
+            ("Change", "On demand"),
+            ("Driver", "On demand"),
+            ("30d Run", "On demand"),
+        ))
         if splash.get("errors"):
             for err in splash.get("errors", [])[:2]:
                 defer_source_note(str(err))
@@ -5240,17 +5253,20 @@ def _cost_operating_snapshot(company: str, days: int, credit_price: float) -> di
 def _render_cost_operating_snapshot(snapshot: dict) -> None:
     st.markdown("**Operating Snapshot**")
     loaded = bool(snapshot.get("loaded"))
-    cols = st.columns(4)
     if not loaded:
-        cols[0].metric("Spend", "On demand")
-        cols[1].metric("Delta", "Load proof")
-        cols[2].metric("Top Inc", "Load proof")
-        cols[3].metric("Actions", "Load queue")
+        render_shell_snapshot((
+            ("Spend", "On demand"),
+            ("Delta", "Load proof"),
+            ("Top Inc", "Load proof"),
+            ("Actions", "Load queue"),
+        ))
         return
-    cols[0].metric("Spend", f"${safe_float(snapshot.get('spend')):,.0f}")
-    cols[1].metric("Delta", f"{safe_float(snapshot.get('delta_pct')):+.1f}%", delta_color="inverse")
-    cols[2].metric("Top Inc", f"{safe_float(snapshot.get('top_delta_credits')):+,.1f} cr", delta_color="inverse")
-    cols[3].metric("Actions", f"{safe_int(snapshot.get('open_actions')):,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Spend", f"${safe_float(snapshot.get('spend')):,.0f}"),
+        ("Delta", f"{safe_float(snapshot.get('delta_pct')):+.1f}%"),
+        ("Top Inc", f"{safe_float(snapshot.get('top_delta_credits')):+,.1f} cr"),
+        ("Actions", f"{safe_int(snapshot.get('open_actions')):,}"),
+    ))
 
 
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:

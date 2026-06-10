@@ -2,6 +2,7 @@
 import pandas as pd
 import streamlit as st
 
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     build_task_health_sql,
     build_mart_service_query_health_sql,
@@ -285,10 +286,11 @@ def render():
 
     risk_services = services[services["SCORE"] < 90] if "SCORE" in services.columns else pd.DataFrame()
     critical_services = services[services["SCORE"] < 60] if "SCORE" in services.columns else pd.DataFrame()
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Services", f"{len(services):,}")
-    k2.metric("Watch / At Risk", f"{len(risk_services):,}", delta_color="inverse")
-    k3.metric("Critical", f"{len(critical_services):,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Services", f"{len(services):,}"),
+        ("Watch / At Risk", f"{len(risk_services):,}"),
+        ("Critical", f"{len(critical_services):,}"),
+    ))
     source_text = " | ".join(v for v in data.get("sources", {}).values() if v)
     defer_source_note(metric_confidence_label("composite"), source_text, freshness_note("ACCOUNT_USAGE"))
 

@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_ALERT_EMAIL
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     get_active_company,
     get_active_environment,
@@ -623,11 +624,12 @@ def render() -> None:
         columns=4,
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Native Ready", f"{summary['ready']:,}")
-    c2.metric("Patterns", f"{summary['pattern']:,}")
-    c3.metric("Partial", f"{summary['partial']:,}", delta_color="inverse")
-    c4.metric("Controls", f"{len(board):,}")
+    render_shell_snapshot((
+        ("Native Ready", f"{summary['ready']:,}"),
+        ("Patterns", f"{summary['pattern']:,}"),
+        ("Partial", f"{summary['partial']:,}"),
+        ("Controls", f"{len(board):,}"),
+    ))
 
     policy_defaults = _default_ai_budget_usd(company)
     p1, p2, p3 = st.columns(3)

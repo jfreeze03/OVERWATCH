@@ -5,6 +5,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 from config import ALFA_DEV_DATABASES, TREXIS_DEV_DATABASES, TREXIS_PROD_DATABASES
+from sections.shell_helpers import render_shell_snapshot
 from utils.workflows import render_workflow_selector
 from utils import (
     get_session, format_credits, credits_to_dollars,
@@ -1993,18 +1994,21 @@ def render():
             unallocated_credits = max(0.0, current_credits - allocated_credits)
             unallocated_pct = (unallocated_credits / current_credits * 100) if current_credits else 0.0
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Current Spend", f"${current_cost:,.2f}", f"{delta_cost:+,.2f}")
-            c2.metric("Current Credits", format_credits(current_credits), f"{delta_credits:+,.2f}")
-            c3.metric("Change vs Baseline", _fmt_delta(delta_pct))
-            c4.metric("Active Warehouses", active_warehouses)
+            bill_metrics = [
+                ("Current Spend", f"${current_cost:,.2f} ({delta_cost:+,.2f})"),
+                ("Current Credits", f"{format_credits(current_credits)} ({delta_credits:+,.2f})"),
+                ("Change vs Baseline", _fmt_delta(delta_pct)),
+                ("Active Warehouses", f"{active_warehouses:,}"),
+            ]
             if explain_budget > 0:
                 budget_delta = current_cost - explain_budget
-                st.metric(
-                    "Budget Variance",
-                    f"${budget_delta:+,.2f}",
-                    "over budget" if budget_delta > 0 else "under budget",
+                bill_metrics.append(
+                    (
+                        "Budget Variance",
+                        f"${budget_delta:+,.2f} {'over' if budget_delta > 0 else 'under'} budget",
+                    )
                 )
+            render_shell_snapshot(tuple(bill_metrics))
 
             defer_source_note(
                 f"{metric_confidence_label('exact')} for warehouse totals | "
@@ -2072,7 +2076,7 @@ def render():
             st.subheader("Bill Narrative")
             n1, n2 = st.columns([1, 3])
             with n1:
-                st.metric("Review Status", narrative["severity"])
+                render_shell_snapshot((("Review Status", narrative["severity"]),))
             with n2:
                 st.markdown(f"**{narrative['headline']}**")
                 st.write(narrative["reason"])

@@ -37,6 +37,7 @@ from utils.dba_tool_catalog import (
     WH_PARAM_HELP as _WH_PARAM_HELP,
 )
 from utils.workflows import render_priority_dataframe, render_workflow_selector
+from sections.shell_helpers import render_shell_snapshot
 
 
 def _load_button(label, key):
@@ -1468,7 +1469,7 @@ def render():
         if st.session_state.get("dba_df_repl") is not None and not st.session_state["dba_df_repl"].empty:
             df_repl = st.session_state["dba_df_repl"]
             st.caption(f"Source: {st.session_state.get('dba_repl_source', 'replication usage history')}")
-            st.metric("Replication Credits", format_credits(df_repl["CREDITS_USED"].sum()))
+            render_shell_snapshot((("Replication Credits", format_credits(df_repl["CREDITS_USED"].sum())),))
             render_priority_dataframe(
                 df_repl,
                 title="Replication cost and lag candidates",
@@ -1508,7 +1509,7 @@ def render():
             if st.session_state.get("dba_df_serverless") is not None and not st.session_state["dba_df_serverless"].empty:
                 df_sv = st.session_state["dba_df_serverless"]
                 svc   = df_sv.groupby("SERVICE_TYPE")["DAILY_CREDITS"].sum().reset_index().sort_values("DAILY_CREDITS", ascending=False)
-                st.metric("Total Serverless Credits", format_credits(float(svc["DAILY_CREDITS"].sum())))
+                render_shell_snapshot((("Total Serverless Credits", format_credits(float(svc["DAILY_CREDITS"].sum()))),))
                 render_priority_dataframe(
                     svc,
                     title="Serverless service cost drivers",
@@ -2295,7 +2296,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
         if st.session_state.get("dba_df_usage_log") is not None and not st.session_state["dba_df_usage_log"].empty:
             df_ul = st.session_state["dba_df_usage_log"]
             lbl   = st.session_state.get("dba_ul_group_label","SECTION")
-            st.metric("Total Loads", f"{int(df_ul['LOAD_COUNT'].sum()):,}")
+            render_shell_snapshot((("Total Loads", f"{int(df_ul['LOAD_COUNT'].sum()):,}"),))
             render_ranked_bar_chart(df_ul, lbl, "LOAD_COUNT", title="Usage Log Hotspots", top_n=25)
             render_priority_dataframe(
                 df_ul,

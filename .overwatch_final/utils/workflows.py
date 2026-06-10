@@ -159,10 +159,12 @@ def render_workflow_selector(
     *,
     columns: int = 4,
     show_label: bool = False,
+    labels: Mapping[str, str] | None = None,
 ) -> str:
     """Render a compact workflow launcher that honors deep-link state."""
     selected = coerce_workflow_state(key, workflows)
     details = details or {}
+    labels = labels or {}
     if label and show_label:
         st.caption(label)
     items = list(workflows)
@@ -174,7 +176,7 @@ def render_workflow_selector(
             with col:
                 is_selected = workflow == selected
                 if st.button(
-                    workflow,
+                    labels.get(workflow, workflow),
                     key=f"{key}_{start}_{workflow}",
                     type="primary" if is_selected else "secondary",
                     width="stretch",

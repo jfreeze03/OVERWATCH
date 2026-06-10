@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from config import DEFAULTS
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     day_window_selectbox,
     format_snowflake_error,
@@ -78,11 +79,12 @@ def render():
     if st.session_state.get("spcs_df_spcs") is not None and not st.session_state["spcs_df_spcs"].empty:
         df_s = st.session_state["spcs_df_spcs"]
         total_cr = df_s["DAILY_CREDITS"].sum()
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Compute Pools Active", df_s["COMPUTE_POOL_NAME"].nunique())
-        c2.metric("Total SPCS Credits", format_credits(total_cr))
-        c3.metric("Total Cost", f"${credits_to_dollars(total_cr, credit_price):,.2f}")
-        c4.metric("Service Events", f"{int(df_s['SERVICE_COUNT'].sum()):,}")
+        render_shell_snapshot((
+            ("Compute Pools Active", f"{df_s['COMPUTE_POOL_NAME'].nunique():,}"),
+            ("Total SPCS Credits", format_credits(total_cr)),
+            ("Total Cost", f"${credits_to_dollars(total_cr, credit_price):,.2f}"),
+            ("Service Events", f"{int(df_s['SERVICE_COUNT'].sum()):,}"),
+        ))
 
         pool_agg = df_s.groupby("COMPUTE_POOL_NAME")["DAILY_CREDITS"].sum().reset_index().sort_values("DAILY_CREDITS", ascending=False)
         pool_agg["COST"] = pool_agg["DAILY_CREDITS"].apply(lambda x: f"${credits_to_dollars(x, credit_price):,.2f}")

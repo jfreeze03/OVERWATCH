@@ -6,6 +6,7 @@ from datetime import datetime
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
+from sections.shell_helpers import render_shell_snapshot
 
 
 ANNOTATION_TABLE = "OVERWATCH_ANNOTATIONS"
@@ -46,6 +47,19 @@ ALERT_CENTER_PANES = [
     "Rules & SLAs",
     "Suppression Windows",
 ]
+
+ALERT_CENTER_PANE_LABELS = {
+    "Alert Brief": "Brief",
+    "Issue Inbox": "Inbox",
+    "Triage Digest": "Digest",
+    "Alert History": "History",
+    "Email Delivery": "Email",
+    "Action Queue Routing": "Routing",
+    "Control Health": "Controls",
+    "Automation Readiness": "Automation",
+    "Rules & SLAs": "Rules",
+    "Suppression Windows": "Suppressions",
+}
 
 ALERT_CENTER_HEALTH_DETAIL_OPTIONS = (
     "Controls",
@@ -230,6 +244,12 @@ def _render_priority_dataframe(*args, **kwargs) -> None:
     from utils.workflows import render_priority_dataframe
 
     render_priority_dataframe(*args, **kwargs)
+
+
+def _render_workflow_selector(*args, **kwargs) -> str:
+    from utils.workflows import render_workflow_selector
+
+    return render_workflow_selector(*args, **kwargs)
 
 
 def _open_alert_mask(df: pd.DataFrame) -> pd.Series:
@@ -962,23 +982,27 @@ def _render_alert_center_metric_rows(
     loaded: bool = True,
 ) -> None:
     st.markdown("**Operating Snapshot**")
-    cols = st.columns(4)
     if not loaded:
-        cols[0].metric("Scope", "Company")
-        cols[1].metric("Window", "Selected")
-        cols[2].metric("Evidence", "Load view")
-        cols[3].metric("Route", "Issue Inbox")
+        render_shell_snapshot((
+            ("Scope", "Company"),
+            ("Window", "Selected"),
+            ("Evidence", "Load view"),
+            ("Route", "Issue Inbox"),
+        ))
         return
-    cols[0].metric("Issues", f"{open_issues:,}")
-    cols[1].metric("Alerts", f"{open_alerts:,}")
-    cols[2].metric("Critical", f"{critical_high:,}", delta_color="inverse")
-    cols[3].metric("Overdue", f"{overdue:,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Issues", f"{open_issues:,}"),
+        ("Alerts", f"{open_alerts:,}"),
+        ("Critical", f"{critical_high:,}"),
+        ("Overdue", f"{overdue:,}"),
+    ))
     if loaded:
         with st.expander("Delivery and queue counts", expanded=False):
-            detail_cols = st.columns(3)
-            detail_cols[0].metric("Email Ready", f"{email_ready:,}")
-            detail_cols[1].metric("Delivered", f"{email_logged:,}")
-            detail_cols[2].metric("Open Queue", f"{open_queue:,}")
+            render_shell_snapshot((
+                ("Email Ready", f"{email_ready:,}"),
+                ("Delivered", f"{email_logged:,}"),
+                ("Open Queue", f"{open_queue:,}"),
+            ))
 
 
 def _alert_center_exception_rows(
@@ -1510,10 +1534,12 @@ def render() -> None:
     _apply_alert_center_brief_first_default()
     _apply_queued_alert_center_view()
 
-    active_view = st.selectbox(
+    active_view = _render_workflow_selector(
         "Alert Center view",
+        "alert_center_active_view",
         ALERT_CENTER_PANES,
-        key="alert_center_active_view",
+        labels=ALERT_CENTER_PANE_LABELS,
+        columns=4,
     )
     required_sources = _alert_center_sources_for_view(active_view)
 

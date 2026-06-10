@@ -5,6 +5,7 @@ import time
 import streamlit as st
 import pandas as pd
 from utils.workflows import render_priority_dataframe, render_workflow_selector
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     build_task_history_sql,
     download_csv,
@@ -2611,15 +2612,21 @@ def _render_task_ops_brief(session) -> None:
             total_runs=safe_int(summary.get("TOTAL_RUNS")),
             total_tasks=safe_int(summary.get("TOTAL_TASKS")),
         )
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Tasks", f"{safe_int(summary.get('TOTAL_TASKS')):,}")
-        c2.metric("Runs", f"{safe_int(summary.get('TOTAL_RUNS')):,}")
-        c3.metric("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}", delta_color="inverse")
-        c5, c6, c7, c8 = st.columns(4)
-        c5.metric("Suspended", f"{safe_int(summary.get('SUSPENDED_TASKS')):,}", delta_color="inverse")
-        c6.metric("SLA/Cost Drift", f"{safe_int(summary.get('LONG_RUNNING_TASKS')) + safe_int(summary.get('COST_DRIFT_TASKS')):,}", delta_color="inverse")
-        c7.metric("Open Recovery", f"{safe_int(summary.get('OPEN_RECOVERIES')):,}", delta_color="inverse")
-        c8.metric("Recovery SLA", f"{safe_int(summary.get('RECOVERY_SLA_BREACHES')):,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Tasks", f"{safe_int(summary.get('TOTAL_TASKS')):,}"),
+            ("Runs", f"{safe_int(summary.get('TOTAL_RUNS')):,}"),
+            ("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}"),
+            ("Score", f"{score}/100"),
+        ))
+        render_shell_snapshot((
+            ("Suspended", f"{safe_int(summary.get('SUSPENDED_TASKS')):,}"),
+            (
+                "SLA / Cost Drift",
+                f"{safe_int(summary.get('LONG_RUNNING_TASKS')) + safe_int(summary.get('COST_DRIFT_TASKS')):,}",
+            ),
+            ("Open Recovery", f"{safe_int(summary.get('OPEN_RECOVERIES')):,}"),
+            ("Recovery SLA", f"{safe_int(summary.get('RECOVERY_SLA_BREACHES')):,}"),
+        ))
         if safe_int(summary.get("P1_INCIDENTS")) or safe_int(summary.get("BLOCKED_RECOVERIES")):
             st.caption(
                 f"P1 graph incidents: {safe_int(summary.get('P1_INCIDENTS')):,} | "
@@ -2651,15 +2658,15 @@ def _render_task_ops_brief(session) -> None:
         controlm_board = _build_controlm_job_status_board(summary, latest, exceptions, controlm_feed)
         controlm_errors = _build_controlm_error_board(exceptions, latest)
         st.subheader("Control-M Job Status")
-        cm1, cm2, cm3, cm4 = st.columns(4)
-        cm1.metric("Handoff State", controlm_state)
-        cm2.metric("Running", f"{safe_int(summary.get('RUNNING_TASKS')):,}")
-        cm3.metric("Job Errors", f"{len(controlm_errors):,}", delta_color="inverse")
-        cm4.metric(
-            "Performance Indicators",
-            f"{safe_int(summary.get('LONG_RUNNING_TASKS')) + safe_int(summary.get('COST_DRIFT_TASKS')):,}",
-            delta_color="inverse",
-        )
+        render_shell_snapshot((
+            ("Handoff State", controlm_state),
+            ("Running", f"{safe_int(summary.get('RUNNING_TASKS')):,}"),
+            ("Job Errors", f"{len(controlm_errors):,}"),
+            (
+                "Performance Indicators",
+                f"{safe_int(summary.get('LONG_RUNNING_TASKS')) + safe_int(summary.get('COST_DRIFT_TASKS')):,}",
+            ),
+        ))
         loaded_at = safe_float(st.session_state.get("task_ops_loaded_at"))
         refresh_mode = str(st.session_state.get("task_ops_refresh_mode") or "snapshot")
         if loaded_at:
@@ -2712,10 +2719,11 @@ def _render_task_ops_brief(session) -> None:
 
         slo_summary, slo_board = _build_task_reliability_slo_board(summary, exceptions, recovery_sla)
         st.subheader("Task Reliability SLO Board")
-        s1, s2, s3 = st.columns(3)
-        s1.metric("Ready", f"{slo_summary['ready']:,}")
-        s2.metric("Review", f"{slo_summary['review']:,}", delta_color="inverse")
-        s3.metric("SLOs", f"{len(slo_board):,}")
+        render_shell_snapshot((
+            ("Ready", f"{slo_summary['ready']:,}"),
+            ("Review", f"{slo_summary['review']:,}"),
+            ("SLOs", f"{len(slo_board):,}"),
+        ))
         render_priority_dataframe(
             slo_board,
             title="Task reliability SLOs and next control step",
@@ -2730,16 +2738,17 @@ def _render_task_ops_brief(session) -> None:
         recovery_board = _task_recovery_command_board(exceptions, recovery_sla)
         if not recovery_board.empty:
             st.subheader("Recovery Command Board")
-            r1, r2, r3, r4 = st.columns(4)
             blocked = int(recovery_board["COMMAND_STATE"].astype(str).eq("Blocked").sum())
             p1_p2 = int(recovery_board["INCIDENT_PRIORITY"].astype(str).str.startswith(("P1", "P2")).sum())
             owner_review = int(
                 recovery_board["OWNER_APPROVAL_STATE"].fillna("").astype(str).str.upper().str.contains("REQUIRED|REQUESTED", na=False).sum()
             )
-            r1.metric("Recovery Items", f"{len(recovery_board):,}")
-            r2.metric("Blocked", f"{blocked:,}", delta_color="inverse")
-            r3.metric("P1 / P2", f"{p1_p2:,}", delta_color="inverse")
-            r4.metric("Owner Review", f"{owner_review:,}", delta_color="inverse")
+            render_shell_snapshot((
+                ("Recovery Items", f"{len(recovery_board):,}"),
+                ("Blocked", f"{blocked:,}"),
+                ("P1 / P2", f"{p1_p2:,}"),
+                ("Owner Review", f"{owner_review:,}"),
+            ))
             render_priority_dataframe(
                 recovery_board,
                 title="Retry and closure readiness",
@@ -2989,12 +2998,13 @@ def _render_sla_cost_drift_console(session) -> None:
     )
 
     summary = st.session_state.get("task_sla_summary", {})
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Tasks Compared", f"{len(view):,}")
-    k2.metric("SLA Breaches", f"{int(view['SLA_BREACH'].sum()):,}", delta_color="inverse")
-    k3.metric("Cost Drift", f"{int(view['COST_DRIFT'].sum()):,}", delta_color="inverse")
-    k4.metric("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}", delta_color="inverse")
-    k5.metric("Query Detail", "Loaded" if st.session_state.get("task_sla_details_loaded") else "Estimated")
+    render_shell_snapshot((
+        ("Tasks Compared", f"{len(view):,}"),
+        ("SLA Breaches", f"{int(view['SLA_BREACH'].sum()):,}"),
+        ("Cost Drift", f"{int(view['COST_DRIFT'].sum()):,}"),
+        ("Failures", f"{safe_int(summary.get('FAILED_RUNS')):,}"),
+        ("Query Detail", "Loaded" if st.session_state.get("task_sla_details_loaded") else "Estimated"),
+    ))
     task_sla_sources = st.session_state.get("task_sla_sources", {})
     if task_sla_sources:
         st.caption(
@@ -3163,18 +3173,20 @@ def render():
         th = st.session_state.get("tg_hist", pd.DataFrame())
 
         if not tl.empty:
-            c1, c2 = st.columns(2)
-            c1.metric("Total Tasks", len(tl))
             active_tasks = tl[tl["STATE"] == "started"] if "STATE" in tl.columns else pd.DataFrame()
-            c2.metric("Active (started)", len(active_tasks))
+            render_shell_snapshot((
+                ("Total Tasks", f"{len(tl):,}"),
+                ("Active (started)", f"{len(active_tasks):,}"),
+            ))
 
         if not th.empty:
             failed_tasks = th[th["STATE"] == "FAILED"] if "STATE" in th.columns else pd.DataFrame()
             succeeded    = th[th["STATE"] == "SUCCEEDED"] if "STATE" in th.columns else pd.DataFrame()
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total Runs",  len(th))
-            c2.metric("Succeeded",   len(succeeded))
-            c3.metric("Failed",      len(failed_tasks), delta_color="inverse")
+            render_shell_snapshot((
+                ("Total Runs", f"{len(th):,}"),
+                ("Succeeded", f"{len(succeeded):,}"),
+                ("Failed", f"{len(failed_tasks):,}"),
+            ))
 
             if not failed_tasks.empty:
                 st.subheader("Failed Tasks")
@@ -3260,11 +3272,12 @@ def render():
         failures = st.session_state.get("tm_failure_rows", pd.DataFrame())
         patterns = st.session_state.get("tm_failure_patterns", pd.DataFrame())
         if summary:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Failures", f"{safe_int(summary.get('FAILURES')):,}", delta_color="inverse")
-            c2.metric("Affected Tasks", f"{safe_int(summary.get('TASKS')):,}")
-            c3.metric("Categories", f"{safe_int(summary.get('CATEGORIES')):,}")
-            c4.metric("High Priority", f"{safe_int(summary.get('CRITICAL')):,}", delta_color="inverse")
+            render_shell_snapshot((
+                ("Failures", f"{safe_int(summary.get('FAILURES')):,}"),
+                ("Affected Tasks", f"{safe_int(summary.get('TASKS')):,}"),
+                ("Categories", f"{safe_int(summary.get('CATEGORIES')):,}"),
+                ("High Priority", f"{safe_int(summary.get('CRITICAL')):,}"),
+            ))
 
             if failures.empty:
                 st.success("No failed task runs found for the selected scope.")
@@ -3405,12 +3418,13 @@ def render():
 
         if st.session_state.get("tm_df_etl") is not None and not st.session_state["tm_df_etl"].empty:
             df_e = st.session_state["tm_df_etl"]
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total Runs", len(df_e))
             ok  = df_e[df_e["STATUS"] == "SUCCESS"] if "STATUS" in df_e.columns else pd.DataFrame()
             err = df_e[df_e["STATUS"] == "FAILED"]  if "STATUS" in df_e.columns else pd.DataFrame()
-            c2.metric("Success", len(ok))
-            c3.metric("Failed",  len(err), delta_color="inverse")
+            render_shell_snapshot((
+                ("Total Runs", f"{len(df_e):,}"),
+                ("Success", f"{len(ok):,}"),
+                ("Failed", f"{len(err):,}"),
+            ))
             render_priority_dataframe(
                 df_e,
                 title="ETL audit runs to review first",

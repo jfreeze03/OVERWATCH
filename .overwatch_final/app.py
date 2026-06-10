@@ -131,6 +131,19 @@ _ASK_OVERWATCH_STATE_KEYS = (
 
 CONNECTION_OPTIONAL_SECTIONS = {"Alert Center"}
 
+SECTION_WORKSPACE_STATE_KEYS = {
+    "Executive Landing": ("_executive_landing_full_workspace_requested", "_executive_landing_brief_mode"),
+    "DBA Control Room": ("_dba_control_room_full_workspace_requested", "_dba_control_room_brief_mode"),
+    "Alert Center": ("_alert_center_full_workspace_requested", "_alert_center_brief_mode"),
+    "Account Health": ("_account_health_full_workspace_requested", "_account_health_brief_mode"),
+    "Cost & Contract": ("_cost_contract_full_workspace_requested", "_cost_contract_brief_mode"),
+    "Workload Operations": ("_workload_operations_full_workspace_requested", "_workload_operations_brief_mode"),
+    "Warehouse Health": ("_warehouse_health_full_workspace_requested", "_warehouse_health_brief_mode"),
+    "Security Posture": ("_security_posture_full_workspace_requested", "_security_posture_brief_mode"),
+    "Change & Drift": ("_change_drift_full_workspace_requested", "_change_drift_brief_mode"),
+    "Architecture Readiness": ("_architecture_readiness_full_workspace_requested", "_architecture_readiness_brief_mode"),
+}
+
 
 def _seed_current_role_from_secrets() -> None:
     """Use configured Snowflake role as a zero-query startup hint when present."""
@@ -262,6 +275,17 @@ def _normalize_nav_section(section: str) -> str:
     return normalize_section_name(section)
 
 
+def _reset_section_workspace_state(section: str) -> None:
+    """Return sidebar navigation to the lightweight brief shell for a section."""
+    target = _normalize_nav_section(section)
+    state_keys = SECTION_WORKSPACE_STATE_KEYS.get(target)
+    if not state_keys:
+        return
+    workspace_key, brief_key = state_keys
+    st.session_state[workspace_key] = False
+    st.session_state[brief_key] = True
+
+
 def _section_requires_connection(section: str) -> bool:
     return _normalize_nav_section(section) not in CONNECTION_OPTIONAL_SECTIONS
 
@@ -273,6 +297,7 @@ def _queue_section_navigation(section: str) -> None:
     if target != current:
         st.session_state["_overwatch_pending_section"] = target
         st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
+    _reset_section_workspace_state(target)
     st.session_state["nav_section"] = target
 
 

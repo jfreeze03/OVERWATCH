@@ -7,6 +7,7 @@ import streamlit as st
 import utils as _utils
 from utils.section_guidance import defer_section_note, defer_source_note
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULTS, DEFAULT_ENVIRONMENT, THRESHOLDS
+from sections.shell_helpers import render_shell_snapshot
 
 
 class _LazyPandas:
@@ -471,17 +472,20 @@ def _warehouse_operating_snapshot(company: str, environment: str, days: int) -> 
 def _render_warehouse_operating_snapshot(snapshot: dict) -> None:
     st.markdown("**Operating Snapshot**")
     loaded = bool(snapshot.get("loaded"))
-    cols = st.columns(4)
     if not loaded:
-        cols[0].metric("Scope", str(snapshot.get("scope") or "All"))
-        cols[1].metric("Window", str(snapshot.get("window") or "14d"))
-        cols[2].metric("Evidence", str(snapshot.get("evidence") or "Load overview"))
-        cols[3].metric("Focus", str(snapshot.get("focus") or "Pressure"))
+        render_shell_snapshot((
+            ("Scope", str(snapshot.get("scope") or "All")),
+            ("Window", str(snapshot.get("window") or "14d")),
+            ("Evidence", str(snapshot.get("evidence") or "Load overview")),
+            ("Focus", str(snapshot.get("focus") or "Pressure")),
+        ))
         return
-    cols[0].metric("Warehouses", f"{safe_int(snapshot.get('warehouses')):,}")
-    cols[1].metric("Queries", f"{safe_int(snapshot.get('queries')):,}")
-    cols[2].metric("Spill GB", f"{safe_float(snapshot.get('spill_gb')):,.1f}")
-    cols[3].metric("Avg Queue", f"{safe_float(snapshot.get('avg_queue')):,.1f}s")
+    render_shell_snapshot((
+        ("Warehouses", f"{safe_int(snapshot.get('warehouses')):,}"),
+        ("Queries", f"{safe_int(snapshot.get('queries')):,}"),
+        ("Spill GB", f"{safe_float(snapshot.get('spill_gb')):,.1f}"),
+        ("Avg Queue", f"{safe_float(snapshot.get('avg_queue')):,.1f}s"),
+    ))
 
 
 def _queue_warehouse_health_view(view: str) -> None:
@@ -2546,19 +2550,19 @@ def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_
     if exceptions is not None and not exceptions.empty and "SEVERITY" in exceptions.columns:
         high_risk = int(exceptions["SEVERITY"].isin(["Critical", "High"]).sum())
 
-    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.4])
-    c1.metric("High-Risk Warehouses", f"{high_risk:,}", delta_color="inverse")
-    c2.metric("Remote Spill", f"{safe_float(summary_row.get('REMOTE_SPILL_GB')):,.1f} GB", delta_color="inverse")
-    c3.metric("Queued Queries", f"{safe_int(summary_row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
-    with c4:
-        if priority.empty:
-            st.success("No urgent warehouse capacity exceptions crossed the selected thresholds.")
-        else:
-            first = priority.iloc[0]
-            st.warning(
-                f"First move: {first.get('SIGNAL', 'Warehouse pressure')} on "
-                f"{first.get('WAREHOUSE_NAME', 'unknown warehouse')} -> {first.get('NEXT_ACTION', 'Review warehouse pressure.')}"
-            )
+    render_shell_snapshot((
+        ("High-Risk Warehouses", f"{high_risk:,}"),
+        ("Remote Spill", f"{safe_float(summary_row.get('REMOTE_SPILL_GB')):,.1f} GB"),
+        ("Queued Queries", f"{safe_int(summary_row.get('QUEUED_QUERIES')):,}"),
+    ))
+    if priority.empty:
+        st.success("No urgent warehouse capacity exceptions crossed the selected thresholds.")
+    else:
+        first = priority.iloc[0]
+        st.warning(
+            f"First move: {first.get('SIGNAL', 'Warehouse pressure')} on "
+            f"{first.get('WAREHOUSE_NAME', 'unknown warehouse')} -> {first.get('NEXT_ACTION', 'Review warehouse pressure.')}"
+        )
 
     st.markdown("**Warehouse Watch Floor**")
     if priority.empty:
@@ -2978,10 +2982,11 @@ def _render_capacity_brief(company: str, environment: str) -> None:
             total_queries=safe_int(row.get("TOTAL_QUERIES")),
             credit_spike_pct=safe_float(row.get("CREDIT_SPIKE_PCT")),
         )
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Queued", f"{safe_int(row.get('QUEUED_QUERIES')):,}", delta_color="inverse")
-        c2.metric("Spill", f"{safe_int(row.get('SPILL_QUERIES')):,}", delta_color="inverse")
-        c3.metric("Metered Credits", format_credits(safe_float(row.get("METERED_CREDITS"))))
+        render_shell_snapshot((
+            ("Queued", f"{safe_int(row.get('QUEUED_QUERIES')):,}"),
+            ("Spill", f"{safe_int(row.get('SPILL_QUERIES')):,}"),
+            ("Metered Credits", format_credits(safe_float(row.get("METERED_CREDITS")))),
+        ))
         if score < 65:
             st.error("Capacity risk: warehouse pressure is high enough to affect service levels or cost control.")
         elif score < 78:
@@ -2994,15 +2999,15 @@ def _render_capacity_brief(company: str, environment: str) -> None:
         operability_fact = st.session_state.get("wh_operability_fact")
         if operability_fact is not None and not operability_fact.empty:
             st.subheader("Warehouse Control Summary")
-            f1, f2, f3, f4 = st.columns(4)
-            f1.metric("Rows", f"{len(operability_fact):,}")
-            f2.metric("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}", delta_color="inverse")
-            f3.metric(
-                "Pressure Signals",
-                f"{int(operability_fact.get('QUEUE_PRESSURE_ROWS', pd.Series(dtype=int)).sum() + operability_fact.get('SPILL_PRESSURE_ROWS', pd.Series(dtype=int)).sum()):,}",
-                delta_color="inverse",
-            )
-            f4.metric("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}")
+            render_shell_snapshot((
+                ("Rows", f"{len(operability_fact):,}"),
+                ("Overdue", f"{int(operability_fact.get('OVERDUE_OPEN', pd.Series(dtype=int)).sum()):,}"),
+                (
+                    "Pressure Signals",
+                    f"{int(operability_fact.get('QUEUE_PRESSURE_ROWS', pd.Series(dtype=int)).sum() + operability_fact.get('SPILL_PRESSURE_ROWS', pd.Series(dtype=int)).sum()):,}",
+                ),
+                ("Verified Closures", f"{int(operability_fact.get('VERIFIED_CLOSURES', pd.Series(dtype=int)).sum()):,}"),
+            ))
             render_priority_dataframe(
                 operability_fact,
                 title="Warehouse blockers",
@@ -3452,11 +3457,12 @@ def _render_warehouse_ownership_panel(company: str, environment: str) -> None:
         blocked = owner_inventory[owner_inventory["GOVERNANCE_READINESS"] == "Owner Route Blocked"]
         directory_only = owner_inventory[owner_inventory["GOVERNANCE_READINESS"] == "Directory Route Only"]
         fully_tagged = owner_inventory[owner_inventory["GOVERNANCE_READINESS"] == "Tagged Owner Ready"]
-        o1, o2, o3, o4 = st.columns(4)
-        o1.metric("Warehouses Reviewed", f"{len(owner_inventory):,}")
-        o2.metric("Tagged Owner Ready", f"{len(fully_tagged):,}")
-        o3.metric("Directory Only", f"{len(directory_only):,}", delta_color="inverse")
-        o4.metric("Owner Blocked", f"{len(blocked):,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Warehouses Reviewed", f"{len(owner_inventory):,}"),
+            ("Tagged Owner Ready", f"{len(fully_tagged):,}"),
+            ("Directory Only", f"{len(directory_only):,}"),
+            ("Owner Blocked", f"{len(blocked):,}"),
+        ))
 
         render_priority_dataframe(
             owner_inventory,
@@ -3487,15 +3493,16 @@ def _render_warehouse_source_health(company: str, environment: str) -> None:
         unavailable = int(source_health["STATE"].eq("Unavailable").sum())
         fast_summary = int(
             source_health[
-                source_health["STATE"].isin(["Loaded", "No Rows"])
-                & source_health["CONFIDENCE"].astype(str).str.contains("Fast summary", case=False, regex=False)
-            ].shape[0]
+            source_health["STATE"].isin(["Loaded", "No Rows"])
+            & source_health["CONFIDENCE"].astype(str).str.contains("Fast summary", case=False, regex=False)
+        ].shape[0]
         )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Current Surfaces", f"{loaded}/{len(source_health)}")
-        c2.metric("Fast Summary", f"{fast_summary:,}")
-        c3.metric("Stale", f"{stale:,}", delta_color="inverse")
-        c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Current Surfaces", f"{loaded}/{len(source_health)}"),
+            ("Fast Summary", f"{fast_summary:,}"),
+            ("Stale", f"{stale:,}"),
+            ("Unavailable", f"{unavailable:,}"),
+        ))
         defer_source_note(
             "Use this before acting on warehouse findings. Stale rows mean the data was loaded under a different "
             "company, environment, lookback, or triage filter."
@@ -3771,11 +3778,12 @@ def render():
         elif st.session_state.get("wh_df_wh") is not None and not st.session_state["wh_df_wh"].empty:
             df_w = st.session_state["wh_df_wh"]
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Warehouses Active", len(df_w))
-            c2.metric("Total Queries",     f"{int(df_w['TOTAL_QUERIES'].sum()):,}")
-            c3.metric("Total Remote Spill", f"{df_w['TOTAL_REMOTE_SPILL_GB'].sum():.1f} GB")
-            c4.metric("Credit Delta", format_credits(float(df_w.get("CREDIT_DELTA", pd.Series(dtype=float)).sum())))
+            render_shell_snapshot((
+                ("Warehouses Active", len(df_w)),
+                ("Total Queries", f"{int(df_w['TOTAL_QUERIES'].sum()):,}"),
+                ("Total Remote Spill", f"{df_w['TOTAL_REMOTE_SPILL_GB'].sum():.1f} GB"),
+                ("Credit Delta", format_credits(float(df_w.get("CREDIT_DELTA", pd.Series(dtype=float)).sum()))),
+            ))
             wh_source = st.session_state.get("wh_df_wh_source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY")
             wh_source_lower = str(wh_source).lower()
             confidence = "estimated" if "fast" in wh_source_lower and "summary" in wh_source_lower else "exact"
@@ -3836,11 +3844,12 @@ def render():
             )
             if not guardrail_board.empty:
                 st.subheader("Warehouse Guardrail Coverage")
-                g1, g2, g3, g4 = st.columns(4)
-                g1.metric("Guardrail Score", f"{guardrail_summary['score']}/100")
-                g2.metric("Blocked", f"{guardrail_summary['blocked']:,}", delta_color="inverse")
-                g3.metric("Needs Review", f"{guardrail_summary['review']:,}", delta_color="inverse")
-                g4.metric("Evidence Missing", f"{guardrail_summary['unknown']:,}", delta_color="inverse")
+                render_shell_snapshot((
+                    ("Guardrail Score", f"{guardrail_summary['score']}/100"),
+                    ("Blocked", f"{guardrail_summary['blocked']:,}"),
+                    ("Needs Review", f"{guardrail_summary['review']:,}"),
+                    ("Evidence Missing", f"{guardrail_summary['unknown']:,}"),
+                ))
                 render_priority_dataframe(
                     guardrail_board,
                     title="Auto-derived warehouse guardrail coverage",
@@ -4041,10 +4050,11 @@ def render():
             st.info("Loaded efficiency metrics are stale for the active scope. Reload Efficiency Metrics before acting.")
         elif df_eff is not None and not df_eff.empty:
             low = df_eff[df_eff["EFFICIENCY_SCORE"] < 70]
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Warehouses Reviewed", len(df_eff))
-            c2.metric("Needs Review", len(low), delta_color="inverse")
-            c3.metric("Total metered credits", format_credits(float(df_eff["METERED_CREDITS"].sum())))
+            render_shell_snapshot((
+                ("Warehouses Reviewed", len(df_eff)),
+                ("Needs Review", len(low)),
+                ("Total metered credits", format_credits(float(df_eff["METERED_CREDITS"].sum()))),
+            ))
             defer_source_note(metric_confidence_label("allocated"), freshness_note("ACCOUNT_USAGE"))
             df_eff_display = df_eff.rename(columns={"EFFICIENCY_SCORE": "REVIEW_PRIORITY"})
             render_priority_dataframe(
@@ -4118,10 +4128,11 @@ def render():
             st.info("Loaded spill data is stale for the active scope. Reload Spill Data before acting.")
         elif st.session_state.get("wh_df_sp") is not None and not st.session_state["wh_df_sp"].empty:
             df_sp = st.session_state["wh_df_sp"]
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Spilling Warehouses", len(df_sp))
-            c2.metric("Total Local Spill",  f"{df_sp['LOCAL_SPILL_GB'].sum():.1f} GB")
-            c3.metric("Total Remote Spill", f"{df_sp['REMOTE_SPILL_GB'].sum():.1f} GB")
+            render_shell_snapshot((
+                ("Spilling Warehouses", len(df_sp)),
+                ("Total Local Spill", f"{df_sp['LOCAL_SPILL_GB'].sum():.1f} GB"),
+                ("Total Remote Spill", f"{df_sp['REMOTE_SPILL_GB'].sum():.1f} GB"),
+            ))
             render_priority_dataframe(
                 df_sp,
                 title="Spill and memory pressure",
@@ -4221,10 +4232,11 @@ def render():
                 pivot.index = pivot.index.map(lambda x: day_names.get(int(x), str(x)))
                 st.subheader(f"Query Volume Heatmap - {sel_wh}")
                 st.dataframe(pivot.style.background_gradient(cmap="YlOrRd"), width="stretch")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Total Queries", f"{int(wh_data['QUERY_COUNT'].sum()):,}")
-                c2.metric("Peak Hour",     f"{int(pivot.max().max()):,}")
-                c3.metric("Avg Elapsed",   f"{wh_data['AVG_ELAPSED_SEC'].mean():.1f}s")
+                render_shell_snapshot((
+                    ("Total Queries", f"{int(wh_data['QUERY_COUNT'].sum()):,}"),
+                    ("Peak Hour", f"{int(pivot.max().max()):,}"),
+                    ("Avg Elapsed", f"{wh_data['AVG_ELAPSED_SEC'].mean():.1f}s"),
+                ))
 
     elif warehouse_view == "Optimization Advisor":
         render_optimization_advisor()

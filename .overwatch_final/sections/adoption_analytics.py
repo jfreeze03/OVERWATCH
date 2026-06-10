@@ -1,6 +1,7 @@
 # sections/adoption_analytics.py - user and workload adoption analytics
 import streamlit as st
 
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     build_mart_adoption_role_type_sql,
     build_mart_adoption_summary_sql,
@@ -290,12 +291,13 @@ def render():
         return
 
     summary = data["summary"]
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Total Queries", f"{_metric(summary, 'TOTAL_QUERIES'):,.0f}")
-    m2.metric("Total Users", f"{_metric(summary, 'TOTAL_USERS'):,.0f}")
-    m3.metric("Queries/User", f"{_metric(summary, 'QUERIES_PER_USER'):,.1f}")
-    m4.metric("Time/Query", f"{_metric(summary, 'AVG_TIME_PER_QUERY_SEC'):,.2f}s")
-    m5.metric("Error Rate", f"{_metric(summary, 'ERROR_RATE'):,.1f}%")
+    render_shell_snapshot((
+        ("Total Queries", f"{_metric(summary, 'TOTAL_QUERIES'):,.0f}"),
+        ("Total Users", f"{_metric(summary, 'TOTAL_USERS'):,.0f}"),
+        ("Queries / User", f"{_metric(summary, 'QUERIES_PER_USER'):,.1f}"),
+        ("Time / Query", f"{_metric(summary, 'AVG_TIME_PER_QUERY_SEC'):,.2f}s"),
+        ("Error Rate", f"{_metric(summary, 'ERROR_RATE'):,.1f}%"),
+    ))
     defer_source_note(data.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
     active_view = render_workflow_selector(

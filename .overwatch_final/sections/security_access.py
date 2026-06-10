@@ -29,6 +29,7 @@ from utils import (
     upsert_actions,
 )
 from config import THRESHOLDS
+from sections.shell_helpers import render_shell_snapshot
 
 
 SECURITY_ACCESS_PANES = (
@@ -1625,7 +1626,7 @@ def render():
         if st.session_state.get("sec_df_grants") is not None and not st.session_state["sec_df_grants"].empty:
             df_g = st.session_state["sec_df_grants"]
             defer_source_note(st.session_state.get("sec_grants_source", "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"))
-            st.metric("Total Grants", len(df_g))
+            render_shell_snapshot((("Total Grants", f"{len(df_g):,}"),))
             df_g = _annotate_security_routes(df_g, "Grant Review")
             render_priority_dataframe(
                 df_g,
@@ -1883,7 +1884,7 @@ def render():
 
         if st.session_state.get("sec_df_lin") is not None and not st.session_state["sec_df_lin"].empty:
             df_l = st.session_state["sec_df_lin"]
-            st.metric("Access Events", len(df_l))
+            render_shell_snapshot((("Access Events", f"{len(df_l):,}"),))
             render_priority_dataframe(
                 df_l,
                 title="Recent access lineage events",

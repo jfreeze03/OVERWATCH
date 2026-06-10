@@ -5,6 +5,7 @@ import html
 import streamlit as st
 from datetime import datetime
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULTS
+from sections.shell_helpers import render_shell_snapshot
 import utils as _utils
 from utils.section_guidance import defer_section_note
 
@@ -83,6 +84,7 @@ resolve_owner_context = _lazy_util("resolve_owner_context")
 mart_object_name = _lazy_util("mart_object_name")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 render_load_status = _lazy_util("render_load_status")
+render_mode_selector = _lazy_util("render_mode_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 
 
@@ -1882,17 +1884,19 @@ def _render_account_health_operating_snapshot(
     """Render the Account Health first-screen metrics without crowding the page."""
     with st.container(border=True):
         st.markdown("**Operating Snapshot**")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Health", f"{health_score:.0f}", score_label)
-        m2.metric("Failures", f"{err_count:,}", delta_color="inverse")
-        m3.metric("Queue", f"{queued:,}", delta_color="inverse")
-        m4.metric("Cost 24h", f"${cost24:,.0f}", delta=f"{pct_delta:+.1f}%")
+        render_shell_snapshot((
+            ("Health", f"{health_score:.0f} {score_label}".strip()),
+            ("Failures", f"{err_count:,}"),
+            ("Queue", f"{queued:,}"),
+            ("Cost 24h", f"${cost24:,.0f} ({pct_delta:+.1f}%)"),
+        ))
         with st.expander("Secondary metrics and source", expanded=False):
-            s1, s2, s3, s4 = st.columns(4)
-            s1.metric("Active", f"{live_val:,}")
-            s2.metric("Credits 24h", format_credits(last24))
-            s3.metric("Storage", f"{stor_tb:.1f} TB")
-            s4.metric("Failed Tasks", f"{failed_tasks:,}", delta_color="inverse")
+            render_shell_snapshot((
+                ("Active", f"{live_val:,}"),
+                ("Credits 24h", format_credits(last24)),
+                ("Storage", f"{stor_tb:.1f} TB"),
+                ("Failed Tasks", f"{failed_tasks:,}"),
+            ))
             st.caption(
                 " | ".join([
                     metric_confidence_label("composite"),
@@ -2946,10 +2950,11 @@ def render():
             query_history_caps = _account_query_history_capabilities(action_session)
         return query_history_caps
 
-    active_view = st.selectbox(
+    active_view = render_mode_selector(
         "Account Health view",
+        "account_health_active_view",
         ACCOUNT_HEALTH_PANES,
-        key="account_health_active_view",
+        default=ACCOUNT_HEALTH_PANES[0],
     )
 
     # -- OVERVIEW --------------------------------------------------------------
@@ -3726,9 +3731,13 @@ def render():
             change_df = hd.get("what_changed", pd.DataFrame())
             if change_df is not None and not change_df.empty:
                 row = change_df.iloc[0]
-                st.metric("Queries",      f"{safe_int(row.get('QUERY_DELTA',0)):+,}")
-                st.metric("Credits",      f"{safe_float(row.get('CREDIT_DELTA',0)):+,.2f}")
-                st.metric("Failures",     f"{safe_int(row.get('FAILURE_DELTA',0)):+,}", delta_color="inverse")
+                render_shell_snapshot(
+                    (
+                        ("Queries", f"{safe_int(row.get('QUERY_DELTA', 0)):+,}"),
+                        ("Credits", f"{safe_float(row.get('CREDIT_DELTA', 0)):+,.2f}"),
+                        ("Failures", f"{safe_int(row.get('FAILURE_DELTA', 0)):+,}"),
+                    )
+                )
             else:
                 st.info("Change summary unavailable.")
 
@@ -3761,10 +3770,13 @@ def render():
         if mon_df is not None and not mon_df.empty:
             mon_df = mon_df.copy()
             mon_df["EST_COST"] = mon_df["CREDITS"].apply(lambda x: credits_to_dollars(x, credit_price))
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Components", len(mon_df))
-            m2.metric("Credits", format_credits(safe_float(mon_df["CREDITS"].sum())))
-            m3.metric("Est. Cost", f"${safe_float(mon_df['EST_COST'].sum()):,.2f}")
+            render_shell_snapshot(
+                (
+                    ("Components", f"{len(mon_df):,}"),
+                    ("Credits", format_credits(safe_float(mon_df["CREDITS"].sum()))),
+                    ("Est. Cost", f"${safe_float(mon_df['EST_COST'].sum()):,.2f}"),
+                )
+            )
             st.caption("Keeps the monitor honest: app-tagged queries, Streamlit warehouse, Cortex, and alert task cost.")
             render_priority_dataframe(
                 mon_df,
@@ -3813,11 +3825,11 @@ def render():
                 """, ttl_key=f"account_health_wh_pressure_live_{company}", tier="recent", section="Account Health")
             if not df_wp.empty:
                 top_wh = df_wp.sort_values(["QUEUED","QUERIES"], ascending=False).iloc[0]
-                st.metric(
-                    "Top warehouse under pressure",
-                    top_wh["WAREHOUSE_NAME"],
-                    f"{int(top_wh['QUEUED'])} queued / {int(top_wh['QUERIES'])} queries",
-                    delta_color="inverse",
+                render_shell_snapshot(
+                    (
+                        ("Top pressure", top_wh["WAREHOUSE_NAME"]),
+                        ("Queue / queries", f"{int(top_wh['QUEUED'])} queued / {int(top_wh['QUERIES'])} queries"),
+                    )
                 )
                 render_drillable_bar_chart(
                     df_wp, dimension="WAREHOUSE_NAME", measure="QUERIES",
@@ -4002,7 +4014,7 @@ def render():
             overnight_cr = safe_float(
                 md["credits"].iloc[0].get("OVERNIGHT_CREDITS", md["credits"].iloc[0].get("PERIOD_CREDITS", 0))
             ) if not md["credits"].empty else 0
-            st.metric("Credits 12h", format_credits(overnight_cr))
+            render_shell_snapshot((("Credits 12h", format_credits(overnight_cr)),))
             if md.get("_source"):
                 st.caption(f"Source: {md['_source']}")
             if not md["failures"].empty:

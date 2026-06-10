@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 import streamlit as st
 
 from config import DEFAULT_ENVIRONMENT, DEFAULTS, SECTION_BY_TITLE, normalize_section_name
+from sections.shell_helpers import render_shell_snapshot
 import utils as _utils
 from utils.section_guidance import defer_section_note
 
@@ -138,6 +139,7 @@ sql_literal = _lazy_util("sql_literal")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 render_load_status = _lazy_util("render_load_status")
+render_workflow_selector = _lazy_util("render_workflow_selector")
 
 DBA_CONTROL_SCOPE_FILTER_KEYS = (
     "global_warehouse",
@@ -3298,10 +3300,11 @@ def _render_operations_priority_index(priority_index: pd.DataFrame) -> None:
         + safe_int(hot.get("APPROVAL_BLOCKS"))
         + safe_int(hot.get("SOURCE_ISSUES"))
     )
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Top Route", top_route)
-    c2.metric("Open Blocks", f"{open_blocks:,}", delta_color="inverse")
-    c3.metric("Routes Reviewed", f"{len(priority_index):,}")
+    render_shell_snapshot((
+        ("Top Route", top_route),
+        ("Open Blocks", f"{open_blocks:,}"),
+        ("Routes Reviewed", f"{len(priority_index):,}"),
+    ))
     view = priority_index.rename(columns={
         "OPERATIONS_PRIORITY_STATE": "State",
         "SECTION": "Route",
@@ -3598,9 +3601,10 @@ def _render_dba_operator_runbook(plan: pd.DataFrame, markdown: str) -> None:
         return
     hot = plan.iloc[0]
     st.markdown("**Operator Runbook**")
-    c1, c2 = st.columns(2)
-    c1.metric("Route", str(hot.get("SECTION") or "DBA Control Room"))
-    c2.metric("Steps", f"{len(plan):,}")
+    render_shell_snapshot((
+        ("Route", str(hot.get("SECTION") or "DBA Control Room")),
+        ("Steps", f"{len(plan):,}"),
+    ))
     view = plan.rename(columns={
         "PHASE_RANK": "Rank",
         "RUNBOOK_STEP": "Step",
@@ -3900,20 +3904,13 @@ def _render_dba_escalation_packet(packet: pd.DataFrame, markdown: str) -> None:
     if packet is None or packet.empty:
         return
     st.markdown("**DBA Escalation Packet**")
-    e1, e2, e3, e4 = st.columns(4)
-    e1.metric("Escalations", f"{len(packet):,}", delta_color="inverse")
     same_shift = int(packet["ESCALATION_LEVEL"].astype(str).eq("Same Shift").sum())
-    e2.metric(
-        "Escalate Now",
-        f"{int(packet['ESCALATION_LEVEL'].astype(str).eq('Escalate Now').sum()):,}",
-        delta_color="inverse",
-    )
-    e3.metric(
-        "No-Go Gates",
-        f"{int(packet['GO_NO_GO'].astype(str).str.contains('No-Go', case=False, regex=False).sum()):,}",
-        delta_color="inverse",
-    )
-    e4.metric("Same Shift", f"{same_shift:,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Escalations", f"{len(packet):,}"),
+        ("Escalate Now", f"{int(packet['ESCALATION_LEVEL'].astype(str).eq('Escalate Now').sum()):,}"),
+        ("No-Go Gates", f"{int(packet['GO_NO_GO'].astype(str).str.contains('No-Go', case=False, regex=False).sum()):,}"),
+        ("Same Shift", f"{same_shift:,}"),
+    ))
     render_priority_dataframe(
         packet,
         title="Owner-facing DBA escalation packet",
@@ -3963,11 +3960,12 @@ def _render_command_queue_control(
     )
     st.markdown("**DBA Command Queue Control**")
     total_blocks = summary["approval_blocks"] + summary["metadata_blocks"] + closure_blockers
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Open Actions", f"{summary['open']:,}", delta_color="inverse")
-    c2.metric("Overdue", f"{summary['overdue']:,}", delta_color="inverse")
-    c3.metric("Ready", f"{summary['execution_ready']:,}")
-    c4.metric("Blocked", f"{total_blocks:,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Open Actions", f"{summary['open']:,}"),
+        ("Overdue", f"{summary['overdue']:,}"),
+        ("Ready", f"{summary['execution_ready']:,}"),
+        ("Blocked", f"{total_blocks:,}"),
+    ))
 
     if section_board is None:
         section_board = _dba_section_operability_board(
@@ -4232,23 +4230,20 @@ def _render_loaded_operating_snapshot(
 ) -> None:
     """Show the loaded Control Room scope without repeating Fast Watch counters."""
     st.markdown("**Operating Snapshot**")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Exceptions", f"{safe_int(exception_count):,}", delta_color="inverse")
-    m2.metric(
-        "Release Blocks",
-        f"{safe_int(release_blocks):,}",
-        f"{safe_int(release_reviews):,} review",
-        delta_color="inverse",
-    )
-    m3.metric("Failed Queries", f"{safe_int(failed_queries):,}", delta_color="inverse")
-    m4.metric("Est. Cost", f"${credits_to_dollars(period_credits, credit_price):,.0f}")
+    render_shell_snapshot((
+        ("Exceptions", f"{safe_int(exception_count):,}"),
+        ("Release Blocks", f"{safe_int(release_blocks):,} ({safe_int(release_reviews):,} review)"),
+        ("Failed Queries", f"{safe_int(failed_queries):,}"),
+        ("Est. Cost", f"${credits_to_dollars(period_credits, credit_price):,.0f}"),
+    ))
 
     with st.expander("More loaded metrics", expanded=False):
-        n1, n2, n3, n4 = st.columns(4)
-        n1.metric("Queued", f"{safe_int(queued_queries):,}", delta_color="inverse")
-        n2.metric("p95 Runtime", f"{safe_float(p95_runtime):,.0f}s")
-        n3.metric("Credits", f"{safe_float(period_credits):,.2f}", f"{safe_float(credit_delta):+.1f}%", delta_color="inverse")
-        n4.metric("Drift / AI", f"{safe_int(drift_ai_count):,}", delta_color="inverse")
+        render_shell_snapshot((
+            ("Queued", f"{safe_int(queued_queries):,}"),
+            ("p95 Runtime", f"{safe_float(p95_runtime):,.0f}s"),
+            ("Credits", f"{safe_float(period_credits):,.2f} ({safe_float(credit_delta):+.1f}%)"),
+            ("Drift / AI", f"{safe_int(drift_ai_count):,}"),
+        ))
 
 
 def _dba_handoff_rows(
@@ -4417,15 +4412,15 @@ def _render_shift_handoff_panel(
     if handoff_rows is None or handoff_rows.empty:
         return
     st.markdown("**DBA Shift Handoff**")
-    h1, h2, h3, h4 = st.columns(4)
-    h1.metric("Handoff Items", f"{len(handoff_rows):,}", delta_color="inverse")
-    h2.metric("Escalate", f"{int((handoff_rows['PRIORITY_RANK'] <= 1).sum()):,}", delta_color="inverse")
-    h3.metric(
-        "Proof Blocks",
-        f"{int(handoff_rows['STATE'].astype(str).str.contains('Blocked|Overdue|Unavailable|Stale', case=False, regex=True).sum()):,}",
-        delta_color="inverse",
-    )
-    h4.metric("Source Issues", f"{int(handoff_rows['SOURCE'].astype(str).eq('Source Health').sum()):,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Handoff Items", f"{len(handoff_rows):,}"),
+        ("Escalate", f"{int((handoff_rows['PRIORITY_RANK'] <= 1).sum()):,}"),
+        (
+            "Proof Blocks",
+            f"{int(handoff_rows['STATE'].astype(str).str.contains('Blocked|Overdue|Unavailable|Stale', case=False, regex=True).sum()):,}",
+        ),
+        ("Source Issues", f"{int(handoff_rows['SOURCE'].astype(str).eq('Source Health').sum()):,}"),
+    ))
     render_priority_dataframe(
         handoff_rows,
         title="Incoming DBA handoff queue",
@@ -4498,19 +4493,12 @@ def _render_incident_board_panel(
     if incident_board is None or incident_board.empty:
         return
     st.markdown("**DBA Incident Board**")
-    i1, i2, i3, i4 = st.columns(4)
-    i1.metric("Incidents", f"{len(incident_board):,}", delta_color="inverse")
-    i2.metric(
-        "Containment",
-        f"{int(incident_board['STATUS'].astype(str).eq('Containment Required').sum()):,}",
-        delta_color="inverse",
-    )
-    i3.metric("Overdue", f"{int(pd.to_numeric(incident_board['OVERDUE'], errors='coerce').fillna(0).sum()):,}", delta_color="inverse")
-    i4.metric(
-        "Evidence Issues",
-        f"{int(pd.to_numeric(incident_board['SOURCE_ISSUES'], errors='coerce').fillna(0).sum()):,}",
-        delta_color="inverse",
-    )
+    render_shell_snapshot((
+        ("Incidents", f"{len(incident_board):,}"),
+        ("Containment", f"{int(incident_board['STATUS'].astype(str).eq('Containment Required').sum()):,}"),
+        ("Overdue", f"{int(pd.to_numeric(incident_board['OVERDUE'], errors='coerce').fillna(0).sum()):,}"),
+        ("Evidence Issues", f"{int(pd.to_numeric(incident_board['SOURCE_ISSUES'], errors='coerce').fillna(0).sum()):,}"),
+    ))
     render_priority_dataframe(
         incident_board,
         title="Grouped operational incidents",
@@ -4566,11 +4554,12 @@ def _render_control_room_source_health(
             & source_health["MODE"].astype(str).str.contains("fast summary", case=False, regex=False)
         ].shape[0]
     )
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Current Surfaces", f"{current}/{len(source_health)}")
-    c2.metric("Fast Summary", f"{fast_summary:,}")
-    c3.metric("Stale", f"{stale:,}", delta_color="inverse")
-    c4.metric("Unavailable", f"{unavailable:,}", delta_color="inverse")
+    render_shell_snapshot((
+        ("Current Surfaces", f"{current}/{len(source_health)}"),
+        ("Fast Summary", f"{fast_summary:,}"),
+        ("Stale", f"{stale:,}"),
+        ("Unavailable", f"{unavailable:,}"),
+    ))
     st.caption(
         "Use this before acting from the Control Room. Stale rows mean evidence was loaded under a different "
         "company, environment, lookback, budget, fallback mode, or triage filter scope."
@@ -4602,12 +4591,13 @@ def _render_release_readiness_gate(
         environment=environment,
         lookback_hours=lookback_hours,
     )
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Gate Score", f"{safe_int(summary.get('score'))}/100")
-    c2.metric("Blocked", f"{safe_int(summary.get('blocked')):,}", delta_color="inverse")
-    c3.metric("Review", f"{safe_int(summary.get('review')):,}", delta_color="inverse")
-    c4.metric("Ready", f"{safe_int(summary.get('ready')):,}")
-    c5.metric("Timeline Events", f"{len(timeline):,}")
+    render_shell_snapshot((
+        ("Gate Score", f"{safe_int(summary.get('score'))}/100"),
+        ("Blocked", f"{safe_int(summary.get('blocked')):,}"),
+        ("Review", f"{safe_int(summary.get('review')):,}"),
+        ("Ready", f"{safe_int(summary.get('ready')):,}"),
+        ("Timeline Events", f"{len(timeline):,}"),
+    ))
     if safe_int(summary.get("blocked")):
         st.error("Release gate is blocked by deployment or task recovery evidence.")
     elif safe_int(summary.get("review")) or safe_int(summary.get("not_loaded")):
@@ -4629,11 +4619,12 @@ def _render_release_readiness_gate(
     source_gate_summary, source_gate = _build_evidence_freshness_gate(source_health)
     if not source_gate.empty:
         st.markdown("**Evidence Freshness Gate**")
-        e1, e2, e3, e4 = st.columns(4)
-        e1.metric("Evidence Score", f"{safe_int(source_gate_summary.get('score'))}/100")
-        e2.metric("Blocked Sources", f"{safe_int(source_gate_summary.get('blocked')):,}", delta_color="inverse")
-        e3.metric("Review Sources", f"{safe_int(source_gate_summary.get('review')):,}", delta_color="inverse")
-        e4.metric("Deferred Sources", f"{safe_int(source_gate_summary.get('deferred')):,}")
+        render_shell_snapshot((
+            ("Evidence Score", f"{safe_int(source_gate_summary.get('score'))}/100"),
+            ("Blocked Sources", f"{safe_int(source_gate_summary.get('blocked')):,}"),
+            ("Review Sources", f"{safe_int(source_gate_summary.get('review')):,}"),
+            ("Deferred Sources", f"{safe_int(source_gate_summary.get('deferred')):,}"),
+        ))
         render_priority_dataframe(
             source_gate,
             title="Release evidence freshness by source",
@@ -4694,7 +4685,7 @@ def _render_route_buttons(exceptions: pd.DataFrame) -> None:
         route = str(item.get("Route", ""))
         workflow = str(item.get("Workflow", "") or "")
         with cols[idx % len(cols)]:
-            if st.button(route, key=f"dba_control_route_{route}", width="stretch"):
+            if st.button(route, key=f"dba_control_route_{idx}_{route}_{workflow}", width="stretch"):
                 _jump(route, workflow=workflow)
 
 
@@ -4853,7 +4844,7 @@ def render() -> None:
     with c1:
         lookback_hours = st.selectbox("Lookback", [12, 24, 48, 168], index=1, format_func=lambda h: f"{h} hours")
     with c2:
-        st.metric("Scope", f"{company} / {environment}")
+        render_shell_snapshot((("Scope", f"{company} / {environment}"),))
     defer_section_note(
         f"{freshness_note('ACCOUNT_USAGE')} | "
         f"Cost basis: {metric_confidence_label('allocated')} | "
@@ -4886,11 +4877,14 @@ def render() -> None:
     if snapshot_result is not None and snapshot_result.available and not snapshot_result.data.empty:
         snapshot = snapshot_result.data.copy()
         st.caption(f"Fast snapshot available from {snapshot_result.source}. Use it for cheap triage; load detail only for investigation.")
-        s1, s2, s3, s4 = st.columns(4)
-        s1.metric("Failed Queries 24h", f"{safe_int(snapshot['FAILED_QUERIES_24H'].sum()):,}", delta_color="inverse")
-        s2.metric("Failed Tasks 24h", f"{safe_int(snapshot['FAILED_TASKS_24H'].sum()):,}", delta_color="inverse")
-        s3.metric("Credits 24h", format_credits(snapshot["CREDITS_24H"].sum()))
-        s4.metric("Cortex 7d", f"${safe_float(snapshot['CORTEX_COST_7D_USD'].sum()):,.0f}", delta_color="inverse")
+        render_shell_snapshot(
+            (
+                ("Failed Queries", f"{safe_int(snapshot['FAILED_QUERIES_24H'].sum()):,}"),
+                ("Failed Tasks", f"{safe_int(snapshot['FAILED_TASKS_24H'].sum()):,}"),
+                ("Credits 24h", format_credits(snapshot["CREDITS_24H"].sum())),
+                ("Cortex 7d", f"${safe_float(snapshot['CORTEX_COST_7D_USD'].sum()):,.0f}"),
+            )
+        )
         if st.button("Use Fast Snapshot", key="dba_control_room_use_snapshot"):
             st.session_state["dba_control_room_data"] = _control_room_snapshot_to_data(snapshot)
             st.session_state["dba_control_room_company"] = company
@@ -5071,13 +5065,12 @@ def render() -> None:
 
     st.divider()
 
-    if st.session_state.get("dba_control_room_active_view") not in DBA_CONTROL_ROOM_PANES:
-        st.session_state["dba_control_room_active_view"] = "Fast Watch"
-    active_view = st.selectbox(
+    active_view = render_workflow_selector(
         "DBA Control Room view",
+        "dba_control_room_active_view",
         DBA_CONTROL_ROOM_PANES,
-        format_func=lambda pane: DBA_CONTROL_ROOM_PANE_LABELS.get(str(pane), str(pane)),
-        key="dba_control_room_active_view",
+        labels=DBA_CONTROL_ROOM_PANE_LABELS,
+        columns=4,
     )
 
     if active_view == "Fast Watch":
@@ -5536,11 +5529,12 @@ def render() -> None:
                 safe_float(task_compare.get("EST_CREDITS_DELTA", pd.Series(dtype=float)).sum() if not task_compare.empty else 0)
                 + safe_float(proc_compare.get("EST_CREDITS_DELTA", pd.Series(dtype=float)).sum() if not proc_compare.empty else 0)
             )
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Task Regressions", f"{len(task_regressions):,}", delta_color="inverse")
-            k2.metric("Procedure Regressions", f"{len(proc_regressions):,}", delta_color="inverse")
-            k3.metric("Est. Credit Delta", format_credits(total_credit_delta), delta_color="inverse")
-            k4.metric("Est. Cost Delta", f"${credits_to_dollars(total_credit_delta, credit_price):,.2f}", delta_color="inverse")
+            render_shell_snapshot((
+                ("Task Regressions", f"{len(task_regressions):,}"),
+                ("Procedure Regressions", f"{len(proc_regressions):,}"),
+                ("Est. Credit Delta", format_credits(total_credit_delta)),
+                ("Est. Cost Delta", f"${credits_to_dollars(total_credit_delta, credit_price):,.2f}"),
+            ))
 
             show_all = st.checkbox("Show stable rows too", value=False, key="dba_release_show_all")
             task_display = task_compare if show_all else task_regressions

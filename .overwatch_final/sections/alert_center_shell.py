@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_alert_center_full_workspace_requested"
@@ -74,10 +74,7 @@ def _full_workspace_requested() -> bool:
         return False
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
-    if evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS):
-        return True
-    active_view = st.session_state.get("alert_center_active_view")
-    return active_view not in (None, "Alert Brief")
+    return False
 
 
 def _open_workspace(view: str | None = None) -> None:
@@ -135,10 +132,7 @@ def _render_operating_snapshot() -> None:
         ("Route", "Issue Inbox"),
     )
     st.markdown("**Operating Snapshot**")
-    cols = st.columns(4)
-    for col, (label, value) in zip(cols, metrics):
-        with col:
-            st.metric(label, value)
+    render_shell_snapshot(metrics)
 
 
 def _render_workflow_launchpad() -> None:

@@ -2,6 +2,7 @@
 import streamlit as st
 
 from config import DEFAULTS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     build_app_runtime_cost_sql,
     format_snowflake_error,
@@ -135,17 +136,17 @@ def render():
             monthly_app_cost = credits_to_dollars(app_credits, credit_price)
             value_ratio = total_monthly / monthly_app_cost if monthly_app_cost > 0 else None
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Monthly Value", f"${total_monthly:,.2f}")
-            c2.metric("Annualized Value", f"${total_annual:,.2f}")
-            c3.metric("Actions Logged", f"{total_actions:,}")
-            c4.metric("Verified Actions", f"{total_verified:,}")
-
-            st.metric("Measured OVERWATCH Runtime Cost", f"${monthly_app_cost:,.2f}")
-            st.metric(
-                "Snowflake Value Multiple",
-                f"{value_ratio:.1f}x" if value_ratio is not None else "Not measured",
-                help=f"Monthly logged value divided by measured 30-day OVERWATCH runtime cost from {app_warehouse or 'available metering components'}.",
+            render_shell_snapshot((
+                ("Monthly Value", f"${total_monthly:,.2f}"),
+                ("Annualized Value", f"${total_annual:,.2f}"),
+                ("Actions Logged", f"{total_actions:,}"),
+                ("Verified Actions", f"{total_verified:,}"),
+                ("OVERWATCH Runtime Cost", f"${monthly_app_cost:,.2f}"),
+                ("Value Multiple", f"{value_ratio:.1f}x" if value_ratio is not None else "Not measured"),
+            ))
+            st.caption(
+                "Value Multiple = monthly logged value divided by measured 30-day OVERWATCH runtime cost "
+                f"from {app_warehouse or 'available metering components'}."
             )
             st.caption(
                 " | ".join([

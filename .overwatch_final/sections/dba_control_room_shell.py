@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_dba_control_room_full_workspace_requested"
@@ -89,6 +89,10 @@ def _full_workspace_requested() -> bool:
         return False
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
+    return False
+
+
+def _loaded_evidence_available() -> bool:
     return evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
 
 
@@ -128,10 +132,10 @@ def _render_action_brief() -> None:
         with detail_col:
             st.markdown("**Open the DBA workspace when a signal needs triage, release proof, or a handoff.**")
             st.caption(
-                evidence_caption(
-                    st.session_state,
-                    _FULL_WORKSPACE_STATE_KEYS,
-                    "Fast snapshot, source health, routed actions, and exports stay on demand.",
+                (
+                    evidence_caption(st.session_state, _FULL_WORKSPACE_STATE_KEYS, "")
+                    if _loaded_evidence_available()
+                    else "Fast snapshot, source health, routed actions, and exports stay on demand."
                 )
             )
         with action_col:
@@ -147,10 +151,7 @@ def _render_operating_snapshot() -> None:
         ("Rate", f"${_credit_price():.2f}"),
     )
     st.markdown("**Operating Snapshot**")
-    cols = st.columns(4)
-    for col, (label, value) in zip(cols, metrics):
-        with col:
-            st.metric(label, value)
+    render_shell_snapshot(metrics)
 
 
 def _render_workflow_launchpad() -> None:

@@ -971,6 +971,68 @@ code, pre, .stCodeBlock {
     line-height: 1.35;
     margin-top: 0.12rem;
 }
+.ow-shell-snapshot-grid {
+    display: grid;
+    gap: 0.65rem;
+    margin: 0.35rem 0 0.85rem;
+}
+.ow-shell-snapshot-card {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: rgba(var(--accent-rgb), 0.045);
+    padding: 0.62rem 0.7rem;
+}
+.ow-shell-snapshot-card span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    font-weight: 850;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.ow-shell-snapshot-card strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 0.94rem;
+    font-weight: 850;
+    line-height: 1.25;
+    margin-top: 0.18rem;
+    overflow-wrap: anywhere;
+}
+.ow-workload-lane-card {
+    min-height: 7.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.24rem;
+}
+.ow-workload-lane-label {
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    font-weight: 850;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.ow-workload-lane-state {
+    color: var(--text-primary);
+    font-size: 1.02rem;
+    font-weight: 850;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+.ow-workload-lane-value {
+    color: var(--accent2);
+    font-size: 0.9rem;
+    font-weight: 800;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+.ow-workload-lane-detail {
+    color: var(--text-secondary);
+    font-size: 0.79rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
 .ow-section-guide {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1100,6 +1162,9 @@ code, pre, .stCodeBlock {
     .ow-brief-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
+    .ow-shell-snapshot-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
     .ow-section-guide {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -1120,6 +1185,9 @@ code, pre, .stCodeBlock {
         grid-template-columns: 1fr;
     }
     .ow-brief-grid {
+        grid-template-columns: 1fr !important;
+    }
+    .ow-shell-snapshot-grid {
         grid-template-columns: 1fr !important;
     }
 }

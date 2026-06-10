@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 
 from config import DEFAULTS, THRESHOLDS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     build_idle_warehouse_sql,
     build_mart_recommendation_failed_tasks_sql,
@@ -240,13 +241,14 @@ def _render_automation_readiness(session):
     evidence = int((board["AUTOMATION_LANE"] == "Evidence Required").sum())
     manual = int((board["AUTOMATION_LANE"] == "Manual Only").sum())
     auto_close = int((board["AUTOMATION_LANE"] == "Auto-Close Candidate").sum())
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("Candidates", f"{len(board):,}")
-    m2.metric("Guided Ready", f"{ready:,}")
-    m3.metric("Approval Needed", f"{approval:,}", delta_color="inverse")
-    m4.metric("Evidence Needed", f"{evidence:,}", delta_color="inverse")
-    m5.metric("Manual Only", f"{manual:,}")
-    m6.metric("Auto-Close", f"{auto_close:,}")
+    render_shell_snapshot((
+        ("Candidates", f"{len(board):,}"),
+        ("Guided Ready", f"{ready:,}"),
+        ("Approval Needed", f"{approval:,}"),
+        ("Evidence Needed", f"{evidence:,}"),
+        ("Manual Only", f"{manual:,}"),
+        ("Auto-Close", f"{auto_close:,}"),
+    ))
 
     first = board.iloc[0]
     st.warning(
@@ -322,13 +324,14 @@ def _render_queue(session):
     )
     evidence_gap_mask = ~evidence_gap.isin(["Ready to work", "Verified closure", "Ignored with reason"])
     overdue_mask = open_mask & (due_state == "Overdue")
-    q1, q2, q3, q4, q5, q6 = st.columns(6)
-    q1.metric("Open", int(open_mask.sum()))
-    q2.metric("High/Critical", int(high_mask.sum()))
-    q3.metric("Overdue", int(overdue_mask.sum()), delta_color="inverse")
-    q4.metric("Evidence Gaps", int(evidence_gap_mask.sum()), delta_color="inverse")
-    q5.metric("Verified Fixed", int(verified_fixed_mask.sum()))
-    q6.metric("Savings Queue", f"${float(df_queue['EST_MONTHLY_SAVINGS'].fillna(0).sum()):,.0f}")
+    render_shell_snapshot((
+        ("Open", f"{int(open_mask.sum()):,}"),
+        ("High / Critical", f"{int(high_mask.sum()):,}"),
+        ("Overdue", f"{int(overdue_mask.sum()):,}"),
+        ("Evidence Gaps", f"{int(evidence_gap_mask.sum()):,}"),
+        ("Verified Fixed", f"{int(verified_fixed_mask.sum()):,}"),
+        ("Savings Queue", f"${float(df_queue['EST_MONTHLY_SAVINGS'].fillna(0).sum()):,.0f}"),
+    ))
     if int(soft_fixed_mask.sum()):
         st.warning(f"{int(soft_fixed_mask.sum())} fixed action(s) are missing verified closure evidence.")
 
@@ -817,12 +820,13 @@ def render():
                 df_recs["Generated SQL Fix"].astype(str).str.contains("No safe automatic SQL fix", case=False, na=False).sum()
             ) if "Generated SQL Fix" in df_recs.columns else 0
             decisive_pct = proof_ready / max(len(df_recs), 1) * 100
-            c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("High/Critical", len(high))
-            c2.metric("Open Findings", len(df_recs))
-            c3.metric("Est. Monthly Savings", f"${monthly:,.0f}")
-            c4.metric("Proof-Ready", f"{proof_ready:,}", delta=f"{decisive_pct:.0f}%")
-            c5.metric("SQL Fix Candidates", f"{max(sql_ready - no_auto_fix, 0):,}", delta=f"{no_auto_fix:,} manual")
+            render_shell_snapshot((
+                ("High / Critical", f"{len(high):,}"),
+                ("Open Findings", f"{len(df_recs):,}"),
+                ("Est. Monthly Savings", f"${monthly:,.0f}"),
+                ("Proof-Ready", f"{proof_ready:,} ({decisive_pct:.0f}%)"),
+                ("SQL Fix Candidates", f"{max(sql_ready - no_auto_fix, 0):,} ({no_auto_fix:,} manual)"),
+            ))
             defer_source_note(
                 metric_confidence_label("estimated"),
                 freshness_note("ACCOUNT_USAGE"),

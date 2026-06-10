@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 from config import DEFAULTS
 
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     build_task_health_sql,
     credits_to_dollars,
@@ -682,12 +683,13 @@ def render():
     })
     health_score = health["score"]
 
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Users", f"{_first_number(overview, 'TOTAL_USERS'):,.0f}")
-    k2.metric("Databases", f"{_first_number(overview, 'ACTIVE_DATABASES'):,.0f}")
-    k3.metric("Success Rate", f"{success_rate:.1f}%")
-    k4.metric("Avg Elapsed", f"{_first_number(overview, 'AVG_ELAPSED_SEC'):,.2f}s")
-    k5.metric("Total Credits", format_credits(_first_number(metering, "TOTAL_CREDITS")))
+    render_shell_snapshot((
+        ("Users", f"{_first_number(overview, 'TOTAL_USERS'):,.0f}"),
+        ("Databases", f"{_first_number(overview, 'ACTIVE_DATABASES'):,.0f}"),
+        ("Success Rate", f"{success_rate:.1f}%"),
+        ("Avg Elapsed", f"{_first_number(overview, 'AVG_ELAPSED_SEC'):,.2f}s"),
+        ("Total Credits", format_credits(_first_number(metering, "TOTAL_CREDITS"))),
+    ))
     defer_source_note(
         f"Health state: {health['label']}",
         metric_confidence_label("exact"),
@@ -719,11 +721,12 @@ def render():
             height=280,
         )
 
-    s1, s2, s3, s4 = st.columns(4)
-    s1.metric("Compute Credits", format_credits(_first_number(metering, "COMPUTE_CREDITS")))
-    s2.metric("Cloud Credits", format_credits(_first_number(metering, "WAREHOUSE_CLOUD_CREDITS")))
-    s3.metric("Active Storage", f"{_first_number(storage, 'ACTIVE_STORAGE_TB'):,.2f} TB")
-    s4.metric("Failsafe Storage", f"{_first_number(storage, 'FAILSAFE_STORAGE_TB'):,.2f} TB")
+    render_shell_snapshot((
+        ("Compute Credits", format_credits(_first_number(metering, "COMPUTE_CREDITS"))),
+        ("Cloud Credits", format_credits(_first_number(metering, "WAREHOUSE_CLOUD_CREDITS"))),
+        ("Active Storage", f"{_first_number(storage, 'ACTIVE_STORAGE_TB'):,.2f} TB"),
+        ("Failsafe Storage", f"{_first_number(storage, 'FAILSAFE_STORAGE_TB'):,.2f} TB"),
+    ))
 
     active_pane = render_workflow_selector(
         "Usage detail view",

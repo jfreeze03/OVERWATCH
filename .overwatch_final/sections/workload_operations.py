@@ -1,6 +1,7 @@
 # sections/workload_operations.py - consolidated DBA workload command center
 from __future__ import annotations
 
+import html
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from importlib import import_module
@@ -8,6 +9,7 @@ from importlib import import_module
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
+from sections.shell_helpers import render_shell_snapshot
 import utils as _utils
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -25,6 +27,7 @@ format_snowflake_error = _lazy_util("format_snowflake_error")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
+render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 
 
@@ -522,17 +525,38 @@ def _render_workload_action_brief(company: str, environment: str, brief: dict) -
 
 def _render_workload_metric_rows(summary: dict) -> None:
     loaded = bool(summary.get("loaded"))
-    cols = st.columns(4)
     if not loaded:
-        cols[0].metric("Scope", "Company")
-        cols[1].metric("Window", "24h")
-        cols[2].metric("Evidence", "Refresh")
-        cols[3].metric("Route", "Live triage")
+        render_shell_snapshot((
+            ("Scope", "Company"),
+            ("Window", "24h"),
+            ("Evidence", "Refresh"),
+            ("Route", "Live triage"),
+        ))
         return
-    cols[0].metric("Queries", f"{safe_int(summary.get('queries')):,}")
-    cols[1].metric("Failed", f"{safe_int(summary.get('failed')):,}", delta_color="inverse")
-    cols[2].metric("Queued", f"{safe_int(summary.get('queued')):,}", delta_color="inverse")
-    cols[3].metric("P95", f"{safe_float(summary.get('p95')):,.1f}s")
+    render_shell_snapshot((
+        ("Queries", f"{safe_int(summary.get('queries')):,}"),
+        ("Failed", f"{safe_int(summary.get('failed')):,}"),
+        ("Queued", f"{safe_int(summary.get('queued')):,}"),
+        ("P95", f"{safe_float(summary.get('p95')):,.1f}s"),
+    ))
+
+
+def _render_workload_lane_card(lane: dict) -> None:
+    label = html.escape(str(lane.get("label") or "Live lane"))
+    state = html.escape(str(lane.get("state") or "Review"))
+    value = html.escape(str(lane.get("value") or "Live route"))
+    detail = html.escape(str(lane.get("detail") or "Open the lane for current workload evidence."))
+    st.markdown(
+        (
+            '<div class="ow-workload-lane-card">'
+            f'<span class="ow-workload-lane-label">{label}</span>'
+            f'<strong class="ow-workload-lane-state">{state}</strong>'
+            f'<span class="ow-workload-lane-value">{value}</span>'
+            f'<span class="ow-workload-lane-detail">{detail}</span>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _render_workload_status_lanes(summary: dict, task_summary: dict | None = None) -> None:
@@ -541,9 +565,7 @@ def _render_workload_status_lanes(summary: dict, task_summary: dict | None = Non
     for idx, lane in enumerate(_workload_status_lanes(summary, task_summary)):
         with cols[idx]:
             with st.container(border=True):
-                st.markdown(f"**{lane['label']}**")
-                st.metric(str(lane.get("state") or "Review"), str(lane.get("value") or "Live route"))
-                st.caption(str(lane.get("detail") or ""))
+                _render_workload_lane_card(lane)
                 if st.button(str(lane.get("button") or "Open"), key=f"workload_ops_lane_{idx}", width="stretch"):
                     workflow = str(lane.get("workflow") or "Live triage")
                     if workflow in WORKFLOWS:
@@ -610,10 +632,11 @@ def render() -> None:
     if st.session_state.get("exceptions_only_mode"):
         st.warning("Exceptions-only mode: start with running work, failures, SLA breaches, and release regressions.")
 
-    active_view = st.selectbox(
+    active_view = render_mode_selector(
         "Workload Operations view",
+        "workload_operations_view",
         WORKLOAD_OPERATIONS_VIEWS,
-        key="workload_operations_view",
+        default=WORKLOAD_OPERATIONS_VIEWS[0],
     )
     if active_view == "Workload Brief":
         return

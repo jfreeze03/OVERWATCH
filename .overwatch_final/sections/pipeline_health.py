@@ -25,6 +25,7 @@ from utils import (
     show_to_df,
     upsert_actions,
 )
+from sections.shell_helpers import render_shell_snapshot
 
 
 PIPELINE_HEALTH_PANES = (
@@ -263,10 +264,11 @@ def render():
             if df_fresh.empty:
                 st.success("No stale tables found for the selected threshold.")
             else:
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Stale tables", len(df_fresh))
-                c2.metric("Databases", df_fresh["DATABASE_NAME"].nunique())
-                c3.metric("Largest stale table GB", f"{float(df_fresh['SIZE_GB'].max() or 0):,.1f}")
+                render_shell_snapshot((
+                    ("Stale tables", f"{len(df_fresh):,}"),
+                    ("Databases", f"{df_fresh['DATABASE_NAME'].nunique():,}"),
+                    ("Largest stale table GB", f"{float(df_fresh['SIZE_GB'].max() or 0):,.1f}"),
+                ))
                 render_priority_dataframe(
                     df_fresh,
                     title="Freshness exceptions to work first",
@@ -334,7 +336,7 @@ def render():
             if df_loads.empty:
                 st.success("No copy/load failures found in the selected window.")
             else:
-                st.metric("Failed load groups", len(df_loads))
+                render_shell_snapshot((("Failed load groups", f"{len(df_loads):,}"),))
                 render_priority_dataframe(
                     df_loads,
                     title="Load failures to work first",
@@ -399,9 +401,10 @@ def render():
             if df_volume.empty:
                 st.success("No tables matched the volume threshold.")
             else:
-                c1, c2 = st.columns(2)
-                c1.metric("Watchlist tables", len(df_volume))
-                c2.metric("Total watchlist GB", f"{float(df_volume['SIZE_GB'].sum() or 0):,.1f}")
+                render_shell_snapshot((
+                    ("Watchlist tables", f"{len(df_volume):,}"),
+                    ("Total watchlist GB", f"{float(df_volume['SIZE_GB'].sum() or 0):,.1f}"),
+                ))
                 render_priority_dataframe(
                     df_volume,
                     title="Volume exceptions to review first",
@@ -450,10 +453,11 @@ def render():
             if df_pipe.empty:
                 st.info("No Snowpipe usage found for the selected period and company scope.")
             else:
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Pipes active", f"{df_pipe['PIPE_NAME'].nunique():,}")
-                c2.metric("Credits", f"{safe_float(df_pipe['DAILY_CREDITS'].sum()):,.2f}")
-                c3.metric("Files inserted", f"{safe_int(df_pipe['FILES_INSERTED'].sum()):,}")
+                render_shell_snapshot((
+                    ("Pipes active", f"{df_pipe['PIPE_NAME'].nunique():,}"),
+                    ("Credits", f"{safe_float(df_pipe['DAILY_CREDITS'].sum()):,.2f}"),
+                    ("Files inserted", f"{safe_int(df_pipe['FILES_INSERTED'].sum()):,}"),
+                ))
                 render_priority_dataframe(
                     df_pipe,
                     title="Snowpipe cost and volume drivers",
@@ -492,10 +496,11 @@ def render():
                 bad_states = pd.Series([False] * len(df_dyn), index=df_dyn.index)
                 if state_col in df_dyn.columns:
                     bad_states = ~df_dyn[state_col].fillna("").astype(str).str.upper().isin(["", "SUCCESS", "SUCCEEDED", "ACTIVE"])
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Dynamic tables", f"{len(df_dyn):,}")
-                c2.metric("Refresh alerts", f"{int(bad_states.sum()):,}", delta_color="inverse")
-                c3.metric("Databases", f"{df_dyn['DATABASE_NAME'].nunique() if 'DATABASE_NAME' in df_dyn.columns else 0:,}")
+                render_shell_snapshot((
+                    ("Dynamic tables", f"{len(df_dyn):,}"),
+                    ("Refresh alerts", f"{int(bad_states.sum()):,}"),
+                    ("Databases", f"{df_dyn['DATABASE_NAME'].nunique() if 'DATABASE_NAME' in df_dyn.columns else 0:,}"),
+                ))
                 render_priority_dataframe(
                     df_dyn,
                     title="Dynamic tables needing attention",

@@ -9,6 +9,7 @@ import zipfile
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DEFAULTS, DAY_WINDOW_OPTIONS
+from sections.shell_helpers import render_shell_snapshot
 import utils as _utils
 from utils.section_guidance import defer_source_note
 
@@ -750,10 +751,7 @@ def _render_powerpoint_kpi_strip(kpi_rows: pd.DataFrame) -> None:
         ("Critical / High", lookup.get("Critical/High alerts", ("0", ""))[0]),
         ("Open Actions", lookup.get("Open actions", ("0", ""))[0]),
     ]
-    cols = st.columns(4)
-    for col, (label, value) in zip(cols, cards):
-        with col:
-            st.metric(label, value)
+    render_shell_snapshot(tuple(cards))
 
 
 def _render_powerpoint_slide_pack(
@@ -880,10 +878,7 @@ def _render_executive_operating_snapshot(
             ("Deploy", f"{summary['migration_blockers']:,}"),
         )
     st.markdown("**Operating Snapshot**")
-    cols = st.columns(4)
-    for col, (label, value) in zip(cols, metrics):
-        with col:
-            st.metric(label, value)
+    render_shell_snapshot(metrics)
 
 
 def _source_health_rows(snapshot: dict) -> pd.DataFrame:

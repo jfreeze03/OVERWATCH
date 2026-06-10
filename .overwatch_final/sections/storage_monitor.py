@@ -1,6 +1,7 @@
 # sections/storage_monitor.py - Storage overview, data freshness, iceberg, egress
 import streamlit as st
 from config import DEFAULTS
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     build_mart_storage_db_detail_sql,
     build_mart_storage_trend_sql,
@@ -124,11 +125,12 @@ def render():
 
         if latest is not None:
             total_tb = safe_float(latest.get("TOTAL_STORAGE_TB", 0))
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Database GB",  f"{safe_float(latest.get('STORAGE_GB',0)):,.1f}")
-            c2.metric("Failsafe GB",  f"{safe_float(latest.get('FAILSAFE_GB',0)):,.1f}")
-            c3.metric("Stage GB",     f"{safe_float(latest.get('STAGE_GB',0)):,.1f}")
-            c4.metric("Est Monthly Cost", f"${total_tb * storage_cost_per_tb:,.2f}")
+            render_shell_snapshot((
+                ("Database GB", f"{safe_float(latest.get('STORAGE_GB', 0)):,.1f}"),
+                ("Failsafe GB", f"{safe_float(latest.get('FAILSAFE_GB', 0)):,.1f}"),
+                ("Stage GB", f"{safe_float(latest.get('STAGE_GB', 0)):,.1f}"),
+                ("Est Monthly Cost", f"${total_tb * storage_cost_per_tb:,.2f}"),
+            ))
             confidence = "account-wide" if company != "ALL" else "exact"
             defer_source_note(
                 metric_confidence_label(confidence),

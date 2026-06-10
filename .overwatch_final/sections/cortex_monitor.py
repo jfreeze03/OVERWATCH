@@ -1,6 +1,7 @@
 # sections/cortex_monitor.py - AI & Cortex Code usage: users, trends, anomalies, predictive alerts
 import streamlit as st
 import pandas as pd
+from sections.shell_helpers import render_shell_snapshot
 from utils.workflows import render_load_status, render_priority_dataframe, render_workflow_selector
 from utils import (
     format_snowflake_error,
@@ -426,16 +427,19 @@ def _render_cortex_control_brief(session, company: str) -> None:
             spike_users=safe_int(row.get("HEAVY_USERS")),
             active_users=safe_int(row.get("ACTIVE_USERS")),
         )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Projected 30d Cost", f"${projected_cost:,.2f}")
-        c2.metric("Active Users", f"{safe_int(row.get('ACTIVE_USERS')):,}")
-        c3.metric("Heavy Users", f"{safe_int(row.get('HEAVY_USERS')):,}", delta_color="inverse")
-        c4.metric("Requests", f"{safe_int(row.get('TOTAL_REQUESTS')):,}")
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Daily Budget", f"${daily_budget:,.2f}")
-        k2.metric("Avg Daily Burn", f"${avg_daily_cost:,.2f}", delta=f"{(avg_daily_cost - daily_budget):+,.2f} vs budget" if daily_budget else None)
-        k3.metric("Code AI Credits", format_credits(safe_float(row.get("TOTAL_CREDITS")), _ai_credit_rate()))
-        k4.metric("AI Function Projection", f"${ai_projected_cost:,.2f}")
+        render_shell_snapshot((
+            ("Projected 30d Cost", f"${projected_cost:,.2f}"),
+            ("Active Users", f"{safe_int(row.get('ACTIVE_USERS')):,}"),
+            ("Heavy Users", f"{safe_int(row.get('HEAVY_USERS')):,}"),
+            ("Requests", f"{safe_int(row.get('TOTAL_REQUESTS')):,}"),
+        ))
+        burn_delta = f" ({(avg_daily_cost - daily_budget):+,.2f} vs budget)" if daily_budget else ""
+        render_shell_snapshot((
+            ("Daily Budget", f"${daily_budget:,.2f}"),
+            ("Avg Daily Burn", f"${avg_daily_cost:,.2f}{burn_delta}"),
+            ("Code AI Credits", format_credits(safe_float(row.get("TOTAL_CREDITS")), _ai_credit_rate())),
+            ("AI Function Projection", f"${ai_projected_cost:,.2f}"),
+        ))
         ai_note = st.session_state.get("cortex_control_ai_note", "")
         if ai_note:
             st.info(ai_note)
@@ -594,11 +598,12 @@ def render():
             df_cc = st.session_state["cm_cc_users_data"]
             total_credits = float(df_cc["TOTAL_CREDITS"].sum())
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Active Users",           df_cc["USER_NAME"].nunique())
-            c2.metric("Total Requests",         f"{int(df_cc['TOTAL_REQUESTS'].sum()):,}")
-            c3.metric("Total AI Credits",       f"{total_credits:.4f}")
-            c4.metric(f"Est. Cost (${_ai_credit_rate()}/AI cr)", f"${total_credits * _ai_credit_rate():,.2f}")
+            render_shell_snapshot((
+                ("Active Users", f"{df_cc['USER_NAME'].nunique():,}"),
+                ("Total Requests", f"{int(df_cc['TOTAL_REQUESTS'].sum()):,}"),
+                ("Total AI Credits", f"{total_credits:.4f}"),
+                (f"Est. Cost (${_ai_credit_rate()}/AI cr)", f"${total_credits * _ai_credit_rate():,.2f}"),
+            ))
             defer_source_note(metric_confidence_label("account-wide"), freshness_note("ACCOUNT_USAGE"))
 
             # Cost column
@@ -890,10 +895,11 @@ def render():
             flagged = df_an[df_an.get("ANOMALY_FLAG", pd.Series()).notna()] if "ANOMALY_FLAG" in df_an.columns else pd.DataFrame()
             spikes  = df_an[df_an.get("ANOMALY_FLAG", pd.Series()).eq("SPEND SPIKE")] if "ANOMALY_FLAG" in df_an.columns else pd.DataFrame()
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Days Analyzed",    len(df_an["USAGE_DATE"].unique()) if "USAGE_DATE" in df_an.columns else 0)
-            c2.metric("Anomalous Days",   len(flagged), delta_color="inverse")
-            c3.metric("Spend Spikes",  len(spikes),  delta_color="inverse")
+            render_shell_snapshot((
+                ("Days Analyzed", f"{len(df_an['USAGE_DATE'].unique()) if 'USAGE_DATE' in df_an.columns else 0:,}"),
+                ("Anomalous Days", f"{len(flagged):,}"),
+                ("Spend Spikes", f"{len(spikes):,}"),
+            ))
 
             if not flagged.empty:
                 st.warning(f"{len(flagged)} anomalous Cortex Code usage day(s) detected.")
@@ -992,10 +998,11 @@ def render():
             projected_month = avg_daily * days_in_month
             projected_cost  = projected_month * _ai_credit_rate()
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Avg Daily AI Credits", f"{avg_daily:.4f}")
-            c2.metric("Projected 30-day Credits", f"{projected_month:.4f}")
-            c3.metric("Projected 30-day Cost",    f"${projected_cost:,.2f}")
+            render_shell_snapshot((
+                ("Avg Daily AI Credits", f"{avg_daily:.4f}"),
+                ("Projected 30-day Credits", f"{projected_month:.4f}"),
+                ("Projected 30-day Cost", f"${projected_cost:,.2f}"),
+            ))
             defer_source_note(metric_confidence_label("projection"), freshness_note("ACCOUNT_USAGE"))
 
             if projected_month > monthly_ai_budget:
@@ -1059,9 +1066,10 @@ def render():
                         ORDER BY credits_used DESC LIMIT 100
                     """, ttl_key=f"cortex_mv_refresh_{company}", tier="standard")
                         if not df_mv.empty:
-                            c1, c2 = st.columns(2)
-                            c1.metric("MV Refreshes (7d)", len(df_mv))
-                            c2.metric("Total Credits",     format_credits(df_mv["CREDITS_USED"].sum()))
+                            render_shell_snapshot((
+                                ("MV Refreshes (7d)", f"{len(df_mv):,}"),
+                                ("Total Credits", format_credits(df_mv["CREDITS_USED"].sum())),
+                            ))
                             render_priority_dataframe(
                                 df_mv,
                                 title="Materialized view refreshes by cost",

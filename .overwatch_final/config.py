@@ -827,7 +827,7 @@ def resolve_role_profile(role: str) -> str:
     """Return the OVERWATCH navigation profile for a Snowflake role name."""
     normalized = str(role or "").strip().upper()
     if not normalized:
-        return "DBA"
+        return "REPORT"
     if normalized in ROLE_PROFILE_OVERRIDES:
         return ROLE_PROFILE_OVERRIDES[normalized]
     if normalized.endswith("_DSA") or "_DSA_" in normalized:
@@ -841,7 +841,7 @@ def resolve_role_profile(role: str) -> str:
     for profile in ROLE_SECTIONS:
         if profile in normalized:
             return profile
-    return "DBA"
+    return "REPORT"
 
 
 EXPERIENCE_VIEW_SECTIONS = {

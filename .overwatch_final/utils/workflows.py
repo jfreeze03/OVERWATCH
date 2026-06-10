@@ -35,6 +35,27 @@ _EXACT_STATUS_DISPLAY_LABELS = {
     "Not Loaded": "Load on demand",
     "Refresh Needed": "Refresh available",
 }
+_TABLE_HEADING_STYLE = (
+    "display:flex;"
+    "justify-content:space-between;"
+    "align-items:baseline;"
+    "gap:1rem;"
+    "margin:0.75rem 0 0.35rem;"
+)
+_TABLE_TITLE_STYLE = (
+    "display:block;"
+    "color:var(--text-primary, #eef8fb);"
+    "font-weight:850;"
+    "line-height:1.25;"
+    "overflow-wrap:anywhere;"
+)
+_TABLE_COUNT_STYLE = (
+    "display:block;"
+    "color:var(--text-muted, #7b9cab);"
+    "font-size:0.72rem;"
+    "line-height:1.25;"
+    "overflow-wrap:anywhere;"
+)
 
 
 def prioritize_context_columns(
@@ -392,9 +413,9 @@ def render_priority_dataframe(
     visible_rows = min(len(view), int(max_rows or 25))
     st.markdown(
         f"""
-        <div class="ow-table-heading">
-            <span>{html.escape(str(title))}</span>
-            <span>Showing {visible_rows:,} of {len(df):,}</span>
+        <div class="ow-table-heading" style="{_TABLE_HEADING_STYLE}">
+            <span style="{_TABLE_TITLE_STYLE}">{html.escape(str(title))}</span>
+            <span style="{_TABLE_COUNT_STYLE}">Showing {visible_rows:,} of {len(df):,}</span>
         </div>
         """,
         unsafe_allow_html=True,

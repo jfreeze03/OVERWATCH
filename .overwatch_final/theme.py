@@ -3,8 +3,6 @@
 #   1. carbon     - Snowflake Dark: default dark shell with Snowflake blue
 #   2. terminal   - Snowflake White: classic white with Snowflake blue
 #   3. corporate  - Henson: muted light shell with dominant red navigation
-#   4. roll_tide  - Roll Tide: Alabama crimson and white
-#   5. war_eagle  - War Eagle: Auburn navy and orange
 #
 # Architecture: All structural styles reference CSS custom properties.
 # Switching theme = injecting a new :root { } block. Zero JS required.
@@ -17,13 +15,15 @@
 #   render_theme_picker()
 import streamlit as st
 
-THEME_VERSION = "2026-06-05-roll-tide-war-eagle-v3"
+THEME_VERSION = "2026-06-10-production-theme-registry-v1"
 
 _DEFAULT_THEME = "carbon"
 _THEME_ALIASES = {
     "aurora": "carbon",
     "black_ice": "carbon",
     "midnight": "carbon",
+    "roll_tide": "carbon",
+    "war_eagle": "carbon",
 }
 
 # Theme metadata (used for the picker UI)
@@ -42,16 +42,6 @@ THEMES = {
         "label":    "Henson",
         "swatch":   "#b00020",
         "bg":       "#f1f4f7",
-    },
-    "roll_tide": {
-        "label":    "Roll Tide",
-        "swatch":   "#981D32",
-        "bg":       "#f7f7f6",
-    },
-    "war_eagle": {
-        "label":    "War Eagle",
-        "swatch":   "#DD550C",
-        "bg":       "#0C213E",
     },
 }
 
@@ -200,99 +190,6 @@ _VARS = {
 }
 """,
 
-# --- 6. ROLL TIDE - Alabama crimson and white --------------------------------
-"roll_tide": """
-:root {
-    --bg-app:          #f7f7f6;
-    --bg-sidebar:      linear-gradient(180deg, #ffffff 0%, #f2e8ea 100%);
-    --bg-card:         #ffffff;
-    --bg-card-hover:   #fbf3f4;
-    --bg-input:        #ffffff;
-    --bg-tab-list:     #ece7e6;
-    --bg-expander:     #ffffff;
-
-    --border-subtle:   #ddd6d5;
-    --border-normal:   #c7b9b9;
-    --border-strong:   #981D32;
-    --border-sidebar:  #d8c7ca;
-
-    --text-primary:    #1d1a1b;
-    --text-secondary:  #332b2d;
-    --text-muted:      #74645d;
-    --text-input:      #111111;
-    --text-heading:    #981D32;
-
-    --accent:          #981D32;
-    --accent-rgb:      152, 29, 50;
-    --accent2:         #74645d;
-    --accent3:         #c0b7b3;
-    --h1-gradient:     linear-gradient(90deg, #981D32 0%, #981D32 48%, #74645d 48%, #74645d 100%);
-
-    --metric-shadow:        0 1px 10px rgba(29, 26, 27, 0.08), 0 1px 2px rgba(29, 26, 27, 0.06);
-    --metric-hover-shadow:  0 8px 24px rgba(152, 29, 50, 0.17), 0 2px 8px rgba(29, 26, 27, 0.10);
-    --btn-bg:          linear-gradient(135deg, #ffffff, #fbf3f4);
-    --btn-bg-hover:    linear-gradient(135deg, #ffffff, #f4dde2);
-    --btn-border:      rgba(152, 29, 50, 0.36);
-    --btn-hover-shadow: 0 2px 13px rgba(152, 29, 50, 0.20);
-    --slider-track:    linear-gradient(90deg, #981D32, #74645d);
-    --tab-active-bg:   rgba(152, 29, 50, 0.10);
-    --tab-active-col:  #981D32;
-    --hr-bg:           linear-gradient(90deg, transparent, #ded6d6, transparent);
-    --scrollbar-track: #f5f1f1;
-    --scrollbar-thumb: rgba(152, 29, 50, 0.35);
-    --scrollbar-hover: rgba(116, 100, 93, 0.48);
-    --font-body:       'Inter', 'DM Sans', 'Segoe UI', system-ui, sans-serif;
-    --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
-    --extra-css:       '';
-}
-""",
-
-# --- 7. WAR EAGLE - Auburn navy and orange -----------------------------------
-"war_eagle": """
-:root {
-    --bg-app:          linear-gradient(160deg, #0C213E 0%, #132B49 52%, #3C4C60 100%);
-    --bg-sidebar:      linear-gradient(180deg, #07182F 0%, #0C213E 62%, #162F4F 100%);
-    --bg-card:         rgba(12, 33, 62, 0.84);
-    --bg-card-hover:   rgba(19, 43, 73, 0.96);
-    --bg-input:        rgba(8, 24, 47, 0.94);
-    --bg-tab-list:     rgba(12, 33, 62, 0.72);
-    --bg-expander:     rgba(12, 33, 62, 0.80);
-
-    --border-subtle:   rgba(221, 85, 12, 0.16);
-    --border-normal:   rgba(221, 85, 12, 0.34);
-    --border-strong:   rgba(221, 85, 12, 0.72);
-    --border-sidebar:  rgba(96, 106, 122, 0.24);
-
-    --text-primary:    #f7fbff;
-    --text-secondary:  #e7e9eb;
-    --text-muted:      #aab5c2;
-    --text-input:      #f7fbff;
-    --text-heading:    transparent;
-
-    --accent:          #DD550C;
-    --accent-rgb:      221, 85, 12;
-    --accent2:         #3C4C60;
-    --accent3:         #e7e9eb;
-    --h1-gradient:     linear-gradient(90deg, #f7fbff, #DD550C, #e7e9eb);
-
-    --metric-shadow:        0 4px 24px rgba(0,0,0,0.48), inset 0 1px 0 rgba(221,85,12,0.08);
-    --metric-hover-shadow:  0 8px 32px rgba(221,85,12,0.18), inset 0 1px 0 rgba(231,233,235,0.10);
-    --btn-bg:          linear-gradient(135deg, rgba(221,85,12,0.14), rgba(60,76,96,0.20));
-    --btn-bg-hover:    linear-gradient(135deg, rgba(221,85,12,0.30), rgba(60,76,96,0.32));
-    --btn-border:      rgba(221, 85, 12, 0.40);
-    --btn-hover-shadow: 0 0 20px rgba(221,85,12,0.24);
-    --slider-track:    linear-gradient(90deg, #DD550C, #e7e9eb);
-    --tab-active-bg:   rgba(221, 85, 12, 0.16);
-    --tab-active-col:  #f7fbff;
-    --hr-bg:           linear-gradient(90deg, transparent, rgba(221,85,12,0.36), transparent);
-    --scrollbar-track: rgba(8, 24, 47, 0.76);
-    --scrollbar-thumb: rgba(221, 85, 12, 0.38);
-    --scrollbar-hover: rgba(231, 233, 235, 0.56);
-    --font-body:       'Inter', 'DM Sans', system-ui, sans-serif;
-    --font-mono:       'DM Mono', 'Cascadia Mono', monospace;
-    --extra-css:       '';
-}
-""",
 }
 
 # Shared structural styles (all colors via variables)
@@ -981,23 +878,27 @@ code, pre, .stCodeBlock {
     border: 1px solid var(--border-subtle);
     border-radius: 8px;
     background: rgba(var(--accent-rgb), 0.045);
-    padding: 0.62rem 0.7rem;
+    padding: 0.68rem 0.78rem;
 }
-.ow-shell-snapshot-card span {
+.ow-shell-snapshot-card span,
+.ow-shell-snapshot-label {
     display: block;
     color: var(--text-muted);
     font-size: 0.66rem;
     font-weight: 850;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
+    line-height: 1.22;
     text-transform: uppercase;
+    overflow-wrap: anywhere;
 }
-.ow-shell-snapshot-card strong {
+.ow-shell-snapshot-card strong,
+.ow-shell-snapshot-value {
     display: block;
     color: var(--text-primary);
-    font-size: 0.94rem;
+    font-size: 0.96rem;
     font-weight: 850;
-    line-height: 1.25;
-    margin-top: 0.18rem;
+    line-height: 1.28;
+    margin-top: 0.26rem;
     overflow-wrap: anywhere;
 }
 .ow-workload-lane-card {
@@ -1166,10 +1067,10 @@ code, pre, .stCodeBlock {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
     .ow-section-guide {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
     .ow-evidence-contract {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr !important;
     }
     .ow-run-context {
         text-align: left;
@@ -1182,7 +1083,7 @@ code, pre, .stCodeBlock {
         flex-direction: column;
     }
     .ow-section-guide {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr !important;
     }
     .ow-brief-grid {
         grid-template-columns: 1fr !important;
@@ -1598,219 +1499,6 @@ _THEME_EXTRAS = {
     color: #ffffff !important;
     background: linear-gradient(135deg, #0068b7, #003545) !important;
     border-color: rgba(41,181,232,0.72) !important;
-}
-</style>
-""",
-    "roll_tide": """
-<style>
-/* Roll Tide: Alabama crimson navigation over a white shell. */
-.stButton > button {
-    color: #1d1a1b !important;
-    background: linear-gradient(135deg, #ffffff, #fbf3f4) !important;
-    border-color: rgba(152,29,50,0.36) !important;
-}
-.stButton > button:hover {
-    color: #7f1829 !important;
-    background: linear-gradient(135deg, #ffffff, #f4dde2) !important;
-    border-color: rgba(152,29,50,0.58) !important;
-}
-.stButton > button[kind="primary"],
-.stButton > button[kind="primary"] p {
-    color: #ffffff !important;
-}
-.stMain [data-testid="stMarkdownContainer"],
-.stMain [data-testid="stMarkdownContainer"] p {
-    color: #1d1a1b !important;
-}
-.stMain [data-testid="stCaptionContainer"],
-.stMain [data-testid="stCaptionContainer"] p,
-.stMain [data-testid="stCaptionContainer"] span {
-    color: #74645d !important;
-}
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] .stRadio > label,
-[data-testid="stSidebar"] p {
-    color: #332b2d !important;
-}
-[data-testid="stSidebar"] .stButton > button {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #981D32, #6f1626) !important;
-    border-color: rgba(111,22,38,0.78) !important;
-    box-shadow: 0 2px 9px rgba(152,29,50,0.18) !important;
-}
-[data-testid="stSidebar"] .stButton > button p {
-    color: inherit !important;
-}
-[data-testid="stSidebar"] .stButton > button:hover {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #b41f3b, #841b2f) !important;
-    border-color: rgba(152,29,50,0.92) !important;
-}
-[data-testid="stSidebar"] .stRadio > div > label:hover {
-    color: #981D32 !important;
-    background: rgba(152,29,50,0.07);
-}
-[data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {
-    color: #981D32 !important;
-    background: rgba(152,29,50,0.11);
-    border-left: 3px solid #981D32;
-}
-[data-testid="stSidebar"] .stButton > button[kind="primary"] {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #6f1626, #981D32) !important;
-    border-color: rgba(111,22,38,0.94) !important;
-    box-shadow: inset 4px 0 0 #c0b7b3, 0 3px 13px rgba(152,29,50,0.25) !important;
-}
-[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
-    color: #ffffff !important;
-}
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
-    color: #981D32 !important;
-}
-[data-testid="stMetric"] {
-    border-top: 3px solid rgba(152,29,50,0.75) !important;
-}
-[data-testid="stMetricValue"] { color: #1d1a1b !important; }
-[data-testid="stMetricLabel"] { color: #74645d !important; }
-[data-testid="stExpander"] {
-    background: #ffffff !important;
-    border-color: #ddd6d5 !important;
-}
-[data-testid="stExpander"] summary,
-[data-testid="stExpander"] summary > div,
-[data-testid="stExpander"] summary p,
-[data-testid="stExpander"] summary span {
-    color: #1d1a1b !important;
-}
-[data-testid="stExpander"] summary {
-    background: #ffffff !important;
-    border-radius: 7px !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #981D32, #6f1626) !important;
-    border: 1px solid rgba(111,22,38,0.78) !important;
-    border-bottom: 1px solid rgba(111,22,38,0.78) !important;
-    box-shadow: 0 2px 9px rgba(152,29,50,0.18) !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
-    color: #ffffff !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
-    background: linear-gradient(135deg, #b41f3b, #841b2f) !important;
-    border-color: rgba(152,29,50,0.92) !important;
-}
-[data-testid="stExpander"] details,
-[data-testid="stExpander"] summary,
-[data-testid="stExpander"] summary p,
-[data-testid="stExpander"] summary span,
-[data-testid="stExpander"] [data-testid="stMarkdownContainer"],
-[data-testid="stExpander"] [data-testid="stMarkdownContainer"] p {
-    color: #1f2937 !important;
-}
-[data-testid="stExpander"] summary:hover,
-[data-testid="stExpander"] summary:hover p,
-[data-testid="stExpander"] summary:hover span {
-    color: #981D32 !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover > span,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover p,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover span {
-    color: #ffffff !important;
-}
-[data-testid="stWidgetLabel"],
-[data-testid="stWidgetLabel"] p,
-.stTextInput label,
-.stTextInput label p {
-    color: #1f2937 !important;
-}
-.stTextInput input::placeholder,
-.stTextArea textarea::placeholder {
-    color: #74645d !important;
-    opacity: 1 !important;
-}
-.stTabs [data-baseweb="tab-list"] {
-    background: #ece7e6 !important;
-    border-bottom: 2px solid rgba(152,29,50,0.65);
-}
-.stTabs [data-baseweb="tab"] {
-    color: #4c4140 !important;
-    font-weight: 650;
-}
-.stTabs [aria-selected="true"] {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #981D32, #6f1626) !important;
-    border-color: rgba(111,22,38,0.72) !important;
-}
-</style>
-""",
-    "war_eagle": """
-<style>
-/* War Eagle: Auburn navy shell with orange action color. */
-[data-testid="stSidebar"] .stButton > button {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #DD550C, #0C213E) !important;
-    border-color: rgba(221,85,12,0.72) !important;
-    box-shadow: 0 2px 10px rgba(221,85,12,0.20) !important;
-}
-[data-testid="stSidebar"] .stButton > button p {
-    color: inherit !important;
-}
-[data-testid="stSidebar"] .stButton > button:hover {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #f06a16, #132B49) !important;
-    border-color: rgba(221,85,12,0.96) !important;
-}
-[data-testid="stSidebar"] .stButton > button[kind="primary"] {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #0C213E, #DD550C) !important;
-    border-color: rgba(221,85,12,0.96) !important;
-    box-shadow: inset 4px 0 0 #e7e9eb, 0 3px 14px rgba(221,85,12,0.32) !important;
-}
-[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
-    color: #ffffff !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #DD550C, #0C213E) !important;
-    border: 1px solid rgba(221,85,12,0.72) !important;
-    border-bottom: 1px solid rgba(221,85,12,0.72) !important;
-    box-shadow: 0 2px 10px rgba(221,85,12,0.20) !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary > span,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary > span > div,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
-    color: #ffffff !important;
-}
-[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
-    background: linear-gradient(135deg, #f06a16, #132B49) !important;
-    border-color: rgba(221,85,12,0.96) !important;
-}
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
-    color: #f6a15c !important;
-}
-[data-testid="stMetric"] {
-    border-top: 3px solid rgba(221,85,12,0.78) !important;
-}
-.stTabs [data-baseweb="tab-list"] {
-    background: rgba(12,33,62,0.84) !important;
-    border-bottom: 2px solid rgba(221,85,12,0.58);
-}
-.stTabs [data-baseweb="tab"] {
-    color: #e7e9eb !important;
-    font-weight: 700;
-}
-.stTabs [aria-selected="true"] {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #DD550C, #0C213E) !important;
-    border-color: rgba(221,85,12,0.74) !important;
 }
 </style>
 """,

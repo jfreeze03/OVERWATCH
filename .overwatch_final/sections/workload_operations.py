@@ -13,6 +13,46 @@ from sections.shell_helpers import render_shell_snapshot
 import utils as _utils
 from utils.section_guidance import defer_section_note, defer_source_note
 
+_LANE_CARD_STYLE = (
+    "min-height:7.1rem;"
+    "display:flex;"
+    "flex-direction:column;"
+    "gap:0.24rem;"
+)
+_LANE_LABEL_STYLE = (
+    "display:block;"
+    "color:var(--text-muted, #7b9cab);"
+    "font-size:0.66rem;"
+    "font-weight:850;"
+    "letter-spacing:0.05em;"
+    "line-height:1.2;"
+    "text-transform:uppercase;"
+    "overflow-wrap:anywhere;"
+)
+_LANE_STATE_STYLE = (
+    "display:block;"
+    "color:var(--text-primary, #eef8fb);"
+    "font-size:1.02rem;"
+    "font-weight:850;"
+    "line-height:1.2;"
+    "overflow-wrap:anywhere;"
+)
+_LANE_VALUE_STYLE = (
+    "display:block;"
+    "color:var(--accent2, #8deeff);"
+    "font-size:0.9rem;"
+    "font-weight:800;"
+    "line-height:1.25;"
+    "overflow-wrap:anywhere;"
+)
+_LANE_DETAIL_STYLE = (
+    "display:block;"
+    "color:var(--text-secondary, #b9d7e2);"
+    "font-size:0.79rem;"
+    "line-height:1.35;"
+    "overflow-wrap:anywhere;"
+)
+
 
 def _lazy_util(name: str):
     def _call(*args, **kwargs):
@@ -548,11 +588,11 @@ def _render_workload_lane_card(lane: dict) -> None:
     detail = html.escape(str(lane.get("detail") or "Open the lane for current workload evidence."))
     st.markdown(
         (
-            '<div class="ow-workload-lane-card">'
-            f'<span class="ow-workload-lane-label">{label}</span>'
-            f'<strong class="ow-workload-lane-state">{state}</strong>'
-            f'<span class="ow-workload-lane-value">{value}</span>'
-            f'<span class="ow-workload-lane-detail">{detail}</span>'
+            f'<div class="ow-workload-lane-card" style="{_LANE_CARD_STYLE}">'
+            f'<span class="ow-workload-lane-label" style="{_LANE_LABEL_STYLE}">{label}</span>'
+            f'<strong class="ow-workload-lane-state" style="{_LANE_STATE_STYLE}">{state}</strong>'
+            f'<span class="ow-workload-lane-value" style="{_LANE_VALUE_STYLE}">{value}</span>'
+            f'<span class="ow-workload-lane-detail" style="{_LANE_DETAIL_STYLE}">{detail}</span>'
             "</div>"
         ),
         unsafe_allow_html=True,

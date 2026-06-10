@@ -14,25 +14,38 @@ class ThemeRegistryTests(unittest.TestCase):
     def test_theme_picker_order_and_default(self):
         self.assertEqual(
             list(theme.THEMES.keys()),
-            ["carbon", "terminal", "corporate", "roll_tide", "war_eagle"],
+            ["carbon", "terminal", "corporate"],
         )
         labels = [value["label"] for value in theme.THEMES.values()]
         self.assertEqual(
             labels,
-            ["Snowflake Dark", "Snowflake White", "Henson", "Roll Tide", "War Eagle"],
+            ["Snowflake Dark", "Snowflake White", "Henson"],
         )
         self.assertEqual(theme._DEFAULT_THEME, "carbon")
         self.assertEqual(theme._normalize_theme_key(None), "carbon")
 
-    def test_removed_themes_alias_to_snowflake_dark(self):
+    def test_removed_and_nonproduction_themes_alias_to_snowflake_dark(self):
         labels = {key: value["label"] for key, value in theme.THEMES.items()}
         self.assertNotIn("midnight", theme.THEMES)
         self.assertNotIn("black_ice", theme.THEMES)
+        self.assertNotIn("roll_tide", theme.THEMES)
+        self.assertNotIn("war_eagle", theme.THEMES)
         self.assertNotIn("Graphite Ember", labels.values())
         self.assertNotIn("Midnight", labels.values())
+        self.assertNotIn("Roll Tide", labels.values())
+        self.assertNotIn("War Eagle", labels.values())
+        self.assertNotIn("roll_tide", theme._VARS)
+        self.assertNotIn("war_eagle", theme._VARS)
+        self.assertNotIn("roll_tide", theme._THEME_EXTRAS)
+        self.assertNotIn("war_eagle", theme._THEME_EXTRAS)
+        cost_contract_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        self.assertNotIn('"roll_tide"', cost_contract_text)
+        self.assertNotIn('"war_eagle"', cost_contract_text)
         self.assertEqual(theme._normalize_theme_key("aurora"), "carbon")
         self.assertEqual(theme._normalize_theme_key("black_ice"), "carbon")
         self.assertEqual(theme._normalize_theme_key("midnight"), "carbon")
+        self.assertEqual(theme._normalize_theme_key("roll_tide"), "carbon")
+        self.assertEqual(theme._normalize_theme_key("war_eagle"), "carbon")
 
     def test_theme_picker_uses_dropdown_not_radio(self):
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
@@ -43,15 +56,6 @@ class ThemeRegistryTests(unittest.TestCase):
     def test_snowflake_themes_use_snowflake_blue(self):
         self.assertEqual(theme.THEMES["terminal"]["swatch"], "#29B5E8")
         self.assertEqual(theme.THEMES["carbon"]["swatch"], "#29B5E8")
-
-    def test_roll_tide_and_war_eagle_palettes_are_distinct(self):
-        self.assertEqual(theme.THEMES["roll_tide"]["swatch"], "#981D32")
-        self.assertEqual(theme.THEMES["war_eagle"]["swatch"], "#DD550C")
-        self.assertIn("#981D32", theme._VARS["roll_tide"])
-        self.assertIn("#DD550C", theme._VARS["war_eagle"])
-        self.assertIn("#0C213E", theme._VARS["war_eagle"])
-        self.assertIn("background: linear-gradient(135deg, #981D32, #6f1626) !important", theme._THEME_EXTRAS["roll_tide"])
-        self.assertIn("background: linear-gradient(135deg, #DD550C, #0C213E) !important", theme._THEME_EXTRAS["war_eagle"])
 
     def test_light_themes_pin_custom_shell_text_contrast(self):
         self.assertIn(
@@ -92,7 +96,6 @@ class ThemeRegistryTests(unittest.TestCase):
         light_theme_text = {
             "corporate": ("#151f2c", "#64748b"),
             "terminal": ("#102a43", "#526b7a"),
-            "roll_tide": ("#1d1a1b", "#74645d"),
         }
         for theme_key, (body_color, caption_color) in light_theme_text.items():
             with self.subTest(theme=theme_key):
@@ -107,8 +110,6 @@ class ThemeRegistryTests(unittest.TestCase):
             "carbon": "background: linear-gradient(135deg, #0068b7, #003545) !important",
             "terminal": "background: linear-gradient(135deg, #0068b7, #00528f) !important",
             "corporate": "background: linear-gradient(135deg, #b00020, #8f001a) !important",
-            "roll_tide": "background: linear-gradient(135deg, #981D32, #6f1626) !important",
-            "war_eagle": "background: linear-gradient(135deg, #DD550C, #0C213E) !important",
         }
         for theme_key, gradient in expected_gradients.items():
             with self.subTest(theme=theme_key):

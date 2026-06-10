@@ -1576,7 +1576,6 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "30d")),
             ("Evidence", str(snapshot.get("evidence") or "Load brief")),
-            ("Focus", str(snapshot.get("focus") or "Access")),
         ))
         return
     render_shell_snapshot((

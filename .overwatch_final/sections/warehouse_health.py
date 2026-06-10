@@ -477,7 +477,6 @@ def _render_warehouse_operating_snapshot(snapshot: dict) -> None:
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "14d")),
             ("Evidence", str(snapshot.get("evidence") or "Load overview")),
-            ("Focus", str(snapshot.get("focus") or "Pressure")),
         ))
         return
     render_shell_snapshot((
@@ -530,25 +529,15 @@ def _warehouse_brief_workflow_rows() -> list[dict[str, str]]:
 def _render_warehouse_brief_launchpad() -> None:
     st.markdown("**Warehouse Investigation Workflows**")
     rows = _warehouse_brief_workflow_rows()
-    show_all = bool(st.session_state.get("warehouse_health_show_all_workflows"))
-    visible_rows = rows if show_all else rows[:3]
-    for offset in range(0, len(visible_rows), 3):
+    for offset in range(0, len(rows), 3):
         cols = st.columns(3)
-        for col, row in zip(cols, visible_rows[offset:offset + 3]):
+        for col, row in zip(cols, rows[offset:offset + 3]):
             with col:
                 st.markdown(f"**{row['VIEW']}**")
                 st.caption(row["DBA_MOVE"])
                 st.caption(row["WHEN"])
                 if st.button(row["BUTTON_LABEL"], key=f"warehouse_brief_{row['VIEW']}", width="stretch"):
                     _queue_warehouse_health_view(row["VIEW"])
-    if len(rows) > len(visible_rows):
-        if st.button("More Warehouse Workflows", key="warehouse_health_show_all_workflows_button"):
-            st.session_state["warehouse_health_show_all_workflows"] = True
-            st.rerun()
-    elif show_all and len(rows) > 3:
-        if st.button("Hide Warehouse Workflows", key="warehouse_health_hide_all_workflows_button"):
-            st.session_state["warehouse_health_show_all_workflows"] = False
-            st.rerun()
 
 
 def _warehouse_sql_exprs(session) -> dict[str, str]:

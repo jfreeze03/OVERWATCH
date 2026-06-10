@@ -122,8 +122,6 @@ def _cost_chart_palette() -> dict[str, str]:
         "carbon": {"bar": "#29B5E8", "line": "#71D3DC", "risk": "#F97316"},
         "terminal": {"bar": "#0068B7", "line": "#29B5E8", "risk": "#B45309"},
         "corporate": {"bar": "#B00020", "line": "#0F7894", "risk": "#D97706"},
-        "roll_tide": {"bar": "#981D32", "line": "#74645D", "risk": "#B45309"},
-        "war_eagle": {"bar": "#DD550C", "line": "#71D3DC", "risk": "#F97316"},
     }
     return palettes.get(theme_key, palettes["carbon"])
 

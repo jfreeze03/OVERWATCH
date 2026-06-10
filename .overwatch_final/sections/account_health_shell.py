@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, render_shell_workflows, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_account_health_full_workspace_requested"
@@ -126,39 +126,22 @@ def _render_operating_snapshot() -> None:
         ("Scope", scope_label(_active_company(), _active_environment())),
         ("Window", _window_label()),
         ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-        ("Focus", "Checklist"),
     )
     st.markdown("**Operating Snapshot**")
     render_shell_snapshot(metrics)
 
 
 def _render_workflow_launchpad() -> None:
-    st.markdown("**Account Health Workflows**")
-    visible = _WORKFLOWS[:3]
-    cols = st.columns(3)
-    for col, row in zip(cols, visible):
-        with col:
-            st.markdown(f"**{row['PANE']}**")
-            st.caption(row["MOVE"])
-            if st.button(row["BUTTON_LABEL"], key=f"account_health_shell_{row['PANE']}", width="stretch"):
-                _open_workspace(str(row["PANE"]))
+    def _open(row):
+        _open_workspace(str(row["PANE"]))
 
-    show_all = bool(st.session_state.get("account_health_shell_show_all"))
-    if not show_all and st.button("More Account Health Workflows", key="account_health_shell_more"):
-        st.session_state["account_health_shell_show_all"] = True
-        st.rerun()
-
-    if show_all:
-        extra_cols = st.columns(1)
-        for col, row in zip(extra_cols, _WORKFLOWS[3:]):
-            with col:
-                st.markdown(f"**{row['PANE']}**")
-                st.caption(row["MOVE"])
-                if st.button(row["BUTTON_LABEL"], key=f"account_health_shell_extra_{row['PANE']}", width="stretch"):
-                    _open_workspace(str(row["PANE"]))
-        if st.button("Hide Account Health Workflows", key="account_health_shell_hide"):
-            st.session_state["account_health_shell_show_all"] = False
-            st.rerun()
+    render_shell_workflows(
+        "Account Health Workflows",
+        _WORKFLOWS,
+        label_key="PANE",
+        key_prefix="account_health_shell",
+        on_open=_open,
+    )
 
 
 def render() -> None:

@@ -930,25 +930,15 @@ def _apply_alert_center_brief_first_default() -> None:
 def _render_alert_center_brief_launchpad() -> None:
     st.markdown("**Morning Alert Workflows**")
     rows = _alert_center_brief_workflow_rows()
-    show_all = bool(st.session_state.get("alert_center_show_all_workflows"))
-    visible_rows = rows if show_all else rows[:3]
-    for offset in range(0, len(visible_rows), 3):
+    for offset in range(0, len(rows), 3):
         cols = st.columns(3)
-        for col, row in zip(cols, visible_rows[offset:offset + 3]):
+        for col, row in zip(cols, rows[offset:offset + 3]):
             with col:
                 st.markdown(f"**{row['VIEW']}**")
                 st.caption(row["DBA_MOVE"])
                 st.caption(row["WHEN"])
                 if st.button(row["BUTTON_LABEL"], key=f"alert_center_brief_{row['VIEW']}", width="stretch"):
                     _queue_alert_center_view(row["VIEW"])
-    if len(rows) > len(visible_rows):
-        if st.button("More Alert Workflows", key="alert_center_show_all_workflows_button"):
-            st.session_state["alert_center_show_all_workflows"] = True
-            st.rerun()
-    elif show_all and len(rows) > 3:
-        if st.button("Hide Alert Workflows", key="alert_center_hide_all_workflows_button"):
-            st.session_state["alert_center_show_all_workflows"] = False
-            st.rerun()
 
 
 def _render_alert_center_action_brief(brief: dict) -> None:

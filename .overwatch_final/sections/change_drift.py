@@ -2148,25 +2148,15 @@ def _change_brief_workflow_rows() -> list[dict[str, str]]:
 def _render_change_brief_launchpad() -> None:
     st.markdown("**Change Investigation Workflows**")
     rows = _change_brief_workflow_rows()
-    show_all = bool(st.session_state.get("change_drift_show_all_workflows"))
-    visible_rows = rows if show_all else rows[:3]
-    for offset in range(0, len(visible_rows), 3):
+    for offset in range(0, len(rows), 3):
         cols = st.columns(3)
-        for col, row in zip(cols, visible_rows[offset:offset + 3]):
+        for col, row in zip(cols, rows[offset:offset + 3]):
             with col:
                 st.markdown(f"**{row['WORKFLOW']}**")
                 st.caption(row["DBA_MOVE"])
                 st.caption(row["WHEN"])
                 if st.button(row["BUTTON_LABEL"], key=f"change_brief_{row['WORKFLOW']}", width="stretch"):
                     _queue_change_workflow(row["WORKFLOW"])
-    if len(rows) > len(visible_rows):
-        if st.button("More Change Workflows", key="change_drift_show_all_workflows_button"):
-            st.session_state["change_drift_show_all_workflows"] = True
-            st.rerun()
-    elif show_all and len(rows) > 3:
-        if st.button("Hide Change Workflows", key="change_drift_hide_all_workflows_button"):
-            st.session_state["change_drift_show_all_workflows"] = False
-            st.rerun()
 
 
 def _build_change_drift_markdown(

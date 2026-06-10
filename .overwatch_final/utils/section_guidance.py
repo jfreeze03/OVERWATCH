@@ -10,6 +10,72 @@ import streamlit as st
 
 SECTION_GUIDANCE_VERSION = "2026-06-03-bottom-notes-v1"
 _DEFERRED_NOTES_PREFIX = "_overwatch_deferred_section_notes"
+_GUIDE_GRID_STYLE = (
+    "display:grid;"
+    "grid-template-columns:repeat(4,minmax(0,1fr));"
+    "gap:0.65rem;"
+    "margin:0.2rem 0 0.85rem;"
+)
+_GUIDE_CARD_STYLE = (
+    "min-width:0;"
+    "border-top:1px solid var(--border-subtle, rgba(41,181,232,0.18));"
+    "padding:0.55rem 0.05rem 0;"
+)
+_GUIDE_LABEL_STYLE = (
+    "display:block;"
+    "color:var(--text-muted, #7b9cab);"
+    "font-size:0.64rem;"
+    "font-weight:850;"
+    "letter-spacing:0.06em;"
+    "line-height:1.2;"
+    "text-transform:uppercase;"
+    "overflow-wrap:anywhere;"
+)
+_GUIDE_DETAIL_STYLE = (
+    "display:block;"
+    "color:var(--text-secondary, #b9d7e2);"
+    "font-size:0.8rem;"
+    "line-height:1.35;"
+    "margin-top:0.18rem;"
+    "overflow-wrap:anywhere;"
+)
+_EVIDENCE_GRID_STYLE = (
+    "display:grid;"
+    "grid-template-columns:repeat(2,minmax(0,1fr));"
+    "gap:0.7rem;"
+    "margin:0.15rem 0 0.35rem;"
+)
+_EVIDENCE_CARD_STYLE = (
+    "min-width:0;"
+    "border:1px solid var(--border-subtle, rgba(41,181,232,0.18));"
+    "border-radius:8px;"
+    "padding:0.75rem 0.8rem;"
+    "background:var(--bg-expander, rgba(10,27,35,0.68));"
+    "color:var(--text-secondary, #b9d7e2);"
+    "font-size:0.78rem;"
+    "line-height:1.35;"
+    "overflow-wrap:anywhere;"
+)
+_EVIDENCE_SOURCE_STYLE = (
+    "display:block;"
+    "color:var(--text-primary, #eef8fb);"
+    "font-weight:850;"
+    "font-size:0.82rem;"
+    "line-height:1.25;"
+    "overflow-wrap:anywhere;"
+)
+_EVIDENCE_ROW_STYLE = "display:block;margin-top:0.38rem;overflow-wrap:anywhere;"
+_EVIDENCE_LABEL_STYLE = (
+    "display:block;"
+    "color:var(--text-muted, #7b9cab);"
+    "font-size:0.62rem;"
+    "font-weight:850;"
+    "letter-spacing:0.06em;"
+    "line-height:1.2;"
+    "text-transform:uppercase;"
+    "margin-bottom:0.08rem;"
+    "overflow-wrap:anywhere;"
+)
 
 SECTION_OPERATING_GUIDE = {
     "Executive Landing": {
@@ -274,13 +340,13 @@ def _section_guide_markup(section: str) -> str:
     cards = []
     for label, detail in items:
         cards.append(
-            "<div class=\"ow-section-guide-card\">"
-            f"<div class=\"ow-section-guide-label\">{html.escape(label)}</div>"
-            f"<div class=\"ow-section-guide-detail\">{html.escape(detail)}</div>"
+            f"<div class=\"ow-section-guide-card\" style=\"{_GUIDE_CARD_STYLE}\">"
+            f"<div class=\"ow-section-guide-label\" style=\"{_GUIDE_LABEL_STYLE}\">{html.escape(label)}</div>"
+            f"<div class=\"ow-section-guide-detail\" style=\"{_GUIDE_DETAIL_STYLE}\">{html.escape(detail)}</div>"
             "</div>"
         )
     return f"""
-    <div class="ow-section-guide" aria-label="{html.escape(str(section))} operating guide">
+    <div class="ow-section-guide" style="{_GUIDE_GRID_STYLE}" aria-label="{html.escape(str(section))} operating guide">
         {''.join(cards)}
     </div>
     """
@@ -386,16 +452,16 @@ def _section_evidence_contract_markup(section: str) -> str:
     contract_cards = []
     for row in rows:
         contract_cards.append(
-            "<div class=\"ow-evidence-contract-card\">"
-            f"<div class=\"ow-evidence-contract-source\">{html.escape(row['source'])}</div>"
-            f"<div><span>Source basis:</span>{html.escape(row['confidence'])}</div>"
-            f"<div><span>Decision use:</span>{html.escape(row['decision_use'])}</div>"
-            f"<div><span>Invalid use:</span>{html.escape(row['invalid_use'])}</div>"
-            f"<div><span>Closure proof:</span>{html.escape(row['proof'])}</div>"
+            f"<div class=\"ow-evidence-contract-card\" style=\"{_EVIDENCE_CARD_STYLE}\">"
+            f"<div class=\"ow-evidence-contract-source\" style=\"{_EVIDENCE_SOURCE_STYLE}\">{html.escape(row['source'])}</div>"
+            f"<div style=\"{_EVIDENCE_ROW_STYLE}\"><span style=\"{_EVIDENCE_LABEL_STYLE}\">Source basis:</span>{html.escape(row['confidence'])}</div>"
+            f"<div style=\"{_EVIDENCE_ROW_STYLE}\"><span style=\"{_EVIDENCE_LABEL_STYLE}\">Decision use:</span>{html.escape(row['decision_use'])}</div>"
+            f"<div style=\"{_EVIDENCE_ROW_STYLE}\"><span style=\"{_EVIDENCE_LABEL_STYLE}\">Invalid use:</span>{html.escape(row['invalid_use'])}</div>"
+            f"<div style=\"{_EVIDENCE_ROW_STYLE}\"><span style=\"{_EVIDENCE_LABEL_STYLE}\">Closure proof:</span>{html.escape(row['proof'])}</div>"
             "</div>"
         )
     return f"""
-    <div class="ow-evidence-contract" aria-label="{html.escape(str(section))} evidence contract">
+    <div class="ow-evidence-contract" style="{_EVIDENCE_GRID_STYLE}" aria-label="{html.escape(str(section))} evidence contract">
         {''.join(contract_cards)}
     </div>
     """

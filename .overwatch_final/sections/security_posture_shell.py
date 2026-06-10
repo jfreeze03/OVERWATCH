@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, render_shell_workflows, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_security_posture_full_workspace_requested"
@@ -128,21 +128,23 @@ def _render_operating_snapshot() -> None:
         ("Scope", scope_label(_active_company(), _active_environment())),
         ("Window", _window_label()),
         ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-        ("Focus", "Access"),
     )
     st.markdown("**Operating Snapshot**")
     render_shell_snapshot(metrics)
 
 
 def _render_workflow_launchpad() -> None:
-    st.markdown("**Security Investigation Workflows**")
-    cols = st.columns(3)
-    for col, row in zip(cols, _WORKFLOWS):
-        with col:
-            st.markdown(f"**{row.get('TITLE') or row['WORKFLOW']}**")
-            st.caption(row["MOVE"])
-            if st.button(row["BUTTON_LABEL"], key=f"security_posture_shell_{row['WORKFLOW']}", width="stretch"):
-                _open_workspace(str(row["WORKFLOW"]))
+    def _open(row):
+        _open_workspace(str(row["WORKFLOW"]))
+
+    render_shell_workflows(
+        "Security Investigation Workflows",
+        _WORKFLOWS,
+        label_key="WORKFLOW",
+        title_key="TITLE",
+        key_prefix="security_posture_shell",
+        on_open=_open,
+    )
 
 
 def render() -> None:

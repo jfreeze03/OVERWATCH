@@ -17,7 +17,7 @@ from utils import (
     render_ranked_bar_chart,
     run_query,
 )
-from utils.workflows import render_priority_dataframe
+from utils.workflows import render_load_status, render_priority_dataframe, render_workflow_selector
 
 
 PLATFORM_TOPOLOGY_PANES = (
@@ -202,7 +202,7 @@ def _load_topology(session, days: int, row_limit: int) -> dict:
 
 def render():
     session = get_session()
-    st.header("Platform Topology")
+    st.subheader("Platform Topology")
     st.caption("Relationship maps showing who uses which warehouses, databases, roles, and client applications.")
 
     days = day_window_selectbox("Lookback", key="topology_days", default=30)
@@ -210,7 +210,7 @@ def render():
     if days > 30 and row_limit > 500:
         defer_source_note("Large topology windows can scan more ACCOUNT_USAGE history; start with KPIs and raise limits only for exports.")
     if st.button("Load Platform Topology", key="topology_load"):
-        with st.spinner("Building topology views..."):
+        with render_load_status("Building topology evidence", "Topology evidence ready"):
             try:
                 st.session_state["topology_data"] = _load_topology(session, days, row_limit)
             except Exception as e:
@@ -218,6 +218,7 @@ def render():
 
     data = st.session_state.get("topology_data")
     if not data:
+        st.info("Awaiting filtered topology evidence.")
         return
     defer_source_note(
         metric_confidence_label("estimated"),
@@ -236,12 +237,12 @@ def render():
     c3.metric("Active Role Grants", f"{len(role_users):,}")
     c4.metric("Application Flows", f"{len(app_flow):,}")
 
-    active_view = st.radio(
+    active_view = render_workflow_selector(
         "Platform topology view",
+        "platform_topology_active_view",
         PLATFORM_TOPOLOGY_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="platform_topology_active_view",
+        columns=3,
+        show_label=True,
     )
 
     if active_view == "Warehouse To User":

@@ -137,6 +137,7 @@ run_query = _lazy_util("run_query")
 sql_literal = _lazy_util("sql_literal")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+render_load_status = _lazy_util("render_load_status")
 
 DBA_CONTROL_SCOPE_FILTER_KEYS = (
     "global_warehouse",
@@ -4878,7 +4879,7 @@ def render() -> None:
     if snapshot_scope_ok:
         st.caption("Fast snapshot lookup is on demand to avoid startup Snowflake queries.")
         if st.button("Check Fast Snapshot", key="dba_control_room_check_snapshot"):
-            with st.spinner("Checking latest control-room summary snapshot..."):
+            with render_load_status("Checking latest control-room summary snapshot", "Fast snapshot check ready"):
                 snapshot_result = load_latest_control_room_mart(company, max_age_hours=6)
                 st.session_state["dba_control_room_snapshot_scope_key"] = snapshot_scope_key
                 st.session_state["dba_control_room_snapshot_result"] = snapshot_result
@@ -4943,7 +4944,7 @@ def render() -> None:
             st.caption("Live checks are capped to the loaded 24-hour evidence window.")
     load_label = "Load Deep Evidence" if include_deep_evidence else "Load Triage"
     if st.button(load_label, key="dba_control_room_load", type="primary"):
-        with st.spinner("Loading exception signals..."):
+        with render_load_status("Loading exception signals", "Control Room evidence ready"):
             session = get_session()
             st.session_state["dba_control_room_data"] = _load_control_room(
                 session,
@@ -5495,7 +5496,7 @@ def render() -> None:
         if not valid_ranges:
             st.warning("Choose valid before and after date ranges.")
         elif st.button("Compare Release Windows", key="dba_release_compare_load", type="primary"):
-            with st.spinner("Comparing task graphs and stored procedure runs..."):
+            with render_load_status("Comparing task graphs and stored procedure runs", "Release comparison ready"):
                 try:
                     session = get_session()
                     st.session_state["dba_release_compare_data"] = _load_release_compare(

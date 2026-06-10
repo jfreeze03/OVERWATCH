@@ -81,7 +81,7 @@ def render():
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
-    st.header("Data Sharing Monitor")
+    st.subheader("Data Sharing Monitor")
     st.caption("DATA_TRANSFER_HISTORY credit consumption and shared database visibility.")
 
     ds_days = day_window_selectbox("Lookback", key="ds_days", default=30)

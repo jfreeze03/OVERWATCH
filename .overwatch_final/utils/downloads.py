@@ -26,4 +26,4 @@ def mark_loaded(key: str):
 def show_loaded_time(key: str):
     ts = st.session_state.get(f"_ts_{key}")
     if ts:
-        st.caption(f"📅 Last loaded: {ts}")
+        st.caption(f"Last loaded: {ts}")

@@ -9,6 +9,8 @@ from utils import (
     render_priority_dataframe,
     filter_existing_columns, format_snowflake_error,
     build_mart_query_bottleneck_sql, build_mart_query_degradation_sql,
+    render_load_status,
+    render_workflow_selector,
     safe_float,
 )
 from config import THRESHOLDS
@@ -115,17 +117,17 @@ def render():
         }
         return qh_exprs
 
-    active_view = st.radio(
+    active_view = render_workflow_selector(
         "Query analysis view",
+        "query_analysis_active_view",
         QUERY_ANALYSIS_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="query_analysis_active_view",
+        columns=3,
+        show_label=True,
     )
 
-    # ── BOTTLENECKS ───────────────────────────────────────────────────────────
+    # Bottlenecks
     if active_view == "Bottlenecks":
-        st.header("🔍 Query Bottleneck Analysis")
+        st.subheader("Query Bottleneck Analysis")
         days = day_window_selectbox("Lookback", key="qa_days", default=7)
         qa_filters = get_global_filter_clause(
             date_col="q.start_time",
@@ -137,28 +139,29 @@ def render():
         )
 
         if st.button("Load Bottlenecks", key="qa_load"):
-            try:
+            with render_load_status("Loading query bottlenecks", "Query bottlenecks ready"):
                 try:
-                    df_qa = run_query(
-                        build_mart_query_bottleneck_sql(
-                            days_back=days,
-                            min_elapsed_ms=THRESHOLDS["query_duration_alert_sec"] * 1000,
-                            company=company,
-                            extra_filter=qa_filters,
-                        ),
-                        ttl_key=f"query_analysis_bottlenecks_mart_{company}_{days}",
-                        tier="historical",
-                    )
-                    st.session_state["qa_bottleneck_source"] = "Fast query detail summary"
-                except Exception:
-                    exprs = _query_history_exprs()
-                    wh_size_expr = exprs["wh_size_expr"]
-                    queued_expr = exprs["queued_expr"]
-                    gb_expr = exprs["gb_expr"]
-                    spill_expr = exprs["spill_expr"]
-                    partition_expr = exprs["partition_expr"]
-                    rows_expr = exprs["rows_expr"]
-                    df_qa = run_query(f"""
+                    try:
+                        df_qa = run_query(
+                            build_mart_query_bottleneck_sql(
+                                days_back=days,
+                                min_elapsed_ms=THRESHOLDS["query_duration_alert_sec"] * 1000,
+                                company=company,
+                                extra_filter=qa_filters,
+                            ),
+                            ttl_key=f"query_analysis_bottlenecks_mart_{company}_{days}",
+                            tier="historical",
+                        )
+                        st.session_state["qa_bottleneck_source"] = "Fast query detail summary"
+                    except Exception:
+                        exprs = _query_history_exprs()
+                        wh_size_expr = exprs["wh_size_expr"]
+                        queued_expr = exprs["queued_expr"]
+                        gb_expr = exprs["gb_expr"]
+                        spill_expr = exprs["spill_expr"]
+                        partition_expr = exprs["partition_expr"]
+                        rows_expr = exprs["rows_expr"]
+                        df_qa = run_query(f"""
                 WITH {build_metered_credit_cte(days_back=days, include_recent=True)}
                 SELECT
                     q.query_id,
@@ -185,11 +188,11 @@ def render():
                   AND q.total_elapsed_time > {THRESHOLDS['query_duration_alert_sec'] * 1000}
                 ORDER BY q.total_elapsed_time DESC
                 LIMIT 500
-                    """, ttl_key=f"query_analysis_bottlenecks_live_{company}_{days}", tier="standard")
-                    st.session_state["qa_bottleneck_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
-                st.session_state["qa_df_qa"] = _annotate_bottleneck_routes(df_qa)
-            except Exception as e:
-                st.warning(f"Bottleneck data unavailable in this role/context: {format_snowflake_error(e)}")
+                        """, ttl_key=f"query_analysis_bottlenecks_live_{company}_{days}", tier="standard")
+                        st.session_state["qa_bottleneck_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+                    st.session_state["qa_df_qa"] = _annotate_bottleneck_routes(df_qa)
+                except Exception as e:
+                    st.warning(f"Bottleneck data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("qa_df_qa") is not None and not st.session_state["qa_df_qa"].empty:
             df = st.session_state["qa_df_qa"]
@@ -207,35 +210,36 @@ def render():
                 (df["QUEUED_SEC"] > 30)
             ]
             if not flagged.empty:
-                st.warning(f"⚠️ {len(flagged)} queries with spill, full-scan, or heavy queue time.")
+                st.warning(f"{len(flagged)} queries with spill, full-scan, or heavy queue time.")
 
             render_query_drilldown(df, key="qa_bottleneck")
             download_csv(df, "bottleneck_queries.csv")
 
-    # ── PATTERN DEGRADATION ───────────────────────────────────────────────────
+    # Pattern degradation
     elif active_view == "Pattern Degradation":
-        st.header("📉 Query Pattern Degradation")
+        st.subheader("Query Pattern Degradation")
         st.caption("Compare query execution time this week vs prior week by query signature.")
 
         if st.button("Detect Degradation", key="deg_load"):
-            try:
-                qa_filters = get_global_filter_clause(
-                    date_col="q.start_time",
-                    wh_col="q.warehouse_name",
-                    user_col="q.user_name",
-                    role_col="q.role_name",
-                    db_col="q.database_name",
-                    schema_col="q.schema_name",
-                )
+            with render_load_status("Detecting query degradation", "Query degradation scan ready"):
                 try:
-                    df_deg = run_query(
-                        build_mart_query_degradation_sql(company=company, extra_filter=qa_filters),
-                        ttl_key=f"query_analysis_degradation_mart_{company}",
-                        tier="historical",
+                    qa_filters = get_global_filter_clause(
+                        date_col="q.start_time",
+                        wh_col="q.warehouse_name",
+                        user_col="q.user_name",
+                        role_col="q.role_name",
+                        db_col="q.database_name",
+                        schema_col="q.schema_name",
                     )
-                    st.session_state["qa_degradation_source"] = "Fast query detail summary"
-                except Exception:
-                    df_deg = run_query(f"""
+                    try:
+                        df_deg = run_query(
+                            build_mart_query_degradation_sql(company=company, extra_filter=qa_filters),
+                            ttl_key=f"query_analysis_degradation_mart_{company}",
+                            tier="historical",
+                        )
+                        st.session_state["qa_degradation_source"] = "Fast query detail summary"
+                    except Exception:
+                        df_deg = run_query(f"""
                     WITH sig_recent AS (
                         SELECT SUBSTR(q.query_text,1,200) AS sig,
                                AVG(q.total_elapsed_time)/1000 AS avg_sec,
@@ -264,11 +268,11 @@ def render():
                     WHERE r.avg_sec > p.avg_sec * 1.25
                       AND r.avg_sec > 5
                     ORDER BY pct_change DESC LIMIT 50
-                    """, ttl_key=f"query_analysis_degradation_live_{company}", tier="standard")
-                    st.session_state["qa_degradation_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
-                st.session_state["qa_df_deg"] = _annotate_degradation_routes(df_deg)
-            except Exception as e:
-                st.warning(f"Pattern degradation data unavailable in this role/context: {format_snowflake_error(e)}")
+                        """, ttl_key=f"query_analysis_degradation_live_{company}", tier="standard")
+                        st.session_state["qa_degradation_source"] = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"
+                    st.session_state["qa_df_deg"] = _annotate_degradation_routes(df_deg)
+                except Exception as e:
+                    st.warning(f"Pattern degradation data unavailable in this role/context: {format_snowflake_error(e)}")
 
         if st.session_state.get("qa_df_deg") is not None:
             df_d = st.session_state["qa_df_deg"]
@@ -288,9 +292,9 @@ def render():
                 )
                 download_csv(df_d, "pattern_degradation.csv")
             else:
-                st.success("✅ No significant query pattern degradation detected.")
+                st.success("No significant query pattern degradation detected.")
 
-    # ── PLAN STEPS ────────────────────────────────────────────────────────────
+    # Plan steps
     elif active_view == "Root-Cause Brief":
         import importlib
 
@@ -304,7 +308,7 @@ def render():
         detailed_diagnosis.render()
 
     elif active_view == "Plan Steps":
-        st.header("🗂️ Query Plan Steps (GET_QUERY_OPERATOR_STATS)")
+        st.subheader("Query Plan Steps")
         st.caption("Enter a Query ID to inspect operator-level statistics.")
 
         qid_input = st.text_input("Query ID", key="planstep_qid")
@@ -328,16 +332,16 @@ def render():
             except Exception as e:
                 st.warning(f"Operator stats unavailable: {format_snowflake_error(e)}")
 
-    # ── AI DIAGNOSIS ──────────────────────────────────────────────────────────
+    # AI diagnosis
     elif active_view == "AI Diagnosis":
-        st.header("🤖 AI Query Diagnosis (Cortex)")
+        st.subheader("AI Query Diagnosis")
         st.caption("Paste a slow query to get AI-powered optimization recommendations.")
 
         query_text = st.text_area("SQL to diagnose", height=200, key="ai_query_text")
         wh_ctx     = st.text_input("Warehouse (optional context)", key="ai_wh_ctx")
 
         if query_text and st.button("Diagnose with AI", key="ai_diagnose"):
-            with st.spinner("Running Cortex analysis..."):
+            with render_load_status("Running Cortex query analysis", "Cortex query analysis ready"):
                 try:
                     prompt = f"""You are a Snowflake performance expert. Analyze this SQL query and provide:
 1. Top 3 performance issues (spill, full-scan, missing clustering, etc.)

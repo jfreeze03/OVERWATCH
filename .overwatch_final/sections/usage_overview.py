@@ -34,7 +34,7 @@ from utils import (
     sql_literal,
     upsert_actions,
 )
-from utils.workflows import render_priority_dataframe
+from utils.workflows import render_load_status, render_priority_dataframe, render_workflow_selector
 
 
 USAGE_OVERVIEW_PANES = ["Cost Drivers", "Query Mix", "Adoption By Database"]
@@ -637,7 +637,7 @@ def _queue_top_warehouses(session, df):
 
 def render():
     session = get_session()
-    st.header("Usage Overview")
+    st.subheader("Usage Overview")
     st.caption("Executive view of Snowflake activity, cost, storage, and top usage drivers.")
 
     c1, c2 = st.columns([1, 2])
@@ -647,7 +647,7 @@ def render():
         st.info("Charts are sorted largest-to-smallest and drill into recent query detail where Snowflake query history is available.")
 
     if st.button("Load Usage Overview", key="uo_load"):
-        with st.spinner("Loading usage overview..."):
+        with render_load_status("Loading usage evidence", "Usage evidence ready"):
             try:
                 st.session_state["uo_data"] = _load_overview(session, days)
             except Exception as e:
@@ -655,6 +655,7 @@ def render():
 
     data = st.session_state.get("uo_data")
     if not data:
+        st.info("Awaiting filtered usage evidence.")
         return
 
     overview = data["overview"]
@@ -724,16 +725,16 @@ def render():
     s3.metric("Active Storage", f"{_first_number(storage, 'ACTIVE_STORAGE_TB'):,.2f} TB")
     s4.metric("Failsafe Storage", f"{_first_number(storage, 'FAILSAFE_STORAGE_TB'):,.2f} TB")
 
-    active_pane = st.radio(
+    active_pane = render_workflow_selector(
         "Usage detail view",
+        "uo_active_pane",
         USAGE_OVERVIEW_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="uo_active_pane",
+        columns=3,
+        show_label=True,
     )
     if active_pane == "Cost Drivers":
         if st.button("Load Cost Driver Chart", key="uo_load_cost_drivers"):
-            with st.spinner("Loading warehouse cost drivers..."):
+            with render_load_status("Loading warehouse cost drivers", "Warehouse cost drivers ready"):
                 st.session_state["uo_top_wh"] = _load_cost_drivers(session, days)
         top_wh = st.session_state.get("uo_top_wh")
         if top_wh is None:
@@ -762,7 +763,7 @@ def render():
 
     elif active_pane == "Query Mix":
         if st.button("Load Query Mix", key="uo_load_query_mix"):
-            with st.spinner("Loading query mix..."):
+            with render_load_status("Loading query mix", "Query mix ready"):
                 st.session_state["uo_query_types"] = _load_query_mix(session, days)
         qt = st.session_state.get("uo_query_types")
         if qt is None:
@@ -792,7 +793,7 @@ def render():
 
     elif active_pane == "Adoption By Database":
         if st.button("Load Database Adoption", key="uo_load_database_adoption"):
-            with st.spinner("Loading database adoption..."):
+            with render_load_status("Loading database adoption", "Database adoption ready"):
                 st.session_state["uo_users_by_db"] = _load_database_adoption(days)
         db = st.session_state.get("uo_users_by_db")
         if db is None:

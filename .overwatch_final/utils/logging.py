@@ -136,12 +136,12 @@ def set_query_logging_enabled(enabled: bool) -> None:
 
 def log_section_load(section: str, duration_ms: int = 0) -> None:
     """
-    Write one row to OVERWATCH_USAGE_LOG. Never raises — silently no-ops
+    Write one row to OVERWATCH_USAGE_LOG. Never raises; silently no-ops
     if the table doesn't exist or logging is disabled.
 
     Direct usage:
         from utils.logging import log_section_load
-        log_section_load("🏠 Account Health")
+        log_section_load("Account Health")
 
     Timed usage via SectionTimer context manager is preferred.
     """
@@ -234,7 +234,7 @@ class SectionTimer:
 
     Usage in any section render():
         from utils.logging import SectionTimer
-        with SectionTimer("🏠 Account Health"):
+        with SectionTimer("Account Health"):
             ... all render code ...
     """
     def __init__(self, section: str):

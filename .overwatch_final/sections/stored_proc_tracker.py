@@ -781,7 +781,7 @@ def render():
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
-    st.header("Stored Proc & UDF Cost Tracker")
+    st.subheader("Stored Proc & UDF Cost Tracker")
     st.caption("CALL queries plus downstream child SQL where ROOT_QUERY_ID is populated.")
 
     sp_days = day_window_selectbox("Lookback", key="sp_tracker_days", default=7)

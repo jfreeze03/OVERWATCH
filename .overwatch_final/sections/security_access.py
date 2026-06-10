@@ -20,6 +20,8 @@ from utils import (
     log_admin_action,
     render_priority_dataframe,
     render_ranked_bar_chart,
+    render_load_status,
+    render_workflow_selector,
     run_query,
     run_query_or_raise,
     safe_int,
@@ -1198,17 +1200,17 @@ def render():
             ))
         return _user_mfa_column_exprs(user_cols)
 
-    active_view = st.radio(
+    active_view = render_workflow_selector(
         "Security Access view",
+        "security_access_active_view",
         SECURITY_ACCESS_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="security_access_active_view",
+        columns=4,
+        show_label=True,
     )
 
     # -- LOGIN AUDIT -----------------------------------------------------------
     if active_view == "Login Audit":
-        st.header("Login Audit")
+        st.subheader("Login Audit")
         sec_days = day_window_selectbox("Lookback", key="sec_days", default=30)
 
         if st.button("Load Login Data", key="sec_load"):
@@ -1292,7 +1294,7 @@ def render():
             st.line_chart(pivot)
 
     elif active_view == "Login Posture":
-        st.header("Login Posture")
+        st.subheader("Login Posture")
         posture_days = day_window_selectbox("Posture lookback", key="sec_posture_days", default=30)
         if st.button("Load Login Posture", key="sec_posture_load"):
             try:
@@ -1450,10 +1452,10 @@ def render():
 
     # Connected programs
     elif active_view == "Connected Programs":
-        st.header("Connected Programs")
+        st.subheader("Connected Programs")
         program_days = day_window_selectbox("Program lookback", key="sec_connected_program_days", default=30)
         if st.button("Load Connected Programs", key="sec_connected_programs_load"):
-            with st.spinner("Tracing connected programs..."):
+            with render_load_status("Tracing connected programs", "Connected program evidence ready"):
                 try:
                     for key, df in _load_connected_programs(get_session(), company, program_days).items():
                         st.session_state[key] = df
@@ -1598,26 +1600,27 @@ def render():
 
     # Roles & grants
     elif active_view == "Roles & Grants":
-        st.header("Roles & Grants")
+        st.subheader("Roles & Grants")
         if st.button("Load Grants", key="grants_load"):
-            try:
-                st.session_state["sec_df_grants"] = _load_grants_mart(company)
-                st.session_state["sec_grants_source"] = "Fast grant summary"
-            except Exception as mart_exc:
-                st.session_state["sec_grants_source"] = "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"
-                defer_source_note(f"Fast summary path skipped: {format_snowflake_error(mart_exc)}")
+            with render_load_status("Loading grant evidence", "Grant evidence ready"):
                 try:
-                    df_grants = run_query(f"""
-                        SELECT grantee_name, role, granted_to, granted_by,
-                               created_on, deleted_on
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
-                        WHERE deleted_on IS NULL
-                          {user_filter_g}
-                        ORDER BY created_on DESC LIMIT 500
-                    """, ttl_key=f"security_grants_to_users_{company}", tier="standard")
-                    st.session_state["sec_df_grants"] = df_grants
-                except Exception as e:
-                    st.warning(f"Grants unavailable: {format_snowflake_error(e)}")
+                    st.session_state["sec_df_grants"] = _load_grants_mart(company)
+                    st.session_state["sec_grants_source"] = "Fast grant summary"
+                except Exception as mart_exc:
+                    st.session_state["sec_grants_source"] = "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS"
+                    defer_source_note(f"Fast summary path skipped: {format_snowflake_error(mart_exc)}")
+                    try:
+                        df_grants = run_query(f"""
+                            SELECT grantee_name, role, granted_to, granted_by,
+                                   created_on, deleted_on
+                            FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
+                            WHERE deleted_on IS NULL
+                              {user_filter_g}
+                            ORDER BY created_on DESC LIMIT 500
+                        """, ttl_key=f"security_grants_to_users_{company}", tier="standard")
+                        st.session_state["sec_df_grants"] = df_grants
+                    except Exception as e:
+                        st.warning(f"Grants unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_grants") is not None and not st.session_state["sec_df_grants"].empty:
             df_g = st.session_state["sec_df_grants"]
@@ -1645,41 +1648,42 @@ def render():
         dormant_days = st.number_input("Inactive threshold (days)", 30, 365, THRESHOLDS["dormant_user_days"], key="dom_days")
         dormant_lookback = min(365, int(dormant_days) + 30)
         if st.button("Find Dormant Users", key="dom_find"):
-            try:
-                user_exprs = _user_column_exprs()
-                last_success_login_expr = user_exprs["last_success_login_expr"]
-                df_dom = run_query(f"""
-                WITH last_login AS (
-                    SELECT user_name, MAX(event_timestamp) AS last_login_time
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-                    WHERE event_timestamp >= DATEADD('day', -{dormant_lookback}, CURRENT_TIMESTAMP())
-                      {user_filter}
-                    GROUP BY user_name
-                ),
-                last_query AS (
-                    SELECT user_name, MAX(start_time) AS last_query_time
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE start_time >= DATEADD('day', -{dormant_lookback}, CURRENT_TIMESTAMP())
-                      {user_filter}
-                      {query_scope}
-                    GROUP BY user_name
-                )
-                SELECT u.name AS user_name, u.created_on, u.disabled,
-                       COALESCE(ll.last_login_time, {last_success_login_expr}) AS last_login,
-                       lq.last_query_time,
-                       DATEDIFF('day', COALESCE(ll.last_login_time, u.created_on), CURRENT_TIMESTAMP()) AS days_since_login
-                FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
-                LEFT JOIN last_login ll ON u.name = ll.user_name
-                LEFT JOIN last_query  lq ON u.name = lq.user_name
-                WHERE u.deleted_on IS NULL
-                  AND u.disabled = 'false'
-                  {user_filter_u}
-                  AND DATEDIFF('day', COALESCE(ll.last_login_time, u.created_on), CURRENT_TIMESTAMP()) > {dormant_days}
-                ORDER BY days_since_login DESC
-                """, ttl_key=f"security_dormant_{company}_{dormant_days}_{dormant_lookback}", tier="standard")
-                st.session_state["sec_df_dom"] = df_dom
-            except Exception as e:
-                st.warning(f"Dormant-user scan unavailable: {format_snowflake_error(e)}")
+            with render_load_status("Finding dormant users", "Dormant-user scan ready"):
+                try:
+                    user_exprs = _user_column_exprs()
+                    last_success_login_expr = user_exprs["last_success_login_expr"]
+                    df_dom = run_query(f"""
+                    WITH last_login AS (
+                        SELECT user_name, MAX(event_timestamp) AS last_login_time
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
+                        WHERE event_timestamp >= DATEADD('day', -{dormant_lookback}, CURRENT_TIMESTAMP())
+                          {user_filter}
+                        GROUP BY user_name
+                    ),
+                    last_query AS (
+                        SELECT user_name, MAX(start_time) AS last_query_time
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                        WHERE start_time >= DATEADD('day', -{dormant_lookback}, CURRENT_TIMESTAMP())
+                          {user_filter}
+                          {query_scope}
+                        GROUP BY user_name
+                    )
+                    SELECT u.name AS user_name, u.created_on, u.disabled,
+                           COALESCE(ll.last_login_time, {last_success_login_expr}) AS last_login,
+                           lq.last_query_time,
+                           DATEDIFF('day', COALESCE(ll.last_login_time, u.created_on), CURRENT_TIMESTAMP()) AS days_since_login
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.USERS u
+                    LEFT JOIN last_login ll ON u.name = ll.user_name
+                    LEFT JOIN last_query  lq ON u.name = lq.user_name
+                    WHERE u.deleted_on IS NULL
+                      AND u.disabled = 'false'
+                      {user_filter_u}
+                      AND DATEDIFF('day', COALESCE(ll.last_login_time, u.created_on), CURRENT_TIMESTAMP()) > {dormant_days}
+                    ORDER BY days_since_login DESC
+                    """, ttl_key=f"security_dormant_{company}_{dormant_days}_{dormant_lookback}", tier="standard")
+                    st.session_state["sec_df_dom"] = df_dom
+                except Exception as e:
+                    st.warning(f"Dormant-user scan unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_dom") is not None and not st.session_state["sec_df_dom"].empty:
             df_d = st.session_state["sec_df_dom"]
@@ -1702,18 +1706,19 @@ def render():
 
     # -- MFA COVERAGE ----------------------------------------------------------
     elif active_view == "MFA Coverage":
-        st.header("MFA Coverage Report")
+        st.subheader("MFA Coverage Report")
         if st.button("Check MFA", key="mfa_check"):
-            try:
-                user_exprs = _user_column_exprs()
-                df_mfa = run_query(
-                    _build_mfa_coverage_sql(user_exprs, user_filter_u),
-                    ttl_key=f"security_mfa_{company}",
-                    tier="standard",
-                )
-                st.session_state["sec_df_mfa"] = df_mfa
-            except Exception as e:
-                st.warning(f"MFA check unavailable: {format_snowflake_error(e)}")
+            with render_load_status("Checking MFA coverage", "MFA coverage ready"):
+                try:
+                    user_exprs = _user_column_exprs()
+                    df_mfa = run_query(
+                        _build_mfa_coverage_sql(user_exprs, user_filter_u),
+                        ttl_key=f"security_mfa_{company}",
+                        tier="standard",
+                    )
+                    st.session_state["sec_df_mfa"] = df_mfa
+                except Exception as e:
+                    st.warning(f"MFA check unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_mfa") is not None and not st.session_state["sec_df_mfa"].empty:
             df_m = st.session_state["sec_df_mfa"]
@@ -1766,24 +1771,25 @@ def render():
 
     # -- EXFILTRATION SIGNALS --------------------------------------------------
     elif active_view == "Exfiltration Signals":
-        st.header("Data Exfiltration Signals")
+        st.subheader("Data Exfiltration Signals")
         st.caption("Users with >2 sigma BYTES_WRITTEN_TO_RESULT vs their 30-day baseline.")
         if st.button("Check Exfiltration", key="exfil_load"):
-            qh_cols = _query_history_columns()
-            if "BYTES_WRITTEN_TO_RESULT" not in qh_cols:
-                st.info("Exfiltration byte metrics are not exposed in QUERY_HISTORY for this role/account.")
-                st.session_state["sec_df_exfil"] = pd.DataFrame()
-            else:
-                try:
-                    exfil_wh_size_expr = (
-                        "warehouse_size AS warehouse_size"
-                        if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
-                    )
-                    exfil_rows_expr = (
-                        "rows_produced AS rows_produced"
-                        if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
-                    )
-                    df_ex = run_query(f"""
+            with render_load_status("Checking exfiltration signals", "Exfiltration scan ready"):
+                qh_cols = _query_history_columns()
+                if "BYTES_WRITTEN_TO_RESULT" not in qh_cols:
+                    st.info("Exfiltration byte metrics are not exposed in QUERY_HISTORY for this role/account.")
+                    st.session_state["sec_df_exfil"] = pd.DataFrame()
+                else:
+                    try:
+                        exfil_wh_size_expr = (
+                            "warehouse_size AS warehouse_size"
+                            if "WAREHOUSE_SIZE" in qh_cols else "NULL::VARCHAR AS warehouse_size"
+                        )
+                        exfil_rows_expr = (
+                            "rows_produced AS rows_produced"
+                            if "ROWS_PRODUCED" in qh_cols else "0::NUMBER AS rows_produced"
+                        )
+                        df_ex = run_query(f"""
                 WITH user_baseline AS (
                     SELECT user_name,
                            AVG(bytes_written_to_result) AS avg_bytes,
@@ -1814,9 +1820,9 @@ def render():
                 WHERE r.gb_written > b.avg_bytes/POWER(1024,3) + 2*b.std_bytes/POWER(1024,3)
                 ORDER BY r.gb_written DESC LIMIT 20
                 """, ttl_key=f"security_exfil_{company}", tier="standard")
-                    st.session_state["sec_df_exfil"] = df_ex
-                except Exception as e:
-                    st.warning(f"Exfiltration check unavailable: {format_snowflake_error(e)}")
+                        st.session_state["sec_df_exfil"] = df_ex
+                    except Exception as e:
+                        st.warning(f"Exfiltration check unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_exfil") is not None:
             df_ex = st.session_state["sec_df_exfil"]
@@ -1842,37 +1848,38 @@ def render():
 
     # -- DATA LINEAGE ----------------------------------------------------------
     elif active_view == "Data Lineage":
-        st.header("Data Lineage (ACCESS_HISTORY)")
+        st.subheader("Data Lineage (ACCESS_HISTORY)")
         defer_source_note("Object-level access lineage from ACCOUNT_USAGE.ACCESS_HISTORY.")
         lin_days = day_window_selectbox("Lookback", key="lin_days", default=7)
 
         if st.button("Load Access History", key="lin_load"):
-            try:
-                df_lin = run_query(f"""
-                    WITH scoped_queries AS (
-                        SELECT query_id
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                        WHERE q.start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
-                          {get_wh_filter_clause("q.warehouse_name")}
-                          {get_db_filter_clause("q.database_name")}
-                          {get_user_filter_clause("q.user_name")}
-                    )
-                    SELECT ah.user_name, ah.query_id,
-                           ah.query_start_time,
-                           ah.objects_modified,
-                           ah.objects_modified_by_ddl,
-                           ah.base_objects_accessed,
-                           ah.direct_objects_accessed
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY ah
-                    JOIN scoped_queries sq ON ah.query_id = sq.query_id
-                    WHERE ah.query_start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
-                      {get_user_filter_clause("ah.user_name")}
-                    ORDER BY ah.query_start_time DESC
-                    LIMIT 500
-                """, ttl_key=f"security_lineage_{company}_{lin_days}", tier="standard")
-                st.session_state["sec_df_lin"] = df_lin
-            except Exception as e:
-                st.warning(f"Access history unavailable: {format_snowflake_error(e)}")
+            with render_load_status("Loading access history", "Access history ready"):
+                try:
+                    df_lin = run_query(f"""
+                        WITH scoped_queries AS (
+                            SELECT query_id
+                            FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+                            WHERE q.start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
+                              {get_wh_filter_clause("q.warehouse_name")}
+                              {get_db_filter_clause("q.database_name")}
+                              {get_user_filter_clause("q.user_name")}
+                        )
+                        SELECT ah.user_name, ah.query_id,
+                               ah.query_start_time,
+                               ah.objects_modified,
+                               ah.objects_modified_by_ddl,
+                               ah.base_objects_accessed,
+                               ah.direct_objects_accessed
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY ah
+                        JOIN scoped_queries sq ON ah.query_id = sq.query_id
+                        WHERE ah.query_start_time >= DATEADD('day', -{lin_days}, CURRENT_TIMESTAMP())
+                          {get_user_filter_clause("ah.user_name")}
+                        ORDER BY ah.query_start_time DESC
+                        LIMIT 500
+                    """, ttl_key=f"security_lineage_{company}_{lin_days}", tier="standard")
+                    st.session_state["sec_df_lin"] = df_lin
+                except Exception as e:
+                    st.warning(f"Access history unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("sec_df_lin") is not None and not st.session_state["sec_df_lin"].empty:
             df_l = st.session_state["sec_df_lin"]

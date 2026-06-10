@@ -17,7 +17,7 @@ from .helpers import safe_float
 from .recommendation_intelligence import duplicate_query_decision, warehouse_sizing_decision
 from .query import format_snowflake_error, run_query
 from .session import get_session
-from .workflows import render_priority_dataframe
+from .workflows import render_priority_dataframe, render_workflow_selector
 
 
 OPTIMIZATION_ADVISOR_PANES = (
@@ -85,16 +85,16 @@ def render_optimization_advisor():
         db_col="database_name",
     )
 
-    active_view = st.radio(
+    active_view = render_workflow_selector(
         "Optimization advisor view",
+        "optimization_advisor_active_view",
         OPTIMIZATION_ADVISOR_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="optimization_advisor_active_view",
+        columns=3,
+        show_label=True,
     )
 
     if active_view == "Idle Warehouse Costs":
-        st.header("Idle Warehouse Cost Detection")
+        st.subheader("Idle Warehouse Cost Detection")
         st.caption("Identifies credit spend during hours with zero query activity.")
         idle_days = day_window_selectbox("Lookback", key="idle_days", default=7)
 
@@ -160,7 +160,7 @@ def render_optimization_advisor():
             st.success("No significant idle warehouse credits detected.")
 
     elif active_view == "Duplicate Queries":
-        st.header("Duplicate & Redundant Query Detection")
+        st.subheader("Duplicate & Redundant Query Detection")
         st.caption(
             "Same query text executed multiple times within a time window - "
             "candidates for result caching or materialization."
@@ -220,7 +220,7 @@ def render_optimization_advisor():
             download_csv(df_d, "duplicate_queries.csv")
 
     elif active_view == "Right-Sizing Advisor":
-        st.header("Warehouse Right-Sizing Advisor")
+        st.subheader("Warehouse Right-Sizing Advisor")
         st.caption("Warehouses with low utilization or persistent spill - downsize or upsize candidates.")
         sz_days = day_window_selectbox("Lookback", key="sz_days", default=14)
 

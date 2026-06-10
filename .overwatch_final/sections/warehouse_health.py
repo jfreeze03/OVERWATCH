@@ -62,6 +62,8 @@ safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
 action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+render_load_status = _lazy_util("render_load_status")
+render_workflow_selector = _lazy_util("render_workflow_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 
 
@@ -101,23 +103,6 @@ def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) 
     for label, detail in items:
         defer_section_note(f"{label}: {detail}")
 
-
-def render_workflow_selector(
-    label: str,
-    key: str,
-    workflows,
-    details: dict[str, str] | None = None,
-    *,
-    columns: int = 4,
-    show_label: bool = False,
-) -> str:
-    selected = st.session_state.get(key, workflows[0] if workflows else "")
-    if selected not in workflows:
-        selected = workflows[0] if workflows else ""
-        st.session_state[key] = selected
-    if label and show_label:
-        st.caption(label)
-    return str(st.selectbox(label, list(workflows), key=key))
 
 WAREHOUSE_HEALTH_VIEWS = (
     "Overview & Scaling",
@@ -2932,7 +2917,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
     with st.expander("Capacity Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
         days = day_window_selectbox("Capacity lookback", key="wh_capacity_days", default=7)
         if st.button("Load Capacity Brief", key="wh_capacity_load"):
-            with st.spinner("Building warehouse capacity brief..."):
+            with render_load_status("Building warehouse capacity brief", "Warehouse capacity brief ready"):
                 try:
                     session = _warehouse_action_session("load the warehouse capacity brief")
                     if session is None:
@@ -3703,7 +3688,7 @@ def render():
 
     # -- OVERVIEW --------------------------------------------------------------
     if warehouse_view == "Overview & Scaling":
-        st.header("Warehouse Health Overview")
+        st.subheader("Warehouse Health Overview")
         wh_days = day_window_selectbox("Lookback", key="wh_days", default=7)
 
         if st.button("Load Warehouse Data", key="wh_load"):
@@ -4008,7 +3993,7 @@ def render():
                 st.info("No scaling or metering events found for the selected warehouse scope.")
 
     elif warehouse_view == "Efficiency":
-        st.header("Warehouse Efficiency Risks")
+        st.subheader("Warehouse Efficiency Risks")
         eff_days = day_window_selectbox("Lookback", key="wh_eff_days", default=7)
         if st.button("Load Efficiency Metrics", key="wh_eff_load"):
             try:
@@ -4095,7 +4080,7 @@ def render():
 
     # -- SPILL -----------------------------------------------------------------
     elif warehouse_view == "Spill & Memory":
-        st.header("Spill & Memory Pressure")
+        st.subheader("Spill & Memory Pressure")
         sp_days = day_window_selectbox("Lookback", key="sp_days", default=7)
 
         if st.button("Load Spill Data", key="sp_load"):
@@ -4168,7 +4153,7 @@ def render():
 
     # -- HEATMAP ---------------------------------------------------------------
     elif warehouse_view == "Workload Heatmap":
-        st.header("Workload Concurrency Heatmap")
+        st.subheader("Workload Concurrency Heatmap")
         hm_days = day_window_selectbox("Lookback", key="hm_days", default=30)
 
         if st.button("Build Heatmap", key="hm_build"):

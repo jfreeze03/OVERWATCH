@@ -61,7 +61,7 @@ def render():
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
-    st.header("SPCS Cost Tracker")
+    st.subheader("SPCS Cost Tracker")
     st.caption("Snowpark Container Services credit usage and cost breakdown.")
 
     spcs_days = day_window_selectbox("Lookback", key="spcs_days", default=30)

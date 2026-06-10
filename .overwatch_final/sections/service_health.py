@@ -24,7 +24,7 @@ from utils import (
     service_health_scorecard,
     upsert_actions,
 )
-from utils.workflows import render_priority_dataframe
+from utils.workflows import render_load_status, render_priority_dataframe
 
 
 def _load_service_health(session, hours: int) -> dict:
@@ -236,12 +236,12 @@ def _queue_service_findings(session, services: pd.DataFrame):
 
 def render():
     session = get_session()
-    st.header("Service Health")
+    st.subheader("Service Health")
     st.caption("Availability-style posture across query execution, warehouses, login/auth, tasks, and data loading.")
 
     hours = st.slider("Lookback hours", 1, 168, 24, key="svc_hours")
     if st.button("Load Service Health", key="svc_load"):
-        with st.spinner("Loading service posture..."):
+        with render_load_status("Loading service posture", "Service posture ready"):
             try:
                 st.session_state["svc_data"] = _load_service_health(session, hours)
             except Exception as e:

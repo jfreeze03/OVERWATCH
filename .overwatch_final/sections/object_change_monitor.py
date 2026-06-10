@@ -11,6 +11,7 @@ from utils import (
     make_action_id,
     mart_object_name,
     render_priority_dataframe,
+    render_workflow_selector,
     run_query,
     sql_literal,
     upsert_actions,
@@ -209,7 +210,7 @@ def render():
             ),
         }
         return qh_caps
-    st.header("Object Change Audit")
+    st.subheader("Object Change Audit")
     st.caption("DDL, grants, roles, policy changes, and owner changes. Terraform evidence is consolidated in Change & Drift.")
 
     days = day_window_selectbox("Lookback", key="ocm_days", default=14)
@@ -226,12 +227,12 @@ def render():
         db_col="database_name",
     )
 
-    active_view = st.radio(
+    active_view = render_workflow_selector(
         "Object change view",
+        "object_change_active_view",
         OBJECT_CHANGE_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="object_change_active_view",
+        columns=3,
+        show_label=True,
     )
     mart_object_category = """
           AND c.change_category IN ('CREATE', 'ALTER', 'DROP')

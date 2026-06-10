@@ -11,6 +11,7 @@ from utils import (
     get_session,
     filter_existing_columns,
     mart_object_name,
+    render_load_status,
     render_query_drilldown,
     run_query,
     safe_float,
@@ -249,7 +250,7 @@ def _queue_diagnosis(session, df, mode: str):
 
 def render():
     session = get_session()
-    st.header("Detailed Diagnosis")
+    st.subheader("Detailed Diagnosis")
     st.caption("High-signal drilldowns for slow, queued, blocked, spilling, and scan-heavy queries.")
     focus_query_id = str(st.session_state.get("dd_focus_query_id") or "")
     if focus_query_id:
@@ -264,7 +265,7 @@ def render():
         limit = st.slider("Rows", 50, 500, 200, step=50, key="dd_limit")
 
     if st.button("Load Diagnosis", key="dd_load"):
-        with st.spinner("Loading detailed diagnosis..."):
+        with render_load_status("Loading detailed diagnosis", "Detailed diagnosis ready"):
             try:
                 st.session_state["dd_df"] = _annotate_diagnosis_routes(_load_diagnosis(session, days, mode, limit), mode)
                 st.session_state["dd_loaded_mode"] = mode

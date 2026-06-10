@@ -42,7 +42,7 @@ def render():
     storage_cost_per_tb = st.session_state.get("storage_cost_per_tb", DEFAULTS["storage_cost_per_tb"])
     company = get_active_company()
 
-    st.header("Storage Monitor")
+    st.subheader("Storage Monitor")
     st.caption("Database & stage storage with cost estimates ($23/TB/month default).")
 
     stor_days = day_window_selectbox("Lookback", key="stor_days", default=90)
@@ -190,7 +190,7 @@ def render():
 
     # Table-level storage
     st.divider()
-    st.subheader("🗃️ Table Storage Metrics (Top 50 by size)")
+    st.subheader("Table Storage Metrics (Top 50 by size)")
     if st.button("Load Table Metrics", key="tbl_stor_load"):
         try:
             df_tbl = run_query(f"""

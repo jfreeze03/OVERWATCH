@@ -1,4 +1,4 @@
-# utils/helpers.py — Pagination, freshness tracking, safe conversions
+# utils/helpers.py - Pagination, freshness tracking, safe conversions
 import pandas as pd
 import streamlit as st
 
@@ -28,13 +28,13 @@ def paginate_df(
 
     c1, c2, c3 = st.columns([1, 3, 1])
     with c1:
-        if st.button("◀ Prev", key=f"{key}_prev", disabled=(page == 0)):
+        if st.button("< Prev", key=f"{key}_prev", disabled=(page == 0)):
             st.session_state[f"_page_{key}"] = page - 1
             st.rerun()
     with c2:
         st.caption(f"Page {page + 1} of {total_pages}  ({total_rows:,} rows total)")
     with c3:
-        if st.button("Next ▶", key=f"{key}_next", disabled=(page >= total_pages - 1)):
+        if st.button("Next >", key=f"{key}_next", disabled=(page >= total_pages - 1)):
             st.session_state[f"_page_{key}"] = page + 1
             st.rerun()
 

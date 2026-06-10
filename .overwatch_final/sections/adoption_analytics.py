@@ -21,7 +21,7 @@ from utils import (
     run_query,
     safe_float,
 )
-from utils.workflows import render_priority_dataframe
+from utils.workflows import render_load_status, render_priority_dataframe, render_workflow_selector
 
 
 ADOPTION_ANALYTICS_PANES = (
@@ -273,12 +273,12 @@ def _metric(df, column: str) -> float:
 
 def render():
     session = get_session()
-    st.header("Adoption Analytics")
+    st.subheader("Adoption Analytics")
     st.caption("Track which teams, warehouses, databases, roles, and clients are actually using Snowflake.")
 
     days = day_window_selectbox("Lookback", key="aa_days", default=30)
     if st.button("Load Adoption Analytics", key="aa_load"):
-        with st.spinner("Loading adoption analytics..."):
+        with render_load_status("Loading adoption evidence", "Adoption evidence ready"):
             try:
                 st.session_state["aa_data"] = _load_adoption(session, days)
             except Exception as e:
@@ -286,6 +286,7 @@ def render():
 
     data = st.session_state.get("aa_data")
     if not data:
+        st.info("Awaiting filtered adoption evidence.")
         return
 
     summary = data["summary"]
@@ -297,12 +298,12 @@ def render():
     m5.metric("Error Rate", f"{_metric(summary, 'ERROR_RATE'):,.1f}%")
     defer_source_note(data.get("source", "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY"))
 
-    active_view = st.radio(
+    active_view = render_workflow_selector(
         "Adoption detail view",
+        "adoption_analytics_active_view",
         ADOPTION_ANALYTICS_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="adoption_analytics_active_view",
+        columns=4,
+        show_label=True,
     )
 
     if active_view == "Trend":

@@ -98,7 +98,7 @@ def render():
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
-    st.header("Snowflake Value")
+    st.subheader("Snowflake Value")
     st.caption(
         "Track verified Snowflake optimization wins from warehouse tuning, query fixes, storage cleanup, "
         "task tuning, and other OVERWATCH recommendations."

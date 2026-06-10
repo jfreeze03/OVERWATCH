@@ -18,6 +18,9 @@ from utils import (
     format_snowflake_error,
 )
 from utils.workflows import (
+    add_cost_companion_columns,
+    apply_operator_status_labels,
+    prioritize_context_columns,
     render_operator_briefing,
     render_priority_dataframe,
     render_signal_confidence,
@@ -728,6 +731,9 @@ def render() -> None:
             st.warning(f"Budget inventory unavailable: {err}")
         inventory = st.session_state.get("budget_governance_inventory")
         if isinstance(inventory, pd.DataFrame) and not inventory.empty:
-            st.dataframe(inventory, width="stretch", hide_index=True)
+            display_inventory = apply_operator_status_labels(
+                add_cost_companion_columns(prioritize_context_columns(inventory))
+            )
+            st.dataframe(display_inventory, width="stretch", hide_index=True)
         else:
             st.caption("Inventory is optional and only runs when loaded.")

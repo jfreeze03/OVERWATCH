@@ -1,7 +1,7 @@
 # sections/cortex_monitor.py - AI & Cortex Code usage: users, trends, anomalies, predictive alerts
 import streamlit as st
 import pandas as pd
-from utils.workflows import render_priority_dataframe, render_workflow_selector
+from utils.workflows import render_load_status, render_priority_dataframe, render_workflow_selector
 from utils import (
     format_snowflake_error,
     get_active_company,
@@ -342,9 +342,9 @@ def _render_cortex_control_brief(session, company: str) -> None:
                 value=1000.0,
                 step=100.0,
                 key="cortex_control_budget_usd",
-            )
+        )
         if st.button("Load Cortex Cost Control", key="cortex_control_load"):
-            with st.spinner("Building Cortex cost control brief..."):
+            with render_load_status("Building Cortex cost control brief", "Cortex cost control ready"):
                 try:
                     summary_sql, exceptions_sql = _build_cortex_control_sql(days, budget_usd)
                     daily_sql = _build_cortex_daily_sql(days)
@@ -529,7 +529,7 @@ def render():
     if st.session_state.get("exceptions_only_mode") and "cortex_monitor_view" not in st.session_state:
         st.session_state["cortex_monitor_view"] = "Budget Control"
 
-    st.header("AI & Cortex Monitor")
+    st.subheader("AI & Cortex Monitor")
     st.caption(
         "Track Cortex Code usage, projected spend, user attribution, anomalies, and budget-control exceptions."
     )
@@ -545,14 +545,14 @@ def render():
         columns=3,
     )
 
-    # ── CORTEX CODE USERS ─────────────────────────────────────────────────────
+    # CORTEX CODE USERS
     if cortex_view == "Budget Control":
         _render_cortex_control_brief(session, company)
         if st.session_state.get("exceptions_only_mode"):
             st.stop()
 
     elif cortex_view == "User Attribution":
-        st.header("Cortex Code User Breakdown")
+        st.subheader("Cortex Code User Breakdown")
         st.caption(
             "Cortex Code usage (Snowsight + CLI) by user. "
             f"AI Credits billed at **${_ai_credit_rate()}/credit** (Table 6(d) regional inference)."
@@ -560,7 +560,7 @@ def render():
 
         cc_days = day_window_selectbox("Lookback", key="cc_days_users", default=30)
         if st.button("Load User Data", key="cc_users_load"):
-            with st.spinner("Loading Cortex Code user data..."):
+            with render_load_status("Loading Cortex Code user data", "Cortex user data ready"):
                 try:
                     df_cc = run_query(f"""
                         WITH combined AS (
@@ -685,8 +685,9 @@ def render():
             st.divider()
             st.subheader("Cost-per-Request Spike Detection (Last 7d vs Prior)")
             if st.button("Detect CPR Spikes", key="cc_spike_load"):
-                try:
-                    df_spike = run_query(f"""
+                with render_load_status("Detecting cost-per-request spikes", "Cost-per-request scan ready"):
+                    try:
+                        df_spike = run_query(f"""
                         WITH combined AS (
                             SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS, TOKENS
                             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
@@ -718,39 +719,39 @@ def render():
                         WHERE 1=1 {get_user_filter_clause("u.NAME")}
                         ORDER BY PCT_CHANGE DESC
                     """, ttl_key=f"cortex_cpr_spikes_{company}_{cc_days}", tier="standard")
-                    if not df_spike.empty:
-                        spikes = df_spike[df_spike["PCT_CHANGE"] > 25] if "PCT_CHANGE" in df_spike.columns else df_spike
-                        if not spikes.empty:
-                            st.warning(f"{len(spikes)} user(s) with >25% cost-per-request increase vs prior period.")
-                        render_priority_dataframe(
-                            df_spike,
-                            title="Cost-per-request spikes",
-                            priority_columns=[
-                                "USER_NAME",
-                                "PCT_CHANGE",
-                                "RECENT_CPR",
-                                "PRIOR_CPR",
-                                "RECENT_REQUESTS",
-                                "PRIOR_REQUESTS",
-                            ],
-                            sort_by=["PCT_CHANGE", "RECENT_CPR"],
-                            ascending=[False, False],
-                            raw_label="All cost-per-request spike rows",
-                        )
-                        download_csv(df_spike, "cortex_cpr_spikes.csv")
-                    else:
-                        st.success("No cost-per-request spikes detected.")
-                except Exception as e:
-                    st.warning(f"Spike detection unavailable: {format_snowflake_error(e)}")
+                        if not df_spike.empty:
+                            spikes = df_spike[df_spike["PCT_CHANGE"] > 25] if "PCT_CHANGE" in df_spike.columns else df_spike
+                            if not spikes.empty:
+                                st.warning(f"{len(spikes)} user(s) with >25% cost-per-request increase vs prior period.")
+                            render_priority_dataframe(
+                                df_spike,
+                                title="Cost-per-request spikes",
+                                priority_columns=[
+                                    "USER_NAME",
+                                    "PCT_CHANGE",
+                                    "RECENT_CPR",
+                                    "PRIOR_CPR",
+                                    "RECENT_REQUESTS",
+                                    "PRIOR_REQUESTS",
+                                ],
+                                sort_by=["PCT_CHANGE", "RECENT_CPR"],
+                                ascending=[False, False],
+                                raw_label="All cost-per-request spike rows",
+                            )
+                            download_csv(df_spike, "cortex_cpr_spikes.csv")
+                        else:
+                            st.success("No cost-per-request spikes detected.")
+                    except Exception as e:
+                        st.warning(f"Spike detection unavailable: {format_snowflake_error(e)}")
 
-    # ── DAILY TRENDS ──────────────────────────────────────────────────────────
+    # DAILY TRENDS
     elif cortex_view == "Daily Trends":
-        st.header("Cortex Code Daily Trends")
+        st.subheader("Cortex Code Daily Trends")
         st.caption("Daily credits, request volume, and active users - Snowsight vs CLI split.")
 
         cc_trend_days = day_window_selectbox("Lookback", key="cc_trend_days", default=30)
         if st.button("Load Trends", key="cc_trends_load"):
-            with st.spinner("Loading trends..."):
+            with render_load_status("Loading Cortex trends", "Cortex trends ready"):
                 try:
                     df_trend = run_query(f"""
                         WITH combined AS (
@@ -821,14 +822,14 @@ def render():
 
             download_csv(df_tr, "cortex_trends.csv")
 
-    # ── ANOMALY DETECTION ─────────────────────────────────────────────────────
+    # ANOMALY DETECTION
     elif cortex_view == "Anomaly Detection":
-        st.header("Cortex Code Anomaly Detection")
+        st.subheader("Cortex Code Anomaly Detection")
         st.caption("Flags unusual daily per-user Cortex spend against the recent baseline.")
 
         cc_anom_days = day_window_selectbox("Detection window", key="cc_anom_days", default=30)
         if st.button("Detect Anomalies", key="cc_anom_load"):
-            with st.spinner("Running anomaly detection..."):
+            with render_load_status("Running Cortex anomaly detection", "Cortex anomaly scan ready"):
                 try:
                     df_anom = run_query(f"""
                         WITH combined AS (
@@ -938,9 +939,9 @@ def render():
         elif st.session_state.get("cm_cc_anom_data") is not None:
             st.success("No anomalies detected in the analysis window.")
 
-    # ── PREDICTIVE ALERTS ─────────────────────────────────────────────────────
+    # PREDICTIVE ALERTS
     elif cortex_view == "Predictive Alerts":
-        st.header("Predictive Cortex AI Cost Alerts")
+        st.subheader("Predictive Cortex AI Cost Alerts")
         st.caption(
             "Projects Cortex Code spend at current trajectory. "
             "Flags accounts on course to exceed configurable monthly budget."
@@ -951,8 +952,9 @@ def render():
         )
 
         if st.button("Run Predictive Analysis", key="cc_pred_load"):
-            try:
-                df_pred = run_query(f"""
+            with render_load_status("Running predictive Cortex analysis", "Predictive Cortex analysis ready"):
+                try:
+                    df_pred = run_query(f"""
                     WITH combined AS (
                         SELECT USER_ID, USAGE_TIME, TOKEN_CREDITS
                         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
@@ -969,9 +971,9 @@ def render():
                     GROUP BY c.USAGE_TIME::DATE
                     ORDER BY c.USAGE_TIME::DATE
                 """, ttl_key=f"cortex_predictive_{company}", tier="standard")
-                st.session_state["cm_cc_pred_data"] = df_pred
-            except Exception as e:
-                st.warning(f"Projection data unavailable: {format_snowflake_error(e)}")
+                    st.session_state["cm_cc_pred_data"] = df_pred
+                except Exception as e:
+                    st.warning(f"Projection data unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("cm_cc_pred_data") is not None and not st.session_state["cm_cc_pred_data"].empty:
             df_p = st.session_state["cm_cc_pred_data"].copy()
@@ -1016,31 +1018,32 @@ def render():
 
             # MV Refresh History tab extra (bonus)
             st.divider()
-            st.subheader("🔄 Materialized View Refresh History")
+            st.subheader("Materialized View Refresh History")
             if st.button("Load MV Refresh History", key="mv_refresh_load"):
-                try:
-                    mv_object = "SNOWFLAKE.ACCOUNT_USAGE.MATERIALIZED_VIEW_REFRESH_HISTORY"
-                    mv_cols = set(filter_existing_columns(
-                        session,
-                        mv_object,
-                        [
-                            "DATABASE_NAME", "SCHEMA_NAME", "NAME", "CREDITS_USED",
-                            "BYTES_WRITTEN", "ROWS_INSERTED", "REFRESH_START_TIME",
-                            "REFRESH_END_TIME",
-                        ],
-                    ))
-                    if "REFRESH_START_TIME" not in mv_cols:
-                        raise ValueError("MATERIALIZED_VIEW_REFRESH_HISTORY does not expose REFRESH_START_TIME.")
+                with render_load_status("Loading materialized view refresh history", "Materialized view refresh history ready"):
+                    try:
+                        mv_object = "SNOWFLAKE.ACCOUNT_USAGE.MATERIALIZED_VIEW_REFRESH_HISTORY"
+                        mv_cols = set(filter_existing_columns(
+                            session,
+                            mv_object,
+                            [
+                                "DATABASE_NAME", "SCHEMA_NAME", "NAME", "CREDITS_USED",
+                                "BYTES_WRITTEN", "ROWS_INSERTED", "REFRESH_START_TIME",
+                                "REFRESH_END_TIME",
+                            ],
+                        ))
+                        if "REFRESH_START_TIME" not in mv_cols:
+                            raise ValueError("MATERIALIZED_VIEW_REFRESH_HISTORY does not expose REFRESH_START_TIME.")
 
-                    def _mv_expr(col: str, fallback: str, alias: str) -> str:
-                        return f"{col.lower()} AS {alias}" if col in mv_cols else f"{fallback} AS {alias}"
+                        def _mv_expr(col: str, fallback: str, alias: str) -> str:
+                            return f"{col.lower()} AS {alias}" if col in mv_cols else f"{fallback} AS {alias}"
 
-                    refresh_end_raw = "refresh_end_time" if "REFRESH_END_TIME" in mv_cols else "CURRENT_TIMESTAMP()"
-                    mv_db_filter = (
-                        get_db_filter_clause("database_name", company)
-                        if "DATABASE_NAME" in mv_cols else ""
-                    )
-                    df_mv = run_query(f"""
+                        refresh_end_raw = "refresh_end_time" if "REFRESH_END_TIME" in mv_cols else "CURRENT_TIMESTAMP()"
+                        mv_db_filter = (
+                            get_db_filter_clause("database_name", company)
+                            if "DATABASE_NAME" in mv_cols else ""
+                        )
+                        df_mv = run_query(f"""
                         SELECT {_mv_expr("DATABASE_NAME", "NULL::VARCHAR", "database_name")},
                                {_mv_expr("SCHEMA_NAME", "NULL::VARCHAR", "schema_name")},
                                {_mv_expr("NAME", "NULL::VARCHAR", "mv_name")},
@@ -1055,29 +1058,29 @@ def render():
                           {mv_db_filter}
                         ORDER BY credits_used DESC LIMIT 100
                     """, ttl_key=f"cortex_mv_refresh_{company}", tier="standard")
-                    if not df_mv.empty:
-                        c1, c2 = st.columns(2)
-                        c1.metric("MV Refreshes (7d)", len(df_mv))
-                        c2.metric("Total Credits",     format_credits(df_mv["CREDITS_USED"].sum()))
-                        render_priority_dataframe(
-                            df_mv,
-                            title="Materialized view refreshes by cost",
-                            priority_columns=[
-                                "DATABASE_NAME",
-                                "SCHEMA_NAME",
-                                "MV_NAME",
-                                "CREDITS_USED",
-                                "DURATION_SEC",
-                                "BYTES_WRITTEN",
-                                "ROWS_INSERTED",
-                                "REFRESH_START_TIME",
-                            ],
-                            sort_by=["CREDITS_USED", "DURATION_SEC", "BYTES_WRITTEN"],
-                            ascending=[False, False, False],
-                            raw_label="All materialized view refresh rows",
-                        )
-                        download_csv(df_mv, "mv_refresh_history.csv")
-                    else:
-                        st.info("No materialized view refresh activity in the last 7 days.")
-                except Exception as e:
-                    st.warning(f"MV refresh history unavailable: {format_snowflake_error(e)}")
+                        if not df_mv.empty:
+                            c1, c2 = st.columns(2)
+                            c1.metric("MV Refreshes (7d)", len(df_mv))
+                            c2.metric("Total Credits",     format_credits(df_mv["CREDITS_USED"].sum()))
+                            render_priority_dataframe(
+                                df_mv,
+                                title="Materialized view refreshes by cost",
+                                priority_columns=[
+                                    "DATABASE_NAME",
+                                    "SCHEMA_NAME",
+                                    "MV_NAME",
+                                    "CREDITS_USED",
+                                    "DURATION_SEC",
+                                    "BYTES_WRITTEN",
+                                    "ROWS_INSERTED",
+                                    "REFRESH_START_TIME",
+                                ],
+                                sort_by=["CREDITS_USED", "DURATION_SEC", "BYTES_WRITTEN"],
+                                ascending=[False, False, False],
+                                raw_label="All materialized view refresh rows",
+                            )
+                            download_csv(df_mv, "mv_refresh_history.csv")
+                        else:
+                            st.info("No materialized view refresh activity in the last 7 days.")
+                    except Exception as e:
+                        st.warning(f"MV refresh history unavailable: {format_snowflake_error(e)}")

@@ -1,7 +1,7 @@
-﻿# sections/dba_tools.py — DBA admin toolkit
-# ─────────────────────────────────────────────────────────────────────────────
+# sections/dba_tools.py - DBA admin toolkit
+# -----------------------------------------------------------------------------
 # Specialist workflows are selected by group so only one guarded tool renders at a time.
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 from utils import (
@@ -36,7 +36,7 @@ from utils.dba_tool_catalog import (
     TASK_GRAPH_CONTROL_PANES,
     WH_PARAM_HELP as _WH_PARAM_HELP,
 )
-from utils.workflows import render_priority_dataframe
+from utils.workflows import render_priority_dataframe, render_workflow_selector
 
 
 def _load_button(label, key):
@@ -500,13 +500,14 @@ def render():
                     "Compatibility checks, setup status, usage logging, action queue routing, and "
                     "formula audit evidence. SQL deployment lives in the Snowflake setup script, not this UI."
                 )
-        group_index = group_names.index(default_group) if default_group in group_names else 0
-        selected_group = st.radio(
+        if "dba_tools_group_selector" not in st.session_state and default_group in group_names:
+            st.session_state["dba_tools_group_selector"] = default_group
+        selected_group = render_workflow_selector(
             "DBA workflow",
+            "dba_tools_group_selector",
             group_names,
-            index=group_index,
-            horizontal=True,
-            key="dba_tools_group_selector",
+            columns=3,
+            show_label=True,
         )
         tool_options = DBA_TOOL_GROUPS[selected_group]
         selected_tool = st.selectbox(
@@ -536,9 +537,9 @@ def render():
             "use this page when you need a specific admin utility."
         )
 
-    # ── TAB 0: QUERY KILL LIST ────────────────────────────────────────────────
+    # -- TAB 0: QUERY KILL LIST ------------------------------------------------
     if selected_tool == "Query Kill List":
-        st.header("Long-Running Query Kill List")
+        st.subheader("Long-Running Query Kill List")
         kill_min = st.number_input("Flag queries running > (seconds)", 60, 3600, 300, key="kill_sec")
         if _load_button("Load Kill List", "kl_load"):
             try:
@@ -594,11 +595,11 @@ def render():
         elif st.session_state.get("dba_df_kl") is not None:
             st.success(f"No queries running > {kill_min}s")
 
-    # ── TAB 1: WAREHOUSE SETTINGS MANAGER ────────────────────────────────────
+    # -- TAB 1: WAREHOUSE SETTINGS MANAGER ------------------------------------
     if selected_tool == "Warehouse Settings":
-        st.header("Warehouse Settings Manager")
+        st.subheader("Warehouse Settings Manager")
         st.caption(
-            "View and interactively change all warehouse parameters — "
+            "View and interactively change all warehouse parameters - "
             "size, timeouts, auto-suspend, multi-cluster, QAS, and scaling policy. "
             "Changes execute as `ALTER WAREHOUSE` statements in real time."
         )
@@ -659,9 +660,9 @@ def render():
                 sus = row.get("auto_suspend", 0)
                 try:
                     if int(sus) > 600:
-                        issues.append(f"🟡 **{wn}**: AUTO_SUSPEND={sus}s (>10 min) — wasting credits when idle")
+                        issues.append(f"Medium - **{wn}**: AUTO_SUSPEND={sus}s (>10 min) - wasting credits when idle")
                     if int(sus) == 0:
-                        issues.append(f"🔴 **{wn}**: AUTO_SUSPEND=0 — warehouse NEVER suspends")
+                        issues.append(f"High - **{wn}**: AUTO_SUSPEND=0 - warehouse never suspends")
                 except Exception:
                     pass
             if issues:
@@ -683,7 +684,7 @@ def render():
                     v = wh_row.get(col, default)
                     return "" if v is None or str(v).lower() in ("nan","none","") else str(v)
 
-                st.markdown(f"**Editing: `{sel_wh}`**  ·  Current state: `{_get('state','unknown')}`")
+                st.markdown(f"**Editing: `{sel_wh}`** | Current state: `{_get('state','unknown')}`")
 
                 with st.form(f"wh_edit_form_{sel_wh}"):
                     c1, c2, c3 = st.columns(3)
@@ -775,7 +776,7 @@ def render():
                             disabled=not new_qas,
                         )
 
-                    apply = st.form_submit_button("📋 Preview & Apply Changes", type="primary")
+                    apply = st.form_submit_button("Preview & Apply Changes", type="primary")
 
                 plan_key = f"wh_change_plan_{sel_wh}"
                 if apply:
@@ -854,7 +855,7 @@ def render():
                                 else:
                                     st.error(f"ALTER failed: {format_snowflake_error(e)}")
 
-    # ── TAB 2: DATA LOADING ───────────────────────────────────────────────────
+    # -- TAB 2: DATA LOADING ---------------------------------------------------
                 plan = st.session_state.get(plan_key)
                 if plan:
                     st.subheader("Reviewed Warehouse Change Plan")
@@ -976,7 +977,7 @@ def render():
                             )
 
     if selected_tool == "Data Loading":
-        st.header("Data Loading Monitor")
+        st.subheader("Data Loading Monitor")
         load_days = day_window_selectbox("Lookback", key="dl_days", default=7)
         if _load_button("Load Copy History", "dl_load"):
             try:
@@ -1005,9 +1006,9 @@ def render():
             )
             download_csv(df_copy, "copy_history.csv")
 
-    # ── TABS 3–13: CARRIED FORWARD (abbreviated for file size) ───────────────
+    # -- TABS 3-13: CARRIED FORWARD (abbreviated for file size) ---------------
     if selected_tool == "Network & Sessions":
-        st.header("Network & Sessions")
+        st.subheader("Network & Sessions")
         if _load_button("Load Session Data", "net_load"):
             try:
                 st.session_state["dba_df_long_sess"] = run_query(f"""
@@ -1032,7 +1033,7 @@ def render():
             )
 
     if selected_tool == "Unused Objects":
-        st.header("Unused Objects")
+        st.subheader("Unused Objects")
         if _load_button("Find Unused Tables", "unused_load"):
             try:
                 st.session_state["dba_df_unused"] = run_query(f"""
@@ -1060,7 +1061,7 @@ def render():
             )
 
     if selected_tool == "Snowpipe Monitor":
-        st.header("Snowpipe Monitor")
+        st.subheader("Snowpipe Monitor")
         sp_days = day_window_selectbox("Lookback", key="spipe_days", default=7)
         if _load_button("Load Pipe Usage", "spipe_load"):
             try:
@@ -1086,7 +1087,7 @@ def render():
             )
 
     if selected_tool == "QAS Monitor":
-        st.header("QAS Monitor")
+        st.subheader("QAS Monitor")
         qas_days = day_window_selectbox("Lookback", key="qas_days", default=7)
         if _load_button("Load QAS Data", "qas_load"):
             try:
@@ -1123,7 +1124,7 @@ def render():
             )
 
     if selected_tool == "Schema Compare":
-        st.header("Schema Compare")
+        st.subheader("Schema Compare")
         st.caption("Choose source and target databases first; schema choices are loaded from the selected database.")
         refresh_schema_meta = st.button("Refresh database and schema choices", key="sc_refresh_metadata")
         scope_key = f"{get_active_company()}_{get_active_environment()}"
@@ -1222,7 +1223,7 @@ def render():
                 st.error(f"Compare failed: {format_snowflake_error(e)}")
 
     if selected_tool == "Recent Objects":
-        st.header("Recent Objects")
+        st.subheader("Recent Objects")
         obj_days = day_window_selectbox("Created/altered within", key="obj_days", default=30)
         refresh_obj_meta = st.button("Refresh database choices", key="obj_refresh_metadata")
         if refresh_obj_meta or "obj_database_options" not in st.session_state:
@@ -1287,7 +1288,7 @@ def render():
             download_csv(df_recent, "recent_objects.csv")
 
     if selected_tool == "Mart Readiness":
-        st.header("Mart Readiness")
+        st.subheader("Mart Readiness")
         st.caption(
             "Checks whether the deployed OVERWATCH summary objects are present. "
             "Pre-aggregation DDL is no longer generated from the dashboard."
@@ -1326,7 +1327,7 @@ def render():
             st.info("Deploy or refresh `snowflake/OVERWATCH_MART_SETUP.sql` outside the dashboard, then recheck.")
 
     if selected_tool == "Dynamic Tables":
-        st.header("Dynamic Tables")
+        st.subheader("Dynamic Tables")
         if st.button("Load Dynamic Tables", key="dyn_load"):
             try:
                 df_dyn = _show_to_df(session, "SHOW DYNAMIC TABLES IN ACCOUNT")
@@ -1421,7 +1422,7 @@ def render():
             download_csv(df_dyn, "dynamic_tables.csv")
 
     if selected_tool == "Replication":
-        st.header("Replication")
+        st.subheader("Replication")
         repl_days = day_window_selectbox("Lookback", key="repl_days", default=30)
         if st.button("Load Replication History", key="repl_load"):
             repl_sql_primary = f"""
@@ -1483,7 +1484,7 @@ def render():
             download_csv(df_repl, "replication_history.csv")
 
     if selected_tool == "Serverless Costs":
-        st.header("Serverless Costs")
+        st.subheader("Serverless Costs")
         if get_active_company() != "ALL":
             st.info(
                 "Serverless metering is account-level in Snowflake and does not expose "
@@ -1519,20 +1520,20 @@ def render():
                 st.area_chart(df_sv.pivot_table(index="USAGE_DATE", columns="SERVICE_TYPE", values="DAILY_CREDITS", aggfunc="sum").fillna(0))
                 download_csv(df_sv, "serverless_costs.csv")
 
-    # ── TAB 14: CORTEX AI LIMITS ──────────────────────────────────────────────
+    # -- TAB 14: CORTEX AI LIMITS ----------------------------------------------
     if selected_tool == "Cortex AI Limits":
-        st.header("Cortex AI Limits")
+        st.subheader("Cortex AI Limits")
         st.caption(
             "View and modify Cortex AI service limits for your account. "
             "These control daily token budgets, inference rate limits, and Cortex Search/Analyst access. "
             "Requires ACCOUNTADMIN or SYSADMIN with MODIFY ACCOUNT privilege."
         )
 
-        # ── Current parameters ────────────────────────────────────────────────
+        # -- Current parameters ------------------------------------------------
         if st.button("Load Current AI Parameters", key="cortex_params_load"):
             results = {}
 
-            # SHOW PARAMETERS — account-level Cortex controls
+            # SHOW PARAMETERS - account-level Cortex controls
             try:
                 df_params = run_query_or_raise("SHOW PARAMETERS LIKE '%CORTEX%' IN ACCOUNT")
                 results["cortex_params"] = df_params
@@ -1611,7 +1612,7 @@ def render():
 
         st.divider()
 
-        # ── Modify parameters ─────────────────────────────────────────────────
+        # -- Modify parameters -------------------------------------------------
         st.subheader("Modify Cortex AI Account Parameters")
         st.caption(
             "Only account parameters returned by Snowflake can be applied here. "
@@ -1705,14 +1706,14 @@ def render():
                                 st.info("Check SHOW PARAMETERS IN ACCOUNT and confirm the current role can modify account parameters.")
             with col_dl:
                 st.download_button(
-                    "📥 Download SQL",
+                    "Download SQL",
                     generated_sql,
                     file_name="cortex_parameter_changes.sql",
                     mime="text/plain",
                     key="cortex_dl_sql",
                 )
 
-        # ── Per-user Cortex policy (Enterprise) ───────────────────────────────
+        # -- Per-user Cortex policy (Enterprise) -------------------------------
         st.divider()
         st.subheader("Per-User / Per-Role Cortex Access and Quotas")
         st.caption(
@@ -1724,7 +1725,7 @@ def render():
             "Tip: To enforce user quotas, revoke the blanket `SNOWFLAKE.CORTEX_USER` grant from PUBLIC, "
             "grant it only through an approved AI role, then use OVERWATCH to queue revoke/restore review SQL."
         )
-        with st.expander("📋 Cortex access control SQL snippets"):
+        with st.expander("Cortex access control SQL snippets"):
             st.code("""
 -- Grant Cortex access to a specific role
 GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER TO ROLE <your_role>;
@@ -1743,24 +1744,24 @@ SHOW PARAMETERS LIKE '%CORTEX%' IN ACCOUNT;
 SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 """, language="sql")
 
-    # ── TAB 15: TASK GRAPH CONTROL ────────────────────────────────────────────
+    # -- TAB 15: TASK GRAPH CONTROL --------------------------------------------
     if selected_tool == "Task Graph Control":
-        st.header("Task Graph Control")
+        st.subheader("Task Graph Control")
         st.caption(
             "Cancel running queries spawned by tasks, cancel task graphs mid-run, "
             "suspend/resume individual tasks or entire DAG trees, and restart failed tasks. "
             "Requires OPERATE privilege on tasks or ACCOUNTADMIN."
         )
 
-        task_graph_view = st.radio(
+        task_graph_view = render_workflow_selector(
             "Task graph control view",
+            "dba_task_graph_control_view",
             TASK_GRAPH_CONTROL_PANES,
-            horizontal=True,
-            label_visibility="collapsed",
-            key="dba_task_graph_control_view",
+            columns=3,
+            show_label=True,
         )
 
-        # ── Running task queries ───────────────────────────────────────────────
+        # -- Running task queries -----------------------------------------------
         if task_graph_view == "Running Task Queries":
             st.subheader("Queries Currently Running Under a Task")
             st.caption(
@@ -1832,12 +1833,12 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                 else:
                     st.success("No task-related queries currently running.")
 
-        # ── Cancel graph / task ────────────────────────────────────────────────
+        # -- Cancel graph / task ------------------------------------------------
         elif task_graph_view == "Cancel Graph / Task":
             st.subheader("Cancel a Running Task Graph or Individual Task Run")
             st.caption(
-                "`SYSTEM$CANCEL_TASK_GRAPH(graph_run_id)` — cancels an entire DAG run in progress. "
-                "`SYSTEM$CANCEL_QUERY(query_id)` — cancels the query spawned by a specific task run."
+                "`SYSTEM$CANCEL_TASK_GRAPH(graph_run_id)` cancels an entire DAG run in progress. "
+                "`SYSTEM$CANCEL_QUERY(query_id)` cancels the query spawned by a specific task run."
             )
 
             # Load recent task runs to get graph_run_id
@@ -1957,7 +1958,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         raw_label="All recent task run rows",
                     )
 
-        # ── Suspend / Resume ──────────────────────────────────────────────────
+        # -- Suspend / Resume --------------------------------------------------
         elif task_graph_view == "Suspend / Resume":
             st.subheader("Suspend / Resume Tasks and DAG Trees")
             st.caption(
@@ -2014,7 +2015,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     full_n = _qualified_name(db_n, sch_n, sel_task)
                     preds  = task_row.get("PREDECESSORS","")
 
-                    st.info(f"`{full_n}` · State: **{state}** · Predecessors: `{preds or 'none (root task)'}`")
+                    st.info(f"`{full_n}` | State: **{state}** | Predecessors: `{preds or 'none (root task)'}`")
                     task_confirmed = _typed_confirmation(
                         "Type the task name to enable task controls",
                         sel_task,
@@ -2099,8 +2100,8 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         ] if "PREDECESSORS" in df_tasks.columns else pd.DataFrame()
 
                         st.info(
-                            f"Root: `{root_full}` · "
-                            f"Child tasks in this graph: {len(children)} · "
+                            f"Root: `{root_full}` | "
+                            f"Child tasks in this graph: {len(children)} | "
                             f"Total tasks affected: {len(children)+1}"
                         )
                         graph_confirmed = _typed_confirmation(
@@ -2149,7 +2150,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                                     st.session_state.pop("dba_df_tg_tasks", None)
                                     st.rerun()
 
-        # ── DAG Inspector ─────────────────────────────────────────────────────
+        # -- DAG Inspector -----------------------------------------------------
         elif task_graph_view == "DAG Inspector":
             st.subheader("DAG Inspector")
             st.caption(
@@ -2225,7 +2226,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         err    = str(row.get("LAST_ERROR","") or "")[:80]
 
                         is_root = preds.strip() in ("","[]","None","nan","")
-                        indent  = "" if is_root else "↳ "
+                        indent  = "" if is_root else "- "
 
                         state_icon = "Started" if state=="started" else "Suspended" if state=="suspended" else "Unknown"
                         lr_icon    = "Succeeded" if lr_st=="SUCCEEDED" else ("Failed" if lr_st=="FAILED" else "Pending")
@@ -2234,7 +2235,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                             f"{'&nbsp;'*4 if indent else ''}{indent}"
                             f"{state_icon} **{name}** &nbsp; {lr_icon} last: {lr_st} "
                             f"({int(dur)}s)"
-                            f"{' — ' + err if err and err != 'nan' else ''}",
+                            f"{' - ' + err if err and err != 'nan' else ''}",
                             unsafe_allow_html=True,
                         )
 
@@ -2251,9 +2252,9 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                     )
                     download_csv(df_dag, f"dag_{sel_dag}.csv")
 
-    # ── TAB 16: USAGE LOG (carried forward) ───────────────────────────────────
+    # -- TAB 16: USAGE LOG (carried forward) -----------------------------------
     if selected_tool == "Usage Log":
-        st.header("OVERWATCH Usage Log")
+        st.subheader("OVERWATCH Usage Log")
         st.caption("Tracks which sections are loaded, by whom, how often, and how fast.")
         from utils.logging import set_logging_enabled, is_logging_enabled
         from config import ALERT_DB, ALERT_SCHEMA
@@ -2308,7 +2309,7 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
 
     # Cost formula audit
     if selected_tool == "Cost Formula Audit":
-        st.header("Cost Formula Audit")
+        st.subheader("Cost Formula Audit")
         st.caption(
             "Documents which OVERWATCH cost numbers reconcile to Snowflake billing "
             "sources and which are allocation or forecast estimates."
@@ -2407,7 +2408,7 @@ ORDER BY current_tb DESC;"""
 
     # Setup status and install readiness
     if selected_tool == "Setup Status":
-        st.header("Setup Status")
+        st.subheader("Setup Status")
         st.caption("Deployment preflight for access, setup objects, formulas, and readiness.")
         defer_source_note(
             "Run Setup Status before deployment to check Snowflake view access, optional account columns, "

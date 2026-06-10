@@ -54,6 +54,7 @@ sql_literal = _lazy_util("sql_literal")
 action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
 upsert_actions = _lazy_util("upsert_actions")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+render_workflow_selector = _lazy_util("render_workflow_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 
 
@@ -113,24 +114,6 @@ def render_signal_confidence(*, source: str = "ACCOUNT_USAGE", confidence: str =
 def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
     for label, detail in items:
         defer_section_note(f"{label}: {detail}")
-
-
-def render_workflow_selector(
-    label: str,
-    key: str,
-    workflows,
-    details: dict[str, str] | None = None,
-    *,
-    columns: int = 4,
-    show_label: bool = False,
-) -> str:
-    selected = st.session_state.get(key, workflows[0] if workflows else "")
-    if selected not in workflows:
-        selected = workflows[0] if workflows else ""
-        st.session_state[key] = selected
-    if label and show_label:
-        st.caption(label)
-    return str(st.selectbox(label, list(workflows), key=key))
 
 
 def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> None:

@@ -63,10 +63,15 @@ get_session_for_action = _lazy_util("get_session_for_action")
 get_user_filter_clause = _lazy_util("get_user_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 load_action_queue = _lazy_util("load_action_queue")
+render_mode_selector = _lazy_util("render_mode_selector")
+render_workflow_selector = _lazy_util("render_workflow_selector")
 run_query = _lazy_util("run_query")
 run_query_or_raise = _lazy_util("run_query_or_raise")
 safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
+add_cost_companion_columns = _lazy_util("add_cost_companion_columns")
+apply_operator_status_labels = _lazy_util("apply_operator_status_labels")
+prioritize_context_columns = _lazy_util("prioritize_context_columns")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 
 
@@ -238,12 +243,11 @@ def _render_cost_chart_with_data_toggle(
     """Render a cost chart with an in-place table mode and a clear return path."""
     st.markdown(f"**{title}**")
     mode_key = f"{key}_chart_data_mode"
-    mode = st.radio(
+    mode = render_mode_selector(
         "Cost chart view",
+        mode_key,
         ("Chart", "Data"),
-        horizontal=True,
-        key=mode_key,
-        label_visibility="collapsed",
+        default="Chart",
     )
     if mode == "Data":
         back_col, note_col = st.columns([1, 4])
@@ -452,24 +456,6 @@ def render_signal_confidence(*, source: str = "ACCOUNT_USAGE", confidence: str =
 def render_operator_briefing(items: list[tuple[str, str]], *, columns: int = 4) -> None:
     for label, detail in items:
         defer_section_note(f"{label}: {detail}")
-
-
-def render_workflow_selector(
-    label: str,
-    key: str,
-    workflows,
-    details: dict[str, str] | None = None,
-    *,
-    columns: int = 4,
-    show_label: bool = False,
-) -> str:
-    selected = st.session_state.get(key, workflows[0] if workflows else "")
-    if selected not in workflows:
-        selected = workflows[0] if workflows else ""
-        st.session_state[key] = selected
-    if label and show_label:
-        st.caption(label)
-    return str(st.selectbox(label, list(workflows), key=key))
 
 
 def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> None:
@@ -3811,7 +3797,10 @@ def _render_cost_governance_mart_and_incident_timeline(
         max_rows=6,
     )
     with st.expander("Cost Governance SQL", expanded=False):
-        st.dataframe(mart_board, hide_index=True, width="stretch")
+        sql_support_board = apply_operator_status_labels(
+            add_cost_companion_columns(prioritize_context_columns(mart_board))
+        )
+        st.dataframe(sql_support_board, hide_index=True, width="stretch")
         st.code(sql_text, language="sql")
 
 

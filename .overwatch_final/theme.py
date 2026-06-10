@@ -1915,7 +1915,7 @@ def render_theme_picker(persist: bool = False) -> None:
     if st.session_state.get("theme_picker_radio") not in options:
         st.session_state["theme_picker_radio"] = current
     index = options.index(current) if current in options else 0
-    selected = st.radio(
+    selected = st.selectbox(
         "Theme",
         options,
         index=index,

@@ -1444,7 +1444,7 @@ def render():
 
     # -- USER LEADERBOARD ------------------------------------------------------
     if cost_view == "Cost Explorer":
-        st.header("Cost Explorer")
+        st.subheader("Cost Explorer")
         st.caption("Cost drilldown by company, owner, warehouse, database, role, and user.")
 
         c1, c2, c3, c4 = st.columns([1, 1.35, 1, 1.2])
@@ -1632,7 +1632,7 @@ def render():
                     _queue_cost_outliers(session, detail, credit_price, "Cost & Contract - Cost Explorer")
 
     elif cost_view == "Explain This Bill":
-        st.header("Explain This Bill")
+        st.subheader("Explain This Bill")
         st.caption("Start here when someone asks why Snowflake spend moved.")
         defer_source_note(
             "Warehouse totals use exact ACCOUNT_USAGE metering; user and query drivers are allocated estimates."
@@ -2298,7 +2298,7 @@ def render():
                 _queue_bill_exceptions(session, wh_deltas, credit_price, bounds["label"])
 
     elif cost_view == "User Leaderboard":
-        st.header("Credit Cost by User / Warehouse")
+        st.subheader("Credit Cost by User / Warehouse")
         days = day_window_selectbox("Lookback", key="cc_lead_days", default=30)
         gf = get_global_filter_clause(
             "q.start_time", "q.warehouse_name", "q.user_name", "q.role_name", "q.database_name", "q.schema_name"
@@ -2406,7 +2406,7 @@ def render():
 
     # -- BURN RATE -------------------------------------------------------------
     elif cost_view == "Burn Rate":
-        st.header("Credit Burn Rate")
+        st.subheader("Credit Burn Rate")
         br_days = day_window_selectbox("Lookback", key="br_days", default=30)
         if st.button("Load Burn Rate", key="br_load"):
             try:
@@ -2463,7 +2463,7 @@ def render():
 
     # -- COST RECONCILIATION -------------------------------------------------
     elif cost_view == "Reconciliation":
-        st.header("Cost Reconciliation")
+        st.subheader("Cost Reconciliation")
         defer_source_note(
             "Compares exact warehouse metering to query-level allocated credits. "
             "Large variances usually mean idle warehouse time, non-query activity, latency, or chargeback assumptions need review."
@@ -2542,7 +2542,7 @@ def render():
 
     # -- FORECAST --------------------------------------------------------------
     elif cost_view == "Forecast":
-        st.header("Credit Forecast (30-day Linear Projection)")
+        st.subheader("Credit Forecast (30-day Linear Projection)")
         if st.button("Generate Forecast", key="fc_load"):
             try:
                 df_fc = run_query(f"""
@@ -2580,7 +2580,7 @@ def render():
 
     # -- BUDGET VS ACTUAL ------------------------------------------------------
     elif cost_view == "Budget vs Actual":
-        st.header("Budget vs Actual")
+        st.subheader("Budget vs Actual")
         monthly_budget = st.number_input(
             "Monthly credit budget", min_value=0, value=10000, step=500, key="bva_budget"
         )
@@ -2618,7 +2618,7 @@ def render():
 
     # -- ATTRIBUTION -----------------------------------------------------------
     elif cost_view == "Attribution":
-        st.header("Cost Attribution")
+        st.subheader("Cost Attribution")
         attr_days = day_window_selectbox("Lookback", key="cc_attr_days", default=30)
         attr_mode = st.selectbox(
             "Attribution dimension",
@@ -2699,7 +2699,7 @@ def render():
 
     # -- CHARGEBACK - ALFA / Trexis split -------------------------------------
     elif cost_view == "Chargeback":
-        st.header("ALFA / Trexis Chargeback")
+        st.subheader("ALFA / Trexis Chargeback")
         st.caption("Allocated credits split by company, environment, database, user, and warehouse.")
         defer_source_note(
             "Database-attributed cost is directional because shared warehouses cannot be exactly split by PROD/DEV."
@@ -2911,7 +2911,7 @@ def render():
 
     # -- CONTRACT / COMMITMENT UTILIZATION -------------------------------------
     elif cost_view == "Contract Utilization":
-        st.header("Contract & Commitment Utilization")
+        st.subheader("Contract & Commitment Utilization")
         st.caption("Track consumption against the annual Snowflake committed-use contract.")
         defer_source_note(
             "Projects burn rate to flag over- and under-utilization risk. "

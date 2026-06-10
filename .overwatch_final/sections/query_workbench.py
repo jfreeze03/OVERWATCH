@@ -21,6 +21,7 @@ from utils import (
     upsert_actions,
 )
 from utils.workflows import (
+    render_load_status,
     render_priority_dataframe,
 )
 
@@ -698,7 +699,7 @@ def render_root_cause_brief(session) -> None:
             limit = st.slider("Exception rows", 25, 250, 100, step=25, key="qw_rc_limit")
 
         if st.button("Load Root-Cause Brief", key="qw_rc_load"):
-            with st.spinner("Building root-cause brief..."):
+            with render_load_status("Building root-cause brief", "Root-cause brief ready"):
                 try:
                     summary_sql, exceptions_sql = _build_mart_root_cause_sql(days, limit, company)
                     summary_df = run_query(
@@ -830,7 +831,7 @@ def render_root_cause_brief(session) -> None:
                 if st.button("Generate Cortex Root-Cause Narrative", key="qw_rc_cortex_narrative"):
                     prompt = _root_cause_cortex_prompt(company, days, score, summary_row, exceptions)
                     try:
-                        with st.spinner("Generating DBA root-cause narrative..."):
+                        with render_load_status("Generating DBA root-cause narrative", "DBA root-cause narrative ready"):
                             st.session_state["qw_root_cortex_narrative"] = _generate_root_cause_cortex_narrative(
                                 session,
                                 prompt,

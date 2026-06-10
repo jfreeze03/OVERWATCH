@@ -97,7 +97,7 @@ def render():
         if "CREDITS_USED_CLOUD_SERVICES" in qh_cols else "0::FLOAT AS cloud_credits"
     )
 
-    st.header("Query Search & History")
+    st.subheader("Query Search & History")
     st.caption("Search company-scoped ACCOUNT_USAGE.QUERY_HISTORY by exact query ID or query-text keyword.")
 
     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])

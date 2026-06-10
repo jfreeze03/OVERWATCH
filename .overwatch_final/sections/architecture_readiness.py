@@ -45,6 +45,7 @@ load_owner_directory = _lazy_util("load_owner_directory")
 load_warehouse_inventory = _lazy_util("load_warehouse_inventory")
 metric_confidence_label = _lazy_util("metric_confidence_label")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+render_load_status = _lazy_util("render_load_status")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
@@ -1611,7 +1612,8 @@ def _render_platform_futures(company: str, environment: str) -> None:
 
     elif futures_view == "Agentic AI Cockpit":
         if st.button("Load Agentic AI Cockpit", key="arch_agentic_cockpit_load"):
-            _refresh_platform_futures_summary(company, environment)
+            with render_load_status("Loading Agentic AI cockpit", "Agentic AI cockpit ready"):
+                _refresh_platform_futures_summary(company, environment)
         agentic_summary = _get_valid_architecture_data(
             "arch_agentic_ai_summary",
             "arch_agentic_ai_meta",
@@ -1635,7 +1637,7 @@ def _render_platform_futures(company: str, environment: str) -> None:
         with c2:
             row_limit = st.slider("Max warehouse rows", 25, 500, 100, step=25, key="arch_adaptive_compute_limit")
         if st.button("Load Adaptive Compute Advisor", key="arch_adaptive_compute_load"):
-            with st.spinner("Loading Adaptive Compute advisor..."):
+            with render_load_status("Loading Adaptive Compute advisor", "Adaptive Compute advisor ready"):
                 try:
                     st.session_state["arch_adaptive_compute"] = load_adaptive_compute_readiness(
                         get_session(),
@@ -1699,7 +1701,7 @@ def _render_platform_futures(company: str, environment: str) -> None:
 
     elif futures_view == "Agents & MCP":
         if st.button("Load Agents and MCP Inventory", key="arch_ai_inventory_load"):
-            with st.spinner("Loading Cortex Agent and MCP inventory..."):
+            with render_load_status("Loading Cortex Agent and MCP inventory", "Agent and MCP inventory ready"):
                 try:
                     st.session_state["arch_ai_inventory"] = load_agent_mcp_inventory(get_session(), company, environment)
                     st.session_state["arch_ai_inventory_meta"] = _architecture_scope_meta(
@@ -1754,7 +1756,7 @@ def _render_platform_futures(company: str, environment: str) -> None:
         with c2:
             row_limit = st.slider("Max AI usage rows", 25, 500, 100, step=25, key="arch_ai_usage_limit")
         if st.button("Load AI Usage Guardrails", key="arch_ai_usage_load"):
-            with st.spinner("Loading AI usage guardrails..."):
+            with render_load_status("Loading AI usage guardrails", "AI usage guardrails ready"):
                 try:
                     st.session_state["arch_ai_usage"] = load_ai_usage_guardrails(
                         get_session(),
@@ -1811,7 +1813,7 @@ def _render_platform_futures(company: str, environment: str) -> None:
 
     elif futures_view == "AI Security":
         if st.button("Load AI Security Guardrails", key="arch_ai_security_guardrails_load"):
-            with st.spinner("Loading AI security guardrails..."):
+            with render_load_status("Loading AI security guardrails", "AI security guardrails ready"):
                 try:
                     st.session_state["arch_ai_security_guardrails"] = load_ai_security_guardrails(get_session())
                     st.session_state["arch_ai_security_guardrails_meta"] = _architecture_scope_meta(
@@ -1873,7 +1875,7 @@ def _render_platform_futures(company: str, environment: str) -> None:
         with c2:
             row_limit = st.slider("Max Openflow rows", 25, 500, 100, step=25, key="arch_openflow_limit")
         if st.button("Load Openflow Operations", key="arch_openflow_load"):
-            with st.spinner("Loading Openflow operations..."):
+            with render_load_status("Loading Openflow operations", "Openflow operations ready"):
                 try:
                     st.session_state["arch_openflow_usage"] = load_openflow_operations(
                         get_session(),
@@ -1930,7 +1932,7 @@ def _render_platform_futures(company: str, environment: str) -> None:
 
     elif futures_view == "Horizon & Semantic":
         if st.button("Load Horizon and Semantic Readiness", key="arch_horizon_load"):
-            with st.spinner("Probing Horizon, semantic, and AI change readiness..."):
+            with render_load_status("Loading Horizon and semantic readiness", "Horizon and semantic readiness ready"):
                 try:
                     st.session_state["arch_horizon_readiness"] = load_horizon_semantic_readiness(get_session())
                     st.session_state["arch_horizon_meta"] = _architecture_scope_meta(
@@ -2059,7 +2061,7 @@ def render():
         with c2:
             row_limit = st.slider("Max rows", 50, 1000, 300, step=50, key="arch_iso_limit")
         if st.button("Load Isolation Matrix", key="arch_iso_load"):
-            with st.spinner("Loading database-to-warehouse isolation evidence..."):
+            with render_load_status("Loading database-to-warehouse isolation evidence", "Isolation evidence ready"):
                 try:
                     st.session_state["arch_iso_df"] = _load_workload_isolation(get_session(), days, row_limit)
                     st.session_state["arch_iso_meta"] = _architecture_scope_meta(
@@ -2111,7 +2113,7 @@ def render():
             row_limit = st.slider("Max tables", 25, 500, 150, step=25, key="arch_cluster_limit")
         defer_section_note("Clustering candidates are ranked only. Run clustering-depth proof SQL for one selected table before changing keys.")
         if st.button("Load Clustering Candidates", key="arch_cluster_load"):
-            with st.spinner("Loading table clustering candidates..."):
+            with render_load_status("Loading table clustering candidates", "Clustering candidates ready"):
                 try:
                     st.session_state["arch_cluster_df"] = _load_clustering_strategy(get_session(), min_gb, row_limit)
                     st.session_state["arch_cluster_meta"] = _architecture_scope_meta(
@@ -2168,7 +2170,7 @@ def render():
         with c2:
             row_limit = st.slider("Max rows", 50, 1000, 300, step=50, key="arch_cache_limit")
         if st.button("Load Cache Evidence", key="arch_cache_load"):
-            with st.spinner("Loading warehouse cache evidence..."):
+            with render_load_status("Loading warehouse cache evidence", "Cache evidence ready"):
                 try:
                     st.session_state["arch_cache_df"] = _load_cache_optimization(get_session(), days, row_limit)
                     st.session_state["arch_cache_meta"] = _architecture_scope_meta(
@@ -2214,7 +2216,8 @@ def render():
         st.subheader("Architecture Objective Register")
         defer_section_note("Manual DBA control objectives cover database families, execution warehouses, workload classes, and RPO/RTO targets.")
         if st.button("Load Objective Register", key="arch_objective_register_load"):
-            _ensure_architecture_objectives_state(company, environment)
+            with render_load_status("Loading architecture objectives", "Architecture objectives ready"):
+                _ensure_architecture_objectives_state(company, environment)
 
         objective_expected = _architecture_scope_meta(company, environment, "Architecture objectives")
         objectives = st.session_state.get("arch_objectives_df")
@@ -2248,7 +2251,8 @@ def render():
             download_csv(objectives, "architecture_objectives.csv")
 
         if st.button("Load Architecture Source Health", key="arch_source_health_load"):
-            _refresh_architecture_source_health_state(company, environment)
+            with render_load_status("Loading architecture source health", "Architecture source health ready"):
+                _refresh_architecture_source_health_state(company, environment)
         source_health = _get_valid_architecture_source_health(company, environment)
         if source_health is not None:
             render_priority_dataframe(
@@ -2266,7 +2270,7 @@ def render():
         days = day_window_selectbox("Replication usage lookback", key="arch_dr_days", default=30)
         defer_section_note(f"Replication lag warning threshold: {THRESHOLDS.get('replication_lag_warn_min', 120)} minutes.")
         if st.button("Load DR Readiness", key="arch_dr_load"):
-            with st.spinner("Loading DR and replication metadata..."):
+            with render_load_status("Loading DR and replication metadata", "DR readiness ready"):
                 try:
                     st.session_state["arch_dr_data"] = _load_dr_readiness(get_session(), days)
                     readiness = st.session_state["arch_dr_data"].get("readiness", pd.DataFrame())

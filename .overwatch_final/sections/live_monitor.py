@@ -21,7 +21,7 @@ from utils import (
     admin_button_disabled, log_admin_action, require_admin_enabled,
     load_warehouse_options,
 )
-from utils.workflows import render_priority_dataframe
+from utils.workflows import render_priority_dataframe, render_workflow_selector
 from config import DEFAULTS, THRESHOLDS
 
 
@@ -98,17 +98,17 @@ def render():
     rt_interval  = st.session_state.get("rt_interval", 30)
     company      = get_active_company()
 
-    active_view = st.radio(
+    active_view = render_workflow_selector(
         "Live monitor view",
+        "live_monitor_active_view",
         LIVE_MONITOR_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="live_monitor_active_view",
+        columns=3,
+        show_label=True,
     )
 
     # -- ACTIVE QUERIES --------------------------------------------------------
     if active_view == "Active Queries":
-        st.header("Live & Recent Queries")
+        st.subheader("Live & Recent Queries")
         st.caption(
             "Uses `ACCOUNT_USAGE.QUERY_HISTORY` by default for Streamlit-in-Snowflake compatibility. "
             "Zero-latency metadata can be tried when the active role/context allows it."
@@ -385,7 +385,7 @@ def render():
 
     # -- TIMELINE --------------------------------------------------------------
     elif active_view == "Timeline":
-        st.header("Query Timeline")
+        st.subheader("Query Timeline")
         tl_hours = st.slider("Lookback (hours)", 1, 24, 6, key="lm_tl_hours")
         if st.button("Load Timeline", key="lm_tl_load"):
             try:
@@ -425,7 +425,7 @@ def render():
 
     # -- SESSIONS --------------------------------------------------------------
     elif active_view == "Sessions":
-        st.header("Active Sessions")
+        st.subheader("Active Sessions")
         s1, s2 = st.columns(2)
 
         with s1:

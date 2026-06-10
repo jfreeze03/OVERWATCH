@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import html
 import inspect
+from contextlib import contextmanager
 from importlib import import_module
 from collections.abc import Mapping, Sequence
 
@@ -13,7 +14,7 @@ from .cost import freshness_note, get_credit_price, metric_confidence_label
 from .section_guidance import defer_section_note, defer_source_note
 
 
-WORKFLOWS_VERSION = "2026-06-05-cost-companion-guard-v1"
+WORKFLOWS_VERSION = "2026-06-09-load-status-guard-v1"
 CONTEXT_PRIORITY_COLUMNS = ("ENVIRONMENT", "DATABASE_NAME", "SCHEMA_NAME")
 _CREDIT_COST_COMPANION_LIMIT = 10
 STATUS_DISPLAY_COLUMNS = (
@@ -182,6 +183,69 @@ def render_workflow_selector(
                     st.session_state[key] = workflow
                     st.rerun()
     return str(st.session_state.get(key, selected))
+
+
+def render_mode_selector(
+    label: str,
+    key: str,
+    modes: Sequence[str],
+    *,
+    default: str | None = None,
+    label_visibility: str = "collapsed",
+) -> str:
+    """Render a compact mode selector with a compatible selectbox fallback."""
+    if not modes:
+        raise ValueError("modes must contain at least one entry")
+    options = list(modes)
+    fallback = default if default in options else options[0]
+    selected = st.session_state.get(key, fallback)
+    if selected not in options:
+        selected = fallback
+        st.session_state[key] = selected
+
+    segmented = getattr(st, "segmented_control", None)
+    if callable(segmented):
+        value = segmented(
+            label,
+            options,
+            selection_mode="single",
+            default=selected,
+            key=key,
+            label_visibility=label_visibility,
+            width="stretch",
+        )
+    else:
+        value = st.selectbox(
+            label,
+            options,
+            index=options.index(selected),
+            key=key,
+            label_visibility=label_visibility,
+        )
+    if value not in options:
+        return str(selected)
+    return str(value)
+
+
+@contextmanager
+def render_load_status(label: str, complete_label: str | None = None, *, expanded: bool = False):
+    """Show consistent lightweight feedback around explicit evidence loads."""
+    complete = complete_label or f"{label} complete"
+    try:
+        status_cm = st.status(label, expanded=expanded)
+    except Exception:
+        with st.spinner(label):
+            yield None
+        return
+
+    with status_cm as status:
+        try:
+            yield status
+        except Exception:
+            status.update(label=f"{label} did not complete", state="error", expanded=True)
+            raise
+        else:
+            status.update(label=complete, state="complete", expanded=False)
 
 
 def migrate_legacy_workflow_state(

@@ -2899,7 +2899,7 @@ def _render_task_ops_brief(session) -> None:
 
 def _render_sla_cost_drift_console(session) -> None:
     company = get_active_company()
-    st.header("Task SLA & Cost Drift")
+    st.subheader("Task SLA & Cost Drift")
     st.caption(
         "Use this after product releases or stored procedure changes. It compares each task's latest run "
         "to its own historical baseline and highlights duration or estimated-credit regressions."
@@ -3135,7 +3135,7 @@ def render():
         _render_task_ops_brief(session)
 
     elif task_view == "Task History":
-        st.header("Task Execution History")
+        st.subheader("Task Execution History")
         th_days = day_window_selectbox("Lookback", key="th_days", default=7)
 
         if st.button("Load Task Data", key="th_load"):
@@ -3210,7 +3210,7 @@ def render():
             download_csv(th, "task_history.csv")
 
     elif task_view == "Failure Console":
-        st.header("Failure Console & Runbook")
+        st.subheader("Failure Console & Runbook")
         st.caption(
             "Diagnose failed task graph runs, link failures to query history and stored procedures, "
             "classify probable cause, and export a DBA handoff runbook."
@@ -3379,7 +3379,7 @@ def render():
         _render_sla_cost_drift_console(session)
 
     elif task_view == "ETL Audit":
-        st.header("ETL Audit Framework")
+        st.subheader("ETL Audit Framework")
         st.caption(f"Custom ETL run tracking table: `{ETL_AUDIT_FQN}`")
         st.info("ETL audit table deployment is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
 
@@ -3428,7 +3428,7 @@ def render():
                 _queue_task_findings(session, err, "Task Management - ETL Audit")
 
     elif task_view == "Control Center":
-        st.header("Task Graph Control Center")
+        st.subheader("Task Graph Control Center")
         st.caption(
             "Generate and run guarded task actions from the same place you diagnose graph health. "
             "Every action is written to the OVERWATCH admin audit table when that table exists."
@@ -3460,10 +3460,9 @@ def render():
             root_names = root_candidates["NAME"].astype(str).sort_values().unique().tolist() if "NAME" in root_candidates.columns else []
             all_names = tl["NAME"].astype(str).sort_values().unique().tolist() if "NAME" in tl.columns else []
 
-            control_mode = st.radio(
+            control_mode = st.selectbox(
                 "Control target",
                 ["Graph/root task", "Individual task", "Cancel running graph/query"],
-                horizontal=True,
                 key="tm_control_mode",
             )
 
@@ -3618,7 +3617,7 @@ def render():
                         ascending=[False, False],
                         raw_label="All cancellable task run rows",
                     )
-                    cancel_type = st.radio("Cancel target", ["Graph Run Group", "Query ID"], horizontal=True, key="tm_cancel_type")
+                    cancel_type = st.selectbox("Cancel target", ["Graph Run Group", "Query ID"], key="tm_cancel_type")
                     if cancel_type == "Graph Run Group" and "GRAPH_RUN_GROUP_ID" in cancel_runs.columns:
                         graph_ids = cancel_runs["GRAPH_RUN_GROUP_ID"].dropna().astype(str).unique().tolist()
                         selected_graph = st.selectbox("Graph run group", graph_ids, key="tm_cancel_graph")
@@ -3680,7 +3679,7 @@ def render():
 
     # -- EXECUTE TASK ----------------------------------------------------------
     elif task_view == "Execute Task":
-        st.header("Execute Task On-Demand")
+        st.subheader("Execute Task On-Demand")
         st.caption("Select and manually trigger a task. Ensure dependencies are met before running.")
         if not admin_actions_enabled():
             st.info("Read-only mode is active. Enable Admin actions in Settings before executing tasks.")

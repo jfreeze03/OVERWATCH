@@ -25,6 +25,7 @@ format_snowflake_error = _lazy_util("format_snowflake_error")
 run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
+render_workflow_selector = _lazy_util("render_workflow_selector")
 
 
 def safe_float(value, default: float = 0.0) -> float:
@@ -89,40 +90,6 @@ def render_operator_briefing(rows: Sequence[tuple[str, str]], *, columns: int = 
     _ = columns
     for label, detail in rows:
         defer_section_note(f"{label}: {detail}")
-
-
-def render_workflow_selector(
-    label: str,
-    key: str,
-    workflows: Sequence[str],
-    details: Mapping[str, str] | None = None,
-    *,
-    columns: int = 4,
-) -> str:
-    selected = str(st.session_state.get(key, workflows[0] if workflows else "") or "")
-    if selected not in workflows:
-        selected = workflows[0] if workflows else ""
-        st.session_state[key] = selected
-
-    details = details or {}
-    items = list(workflows)
-    columns = max(1, min(int(columns or 4), 5))
-    for start in range(0, len(items), columns):
-        row = items[start:start + columns]
-        cols = st.columns(len(row))
-        for col, workflow in zip(cols, row):
-            with col:
-                is_selected = workflow == selected
-                if st.button(
-                    workflow,
-                    key=f"{key}_{start}_{workflow}",
-                    type="primary" if is_selected else "secondary",
-                    width="stretch",
-                    help=details.get(workflow) or None,
-                ):
-                    st.session_state[key] = workflow
-                    st.rerun()
-    return str(st.session_state.get(key, selected))
 
 
 WORKLOAD_OPERATIONS_VIEWS = ("Workload Brief", "Specialist Workflows")

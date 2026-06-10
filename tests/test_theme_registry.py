@@ -34,6 +34,12 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertEqual(theme._normalize_theme_key("black_ice"), "carbon")
         self.assertEqual(theme._normalize_theme_key("midnight"), "carbon")
 
+    def test_theme_picker_uses_dropdown_not_radio(self):
+        theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
+        self.assertIn("selected = st.selectbox(", theme_text)
+        self.assertNotIn("selected = st.radio(", theme_text)
+        self.assertIn('key="theme_picker_radio"', theme_text)
+
     def test_snowflake_themes_use_snowflake_blue(self):
         self.assertEqual(theme.THEMES["terminal"]["swatch"], "#29B5E8")
         self.assertEqual(theme.THEMES["carbon"]["swatch"], "#29B5E8")

@@ -36,7 +36,7 @@ from utils import (
     verification_query_safety_issues,
 )
 from utils.recommendation_intelligence import build_automation_readiness_board, harden_recommendation
-from utils.workflows import render_priority_dataframe
+from utils.workflows import render_load_status, render_priority_dataframe, render_workflow_selector
 
 
 RECOMMENDATION_PANES = (
@@ -203,16 +203,17 @@ def _automation_playbook_frame() -> pd.DataFrame:
 
 
 def _render_automation_readiness(session):
-    st.header("Automation Readiness")
+    st.subheader("Automation Readiness")
     st.caption("DBA-safe automation lanes for recommendations and action queue items.")
     c_load, c_hint = st.columns([1, 3])
     with c_load:
         if st.button("Load Action Queue", key="automation_queue_load"):
-            try:
-                st.session_state["rec_action_queue"] = load_action_queue(session)
-            except Exception as e:
-                st.info(f"Action queue table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
-                st.session_state["rec_action_queue"] = pd.DataFrame()
+            with render_load_status("Loading action queue", "Action queue ready"):
+                try:
+                    st.session_state["rec_action_queue"] = load_action_queue(session)
+                except Exception as e:
+                    st.info(f"Action queue table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
+                    st.session_state["rec_action_queue"] = pd.DataFrame()
     with c_hint:
         st.caption("Generate recommendations and/or load the action queue, then use this board to decide what can be safely packaged.")
 
@@ -280,16 +281,17 @@ def _render_automation_readiness(session):
 
 
 def _render_queue(session):
-    st.header("Persistent Action Queue")
+    st.subheader("Persistent Action Queue")
     st.caption("Owner, status, savings, generated SQL, and proof query for every actionable finding.")
     st.info("Action Queue setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
 
     if st.button("Load Action Queue", key="queue_load"):
-        try:
-            st.session_state["rec_action_queue"] = load_action_queue(session)
-        except Exception as e:
-            st.info(f"Action queue table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
-            st.session_state["rec_action_queue"] = pd.DataFrame()
+        with render_load_status("Loading action queue", "Action queue ready"):
+            try:
+                st.session_state["rec_action_queue"] = load_action_queue(session)
+            except Exception as e:
+                st.info(f"Action queue table not found. Run the setup DDL first. ({format_snowflake_error(e)})")
+                st.session_state["rec_action_queue"] = pd.DataFrame()
 
     df_queue = st.session_state.get("rec_action_queue")
     if df_queue is None:
@@ -373,20 +375,21 @@ def _render_queue(session):
     if safety_issues:
         st.warning("Stored verification query is not runnable from the app: " + "; ".join(safety_issues))
     elif st.button("Run stored verification query", key=f"queue_run_verification_{selected}"):
-        try:
-            verification_sql = build_safe_verification_query(default_query)
-            evidence_df = run_query_or_raise(
-                verification_sql,
-                section="Action Queue",
-                ttl_key=f"action_queue_verify_{selected}",
-                tier="live",
-            )
-            st.session_state[f"queue_verification_result_prefill_{selected}"] = summarize_verification_frame(evidence_df)
-            st.session_state[f"queue_verification_query_prefill_{selected}"] = verification_sql
-            st.success("Verification query ran. Review the summarized evidence before closing the item.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Could not run verification query: {format_snowflake_error(e)}")
+        with render_load_status("Running verification query", "Verification evidence ready"):
+            try:
+                verification_sql = build_safe_verification_query(default_query)
+                evidence_df = run_query_or_raise(
+                    verification_sql,
+                    section="Action Queue",
+                    ttl_key=f"action_queue_verify_{selected}",
+                    tier="live",
+                )
+                st.session_state[f"queue_verification_result_prefill_{selected}"] = summarize_verification_frame(evidence_df)
+                st.session_state[f"queue_verification_query_prefill_{selected}"] = verification_sql
+                st.success("Verification query ran. Review the summarized evidence before closing the item.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Could not run verification query: {format_snowflake_error(e)}")
 
     verification_query_default = st.session_state.get(
         f"queue_verification_query_prefill_{selected}",
@@ -576,16 +579,16 @@ def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
 
-    active_view = st.radio(
+    active_view = render_workflow_selector(
         "Recommendation view",
+        "recommendations_active_view",
         RECOMMENDATION_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="recommendations_active_view",
+        columns=4,
+        show_label=True,
     )
 
     if active_view == "Recommendations":
-        st.header("Automated Recommendations Feed")
+        st.subheader("Automated Recommendations Feed")
         st.caption("Prioritized findings that can be saved into a persistent owner/status queue.")
 
         if st.button("Generate Recommendations", key="recs_gen"):
@@ -873,13 +876,14 @@ def render():
         _render_queue(session)
 
     elif active_view == "Anomaly Log":
-        st.header("Anomaly Log")
+        st.subheader("Anomaly Log")
         st.caption("Flags warehouse credit spikes against a rolling 7-day baseline.")
         anom_days = day_window_selectbox("Detection window", key="anom_days", default=30)
 
         if st.button("Detect Anomalies", key="anom_detect"):
-            try:
-                df_anom = run_query(f"""
+            with render_load_status("Detecting credit anomalies", "Anomaly scan ready"):
+                try:
+                    df_anom = run_query(f"""
                 WITH daily AS (
                     SELECT warehouse_name,
                            DATE_TRUNC('day', start_time) AS day,
@@ -911,10 +915,10 @@ def render():
                 WHERE rolling_avg IS NOT NULL
                   AND (daily_credits - rolling_avg) / NULLIF(rolling_std, 0) > 1.5
                 ORDER BY day DESC, zscore DESC
-                """, ttl_key=f"rec_anomaly_{_active_company()}_{anom_days}", tier="historical")
-                st.session_state["rec_anomalies"] = df_anom
-            except Exception as e:
-                st.warning(f"Recommendation scan unavailable in this role/context: {format_snowflake_error(e)}")
+                    """, ttl_key=f"rec_anomaly_{_active_company()}_{anom_days}", tier="historical")
+                    st.session_state["rec_anomalies"] = df_anom
+                except Exception as e:
+                    st.warning(f"Recommendation scan unavailable in this role/context: {format_snowflake_error(e)}")
 
         df_an = st.session_state.get("rec_anomalies")
         if df_an is not None:

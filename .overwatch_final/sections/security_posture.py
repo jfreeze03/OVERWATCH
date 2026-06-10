@@ -50,6 +50,7 @@ get_user_filter_clause = _lazy_util("get_user_filter_clause")
 mart_object_name = _lazy_util("mart_object_name")
 make_action_id = _lazy_util("make_action_id")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
+render_workflow_selector = _lazy_util("render_workflow_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 resolve_owner_context = _lazy_util("resolve_owner_context")
 run_query = _lazy_util("run_query")
@@ -149,24 +150,6 @@ def render_workflow_guide(summary: str, rows) -> None:
     defer_section_note(summary)
     for trigger, action in rows:
         defer_section_note(f"{trigger}: {action}")
-
-
-def render_workflow_selector(
-    label: str,
-    key: str,
-    workflows,
-    details: dict[str, str] | None = None,
-    *,
-    columns: int = 4,
-    show_label: bool = False,
-) -> str:
-    selected = st.session_state.get(key, workflows[0] if workflows else "")
-    if selected not in workflows:
-        selected = workflows[0] if workflows else ""
-        st.session_state[key] = selected
-    if label and show_label:
-        st.caption(label)
-    return str(st.selectbox(label, list(workflows), key=key))
 
 
 def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> None:

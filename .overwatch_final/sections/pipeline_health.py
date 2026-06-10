@@ -17,6 +17,7 @@ from utils import (
     make_action_id,
     render_drillable_bar_chart,
     render_priority_dataframe,
+    render_workflow_selector,
     run_query,
     safe_float,
     safe_int,
@@ -210,16 +211,16 @@ def _load_dynamic_table_inventory(session, company: str, days: int) -> pd.DataFr
 def render():
     session = get_session()
     company = st.session_state.get("active_company", "ALFA")
-    active_view = st.radio(
+    active_view = render_workflow_selector(
         "Pipeline health view",
+        "pipeline_health_active_view",
         PIPELINE_HEALTH_PANES,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="pipeline_health_active_view",
+        columns=3,
+        show_label=True,
     )
 
     if active_view == "Freshness SLA":
-        st.header("Pipeline Freshness SLA")
+        st.subheader("Pipeline Freshness SLA")
         stale_hours = st.slider("Stale threshold (hours)", 4, 168, 24, key="pipe_stale_hours")
         if st.button("Load Freshness Watchlist", key="pipe_fresh_load"):
             try:
@@ -290,7 +291,7 @@ def render():
                     _queue_pipeline_findings(session, df_fresh, "Freshness")
 
     elif active_view == "Load Failures":
-        st.header("Load Failure Monitor")
+        st.subheader("Load Failure Monitor")
         load_days = day_window_selectbox("Lookback", key="pipe_load_days", default=7)
         if st.button("Load Copy History Failures", key="pipe_load_failures"):
             try:
@@ -351,7 +352,7 @@ def render():
                     _queue_pipeline_findings(session, df_loads, "Load Failure")
 
     elif active_view == "Volume Watch":
-        st.header("Table Volume Watch")
+        st.subheader("Table Volume Watch")
         defer_source_note("Highlights large and fast-changing tables from ACCOUNT_USAGE.TABLES metadata.")
         min_gb = st.slider("Minimum table size (GB)", 1, 500, 25, key="pipe_min_gb")
         if st.button("Load Volume Watchlist", key="pipe_volume_load"):
@@ -418,7 +419,7 @@ def render():
                     _queue_pipeline_findings(session, df_volume, "Volume")
 
     elif active_view == "Snowpipe Usage":
-        st.header("Snowpipe Usage")
+        st.subheader("Snowpipe Usage")
         defer_source_note("Snowpipe credit and file-volume monitoring from ACCOUNT_USAGE.PIPE_USAGE_HISTORY.")
         pipe_days = day_window_selectbox("Lookback", key="pipe_snowpipe_days", default=7)
         if st.button("Load Snowpipe Usage", key="pipe_snowpipe_load"):
@@ -469,7 +470,7 @@ def render():
                     _queue_pipeline_findings(session, df_pipe, "Snowpipe")
 
     elif active_view == "Dynamic Tables":
-        st.header("Dynamic Table Refresh Health")
+        st.subheader("Dynamic Table Refresh Health")
         st.caption("Inventory and latest refresh state for Snowflake dynamic tables.")
         dyn_days = day_window_selectbox("Refresh lookback", key="pipe_dynamic_days", default=7)
         if st.button("Load Dynamic Tables", key="pipe_dynamic_load"):

@@ -190,7 +190,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_cost_savings_verification_health_sql",
     ),
     "workflows": (
-        "coerce_workflow_state", "render_workflow_selector", "render_workflow_guide",
+        "coerce_workflow_state", "render_workflow_selector", "render_mode_selector", "render_load_status", "render_workflow_guide",
         "render_signal_confidence", "add_signal_routes", "add_cost_companion_columns",
         "apply_operator_status_labels", "render_priority_dataframe", "prioritize_context_columns", "migrate_legacy_workflow_state",
         "render_workflow_module",

@@ -23,6 +23,13 @@ from utils import (
     sql_literal,
     upsert_actions,
 )
+from utils.evidence_mode import (
+    TRIAGE_MODE_ALL_EVIDENCE,
+    TRIAGE_MODE_INVESTIGATE,
+    current_evidence_mode,
+    evidence_mode_is_all_evidence,
+    evidence_mode_is_investigation,
+)
 from utils.workflows import (
     render_load_status,
     render_priority_dataframe,
@@ -782,12 +789,20 @@ def _queue_root_cause_actions(session, exceptions: pd.DataFrame) -> int:
 
 def render_root_cause_brief(session) -> None:
     company = get_active_company()
-    with st.expander("Root-Cause Brief", expanded=bool(st.session_state.get("exceptions_only_mode"))):
+    evidence_mode = current_evidence_mode(st.session_state)
+    investigation_mode = evidence_mode_is_investigation(st.session_state)
+    all_evidence_mode = evidence_mode_is_all_evidence(st.session_state)
+    default_limit = 100
+    if evidence_mode == TRIAGE_MODE_INVESTIGATE:
+        default_limit = 150
+    elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
+        default_limit = 250
+    with st.expander("Root-Cause Brief", expanded=bool(st.session_state.get("exceptions_only_mode") or investigation_mode)):
         c1, c2 = st.columns([1, 1])
         with c1:
             days = day_window_selectbox("Root-cause lookback", key="qw_rc_days", default=7)
         with c2:
-            limit = st.slider("Exception rows", 25, 250, 100, step=25, key="qw_rc_limit")
+            limit = st.slider("Exception rows", 25, 250, default_limit, step=25, key="qw_rc_limit")
 
         if st.button("Load Root-Cause Brief", key="qw_rc_load"):
             with render_load_status("Building root-cause brief", "Root-cause brief ready"):
@@ -920,13 +935,14 @@ def render_root_cause_brief(session) -> None:
                 "score": int(score),
                 "top_query": str(exceptions.iloc[0].get("QUERY_ID", "")) if not exceptions.empty else "",
             }
-            with st.expander("Cortex Root-Cause Narrative"):
+            with st.expander("Cortex Root-Cause Narrative", expanded=evidence_mode == TRIAGE_MODE_INVESTIGATE):
                 if st.button(
                     "Generate Cortex Root-Cause Narrative",
                     key="qw_rc_cortex_narrative",
                     help=(
                         "Runs one Cortex completion against the loaded root-cause evidence. "
-                        "The request is throttled; telemetry stores feature, timing, and prompt hash only, not prompt text."
+                        "The request is throttled and identical evidence reuses the cached answer; telemetry stores "
+                        "feature, timing, and prompt hash only, not prompt text."
                     ),
                     width="stretch",
                 ):
@@ -961,7 +977,7 @@ def render_root_cause_brief(session) -> None:
             mime="text/markdown",
             key="qw_rc_download",
         )
-        with st.expander("Proof SQL"):
+        with st.expander("Proof SQL", expanded=all_evidence_mode):
             sql_map = st.session_state.get("qw_root_sql", {})
             st.code(sql_map.get("summary", ""), language="sql")
             st.code(sql_map.get("exceptions", ""), language="sql")

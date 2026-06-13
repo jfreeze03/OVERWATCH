@@ -112,3 +112,37 @@ class CortexGuardTests(unittest.TestCase):
         self.assertEqual(telemetry[0]["prompt_chars"], len("sensitive query text with account details"))
         self.assertNotIn("sensitive query text", str(telemetry[0]))
         self.assertIn("tier=cortex", telemetry[0]["query_tag"])
+
+    def test_cortex_completion_reuses_cached_answer_without_second_call(self):
+        session = _DummySession("diagnosis")
+        first = cortex.run_cortex_completion(
+            session,
+            "same loaded evidence",
+            alias="answer",
+            feature="query_analysis_ai_diagnosis",
+            cooldown_seconds=0,
+            daily_call_limit=1,
+            cache_ttl_seconds=60,
+        )
+        statement_count = len(session.statements)
+
+        second = cortex.run_cortex_completion(
+            session,
+            "same loaded evidence",
+            alias="answer",
+            feature="query_analysis_ai_diagnosis",
+            cooldown_seconds=0,
+            daily_call_limit=1,
+            cache_ttl_seconds=60,
+        )
+
+        usage = cortex.get_cortex_usage_summary()
+        telemetry = cortex.get_cortex_telemetry()
+
+        self.assertEqual(first, "diagnosis")
+        self.assertEqual(second, "diagnosis")
+        self.assertEqual(len(session.statements), statement_count)
+        self.assertEqual(usage["total_calls"], 1)
+        self.assertEqual(usage["cached_answers"], 1)
+        self.assertEqual([row["status"] for row in telemetry], ["success", "cache_hit"])
+        self.assertNotIn("same loaded evidence", str(telemetry))

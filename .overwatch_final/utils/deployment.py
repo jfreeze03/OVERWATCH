@@ -58,12 +58,14 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
     cloud_config_path = repo / ".streamlit" / "config.toml"
     deploy_doc_path = repo / "STREAMLIT_CLOUD_DEPLOY.md"
     ci_path = repo / ".github" / "workflows" / "validate.yml"
+    cortex_path = app_root / "utils" / "cortex.py"
 
     manifest = _read_text(manifest_path)
     wrapper = _read_text(wrapper_path)
     cloud_config = _read_text(cloud_config_path)
     deploy_doc = _read_text(deploy_doc_path)
     ci_text = _read_text(ci_path)
+    cortex_text = _read_text(cortex_path)
 
     artifact_states = []
     for artifact in STREAMLIT_SNOWFLAKE_ARTIFACTS:
@@ -138,6 +140,30 @@ def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.Data
             "present" if "tests.test_deployment_contract" in ci_text else "missing",
             "tests.test_deployment_contract" in ci_text,
             "Add the dedicated deployment-contract test step to .github/workflows/validate.yml.",
+        ),
+        _contract_row(
+            "CI production shell guards",
+            "validate.yml fast-fails production shell and navigation regressions before full suite",
+            "present" if "Run production shell guards" in ci_text else "missing",
+            "Run production shell guards" in ci_text
+            and "test_streamlit_deployment_entrypoints_are_pinned" in ci_text
+            and "test_app_shell_header_renders_before_sidebar_hydration" in ci_text
+            and "test_workflow_hubs_replace_scattered_operational_pages" in ci_text
+            and "test_dead_ui_helpers_stay_removed" in ci_text,
+            "Add the production shell guard step before the full test suite in .github/workflows/validate.yml.",
+        ),
+        _contract_row(
+            "Cortex completion guardrails",
+            "manual Cortex completions are throttled, cached, and telemetry-safe",
+            "present" if "Run Cortex guardrails" in ci_text else "missing",
+            "Run Cortex guardrails" in ci_text
+            and "tests.test_cortex_guard" in ci_text
+            and "DEFAULT_CORTEX_COOLDOWN_SECONDS" in cortex_text
+            and "DEFAULT_CORTEX_DAILY_CALL_LIMIT" in cortex_text
+            and "DEFAULT_CORTEX_CACHE_TTL_SECONDS" in cortex_text
+            and "_overwatch_cortex_cache" in cortex_text
+            and "prompt_hash" in cortex_text,
+            "Restore utils.cortex throttling, session cache, prompt-safe telemetry, and the CI guard step.",
         ),
     ]
     return pd.DataFrame(rows)

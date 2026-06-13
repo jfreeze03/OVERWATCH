@@ -2899,7 +2899,7 @@ def render() -> None:
         columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
-        st.warning("Exceptions-only mode: prioritize failed logins, MFA gaps, risky grants, and external exposure.")
+        st.warning("Triage mode: prioritize failed logins, MFA gaps, risky grants, and external exposure.")
     render_workflow_guide(
         "Start with identity/access posture, open privilege sprawl for high-risk grants, "
         "then inspect data sharing when the question is external exposure or audit evidence.",

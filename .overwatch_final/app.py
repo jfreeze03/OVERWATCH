@@ -55,6 +55,15 @@ from utils.company_filter import (
     invalidate_company_cache,
 )
 from utils.admin import render_admin_mode_control
+from utils.evidence_mode import (
+    TRIAGE_MODE_ALL_EVIDENCE,
+    TRIAGE_MODE_INVESTIGATE,
+    TRIAGE_MODE_OPTIONS,
+    TRIAGE_MODE_TRIAGE,
+    evidence_mode_from_exceptions,
+    exceptions_enabled_from_evidence_mode,
+    normalize_evidence_mode,
+)
 try:
     from utils.admin import clamp_global_date_range
 except ImportError:
@@ -80,13 +89,10 @@ except ImportError:
         return end_date - timedelta(days=max_days - 1), end_date, True, max_days
 import utils.section_guidance as section_guidance
 
-TRIAGE_MODE_EXCEPTIONS = "Exceptions only"
-TRIAGE_MODE_ALL_EVIDENCE = "All evidence"
-TRIAGE_MODE_OPTIONS = (TRIAGE_MODE_EXCEPTIONS, TRIAGE_MODE_ALL_EVIDENCE)
 TRIAGE_MODE_HELP = (
-    "Exceptions only keeps the app focused on failures, cost spikes, queue pressure, "
-    "suspicious access, contract risk, and owner-ready action. All evidence shows broader "
-    "context and lower-priority supporting rows."
+    "Triage keeps the app focused on failures, cost spikes, queue pressure, suspicious access, "
+    "contract risk, and owner-ready action. Investigate opens broader root-cause context. "
+    "All Evidence keeps lower-priority supporting rows available."
 )
 
 
@@ -335,24 +341,31 @@ def _sync_experience_navigation() -> None:
 
 
 def _triage_mode_from_exceptions(enabled: bool) -> str:
-    return TRIAGE_MODE_EXCEPTIONS if enabled else TRIAGE_MODE_ALL_EVIDENCE
+    return evidence_mode_from_exceptions(enabled)
+
+
+def _normalize_triage_mode(mode: object) -> str:
+    return normalize_evidence_mode(mode)
 
 
 def _exceptions_enabled_from_triage_mode(mode: object) -> bool:
-    return str(mode or TRIAGE_MODE_EXCEPTIONS) == TRIAGE_MODE_EXCEPTIONS
+    return exceptions_enabled_from_evidence_mode(mode)
 
 
 def _sync_exceptions_only_mode() -> None:
     st.session_state["exceptions_only_mode"] = _exceptions_enabled_from_triage_mode(
-        st.session_state.get("triage_view_mode", TRIAGE_MODE_EXCEPTIONS)
+        st.session_state.get("triage_view_mode", TRIAGE_MODE_TRIAGE)
     )
 
 
 def _ensure_triage_mode_state(default_exceptions: bool) -> None:
-    if st.session_state.get("triage_view_mode") not in TRIAGE_MODE_OPTIONS:
+    raw_mode = st.session_state.get("triage_view_mode")
+    if raw_mode is None:
         st.session_state["triage_view_mode"] = _triage_mode_from_exceptions(
             bool(st.session_state.get("exceptions_only_mode", default_exceptions))
         )
+    else:
+        st.session_state["triage_view_mode"] = _normalize_triage_mode(raw_mode)
     _sync_exceptions_only_mode()
 
 
@@ -836,8 +849,8 @@ def _active_scope_chips(company: str) -> str:
         value = st.session_state.get(key)
         if value:
             chips.append(_chip(label, value, muted=True))
-    exceptions_enabled = bool(st.session_state.get("exceptions_only_mode"))
-    chips.append(_chip("Mode", _triage_mode_from_exceptions(exceptions_enabled), muted=not exceptions_enabled))
+    evidence_mode = _normalize_triage_mode(st.session_state.get("triage_view_mode"))
+    chips.append(_chip("Evidence", evidence_mode, muted=evidence_mode != TRIAGE_MODE_TRIAGE))
     return "".join(chips)
 
 
@@ -1013,10 +1026,12 @@ with st.sidebar:
             _clear_global_filters()
 
     _ensure_triage_mode_state(resolve_role_profile(_get_current_role()) == "DBA")
+    selected_triage_mode = _normalize_triage_mode(st.session_state.get("triage_view_mode", TRIAGE_MODE_TRIAGE))
+    st.session_state["triage_view_mode"] = selected_triage_mode
     st.selectbox(
-        "Triage Mode",
+        "Evidence Mode",
         TRIAGE_MODE_OPTIONS,
-        index=TRIAGE_MODE_OPTIONS.index(st.session_state.get("triage_view_mode", TRIAGE_MODE_EXCEPTIONS)),
+        index=TRIAGE_MODE_OPTIONS.index(selected_triage_mode),
         key="triage_view_mode",
         help=TRIAGE_MODE_HELP,
         on_change=_sync_exceptions_only_mode,

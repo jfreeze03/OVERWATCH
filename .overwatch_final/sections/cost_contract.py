@@ -5622,7 +5622,7 @@ def render() -> None:
         columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
-        st.warning("Exceptions-only mode: prioritize bill deltas, open action queue items, and contract risk.")
+        st.warning("Triage mode: prioritize bill deltas, open action queue items, and contract risk.")
     _render_cost_watch_floor(company, credit_price)
 
     workflow = render_workflow_selector(

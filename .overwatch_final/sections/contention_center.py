@@ -914,6 +914,22 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
         "Do not cancel or abort for pure warehouse queueing, unknown ownership, or missing "
         "query/transaction identity."
     )
+    approval_gate = (
+        "Owner approval, DBA on-call acknowledgement, and incident/ticket reference required "
+        "before any manual cleanup SQL."
+    )
+    audit_evidence = (
+        "Save precheck result, selected query or transaction ID, owner approval, copied manual SQL, "
+        "executor, timestamp, post-action Query History or lock evidence, and verify SQL result."
+    )
+    recovery_plan = (
+        "Monitor dependent workload, capture post-action Query History and lock evidence, and route "
+        "retry/recovery to the owning team."
+    )
+    execution_boundary = (
+        "OVERWATCH displays manual SQL only; execute from an approved Snowflake worksheet or DBA runbook "
+        "after approval."
+    )
     verification = (
         "Refresh active locks and Query History; blocked seconds should clear and the owner "
         "should confirm the dependent workload recovered."
@@ -936,6 +952,10 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
     if route == "Warehouse Health" or ("QUEUE" in signal_text and blocked <= 0 and queued > 0):
         action_type = "No cancel - capacity review"
         readiness = "Route to Warehouse Health"
+        approval_gate = "Warehouse owner approval required before resize, isolation, or schedule change. No cleanup SQL."
+        audit_evidence = "Save warehouse load history before and after, owner decision, change ticket, and cost note."
+        recovery_plan = "Use Warehouse Health capacity/isolation runbook, then verify queued load and blocked load fall."
+        execution_boundary = "No cancel or abort SQL is generated for pure warehouse queueing."
         verification = "Verify AVG_QUEUED_LOAD and QUEUED_OVERLOAD_TIME fall after capacity or isolation change."
         precheck_sql = _contention_precheck_sql(
             query_id=query_id,
@@ -954,6 +974,14 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
         readiness = "Ready for DBA review"
         manual_sql = f"SELECT SYSTEM$ABORT_TRANSACTION({sql_literal(blocker_tx, 120)});"
         confirmation = "Type ABORT TRANSACTION in the guarded DBA flow."
+        approval_gate = (
+            "Application/data owner approval, DBA on-call acknowledgement, and incident ticket required; "
+            "confirm rollback impact before abort."
+        )
+        recovery_plan = (
+            "Verify lock release, confirm dependent workload outcome, and coordinate retry or data repair "
+            "with the blocker owner."
+        )
         prechecks = (
             "Confirm the blocker transaction is still active, owns the lock, belongs to the expected "
             "user/workload, and can be rolled back without data loss."
@@ -978,6 +1006,14 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
         readiness = "Ready for DBA review"
         manual_sql = f"SELECT SYSTEM$ABORT_TRANSACTION({sql_literal(transaction_id, 120)});"
         confirmation = "Type ABORT TRANSACTION in the guarded DBA flow."
+        approval_gate = (
+            "Application/data owner approval, DBA on-call acknowledgement, and incident ticket required; "
+            "confirm the transaction is the blocker before abort."
+        )
+        recovery_plan = (
+            "Verify lock release, confirm waiters resumed or failed cleanly, and assign retry/recovery "
+            "to the workload owner."
+        )
         prechecks = (
             "Confirm this transaction is the blocker, not merely a waiter, and get owner approval "
             "before aborting."
@@ -1000,6 +1036,10 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
     elif route == "Task graphs" or "TASK" in signal_text:
         action_type = "Task schedule cleanup"
         readiness = "Route to Task graphs"
+        approval_gate = "Task owner or scheduler approval required before changing graph timing or retry behavior."
+        audit_evidence = "Save task graph overlap evidence, owner approval, schedule decision, and next-run verification."
+        recovery_plan = "Serialize or reschedule the task graph, then verify the next TASK_HISTORY run has no overlap."
+        execution_boundary = "No task cancel is executed from Contention Center; route changes through Task graphs."
         prechecks = "Identify the root task, overlapping graph run, final shared target, and approved schedule change."
         verification = "Next TASK_HISTORY run should show no overlap and no blocked publish query."
         precheck_sql = _contention_precheck_sql(
@@ -1019,6 +1059,14 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
         readiness = "Ready for DBA review"
         manual_sql = f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(query_id, 120)});"
         confirmation = "Type CANCEL QUERY in the guarded DBA flow."
+        approval_gate = (
+            "Query owner or application owner approval and DBA on-call acknowledgement required; confirm whether "
+            "the query is a waiter or blocker before cancel."
+        )
+        recovery_plan = (
+            "Confirm cancellation state, watch whether the blocker remains, and route retry/recovery to the "
+            "query owner."
+        )
         prechecks = (
             "Confirm whether this query is the blocker or the waiter. Canceling a waiter stops wasted runtime "
             "but does not release the blocker lock."
@@ -1043,6 +1091,10 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
         "CLEANUP_READINESS": readiness,
         "MANUAL_ACTION_SQL": manual_sql,
         "OPERATOR_CONFIRMATION": confirmation,
+        "APPROVAL_GATE": approval_gate,
+        "AUDIT_EVIDENCE_REQUIRED": audit_evidence,
+        "RECOVERY_PLAN": recovery_plan,
+        "EXECUTION_BOUNDARY": execution_boundary,
         "PRECHECKS": prechecks,
         "PRECHECK_SQL": precheck_sql,
         "WHEN_NOT_TO_RUN": when_not_to_run,
@@ -1552,9 +1604,12 @@ def _render_fix_plan_actions(decision: pd.DataFrame) -> None:
                 f"Compute decision: {row.get('COMPUTE_DECISION', '')}",
                 f"Proof required: {row.get('PROOF_REQUIRED', '')}",
                 f"Cleanup decision: {row.get('CLEANUP_DECISION', '')}",
+                f"Approval gate: {row.get('APPROVAL_GATE', '')}",
                 f"Prechecks: {row.get('PRECHECKS', '')}",
                 f"Precheck SQL: {row.get('PRECHECK_SQL', '')}",
                 f"Manual SQL: {row.get('MANUAL_ACTION_SQL', '')}",
+                f"Audit evidence: {row.get('AUDIT_EVIDENCE_REQUIRED', '')}",
+                f"Recovery plan: {row.get('RECOVERY_PLAN', '')}",
                 f"Verify after cleanup: {row.get('VERIFY_AFTER_CLEANUP', '')}",
                 f"Verify SQL: {row.get('VERIFY_SQL', '')}",
             ] if part.split(": ", 1)[-1]
@@ -1579,9 +1634,13 @@ def _cleanup_contract_view(decision: pd.DataFrame, max_rows: int = 3) -> pd.Data
         "CLEANUP_DECISION",
         "CLEANUP_READINESS",
         "ACTION_GUARDRAIL",
+        "APPROVAL_GATE",
         "PRECHECKS",
         "PRECHECK_SQL",
         "MANUAL_ACTION_SQL",
+        "AUDIT_EVIDENCE_REQUIRED",
+        "RECOVERY_PLAN",
+        "EXECUTION_BOUNDARY",
         "WHEN_NOT_TO_RUN",
         "VERIFY_AFTER_CLEANUP",
         "VERIFY_SQL",
@@ -1672,6 +1731,8 @@ def _incident_cockpit_view(decision: pd.DataFrame, max_rows: int = 5) -> pd.Data
             "INCIDENT_OWNER": _incident_owner_route(str(row.get("OWNER_ROUTE") or "")),
             "EXACT_NEXT_MOVE": row.get("FIRST_MOVE") or row.get("NEXT_ACTION", ""),
             "DECISION_GATE": _incident_decision_gate(row),
+            "APPROVAL_GATE": row.get("APPROVAL_GATE", ""),
+            "RECOVERY_PLAN": row.get("RECOVERY_PLAN", ""),
             "PRECHECK_SQL": row.get("PRECHECK_SQL", ""),
             "MANUAL_ACTION_SQL": row.get("MANUAL_ACTION_SQL", ""),
             "VERIFY_SQL": row.get("VERIFY_SQL", ""),
@@ -1699,6 +1760,8 @@ def _render_incident_cockpit(decision: pd.DataFrame) -> None:
             "INCIDENT_OWNER",
             "EXACT_NEXT_MOVE",
             "DECISION_GATE",
+            "APPROVAL_GATE",
+            "RECOVERY_PLAN",
             "PRECHECK_SQL",
             "MANUAL_ACTION_SQL",
             "VERIFY_SQL",
@@ -1730,9 +1793,13 @@ def _render_cleanup_contract(decision: pd.DataFrame) -> None:
             "WAREHOUSE_NAME",
             "CLEANUP_DECISION",
             "CLEANUP_READINESS",
+            "APPROVAL_GATE",
             "PRECHECKS",
             "PRECHECK_SQL",
             "MANUAL_ACTION_SQL",
+            "AUDIT_EVIDENCE_REQUIRED",
+            "RECOVERY_PLAN",
+            "EXECUTION_BOUNDARY",
             "VERIFY_AFTER_CLEANUP",
             "VERIFY_SQL",
             "ACTION_GUARDRAIL",

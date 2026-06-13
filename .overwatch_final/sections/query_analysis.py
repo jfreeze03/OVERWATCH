@@ -1051,7 +1051,8 @@ def render():
             key="ai_diagnose",
             help=(
                 "Runs one throttled Cortex completion against loaded query evidence, operator stats, and deterministic "
-                "candidates. Telemetry stores feature, timing, and prompt hash only; prompt text is not stored."
+                "candidates. Identical evidence reuses the cached answer. Telemetry stores feature, timing, and "
+                "prompt hash only; prompt text is not stored."
             ),
             disabled=not bool(query_text),
             width="stretch",

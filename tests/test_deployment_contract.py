@@ -29,6 +29,8 @@ class DeploymentContractTests(unittest.TestCase):
             "Community Cloud config",
             "Deployment guide",
             "CI deployment contract",
+            "CI production shell guards",
+            "Cortex completion guardrails",
         }
         self.assertEqual(set(contract["CHECK"]), expected_checks)
         self.assertEqual(set(contract["STATE"]), {"Ready"})
@@ -64,8 +66,23 @@ class DeploymentContractTests(unittest.TestCase):
 
         self.assertIn("Validate deployment contract", workflow)
         self.assertIn("python -m unittest tests.test_deployment_contract", workflow)
+        self.assertIn("Run production shell guards", workflow)
+        self.assertIn("test_streamlit_deployment_entrypoints_are_pinned", workflow)
+        self.assertIn("test_app_shell_header_renders_before_sidebar_hydration", workflow)
+        self.assertIn("test_workflow_hubs_replace_scattered_operational_pages", workflow)
+        self.assertIn("test_dead_ui_helpers_stay_removed", workflow)
+        self.assertIn("Run Cortex guardrails", workflow)
+        self.assertIn("python -m unittest tests.test_cortex_guard", workflow)
         self.assertLess(
             workflow.index("Validate deployment contract"),
+            workflow.index("Run production shell guards"),
+        )
+        self.assertLess(
+            workflow.index("Run production shell guards"),
+            workflow.index("Run Cortex guardrails"),
+        )
+        self.assertLess(
+            workflow.index("Run Cortex guardrails"),
             workflow.index("Run unit tests"),
         )
 

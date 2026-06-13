@@ -3646,7 +3646,7 @@ def render():
         st.session_state["warehouse_health_support_panels_open"] = True
         st.rerun()
     if st.session_state.get("exceptions_only_mode") and warehouse_view != "Overview & Scaling":
-        st.caption("Exceptions-only mode keeps specialist warehouse workflows gated until selected for investigation.")
+        st.caption("Triage mode keeps specialist warehouse workflows gated until selected for investigation.")
         return
 
     # -- OVERVIEW --------------------------------------------------------------

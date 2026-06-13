@@ -37,6 +37,17 @@ jobs:
       - name: Validate deployment contract
         run: python -m unittest tests.test_deployment_contract
 
+      - name: Run production shell guards
+        run: |
+          python -m unittest \
+            tests.test_navigation_integrity.NavigationIntegrityTests.test_streamlit_deployment_entrypoints_are_pinned \
+            tests.test_navigation_integrity.NavigationIntegrityTests.test_app_shell_header_renders_before_sidebar_hydration \
+            tests.test_navigation_integrity.NavigationIntegrityTests.test_workflow_hubs_replace_scattered_operational_pages \
+            tests.test_navigation_integrity.NavigationIntegrityTests.test_dead_ui_helpers_stay_removed
+
+      - name: Run Cortex guardrails
+        run: python -m unittest tests.test_cortex_guard
+
       - name: Run unit tests
         run: python -m unittest discover -s tests
 

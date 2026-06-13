@@ -11,6 +11,12 @@ import streamlit as st
 from config import ALERT_DB, ALERT_SCHEMA, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
 from sections.base import lazy_util as _lazy_util
 from sections.shell_helpers import render_shell_snapshot
+from utils.evidence_mode import (
+    TRIAGE_MODE_ALL_EVIDENCE,
+    TRIAGE_MODE_INVESTIGATE,
+    TRIAGE_MODE_TRIAGE,
+    current_evidence_mode,
+)
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -201,6 +207,22 @@ def _normalize_workload_workflow_state() -> None:
     workflow, query_view = mapped
     st.session_state["workload_operations_workflow"] = workflow
     st.session_state["query_analysis_active_view"] = query_view
+
+
+def _apply_workload_evidence_mode_defaults(mode: str) -> None:
+    marker_key = "_workload_operations_evidence_mode_defaults"
+    if st.session_state.get(marker_key) == mode:
+        return
+    if mode == TRIAGE_MODE_TRIAGE:
+        st.session_state.setdefault("workload_operations_workflow", "Live triage")
+    elif mode == TRIAGE_MODE_INVESTIGATE:
+        st.session_state["workload_operations_view"] = "Specialist Workflows"
+        st.session_state["workload_operations_workflow"] = "Contention Center"
+    elif mode == TRIAGE_MODE_ALL_EVIDENCE:
+        st.session_state["workload_operations_view"] = "Specialist Workflows"
+        st.session_state["workload_operations_workflow"] = "Query diagnosis"
+        st.session_state["query_analysis_active_view"] = "Root-Cause Brief"
+    st.session_state[marker_key] = mode
 
 
 def _snapshot_meta(company: str, environment: str, hours: int = 24) -> dict:
@@ -694,8 +716,10 @@ def _render_workload_snapshot(company: str, environment: str) -> None:
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
+    evidence_mode = current_evidence_mode(st.session_state)
     _apply_fast_entry_default()
     _normalize_workload_workflow_state()
+    _apply_workload_evidence_mode_defaults(evidence_mode)
     if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
         st.session_state["workload_operations_workflow"] = "Live triage"
     if st.session_state.get("workload_operations_view") not in WORKLOAD_OPERATIONS_VIEWS:
@@ -716,8 +740,12 @@ def render() -> None:
         ],
         columns=4,
     )
-    if st.session_state.get("exceptions_only_mode"):
-        st.warning("Exceptions-only mode: start with running work, failures, SLA breaches, and release regressions.")
+    if evidence_mode == TRIAGE_MODE_TRIAGE:
+        st.warning("Triage mode: start with running work, failures, SLA breaches, and release regressions.")
+    elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
+        defer_section_note("Evidence Mode: Investigate opens specialist workflows for contention and root-cause analysis.")
+    elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
+        defer_section_note("Evidence Mode: All Evidence opens Query diagnosis with root-cause context ready.")
 
     active_view = render_mode_selector(
         "Workload Operations view",

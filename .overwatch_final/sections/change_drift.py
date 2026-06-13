@@ -3913,7 +3913,7 @@ def render() -> None:
         columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
-        st.warning("Exceptions-only mode: prioritize recent DDL, grant, owner, policy, replication, and task-control issues.")
+        st.warning("Triage mode: prioritize recent DDL, grant, owner, policy, replication, and task-control issues.")
 
     days = safe_int(st.session_state.get("change_drift_brief_days", 14), 14)
     if days < 1 or days > 90:

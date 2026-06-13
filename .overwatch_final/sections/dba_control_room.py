@@ -15,6 +15,14 @@ from config import DEFAULT_ENVIRONMENT, DEFAULTS, SECTION_BY_TITLE, normalize_se
 from sections.base import lazy_pandas, lazy_util as _lazy_util, lazy_util_attr
 from sections.navigation import apply_navigation_state
 from sections.shell_helpers import render_shell_snapshot
+from utils.evidence_mode import (
+    TRIAGE_MODE_ALL_EVIDENCE,
+    TRIAGE_MODE_INVESTIGATE,
+    TRIAGE_MODE_TRIAGE,
+    current_evidence_mode,
+    evidence_mode_is_all_evidence,
+    evidence_mode_is_investigation,
+)
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
 
@@ -458,6 +466,48 @@ def _dba_control_source_health_rows(
 def _frame_or_empty(data: dict, key: str) -> pd.DataFrame:
     value = data.get(key, _empty_df()) if isinstance(data, dict) else _empty_df()
     return value if isinstance(value, pd.DataFrame) else _empty_df()
+
+
+def _dba_controlm_task_summary(data: dict | None) -> dict:
+    """Normalize the bounded Control-M feed summary used by Workload Operations."""
+    empty_summary = {
+        "loaded": False,
+        "controlm_rows": 0,
+        "controlm_failures": 0,
+        "controlm_late": 0,
+        "controlm_alerts": 0,
+        "controlm_watch": 0,
+        "last_seen": "",
+    }
+    if not isinstance(data, dict):
+        return empty_summary
+
+    frame = _empty_df()
+    for key in (
+        "workload_task_status",
+        "workload_operations_task_snapshot",
+        "controlm_task_status",
+        "controlm_external_feed_summary",
+    ):
+        candidate = _frame_or_empty(data, key)
+        if not candidate.empty:
+            frame = candidate
+            break
+    if frame.empty:
+        return empty_summary
+
+    view = frame.copy()
+    view.columns = [str(col).upper() for col in view.columns]
+    row = view.iloc[0]
+    return {
+        "loaded": True,
+        "controlm_rows": safe_int(_row_value(row, "CONTROL_M_ROWS", "CONTROLM_ROWS", default=0)),
+        "controlm_failures": safe_int(_row_value(row, "CONTROL_M_FAILURE_ROWS", "CONTROLM_FAILURES", default=0)),
+        "controlm_late": safe_int(_row_value(row, "CONTROL_M_LATE_ROWS", "CONTROLM_LATE", default=0)),
+        "controlm_alerts": safe_int(_row_value(row, "CONTROL_M_ALERT_ROWS", "CONTROLM_ALERTS", default=0)),
+        "controlm_watch": safe_int(_row_value(row, "CONTROL_M_WATCH_ROWS", "CONTROLM_WATCH", default=0)),
+        "last_seen": str(_row_value(row, "CONTROL_M_LAST_SEEN_AT", "LAST_SEEN", default="") or ""),
+    }
 
 
 def _row_value(row, *names: str, default: object = "") -> object:
@@ -1882,6 +1932,26 @@ def _load_control_room(
     except Exception as exc:
         data["task_failures"] = _empty_df()
         data["task_failures_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
+
+    try:
+        from sections.workload_operations import _build_workload_task_status_sql
+
+        environment = get_active_environment()
+        data["workload_task_status"] = run_query(
+            _build_workload_task_status_sql(company, environment, hours=min(int(lookback_hours), 24)),
+            ttl_key=f"dba_control_room_{company}_{environment}_{lookback_hours}_workload_task_status",
+            tier="metadata",
+            section="DBA Control Room",
+        )
+        source_rows.append({"Source": "workload_task_status", "Mode": "Metadata"})
+    except Exception as exc:
+        data["workload_task_status"] = _empty_df()
+        data["workload_task_status_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
+        source_rows.append({
+            "Source": "workload_task_status",
+            "Mode": "Metadata unavailable",
+            "Message": "Control-M external feed summary unavailable; deploy or refresh the external control feed.",
+        })
 
     try:
         data["schema_migration_status"] = run_query(
@@ -4020,6 +4090,7 @@ def _dba_workload_morning_lanes(
     task_failures = data.get("task_failures", _empty_df())
     task_sla_cost = data.get("task_sla_cost", _empty_df())
     procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
+    controlm_summary = _dba_controlm_task_summary(data)
     exception_context = _normalize_focus_frame(exceptions)
 
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
@@ -4093,6 +4164,65 @@ def _dba_workload_morning_lanes(
             owner_route="Task owner / Control-M operator / DBA on-call",
             go_no_go="No-Go for dependent loads until clean rerun and downstream proof are current.",
             source_signals="Task failures: mart/TASK_HISTORY",
+        )
+
+    if (
+        (task_failures is None or task_failures.empty)
+        and controlm_summary.get("loaded")
+        and (
+            safe_int(controlm_summary.get("controlm_failures"))
+            or safe_int(controlm_summary.get("controlm_late"))
+            or safe_int(controlm_summary.get("controlm_alerts"))
+            or safe_int(controlm_summary.get("controlm_watch"))
+        )
+    ):
+        controlm_rows = safe_int(controlm_summary.get("controlm_rows"))
+        controlm_failures = safe_int(controlm_summary.get("controlm_failures"))
+        controlm_late = safe_int(controlm_summary.get("controlm_late"))
+        controlm_alerts = safe_int(controlm_summary.get("controlm_alerts"))
+        controlm_watch = safe_int(controlm_summary.get("controlm_watch"))
+        last_seen = str(controlm_summary.get("last_seen") or "").strip()
+        if controlm_failures:
+            state = "Blocked Scheduler Work"
+            priority = 97
+            go_no_go = "No-Go for dependent loads until failed/blocked Control-M jobs are explained and recovered."
+        elif controlm_late:
+            state = "Scheduler SLA Risk"
+            priority = 92
+            go_no_go = "No-Go for SLA-complete claims until late or missed Control-M jobs are closed or rerouted."
+        elif controlm_alerts:
+            state = "Scheduler Alert"
+            priority = 86
+            go_no_go = "Go only after high-severity Control-M alert rows have owner acknowledgement."
+        else:
+            state = "Scheduler Watch"
+            priority = 74
+            go_no_go = "Go for monitoring; escalate if watch rows become failed, blocked, late, or missed."
+        evidence_bits = [
+            f"feed rows={controlm_rows:,}",
+            f"failed/blocked={controlm_failures:,}",
+            f"late/missed={controlm_late:,}",
+            f"alerts={controlm_alerts:,}",
+            f"watch={controlm_watch:,}",
+        ]
+        if last_seen:
+            evidence_bits.append(f"last_seen={last_seen}")
+        add_lane(
+            "Task graphs",
+            state=state,
+            why_now=f"Control-M external feed: {'; '.join(evidence_bits)}.",
+            first_move=(
+                "Open Task graphs, match the Control-M job/run state to Snowflake TASK_HISTORY, identify downstream "
+                "SLA impact, then choose retry, reroute, or hold only with owner approval."
+            ),
+            proof_required=(
+                "Control-M feed row/status, matching TASK_HISTORY run, downstream dependency/SLA impact, "
+                "owner approval, and recovery SLA verification."
+            ),
+            priority_score=priority,
+            owner_route="Control-M operator / task owner / DBA on-call",
+            go_no_go=go_no_go,
+            source_signals="Control-M external feed snapshot",
         )
 
     if task_sla_cost is not None and not task_sla_cost.empty:
@@ -4439,7 +4569,103 @@ def _add_dba_morning_decision_contract(brief: pd.DataFrame) -> pd.DataFrame:
     contract_df = pd.DataFrame(contracts)
     for column in contract_df.columns:
         view[column] = contract_df[column].values
+    execution_contracts = [
+        _dba_morning_execution_contract(row)
+        for row in view.to_dict("records")
+    ]
+    execution_df = pd.DataFrame(execution_contracts)
+    for column in execution_df.columns:
+        view[column] = execution_df[column].values
     return view
+
+
+def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, str]:
+    """Return approval, evidence, verification, and execution boundaries for one morning row."""
+    row = row if row is not None else {}
+    route = str(_row_value(row, "ROUTE", default="DBA Control Room") or "DBA Control Room")
+    workflow = str(_row_value(row, "WORKFLOW", default="") or "").strip()
+    state = str(_row_value(row, "STATE", default="Review") or "Review")
+    first_move = str(_row_value(row, "FIRST_MOVE", default="Open the owning workflow and validate evidence.") or "")
+    proof = str(_row_value(row, "PROOF_REQUIRED", default="fresh source evidence") or "")
+    owner = str(_row_value(row, "OWNER_ROUTE", default="DBA owner") or "DBA owner")
+    focus_query = str(_row_value(row, "FOCUS_QUERY_ID", default="") or "").strip()
+    focus_warehouse = str(_row_value(row, "FOCUS_WAREHOUSE", default="") or "").strip()
+    focus_object = str(_row_value(row, "FOCUS_OBJECT", default="") or "").strip()
+
+    approval_gate = f"{owner} approval or acknowledgement before operational change."
+    evidence_package = proof or "current source evidence, owner, ticket, and verification result."
+    verify_next = "Re-open the owning workflow and verify the signal cleared before closing the row."
+    execution_boundary = "Morning Brief is routing only; execute approved changes inside the owning workflow."
+
+    if workflow == "Contention Center":
+        try:
+            from sections.contention_center import build_contention_safe_action_contract
+
+            contention_row = {
+                "SIGNAL": "Blocked query / lock contention",
+                "QUERY_ID": focus_query,
+                "WAREHOUSE_NAME": focus_warehouse,
+                "TARGET_OBJECT": focus_object,
+                "OWNER_ROUTE": "Contention Center",
+                "BLOCKED_SECONDS": 1 if focus_query else 0,
+            }
+            contract = build_contention_safe_action_contract(contention_row, "Blocked query / lock contention")
+            approval_gate = str(contract.get("APPROVAL_GATE") or approval_gate)
+            evidence_package = str(contract.get("AUDIT_EVIDENCE_REQUIRED") or evidence_package)
+            verify_next = str(contract.get("RECOVERY_PLAN") or contract.get("VERIFY_AFTER_CLEANUP") or verify_next)
+            execution_boundary = str(contract.get("EXECUTION_BOUNDARY") or execution_boundary)
+        except Exception:
+            approval_gate = "DBA on-call, workload owner, and incident/ticket approval before cancel/abort/schedule action."
+            evidence_package = "SHOW LOCKS, LOCK_WAIT_HISTORY, blocked query, target object, owner approval, and post-action proof."
+            verify_next = "Verify blocked seconds stop increasing and dependent workload recovers before closure."
+            execution_boundary = "No cleanup from Morning Brief; open Contention Center for manual SQL and verification."
+    elif workflow == "Task graphs":
+        approval_gate = "Task owner, Control-M operator, and DBA on-call approval before retry, resume, or schedule change."
+        evidence_package = (
+            "TASK_HISTORY failure/recovery rows, Control-M failed/blocked/late state, owner approval, "
+            "downstream refresh proof, and recovery SLA status."
+        )
+        verify_next = (
+            "Verify next TASK_HISTORY run succeeded, Control-M job is closed or rerouted, and recovery SLA evidence "
+            "is attached."
+        )
+        execution_boundary = "No task retry/resume from Morning Brief; use Task graphs guarded controls and typed confirmation."
+    elif workflow == "Query diagnosis":
+        approval_gate = "Query owner and DBA performance reviewer approval before SQL, clustering, or warehouse changes."
+        evidence_package = (
+            "Query ID, query text/profile, operator stats, warehouse/user/role/database context, and deterministic "
+            "optimization finding."
+        )
+        verify_next = "Compare rerun elapsed time, queue, spill, scan, and cost against the original query evidence."
+        execution_boundary = "AI Query Diagnosis is advisory; no generated SQL is executed from the brief."
+    elif workflow == "Stored procedures":
+        approval_gate = "Procedure owner and DBA release reviewer approval before procedure or schedule changes."
+        evidence_package = "Procedure run baseline, latest CALL query ID, change/ticket context, owner approval, and rollback path."
+        verify_next = "Verify latest CALL returns inside runtime/cost baseline and dependent task graph remains clean."
+        execution_boundary = "Do not alter procedure code from Morning Brief; route through Stored procedures and Change & Drift."
+    elif route == "Change & Drift":
+        approval_gate = "Change owner, DBA release reviewer, and ticket approval before release or schema remediation."
+        evidence_package = "Migration ledger, DDL/grant diff, ticket, reviewer, rollback SQL, and post-change verification."
+        verify_next = "Reload release gate and source health; required objects and ledger version must be Ready."
+        execution_boundary = "Do not execute DDL from Morning Brief; run approved release remediation from the governed runbook."
+    elif route == "Warehouse Health":
+        approval_gate = "Warehouse owner and DBA capacity reviewer approval before resize, isolation, or monitor changes."
+        evidence_package = "Warehouse load, queue/spill trend, metering impact, owner approval, rollback setting, and post-change proof."
+        verify_next = "Verify queued load, spill, and cost movement after the capacity or isolation decision."
+        execution_boundary = "No warehouse DDL from Morning Brief; use Warehouse Health guarded settings workflow."
+
+    closure_rule = (
+        f"{state}: keep this row open until approval, evidence package, and verification are attached."
+        if state not in {"Monitor", "Ready"}
+        else "Close only after the next DBA review confirms no new exception evidence."
+    )
+    return {
+        "APPROVAL_GATE": approval_gate,
+        "EVIDENCE_PACKAGE": evidence_package,
+        "VERIFY_NEXT": verify_next,
+        "EXECUTION_BOUNDARY": execution_boundary,
+        "CLOSURE_RULE": closure_rule,
+    }
 
 
 def _dba_morning_focus_note(row: dict | pd.Series | None) -> str:
@@ -4478,6 +4704,10 @@ def _dba_morning_command_queue(brief: pd.DataFrame | None, max_rows: int = 3) ->
             "SLA_CLOCK": row.get("SLA_CLOCK", ""),
             "FOCUS": focus or "No focused query/object",
             "GATE": row.get("GO_NO_GO") or row.get("STOP_RULE", ""),
+            "APPROVAL_GATE": row.get("APPROVAL_GATE", ""),
+            "EVIDENCE_PACKAGE": row.get("EVIDENCE_PACKAGE", ""),
+            "VERIFY_NEXT": row.get("VERIFY_NEXT", ""),
+            "EXECUTION_BOUNDARY": row.get("EXECUTION_BOUNDARY", ""),
             "OWNER_PROOF_STATE": row.get("OWNER_PROOF_STATE", ""),
             "SOURCE_SIGNALS": row.get("SOURCE_SIGNALS", ""),
         })
@@ -4515,6 +4745,10 @@ def _build_dba_morning_brief_markdown(
                 f"Why: {row.get('WHY_NOW', '')}. "
                 f"Gate: {row.get('GO_NO_GO', '')}. "
                 f"Proof: {row.get('PROOF_REQUIRED', '')}. "
+                f"Approval: {row.get('APPROVAL_GATE', '')}. "
+                f"Evidence package: {row.get('EVIDENCE_PACKAGE', '')}. "
+                f"Verify next: {row.get('VERIFY_NEXT', '')}. "
+                f"Boundary: {row.get('EXECUTION_BOUNDARY', '')}. "
                 f"Stop: {row.get('STOP_RULE', '')}."
                 f"{focus_sentence}"
             )
@@ -4577,7 +4811,8 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
         title="Morning command queue",
         priority_columns=[
             "MORNING_RANK", "MORNING_DECISION", "TARGET", "ACTION",
-            "SLA_CLOCK", "FOCUS", "GATE", "OWNER_PROOF_STATE",
+            "SLA_CLOCK", "FOCUS", "APPROVAL_GATE", "VERIFY_NEXT",
+            "EXECUTION_BOUNDARY", "OWNER_PROOF_STATE",
         ],
         sort_by=["MORNING_RANK"],
         ascending=[True],
@@ -4599,6 +4834,11 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
             f"First move: {row.get('FIRST_MOVE', '')}",
             f"Route action: {row.get('ROUTE_ACTION', '')}",
             f"Proof: {row.get('PROOF_REQUIRED', '')}",
+            f"Approval gate: {row.get('APPROVAL_GATE', '')}",
+            f"Evidence package: {row.get('EVIDENCE_PACKAGE', '')}",
+            f"Verify next: {row.get('VERIFY_NEXT', '')}",
+            f"Execution boundary: {row.get('EXECUTION_BOUNDARY', '')}",
+            f"Closure rule: {row.get('CLOSURE_RULE', '')}",
             f"Stop rule: {row.get('STOP_RULE', '')}",
         ]
         if focus_note:
@@ -4619,7 +4859,8 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
             priority_columns=[
                 "MORNING_RANK", "MORNING_DECISION", "SLA_CLOCK", "ROUTE", "WORKFLOW",
                 "STATE", "WHY_NOW", "FIRST_MOVE", "OWNER_PROOF_STATE", "OWNER_ROUTE",
-                "GO_NO_GO", "PROOF_REQUIRED", "SOURCE_SIGNALS",
+                "GO_NO_GO", "PROOF_REQUIRED", "APPROVAL_GATE", "EVIDENCE_PACKAGE",
+                "VERIFY_NEXT", "EXECUTION_BOUNDARY", "CLOSURE_RULE", "SOURCE_SIGNALS",
                 "FOCUS_QUERY_ID", "FOCUS_WAREHOUSE", "FOCUS_OBJECT",
             ],
             sort_by=["MORNING_RANK"],
@@ -5491,6 +5732,9 @@ def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
     credit_price = safe_float(get_credit_price()) or 3.68
+    evidence_mode = current_evidence_mode(st.session_state)
+    investigation_mode = evidence_mode_is_investigation(st.session_state)
+    all_evidence_mode = evidence_mode_is_all_evidence(st.session_state)
 
     render_operator_briefing(
         [
@@ -5501,11 +5745,12 @@ def render() -> None:
         ],
         columns=4,
     )
-    if st.session_state.get("exceptions_only_mode"):
-        st.info(
-            "Exceptions-only mode is on. This page is prioritizing actionable issues and report-ready evidence "
-            "over broad exploratory charts."
-        )
+    if evidence_mode == TRIAGE_MODE_TRIAGE:
+        defer_section_note("Evidence Mode: Triage keeps this page on actionable issues and report-ready proof.")
+    elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
+        defer_section_note("Evidence Mode: Investigate opens deeper root-cause evidence defaults.")
+    elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
+        defer_section_note("Evidence Mode: All Evidence opens full detail and bounded live fallback defaults.")
 
     cortex_budget_usd = float(
         st.session_state.get(
@@ -5580,7 +5825,13 @@ def render() -> None:
             "Snapshot is company-level. Clear filters or load triage for this scoped view."
         )
 
-    with st.expander("Evidence options", expanded=False):
+    mode_default_key = "_dba_control_room_evidence_mode_defaults"
+    if st.session_state.get(mode_default_key) != evidence_mode:
+        st.session_state["dba_control_room_include_deep_evidence"] = bool(investigation_mode)
+        st.session_state["dba_control_room_allow_live_fallback"] = bool(all_evidence_mode)
+        st.session_state[mode_default_key] = evidence_mode
+
+    with st.expander("Evidence options", expanded=bool(investigation_mode)):
         cortex_budget_usd = st.number_input(
             "Cortex monthly budget ($)",
             min_value=1.0,
@@ -5645,7 +5896,13 @@ def render() -> None:
             if auto_build_ops:
                 st.session_state["_dba_control_room_auto_build_ops"] = True
 
-    load_label = "Load Deep Evidence" if include_deep_evidence else "Load Triage"
+    load_label = (
+        "Load Full Evidence Packet"
+        if all_evidence_mode
+        else "Load Investigation Evidence"
+        if investigation_mode
+        else "Load Triage"
+    )
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         _load_control_room_evidence()
 
@@ -5687,7 +5944,7 @@ def render() -> None:
                 _load_control_room_evidence(status_label="Loading Operations Board evidence", auto_build_ops=True)
                 st.rerun()
         else:
-            st.warning("Load triage to see today's DBA exceptions and exportable evidence.")
+            st.warning(f"{load_label} to see today's DBA exceptions and exportable evidence.")
             st.caption("Workflow: snapshot -> exception -> owner action -> evidence export.")
         return
 

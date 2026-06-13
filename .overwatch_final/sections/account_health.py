@@ -3793,7 +3793,7 @@ def render():
             st.info("No tagged OVERWATCH monitoring cost found in the selected window.")
 
         if exceptions_only:
-            st.caption("Exceptions-only mode intentionally stops here to avoid loading lower-priority drilldowns.")
+            st.caption("Triage mode stops here to avoid loading lower-priority drilldowns.")
             return
 
         st.divider()

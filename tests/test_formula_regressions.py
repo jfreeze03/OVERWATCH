@@ -82,6 +82,18 @@ from sections.query_analysis import (  # noqa: E402
     _build_query_diagnosis_action_contract,
     _build_query_optimization_candidates,
 )
+from utils.evidence_mode import (  # noqa: E402
+    TRIAGE_MODE_ALL_EVIDENCE,
+    TRIAGE_MODE_INVESTIGATE,
+    TRIAGE_MODE_OPTIONS,
+    TRIAGE_MODE_TRIAGE,
+    current_evidence_mode,
+    evidence_mode_from_exceptions,
+    evidence_mode_is_all_evidence,
+    evidence_mode_is_investigation,
+    exceptions_enabled_from_evidence_mode,
+    normalize_evidence_mode,
+)
 from sections.executive_landing import (  # noqa: E402
     _build_executive_snapshot_pptx,
     _build_platform_operating_score,
@@ -484,6 +496,22 @@ def _python_sources():
 
 
 class FormulaRegressionTests(unittest.TestCase):
+    def test_evidence_mode_contract_preserves_legacy_exception_state(self):
+        self.assertEqual(
+            TRIAGE_MODE_OPTIONS,
+            (TRIAGE_MODE_TRIAGE, TRIAGE_MODE_INVESTIGATE, TRIAGE_MODE_ALL_EVIDENCE),
+        )
+        self.assertEqual(normalize_evidence_mode("Exceptions only"), TRIAGE_MODE_TRIAGE)
+        self.assertEqual(normalize_evidence_mode("All evidence"), TRIAGE_MODE_ALL_EVIDENCE)
+        self.assertEqual(evidence_mode_from_exceptions(True), TRIAGE_MODE_TRIAGE)
+        self.assertEqual(evidence_mode_from_exceptions(False), TRIAGE_MODE_INVESTIGATE)
+        self.assertTrue(exceptions_enabled_from_evidence_mode(TRIAGE_MODE_TRIAGE))
+        self.assertFalse(exceptions_enabled_from_evidence_mode(TRIAGE_MODE_INVESTIGATE))
+        self.assertTrue(evidence_mode_is_investigation({"triage_view_mode": TRIAGE_MODE_INVESTIGATE}))
+        self.assertTrue(evidence_mode_is_investigation({"triage_view_mode": TRIAGE_MODE_ALL_EVIDENCE}))
+        self.assertTrue(evidence_mode_is_all_evidence({"triage_view_mode": TRIAGE_MODE_ALL_EVIDENCE}))
+        self.assertEqual(current_evidence_mode({"triage_view_mode": "bad saved value"}), TRIAGE_MODE_TRIAGE)
+
     def test_streamlit_and_mart_credit_defaults_stay_aligned(self):
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8")
 
@@ -3786,10 +3814,31 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(list(brief["MORNING_RANK"]), [1, 2, 3, 4])
         self.assertEqual(set(brief["ROUTE"]), {"Workload Operations"})
         self.assertIn("MORNING_DECISION", brief.columns)
+        for column in [
+            "APPROVAL_GATE",
+            "EVIDENCE_PACKAGE",
+            "VERIFY_NEXT",
+            "EXECUTION_BOUNDARY",
+            "CLOSURE_RULE",
+        ]:
+            self.assertIn(column, brief.columns)
         self.assertEqual(brief.iloc[0]["MORNING_DECISION"], "No-Go / contain now")
         self.assertEqual(brief.iloc[1]["MORNING_DECISION"], "No-Go / contain now")
         self.assertIn("No-Go for warehouse resizing", brief.iloc[1]["GO_NO_GO"])
         self.assertEqual(brief.iloc[1]["FOCUS_QUERY_ID"], "01blocked")
+        task_row = brief[brief["WORKFLOW"].eq("Task graphs")].iloc[0]
+        contention_row = brief[brief["WORKFLOW"].eq("Contention Center")].iloc[0]
+        query_row = brief[brief["WORKFLOW"].eq("Query diagnosis")].iloc[0]
+        self.assertIn("Control-M operator", task_row["APPROVAL_GATE"])
+        self.assertIn("recovery SLA", task_row["EVIDENCE_PACKAGE"])
+        self.assertIn("TASK_HISTORY run succeeded", task_row["VERIFY_NEXT"])
+        self.assertIn("Task graphs guarded controls", task_row["EXECUTION_BOUNDARY"])
+        self.assertIn("Query owner", contention_row["APPROVAL_GATE"])
+        self.assertIn("post-action Query History", contention_row["EVIDENCE_PACKAGE"])
+        self.assertIn("retry/recovery", contention_row["VERIFY_NEXT"])
+        self.assertIn("OVERWATCH displays manual SQL only", contention_row["EXECUTION_BOUNDARY"])
+        self.assertIn("operator stats", query_row["EVIDENCE_PACKAGE"])
+        self.assertIn("AI Query Diagnosis is advisory", query_row["EXECUTION_BOUNDARY"])
 
         command_queue = _dba_morning_command_queue(brief)
         self.assertEqual(len(command_queue), 3)
@@ -3797,11 +3846,19 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("TARGET", command_queue.columns)
         self.assertIn("ACTION", command_queue.columns)
         self.assertIn("GATE", command_queue.columns)
+        self.assertIn("APPROVAL_GATE", command_queue.columns)
+        self.assertIn("EVIDENCE_PACKAGE", command_queue.columns)
+        self.assertIn("VERIFY_NEXT", command_queue.columns)
+        self.assertIn("EXECUTION_BOUNDARY", command_queue.columns)
         self.assertIn("Workload Operations / Contention Center", set(command_queue["TARGET"]))
         contention_command = command_queue[command_queue["TARGET"].eq("Workload Operations / Contention Center")].iloc[0]
         self.assertIn("query=01blocked", contention_command["FOCUS"])
         self.assertIn("warehouse=WH_TRXS_LOAD", contention_command["FOCUS"])
         self.assertIn("No-Go", contention_command["GATE"])
+        self.assertIn("Query owner", contention_command["APPROVAL_GATE"])
+        self.assertIn("post-action Query History", contention_command["EVIDENCE_PACKAGE"])
+        self.assertIn("retry/recovery", contention_command["VERIFY_NEXT"])
+        self.assertIn("OVERWATCH displays manual SQL only", contention_command["EXECUTION_BOUNDARY"])
         self.assertNotIn("Stored procedures", set(command_queue["TARGET"]))
 
         markdown = _build_dba_morning_brief_markdown(
@@ -3813,9 +3870,61 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Workload Operations / Contention Center", markdown)
         self.assertIn("Workload Operations / Query diagnosis", markdown)
         self.assertIn("No-Go for warehouse resizing", markdown)
+        self.assertIn("Approval: Query owner", markdown)
+        self.assertIn("Evidence package: Save precheck result", markdown)
+        self.assertIn("Verify next: Confirm cancellation state", markdown)
+        self.assertIn("Boundary: OVERWATCH displays manual SQL only", markdown)
         self.assertIn("Focus: query=01blocked", markdown)
         self.assertIn("warehouse=WH_TRXS_LOAD", markdown)
         self.assertIn("object=PROD_DB.CORE.FACT_POLICY", markdown)
+
+    def test_dba_morning_brief_uses_controlm_feed_without_task_failure_rollup(self):
+        data = {
+            "summary": pd.DataFrame([{
+                "FAILED_QUERIES": 0,
+                "QUEUED_QUERIES": 0,
+                "REMOTE_SPILL_QUERIES": 0,
+                "P95_ELAPSED_SEC": 22,
+            }]),
+            "warehouse_pressure": pd.DataFrame(),
+            "failed_queries": pd.DataFrame(),
+            "task_failures": pd.DataFrame(),
+            "task_sla_cost": pd.DataFrame(),
+            "procedure_sla_cost": pd.DataFrame(),
+            "workload_task_status": pd.DataFrame([{
+                "CONTROL_M_ROWS": 12,
+                "CONTROL_M_FAILURE_ROWS": 3,
+                "CONTROL_M_LATE_ROWS": 2,
+                "CONTROL_M_ALERT_ROWS": 4,
+                "CONTROL_M_WATCH_ROWS": 1,
+                "CONTROL_M_LAST_SEEN_AT": "2026-06-13 07:00:00",
+            }]),
+        }
+
+        workload_lanes = _dba_workload_morning_lanes(data, pd.DataFrame())
+        self.assertEqual(len(workload_lanes), 1)
+        lane = workload_lanes.iloc[0]
+        self.assertEqual(lane["WORKFLOW"], "Task graphs")
+        self.assertEqual(lane["STATE"], "Blocked Scheduler Work")
+        self.assertIn("Control-M external feed", lane["WHY_NOW"])
+        self.assertIn("failed/blocked=3", lane["WHY_NOW"])
+        self.assertIn("TASK_HISTORY", lane["FIRST_MOVE"])
+        self.assertIn("downstream SLA impact", lane["FIRST_MOVE"])
+        self.assertIn("owner approval", lane["PROOF_REQUIRED"])
+        self.assertIn("No-Go for dependent loads", lane["GO_NO_GO"])
+        self.assertEqual(lane["SOURCE_SIGNALS"], "Control-M external feed snapshot")
+
+        brief = _dba_morning_brief_rows(
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            workload_lanes,
+            max_rows=1,
+        )
+        self.assertEqual(brief.iloc[0]["WORKFLOW"], "Task graphs")
+        self.assertEqual(brief.iloc[0]["MORNING_DECISION"], "No-Go / contain now")
+        self.assertIn("Control-M operator", brief.iloc[0]["APPROVAL_GATE"])
+        self.assertIn("recovery SLA", brief.iloc[0]["EVIDENCE_PACKAGE"])
 
     def test_dba_morning_route_context_seeds_contention_focus(self):
         import streamlit as st

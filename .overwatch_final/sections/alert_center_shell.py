@@ -105,6 +105,11 @@ def _render_back_to_brief_control() -> None:
 
 
 def _render_action_brief() -> None:
+    workspace_help = evidence_caption(
+        st.session_state,
+        _FULL_WORKSPACE_STATE_KEYS,
+        "The shell stays zero-query; alert evidence loads only after a workflow is selected.",
+    )
     with st.container(border=True):
         label_col, detail_col, action_col = st.columns([1.0, 3.0, 1.8])
         with label_col:
@@ -112,27 +117,15 @@ def _render_action_brief() -> None:
             st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
         with detail_col:
             st.markdown("**Open Alert Center when inbox, delivery, routing, or automation proof is needed.**")
-            st.caption(
-                evidence_caption(
-                    st.session_state,
-                    _FULL_WORKSPACE_STATE_KEYS,
-                    "The shell stays zero-query; alert evidence loads only after a workflow is selected.",
-                )
-            )
         with action_col:
-            if st.button("Open Alert Center", key="alert_center_shell_open", type="primary", width="stretch"):
+            if st.button(
+                "Open Alert Center",
+                key="alert_center_shell_open",
+                help=workspace_help,
+                type="primary",
+                width="stretch",
+            ):
                 _open_workspace("Alert Brief")
-
-
-def _render_operating_snapshot() -> None:
-    metrics = (
-        ("Scope", scope_label(_active_company(), _active_environment())),
-        ("Window", _window_label()),
-        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-        ("Route", "Issue Inbox"),
-    )
-    st.markdown("**Operating Snapshot**")
-    render_shell_snapshot(metrics)
 
 
 def _render_workflow_launchpad() -> None:
@@ -156,5 +149,4 @@ def render() -> None:
 
     st.session_state.setdefault("alert_center_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _render_action_brief()
-    _render_operating_snapshot()
     _render_workflow_launchpad()

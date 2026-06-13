@@ -124,6 +124,11 @@ def _render_back_to_brief_control() -> None:
 
 
 def _render_action_brief() -> None:
+    workspace_help = (
+        evidence_caption(st.session_state, _FULL_WORKSPACE_STATE_KEYS, "")
+        if _loaded_evidence_available()
+        else "Fast snapshot, source health, routed actions, and exports stay on demand."
+    )
     with st.container(border=True):
         label_col, detail_col, action_col = st.columns([1.0, 3.0, 1.8])
         with label_col:
@@ -131,27 +136,15 @@ def _render_action_brief() -> None:
             st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
         with detail_col:
             st.markdown("**Open the DBA workspace when a signal needs triage, release proof, or a handoff.**")
-            st.caption(
-                (
-                    evidence_caption(st.session_state, _FULL_WORKSPACE_STATE_KEYS, "")
-                    if _loaded_evidence_available()
-                    else "Fast snapshot, source health, routed actions, and exports stay on demand."
-                )
-            )
         with action_col:
-            if st.button("Open DBA workspace", key="dba_control_room_open_full_workspace", type="primary", width="stretch"):
+            if st.button(
+                "Open DBA workspace",
+                key="dba_control_room_open_full_workspace",
+                help=workspace_help or None,
+                type="primary",
+                width="stretch",
+            ):
                 _open_workspace()
-
-
-def _render_operating_snapshot() -> None:
-    metrics = (
-        ("Scope", scope_label(_active_company(), _active_environment())),
-        ("Window", _window_label()),
-        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-        ("Rate", f"${_credit_price():.2f}"),
-    )
-    st.markdown("**Operating Snapshot**")
-    render_shell_snapshot(metrics)
 
 
 def _render_workflow_launchpad() -> None:
@@ -176,5 +169,4 @@ def render() -> None:
     st.session_state.setdefault("dba_control_room_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
 
     _render_action_brief()
-    _render_operating_snapshot()
     _render_workflow_launchpad()

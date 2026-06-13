@@ -78,6 +78,15 @@ except ImportError:
         return end_date - timedelta(days=max_days - 1), end_date, True, max_days
 import utils.section_guidance as section_guidance
 
+TRIAGE_MODE_EXCEPTIONS = "Exceptions only"
+TRIAGE_MODE_ALL_EVIDENCE = "All evidence"
+TRIAGE_MODE_OPTIONS = (TRIAGE_MODE_EXCEPTIONS, TRIAGE_MODE_ALL_EVIDENCE)
+TRIAGE_MODE_HELP = (
+    "Exceptions only keeps the app focused on failures, cost spikes, queue pressure, "
+    "suspicious access, contract risk, and owner-ready action. All evidence shows broader "
+    "context and lower-priority supporting rows."
+)
+
 
 def _lazy_query_call(name: str):
     def _call(*args, **kwargs):
@@ -209,7 +218,7 @@ def _maybe_reload_dev_helpers() -> None:
 
 import sections
 
-if getattr(theme_module, "THEME_VERSION", "") != "2026-06-10-production-theme-registry-v1":
+if getattr(theme_module, "THEME_VERSION", "") != "2026-06-13-score-shell-white-theme-v1":
     theme_module = importlib.reload(theme_module)
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker
@@ -229,7 +238,7 @@ if "_logging_enabled" not in st.session_state:
 if "_query_logging_enabled" not in st.session_state:
     st.session_state["_query_logging_enabled"] = False
 if "_detailed_query_tags_enabled" not in st.session_state:
-    st.session_state["_detailed_query_tags_enabled"] = False
+    st.session_state["_detailed_query_tags_enabled"] = True
 _seed_current_role_from_secrets()
 if "global_start_date" not in st.session_state or "global_end_date" not in st.session_state:
     _default_end = datetime.now().date()
@@ -310,6 +319,28 @@ def _sync_experience_navigation() -> None:
         _queue_section_navigation(visible[0])
 
 
+def _triage_mode_from_exceptions(enabled: bool) -> str:
+    return TRIAGE_MODE_EXCEPTIONS if enabled else TRIAGE_MODE_ALL_EVIDENCE
+
+
+def _exceptions_enabled_from_triage_mode(mode: object) -> bool:
+    return str(mode or TRIAGE_MODE_EXCEPTIONS) == TRIAGE_MODE_EXCEPTIONS
+
+
+def _sync_exceptions_only_mode() -> None:
+    st.session_state["exceptions_only_mode"] = _exceptions_enabled_from_triage_mode(
+        st.session_state.get("triage_view_mode", TRIAGE_MODE_EXCEPTIONS)
+    )
+
+
+def _ensure_triage_mode_state(default_exceptions: bool) -> None:
+    if st.session_state.get("triage_view_mode") not in TRIAGE_MODE_OPTIONS:
+        st.session_state["triage_view_mode"] = _triage_mode_from_exceptions(
+            bool(st.session_state.get("exceptions_only_mode", default_exceptions))
+        )
+    _sync_exceptions_only_mode()
+
+
 def _apply_role_based_defaults() -> None:
     """Seed no-click persona defaults for the current Snowflake role."""
     role = _get_current_role()
@@ -320,8 +351,7 @@ def _apply_role_based_defaults() -> None:
 
     default_experience = default_experience_view_for_role(role)
     st.session_state["overwatch_experience_view"] = default_experience
-    if "exceptions_only_mode" not in st.session_state:
-        st.session_state["exceptions_only_mode"] = profile == "DBA"
+    _ensure_triage_mode_state(profile == "DBA")
     st.session_state["_overwatch_role_defaults_scope"] = scope
     _sync_experience_navigation()
 
@@ -791,8 +821,8 @@ def _active_scope_chips(company: str) -> str:
         value = st.session_state.get(key)
         if value:
             chips.append(_chip(label, value, muted=True))
-    if st.session_state.get("exceptions_only_mode"):
-        chips.append(_chip("Mode", "Exceptions only"))
+    exceptions_enabled = bool(st.session_state.get("exceptions_only_mode"))
+    chips.append(_chip("Mode", _triage_mode_from_exceptions(exceptions_enabled), muted=not exceptions_enabled))
     return "".join(chips)
 
 
@@ -967,14 +997,16 @@ with st.sidebar:
         if st.button("Clear All Filters", key="global_filters_clear"):
             _clear_global_filters()
 
-    st.toggle(
-        "Exceptions-only mode",
-        key="exceptions_only_mode",
-        help=(
-            "Prioritize failures, cost spikes, queue pressure, suspicious access, "
-            "and contract risk. Use this for DBA morning triage and leadership briefs."
-        ),
+    _ensure_triage_mode_state(resolve_role_profile(_get_current_role()) == "DBA")
+    st.selectbox(
+        "Triage Mode",
+        TRIAGE_MODE_OPTIONS,
+        index=TRIAGE_MODE_OPTIONS.index(st.session_state.get("triage_view_mode", TRIAGE_MODE_EXCEPTIONS)),
+        key="triage_view_mode",
+        help=TRIAGE_MODE_HELP,
+        on_change=_sync_exceptions_only_mode,
     )
+    _sync_exceptions_only_mode()
 
     st.divider()
 

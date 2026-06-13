@@ -13,6 +13,7 @@ from sections.shell_helpers import action_state_label, evidence_caption, evidenc
 _FULL_WORKSPACE_KEY = "_executive_landing_full_workspace_requested"
 _BRIEF_MODE_KEY = "_executive_landing_brief_mode"
 _FULL_WORKSPACE_STATE_KEYS = ("executive_landing_snapshot",)
+_PLATFORM_SUMMARY_KEY = "executive_landing_platform_summary"
 
 _WORKFLOWS = (
     {
@@ -62,6 +63,13 @@ def _credit_price() -> float:
         return float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)) or 3.68)
     except (TypeError, ValueError):
         return 3.68
+
+
+def _int_label(value: object, default: int = 0) -> str:
+    try:
+        return f"{int(round(float(value)))}"
+    except (TypeError, ValueError):
+        return f"{default}"
 
 
 def _window_label() -> str:
@@ -174,14 +182,26 @@ def _render_action_brief() -> None:
                 _open_workspace()
 
 
-def _render_operating_snapshot() -> None:
-    metrics = (
-        ("Scope", scope_label(_active_company(), _active_environment())),
-        ("Window", _window_label()),
-        ("Rate", f"${_credit_price():.2f}"),
-        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-    )
-    st.markdown("**Operating Snapshot**")
+def _render_platform_score_preview() -> None:
+    summary = st.session_state.get(_PLATFORM_SUMMARY_KEY)
+    has_summary = isinstance(summary, dict) and evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
+    if has_summary:
+        cap_value = _int_label(summary.get("score_cap"), 100)
+        cap_label = "None" if cap_value == "100" else f"{cap_value}/100"
+        metrics = (
+            ("Score", f"{_int_label(summary.get('score'))}/100"),
+            ("State", str(summary.get("state") or "Review")),
+            ("Raw", f"{_int_label(summary.get('raw_score'))}/100"),
+            ("Cap", cap_label),
+        )
+    else:
+        metrics = (
+            ("Score", "Load snapshot"),
+            ("State", "Evidence gated"),
+            ("Drivers", "Cost / Alerts / Actions / Deploy"),
+            ("Cap", "Source health"),
+        )
+    st.markdown("**Platform Operating Score**")
     render_shell_snapshot(metrics)
 
 
@@ -206,5 +226,5 @@ def render() -> None:
 
     st.session_state.setdefault("executive_landing_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _render_action_brief()
-    _render_operating_snapshot()
+    _render_platform_score_preview()
     _render_workflow_launchpad()

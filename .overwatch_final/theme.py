@@ -15,7 +15,7 @@
 #   render_theme_picker()
 import streamlit as st
 
-THEME_VERSION = "2026-06-10-production-theme-registry-v1"
+THEME_VERSION = "2026-06-13-score-shell-white-theme-v1"
 
 _DEFAULT_THEME = "carbon"
 _THEME_ALIASES = {
@@ -331,7 +331,9 @@ p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
 }
 
 /* Buttons */
-.stButton > button {
+.stButton > button,
+[data-testid="stButton"] button,
+button[data-testid^="stBaseButton"] {
     background: var(--btn-bg) !important;
     border: 1px solid var(--btn-border) !important;
     color: var(--text-primary) !important;
@@ -343,28 +345,38 @@ p, li { color: var(--text-primary); font-family: var(--font-body) !important; }
     transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
     backdrop-filter: blur(8px);
 }
-.stButton > button p {
+.stButton > button p,
+[data-testid="stButton"] button p,
+button[data-testid^="stBaseButton"] p {
     color: inherit !important;
     white-space: normal !important;
     overflow-wrap: anywhere !important;
     line-height: 1.15 !important;
     font-size: 0.82rem !important;
 }
-.stButton > button:hover {
+.stButton > button:hover,
+[data-testid="stButton"] button:hover,
+button[data-testid^="stBaseButton"]:hover {
     background: var(--btn-bg-hover) !important;
     border-color: var(--border-strong) !important;
     box-shadow: var(--btn-hover-shadow) !important;
 }
-.stButton > button[kind="primary"] {
+.stButton > button[kind="primary"],
+[data-testid="stButton"] button[kind="primary"],
+button[data-testid="stBaseButton-primary"] {
     background: linear-gradient(135deg, var(--accent), var(--accent2)) !important;
     border: none !important;
     color: #ffffff !important;
     box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.35) !important;
 }
-.stButton > button[kind="primary"] p {
+.stButton > button[kind="primary"] p,
+[data-testid="stButton"] button[kind="primary"] p,
+button[data-testid="stBaseButton-primary"] p {
     color: #ffffff !important;
 }
-.stButton > button[kind="primary"]:hover {
+.stButton > button[kind="primary"]:hover,
+[data-testid="stButton"] button[kind="primary"]:hover,
+button[data-testid="stBaseButton-primary"]:hover {
     box-shadow: 0 6px 24px rgba(var(--accent-rgb), 0.55) !important;
 }
 
@@ -535,7 +547,9 @@ code, pre, .stCodeBlock {
     text-transform: uppercase !important;
     margin-top: 0.6rem !important;
 }
-[data-testid="stSidebar"] .stButton > button {
+[data-testid="stSidebar"] .stButton > button,
+[data-testid="stSidebar"] [data-testid="stButton"] button,
+[data-testid="stSidebar"] button[data-testid^="stBaseButton"] {
     justify-content: flex-start !important;
     min-height: 36px;
     border-radius: 7px !important;
@@ -543,18 +557,24 @@ code, pre, .stCodeBlock {
     font-weight: 760 !important;
     box-shadow: none !important;
 }
-[data-testid="stSidebar"] .stButton > button p {
+[data-testid="stSidebar"] .stButton > button p,
+[data-testid="stSidebar"] [data-testid="stButton"] button p,
+[data-testid="stSidebar"] button[data-testid^="stBaseButton"] p {
     white-space: nowrap !important;
     overflow-wrap: normal !important;
     font-size: 0.84rem !important;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"],
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] {
     background: rgba(var(--accent-rgb), 0.17) !important;
     border: 1px solid rgba(var(--accent-rgb), 0.45) !important;
     color: var(--accent) !important;
     box-shadow: inset 3px 0 0 var(--accent) !important;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p,
+[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] p,
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] p {
     color: var(--accent) !important;
 }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-brand-row,
@@ -1160,18 +1180,26 @@ _THEME_EXTRAS = {
     "corporate": """
 <style>
 /* Henson: reduce glare and make navigation decisively red. */
-.stButton > button {
+.stButton > button,
+[data-testid="stButton"] button,
+button[data-testid^="stBaseButton"] {
     color: #151f2c !important;
     background: linear-gradient(135deg, #ffffff, #f7eef1) !important;
     border-color: rgba(176,0,32,0.34) !important;
 }
-.stButton > button:hover {
+.stButton > button:hover,
+[data-testid="stButton"] button:hover,
+button[data-testid^="stBaseButton"]:hover {
     color: #8f001a !important;
     background: linear-gradient(135deg, #fff6f8, #f0dce2) !important;
     border-color: rgba(176,0,32,0.55) !important;
 }
 .stButton > button[kind="primary"],
-.stButton > button[kind="primary"] p {
+[data-testid="stButton"] button[kind="primary"],
+button[data-testid="stBaseButton-primary"],
+.stButton > button[kind="primary"] p,
+[data-testid="stButton"] button[kind="primary"] p,
+button[data-testid="stBaseButton-primary"] p {
     color: #ffffff !important;
 }
 .stMain [data-testid="stMarkdownContainer"],
@@ -1188,16 +1216,22 @@ _THEME_EXTRAS = {
 [data-testid="stSidebar"] p {
     color: #28384a !important;
 }
-[data-testid="stSidebar"] .stButton > button {
+[data-testid="stSidebar"] .stButton > button,
+[data-testid="stSidebar"] [data-testid="stButton"] button,
+[data-testid="stSidebar"] button[data-testid^="stBaseButton"] {
     color: #ffffff !important;
     background: linear-gradient(135deg, #b00020, #8f001a) !important;
     border-color: rgba(143,0,26,0.78) !important;
     box-shadow: 0 2px 9px rgba(176,0,32,0.16) !important;
 }
-[data-testid="stSidebar"] .stButton > button p {
+[data-testid="stSidebar"] .stButton > button p,
+[data-testid="stSidebar"] [data-testid="stButton"] button p,
+[data-testid="stSidebar"] button[data-testid^="stBaseButton"] p {
     color: inherit !important;
 }
-[data-testid="stSidebar"] .stButton > button:hover {
+[data-testid="stSidebar"] .stButton > button:hover,
+[data-testid="stSidebar"] [data-testid="stButton"] button:hover,
+[data-testid="stSidebar"] button[data-testid^="stBaseButton"]:hover {
     color: #ffffff !important;
     background: linear-gradient(135deg, #c91535, #9f0b25) !important;
     border-color: rgba(176,0,32,0.90) !important;
@@ -1211,13 +1245,17 @@ _THEME_EXTRAS = {
     background: rgba(176,0,32,0.10);
     border-left: 3px solid #b00020;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"],
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] {
     color: #ffffff !important;
     background: linear-gradient(135deg, #7f0017, #b00020) !important;
     border-color: rgba(127,0,23,0.94) !important;
     box-shadow: inset 4px 0 0 #0f7894, 0 3px 13px rgba(176,0,32,0.24) !important;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p,
+[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] p,
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] p {
     color: #ffffff !important;
 }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
@@ -1308,18 +1346,35 @@ _THEME_EXTRAS = {
     "terminal": """
 <style>
 /* Snowflake White: reduce glare and make navigation decisively blue. */
-.stButton > button {
+.stApp .stButton > button,
+.stApp [data-testid="stButton"] button,
+.stApp button[data-testid^="stBaseButton"] {
     color: #102a43 !important;
     background: linear-gradient(135deg, #ffffff, #edf8fd) !important;
     border-color: rgba(0,104,183,0.38) !important;
 }
-.stButton > button:hover {
+.stApp .stButton > button:hover,
+.stApp [data-testid="stButton"] button:hover,
+.stApp button[data-testid^="stBaseButton"]:hover {
     color: #004f8f !important;
     background: linear-gradient(135deg, #f8fdff, #d9f1fb) !important;
     border-color: rgba(0,104,183,0.58) !important;
 }
-.stButton > button[kind="primary"],
-.stButton > button[kind="primary"] p {
+.stApp .stButton > button p,
+.stApp [data-testid="stButton"] button p,
+.stApp button[data-testid^="stBaseButton"] p {
+    color: inherit !important;
+}
+.stApp .stButton > button[kind="primary"],
+.stApp [data-testid="stButton"] button[kind="primary"],
+.stApp button[data-testid="stBaseButton-primary"] {
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #0068b7, #29B5E8) !important;
+    border-color: rgba(0,104,183,0.78) !important;
+}
+.stApp .stButton > button[kind="primary"] p,
+.stApp [data-testid="stButton"] button[kind="primary"] p,
+.stApp button[data-testid="stBaseButton-primary"] p {
     color: #ffffff !important;
 }
 .stMain [data-testid="stMarkdownContainer"],
@@ -1336,19 +1391,26 @@ _THEME_EXTRAS = {
 [data-testid="stSidebar"] p {
     color: #1f4e6b !important;
 }
-[data-testid="stSidebar"] .stButton > button {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #0068b7, #00528f) !important;
-    border-color: rgba(0,82,143,0.78) !important;
-    box-shadow: 0 2px 9px rgba(0,104,183,0.16) !important;
+.stApp [data-testid="stSidebar"] .stButton > button,
+.stApp [data-testid="stSidebar"] [data-testid="stButton"] button,
+.stApp [data-testid="stSidebar"] button[data-testid^="stBaseButton"] {
+    color: #102a43 !important;
+    background: linear-gradient(135deg, #ffffff, #eaf6fb) !important;
+    border-color: rgba(0,104,183,0.28) !important;
+    box-shadow: none !important;
 }
-[data-testid="stSidebar"] .stButton > button p {
-    color: inherit !important;
+.stApp [data-testid="stSidebar"] .stButton > button p,
+.stApp [data-testid="stSidebar"] [data-testid="stButton"] button p,
+.stApp [data-testid="stSidebar"] button[data-testid^="stBaseButton"] p {
+    color: #102a43 !important;
 }
-[data-testid="stSidebar"] .stButton > button:hover {
-    color: #ffffff !important;
-    background: linear-gradient(135deg, #0079d6, #005fa8) !important;
-    border-color: rgba(0,104,183,0.90) !important;
+.stApp [data-testid="stSidebar"] .stButton > button:hover,
+.stApp [data-testid="stSidebar"] [data-testid="stButton"] button:hover,
+.stApp [data-testid="stSidebar"] button[data-testid^="stBaseButton"]:hover {
+    color: #003f73 !important;
+    background: linear-gradient(135deg, #f8fdff, #d9f1fb) !important;
+    border-color: rgba(0,104,183,0.55) !important;
+    box-shadow: 0 2px 9px rgba(0,104,183,0.12) !important;
 }
 [data-testid="stSidebar"] .stRadio > div > label:hover {
     color: #0068b7 !important;
@@ -1359,13 +1421,17 @@ _THEME_EXTRAS = {
     background: rgba(0,104,183,0.13);
     border-left: 3px solid #0068b7;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+.stApp [data-testid="stSidebar"] .stButton > button[kind="primary"],
+.stApp [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"],
+.stApp [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] {
     color: #ffffff !important;
-    background: linear-gradient(135deg, #003f73, #0068b7) !important;
+    background: linear-gradient(135deg, #0068b7, #00528f) !important;
     border-color: rgba(0,63,115,0.94) !important;
     box-shadow: inset 4px 0 0 #71D3DC, 0 3px 13px rgba(0,104,183,0.24) !important;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+.stApp [data-testid="stSidebar"] .stButton > button[kind="primary"] p,
+.stApp [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] p,
+.stApp [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] p {
     color: #ffffff !important;
 }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill {
@@ -1422,45 +1488,61 @@ _THEME_EXTRAS = {
 [data-testid="stSidebar"] [data-testid="stExpander"] summary:hover span {
     color: #ffffff !important;
 }
-.stTabs [data-baseweb="tab-list"] {
+.stApp .stTabs [data-baseweb="tab-list"] {
     background: #dceff7 !important;
     border-bottom: 2px solid rgba(0,104,183,0.55);
 }
-.stTabs [data-baseweb="tab"] {
+.stApp .stTabs [data-baseweb="tab"] {
     color: #102a43 !important;
     font-weight: 650;
 }
-.stTabs [aria-selected="true"] {
+.stApp .stTabs [data-baseweb="tab"] p {
+    color: inherit !important;
+}
+.stApp .stTabs [aria-selected="true"] {
     color: #ffffff !important;
     background: linear-gradient(135deg, #0068b7, #00528f) !important;
     border-color: rgba(0,82,143,0.72) !important;
+}
+.stApp .stTabs [aria-selected="true"] p {
+    color: #ffffff !important;
 }
 </style>
 """,
     "carbon": """
 <style>
 /* Snowflake Dark: make Snowflake blue the dominant navigation treatment. */
-[data-testid="stSidebar"] .stButton > button {
+[data-testid="stSidebar"] .stButton > button,
+[data-testid="stSidebar"] [data-testid="stButton"] button,
+[data-testid="stSidebar"] button[data-testid^="stBaseButton"] {
     color: #ffffff !important;
     background: linear-gradient(135deg, #0068b7, #003545) !important;
     border-color: rgba(41,181,232,0.70) !important;
     box-shadow: 0 2px 10px rgba(41,181,232,0.18) !important;
 }
-[data-testid="stSidebar"] .stButton > button p {
+[data-testid="stSidebar"] .stButton > button p,
+[data-testid="stSidebar"] [data-testid="stButton"] button p,
+[data-testid="stSidebar"] button[data-testid^="stBaseButton"] p {
     color: inherit !important;
 }
-[data-testid="stSidebar"] .stButton > button:hover {
+[data-testid="stSidebar"] .stButton > button:hover,
+[data-testid="stSidebar"] [data-testid="stButton"] button:hover,
+[data-testid="stSidebar"] button[data-testid^="stBaseButton"]:hover {
     color: #ffffff !important;
     background: linear-gradient(135deg, #29B5E8, #0068b7) !important;
     border-color: rgba(113,211,220,0.95) !important;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"],
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] {
     color: #ffffff !important;
     background: linear-gradient(135deg, #003f73, #0068b7) !important;
     border-color: rgba(113,211,220,0.96) !important;
     box-shadow: inset 4px 0 0 #71D3DC, 0 3px 14px rgba(41,181,232,0.30) !important;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p,
+[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] p,
+[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] p {
     color: #ffffff !important;
 }
 [data-testid="stSidebar"] [data-testid="stExpander"] summary {

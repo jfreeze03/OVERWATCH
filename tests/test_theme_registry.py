@@ -83,11 +83,15 @@ class ThemeRegistryTests(unittest.TestCase):
             theme._STRUCTURAL_CSS,
         )
         self.assertIn("background: linear-gradient(135deg, #7f0017, #b00020) !important", theme._THEME_EXTRAS["corporate"])
-        self.assertIn("background: linear-gradient(135deg, #003f73, #0068b7) !important", theme._THEME_EXTRAS["terminal"])
+        self.assertIn("background: linear-gradient(135deg, #ffffff, #eaf6fb) !important", theme._THEME_EXTRAS["terminal"])
+        self.assertIn('[data-testid="stButton"] button', theme._THEME_EXTRAS["terminal"])
+        self.assertIn('button[data-testid^="stBaseButton"]', theme._THEME_EXTRAS["terminal"])
         self.assertIn('[data-testid="stSidebar"] [data-testid="stExpander"] summary', theme._THEME_EXTRAS["corporate"])
         self.assertIn('[data-testid="stSidebar"] [data-testid="stExpander"] summary', theme._THEME_EXTRAS["terminal"])
         self.assertIn("background: linear-gradient(135deg, #b00020, #8f001a) !important", theme._THEME_EXTRAS["corporate"])
         self.assertIn("background: linear-gradient(135deg, #0068b7, #00528f) !important", theme._THEME_EXTRAS["terminal"])
+        self.assertNotIn("background: linear-gradient(135deg, #7f0017, #b00020) !important", theme._THEME_EXTRAS["terminal"])
+        self.assertNotIn("background: linear-gradient(135deg, #b00020, #8f001a) !important", theme._THEME_EXTRAS["terminal"])
         self.assertIn("color: #ffffff !important", theme._THEME_EXTRAS["corporate"])
         self.assertIn("color: #ffffff !important", theme._THEME_EXTRAS["terminal"])
         self.assertIn('[data-testid="stExpander"] summary', theme._THEME_EXTRAS["corporate"])
@@ -119,6 +123,15 @@ class ThemeRegistryTests(unittest.TestCase):
                 self.assertIn(".stTabs [aria-selected=\"true\"]", extra)
                 self.assertIn(gradient, extra)
                 self.assertIn("color: #ffffff !important", extra)
+
+    def test_theme_targets_current_streamlit_button_dom(self):
+        self.assertIn('button[data-testid^="stBaseButton"]', theme._STRUCTURAL_CSS)
+        self.assertIn('[data-testid="stButton"] button', theme._STRUCTURAL_CSS)
+        for theme_key in ("carbon", "terminal", "corporate"):
+            with self.subTest(theme=theme_key):
+                extra = theme._THEME_EXTRAS[theme_key]
+                self.assertIn('button[data-testid^="stBaseButton"]', extra)
+                self.assertIn('[data-testid="stButton"] button', extra)
 
 
 if __name__ == "__main__":

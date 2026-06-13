@@ -30,6 +30,7 @@ run_query = _lazy_util("run_query")
 
 
 EXECUTIVE_LANDING_VERSION = "2026-06-05-boardroom-pptx-v1"
+PLATFORM_SUMMARY_STATE_KEY = "executive_landing_platform_summary"
 
 _PPTX_EMU_PER_INCH = 914400
 _PPTX_SLIDE_WIDTH = 12192000
@@ -206,6 +207,18 @@ def _with_platform_operating_score(summary: dict, source_health: pd.DataFrame | 
     enriched = dict(summary or {})
     enriched.update(_build_platform_operating_score(enriched, source_health))
     return enriched
+
+
+def _persist_platform_summary(summary: dict | None) -> None:
+    if not summary:
+        return
+    st.session_state[PLATFORM_SUMMARY_STATE_KEY] = {
+        "score": safe_int(summary.get("score")),
+        "raw_score": safe_float(summary.get("raw_score")),
+        "state": str(summary.get("state") or "Review"),
+        "score_cap": safe_int(summary.get("score_cap"), 100),
+        "cap_reason": str(summary.get("cap_reason") or "No hard cap applied."),
+    }
 
 
 def _snapshot_state(cost: pd.DataFrame, alerts: pd.DataFrame, queue: pd.DataFrame, migration: pd.DataFrame) -> dict:
@@ -1080,6 +1093,7 @@ def render() -> None:
     snapshot = st.session_state.get("executive_landing_snapshot")
     if isinstance(snapshot, dict) and not _snapshot_matches_scope(snapshot, company, environment, int(days)):
         defer_source_note("Loaded Executive Landing snapshot is for another scope. Reload the snapshot for the selected company, environment, and window.")
+        st.session_state.pop(PLATFORM_SUMMARY_STATE_KEY, None)
         snapshot = None
     summary = None
     source_health = pd.DataFrame()
@@ -1092,6 +1106,7 @@ def render() -> None:
             snapshot.get("migration", pd.DataFrame()),
         )
         summary = _with_platform_operating_score(summary, source_health)
+        _persist_platform_summary(summary)
     load = _render_executive_action_brief(summary, int(days))
     _render_executive_operating_snapshot(summary, credit_price=credit_price, company=company, days=int(days))
 
@@ -1103,6 +1118,7 @@ def render() -> None:
         )
         if session is None:
             return
+        st.session_state.pop(PLATFORM_SUMMARY_STATE_KEY, None)
         snapshot = {"errors": []}
         try:
             snapshot["cost"] = run_query(
@@ -1148,6 +1164,7 @@ def render() -> None:
     if not isinstance(source_health, pd.DataFrame) or source_health.empty:
         source_health = _source_health_rows(snapshot)
         summary = _with_platform_operating_score(summary, source_health)
+        _persist_platform_summary(summary)
     loaded_sources = int(source_health["STATE"].eq("Loaded").sum())
     limited_sources = int(source_health["STATE"].eq("Limited").sum())
     no_row_sources = int(source_health["STATE"].eq("No Rows").sum())

@@ -116,6 +116,11 @@ def _render_back_to_brief_control() -> None:
 
 
 def _render_action_brief() -> None:
+    workspace_help = evidence_caption(
+        st.session_state,
+        _FULL_WORKSPACE_STATE_KEYS,
+        "The shell stays zero-query; change evidence loads only after a workflow is selected.",
+    )
     with st.container(border=True):
         label_col, detail_col, action_col = st.columns([1.0, 3.0, 1.8])
         with label_col:
@@ -123,26 +128,15 @@ def _render_action_brief() -> None:
             st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
         with detail_col:
             st.markdown("**Open Change & Drift when approval proof, drift, or DBA action evidence is needed.**")
-            st.caption(
-                evidence_caption(
-                    st.session_state,
-                    _FULL_WORKSPACE_STATE_KEYS,
-                    "The shell stays zero-query; change evidence loads only after a workflow is selected.",
-                )
-            )
         with action_col:
-            if st.button("Open Change Workspace", key="change_drift_shell_open", type="primary", width="stretch"):
+            if st.button(
+                "Open Change Workspace",
+                key="change_drift_shell_open",
+                help=workspace_help,
+                type="primary",
+                width="stretch",
+            ):
                 _open_workspace()
-
-
-def _render_operating_snapshot() -> None:
-    metrics = (
-        ("Scope", scope_label(_active_company(), _active_environment())),
-        ("Window", _window_label()),
-        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-    )
-    st.markdown("**Operating Snapshot**")
-    render_shell_snapshot(metrics)
 
 
 def _render_workflow_launchpad() -> None:
@@ -166,5 +160,4 @@ def render() -> None:
 
     st.session_state.setdefault("change_drift_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _render_action_brief()
-    _render_operating_snapshot()
     _render_workflow_launchpad()

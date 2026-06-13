@@ -20,6 +20,7 @@ PRESERVE_STATE_EXACT = {
     "rt_interval",
     "theme_picker_radio",
     "exceptions_only_mode",
+    "triage_view_mode",
 }
 
 PRESERVE_STATE_PREFIXES = (
@@ -29,4 +30,5 @@ PRESERVE_STATE_PREFIXES = (
     "theme_",
     "company_",
     "exceptions_only",
+    "triage_",
 )

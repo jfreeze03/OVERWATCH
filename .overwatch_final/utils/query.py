@@ -14,7 +14,7 @@ import time
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from .session import get_session
+from .session import apply_overwatch_query_tag, build_overwatch_query_tag, get_session
 from .data import normalize_df
 
 CACHE_TIERS: dict[str, int] = {
@@ -536,28 +536,16 @@ def safe_schedule(value: str) -> str:
 
 def _build_overwatch_query_tag(section: str, ttl_key: str, tier: str) -> str:
     """Build a compact query tag for section-level OVERWATCH cost attribution."""
-    if not st.session_state.get("_detailed_query_tags_enabled", False):
-        return "OVERWATCH"
-    section_label = _infer_telemetry_section(section, ttl_key)
-    section_label = re.sub(r"[^A-Za-z0-9 _&:/.-]+", "", str(section_label)).strip() or "Unknown"
-    company = str(st.session_state.get("active_company", "ALFA") or "ALFA")
-    perf = _perf_run_id()
-    tag = f"OVERWATCH|{company[:24]}|{section_label[:80]}|{str(tier or 'recent')[:20]}"
-    if perf:
-        tag = f"{tag}|PERF:{perf[:48]}"
-    return tag[:250]
+    return build_overwatch_query_tag(
+        section=_infer_telemetry_section(section, ttl_key),
+        ttl_key=ttl_key,
+        tier=tier,
+    )
 
 
 def _apply_overwatch_query_tag(session, query_tag: str) -> None:
     """Set QUERY_TAG only when it changes; failures are non-fatal."""
-    query_tag = str(query_tag or "OVERWATCH")[:250]
-    if st.session_state.get("_overwatch_active_query_tag") == query_tag:
-        return
-    try:
-        session.sql(f"ALTER SESSION SET QUERY_TAG = {sql_literal(query_tag, 250)}").collect()
-        st.session_state["_overwatch_active_query_tag"] = query_tag
-    except Exception:
-        pass
+    apply_overwatch_query_tag(session, query_tag)
 
 
 def _execute_snowflake_query(

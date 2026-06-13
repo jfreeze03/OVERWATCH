@@ -15,7 +15,7 @@ from .cost import (
 )
 from .display import day_window_selectbox, download_csv, render_drillable_bar_chart
 from .helpers import safe_float
-from .recommendation_intelligence import duplicate_query_decision, warehouse_sizing_decision
+from .recommendation_intelligence import duplicate_query_decision, harden_recommendation, warehouse_sizing_decision
 from .query import format_snowflake_error, run_query
 from .session import get_session
 from .workflows import render_priority_dataframe, render_workflow_selector
@@ -26,6 +26,39 @@ OPTIMIZATION_ADVISOR_PANES = (
     "Duplicate Queries",
     "Right-Sizing Advisor",
 )
+
+
+def _idle_warehouse_advisor_decision(row, credit_price: float) -> dict:
+    idle_credits = safe_float(row.get("IDLE_CREDITS", 0))
+    idle_hours = int(safe_float(row.get("IDLE_HOURS", 0)))
+    warehouse = str(row.get("WAREHOUSE_NAME") or "Warehouse")
+    monthly_savings = credits_to_dollars(idle_credits / 7 * 30, credit_price)
+    hardened = harden_recommendation({
+        "Source": "Idle warehouse detector",
+        "Severity": "High",
+        "Category": "Cost Control",
+        "Entity Type": "Warehouse",
+        "Entity": warehouse,
+        "Owner": "Warehouse owner / DBA capacity reviewer",
+        "Finding": f"{warehouse} idle {idle_hours}h, wasting {format_credits(idle_credits)}",
+        "Action": f"Reduce AUTO_SUSPEND to <= {THRESHOLDS['idle_warehouse_minutes']} minutes",
+        "Idle Hours": idle_hours,
+        "Estimated Monthly Savings": round(monthly_savings, 2),
+        "Baseline Value": round(idle_credits, 4),
+        "Current Value": round(idle_credits, 4),
+    })
+    return {
+        "DECISION": hardened["Decision"],
+        "EVIDENCE_PACKET": hardened["Evidence Packet"],
+        "SAFE_NEXT_ACTION": hardened["Safe Next Action"],
+        "APPROVAL_GATE": hardened["APPROVAL_GATE"],
+        "EVIDENCE_PACKAGE": hardened["EVIDENCE_PACKAGE"],
+        "VERIFY_NEXT": hardened["VERIFY_NEXT"],
+        "EXECUTION_BOUNDARY": hardened["EXECUTION_BOUNDARY"],
+        "CLOSURE_RULE": hardened["CLOSURE_RULE"],
+        "PROOF_REQUIRED": hardened["Proof Required"],
+        "DO_NOT_DO": hardened["Do Not Do"],
+    }
 
 
 def render_optimization_advisor():
@@ -115,7 +148,9 @@ def render_optimization_advisor():
                 st.warning(f"Idle warehouse scan unavailable: {format_snowflake_error(e)}")
 
         if st.session_state.get("opt_df_idle") is not None and not st.session_state["opt_df_idle"].empty:
-            df_i = st.session_state["opt_df_idle"]
+            df_i = st.session_state["opt_df_idle"].copy()
+            decision_rows = [_idle_warehouse_advisor_decision(row, credit_price) for _, row in df_i.iterrows()]
+            df_i = pd.concat([df_i.reset_index(drop=True), pd.DataFrame(decision_rows)], axis=1)
             total_idle = df_i["IDLE_CREDITS"].sum()
             render_shell_snapshot((
                 ("Warehouses Wasting", f"{len(df_i):,}"),
@@ -127,6 +162,16 @@ def render_optimization_advisor():
                 df_i,
                 title="Idle warehouse waste candidates",
                 priority_columns=[
+                    "DECISION",
+                    "EVIDENCE_PACKET",
+                    "SAFE_NEXT_ACTION",
+                    "APPROVAL_GATE",
+                    "EVIDENCE_PACKAGE",
+                    "VERIFY_NEXT",
+                    "EXECUTION_BOUNDARY",
+                    "CLOSURE_RULE",
+                    "PROOF_REQUIRED",
+                    "DO_NOT_DO",
                     "WAREHOUSE_NAME",
                     "IDLE_HOURS",
                     "IDLE_CREDITS",
@@ -147,15 +192,10 @@ def render_optimization_advisor():
                 lookback_hours=idle_days * 24,
             )
             for _, row in df_i.iterrows():
-                idle_decision = (
-                    "Set AUTO_SUSPEND after confirming the warehouse is not an approved always-on service."
-                    if safe_float(row.get("IDLE_CREDITS", 0)) > 0
-                    else "No suspend change needed from this row."
-                )
                 st.warning(
                     f"**{row['WAREHOUSE_NAME']}**: {int(row['IDLE_HOURS'])} idle hours, "
                     f"{format_credits(row['IDLE_CREDITS'])} wasted - "
-                    f"{idle_decision}"
+                    f"{row.get('SAFE_NEXT_ACTION', '')} Boundary: {row.get('EXECUTION_BOUNDARY', '')}"
                 )
             download_csv(df_i, "idle_warehouses.csv")
         elif st.session_state.get("opt_df_idle") is not None:
@@ -206,6 +246,11 @@ def render_optimization_advisor():
                     "DECISION",
                     "EVIDENCE_PACKET",
                     "SAFE_NEXT_ACTION",
+                    "APPROVAL_GATE",
+                    "EVIDENCE_PACKAGE",
+                    "VERIFY_NEXT",
+                    "EXECUTION_BOUNDARY",
+                    "CLOSURE_RULE",
                     "PROOF_REQUIRED",
                     "DO_NOT_DO",
                     "QUERY_SIG",
@@ -287,6 +332,11 @@ def render_optimization_advisor():
                     "DECISION",
                     "EVIDENCE_PACKET",
                     "SAFE_NEXT_ACTION",
+                    "APPROVAL_GATE",
+                    "EVIDENCE_PACKAGE",
+                    "VERIFY_NEXT",
+                    "EXECUTION_BOUNDARY",
+                    "CLOSURE_RULE",
                     "PROOF_REQUIRED",
                     "DO_NOT_DO",
                     "WAREHOUSE_NAME",

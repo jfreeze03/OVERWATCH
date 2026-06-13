@@ -415,7 +415,9 @@ from utils.company_filter import (  # noqa: E402
 )
 from utils.recommendation_intelligence import (  # noqa: E402
     build_automation_readiness_board,
+    duplicate_query_decision,
     harden_recommendation,
+    recommendation_execution_contract,
     warehouse_sizing_decision,
 )
 from utils.action_queue import verification_query_safety_issues  # noqa: E402
@@ -7557,6 +7559,37 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("AUTO_SUSPEND", rec["Safe Next Action"])
         self.assertIn("Proof query is attached", rec["Proof Required"])
         self.assertIn("Do not disable", rec["Do Not Do"])
+        self.assertIn("Approval Gate", rec)
+        self.assertIn("Evidence Package", rec)
+        self.assertIn("Verify Next", rec)
+        self.assertIn("Execution Boundary", rec)
+        self.assertIn("Closure Rule", rec)
+        self.assertIn("Warehouse owner", rec["Approval Gate"])
+        self.assertIn("Do not disable", rec["Execution Boundary"])
+
+    def test_recommendation_execution_contract_is_specific_by_surface(self):
+        idle_contract = recommendation_execution_contract({
+            "Source": "Idle warehouse detector",
+            "Category": "Cost Control",
+            "Entity Type": "Warehouse",
+            "Entity": "COMPUTE_WH",
+            "Finding": "Idle warehouse",
+            "Evidence Packet": "COMPUTE_WH idle 12h",
+            "Proof Required": "Rerun idle proof query.",
+        })
+        query_contract = duplicate_query_decision(pd.Series({
+            "QUERY_SIG": "select * from FACT_POLICY where POLICY_ID = ?",
+            "EXECUTION_COUNT": 25,
+            "USER_COUNT": 4,
+            "TOTAL_WASTED_SEC": 1800,
+            "CLOUD_CREDITS": 0.12,
+        }))
+
+        self.assertIn("idle proof query", idle_contract["VERIFY_NEXT"])
+        self.assertIn("Warehouse owner", idle_contract["APPROVAL_GATE"])
+        self.assertIn("repeated query signature", query_contract["EVIDENCE_PACKAGE"])
+        self.assertIn("materialized views", query_contract["EXECUTION_BOUNDARY"])
+        self.assertIn("CLOSURE_RULE", query_contract)
 
     def test_warehouse_sizing_decision_blocks_blind_upsize(self):
         decision = warehouse_sizing_decision(pd.Series({
@@ -7573,6 +7606,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ALFA_WH", decision["EVIDENCE_PACKET"])
         self.assertIn("query profiles", decision["SAFE_NEXT_ACTION"])
         self.assertIn("Do not upsize blindly", decision["DO_NOT_DO"])
+        self.assertIn("Warehouse owner", decision["APPROVAL_GATE"])
+        self.assertIn("guarded controls", decision["EXECUTION_BOUNDARY"])
+        self.assertIn("queue, spill, runtime", decision["VERIFY_NEXT"])
 
     def test_automation_readiness_identifies_guided_warehouse_change(self):
         board = build_automation_readiness_board([{
@@ -7600,6 +7636,13 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(row["STATE_CHANGING_SQL"], "Yes")
         self.assertEqual(row["BLOCKERS"], "none")
         self.assertGreaterEqual(row["AUTOMATION_SCORE"], 90)
+        self.assertIn("APPROVAL_GATE", board.columns)
+        self.assertIn("EVIDENCE_PACKAGE", board.columns)
+        self.assertIn("VERIFY_NEXT", board.columns)
+        self.assertIn("EXECUTION_BOUNDARY", board.columns)
+        self.assertIn("CLOSURE_RULE", board.columns)
+        self.assertIn("Warehouse owner", row["APPROVAL_GATE"])
+        self.assertIn("idle proof query", row["VERIFY_NEXT"])
 
     def test_automation_readiness_blocks_unapproved_and_manual_actions(self):
         board = build_automation_readiness_board([

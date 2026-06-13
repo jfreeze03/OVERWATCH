@@ -2937,6 +2937,23 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("OPTIMIZATION_ADVISOR_PANES", optimization_text)
         self.assertIn("active_view = render_workflow_selector", optimization_text)
         self.assertNotIn("active_view = st.radio", optimization_text)
+        for marker in (
+            "APPROVAL_GATE",
+            "EVIDENCE_PACKAGE",
+            "VERIFY_NEXT",
+            "EXECUTION_BOUNDARY",
+            "CLOSURE_RULE",
+        ):
+            self.assertIn(marker, optimization_text)
+            self.assertIn(marker, recommendations_text)
+        for marker in (
+            "Approval Gate",
+            "Evidence Package",
+            "Verify Next",
+            "Execution Boundary",
+            "Closure Rule",
+        ):
+            self.assertIn(marker, recommendations_text)
         self.assertEqual(
             sorted((APP_ROOT).rglob("*.py")),
             sorted(path for path in (APP_ROOT).rglob("*.py") if "st.tabs(" not in path.read_text(encoding="utf-8")),

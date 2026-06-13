@@ -261,7 +261,9 @@ def _render_automation_readiness(session):
         priority_columns=[
             "AUTOMATION_LANE", "AUTOMATION_SCORE", "SEVERITY", "CATEGORY", "ENTITY",
             "DECISION", "BLOCKERS", "APPROVAL_STATE", "SAFE_GUIDED_SQL",
-            "STATE_CHANGING_SQL", "SAFE_AUTOMATION_STEP", "PROOF_REQUIRED", "DO_NOT_DO",
+            "STATE_CHANGING_SQL", "SAFE_AUTOMATION_STEP", "APPROVAL_GATE",
+            "EVIDENCE_PACKAGE", "VERIFY_NEXT", "EXECUTION_BOUNDARY", "CLOSURE_RULE",
+            "PROOF_REQUIRED", "DO_NOT_DO",
         ],
         sort_by=["AUTOMATION_LANE", "AUTOMATION_SCORE", "SEVERITY"],
         ascending=[True, False, True],
@@ -845,8 +847,9 @@ def render():
                 title="Recommendations to work first",
                 priority_columns=[
                     "Severity", "Decision Gate", "Decision", "Category", "Entity",
-                    "Evidence Packet", "Safe Next Action", "Proof Required",
-                    "Do Not Do", "Estimated Monthly Savings", "Owner Route", "Status",
+                    "Evidence Packet", "Safe Next Action", "Approval Gate",
+                    "Evidence Package", "Verify Next", "Execution Boundary", "Closure Rule",
+                    "Proof Required", "Do Not Do", "Estimated Monthly Savings", "Owner Route", "Status",
                 ],
                 sort_by=["Severity", "Estimated Monthly Savings"],
                 ascending=[True, False],
@@ -858,9 +861,12 @@ def render():
             with st.expander("Generated SQL fixes and proof queries"):
                 for _, rec in df_recs.iterrows():
                     st.markdown(f"**{rec['Severity']} - {rec['Decision']} - {rec['Entity']}**")
-                    st.caption(f"{rec['Evidence Packet']} | {rec['Do Not Do']}")
+                    st.caption(
+                        f"{rec['Evidence Packet']} | Approval: {rec['Approval Gate']} | "
+                        f"Boundary: {rec['Execution Boundary']} | {rec['Do Not Do']}"
+                    )
                     st.code(rec["Generated SQL Fix"], language="sql")
-                    st.caption(rec["Proof Query"])
+                    st.caption(f"Verify: {rec['Verify Next']} | Proof query: {rec['Proof Query']}")
 
             if st.button("Save / refresh these findings in Action Queue", key="rec_save_queue", type="primary"):
                 try:

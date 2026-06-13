@@ -154,9 +154,11 @@ from sections.dba_control_room import (  # noqa: E402
     _build_dba_morning_brief_markdown,
     _dba_action_brief,
     _dba_escalation_packet,
+    _dba_morning_command_queue,
     _dba_morning_decision_contract,
     _dba_morning_brief_rows,
     _dba_workload_morning_lanes,
+    _seed_dba_morning_route_context,
     _dba_operator_runbook,
     _dba_operations_priority_index,
     _dba_section_operability_board,
@@ -3748,8 +3750,17 @@ class FormulaRegressionTests(unittest.TestCase):
                 "PROCEDURE_NAME": "SP_LOAD_POLICY",
             }]),
         }
+        exceptions = pd.DataFrame([{
+            "ROOT_CAUSE": "Lock Contention",
+            "QUERY_ID": "01blocked",
+            "WAREHOUSE_NAME": "WH_TRXS_LOAD",
+            "DATABASE_NAME": "PROD_DB",
+            "SCHEMA_NAME": "CORE",
+            "OBJECT_NAME": "FACT_POLICY",
+            "BLOCKED_SEC": 185,
+        }])
 
-        workload_lanes = _dba_workload_morning_lanes(data)
+        workload_lanes = _dba_workload_morning_lanes(data, exceptions)
         by_workflow = {row["WORKFLOW"]: row for row in workload_lanes.to_dict("records")}
 
         self.assertIn("Task graphs", by_workflow)
@@ -3760,6 +3771,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("before resizing", by_workflow["Contention Center"]["FIRST_MOVE"])
         self.assertIn("AI Query Diagnosis", by_workflow["Query diagnosis"]["FIRST_MOVE"])
         self.assertIn("QUERY_HISTORY blocked seconds", by_workflow["Contention Center"]["PROOF_REQUIRED"])
+        self.assertEqual(by_workflow["Contention Center"]["FOCUS_QUERY_ID"], "01blocked")
+        self.assertEqual(by_workflow["Contention Center"]["FOCUS_WAREHOUSE"], "WH_TRXS_LOAD")
+        self.assertEqual(by_workflow["Contention Center"]["FOCUS_OBJECT"], "PROD_DB.CORE.FACT_POLICY")
 
         brief = _dba_morning_brief_rows(
             pd.DataFrame(),
@@ -3775,6 +3789,20 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(brief.iloc[0]["MORNING_DECISION"], "No-Go / contain now")
         self.assertEqual(brief.iloc[1]["MORNING_DECISION"], "No-Go / contain now")
         self.assertIn("No-Go for warehouse resizing", brief.iloc[1]["GO_NO_GO"])
+        self.assertEqual(brief.iloc[1]["FOCUS_QUERY_ID"], "01blocked")
+
+        command_queue = _dba_morning_command_queue(brief)
+        self.assertEqual(len(command_queue), 3)
+        self.assertEqual(list(command_queue["MORNING_RANK"]), [1, 2, 3])
+        self.assertIn("TARGET", command_queue.columns)
+        self.assertIn("ACTION", command_queue.columns)
+        self.assertIn("GATE", command_queue.columns)
+        self.assertIn("Workload Operations / Contention Center", set(command_queue["TARGET"]))
+        contention_command = command_queue[command_queue["TARGET"].eq("Workload Operations / Contention Center")].iloc[0]
+        self.assertIn("query=01blocked", contention_command["FOCUS"])
+        self.assertIn("warehouse=WH_TRXS_LOAD", contention_command["FOCUS"])
+        self.assertIn("No-Go", contention_command["GATE"])
+        self.assertNotIn("Stored procedures", set(command_queue["TARGET"]))
 
         markdown = _build_dba_morning_brief_markdown(
             brief,
@@ -3785,6 +3813,33 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Workload Operations / Contention Center", markdown)
         self.assertIn("Workload Operations / Query diagnosis", markdown)
         self.assertIn("No-Go for warehouse resizing", markdown)
+        self.assertIn("Focus: query=01blocked", markdown)
+        self.assertIn("warehouse=WH_TRXS_LOAD", markdown)
+        self.assertIn("object=PROD_DB.CORE.FACT_POLICY", markdown)
+
+    def test_dba_morning_route_context_seeds_contention_focus(self):
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            _seed_dba_morning_route_context({
+                "ROUTE": "Workload Operations",
+                "WORKFLOW": "Contention Center",
+                "FOCUS_QUERY_ID": "01blocked",
+                "FOCUS_WAREHOUSE": "WH_TRXS_LOAD",
+                "FOCUS_USER": "ETL_USER",
+                "FOCUS_OBJECT": "PROD_DB.CORE.FACT_POLICY",
+            })
+
+            self.assertEqual(st.session_state["contention_center_view"], "Brief")
+            self.assertEqual(st.session_state["contention_focus_query_id"], "01blocked")
+            self.assertEqual(st.session_state["contention_live_warehouse"], "WH_TRXS_LOAD")
+            self.assertEqual(st.session_state["global_warehouse"], "WH_TRXS_LOAD")
+            self.assertEqual(st.session_state["global_user"], "ETL_USER")
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []
@@ -3837,6 +3892,10 @@ class FormulaRegressionTests(unittest.TestCase):
         change_summary, change_exceptions = _build_mart_change_drift_sql(14, "ALL")
         combined_sql = "\n".join([query_summary, query_exceptions, change_summary, change_exceptions]).upper()
         self.assertNotIn("COMPANY = 'ALL'", combined_sql)
+        self.assertIn("BLOCKED_QUERIES", query_summary.upper())
+        self.assertIn("LOCK CONTENTION", query_exceptions.upper())
+        self.assertIn("TRANSACTION_BLOCKED_TIME", query_exceptions.upper())
+        self.assertIn("SECONDS BLOCKED", query_exceptions.upper())
 
         security_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
         self.assertIn('upper() == "ALL"', security_text)
@@ -5338,6 +5397,7 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_query_root_cause_score_weights_failures_and_queue(self):
         stable = _root_cause_score(
             failed_queries=0,
+            blocked_queries=0,
             queued_queries=0,
             spill_queries=0,
             full_scan_queries=1,
@@ -5346,6 +5406,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         risky = _root_cause_score(
             failed_queries=20,
+            blocked_queries=10,
             queued_queries=30,
             spill_queries=20,
             full_scan_queries=120,
@@ -5357,9 +5418,12 @@ class FormulaRegressionTests(unittest.TestCase):
 
     def test_query_root_cause_actions_are_specific(self):
         self.assertEqual(_root_cause_action_for("Failed Query")[0], "Query")
+        self.assertEqual(_root_cause_action_for("Lock Contention")[0], "Query/Transaction")
         self.assertEqual(_root_cause_action_for("Warehouse Queue")[0], "Warehouse")
         self.assertEqual(_root_cause_action_for("Remote Spill")[0], "Query/Warehouse")
         self.assertEqual(_root_cause_action_for("Full Scan")[0], "Object/Query")
+        self.assertIn("Contention Center", _root_cause_action_for("Lock Contention")[1])
+        self.assertIn("TRANSACTION_BLOCKED_TIME", _root_cause_action_for("Lock Contention")[2])
         self.assertIn("AI Query Diagnosis", _root_cause_action_for("Remote Spill")[1])
         self.assertIn("partition evidence", _root_cause_action_for("Full Scan")[1])
         self.assertIn("query ID evidence", _root_cause_action_for("Slow Query")[1])
@@ -5367,34 +5431,35 @@ class FormulaRegressionTests(unittest.TestCase):
     def test_query_root_cause_routes_sql_shape_to_ai_diagnosis(self):
         exceptions = pd.DataFrame(
             {
-                "SEVERITY": ["Critical", "High", "High"],
-                "ROOT_CAUSE": ["Remote Spill", "Full Scan", "Warehouse Queue"],
-                "QUERY_ID": ["01spill", "01scan", "01queue"],
-                "USER_NAME": ["ETL_USER", "BI_USER", "BATCH_USER"],
-                "ROLE_NAME": ["SYSADMIN", "ANALYST", "SYSADMIN"],
-                "WAREHOUSE_NAME": ["WH_TRXS_QUERY", "BI_COMPUTE_WH", "LOAD_WH"],
-                "WAREHOUSE_SIZE": ["Large", "Medium", "Large"],
-                "DATABASE_NAME": ["PROD_DB", "PROD_DB", "PROD_DB"],
-                "SCHEMA_NAME": ["CORE", "REPORTING", "LOAD"],
-                "EXECUTION_STATUS": ["SUCCESS", "SUCCESS", "SUCCESS"],
-                "START_TIME": ["2026-06-13 08:00", "2026-06-13 08:05", "2026-06-13 08:10"],
-                "ELAPSED_SEC": [420.0, 310.0, 125.0],
-                "COMPILE_SEC": [2.0, 1.0, 1.0],
-                "EXEC_SEC": [410.0, 300.0, 80.0],
-                "QUEUED_SEC": [0.0, 0.0, 70.0],
-                "BLOCKED_SEC": [0.0, 0.0, 0.0],
-                "GB_SCANNED": [80.0, 240.0, 5.0],
-                "REMOTE_SPILL_GB": [8.2, 0.0, 0.0],
-                "PARTITION_PCT": [45.0, 98.0, 5.0],
-                "ROWS_PRODUCED": [1000, 250, 100],
-                "ERROR_MESSAGE": ["", "", ""],
+                "SEVERITY": ["Critical", "High", "High", "Critical"],
+                "ROOT_CAUSE": ["Remote Spill", "Full Scan", "Warehouse Queue", "Lock Contention"],
+                "QUERY_ID": ["01spill", "01scan", "01queue", "01blocked"],
+                "USER_NAME": ["ETL_USER", "BI_USER", "BATCH_USER", "LOAD_USER"],
+                "ROLE_NAME": ["SYSADMIN", "ANALYST", "SYSADMIN", "SYSADMIN"],
+                "WAREHOUSE_NAME": ["WH_TRXS_QUERY", "BI_COMPUTE_WH", "LOAD_WH", "WH_TRXS_LOAD"],
+                "WAREHOUSE_SIZE": ["Large", "Medium", "Large", "Large"],
+                "DATABASE_NAME": ["PROD_DB", "PROD_DB", "PROD_DB", "PROD_DB"],
+                "SCHEMA_NAME": ["CORE", "REPORTING", "LOAD", "CORE"],
+                "EXECUTION_STATUS": ["SUCCESS", "SUCCESS", "SUCCESS", "RUNNING"],
+                "START_TIME": ["2026-06-13 08:00", "2026-06-13 08:05", "2026-06-13 08:10", "2026-06-13 08:15"],
+                "ELAPSED_SEC": [420.0, 310.0, 125.0, 600.0],
+                "COMPILE_SEC": [2.0, 1.0, 1.0, 1.0],
+                "EXEC_SEC": [410.0, 300.0, 80.0, 590.0],
+                "QUEUED_SEC": [0.0, 0.0, 70.0, 0.0],
+                "BLOCKED_SEC": [0.0, 0.0, 0.0, 185.0],
+                "GB_SCANNED": [80.0, 240.0, 5.0, 20.0],
+                "REMOTE_SPILL_GB": [8.2, 0.0, 0.0, 0.0],
+                "PARTITION_PCT": [45.0, 98.0, 5.0, 10.0],
+                "ROWS_PRODUCED": [1000, 250, 100, 0],
+                "ERROR_MESSAGE": ["", "", "", ""],
                 "QUERY_TEXT": [
                     "SELECT * FROM PROD_DB.CORE.FACT_POLICY p JOIN PROD_DB.CORE.DIM_CUSTOMER c ON p.CUSTOMER_ID = c.CUSTOMER_ID",
                     "SELECT POLICY_ID FROM PROD_DB.REPORTING.POLICY_SUMMARY WHERE TO_DATE(BIND_TS) = '2026-06-01'",
                     "SELECT COUNT(*) FROM PROD_DB.LOAD.BATCH_AUDIT",
+                    "MERGE INTO PROD_DB.CORE.FACT_POLICY tgt USING STAGE_DB.LOAD.POLICY_DELTA src ON tgt.POLICY_ID = src.POLICY_ID WHEN MATCHED THEN UPDATE SET PREMIUM_AMOUNT = src.PREMIUM_AMOUNT",
                 ],
-                "IMPACT_VALUE": [8.2, 240.0, 70.0],
-                "IMPACT_UNIT": ["GB remote spill", "GB scanned", "seconds queued"],
+                "IMPACT_VALUE": [8.2, 240.0, 70.0, 185.0],
+                "IMPACT_UNIT": ["GB remote spill", "GB scanned", "seconds queued", "seconds blocked"],
             }
         )
 
@@ -5404,6 +5469,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_query["01spill"]["NEXT_WORKFLOW"], "AI Diagnosis")
         self.assertEqual(by_query["01scan"]["NEXT_WORKFLOW"], "AI Diagnosis")
         self.assertEqual(by_query["01queue"]["NEXT_WORKFLOW"], "Live Triage")
+        self.assertEqual(by_query["01blocked"]["NEXT_WORKFLOW"], "Contention Center")
+        self.assertIn("safe action contract", by_query["01blocked"]["NEXT_ACTION"])
 
         import streamlit as st
 
@@ -5431,6 +5498,7 @@ class FormulaRegressionTests(unittest.TestCase):
         summary_row = {
             "TOTAL_QUERIES": 100,
             "FAILED_QUERIES": 2,
+            "BLOCKED_QUERIES": 1,
             "QUEUED_QUERIES": 4,
             "SPILL_QUERIES": 1,
             "FULL_SCAN_QUERIES": 8,
@@ -5455,6 +5523,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH Query Root-Cause Brief - ALFA", md)
         self.assertNotIn("Root-cause score", md)
         self.assertIn("Failed queries: 2", md)
+        self.assertIn("Blocked queries: 1", md)
         self.assertIn("Warehouse Queue", md)
         self.assertIn("QUERY_HISTORY can lag", md)
 
@@ -5462,6 +5531,7 @@ class FormulaRegressionTests(unittest.TestCase):
         summary_row = {
             "TOTAL_QUERIES": 100,
             "FAILED_QUERIES": 2,
+            "BLOCKED_QUERIES": 1,
             "QUEUED_QUERIES": 4,
             "SPILL_QUERIES": 1,
             "FULL_SCAN_QUERIES": 8,
@@ -5479,6 +5549,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "SCHEMA_NAME": ["PUBLIC"],
                 "ELAPSED_SEC": [91.2],
                 "QUEUED_SEC": [45.0],
+                "BLOCKED_SEC": [12.0],
                 "REMOTE_SPILL_GB": [0.0],
                 "GB_SCANNED": [12.5],
                 "PARTITION_PCT": [40.0],
@@ -5499,6 +5570,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("query_id=01abc", prompt)
         self.assertIn("warehouse=BI_COMPUTE_WH", prompt)
         self.assertIn("queued_sec=45.00", prompt)
+        self.assertIn("blocked=1", prompt)
+        self.assertIn("blocked_sec=12.00", prompt)
 
     def test_warehouse_capacity_score_weights_queue_spill_and_credit_spikes(self):
         healthy = _warehouse_capacity_score(

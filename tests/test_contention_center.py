@@ -10,7 +10,10 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from sections.contention_center import (  # noqa: E402
+    _cleanup_contract_view,
     _decision_rows,
+    _focus_handoff_frame,
+    _incident_cockpit_view,
     _live_incident_rows,
     build_contention_safe_action_contract,
     build_blocked_query_task_map_sql,
@@ -156,8 +159,23 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertIn("Task-owned blocked write", set(decisions["SIGNAL"]))
         self.assertIn("CLEANUP_DECISION", decisions.columns)
         self.assertIn("CLEANUP_READINESS", decisions.columns)
+        self.assertIn("PRECHECK_SQL", decisions.columns)
         self.assertIn("SYSTEM$ABORT_TRANSACTION('tx_blocker_123')", " ".join(decisions["MANUAL_ACTION_SQL"].astype(str)))
+        self.assertIn("LOCK_WAIT_HISTORY", " ".join(decisions["PRECHECK_SQL"].astype(str)))
+        self.assertIn("RECENT_WAIT_EVENTS", " ".join(decisions["VERIFY_SQL"].astype(str)))
         self.assertIn("Manual DBA action only", " ".join(decisions["ACTION_GUARDRAIL"].astype(str)))
+
+        cockpit = _incident_cockpit_view(decisions)
+        self.assertIn("BLOCKER", cockpit.columns)
+        self.assertIn("WAITER", cockpit.columns)
+        self.assertIn("LOCKED_OBJECT", cockpit.columns)
+        first = cockpit.iloc[0]
+        self.assertEqual(first["BLOCKER"], "transaction tx_blocker_123")
+        self.assertEqual(first["WAITER"], "query 01a")
+        self.assertEqual(first["LOCKED_OBJECT"], "APP_DB.CORE.FACT_POLICY")
+        self.assertIn("DBA on-call", first["INCIDENT_OWNER"])
+        self.assertIn("Run precheck SQL", first["DECISION_GATE"])
+        self.assertIn("VERIFY_SQL", cockpit.columns)
 
     def test_decision_rows_separate_warehouse_queueing_from_locks(self):
         decisions = _decision_rows(
@@ -219,16 +237,89 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertEqual(abort_contract["CLEANUP_DECISION"], "Abort blocker transaction candidate")
         self.assertIn("SYSTEM$ABORT_TRANSACTION('tx123')", abort_contract["MANUAL_ACTION_SQL"])
         self.assertIn("still active", abort_contract["PRECHECKS"])
+        self.assertIn("SHOW TRANSACTIONS IN ACCOUNT", abort_contract["PRECHECK_SQL"])
+        self.assertIn("LOCK_WAIT_HISTORY", abort_contract["PRECHECK_SQL"])
+        self.assertIn("RECENT_WAIT_EVENTS", abort_contract["VERIFY_SQL"])
         self.assertIn("SHOW LOCKS", abort_contract["VERIFY_AFTER_CLEANUP"])
 
         self.assertEqual(cancel_contract["CLEANUP_DECISION"], "Cancel blocked query candidate")
         self.assertIn("SYSTEM$CANCEL_QUERY('01blocked')", cancel_contract["MANUAL_ACTION_SQL"])
         self.assertIn("does not release the blocker lock", cancel_contract["PRECHECKS"])
+        self.assertIn("QUERY_HISTORY", cancel_contract["PRECHECK_SQL"])
+        self.assertIn("QUERY_ID = '01blocked'", cancel_contract["PRECHECK_SQL"])
+        self.assertIn("LOCK_WAIT_HISTORY", cancel_contract["PRECHECK_SQL"])
+        self.assertIn("QUERY_HISTORY", cancel_contract["VERIFY_SQL"])
+        self.assertIn("RECENT_WAIT_EVENTS", cancel_contract["VERIFY_SQL"])
         self.assertIn("Manual DBA action only", cancel_contract["ACTION_GUARDRAIL"])
 
         self.assertEqual(queue_contract["CLEANUP_DECISION"], "No cancel - capacity review")
         self.assertEqual(queue_contract["MANUAL_ACTION_SQL"], "")
+        self.assertIn("WAREHOUSE_LOAD_HISTORY", queue_contract["PRECHECK_SQL"])
+        self.assertIn("WAREHOUSE_NAME = 'WH_TRXS_QUERY'", queue_contract["PRECHECK_SQL"])
+        self.assertIn("WAREHOUSE_LOAD_HISTORY", queue_contract["VERIFY_SQL"])
         self.assertIn("Do not cancel or abort", queue_contract["WHEN_NOT_TO_RUN"])
+
+    def test_cleanup_contract_view_surfaces_manual_guardrails(self):
+        decisions = pd.DataFrame([{
+            "SEVERITY": "Critical",
+            "HANDOFF_MATCH": "Selected query",
+            "SIGNAL": "Live blocked query",
+            "ENTITY": "01blocked",
+            "TARGET_OBJECT": "APP_DB.CORE.FACT_POLICY",
+            "QUERY_ID": "01blocked",
+            "WAREHOUSE_NAME": "WH_TRXS_LOAD",
+            "CLEANUP_DECISION": "Cancel blocked query candidate",
+            "CLEANUP_READINESS": "Ready for DBA review",
+            "ACTION_GUARDRAIL": "Manual DBA action only; OVERWATCH does not auto-cancel from this view.",
+            "PRECHECKS": "Confirm whether this query is the blocker or the waiter.",
+            "PRECHECK_SQL": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY WHERE QUERY_ID = '01blocked';",
+            "MANUAL_ACTION_SQL": "SELECT SYSTEM$CANCEL_QUERY('01blocked');",
+            "WHEN_NOT_TO_RUN": "Do not cancel for pure warehouse queueing.",
+            "VERIFY_AFTER_CLEANUP": "Query History should show the selected query canceled.",
+            "VERIFY_SQL": "SELECT COUNT(*) AS RECENT_WAIT_EVENTS FROM SNOWFLAKE.ACCOUNT_USAGE.LOCK_WAIT_HISTORY;",
+            "UNRELATED": "hidden",
+        }])
+
+        contract = _cleanup_contract_view(decisions)
+
+        self.assertIn("MANUAL_ACTION_SQL", contract.columns)
+        self.assertIn("PRECHECKS", contract.columns)
+        self.assertIn("PRECHECK_SQL", contract.columns)
+        self.assertIn("VERIFY_AFTER_CLEANUP", contract.columns)
+        self.assertIn("VERIFY_SQL", contract.columns)
+        self.assertNotIn("UNRELATED", contract.columns)
+        self.assertIn("SYSTEM$CANCEL_QUERY", contract.iloc[0]["MANUAL_ACTION_SQL"])
+        self.assertIn("QUERY_HISTORY", contract.iloc[0]["PRECHECK_SQL"])
+        self.assertIn("RECENT_WAIT_EVENTS", contract.iloc[0]["VERIFY_SQL"])
+
+    def test_handoff_focus_promotes_selected_query_rows(self):
+        frame = pd.DataFrame([
+            {
+                "SEVERITY": "High",
+                "SIGNAL": "Warehouse queueing",
+                "QUERY_ID": "01queued",
+                "EVIDENCE": "45 seconds queued",
+            },
+            {
+                "SEVERITY": "Critical",
+                "SIGNAL": "Lock wait",
+                "WAITER_QUERY_ID": "01blocked",
+                "EVIDENCE": "180 seconds blocked",
+            },
+            {
+                "SEVERITY": "High",
+                "SIGNAL": "Task overlap",
+                "RUN_1_QUERY_ID": "01task",
+                "RUN_2_QUERY_ID": "01blocked",
+                "EVIDENCE": "overlap with blocked publish",
+            },
+        ])
+
+        focused = _focus_handoff_frame(frame, "01blocked")
+
+        self.assertEqual(list(focused["HANDOFF_MATCH"].head(2)), ["Selected query", "Selected query"])
+        self.assertEqual(set(focused.head(2)["SIGNAL"]), {"Lock wait", "Task overlap"})
+        self.assertEqual(focused.iloc[-1]["SIGNAL"], "Warehouse queueing")
 
     def test_live_incident_rows_rank_active_blockers_and_queueing(self):
         live_rows = _live_incident_rows(
@@ -281,5 +372,15 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertIn("WAREHOUSE_LOAD_HISTORY", by_signal["Live warehouse pressure"]["PROOF_REQUIRED"])
         self.assertEqual(by_signal["Active lock"]["CLEANUP_DECISION"], "Abort active transaction candidate")
         self.assertIn("SYSTEM$ABORT_TRANSACTION('tx123')", by_signal["Active lock"]["MANUAL_ACTION_SQL"])
+        self.assertIn("SHOW TRANSACTIONS IN ACCOUNT", by_signal["Active lock"]["PRECHECK_SQL"])
+        self.assertIn("SHOW TRANSACTIONS IN ACCOUNT", by_signal["Active lock"]["VERIFY_SQL"])
         self.assertEqual(by_signal["Live warehouse queueing"]["MANUAL_ACTION_SQL"], "")
+        self.assertIn("WAREHOUSE_LOAD_HISTORY", by_signal["Live warehouse queueing"]["PRECHECK_SQL"])
+        self.assertIn("WAREHOUSE_LOAD_HISTORY", by_signal["Live warehouse queueing"]["VERIFY_SQL"])
         self.assertEqual(by_signal["Current task graph"]["CLEANUP_DECISION"], "Task schedule cleanup")
+
+        cockpit = _incident_cockpit_view(live_rows)
+        by_class = {row["INCIDENT_CLASS"]: row for row in cockpit.to_dict("records")}
+        self.assertEqual(by_class["Active lock"]["BLOCKER"], "transaction tx123")
+        self.assertIn("DBA on-call", by_class["Active lock"]["INCIDENT_OWNER"])
+        self.assertEqual(by_class["Live warehouse queueing"]["BLOCKER"], "No blocker proven")

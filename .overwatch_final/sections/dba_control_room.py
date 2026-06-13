@@ -476,6 +476,95 @@ def _row_value(row, *names: str, default: object = "") -> object:
     return default
 
 
+def _normalize_focus_frame(value: pd.DataFrame | None) -> pd.DataFrame:
+    if value is None or not isinstance(value, pd.DataFrame) or value.empty:
+        return _empty_df()
+    view = value.copy()
+    view.columns = [str(col).upper() for col in view.columns]
+    return view
+
+
+def _target_object_from_row(row: dict | pd.Series | None) -> str:
+    row = row if row is not None else {}
+    explicit = str(_row_value(row, "TARGET_OBJECT", "WAIT_OBJECTS", default="") or "").strip()
+    if explicit:
+        return explicit.split(",")[0].strip()
+    parts = [
+        str(_row_value(row, "DATABASE_NAME", default="") or "").strip(),
+        str(_row_value(row, "SCHEMA_NAME", default="") or "").strip(),
+        str(_row_value(row, "OBJECT_NAME", default="") or "").strip(),
+    ]
+    return ".".join(part for part in parts if part and part.upper() not in {"NAN", "NONE", "NULL"})
+
+
+def _focus_context_from_row(row: dict | pd.Series | None, *, reason: str = "") -> dict[str, str]:
+    row = row if row is not None else {}
+    query_id = str(_row_value(
+        row,
+        "QUERY_ID",
+        "WAITER_QUERY_ID",
+        "BLOCKER_QUERY_ID",
+        "TASK_QUERY_ID",
+        "RUN_1_QUERY_ID",
+        "RUN_2_QUERY_ID",
+        default="",
+    ) or "").strip()
+    return {
+        "FOCUS_QUERY_ID": query_id,
+        "FOCUS_WAREHOUSE": str(_row_value(row, "WAREHOUSE_NAME", "WAREHOUSE", default="") or "").strip(),
+        "FOCUS_USER": str(_row_value(row, "USER_NAME", "USER", default="") or "").strip(),
+        "FOCUS_OBJECT": _target_object_from_row(row),
+        "FOCUS_REASON": str(reason or _row_value(row, "ROOT_CAUSE", "SIGNAL", "STATE", default="") or "").strip(),
+    }
+
+
+def _first_focus_context(
+    frame: pd.DataFrame | None,
+    *,
+    tokens: tuple[str, ...] = (),
+    numeric_columns: tuple[str, ...] = (),
+    reason: str = "",
+) -> dict[str, str]:
+    view = _normalize_focus_frame(frame)
+    if view.empty:
+        return {}
+    mask = pd.Series(False, index=view.index)
+    if tokens:
+        text_columns = [
+            column for column in (
+                "ROOT_CAUSE", "SIGNAL", "STATE", "WHY_NOW", "EVIDENCE",
+                "NEXT_ACTION", "IMPACT_UNIT", "ERROR_MESSAGE", "QUERY_TEXT",
+            )
+            if column in view.columns
+        ]
+        if text_columns:
+            combined = view[text_columns].fillna("").astype(str).agg(" ".join, axis=1).str.upper()
+            mask = mask | combined.apply(lambda text: any(token in text for token in tokens))
+    for column in numeric_columns:
+        if column in view.columns:
+            mask = mask | pd.to_numeric(view[column], errors="coerce").fillna(0).gt(0)
+    candidates = view[mask] if bool(mask.any()) else view.head(1)
+    return _focus_context_from_row(candidates.iloc[0], reason=reason)
+
+
+def _top_warehouse_focus_context(frame: pd.DataFrame | None, *, reason: str = "") -> dict[str, str]:
+    view = _normalize_focus_frame(frame)
+    if view.empty:
+        return {}
+    sort_cols = [
+        column for column in (
+            "BLOCKED_QUERIES", "QUEUED_QUERIES", "AVG_BLOCKED",
+            "MAX_QUEUED_LOAD", "REMOTE_SPILL_GB", "QUERIES",
+        )
+        if column in view.columns
+    ]
+    if sort_cols:
+        for column in sort_cols:
+            view[column] = pd.to_numeric(view[column], errors="coerce").fillna(0)
+        view = view.sort_values(sort_cols, ascending=[False] * len(sort_cols))
+    return _focus_context_from_row(view.iloc[0], reason=reason)
+
+
 def _task_failure_root_cause(error_text: object, query_text: object = "") -> dict:
     signal = f"{error_text or ''} {query_text or ''}".upper()
     if any(token in signal for token in [
@@ -3931,6 +4020,7 @@ def _dba_workload_morning_lanes(
     task_failures = data.get("task_failures", _empty_df())
     task_sla_cost = data.get("task_sla_cost", _empty_df())
     procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
+    exception_context = _normalize_focus_frame(exceptions)
 
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
     failed_count = safe_int(row.get("FAILED_QUERIES", 0))
@@ -3963,7 +4053,9 @@ def _dba_workload_morning_lanes(
         owner_route: str = "Workload owner / DBA on-call",
         go_no_go: str = "Go only through Workload Operations after evidence is current.",
         source_signals: str = "DBA Control Room workload evidence",
+        focus_context: dict[str, str] | None = None,
     ) -> None:
+        focus_context = focus_context or {}
         rows.append({
             "ROUTE": "Workload Operations",
             "WORKFLOW": workflow,
@@ -3975,6 +4067,11 @@ def _dba_workload_morning_lanes(
             "PROOF_REQUIRED": proof_required,
             "SOURCE_SIGNALS": source_signals,
             "PRIORITY_SCORE": safe_float(priority_score),
+            "FOCUS_QUERY_ID": str(focus_context.get("FOCUS_QUERY_ID", "")),
+            "FOCUS_WAREHOUSE": str(focus_context.get("FOCUS_WAREHOUSE", "")),
+            "FOCUS_USER": str(focus_context.get("FOCUS_USER", "")),
+            "FOCUS_OBJECT": str(focus_context.get("FOCUS_OBJECT", "")),
+            "FOCUS_REASON": str(focus_context.get("FOCUS_REASON", "")),
         })
 
     if task_failures is not None and not task_failures.empty:
@@ -4014,6 +4111,17 @@ def _dba_workload_morning_lanes(
         )
 
     if queued_queries or queued_warehouses or warehouse_count:
+        contention_context = _first_focus_context(
+            exception_context,
+            tokens=("LOCK", "BLOCK", "CONTENTION", "QUEUE"),
+            numeric_columns=("BLOCKED_SEC", "BLOCKED_SECONDS", "TRANSACTION_BLOCKED_TIME"),
+            reason="Morning contention focus",
+        )
+        warehouse_context = _top_warehouse_focus_context(
+            warehouse_pressure,
+            reason="Morning warehouse pressure focus",
+        )
+        contention_context = {**warehouse_context, **{k: v for k, v in contention_context.items() if str(v).strip()}}
         add_lane(
             "Contention Center",
             state="Contention Triage",
@@ -4030,9 +4138,21 @@ def _dba_workload_morning_lanes(
             owner_route="DBA on-call / workload owner / warehouse owner",
             go_no_go="No-Go for warehouse resizing until lock waits and overlapping writers are ruled out.",
             source_signals="Warehouse pressure and queue evidence",
+            focus_context=contention_context,
         )
 
     if failed_count or spill_count or remote_spill_gb or p95_runtime >= 120:
+        query_context = _first_focus_context(
+            failed_queries,
+            tokens=("FAILED", "ERROR", "SPILL", "SLOW", "SCAN"),
+            numeric_columns=("REMOTE_SPILL_GB", "ELAPSED_SEC", "ELAPSED_SECONDS"),
+            reason="Morning query diagnosis focus",
+        ) or _first_focus_context(
+            exception_context,
+            tokens=("FAILED", "ERROR", "SPILL", "SLOW", "SCAN"),
+            numeric_columns=("REMOTE_SPILL_GB", "ELAPSED_SEC", "ELAPSED_SECONDS"),
+            reason="Morning query diagnosis focus",
+        )
         reason_bits = []
         if failed_count:
             reason_bits.append(f"{failed_count:,} failed query row(s)")
@@ -4054,6 +4174,7 @@ def _dba_workload_morning_lanes(
             priority_score=88 if failed_count >= 10 or spill_count or p95_runtime >= 300 else 72,
             owner_route="Query owner / DBA performance reviewer",
             source_signals="Failed, spilling, or long-running query evidence",
+            focus_context=query_context,
         )
 
     if procedure_sla_cost is not None and not procedure_sla_cost.empty:
@@ -4103,6 +4224,11 @@ def _dba_morning_brief_rows(
         source_signals: object = "",
         priority_score: object = 0,
         workflow: object = "",
+        focus_query_id: object = "",
+        focus_warehouse: object = "",
+        focus_user: object = "",
+        focus_object: object = "",
+        focus_reason: object = "",
     ) -> None:
         route_text = str(route or "DBA Control Room").strip() or "DBA Control Room"
         workflow_text = str(workflow or "").strip()
@@ -4122,6 +4248,11 @@ def _dba_morning_brief_rows(
             "PROOF_REQUIRED": str(proof_required or _dba_section_proof_required(route_text)),
             "SOURCE_SIGNALS": str(source_signals or "Control Room"),
             "PRIORITY_SCORE": safe_float(priority_score),
+            "FOCUS_QUERY_ID": str(focus_query_id or ""),
+            "FOCUS_WAREHOUSE": str(focus_warehouse or ""),
+            "FOCUS_USER": str(focus_user or ""),
+            "FOCUS_OBJECT": str(focus_object or ""),
+            "FOCUS_REASON": str(focus_reason or ""),
         })
 
     packet = escalation_packet.copy() if escalation_packet is not None and not escalation_packet.empty else _empty_df()
@@ -4141,6 +4272,11 @@ def _dba_morning_brief_rows(
                 source_signals=item.get("SOURCE_SIGNALS"),
                 priority_score=item.get("PRIORITY_SCORE"),
                 workflow=item.get("WORKFLOW"),
+                focus_query_id=item.get("FOCUS_QUERY_ID"),
+                focus_warehouse=item.get("FOCUS_WAREHOUSE"),
+                focus_user=item.get("FOCUS_USER"),
+                focus_object=item.get("FOCUS_OBJECT"),
+                focus_reason=item.get("FOCUS_REASON"),
             )
 
     workload = workload_lanes.copy() if workload_lanes is not None and not workload_lanes.empty else _empty_df()
@@ -4160,6 +4296,11 @@ def _dba_morning_brief_rows(
                 source_signals=item.get("SOURCE_SIGNALS"),
                 priority_score=item.get("PRIORITY_SCORE"),
                 workflow=item.get("WORKFLOW"),
+                focus_query_id=item.get("FOCUS_QUERY_ID"),
+                focus_warehouse=item.get("FOCUS_WAREHOUSE"),
+                focus_user=item.get("FOCUS_USER"),
+                focus_object=item.get("FOCUS_OBJECT"),
+                focus_reason=item.get("FOCUS_REASON"),
             )
 
     priority = priority_index.copy() if priority_index is not None and not priority_index.empty else _empty_df()
@@ -4301,6 +4442,48 @@ def _add_dba_morning_decision_contract(brief: pd.DataFrame) -> pd.DataFrame:
     return view
 
 
+def _dba_morning_focus_note(row: dict | pd.Series | None) -> str:
+    row = row if row is not None else {}
+    parts = [
+        ("query", _row_value(row, "FOCUS_QUERY_ID", default="")),
+        ("warehouse", _row_value(row, "FOCUS_WAREHOUSE", default="")),
+        ("user", _row_value(row, "FOCUS_USER", default="")),
+        ("object", _row_value(row, "FOCUS_OBJECT", default="")),
+        ("reason", _row_value(row, "FOCUS_REASON", default="")),
+    ]
+    return "; ".join(
+        f"{label}={str(value).strip()}"
+        for label, value in parts
+        if str(value or "").strip()
+    )
+
+
+def _dba_morning_command_queue(brief: pd.DataFrame | None, max_rows: int = 3) -> pd.DataFrame:
+    """Return the compact first-screen command queue for the DBA Morning Brief."""
+    if brief is None or brief.empty:
+        return _empty_df()
+    view = brief.copy()
+    if "MORNING_RANK" in view.columns:
+        view = view.sort_values("MORNING_RANK", ascending=True)
+    rows: list[dict[str, object]] = []
+    for _, row in view.head(max_rows).iterrows():
+        route = str(row.get("ROUTE") or "DBA Control Room").strip()
+        workflow = str(row.get("WORKFLOW") or "").strip()
+        focus = _dba_morning_focus_note(row)
+        rows.append({
+            "MORNING_RANK": safe_int(row.get("MORNING_RANK")),
+            "MORNING_DECISION": row.get("MORNING_DECISION", ""),
+            "TARGET": f"{route} / {workflow}" if workflow else route,
+            "ACTION": row.get("FIRST_MOVE", ""),
+            "SLA_CLOCK": row.get("SLA_CLOCK", ""),
+            "FOCUS": focus or "No focused query/object",
+            "GATE": row.get("GO_NO_GO") or row.get("STOP_RULE", ""),
+            "OWNER_PROOF_STATE": row.get("OWNER_PROOF_STATE", ""),
+            "SOURCE_SIGNALS": row.get("SOURCE_SIGNALS", ""),
+        })
+    return pd.DataFrame(rows)
+
+
 def _build_dba_morning_brief_markdown(
     brief: pd.DataFrame,
     *,
@@ -4322,6 +4505,8 @@ def _build_dba_morning_brief_markdown(
         for _, row in rows.sort_values("MORNING_RANK").iterrows():
             workflow = str(row.get("WORKFLOW") or "").strip()
             workflow_note = f" / {workflow}" if workflow else ""
+            focus_note = _dba_morning_focus_note(row)
+            focus_sentence = f" Focus: {focus_note}." if focus_note else ""
             lines.append(
                 f"- {safe_int(row.get('MORNING_RANK'))}. [{row.get('STATE', '')}] "
                 f"{row.get('ROUTE', '')}{workflow_note}: {row.get('FIRST_MOVE', '')} "
@@ -4331,6 +4516,7 @@ def _build_dba_morning_brief_markdown(
                 f"Gate: {row.get('GO_NO_GO', '')}. "
                 f"Proof: {row.get('PROOF_REQUIRED', '')}. "
                 f"Stop: {row.get('STOP_RULE', '')}."
+                f"{focus_sentence}"
             )
     lines.extend([
         "",
@@ -4340,6 +4526,38 @@ def _build_dba_morning_brief_markdown(
         "- Treat No-Go rows as blocked until source proof is current.",
     ])
     return "\n".join(lines).strip()
+
+
+def _seed_dba_morning_route_context(row: dict | pd.Series | None) -> None:
+    """Carry Morning Brief context into the owning workflow before navigation."""
+    row = row if row is not None else {}
+    workflow = str(_row_value(row, "WORKFLOW", default="") or "").strip()
+    query_id = str(_row_value(row, "FOCUS_QUERY_ID", default="") or "").strip()
+    warehouse = str(_row_value(row, "FOCUS_WAREHOUSE", default="") or "").strip()
+    user = str(_row_value(row, "FOCUS_USER", default="") or "").strip()
+    target_object = str(_row_value(row, "FOCUS_OBJECT", default="") or "").strip()
+
+    if warehouse:
+        st.session_state["global_warehouse"] = warehouse
+        st.session_state["wh_filter"] = warehouse
+    if user:
+        st.session_state["global_user"] = user
+    if workflow == "Contention Center":
+        st.session_state["contention_center_view"] = "Brief"
+        st.session_state["contention_active_view"] = "Brief"
+        if query_id:
+            st.session_state["contention_focus_query_id"] = query_id
+        if warehouse:
+            st.session_state["contention_live_warehouse"] = warehouse
+    elif workflow == "Query diagnosis":
+        if query_id:
+            st.session_state["query_analysis_active_view"] = "History Search"
+            st.session_state["qs_text"] = query_id
+            st.session_state["qs_status"] = "ALL"
+            st.session_state["qs_autorun"] = True
+            st.session_state["ai_query_id"] = query_id
+        if target_object:
+            st.session_state["ai_object_ctx"] = target_object
 
 
 def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
@@ -4353,42 +4571,63 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
         ("Escalate Now", f"{int(brief['STATE'].astype(str).eq('Escalate Now').sum()):,}"),
         ("Routes", f"{len(brief):,}"),
     ))
+    command_queue = _dba_morning_command_queue(brief)
+    render_priority_dataframe(
+        command_queue,
+        title="Morning command queue",
+        priority_columns=[
+            "MORNING_RANK", "MORNING_DECISION", "TARGET", "ACTION",
+            "SLA_CLOCK", "FOCUS", "GATE", "OWNER_PROOF_STATE",
+        ],
+        sort_by=["MORNING_RANK"],
+        ascending=[True],
+        raw_label="All morning command rows",
+        height=220,
+        max_rows=3,
+    )
     first_moves = brief.head(3)
     move_cols = st.columns(max(1, len(first_moves)))
     for idx, (_, row) in enumerate(first_moves.iterrows()):
         route = str(row.get("ROUTE") or "DBA Control Room")
         workflow = str(row.get("WORKFLOW") or "").strip()
         label = f"Open {workflow or route}"
-        help_text = (
-            f"{row.get('STATE', 'Review')}: {row.get('WHY_NOW', '')}\n"
-            f"Decision: {row.get('MORNING_DECISION', '')}\n"
-            f"SLA: {row.get('SLA_CLOCK', '')}\n"
-            f"First move: {row.get('FIRST_MOVE', '')}\n"
-            f"Route action: {row.get('ROUTE_ACTION', '')}\n"
-            f"Proof: {row.get('PROOF_REQUIRED', '')}\n"
-            f"Stop rule: {row.get('STOP_RULE', '')}"
-        )
+        focus_note = _dba_morning_focus_note(row)
+        help_lines = [
+            f"{row.get('STATE', 'Review')}: {row.get('WHY_NOW', '')}",
+            f"Decision: {row.get('MORNING_DECISION', '')}",
+            f"SLA: {row.get('SLA_CLOCK', '')}",
+            f"First move: {row.get('FIRST_MOVE', '')}",
+            f"Route action: {row.get('ROUTE_ACTION', '')}",
+            f"Proof: {row.get('PROOF_REQUIRED', '')}",
+            f"Stop rule: {row.get('STOP_RULE', '')}",
+        ]
+        if focus_note:
+            help_lines.append(f"Focus: {focus_note}")
+        help_text = "\n".join(help_lines)
         with move_cols[idx]:
             if st.button(label, key=f"dba_morning_open_{idx}_{route}_{workflow}", help=help_text, width="stretch"):
                 if route == "DBA Control Room" and workflow in DBA_CONTROL_ROOM_PANES:
                     st.session_state["dba_control_room_active_view"] = workflow
                     st.rerun()
                 else:
+                    _seed_dba_morning_route_context(row)
                     _jump(route, workflow=workflow)
-    render_priority_dataframe(
-        brief,
-        title="DBA morning brief",
-        priority_columns=[
-            "MORNING_RANK", "MORNING_DECISION", "SLA_CLOCK", "ROUTE", "WORKFLOW",
-            "STATE", "WHY_NOW", "FIRST_MOVE", "OWNER_PROOF_STATE", "OWNER_ROUTE",
-            "GO_NO_GO", "PROOF_REQUIRED", "SOURCE_SIGNALS",
-        ],
-        sort_by=["MORNING_RANK"],
-        ascending=[True],
-        raw_label="All DBA morning brief rows",
-        height=300,
-        max_rows=5,
-    )
+    with st.expander("Brief evidence detail", expanded=False):
+        render_priority_dataframe(
+            brief,
+            title="DBA morning brief evidence",
+            priority_columns=[
+                "MORNING_RANK", "MORNING_DECISION", "SLA_CLOCK", "ROUTE", "WORKFLOW",
+                "STATE", "WHY_NOW", "FIRST_MOVE", "OWNER_PROOF_STATE", "OWNER_ROUTE",
+                "GO_NO_GO", "PROOF_REQUIRED", "SOURCE_SIGNALS",
+                "FOCUS_QUERY_ID", "FOCUS_WAREHOUSE", "FOCUS_OBJECT",
+            ],
+            sort_by=["MORNING_RANK"],
+            ascending=[True],
+            raw_label="All DBA morning brief rows",
+            height=300,
+            max_rows=5,
+        )
     with st.expander("Morning brief packet", expanded=False):
         st.code(markdown, language="markdown")
         st.download_button(

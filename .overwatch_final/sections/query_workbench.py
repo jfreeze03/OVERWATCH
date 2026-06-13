@@ -36,15 +36,18 @@ def _root_cause_score(
     full_scan_queries: int,
     slow_queries: int,
     total_queries: int,
+    blocked_queries: int = 0,
 ) -> int:
     total = max(int(total_queries or 0), 1)
     failed_pct = safe_float(failed_queries) / total * 100
+    blocked_pct = safe_float(blocked_queries) / total * 100
     queue_pct = safe_float(queued_queries) / total * 100
     spill_pct = safe_float(spill_queries) / total * 100
     full_scan_pct = safe_float(full_scan_queries) / total * 100
     slow_pct = safe_float(slow_queries) / total * 100
     penalty = (
         min(failed_pct * 2.2, 30)
+        + min(blocked_pct * 2.4, 28)
         + min(queue_pct * 1.8, 24)
         + min(spill_pct * 1.6, 20)
         + min(full_scan_pct * 0.8, 14)
@@ -60,6 +63,12 @@ def _root_cause_action_for(cause: str) -> tuple[str, str, str]:
             "Query",
             "Review error code/message, recent deploys, role/database context, and retry pattern before rerun.",
             "-- Pull the failing query text and error details from QUERY_HISTORY, then validate object and role access.",
+        )
+    if "LOCK" in cause or "BLOCK" in cause or "CONTENTION" in cause:
+        return (
+            "Query/Transaction",
+            "Open Contention Center, identify blocker transaction/session and shared target object, then apply the safe action contract before retrying.",
+            "-- Verify TRANSACTION_BLOCKED_TIME, SHOW LOCKS, blocker owner, and post-fix blocked seconds before any compute change.",
         )
     if "QUEUE" in cause:
         return (
@@ -96,6 +105,8 @@ def _root_cause_workflow_for(cause: str) -> str:
     cause = str(cause or "").upper()
     if "FAILED" in cause:
         return "History Search"
+    if "LOCK" in cause or "BLOCK" in cause or "CONTENTION" in cause:
+        return "Contention Center"
     if "QUEUE" in cause:
         return "Live Triage"
     if "SPILL" in cause or "SCAN" in cause or "SLOW" in cause:
@@ -211,6 +222,11 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
                     st.session_state["qs_autorun"] = True
                     st.session_state["workload_operations_workflow"] = "Query diagnosis"
                     st.session_state["query_analysis_active_view"] = "History Search"
+                elif workflow == "Contention Center":
+                    st.session_state["workload_operations_workflow"] = "Contention Center"
+                    st.session_state["contention_focus_query_id"] = query_id
+                    st.session_state["contention_center_view"] = "Brief"
+                    st.session_state["contention_active_view"] = "Brief"
                 elif workflow == "AI Diagnosis":
                     _seed_ai_query_diagnosis_from_row(item, days=days)
                 elif workflow == "Diagnosis":
@@ -250,6 +266,7 @@ def _build_root_cause_markdown(
         f"- Lookback: {days} days",
         f"- Total queries: {safe_int(summary_row.get('TOTAL_QUERIES')):,}",
         f"- Failed queries: {safe_int(summary_row.get('FAILED_QUERIES')):,}",
+        f"- Blocked queries: {safe_int(summary_row.get('BLOCKED_QUERIES')):,}",
         f"- Queued queries: {safe_int(summary_row.get('QUEUED_QUERIES')):,}",
         f"- Spill queries: {safe_int(summary_row.get('SPILL_QUERIES')):,}",
         f"- Full-scan candidates: {safe_int(summary_row.get('FULL_SCAN_QUERIES')):,}",
@@ -304,6 +321,7 @@ def _root_cause_cortex_prompt(
             f"schema={row.get('SCHEMA_NAME', '')}; "
             f"elapsed_sec={safe_float(row.get('ELAPSED_SEC')):.2f}; "
             f"queued_sec={safe_float(row.get('QUEUED_SEC')):.2f}; "
+            f"blocked_sec={safe_float(row.get('BLOCKED_SEC')):.2f}; "
             f"remote_spill_gb={safe_float(row.get('REMOTE_SPILL_GB')):.2f}; "
             f"gb_scanned={safe_float(row.get('GB_SCANNED')):.2f}; "
             f"partition_pct={safe_float(row.get('PARTITION_PCT')):.2f}; "
@@ -322,6 +340,7 @@ def _root_cause_cortex_prompt(
             "Summary: "
             f"total_queries={safe_int(summary_row.get('TOTAL_QUERIES'))}; "
             f"failed={safe_int(summary_row.get('FAILED_QUERIES'))}; "
+            f"blocked={safe_int(summary_row.get('BLOCKED_QUERIES'))}; "
             f"queued={safe_int(summary_row.get('QUEUED_QUERIES'))}; "
             f"spill={safe_int(summary_row.get('SPILL_QUERIES'))}; "
             f"full_scan={safe_int(summary_row.get('FULL_SCAN_QUERIES'))}; "
@@ -440,6 +459,7 @@ def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
         SELECT
             COUNT(*) AS total_queries,
             SUM(IFF(UPPER(execution_status) = 'FAILED_WITH_ERROR', 1, 0)) AS failed_queries,
+            SUM(IFF(blocked_sec >= 5, 1, 0)) AS blocked_queries,
             SUM(IFF(elapsed_sec >= 30, 1, 0)) AS slow_queries,
             SUM(IFF(queued_sec > 0, 1, 0)) AS queued_queries,
             SUM(IFF(local_spill_gb > 0 OR remote_spill_gb > 0, 1, 0)) AS spill_queries,
@@ -458,6 +478,7 @@ def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
             SELECT *,
                 CASE
                     WHEN UPPER(execution_status) = 'FAILED_WITH_ERROR' THEN 'Failed Query'
+                    WHEN blocked_sec >= 5 THEN 'Lock Contention'
                     WHEN queued_sec >= 30 THEN 'Warehouse Queue'
                     WHEN remote_spill_gb >= 1 THEN 'Remote Spill'
                     WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN 'Full Scan'
@@ -466,6 +487,7 @@ def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
                 END AS root_cause,
                 CASE
                     WHEN UPPER(execution_status) = 'FAILED_WITH_ERROR' THEN 1000000 + elapsed_sec
+                    WHEN blocked_sec >= 5 THEN blocked_sec
                     WHEN queued_sec >= 30 THEN queued_sec
                     WHEN remote_spill_gb >= 1 THEN remote_spill_gb
                     WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN gb_scanned
@@ -473,6 +495,7 @@ def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
                 END AS impact_value,
                 CASE
                     WHEN UPPER(execution_status) = 'FAILED_WITH_ERROR' THEN 'error'
+                    WHEN blocked_sec >= 5 THEN 'seconds blocked'
                     WHEN queued_sec >= 30 THEN 'seconds queued'
                     WHEN remote_spill_gb >= 1 THEN 'GB remote spill'
                     WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN 'GB scanned'
@@ -480,6 +503,7 @@ def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
                 END AS impact_unit
             FROM base
             WHERE UPPER(execution_status) = 'FAILED_WITH_ERROR'
+               OR blocked_sec >= 5
                OR queued_sec >= 30
                OR remote_spill_gb >= 1
                OR (partition_pct >= 90 AND gb_scanned >= 10)
@@ -488,6 +512,8 @@ def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:
         SELECT
             CASE
                 WHEN root_cause = 'Failed Query' THEN 'High'
+                WHEN root_cause = 'Lock Contention' AND impact_value >= 30 THEN 'Critical'
+                WHEN root_cause = 'Lock Contention' THEN 'High'
                 WHEN root_cause IN ('Warehouse Queue', 'Remote Spill') AND impact_value >= 60 THEN 'Critical'
                 WHEN root_cause IN ('Warehouse Queue', 'Remote Spill') THEN 'High'
                 WHEN root_cause = 'Full Scan' AND impact_value >= 100 THEN 'High'
@@ -576,7 +602,8 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
                     COALESCE(partitions_total, 0) > 0
                     AND partitions_scanned * 100.0 / NULLIF(partitions_total, 0) >= 90
                     AND COALESCE(bytes_scanned, 0) / POWER(1024, 3) >= 10
-                ) AS full_scan_queries
+                ) AS full_scan_queries,
+                COUNT_IF(COALESCE(transaction_blocked_time, 0) / 1000.0 >= 5) AS blocked_queries
             FROM {detail}
             WHERE start_time >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
               {company_filter}
@@ -586,6 +613,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
         SELECT
             h.total_queries,
             h.failed_queries,
+            COALESCE(d.blocked_queries, 0) AS blocked_queries,
             h.slow_queries,
             h.queued_queries,
             h.spill_queries,
@@ -639,6 +667,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
             SELECT *,
                 CASE
                     WHEN UPPER(COALESCE(execution_status, '')) IN ('FAILED_WITH_ERROR', 'FAILED') THEN 'Failed Query'
+                    WHEN blocked_sec >= 5 THEN 'Lock Contention'
                     WHEN queued_sec >= 30 THEN 'Warehouse Queue'
                     WHEN remote_spill_gb >= 1 THEN 'Remote Spill'
                     WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN 'Full Scan'
@@ -647,6 +676,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
                 END AS root_cause,
                 CASE
                     WHEN UPPER(COALESCE(execution_status, '')) IN ('FAILED_WITH_ERROR', 'FAILED') THEN 1000000 + elapsed_sec
+                    WHEN blocked_sec >= 5 THEN blocked_sec
                     WHEN queued_sec >= 30 THEN queued_sec
                     WHEN remote_spill_gb >= 1 THEN remote_spill_gb
                     WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN gb_scanned
@@ -654,6 +684,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
                 END AS impact_value,
                 CASE
                     WHEN UPPER(COALESCE(execution_status, '')) IN ('FAILED_WITH_ERROR', 'FAILED') THEN 'error'
+                    WHEN blocked_sec >= 5 THEN 'seconds blocked'
                     WHEN queued_sec >= 30 THEN 'seconds queued'
                     WHEN remote_spill_gb >= 1 THEN 'GB remote spill'
                     WHEN partition_pct >= 90 AND gb_scanned >= 10 THEN 'GB scanned'
@@ -661,6 +692,7 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
                 END AS impact_unit
             FROM base
             WHERE UPPER(COALESCE(execution_status, '')) IN ('FAILED_WITH_ERROR', 'FAILED')
+               OR blocked_sec >= 5
                OR queued_sec >= 30
                OR remote_spill_gb >= 1
                OR (partition_pct >= 90 AND gb_scanned >= 10)
@@ -669,6 +701,8 @@ def _build_mart_root_cause_sql(days: int, limit: int, company: str) -> tuple[str
         SELECT
             CASE
                 WHEN root_cause = 'Failed Query' THEN 'High'
+                WHEN root_cause = 'Lock Contention' AND impact_value >= 30 THEN 'Critical'
+                WHEN root_cause = 'Lock Contention' THEN 'High'
                 WHEN root_cause IN ('Warehouse Queue', 'Remote Spill') AND impact_value >= 60 THEN 'Critical'
                 WHEN root_cause IN ('Warehouse Queue', 'Remote Spill') THEN 'High'
                 WHEN root_cause = 'Full Scan' AND impact_value >= 250 THEN 'High'
@@ -829,6 +863,7 @@ def render_root_cause_brief(session) -> None:
         summary_row = summary_df.iloc[0].to_dict()
         score = _root_cause_score(
             failed_queries=safe_int(summary_row.get("FAILED_QUERIES")),
+            blocked_queries=safe_int(summary_row.get("BLOCKED_QUERIES")),
             queued_queries=safe_int(summary_row.get("QUEUED_QUERIES")),
             spill_queries=safe_int(summary_row.get("SPILL_QUERIES")),
             full_scan_queries=safe_int(summary_row.get("FULL_SCAN_QUERIES")),
@@ -837,6 +872,7 @@ def render_root_cause_brief(session) -> None:
         )
         render_shell_snapshot((
             ("Failed", f"{safe_int(summary_row.get('FAILED_QUERIES')):,}"),
+            ("Blocked", f"{safe_int(summary_row.get('BLOCKED_QUERIES')):,}"),
             ("Queued", f"{safe_int(summary_row.get('QUEUED_QUERIES')):,}"),
             ("Spill", f"{safe_int(summary_row.get('SPILL_QUERIES')):,}"),
             ("Full Scan", f"{safe_int(summary_row.get('FULL_SCAN_QUERIES')):,}"),
@@ -863,11 +899,11 @@ def render_root_cause_brief(session) -> None:
                 priority_columns=[
                     "SEVERITY", "ROOT_CAUSE", "QUERY_ID", "USER_NAME",
                     "WAREHOUSE_NAME", "DATABASE_NAME", "ELAPSED_SEC",
-                    "QUEUED_SEC", "GB_SCANNED", "REMOTE_SPILL_GB",
+                    "BLOCKED_SEC", "QUEUED_SEC", "GB_SCANNED", "REMOTE_SPILL_GB",
                     "NEXT_ACTION",
                 ],
-                sort_by=["ELAPSED_SEC", "QUEUED_SEC", "GB_SCANNED", "REMOTE_SPILL_GB"],
-                ascending=[False, False, False, False],
+                sort_by=["BLOCKED_SEC", "ELAPSED_SEC", "QUEUED_SEC", "GB_SCANNED", "REMOTE_SPILL_GB"],
+                ascending=[False, False, False, False, False],
                 raw_label="All query root-cause exceptions",
             )
             if st.button("Save Root-Cause Exceptions to Action Queue", key="qw_rc_queue"):

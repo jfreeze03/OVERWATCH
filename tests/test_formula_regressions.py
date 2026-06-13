@@ -436,10 +436,24 @@ from utils.alerts import (  # noqa: E402
     build_alert_email_body,
     build_alert_email_subject,
     build_alert_escalation_ack_sql,
+    build_alert_command_center_runbook_markdown,
+    build_alert_command_center_setup_sql,
+    build_alert_command_center_summary,
+    build_alert_data_quality_check_seed_rows,
+    build_alert_data_quality_checks_ddl,
+    build_alert_event_materialization_sql,
+    build_alert_incident_action_board,
+    build_alert_morning_brief_rows,
+    build_alert_optional_integrations,
+    build_alert_owner_workload_board,
+    build_alert_remediation_contract,
+    build_alert_required_privileges,
     build_alert_rule_audit_ddl,
     build_alert_rule_audit_insert_sql,
     build_alert_rule_update_sql,
+    build_alert_signal_query_catalog,
     build_alert_status_update_sql,
+    build_alert_threshold_seed_rows,
     build_alert_triage_view_sql,
     build_dashboard_issue_rows,
     normalize_alert_rule_frame,
@@ -9854,20 +9868,28 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(
             [row["VIEW"] for row in workflows],
             [
+                "Command Center",
+                "DBA Morning Brief",
+                "Detection Catalog",
                 "Issue Inbox",
                 "Triage Digest",
                 "Email Delivery",
                 "Action Queue Routing",
                 "Control Health",
                 "Automation Readiness",
+                "Setup & Runbook",
             ],
         )
         by_view = {row["VIEW"]: row for row in workflows}
+        self.assertIn("Open Command Center", by_view["Command Center"]["BUTTON_LABEL"])
+        self.assertIn("Open Morning Brief", by_view["DBA Morning Brief"]["BUTTON_LABEL"])
+        self.assertIn("Open Detection Catalog", by_view["Detection Catalog"]["BUTTON_LABEL"])
         self.assertIn("Alert history", by_view["Issue Inbox"]["SOURCES"])
         self.assertIn("Action queue", by_view["Issue Inbox"]["SOURCES"])
         self.assertIn("Email delivery audit", by_view["Email Delivery"]["SOURCES"])
         self.assertIn("No-touch automation health", by_view["Automation Readiness"]["SOURCES"])
         self.assertIn("Open Issue Inbox", by_view["Issue Inbox"]["BUTTON_LABEL"])
+        self.assertIn("No Snowflake sources", by_view["Setup & Runbook"]["SOURCES"])
 
     def test_alert_center_brief_first_default_resets_stale_unloaded_subview(self):
         import streamlit as st
@@ -9906,6 +9928,238 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("consolidated Alert Center", dba_tools_text)
         self.assertNotIn("Alert Configuration", rec_text)
         self.assertNotIn("tab_alerts", rec_text)
+
+    def test_alert_command_center_setup_sql_creates_required_contract_tables(self):
+        sql = build_alert_command_center_setup_sql().upper()
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+
+        for table in [
+            "ALERT_CONFIG",
+            "ALERT_EVENTS",
+            "ALERT_RUN_HISTORY",
+            "ALERT_ACKNOWLEDGEMENTS",
+            "ALERT_REMEDIATION_LOG",
+            "ALERT_NOTIFICATION_LOG",
+            "ALERT_THRESHOLDS",
+            "ALERT_OWNER_ROUTING",
+        ]:
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS", sql)
+            self.assertIn(table, sql)
+            self.assertIn(table, setup_sql)
+
+        self.assertIn("REMEDIATION_MODE", sql)
+        self.assertIn("DEDUP", sql)
+        self.assertIn("SUPPRESSION_WINDOW_MINUTES", sql)
+        self.assertIn("ACCOUNT_USAGE DELAYED", sql)
+        self.assertIn("SECURITY_PRIVILEGE_ESCALATION", sql)
+        self.assertIn("PIPELINE_TASK_FAILURE", sql)
+        self.assertGreaterEqual(len(build_alert_threshold_seed_rows()), 7)
+
+    def test_alert_data_quality_config_and_event_materialization_sql_are_deployable(self):
+        dq_ddl = build_alert_data_quality_checks_ddl().upper()
+        materialize_sql = build_alert_event_materialization_sql(days=7).upper()
+        setup_sql = build_alert_command_center_setup_sql().upper()
+        repo_setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        dq_rows = build_alert_data_quality_check_seed_rows()
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS", dq_ddl)
+        self.assertIn("ALERT_DATA_QUALITY_CHECKS", dq_ddl)
+        for column in [
+            "DATABASE_NAME",
+            "SCHEMA_NAME",
+            "TABLE_NAME",
+            "COLUMN_NAME",
+            "CHECK_TYPE",
+            "THRESHOLD_VALUE",
+            "SEVERITY",
+            "OWNER",
+            "NOTIFICATION_CHANNEL",
+            "ENABLED",
+        ]:
+            self.assertIn(column, dq_ddl)
+        self.assertIn("ALERT_DATA_QUALITY_CHECKS", setup_sql)
+        self.assertIn("ALERT_DATA_QUALITY_CHECKS", repo_setup_sql)
+        self.assertGreaterEqual(len(dq_rows), 3)
+        self.assertTrue(any(row["CHECK_TYPE"] == "FRESHNESS_SLA_HOURS" for row in dq_rows))
+
+        self.assertIn("MERGE INTO", materialize_sql)
+        self.assertIn("ALERT_EVENTS", materialize_sql)
+        self.assertIn("OVERWATCH_ALERT_TRIAGE_V", materialize_sql)
+        self.assertIn("ALERT_RUN_HISTORY", materialize_sql)
+        self.assertIn("DEDUPE_KEY", materialize_sql)
+        self.assertIn("SHA2", materialize_sql)
+        self.assertIn("ACCOUNT_USAGE-BACKED ALERTS MAY LAG", materialize_sql)
+
+    def test_alert_signal_query_catalog_covers_dba_critical_telemetry(self):
+        catalog = build_alert_signal_query_catalog(hours=12)
+        text = "\n".join(
+            catalog["SQL"].astype(str).tolist()
+            + catalog["TELEMETRY"].astype(str).tolist()
+        ).upper()
+        categories = set(catalog["CATEGORY"])
+
+        self.assertTrue({"Security", "Cost / FinOps", "Performance", "Task / Pipeline", "Data Quality", "Optimization"}.issubset(categories))
+        for source in [
+            "SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY",
+            "SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS",
+            "SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY",
+            "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+            "SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY",
+            "SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY",
+            "SNOWFLAKE.ACCOUNT_USAGE.COPY_HISTORY",
+            "SNOWFLAKE.ACCOUNT_USAGE.DYNAMIC_TABLE_REFRESH_HISTORY",
+            "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSES",
+        ]:
+            self.assertIn(source, text)
+        self.assertTrue(catalog["FRESHNESS"].astype(str).str.contains("ACCOUNT_USAGE|near-real-time", case=False, regex=True).any())
+
+    def test_alert_command_center_summary_and_morning_brief_prioritize_business_impact(self):
+        alerts = pd.DataFrame([
+            {
+                "ALERT_ID": 1,
+                "ALERT_TS": pd.Timestamp("2026-06-13 06:00"),
+                "FIRST_SEEN_AT": pd.Timestamp("2026-06-13 05:55"),
+                "DETECTED_AT": pd.Timestamp("2026-06-13 06:00"),
+                "CATEGORY": "Security",
+                "ALERT_TYPE": "Privileged Role Grant",
+                "SEVERITY": "Critical",
+                "STATUS": "New",
+                "ENTITY_NAME": "SVC_LOAD",
+                "OWNER": "Security Approver",
+                "SUGGESTED_ACTION": "Validate ticket, MFA posture, and approver.",
+                "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS;",
+            },
+            {
+                "ALERT_ID": 2,
+                "ALERT_TS": pd.Timestamp("2026-06-13 02:00"),
+                "CATEGORY": "Task / Pipeline",
+                "ALERT_TYPE": "Task Failure",
+                "SEVERITY": "High",
+                "STATUS": "Acknowledged",
+                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD",
+                "OWNER": "Pipeline Owner",
+                "SUGGESTED_ACTION": "Identify failed child task and safe rerun path.",
+                "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY;",
+            },
+            {
+                "ALERT_ID": 3,
+                "ALERT_TS": pd.Timestamp("2026-06-12 02:00"),
+                "RESOLVED_AT": pd.Timestamp("2026-06-12 04:00"),
+                "CATEGORY": "Cost / FinOps",
+                "ALERT_TYPE": "Credit Spike",
+                "SEVERITY": "Medium",
+                "STATUS": "Resolved",
+                "ENTITY_NAME": "WH_LOAD",
+                "OWNER": "DBA / FinOps",
+                "SUGGESTED_ACTION": "Explain metering movement.",
+            },
+        ])
+
+        summary = build_alert_command_center_summary(alerts, now=pd.Timestamp("2026-06-13 08:00"))
+        metrics = {row["METRIC"]: row for _, row in summary["metrics"].iterrows()}
+        morning = build_alert_morning_brief_rows(alerts)
+
+        self.assertEqual(metrics["Open critical"]["VALUE"], 1)
+        self.assertEqual(metrics["Warning alerts"]["VALUE"], 1)
+        self.assertEqual(metrics["Resolved alerts"]["VALUE"], 1)
+        self.assertGreater(summary["severity_score"], 100)
+        self.assertEqual(summary["category_board"].iloc[0]["CATEGORY"], "Security")
+        self.assertEqual(morning.iloc[0]["CATEGORY"], "Security")
+        self.assertIn("Possible breach", morning.iloc[0]["WHY_THIS_MATTERS"])
+        self.assertIn("TASK_HISTORY", "\n".join(morning["PROOF_QUERY"].astype(str)))
+
+    def test_alert_incident_action_board_prioritizes_sla_owner_and_evidence(self):
+        alerts = pd.DataFrame([
+            {
+                "ALERT_ID": "A1",
+                "FIRST_SEEN_AT": pd.Timestamp("2026-06-13 00:00"),
+                "CATEGORY": "Task / Pipeline",
+                "ALERT_TYPE": "Root task failed",
+                "SEVERITY": "High",
+                "STATUS": "Acknowledged",
+                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY",
+                "OWNER": "Pipeline Owner",
+                "SUGGESTED_ACTION": "Fix failed child task before retrying graph.",
+                "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY;",
+                "SLA_HOURS": 4,
+                "REMEDIATION_MODE": "APPROVAL_REQUIRED",
+            },
+            {
+                "ALERT_ID": "A2",
+                "FIRST_SEEN_AT": pd.Timestamp("2026-06-13 07:45"),
+                "CATEGORY": "Optimization",
+                "ALERT_TYPE": "Unused warehouse",
+                "SEVERITY": "Medium",
+                "STATUS": "New",
+                "ENTITY_NAME": "WH_DEV_IDLE",
+                "OWNER": "DBA / FinOps",
+                "SUGGESTED_ACTION": "Review warehouse ownership and auto-suspend.",
+            },
+        ])
+        queue = pd.DataFrame([
+            {
+                "CATEGORY": "Task / Pipeline",
+                "ENTITY_NAME": "ALFA_EDW_PROD.PUBLIC.T_LOAD_POLICY",
+                "STATUS": "In Progress",
+                "TICKET_ID": "INC123",
+                "DUE_STATE": "Breached",
+                "EVIDENCE_GAP": "Need retry proof after fix.",
+                "APPROVAL_GROUP": "DBA CAB",
+            }
+        ])
+
+        board = build_alert_incident_action_board(alerts, queue, now=pd.Timestamp("2026-06-13 08:00"))
+        owners = build_alert_owner_workload_board(alerts, queue, now=pd.Timestamp("2026-06-13 08:00"))
+
+        self.assertEqual(board.iloc[0]["INCIDENT_KEY"], "A1")
+        self.assertEqual(board.iloc[0]["SLA_STATE"], "Breached")
+        self.assertEqual(board.iloc[0]["TICKET_ID"], "INC123")
+        self.assertEqual(board.iloc[0]["APPROVAL_GROUP"], "DBA CAB")
+        self.assertIn("before state", board.iloc[0]["FIRST_RESPONSE"])
+        self.assertIn("ACCOUNT_USAGE", board.iloc[0]["SOURCE_FRESHNESS"])
+        self.assertEqual(owners.iloc[0]["OWNER"], "Pipeline Owner")
+        self.assertEqual(owners.iloc[0]["SLA_BREACHED"], 1)
+        self.assertEqual(owners.iloc[0]["TICKETS_ATTACHED"], 1)
+
+        queue_only = build_alert_incident_action_board(pd.DataFrame(), queue, now=pd.Timestamp("2026-06-13 08:00"))
+        self.assertFalse(queue_only.empty)
+        self.assertEqual(queue_only.iloc[0]["TICKET_ID"], "INC123")
+        self.assertEqual(queue_only.iloc[0]["QUEUE_STATE"], "In Progress")
+
+    def test_alert_remediation_contract_blocks_dangerous_auto_actions(self):
+        contract = build_alert_remediation_contract({
+            "CATEGORY": "Security",
+            "ALERT_TYPE": "Privilege Escalation",
+            "ENTITY_NAME": "SVC_LOAD",
+            "REMEDIATION_MODE": "AUTO",
+            "REMEDIATION_SQL": "REVOKE ROLE ACCOUNTADMIN FROM USER SVC_LOAD;",
+            "PROOF_QUERY": "SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS;",
+        })
+        safe_contract = build_alert_remediation_contract({
+            "CATEGORY": "Optimization",
+            "ENTITY_NAME": "WH_LOAD",
+            "REMEDIATION_MODE": "RECOMMEND",
+            "REMEDIATION_SQL": "-- Recommend lowering auto-suspend after owner approval.",
+        })
+
+        self.assertEqual(contract["REMEDIATION_MODE"], "APPROVAL_REQUIRED")
+        self.assertEqual(contract["DANGEROUS_ACTION"], "Yes")
+        self.assertIn("ALERT_REMEDIATION_LOG", contract["AUDIT_LOG_REQUIRED"])
+        self.assertIn("ROLLBACK", contract["ROLLBACK_GUIDANCE"].upper())
+        self.assertEqual(safe_contract["DANGEROUS_ACTION"], "No")
+        self.assertEqual(safe_contract["REMEDIATION_MODE"], "RECOMMEND")
+
+    def test_alert_command_center_runbook_lists_privileges_and_integrations(self):
+        privileges = build_alert_required_privileges()
+        integrations = build_alert_optional_integrations()
+        runbook = build_alert_command_center_runbook_markdown()
+
+        self.assertIn("Imported privileges", privileges.iloc[0]["PRIVILEGE_ASSUMPTION"])
+        self.assertIn("Notification integration usage", "\n".join(privileges["PRIVILEGE_ASSUMPTION"]))
+        self.assertIn("Snowflake ALERT objects", "\n".join(integrations["INTEGRATION"]))
+        self.assertIn("Event tables", "\n".join(integrations["INTEGRATION"]))
+        self.assertIn("ACCOUNT_USAGE views are authoritative", runbook)
+        self.assertIn("AUTO is allowed only", runbook)
 
 
 if __name__ == "__main__":

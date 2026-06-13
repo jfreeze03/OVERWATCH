@@ -19,6 +19,21 @@ _FULL_WORKSPACE_STATE_KEYS = (
 
 _WORKFLOWS = (
     {
+        "VIEW": "Command Center",
+        "BUTTON_LABEL": "Open Command Center",
+        "MOVE": "Start with severity-ranked risk, category owners, freshness, and business impact.",
+    },
+    {
+        "VIEW": "DBA Morning Brief",
+        "BUTTON_LABEL": "Open Morning Brief",
+        "MOVE": "Work overnight failures, security events, cost anomalies, and missed SLAs in order.",
+    },
+    {
+        "VIEW": "Detection Catalog",
+        "BUTTON_LABEL": "Open Detection Catalog",
+        "MOVE": "Review Snowflake-native security, cost, performance, pipeline, data-quality, and optimization checks.",
+    },
+    {
         "VIEW": "Issue Inbox",
         "BUTTON_LABEL": "Open Issue Inbox",
         "MOVE": "Start with the combined alert and action-queue inbox for morning triage.",
@@ -47,6 +62,16 @@ _WORKFLOWS = (
         "VIEW": "Automation Readiness",
         "BUTTON_LABEL": "Open Automation",
         "MOVE": "Review no-touch alert, Control-M, Jira, Terraform, and Flyway feed health.",
+    },
+    {
+        "VIEW": "Notifications & Remediation",
+        "BUTTON_LABEL": "Open Remediation",
+        "MOVE": "Review notification routing and approval-gated remediation contracts before action.",
+    },
+    {
+        "VIEW": "Setup & Runbook",
+        "BUTTON_LABEL": "Open Setup",
+        "MOVE": "Deploy alert config, events, thresholds, owner routing, notification, and remediation audit tables.",
     },
 )
 
@@ -116,16 +141,16 @@ def _render_action_brief() -> None:
             st.markdown("**Action Brief**")
             st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
         with detail_col:
-            st.markdown("**Open Alert Center when inbox, delivery, routing, or automation proof is needed.**")
+            st.markdown("**Open Alert Command Center when risk, cost, security, pipeline, or remediation proof is needed.**")
         with action_col:
             if st.button(
-                "Open Alert Center",
+                "Open Command Center",
                 key="alert_center_shell_open",
                 help=workspace_help,
                 type="primary",
                 width="stretch",
             ):
-                _open_workspace("Alert Brief")
+                _open_workspace("Command Center")
 
 
 def _render_workflow_launchpad() -> None:
@@ -133,7 +158,7 @@ def _render_workflow_launchpad() -> None:
         _open_workspace(str(row["VIEW"]))
 
     render_shell_workflows(
-        "Morning Alert Workflows",
+        "Alert Command Workflows",
         _WORKFLOWS,
         label_key="VIEW",
         key_prefix="alert_center_shell",

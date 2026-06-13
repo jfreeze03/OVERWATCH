@@ -50,6 +50,45 @@ Database, schema, user, role, and environment costs are allocated from exact
 metered warehouse-hour credits when Snowflake does not provide direct billing at
 that grain. Exact metering and allocated attribution are labeled separately.
 
+## Alert Command Center
+
+The Alert Center is being hardened into a proactive DBA command center rather
+than a cosmetic inbox. It now has deployable configuration, event,
+acknowledgement, notification, owner-routing, threshold, and remediation audit
+tables:
+
+- `ALERT_CONFIG`
+- `ALERT_EVENTS`
+- `ALERT_RUN_HISTORY`
+- `ALERT_ACKNOWLEDGEMENTS`
+- `ALERT_REMEDIATION_LOG`
+- `ALERT_NOTIFICATION_LOG`
+- `ALERT_THRESHOLDS`
+- `ALERT_OWNER_ROUTING`
+- `ALERT_DATA_QUALITY_CHECKS`
+
+The section covers security, Cost/FinOps, performance, task and pipeline,
+data-quality, and optimization alert families. Snowflake `ACCOUNT_USAGE` views
+are treated as authoritative historical evidence but are labeled as delayed
+telemetry. Near-real-time operations should use `INFORMATION_SCHEMA` table
+functions, Snowflake alert objects, task graph notifications, and event tables
+where the account supports them.
+
+The Command Center now promotes open alert rows into an incident action board.
+That board sorts by severity, SLA age, owner, ticket state, business impact,
+source freshness, proof query, and remediation mode so the DBA can work the
+right item first instead of scanning a flat inbox.
+
+`ALERT_DATA_QUALITY_CHECKS` is the metadata-driven table for freshness, row
+count, null-rate, duplicate, volume, and schema checks. DBAs and data owners can
+tune database/schema/table/column/check type/threshold/severity/owner/channel
+without changing Streamlit code.
+
+Remediation is approval-gated by default. The app may recommend SQL or actions,
+but state-changing fixes must log trigger, approval, before/after state,
+rollback guidance, affected object/user/warehouse/task, and verification result
+in `ALERT_REMEDIATION_LOG`.
+
 ## Quick Start
 
 Local run:
@@ -119,6 +158,8 @@ against `.overwatch_final`, `tests`, and documentation before release.
   documents the current cost formula contract and audit status.
 - [DBA_CONTROL_ROOM_ROADMAP.md](DBA_CONTROL_ROOM_ROADMAP.md) tracks the path to
   closed-loop DBA operations.
+- [ALERT_COMMAND_CENTER_RUNBOOK.md](ALERT_COMMAND_CENTER_RUNBOOK.md) explains
+  Alert Center setup, privileges, integrations, and daily DBA alert triage.
 - [UX_PRODUCTION_GUIDELINES.md](UX_PRODUCTION_GUIDELINES.md) documents current
   production UI standards.
 - [OVERWATCH_PROCESS_FOR_16_YEAR_OLD.md](OVERWATCH_PROCESS_FOR_16_YEAR_OLD.md)

@@ -7,37 +7,13 @@ from importlib import import_module
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
+from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import render_shell_snapshot
-import utils as _utils
+from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
 
-class _LazyPandas:
-    """Load pandas only after Security Posture needs dataframe work."""
-
-    _module = None
-
-    def _load(self):
-        if self._module is None:
-            import pandas as pandas_module
-
-            self._module = pandas_module
-        return self._module
-
-    def __getattr__(self, name: str):
-        return getattr(self._load(), name)
-
-
-pd = _LazyPandas()
-
-
-def _lazy_util(name: str):
-    def _call(*args, **kwargs):
-        return getattr(_utils, name)(*args, **kwargs)
-
-    _call.__name__ = name
-    return _call
-
+pd = lazy_pandas()
 
 action_queue_environment_clause = _lazy_util("action_queue_environment_clause")
 environment_label_for_database = _lazy_util("environment_label_for_database")
@@ -59,24 +35,6 @@ run_query = _lazy_util("run_query")
 safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
 upsert_actions = _lazy_util("upsert_actions")
-
-
-def safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_int(value, default: int = 0) -> int:
-    try:
-        if value is None or value != value:
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def get_active_company() -> str:
@@ -167,6 +125,11 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
     render()
 
 SECURITY_POSTURE_VIEWS = ("Security Brief", "Evidence Readiness", "Access Workflows")
+SECURITY_POSTURE_VIEW_DETAILS = {
+    "Security Brief": "Default cockpit: security action brief, operating snapshot, and exception-first load path.",
+    "Evidence Readiness": "Source health, privileged-grant readiness, control proof, and audit trust boundaries.",
+    "Access Workflows": "Open privileged grants, dormant users, MFA/login risk, data sharing, and governance workflows.",
+}
 
 WORKFLOWS = ("Access posture", "Privilege sprawl", "Data sharing exposure")
 
@@ -2966,6 +2929,8 @@ def render() -> None:
         "security_posture_view",
         SECURITY_POSTURE_VIEWS,
         default=SECURITY_POSTURE_VIEWS[0],
+        details=SECURITY_POSTURE_VIEW_DETAILS,
+        columns=3,
     )
     if active_view == "Security Brief":
         _render_security_brief_launchpad()

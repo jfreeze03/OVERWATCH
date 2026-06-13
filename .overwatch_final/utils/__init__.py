@@ -79,6 +79,9 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "helpers": (
         "paginate_df", "safe_float", "safe_int",
     ),
+    "primitives": (
+        "safe_str", "safe_bool", "safe_strip_tz", "coerce_numeric",
+    ),
     "alerts": (
         "ALERT_OPEN_STATUSES", "ALERT_STATUS_CHOICES", "DEFAULT_ALERT_RECIPIENT",
         "acknowledge_alert_escalation", "alert_rule_catalog",

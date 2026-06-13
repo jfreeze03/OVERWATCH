@@ -801,7 +801,7 @@ def _render_app_header(section: str, company: str, credit_price: float, role: st
     icon = SECTION_ICONS.get(section, "target")
     now_label = datetime.now().strftime("%Y-%m-%d %H:%M")
     safe_section = html.escape(section)
-    safe_subtitle = html.escape(_section_subtitle(section))
+    safe_subtitle = html.escape(_section_subtitle(section), quote=True)
     safe_role = html.escape(role[:24] or "DBA")
     safe_icon = html.escape(str(icon).upper())
     scope_chips = _active_scope_chips(company)
@@ -814,8 +814,7 @@ def _render_app_header(section: str, company: str, credit_price: float, role: st
                 <div class="ow-section-row">
                     <span class="ow-section-icon">{safe_icon}</span>
                     <div>
-                        <div class="ow-section-title">{safe_section}</div>
-                        <div class="ow-section-subtitle">{safe_subtitle}</div>
+                        <div class="ow-section-title" title="{safe_subtitle}">{safe_section}</div>
                     </div>
                 </div>
                 <div class="ow-scope-row">{scope_chips}</div>
@@ -999,7 +998,6 @@ with st.sidebar:
     role_label = current_role[:20] or "DBA"
 
     st.caption(f"{role_label} - {matched_profile} ROLE - {selected_experience} VIEW")
-    st.caption("NAVIGATE")
 
     active_section = _current_active_section(visible_sections)
 
@@ -1020,6 +1018,7 @@ with st.sidebar:
                 width="stretch",
                 on_click=_set_section,
                 args=(section_name,),
+                help=_section_subtitle(section_name),
             )
 
     st.divider()

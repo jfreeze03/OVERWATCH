@@ -4,38 +4,14 @@ from __future__ import annotations
 from datetime import datetime
 
 import streamlit as st
-import utils as _utils
+from sections.base import lazy_pandas, lazy_util as _lazy_util
+from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULTS, DEFAULT_ENVIRONMENT, THRESHOLDS
 from sections.shell_helpers import render_shell_snapshot
 
 
-class _LazyPandas:
-    """Load pandas only after Warehouse Health needs dataframe work."""
-
-    _module = None
-
-    def _load(self):
-        if self._module is None:
-            import pandas as pandas_module
-
-            self._module = pandas_module
-        return self._module
-
-    def __getattr__(self, name: str):
-        return getattr(self._load(), name)
-
-
-pd = _LazyPandas()
-
-
-def _lazy_util(name: str):
-    def _call(*args, **kwargs):
-        return getattr(_utils, name)(*args, **kwargs)
-
-    _call.__name__ = name
-    return _call
-
+pd = lazy_pandas()
 
 get_session_for_action = _lazy_util("get_session_for_action")
 format_credits = _lazy_util("format_credits")
@@ -72,24 +48,6 @@ def _admin_audit_fqn() -> str:
     from utils.admin import ADMIN_AUDIT_FQN
 
     return ADMIN_AUDIT_FQN
-
-
-def safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_int(value, default: int = 0) -> int:
-    try:
-        if value is None or value != value:
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def get_active_company() -> str:

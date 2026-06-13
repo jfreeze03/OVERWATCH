@@ -145,8 +145,10 @@ from sections.dba_control_room import (  # noqa: E402
     _command_queue_route_readiness,
     _build_dba_operator_runbook_markdown,
     _build_dba_escalation_packet_markdown,
+    _build_dba_morning_brief_markdown,
     _dba_action_brief,
     _dba_escalation_packet,
+    _dba_morning_brief_rows,
     _dba_operator_runbook,
     _dba_operations_priority_index,
     _dba_section_operability_board,
@@ -2266,7 +2268,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("AFTER OVERWATCH_REFRESH_CONTROL_ROOM", setup_upper)
         self.assertIn("OVERWATCH_ALERTS", setup_upper)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ANNOTATIONS", setup_upper)
-        self.assertIn("WAREHOUSE = COMPUTE_WH", setup_upper)
+        self.assertIn("WAREHOUSE = OVERWATCH_WH", setup_upper)
         self.assertIn("APP_RUNTIME", setup_upper)
         self.assertIn("WAREHOUSE_COST_MOVEMENT", setup_upper)
         self.assertIn("CORTEX_BUDGET_AND_QUOTA", setup_upper)
@@ -2334,7 +2336,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SP_OVERWATCH_REFRESH_COST_GOVERNANCE", sql)
         self.assertIn("OVERWATCH_COST_GOVERNANCE_REFRESH", sql)
         self.assertIn("OVERWATCH_ALERTS", sql)
-        self.assertIn("WAREHOUSE = COMPUTE_WH", sql)
+        self.assertIn("WAREHOUSE = OVERWATCH_WH", sql)
 
     def test_budget_governance_board_tracks_summit_budget_capabilities(self):
         summary, board = _build_budget_governance_board()
@@ -3431,6 +3433,62 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("ESC-01", markdown)
         self.assertIn("No-Go", markdown)
         self.assertIn("Do not execute state-changing DBA actions", markdown)
+
+    def test_dba_morning_brief_prioritizes_no_go_and_owner_proof(self):
+        priority_index = pd.DataFrame([
+            {
+                "SECTION": "Warehouse Health",
+                "OPERATIONS_PRIORITY_STATE": "Owner Review",
+                "PRIORITY_SCORE": 62,
+                "WHY_NOW": "2 proof blockers",
+                "WORST_SIGNAL": "Warehouse guardrail review",
+                "FIRST_MOVE": "Review warehouse owner route.",
+                "PROOF_REQUIRED": "capacity evidence, owner approval, rollback SQL",
+            }
+        ])
+        packet = pd.DataFrame([
+            {
+                "ESCALATION_ID": "ESC-01",
+                "ESCALATION_LEVEL": "Escalate Now",
+                "ROUTE": "Change & Drift",
+                "OWNER_ROUTE": "Change owner / DBA release reviewer",
+                "PRIORITY_SCORE": 99,
+                "STATE": "Release Gate Blocked",
+                "WHY_NOW": "OVERWATCH_ANNOTATIONS missing",
+                "FIRST_MOVE": "Apply release remediation DDL.",
+                "GO_NO_GO": "No-Go until blocker proof is current.",
+                "PROOF_REQUIRED": "schema migration ledger, DDL proof, task retry evidence",
+                "SOURCE_SIGNALS": "Release Gate: Deployment object",
+            }
+        ])
+        handoff = pd.DataFrame([
+            {
+                "PRIORITY_RANK": 1,
+                "LANE": "Source Health",
+                "STATE": "Unavailable",
+                "EVIDENCE": "Task SLA / Cost unavailable",
+                "OWNER_OR_ROUTE": "DBA / Platform",
+                "NEXT_ACTION": "Refresh mart grants before relying on this surface.",
+                "PROOF_REQUIRED": "current source health",
+                "SOURCE": "Source Health",
+            }
+        ])
+
+        brief = _dba_morning_brief_rows(priority_index, packet, handoff, max_rows=3)
+        markdown = _build_dba_morning_brief_markdown(
+            brief,
+            company="ALFA",
+            environment="PROD",
+            lookback_hours=24,
+        )
+
+        self.assertEqual(brief.iloc[0]["ROUTE"], "Change & Drift")
+        self.assertEqual(brief.iloc[0]["STATE"], "Escalate Now")
+        self.assertIn("No-Go", brief.iloc[0]["GO_NO_GO"])
+        self.assertIn("schema migration ledger", brief.iloc[0]["PROOF_REQUIRED"])
+        self.assertIn("Warehouse Health", set(brief["ROUTE"]))
+        self.assertIn("# OVERWATCH DBA Morning Brief", markdown)
+        self.assertIn("No irreversible DBA action", markdown)
 
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []
@@ -8340,6 +8398,50 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(task_alert_brief["state"], "Job Review")
         self.assertIn("Control-M", task_alert_brief["detail"])
 
+        task_failure_brief = _workload_action_brief(
+            {
+                "loaded": True,
+                "queries": 100,
+                "failed": 0,
+                "queued": 0,
+                "spill": 0,
+                "p95": 18.5,
+            },
+            task_summary={
+                "loaded": True,
+                "controlm_rows": 5,
+                "controlm_failures": 2,
+                "controlm_late": 1,
+                "controlm_alerts": 3,
+                "controlm_watch": 0,
+            },
+        )
+        self.assertEqual(task_failure_brief["workflow"], "Task graphs")
+        self.assertEqual(task_failure_brief["state"], "Job Review")
+        self.assertIn("failed/blocked", task_failure_brief["detail"])
+
+        task_late_brief = _workload_action_brief(
+            {
+                "loaded": True,
+                "queries": 100,
+                "failed": 0,
+                "queued": 0,
+                "spill": 0,
+                "p95": 18.5,
+            },
+            task_summary={
+                "loaded": True,
+                "controlm_rows": 5,
+                "controlm_failures": 0,
+                "controlm_late": 2,
+                "controlm_alerts": 2,
+                "controlm_watch": 0,
+            },
+        )
+        self.assertEqual(task_late_brief["workflow"], "Task graphs")
+        self.assertEqual(task_late_brief["state"], "SLA Risk")
+        self.assertIn("late, missed", task_late_brief["detail"])
+
         task_watch_brief = _workload_action_brief(
             {
                 "loaded": True,
@@ -8370,6 +8472,8 @@ class FormulaRegressionTests(unittest.TestCase):
 
         task_summary = _workload_task_summary(pd.DataFrame([{
             "CONTROL_M_ROWS": 5,
+            "CONTROL_M_FAILURE_ROWS": 2,
+            "CONTROL_M_LATE_ROWS": 1,
             "CONTROL_M_ALERT_ROWS": 2,
             "CONTROL_M_WATCH_ROWS": 1,
             "CONTROL_M_LAST_SEEN_AT": "2026-05-01 10:00:00",
@@ -8377,8 +8481,10 @@ class FormulaRegressionTests(unittest.TestCase):
         task_lanes = _workload_status_lanes(summary, task_summary)
         task_by_label = {lane["label"]: lane for lane in task_lanes}
         self.assertEqual(task_by_label["Task / job status"]["state"], "Review")
-        self.assertEqual(task_by_label["Task / job status"]["value"], "2 scheduler alert")
+        self.assertEqual(task_by_label["Task / job status"]["value"], "2 failed or blocked")
         self.assertEqual(task_summary["controlm_rows"], 5)
+        self.assertEqual(task_summary["controlm_failures"], 2)
+        self.assertEqual(task_summary["controlm_late"], 1)
         self.assertEqual(task_summary["controlm_alerts"], 2)
 
     def test_workload_task_status_sql_reads_controlm_feed_only(self):
@@ -8387,6 +8493,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", sql)
         self.assertIn("SOURCE_SYSTEM", sql)
         self.assertIn("CONTROL_M", sql)
+        self.assertIn("CONTROL_M_FAILURE_ROWS", sql)
+        self.assertIn("CONTROL_M_LATE_ROWS", sql)
+        self.assertIn("MISSED|LATE|DELAY|OVERDUE|SLA|BREACH", sql)
         self.assertIn("COMPANY = 'TREXIS'", sql)
         self.assertIn("COALESCE(ENVIRONMENT, 'NO DATABASE CONTEXT') = 'PROD'", sql)
         self.assertIn("DATEADD('HOUR', -24", sql)
@@ -8406,6 +8515,8 @@ class FormulaRegressionTests(unittest.TestCase):
         task_summary = {
             "loaded": True,
             "controlm_rows": 4,
+            "controlm_failures": 1,
+            "controlm_late": 1,
             "controlm_alerts": 1,
             "controlm_watch": 1,
             "last_seen": "2026-05-01 10:00:00",
@@ -8415,7 +8526,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("# OVERWATCH Workload Operations Runbook", markdown)
         self.assertIn("- Scope: Trexis / DEV_ALL", markdown)
         self.assertIn("100 queries, 3 failed, 7 queued, 2 remote-spill, p95 18.5s", markdown)
-        self.assertIn("Control-M feed rows=4; alerts=1; watch=1", markdown)
+        self.assertIn("Control-M feed rows=4; failed_blocked=1; late_or_missed=1; alerts=1; watch=1", markdown)
         self.assertIn("## Slide Bullets", markdown)
         self.assertIn("## Triage Order", markdown)
         self.assertIn("Query diagnosis: capture query ID", markdown)

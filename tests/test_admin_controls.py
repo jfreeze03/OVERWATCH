@@ -616,14 +616,14 @@ class AdminControlTests(unittest.TestCase):
         self.assertEqual(
             warehouses,
             {
-                "OVERWATCH_COST_SAVINGS_VERIFY": "COMPUTE_WH",
-                "OVERWATCH_ANOMALY_CHECK": "COMPUTE_WH",
-                "OVERWATCH_LOAD_HOURLY": "COMPUTE_WH",
-                "OVERWATCH_LOAD_CORTEX": "COMPUTE_WH",
-                "OVERWATCH_REFRESH_CONTROL_ROOM": "COMPUTE_WH",
-                "OVERWATCH_COST_GOVERNANCE_REFRESH": "COMPUTE_WH",
-                "OVERWATCH_AUTOMATION_REFRESH": "COMPUTE_WH",
-                "OVERWATCH_LOAD_DAILY": "COMPUTE_WH",
+                "OVERWATCH_COST_SAVINGS_VERIFY": "OVERWATCH_WH",
+                "OVERWATCH_ANOMALY_CHECK": "OVERWATCH_WH",
+                "OVERWATCH_LOAD_HOURLY": "OVERWATCH_WH",
+                "OVERWATCH_LOAD_CORTEX": "OVERWATCH_WH",
+                "OVERWATCH_REFRESH_CONTROL_ROOM": "OVERWATCH_WH",
+                "OVERWATCH_COST_GOVERNANCE_REFRESH": "OVERWATCH_WH",
+                "OVERWATCH_AUTOMATION_REFRESH": "OVERWATCH_WH",
+                "OVERWATCH_LOAD_DAILY": "OVERWATCH_WH",
             },
         )
         self.assertEqual(

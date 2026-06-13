@@ -121,6 +121,24 @@ class NavigationIntegrityTests(unittest.TestCase):
         ]
         self.assertEqual(missing, [])
 
+    def test_workspace_sections_use_shared_base_helpers(self):
+        base_text = (APP_ROOT / "sections" / "base.py").read_text(encoding="utf-8")
+        primitives_text = (APP_ROOT / "utils" / "primitives.py").read_text(encoding="utf-8")
+        self.assertIn("class LazyPandas", base_text)
+        self.assertIn("def lazy_util", base_text)
+        self.assertIn("def safe_float", primitives_text)
+        self.assertIn("def safe_int", primitives_text)
+
+        for path in (APP_ROOT / "sections").glob("*.py"):
+            if path.name == "base.py":
+                continue
+            section_text = path.read_text(encoding="utf-8")
+            with self.subTest(section=path.name):
+                self.assertNotIn("class _LazyPandas", section_text)
+                self.assertNotIn("def _lazy_util", section_text)
+                self.assertNotIn("def safe_float", section_text)
+                self.assertNotIn("def safe_int", section_text)
+
     def test_fast_shells_offer_back_to_brief_toggle(self):
         shell_modules = {
             section: module_path
@@ -1232,7 +1250,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("reload_loaded_sections()", app_text)
         self.assertIn("def reload_loaded_sections()", sections_text)
         self.assertIn("help=details.get(workflow) or None", workflows_text)
+        self.assertIn("help=details.get(mode) or None", workflows_text)
         self.assertNotIn("st.caption(details[workflow])", workflows_text)
+        self.assertNotIn("st.caption(details[mode])", workflows_text)
         self.assertIn("from .section_guidance import defer_section_note", workflows_text)
         self.assertIn("defer_source_note", workflows_text)
         self.assertIn("defer_section_note(summary)", workflows_text)
@@ -1243,6 +1263,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def render_mode_selector", workflows_text)
         self.assertIn('getattr(st, "segmented_control", None)', workflows_text)
         self.assertIn("st.selectbox(", workflows_text)
+        self.assertIn("help=_section_subtitle(section_name)", app_text)
+        self.assertNotIn('<div class="ow-section-subtitle">{safe_subtitle}</div>', app_text)
+        self.assertNotIn('st.caption("NAVIGATE")', app_text)
         self.assertNotIn("with st.expander(str(title), expanded=False)", workflows_text)
         self.assertNotIn("ow-brief-strip-collapsed", workflows_text)
         self.assertNotIn("ow-brief-title", workflows_text)
@@ -1498,7 +1521,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("import pandas as pd", executive_landing_import_block)
         self.assertNotIn("from utils import (", executive_landing_import_block)
         self.assertNotIn("from utils.workflows import render_priority_dataframe", executive_landing_import_block)
-        self.assertIn("class _LazyPandas", executive_landing_text)
+        self.assertIn("from sections.base import lazy_pandas", executive_landing_text)
+        self.assertIn("pd = lazy_pandas()", executive_landing_text)
         self.assertIn("def _render_executive_action_brief", executive_landing_text)
         self.assertIn("def _render_executive_operating_snapshot", executive_landing_text)
         self.assertIn('st.markdown("**Operating Snapshot**")', executive_landing_text)
@@ -1571,7 +1595,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("import pandas as pd", account_health_import_block)
         self.assertNotIn("from utils import (", account_health_import_block)
         self.assertNotIn("from utils.workflows import", account_health_import_block)
-        self.assertIn("class _LazyPandas", account_health_text)
+        self.assertIn("from sections.base import lazy_pandas", account_health_text)
+        self.assertIn("pd = lazy_pandas()", account_health_text)
         self.assertIn('render_priority_dataframe = _lazy_util("render_priority_dataframe")', account_health_text)
         self.assertIn("def _account_health_has_source_state", account_health_text)
         self.assertIn("if _account_health_has_source_state(st.session_state):", account_health_text)
@@ -1594,7 +1619,8 @@ class NavigationIntegrityTests(unittest.TestCase):
             with self.subTest(lazy_pandas_section=label):
                 section_import_block = section_text.split(split_marker, 1)[0]
                 self.assertNotIn("import pandas as pd", section_import_block)
-                self.assertIn("class _LazyPandas", section_text)
+                self.assertIn("from sections.base import lazy_pandas", section_import_block)
+                self.assertIn("pd = lazy_pandas()", section_import_block)
         warehouse_health_import_block = warehouse_health_text.split("def _admin_audit_fqn", 1)[0]
         self.assertNotIn("from utils import (", warehouse_health_import_block)
         self.assertNotIn("from utils.workflows import", warehouse_health_import_block)
@@ -1894,7 +1920,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("build_forward_platform_control_register()", architecture_render_preload)
         self.assertNotIn("_architecture_source_health_rows(", architecture_render_preload)
         architecture_top_import_block = architecture_text.split("def build_agentic_ai_surface_scorecard", 1)[0]
-        self.assertIn("class _LazyPandas", architecture_top_import_block)
+        self.assertIn("from sections.base import lazy_pandas", architecture_top_import_block)
+        self.assertIn("pd = lazy_pandas()", architecture_top_import_block)
         self.assertNotIn("import pandas as pd", architecture_top_import_block)
         self.assertNotIn("from utils import", architecture_top_import_block)
         self.assertNotIn("from utils.workflows import", architecture_top_import_block)
@@ -1984,7 +2011,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("get_session()", live_monitor_render_preload)
         self.assertNotIn("render_workflow_module(", workload_render_default)
         self.assertNotIn("get_session()", architecture_render_preload)
-        self.assertIn("class _LazyPandas", security_posture_import_block)
+        self.assertIn("from sections.base import lazy_pandas", security_posture_import_block)
+        self.assertIn("pd = lazy_pandas()", security_posture_import_block)
         self.assertNotIn("import pandas as pd", security_posture_import_block)
         self.assertNotIn("from utils import", security_posture_import_block)
         self.assertNotIn("from utils.workflows import", security_posture_import_block)
@@ -2301,6 +2329,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_dba_operations_priority_index", dba_control_text)
         self.assertIn("Operations priority board", dba_control_text)
         self.assertIn("dba_operations_priority_index", dba_control_text)
+        self.assertIn("_dba_morning_brief_rows", dba_control_text)
+        self.assertIn("DBA morning brief", dba_control_text)
+        self.assertIn('"Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"', dba_control_text)
+        self.assertIn('st.session_state["dba_control_room_morning_brief"]', dba_control_text)
         self.assertIn("_dba_operator_runbook", dba_control_text)
         self.assertIn("Operator runbook", dba_control_text)
         self.assertIn("dba_operator_runbook", dba_control_text)

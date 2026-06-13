@@ -9,37 +9,13 @@ import zipfile
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DEFAULTS, DAY_WINDOW_OPTIONS
+from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import render_shell_snapshot
-import utils as _utils
+from utils.primitives import safe_float
 from utils.section_guidance import defer_source_note
 
 
-class _LazyPandas:
-    """Load pandas only after an executive snapshot has been requested."""
-
-    _module = None
-
-    def _load(self):
-        if self._module is None:
-            import pandas as pandas_module
-
-            self._module = pandas_module
-        return self._module
-
-    def __getattr__(self, name: str):
-        return getattr(self._load(), name)
-
-
-pd = _LazyPandas()
-
-
-def _lazy_util(name: str):
-    def _call(*args, **kwargs):
-        return getattr(_utils, name)(*args, **kwargs)
-
-    _call.__name__ = name
-    return _call
-
+pd = lazy_pandas()
 
 build_mart_cost_cockpit_sql = _lazy_util("build_mart_cost_cockpit_sql")
 build_schema_migration_status_sql = _lazy_util("build_schema_migration_status_sql")
@@ -73,15 +49,6 @@ def _altair():
     import altair as alt
 
     return alt
-
-
-def safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _active_company() -> str:

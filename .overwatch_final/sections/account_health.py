@@ -5,37 +5,13 @@ import html
 import streamlit as st
 from datetime import datetime
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULTS
+from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import render_shell_snapshot
-import utils as _utils
+from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
 
 
-class _LazyPandas:
-    """Load pandas only after Account Health evidence needs dataframe work."""
-
-    _module = None
-
-    def _load(self):
-        if self._module is None:
-            import pandas as pandas_module
-
-            self._module = pandas_module
-        return self._module
-
-    def __getattr__(self, name: str):
-        return getattr(self._load(), name)
-
-
-pd = _LazyPandas()
-
-
-def _lazy_util(name: str):
-    def _call(*args, **kwargs):
-        return getattr(_utils, name)(*args, **kwargs)
-
-    _call.__name__ = name
-    return _call
-
+pd = lazy_pandas()
 
 get_session_for_action = _lazy_util("get_session_for_action")
 run_query = _lazy_util("run_query")
@@ -88,24 +64,6 @@ render_mode_selector = _lazy_util("render_mode_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
 
 
-def safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_int(value, default: int = 0) -> int:
-    try:
-        if value is None or value != value:
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def get_credit_price() -> float:
     return safe_float(st.session_state.get("credit_price", DEFAULTS.get("credit_price", 3.68)), 3.68)
 
@@ -124,6 +82,12 @@ ACCOUNT_HEALTH_PANES = (
     "Morning Report",
     "Executive Briefing",
 )
+ACCOUNT_HEALTH_PANE_DETAILS = {
+    "Overview": "Daily account cockpit: checklist state, source readiness, exception signals, and owner routes.",
+    "Resource Monitors": "Quota and suspend-threshold evidence for warehouses and account-level guardrails.",
+    "Morning Report": "Copy-ready DBA handoff built from verified account-health and overnight evidence.",
+    "Executive Briefing": "Leadership-ready account posture summary for health, risk, cost, and closure evidence.",
+}
 ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (
     "global_start_date",
     "global_end_date",
@@ -2957,6 +2921,8 @@ def render():
         "account_health_active_view",
         ACCOUNT_HEALTH_PANES,
         default=ACCOUNT_HEALTH_PANES[0],
+        details=ACCOUNT_HEALTH_PANE_DETAILS,
+        columns=4,
     )
 
     # -- OVERVIEW --------------------------------------------------------------

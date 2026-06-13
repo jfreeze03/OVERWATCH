@@ -6,35 +6,13 @@ import re
 import streamlit as st
 
 from config import ARCHITECTURE_OBJECTIVES, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, THRESHOLDS
+from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import render_shell_snapshot
-import utils as _utils
+from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
 
 
-class _LazyPandas:
-    _module = None
-
-    def _load(self):
-        if self._module is None:
-            import pandas as pandas_module
-
-            self._module = pandas_module
-        return self._module
-
-    def __getattr__(self, name):
-        return getattr(self._load(), name)
-
-
-pd = _LazyPandas()
-
-
-def _lazy_util(name: str):
-    def _call(*args, **kwargs):
-        return getattr(_utils, name)(*args, **kwargs)
-
-    _call.__name__ = name
-    return _call
-
+pd = lazy_pandas()
 
 download_csv = _lazy_util("download_csv")
 filter_existing_columns = _lazy_util("filter_existing_columns")
@@ -54,24 +32,6 @@ run_query = _lazy_util("run_query")
 show_to_df = _lazy_util("show_to_df")
 sql_literal = _lazy_util("sql_literal")
 upsert_actions = _lazy_util("upsert_actions")
-
-
-def safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_int(value, default: int = 0) -> int:
-    try:
-        if value is None or value != value:
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def get_active_company() -> str:

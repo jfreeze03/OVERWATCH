@@ -15,37 +15,13 @@ from config import (
     ETL_AUDIT_DB,
     ETL_AUDIT_SCHEMA,
 )
+from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import render_shell_snapshot
-import utils as _utils
+from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
 
-class _LazyPandas:
-    """Load pandas only after Cost & Contract needs dataframe work."""
-
-    _module = None
-
-    def _load(self):
-        if self._module is None:
-            import pandas as pandas_module
-
-            self._module = pandas_module
-        return self._module
-
-    def __getattr__(self, name: str):
-        return getattr(self._load(), name)
-
-
-pd = _LazyPandas()
-
-
-def _lazy_util(name: str):
-    def _call(*args, **kwargs):
-        return getattr(_utils, name)(*args, **kwargs)
-
-    _call.__name__ = name
-    return _call
-
+pd = lazy_pandas()
 
 build_cost_reconciliation_sql = _lazy_util("build_cost_reconciliation_sql")
 build_cost_savings_verification_health_sql = _lazy_util("build_cost_savings_verification_health_sql")
@@ -74,24 +50,6 @@ add_cost_companion_columns = _lazy_util("add_cost_companion_columns")
 apply_operator_status_labels = _lazy_util("apply_operator_status_labels")
 prioritize_context_columns = _lazy_util("prioritize_context_columns")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
-
-
-def safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_int(value, default: int = 0) -> int:
-    try:
-        if value is None or value != value:
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def get_active_company() -> str:
@@ -3654,7 +3612,7 @@ def build_cost_governance_mart_sql(
     *,
     db: str = ETL_AUDIT_DB,
     schema: str = ETL_AUDIT_SCHEMA,
-    warehouse: str = "COMPUTE_WH",
+    warehouse: str = "OVERWATCH_WH",
     email_target: str = DEFAULT_ALERT_EMAIL,
 ) -> str:
     """Return the Cost Governance deployment excerpt from OVERWATCH_MART_SETUP.sql."""
@@ -3671,7 +3629,7 @@ def build_cost_governance_mart_sql(
 --   SP_OVERWATCH_REFRESH_COST_GOVERNANCE
 --   OVERWATCH_COST_GOVERNANCE_REFRESH
 --   OVERWATCH_ALERTS bridge
--- Defaults: warehouse COMPUTE_WH, email dba-alerts@yourcompany.com.
+-- Defaults: warehouse OVERWATCH_WH, email dba-alerts@yourcompany.com.
 """
 
     table_block = _extract_setup_sql_block(

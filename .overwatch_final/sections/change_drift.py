@@ -8,37 +8,13 @@ import re
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
+from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import render_shell_snapshot
-import utils as _utils
+from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
 
-class _LazyPandas:
-    """Load pandas only after Change & Drift needs dataframe work."""
-
-    _module = None
-
-    def _load(self):
-        if self._module is None:
-            import pandas as pandas_module
-
-            self._module = pandas_module
-        return self._module
-
-    def __getattr__(self, name: str):
-        return getattr(self._load(), name)
-
-
-pd = _LazyPandas()
-
-
-def _lazy_util(name: str):
-    def _call(*args, **kwargs):
-        return getattr(_utils, name)(*args, **kwargs)
-
-    _call.__name__ = name
-    return _call
-
+pd = lazy_pandas()
 
 filter_existing_columns = _lazy_util("filter_existing_columns")
 format_snowflake_error = _lazy_util("format_snowflake_error")
@@ -59,24 +35,6 @@ render_chart_with_data_toggle = _lazy_util("render_chart_with_data_toggle")
 render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
 day_window_selectbox = _lazy_util("day_window_selectbox")
-
-
-def safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_int(value, default: int = 0) -> int:
-    try:
-        if value is None or value != value:
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def get_active_company() -> str:
@@ -132,6 +90,10 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
     render()
 
 CHANGE_DRIFT_VIEWS = ("Change Brief", "Change Workflows")
+CHANGE_DRIFT_VIEW_DETAILS = {
+    "Change Brief": "Default cockpit: change action brief, operating snapshot, and exception-first launchpad.",
+    "Change Workflows": "Open object/access changes, stored procedure lineage, Terraform, Jira, schema drift, or deployment evidence.",
+}
 CHANGE_DRIFT_BRIEF_FIRST_VERSION = 2
 
 WORKFLOWS = (
@@ -3967,6 +3929,8 @@ def render() -> None:
         "change_drift_view",
         CHANGE_DRIFT_VIEWS,
         default=CHANGE_DRIFT_VIEWS[0],
+        details=CHANGE_DRIFT_VIEW_DETAILS,
+        columns=2,
     )
     if active_view == "Change Brief":
         _render_change_brief_launchpad()

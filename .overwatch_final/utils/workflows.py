@@ -215,8 +215,11 @@ def render_mode_selector(
     *,
     default: str | None = None,
     label_visibility: str = "collapsed",
+    details: Mapping[str, str] | None = None,
+    labels: Mapping[str, str] | None = None,
+    columns: int = 4,
 ) -> str:
-    """Render a compact mode selector with a compatible selectbox fallback."""
+    """Render a compact mode selector, using hover-help buttons when details exist."""
     if not modes:
         raise ValueError("modes must contain at least one entry")
     options = list(modes)
@@ -225,6 +228,27 @@ def render_mode_selector(
     if selected not in options:
         selected = fallback
         st.session_state[key] = selected
+
+    details = details or {}
+    labels = labels or {}
+    if details:
+        columns = max(1, min(int(columns or 4), 5))
+        for start in range(0, len(options), columns):
+            row = options[start:start + columns]
+            cols = st.columns(len(row))
+            for col, mode in zip(cols, row):
+                with col:
+                    is_selected = mode == selected
+                    if st.button(
+                        labels.get(mode, mode),
+                        key=f"{key}_{start}_{mode}",
+                        type="primary" if is_selected else "secondary",
+                        width="stretch",
+                        help=details.get(mode) or None,
+                    ):
+                        st.session_state[key] = mode
+                        st.rerun()
+        return str(st.session_state.get(key, selected))
 
     segmented = getattr(st, "segmented_control", None)
     if callable(segmented):

@@ -12,54 +12,13 @@ from datetime import date, datetime, timedelta
 import streamlit as st
 
 from config import DEFAULT_ENVIRONMENT, DEFAULTS, SECTION_BY_TITLE, normalize_section_name
+from sections.base import lazy_pandas, lazy_util as _lazy_util, lazy_util_attr
 from sections.shell_helpers import render_shell_snapshot
-import utils as _utils
+from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
 
 
-class _LazyPandas:
-    """Load pandas only when the Control Room actually needs dataframe work."""
-
-    _module = None
-
-    def _load(self):
-        if self._module is None:
-            import pandas as pandas_module
-
-            self._module = pandas_module
-        return self._module
-
-    def __getattr__(self, name: str):
-        return getattr(self._load(), name)
-
-
-pd = _LazyPandas()
-
-
-def _lazy_util(name: str):
-    def _call(*args, **kwargs):
-        return getattr(_utils, name)(*args, **kwargs)
-
-    _call.__name__ = name
-    return _call
-
-
-def safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_int(value, default: int = 0) -> int:
-    try:
-        if value is None or value != value:
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+pd = lazy_pandas()
 
 
 def get_active_environment() -> str:
@@ -119,6 +78,7 @@ get_global_filter_clause = _lazy_util("get_global_filter_clause")
 get_session = _lazy_util("get_session")
 get_user_filter_clause = _lazy_util("get_user_filter_clause")
 get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
+get_owner_context_columns = lazy_util_attr("OWNER_CONTEXT_COLUMNS")
 build_mart_control_room_summary_sql = _lazy_util("build_mart_control_room_summary_sql")
 build_mart_control_room_credits_sql = _lazy_util("build_mart_control_room_credits_sql")
 build_mart_control_room_cost_drivers_sql = _lazy_util("build_mart_control_room_cost_drivers_sql")
@@ -183,6 +143,8 @@ DBA_CONTROL_ROOM_DETAIL_PANES = (
 DBA_CONTROL_ROOM_DERIVED_STATE_KEYS = (
     "dba_control_room_incident_board",
     "dba_control_room_handoff",
+    "dba_control_room_morning_brief",
+    "dba_control_room_morning_brief_markdown",
     "dba_control_room_escalation_packet",
     "dba_control_room_escalation_packet_markdown",
     "dba_operations_priority_index",
@@ -2306,7 +2268,7 @@ def _enrich_command_owner_context(view: pd.DataFrame) -> pd.DataFrame:
         ),
         axis=1,
     )
-    for column in _utils.OWNER_CONTEXT_COLUMNS:
+    for column in get_owner_context_columns():
         enriched[column] = contexts.apply(lambda context: context.get(column, ""))
     return enriched
 
@@ -3936,6 +3898,196 @@ def _render_dba_escalation_packet(packet: pd.DataFrame, markdown: str) -> None:
     download_csv(packet, "dba_escalation_packet.csv")
 
 
+def _dba_morning_brief_rows(
+    priority_index: pd.DataFrame | None,
+    escalation_packet: pd.DataFrame | None,
+    handoff_rows: pd.DataFrame | None,
+    *,
+    max_rows: int = 5,
+) -> pd.DataFrame:
+    """Create a concise morning operating brief from loaded Control Room evidence."""
+    rows: list[dict] = []
+    seen_routes: set[str] = set()
+
+    def add_row(
+        route: object,
+        *,
+        state: object,
+        why_now: object,
+        first_move: object,
+        owner_route: object = "",
+        go_no_go: object = "",
+        proof_required: object = "",
+        source_signals: object = "",
+        priority_score: object = 0,
+    ) -> None:
+        if len(rows) >= max_rows:
+            return
+        route_text = str(route or "DBA Control Room").strip() or "DBA Control Room"
+        route_key = route_text.upper()
+        if route_key in seen_routes:
+            return
+        seen_routes.add(route_key)
+        rows.append({
+            "MORNING_RANK": len(rows) + 1,
+            "ROUTE": route_text,
+            "STATE": str(state or "Review"),
+            "WHY_NOW": str(why_now or "Loaded Control Room evidence requires review."),
+            "FIRST_MOVE": str(first_move or "Open the owning workflow and validate evidence."),
+            "OWNER_ROUTE": str(owner_route or _dba_runbook_route_templates(route_text, 24)["owner_route"]),
+            "GO_NO_GO": str(go_no_go or "Go only through the owning workflow."),
+            "PROOF_REQUIRED": str(proof_required or _dba_section_proof_required(route_text)),
+            "SOURCE_SIGNALS": str(source_signals or "Control Room"),
+            "PRIORITY_SCORE": safe_float(priority_score),
+        })
+
+    packet = escalation_packet.copy() if escalation_packet is not None and not escalation_packet.empty else _empty_df()
+    if not packet.empty:
+        packet.columns = [str(col).upper() for col in packet.columns]
+        sort_cols = [col for col in ["PRIORITY_SCORE", "ROUTE"] if col in packet.columns]
+        ordered_packet = packet.sort_values(sort_cols, ascending=[False, True][: len(sort_cols)]) if sort_cols else packet
+        for _, item in ordered_packet.iterrows():
+            add_row(
+                item.get("ROUTE"),
+                state=item.get("ESCALATION_LEVEL") or item.get("STATE"),
+                why_now=item.get("WHY_NOW") or item.get("EVIDENCE_PACKET"),
+                first_move=item.get("FIRST_MOVE"),
+                owner_route=item.get("OWNER_ROUTE"),
+                go_no_go=item.get("GO_NO_GO"),
+                proof_required=item.get("PROOF_REQUIRED"),
+                source_signals=item.get("SOURCE_SIGNALS"),
+                priority_score=item.get("PRIORITY_SCORE"),
+            )
+
+    priority = priority_index.copy() if priority_index is not None and not priority_index.empty else _empty_df()
+    if len(rows) < max_rows and not priority.empty:
+        priority.columns = [str(col).upper() for col in priority.columns]
+        sort_cols = [col for col in ["PRIORITY_SCORE", "SECTION"] if col in priority.columns]
+        ordered_priority = priority.sort_values(sort_cols, ascending=[False, True][: len(sort_cols)]) if sort_cols else priority
+        for _, item in ordered_priority.iterrows():
+            add_row(
+                item.get("SECTION"),
+                state=item.get("OPERATIONS_PRIORITY_STATE"),
+                why_now=item.get("WHY_NOW") or item.get("WORST_SIGNAL"),
+                first_move=item.get("FIRST_MOVE"),
+                go_no_go="Go only through the owning specialist workflow.",
+                proof_required=item.get("PROOF_REQUIRED"),
+                source_signals=f"Operations Priority: {item.get('WORST_SIGNAL') or item.get('WHY_NOW') or item.get('SECTION')}",
+                priority_score=item.get("PRIORITY_SCORE"),
+            )
+
+    handoff = handoff_rows.copy() if handoff_rows is not None and not handoff_rows.empty else _empty_df()
+    if len(rows) < max_rows and not handoff.empty:
+        handoff.columns = [str(col).upper() for col in handoff.columns]
+        rank = pd.to_numeric(handoff.get("PRIORITY_RANK", pd.Series([9] * len(handoff))), errors="coerce").fillna(9)
+        important = handoff.assign(_MORNING_SORT=rank).sort_values(["_MORNING_SORT", "LANE"], ascending=[True, True])
+        for _, item in important.iterrows():
+            lane = str(item.get("LANE") or "DBA Control Room")
+            go_no_go = (
+                "No-Go until handoff blocker proof is current."
+                if safe_int(item.get("_MORNING_SORT"), 9) <= 1
+                else "Go for owner review through the routed workflow."
+            )
+            add_row(
+                lane,
+                state=item.get("STATE"),
+                why_now=item.get("EVIDENCE"),
+                first_move=item.get("NEXT_ACTION"),
+                owner_route=item.get("OWNER_OR_ROUTE"),
+                go_no_go=go_no_go,
+                proof_required=item.get("PROOF_REQUIRED"),
+                source_signals=f"Shift Handoff: {item.get('SOURCE') or lane}",
+                priority_score=max(0, 70 - safe_int(item.get("_MORNING_SORT"), 9) * 10),
+            )
+
+    if not rows:
+        add_row(
+            "DBA Control Room",
+            state="Monitor",
+            why_now="No loaded blocker, escalation, or handoff row for the current scope.",
+            first_move="Keep Fast Watch current and review Alert Center for newly routed issues.",
+            owner_route="On-call DBA / platform owner",
+            go_no_go="Go for monitoring only.",
+            proof_required="fresh Control Room load and current Alert Center review",
+            source_signals="Morning Brief: routine watch",
+            priority_score=0,
+        )
+
+    return pd.DataFrame(rows)
+
+
+def _build_dba_morning_brief_markdown(
+    brief: pd.DataFrame,
+    *,
+    company: str,
+    environment: str,
+    lookback_hours: int,
+) -> str:
+    """Create a concise markdown packet for the DBA morning brief."""
+    rows = brief if brief is not None and not brief.empty else _empty_df()
+    lines = [
+        "# OVERWATCH DBA Morning Brief",
+        f"Scope: {company} / {environment} / {safe_int(lookback_hours, 24)}h",
+        "Mode: Evidence-ranked operating brief",
+        "",
+    ]
+    if rows.empty:
+        lines.append("- No morning brief rows were available.")
+    else:
+        for _, row in rows.sort_values("MORNING_RANK").iterrows():
+            lines.append(
+                f"- {safe_int(row.get('MORNING_RANK'))}. [{row.get('STATE', '')}] "
+                f"{row.get('ROUTE', '')}: {row.get('FIRST_MOVE', '')} "
+                f"Why: {row.get('WHY_NOW', '')}. "
+                f"Gate: {row.get('GO_NO_GO', '')}. "
+                f"Proof: {row.get('PROOF_REQUIRED', '')}."
+            )
+    lines.extend([
+        "",
+        "Rules:",
+        "- No irreversible DBA action from the brief alone.",
+        "- Use the owning workflow for approval, execution, rollback, and verification evidence.",
+        "- Treat No-Go rows as blocked until source proof is current.",
+    ])
+    return "\n".join(lines).strip()
+
+
+def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
+    if brief is None or brief.empty:
+        return
+    top = brief.iloc[0]
+    st.markdown("**DBA Morning Brief**")
+    render_shell_snapshot((
+        ("First Route", str(top.get("ROUTE") or "DBA Control Room")),
+        ("No-Go", f"{int(brief['GO_NO_GO'].astype(str).str.contains('No-Go', case=False, regex=False).sum()):,}"),
+        ("Escalate Now", f"{int(brief['STATE'].astype(str).eq('Escalate Now').sum()):,}"),
+        ("Routes", f"{len(brief):,}"),
+    ))
+    render_priority_dataframe(
+        brief,
+        title="DBA morning brief",
+        priority_columns=[
+            "MORNING_RANK", "ROUTE", "STATE", "WHY_NOW", "FIRST_MOVE",
+            "OWNER_ROUTE", "GO_NO_GO", "PROOF_REQUIRED", "SOURCE_SIGNALS",
+        ],
+        sort_by=["MORNING_RANK"],
+        ascending=[True],
+        raw_label="All DBA morning brief rows",
+        height=300,
+        max_rows=5,
+    )
+    with st.expander("Morning brief packet", expanded=False):
+        st.code(markdown, language="markdown")
+        st.download_button(
+            "Download DBA Morning Brief",
+            data=markdown,
+            file_name="dba_morning_brief.md",
+            mime="text/markdown",
+            width="stretch",
+        )
+    download_csv(brief, "dba_morning_brief.csv")
+
+
 def _render_command_queue_control(
     queue: pd.DataFrame,
     raw_queue: pd.DataFrame | None = None,
@@ -5219,14 +5371,29 @@ def render() -> None:
             )
             st.session_state["dba_control_room_escalation_packet"] = escalation_packet
             st.session_state["dba_control_room_escalation_packet_markdown"] = escalation_md
+            morning_brief = _dba_morning_brief_rows(
+                operations_priority,
+                escalation_packet,
+                handoff_rows,
+            )
+            morning_brief_md = _build_dba_morning_brief_markdown(
+                morning_brief,
+                company=company,
+                environment=environment,
+                lookback_hours=int(lookback_hours),
+            )
+            st.session_state["dba_control_room_morning_brief"] = morning_brief
+            st.session_state["dba_control_room_morning_brief_markdown"] = morning_brief_md
 
             ops_detail = st.selectbox(
                 "Operations Board detail",
-                ("Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"),
+                ("Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"),
                 label_visibility="collapsed",
                 key="dba_operations_board_detail",
             )
-            if ops_detail == "Priority":
+            if ops_detail == "Morning Brief":
+                _render_dba_morning_brief(morning_brief, morning_brief_md)
+            elif ops_detail == "Priority":
                 _render_operations_priority_index(operations_priority)
             elif ops_detail == "Runbook":
                 _render_dba_operator_runbook(operator_runbook, operator_runbook_md)

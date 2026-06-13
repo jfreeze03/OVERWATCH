@@ -9,8 +9,9 @@ from importlib import import_module
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
+from sections.base import lazy_util as _lazy_util
 from sections.shell_helpers import render_shell_snapshot
-import utils as _utils
+from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
 _LANE_CARD_STYLE = (
@@ -54,14 +55,6 @@ _LANE_DETAIL_STYLE = (
 )
 
 
-def _lazy_util(name: str):
-    def _call(*args, **kwargs):
-        return getattr(_utils, name)(*args, **kwargs)
-
-    _call.__name__ = name
-    return _call
-
-
 build_mart_control_room_summary_sql = _lazy_util("build_mart_control_room_summary_sql")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 run_query = _lazy_util("run_query")
@@ -69,24 +62,6 @@ safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
 render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
-
-
-def safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None or value != value:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def safe_int(value, default: int = 0) -> int:
-    try:
-        if value is None or value != value:
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def get_active_company() -> str:
@@ -136,6 +111,10 @@ def render_operator_briefing(rows: Sequence[tuple[str, str]], *, columns: int = 
 
 
 WORKLOAD_OPERATIONS_VIEWS = ("Workload Brief", "Specialist Workflows")
+WORKLOAD_OPERATIONS_VIEW_DETAILS = {
+    "Workload Brief": "Default cockpit: action brief, operating snapshot, and task/job lanes without loading every specialist workflow.",
+    "Specialist Workflows": "Open live triage, query diagnosis, task graphs, stored procedures, pipeline health, or history search when evidence needs drilldown.",
+}
 WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-06-fast-brief-v1"
 
 WORKFLOWS = (
@@ -228,6 +207,12 @@ def _build_workload_task_status_sql(company: str, environment: str, *, hours: in
         SELECT
             COUNT(*) AS CONTROL_M_ROWS,
             COUNT_IF(
+                REGEXP_LIKE(UPPER(COALESCE(STATUS, '')), 'FAIL|ERROR|CANCEL|BLOCK')
+            ) AS CONTROL_M_FAILURE_ROWS,
+            COUNT_IF(
+                REGEXP_LIKE(UPPER(COALESCE(STATUS, '')), 'MISSED|LATE|DELAY|OVERDUE|SLA|BREACH')
+            ) AS CONTROL_M_LATE_ROWS,
+            COUNT_IF(
                 UPPER(COALESCE(SEVERITY, '')) IN ('CRITICAL', 'HIGH')
                 OR REGEXP_LIKE(UPPER(COALESCE(STATUS, '')), 'FAIL|ERROR|CANCEL|BLOCK|MISSED|LATE')
             ) AS CONTROL_M_ALERT_ROWS,
@@ -308,6 +293,8 @@ def _workload_task_summary(snapshot) -> dict:
         return {
             "loaded": False,
             "controlm_rows": 0,
+            "controlm_failures": 0,
+            "controlm_late": 0,
             "controlm_alerts": 0,
             "controlm_watch": 0,
             "last_seen": "",
@@ -316,6 +303,8 @@ def _workload_task_summary(snapshot) -> dict:
     return {
         "loaded": True,
         "controlm_rows": safe_int(row.get("CONTROL_M_ROWS")),
+        "controlm_failures": safe_int(row.get("CONTROL_M_FAILURE_ROWS")),
+        "controlm_late": safe_int(row.get("CONTROL_M_LATE_ROWS")),
         "controlm_alerts": safe_int(row.get("CONTROL_M_ALERT_ROWS")),
         "controlm_watch": safe_int(row.get("CONTROL_M_WATCH_ROWS")),
         "last_seen": str(row.get("CONTROL_M_LAST_SEEN_AT") or ""),
@@ -332,6 +321,8 @@ def _workload_status_lanes(summary: dict, task_summary: dict | None = None) -> l
     task_summary = task_summary or {}
     task_loaded = bool(task_summary.get("loaded"))
     controlm_rows = safe_int(task_summary.get("controlm_rows"))
+    controlm_failures = safe_int(task_summary.get("controlm_failures"))
+    controlm_late = safe_int(task_summary.get("controlm_late"))
     controlm_alerts = safe_int(task_summary.get("controlm_alerts"))
     controlm_watch = safe_int(task_summary.get("controlm_watch"))
 
@@ -341,7 +332,13 @@ def _workload_status_lanes(summary: dict, task_summary: dict | None = None) -> l
         state = "Open live view"
         value = "Live route"
         if label == "Task / job status" and task_loaded:
-            if controlm_alerts:
+            if controlm_failures:
+                state = "Review"
+                value = f"{controlm_failures:,} failed or blocked"
+            elif controlm_late:
+                state = "SLA Risk"
+                value = f"{controlm_late:,} late or missed"
+            elif controlm_alerts:
                 state = "Review"
                 value = f"{controlm_alerts:,} scheduler alert"
             elif controlm_watch:
@@ -379,6 +376,8 @@ def _workload_action_brief(
 ) -> dict:
     task_summary = task_summary or {}
     task_loaded = bool(task_summary.get("loaded"))
+    task_failures = safe_int(task_summary.get("controlm_failures"))
+    task_late = safe_int(task_summary.get("controlm_late"))
     task_alerts = safe_int(task_summary.get("controlm_alerts"))
     task_watch = safe_int(task_summary.get("controlm_watch"))
     task_rows = safe_int(task_summary.get("controlm_rows"))
@@ -395,10 +394,28 @@ def _workload_action_brief(
             "workflow": "Live triage",
             "refresh": True,
         }
+    if task_loaded and task_failures > 0:
+        return {
+            "state": "Job Review",
+            "headline": "Review failed or blocked Control-M jobs before query drilldown.",
+            "detail": f"{task_failures:,} failed/blocked scheduler row(s) in the loaded Control-M feed snapshot.",
+            "primary_label": "Open Task Graphs",
+            "workflow": "Task graphs",
+            "refresh": False,
+        }
+    if task_loaded and task_late > 0:
+        return {
+            "state": "SLA Risk",
+            "headline": "Check late or missed scheduler jobs before declaring the workload healthy.",
+            "detail": f"{task_late:,} late, missed, overdue, or SLA-risk Control-M row(s) in the loaded feed snapshot.",
+            "primary_label": "Open Task Graphs",
+            "workflow": "Task graphs",
+            "refresh": False,
+        }
     if task_loaded and task_alerts > 0:
         return {
             "state": "Job Review",
-            "headline": "Review Control-M task/job alerts before query drilldown.",
+            "headline": "Review high-severity Control-M scheduler alerts before query drilldown.",
             "detail": f"{task_alerts:,} Control-M alert row(s) in the loaded scheduler feed snapshot.",
             "primary_label": "Open Task Graphs",
             "workflow": "Task graphs",
@@ -490,6 +507,8 @@ def _build_workload_runbook_markdown(
     if task_summary.get("loaded"):
         task_line = (
             f"Control-M feed rows={safe_int(task_summary.get('controlm_rows')):,}; "
+            f"failed_blocked={safe_int(task_summary.get('controlm_failures')):,}; "
+            f"late_or_missed={safe_int(task_summary.get('controlm_late')):,}; "
             f"alerts={safe_int(task_summary.get('controlm_alerts')):,}; "
             f"watch={safe_int(task_summary.get('controlm_watch')):,}; "
             f"last_seen={task_summary.get('last_seen') or 'not reported'}"
@@ -677,6 +696,8 @@ def render() -> None:
         "workload_operations_view",
         WORKLOAD_OPERATIONS_VIEWS,
         default=WORKLOAD_OPERATIONS_VIEWS[0],
+        details=WORKLOAD_OPERATIONS_VIEW_DETAILS,
+        columns=2,
     )
     if active_view == "Workload Brief":
         return

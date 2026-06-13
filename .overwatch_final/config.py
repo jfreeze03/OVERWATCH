@@ -718,6 +718,7 @@ for _section in SECTION_DEFINITIONS:
     NAV_GROUPS.setdefault(_section.group, []).append(_section.label)
 
 ALL_SECTIONS = [_section.label for _section in SECTION_DEFINITIONS]
+PRIMARY_SECTIONS = [section for section in ALL_SECTIONS if section not in PRIMARY_NAV_HIDDEN_SECTIONS]
 SECTION_MODULES = {_section.label: _section.module for _section in SECTION_DEFINITIONS}
 _CANONICAL_SECTION_BY_TITLE = {_section.title: _section.label for _section in SECTION_DEFINITIONS}
 SECTION_REDIRECTS = {
@@ -759,18 +760,34 @@ SECTION_REDIRECTS = {
     "DR Readiness": _CANONICAL_SECTION_BY_TITLE["Architecture Readiness"],
     "Disaster Recovery": _CANONICAL_SECTION_BY_TITLE["Architecture Readiness"],
 }
+RETIRED_SECTION_REDIRECTS = {
+    "Account Health": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
+}
+SECTION_ROUTE_STATE = {
+    "Account Health": {
+        "dba_control_room_active_view": "Morning Brief",
+        "_dba_control_room_full_workspace_requested": True,
+        "_dba_control_room_brief_mode": False,
+    },
+}
 SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)
 SECTION_ICONS = {_section.title: _section.icon for _section in SECTION_DEFINITIONS}
 
 SECTION_ALIASES = {
     **_CANONICAL_SECTION_BY_TITLE,
     **SECTION_REDIRECTS,
+    **RETIRED_SECTION_REDIRECTS,
 }
 
 
 def normalize_section_name(section: str) -> str:
     """Return the current canonical section name for a route, bookmark, or alias."""
     return SECTION_ALIASES.get(str(section or "").strip(), str(section or "").strip())
+
+
+def compatibility_state_for_section(section: str) -> dict[str, object]:
+    """Return session-state adjustments for retired routes that now open a canonical workflow."""
+    return dict(SECTION_ROUTE_STATE.get(str(section or "").strip(), {}))
 
 
 def _sections_by_title(*titles: str) -> list[str]:
@@ -785,32 +802,29 @@ ROLE_SECTIONS = {
         "DBA Control Room",
         "Alert Center",
         "Cost & Contract",
-        "Account Health",
     ),
     "ANALYST": _sections_by_title(
         "Executive Landing",
         "DBA Control Room",
         "Alert Center",
-        "Account Health",
         "Workload Operations",
         "Warehouse Health",
         "Architecture Readiness",
         "Cost & Contract",
     ),
-    "MANAGER": list(ALL_SECTIONS),
+    "MANAGER": list(PRIMARY_SECTIONS),
     "REPORT": _sections_by_title(
         "Executive Landing",
         "DBA Control Room",
         "Alert Center",
-        "Account Health",
         "Workload Operations",
         "Warehouse Health",
         "Architecture Readiness",
         "Cost & Contract",
     ),
-    "DBA": list(ALL_SECTIONS),
-    "SYSADMIN": list(ALL_SECTIONS),
-    "ACCOUNTADMIN": list(ALL_SECTIONS),
+    "DBA": list(PRIMARY_SECTIONS),
+    "SYSADMIN": list(PRIMARY_SECTIONS),
+    "ACCOUNTADMIN": list(PRIMARY_SECTIONS),
 }
 
 ROLE_PROFILE_OVERRIDES = {
@@ -851,13 +865,12 @@ def resolve_role_profile(role: str) -> str:
 
 
 EXPERIENCE_VIEW_SECTIONS = {
-    "DBA": list(ALL_SECTIONS),
+    "DBA": list(PRIMARY_SECTIONS),
     "Executive": _sections_by_title(
         "Executive Landing",
         "DBA Control Room",
         "Alert Center",
         "Cost & Contract",
-        "Account Health",
     ),
     "FinOps": _sections_by_title(
         "Executive Landing",
@@ -871,7 +884,6 @@ EXPERIENCE_VIEW_SECTIONS = {
         "Alert Center",
         "Security Posture",
         "Change & Drift",
-        "Account Health",
     ),
     "Platform": _sections_by_title(
         "Executive Landing",

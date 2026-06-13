@@ -10,6 +10,7 @@ import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DEFAULTS, DAY_WINDOW_OPTIONS
 from sections.base import lazy_pandas, lazy_util as _lazy_util
+from sections.navigation import apply_navigation_state
 from sections.shell_helpers import render_shell_snapshot
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
@@ -1066,7 +1067,7 @@ def _nav_button(
     state_updates: dict[str, str] | None = None,
 ) -> None:
     if st.button(label, key=f"executive_nav_{section}_{workflow or label}", width="stretch"):
-        st.session_state["nav_section"] = section
+        apply_navigation_state(section)
         if workflow_key and workflow:
             st.session_state[workflow_key] = workflow
         for key, value in (state_updates or {}).items():

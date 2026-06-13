@@ -32,6 +32,8 @@ from config import (
     DEFAULT_COMPANY, ROLE_SECTIONS,
     SECTION_BY_TITLE, ENVIRONMENT_CONFIG, DEFAULT_ENVIRONMENT,
     SECTION_ICONS, DEFAULT_ALERT_EMAIL, EXPERIENCE_VIEW_SECTIONS,
+    PRIMARY_NAV_HIDDEN_SECTIONS,
+    compatibility_state_for_section,
     default_experience_view_for_role,
     normalize_section_name,
     resolve_allowed_experience_views,
@@ -276,12 +278,23 @@ def _resolve_visible_sections_for_experience(experience: str) -> list[str]:
     allowed = _allowed_experience_options()
     selected_experience = experience if experience in allowed else allowed[0]
     profile_sections = EXPERIENCE_VIEW_SECTIONS.get(selected_experience, EXPERIENCE_VIEW_SECTIONS["DBA"])
-    visible = [section for section in profile_sections if section in base_sections]
-    return visible or base_sections
+    visible = [
+        section
+        for section in profile_sections
+        if section in base_sections and section not in PRIMARY_NAV_HIDDEN_SECTIONS
+    ]
+    base_visible = [section for section in base_sections if section not in PRIMARY_NAV_HIDDEN_SECTIONS]
+    return visible or base_visible or base_sections
 
 
 def _normalize_nav_section(section: str) -> str:
     return normalize_section_name(section)
+
+
+def _apply_section_compatibility_state(section: str) -> None:
+    """Apply workflow state for retired routes that now open canonical sections."""
+    for key, value in compatibility_state_for_section(section).items():
+        st.session_state[key] = value
 
 
 def _reset_section_workspace_state(section: str) -> None:
@@ -301,12 +314,14 @@ def _section_requires_connection(section: str) -> bool:
 
 def _queue_section_navigation(section: str) -> None:
     """Mark a section switch before the next rerun starts rendering."""
-    target = _normalize_nav_section(section)
+    raw_section = str(section or "").strip()
+    target = _normalize_nav_section(raw_section)
     current = _normalize_nav_section(st.session_state.get("nav_section", ""))
     if target != current:
         st.session_state["_overwatch_pending_section"] = target
         st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
     _reset_section_workspace_state(target)
+    _apply_section_compatibility_state(raw_section)
     st.session_state["nav_section"] = target
 
 

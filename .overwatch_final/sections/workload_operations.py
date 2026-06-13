@@ -143,11 +143,13 @@ CONSOLIDATED_WORKFLOW_ALIASES = {
     "History Search": ("Query diagnosis", "History Search"),
     "Root cause patterns": ("Query diagnosis", "Root-Cause Brief"),
     "Detailed diagnosis": ("Query diagnosis", "Detailed Diagnosis"),
+    "AI Diagnosis": ("Query diagnosis", "AI Diagnosis"),
 }
 
 LEGACY_WORKFLOW_MAP = {
     "Diagnosis": "Query diagnosis",
     "History Search": "Query diagnosis",
+    "AI Diagnosis": "Query diagnosis",
     "Live Triage": "Live triage",
     "Contention": "Contention Center",
     "Patterns": "Query diagnosis",

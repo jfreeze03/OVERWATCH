@@ -1,6 +1,6 @@
 # OVERWATCH Streamlit Deployment Guide
 
-Last updated: June 6, 2026
+Last updated: June 13, 2026
 
 This guide covers the public Streamlit Community Cloud entry point and the
 Snowflake Streamlit-in-Snowflake entry point.
@@ -80,6 +80,17 @@ Run from:
 ```powershell
 cd C:\Users\jfree\Desktop\overwatchv3\_deploy_OVERWATCH
 ```
+
+CI deployment contract:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests.test_deployment_contract
+```
+
+This validates the Snowflake manifest, `OVERWATCH_WH`, caller-mode boundary,
+Snowflake artifact list, Community Cloud wrapper, `.streamlit/config.toml`,
+deployment guide, and CI release rule. If it fails, fix the manifest, docs,
+and code contract before deploying.
 
 Focused hot-path guard:
 

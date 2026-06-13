@@ -24,6 +24,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "cortex": (
         "CortexRateLimitError", "reserve_cortex_completion", "run_cortex_completion",
+        "get_cortex_usage_summary", "get_cortex_telemetry", "clear_cortex_usage",
     ),
     "data": (
         "normalize_df", "safe_strip_tz",
@@ -206,7 +207,8 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "deployment": (
         "OVERWATCH_SCHEMA_VERSION", "MIGRATION_TABLE", "STREAMLIT_DEPLOYMENT_DECISION_VERSION",
-        "build_streamlit_deployment_decision",
+        "STREAMLIT_MANIFEST_CONTRACT_VERSION", "STREAMLIT_SNOWFLAKE_ARTIFACTS",
+        "build_streamlit_deployment_decision", "build_streamlit_manifest_contract",
         "build_schema_migration_contract", "build_schema_migration_status_sql",
         "build_schema_migration_ddl",
     ),

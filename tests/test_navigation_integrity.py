@@ -23,6 +23,7 @@ from config import (  # noqa: E402
     DAY_WINDOW_OPTIONS,
     DEFAULT_DAY_WINDOW,
     NAV_GROUPS,
+    PRIMARY_SECTIONS,
     PRIMARY_NAV_HIDDEN_SECTIONS,
     ROLE_SECTIONS,
     SECTION_ALIASES,
@@ -31,12 +32,14 @@ from config import (  # noqa: E402
     SECTION_MODULES,
     SECTION_REDIRECTS,
     EXPERIENCE_VIEW_SECTIONS,
+    RETIRED_SECTION_REDIRECTS,
     ROLE_EXPERIENCE_VIEWS,
     TREXIS_DATABASES,
     TREXIS_DEV_DATABASES,
     TREXIS_PROD_DATABASES,
     TREXIS_WAREHOUSES,
     default_experience_view_for_role,
+    compatibility_state_for_section,
     normalize_section_name,
     resolve_allowed_experience_views,
     resolve_role_profile,
@@ -67,6 +70,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         flattened = [section for sections in NAV_GROUPS.values() for section in sections]
         defined = [section.label for section in SECTION_DEFINITIONS]
         primary_sections = [section for section in ALL_SECTIONS if section not in PRIMARY_NAV_HIDDEN_SECTIONS]
+        self.assertEqual(PRIMARY_SECTIONS, primary_sections)
         self.assertEqual(primary_sections, flattened)
         self.assertEqual(ALL_SECTIONS, defined)
         self.assertIn("Account Health", ALL_SECTIONS)
@@ -251,6 +255,29 @@ class NavigationIntegrityTests(unittest.TestCase):
                 brief_key = shell_text.split('_BRIEF_MODE_KEY = "', 1)[1].split('"', 1)[0]
                 self.assertIn(f'"{section}": ("{workspace_key}", "{brief_key}")', app_text)
 
+    def test_direct_section_navigation_uses_compatibility_helper(self):
+        navigation_text = (APP_ROOT / "sections" / "navigation.py").read_text(encoding="utf-8")
+        self.assertIn("def apply_navigation_state", navigation_text)
+        self.assertIn("normalize_section_name(raw_section)", navigation_text)
+        self.assertIn("compatibility_state_for_section(raw_section)", navigation_text)
+        self.assertIn('st.session_state["_overwatch_pending_section"] = target', navigation_text)
+        self.assertIn('st.session_state["nav_section"] = target', navigation_text)
+
+        direct_nav_modules = {
+            "account_health.py": ("apply_navigation_state(section)", "apply_navigation_state(tgt)"),
+            "dba_control_room.py": ("apply_navigation_state(raw_target)",),
+            "dba_tools.py": ('apply_navigation_state("Alert Center")',),
+            "executive_landing.py": ("apply_navigation_state(section)",),
+            "executive_landing_shell.py": ("section = apply_navigation_state(section)",),
+        }
+        for file_name, expected_calls in direct_nav_modules.items():
+            module_text = (APP_ROOT / "sections" / file_name).read_text(encoding="utf-8")
+            with self.subTest(module=file_name):
+                self.assertIn("from sections.navigation import apply_navigation_state", module_text)
+                for expected_call in expected_calls:
+                    self.assertIn(expected_call, module_text)
+                self.assertNotIn('st.session_state["nav_section"] =', module_text)
+
     def test_executive_landing_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["Executive Landing"], "sections.executive_landing_shell")
         shell_text = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
@@ -287,7 +314,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("def _open_target_workspace", shell_text)
         self.assertIn('st.session_state[workspace_key] = True', shell_text)
         self.assertIn('st.session_state[brief_key] = False', shell_text)
-        self.assertIn('st.session_state["_overwatch_pending_section"] = section', shell_text)
+        self.assertIn("from sections.navigation import apply_navigation_state", shell_text)
+        self.assertIn("section = apply_navigation_state(section)", shell_text)
         self.assertIn("alert_center_requested_view", shell_text)
         self.assertIn("cost_contract_workflow", shell_text)
         self.assertIn("_cost_contract_pending_detail_workflow", shell_text)
@@ -566,16 +594,18 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("if workflow in _AUTO_OPEN_DETAIL_WORKFLOWS and open_workflow != workflow:", full_workspace_text)
 
     def test_roles_and_aliases_resolve_to_visible_sections(self):
+        primary_sections = [section for section in ALL_SECTIONS if section not in PRIMARY_NAV_HIDDEN_SECTIONS]
         for role, sections in ROLE_SECTIONS.items():
             with self.subTest(role=role):
                 self.assertTrue(sections)
                 self.assertLessEqual(set(sections), set(ALL_SECTIONS))
+                self.assertNotIn("Account Health", sections)
         self.assertIn("Workload Operations", ROLE_SECTIONS["ANALYST"])
         self.assertIn("Workload Operations", ROLE_SECTIONS["MANAGER"])
         self.assertNotIn("Security Posture", ROLE_SECTIONS["ANALYST"])
         self.assertNotIn("Change & Drift", ROLE_SECTIONS["ANALYST"])
-        self.assertEqual(ROLE_SECTIONS["MANAGER"], ALL_SECTIONS)
-        self.assertEqual(ROLE_SECTIONS["DBA"], ALL_SECTIONS)
+        self.assertEqual(ROLE_SECTIONS["MANAGER"], primary_sections)
+        self.assertEqual(ROLE_SECTIONS["DBA"], primary_sections)
 
         role_profile_cases = {
             "SNOW_PRI_GFR_PRD_ALFA_PDMWMGMT": "EXECUTIVE",
@@ -594,7 +624,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(resolve_role_profile("SNOW_PRI_UNKNOWN_VIEWER"), "REPORT")
         self.assertEqual(resolve_role_profile(""), "REPORT")
         self.assertIn("Workload Operations", ROLE_SECTIONS[resolve_role_profile("SNOW_PRI_GFR_PRD_ALFA_DTI")])
-        self.assertEqual(ROLE_SECTIONS[resolve_role_profile("SNOW_PRI_GFR_PRD_ALFA_DSA")], ALL_SECTIONS)
+        self.assertEqual(ROLE_SECTIONS[resolve_role_profile("SNOW_PRI_GFR_PRD_ALFA_DSA")], primary_sections)
         self.assertEqual(resolve_allowed_experience_views("SNOW_PRI_GFR_PRD_ALFA_PDMWMGMT"), ("Executive",))
         self.assertEqual(
             resolve_allowed_experience_views("SNOW_PRI_GFR_PRD_ALFA_DSA"),
@@ -617,6 +647,17 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertEqual(SECTION_ALIASES[alias], target)
                 self.assertEqual(normalize_section_name(alias), target)
                 self.assertNotIn(alias, SECTION_BY_TITLE)
+        self.assertEqual(RETIRED_SECTION_REDIRECTS["Account Health"], SECTION_BY_TITLE["DBA Control Room"])
+        self.assertEqual(SECTION_ALIASES["Account Health"], SECTION_BY_TITLE["DBA Control Room"])
+        self.assertEqual(normalize_section_name("Account Health"), SECTION_BY_TITLE["DBA Control Room"])
+        self.assertEqual(
+            compatibility_state_for_section("Account Health"),
+            {
+                "dba_control_room_active_view": "Morning Brief",
+                "_dba_control_room_full_workspace_requested": True,
+                "_dba_control_room_brief_mode": False,
+            },
+        )
         self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Posture"])
@@ -651,6 +692,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Executive Landing", EXPERIENCE_VIEW_SECTIONS["Executive"])
         self.assertIn("Cost & Contract", EXPERIENCE_VIEW_SECTIONS["FinOps"])
         self.assertIn("Security Posture", EXPERIENCE_VIEW_SECTIONS["Security"])
+        for profile, sections in EXPERIENCE_VIEW_SECTIONS.items():
+            with self.subTest(hidden_section_experience=profile):
+                self.assertNotIn("Account Health", sections)
         for profile, views in ROLE_EXPERIENCE_VIEWS.items():
             with self.subTest(role_experience=profile):
                 self.assertTrue(views)
@@ -1071,6 +1115,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("resolve_role_profile(_get_current_role())", app_text)
         self.assertIn("resolve_allowed_experience_views(_get_current_role())", app_text)
         self.assertIn("matched_profile  = resolve_role_profile(current_role)", app_text)
+        self.assertIn("compatibility_state_for_section", app_text)
+        self.assertIn("_apply_section_compatibility_state(raw_section)", app_text)
 
     def test_sidebar_saved_views_are_explicit_load_only(self):
         app_text = (APP_ROOT / "app.py").read_text(encoding="utf-8")
@@ -1084,6 +1130,8 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("disabled=not new_bm_name", app_text)
         self.assertIn("def _bookmark_json_default", bookmarks_text)
         self.assertIn("json.dumps(state, default=_bookmark_json_default)", bookmarks_text)
+        self.assertIn("compatibility_state_for_section", bookmarks_text)
+        self.assertIn("raw_nav_section = state.get(\"nav_section\")", bookmarks_text)
         self.assertIn("raise", bookmarks_text.split("def load_bookmarks", 1)[1].split("def apply_bookmark", 1)[0])
 
     def test_saved_view_state_serializes_date_filters(self):
@@ -1431,6 +1479,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         query_analysis_text = (APP_ROOT / "sections" / "query_analysis.py").read_text(encoding="utf-8")
         query_workbench_text = (APP_ROOT / "sections" / "query_workbench.py").read_text(encoding="utf-8")
         detailed_diagnosis_text = (APP_ROOT / "sections" / "detailed_diagnosis.py").read_text(encoding="utf-8")
+        contention_center_text = (APP_ROOT / "sections" / "contention_center.py").read_text(encoding="utf-8")
         query_search_text = (APP_ROOT / "sections" / "query_search.py").read_text(encoding="utf-8")
         pipeline_health_text = (APP_ROOT / "sections" / "pipeline_health.py").read_text(encoding="utf-8")
         workload_operations_text = (APP_ROOT / "sections" / "workload_operations.py").read_text(encoding="utf-8")
@@ -1560,10 +1609,9 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Load Operations Board"', dba_control_text)
         self.assertIn("Use Operations Board when you need route priority", dba_control_text)
         self.assertIn("Action Brief", dba_control_text)
-        self.assertIn("def _render_loaded_operating_snapshot", dba_control_text)
-        self.assertIn("More loaded metrics", dba_control_text)
+        self.assertNotIn("def _render_loaded_operating_snapshot", dba_control_text)
+        self.assertNotIn("More loaded metrics", dba_control_text)
         self.assertIn("render_shell_snapshot((", dba_control_text)
-        self.assertIn("Release Blocks", dba_control_text)
         self.assertNotIn('"Cost Window"', dba_control_text)
         self.assertIn('with render_load_status("Checking latest control-room summary snapshot"', dba_control_text)
         self.assertIn('status_label: str = "Loading exception signals"', dba_control_text)
@@ -2479,7 +2527,18 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Operations priority board", dba_control_text)
         self.assertIn("dba_operations_priority_index", dba_control_text)
         self.assertIn("_dba_morning_brief_rows", dba_control_text)
+        self.assertIn("_dba_morning_decision_contract", dba_control_text)
+        self.assertIn("_add_dba_morning_decision_contract", dba_control_text)
+        self.assertIn("_dba_workload_morning_lanes", dba_control_text)
+        self.assertIn("workload_morning_lanes = _dba_workload_morning_lanes(data, exceptions)", dba_control_text)
         self.assertIn("DBA morning brief", dba_control_text)
+        self.assertIn('"MORNING_RANK", "MORNING_DECISION", "SLA_CLOCK", "ROUTE"', dba_control_text)
+        self.assertIn('st.button(label, key=f"dba_morning_open_', dba_control_text)
+        self.assertIn("help=help_text", dba_control_text)
+        self.assertIn("Route action: {row.get('ROUTE_ACTION', '')}", dba_control_text)
+        self.assertIn("Stop rule: {row.get('STOP_RULE', '')}", dba_control_text)
+        self.assertIn('st.session_state["_workload_operations_explicit_workflow_request"] = True', dba_control_text)
+        self.assertIn('st.session_state["workload_operations_view"] = "Specialist Workflows"', dba_control_text)
         self.assertIn('"Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"', dba_control_text)
         self.assertIn('st.session_state["dba_control_room_morning_brief"]', dba_control_text)
         self.assertIn("_dba_operator_runbook", dba_control_text)
@@ -2520,9 +2579,40 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('st.button(\n            "Load Query Evidence"', query_analysis_text)
         self.assertIn('st.button(\n            "Diagnose with Cortex"', query_analysis_text)
         self.assertIn("def _build_query_optimization_candidates", query_analysis_text)
+        self.assertIn("def _build_query_diagnosis_action_contract", query_analysis_text)
         self.assertIn("def _build_ai_query_diagnosis_prompt", query_analysis_text)
         self.assertIn("Do not recommend indexes", query_analysis_text)
         self.assertIn("Every recommendation must cite exact evidence", query_analysis_text)
+        self.assertIn("Do not invent table names", query_analysis_text)
+        self.assertIn("Query diagnosis action contract", query_analysis_text)
+        self.assertIn("Operator action contract", query_analysis_text)
+        self.assertIn("Lock/write contention", query_analysis_text)
+        self.assertIn("TRANSACTION_BLOCKED_TIME", query_analysis_text)
+        self.assertIn("prioritize lock/write contention fixes", query_analysis_text)
+        self.assertIn("def _contention_fix_fields", contention_center_text)
+        self.assertIn("def build_live_query_incident_sql", contention_center_text)
+        self.assertIn("def build_live_task_graphs_sql", contention_center_text)
+        self.assertIn("def build_live_warehouse_load_sql", contention_center_text)
+        self.assertIn("def _live_incident_rows", contention_center_text)
+        self.assertIn("def _load_live_incident_snapshot", contention_center_text)
+        self.assertIn('"Live Incident"', contention_center_text)
+        self.assertIn('"Capture Live Incident"', contention_center_text)
+        self.assertIn("SHOW TRANSACTIONS IN ACCOUNT", contention_center_text)
+        self.assertIn("INFORMATION_SCHEMA.CURRENT_TASK_GRAPHS", contention_center_text)
+        self.assertIn("INFORMATION_SCHEMA.QUERY_HISTORY", contention_center_text)
+        self.assertIn("Contention Fix Plan", contention_center_text)
+        self.assertIn("OWNER_ROUTE", contention_center_text)
+        self.assertIn("build_contention_safe_action_contract", contention_center_text)
+        self.assertIn("Manual DBA action only", contention_center_text)
+        self.assertIn("SYSTEM$ABORT_TRANSACTION", contention_center_text)
+        self.assertIn("SYSTEM$CANCEL_QUERY", contention_center_text)
+        self.assertIn("CLEANUP_DECISION", contention_center_text)
+        self.assertIn("OVERLAP_POLICY = NO_OVERLAP", contention_center_text)
+        self.assertIn("do not resize solely because a query is blocked", contention_center_text)
+        self.assertIn("_open_contention_owner_route", contention_center_text)
+        self.assertIn('st.session_state["workload_operations_workflow"] = "Task graphs"', contention_center_text)
+        self.assertIn('st.session_state["workload_operations_workflow"] = "Query diagnosis"', contention_center_text)
+        self.assertIn('apply_navigation_state("Warehouse Health")', contention_center_text)
         self.assertNotIn('st.radio(\n        "Query analysis view"', query_analysis_text)
         self.assertNotIn(chr(0x2500), query_analysis_text)
         self.assertNotIn(chr(0x1F50D), query_analysis_text)
@@ -2531,6 +2621,11 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('"Root-Cause Brief"', query_analysis_text)
         self.assertIn("def _root_cause_cortex_prompt", query_workbench_text)
         self.assertIn("def _generate_root_cause_cortex_narrative", query_workbench_text)
+        self.assertIn("def _seed_ai_query_diagnosis_from_row", query_workbench_text)
+        self.assertIn('return "AI Diagnosis"', query_workbench_text)
+        self.assertIn('st.session_state["query_analysis_active_view"] = "AI Diagnosis"', query_workbench_text)
+        self.assertIn('st.session_state["ai_query_evidence"] = evidence', query_workbench_text)
+        self.assertIn("Operator stats still need to be loaded for final proof", query_workbench_text)
         self.assertIn("Generate Cortex Root-Cause Narrative", query_workbench_text)
         self.assertIn("run_cortex_completion(", query_workbench_text)
         self.assertIn("Runs one Cortex completion against the loaded root-cause evidence.", query_workbench_text)
@@ -2544,6 +2639,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertNotIn("from sections import detailed_diagnosis", query_workbench_text)
         self.assertIn("_query_history_exprs()", query_analysis_text)
         self.assertIn("workload_operations_snapshot", workload_operations_text)
+        self.assertIn('"AI Diagnosis": ("Query diagnosis", "AI Diagnosis")', workload_operations_text)
         self.assertIn("WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION", workload_operations_text)
         self.assertIn("def _apply_fast_entry_default", workload_operations_text)
         self.assertIn("_apply_fast_entry_default()", workload_render_default)

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pandas as pd
 import streamlit as st
 
+from sections.navigation import apply_navigation_state
+from sections.shell_helpers import render_shell_snapshot
 from utils import (
     day_window_selectbox,
     download_csv,
@@ -15,6 +19,7 @@ from utils import (
     safe_float,
     safe_int,
     show_to_df,
+    sql_literal,
 )
 from utils.section_guidance import defer_section_note
 from utils.workflows import render_load_status, render_mode_selector
@@ -22,6 +27,7 @@ from utils.workflows import render_load_status, render_mode_selector
 
 CONTENTION_CENTER_VIEWS = (
     "Brief",
+    "Live Incident",
     "Active Locks",
     "Historical Waits",
     "Table Hotspots",
@@ -32,6 +38,7 @@ CONTENTION_CENTER_VIEWS = (
 
 CONTENTION_VIEW_DETAILS = {
     "Brief": "One ranked decision view: lock contention, task overlap, long DML, or warehouse queueing.",
+    "Live Incident": "Read-only current blockers: SHOW locks/transactions, recent blocked or queued queries, current task graphs, and warehouse load.",
     "Active Locks": "Live SHOW LOCKS evidence for the current incident window.",
     "Historical Waits": "LOCK_WAIT_HISTORY trend evidence for repeated table/object contention.",
     "Table Hotspots": "Objects repeatedly showing wait time, waiter volume, and blocker volume.",
@@ -42,6 +49,13 @@ CONTENTION_VIEW_DETAILS = {
 
 CONTENTION_STATE_KEYS = (
     "contention_active_locks",
+    "contention_live_transactions",
+    "contention_live_queries",
+    "contention_live_task_graphs",
+    "contention_live_warehouse_load",
+    "contention_live_decision_rows",
+    "contention_live_source_errors",
+    "contention_live_snapshot_meta",
     "contention_historical_waits",
     "contention_table_hotspots",
     "contention_task_overlap",
@@ -342,6 +356,137 @@ LIMIT 100
 """
 
 
+def build_live_query_incident_sql(minutes: int = 30, warehouse_name: str = "") -> str:
+    """Return recent blocked, queued, or running query evidence from Information Schema."""
+    minutes = max(5, min(int(minutes or 30), 240))
+    warehouse_filter = ""
+    if str(warehouse_name or "").strip():
+        warehouse_filter = f"AND WAREHOUSE_NAME = {sql_literal(str(warehouse_name), 200)}"
+    return f"""
+SELECT
+    CURRENT_TIMESTAMP() AS SNAPSHOT_TS,
+    QUERY_ID,
+    USER_NAME,
+    ROLE_NAME,
+    WAREHOUSE_NAME,
+    DATABASE_NAME,
+    SCHEMA_NAME,
+    QUERY_TYPE,
+    START_TIME,
+    END_TIME,
+    EXECUTION_STATUS,
+    TOTAL_ELAPSED_TIME / 1000.0 AS ELAPSED_SECONDS,
+    COALESCE(QUEUED_OVERLOAD_TIME, 0) / 1000.0 AS QUEUED_OVERLOAD_SECONDS,
+    COALESCE(QUEUED_PROVISIONING_TIME, 0) / 1000.0 AS QUEUED_PROVISIONING_SECONDS,
+    COALESCE(TRANSACTION_BLOCKED_TIME, 0) / 1000.0 AS BLOCKED_SECONDS,
+    LEFT(QUERY_TEXT, 1200) AS QUERY_TEXT,
+    CASE
+      WHEN COALESCE(TRANSACTION_BLOCKED_TIME, 0) >= 300000 THEN 'Critical'
+      WHEN COALESCE(TRANSACTION_BLOCKED_TIME, 0) >= 60000 THEN 'High'
+      WHEN COALESCE(QUEUED_OVERLOAD_TIME, 0) > 0 THEN 'Medium'
+      ELSE 'Watch'
+    END AS SEVERITY,
+    CASE
+      WHEN COALESCE(TRANSACTION_BLOCKED_TIME, 0) > 0 THEN 'Live blocked query'
+      WHEN COALESCE(QUEUED_OVERLOAD_TIME, 0) > 0 THEN 'Live warehouse queueing'
+      ELSE 'Live running query'
+    END AS ROOT_CAUSE
+FROM TABLE(
+    INFORMATION_SCHEMA.QUERY_HISTORY(
+        END_TIME_RANGE_START => DATEADD('minute', -{minutes}, CURRENT_TIMESTAMP()),
+        END_TIME_RANGE_END => CURRENT_TIMESTAMP(),
+        RESULT_LIMIT => 1000
+    )
+)
+WHERE (
+        EXECUTION_STATUS IN ('RUNNING', 'QUEUED', 'BLOCKED')
+        OR COALESCE(TRANSACTION_BLOCKED_TIME, 0) > 0
+        OR COALESCE(QUEUED_OVERLOAD_TIME, 0) > 0
+      )
+  {warehouse_filter}
+ORDER BY BLOCKED_SECONDS DESC, QUEUED_OVERLOAD_SECONDS DESC, ELAPSED_SECONDS DESC
+LIMIT 200
+"""
+
+
+def build_live_task_graphs_sql(root_task_name: str = "") -> str:
+    """Return currently executing or scheduled task graph evidence."""
+    root_filter = ""
+    if str(root_task_name or "").strip():
+        root_filter = f"WHERE ROOT_TASK_NAME = {sql_literal(str(root_task_name), 500)}"
+    return f"""
+SELECT
+    CURRENT_TIMESTAMP() AS SNAPSHOT_TS,
+    *
+FROM TABLE(INFORMATION_SCHEMA.CURRENT_TASK_GRAPHS())
+{root_filter}
+LIMIT 200
+"""
+
+
+def build_live_warehouse_load_sql(minutes: int = 30, warehouse_name: str = "") -> str:
+    """Return warehouse pressure evidence for the live incident window."""
+    minutes = max(5, min(int(minutes or 30), 240))
+    warehouse = str(warehouse_name or "").strip()
+    if warehouse:
+        return f"""
+SELECT
+    CURRENT_TIMESTAMP() AS SNAPSHOT_TS,
+    WAREHOUSE_NAME,
+    START_TIME,
+    END_TIME,
+    AVG_RUNNING,
+    AVG_QUEUED_LOAD,
+    AVG_QUEUED_PROVISIONING,
+    AVG_BLOCKED,
+    CASE
+      WHEN AVG_BLOCKED > 0 THEN 'High'
+      WHEN AVG_QUEUED_LOAD > 0 THEN 'Medium'
+      ELSE 'Info'
+    END AS SEVERITY,
+    CASE
+      WHEN AVG_BLOCKED > 0 THEN 'Live blocked warehouse load'
+      WHEN AVG_QUEUED_LOAD > 0 THEN 'Live warehouse queueing'
+      ELSE 'No live warehouse pressure'
+    END AS ROOT_CAUSE
+FROM TABLE(
+    INFORMATION_SCHEMA.WAREHOUSE_LOAD_HISTORY(
+        DATE_RANGE_START => DATEADD('minute', -{minutes}, CURRENT_TIMESTAMP()),
+        DATE_RANGE_END => DATEADD('minute', -1, CURRENT_TIMESTAMP()),
+        WAREHOUSE_NAME => {sql_literal(warehouse, 200)}
+    )
+)
+ORDER BY START_TIME DESC
+LIMIT 200
+"""
+    return f"""
+SELECT
+    CURRENT_TIMESTAMP() AS SNAPSHOT_TS,
+    WAREHOUSE_NAME,
+    START_TIME,
+    END_TIME,
+    AVG_RUNNING,
+    AVG_QUEUED_LOAD,
+    AVG_QUEUED_PROVISIONING,
+    AVG_BLOCKED,
+    CASE
+      WHEN AVG_BLOCKED > 0 THEN 'High'
+      WHEN AVG_QUEUED_LOAD > 0 THEN 'Medium'
+      ELSE 'Info'
+    END AS SEVERITY,
+    CASE
+      WHEN AVG_BLOCKED > 0 THEN 'Recent blocked warehouse load'
+      WHEN AVG_QUEUED_LOAD > 0 THEN 'Recent warehouse queueing'
+      ELSE 'No recent warehouse pressure'
+    END AS ROOT_CAUSE
+FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_LOAD_HISTORY
+WHERE START_TIME >= DATEADD('minute', -{minutes}, CURRENT_TIMESTAMP())
+  AND (COALESCE(AVG_QUEUED_LOAD, 0) > 0 OR COALESCE(AVG_BLOCKED, 0) > 0)
+ORDER BY AVG_BLOCKED DESC, AVG_QUEUED_LOAD DESC, START_TIME DESC
+LIMIT 200
+"""
+
+
 def _safe_frame(value) -> pd.DataFrame:
     if isinstance(value, pd.DataFrame):
         return value
@@ -374,6 +519,212 @@ def _severity_rank(value: object) -> int:
     return {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "WATCH": 3, "INFO": 4}.get(str(value or "").upper(), 9)
 
 
+def _contention_target_object(row: dict | pd.Series | None) -> str:
+    row = row if row is not None else {}
+    parts = [
+        str(row.get("DATABASE_NAME") or "").strip(),
+        str(row.get("SCHEMA_NAME") or "").strip(),
+        str(row.get("OBJECT_NAME") or "").strip(),
+    ]
+    target = ".".join(part for part in parts if part and part.lower() != "nan")
+    if target:
+        return target
+    wait_objects = str(row.get("WAIT_OBJECTS") or "").strip()
+    if wait_objects and wait_objects.lower() != "nan":
+        return wait_objects.split(",")[0].strip()
+    query_text = str(row.get("QUERY_TEXT") or "")
+    if not query_text:
+        return ""
+    import re
+
+    pattern = re.compile(
+        r"\b(?:MERGE\s+INTO|UPDATE|DELETE\s+FROM|INSERT\s+INTO|COPY\s+INTO)\s+([A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*){0,2})",
+        re.IGNORECASE,
+    )
+    match = pattern.search(query_text)
+    return match.group(1).strip() if match else ""
+
+
+def _contention_fix_fields(signal: str, row: dict | pd.Series | None = None) -> dict[str, str]:
+    row = row if row is not None else {}
+    signal_text = str(signal or row.get("ROOT_CAUSE") or "").upper()
+    target = _contention_target_object(row)
+    query_id = str(row.get("QUERY_ID") or row.get("WAITER_QUERY_ID") or "").strip()
+    warehouse = str(row.get("WAREHOUSE_NAME") or "").strip()
+
+    fields = {
+        "BOTTLENECK_TYPE": "Contention investigation",
+        "OWNER_ROUTE": "Contention Center",
+        "FIRST_MOVE": "Load active locks, identify the blocker, and prove whether this is lock wait, task overlap, or queueing.",
+        "SAFE_FIX": "Capture proof before canceling work; change one scheduling or write-path control at a time.",
+        "COMPUTE_DECISION": "Do not resize until blocked seconds are separated from queued load.",
+        "PROOF_REQUIRED": "SHOW LOCKS, LOCK_WAIT_HISTORY, QUERY_HISTORY, TASK_HISTORY, and WAREHOUSE_LOAD_HISTORY.",
+        "TARGET_OBJECT": target,
+        "QUERY_ID": query_id,
+        "WAREHOUSE_NAME": warehouse,
+        "WAITER_TRANSACTION_ID": str(row.get("WAITER_TRANSACTION_ID") or "").strip(),
+        "BLOCKER_TRANSACTION_ID": str(row.get("BLOCKER_TRANSACTION_ID") or "").strip(),
+        "TRANSACTION_ID": str(row.get("TRANSACTION_ID") or row.get("TRANSACTION") or row.get("ID") or "").strip(),
+    }
+    if "TASK-OWNED" in signal_text or "TASK OVERLAP" in signal_text:
+        fields.update({
+            "BOTTLENECK_TYPE": "Task graph overlap / blocked task write",
+            "OWNER_ROUTE": "Task graphs",
+            "FIRST_MOVE": "Open Task graphs, find the overlapping root task/window, and pause or reschedule only the colliding graph.",
+            "SAFE_FIX": "Set OVERLAP_POLICY = NO_OVERLAP on the root task or widen the schedule; keep parallel reads/transforms but serialize the final shared-table publish.",
+            "COMPUTE_DECISION": "Task overlap is a scheduling/write-path problem first; bigger compute can make overlap happen faster.",
+            "PROOF_REQUIRED": "TASK_HISTORY run windows, blocked task query ID, target table, and next successful non-overlapping run.",
+        })
+    elif "HOT LOCKED OBJECT" in signal_text:
+        fields.update({
+            "BOTTLENECK_TYPE": "Repeated table/object lock hotspot",
+            "OWNER_ROUTE": "Contention Center",
+            "FIRST_MOVE": "Name the shared target object and identify every writer touching it in the same window.",
+            "SAFE_FIX": "Move parallel writers into isolated staging tables and use one downstream publish/MERGE task for the shared target.",
+            "COMPUTE_DECISION": "Repeated object waits are lock evidence; bigger warehouse will not release a blocker transaction.",
+            "PROOF_REQUIRED": "LOCK_WAIT_HISTORY total wait seconds by object plus writer query/task IDs before and after the schedule change.",
+        })
+    elif "LOCK WAIT" in signal_text or "BLOCKED" in signal_text:
+        fields.update({
+            "BOTTLENECK_TYPE": "Lock wait / blocked transaction",
+            "OWNER_ROUTE": "Active Locks",
+            "FIRST_MOVE": "Run Check Active Locks Now, identify blocker transaction/session, then stop overlapping writers to the same object.",
+            "SAFE_FIX": "Shorten the write transaction, stage transforms before the final write, and batch large MERGE/UPDATE/DELETE work by date, hash bucket, tenant, or batch id.",
+            "COMPUTE_DECISION": "Blocked seconds are transaction wait; do not resize solely because a query is blocked.",
+            "PROOF_REQUIRED": "SHOW LOCKS, LOCK_WAIT_HISTORY waiter/blocker IDs, and QUERY_HISTORY TRANSACTION_BLOCKED_TIME returning to zero.",
+        })
+    elif "WAREHOUSE QUEUE" in signal_text or "QUEUEING" in signal_text:
+        fields.update({
+            "BOTTLENECK_TYPE": "Warehouse queue pressure",
+            "OWNER_ROUTE": "Warehouse Health",
+            "FIRST_MOVE": "Check active query concurrency and WAREHOUSE_LOAD_HISTORY before changing SQL or task ordering.",
+            "SAFE_FIX": "Use workload isolation, multi-cluster, or right-sized compute only when queued load is present and blocked seconds are not the dominant signal.",
+            "COMPUTE_DECISION": "This is compute concurrency evidence; resizing or isolation may help if lock waits are not driving the delay.",
+            "PROOF_REQUIRED": "WAREHOUSE_LOAD_HISTORY AVG_QUEUED_LOAD and QUERY_HISTORY QUEUED_OVERLOAD_TIME before and after the change.",
+        })
+    elif "LONG DML" in signal_text:
+        fields.update({
+            "BOTTLENECK_TYPE": "Long DML lock window",
+            "OWNER_ROUTE": "Query diagnosis",
+            "FIRST_MOVE": "Open Query Diagnosis for the DML query ID and identify the target table plus longest write step.",
+            "SAFE_FIX": "Do heavy transforms outside the transaction, then run a smaller final write; split large MERGE/UPDATE/DELETE into bounded batches.",
+            "COMPUTE_DECISION": "Long elapsed DML can hold locks; prove queue time separately before treating this as compute.",
+            "PROOF_REQUIRED": "QUERY_HISTORY elapsed/blocked seconds, target object, and rerun showing shorter write window.",
+        })
+    return fields
+
+
+def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: str = "") -> dict[str, str]:
+    """Return the manual cleanup contract for a contention row without executing SQL."""
+    row = row if row is not None else {}
+    signal_text = str(signal or _first_value(row, "SIGNAL", "ROOT_CAUSE", default="")).upper()
+    route = str(_first_value(row, "OWNER_ROUTE", default="Contention Center") or "Contention Center")
+    query_id = str(_first_value(row, "QUERY_ID", "WAITER_QUERY_ID", default="")).strip()
+    blocker_tx = str(_first_value(row, "BLOCKER_TRANSACTION_ID", default="")).strip()
+    transaction_id = str(_first_value(row, "TRANSACTION_ID", "TRANSACTION", "ID", default="")).strip()
+    target = str(_first_value(row, "TARGET_OBJECT", "ENTITY", default="")).strip()
+    warehouse = str(_first_value(row, "WAREHOUSE_NAME", default="")).strip()
+    blocked = max(
+        safe_float(_first_value(row, "BLOCKED_SECONDS", default=0)),
+        safe_float(_first_value(row, "WAIT_SECONDS", default=0)),
+        safe_float(_first_value(row, "MAX_LOCK_WAIT_SECONDS", default=0)),
+    )
+    queued = max(
+        safe_float(_first_value(row, "QUEUED_OVERLOAD_SECONDS", default=0)),
+        safe_float(_first_value(row, "MAX_QUEUED_LOAD", default=0)),
+    )
+
+    action_type = "Hold and gather evidence"
+    readiness = "Blocked - identify blocker"
+    manual_sql = ""
+    confirmation = "No cancel action"
+    prechecks = (
+        "Confirm query or transaction identity, owner, target object, business impact, "
+        "and ticket/approval before cleanup."
+    )
+    when_not_to_run = (
+        "Do not cancel or abort for pure warehouse queueing, unknown ownership, or missing "
+        "query/transaction identity."
+    )
+    verification = (
+        "Refresh active locks and Query History; blocked seconds should clear and the owner "
+        "should confirm the dependent workload recovered."
+    )
+
+    if route == "Warehouse Health" or ("QUEUE" in signal_text and blocked <= 0 and queued > 0):
+        action_type = "No cancel - capacity review"
+        readiness = "Route to Warehouse Health"
+        verification = "Verify AVG_QUEUED_LOAD and QUEUED_OVERLOAD_TIME fall after capacity or isolation change."
+    elif blocker_tx:
+        action_type = "Abort blocker transaction candidate"
+        readiness = "Ready for DBA review"
+        manual_sql = f"SELECT SYSTEM$ABORT_TRANSACTION({sql_literal(blocker_tx, 120)});"
+        confirmation = "Type ABORT TRANSACTION in the guarded DBA flow."
+        prechecks = (
+            "Confirm the blocker transaction is still active, owns the lock, belongs to the expected "
+            "user/workload, and can be rolled back without data loss."
+        )
+        verification = "Run SHOW LOCKS and SHOW TRANSACTIONS again; the blocker transaction should disappear."
+    elif transaction_id and ("ACTIVE LOCK" in signal_text or "TRANSACTION" in signal_text):
+        action_type = "Abort active transaction candidate"
+        readiness = "Ready for DBA review"
+        manual_sql = f"SELECT SYSTEM$ABORT_TRANSACTION({sql_literal(transaction_id, 120)});"
+        confirmation = "Type ABORT TRANSACTION in the guarded DBA flow."
+        prechecks = (
+            "Confirm this transaction is the blocker, not merely a waiter, and get owner approval "
+            "before aborting."
+        )
+        verification = "Run SHOW LOCKS and SHOW TRANSACTIONS again; dependent blocked queries should resume or fail cleanly."
+    elif route == "Task graphs" or "TASK" in signal_text:
+        action_type = "Task schedule cleanup"
+        readiness = "Route to Task graphs"
+        prechecks = "Identify the root task, overlapping graph run, final shared target, and approved schedule change."
+        verification = "Next TASK_HISTORY run should show no overlap and no blocked publish query."
+    elif query_id and ("BLOCK" in signal_text or blocked > 0):
+        action_type = "Cancel blocked query candidate"
+        readiness = "Ready for DBA review"
+        manual_sql = f"SELECT SYSTEM$CANCEL_QUERY({sql_literal(query_id, 120)});"
+        confirmation = "Type CANCEL QUERY in the guarded DBA flow."
+        prechecks = (
+            "Confirm whether this query is the blocker or the waiter. Canceling a waiter stops wasted runtime "
+            "but does not release the blocker lock."
+        )
+        verification = "Query History should show the selected query canceled and blocked seconds should stop increasing."
+
+    return {
+        "ACTION_GUARDRAIL": "Manual DBA action only; OVERWATCH does not auto-cancel from this view.",
+        "CLEANUP_DECISION": action_type,
+        "CLEANUP_READINESS": readiness,
+        "MANUAL_ACTION_SQL": manual_sql,
+        "OPERATOR_CONFIRMATION": confirmation,
+        "PRECHECKS": prechecks,
+        "WHEN_NOT_TO_RUN": when_not_to_run,
+        "VERIFY_AFTER_CLEANUP": verification,
+        "CLEANUP_CONTEXT": "; ".join(
+            part for part in [
+                f"route={route}",
+                f"target={target}" if target else "",
+                f"warehouse={warehouse}" if warehouse else "",
+                f"blocked={blocked:,.0f}s" if blocked else "",
+                f"queued={queued:,.2f}" if queued else "",
+            ] if part
+        ),
+    }
+
+
+def _add_safe_action_contracts(decision: pd.DataFrame) -> pd.DataFrame:
+    if decision.empty:
+        return decision
+    contracts = [
+        build_contention_safe_action_contract(row, str(row.get("SIGNAL", "")))
+        for row in decision.to_dict("records")
+    ]
+    contract_df = pd.DataFrame(contracts)
+    for column in contract_df.columns:
+        decision[column] = contract_df[column].values
+    return decision
+
+
 def _decision_rows(
     lock_waits: pd.DataFrame,
     task_overlap: pd.DataFrame,
@@ -389,7 +740,7 @@ def _decision_rows(
     if not lock_waits.empty:
         top = lock_waits.head(10)
         for _, row in top.iterrows():
-            rows.append({
+            entry = {
                 "SEVERITY": row.get("SEVERITY", "High"),
                 "SIGNAL": "Lock wait",
                 "ENTITY": ".".join(
@@ -402,11 +753,13 @@ def _decision_rows(
                 "EVIDENCE": f"{safe_int(row.get('WAIT_SECONDS')):,} seconds waiting; waiter query {row.get('WAITER_QUERY_ID', '')}",
                 "NEXT_ACTION": row.get("NEXT_ACTION", ""),
                 "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", ""),
-            })
+            }
+            entry.update(_contention_fix_fields(str(entry["SIGNAL"]), row))
+            rows.append(entry)
 
     if not table_hotspots.empty:
         for _, row in table_hotspots.head(10).iterrows():
-            rows.append({
+            entry = {
                 "SEVERITY": row.get("SEVERITY", "High"),
                 "SIGNAL": "Hot locked object",
                 "ENTITY": ".".join(
@@ -423,23 +776,27 @@ def _decision_rows(
                 ),
                 "NEXT_ACTION": row.get("NEXT_ACTION", ""),
                 "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", ""),
-            })
+            }
+            entry.update(_contention_fix_fields(str(entry["SIGNAL"]), row))
+            rows.append(entry)
 
     if not task_overlap.empty:
         for _, row in task_overlap.head(10).iterrows():
-            rows.append({
+            entry = {
                 "SEVERITY": row.get("SEVERITY", "High"),
                 "SIGNAL": "Task overlap",
                 "ENTITY": row.get("TASK_NAME", "Task"),
                 "EVIDENCE": f"{safe_int(row.get('OVERLAP_SECONDS')):,} seconds overlapping; runs {row.get('RUN_1_QUERY_ID', '')} and {row.get('RUN_2_QUERY_ID', '')}",
                 "NEXT_ACTION": row.get("NEXT_ACTION", ""),
                 "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", ""),
-            })
+            }
+            entry.update(_contention_fix_fields(str(entry["SIGNAL"]), row))
+            rows.append(entry)
 
     if not task_mapping.empty:
         for _, row in task_mapping.head(10).iterrows():
             owner = row.get("TASK_NAME") or row.get("USER_NAME") or "Blocked query"
-            rows.append({
+            entry = {
                 "SEVERITY": row.get("SEVERITY", "High"),
                 "SIGNAL": row.get("ROOT_CAUSE", "Blocked query"),
                 "ENTITY": owner,
@@ -450,14 +807,16 @@ def _decision_rows(
                 ),
                 "NEXT_ACTION": row.get("NEXT_ACTION", ""),
                 "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", ""),
-            })
+            }
+            entry.update(_contention_fix_fields(str(entry["SIGNAL"]), row))
+            rows.append(entry)
 
     if not long_dml.empty:
         blocked_seconds = _numeric_series(long_dml, "BLOCKED_SECONDS")
         elapsed_seconds = _numeric_series(long_dml, "ELAPSED_SECONDS")
         dml = long_dml[(blocked_seconds > 0) | (elapsed_seconds >= 900)].head(10)
         for _, row in dml.iterrows():
-            rows.append({
+            entry = {
                 "SEVERITY": row.get("SEVERITY", "Medium"),
                 "SIGNAL": row.get("ROOT_CAUSE", "Long DML"),
                 "ENTITY": row.get("QUERY_ID", "Query"),
@@ -467,11 +826,13 @@ def _decision_rows(
                 ),
                 "NEXT_ACTION": row.get("NEXT_ACTION", ""),
                 "VERIFY_AFTER_FIX": row.get("VERIFY_AFTER_FIX", ""),
-            })
+            }
+            entry.update(_contention_fix_fields(str(entry["SIGNAL"]), row))
+            rows.append(entry)
 
     if not warehouse_pressure.empty:
         for _, row in warehouse_pressure.head(10).iterrows():
-            rows.append({
+            entry = {
                 "SEVERITY": row.get("SEVERITY", "Medium"),
                 "SIGNAL": row.get("ROOT_CAUSE", "Warehouse pressure"),
                 "ENTITY": row.get("WAREHOUSE_NAME", "Warehouse"),
@@ -481,14 +842,255 @@ def _decision_rows(
                 ),
                 "NEXT_ACTION": row.get("NEXT_ACTION", ""),
                 "VERIFY_AFTER_FIX": "Confirm warehouse load and query blocked time clear after remediation.",
-            })
+            }
+            entry.update(_contention_fix_fields(str(entry["SIGNAL"]), row))
+            rows.append(entry)
 
     decision = pd.DataFrame(rows)
     if decision.empty:
         return decision
     decision["_RANK"] = decision["SEVERITY"].map(_severity_rank)
     decision = decision.sort_values(["_RANK", "SIGNAL", "ENTITY"]).drop(columns=["_RANK"])
+    decision = _add_safe_action_contracts(decision)
     return decision
+
+
+def _first_value(row: dict | pd.Series, *names: str, default=""):
+    for name in names:
+        for candidate in (name, str(name).upper(), str(name).lower()):
+            if candidate in row:
+                value = row.get(candidate)
+                try:
+                    if pd.isna(value):
+                        continue
+                except Exception:
+                    pass
+                if value not in (None, ""):
+                    return value
+    return default
+
+
+def _live_incident_rows(
+    active_locks: pd.DataFrame | None,
+    transactions: pd.DataFrame | None,
+    live_queries: pd.DataFrame | None,
+    task_graphs: pd.DataFrame | None,
+    warehouse_load: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Rank current incident evidence from read-only live Snowflake sources."""
+    rows: list[dict[str, object]] = []
+    active_locks = _safe_frame(active_locks)
+    transactions = _safe_frame(transactions)
+    live_queries = _safe_frame(live_queries)
+    task_graphs = _safe_frame(task_graphs)
+    warehouse_load = _safe_frame(warehouse_load)
+
+    for _, row in active_locks.head(10).iterrows():
+        row_dict = row.to_dict()
+        target = _first_value(row_dict, "RESOURCE", "OBJECT_NAME", "OBJECT", "LOCK_OBJECT", default="Active lock")
+        transaction_id = _first_value(row_dict, "TRANSACTION", "TRANSACTION_ID", "ID", default="")
+        user_name = _first_value(row_dict, "USER", "USER_NAME", default="")
+        entry = {
+            "SEVERITY": "High",
+            "SIGNAL": "Active lock",
+            "ENTITY": target,
+            "EVIDENCE": f"transaction {transaction_id or 'unknown'}; user {user_name or 'unknown'}",
+            "FIRST_MOVE": "Open Active Locks and identify the blocker transaction before canceling or retrying dependent work.",
+            "SAFE_FIX": "Coordinate with the owning session; pause overlapping writers and shorten the final shared-table write window.",
+            "COMPUTE_DECISION": "An active lock is transaction contention; resize only after blocked seconds are ruled out.",
+            "PROOF_REQUIRED": "SHOW LOCKS, SHOW TRANSACTIONS, blocker owner, target object, and post-fix blocked seconds.",
+            "OWNER_ROUTE": "Active Locks",
+            "QUERY_ID": "",
+            "WAREHOUSE_NAME": "",
+            "TARGET_OBJECT": str(target or ""),
+            "TRANSACTION_ID": str(transaction_id or ""),
+        }
+        rows.append(entry)
+
+    for _, row in live_queries.head(20).iterrows():
+        row_dict = row.to_dict()
+        blocked = safe_float(_first_value(row_dict, "BLOCKED_SECONDS", default=0))
+        queued = safe_float(_first_value(row_dict, "QUEUED_OVERLOAD_SECONDS", default=0))
+        elapsed = safe_float(_first_value(row_dict, "ELAPSED_SECONDS", default=0))
+        query_id = str(_first_value(row_dict, "QUERY_ID", default="")).strip()
+        warehouse = str(_first_value(row_dict, "WAREHOUSE_NAME", default="")).strip()
+        root_cause = str(_first_value(row_dict, "ROOT_CAUSE", default="Live query"))
+        if blocked <= 0 and queued <= 0 and str(_first_value(row_dict, "EXECUTION_STATUS", default="")).upper() not in {"RUNNING", "QUEUED", "BLOCKED"}:
+            continue
+        severity = "Critical" if blocked >= 300 else "High" if blocked >= 60 else "Medium" if queued > 0 else "Watch"
+        owner_route = "Active Locks" if blocked > 0 else "Warehouse Health" if queued > 0 else "Query diagnosis"
+        first_move = (
+            "Run active locks, identify blocker transaction/session, and stop overlapping writers to the same target."
+            if blocked > 0
+            else "Check warehouse load and running-query concurrency before changing SQL or task ordering."
+            if queued > 0
+            else "Open Query Diagnosis and inspect the running query profile before tuning."
+        )
+        safe_fix = (
+            "Serialize final writes, batch the DML, or shorten transaction scope; do not resize solely on blocked seconds."
+            if blocked > 0
+            else "Use workload isolation, multi-cluster, or right-sized compute only when queued load is the dominant signal."
+            if queued > 0
+            else "Capture query ID, owner, and operator stats before cancel/retry decisions."
+        )
+        proof = (
+            "SHOW LOCKS plus QUERY_HISTORY TRANSACTION_BLOCKED_TIME returning to zero."
+            if blocked > 0
+            else "WAREHOUSE_LOAD_HISTORY AVG_QUEUED_LOAD and QUERY_HISTORY QUEUED_OVERLOAD_TIME before/after."
+            if queued > 0
+            else "QUERY_HISTORY execution status and query profile evidence."
+        )
+        rows.append({
+            "SEVERITY": severity,
+            "SIGNAL": root_cause,
+            "ENTITY": query_id or warehouse or "Live query",
+            "EVIDENCE": f"{elapsed:,.0f}s elapsed; {blocked:,.0f}s blocked; {queued:,.0f}s queued; warehouse {warehouse or 'unknown'}",
+            "FIRST_MOVE": first_move,
+            "SAFE_FIX": safe_fix,
+            "COMPUTE_DECISION": (
+                "Blocked query: transaction fix first."
+                if blocked > 0 else "Queue pressure: compute/isolation may help after lock waits are ruled out."
+                if queued > 0 else "Need profile evidence before compute decision."
+            ),
+            "PROOF_REQUIRED": proof,
+            "OWNER_ROUTE": owner_route,
+            "QUERY_ID": query_id,
+            "WAREHOUSE_NAME": warehouse,
+            "TARGET_OBJECT": _contention_target_object(row_dict),
+        })
+
+    for _, row in task_graphs.head(10).iterrows():
+        row_dict = row.to_dict()
+        task_name = str(_first_value(row_dict, "ROOT_TASK_NAME", "TASK_NAME", "NAME", default="Task graph"))
+        state = str(_first_value(row_dict, "STATE", "GRAPH_STATE", default="current"))
+        rows.append({
+            "SEVERITY": "High" if state.upper() in {"FAILED", "CANCELLED", "BLOCKED"} else "Medium",
+            "SIGNAL": "Current task graph",
+            "ENTITY": task_name,
+            "EVIDENCE": f"state {state}; graph {_first_value(row_dict, 'GRAPH_RUN_GROUP_ID', 'GRAPH_ID', default='')}",
+            "FIRST_MOVE": "Open Task graphs and confirm whether this graph overlaps with another run or shares a final write table.",
+            "SAFE_FIX": "Pause or reschedule only the colliding graph; set OVERLAP_POLICY = NO_OVERLAP when graph instances collide.",
+            "COMPUTE_DECISION": "Task graph overlap is scheduling/write-path first, not compute first.",
+            "PROOF_REQUIRED": "CURRENT_TASK_GRAPHS, TASK_HISTORY run windows, root task, final target table, and next clean run.",
+            "OWNER_ROUTE": "Task graphs",
+            "QUERY_ID": str(_first_value(row_dict, "QUERY_ID", "GRAPH_RUN_GROUP_ID", default="")),
+            "WAREHOUSE_NAME": "",
+            "TARGET_OBJECT": "",
+        })
+
+    for _, row in warehouse_load.head(10).iterrows():
+        row_dict = row.to_dict()
+        blocked = safe_float(_first_value(row_dict, "AVG_BLOCKED", default=0))
+        queued = safe_float(_first_value(row_dict, "AVG_QUEUED_LOAD", default=0))
+        if blocked <= 0 and queued <= 0:
+            continue
+        warehouse = str(_first_value(row_dict, "WAREHOUSE_NAME", default="Warehouse"))
+        rows.append({
+            "SEVERITY": "High" if blocked > 0 else "Medium",
+            "SIGNAL": "Live warehouse pressure",
+            "ENTITY": warehouse,
+            "EVIDENCE": f"avg blocked {blocked:,.2f}; avg queued load {queued:,.2f}",
+            "FIRST_MOVE": "Compare warehouse pressure with live blocked queries before resizing.",
+            "SAFE_FIX": "Use warehouse isolation or multi-cluster for queue pressure; use lock/task remediation when blocked load is present.",
+            "COMPUTE_DECISION": "Queue pressure can justify compute changes only when lock waits are not the primary signal.",
+            "PROOF_REQUIRED": "WAREHOUSE_LOAD_HISTORY AVG_BLOCKED/AVG_QUEUED_LOAD and matching live query blocked/queued seconds.",
+            "OWNER_ROUTE": "Warehouse Health",
+            "QUERY_ID": "",
+            "WAREHOUSE_NAME": warehouse,
+            "TARGET_OBJECT": "",
+        })
+
+    if transactions is not None and not transactions.empty and not rows:
+        rows.append({
+            "SEVERITY": "Watch",
+            "SIGNAL": "Active transactions",
+            "ENTITY": f"{len(transactions):,} transaction(s)",
+            "EVIDENCE": "SHOW TRANSACTIONS returned rows but no lock/query pressure was classified.",
+            "FIRST_MOVE": "Review active transactions alongside Query History if users report a hang.",
+            "SAFE_FIX": "Coordinate with the owning sessions before canceling transactions.",
+            "COMPUTE_DECISION": "No compute decision without blocked or queued evidence.",
+            "PROOF_REQUIRED": "SHOW TRANSACTIONS plus matching query IDs or lock rows.",
+            "OWNER_ROUTE": "Active Locks",
+            "QUERY_ID": "",
+            "WAREHOUSE_NAME": "",
+            "TARGET_OBJECT": "",
+        })
+
+    decision = pd.DataFrame(rows)
+    if decision.empty:
+        return decision
+    decision["_RANK"] = decision["SEVERITY"].map(_severity_rank)
+    decision = decision.sort_values(["_RANK", "SIGNAL", "ENTITY"]).drop(columns=["_RANK"])
+    decision = _add_safe_action_contracts(decision)
+    return decision
+
+
+def _run_live_incident_query(key: str, label: str, sql: str) -> pd.DataFrame:
+    try:
+        frame = run_query(
+            sql,
+            ttl_key=f"{key}_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}",
+            use_cache=False,
+            tier="live",
+            section="Contention Center",
+        )
+    except Exception as exc:
+        message = format_snowflake_error(exc)
+        st.session_state[_source_error_key(key)] = message
+        st.session_state.setdefault("contention_live_source_errors", {})[label] = message
+        return pd.DataFrame()
+    st.session_state[_source_error_key(key)] = ""
+    return frame
+
+
+def _load_live_incident_snapshot(minutes: int, warehouse_name: str = "", root_task_name: str = "") -> None:
+    session = get_session()
+    st.session_state["contention_live_source_errors"] = {}
+    try:
+        active_locks = show_to_df(session, "SHOW LOCKS IN ACCOUNT", force_refresh=True)
+    except Exception as exc:
+        st.session_state.setdefault("contention_live_source_errors", {})["SHOW LOCKS"] = format_snowflake_error(exc)
+        active_locks = pd.DataFrame()
+    try:
+        transactions = show_to_df(session, "SHOW TRANSACTIONS IN ACCOUNT", force_refresh=True)
+    except Exception as exc:
+        st.session_state.setdefault("contention_live_source_errors", {})["SHOW TRANSACTIONS"] = format_snowflake_error(exc)
+        transactions = pd.DataFrame()
+
+    live_queries = _run_live_incident_query(
+        "contention_live_queries",
+        "Live queries",
+        build_live_query_incident_sql(minutes, warehouse_name),
+    )
+    task_graphs = _run_live_incident_query(
+        "contention_live_task_graphs",
+        "Current task graphs",
+        build_live_task_graphs_sql(root_task_name),
+    )
+    warehouse_load = _run_live_incident_query(
+        "contention_live_warehouse_load",
+        "Live warehouse load",
+        build_live_warehouse_load_sql(minutes, warehouse_name),
+    )
+
+    st.session_state["contention_active_locks"] = active_locks
+    st.session_state["contention_live_transactions"] = transactions
+    st.session_state["contention_live_queries"] = live_queries
+    st.session_state["contention_live_task_graphs"] = task_graphs
+    st.session_state["contention_live_warehouse_load"] = warehouse_load
+    st.session_state["contention_live_decision_rows"] = _live_incident_rows(
+        active_locks,
+        transactions,
+        live_queries,
+        task_graphs,
+        warehouse_load,
+    )
+    st.session_state["contention_live_snapshot_meta"] = {
+        "captured_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "minutes": int(minutes),
+        "warehouse": str(warehouse_name or ""),
+        "root_task": str(root_task_name or ""),
+    }
 
 
 def _load_contention_evidence(days: int) -> None:
@@ -556,6 +1158,62 @@ def _check_active_locks() -> None:
     st.session_state["contention_active_locks"] = locks
 
 
+def _open_contention_owner_route(row: pd.Series | dict) -> None:
+    route = str(row.get("OWNER_ROUTE") or "Contention Center")
+    query_id = str(row.get("QUERY_ID") or "").strip()
+    warehouse = str(row.get("WAREHOUSE_NAME") or "").strip()
+    target_object = str(row.get("TARGET_OBJECT") or "").strip()
+    if warehouse:
+        st.session_state["global_warehouse"] = warehouse
+        st.session_state["wh_filter"] = warehouse
+    if route == "Active Locks":
+        st.session_state["contention_center_view"] = "Active Locks"
+    elif route == "Task graphs":
+        st.session_state["workload_operations_view"] = "Specialist Workflows"
+        st.session_state["workload_operations_workflow"] = "Task graphs"
+    elif route == "Query diagnosis":
+        st.session_state["workload_operations_view"] = "Specialist Workflows"
+        st.session_state["workload_operations_workflow"] = "Query diagnosis"
+        st.session_state["query_analysis_active_view"] = "AI Diagnosis"
+        if query_id:
+            st.session_state["ai_query_id"] = query_id
+        if target_object:
+            st.session_state["ai_object_ctx"] = target_object
+    elif route == "Warehouse Health":
+        apply_navigation_state("Warehouse Health")
+    else:
+        st.session_state["contention_center_view"] = "Brief"
+    st.rerun()
+
+
+def _render_fix_plan_actions(decision: pd.DataFrame) -> None:
+    if decision.empty:
+        return
+    st.markdown("**Contention Fix Plan**")
+    top = decision.head(3)
+    cols = st.columns(len(top))
+    for idx, (_, row) in enumerate(top.iterrows()):
+        route = str(row.get("OWNER_ROUTE") or "Contention Center")
+        label = f"Open {route}"
+        help_text = "\n".join(
+            part for part in [
+                f"Bottleneck: {row.get('BOTTLENECK_TYPE', '')}",
+                f"Evidence: {row.get('EVIDENCE', '')}",
+                f"First move: {row.get('FIRST_MOVE', '')}",
+                f"Safe fix: {row.get('SAFE_FIX', '')}",
+                f"Compute decision: {row.get('COMPUTE_DECISION', '')}",
+                f"Proof required: {row.get('PROOF_REQUIRED', '')}",
+                f"Cleanup decision: {row.get('CLEANUP_DECISION', '')}",
+                f"Prechecks: {row.get('PRECHECKS', '')}",
+                f"Manual SQL: {row.get('MANUAL_ACTION_SQL', '')}",
+                f"Verify after cleanup: {row.get('VERIFY_AFTER_CLEANUP', '')}",
+            ] if part.split(": ", 1)[-1]
+        )
+        with cols[idx]:
+            if st.button(label, key=f"contention_fix_plan_open_{idx}_{route}", help=help_text, width="stretch"):
+                _open_contention_owner_route(row)
+
+
 def _render_metric_strip() -> None:
     locks = _safe_frame(st.session_state.get("contention_active_locks"))
     waits = _safe_frame(st.session_state.get("contention_historical_waits"))
@@ -595,13 +1253,28 @@ def _render_brief() -> None:
     if decision.empty:
         st.info("Load contention evidence to rank blockers, task overlap, long DML, and warehouse pressure.")
         return
+    _render_fix_plan_actions(decision)
     render_priority_dataframe(
         decision,
-        title="Contention decision queue",
-        priority_columns=["SEVERITY", "SIGNAL", "ENTITY", "EVIDENCE", "NEXT_ACTION", "VERIFY_AFTER_FIX"],
+        title="Evidence-ranked contention fixes",
+        priority_columns=[
+            "SEVERITY",
+            "BOTTLENECK_TYPE",
+            "ENTITY",
+            "TARGET_OBJECT",
+            "EVIDENCE",
+            "FIRST_MOVE",
+            "SAFE_FIX",
+            "COMPUTE_DECISION",
+            "CLEANUP_DECISION",
+            "CLEANUP_READINESS",
+            "PROOF_REQUIRED",
+            "VERIFY_AFTER_FIX",
+            "OWNER_ROUTE",
+        ],
         sort_by=["SEVERITY", "SIGNAL"],
         max_rows=20,
-        raw_label="All contention decisions",
+        raw_label="All contention decisions and proof rows",
     )
     download_csv(decision, "overwatch_contention_decisions.csv")
 
@@ -622,6 +1295,117 @@ def _render_active_locks() -> None:
         raw_label="All SHOW LOCKS rows",
     )
     download_csv(locks, "overwatch_active_locks.csv")
+
+
+def _render_live_raw_frame(key: str, title: str, priority_columns: list[str]) -> None:
+    frame = _safe_frame(st.session_state.get(key))
+    if frame.empty:
+        error = st.session_state.get(_source_error_key(key))
+        if error:
+            st.warning(f"{title} unavailable: {error}")
+        else:
+            st.info(f"No {title.lower()} rows in the last live snapshot.")
+        return
+    render_priority_dataframe(
+        frame,
+        title=title,
+        priority_columns=priority_columns,
+        max_rows=40,
+        raw_label=f"All {title.lower()} rows",
+    )
+    download_csv(frame, f"overwatch_{key}.csv")
+
+
+def _render_live_incident() -> None:
+    meta = st.session_state.get("contention_live_snapshot_meta") or {}
+    decision = _safe_frame(st.session_state.get("contention_live_decision_rows"))
+    locks = _safe_frame(st.session_state.get("contention_active_locks"))
+    transactions = _safe_frame(st.session_state.get("contention_live_transactions"))
+    live_queries = _safe_frame(st.session_state.get("contention_live_queries"))
+    task_graphs = _safe_frame(st.session_state.get("contention_live_task_graphs"))
+    warehouse_load = _safe_frame(st.session_state.get("contention_live_warehouse_load"))
+    source_errors = st.session_state.get("contention_live_source_errors") or {}
+
+    render_shell_snapshot((
+        ("Captured", str(meta.get("captured_at") or "Not loaded")),
+        ("Locks", f"{len(locks):,}"),
+        ("Queries", f"{len(live_queries):,}"),
+        ("Actions", f"{len(decision):,}"),
+    ))
+    if source_errors:
+        with st.expander("Unavailable live sources", expanded=False):
+            for label, message in source_errors.items():
+                st.caption(f"{label}: {message}")
+
+    if decision.empty:
+        st.info("Capture a live incident snapshot to rank current locks, transactions, blocked queries, task graphs, and warehouse pressure.")
+    else:
+        _render_fix_plan_actions(decision)
+        render_priority_dataframe(
+            decision,
+            title="Live incident action queue",
+            priority_columns=[
+                "SEVERITY",
+                "SIGNAL",
+                "ENTITY",
+                "EVIDENCE",
+                "FIRST_MOVE",
+                "SAFE_FIX",
+                "COMPUTE_DECISION",
+                "CLEANUP_DECISION",
+                "CLEANUP_READINESS",
+                "PROOF_REQUIRED",
+                "OWNER_ROUTE",
+                "QUERY_ID",
+                "WAREHOUSE_NAME",
+                "TARGET_OBJECT",
+            ],
+            sort_by=["SEVERITY", "SIGNAL"],
+            max_rows=20,
+            raw_label="All live incident actions",
+        )
+        download_csv(decision, "overwatch_live_incident_actions.csv")
+
+    with st.expander("Live query evidence", expanded=False):
+        _render_live_raw_frame(
+            "contention_live_queries",
+            "Live blocked, queued, or running queries",
+            [
+                "SEVERITY",
+                "ROOT_CAUSE",
+                "QUERY_ID",
+                "WAREHOUSE_NAME",
+                "EXECUTION_STATUS",
+                "ELAPSED_SECONDS",
+                "BLOCKED_SECONDS",
+                "QUEUED_OVERLOAD_SECONDS",
+                "QUERY_TYPE",
+                "USER_NAME",
+                "ROLE_NAME",
+            ],
+        )
+    with st.expander("Task graph and warehouse evidence", expanded=False):
+        _render_live_raw_frame(
+            "contention_live_task_graphs",
+            "Current task graphs",
+            ["STATE", "ROOT_TASK_NAME", "GRAPH_RUN_GROUP_ID", "DATABASE_NAME", "SCHEMA_NAME", "SCHEDULED_TIME"],
+        )
+        _render_live_raw_frame(
+            "contention_live_warehouse_load",
+            "Live warehouse load",
+            ["SEVERITY", "ROOT_CAUSE", "WAREHOUSE_NAME", "AVG_RUNNING", "AVG_QUEUED_LOAD", "AVG_BLOCKED", "START_TIME", "END_TIME"],
+        )
+    with st.expander("Active locks and transactions", expanded=False):
+        _render_live_raw_frame(
+            "contention_active_locks",
+            "Active locks",
+            ["DATABASE", "SCHEMA", "RESOURCE", "OBJECT_NAME", "TRANSACTION", "TRANSACTION_ID", "USER", "STATUS"],
+        )
+        _render_live_raw_frame(
+            "contention_live_transactions",
+            "Active transactions",
+            ["ID", "TRANSACTION_ID", "USER", "USER_NAME", "STATE", "STATUS", "STARTED_ON", "DATABASE", "SCHEMA"],
+        )
 
 
 def _render_named_frame(key: str, title: str, priority_columns: list[str], raw_label: str) -> None:
@@ -660,12 +1444,39 @@ def render() -> None:
         default=7,
         help="Historical lock waits and task overlap use Account Usage, which can lag. Active locks are checked separately.",
     )
+    l1, l2, l3 = st.columns([1, 1, 1])
+    with l1:
+        live_minutes = int(st.selectbox(
+            "Live incident window",
+            (15, 30, 60, 120),
+            index=1,
+            key="contention_live_minutes",
+            format_func=lambda value: f"{int(value)} minutes",
+            help="Recent Information Schema query/task evidence for an active incident.",
+        ))
+    with l2:
+        live_warehouse = st.text_input(
+            "Live warehouse",
+            value=str(st.session_state.get("global_warehouse") or ""),
+            key="contention_live_warehouse",
+            help="Optional. Use a specific warehouse for the most current warehouse-load history.",
+        )
+    with l3:
+        live_root_task = st.text_input(
+            "Root task",
+            key="contention_live_root_task",
+            help="Optional. Filter CURRENT_TASK_GRAPHS to one root task name.",
+        )
 
-    c_load, c_live = st.columns([1, 1])
+    c_load, c_capture, c_live = st.columns([1, 1, 1])
     with c_load:
         if st.button("Load Contention Evidence", key="contention_load", type="primary", width="stretch"):
             with render_load_status("Loading contention evidence", "Contention evidence ready"):
                 _load_contention_evidence(days)
+    with c_capture:
+        if st.button("Capture Live Incident", key="contention_capture_live_incident", width="stretch"):
+            with render_load_status("Capturing live incident evidence", "Live incident snapshot ready"):
+                _load_live_incident_snapshot(live_minutes, live_warehouse, live_root_task)
     with c_live:
         if st.button("Check Active Locks Now", key="contention_active_locks", width="stretch"):
             with render_load_status("Checking active locks", "Active lock check complete"):
@@ -684,6 +1495,8 @@ def render() -> None:
 
     if active_view == "Brief":
         _render_brief()
+    elif active_view == "Live Incident":
+        _render_live_incident()
     elif active_view == "Active Locks":
         _render_active_locks()
     elif active_view == "Historical Waits":

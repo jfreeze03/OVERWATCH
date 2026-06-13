@@ -10,7 +10,7 @@
 import json
 from datetime import date, datetime
 import streamlit as st
-from config import ALERT_DB, ALERT_SCHEMA, normalize_section_name
+from config import ALERT_DB, ALERT_SCHEMA, compatibility_state_for_section, normalize_section_name
 from .query import format_snowflake_error, safe_identifier, sql_literal
 
 BOOKMARK_TABLE = (
@@ -72,9 +72,13 @@ def _bookmark_json_default(value):
 
 def _restore_state(state: dict) -> None:
     """Write a saved state dict back into session state and rerun."""
+    raw_nav_section = state.get("nav_section")
     for k, v in state.items():
         if v is not None:
             st.session_state[k] = normalize_section_name(v) if k == "nav_section" else v
+    if raw_nav_section:
+        for key, value in compatibility_state_for_section(str(raw_nav_section)).items():
+            st.session_state[key] = value
 
 
 def _safe_actor(session) -> str:

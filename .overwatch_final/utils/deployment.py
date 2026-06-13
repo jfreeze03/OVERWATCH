@@ -1,12 +1,146 @@
 # utils/deployment.py - release and mart migration readiness helpers
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 
 OVERWATCH_SCHEMA_VERSION = "2026.06.04-cost-proof-mart"
 MIGRATION_TABLE = "OVERWATCH_SCHEMA_MIGRATION"
 STREAMLIT_DEPLOYMENT_DECISION_VERSION = "2026.06.13-streamlit-entrypoint-contract"
+STREAMLIT_MANIFEST_CONTRACT_VERSION = "2026.06.13-sis-manifest-contract"
+STREAMLIT_SNOWFLAKE_ARTIFACTS = (
+    "app.py",
+    "config.py",
+    "theme.py",
+    "environment.yml",
+    "utils/",
+    "sections/",
+)
+
+
+def _repo_root(root: str | Path | None = None) -> Path:
+    if root is not None:
+        return Path(root)
+    return Path(__file__).resolve().parents[2]
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
+def _contract_row(
+    check: str,
+    expected: str,
+    actual: str,
+    ready: bool,
+    next_action: str = "No action.",
+) -> dict[str, str]:
+    return {
+        "CHECK": check,
+        "EXPECTED": expected,
+        "ACTUAL": actual,
+        "STATE": "Ready" if ready else "Blocked",
+        "NEXT_ACTION": next_action if not ready else "No action.",
+    }
+
+
+def build_streamlit_manifest_contract(root: str | Path | None = None) -> pd.DataFrame:
+    """Validate the pinned Streamlit deployment files without importing app code."""
+    repo = _repo_root(root)
+    app_root = repo / ".overwatch_final"
+    manifest_path = app_root / "snowflake.yml"
+    wrapper_path = repo / "streamlit_app.py"
+    cloud_config_path = repo / ".streamlit" / "config.toml"
+    deploy_doc_path = repo / "STREAMLIT_CLOUD_DEPLOY.md"
+    ci_path = repo / ".github" / "workflows" / "validate.yml"
+
+    manifest = _read_text(manifest_path)
+    wrapper = _read_text(wrapper_path)
+    cloud_config = _read_text(cloud_config_path)
+    deploy_doc = _read_text(deploy_doc_path)
+    ci_text = _read_text(ci_path)
+
+    artifact_states = []
+    for artifact in STREAMLIT_SNOWFLAKE_ARTIFACTS:
+        listed = f"- {artifact}" in manifest
+        exists = (app_root / artifact.rstrip("/")).exists()
+        artifact_states.append((artifact, listed, exists))
+    missing_artifacts = [name for name, listed, exists in artifact_states if not (listed and exists)]
+
+    rows = [
+        _contract_row(
+            "Snowflake manifest file",
+            ".overwatch_final/snowflake.yml exists",
+            "present" if manifest_path.exists() else "missing",
+            manifest_path.exists(),
+            "Restore .overwatch_final/snowflake.yml before deploying Streamlit in Snowflake.",
+        ),
+        _contract_row(
+            "Snowflake entrypoint",
+            "main_file: app.py",
+            "app.py" if "main_file: app.py" in manifest else "unknown",
+            "main_file: app.py" in manifest,
+            "Keep Streamlit-in-Snowflake pointed at .overwatch_final/app.py.",
+        ),
+        _contract_row(
+            "Snowflake runtime warehouse",
+            "query_warehouse: OVERWATCH_WH and not COMPUTE_WH",
+            "OVERWATCH_WH" if "query_warehouse: OVERWATCH_WH" in manifest else "unknown",
+            "query_warehouse: OVERWATCH_WH" in manifest and "query_warehouse: COMPUTE_WH" not in manifest,
+            "Use OVERWATCH_WH for app execution; do not route the app back to COMPUTE_WH.",
+        ),
+        _contract_row(
+            "Snowflake caller boundary",
+            "CALLER-mode deployment, never execute_as OWNER",
+            "OWNER" if "execute_as: OWNER" in manifest else "CALLER documented",
+            "execute_as: OWNER" not in manifest and "CALLER MODE MEANS" in manifest,
+            "Keep the app in caller-mode. Do not deploy OVERWATCH as owner-rights automation.",
+        ),
+        _contract_row(
+            "Snowflake package artifacts",
+            ", ".join(STREAMLIT_SNOWFLAKE_ARTIFACTS),
+            "missing: " + ", ".join(missing_artifacts) if missing_artifacts else "all listed and present",
+            not missing_artifacts,
+            "Update snowflake.yml artifacts and repository paths together.",
+        ),
+        _contract_row(
+            "Community Cloud wrapper",
+            "streamlit_app.py delegates to .overwatch_final/app.py",
+            "wrapper pinned" if ".overwatch_final" in wrapper and "runpy.run_path" in wrapper else "unknown",
+            ".overwatch_final" in wrapper and "runpy.run_path" in wrapper and "app.py" in wrapper,
+            "Keep Community Cloud on the root wrapper and root requirements.txt.",
+        ),
+        _contract_row(
+            "Community Cloud config",
+            "sidebar navigation hidden and usage stats disabled",
+            "configured" if "showSidebarNavigation = false" in cloud_config else "unknown",
+            "showSidebarNavigation = false" in cloud_config and "gatherUsageStats = false" in cloud_config,
+            "Restore .streamlit/config.toml production shell settings.",
+        ),
+        _contract_row(
+            "Deployment guide",
+            "runtime split and release rule documented",
+            "documented" if "Deployment Decision" in deploy_doc and "Only commit and push" in deploy_doc else "unknown",
+            "Deployment Decision" in deploy_doc
+            and ".overwatch_final/snowflake.yml" in deploy_doc
+            and "streamlit_app.py" in deploy_doc
+            and "Only commit and push" in deploy_doc,
+            "Update STREAMLIT_CLOUD_DEPLOY.md with the current deployment split.",
+        ),
+        _contract_row(
+            "CI deployment contract",
+            "validate.yml runs tests.test_deployment_contract",
+            "present" if "tests.test_deployment_contract" in ci_text else "missing",
+            "tests.test_deployment_contract" in ci_text,
+            "Add the dedicated deployment-contract test step to .github/workflows/validate.yml.",
+        ),
+    ]
+    return pd.DataFrame(rows)
 
 
 def build_streamlit_deployment_decision() -> pd.DataFrame:

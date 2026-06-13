@@ -6,6 +6,7 @@ import streamlit as st
 
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
+    CortexRateLimitError,
     day_window_selectbox,
     defer_source_note,
     filter_existing_columns,
@@ -69,18 +70,24 @@ def _root_cause_action_for(cause: str) -> tuple[str, str, str]:
     if "SPILL" in cause:
         return (
             "Query/Warehouse",
-            "Inspect join/order/group operators and warehouse size; remote spill usually means memory pressure or large reshuffle.",
+            "Open AI Query Diagnosis with query ID evidence, inspect join/sort/aggregate operators, then decide SQL-shape versus warehouse-memory fix.",
             "-- Use GET_QUERY_OPERATOR_STATS for the query and inspect spilled bytes by operator.",
         )
     if "SCAN" in cause:
         return (
             "Object/Query",
-            "Check pruning, clustering, filters, search optimization, and whether the query is scanning avoidable partitions.",
+            "Open AI Query Diagnosis with query text and partition evidence, then validate pruning, predicate rewrite, clustering, or search optimization fit.",
             "-- Review PARTITIONS_SCANNED vs PARTITIONS_TOTAL and clustering depth for affected tables.",
+        )
+    if "SLOW" in cause:
+        return (
+            "Query",
+            "Open AI Query Diagnosis with query ID evidence before choosing SQL rewrite, clustering, or warehouse changes.",
+            "-- Load QUERY_HISTORY and GET_QUERY_OPERATOR_STATS before changing SQL or compute.",
         )
     return (
         "Query",
-        "Open the detailed diagnosis row, compare recurring signatures, and inspect query profile.",
+        "Open AI Query Diagnosis when query text is available; otherwise compare recurring signatures and inspect query profile.",
         "-- Review elapsed, execution, compilation, queue, scan, and spill components for this query.",
     )
 
@@ -92,7 +99,7 @@ def _root_cause_workflow_for(cause: str) -> str:
     if "QUEUE" in cause:
         return "Live Triage"
     if "SPILL" in cause or "SCAN" in cause or "SLOW" in cause:
-        return "Diagnosis"
+        return "AI Diagnosis"
     return "Patterns"
 
 
@@ -106,6 +113,47 @@ def _root_cause_priority_view(exceptions: pd.DataFrame) -> pd.DataFrame:
     view["NEXT_ACTION"] = view.get("ROOT_CAUSE", pd.Series(dtype=str)).apply(lambda value: _root_cause_action_for(value)[1])
     view["NEXT_WORKFLOW"] = view.get("ROOT_CAUSE", pd.Series(dtype=str)).apply(_root_cause_workflow_for)
     return view.sort_values(["_RANK", "IMPACT_VALUE"], ascending=[True, False]).drop(columns=["_RANK"], errors="ignore")
+
+
+def _seed_ai_query_diagnosis_from_row(row, *, days: int) -> None:
+    """Prepare AI Diagnosis with evidence already loaded from a root-cause row."""
+    query_id = str(row.get("QUERY_ID") or "").strip()
+    query_text = str(row.get("QUERY_TEXT") or "").strip()
+    root_cause = str(row.get("ROOT_CAUSE") or "Query exception").strip()
+    impact_value = safe_float(row.get("IMPACT_VALUE"))
+    impact_unit = str(row.get("IMPACT_UNIT") or "").strip()
+    evidence = {
+        "QUERY_ID": query_id,
+        "USER_NAME": str(row.get("USER_NAME") or ""),
+        "ROLE_NAME": str(row.get("ROLE_NAME") or ""),
+        "WAREHOUSE_NAME": str(row.get("WAREHOUSE_NAME") or ""),
+        "WAREHOUSE_SIZE": str(row.get("WAREHOUSE_SIZE") or ""),
+        "DATABASE_NAME": str(row.get("DATABASE_NAME") or ""),
+        "SCHEMA_NAME": str(row.get("SCHEMA_NAME") or ""),
+        "EXECUTION_STATUS": str(row.get("EXECUTION_STATUS") or ""),
+        "START_TIME": str(row.get("START_TIME") or ""),
+        "ELAPSED_SEC": safe_float(row.get("ELAPSED_SEC")),
+        "COMPILE_SEC": safe_float(row.get("COMPILE_SEC")),
+        "EXEC_SEC": safe_float(row.get("EXEC_SEC")),
+        "QUEUED_SEC": safe_float(row.get("QUEUED_SEC")),
+        "BLOCKED_SEC": safe_float(row.get("BLOCKED_SEC")),
+        "BYTES_SCANNED_GB": safe_float(row.get("GB_SCANNED")),
+        "REMOTE_SPILL_GB": safe_float(row.get("REMOTE_SPILL_GB")),
+        "PARTITION_PCT": safe_float(row.get("PARTITION_PCT")),
+        "ROWS_PRODUCED": safe_float(row.get("ROWS_PRODUCED")),
+        "ERROR_MESSAGE": str(row.get("ERROR_MESSAGE") or ""),
+        "OPERATOR_NOTES": (
+            f"Root-Cause Brief routed {root_cause}; impact={impact_value:,.2f} {impact_unit}; "
+            f"lookback_days={int(days)}. Operator stats still need to be loaded for final proof."
+        ),
+    }
+    st.session_state["workload_operations_workflow"] = "Query diagnosis"
+    st.session_state["query_analysis_active_view"] = "AI Diagnosis"
+    st.session_state["ai_query_id"] = query_id
+    st.session_state["ai_query_text"] = query_text
+    st.session_state["ai_query_evidence"] = evidence
+    st.session_state["ai_query_operator_stats"] = pd.DataFrame()
+    st.session_state["ai_observed_ctx"] = evidence["OPERATOR_NOTES"]
 
 
 def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row: dict, days: int) -> None:
@@ -163,6 +211,8 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
                     st.session_state["qs_autorun"] = True
                     st.session_state["workload_operations_workflow"] = "Query diagnosis"
                     st.session_state["query_analysis_active_view"] = "History Search"
+                elif workflow == "AI Diagnosis":
+                    _seed_ai_query_diagnosis_from_row(item, days=days)
                 elif workflow == "Diagnosis":
                     mode = "Execution Time"
                     if "QUEUE" in root_cause.upper():
@@ -835,8 +885,15 @@ def render_root_cause_brief(session) -> None:
                 "top_query": str(exceptions.iloc[0].get("QUERY_ID", "")) if not exceptions.empty else "",
             }
             with st.expander("Cortex Root-Cause Narrative"):
-                st.caption("Runs one Cortex completion against the loaded root-cause evidence.")
-                if st.button("Generate Cortex Root-Cause Narrative", key="qw_rc_cortex_narrative"):
+                if st.button(
+                    "Generate Cortex Root-Cause Narrative",
+                    key="qw_rc_cortex_narrative",
+                    help=(
+                        "Runs one Cortex completion against the loaded root-cause evidence. "
+                        "The request is throttled; telemetry stores feature, timing, and prompt hash only, not prompt text."
+                    ),
+                    width="stretch",
+                ):
                     prompt = _root_cause_cortex_prompt(company, days, score, summary_row, exceptions)
                     try:
                         with render_load_status("Generating DBA root-cause narrative", "DBA root-cause narrative ready"):
@@ -845,6 +902,8 @@ def render_root_cause_brief(session) -> None:
                                 prompt,
                             )
                             st.session_state["qw_root_cortex_meta"] = narrative_meta
+                    except CortexRateLimitError as e:
+                        st.info(format_snowflake_error(e))
                     except Exception as e:
                         st.info(
                             "Cortex root-cause narrative unavailable. "

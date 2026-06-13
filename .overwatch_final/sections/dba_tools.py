@@ -27,6 +27,7 @@ from config import (
     ALERT_DB, ALERT_SCHEMA, ALERT_TABLE,
     ACTION_QUEUE_TABLE, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA,
 )
+from sections.navigation import apply_navigation_state
 from utils.dba_tool_catalog import (
     DBA_TOOL_FOCUS_GROUPS,
     DBA_TOOL_FOCUS_HINTS,
@@ -519,7 +520,7 @@ def render():
         )
         st.info("Alert history, email-ready delivery rows, routing, and suppression windows now live in the consolidated Alert Center.")
         if st.button("Open Alert Center", key="dba_tools_open_alert_center"):
-            st.session_state["nav_section"] = "Alert Center"
+            apply_navigation_state("Alert Center")
             st.rerun()
 
     if not admin_actions_enabled() and selected_tool in {

@@ -7,6 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
+from sections.navigation import apply_navigation_state
 from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, render_shell_workflows, scope_label
 
 
@@ -118,10 +119,7 @@ def _open_target_workspace(section: str) -> None:
 
 
 def _navigate(section: str, state_updates: dict[str, str] | None = None, *, open_workspace: bool = True) -> None:
-    if str(st.session_state.get("nav_section") or "") != section:
-        st.session_state["_overwatch_pending_section"] = section
-        st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
-    st.session_state["nav_section"] = section
+    section = apply_navigation_state(section)
     for key, value in (state_updates or {}).items():
         st.session_state[key] = value
     if open_workspace:

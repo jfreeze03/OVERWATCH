@@ -79,6 +79,7 @@ from sections.workload_operations import (  # noqa: E402
 )
 from sections.query_analysis import (  # noqa: E402
     _build_ai_query_diagnosis_prompt,
+    _build_query_diagnosis_action_contract,
     _build_query_optimization_candidates,
 )
 from sections.executive_landing import (  # noqa: E402
@@ -153,7 +154,9 @@ from sections.dba_control_room import (  # noqa: E402
     _build_dba_morning_brief_markdown,
     _dba_action_brief,
     _dba_escalation_packet,
+    _dba_morning_decision_contract,
     _dba_morning_brief_rows,
+    _dba_workload_morning_lanes,
     _dba_operator_runbook,
     _dba_operations_priority_index,
     _dba_section_operability_board,
@@ -231,7 +234,9 @@ from sections.query_workbench import (  # noqa: E402
     _build_root_cause_markdown,
     _root_cause_cortex_prompt,
     _root_cause_action_for,
+    _root_cause_priority_view,
     _root_cause_score,
+    _seed_ai_query_diagnosis_from_row,
 )
 from sections.recommendations import (  # noqa: E402
     _idle_warehouse_verification_sql,
@@ -1729,7 +1734,82 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("GET_QUERY_OPERATOR_STATS", prompt)
         self.assertIn("SYSTEM$CLUSTERING_INFORMATION", prompt)
         self.assertIn("Warehouse queue pressure", prompt)
+        self.assertIn("Query diagnosis action contract", prompt)
+        self.assertIn("Do not invent table names", prompt)
+        self.assertIn("Action decision", prompt)
         self.assertIn("Verification", prompt)
+
+    def test_query_diagnosis_action_contract_is_specific_and_routed(self):
+        query_text = """
+            SELECT *
+            FROM PROD_DB.CORE.FACT_POLICY p
+            JOIN PROD_DB.CORE.DIM_CUSTOMER c ON p.CUSTOMER_ID = c.CUSTOMER_ID
+            WHERE TO_DATE(p.BIND_TS) = '2026-06-01'
+              AND c.LAST_NAME ILIKE '%SMITH%'
+            ORDER BY p.PREMIUM_AMOUNT
+        """
+        evidence = {
+            "QUERY_ID": "01specific",
+            "WAREHOUSE_NAME": "WH_TRXS_QUERY",
+            "QUEUED_SEC": 74,
+            "REMOTE_SPILL_GB": 4.2,
+            "PARTITION_PCT": 95,
+            "BYTES_SCANNED_GB": 120,
+            "ROWS_PRODUCED": 1000,
+        }
+        candidates = _build_query_optimization_candidates(query_text, evidence)
+        contract = _build_query_diagnosis_action_contract(candidates, evidence, query_text)
+
+        by_signal = {row["SIGNAL"]: row for row in contract}
+        self.assertEqual(by_signal["Warehouse queue pressure"]["ACTION_DECISION"], "Route to Warehouse Health")
+        self.assertIn("WH_TRXS_QUERY", by_signal["Warehouse queue pressure"]["FIRST_OPERATOR_MOVE"])
+        self.assertIn("Do not rewrite SQL as the first fix", by_signal["Warehouse queue pressure"]["DO_NOT_DO"])
+        self.assertEqual(by_signal["Remote spill"]["ACTION_DECISION"], "Inspect operator stats before rerun")
+        self.assertIn("GET_QUERY_OPERATOR_STATS", by_signal["Remote spill"]["FIRST_OPERATOR_MOVE"])
+        self.assertEqual(by_signal["Full/high partition scan"]["ACTION_DECISION"], "Fix pruning evidence")
+        self.assertIn("p.BIND_TS", by_signal["Full/high partition scan"]["EXACT_CHANGE"])
+        self.assertEqual(by_signal["Leading wildcard text search"]["ACTION_DECISION"], "Redesign text lookup")
+        self.assertIn("c.LAST_NAME", by_signal["Leading wildcard text search"]["EXACT_CHANGE"])
+        self.assertTrue(all(row["VERIFY_AFTER_FIX"] for row in contract))
+
+    def test_ai_query_diagnosis_prioritizes_lock_contention_evidence(self):
+        query_text = """
+            MERGE INTO PROD_DB.CORE.FACT_POLICY tgt
+            USING STAGE_DB.LOAD.POLICY_DELTA src
+              ON tgt.POLICY_ID = src.POLICY_ID
+            WHEN MATCHED THEN UPDATE SET PREMIUM_AMOUNT = src.PREMIUM_AMOUNT
+            WHEN NOT MATCHED THEN INSERT (POLICY_ID, PREMIUM_AMOUNT) VALUES (src.POLICY_ID, src.PREMIUM_AMOUNT)
+        """
+        evidence = {
+            "QUERY_ID": "01blocked",
+            "BLOCKED_SEC": 185,
+            "QUEUED_SEC": 0,
+            "ELAPSED_SEC": 540,
+            "OPERATOR_NOTES": "Task overlap observed on shared final table.",
+        }
+
+        candidates = _build_query_optimization_candidates(query_text, evidence)
+        signals = [row["SIGNAL"] for row in candidates]
+        contract = _build_query_diagnosis_action_contract(candidates, evidence, query_text)
+
+        self.assertEqual(signals[0], "Lock/write contention")
+        self.assertIn("Write-path contention risk", signals)
+        self.assertIn("Do not resize compute solely on blocked seconds", candidates[0]["SPECIFIC_RECOMMENDATION"])
+        self.assertIn("TRANSACTION_BLOCKED_TIME", candidates[0]["VERIFY_AFTER_FIX"])
+        self.assertEqual(contract[0]["ACTION_DECISION"], "Route to Contention Center before SQL tuning")
+        self.assertIn("Do not resize the warehouse", contract[0]["DO_NOT_DO"])
+        self.assertIn("DBA plus task/job owner", contract[0]["OWNER_HANDOFF"])
+
+        prompt = _build_ai_query_diagnosis_prompt(
+            query_text,
+            evidence,
+            candidates,
+            "operator=TableScan; stats=blocked writer",
+        )
+        self.assertIn("BLOCKED_SEC", prompt)
+        self.assertIn("TRANSACTION_BLOCKED_TIME", prompt)
+        self.assertIn("prioritize lock/write contention fixes", prompt)
+        self.assertIn("Route to Contention Center before SQL tuning", prompt)
 
     def test_dba_control_room_mart_sql_uses_operational_facts(self):
         summary_sql = build_mart_control_room_summary_sql(24, "ALFA").upper()
@@ -3588,11 +3668,123 @@ class FormulaRegressionTests(unittest.TestCase):
 
         self.assertEqual(brief.iloc[0]["ROUTE"], "Change & Drift")
         self.assertEqual(brief.iloc[0]["STATE"], "Escalate Now")
+        self.assertEqual(brief.iloc[0]["MORNING_DECISION"], "No-Go / contain now")
+        self.assertEqual(brief.iloc[0]["SLA_CLOCK"], "15 min containment; 30 min owner update")
+        self.assertEqual(brief.iloc[0]["OWNER_PROOF_STATE"], "Owner/proof named")
         self.assertIn("No-Go", brief.iloc[0]["GO_NO_GO"])
         self.assertIn("schema migration ledger", brief.iloc[0]["PROOF_REQUIRED"])
+        self.assertIn("approval, execution, rollback, and verification", brief.iloc[0]["ROUTE_ACTION"])
+        self.assertIn("Do not release", brief.iloc[0]["STOP_RULE"])
         self.assertIn("Warehouse Health", set(brief["ROUTE"]))
         self.assertIn("# OVERWATCH DBA Morning Brief", markdown)
         self.assertIn("No irreversible DBA action", markdown)
+        self.assertIn("Decision: No-Go / contain now", markdown)
+        self.assertIn("SLA: 15 min containment", markdown)
+
+    def test_dba_morning_decision_contract_classifies_operating_rows(self):
+        no_go = _dba_morning_decision_contract({
+            "STATE": "Escalate Now",
+            "ROUTE": "Change & Drift",
+            "GO_NO_GO": "No-Go until blocker proof is current.",
+            "OWNER_ROUTE": "Change owner / DBA release reviewer",
+            "PROOF_REQUIRED": "schema migration ledger, owner approval, rollback SQL, verification",
+            "PRIORITY_SCORE": 99,
+        })
+        queue = _dba_morning_decision_contract({
+            "STATE": "SLA Risk",
+            "ROUTE": "Workload Operations",
+            "WORKFLOW": "Contention Center",
+            "OWNER_ROUTE": "DBA on-call / workload owner",
+            "PROOF_REQUIRED": "QUERY_HISTORY blocked seconds and current source proof",
+            "PRIORITY_SCORE": 82,
+        })
+        monitor = _dba_morning_decision_contract({
+            "STATE": "Monitor",
+            "ROUTE": "DBA Control Room",
+            "PROOF_REQUIRED": "fresh Control Room load",
+            "PRIORITY_SCORE": 0,
+        })
+
+        self.assertEqual(no_go["MORNING_DECISION"], "No-Go / contain now")
+        self.assertEqual(no_go["OWNER_PROOF_STATE"], "Owner/proof named")
+        self.assertIn("Do not release", no_go["STOP_RULE"])
+
+        self.assertEqual(queue["MORNING_DECISION"], "Contain same shift")
+        self.assertEqual(queue["SLA_CLOCK"], "30 min triage; same-shift mitigation")
+        self.assertIn("Workload Operations / Contention Center", queue["ROUTE_ACTION"])
+
+        self.assertEqual(monitor["MORNING_DECISION"], "Monitor")
+        self.assertEqual(monitor["OWNER_PROOF_STATE"], "Owner gap")
+
+    def test_dba_morning_brief_adds_specific_workload_lanes(self):
+        data = {
+            "summary": pd.DataFrame([{
+                "FAILED_QUERIES": 12,
+                "QUEUED_QUERIES": 24,
+                "REMOTE_SPILL_QUERIES": 2,
+                "P95_ELAPSED_SEC": 360,
+            }]),
+            "warehouse_pressure": pd.DataFrame([{
+                "WAREHOUSE_NAME": "WH_TRXS_QUERY",
+                "QUEUED_QUERIES": 9,
+                "REMOTE_SPILL_GB": 4.2,
+            }]),
+            "failed_queries": pd.DataFrame([{
+                "QUERY_ID": "01abc",
+                "WAREHOUSE_NAME": "WH_TRXS_QUERY",
+                "ERROR_MESSAGE": "statement timed out",
+            }]),
+            "task_failures": pd.DataFrame([{
+                "TASK_NAME": "LOAD_POLICY",
+                "ROOT_TASK_NAME": "ROOT_LOAD_POLICY",
+                "FAILURES": 2,
+            }]),
+            "task_sla_cost": pd.DataFrame([{
+                "SIGNAL": "Long Running / SLA Risk",
+                "TASK_NAME": "LOAD_POLICY",
+            }]),
+            "procedure_sla_cost": pd.DataFrame([{
+                "SIGNAL": "Procedure Cost Regression",
+                "PROCEDURE_NAME": "SP_LOAD_POLICY",
+            }]),
+        }
+
+        workload_lanes = _dba_workload_morning_lanes(data)
+        by_workflow = {row["WORKFLOW"]: row for row in workload_lanes.to_dict("records")}
+
+        self.assertIn("Task graphs", by_workflow)
+        self.assertIn("Contention Center", by_workflow)
+        self.assertIn("Query diagnosis", by_workflow)
+        self.assertIn("Stored procedures", by_workflow)
+        self.assertIn("Control-M", by_workflow["Task graphs"]["FIRST_MOVE"])
+        self.assertIn("before resizing", by_workflow["Contention Center"]["FIRST_MOVE"])
+        self.assertIn("AI Query Diagnosis", by_workflow["Query diagnosis"]["FIRST_MOVE"])
+        self.assertIn("QUERY_HISTORY blocked seconds", by_workflow["Contention Center"]["PROOF_REQUIRED"])
+
+        brief = _dba_morning_brief_rows(
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            workload_lanes,
+            max_rows=4,
+        )
+        self.assertEqual(list(brief["WORKFLOW"]), ["Task graphs", "Contention Center", "Query diagnosis", "Stored procedures"])
+        self.assertEqual(list(brief["MORNING_RANK"]), [1, 2, 3, 4])
+        self.assertEqual(set(brief["ROUTE"]), {"Workload Operations"})
+        self.assertIn("MORNING_DECISION", brief.columns)
+        self.assertEqual(brief.iloc[0]["MORNING_DECISION"], "No-Go / contain now")
+        self.assertEqual(brief.iloc[1]["MORNING_DECISION"], "No-Go / contain now")
+        self.assertIn("No-Go for warehouse resizing", brief.iloc[1]["GO_NO_GO"])
+
+        markdown = _build_dba_morning_brief_markdown(
+            brief,
+            company="Trexis",
+            environment="PROD",
+            lookback_hours=24,
+        )
+        self.assertIn("Workload Operations / Contention Center", markdown)
+        self.assertIn("Workload Operations / Query diagnosis", markdown)
+        self.assertIn("No-Go for warehouse resizing", markdown)
 
     def test_company_scope_does_not_default_missing_company_to_alfa(self):
         offenders = []
@@ -5168,6 +5360,72 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(_root_cause_action_for("Warehouse Queue")[0], "Warehouse")
         self.assertEqual(_root_cause_action_for("Remote Spill")[0], "Query/Warehouse")
         self.assertEqual(_root_cause_action_for("Full Scan")[0], "Object/Query")
+        self.assertIn("AI Query Diagnosis", _root_cause_action_for("Remote Spill")[1])
+        self.assertIn("partition evidence", _root_cause_action_for("Full Scan")[1])
+        self.assertIn("query ID evidence", _root_cause_action_for("Slow Query")[1])
+
+    def test_query_root_cause_routes_sql_shape_to_ai_diagnosis(self):
+        exceptions = pd.DataFrame(
+            {
+                "SEVERITY": ["Critical", "High", "High"],
+                "ROOT_CAUSE": ["Remote Spill", "Full Scan", "Warehouse Queue"],
+                "QUERY_ID": ["01spill", "01scan", "01queue"],
+                "USER_NAME": ["ETL_USER", "BI_USER", "BATCH_USER"],
+                "ROLE_NAME": ["SYSADMIN", "ANALYST", "SYSADMIN"],
+                "WAREHOUSE_NAME": ["WH_TRXS_QUERY", "BI_COMPUTE_WH", "LOAD_WH"],
+                "WAREHOUSE_SIZE": ["Large", "Medium", "Large"],
+                "DATABASE_NAME": ["PROD_DB", "PROD_DB", "PROD_DB"],
+                "SCHEMA_NAME": ["CORE", "REPORTING", "LOAD"],
+                "EXECUTION_STATUS": ["SUCCESS", "SUCCESS", "SUCCESS"],
+                "START_TIME": ["2026-06-13 08:00", "2026-06-13 08:05", "2026-06-13 08:10"],
+                "ELAPSED_SEC": [420.0, 310.0, 125.0],
+                "COMPILE_SEC": [2.0, 1.0, 1.0],
+                "EXEC_SEC": [410.0, 300.0, 80.0],
+                "QUEUED_SEC": [0.0, 0.0, 70.0],
+                "BLOCKED_SEC": [0.0, 0.0, 0.0],
+                "GB_SCANNED": [80.0, 240.0, 5.0],
+                "REMOTE_SPILL_GB": [8.2, 0.0, 0.0],
+                "PARTITION_PCT": [45.0, 98.0, 5.0],
+                "ROWS_PRODUCED": [1000, 250, 100],
+                "ERROR_MESSAGE": ["", "", ""],
+                "QUERY_TEXT": [
+                    "SELECT * FROM PROD_DB.CORE.FACT_POLICY p JOIN PROD_DB.CORE.DIM_CUSTOMER c ON p.CUSTOMER_ID = c.CUSTOMER_ID",
+                    "SELECT POLICY_ID FROM PROD_DB.REPORTING.POLICY_SUMMARY WHERE TO_DATE(BIND_TS) = '2026-06-01'",
+                    "SELECT COUNT(*) FROM PROD_DB.LOAD.BATCH_AUDIT",
+                ],
+                "IMPACT_VALUE": [8.2, 240.0, 70.0],
+                "IMPACT_UNIT": ["GB remote spill", "GB scanned", "seconds queued"],
+            }
+        )
+
+        priority = _root_cause_priority_view(exceptions)
+        by_query = {row["QUERY_ID"]: row for _, row in priority.iterrows()}
+
+        self.assertEqual(by_query["01spill"]["NEXT_WORKFLOW"], "AI Diagnosis")
+        self.assertEqual(by_query["01scan"]["NEXT_WORKFLOW"], "AI Diagnosis")
+        self.assertEqual(by_query["01queue"]["NEXT_WORKFLOW"], "Live Triage")
+
+        import streamlit as st
+
+        previous = dict(st.session_state)
+        try:
+            st.session_state.clear()
+            _seed_ai_query_diagnosis_from_row(by_query["01spill"], days=7)
+
+            self.assertEqual(st.session_state["workload_operations_workflow"], "Query diagnosis")
+            self.assertEqual(st.session_state["query_analysis_active_view"], "AI Diagnosis")
+            self.assertEqual(st.session_state["ai_query_id"], "01spill")
+            self.assertIn("FACT_POLICY", st.session_state["ai_query_text"])
+            evidence = st.session_state["ai_query_evidence"]
+            self.assertEqual(evidence["QUERY_ID"], "01spill")
+            self.assertEqual(evidence["WAREHOUSE_NAME"], "WH_TRXS_QUERY")
+            self.assertEqual(evidence["BYTES_SCANNED_GB"], 80.0)
+            self.assertEqual(evidence["REMOTE_SPILL_GB"], 8.2)
+            self.assertIn("Root-Cause Brief routed Remote Spill", evidence["OPERATOR_NOTES"])
+            self.assertTrue(st.session_state["ai_query_operator_stats"].empty)
+        finally:
+            st.session_state.clear()
+            st.session_state.update(previous)
 
     def test_query_root_cause_brief_markdown_contains_evidence_limits(self):
         summary_row = {

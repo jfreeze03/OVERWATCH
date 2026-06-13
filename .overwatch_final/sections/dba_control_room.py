@@ -13,6 +13,7 @@ import streamlit as st
 
 from config import DEFAULT_ENVIRONMENT, DEFAULTS, SECTION_BY_TITLE, normalize_section_name
 from sections.base import lazy_pandas, lazy_util as _lazy_util, lazy_util_attr
+from sections.navigation import apply_navigation_state
 from sections.shell_helpers import render_shell_snapshot
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
@@ -254,12 +255,15 @@ def _procedure_helpers():
 
 def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = "") -> None:
     """Navigate to a registered section and carry useful filter context."""
-    target = normalize_section_name(SECTION_BY_TITLE.get(title, title))
+    raw_target = SECTION_BY_TITLE.get(title, title)
+    target = normalize_section_name(raw_target)
     if target not in set(SECTION_BY_TITLE.values()):
         return
-    st.session_state["nav_section"] = target
+    apply_navigation_state(raw_target)
     if workflow:
         if title in {"Query Workbench", "Workload Operations"}:
+            st.session_state["_workload_operations_explicit_workflow_request"] = True
+            st.session_state["workload_operations_view"] = "Specialist Workflows"
             if workflow == "Diagnosis":
                 st.session_state["workload_operations_workflow"] = "Query diagnosis"
             elif workflow == "History Search":
@@ -267,6 +271,8 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
                 st.session_state["query_analysis_active_view"] = "History Search"
             else:
                 st.session_state["workload_operations_workflow"] = workflow
+        elif title == "DBA Control Room" and workflow in DBA_CONTROL_ROOM_PANES:
+            st.session_state["dba_control_room_active_view"] = workflow
         elif title == "Cost & Contract":
             st.session_state["cost_contract_workflow"] = workflow
         elif title == "Security Posture":
@@ -3910,10 +3916,174 @@ def _render_dba_escalation_packet(packet: pd.DataFrame, markdown: str) -> None:
     download_csv(packet, "dba_escalation_packet.csv")
 
 
+def _dba_workload_morning_lanes(
+    data: dict | None,
+    exceptions: pd.DataFrame | None = None,
+    *,
+    max_rows: int = 4,
+) -> pd.DataFrame:
+    """Build workload-specific Morning Brief lanes from already-loaded evidence."""
+    data = data or {}
+    summary = data.get("summary", _empty_df())
+    row = summary.iloc[0] if summary is not None and not summary.empty else {}
+    warehouse_pressure = data.get("warehouse_pressure", _empty_df())
+    failed_queries = data.get("failed_queries", _empty_df())
+    task_failures = data.get("task_failures", _empty_df())
+    task_sla_cost = data.get("task_sla_cost", _empty_df())
+    procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
+
+    queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
+    failed_count = safe_int(row.get("FAILED_QUERIES", 0))
+    spill_count = safe_int(row.get("REMOTE_SPILL_QUERIES", 0))
+    p95_runtime = safe_float(row.get("P95_ELAPSED_SEC", 0))
+    if not failed_count and failed_queries is not None and not failed_queries.empty:
+        failed_count = len(failed_queries)
+
+    warehouse_count = 0 if warehouse_pressure is None or warehouse_pressure.empty else len(warehouse_pressure)
+    queued_warehouses = 0
+    remote_spill_gb = 0.0
+    if warehouse_pressure is not None and not warehouse_pressure.empty:
+        if "QUEUED_QUERIES" in warehouse_pressure.columns:
+            queued_warehouses = int(
+                (pd.to_numeric(warehouse_pressure["QUEUED_QUERIES"], errors="coerce").fillna(0) > 0).sum()
+            )
+        if "REMOTE_SPILL_GB" in warehouse_pressure.columns:
+            remote_spill_gb = float(pd.to_numeric(warehouse_pressure["REMOTE_SPILL_GB"], errors="coerce").fillna(0).sum())
+
+    rows: list[dict] = []
+
+    def add_lane(
+        workflow: str,
+        *,
+        state: str,
+        why_now: str,
+        first_move: str,
+        proof_required: str,
+        priority_score: float,
+        owner_route: str = "Workload owner / DBA on-call",
+        go_no_go: str = "Go only through Workload Operations after evidence is current.",
+        source_signals: str = "DBA Control Room workload evidence",
+    ) -> None:
+        rows.append({
+            "ROUTE": "Workload Operations",
+            "WORKFLOW": workflow,
+            "STATE": state,
+            "WHY_NOW": why_now,
+            "FIRST_MOVE": first_move,
+            "OWNER_ROUTE": owner_route,
+            "GO_NO_GO": go_no_go,
+            "PROOF_REQUIRED": proof_required,
+            "SOURCE_SIGNALS": source_signals,
+            "PRIORITY_SCORE": safe_float(priority_score),
+        })
+
+    if task_failures is not None and not task_failures.empty:
+        task_names = ", ".join(
+            dict.fromkeys(
+                task_failures.get("TASK_NAME", pd.Series(dtype=str)).dropna().astype(str).head(3)
+            )
+        )
+        add_lane(
+            "Task graphs",
+            state="Blocked Workload",
+            why_now=f"{len(task_failures):,} failed task group(s){f': {task_names}' if task_names else ''}.",
+            first_move=(
+                "Open Task graphs, inspect the latest TASK_HISTORY failure, confirm Control-M downstream state, "
+                "then protect late SLAs before retrying."
+            ),
+            proof_required="TASK_HISTORY success after latest failure, Control-M rerun/late state, and downstream refresh proof.",
+            priority_score=96,
+            owner_route="Task owner / Control-M operator / DBA on-call",
+            go_no_go="No-Go for dependent loads until clean rerun and downstream proof are current.",
+            source_signals="Task failures: mart/TASK_HISTORY",
+        )
+
+    if task_sla_cost is not None and not task_sla_cost.empty:
+        signals = task_sla_cost.get("SIGNAL", pd.Series(dtype=str)).astype(str)
+        sla_count = int((signals == "Long Running / SLA Risk").sum())
+        cost_count = int((signals == "Cost Drift / Release Regression").sum())
+        add_lane(
+            "Task graphs",
+            state="SLA Risk",
+            why_now=f"{sla_count:,} runtime breach(es); {cost_count:,} cost regression candidate(s).",
+            first_move="Compare current task graph runs to baseline, isolate the changed task/query, and assign owner proof.",
+            proof_required="Task baseline comparison, latest successful run, cost/runtime delta, and owner approval for schedule changes.",
+            priority_score=90 if cost_count or sla_count >= 3 else 76,
+            owner_route="Task graph owner / DBA release reviewer",
+            source_signals="Task SLA/cost evidence",
+        )
+
+    if queued_queries or queued_warehouses or warehouse_count:
+        add_lane(
+            "Contention Center",
+            state="Contention Triage",
+            why_now=(
+                f"{queued_queries:,} queued query row(s); {queued_warehouses:,} queued warehouse(s); "
+                f"{warehouse_count:,} pressure row(s)."
+            ),
+            first_move=(
+                "Open Contention Center before resizing: check active locks, task overlap, long DML, "
+                "then separate lock waits from warehouse queueing."
+            ),
+            proof_required="SHOW LOCKS/LOCK_WAIT_HISTORY, task-overlap evidence, QUERY_HISTORY blocked seconds, and WAREHOUSE_LOAD_HISTORY.",
+            priority_score=94 if queued_queries >= 20 or queued_warehouses else 82,
+            owner_route="DBA on-call / workload owner / warehouse owner",
+            go_no_go="No-Go for warehouse resizing until lock waits and overlapping writers are ruled out.",
+            source_signals="Warehouse pressure and queue evidence",
+        )
+
+    if failed_count or spill_count or remote_spill_gb or p95_runtime >= 120:
+        reason_bits = []
+        if failed_count:
+            reason_bits.append(f"{failed_count:,} failed query row(s)")
+        if spill_count:
+            reason_bits.append(f"{spill_count:,} remote-spill query row(s)")
+        if remote_spill_gb:
+            reason_bits.append(f"{remote_spill_gb:,.2f} GB remote spill")
+        if p95_runtime >= 120:
+            reason_bits.append(f"p95 {p95_runtime:,.0f}s")
+        add_lane(
+            "Query diagnosis",
+            state="Query Diagnosis",
+            why_now="; ".join(reason_bits) or "Slow or failed query evidence needs diagnosis.",
+            first_move=(
+                "Open Query diagnosis, load the query ID/operator stats, then use AI Query Diagnosis only after "
+                "queue/spill/scan evidence is attached."
+            ),
+            proof_required="Query ID, warehouse/user/role/database context, operator stats, specific recommendation, and rerun comparison.",
+            priority_score=88 if failed_count >= 10 or spill_count or p95_runtime >= 300 else 72,
+            owner_route="Query owner / DBA performance reviewer",
+            source_signals="Failed, spilling, or long-running query evidence",
+        )
+
+    if procedure_sla_cost is not None and not procedure_sla_cost.empty:
+        signals = procedure_sla_cost.get("SIGNAL", pd.Series(dtype=str)).astype(str)
+        runtime_count = int((signals == "Procedure Runtime SLA Breach").sum())
+        cost_count = int((signals == "Procedure Cost Regression").sum())
+        add_lane(
+            "Stored procedures",
+            state="Procedure Regression",
+            why_now=f"{runtime_count:,} runtime breach(es); {cost_count:,} cost regression candidate(s).",
+            first_move="Open Stored procedures, compare latest CALL duration/cost to baseline, and verify release linkage.",
+            proof_required="Procedure run baseline, latest CALL query ID, owner, ticket/change ID, and post-fix runtime/cost proof.",
+            priority_score=84 if cost_count or runtime_count >= 3 else 70,
+            owner_route="Procedure owner / DBA release reviewer",
+            source_signals="Stored procedure SLA/cost evidence",
+        )
+
+    if not rows:
+        return _empty_df()
+    return pd.DataFrame(rows).sort_values(
+        ["PRIORITY_SCORE", "WORKFLOW"],
+        ascending=[False, True],
+    ).head(max_rows).reset_index(drop=True)
+
+
 def _dba_morning_brief_rows(
     priority_index: pd.DataFrame | None,
     escalation_packet: pd.DataFrame | None,
     handoff_rows: pd.DataFrame | None,
+    workload_lanes: pd.DataFrame | None = None,
     *,
     max_rows: int = 5,
 ) -> pd.DataFrame:
@@ -3932,17 +4102,18 @@ def _dba_morning_brief_rows(
         proof_required: object = "",
         source_signals: object = "",
         priority_score: object = 0,
+        workflow: object = "",
     ) -> None:
-        if len(rows) >= max_rows:
-            return
         route_text = str(route or "DBA Control Room").strip() or "DBA Control Room"
-        route_key = route_text.upper()
+        workflow_text = str(workflow or "").strip()
+        route_key = f"{route_text.upper()}|{workflow_text.upper()}" if workflow_text else route_text.upper()
         if route_key in seen_routes:
             return
         seen_routes.add(route_key)
         rows.append({
-            "MORNING_RANK": len(rows) + 1,
+            "MORNING_RANK": 0,
             "ROUTE": route_text,
+            "WORKFLOW": workflow_text,
             "STATE": str(state or "Review"),
             "WHY_NOW": str(why_now or "Loaded Control Room evidence requires review."),
             "FIRST_MOVE": str(first_move or "Open the owning workflow and validate evidence."),
@@ -3969,10 +4140,30 @@ def _dba_morning_brief_rows(
                 proof_required=item.get("PROOF_REQUIRED"),
                 source_signals=item.get("SOURCE_SIGNALS"),
                 priority_score=item.get("PRIORITY_SCORE"),
+                workflow=item.get("WORKFLOW"),
+            )
+
+    workload = workload_lanes.copy() if workload_lanes is not None and not workload_lanes.empty else _empty_df()
+    if not workload.empty:
+        workload.columns = [str(col).upper() for col in workload.columns]
+        sort_cols = [col for col in ["PRIORITY_SCORE", "WORKFLOW"] if col in workload.columns]
+        ordered_workload = workload.sort_values(sort_cols, ascending=[False, True][: len(sort_cols)]) if sort_cols else workload
+        for _, item in ordered_workload.iterrows():
+            add_row(
+                item.get("ROUTE") or "Workload Operations",
+                state=item.get("STATE"),
+                why_now=item.get("WHY_NOW"),
+                first_move=item.get("FIRST_MOVE"),
+                owner_route=item.get("OWNER_ROUTE"),
+                go_no_go=item.get("GO_NO_GO"),
+                proof_required=item.get("PROOF_REQUIRED"),
+                source_signals=item.get("SOURCE_SIGNALS"),
+                priority_score=item.get("PRIORITY_SCORE"),
+                workflow=item.get("WORKFLOW"),
             )
 
     priority = priority_index.copy() if priority_index is not None and not priority_index.empty else _empty_df()
-    if len(rows) < max_rows and not priority.empty:
+    if not priority.empty:
         priority.columns = [str(col).upper() for col in priority.columns]
         sort_cols = [col for col in ["PRIORITY_SCORE", "SECTION"] if col in priority.columns]
         ordered_priority = priority.sort_values(sort_cols, ascending=[False, True][: len(sort_cols)]) if sort_cols else priority
@@ -3989,7 +4180,7 @@ def _dba_morning_brief_rows(
             )
 
     handoff = handoff_rows.copy() if handoff_rows is not None and not handoff_rows.empty else _empty_df()
-    if len(rows) < max_rows and not handoff.empty:
+    if not handoff.empty:
         handoff.columns = [str(col).upper() for col in handoff.columns]
         rank = pd.to_numeric(handoff.get("PRIORITY_RANK", pd.Series([9] * len(handoff))), errors="coerce").fillna(9)
         important = handoff.assign(_MORNING_SORT=rank).sort_values(["_MORNING_SORT", "LANE"], ascending=[True, True])
@@ -4025,7 +4216,89 @@ def _dba_morning_brief_rows(
             priority_score=0,
         )
 
-    return pd.DataFrame(rows)
+    result = pd.DataFrame(rows).sort_values(
+        ["PRIORITY_SCORE", "ROUTE", "WORKFLOW"],
+        ascending=[False, True, True],
+    ).head(max_rows).reset_index(drop=True)
+    result["MORNING_RANK"] = range(1, len(result) + 1)
+    result = _add_dba_morning_decision_contract(result)
+    return result
+
+
+def _dba_morning_decision_contract(row: dict | pd.Series | None) -> dict[str, str]:
+    """Return the operator contract for one Morning Brief row."""
+    row = row if row is not None else {}
+    state = str(_row_value(row, "STATE", default="Review") or "Review")
+    route = str(_row_value(row, "ROUTE", default="DBA Control Room") or "DBA Control Room")
+    workflow = str(_row_value(row, "WORKFLOW", default="") or "").strip()
+    go_no_go = str(_row_value(row, "GO_NO_GO", default="") or "")
+    proof = str(_row_value(row, "PROOF_REQUIRED", default="") or "")
+    owner = str(_row_value(row, "OWNER_ROUTE", default="") or "")
+    score = safe_float(_row_value(row, "PRIORITY_SCORE", default=0))
+    combined = f"{state} {go_no_go} {proof}".upper()
+
+    if "NO-GO" in combined or "ESCALATE NOW" in combined or score >= 95:
+        decision = "No-Go / contain now"
+        sla_clock = "15 min containment; 30 min owner update"
+        next_checkpoint = "Confirm blocker owner, proof source, and containment path before lower-priority work."
+        stop_rule = "Do not release, resize, close, or retry until blocker proof is current."
+    elif any(token in combined for token in ("BLOCKED", "OVERDUE", "UNAVAILABLE", "STALE")) or score >= 85:
+        decision = "Contain same shift"
+        sla_clock = "30 min triage; same-shift mitigation"
+        next_checkpoint = "Assign DBA owner and prove whether this is service risk, source drift, or queue backlog."
+        stop_rule = "Do not close the route until owner, ticket, and verification evidence are attached."
+    elif any(token in combined for token in ("SLA", "RISK", "REVIEW", "DIAGNOSIS", "CONTENTION")) or score >= 70:
+        decision = "Triage today"
+        sla_clock = "Same business day"
+        next_checkpoint = "Load the owning workflow and attach the first evidence row before changing settings."
+        stop_rule = "Do not make state-changing fixes from the brief alone."
+    else:
+        decision = "Monitor"
+        sla_clock = "Next DBA review"
+        next_checkpoint = "Keep Fast Watch and Alert Center current."
+        stop_rule = "Escalate only if new evidence raises the route priority."
+
+    proof_l = proof.lower()
+    owner_l = owner.lower()
+    proof_tokens = (
+        "owner", "approval", "ticket", "verification", "query", "source",
+        "current", "fresh", "rollback", "evidence", "ledger", "ddl",
+    )
+    owner_named = bool(owner.strip()) and owner_l not in {"nan", "none", "unassigned"}
+    proof_named = any(token in proof_l for token in proof_tokens)
+    if owner_named and proof_named:
+        owner_proof_state = "Owner/proof named"
+    elif owner_named:
+        owner_proof_state = "Proof gap"
+    elif proof_named:
+        owner_proof_state = "Owner gap"
+    else:
+        owner_proof_state = "Owner/proof gap"
+
+    route_action = f"Open {route}{f' / {workflow}' if workflow else ''}; keep approval, execution, rollback, and verification in the owning workflow."
+    return {
+        "MORNING_DECISION": decision,
+        "SLA_CLOCK": sla_clock,
+        "OWNER_PROOF_STATE": owner_proof_state,
+        "ROUTE_ACTION": route_action,
+        "NEXT_CHECKPOINT": next_checkpoint,
+        "STOP_RULE": stop_rule,
+    }
+
+
+def _add_dba_morning_decision_contract(brief: pd.DataFrame) -> pd.DataFrame:
+    """Attach concise decision metadata to Morning Brief rows."""
+    if brief is None or brief.empty:
+        return _empty_df()
+    view = brief.copy()
+    contracts = [
+        _dba_morning_decision_contract(row)
+        for row in view.to_dict("records")
+    ]
+    contract_df = pd.DataFrame(contracts)
+    for column in contract_df.columns:
+        view[column] = contract_df[column].values
+    return view
 
 
 def _build_dba_morning_brief_markdown(
@@ -4047,12 +4320,17 @@ def _build_dba_morning_brief_markdown(
         lines.append("- No morning brief rows were available.")
     else:
         for _, row in rows.sort_values("MORNING_RANK").iterrows():
+            workflow = str(row.get("WORKFLOW") or "").strip()
+            workflow_note = f" / {workflow}" if workflow else ""
             lines.append(
                 f"- {safe_int(row.get('MORNING_RANK'))}. [{row.get('STATE', '')}] "
-                f"{row.get('ROUTE', '')}: {row.get('FIRST_MOVE', '')} "
+                f"{row.get('ROUTE', '')}{workflow_note}: {row.get('FIRST_MOVE', '')} "
+                f"Decision: {row.get('MORNING_DECISION', '')}. "
+                f"SLA: {row.get('SLA_CLOCK', '')}. "
                 f"Why: {row.get('WHY_NOW', '')}. "
                 f"Gate: {row.get('GO_NO_GO', '')}. "
-                f"Proof: {row.get('PROOF_REQUIRED', '')}."
+                f"Proof: {row.get('PROOF_REQUIRED', '')}. "
+                f"Stop: {row.get('STOP_RULE', '')}."
             )
     lines.extend([
         "",
@@ -4075,12 +4353,35 @@ def _render_dba_morning_brief(brief: pd.DataFrame, markdown: str) -> None:
         ("Escalate Now", f"{int(brief['STATE'].astype(str).eq('Escalate Now').sum()):,}"),
         ("Routes", f"{len(brief):,}"),
     ))
+    first_moves = brief.head(3)
+    move_cols = st.columns(max(1, len(first_moves)))
+    for idx, (_, row) in enumerate(first_moves.iterrows()):
+        route = str(row.get("ROUTE") or "DBA Control Room")
+        workflow = str(row.get("WORKFLOW") or "").strip()
+        label = f"Open {workflow or route}"
+        help_text = (
+            f"{row.get('STATE', 'Review')}: {row.get('WHY_NOW', '')}\n"
+            f"Decision: {row.get('MORNING_DECISION', '')}\n"
+            f"SLA: {row.get('SLA_CLOCK', '')}\n"
+            f"First move: {row.get('FIRST_MOVE', '')}\n"
+            f"Route action: {row.get('ROUTE_ACTION', '')}\n"
+            f"Proof: {row.get('PROOF_REQUIRED', '')}\n"
+            f"Stop rule: {row.get('STOP_RULE', '')}"
+        )
+        with move_cols[idx]:
+            if st.button(label, key=f"dba_morning_open_{idx}_{route}_{workflow}", help=help_text, width="stretch"):
+                if route == "DBA Control Room" and workflow in DBA_CONTROL_ROOM_PANES:
+                    st.session_state["dba_control_room_active_view"] = workflow
+                    st.rerun()
+                else:
+                    _jump(route, workflow=workflow)
     render_priority_dataframe(
         brief,
         title="DBA morning brief",
         priority_columns=[
-            "MORNING_RANK", "ROUTE", "STATE", "WHY_NOW", "FIRST_MOVE",
-            "OWNER_ROUTE", "GO_NO_GO", "PROOF_REQUIRED", "SOURCE_SIGNALS",
+            "MORNING_RANK", "MORNING_DECISION", "SLA_CLOCK", "ROUTE", "WORKFLOW",
+            "STATE", "WHY_NOW", "FIRST_MOVE", "OWNER_PROOF_STATE", "OWNER_ROUTE",
+            "GO_NO_GO", "PROOF_REQUIRED", "SOURCE_SIGNALS",
         ],
         sort_by=["MORNING_RANK"],
         ascending=[True],
@@ -4377,37 +4678,6 @@ def _render_dba_action_brief(
             if st.button("Alert Center", key="dba_control_room_action_brief_alerts", width="stretch"):
                 _jump("Alert Center")
                 st.rerun()
-
-
-def _render_loaded_operating_snapshot(
-    *,
-    exception_count: int,
-    release_blocks: int,
-    release_reviews: int,
-    failed_queries: int,
-    queued_queries: int,
-    p95_runtime: float,
-    period_credits: float,
-    credit_delta: float,
-    credit_price: float,
-    drift_ai_count: int,
-) -> None:
-    """Show the loaded Control Room scope without repeating Fast Watch counters."""
-    st.markdown("**Operating Snapshot**")
-    render_shell_snapshot((
-        ("Exceptions", f"{safe_int(exception_count):,}"),
-        ("Release Blocks", f"{safe_int(release_blocks):,} ({safe_int(release_reviews):,} review)"),
-        ("Failed Queries", f"{safe_int(failed_queries):,}"),
-        ("Est. Cost", f"${credits_to_dollars(period_credits, credit_price):,.0f}"),
-    ))
-
-    with st.expander("More loaded metrics", expanded=False):
-        render_shell_snapshot((
-            ("Queued", f"{safe_int(queued_queries):,}"),
-            ("p95 Runtime", f"{safe_float(p95_runtime):,.0f}s"),
-            ("Credits", f"{safe_float(period_credits):,.2f} ({safe_float(credit_delta):+.1f}%)"),
-            ("Drift / AI", f"{safe_int(drift_ai_count):,}"),
-        ))
 
 
 def _dba_handoff_rows(
@@ -5228,9 +5498,7 @@ def render() -> None:
     task_sla_cost = data.get("task_sla_cost", _empty_df())
     procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
     regression_count = (0 if task_sla_cost.empty else len(task_sla_cost)) + (0 if procedure_sla_cost.empty else len(procedure_sla_cost))
-    cortex_summary = data.get("cortex_summary", _empty_df())
     cortex_exceptions = data.get("cortex_exceptions", _empty_df())
-    cortex_projected = safe_float(cortex_summary.iloc[0].get("PROJECTED_30D_COST", 0)) if not cortex_summary.empty else 0
     release_source_health = _dba_control_source_health_rows(
         data,
         st.session_state,
@@ -5243,24 +5511,8 @@ def render() -> None:
     )
     release_gate_summary, release_gate_rows = _build_auto_release_readiness_gate(data, release_source_health)
 
-    release_blocks = safe_int(release_gate_summary.get("blocked"))
-    release_reviews = safe_int(release_gate_summary.get("review")) + safe_int(release_gate_summary.get("not_loaded"))
     failed_queries = safe_int(row.get("FAILED_QUERIES", 0))
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
-    p95_runtime = safe_float(row.get("P95_ELAPSED_SEC", 0))
-    cortex_issue_count = 0 if cortex_exceptions.empty else len(cortex_exceptions)
-    _render_loaded_operating_snapshot(
-        exception_count=len(exceptions),
-        release_blocks=release_blocks,
-        release_reviews=release_reviews,
-        failed_queries=failed_queries,
-        queued_queries=queued_queries,
-        p95_runtime=p95_runtime,
-        period_credits=period_credits,
-        credit_delta=credit_delta,
-        credit_price=credit_price,
-        drift_ai_count=regression_count + cortex_issue_count,
-    )
     _render_dba_action_brief(
         release_gate_summary,
         exceptions,
@@ -5434,10 +5686,12 @@ def render() -> None:
             )
             st.session_state["dba_control_room_escalation_packet"] = escalation_packet
             st.session_state["dba_control_room_escalation_packet_markdown"] = escalation_md
+            workload_morning_lanes = _dba_workload_morning_lanes(data, exceptions)
             morning_brief = _dba_morning_brief_rows(
                 operations_priority,
                 escalation_packet,
                 handoff_rows,
+                workload_morning_lanes,
             )
             morning_brief_md = _build_dba_morning_brief_markdown(
                 morning_brief,

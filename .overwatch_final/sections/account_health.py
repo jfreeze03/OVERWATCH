@@ -5,6 +5,7 @@ import streamlit as st
 from datetime import datetime
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULTS
 from sections.base import lazy_pandas, lazy_util as _lazy_util
+from sections.navigation import apply_navigation_state
 from sections.shell_helpers import render_shell_snapshot
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
@@ -356,7 +357,7 @@ def _drill_to(
     workflow_key: str = "",
     workflow: str = "",
 ):
-    st.session_state["nav_section"] = section
+    apply_navigation_state(section)
     if workflow_key and workflow:
         st.session_state[workflow_key] = workflow
     if wh_filter:
@@ -3640,7 +3641,7 @@ def render():
         qnav_cols = st.columns(4)
 
         def _jump(tgt, workflow=None):
-            st.session_state["nav_section"] = tgt
+            apply_navigation_state(tgt)
             if workflow:
                 st.session_state["workload_operations_workflow"] = workflow
 

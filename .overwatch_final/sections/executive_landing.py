@@ -11,7 +11,7 @@ import streamlit as st
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DEFAULTS, DAY_WINDOW_OPTIONS
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.shell_helpers import render_shell_snapshot
-from utils.primitives import safe_float
+from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
 
 
@@ -80,6 +80,134 @@ def _open_action_mask(queue: pd.DataFrame) -> pd.Series:
     return ~queue["STATUS"].fillna("New").astype(str).str.title().isin(["Fixed", "Ignored", "Closed"])
 
 
+def _platform_score_state(score: float) -> str:
+    score = safe_float(score)
+    if score >= 90:
+        return "Ready"
+    if score >= 80:
+        return "Watch"
+    if score >= 70:
+        return "Needs DBA Review"
+    return "Executive Escalation"
+
+
+def _score_driver(
+    driver: str,
+    *,
+    penalty: float,
+    evidence: str,
+    next_action: str,
+    cap: int | None = None,
+) -> dict:
+    penalty = max(0.0, safe_float(penalty))
+    return {
+        "DRIVER": driver,
+        "STATE": "Review" if penalty > 0 else "Ready",
+        "SCORE_IMPACT": round(-penalty, 1),
+        "EVIDENCE": evidence,
+        "SCORE_CAP": "" if cap is None else int(cap),
+        "NEXT_ACTION": next_action,
+    }
+
+
+def _build_platform_operating_score(summary: dict, source_health: pd.DataFrame | None = None) -> dict:
+    """Strict executive score with visible drivers and hard evidence caps."""
+    prior_credits = safe_float(summary.get("prior_credits"))
+    cost_delta = safe_float(summary.get("cost_delta"))
+    critical_high = safe_int(summary.get("critical_high_alerts"))
+    open_actions = safe_int(summary.get("open_actions"))
+    high_actions = safe_int(summary.get("high_actions"))
+    migration_blockers = safe_int(summary.get("migration_blockers"))
+    source_rows = source_health if isinstance(source_health, pd.DataFrame) else pd.DataFrame()
+    loaded_sources = int(source_rows["STATE"].eq("Loaded").sum()) if "STATE" in source_rows.columns else 0
+    limited_sources = int(source_rows["STATE"].eq("Limited").sum()) if "STATE" in source_rows.columns else 0
+
+    cost_delta_pct = cost_delta / max(prior_credits, 1.0) if cost_delta > 0 and prior_credits else 0.0
+    cost_penalty = min(20.0, max(0.0, cost_delta_pct) * 35.0)
+    alert_penalty = min(24.0, critical_high * 8.0)
+    action_penalty = min(18.0, high_actions * 5.0 + max(0, open_actions - high_actions) * 0.5)
+    deployment_penalty = min(24.0, migration_blockers * 12.0)
+    evidence_penalty = min(18.0, limited_sources * 8.0)
+
+    caps: list[tuple[int, str]] = []
+    if limited_sources:
+        caps.append((82, f"{limited_sources} executive evidence source(s) are limited."))
+    if migration_blockers:
+        caps.append((74, f"{migration_blockers} setup or migration blocker(s) cap the executive score."))
+    if critical_high:
+        caps.append((85, f"{critical_high} Critical/High open alert(s) cap the executive score."))
+    if high_actions:
+        caps.append((88, f"{high_actions} high-priority open action(s) cap the executive score."))
+    if cost_delta_pct >= 0.20:
+        caps.append((90, f"Spend increased {cost_delta_pct:.0%} versus the prior window."))
+
+    drivers = pd.DataFrame([
+        _score_driver(
+            "Cost & Contract",
+            penalty=cost_penalty,
+            evidence=(
+                f"Spend delta {cost_delta:+,.2f} credits"
+                if cost_delta > 0
+                else "No positive spend movement in loaded cost summary."
+            ),
+            next_action="Open Cost & Contract and validate the top cost mover before budget action.",
+            cap=90 if cost_delta_pct >= 0.20 else None,
+        ),
+        _score_driver(
+            "Reliability / Alerts",
+            penalty=alert_penalty,
+            evidence=f"{critical_high:,} Critical/High open alert(s).",
+            next_action="Open Alert Center and confirm owner, SLA state, and escalation proof.",
+            cap=85 if critical_high else None,
+        ),
+        _score_driver(
+            "Owned Closure",
+            penalty=action_penalty,
+            evidence=f"{open_actions:,} open action(s), {high_actions:,} high-priority.",
+            next_action="Open DBA Control Room and work owner-ready queue rows with verification evidence.",
+            cap=88 if high_actions else None,
+        ),
+        _score_driver(
+            "Deployment Trust",
+            penalty=deployment_penalty,
+            evidence=f"{migration_blockers:,} setup or migration blocker(s).",
+            next_action="Open Setup Status and reconcile the migration ledger before leadership sign-off.",
+            cap=74 if migration_blockers else None,
+        ),
+        _score_driver(
+            "Evidence Coverage",
+            penalty=evidence_penalty,
+            evidence=f"{loaded_sources}/4 executive source(s) loaded; {limited_sources} limited.",
+            next_action="Reload or route to the source section when evidence is limited.",
+            cap=82 if limited_sources else None,
+        ),
+    ])
+    if not drivers.empty:
+        drivers = drivers.sort_values(["SCORE_IMPACT", "DRIVER"], ascending=[True, True]).reset_index(drop=True)
+
+    raw_score = max(
+        0.0,
+        min(100.0, 100.0 - cost_penalty - alert_penalty - action_penalty - deployment_penalty - evidence_penalty),
+    )
+    cap_value = min((cap for cap, _reason in caps), default=100)
+    cap_reason = next((reason for cap, reason in sorted(caps, key=lambda item: item[0]) if cap == cap_value), "")
+    final_score = max(0, min(100, int(round(min(raw_score, cap_value)))))
+    return {
+        "score": final_score,
+        "raw_score": round(raw_score, 1),
+        "state": _platform_score_state(final_score),
+        "score_cap": cap_value,
+        "cap_reason": cap_reason or "No hard cap applied.",
+        "platform_score_drivers": drivers,
+    }
+
+
+def _with_platform_operating_score(summary: dict, source_health: pd.DataFrame | None = None) -> dict:
+    enriched = dict(summary or {})
+    enriched.update(_build_platform_operating_score(enriched, source_health))
+    return enriched
+
+
 def _snapshot_state(cost: pd.DataFrame, alerts: pd.DataFrame, queue: pd.DataFrame, migration: pd.DataFrame) -> dict:
     cost_row = cost.iloc[0] if isinstance(cost, pd.DataFrame) and not cost.empty else pd.Series(dtype=object)
     current_credits = safe_float(cost_row.get("CURRENT_CREDITS"))
@@ -104,16 +232,7 @@ def _snapshot_state(cost: pd.DataFrame, alerts: pd.DataFrame, queue: pd.DataFram
         if isinstance(migration, pd.DataFrame) and not migration.empty and "MIGRATION_STATE" in migration.columns
         else 0
     )
-    score = 100
-    score -= min(max(cost_delta, 0) / max(prior_credits, 1) * 25, 25) if prior_credits else 0
-    score -= min(critical_high_alerts * 6, 24)
-    score -= min(high_actions * 5, 20)
-    score -= min(migration_blockers * 10, 20)
-    score = max(0, min(100, int(round(score))))
-    state = "Ready" if score >= 90 else "Watch" if score >= 80 else "Needs DBA Review" if score >= 70 else "Executive Escalation"
-    return {
-        "score": score,
-        "state": state,
+    return _with_platform_operating_score({
         "current_credits": current_credits,
         "prior_credits": prior_credits,
         "cost_delta": cost_delta,
@@ -123,7 +242,7 @@ def _snapshot_state(cost: pd.DataFrame, alerts: pd.DataFrame, queue: pd.DataFram
         "high_actions": high_actions,
         "migration_blockers": migration_blockers,
         "top_cost_driver": str(cost_row.get("TOP_INCREASE_WAREHOUSE") or "No loaded driver"),
-    }
+    })
 
 
 def _decision_rows(summary: dict) -> pd.DataFrame:
@@ -168,13 +287,15 @@ def _executive_action_brief(summary: dict | None) -> dict[str, str]:
             "detail": "Risk, spend movement, closure work, and deployment trust stay behind one explicit load.",
         }
     if summary["critical_high_alerts"] or summary["high_actions"] or summary["migration_blockers"]:
+        cap_reason = str(summary.get("cap_reason") or "")
+        cap_detail = f" Score cap: {cap_reason}" if cap_reason and cap_reason != "No hard cap applied." else ""
         return {
             "state": str(summary["state"]),
             "headline": "Review the top exception before briefing leaders.",
             "detail": (
                 f"{summary['critical_high_alerts']:,} Critical/High alert(s), "
                 f"{summary['high_actions']:,} high-priority action(s), "
-                f"{summary['migration_blockers']:,} deployment blocker(s)."
+                f"{summary['migration_blockers']:,} deployment blocker(s).{cap_detail}"
             ),
         }
     if summary["cost_delta"] > 0:
@@ -228,7 +349,8 @@ def _powerpoint_kpi_rows(
     rows = [
         ("Scope", f"{company} / {environment_label}", "Company and environment currently selected."),
         ("Window", f"{int(days)} days", "Executive snapshot window."),
-        ("Executive state", f"{summary.get('state')} ({safe_float(summary.get('score')):.0f}/100)", "Composite operating signal."),
+        ("Executive state", f"{summary.get('state')} ({safe_float(summary.get('score')):.0f}/100)", "Platform Operating Score with hard evidence caps."),
+        ("Score cap", "None" if safe_int(summary.get("score_cap"), 100) >= 100 else f"{safe_int(summary.get('score_cap'))}/100", str(summary.get("cap_reason") or "No hard cap applied.")),
         ("Current spend", _money(current_spend), f"{safe_float(summary.get('current_credits')):,.2f} credits at ${safe_float(credit_price):,.2f}/credit."),
         ("Spend delta", _money(spend_delta, signed=True), f"Prior window: {_money(prior_spend)}."),
         ("Top cost mover", str(summary.get("top_cost_driver") or "No loaded driver"), f"{safe_float(summary.get('top_increase_credits')):+,.2f} credits."),
@@ -271,6 +393,7 @@ def _powerpoint_slide_brief(
         [
             f"OVERWATCH Executive KPI Brief - {company} / {environment_label} / {int(days)} days",
             f"Headline: {summary.get('state')} ({safe_float(summary.get('score')):.0f}/100)",
+            f"Score cap: {summary.get('cap_reason') or 'No hard cap applied.'}",
             "",
             "Slide bullets:",
             f"- Spend: {_money(current_spend)} current window, {_money(spend_delta, signed=True)} versus prior window.",
@@ -809,6 +932,9 @@ def _render_powerpoint_slide_pack(
 
 def _render_executive_action_brief(summary: dict | None, days: int) -> bool:
     brief = _executive_action_brief(summary)
+    button_help = " ".join(
+        part for part in (str(brief.get("headline") or ""), str(brief.get("detail") or "")) if part
+    )
     with st.container(border=True):
         label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
         with label_col:
@@ -816,11 +942,46 @@ def _render_executive_action_brief(summary: dict | None, days: int) -> bool:
             st.caption(str(brief["state"]))
         with detail_col:
             st.markdown(f"**{brief['headline']}**")
-            st.caption(str(brief["detail"]))
         with action_col:
             st.caption(f"{int(days)}-day window")
-            return bool(st.button("Load Executive Snapshot", key="executive_landing_load", type="primary", width="stretch"))
+            return bool(
+                st.button(
+                    "Load Executive Snapshot",
+                    key="executive_landing_load",
+                    help=button_help or None,
+                    type="primary",
+                    width="stretch",
+                )
+            )
     return False
+
+
+def _render_platform_operating_score(summary: dict | None) -> None:
+    if not summary:
+        return
+    drivers = summary.get("platform_score_drivers")
+    if not isinstance(drivers, pd.DataFrame):
+        drivers = pd.DataFrame()
+    cap_value = safe_int(summary.get("score_cap"), 100)
+    cap_label = "None" if cap_value >= 100 else f"{cap_value}/100"
+    st.markdown("**Platform Operating Score**")
+    render_shell_snapshot((
+        ("Score", f"{safe_int(summary.get('score'))}/100"),
+        ("State", str(summary.get("state") or "Review")),
+        ("Raw", f"{safe_float(summary.get('raw_score')):,.1f}/100"),
+        ("Cap", cap_label),
+    ))
+    if not drivers.empty:
+        render_priority_dataframe(
+            drivers,
+            title="Platform score drivers",
+            priority_columns=["DRIVER", "STATE", "SCORE_IMPACT", "EVIDENCE", "SCORE_CAP", "NEXT_ACTION"],
+            sort_by=["SCORE_IMPACT", "DRIVER"],
+            ascending=[True, True],
+            raw_label="All platform operating score drivers",
+            height=260,
+            max_rows=5,
+        )
 
 
 def _render_executive_operating_snapshot(
@@ -839,7 +1000,7 @@ def _render_executive_operating_snapshot(
         )
     else:
         metrics = (
-            ("State", str(summary["state"])),
+            ("Score", f"{safe_int(summary['score'])}/100"),
             ("Spend", f"${credits_to_dollars(summary['current_credits'], credit_price):,.0f}"),
             ("Alerts", f"{summary['critical_high_alerts']:,}"),
             ("Deploy", f"{summary['migration_blockers']:,}"),
@@ -921,13 +1082,16 @@ def render() -> None:
         defer_source_note("Loaded Executive Landing snapshot is for another scope. Reload the snapshot for the selected company, environment, and window.")
         snapshot = None
     summary = None
+    source_health = pd.DataFrame()
     if isinstance(snapshot, dict):
+        source_health = _source_health_rows(snapshot)
         summary = _snapshot_state(
             snapshot.get("cost", pd.DataFrame()),
             snapshot.get("alerts", pd.DataFrame()),
             snapshot.get("queue", pd.DataFrame()),
             snapshot.get("migration", pd.DataFrame()),
         )
+        summary = _with_platform_operating_score(summary, source_health)
     load = _render_executive_action_brief(summary, int(days))
     _render_executive_operating_snapshot(summary, credit_price=credit_price, company=company, days=int(days))
 
@@ -981,7 +1145,9 @@ def render() -> None:
     for err in snapshot.get("errors", []):
         defer_source_note(err)
 
-    source_health = _source_health_rows(snapshot)
+    if not isinstance(source_health, pd.DataFrame) or source_health.empty:
+        source_health = _source_health_rows(snapshot)
+        summary = _with_platform_operating_score(summary, source_health)
     loaded_sources = int(source_health["STATE"].eq("Loaded").sum())
     limited_sources = int(source_health["STATE"].eq("Limited").sum())
     no_row_sources = int(source_health["STATE"].eq("No Rows").sum())
@@ -1000,6 +1166,8 @@ def render() -> None:
             raw_label="All executive source health rows",
             height=220,
         )
+
+    _render_platform_operating_score(summary)
 
     _render_powerpoint_slide_pack(
         summary,

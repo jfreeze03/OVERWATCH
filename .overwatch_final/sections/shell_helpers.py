@@ -131,7 +131,10 @@ def render_shell_workflows(
             with col:
                 st.markdown(f"**{html.escape(str(heading))}**")
                 caption = str(row.get(caption_key) or "").strip()
-                if caption:
-                    st.caption(caption)
-                if st.button(button_label, key=f"{key_prefix}_{key_token}", width="stretch"):
+                if st.button(
+                    button_label,
+                    key=f"{key_prefix}_{key_token}",
+                    help=caption or None,
+                    width="stretch",
+                ):
                     on_open(row)

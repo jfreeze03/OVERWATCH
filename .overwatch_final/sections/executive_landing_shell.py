@@ -151,6 +151,11 @@ def _render_back_to_brief_control() -> None:
 
 
 def _render_action_brief() -> None:
+    snapshot_help = evidence_caption(
+        st.session_state,
+        _FULL_WORKSPACE_STATE_KEYS,
+        "The shell stays zero-query; PowerPoint evidence and live source health load only on demand.",
+    )
     with st.container(border=True):
         label_col, detail_col, action_col = st.columns([1.0, 3.0, 1.8])
         with label_col:
@@ -158,15 +163,14 @@ def _render_action_brief() -> None:
             st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
         with detail_col:
             st.markdown("**Open Executive Snapshot when leaders need a board-ready status package.**")
-            st.caption(
-                evidence_caption(
-                    st.session_state,
-                    _FULL_WORKSPACE_STATE_KEYS,
-                    "The shell stays zero-query; PowerPoint evidence and live source health load only on demand.",
-                )
-            )
         with action_col:
-            if st.button("Open Executive Snapshot", key="executive_landing_shell_open", type="primary", width="stretch"):
+            if st.button(
+                "Open Executive Snapshot",
+                key="executive_landing_shell_open",
+                help=snapshot_help,
+                type="primary",
+                width="stretch",
+            ):
                 _open_workspace()
 
 

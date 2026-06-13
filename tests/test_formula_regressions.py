@@ -79,6 +79,7 @@ from sections.workload_operations import (  # noqa: E402
 )
 from sections.executive_landing import (  # noqa: E402
     _build_executive_snapshot_pptx,
+    _build_platform_operating_score,
     _powerpoint_chart_rows,
     _powerpoint_kpi_rows,
     _powerpoint_slide_brief,
@@ -568,6 +569,37 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Trexis / All DEV/SIT / 30 days", slide1)
         self.assertIn("Boardroom KPI Drivers", slide2)
         self.assertIn("Risk and work", slide2)
+
+    def test_executive_platform_operating_score_is_capped_by_evidence(self):
+        source_health = pd.DataFrame([
+            {"SOURCE": "Cost cockpit", "STATE": "Loaded"},
+            {"SOURCE": "Alert evidence", "STATE": "Limited"},
+            {"SOURCE": "Action queue", "STATE": "Loaded"},
+            {"SOURCE": "Migration ledger", "STATE": "Loaded"},
+        ])
+        scorecard = _build_platform_operating_score(
+            {
+                "current_credits": 112.0,
+                "prior_credits": 100.0,
+                "cost_delta": 12.0,
+                "critical_high_alerts": 1,
+                "open_actions": 4,
+                "high_actions": 1,
+                "migration_blockers": 1,
+                "top_cost_driver": "WH_TRXS_QUERY",
+            },
+            source_health,
+        )
+        drivers = scorecard["platform_score_drivers"]
+        by_driver = {row["DRIVER"]: row for _, row in drivers.iterrows()}
+
+        self.assertEqual(scorecard["score"], 61)
+        self.assertEqual(scorecard["score_cap"], 74)
+        self.assertIn("migration blocker", scorecard["cap_reason"])
+        self.assertEqual(scorecard["state"], "Executive Escalation")
+        self.assertEqual(by_driver["Deployment Trust"]["SCORE_CAP"], 74)
+        self.assertEqual(by_driver["Evidence Coverage"]["SCORE_CAP"], 82)
+        self.assertLess(by_driver["Reliability / Alerts"]["SCORE_IMPACT"], 0)
 
     def test_priority_tables_add_cost_companions_for_credit_metrics(self):
         from utils.workflows import add_cost_companion_columns

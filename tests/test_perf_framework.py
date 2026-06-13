@@ -42,6 +42,18 @@ def load_live_runner():
     return module
 
 
+def load_section_smoke_runner():
+    spec = importlib.util.spec_from_file_location(
+        "overwatch_section_smoke_runner",
+        PERF_ROOT / "section_smoke_runner.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class PerformanceFrameworkTests(unittest.TestCase):
     def test_perf_sql_scripts_are_guarded_and_cleanup_is_scoped(self):
         setup_sql = (PERF_ROOT / "sql" / "01_perf_test_setup.sql").read_text(encoding="utf-8").upper()
@@ -144,10 +156,13 @@ class PerformanceFrameworkTests(unittest.TestCase):
         self.assertEqual(args.run_id, "PERF_SQL_UNIT")
 
     def test_section_smoke_runner_is_optional_navigation_coverage(self):
+        runner = load_section_smoke_runner()
         runner_text = (PERF_ROOT / "section_smoke_runner.py").read_text(encoding="utf-8")
 
         self.assertIn("DEFAULT_SECTIONS", runner_text)
         self.assertIn("Cost & Contract", runner_text)
+        self.assertIn("DBA Control Room", runner.DEFAULT_SECTIONS)
+        self.assertNotIn("Account Health", runner.DEFAULT_SECTIONS)
         self.assertIn("load_playwright", runner_text)
         self.assertIn("wait_for_app_ready", runner_text)
         self.assertIn('page.locator(".ow-section-title").first.wait_for', runner_text)

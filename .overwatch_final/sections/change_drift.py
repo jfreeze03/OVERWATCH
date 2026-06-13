@@ -1914,8 +1914,13 @@ def _render_change_watch_floor(score: int, exceptions: pd.DataFrame, row) -> Non
             st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('FINDING_TYPE', '')}**")
             st.caption(f"{item.get('ENTITY_TYPE', 'Object')}: {item.get('ENTITY', 'unknown')}")
             st.caption(f"Actor: {item.get('USER_NAME', 'unknown')} | Query: {item.get('QUERY_ID', '')}")
-            st.write(str(item.get("NEXT_ACTION", "")))
-            if st.button(f"Open {workflow}", key=f"change_watch_floor_{idx}_{workflow}", width="stretch"):
+            next_action = str(item.get("NEXT_ACTION", "") or "")
+            if st.button(
+                f"Open {workflow}",
+                key=f"change_watch_floor_{idx}_{workflow}",
+                help=next_action or None,
+                width="stretch",
+            ):
                 entity = str(item.get("ENTITY") or "").strip()
                 actor = str(item.get("USER_NAME") or "").strip()
                 query_id = str(item.get("QUERY_ID") or "").strip()
@@ -2115,9 +2120,13 @@ def _render_change_brief_launchpad() -> None:
         for col, row in zip(cols, rows[offset:offset + 3]):
             with col:
                 st.markdown(f"**{row['WORKFLOW']}**")
-                st.caption(row["DBA_MOVE"])
-                st.caption(row["WHEN"])
-                if st.button(row["BUTTON_LABEL"], key=f"change_brief_{row['WORKFLOW']}", width="stretch"):
+                help_text = f"{row['DBA_MOVE']} When: {row['WHEN']}"
+                if st.button(
+                    row["BUTTON_LABEL"],
+                    key=f"change_brief_{row['WORKFLOW']}",
+                    help=help_text,
+                    width="stretch",
+                ):
                     _queue_change_workflow(row["WORKFLOW"])
 
 

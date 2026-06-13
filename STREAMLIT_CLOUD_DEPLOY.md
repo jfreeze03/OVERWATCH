@@ -5,6 +5,19 @@ Last updated: June 6, 2026
 This guide covers the public Streamlit Community Cloud entry point and the
 Snowflake Streamlit-in-Snowflake entry point.
 
+## Deployment Decision
+
+The deployment source of truth is intentionally split by runtime:
+
+| Runtime | Entry point | Manifest | Warehouse / execution |
+|---|---|---|---|
+| Streamlit in Snowflake | `.overwatch_final/app.py` | `.overwatch_final/snowflake.yml` | `OVERWATCH_WH`, `CALLER` |
+| Streamlit Community Cloud | `streamlit_app.py` | `.streamlit/config.toml` | user-provided Snowflake connection |
+| Snowflake setup objects | `snowflake/OVERWATCH_MART_SETUP.sql` | `utils.deployment` schema contract | setup role, mart task warehouses |
+
+Do not deploy Streamlit in Snowflake from `streamlit_app.py`, and do not move
+the app runtime back to `COMPUTE_WH`.
+
 ## Community Cloud
 
 Use these settings:

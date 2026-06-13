@@ -6,6 +6,47 @@ import pandas as pd
 
 OVERWATCH_SCHEMA_VERSION = "2026.06.04-cost-proof-mart"
 MIGRATION_TABLE = "OVERWATCH_SCHEMA_MIGRATION"
+STREAMLIT_DEPLOYMENT_DECISION_VERSION = "2026.06.13-streamlit-entrypoint-contract"
+
+
+def build_streamlit_deployment_decision() -> pd.DataFrame:
+    """Return the pinned OVERWATCH Streamlit deployment entrypoint contract."""
+    rows = [
+        {
+            "RUNTIME": "Streamlit in Snowflake",
+            "DECISION": "Use .overwatch_final/snowflake.yml",
+            "ENTRYPOINT": ".overwatch_final/app.py",
+            "MANIFEST": ".overwatch_final/snowflake.yml",
+            "WAREHOUSE": "OVERWATCH_WH",
+            "EXECUTE_AS": "CALLER",
+            "DEPLOY_CONTEXT": "Snowflake app package root is .overwatch_final.",
+            "DO_NOT_USE": "streamlit_app.py, COMPUTE_WH",
+            "WHY_IT_MATTERS": "Keeps app execution on the dedicated OVERWATCH runtime warehouse with caller-mode privileges.",
+        },
+        {
+            "RUNTIME": "Streamlit Community Cloud",
+            "DECISION": "Use root streamlit_app.py wrapper",
+            "ENTRYPOINT": "streamlit_app.py",
+            "MANIFEST": ".streamlit/config.toml",
+            "WAREHOUSE": "User-provided Snowflake connection",
+            "EXECUTE_AS": "Connected Snowflake role",
+            "DEPLOY_CONTEXT": "Public wrapper inserts .overwatch_final into sys.path and runs .overwatch_final/app.py.",
+            "DO_NOT_USE": ".overwatch_final/snowflake.yml",
+            "WHY_IT_MATTERS": "Keeps Community Cloud on root requirements.txt instead of Snowflake-specific environment.yml.",
+        },
+        {
+            "RUNTIME": "Snowflake setup",
+            "DECISION": "Run snowflake/OVERWATCH_MART_SETUP.sql for database objects",
+            "ENTRYPOINT": "snowflake/OVERWATCH_MART_SETUP.sql",
+            "MANIFEST": "utils.deployment schema contract",
+            "WAREHOUSE": "COMPUTE_WH for summary refresh tasks, OVERWATCH_WH for app runtime",
+            "EXECUTE_AS": "Setup role executing the SQL",
+            "DEPLOY_CONTEXT": "DDL and mart migrations live in setup SQL, not in Streamlit UI code.",
+            "DO_NOT_USE": "ad hoc app-generated DDL as source of truth",
+            "WHY_IT_MATTERS": "Separates UI deployment from governed Snowflake mart/schema migration readiness.",
+        },
+    ]
+    return pd.DataFrame(rows)
 
 
 def build_schema_migration_contract() -> pd.DataFrame:

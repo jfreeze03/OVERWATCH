@@ -21,30 +21,20 @@ _FULL_WORKSPACE_STATE_KEYS = (
     "account_health_checklist_trend",
     "account_health_closure_analytics",
     "morning_data",
-    "ah_briefing_data",
-    "resmon_data",
 )
 
 _WORKFLOWS = (
     {
-        "PANE": "Overview",
-        "BUTTON_LABEL": "Open Health",
-        "MOVE": "Load the daily health checklist, morning exceptions, gates, controls, and operator next moves.",
-    },
-    {
         "PANE": "Morning Report",
-        "BUTTON_LABEL": "Open Morning Report",
-        "MOVE": "Generate a DBA morning report for failures, pressure, changes, and workload risk.",
+        "TITLE": "DBA Morning Brief",
+        "BUTTON_LABEL": "Open Morning Brief",
+        "MOVE": "Build the on-call DBA morning packet from Control Room evidence, Account Health exceptions, and owner proof.",
     },
     {
-        "PANE": "Executive Briefing",
-        "BUTTON_LABEL": "Open Executive Briefing",
-        "MOVE": "Prepare leadership-ready cost, reliability, and risk summary evidence.",
-    },
-    {
-        "PANE": "Resource Monitors",
-        "BUTTON_LABEL": "Open Resource Monitors",
-        "MOVE": "Review monitor coverage, quota pressure, and credit-governance blockers.",
+        "PANE": "Overview",
+        "TITLE": "Health Workspace",
+        "BUTTON_LABEL": "Open Health Workspace",
+        "MOVE": "Load the daily health checklist, morning exceptions, gates, controls, and operator next moves.",
     },
 )
 
@@ -133,6 +123,7 @@ def _render_workflow_launchpad() -> None:
         "Account Health Workflows",
         _WORKFLOWS,
         label_key="PANE",
+        title_key="TITLE",
         key_prefix="account_health_shell",
         on_open=_open,
     )

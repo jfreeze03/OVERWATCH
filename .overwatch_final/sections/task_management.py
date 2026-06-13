@@ -2776,12 +2776,17 @@ def _render_task_ops_brief(session) -> None:
                 task_name = str(item.get("TASK_NAME") or item.get("ROOT_TASK_NAME") or "Task graph")
                 with move_cols[idx]:
                     st.markdown(f"**{item.get('SEVERITY', 'Signal')}: {task_name}**")
-                    st.caption(str(item.get("SIGNAL", "")))
+                    signal = str(item.get("SIGNAL", "") or "")
+                    st.caption(signal)
                     detail = str(item.get("DETAIL", "") or "")
-                    if detail:
-                        st.caption(detail[:220])
-                    st.write(str(item.get("NEXT_ACTION", "")))
-                    if st.button(f"Open {workflow}", key=f"task_ops_next_{idx}_{workflow}", width="stretch"):
+                    next_action = str(item.get("NEXT_ACTION", "") or "")
+                    help_text = " ".join(part for part in (signal, detail, next_action) if part).strip()
+                    if st.button(
+                        f"Open {workflow}",
+                        key=f"task_ops_next_{idx}_{workflow}",
+                        help=help_text or None,
+                        width="stretch",
+                    ):
                         st.session_state["task_management_view"] = workflow
                         st.rerun()
 

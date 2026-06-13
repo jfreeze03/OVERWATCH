@@ -1,7 +1,6 @@
-"""Account Health: KPIs, Resource Monitors, Morning Report, and executive briefing."""
+"""Account Health: daily checklist, source readiness, and DBA morning brief."""
 from __future__ import annotations
 
-import html
 import streamlit as st
 from datetime import datetime
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULTS
@@ -33,7 +32,6 @@ get_wh_filter_clause = _lazy_util("get_wh_filter_clause")
 get_db_filter_clause = _lazy_util("get_db_filter_clause")
 get_user_filter_clause = _lazy_util("get_user_filter_clause")
 get_global_filter_clause = _lazy_util("get_global_filter_clause")
-company_value_allowed = _lazy_util("company_value_allowed")
 get_active_environment = _lazy_util("get_active_environment")
 load_latest_control_room_mart = _lazy_util("load_latest_control_room_mart")
 mart_source_caption = _lazy_util("mart_source_caption")
@@ -42,13 +40,6 @@ build_mart_account_health_cost_drivers_sql = _lazy_util("build_mart_account_heal
 build_mart_account_health_change_sql = _lazy_util("build_mart_account_health_change_sql")
 build_mart_control_room_task_failures_sql = _lazy_util("build_mart_control_room_task_failures_sql")
 build_mart_control_room_warehouse_pressure_sql = _lazy_util("build_mart_control_room_warehouse_pressure_sql")
-build_mart_account_health_failure_types_sql = _lazy_util("build_mart_account_health_failure_types_sql")
-build_mart_account_health_long_queries_sql = _lazy_util("build_mart_account_health_long_queries_sql")
-build_mart_account_health_credits_sql = _lazy_util("build_mart_account_health_credits_sql")
-build_mart_account_health_failure_count_sql = _lazy_util("build_mart_account_health_failure_count_sql")
-build_mart_account_health_top_driver_sql = _lazy_util("build_mart_account_health_top_driver_sql")
-build_mart_account_health_queued_sql = _lazy_util("build_mart_account_health_queued_sql")
-build_mart_account_health_ytd_credits_sql = _lazy_util("build_mart_account_health_ytd_credits_sql")
 format_snowflake_error = _lazy_util("format_snowflake_error")
 filter_existing_columns = _lazy_util("filter_existing_columns")
 make_action_id = _lazy_util("make_action_id")
@@ -78,15 +69,15 @@ ACCOUNT_HEALTH_ACTION_SOURCE = "Account Health - Daily DBA Checklist"
 ACCOUNT_HEALTH_ACCESS_HYGIENE_SOURCE = "Account Health - Account Access Hygiene"
 ACCOUNT_HEALTH_PANES = (
     "Overview",
-    "Resource Monitors",
     "Morning Report",
-    "Executive Briefing",
 )
+ACCOUNT_HEALTH_PANE_LABELS = {
+    "Overview": "Health Workspace",
+    "Morning Report": "DBA Morning Brief",
+}
 ACCOUNT_HEALTH_PANE_DETAILS = {
     "Overview": "Daily account cockpit: checklist state, source readiness, exception signals, and owner routes.",
-    "Resource Monitors": "Quota and suspend-threshold evidence for warehouses and account-level guardrails.",
-    "Morning Report": "Copy-ready DBA handoff built from verified account-health and overnight evidence.",
-    "Executive Briefing": "Leadership-ready account posture summary for health, risk, cost, and closure evidence.",
+    "Morning Report": "Copy-ready DBA morning packet built from Control Room blockers, handoff rows, and owner proof.",
 }
 ACCOUNT_HEALTH_SCOPE_FILTER_KEYS = (
     "global_start_date",
@@ -211,8 +202,6 @@ def _account_health_has_source_state(state: dict) -> bool:
         "account_health_closure_analytics_error",
         "morning_data",
         "morning_data_error",
-        "ah_briefing_text",
-        "ah_briefing_error",
     ):
         value = state.get(key)
         if isinstance(value, str):
@@ -297,21 +286,14 @@ def _account_health_source_health_rows(
             "confidence": "Workflow evidence",
         },
         {
-            "surface": "Morning report",
+            "surface": "DBA Morning Brief",
             "value": state.get("morning_data"),
-            "source": state.get("morning_data_source", "Fast summary or live account history"),
+            "source": state.get("morning_data_source", "DBA Control Room evidence"),
             "meta_key": "morning_data_meta",
-            "window": "12h",
-            "confidence": "Mixed",
-        },
-        {
-            "surface": "Executive briefing",
-            "value": state.get("ah_briefing_text"),
-            "source": state.get("ah_briefing_source", "Fast summary or live account history"),
-            "meta_key": "ah_briefing_meta",
-            "window_key": "ah_briefing_window",
+            "window_key": "account_health_morning_lookback",
             "default_window": "24h",
-            "confidence": "Mixed",
+            "window_unit": "h",
+            "confidence": "Control Room evidence",
         },
     ]
     rows = []
@@ -322,7 +304,7 @@ def _account_health_source_health_rows(
             raw_window = state.get(window_key, item.get("default_window", "")) if window_key else item.get("default_window", "")
             raw_window_text = _account_health_scope_value(raw_window)
             if window_key and raw_window_text.isdigit():
-                raw_window = f"{int(raw_window_text)}d"
+                raw_window = f"{int(raw_window_text)}{item.get('window_unit', 'd')}"
         window = _account_health_scope_value(raw_window)
         expected_meta = _account_health_scope_meta(company, environment, window=window, state=state)
         if item.get("ignore_environment"):
@@ -383,53 +365,6 @@ def _drill_to(
     if user_filter:
         st.session_state["global_user"] = user_filter
     st.rerun()
-
-
-def _build_briefing_prompt(data: dict, credit_price: float, company: str) -> str:
-    """Build the Cortex prompt from collected health metrics."""
-    cr24     = data.get("cr24",     0)
-    cr_prior = data.get("cr_prior", 0)
-    cr_delta = ((cr24 - cr_prior) / cr_prior * 100) if cr_prior > 0 else 0
-    cost24   = credits_to_dollars(cr24, credit_price)
-    failures = data.get("failures", 0)
-    queued   = data.get("queued",   0)
-    stor_tb  = data.get("stor_tb",  0)
-    contract_pct = data.get("contract_pct", None)
-    top_driver    = data.get("top_driver",   "")
-    top_driver_cost = data.get("top_driver_cost", 0)
-    failed_task   = data.get("failed_task",   "")
-
-    contract_line = (
-        f"Contract utilization is at {contract_pct:.1f}% of annual committed credits."
-        if contract_pct is not None
-        else "Contract utilization data not available."
-    )
-    task_line = (
-        f"A task failure was detected: {failed_task}."
-        if failed_task
-        else "No critical task failures overnight."
-    )
-
-    return f"""You are OVERWATCH, a Snowflake monitoring assistant for ALFA Insurance.
-Write a concise executive briefing (3-4 short paragraphs, plain English, no bullet points, no markdown headers).
-The audience is senior IT leadership - not technical DBAs.
-Tone: professional, direct, factual. Flag risks clearly. Quantify in dollars where possible.
-Do NOT invent data. Only use the numbers provided. Do NOT use markdown headers or bullet points.
-Today is {datetime.now().strftime('%A, %B %d %Y')}.
-Company: {company}
-
-Data:
-- Credits consumed (last 24h): {cr24:,.0f} (${cost24:,.2f} at ${credit_price:.2f}/credit)
-- Credit change vs prior 24h: {cr_delta:+.1f}%
-- Top cost driver: {top_driver} (${top_driver_cost:,.2f} yesterday)
-- Query failures (last 24h): {failures}
-- Queued queries (current): {queued}
-- Storage: {stor_tb:.1f} TB
-- {contract_line}
-- {task_line}
-
-Write the briefing now. Start with yesterday's overall performance summary, then highlight risks,
-then one recommended action for leadership."""
 
 
 def _task_failure_sql_or_empty(session, time_predicate: str, limit: int, company: str) -> str:
@@ -930,8 +865,8 @@ def _build_account_health_dba_checklist(
             "SEVERITY": "Low" if stor_tb > 0 else "Medium",
             "EVIDENCE": f"{safe_float(stor_tb):.1f} TB latest storage reading",
             "OWNER": "DBA / Platform",
-            "ROUTE": "Account Health",
-            "NEXT_ACTION": "Review Resource Monitors for quota, notify, suspend, and suspend-immediate coverage.",
+            "ROUTE": "Cost & Contract",
+            "NEXT_ACTION": "Review budget governance and cost controls for quota, notify, suspend, and suspend-immediate coverage.",
             "PROOF_REQUIRED": "resource monitor thresholds and warehouse scope",
         },
     ]
@@ -1823,9 +1758,104 @@ def _render_account_health_action_brief(checklist: pd.DataFrame | None) -> None:
                     st.rerun()
                 else:
                     _drill_to(target)
-            if st.button("Morning Report", key="account_health_action_brief_report", width="stretch"):
+            if st.button("Morning Brief", key="account_health_action_brief_report", width="stretch"):
                 st.session_state["account_health_active_view"] = "Morning Report"
                 st.rerun()
+
+
+def _build_account_health_dba_morning_brief(
+    action_session,
+    *,
+    company: str,
+    environment: str,
+    credit_price: float,
+    lookback_hours: int,
+    cortex_budget_usd: float,
+    allow_live_fallback: bool = False,
+) -> dict:
+    """Build the DBA Morning Brief using the Control Room evidence model."""
+    from sections import dba_control_room as dba
+
+    data = dba._load_control_room(
+        action_session,
+        company,
+        credit_price,
+        int(lookback_hours),
+        safe_float(cortex_budget_usd),
+        include_deep_evidence=False,
+        allow_live_fallback=bool(allow_live_fallback),
+    )
+    exceptions = dba._severity_rows(data, credit_price)
+    action_queue = data.get("action_queue", pd.DataFrame()) if isinstance(data, dict) else pd.DataFrame()
+    command_queue = dba._build_command_queue(action_queue)
+    closure_rollup = dba._command_queue_closure_readiness(action_queue)
+    source_health = dba._dba_control_source_health_rows(
+        data,
+        st.session_state,
+        company,
+        environment,
+        int(lookback_hours),
+        safe_float(cortex_budget_usd),
+        False,
+        bool(allow_live_fallback),
+    )
+    incident_board = dba._dba_incident_board(
+        exceptions,
+        command_queue,
+        closure_rollup,
+        source_health,
+    )
+    section_board = dba._dba_section_operability_board(
+        command_queue=command_queue,
+        closure_rollup=closure_rollup,
+        source_health=source_health,
+    )
+    operations_priority = dba._dba_operations_priority_index(
+        section_board,
+        incident_board,
+        command_queue,
+        source_health,
+    )
+    handoff_rows = dba._dba_handoff_rows(
+        exceptions,
+        command_queue,
+        closure_rollup,
+        source_health,
+    )
+    _release_gate_summary, release_gate_rows = dba._build_auto_release_readiness_gate(
+        data,
+        source_health,
+    )
+    escalation_packet = dba._dba_escalation_packet(
+        operations_priority,
+        incident_board,
+        handoff_rows,
+        release_gate_rows,
+        company=company,
+        environment=environment,
+        lookback_hours=int(lookback_hours),
+    )
+    brief = dba._dba_morning_brief_rows(
+        operations_priority,
+        escalation_packet,
+        handoff_rows,
+    )
+    markdown = dba._build_dba_morning_brief_markdown(
+        brief,
+        company=company,
+        environment=environment,
+        lookback_hours=int(lookback_hours),
+    )
+    return {
+        "data": data,
+        "exceptions": exceptions,
+        "source_health": source_health,
+        "operations_priority": operations_priority,
+        "handoff": handoff_rows,
+        "escalation_packet": escalation_packet,
+        "brief": brief,
+        "markdown": markdown,
+    }
 
 
 def _render_account_health_operating_snapshot(
@@ -2922,7 +2952,8 @@ def render():
         ACCOUNT_HEALTH_PANES,
         default=ACCOUNT_HEALTH_PANES[0],
         details=ACCOUNT_HEALTH_PANE_DETAILS,
-        columns=4,
+        labels=ACCOUNT_HEALTH_PANE_LABELS,
+        columns=2,
     )
 
     # -- OVERVIEW --------------------------------------------------------------
@@ -2932,7 +2963,7 @@ def render():
                 ("First move", "Refresh the health snapshot and read the exception signals."),
                 ("Evidence", "Use cost drivers, failed work, warehouse pressure, and changes since yesterday."),
                 ("Control", "Drill into the owning workflow before recommending action."),
-                ("Output", "Generate the morning report or executive briefing from verified facts."),
+                ("Output", "Build the DBA morning brief from verified Control Room and Account Health facts."),
             ],
             columns=4,
         )
@@ -3815,521 +3846,99 @@ def render():
         except Exception as e:
             st.caption(f"Warehouse pressure unavailable: {format_snowflake_error(e)}")
 
-    # -- RESOURCE MONITORS -----------------------------------------------------
-    elif active_view == "Resource Monitors":
-        st.subheader("Resource Monitor Dashboard")
-        st.caption("Credit quota vs. consumed - with suspend threshold validation.")
-
-        if st.button("Load Resource Monitors", key="resmon_load"):
-            action_session = _account_health_action_session("load Resource Monitors")
-            if action_session is None:
-                return
-            try:
-                rm_object = "SNOWFLAKE.ACCOUNT_USAGE.RESOURCE_MONITORS"
-                rm_cols = set(filter_existing_columns(
-                    action_session,
-                    rm_object,
-                    [
-                        "NAME", "CREATED", "CREDIT_QUOTA", "USED_CREDITS",
-                        "REMAINING_CREDITS", "OWNER", "NOTIFY", "SUSPEND",
-                        "SUSPEND_IMMEDIATE", "WAREHOUSES",
-                    ],
-                ))
-                if "NAME" not in rm_cols:
-                    raise ValueError("RESOURCE_MONITORS does not expose NAME for this role/account.")
-
-                def _rm_expr(col: str, fallback: str, alias: str | None = None) -> str:
-                    output = alias or col.lower()
-                    if col in rm_cols:
-                        if col == "WAREHOUSES":
-                            return f"TO_VARCHAR({col.lower()}) AS {output}"
-                        return f"{col.lower()} AS {output}"
-                    return f"{fallback} AS {output}"
-
-                df_rm = run_query(f"""
-                    SELECT {_rm_expr("NAME", "NULL::VARCHAR")},
-                           {_rm_expr("CREATED", "NULL::TIMESTAMP_NTZ")},
-                           {_rm_expr("CREDIT_QUOTA", "0::FLOAT")},
-                           {_rm_expr("USED_CREDITS", "0::FLOAT")},
-                           {_rm_expr("REMAINING_CREDITS", "0::FLOAT")},
-                           {_rm_expr("OWNER", "NULL::VARCHAR")},
-                           {_rm_expr("NOTIFY", "NULL::VARCHAR")},
-                           {_rm_expr("SUSPEND", "NULL::VARCHAR")},
-                           {_rm_expr("SUSPEND_IMMEDIATE", "NULL::VARCHAR")},
-                           {_rm_expr("WAREHOUSES", "NULL::VARCHAR")}
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.RESOURCE_MONITORS
-                """, ttl_key="account_health_resource_monitors", tier="standard")
-                if company != "ALL" and not df_rm.empty and "WAREHOUSES" in df_rm.columns:
-                    def _monitor_in_company(value) -> bool:
-                        text = str(value or "")
-                        if not text.strip():
-                            return False
-                        tokens = [part.strip(" []'\"") for part in text.replace(",", " ").split()]
-                        return any(company_value_allowed(token, "warehouse", company) for token in tokens)
-
-                    df_rm = df_rm[df_rm["WAREHOUSES"].apply(_monitor_in_company)]
-                st.session_state["ah_df_resmon"] = df_rm
-            except Exception as e:
-                st.warning(f"Resource monitor data unavailable: {format_snowflake_error(e)}")
-
-        if st.session_state.get("ah_df_resmon") is not None and not st.session_state["ah_df_resmon"].empty:
-            df_rm = st.session_state["ah_df_resmon"]
-            total_quota = df_rm["CREDIT_QUOTA"].sum()
-            total_used  = df_rm["USED_CREDITS"].sum()
-            render_shell_snapshot((
-                ("Quota", format_credits(total_quota)),
-                ("Used", format_credits(total_used)),
-                ("Usage", f"{(total_used/total_quota*100) if total_quota else 0:.1f}%"),
-            ))
-
-            for _, row in df_rm.iterrows():
-                quota   = safe_float(row.get("CREDIT_QUOTA",0))
-                used    = safe_float(row.get("USED_CREDITS",0))
-                name    = row.get("NAME","Unknown")
-                pct     = (used / quota * 100) if quota > 0 else 0
-                suspend = row.get("SUSPEND","")
-                s_imm   = row.get("SUSPEND_IMMEDIATE","")
-                st.markdown(f"**{html.escape(str(name))}**")
-                render_shell_snapshot((
-                    ("Quota", format_credits(quota)),
-                    ("Used", format_credits(used)),
-                    ("Remaining", format_credits(safe_float(row.get("REMAINING_CREDITS",0)))),
-                    ("Usage", f"{pct:.1f}%"),
-                    ("Est. $", f"${credits_to_dollars(used):,.2f}"),
-                ))
-                if pct > 100:  st.error(f"**{name}** OVER BUDGET at {pct:.0f}%")
-                elif pct > 80: st.warning(f"**{name}** at {pct:.0f}% - approaching limit")
-                else:          st.success(f"**{name}** at {pct:.0f}% - on track")
-                if not suspend and not s_imm:
-                    st.warning(f"**{name}** has no suspend threshold.")
-            download_csv(df_rm, "resource_monitors.csv")
-
     # -- MORNING REPORT --------------------------------------------------------
     elif active_view == "Morning Report":
-        st.subheader("Morning Health Report")
-        st.caption("Overnight summary: failures, cost spikes, longest queries (last 12h).")
-
-        if st.button("Generate Morning Report", key="morning_gen"):
-            with render_load_status("Generating overnight report", "Morning report ready"):
-                md = {}
-                morning_mart_ok, morning_mart_reason = _can_use_control_room_mart(company)
-                qh = _query_history_capabilities()
-                failed_pred_plain = qh["failed_pred_plain"]
-                morning_live_queries = {
-                    "failures": f"""
-                        SELECT query_type, COUNT(*) AS fail_count,
-                               COUNT(DISTINCT user_name) AS affected_users,
-                               COUNT(DISTINCT warehouse_name) AS affected_wh
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                        WHERE start_time >= DATEADD('hours',-12,CURRENT_TIMESTAMP())
-                          AND {failed_pred_plain}
-                          {wh_filter_m} {get_db_filter_clause("database_name", company)} {get_user_filter_clause("user_name", company)}
-                        GROUP BY query_type ORDER BY fail_count DESC
-                    """,
-                    "long_queries": f"""
-                        SELECT query_id, user_name, warehouse_name,
-                               SUBSTR(query_text,1,100) AS query_preview,
-                               total_elapsed_time/1000  AS elapsed_sec,
-                               execution_status
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                        WHERE start_time >= DATEADD('hours',-12,CURRENT_TIMESTAMP())
-                          AND warehouse_name IS NOT NULL
-                          {wh_filter_m} {get_db_filter_clause("database_name", company)} {get_user_filter_clause("user_name", company)}
-                        ORDER BY total_elapsed_time DESC LIMIT 10
-                    """,
-                    "credits": f"""
-                        SELECT SUM(credits_used) AS overnight_credits
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                        WHERE start_time >= DATEADD('hours',-12,CURRENT_TIMESTAMP())
-                          {wh_filter_m}
-                    """,
-                }
-                morning_mart_queries = {
-                    "failures": build_mart_account_health_failure_types_sql(12, company),
-                    "long_queries": build_mart_account_health_long_queries_sql(12, company, limit=10),
-                    "credits": build_mart_account_health_credits_sql(12, company),
-                }
-                morning_source = "Fast summary" if morning_mart_ok else f"Live fallback: {morning_mart_reason}"
-                for key, live_sql in morning_live_queries.items():
-                    try:
-                        if morning_mart_ok:
-                            md[key] = run_query(
-                                morning_mart_queries[key],
-                                ttl_key=f"account_health_morning_mart_{company}_{key}",
-                                tier="historical",
-                                section="Account Health",
-                            )
-                        else:
-                            raise RuntimeError(morning_mart_reason)
-                    except Exception as mart_exc:
-                        try:
-                            md[key] = run_query(
-                                live_sql,
-                                ttl_key=f"account_health_morning_live_{company}_{key}",
-                                tier="recent",
-                                section="Account Health",
-                            )
-                            if morning_mart_ok:
-                                morning_source = f"Live fallback: {format_snowflake_error(mart_exc)}"
-                        except Exception:
-                            md[key] = pd.DataFrame()
-                md["_source"] = morning_source
-                st.session_state["morning_data"] = md
-                st.session_state["morning_data_source"] = morning_source
-                st.session_state["morning_data_meta"] = _account_health_scope_meta(
-                    company, environment, window="12h"
-                )
-
-        if st.session_state.get("morning_data"):
-            md = st.session_state["morning_data"]
-            overnight_cr = safe_float(
-                md["credits"].iloc[0].get("OVERNIGHT_CREDITS", md["credits"].iloc[0].get("PERIOD_CREDITS", 0))
-            ) if not md["credits"].empty else 0
-            render_shell_snapshot((("Credits 12h", format_credits(overnight_cr)),))
-            if md.get("_source"):
-                st.caption(f"Source: {md['_source']}")
-            if not md["failures"].empty:
-                st.subheader("Overnight Failures by Type")
-                render_priority_dataframe(
-                    md["failures"],
-                    title="Overnight failure groups",
-                    priority_columns=["QUERY_TYPE", "FAIL_COUNT", "AFFECTED_USERS", "AFFECTED_WH"],
-                    sort_by=["FAIL_COUNT", "AFFECTED_USERS", "AFFECTED_WH"],
-                    ascending=[False, False, False],
-                    raw_label="All overnight failure groups",
-                )
-                download_csv(md["failures"], "morning_failures.csv")
-            else:
-                st.success("No query failures overnight")
-            if not md["long_queries"].empty:
-                st.subheader("Longest Running Queries")
-                render_priority_dataframe(
-                    md["long_queries"],
-                    title="Longest overnight queries",
-                    priority_columns=[
-                        "QUERY_ID",
-                        "USER_NAME",
-                        "WAREHOUSE_NAME",
-                        "ELAPSED_SEC",
-                        "EXECUTION_STATUS",
-                        "QUERY_PREVIEW",
-                    ],
-                    sort_by=["ELAPSED_SEC"],
-                    ascending=False,
-                    raw_label="All long overnight query rows",
-                )
-                download_csv(md["long_queries"], "morning_long_queries.csv")
-            brief_lines = [
-                "# OVERWATCH Morning Brief",
-                f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                f"Overnight credits: {format_credits(overnight_cr)}",
-                f"Failure groups: {0 if md['failures'].empty else len(md['failures'])}",
-                f"Long-query watchlist: {0 if md['long_queries'].empty else len(md['long_queries'])}",
-            ]
-            st.download_button(
-                "Export Morning Brief",
-                "\n".join(brief_lines),
-                file_name=f"overwatch_morning_brief_{datetime.now().strftime('%Y%m%d')}.md",
-                mime="text/markdown",
-                key="morning_brief_export",
-            )
-
-    # -- EXECUTIVE BRIEFING (NEW) -----------------------------------------------
-    elif active_view == "Executive Briefing":
-        st.subheader("Executive Briefing")
+        st.subheader("DBA Morning Brief")
         st.caption(
-            "Plain-English summary generated by Cortex AI from live OVERWATCH data. "
-            "Designed to be copied into an email or Teams message to leadership - no dashboard login required."
+            "Evidence-ranked DBA packet built from Control Room blockers, source health, handoff rows, "
+            "release gates, and action-queue closure proof."
         )
 
-        briefing_window = st.selectbox(
-            "Report window",
-            ["Last 24 hours", "Last 7 days", "Last 30 days"],
-            key="br_window",
-        )
+        brief_cols = st.columns([1, 1, 2])
+        with brief_cols[0]:
+            morning_lookback = st.selectbox(
+                "Brief window",
+                [12, 24, 48, 168],
+                index=1,
+                key="account_health_morning_lookback",
+                format_func=lambda h: f"{h} hours",
+            )
+        with brief_cols[1]:
+            allow_brief_live_fallback = st.toggle(
+                "Bounded live fallback",
+                key="account_health_morning_live_fallback",
+                value=False,
+                help=(
+                    "Use limited 24-hour ACCOUNT_USAGE checks when the fast summary is incomplete. "
+                    "Leave off for the cheapest morning packet."
+                ),
+            )
+        with brief_cols[2]:
+            render_shell_snapshot((("Scope", f"{company} / {environment}"),))
 
-        hours_map = {"Last 24 hours": 24, "Last 7 days": 168, "Last 30 days": 720}
-        br_hours  = hours_map[briefing_window]
-
-        if st.button("Generate Executive Briefing", key="br_generate", type="primary"):
-            action_session = _account_health_action_session("generate Account Health executive briefing")
+        if st.button("Build DBA Morning Brief", key="morning_gen", type="primary"):
+            action_session = _account_health_action_session("build DBA Morning Brief")
             if action_session is None:
                 return
-            with render_load_status("Collecting metrics and generating briefing via Cortex AI", "Executive briefing ready"):
-                br_data = {}
-
-                # -- Collect metrics --------------------------------------------
-                briefing_mart_ok, briefing_mart_reason = _can_use_control_room_mart(company)
-                qh = _query_history_capabilities(action_session)
-                failed_pred_plain = qh["failed_pred_plain"]
-                queued_count_expr_q = qh["queued_count_expr_q"]
-                metric_queries = {
-                    "credits": f"""
-                        SELECT SUM(CASE WHEN start_time >= DATEADD('hours',-{br_hours},CURRENT_TIMESTAMP())
-                                        AND start_time <  CURRENT_TIMESTAMP()
-                                   THEN credits_used ELSE 0 END) AS period_credits,
-                               SUM(CASE WHEN start_time >= DATEADD('hours',-{br_hours*2},CURRENT_TIMESTAMP())
-                                        AND start_time <  DATEADD('hours',-{br_hours},CURRENT_TIMESTAMP())
-                                   THEN credits_used ELSE 0 END) AS prior_period_credits
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                        WHERE start_time >= DATEADD('hours',-{br_hours*2},CURRENT_TIMESTAMP())
-                          AND start_time <  CURRENT_TIMESTAMP()
-                          {wh_filter_m}
-                    """,
-                    "failures": f"""
-                        SELECT COUNT(*) AS fail_count
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                        WHERE start_time >= DATEADD('hours',-{br_hours},CURRENT_TIMESTAMP())
-                          AND {failed_pred_plain}
-                          {wh_filter_m} {get_db_filter_clause("database_name", company)} {get_user_filter_clause("user_name", company)}
-                    """,
-                    "top_driver": f"""
-                        WITH {build_metered_credit_cte(hours_back=br_hours, include_recent=True)}
-                        SELECT q.user_name, q.warehouse_name,
-                               ROUND(SUM(COALESCE(pqc.metered_credits,0)),2) AS credits
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                        LEFT JOIN per_query_credits pqc ON q.query_id = pqc.query_id
-                        WHERE q.start_time >= DATEADD('hours',-{br_hours},CURRENT_TIMESTAMP())
-                          AND q.warehouse_name IS NOT NULL
-                          {wh_filter_q} {db_filter_q} {user_filter_q}
-                        GROUP BY q.user_name, q.warehouse_name
-                        ORDER BY credits DESC LIMIT 1
-                    """,
-                    "failed_tasks": _task_failure_sql_or_empty(
-                        action_session,
-                        f"scheduled_time >= DATEADD('hours',-{int(br_hours)},CURRENT_TIMESTAMP())",
-                        1,
-                        company,
-                    ),
-                    "storage": f"""
-                        SELECT COALESCE(
-                            ROUND(SUM(COALESCE(average_database_bytes,0)+COALESCE(average_failsafe_bytes,0))/POWER(1024,4),2),
-                            0
-                        ) AS storage_tb
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY
-                        WHERE usage_date = (SELECT MAX(usage_date)
-                                            FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASE_STORAGE_USAGE_HISTORY)
-                          {get_db_filter_clause("database_name", company)}
-                    """,
-                    "queued": f"""
-                        SELECT {queued_count_expr_q} AS queued
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
-                        WHERE q.start_time >= DATEADD('hours', -1, CURRENT_TIMESTAMP())
-                          AND UPPER(q.execution_status) IN ('RUNNING','QUEUED','BLOCKED')
-                          {wh_filter_q} {db_filter_q} {user_filter_q}
-                    """,
-                }
-                mart_metric_queries = {
-                    "credits": build_mart_account_health_credits_sql(br_hours, company),
-                    "failures": build_mart_account_health_failure_count_sql(br_hours, company),
-                    "top_driver": build_mart_account_health_top_driver_sql(br_hours, company),
-                    "failed_tasks": build_mart_control_room_task_failures_sql(br_hours, company),
-                    "storage": build_mart_account_health_storage_sql(company),
-                    "queued": build_mart_account_health_queued_sql(1, company),
-                }
-                briefing_source = "Fast summary" if briefing_mart_ok else f"Live fallback: {briefing_mart_reason}"
-
-                for k, sql in metric_queries.items():
-                    try:
-                        if briefing_mart_ok:
-                            br_data[k] = run_query(
-                                mart_metric_queries[k],
-                                ttl_key=f"account_health_brief_mart_{company}_{k}_{br_hours}",
-                                tier="historical",
-                                section="Account Health",
-                            )
-                        else:
-                            raise RuntimeError(briefing_mart_reason)
-                    except Exception as mart_exc:
-                        try:
-                            br_data[k] = run_query(
-                                sql,
-                                ttl_key=f"account_health_brief_live_{company}_{k}_{br_hours}",
-                                tier="recent",
-                                section="Account Health",
-                            )
-                            if briefing_mart_ok:
-                                briefing_source = f"Live fallback: {format_snowflake_error(mart_exc)}"
-                        except Exception:
-                            br_data[k] = pd.DataFrame()
-
-                # Contract utilization
-                try:
-                    if briefing_mart_ok:
-                        try:
-                            df_ytd = run_query(
-                                build_mart_account_health_ytd_credits_sql(company),
-                                ttl_key=f"account_health_brief_contract_ytd_mart_{company}",
-                                tier="historical",
-                                section="Account Health",
-                            )
-                        except Exception:
-                            ytd_source = "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY" if company == "ALL" else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-                            ytd_filter = "" if company == "ALL" else wh_filter_m
-                            df_ytd = run_query(f"""
-                                SELECT SUM(credits_used) AS ytd_credits
-                                FROM {ytd_source}
-                                WHERE start_time >= DATE_TRUNC('year', CURRENT_DATE())
-                                  AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                                  {ytd_filter}
-                            """, ttl_key=f"account_health_brief_contract_ytd_live_{company}", tier="historical", section="Account Health")
-                    else:
-                        ytd_source = "SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY" if company == "ALL" else "SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-                        ytd_filter = "" if company == "ALL" else wh_filter_m
-                        df_ytd = run_query(f"""
-                            SELECT SUM(credits_used) AS ytd_credits
-                            FROM {ytd_source}
-                            WHERE start_time >= DATE_TRUNC('year', CURRENT_DATE())
-                              AND start_time < DATEADD('hour', -24, CURRENT_TIMESTAMP())
-                              {ytd_filter}
-                        """, ttl_key=f"account_health_brief_contract_ytd_live_{company}", tier="historical", section="Account Health")
-                    committed = st.session_state.get("cc_committed_credits", 100000)
-                    ytd       = safe_float(df_ytd["YTD_CREDITS"].iloc[0]) if not df_ytd.empty else 0
-                    br_data["contract_pct"] = (ytd / committed * 100) if committed > 0 else None
-                except Exception:
-                    br_data["contract_pct"] = None
-
-                # -- Extract values --------------------------------------------
-                cr24     = safe_float(br_data["credits"]["PERIOD_CREDITS"].iloc[0]) if not br_data["credits"].empty else 0
-                cr_prior = safe_float(br_data["credits"]["PRIOR_PERIOD_CREDITS"].iloc[0]) if not br_data["credits"].empty else 0
-                failures = safe_int(br_data["failures"]["FAIL_COUNT"].iloc[0]) if not br_data["failures"].empty else 0
-                stor_tb  = safe_float(br_data["storage"]["STORAGE_TB"].iloc[0]) if not br_data["storage"].empty else 0
-                queued   = safe_int(br_data["queued"]["QUEUED"].iloc[0]) if not br_data["queued"].empty else 0
-
-                top_driver      = ""
-                top_driver_cost = 0.0
-                if not br_data["top_driver"].empty:
-                    td = br_data["top_driver"].iloc[0]
-                    top_driver      = f"{td.get('USER_NAME','')} on {td.get('WAREHOUSE_NAME','')}"
-                    top_driver_cost = credits_to_dollars(safe_float(td.get("CREDITS",0)), credit_price)
-
-                failed_task = ""
-                if not br_data["failed_tasks"].empty:
-                    failed_task = str(br_data["failed_tasks"]["TASK_NAME"].iloc[0])
-
-                metric_payload = {
-                    "cr24": cr24, "cr_prior": cr_prior,
-                    "failures": failures, "queued": queued,
-                    "stor_tb": stor_tb,
-                    "contract_pct": br_data.get("contract_pct"),
-                    "top_driver": top_driver,
-                    "top_driver_cost": top_driver_cost,
-                    "failed_task": failed_task,
-                }
-
-                # -- Call Cortex ------------------------------------------------
-                prompt = _build_briefing_prompt(metric_payload, credit_price, company)
-                prompt_esc = prompt.replace("'", "''")
-
-                try:
-                    result = action_session.sql(
-                        f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', '{prompt_esc}') AS briefing"
-                    ).collect()
-                    briefing_text = result[0]["BRIEFING"] or ""
-                except Exception as e:
-                    # Graceful fallback: structured text brief if Cortex unavailable.
-                    cr_delta = ((cr24 - cr_prior) / cr_prior * 100) if cr_prior > 0 else 0
-                    briefing_text = (
-                        f"OVERWATCH Executive Briefing - {datetime.now().strftime('%B %d, %Y')}\n\n"
-                        f"ALFA Insurance Snowflake consumed {cr24:,.0f} credits "
-                        f"(${credits_to_dollars(cr24, credit_price):,.2f}) "
-                        f"over the {briefing_window.lower()}, "
-                        f"{'up' if cr_delta > 0 else 'down'} {abs(cr_delta):.1f}% vs the prior period. "
-                        f"The top cost driver was {top_driver} at ${top_driver_cost:,.2f}. "
-                        f"There were {failures} query failures recorded. "
-                        f"Storage stands at {stor_tb:.1f} TB.\n\n"
-                        f"(Cortex AI unavailable: {format_snowflake_error(e)}. Plain summary generated from raw metrics.)"
+            with render_load_status("Building DBA Morning Brief", "DBA Morning Brief ready"):
+                cortex_budget_usd = float(
+                    st.session_state.get(
+                        "dba_control_room_cortex_budget_usd",
+                        st.session_state.get("cortex_control_budget_usd", 5000.0),
                     )
-
-                st.session_state["ah_briefing_text"] = briefing_text
-                st.session_state["ah_briefing_ts"]   = datetime.now().strftime("%Y-%m-%d %H:%M")
-                st.session_state["ah_briefing_window"] = briefing_window
-                st.session_state["ah_briefing_source"] = briefing_source
-                st.session_state["ah_briefing_meta"] = _account_health_scope_meta(
-                    company, environment, window=briefing_window
                 )
-
-        # -- Render briefing ----------------------------------------------------
-        if st.session_state.get("ah_briefing_text"):
-            briefing_text   = st.session_state["ah_briefing_text"]
-            briefing_ts     = st.session_state.get("ah_briefing_ts", "")
-            briefing_window = st.session_state.get("ah_briefing_window", "")
-            briefing_source = st.session_state.get("ah_briefing_source", "Live fallback")
-            safe_briefing_text = html.escape(str(briefing_text))
-            safe_company = html.escape(str(company))
-            safe_window = html.escape(str(briefing_window))
-            safe_ts = html.escape(str(briefing_ts))
-            safe_source = html.escape(str(briefing_source))
-
-            st.divider()
-
-            # Visual card
-            st.markdown(f"""
-            <div style="background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.2);
-                        border-radius:12px;padding:24px;margin:8px 0;">
-                <div style="font-size:0.7rem;color:#64748b;margin-bottom:12px;letter-spacing:1px;text-transform:uppercase;">
-                    OVERWATCH Executive Briefing - {safe_company} - {safe_window} - Generated {safe_ts} - Source {safe_source}
-                </div>
-                <div style="color:#e2e8f0;font-size:0.95rem;line-height:1.7;white-space:pre-wrap;">{safe_briefing_text}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Export options
-            st.divider()
-            st.subheader("Export & Share")
-            col_e1, col_e2, col_e3 = st.columns(3)
-
-            # Plain text download
-            full_text = (
-                f"OVERWATCH Executive Briefing\n"
-                f"Company: {company}\n"
-                f"Period: {briefing_window}\n"
-                f"Generated: {briefing_ts}\n"
-                f"{'-'*60}\n\n"
-                f"{briefing_text}\n\n"
-                f"{'-'*60}\n"
-                f"Source: OVERWATCH - Snowflake DBA Command Center\n"
-                f"Data from: SNOWFLAKE.ACCOUNT_USAGE\n"
-            )
-            with col_e1:
-                st.download_button(
-                    "Download .txt",
-                    full_text,
-                    file_name=f"overwatch_executive_brief_{datetime.now().strftime('%Y%m%d')}.txt",
-                    mime="text/plain",
-                    key="br_dl_txt",
-                    width="stretch",
+                packet = _build_account_health_dba_morning_brief(
+                    action_session,
+                    company=company,
+                    environment=environment,
+                    credit_price=credit_price,
+                    lookback_hours=int(morning_lookback),
+                    cortex_budget_usd=safe_float(cortex_budget_usd),
+                    allow_live_fallback=bool(allow_brief_live_fallback),
                 )
-
-            # Markdown download
-            md_text = (
-                f"# OVERWATCH Executive Briefing\n\n"
-                f"**Company:** {company}  \n"
-                f"**Period:** {briefing_window}  \n"
-                f"**Generated:** {briefing_ts}  \n\n"
-                f"---\n\n"
-                f"{briefing_text}\n\n"
-                f"---\n\n"
-                f"*Generated by OVERWATCH - Snowflake DBA Command Center*\n"
-            )
-            with col_e2:
-                st.download_button(
-                    "Download .md",
-                    md_text,
-                    file_name=f"overwatch_brief_{datetime.now().strftime('%Y%m%d')}.md",
-                    mime="text/markdown",
-                    key="br_dl_md",
-                    width="stretch",
+                packet["_source"] = (
+                    "DBA Control Room fast summary + bounded live fallback"
+                    if allow_brief_live_fallback
+                    else "DBA Control Room fast summary"
                 )
+                st.session_state["morning_data"] = packet
+                st.session_state["morning_data_source"] = packet["_source"]
+                st.session_state["morning_data_meta"] = _account_health_scope_meta(
+                    company, environment, window=f"{int(morning_lookback)}h"
+                )
+                st.session_state["dba_control_room_morning_brief"] = packet["brief"]
+                st.session_state["dba_control_room_morning_brief_markdown"] = packet["markdown"]
+                st.session_state["dba_operations_priority_index"] = packet["operations_priority"]
+                st.session_state["dba_control_room_handoff"] = packet["handoff"]
+                st.session_state["dba_control_room_escalation_packet"] = packet["escalation_packet"]
 
-            # Copy-ready Teams/email text
-            with col_e3:
-                if st.button("Copy to clipboard", key="br_copy", width="stretch"):
-                    st.code(briefing_text, language=None)
-                    st.caption("Select all text above and copy.")
+        morning_packet = st.session_state.get("morning_data")
+        expected_meta = _account_health_scope_meta(company, environment, window=f"{int(morning_lookback)}h")
+        if not morning_packet:
+            st.info("Build the morning brief when the on-call DBA needs a ranked operating packet.")
+        elif not _account_health_meta_matches(st.session_state.get("morning_data_meta"), expected_meta):
+            st.warning("Loaded DBA Morning Brief is stale for the active scope. Rebuild before using it.")
+        else:
+            from sections import dba_control_room as dba
 
-            # Regenerate note
-            st.caption(
-                "Tip: set your annual committed credits in Cost & Contract -> Contract Utilization "
-                "before generating the briefing to include contract pacing in the narrative."
+            st.caption(f"Source: {morning_packet.get('_source', 'DBA Control Room evidence')}")
+            dba._render_dba_morning_brief(
+                morning_packet.get("brief", pd.DataFrame()),
+                str(morning_packet.get("markdown") or ""),
             )
+            source_health = morning_packet.get("source_health", pd.DataFrame())
+            if source_health is not None and not source_health.empty:
+                with st.expander("Source proof behind the brief", expanded=False):
+                    render_priority_dataframe(
+                        source_health,
+                        title="Morning brief source proof",
+                        priority_columns=[
+                            "PRIORITY_RANK", "SURFACE", "STATE", "EVIDENCE",
+                            "OWNER_OR_ROUTE", "NEXT_ACTION", "PROOF_REQUIRED", "SOURCE",
+                        ],
+                        sort_by=["PRIORITY_RANK", "SURFACE"],
+                        ascending=[True, True],
+                        raw_label="All morning brief source rows",
+                        height=260,
+                        max_rows=8,
+                    )

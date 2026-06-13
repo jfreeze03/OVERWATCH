@@ -1,4 +1,7 @@
 # sections/query_analysis.py - Bottlenecks, plan steps, pattern degradation, AI diagnosis
+import re
+
+import pandas as pd
 import streamlit as st
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
@@ -12,6 +15,7 @@ from utils import (
     build_mart_query_bottleneck_sql, build_mart_query_degradation_sql,
     render_load_status,
     render_workflow_selector,
+    run_cortex_completion,
     safe_float,
 )
 from config import THRESHOLDS
@@ -23,6 +27,7 @@ QUERY_ANALYSIS_PANES = (
     "Root-Cause Brief",
     "Detailed Diagnosis",
     "Plan Steps",
+    "History Search",
     "AI Diagnosis",
 )
 
@@ -74,6 +79,349 @@ def _annotate_degradation_routes(df):
         "and confirm whether data volume or logic changed."
     )
     return routed
+
+
+def _row_value(row: dict, *names: str, default=""):
+    for name in names:
+        if name in row:
+            value = row.get(name)
+            try:
+                if pd.isna(value):
+                    continue
+            except Exception:
+                pass
+            return value
+        upper_name = name.upper()
+        if upper_name in row:
+            value = row.get(upper_name)
+            try:
+                if pd.isna(value):
+                    continue
+            except Exception:
+                pass
+            return value
+    return default
+
+
+def _safe_query_key(query_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]+", "_", str(query_id or "query")).strip("_")[:90] or "query"
+
+
+def _build_ai_query_history_sql(query_id: str, exprs: dict[str, str]) -> str:
+    return f"""
+        SELECT
+            q.query_id,
+            q.user_name,
+            q.role_name,
+            q.warehouse_name,
+            {exprs["wh_size_expr"]},
+            q.database_name,
+            q.schema_name,
+            q.execution_status,
+            q.start_time,
+            q.total_elapsed_time/1000 AS elapsed_sec,
+            q.compilation_time/1000 AS compile_sec,
+            q.execution_time/1000 AS exec_sec,
+            {exprs["queued_expr"]},
+            {exprs["gb_expr"]},
+            {exprs["spill_expr"]},
+            {exprs["partition_expr"]},
+            {exprs["rows_expr"]},
+            COALESCE(q.error_message, '') AS error_message,
+            SUBSTR(q.query_text, 1, 12000) AS query_text
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+        WHERE q.query_id = {sql_literal(query_id, 200)}
+        LIMIT 1
+    """
+
+
+def _build_ai_operator_stats_sql(query_id: str) -> str:
+    return f"""
+        SELECT
+            OPERATOR_ID,
+            OPERATOR_TYPE,
+            PARENT_OPERATORS,
+            OPERATOR_STATISTICS,
+            EXECUTION_TIME_BREAKDOWN
+        FROM TABLE(GET_QUERY_OPERATOR_STATS({sql_literal(query_id, 200)}))
+        ORDER BY OPERATOR_ID
+        LIMIT 80
+    """
+
+
+def _query_evidence_from_history(df) -> dict:
+    if df is None or getattr(df, "empty", True):
+        return {}
+    row = df.iloc[0].to_dict()
+    return {
+        "QUERY_ID": str(_row_value(row, "QUERY_ID")),
+        "USER_NAME": str(_row_value(row, "USER_NAME")),
+        "ROLE_NAME": str(_row_value(row, "ROLE_NAME")),
+        "WAREHOUSE_NAME": str(_row_value(row, "WAREHOUSE_NAME")),
+        "WAREHOUSE_SIZE": str(_row_value(row, "WAREHOUSE_SIZE")),
+        "DATABASE_NAME": str(_row_value(row, "DATABASE_NAME")),
+        "SCHEMA_NAME": str(_row_value(row, "SCHEMA_NAME")),
+        "EXECUTION_STATUS": str(_row_value(row, "EXECUTION_STATUS")),
+        "START_TIME": str(_row_value(row, "START_TIME")),
+        "ELAPSED_SEC": safe_float(_row_value(row, "ELAPSED_SEC")),
+        "COMPILE_SEC": safe_float(_row_value(row, "COMPILE_SEC")),
+        "EXEC_SEC": safe_float(_row_value(row, "EXEC_SEC")),
+        "QUEUED_SEC": safe_float(_row_value(row, "QUEUED_SEC")),
+        "BYTES_SCANNED_GB": safe_float(_row_value(row, "GB_SCANNED")),
+        "REMOTE_SPILL_GB": safe_float(_row_value(row, "REMOTE_SPILL_GB")),
+        "PARTITION_PCT": safe_float(_row_value(row, "PARTITION_PCT")),
+        "ROWS_PRODUCED": safe_float(_row_value(row, "ROWS_PRODUCED")),
+        "ERROR_MESSAGE": str(_row_value(row, "ERROR_MESSAGE")),
+        "QUERY_TEXT": str(_row_value(row, "QUERY_TEXT"))[:12000],
+    }
+
+
+def _extract_query_objects(query_text: str) -> list[str]:
+    objects = []
+    pattern = re.compile(
+        r"\b(?:FROM|JOIN|UPDATE|INTO|MERGE\s+INTO|DELETE\s+FROM)\s+([A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*){0,2})",
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(str(query_text or "")):
+        obj = match.group(1).strip().strip('"')
+        if obj and obj.upper() not in {"SELECT", "TABLE", "LATERAL"} and obj not in objects:
+            objects.append(obj)
+    return objects[:8]
+
+
+def _query_uses_function_wrapped_predicate(query_text: str) -> bool:
+    text = re.sub(r"\s+", " ", str(query_text or "")).upper()
+    where_match = re.search(r"\bWHERE\b(.+?)(?:\bGROUP\s+BY\b|\bORDER\s+BY\b|\bQUALIFY\b|\bLIMIT\b|$)", text)
+    if not where_match:
+        return False
+    where_text = where_match.group(1)
+    return bool(re.search(r"\b(?:TO_DATE|DATE_TRUNC|CAST|UPPER|LOWER|COALESCE|NVL)\s*\(", where_text))
+
+
+def _add_query_candidate(candidates: list[dict], signal: str, evidence: str, recommendation: str, verify: str) -> None:
+    candidates.append({
+        "PRIORITY": len(candidates) + 1,
+        "SIGNAL": signal,
+        "EVIDENCE": evidence,
+        "SPECIFIC_RECOMMENDATION": recommendation,
+        "VERIFY_AFTER_FIX": verify,
+    })
+
+
+def _build_query_optimization_candidates(query_text: str, evidence: dict | None = None) -> list[dict]:
+    evidence = evidence or {}
+    text = str(query_text or "")
+    upper = text.upper()
+    objects = _extract_query_objects(text)
+    object_hint = objects[0] if objects else "<target_table>"
+    candidates: list[dict] = []
+
+    queued_sec = safe_float(evidence.get("QUEUED_SEC"))
+    remote_spill_gb = safe_float(evidence.get("REMOTE_SPILL_GB"))
+    partition_pct = safe_float(evidence.get("PARTITION_PCT"))
+    gb_scanned = safe_float(evidence.get("BYTES_SCANNED_GB"))
+    rows_produced = safe_float(evidence.get("ROWS_PRODUCED"))
+    elapsed_sec = safe_float(evidence.get("ELAPSED_SEC"))
+    query_id = str(evidence.get("QUERY_ID") or "").strip()
+
+    if queued_sec >= 30:
+        _add_query_candidate(
+            candidates,
+            "Warehouse queue pressure",
+            f"Queued overload is {queued_sec:,.1f}s.",
+            "Separate compute contention from SQL shape first: open Live triage/Warehouse Health, compare active queries on the same warehouse, and check WAREHOUSE_LOAD_HISTORY before resizing or rewriting SQL.",
+            "Verify QUEUED_OVERLOAD_TIME drops for the rerun and p95 queue stays below the local SLA.",
+        )
+    if remote_spill_gb >= max(THRESHOLDS["spill_warning_gb"], 1):
+        _add_query_candidate(
+            candidates,
+            "Remote spill",
+            f"Remote spill is {remote_spill_gb:,.2f} GB.",
+            f"Use GET_QUERY_OPERATOR_STATS for {query_id or '<query_id>'} and fix the spill-heavy JOIN, SORT, or AGGREGATE step by pre-filtering {object_hint}, reducing projected columns, or pre-aggregating before the wide join. Test warehouse memory only after SQL-shape evidence is captured.",
+            "Rerun and compare BYTES_SPILLED_TO_REMOTE_STORAGE plus operator-level spill in GET_QUERY_OPERATOR_STATS.",
+        )
+    if partition_pct >= THRESHOLDS["partition_scan_warning_pct"]:
+        _add_query_candidate(
+            candidates,
+            "Full/high partition scan",
+            f"Partition scan is {partition_pct:,.1f}%.",
+            f"Check pruning on {object_hint}; rewrite date/range predicates so the column is not wrapped in a function, and evaluate CLUSTER BY or Search Optimization only for the specific predicate columns used by this SQL.",
+            f"Run SYSTEM$CLUSTERING_INFORMATION('{object_hint}') where applicable and compare PARTITIONS_SCANNED / PARTITIONS_TOTAL on rerun.",
+        )
+    if gb_scanned >= 25 and (rows_produced <= 100000 or rows_produced / max(gb_scanned, 1) < 5000):
+        _add_query_candidate(
+            candidates,
+            "High scan with low output",
+            f"Scanned {gb_scanned:,.1f} GB for {rows_produced:,.0f} output rows.",
+            "Push filters into the earliest table scans, replace wide projections with required columns, and materialize a narrow candidate set before joins or window functions.",
+            "Verify BYTES_SCANNED and ROWS_PRODUCED/GB improve for the same query pattern.",
+        )
+    if re.search(r"\bSELECT\s+\*", upper):
+        _add_query_candidate(
+            candidates,
+            "Wide SELECT star",
+            "SQL includes SELECT *.",
+            "Replace SELECT * with the columns consumed downstream. If this feeds a BI/export workflow, create a narrow view for the consumer instead of scanning unused columns.",
+            "Compare BYTES_SCANNED and compilation/execution time before and after the projection change.",
+        )
+    if re.search(r"\b(?:ILIKE|LIKE)\s+['\"]%", upper):
+        _add_query_candidate(
+            candidates,
+            "Leading wildcard text search",
+            "SQL has LIKE/ILIKE with a leading wildcard.",
+            f"If this is a selective text lookup on {object_hint}, test Search Optimization on the searched text column; otherwise route to a staged search table or normalized token column instead of scanning every micro-partition.",
+            "Verify search selectivity, Search Optimization maintenance cost, and BYTES_SCANNED on the same predicate.",
+        )
+    if _query_uses_function_wrapped_predicate(text):
+        _add_query_candidate(
+            candidates,
+            "Function-wrapped predicate",
+            "WHERE clause wraps a filtered column with a function.",
+            "Move functions to the constant side or persist a normalized/date bucket column so Snowflake can prune micro-partitions on the raw filtered column.",
+            "Compare PARTITIONS_SCANNED and elapsed time for the rewritten predicate.",
+        )
+    join_count = len(re.findall(r"\bJOIN\b", upper))
+    if join_count >= 4:
+        _add_query_candidate(
+            candidates,
+            "Large join graph",
+            f"SQL has {join_count} JOIN clauses.",
+            "Identify the largest build/probe sides in operator stats, filter each base table before joining, and pre-aggregate many-to-one dimensions before the wide fact join.",
+            "Verify join operator rows, spill, and elapsed time drop in GET_QUERY_OPERATOR_STATS.",
+        )
+    if re.search(r"\bORDER\s+BY\b", upper) and not re.search(r"\bLIMIT\b", upper):
+        _add_query_candidate(
+            candidates,
+            "Unbounded sort",
+            "SQL sorts without a LIMIT.",
+            "If this is an inspection/export query, add a LIMIT or sort only the final reduced result. If ordering is required for downstream logic, materialize the filtered result first.",
+            "Verify sort operator time and remote spill in operator stats.",
+        )
+    if re.search(r"\bCOUNT\s*\(\s*DISTINCT\b|\bSELECT\s+DISTINCT\b", upper):
+        _add_query_candidate(
+            candidates,
+            "Distinct-heavy aggregation",
+            "SQL uses DISTINCT or COUNT(DISTINCT).",
+            "Pre-aggregate at the business grain before joining, remove duplicate-generating joins, or use APPROX_COUNT_DISTINCT only when the business question allows approximation.",
+            "Verify aggregate operator time, rows before aggregate, and output accuracy.",
+        )
+    if re.search(r"\b(MERGE|UPDATE|DELETE)\b", upper):
+        _add_query_candidate(
+            candidates,
+            "Write-path contention risk",
+            "SQL is DML that can lock tables or overlap with task windows.",
+            "Open Contention Center before rerun; batch by partition/date key, shorten transaction scope, and reschedule overlapping tasks that write the same target object.",
+            "Verify LOCK_WAIT_HISTORY, task overlap, and rerun duration after the schedule or batching change.",
+        )
+    if elapsed_sec >= 300 and not candidates:
+        _add_query_candidate(
+            candidates,
+            "Long runtime needs operator evidence",
+            f"Elapsed time is {elapsed_sec:,.1f}s but no obvious SQL-shape signal was detected.",
+            "Load GET_QUERY_OPERATOR_STATS and classify the dominant operator before changing SQL, clustering, or warehouse size.",
+            "Verify the dominant operator's execution-time share falls on rerun.",
+        )
+    return candidates[:8]
+
+
+def _summarize_operator_stats(df, *, limit: int = 12) -> str:
+    if df is None or getattr(df, "empty", True):
+        return "Operator stats not loaded."
+    rows = []
+    for row in df.head(limit).to_dict("records"):
+        rows.append(
+            "- "
+            f"operator={_row_value(row, 'OPERATOR_TYPE', default='unknown')}; "
+            f"id={_row_value(row, 'OPERATOR_ID', default='')}; "
+            f"stats={str(_row_value(row, 'OPERATOR_STATISTICS', default=''))[:700]}; "
+            f"time={str(_row_value(row, 'EXECUTION_TIME_BREAKDOWN', default=''))[:500]}"
+        )
+    return "\n".join(rows)
+
+
+def _format_ai_evidence_for_prompt(evidence: dict) -> str:
+    if not evidence:
+        return "No ACCOUNT_USAGE evidence loaded. Use SQL text and operator notes only."
+    ordered_keys = (
+        "QUERY_ID", "USER_NAME", "ROLE_NAME", "WAREHOUSE_NAME", "WAREHOUSE_SIZE",
+        "DATABASE_NAME", "SCHEMA_NAME", "EXECUTION_STATUS", "START_TIME",
+        "ELAPSED_SEC", "COMPILE_SEC", "EXEC_SEC", "QUEUED_SEC",
+        "BYTES_SCANNED_GB", "REMOTE_SPILL_GB", "PARTITION_PCT", "ROWS_PRODUCED",
+        "ERROR_MESSAGE", "OBJECT_HINTS", "OPERATOR_NOTES",
+    )
+    lines = []
+    for key in ordered_keys:
+        value = evidence.get(key)
+        if value not in (None, ""):
+            lines.append(f"- {key}: {value}")
+    return "\n".join(lines) if lines else "No structured evidence loaded."
+
+
+def _format_candidates_for_prompt(candidates: list[dict]) -> str:
+    if not candidates:
+        return "No deterministic candidate was detected; ask for query ID evidence before making tuning claims."
+    return "\n".join(
+        (
+            f"{item['PRIORITY']}. {item['SIGNAL']} | Evidence: {item['EVIDENCE']} | "
+            f"Recommendation: {item['SPECIFIC_RECOMMENDATION']} | Verify: {item['VERIFY_AFTER_FIX']}"
+        )
+        for item in candidates
+    )
+
+
+def _build_ai_query_diagnosis_prompt(
+    query_text: str,
+    evidence: dict,
+    candidates: list[dict],
+    operator_summary: str,
+) -> str:
+    return f"""You are OVERWATCH's Snowflake DBA query optimization model.
+
+Your job is to produce specific, evidence-bound optimization recommendations for one Snowflake query.
+
+Hard rules:
+- Every recommendation must cite exact evidence from the query text, ACCOUNT_USAGE metrics, operator stats, or deterministic candidates below.
+- Do not recommend indexes. Snowflake does not use traditional indexes for this tuning path.
+- Do not say generic phrases such as "optimize the query", "review joins", or "improve performance" unless you name the exact join/filter/sort/aggregate evidence.
+- Separate warehouse contention from SQL-shape problems. If QUEUED_SEC is high, say that SQL tuning may not fix the bottleneck.
+- Include Snowflake-specific syntax only when it fits the evidence, such as GET_QUERY_OPERATOR_STATS, SYSTEM$CLUSTERING_INFORMATION, CLUSTER BY, Search Optimization, QUALIFY, or a rewritten predicate.
+- If evidence is missing, say what to load next instead of guessing.
+
+Return this exact structure:
+1. DBA verdict: one sentence.
+2. Priority table with columns: Priority | Evidence | Root cause | Exact change | Verification.
+3. Safe rollout notes: risk, owner handoff, and rollback/verification.
+
+Structured evidence:
+{_format_ai_evidence_for_prompt(evidence)}
+
+Deterministic candidates:
+{_format_candidates_for_prompt(candidates)}
+
+Operator stats sample:
+{operator_summary}
+
+SQL:
+```sql
+{str(query_text or '')[:6000]}
+```"""
+
+
+def _render_ai_evidence_snapshot(evidence: dict) -> None:
+    if not evidence:
+        render_shell_snapshot((
+            ("Evidence", "Paste SQL"),
+            ("Query ID", "Optional"),
+            ("Operator Stats", "Optional"),
+            ("Cortex", "Manual"),
+        ))
+        return
+    render_shell_snapshot((
+        ("Elapsed", f"{safe_float(evidence.get('ELAPSED_SEC')):,.1f}s"),
+        ("Queue", f"{safe_float(evidence.get('QUEUED_SEC')):,.1f}s"),
+        ("Remote Spill", f"{safe_float(evidence.get('REMOTE_SPILL_GB')):,.2f} GB"),
+        ("Partition Scan", f"{safe_float(evidence.get('PARTITION_PCT')):,.1f}%"),
+    ))
 
 
 def render():
@@ -334,28 +682,134 @@ def render():
             except Exception as e:
                 st.warning(f"Operator stats unavailable: {format_snowflake_error(e)}")
 
+    elif active_view == "History Search":
+        import importlib
+
+        query_search = importlib.import_module("sections.query_search")
+        query_search.render()
+
     # AI diagnosis
     elif active_view == "AI Diagnosis":
         st.subheader("AI Query Diagnosis")
-        st.caption("Paste a slow query to get AI-powered optimization recommendations.")
+        st.caption("Use query evidence and Cortex to generate proof-backed Snowflake tuning recommendations.")
 
-        query_text = st.text_area("SQL to diagnose", height=200, key="ai_query_text")
-        wh_ctx     = st.text_input("Warehouse (optional context)", key="ai_wh_ctx")
+        qid_input = st.text_input("Query ID (optional)", key="ai_query_id")
+        load_query_evidence = st.button(
+            "Load Query Evidence",
+            key="ai_load_query_evidence",
+            help="Loads ACCOUNT_USAGE query metrics and GET_QUERY_OPERATOR_STATS for this query ID.",
+            disabled=not bool(qid_input),
+            width="stretch",
+        )
+        if load_query_evidence:
+            with render_load_status("Loading AI query evidence", "AI query evidence ready"):
+                try:
+                    query_key = _safe_query_key(qid_input)
+                    df_evidence = run_query(
+                        _build_ai_query_history_sql(qid_input, _query_history_exprs()),
+                        ttl_key=f"query_analysis_ai_evidence_{company}_{query_key}",
+                        tier="standard",
+                    )
+                    evidence = _query_evidence_from_history(df_evidence)
+                    if evidence:
+                        st.session_state["ai_query_evidence"] = evidence
+                        if evidence.get("QUERY_TEXT"):
+                            st.session_state["ai_query_text"] = str(evidence["QUERY_TEXT"])
+                    else:
+                        st.session_state["ai_query_evidence"] = {}
+                        st.warning("No ACCOUNT_USAGE query row found for that query ID.")
+                    try:
+                        operator_stats = run_query(
+                            _build_ai_operator_stats_sql(qid_input),
+                            ttl_key=f"query_analysis_ai_operator_stats_{company}_{query_key}",
+                            tier="standard",
+                        )
+                        st.session_state["ai_query_operator_stats"] = operator_stats
+                    except Exception as op_exc:
+                        st.session_state["ai_query_operator_stats"] = pd.DataFrame()
+                        st.info(f"Operator stats unavailable for this query ID: {format_snowflake_error(op_exc)}")
+                except Exception as e:
+                    st.session_state["ai_query_evidence"] = {}
+                    st.warning(f"Query evidence unavailable: {format_snowflake_error(e)}")
 
-        if query_text and st.button("Diagnose with AI", key="ai_diagnose"):
+        evidence = dict(st.session_state.get("ai_query_evidence") or {})
+        operator_stats = st.session_state.get("ai_query_operator_stats")
+        _render_ai_evidence_snapshot(evidence)
+
+        query_text = st.text_area("SQL to diagnose", height=220, key="ai_query_text")
+        with st.expander("Optional diagnosis context", expanded=False):
+            wh_ctx = st.text_input(
+                "Warehouse override",
+                value=str(evidence.get("WAREHOUSE_NAME") or ""),
+                key="ai_wh_ctx",
+            )
+            object_ctx = st.text_input(
+                "Known objects or hot tables",
+                key="ai_object_ctx",
+                help="Example: PROD_DB.CORE.FACT_POLICY, STAGE_DB.RAW.CLAIMS",
+            )
+            observed_ctx = st.text_area(
+                "Observed symptoms",
+                key="ai_observed_ctx",
+                height=90,
+                help="Queue, spill, lock waits, task overlap, SLA miss, release window, or business owner notes.",
+            )
+        if wh_ctx:
+            evidence["WAREHOUSE_NAME"] = wh_ctx
+        if object_ctx:
+            evidence["OBJECT_HINTS"] = object_ctx
+        if observed_ctx:
+            evidence["OPERATOR_NOTES"] = observed_ctx[:1200]
+
+        candidates = _build_query_optimization_candidates(query_text, evidence) if query_text else []
+        if candidates:
+            render_priority_dataframe(
+                pd.DataFrame(candidates),
+                title="Evidence-bound optimization candidates",
+                priority_columns=[
+                    "PRIORITY", "SIGNAL", "EVIDENCE",
+                    "SPECIFIC_RECOMMENDATION", "VERIFY_AFTER_FIX",
+                ],
+                raw_label="All AI diagnosis candidates",
+            )
+        elif query_text:
+            st.info("No deterministic tuning candidate found yet. Load a query ID or add observed symptoms before asking Cortex.")
+
+        if operator_stats is not None and not getattr(operator_stats, "empty", True):
+            with st.expander("Loaded operator stats sample", expanded=False):
+                render_priority_dataframe(
+                    operator_stats,
+                    title="Operator stats loaded for Cortex context",
+                    priority_columns=[
+                        "OPERATOR_ID", "OPERATOR_TYPE", "PARENT_OPERATORS",
+                        "OPERATOR_STATISTICS", "EXECUTION_TIME_BREAKDOWN",
+                    ],
+                    raw_label="All loaded operator stats",
+                )
+
+        diagnose_with_cortex = st.button(
+            "Diagnose with Cortex",
+            key="ai_diagnose",
+            help="Runs one guarded Cortex completion against the query text, metrics, operator stats, and deterministic candidates.",
+            disabled=not bool(query_text),
+            width="stretch",
+        )
+        if diagnose_with_cortex:
             with render_load_status("Running Cortex query analysis", "Cortex query analysis ready"):
                 try:
-                    prompt = f"""You are a Snowflake performance expert. Analyze this SQL query and provide:
-1. Top 3 performance issues (spill, full-scan, missing clustering, etc.)
-2. Concrete optimization recommendations with Snowflake syntax
-3. Estimated impact of each fix
-Warehouse context: {wh_ctx or 'unknown'}
-Query:
-{query_text[:3000]}
-Be concise, technical, Snowflake-specific."""
-                    result = session.sql(
-                        f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', {sql_literal(prompt)}) AS answer"
-                    ).collect()
-                    st.markdown(result[0]["ANSWER"])
+                    prompt = _build_ai_query_diagnosis_prompt(
+                        query_text,
+                        evidence,
+                        candidates,
+                        _summarize_operator_stats(operator_stats),
+                    )
+                    answer = run_cortex_completion(
+                        session,
+                        prompt,
+                        alias="ANSWER",
+                        prompt_limit=8000,
+                        feature="query_analysis_ai_diagnosis",
+                    )
+                    st.markdown(answer)
                 except Exception as e:
                     st.info(f"Cortex AI unavailable. {format_snowflake_error(e)} Ensure Cortex functions are enabled in your account.")

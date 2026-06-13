@@ -26,6 +26,11 @@ _WORKFLOWS = (
         "MOVE": "Start with the cheapest snapshot, failures, queue pressure, and routed exceptions.",
     },
     {
+        "VIEW": "Morning Brief",
+        "BUTTON_LABEL": "Open Morning Brief",
+        "MOVE": "Build the DBA morning packet from route priority, handoff blockers, escalations, and owner proof.",
+    },
+    {
         "VIEW": "Operations Board",
         "BUTTON_LABEL": "Open Ops Board",
         "MOVE": "Build route priority, runbook, escalation, handoff, incident, and action queue detail.",
@@ -39,6 +44,11 @@ _WORKFLOWS = (
         "VIEW": "Source Health",
         "BUTTON_LABEL": "Open Source Health",
         "MOVE": "Review which evidence sources are fresh, stale, skipped, or missing for this scope.",
+    },
+    {
+        "VIEW": "Service Posture",
+        "BUTTON_LABEL": "Open Service Posture",
+        "MOVE": "Review service risk across query execution, warehouses, login/auth, tasks, and data loading.",
     },
     {
         "VIEW": "Executive Evidence",

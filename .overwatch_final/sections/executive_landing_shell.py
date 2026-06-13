@@ -15,6 +15,13 @@ _BRIEF_MODE_KEY = "_executive_landing_brief_mode"
 _FULL_WORKSPACE_STATE_KEYS = ("executive_landing_snapshot",)
 _PLATFORM_SUMMARY_KEY = "executive_landing_platform_summary"
 
+_SECTION_WORKSPACE_KEYS = {
+    "Alert Center": ("_alert_center_full_workspace_requested", "_alert_center_brief_mode"),
+    "Cost & Contract": ("_cost_contract_full_workspace_requested", "_cost_contract_brief_mode"),
+    "DBA Control Room": ("_dba_control_room_full_workspace_requested", "_dba_control_room_brief_mode"),
+    "Change & Drift": ("_change_drift_full_workspace_requested", "_change_drift_brief_mode"),
+}
+
 _WORKFLOWS = (
     {
         "WORKFLOW": "Executive snapshot",
@@ -101,10 +108,24 @@ def _open_workspace() -> None:
     st.rerun()
 
 
-def _navigate(section: str, state_updates: dict[str, str] | None = None) -> None:
+def _open_target_workspace(section: str) -> None:
+    workspace_keys = _SECTION_WORKSPACE_KEYS.get(section)
+    if not workspace_keys:
+        return
+    workspace_key, brief_key = workspace_keys
+    st.session_state[workspace_key] = True
+    st.session_state[brief_key] = False
+
+
+def _navigate(section: str, state_updates: dict[str, str] | None = None, *, open_workspace: bool = True) -> None:
+    if str(st.session_state.get("nav_section") or "") != section:
+        st.session_state["_overwatch_pending_section"] = section
+        st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
     st.session_state["nav_section"] = section
     for key, value in (state_updates or {}).items():
         st.session_state[key] = value
+    if open_workspace:
+        _open_target_workspace(section)
     st.rerun()
 
 
@@ -121,6 +142,7 @@ def _open_workflow(workflow: str) -> None:
             {
                 "cost_contract_workflow": "FinOps Control Center",
                 "_cost_contract_detail_workflow": "FinOps Control Center",
+                "_cost_contract_pending_detail_workflow": "FinOps Control Center",
             },
         )
         return
@@ -131,6 +153,8 @@ def _open_workflow(workflow: str) -> None:
         _navigate(
             "Change & Drift",
             {
+                "change_drift_requested_view": "Change Workflows",
+                "change_drift_requested_workflow": "Controlled DBA actions",
                 "change_drift_workflow": "Controlled DBA actions",
                 "dba_tools_focus": "Cost",
                 "dba_tools_group_selector": "Cost & Setup",

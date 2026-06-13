@@ -707,8 +707,14 @@ SECTION_DEFINITIONS = (
     SectionDefinition("ARCHITECTURE", "map", "Architecture Readiness", "sections.architecture_readiness_shell"),
 )
 
+PRIMARY_NAV_HIDDEN_SECTIONS = frozenset({
+    "Account Health",
+})
+
 NAV_GROUPS: dict[str, list[str]] = {}
 for _section in SECTION_DEFINITIONS:
+    if _section.label in PRIMARY_NAV_HIDDEN_SECTIONS:
+        continue
     NAV_GROUPS.setdefault(_section.group, []).append(_section.label)
 
 ALL_SECTIONS = [_section.label for _section in SECTION_DEFINITIONS]

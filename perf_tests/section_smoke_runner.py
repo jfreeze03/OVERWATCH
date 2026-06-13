@@ -23,7 +23,6 @@ DEFAULT_SECTIONS = [
     "Executive Landing",
     "DBA Control Room",
     "Alert Center",
-    "Account Health",
     "Workload Operations",
     "Warehouse Health",
     "Architecture Readiness",

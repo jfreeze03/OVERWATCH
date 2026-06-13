@@ -935,9 +935,13 @@ def _render_alert_center_brief_launchpad() -> None:
         for col, row in zip(cols, rows[offset:offset + 3]):
             with col:
                 st.markdown(f"**{row['VIEW']}**")
-                st.caption(row["DBA_MOVE"])
-                st.caption(row["WHEN"])
-                if st.button(row["BUTTON_LABEL"], key=f"alert_center_brief_{row['VIEW']}", width="stretch"):
+                help_text = f"{row['DBA_MOVE']} When: {row['WHEN']}"
+                if st.button(
+                    row["BUTTON_LABEL"],
+                    key=f"alert_center_brief_{row['VIEW']}",
+                    help=help_text,
+                    width="stretch",
+                ):
                     _queue_alert_center_view(row["VIEW"])
 
 

@@ -492,9 +492,13 @@ def _render_warehouse_brief_launchpad() -> None:
         for col, row in zip(cols, rows[offset:offset + 3]):
             with col:
                 st.markdown(f"**{row['VIEW']}**")
-                st.caption(row["DBA_MOVE"])
-                st.caption(row["WHEN"])
-                if st.button(row["BUTTON_LABEL"], key=f"warehouse_brief_{row['VIEW']}", width="stretch"):
+                help_text = f"{row['DBA_MOVE']} When: {row['WHEN']}"
+                if st.button(
+                    row["BUTTON_LABEL"],
+                    key=f"warehouse_brief_{row['VIEW']}",
+                    help=help_text,
+                    width="stretch",
+                ):
                     _queue_warehouse_health_view(row["VIEW"])
 
 
@@ -2531,8 +2535,13 @@ def _render_warehouse_watch_floor(score: int, exceptions: pd.DataFrame, summary_
                 f"Spill {safe_int(item.get('SPILL_QUERIES')):,} | "
                 f"{format_credits(safe_float(item.get('METERED_CREDITS')))}"
             )
-            st.write(str(item.get("NEXT_ACTION", "")))
-            if st.button(f"Open {workflow}", key=f"wh_watch_floor_{idx}_{workflow}", width="stretch"):
+            next_action = str(item.get("NEXT_ACTION", "") or "")
+            if st.button(
+                f"Open {workflow}",
+                key=f"wh_watch_floor_{idx}_{workflow}",
+                help=next_action or None,
+                width="stretch",
+            ):
                 warehouse = str(item.get("WAREHOUSE_NAME") or "")
                 if warehouse:
                     st.session_state["global_warehouse"] = warehouse

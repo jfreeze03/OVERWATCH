@@ -22,6 +22,9 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "get_query_telemetry", "get_query_budget_summary", "clear_query_telemetry",
         "format_snowflake_error",
     ),
+    "cortex": (
+        "CortexRateLimitError", "reserve_cortex_completion", "run_cortex_completion",
+    ),
     "data": (
         "normalize_df", "safe_strip_tz",
     ),
@@ -202,7 +205,8 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "defer_section_note", "defer_source_note",
     ),
     "deployment": (
-        "OVERWATCH_SCHEMA_VERSION", "MIGRATION_TABLE",
+        "OVERWATCH_SCHEMA_VERSION", "MIGRATION_TABLE", "STREAMLIT_DEPLOYMENT_DECISION_VERSION",
+        "build_streamlit_deployment_decision",
         "build_schema_migration_contract", "build_schema_migration_status_sql",
         "build_schema_migration_ddl",
     ),

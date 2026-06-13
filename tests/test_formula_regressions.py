@@ -77,6 +77,10 @@ from sections.workload_operations import (  # noqa: E402
     _workload_status_lanes,
     _workload_task_summary,
 )
+from sections.query_analysis import (  # noqa: E402
+    _build_ai_query_diagnosis_prompt,
+    _build_query_optimization_candidates,
+)
 from sections.executive_landing import (  # noqa: E402
     _build_executive_snapshot_pptx,
     _build_platform_operating_score,
@@ -353,9 +357,11 @@ from utils.mart import build_mart_cost_service_lens_sql  # noqa: E402
 from utils.compatibility import clear_compatibility_process_cache  # noqa: E402
 from utils.deployment import (  # noqa: E402
     OVERWATCH_SCHEMA_VERSION,
+    STREAMLIT_DEPLOYMENT_DECISION_VERSION,
     build_schema_migration_contract,
     build_schema_migration_ddl,
     build_schema_migration_status_sql,
+    build_streamlit_deployment_decision,
 )
 from utils.ask_overwatch import (  # noqa: E402
     answer_ask_overwatch,
@@ -1680,6 +1686,51 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("NULLIF(P.AVG_SEC, 0)", degradation_sql)
         self.assertIn("Q.COMPANY = 'TREXIS'", degradation_sql)
 
+    def test_ai_query_diagnosis_model_is_evidence_bound(self):
+        query_text = """
+            SELECT *
+            FROM PROD_DB.CORE.FACT_POLICY p
+            JOIN PROD_DB.CORE.DIM_CUSTOMER c ON p.CUSTOMER_ID = c.CUSTOMER_ID
+            JOIN PROD_DB.CORE.DIM_AGENT a ON p.AGENT_ID = a.AGENT_ID
+            JOIN PROD_DB.CORE.DIM_PRODUCT pr ON p.PRODUCT_ID = pr.PRODUCT_ID
+            JOIN PROD_DB.CORE.DIM_REGION r ON c.REGION_ID = r.REGION_ID
+            WHERE TO_DATE(p.BIND_TS) = '2026-06-01'
+              AND c.LAST_NAME ILIKE '%SMITH%'
+            ORDER BY p.PREMIUM_AMOUNT
+        """
+        evidence = {
+            "QUERY_ID": "01b123",
+            "QUEUED_SEC": 42,
+            "REMOTE_SPILL_GB": 8.5,
+            "PARTITION_PCT": 97,
+            "BYTES_SCANNED_GB": 180,
+            "ROWS_PRODUCED": 125,
+        }
+
+        candidates = _build_query_optimization_candidates(query_text, evidence)
+        signals = {row["SIGNAL"] for row in candidates}
+
+        self.assertIn("Warehouse queue pressure", signals)
+        self.assertIn("Remote spill", signals)
+        self.assertIn("Full/high partition scan", signals)
+        self.assertIn("Wide SELECT star", signals)
+        self.assertIn("Leading wildcard text search", signals)
+        self.assertIn("Function-wrapped predicate", signals)
+        self.assertTrue(all(row["VERIFY_AFTER_FIX"] for row in candidates))
+
+        prompt = _build_ai_query_diagnosis_prompt(
+            query_text,
+            evidence,
+            candidates,
+            "operator=JOIN; stats=remote spill observed",
+        )
+        self.assertIn("Every recommendation must cite exact evidence", prompt)
+        self.assertIn("Do not recommend indexes", prompt)
+        self.assertIn("GET_QUERY_OPERATOR_STATS", prompt)
+        self.assertIn("SYSTEM$CLUSTERING_INFORMATION", prompt)
+        self.assertIn("Warehouse queue pressure", prompt)
+        self.assertIn("Verification", prompt)
+
     def test_dba_control_room_mart_sql_uses_operational_facts(self):
         summary_sql = build_mart_control_room_summary_sql(24, "ALFA").upper()
         self.assertIn("FACT_QUERY_DETAIL_RECENT", summary_sql)
@@ -2345,6 +2396,27 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("No-touch automation", set(contract["COMPONENT"]))
         self.assertIn("Flyway", " ".join(contract["WHY_IT_MATTERS"].astype(str)))
         self.assertIn("Cost proof mart", set(contract["COMPONENT"]))
+
+    def test_streamlit_deployment_decision_pins_entrypoints(self):
+        decision = build_streamlit_deployment_decision()
+        by_runtime = {row["RUNTIME"]: row for _, row in decision.iterrows()}
+
+        self.assertIn("2026.06.13", STREAMLIT_DEPLOYMENT_DECISION_VERSION)
+        sis = by_runtime["Streamlit in Snowflake"]
+        self.assertEqual(sis["MANIFEST"], ".overwatch_final/snowflake.yml")
+        self.assertEqual(sis["ENTRYPOINT"], ".overwatch_final/app.py")
+        self.assertEqual(sis["WAREHOUSE"], "OVERWATCH_WH")
+        self.assertEqual(sis["EXECUTE_AS"], "CALLER")
+        self.assertIn("streamlit_app.py", sis["DO_NOT_USE"])
+        self.assertIn("COMPUTE_WH", sis["DO_NOT_USE"])
+
+        cloud = by_runtime["Streamlit Community Cloud"]
+        self.assertEqual(cloud["ENTRYPOINT"], "streamlit_app.py")
+        self.assertEqual(cloud["MANIFEST"], ".streamlit/config.toml")
+
+        setup = by_runtime["Snowflake setup"]
+        self.assertEqual(setup["ENTRYPOINT"], "snowflake/OVERWATCH_MART_SETUP.sql")
+        self.assertIn("not in Streamlit UI code", setup["DEPLOY_CONTEXT"])
 
     def test_release_remediation_sql_covers_existing_deployment_drift(self):
         remediation_sql = (ROOT / "snowflake" / "OVERWATCH_RELEASE_REMEDIATION.sql").read_text(encoding="utf-8")

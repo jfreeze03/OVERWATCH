@@ -13,6 +13,7 @@ from sections.shell_helpers import action_state_label, evidence_caption, evidenc
 _FULL_WORKSPACE_KEY = "_cost_contract_full_workspace_requested"
 _BRIEF_MODE_KEY = "_cost_contract_brief_mode"
 _DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
+_PENDING_DETAIL_WORKFLOW_KEY = "_cost_contract_pending_detail_workflow"
 _COST_SPLASH_KEY = "cost_contract_splash"
 _FULL_WORKSPACE_STATE_KEYS = (
     _COST_SPLASH_KEY,
@@ -32,6 +33,11 @@ _WORKFLOWS = (
         "WORKFLOW": "Explain bill / attribution / contract",
         "BUTTON_LABEL": "Open Cost Overview",
         "MOVE": "Start with bill movement, warehouse ranking, service spend, Cortex, and contract pace.",
+    },
+    {
+        "WORKFLOW": "Storage cost and retention",
+        "BUTTON_LABEL": "Open Storage Cost",
+        "MOVE": "Review database, failsafe, stage, and table storage cost evidence from Snowflake storage usage views.",
     },
     {
         "WORKFLOW": "FinOps Control Center",
@@ -107,6 +113,7 @@ def _open_workspace(workflow: str | None = None, *, open_detail: bool = False) -
         st.session_state["cost_contract_workflow"] = workflow
         if open_detail:
             st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
+            st.session_state[_PENDING_DETAIL_WORKFLOW_KEY] = workflow
     st.rerun()
 
 

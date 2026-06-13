@@ -12,6 +12,7 @@ from sections.shell_helpers import action_state_label, evidence_caption, evidenc
 
 _FULL_WORKSPACE_KEY = "_workload_operations_full_workspace_requested"
 _BRIEF_MODE_KEY = "_workload_operations_brief_mode"
+_EXPLICIT_WORKFLOW_KEY = "_workload_operations_explicit_workflow_request"
 _FULL_WORKSPACE_STATE_KEYS = (
     "workload_operations_snapshot",
     "workload_operations_task_snapshot",
@@ -20,6 +21,12 @@ _FULL_WORKSPACE_STATE_KEYS = (
     "live_monitor_state",
     "query_analysis_df",
     "task_management_df",
+    "contention_decision_rows",
+    "contention_historical_waits",
+    "contention_table_hotspots",
+    "contention_task_overlap",
+    "contention_long_dml",
+    "contention_task_mapping",
     "stored_proc_tracker_df",
     "pipeline_health_df",
     "query_search_results",
@@ -32,9 +39,14 @@ _WORKFLOWS = (
         "MOVE": "Check Control-M and Snowflake job status, SLA risk, retries, and downstream impact.",
     },
     {
+        "WORKFLOW": "Contention Center",
+        "BUTTON_LABEL": "Open Contention",
+        "MOVE": "Prove lock waits, overlapping tasks, long DML, or warehouse queueing before changing compute.",
+    },
+    {
         "WORKFLOW": "Query diagnosis",
         "BUTTON_LABEL": "Open Query Diagnosis",
-        "MOVE": "Review p95 runtime, queue pressure, spill, high-cost SQL, and regressions.",
+        "MOVE": "Review p95 runtime, queue pressure, spill, high-cost SQL, regressions, plan steps, and history search.",
     },
     {
         "WORKFLOW": "Live triage",
@@ -50,11 +62,6 @@ _WORKFLOWS = (
         "WORKFLOW": "Pipeline health",
         "BUTTON_LABEL": "Open Pipelines",
         "MOVE": "Review load health, Snowpipe, task/pipeline signals, and backlog.",
-    },
-    {
-        "WORKFLOW": "History search",
-        "BUTTON_LABEL": "Open History",
-        "MOVE": "Find one query, user, warehouse, task, or incident evidence trail.",
     },
 )
 
@@ -90,6 +97,7 @@ def _open_workspace(workflow: str | None = None) -> None:
     st.session_state[_FULL_WORKSPACE_KEY] = True
     st.session_state["workload_operations_view"] = "Workload Brief"
     if workflow:
+        st.session_state[_EXPLICIT_WORKFLOW_KEY] = True
         st.session_state["workload_operations_view"] = "Specialist Workflows"
         st.session_state["workload_operations_workflow"] = workflow
     st.rerun()

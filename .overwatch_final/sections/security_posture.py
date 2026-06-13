@@ -1332,9 +1332,15 @@ def _render_security_watch_floor(score: int, exceptions: pd.DataFrame, row) -> N
         with cols[idx]:
             st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('FINDING_TYPE', '')}**")
             st.caption(f"{item.get('ENTITY_TYPE', 'Access')}: {item.get('ENTITY', 'unknown')}")
-            st.write(str(item.get("NEXT_ACTION", "")))
-            st.caption(str(item.get("PROOF_QUERY", "")))
-            if st.button(f"Open {workflow}", key=f"security_watch_floor_{idx}_{workflow}", width="stretch"):
+            next_action = str(item.get("NEXT_ACTION", "") or "")
+            proof_query = str(item.get("PROOF_QUERY", "") or "")
+            help_text = " ".join(part for part in (next_action, proof_query) if part).strip()
+            if st.button(
+                f"Open {workflow}",
+                key=f"security_watch_floor_{idx}_{workflow}",
+                help=help_text or None,
+                width="stretch",
+            ):
                 entity = str(item.get("ENTITY") or "").strip()
                 if workflow == "Data sharing exposure":
                     if entity and entity.lower() != "unknown":
@@ -1586,9 +1592,13 @@ def _render_security_brief_launchpad() -> None:
     for col, row in zip(cols, rows):
         with col:
             st.markdown(f"**{row['WORKFLOW']}**")
-            st.caption(row["DBA_MOVE"])
-            st.caption(row["WHEN"])
-            if st.button(row["BUTTON_LABEL"], key=f"security_brief_{row['WORKFLOW']}", width="stretch"):
+            help_text = f"{row['DBA_MOVE']} When: {row['WHEN']}"
+            if st.button(
+                row["BUTTON_LABEL"],
+                key=f"security_brief_{row['WORKFLOW']}",
+                help=help_text,
+                width="stretch",
+            ):
                 _queue_security_workflow(row["WORKFLOW"])
 
 

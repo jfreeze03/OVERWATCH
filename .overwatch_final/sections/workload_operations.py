@@ -46,13 +46,6 @@ _LANE_VALUE_STYLE = (
     "line-height:1.25;"
     "overflow-wrap:anywhere;"
 )
-_LANE_DETAIL_STYLE = (
-    "display:block;"
-    "color:var(--text-secondary, #b9d7e2);"
-    "font-size:0.79rem;"
-    "line-height:1.35;"
-    "overflow-wrap:anywhere;"
-)
 
 
 build_mart_control_room_summary_sql = _lazy_util("build_mart_control_room_summary_sql")
@@ -116,40 +109,47 @@ WORKLOAD_OPERATIONS_VIEW_DETAILS = {
     "Specialist Workflows": "Open live triage, query diagnosis, task graphs, stored procedures, pipeline health, or history search when evidence needs drilldown.",
 }
 WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-06-fast-brief-v1"
+WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY = "_workload_operations_explicit_workflow_request"
 
 WORKFLOWS = (
     "Live triage",
+    "Contention Center",
     "Query diagnosis",
     "Task graphs",
     "Stored procedures",
     "Pipeline health",
-    "History search",
 )
 
 WORKFLOW_DETAILS = {
     "Live triage": "What is running, queued, blocked, or failing right now.",
-    "Query diagnosis": "Slow, spilling, expensive, failed, and scan-heavy SQL.",
+    "Contention Center": "Prove lock waits, task overlap, long DML, or warehouse queueing and pick the safest fix.",
+    "Query diagnosis": "Slow, spilling, expensive, failed, scan-heavy SQL, root cause, plan steps, and history search.",
     "Task graphs": "Workflow/DAG status, failures, retries, SLA, and admin control.",
     "Stored procedures": "Procedure CALL history, runtime drift, lineage, and cost attribution.",
     "Pipeline health": "Load health, copy patterns, task/pipeline signals, and backlog.",
-    "History search": "Find one query, user, warehouse, task, or incident trail.",
 }
 
 WORKFLOW_MODULES = {
     "Live triage": "sections.live_monitor",
+    "Contention Center": "sections.contention_center",
     "Query diagnosis": "sections.query_analysis",
-    "Root cause patterns": "sections.query_analysis",
-    "Detailed diagnosis": "sections.detailed_diagnosis",
     "Task graphs": "sections.task_management",
     "Stored procedures": "sections.stored_proc_tracker",
     "Pipeline health": "sections.pipeline_health",
-    "History search": "sections.query_search",
+}
+
+CONSOLIDATED_WORKFLOW_ALIASES = {
+    "History search": ("Query diagnosis", "History Search"),
+    "History Search": ("Query diagnosis", "History Search"),
+    "Root cause patterns": ("Query diagnosis", "Root-Cause Brief"),
+    "Detailed diagnosis": ("Query diagnosis", "Detailed Diagnosis"),
 }
 
 LEGACY_WORKFLOW_MAP = {
     "Diagnosis": "Query diagnosis",
-    "History Search": "History search",
+    "History Search": "Query diagnosis",
     "Live Triage": "Live triage",
+    "Contention": "Contention Center",
     "Patterns": "Query diagnosis",
 }
 
@@ -167,6 +167,12 @@ WORKLOAD_STATUS_LANES = (
         "detail": "P95 runtime, queue pressure, spill, warehouse context, and high-cost SQL patterns.",
     },
     {
+        "label": "Contention",
+        "workflow": "Contention Center",
+        "button": "Open Contention",
+        "detail": "Lock waits, overlapping tasks, long DML, warehouse queueing, and safe fix guidance.",
+    },
+    {
         "label": "Errors",
         "workflow": "Live triage",
         "button": "Open Live Triage",
@@ -177,11 +183,22 @@ WORKLOAD_STATUS_LANES = (
 
 def _apply_fast_entry_default() -> None:
     """Keep first navigation fast after older sessions auto-opened live triage."""
+    explicit_workflow_request = bool(st.session_state.pop(WORKLOAD_OPERATIONS_EXPLICIT_WORKFLOW_KEY, False))
     if st.session_state.get("_workload_operations_fast_entry_version") == WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION:
         return
-    if st.session_state.get("workload_operations_view") == "Specialist Workflows":
+    if st.session_state.get("workload_operations_view") == "Specialist Workflows" and not explicit_workflow_request:
         st.session_state["workload_operations_view"] = WORKLOAD_OPERATIONS_VIEWS[0]
     st.session_state["_workload_operations_fast_entry_version"] = WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION
+
+
+def _normalize_workload_workflow_state() -> None:
+    current = str(st.session_state.get("workload_operations_workflow") or "")
+    mapped = CONSOLIDATED_WORKFLOW_ALIASES.get(current)
+    if not mapped:
+        return
+    workflow, query_view = mapped
+    st.session_state["workload_operations_workflow"] = workflow
+    st.session_state["query_analysis_active_view"] = query_view
 
 
 def _snapshot_meta(company: str, environment: str, hours: int = 24) -> dict:
@@ -604,14 +621,12 @@ def _render_workload_lane_card(lane: dict) -> None:
     label = html.escape(str(lane.get("label") or "Live lane"))
     state = html.escape(str(lane.get("state") or "Review"))
     value = html.escape(str(lane.get("value") or "Live route"))
-    detail = html.escape(str(lane.get("detail") or "Open the lane for current workload evidence."))
     st.markdown(
         (
             f'<div class="ow-workload-lane-card" style="{_LANE_CARD_STYLE}">'
             f'<span class="ow-workload-lane-label" style="{_LANE_LABEL_STYLE}">{label}</span>'
             f'<strong class="ow-workload-lane-state" style="{_LANE_STATE_STYLE}">{state}</strong>'
             f'<span class="ow-workload-lane-value" style="{_LANE_VALUE_STYLE}">{value}</span>'
-            f'<span class="ow-workload-lane-detail" style="{_LANE_DETAIL_STYLE}">{detail}</span>'
             "</div>"
         ),
         unsafe_allow_html=True,
@@ -620,17 +635,27 @@ def _render_workload_lane_card(lane: dict) -> None:
 
 def _render_workload_status_lanes(summary: dict, task_summary: dict | None = None) -> None:
     st.markdown("**Live Workload Lanes**")
-    cols = st.columns(3)
-    for idx, lane in enumerate(_workload_status_lanes(summary, task_summary)):
-        with cols[idx]:
-            with st.container(border=True):
-                _render_workload_lane_card(lane)
-                if st.button(str(lane.get("button") or "Open"), key=f"workload_ops_lane_{idx}", width="stretch"):
-                    workflow = str(lane.get("workflow") or "Live triage")
-                    if workflow in WORKFLOWS:
-                        st.session_state["workload_operations_view"] = "Specialist Workflows"
-                        st.session_state["workload_operations_workflow"] = workflow
-                        st.rerun()
+    lanes = _workload_status_lanes(summary, task_summary)
+    columns = 4
+    for start in range(0, len(lanes), columns):
+        row = lanes[start:start + columns]
+        cols = st.columns(len(row))
+        for offset, lane in enumerate(row):
+            idx = start + offset
+            with cols[offset]:
+                with st.container(border=True):
+                    _render_workload_lane_card(lane)
+                    if st.button(
+                        str(lane.get("button") or "Open"),
+                        key=f"workload_ops_lane_{idx}",
+                        help=str(lane.get("detail") or "Open the lane for current workload evidence."),
+                        width="stretch",
+                    ):
+                        workflow = str(lane.get("workflow") or "Live triage")
+                        if workflow in WORKFLOWS:
+                            st.session_state["workload_operations_view"] = "Specialist Workflows"
+                            st.session_state["workload_operations_workflow"] = workflow
+                            st.rerun()
 
 
 def _render_workload_snapshot(company: str, environment: str) -> None:
@@ -668,6 +693,7 @@ def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
     _apply_fast_entry_default()
+    _normalize_workload_workflow_state()
     if st.session_state.get("exceptions_only_mode") and "workload_operations_workflow" not in st.session_state:
         st.session_state["workload_operations_workflow"] = "Live triage"
     if st.session_state.get("workload_operations_view") not in WORKLOAD_OPERATIONS_VIEWS:
@@ -703,13 +729,14 @@ def render() -> None:
         return
 
     render_workflow_guide(
-        "Start with live triage. Move into query diagnosis, task graphs, or stored procedure tracking only when "
+        "Start with live triage. Move into contention, query diagnosis, task graphs, or stored procedure tracking only when "
         "the signal requires deeper evidence or an admin action.",
         [
             ("A job is late or failed", "Use Task graphs, then drill into the stored procedure and query IDs."),
+            ("A table or task is bottlenecked", "Use Contention Center to separate lock waits from warehouse queueing before resizing."),
             ("A release increased runtime", "Use Stored procedures and the DBA Control Room release compare."),
             ("A warehouse is under pressure", "Use Live triage first, then Warehouse Health."),
-            ("A user asks what happened", "Use History search to find the query, then document evidence."),
+            ("A user asks what happened", "Use Query diagnosis history search to find and document evidence."),
         ],
     )
 

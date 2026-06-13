@@ -111,21 +111,25 @@ DBA_CONTROL_SCOPE_FILTER_KEYS = (
 )
 DBA_CONTROL_ROOM_PANES = (
     "Fast Watch",
+    "Morning Brief",
     "Operations Board",
     "Triage",
     "Drill Routes",
     "Release Gate",
     "Source Health",
+    "Service Posture",
     "Executive Evidence",
     "Release Compare",
 )
 DBA_CONTROL_ROOM_PANE_LABELS = {
     "Fast Watch": "Watch",
+    "Morning Brief": "Morning",
     "Operations Board": "Ops",
     "Triage": "Triage",
     "Drill Routes": "Routes",
     "Release Gate": "Gate",
     "Source Health": "Sources",
+    "Service Posture": "Service",
     "Executive Evidence": "Evidence",
     "Release Compare": "Compare",
 }
@@ -174,6 +178,13 @@ def _clear_dba_control_room_derived_state() -> None:
     """Clear derived boards when the loaded evidence scope changes."""
     for key in DBA_CONTROL_ROOM_DERIVED_STATE_KEYS:
         st.session_state.pop(key, None)
+
+
+def _render_consolidated_service_posture() -> None:
+    """Render legacy Service Health inside the DBA Control Room workspace."""
+    from sections import service_health
+
+    service_health.render()
 
 
 def _dba_control_ops_scope_key(
@@ -252,7 +263,8 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
             if workflow == "Diagnosis":
                 st.session_state["workload_operations_workflow"] = "Query diagnosis"
             elif workflow == "History Search":
-                st.session_state["workload_operations_workflow"] = "History search"
+                st.session_state["workload_operations_workflow"] = "Query diagnosis"
+                st.session_state["query_analysis_active_view"] = "History Search"
             else:
                 st.session_state["workload_operations_workflow"] = workflow
         elif title == "Cost & Contract":
@@ -5088,9 +5100,8 @@ def render() -> None:
         )
         if allow_live_fallback:
             st.caption("Live checks are capped to the loaded 24-hour evidence window.")
-    load_label = "Load Deep Evidence" if include_deep_evidence else "Load Triage"
-    if st.button(load_label, key="dba_control_room_load", type="primary"):
-        with render_load_status("Loading exception signals", "Control Room evidence ready"):
+    def _load_control_room_evidence(*, status_label: str = "Loading exception signals", auto_build_ops: bool = False) -> None:
+        with render_load_status(status_label, "Control Room evidence ready"):
             session = get_session()
             st.session_state["dba_control_room_data"] = _load_control_room(
                 session,
@@ -5122,11 +5133,53 @@ def render() -> None:
                 bool(allow_live_fallback),
             )
             _clear_dba_control_room_derived_state()
+            if auto_build_ops:
+                st.session_state["_dba_control_room_auto_build_ops"] = True
+
+    load_label = "Load Deep Evidence" if include_deep_evidence else "Load Triage"
+    if st.button(load_label, key="dba_control_room_load", type="primary"):
+        _load_control_room_evidence()
 
     data = st.session_state.get("dba_control_room_data", {})
+    if st.session_state.get("dba_control_room_active_view") == "Service Posture":
+        st.divider()
+        active_view = render_workflow_selector(
+            "DBA Control Room view",
+            "dba_control_room_active_view",
+            DBA_CONTROL_ROOM_PANES,
+            labels=DBA_CONTROL_ROOM_PANE_LABELS,
+            columns=4,
+        )
+        if active_view == "Service Posture":
+            _render_consolidated_service_posture()
+            return
     if not data:
-        st.warning("Load triage to see today's DBA exceptions and exportable evidence.")
-        st.caption("Workflow: snapshot -> exception -> owner action -> evidence export.")
+        st.divider()
+        active_view = render_workflow_selector(
+            "DBA Control Room view",
+            "dba_control_room_active_view",
+            DBA_CONTROL_ROOM_PANES,
+            labels=DBA_CONTROL_ROOM_PANE_LABELS,
+            columns=4,
+        )
+        if active_view == "Service Posture":
+            _render_consolidated_service_posture()
+            return
+        if active_view == "Morning Brief":
+            st.warning("Build the DBA Morning Brief to rank today's route priority and exportable evidence.")
+            st.caption("Workflow: load triage -> route priority -> escalation proof -> owner handoff.")
+            if st.button("Build DBA Morning Brief", key="dba_control_room_build_morning_from_empty", type="primary"):
+                _load_control_room_evidence(status_label="Building DBA Morning Brief evidence", auto_build_ops=True)
+                st.rerun()
+        elif active_view == "Operations Board":
+            st.warning("Load the Operations Board to see route priority, runbook, handoff, incident, and action queue detail.")
+            st.caption("Workflow: load triage -> route priority -> owner action -> closure proof.")
+            if st.button("Load Operations Board", key="dba_control_room_build_ops_from_empty", type="primary"):
+                _load_control_room_evidence(status_label="Loading Operations Board evidence", auto_build_ops=True)
+                st.rerun()
+        else:
+            st.warning("Load triage to see today's DBA exceptions and exportable evidence.")
+            st.caption("Workflow: snapshot -> exception -> owner action -> evidence export.")
         return
 
     loaded_lookback = st.session_state.get("dba_control_room_lookback", lookback_hours)
@@ -5268,7 +5321,10 @@ def render() -> None:
             lookback_hours=int(lookback_hours),
         )
 
-    elif active_view == "Operations Board":
+    elif active_view == "Service Posture":
+        _render_consolidated_service_posture()
+
+    elif active_view in {"Operations Board", "Morning Brief"}:
         ops_scope_key = _dba_control_ops_scope_key(
             company,
             environment,
@@ -5281,9 +5337,16 @@ def render() -> None:
         if st.session_state.get("dba_control_room_ops_scope_key") != ops_scope_key:
             st.session_state.pop("dba_control_room_ops_ready", None)
             st.session_state["dba_control_room_ops_scope_key"] = ops_scope_key
+        if st.session_state.pop("_dba_control_room_auto_build_ops", False):
+            st.session_state["dba_control_room_ops_ready"] = True
         if not st.session_state.get("dba_control_room_ops_ready"):
-            st.caption("Load route priority, runbook, escalation, handoff, incident, and queue detail for the current scope.")
-            if st.button("Load Operations Board", key="dba_control_room_build_ops", type="primary"):
+            if active_view == "Morning Brief":
+                st.caption("Build the DBA Morning Brief from route priority, escalation, handoff, incident, and action queue evidence.")
+                load_label = "Build DBA Morning Brief"
+            else:
+                st.caption("Load route priority, runbook, escalation, handoff, incident, and queue detail for the current scope.")
+                load_label = "Load Operations Board"
+            if st.button(load_label, key="dba_control_room_build_ops", type="primary"):
                 st.session_state["dba_control_room_ops_ready"] = True
                 st.rerun()
         else:
@@ -5385,12 +5448,16 @@ def render() -> None:
             st.session_state["dba_control_room_morning_brief"] = morning_brief
             st.session_state["dba_control_room_morning_brief_markdown"] = morning_brief_md
 
-            ops_detail = st.selectbox(
-                "Operations Board detail",
-                ("Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"),
-                label_visibility="collapsed",
-                key="dba_operations_board_detail",
-            )
+            if active_view == "Morning Brief":
+                ops_detail = "Morning Brief"
+                st.session_state["dba_operations_board_detail"] = ops_detail
+            else:
+                ops_detail = st.selectbox(
+                    "Operations Board detail",
+                    ("Morning Brief", "Priority", "Runbook", "Escalations", "Handoff", "Incidents", "Queue"),
+                    label_visibility="collapsed",
+                    key="dba_operations_board_detail",
+                )
             if ops_detail == "Morning Brief":
                 _render_dba_morning_brief(morning_brief, morning_brief_md)
             elif ops_detail == "Priority":

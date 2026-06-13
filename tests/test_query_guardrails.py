@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
+import utils.query as query  # noqa: E402
 from utils.query import (  # noqa: E402
     ADMIN_SQL_READ_LIMIT_ROWS,
     STANDARD_SQL_READ_LIMIT_ROWS,
@@ -84,6 +85,36 @@ class QueryGuardrailTests(unittest.TestCase):
             with self.subTest(identifier=identifier):
                 with self.assertRaises(ValueError):
                     safe_identifier(identifier, allow_qualified=True)
+
+    def test_query_cache_locks_are_bounded_stripes(self):
+        locks = {
+            query._get_query_cache_lock(
+                f"select {idx}",
+                cache_context=f"context_{idx}",
+                cache_salt=f"salt_{idx}",
+                tier="standard",
+            )
+            for idx in range(500)
+        }
+
+        self.assertLessEqual(len(locks), query._QUERY_CACHE_LOCK_STRIPE_COUNT)
+        self.assertEqual(len(query._QUERY_CACHE_LOCK_STRIPES), query._QUERY_CACHE_LOCK_STRIPE_COUNT)
+
+    def test_identical_cached_queries_share_the_same_lock(self):
+        first = query._get_query_cache_lock(
+            "select current_timestamp()",
+            cache_context="same_context",
+            cache_salt="same_salt",
+            tier="live",
+        )
+        second = query._get_query_cache_lock(
+            "select current_timestamp()",
+            cache_context="same_context",
+            cache_salt="same_salt",
+            tier="live",
+        )
+
+        self.assertIs(first, second)
 
 
 if __name__ == "__main__":

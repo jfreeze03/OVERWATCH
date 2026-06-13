@@ -948,12 +948,6 @@ code, pre, .stCodeBlock {
     line-height: 1.25;
     overflow-wrap: anywhere;
 }
-.ow-workload-lane-detail {
-    color: var(--text-secondary);
-    font-size: 0.79rem;
-    line-height: 1.35;
-    overflow-wrap: anywhere;
-}
 .ow-section-guide {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

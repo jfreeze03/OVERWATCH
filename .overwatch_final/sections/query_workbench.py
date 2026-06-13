@@ -15,6 +15,7 @@ from utils import (
     mart_object_name,
     make_action_id,
     render_query_drilldown,
+    run_cortex_completion,
     run_query,
     safe_float,
     safe_int,
@@ -144,8 +145,13 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
             st.markdown(f"**{item.get('SEVERITY', 'Medium')}: {item.get('ROOT_CAUSE', '')}**")
             st.caption(f"{item.get('QUERY_ID', '')} | {item.get('WAREHOUSE_NAME', 'unknown warehouse')}")
             st.caption(f"Impact: {safe_float(item.get('IMPACT_VALUE')):,.2f} {item.get('IMPACT_UNIT', '')}")
-            st.write(str(item.get("NEXT_ACTION", "")))
-            if st.button(f"Open {workflow}", key=f"qw_watch_floor_{idx}_{workflow}", width="stretch"):
+            next_action = str(item.get("NEXT_ACTION", "") or "")
+            if st.button(
+                f"Open {workflow}",
+                key=f"qw_watch_floor_{idx}_{workflow}",
+                help=next_action or None,
+                width="stretch",
+            ):
                 if warehouse:
                     st.session_state["global_warehouse"] = warehouse
                     st.session_state["lm_wh"] = warehouse
@@ -155,6 +161,8 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
                     st.session_state["qs_status"] = "ALL"
                     st.session_state["qs_days"] = min(max(int(days), 1), 30)
                     st.session_state["qs_autorun"] = True
+                    st.session_state["workload_operations_workflow"] = "Query diagnosis"
+                    st.session_state["query_analysis_active_view"] = "History Search"
                 elif workflow == "Diagnosis":
                     mode = "Execution Time"
                     if "QUEUE" in root_cause.upper():
@@ -172,7 +180,8 @@ def _render_query_watch_floor(score: int, exceptions: pd.DataFrame, summary_row:
                     st.session_state["query_analysis_active_view"] = "Pattern Degradation"
                     st.session_state["workload_operations_workflow"] = "Query diagnosis"
                 elif workflow == "History Search":
-                    st.session_state["workload_operations_workflow"] = "History search"
+                    st.session_state["workload_operations_workflow"] = "Query diagnosis"
+                    st.session_state["query_analysis_active_view"] = "History Search"
                 elif workflow == "Live Triage":
                     st.session_state["workload_operations_workflow"] = "Live triage"
                 st.rerun()
@@ -277,16 +286,13 @@ def _root_cause_cortex_prompt(
 
 def _generate_root_cause_cortex_narrative(session, prompt: str) -> str:
     """Run one Cortex completion for a loaded root-cause brief."""
-    result = session.sql(
-        f"SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', {sql_literal(prompt, 16000)}) AS narrative"
-    ).collect()
-    if not result:
-        return ""
-    first = result[0]
-    try:
-        return str(first["NARRATIVE"] or "").strip()
-    except Exception:
-        return str(getattr(first, "NARRATIVE", "") or "").strip()
+    return run_cortex_completion(
+        session,
+        prompt,
+        alias="NARRATIVE",
+        prompt_limit=16000,
+        feature="query_workbench_root_cause",
+    )
 
 
 def _build_root_cause_sql(session, days: int, limit: int) -> tuple[str, str]:

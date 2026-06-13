@@ -26,7 +26,6 @@ DEFAULT_OUTPUT_DIR = pathlib.Path(__file__).resolve().parent / "results"
 DEFAULT_SECTIONS = [
     "DBA Control Room",
     "Alert Center",
-    "Account Health",
     "Warehouse Health",
     "Change & Drift",
     "Cost & Contract",

@@ -372,10 +372,14 @@ def _render_cost_splash_next_move(summary: dict) -> None:
             st.caption(state)
         with detail_col:
             st.markdown(f"**{workflow}**")
-            st.caption(detail)
         with action_col:
             st.write("")
-            if st.button("Open workflow", key="cost_contract_splash_next_workflow", width="stretch"):
+            if st.button(
+                "Open workflow",
+                key="cost_contract_splash_next_workflow",
+                help=detail,
+                width="stretch",
+            ):
                 st.session_state["cost_contract_workflow"] = workflow
                 st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
                 st.rerun()
@@ -431,6 +435,7 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
 
 WORKFLOWS = (
     "Explain bill / attribution / contract",
+    "Storage cost and retention",
     "Budget governance",
     "Recommendations and action queue",
     "FinOps Control Center",
@@ -441,6 +446,7 @@ WORKFLOWS = (
 
 WORKFLOW_DETAILS = {
     "Explain bill / attribution / contract": "Start here: bill movement, chargeback, contract pacing, and cost drivers.",
+    "Storage cost and retention": "Database, failsafe, stage, and table storage cost evidence in the cost workspace.",
     "Budget governance": "Native Snowflake budgets, shared AI resources, per-user AI quota patterns, and custom actions.",
     "Recommendations and action queue": "Owned fixes with severity, proof, savings, and status.",
     "FinOps Control Center": "Cost governance: resource monitors, migration status, verified savings, and formula trust.",
@@ -451,6 +457,7 @@ WORKFLOW_DETAILS = {
 
 WORKFLOW_MODULES = {
     "Explain bill / attribution / contract": "sections.cost_center",
+    "Storage cost and retention": "sections.storage_monitor",
     "FinOps Control Center": "sections.finops_control",
     "Recommendations and action queue": "sections.recommendations",
     "Snowflake value log": "sections.snowflake_value",
@@ -460,6 +467,8 @@ WORKFLOW_MODULES = {
 }
 
 _DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
+_PENDING_DETAIL_WORKFLOW_KEY = "_cost_contract_pending_detail_workflow"
+_AUTO_OPEN_DETAIL_WORKFLOWS = frozenset({"Storage cost and retention"})
 _FULL_COCKPIT_BOARDS_KEY = "_cost_contract_full_cockpit_boards"
 _COST_SPLASH_KEY = "cost_contract_splash"
 _COST_SPLASH_AUTOLOAD_SCOPE_KEY = "_cost_contract_splash_autoload_scope"
@@ -5624,7 +5633,22 @@ def render() -> None:
         columns=5,
     )
 
+    pending_detail = st.session_state.get(_PENDING_DETAIL_WORKFLOW_KEY)
+    if pending_detail in WORKFLOWS:
+        if pending_detail != workflow:
+            st.session_state["cost_contract_workflow"] = pending_detail
+            st.session_state[_DETAIL_WORKFLOW_KEY] = pending_detail
+            st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)
+            st.rerun()
+        st.session_state[_DETAIL_WORKFLOW_KEY] = pending_detail
+        st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)
+    elif pending_detail:
+        st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)
+
     open_workflow = st.session_state.get(_DETAIL_WORKFLOW_KEY)
+    if workflow in _AUTO_OPEN_DETAIL_WORKFLOWS and open_workflow != workflow:
+        st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
+        open_workflow = workflow
     if open_workflow not in WORKFLOWS:
         open_workflow = ""
         st.session_state.pop(_DETAIL_WORKFLOW_KEY, None)

@@ -31,8 +31,10 @@ ADMIN_RESULT_HARD_MB = 100.0
 STANDARD_SQL_READ_LIMIT_ROWS = STANDARD_RESULT_WARNING_ROWS
 ADMIN_SQL_READ_LIMIT_ROWS = ADMIN_RESULT_HARD_ROWS
 
-_QUERY_CACHE_LOCKS: dict[str, threading.Lock] = {}
-_QUERY_CACHE_LOCKS_GUARD = threading.Lock()
+_QUERY_CACHE_LOCK_STRIPE_COUNT = 64
+_QUERY_CACHE_LOCK_STRIPES: tuple[threading.Lock, ...] = tuple(
+    threading.Lock() for _ in range(_QUERY_CACHE_LOCK_STRIPE_COUNT)
+)
 
 _RESULT_SIZE_DEEP_ROW_LIMIT = 5_000
 _RESULT_SIZE_SAMPLE_ROWS = 1_000
@@ -587,15 +589,11 @@ def _cache_salt(ttl_key: str) -> str:
 
 
 def _get_query_cache_lock(query_text: str, cache_context: str, cache_salt: str, tier: str) -> threading.Lock:
-    """Return a process-wide lock for identical in-flight cached queries."""
+    """Return a bounded process-wide lock stripe for in-flight cached queries."""
     key_basis = "\n".join([str(tier or ""), str(cache_context or ""), str(cache_salt or ""), str(query_text or "")])
     key = hashlib.sha1(key_basis.encode("utf-8", errors="ignore")).hexdigest()
-    with _QUERY_CACHE_LOCKS_GUARD:
-        lock = _QUERY_CACHE_LOCKS.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _QUERY_CACHE_LOCKS[key] = lock
-        return lock
+    stripe = int(key[:8], 16) % _QUERY_CACHE_LOCK_STRIPE_COUNT
+    return _QUERY_CACHE_LOCK_STRIPES[stripe]
 
 
 @st.cache_data(ttl=CACHE_TIERS["live"], show_spinner=False)

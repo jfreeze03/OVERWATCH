@@ -96,6 +96,7 @@ from utils.evidence_mode import (  # noqa: E402
 )
 from sections.executive_landing import (  # noqa: E402
     _build_executive_snapshot_pptx,
+    _build_executive_observability_sql,
     _build_platform_operating_score,
     _powerpoint_chart_rows,
     _powerpoint_kpi_rows,
@@ -215,33 +216,15 @@ from sections.change_drift import (  # noqa: E402
     _change_drift_rating,
     _change_drift_score,
     _change_control_operability_fact_sql,
-    _available_change_integration_tables,
-    _change_integration_status_sql,
-    _change_integration_timeline_sql,
-    _change_integration_object_inventory_sql,
-    _change_legacy_integration_status_sql,
-    _change_legacy_integration_timeline_sql,
-    _change_legacy_unmatched_evidence_sql,
-    _change_legacy_feed_health_sql,
-    _change_split_feed_health_sql,
-    _change_unmatched_evidence_sql,
     _change_intervention_matrix,
     _change_operator_next_moves,
     _change_source_health_rows,
     _change_verification_sql,
     _enrich_change_control_evidence,
-    _split_change_evidence_tables_ready,
-    build_change_itsm_ticket_ddl,
-    build_change_itsm_ticket_feed_load_sql,
-    build_change_itsm_ticket_migration_sql,
     build_change_control_evidence_ddl,
     build_change_control_evidence_migration_sql,
     build_change_control_operability_fact_ddl,
     build_change_control_operability_fact_migration_sql,
-    build_change_evidence_feed_stage_sql,
-    build_change_source_control_ddl,
-    build_change_source_control_feed_load_sql,
-    build_change_source_control_migration_sql,
 )
 from sections.query_workbench import (  # noqa: E402
     _build_mart_root_cause_sql,
@@ -312,9 +295,8 @@ from sections.task_management import (  # noqa: E402
     _build_failure_console_frames,
     _build_failure_runbook_markdown,
     _build_task_critical_path_snapshot,
-    _build_controlm_external_feed_sql,
-    _build_controlm_error_board,
-    _build_controlm_job_status_board,
+    _build_task_status_error_board,
+    _build_task_status_job_status_board,
     _build_task_reliability_action,
     _build_task_graph_dot,
     _build_task_ops_frames,
@@ -331,7 +313,6 @@ from sections.task_management import (  # noqa: E402
     _task_action_for,
     _task_ops_workflow_for,
     _task_ops_score,
-    build_controlm_external_feed_setup_sql,
     TASK_CONTROL_DETAILS,
     TASK_CONTROL_VIEWS,
 )
@@ -657,6 +638,23 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_driver["Deployment Trust"]["SCORE_CAP"], 74)
         self.assertEqual(by_driver["Evidence Coverage"]["SCORE_CAP"], 82)
         self.assertLess(by_driver["Reliability / Alerts"]["SCORE_IMPACT"], 0)
+
+    def test_executive_observability_first_paint_uses_compact_mart(self):
+        sql = _build_executive_observability_sql(
+            "ALFA",
+            "PROD",
+            30,
+            credit_price=3.68,
+            ai_credit_price=2.20,
+        ).upper()
+
+        self.assertIn("MART_EXECUTIVE_OBSERVABILITY", sql)
+        self.assertIn("WINDOW_DAYS = 30", sql)
+        self.assertIn("ROW_NUMBER() OVER", sql)
+        self.assertIn("UPPER(COMPANY) IN ('ALFA', 'ALL')", sql)
+        self.assertNotIn("FACT_QUERY_HOURLY", sql)
+        self.assertNotIn("FACT_COST_DAILY", sql)
+        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE", sql)
 
     def test_priority_tables_add_cost_companions_for_credit_metrics(self):
         from utils.workflows import add_cost_companion_columns
@@ -2455,7 +2453,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_INCIDENT_TIMELINE", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_DAILY", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_SOURCE_HEALTH_DAILY", setup_upper)
+        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_OBSERVABILITY", setup_upper)
         self.assertIn("ALTER TABLE IF EXISTS FACT_COST_DAILY ADD COLUMN IF NOT EXISTS RATE_USD", setup_upper)
+        self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY", setup_upper)
+        self.assertIn("CREATE OR REPLACE TASK OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH", setup_upper)
+        self.assertIn("CALL SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY()", setup_upper)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", setup_upper)
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", setup_upper)
         self.assertIn("AI_CREDIT_PRICE_USD", setup_upper)
@@ -2496,31 +2498,32 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_AUTOMATION_RUN", status_sql)
         self.assertIn("OVERWATCH_AUTOMATION_HEALTH_V", status_sql)
         self.assertIn("OVERWATCH_EXECUTIVE_PACKET", status_sql)
-        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", status_sql)
         self.assertIn("OVERWATCH_ALERT_DELIVERY_LOG", status_sql)
         self.assertIn("OVERWATCH_ANNOTATIONS", status_sql)
-        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", status_sql)
-        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", status_sql)
-        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE", status_sql)
-        self.assertIn("OVERWATCH_ITSM_TICKET_STAGE", status_sql)
         self.assertIn("FACT_COST_DAILY", status_sql)
         self.assertIn("FACT_COST_SOURCE_HEALTH_DAILY", status_sql)
+        self.assertIn("MART_EXECUTIVE_OBSERVABILITY", status_sql)
         self.assertIn("FACT_PROCEDURE_RUN", status_sql)
-        self.assertIn("OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT", status_sql)
+        self.assertNotIn("OVERWATCH_EXTERNAL_CONTROL_FEED", status_sql)
+        self.assertNotIn("OVERWATCH_SOURCE_CONTROL_CHANGE", status_sql)
+        self.assertNotIn("OVERWATCH_OWNER_APPROVAL", status_sql)
+        self.assertNotIn("OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT", status_sql)
         self.assertIn("INFORMATION_SCHEMA.STAGES", status_sql)
         self.assertIn("INFORMATION_SCHEMA.FILE_FORMATS", status_sql)
         self.assertIn("VERSION DRIFT", status_sql)
         self.assertIn("Schema migration ledger", set(contract["COMPONENT"]))
-        self.assertIn("Change evidence feed ingress", set(contract["COMPONENT"]))
+        self.assertNotIn("Change evidence feed ingress", set(contract["COMPONENT"]))
         self.assertIn("Procedure runtime context", set(contract["COMPONENT"]))
+        self.assertIn("Executive observability mart", set(contract["COMPONENT"]))
         self.assertIn("OVERWATCH_SCHEMA_MIGRATION", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("FACT_COST_DAILY", set(contract["REQUIRED_OBJECT"]))
+        self.assertIn("MART_EXECUTIVE_OBSERVABILITY", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("FACT_PROCEDURE_RUN", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("OVERWATCH_ANNOTATIONS", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("OVERWATCH_AUTOMATION_RUN", set(contract["REQUIRED_OBJECT"]))
-        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", set(contract["REQUIRED_OBJECT"]))
+        self.assertNotIn("OVERWATCH_EXTERNAL_CONTROL_FEED", set(contract["REQUIRED_OBJECT"]))
         self.assertIn("No-touch automation", set(contract["COMPONENT"]))
-        self.assertIn("Flyway", " ".join(contract["WHY_IT_MATTERS"].astype(str)))
+        self.assertNotIn("Flyway", " ".join(contract["WHY_IT_MATTERS"].astype(str)))
         self.assertIn("Cost proof mart", set(contract["COMPONENT"]))
 
     def test_streamlit_deployment_decision_pins_entrypoints(self):
@@ -2860,8 +2863,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "OBJECT_NAME": "OVERWATCH_SCHEMA_MIGRATION",
                 "OBJECT_TYPE": "TABLE",
                 "OBJECT_STATE": "Present",
-                "REQUIRED_VERSION": "2026.06.04-cost-proof-mart",
-                "DEPLOYED_VERSION": "2026.06.04-cost-proof-mart",
+                "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
+                "DEPLOYED_VERSION": OVERWATCH_SCHEMA_VERSION,
                 "MIGRATION_STATE": "Ready",
                 "NEXT_ACTION": "No action.",
             }]),
@@ -2901,8 +2904,8 @@ class FormulaRegressionTests(unittest.TestCase):
                     "OBJECT_NAME": "OVERWATCH_ANNOTATIONS",
                     "OBJECT_TYPE": "TABLE",
                     "OBJECT_STATE": "Present",
-                    "REQUIRED_VERSION": "2026.06.04-cost-proof-mart",
-                    "DEPLOYED_VERSION": "2026.06.04-cost-proof-mart",
+                    "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
+                    "DEPLOYED_VERSION": OVERWATCH_SCHEMA_VERSION,
                     "MIGRATION_STATE": "Ready",
                     "NEXT_ACTION": "No action.",
                 }])
@@ -2931,7 +2934,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "OBJECT_NAME": "OVERWATCH_ANNOTATIONS",
                 "OBJECT_TYPE": "TABLE",
                 "OBJECT_STATE": "Missing",
-                "REQUIRED_VERSION": "2026.06.04-cost-proof-mart",
+                "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
                 "DEPLOYED_VERSION": "Unknown",
                 "MIGRATION_STATE": "Blocked",
                 "NEXT_ACTION": "Apply release remediation.",
@@ -3395,7 +3398,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Rollback or Escalate", markdown)
 
     def test_dba_section_proof_required_names_section_evidence_contracts(self):
-        self.assertIn("source-control/IaC", _dba_section_proof_required("Change & Drift"))
+        self.assertIn("release-note/rollback", _dba_section_proof_required("Change & Drift"))
         self.assertIn("savings verification", _dba_section_proof_required("Cost & Contract"))
         self.assertIn("email evidence", _dba_section_proof_required("Alert Center"))
 
@@ -3811,7 +3814,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Contention Center", by_workflow)
         self.assertIn("Query diagnosis", by_workflow)
         self.assertIn("Stored procedures", by_workflow)
-        self.assertIn("Control-M", by_workflow["Task graphs"]["FIRST_MOVE"])
+        self.assertIn("Snowflake task", by_workflow["Task graphs"]["FIRST_MOVE"])
         self.assertIn("before resizing", by_workflow["Contention Center"]["FIRST_MOVE"])
         self.assertIn("AI Query Diagnosis", by_workflow["Query diagnosis"]["FIRST_MOVE"])
         self.assertIn("QUERY_HISTORY blocked seconds", by_workflow["Contention Center"]["PROOF_REQUIRED"])
@@ -3845,7 +3848,7 @@ class FormulaRegressionTests(unittest.TestCase):
         task_row = brief[brief["WORKFLOW"].eq("Task graphs")].iloc[0]
         contention_row = brief[brief["WORKFLOW"].eq("Contention Center")].iloc[0]
         query_row = brief[brief["WORKFLOW"].eq("Query diagnosis")].iloc[0]
-        self.assertIn("Control-M operator", task_row["APPROVAL_GATE"])
+        self.assertIn("Snowflake task operator", task_row["APPROVAL_GATE"])
         self.assertIn("recovery SLA", task_row["EVIDENCE_PACKAGE"])
         self.assertIn("TASK_HISTORY run succeeded", task_row["VERIFY_NEXT"])
         self.assertIn("Task graphs guarded controls", task_row["EXECUTION_BOUNDARY"])
@@ -3894,7 +3897,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("warehouse=WH_TRXS_LOAD", markdown)
         self.assertIn("object=PROD_DB.CORE.FACT_POLICY", markdown)
 
-    def test_dba_morning_brief_uses_controlm_feed_without_task_failure_rollup(self):
+    def test_dba_morning_brief_uses_task_status_feed_without_task_failure_rollup(self):
         data = {
             "summary": pd.DataFrame([{
                 "FAILED_QUERIES": 0,
@@ -3908,12 +3911,12 @@ class FormulaRegressionTests(unittest.TestCase):
             "task_sla_cost": pd.DataFrame(),
             "procedure_sla_cost": pd.DataFrame(),
             "workload_task_status": pd.DataFrame([{
-                "CONTROL_M_ROWS": 12,
-                "CONTROL_M_FAILURE_ROWS": 3,
-                "CONTROL_M_LATE_ROWS": 2,
-                "CONTROL_M_ALERT_ROWS": 4,
-                "CONTROL_M_WATCH_ROWS": 1,
-                "CONTROL_M_LAST_SEEN_AT": "2026-06-13 07:00:00",
+                "TASK_STATUS_ROWS": 12,
+                "TASK_STATUS_FAILURE_ROWS": 3,
+                "TASK_STATUS_LATE_ROWS": 2,
+                "TASK_STATUS_ALERT_ROWS": 4,
+                "TASK_STATUS_WATCH_ROWS": 1,
+                "TASK_STATUS_LAST_SEEN_AT": "2026-06-13 07:00:00",
             }]),
         }
 
@@ -3922,13 +3925,13 @@ class FormulaRegressionTests(unittest.TestCase):
         lane = workload_lanes.iloc[0]
         self.assertEqual(lane["WORKFLOW"], "Task graphs")
         self.assertEqual(lane["STATE"], "Blocked Scheduler Work")
-        self.assertIn("Control-M external feed", lane["WHY_NOW"])
+        self.assertIn("Snowflake TASK_HISTORY", lane["WHY_NOW"])
         self.assertIn("failed/blocked=3", lane["WHY_NOW"])
         self.assertIn("TASK_HISTORY", lane["FIRST_MOVE"])
         self.assertIn("downstream SLA impact", lane["FIRST_MOVE"])
         self.assertIn("owner approval", lane["PROOF_REQUIRED"])
         self.assertIn("No-Go for dependent loads", lane["GO_NO_GO"])
-        self.assertEqual(lane["SOURCE_SIGNALS"], "Control-M external feed snapshot")
+        self.assertEqual(lane["SOURCE_SIGNALS"], "Snowflake TASK_HISTORY summary")
 
         brief = _dba_morning_brief_rows(
             pd.DataFrame(),
@@ -3939,7 +3942,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         self.assertEqual(brief.iloc[0]["WORKFLOW"], "Task graphs")
         self.assertEqual(brief.iloc[0]["MORNING_DECISION"], "No-Go / contain now")
-        self.assertIn("Control-M operator", brief.iloc[0]["APPROVAL_GATE"])
+        self.assertIn("Snowflake task operator", brief.iloc[0]["APPROVAL_GATE"])
         self.assertIn("recovery SLA", brief.iloc[0]["EVIDENCE_PACKAGE"])
 
     def test_dba_morning_route_context_seeds_contention_focus(self):
@@ -4996,17 +4999,15 @@ class FormulaRegressionTests(unittest.TestCase):
             [row["WORKFLOW"] for row in rows],
             [
                 "Object and access changes",
-                "Terraform evidence",
-                "Jira evidence",
                 "Schema and object drift",
                 "Data movement and replication",
+                "Stored procedure lineage",
                 "Controlled DBA actions",
             ],
         )
         by_workflow = {row["WORKFLOW"]: row for row in rows}
         self.assertIn("recent DDL", by_workflow["Object and access changes"]["DBA_MOVE"])
-        self.assertIn("Terraform", by_workflow["Terraform evidence"]["DBA_MOVE"])
-        self.assertIn("Jira", by_workflow["Jira evidence"]["DBA_MOVE"])
+        self.assertIn("Trace stored procedure", by_workflow["Stored procedure lineage"]["DBA_MOVE"])
         self.assertIn("Open DBA Actions", by_workflow["Controlled DBA actions"]["BUTTON_LABEL"])
         self.assertIn("Guarded admin", by_workflow["Controlled DBA actions"]["SOURCES"])
 
@@ -5042,7 +5043,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "ENTITY": "ALFA_EDW_DEV.PUBLIC.POLICY_FACT",
             "USER_NAME": "DEPLOY_USER",
             "QUERY_ID": "01abc",
-            "QUERY_TAG": "CHG-12345 terraform release",
+            "QUERY_TAG": "CHG-12345 deployment release",
         }
         action = _change_action_payload(row, company="ALFA", environment="ALFA_EDW_DEV")
 
@@ -5057,7 +5058,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("QUERY_HISTORY", action["Verification Query"])
         self.assertEqual(verification_query_safety_issues(action["Verification Query"]), [])
         self.assertIn("OBJECT_DEPENDENCIES", action["Recovery Evidence"])
-        self.assertIn("Codified / deployment-tagged", action["Recovery Evidence"])
+        self.assertIn("Approval proof tagged", action["Recovery Evidence"])
         self.assertIn("blast-radius", action["Generated SQL Fix"])
         self.assertNotIn("DROP TABLE", action["Generated SQL Fix"].upper())
 
@@ -5090,7 +5091,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("owner directory evidence", row["EVIDENCE_BLOCKERS"])
         self.assertEqual(row["REVIEW_SLA_HOURS"], 72)
         self.assertIn("Attach the approved change ticket", row["NEXT_CONTROL_ACTION"])
-        self.assertIn("Review source-control", row["IAC_RECONCILIATION_STATE"])
+        self.assertIn("Review approval evidence", row["IAC_RECONCILIATION_STATE"])
         self.assertIn("Query ID", row["EXECUTION_AUDIT_STATE"])
         self.assertIn("change ticket", row["PROOF_REQUIRED"])
         self.assertEqual(verification_query_safety_issues(row["VERIFICATION_QUERY"]), [])
@@ -5105,7 +5106,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "USER_NAME": "DEPLOY_USER",
                 "ROLE_NAME": "SECURITYADMIN",
                 "QUERY_ID": "01policy",
-                "QUERY_TAG": "CHG-12345 terraform release",
+                "QUERY_TAG": "CHG-12345 deployment release",
                 "LAST_SEEN": "2026-05-31 10:00:00",
             },
             {
@@ -5141,7 +5142,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "USER_NAME": "DEPLOY_USER",
                 "ROLE_NAME": "SECURITYADMIN",
                 "QUERY_ID": "01policy",
-                "QUERY_TAG": "RFC98765 flyway release",
+                "QUERY_TAG": "RFC98765 approved change",
                 "LAST_SEEN": "2026-05-31 09:00:00",
                 "CHANGE_CONTROL_STATE": "Approval Required",
                 "CONTROL_GAP": "Needs approver, change ticket, and blast-radius note",
@@ -5178,124 +5179,35 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("INSERT INTO", insert_sql)
         self.assertIn("'RFC98765'", insert_sql)
         self.assertIn("'PROD'", insert_sql)
-        self.assertIn("CODIFIED / DEPLOYMENT-TAGGED", insert_sql)
+        self.assertIn("APPROVAL PROOF TAGGED", insert_sql)
         self.assertIn("REVIEW READY", insert_sql)
         self.assertIn("SNAPSHOT_TS >= DATEADD('DAY', -30", trend_sql)
         self.assertIn("COMPANY = 'ALFA'", trend_sql)
         self.assertIn("ENVIRONMENT = 'PROD'", trend_sql)
         self.assertIn("MISSING_TICKET_ROWS", trend_sql)
 
-    def test_change_external_integration_tables_and_sql_join_jira_terraform_evidence(self):
-        source_ddl = build_change_source_control_ddl().upper()
-        ticket_ddl = build_change_itsm_ticket_ddl().upper()
-        stage_sql = build_change_evidence_feed_stage_sql().upper()
-        source_load_sql = build_change_source_control_feed_load_sql().upper()
-        ticket_load_sql = build_change_itsm_ticket_feed_load_sql().upper()
-        source_migration = "\n".join(build_change_source_control_migration_sql()).upper()
-        ticket_migration = "\n".join(build_change_itsm_ticket_migration_sql()).upper()
-        status_sql = _change_integration_status_sql(14, "ALFA", "PROD").upper()
-        unmatched_sql = _change_unmatched_evidence_sql(14, "ALFA", "PROD").upper()
-        timeline_sql = _change_integration_timeline_sql(14, "ALFA", "PROD").upper()
-        feed_health_sql = _change_split_feed_health_sql(14, "ALFA", "PROD").upper()
-        legacy_status_sql = _change_legacy_integration_status_sql(14, "ALFA", "PROD").upper()
-        legacy_unmatched_sql = _change_legacy_unmatched_evidence_sql(14, "ALFA", "PROD").upper()
-        legacy_timeline_sql = _change_legacy_integration_timeline_sql(14, "ALFA", "PROD").upper()
-        legacy_feed_health_sql = _change_legacy_feed_health_sql(14, "ALFA", "PROD").upper()
-        inventory_sql = _change_integration_object_inventory_sql().upper()
+    def test_external_integration_placeholders_are_removed_from_change_contract(self):
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+        change_text = (ROOT / ".overwatch_final" / "sections" / "change_drift.py").read_text(encoding="utf-8").upper()
+        task_text = (ROOT / ".overwatch_final" / "sections" / "task_management.py").read_text(encoding="utf-8").upper()
+        workload_text = (ROOT / ".overwatch_final" / "sections" / "workload_operations.py").read_text(encoding="utf-8").upper()
 
-        self.assertIn("CREATE TABLE IF NOT EXISTS", source_ddl)
-        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", source_ddl)
-        self.assertIn("TERRAFORM_ADDRESS", source_ddl)
-        self.assertIn("COMMIT_SHA", source_ddl)
-        self.assertIn("CHANGE_TICKET_ID", source_ddl)
-        self.assertIn("CREATE TABLE IF NOT EXISTS", ticket_ddl)
-        self.assertIn("OVERWATCH_ITSM_TICKET", ticket_ddl)
-        self.assertIn("APPROVAL_STATUS", ticket_ddl)
-        self.assertIn("LINKED_COMMIT_SHA", ticket_ddl)
-        self.assertIn("ADD COLUMN IF NOT EXISTS OBJECT_FQN", source_migration)
-        self.assertIn("ADD COLUMN IF NOT EXISTS LINKED_PR_URL", ticket_migration)
-        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", setup_sql)
-        self.assertIn("OVERWATCH_ITSM_TICKET", setup_sql)
-        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE", setup_sql)
-        self.assertIn("OVERWATCH_ITSM_TICKET_STAGE", setup_sql)
-        self.assertIn("CREATE FILE FORMAT IF NOT EXISTS OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT", setup_sql)
-        self.assertIn("CREATE STAGE IF NOT EXISTS", stage_sql)
-        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE", stage_sql)
-        self.assertIn("OVERWATCH_ITSM_TICKET_STAGE", stage_sql)
-        self.assertIn("COPY INTO", source_load_sql)
-        self.assertIn("FROM @DBA_MAINT_DB.OVERWATCH.OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE", source_load_sql)
-        self.assertIn("TRY_TO_TIMESTAMP_NTZ($20)", source_load_sql)
-        self.assertIn("COPY INTO", ticket_load_sql)
-        self.assertIn("FROM @DBA_MAINT_DB.OVERWATCH.OVERWATCH_ITSM_TICKET_STAGE", ticket_load_sql)
-        self.assertIn("TRY_TO_TIMESTAMP_NTZ($18)", ticket_load_sql)
-        self.assertIn("FACT_OBJECT_CHANGE", status_sql)
-        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", status_sql)
-        self.assertIn("OVERWATCH_ITSM_TICKET", status_sql)
-        self.assertIn("REGEXP_SUBSTR", status_sql)
-        self.assertIn("COMMIT_SHA <> ''", status_sql)
-        self.assertIn("OBJECT_MATCH_KEY", status_sql)
-        self.assertIn('AS "ROWS"', status_sql)
-        self.assertNotIn(" AND AND ", status_sql)
-        self.assertNotIn(" AND AND ", unmatched_sql)
-        self.assertNotIn(" AND AND ", timeline_sql)
-        self.assertIn("SNOWFLAKE CHANGE MISSING EXTERNAL EVIDENCE", unmatched_sql)
-        self.assertIn("APPROVED JIRA CHANGE MISSING DEPLOY EVIDENCE", unmatched_sql)
-        self.assertIn("EVENT_SOURCE", timeline_sql)
-        self.assertIn("'JIRA'", timeline_sql)
-        self.assertIn("TO_DATE(COALESCE(APPLY_TS, SNAPSHOT_TS))", timeline_sql)
-        self.assertNotIn("ACCOUNT_USAGE.QUERY_HISTORY", status_sql)
-        self.assertIn("READY - EMPTY", feed_health_sql)
-        self.assertIn('AS "ROWS"', feed_health_sql)
-        self.assertIn("ACTIVE_SCOPE_ROWS", feed_health_sql)
-        self.assertIn("COALESCE(COUNT_IF", feed_health_sql)
-        self.assertIn("TICKET_KEY_ROWS", feed_health_sql)
-        self.assertIn("LINK_KEY_ROWS", feed_health_sql)
-        self.assertIn("EVIDENCE_URL_ROWS", feed_health_sql)
-        self.assertNotIn(" AND AND ", feed_health_sql)
-        self.assertIn("INFORMATION_SCHEMA.TABLES", inventory_sql)
-        self.assertIn("OVERWATCH_CHANGE_CONTROL_EVIDENCE", inventory_sql)
-        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", inventory_sql)
-        self.assertIn("OVERWATCH_ITSM_TICKET", inventory_sql)
-        self.assertIn("OVERWATCH_CHANGE_CONTROL_EVIDENCE", legacy_status_sql)
-        self.assertIn("FACT_OBJECT_CHANGE", legacy_status_sql)
-        self.assertIn("LEGACY_SOURCE", legacy_status_sql)
-        self.assertIn("LEGACY_TICKETS", legacy_status_sql)
-        self.assertIn("LEGACY EVIDENCE IS IN USE", legacy_status_sql)
-        self.assertNotIn("FROM DBA_MAINT_DB.OVERWATCH.OVERWATCH_SOURCE_CONTROL_CHANGE", legacy_status_sql)
-        self.assertNotIn("FROM DBA_MAINT_DB.OVERWATCH.OVERWATCH_ITSM_TICKET", legacy_status_sql)
-        self.assertIn("LEGACY EVIDENCE MISSING SPLIT-TABLE DETAIL", legacy_unmatched_sql)
-        self.assertIn("TERRAFORM/GIT (LEGACY)", legacy_timeline_sql)
-        self.assertIn("'JIRA'", legacy_timeline_sql)
-        self.assertIn("LEGACY CHANGE-CONTROL EVIDENCE", legacy_feed_health_sql)
-        self.assertIn('AS "ROWS"', legacy_feed_health_sql)
-        self.assertIn("ACTIVE_SCOPE_ROWS", legacy_feed_health_sql)
-        self.assertNotIn(" AND AND ", legacy_feed_health_sql)
-        available = _available_change_integration_tables(
-            pd.DataFrame({"TABLE_NAME": ["overwatch_source_control_change", "OVERWATCH_ITSM_TICKET"]})
-        )
-        self.assertTrue(_split_change_evidence_tables_ready(available))
-        self.assertFalse(_split_change_evidence_tables_ready({"OVERWATCH_CHANGE_CONTROL_EVIDENCE"}))
+        for retired in [
+            "OVERWATCH_EXTERNAL_CONTROL_FEED",
+            "OVERWATCH_SOURCE_CONTROL_CHANGE",
+            "OVERWATCH_OWNER_APPROVAL",
+            "OVERWATCH_TASK_STATUS_FEED_STAGE",
+            "SNOWFLAKE TASK FEED SETUP",
+            "LOAD RELEASE EVIDENCE",
+            "LOAD OWNER APPROVAL EVIDENCE",
+        ]:
+            self.assertNotIn(retired, setup_sql)
+            self.assertNotIn(retired, change_text)
+            self.assertNotIn(retired, task_text)
 
-    def test_change_control_operability_fact_is_fast_and_environment_scoped(self):
-        ddl = build_change_control_operability_fact_ddl().upper()
-        migration_sql = "\n".join(build_change_control_operability_fact_migration_sql()).upper()
-        fact_sql = _change_control_operability_fact_sql(30, "ALFA", "DEV_ALL").upper()
-
-        self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS", ddl)
-        self.assertIn("FACT_CHANGE_CONTROL_OPERABILITY_DAILY", ddl)
-        self.assertIn("CONTROL_SOURCE", ddl)
-        self.assertIn("CONTROL_RANK", ddl)
-        self.assertIn("NEXT_CONTROL_ACTION", ddl)
-        self.assertIn("ADD COLUMN IF NOT EXISTS CONTROL_SOURCE", migration_sql)
-        self.assertIn("ADD COLUMN IF NOT EXISTS CONTROL_RANK", migration_sql)
-        self.assertIn("FACT_CHANGE_CONTROL_OPERABILITY_DAILY", fact_sql)
-        self.assertIn("SNAPSHOT_DATE >= DATEADD('DAY', -30", fact_sql)
-        self.assertIn("COMPANY = 'ALFA'", fact_sql)
-        for db_name in ["ALFA_EDW_DEV", "ALFA_EDW_SAN", "ALFA_EDW_PHX", "ALFA_EDW_SEA", "ALFA_EDW_SIT"]:
-            self.assertIn(db_name, fact_sql)
-        self.assertNotIn("ACCOUNT_USAGE.QUERY_HISTORY", fact_sql)
-        self.assertNotIn("OVERWATCH_ACTION_QUEUE", fact_sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", workload_text)
+        self.assertIn("OVERWATCH_CHANGE_CONTROL_EVIDENCE", setup_sql)
+        self.assertIn("OVERWATCH_ACTION_QUEUE", setup_sql)
 
     def test_change_source_health_flags_loaded_stale_and_unavailable_evidence(self):
         state = {
@@ -5335,8 +5247,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "global_start_date": "",
                 "global_end_date": "",
             },
-            "change_integration_terraform_days": 14,
-            "change_integration_jira_days": 14,
+            "change_integration_deployment_days": 14,
+            "change_integration_owner_approval_days": 14,
         }
 
         rows = _change_source_health_rows(state, company="ALFA", environment="PROD")
@@ -5348,10 +5260,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_surface["Control summary"]["STATE"], "Unavailable")
         self.assertEqual(by_surface["Evidence trend"]["STATE"], "Stale")
         self.assertEqual(by_surface["Closure analytics"]["STATE"], "Not Loaded")
-        self.assertEqual(by_surface["Terraform evidence"]["STATE"], "Not Loaded")
-        self.assertEqual(by_surface["Jira evidence"]["STATE"], "Not Loaded")
-        self.assertIn("OVERWATCH_SOURCE_CONTROL_CHANGE", by_surface["Terraform evidence"]["SOURCE"])
-        self.assertIn("OVERWATCH_ITSM_TICKET", by_surface["Jira evidence"]["SOURCE"])
+        self.assertNotIn("Release evidence", by_surface)
+        self.assertNotIn("Owner approval evidence", by_surface)
         self.assertIn("Reload", by_surface["Evidence trend"]["NEXT_ACTION"])
 
     def test_change_action_queue_closure_sql_scores_evidence_gaps(self):
@@ -5365,7 +5275,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("FIXED_WITHOUT_VERIFICATION", sql)
         self.assertIn("OWNER_APPROVAL_GAP_ROWS", sql)
         self.assertIn("CLOSURE_READINESS", sql)
-        self.assertIn("SOURCE-CONTROL OR ROLLBACK PROOF", sql)
+        self.assertIn("APPROVAL OR ROLLBACK PROOF", sql)
         self.assertEqual(verification_query_safety_issues(sql), [])
 
     def test_change_operator_next_moves_prioritize_route_proof_scope_and_closure(self):
@@ -6637,7 +6547,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(summary["LATEST_FAILED_TASKS"], 0)
         self.assertEqual(str(latest.iloc[0]["STATE"]), "RUNNING")
 
-    def test_controlm_job_status_board_surfaces_performance_and_errors(self):
+    def test_task_status_job_status_board_surfaces_performance_and_errors(self):
         summary = {
             "TOTAL_TASKS": 4,
             "TOTAL_RUNS": 12,
@@ -6677,66 +6587,25 @@ class FormulaRegressionTests(unittest.TestCase):
             }
         )
 
-        controlm_feed = pd.DataFrame(
-            {
-                "SOURCE_SYSTEM": ["CONTROL_M"],
-                "OBJECT_NAME": ["ALFA_EDW_DEV.ROOT_TASK"],
-                "OBJECT_TYPE": ["Task graph"],
-                "STATUS": ["FAILED"],
-                "SEVERITY": ["High"],
-                "OWNER": ["Data Engineering"],
-                "TICKET_ID": ["CHG-123"],
-                "EVIDENCE": ["job_id=abc; status=FAILED"],
-                "NEXT_ACTION": ["Route failed job to recovery."],
-                "LAST_SEEN_AT": pd.to_datetime(["2026-05-01 10:15"]),
-                "SEEN_COUNT": [3],
-            }
-        )
-
-        board = _build_controlm_job_status_board(summary, latest, exceptions, controlm_feed)
-        errors = _build_controlm_error_board(exceptions, latest)
-        by_view = {row["CONTROL_M_VIEW"]: row for _, row in board.iterrows()}
+        board = _build_task_status_job_status_board(summary, latest, exceptions)
+        errors = _build_task_status_error_board(exceptions, latest)
+        by_view = {row["TASK_STATUS_VIEW"]: row for _, row in board.iterrows()}
 
         self.assertEqual(by_view["Job Status"]["STATE"], "Needs Triage")
         self.assertEqual(by_view["Performance Indicators"]["COUNT"], 2)
         self.assertEqual(by_view["Errors"]["COUNT"], 1)
-        self.assertEqual(by_view["Scheduler Feed"]["STATE"], "Alert")
-        self.assertEqual(by_view["Scheduler Feed"]["COUNT"], 1)
-        self.assertIn("FAILED", by_view["Scheduler Feed"]["EVIDENCE"])
+        self.assertNotIn("Scheduler Feed", by_view)
         self.assertIn("FAILED_WITH_ERROR", by_view["Job Status"]["EVIDENCE"])
         self.assertFalse(errors.empty)
         self.assertIn("missing table", errors.iloc[0]["ERROR_SIGNATURE"])
         self.assertIn("EST_TOTAL_CREDITS", errors.columns)
 
-    def test_controlm_external_feed_sql_is_mart_scoped(self):
-        sql = _build_controlm_external_feed_sql("Trexis", "PROD", 14).upper()
+    def test_task_status_external_feed_setup_is_removed(self):
+        task_text = (ROOT / ".overwatch_final" / "sections" / "task_management.py").read_text(encoding="utf-8").upper()
 
-        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", sql)
-        self.assertIn("CONTROL_M", sql)
-        self.assertIn("COMPANY = 'TREXIS'", sql)
-        self.assertIn("COALESCE(ENVIRONMENT, 'NO DATABASE CONTEXT') = 'PROD'", sql)
-        self.assertIn("DATEADD('DAY', -14", sql)
-        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", sql)
-
-    def test_controlm_external_feed_setup_sql_is_automation_ready(self):
-        sql = build_controlm_external_feed_setup_sql().upper()
-
-        self.assertIn("CREATE TABLE IF NOT EXISTS", sql)
-        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", sql)
-        self.assertIn("SOURCE_SYSTEM VARCHAR DEFAULT 'CONTROL_M'", sql)
-        self.assertIn("EXTERNAL_ID VARCHAR NOT NULL", sql)
-        self.assertIn("RAW_PAYLOAD VARIANT", sql)
-        self.assertIn("PRIMARY KEY (SOURCE_SYSTEM, EXTERNAL_ID) NOT ENFORCED", sql)
-        self.assertIn("CREATE FILE FORMAT IF NOT EXISTS", sql)
-        self.assertIn("OVERWATCH_CONTROL_M_JSON_FF", sql)
-        self.assertIn("CREATE STAGE IF NOT EXISTS", sql)
-        self.assertIn("OVERWATCH_CONTROL_M_FEED_STAGE", sql)
-        self.assertIn("MERGE INTO", sql)
-        self.assertIn("FROM @DBA_MAINT_DB.OVERWATCH.OVERWATCH_CONTROL_M_FEED_STAGE/CONTROL_M/", sql)
-        self.assertIn("$1:JOB_ID::VARCHAR", sql)
-        self.assertIn("$1:STATUS::VARCHAR", sql)
-        self.assertIn("WHEN MATCHED THEN UPDATE SET", sql)
-        self.assertIn("WHEN NOT MATCHED THEN INSERT", sql)
+        self.assertNotIn("OVERWATCH_EXTERNAL_CONTROL_FEED", task_text)
+        self.assertNotIn("SNOWFLAKE TASK FEED SETUP", task_text)
+        self.assertNotIn("OVERWATCH_TASK_STATUS_FEED_STAGE", task_text)
 
     def test_task_recovery_sla_frame_tracks_open_and_late_recoveries(self):
         inventory = pd.DataFrame(
@@ -6902,7 +6771,7 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         self.assertIn("OVERWATCH Task Graph Operations Brief - ALFA", md)
         self.assertIn("Informatica Monitor replacement", md)
-        self.assertIn("Control-M handoff state", md)
+        self.assertIn("Snowflake task handoff state", md)
         self.assertIn("Failed Task Run", md)
         self.assertIn("Cost drift/release-regression candidates", md)
         self.assertIn("Admin actions require", md)
@@ -6912,9 +6781,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("resume only after owner approval", _task_action_for("Suspended Task")[0])
         self.assertIn("historical average", _task_action_for("Long Running / SLA Risk")[0])
 
-    def test_task_management_defaults_to_controlm_job_status_brief(self):
+    def test_task_management_defaults_to_task_status_job_status_brief(self):
         self.assertEqual(TASK_CONTROL_VIEWS[0], "Job Status Brief")
-        self.assertIn("Control-M handoff", TASK_CONTROL_DETAILS["Job Status Brief"])
+        self.assertIn("Snowflake task handoff", TASK_CONTROL_DETAILS["Job Status Brief"])
         self.assertEqual(_task_ops_workflow_for("Healthy task graph"), "Job Status Brief")
         self.assertEqual(_task_ops_workflow_for("Failed Task Run"), "Failure Console")
         self.assertEqual(_task_ops_workflow_for("Long Running / SLA Risk"), "SLA & Cost Drift")
@@ -7221,7 +7090,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("warehouse pressure", by_view["Overview & Scaling"]["DBA_MOVE"])
         self.assertIn("credits per query", by_view["Efficiency"]["DBA_MOVE"])
         self.assertIn("remote spill", by_view["Spill & Memory"]["WHEN"])
-        self.assertIn("Control-M", by_view["Workload Heatmap"]["WHEN"])
+        self.assertIn("Snowflake task", by_view["Workload Heatmap"]["WHEN"])
         self.assertIn("Open Advisor", by_view["Optimization Advisor"]["BUTTON_LABEL"])
         self.assertIn("Actionable sizing", by_view["Optimization Advisor"]["SOURCES"])
 
@@ -7745,6 +7614,41 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("queued", warehouse_cards[0]["evidence"])
         self.assertEqual(build_top_priority_brief_cards({}, domain="All"), [])
 
+    def test_top_priority_brief_reads_executive_landing_platform_score(self):
+        state = {
+            "executive_landing_platform_summary": {
+                "score": 58,
+                "raw_score": 63.5,
+                "state": "Executive Escalation",
+                "score_cap": 74,
+                "cap_reason": "1 setup or migration blocker caps the executive score.",
+            },
+            "executive_landing_snapshot": {
+                "errors": ["Alert evidence unavailable: missing ALERT_EVENTS privilege."],
+                "cost": pd.DataFrame([{
+                    "CURRENT_CREDITS": 180.0,
+                    "PRIOR_CREDITS": 120.0,
+                    "TOP_INCREASE_WAREHOUSE": "WH_TRXS_QUERY",
+                }]),
+                "alerts": pd.DataFrame([{
+                    "SEVERITY": "High",
+                    "ALERT_NAME": "Failed production task",
+                    "ENTITY": "TASK_LOAD_CUSTOMER",
+                    "EVIDENCE": "3 failures in the executive window.",
+                }]),
+            },
+        }
+
+        cards = build_top_priority_brief_cards(state, domain="All", limit=5)
+        alert_cards = build_top_priority_brief_cards(state, domain="Alerts", limit=5)
+
+        self.assertEqual(cards[0]["surface"], "Executive Landing")
+        self.assertEqual(cards[0]["signal"], "Platform operating score")
+        self.assertEqual(cards[0]["severity"], "Critical")
+        self.assertIn("58/100", cards[0]["entity"])
+        self.assertIn("cap=74/100", cards[0]["evidence"])
+        self.assertIn("Failed production task", {card["signal"] for card in alert_cards})
+
     def test_top_priority_brief_reads_security_posture_summary(self):
         state = {
             "security_posture_summary": pd.DataFrame([{
@@ -7930,6 +7834,8 @@ class FormulaRegressionTests(unittest.TestCase):
             "rec_recommendations": [{"Entity": "COMPUTE_WH", "Finding": "Idle warehouse"}],
             "rec_automation_board": pd.DataFrame([{"ENTITY": "COMPUTE_WH"}]),
             "unrelated_large_frame": huge_frame,
+            "executive_landing_platform_summary": {"score": 58},
+            "executive_landing_snapshot": {"errors": []},
             "dba_control_room_data": {"summary": pd.DataFrame()},
             "arch_agentic_ai_scorecard": pd.DataFrame([{"CONTROL_AREA": "CoWork Artifact Governance"}]),
             "security_posture_summary": pd.DataFrame([{"FAILED_LOGINS": 3}]),
@@ -7943,6 +7849,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("dict(st.session_state),", app_text)
         self.assertIn("rec_recommendations", snapshot)
         self.assertIn("rec_automation_board", snapshot)
+        self.assertIn("executive_landing_platform_summary", snapshot)
+        self.assertIn("executive_landing_snapshot", snapshot)
         self.assertIn("dba_control_room_data", snapshot)
         self.assertIn("arch_agentic_ai_scorecard", snapshot)
         self.assertIn("security_posture_summary", snapshot)
@@ -8990,14 +8898,14 @@ class FormulaRegressionTests(unittest.TestCase):
             },
             task_summary={
                 "loaded": True,
-                "controlm_rows": 5,
-                "controlm_alerts": 2,
-                "controlm_watch": 1,
+                "task_status_rows": 5,
+                "task_status_alerts": 2,
+                "task_status_watch": 1,
             },
         )
         self.assertEqual(task_alert_brief["workflow"], "Task graphs")
         self.assertEqual(task_alert_brief["state"], "Job Review")
-        self.assertIn("Control-M", task_alert_brief["detail"])
+        self.assertIn("Snowflake task", task_alert_brief["detail"])
 
         task_failure_brief = _workload_action_brief(
             {
@@ -9010,11 +8918,11 @@ class FormulaRegressionTests(unittest.TestCase):
             },
             task_summary={
                 "loaded": True,
-                "controlm_rows": 5,
-                "controlm_failures": 2,
-                "controlm_late": 1,
-                "controlm_alerts": 3,
-                "controlm_watch": 0,
+                "task_status_rows": 5,
+                "task_status_failures": 2,
+                "task_status_late": 1,
+                "task_status_alerts": 3,
+                "task_status_watch": 0,
             },
         )
         self.assertEqual(task_failure_brief["workflow"], "Task graphs")
@@ -9032,11 +8940,11 @@ class FormulaRegressionTests(unittest.TestCase):
             },
             task_summary={
                 "loaded": True,
-                "controlm_rows": 5,
-                "controlm_failures": 0,
-                "controlm_late": 2,
-                "controlm_alerts": 2,
-                "controlm_watch": 0,
+                "task_status_rows": 5,
+                "task_status_failures": 0,
+                "task_status_late": 2,
+                "task_status_alerts": 2,
+                "task_status_watch": 0,
             },
         )
         self.assertEqual(task_late_brief["workflow"], "Task graphs")
@@ -9054,9 +8962,9 @@ class FormulaRegressionTests(unittest.TestCase):
             },
             task_summary={
                 "loaded": True,
-                "controlm_rows": 5,
-                "controlm_alerts": 0,
-                "controlm_watch": 1,
+                "task_status_rows": 5,
+                "task_status_alerts": 0,
+                "task_status_watch": 1,
             },
         )
         self.assertEqual(task_watch_brief["workflow"], "Task graphs")
@@ -9072,36 +8980,33 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(by_label["Errors"]["value"], "3 failed")
 
         task_summary = _workload_task_summary(pd.DataFrame([{
-            "CONTROL_M_ROWS": 5,
-            "CONTROL_M_FAILURE_ROWS": 2,
-            "CONTROL_M_LATE_ROWS": 1,
-            "CONTROL_M_ALERT_ROWS": 2,
-            "CONTROL_M_WATCH_ROWS": 1,
-            "CONTROL_M_LAST_SEEN_AT": "2026-05-01 10:00:00",
+            "TASK_STATUS_ROWS": 5,
+            "TASK_STATUS_FAILURE_ROWS": 2,
+            "TASK_STATUS_LATE_ROWS": 1,
+            "TASK_STATUS_ALERT_ROWS": 2,
+            "TASK_STATUS_WATCH_ROWS": 1,
+            "TASK_STATUS_LAST_SEEN_AT": "2026-05-01 10:00:00",
         }]))
         task_lanes = _workload_status_lanes(summary, task_summary)
         task_by_label = {lane["label"]: lane for lane in task_lanes}
         self.assertEqual(task_by_label["Task / job status"]["state"], "Review")
         self.assertEqual(task_by_label["Task / job status"]["value"], "2 failed or blocked")
-        self.assertEqual(task_summary["controlm_rows"], 5)
-        self.assertEqual(task_summary["controlm_failures"], 2)
-        self.assertEqual(task_summary["controlm_late"], 1)
-        self.assertEqual(task_summary["controlm_alerts"], 2)
+        self.assertEqual(task_summary["task_status_rows"], 5)
+        self.assertEqual(task_summary["task_status_failures"], 2)
+        self.assertEqual(task_summary["task_status_late"], 1)
+        self.assertEqual(task_summary["task_status_alerts"], 2)
 
-    def test_workload_task_status_sql_reads_controlm_feed_only(self):
+    def test_workload_task_status_sql_reads_snowflake_task_history_only(self):
         sql = _build_workload_task_status_sql("Trexis", "PROD", hours=24).upper()
 
-        self.assertIn("OVERWATCH_EXTERNAL_CONTROL_FEED", sql)
-        self.assertIn("SOURCE_SYSTEM", sql)
-        self.assertIn("CONTROL_M", sql)
-        self.assertIn("CONTROL_M_FAILURE_ROWS", sql)
-        self.assertIn("CONTROL_M_LATE_ROWS", sql)
-        self.assertIn("MISSED|LATE|DELAY|OVERDUE|SLA|BREACH", sql)
-        self.assertIn("COMPANY = 'TREXIS'", sql)
-        self.assertIn("COALESCE(ENVIRONMENT, 'NO DATABASE CONTEXT') = 'PROD'", sql)
+        self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", sql)
+        self.assertIn("TASK_STATUS_FAILURE_ROWS", sql)
+        self.assertIn("TASK_STATUS_LATE_ROWS", sql)
         self.assertIn("DATEADD('HOUR', -24", sql)
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY", sql)
-        self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY", sql)
+        self.assertNotIn("OVERWATCH_EXTERNAL_CONTROL_FEED", sql)
+        self.assertNotIn("SOURCE_SYSTEM", sql)
+        self.assertNotIn("COALESCE(ENVIRONMENT, 'NO DATABASE CONTEXT') = 'PROD'", sql)
 
     def test_workload_runbook_markdown_is_copy_ready_and_evidence_bounded(self):
         summary = {
@@ -9115,11 +9020,11 @@ class FormulaRegressionTests(unittest.TestCase):
         brief = _workload_action_brief(summary)
         task_summary = {
             "loaded": True,
-            "controlm_rows": 4,
-            "controlm_failures": 1,
-            "controlm_late": 1,
-            "controlm_alerts": 1,
-            "controlm_watch": 1,
+            "task_status_rows": 4,
+            "task_status_failures": 1,
+            "task_status_late": 1,
+            "task_status_alerts": 1,
+            "task_status_watch": 1,
             "last_seen": "2026-05-01 10:00:00",
         }
         markdown = _build_workload_runbook_markdown("Trexis", "DEV_ALL", summary, brief, task_summary)
@@ -9127,11 +9032,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("# OVERWATCH Workload Operations Runbook", markdown)
         self.assertIn("- Scope: Trexis / DEV_ALL", markdown)
         self.assertIn("100 queries, 3 failed, 7 queued, 2 remote-spill, p95 18.5s", markdown)
-        self.assertIn("Control-M feed rows=4; failed_blocked=1; late_or_missed=1; alerts=1; watch=1", markdown)
+        self.assertIn("Snowflake TASK_HISTORY runs=4; failed_blocked=1; late_or_missed=1; alerts=1; watch=1", markdown)
         self.assertIn("## Slide Bullets", markdown)
         self.assertIn("## Triage Order", markdown)
         self.assertIn("Query diagnosis: capture query ID", markdown)
-        self.assertIn("Control-M and Snowflake task status", markdown)
+        self.assertIn("Snowflake task and Snowflake task status", markdown)
         self.assertIn("## Evidence Checklist", markdown)
         self.assertIn("Warehouse, user, role, database, and schema", markdown)
         self.assertEqual(
@@ -9548,7 +9453,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("post-fix verification", lifecycle.iloc[0]["CLOSURE_PROOF_REQUIRED"])
         self.assertEqual(integration.iloc[0]["CONTROL"], "Named owner routes")
         self.assertEqual(integration_by_control["Snowflake notification integration"]["STATE"], "Manual")
-        self.assertEqual(integration_by_control["ITSM lifecycle sync"]["STATE"], "Manual")
+        self.assertEqual(integration_by_control["Action queue lifecycle"]["STATE"], "Manual")
         self.assertIn("Tier 0/1 gap", integration_by_control["Named owner routes"]["EVIDENCE"])
 
     def test_alert_delivery_audit_and_escalation_ack_sql(self):
@@ -9891,7 +9796,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Open Issue Inbox", by_view["Issue Inbox"]["BUTTON_LABEL"])
         self.assertIn("No Snowflake sources", by_view["Setup & Runbook"]["SOURCES"])
 
-    def test_alert_center_brief_first_default_resets_stale_unloaded_subview(self):
+    def test_alert_center_brief_first_default_preserves_explicit_data_view(self):
         import streamlit as st
 
         previous = dict(st.session_state)
@@ -9900,12 +9805,16 @@ class FormulaRegressionTests(unittest.TestCase):
             st.session_state["alert_center_active_view"] = "Control Health"
             _apply_alert_center_brief_first_default()
 
-            self.assertEqual(st.session_state["alert_center_active_view"], "Alert Brief")
+            self.assertEqual(st.session_state["alert_center_active_view"], "Control Health")
             self.assertEqual(st.session_state["_alert_center_brief_first_version"], 2)
 
             st.session_state["alert_center_active_view"] = "Automation Readiness"
             _apply_alert_center_brief_first_default()
             self.assertEqual(st.session_state["alert_center_active_view"], "Automation Readiness")
+
+            st.session_state.clear()
+            _apply_alert_center_brief_first_default()
+            self.assertEqual(st.session_state["alert_center_active_view"], "Command Center")
 
             st.session_state.clear()
             st.session_state["alert_center_active_view"] = "Control Health"

@@ -6,7 +6,7 @@
 #
 # Architecture: All structural styles reference CSS custom properties.
 # Switching theme = injecting a new :root { } block. Zero JS required.
-# Preference persists in session_state; optional DB persistence via Bookmarks.
+# Preference persists in session_state for the active browser session.
 #
 # Usage in app.py:
 #   from theme import inject_theme, render_theme_picker
@@ -973,27 +973,6 @@ code, pre, .stCodeBlock {
     line-height: 1.35;
     margin-top: 0.18rem;
 }
-.ow-section-notes {
-    color: var(--text-secondary);
-    font-size: 0.8rem;
-    line-height: 1.4;
-    margin: 0.1rem 0 0.85rem;
-}
-.ow-section-notes-title {
-    color: var(--text-muted);
-    font-size: 0.64rem;
-    font-weight: 850;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-bottom: 0.25rem;
-}
-.ow-section-notes ul {
-    margin: 0;
-    padding-left: 1rem;
-}
-.ow-section-notes li {
-    margin: 0.2rem 0;
-}
 .ow-evidence-contract {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1050,7 +1029,6 @@ code, pre, .stCodeBlock {
 [data-testid="stMarkdownContainer"] .ow-section-subtitle,
 [data-testid="stMarkdownContainer"] .ow-scope-chip,
 [data-testid="stMarkdownContainer"] .ow-empty-list span,
-[data-testid="stMarkdownContainer"] .ow-section-notes,
 [data-testid="stMarkdownContainer"] .ow-section-guide-detail,
 [data-testid="stMarkdownContainer"] .ow-evidence-contract-card,
 [data-testid="stMarkdownContainer"] .ow-brief-detail {
@@ -1060,7 +1038,6 @@ code, pre, .stCodeBlock {
 [data-testid="stMarkdownContainer"] .ow-filter-strip-kicker,
 [data-testid="stMarkdownContainer"] .ow-scope-chip span,
 [data-testid="stMarkdownContainer"] .ow-run-context,
-[data-testid="stMarkdownContainer"] .ow-section-notes-title,
 [data-testid="stMarkdownContainer"] .ow-section-guide-label,
 [data-testid="stMarkdownContainer"] .ow-evidence-contract-card span,
 [data-testid="stMarkdownContainer"] .ow-brief-label,
@@ -1674,6 +1651,14 @@ details summary span[translate="no"] {
     max-width: 3.25rem !important;
     overflow: hidden !important;
 }
+[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"] > *:not([data-testid="stSidebarHeader"]) {
+    display: none !important;
+}
+[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarUserContent"] {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
 [data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarHeader"] {
     display: flex !important;
     justify-content: center !important;
@@ -1731,7 +1716,7 @@ def inject_theme() -> None:
     st.markdown(_combined_theme_css(theme_key), unsafe_allow_html=True)
 
 
-def render_theme_picker(persist: bool = False) -> None:
+def render_theme_picker() -> None:
     """
     Render the theme picker.
     Place this inside the sidebar Settings expander in app.py.
@@ -1739,8 +1724,6 @@ def render_theme_picker(persist: bool = False) -> None:
     Each option shows only the theme name.
     The active theme gets a highlight border.
 
-    Args:
-        persist: Write preference to OVERWATCH_BOOKMARKS for cross-session persistence.
     """
     current = _get_theme()
     options = list(THEMES.keys())
@@ -1756,69 +1739,4 @@ def render_theme_picker(persist: bool = False) -> None:
     )
     if selected != current:
         st.session_state["active_theme"] = selected
-        if persist:
-            _save_theme_preference(selected)
         st.rerun()
-
-
-def restore_theme_preference() -> None:
-    """
-    Restore a persisted theme from OVERWATCH_BOOKMARKS on first session load.
-    Call before inject_theme() in app.py. Only needed when persist=True.
-    """
-    if "active_theme" in st.session_state:
-        return
-    try:
-        from utils.session import get_session
-        from config import ALERT_DB, ALERT_SCHEMA
-        from utils.query import safe_identifier, sql_literal
-        session = get_session()
-        sf_user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
-        bookmark_table = (
-            f"{safe_identifier(ALERT_DB)}."
-            f"{safe_identifier(ALERT_SCHEMA)}."
-            f"{safe_identifier('OVERWATCH_BOOKMARKS')}"
-        )
-        rows = session.sql(f"""
-            SELECT STATE_JSON FROM {bookmark_table}
-            WHERE SF_USER = {sql_literal(sf_user)}
-              AND BOOKMARK_NAME = {sql_literal("_theme_pref")}
-            ORDER BY CREATED_AT DESC LIMIT 1
-        """).collect()
-        if rows:
-            import json
-            state = json.loads(rows[0]["STATE_JSON"] or "{}")
-            st.session_state["active_theme"] = _normalize_theme_key(
-                state.get("active_theme", _DEFAULT_THEME)
-            )
-    except Exception:
-        pass
-
-
-def _save_theme_preference(theme_key: str) -> None:
-    import json
-    try:
-        from utils.session import get_session
-        from config import ALERT_DB, ALERT_SCHEMA
-        from utils.query import safe_identifier, sql_literal
-        session = get_session()
-        sf_user = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
-        bookmark_table = (
-            f"{safe_identifier(ALERT_DB)}."
-            f"{safe_identifier(ALERT_SCHEMA)}."
-            f"{safe_identifier('OVERWATCH_BOOKMARKS')}"
-        )
-        state_json = sql_literal(json.dumps({"active_theme": theme_key}))
-        bookmark_name = sql_literal("_theme_pref")
-        sf_user_safe = sql_literal(sf_user)
-        session.sql(f"""
-            DELETE FROM {bookmark_table}
-            WHERE SF_USER = {sf_user_safe} AND BOOKMARK_NAME = {bookmark_name}
-        """).collect()
-        session.sql(f"""
-            INSERT INTO {bookmark_table}
-                (SF_USER, BOOKMARK_NAME, SECTION, STATE_JSON, IS_SHARED)
-            VALUES ({sf_user_safe}, {bookmark_name}, '', PARSE_JSON({state_json}), FALSE)
-        """).collect()
-    except Exception:
-        pass

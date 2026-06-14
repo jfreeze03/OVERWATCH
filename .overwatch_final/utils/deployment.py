@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 
-OVERWATCH_SCHEMA_VERSION = "2026.06.04-cost-proof-mart"
+OVERWATCH_SCHEMA_VERSION = "2026.06.13-executive-observability-mart"
 MIGRATION_TABLE = "OVERWATCH_SCHEMA_MIGRATION"
 STREAMLIT_DEPLOYMENT_DECISION_VERSION = "2026.06.13-streamlit-entrypoint-contract"
 STREAMLIT_MANIFEST_CONTRACT_VERSION = "2026.06.13-sis-manifest-contract"
@@ -251,15 +251,8 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "COMPONENT": "No-touch automation",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "OVERWATCH_AUTOMATION_RUN",
-            "WHY_IT_MATTERS": "Records scheduled queue seeding, owner routing, alert digest, executive packet, and evidence-feed runs.",
+            "WHY_IT_MATTERS": "Records scheduled queue seeding, owner routing, alert digest, executive packet, and Snowflake-native refresh runs.",
             "READY_CRITERIA": "Automation run ledger, health view, refresh procedure, and task are deployed.",
-        },
-        {
-            "COMPONENT": "No-touch automation",
-            "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
-            "REQUIRED_OBJECT": "OVERWATCH_EXTERNAL_CONTROL_FEED",
-            "WHY_IT_MATTERS": "Normalizes Control-M, Jira, Terraform, and Flyway evidence so Change & Drift can show exception rollups.",
-            "READY_CRITERIA": "External feed table exists and SP_OVERWATCH_REFRESH_AUTOMATION can upsert feed rows.",
         },
         {
             "COMPONENT": "Cost proof mart",
@@ -269,25 +262,18 @@ def build_schema_migration_contract() -> pd.DataFrame:
             "READY_CRITERIA": "Daily service-cost mart and source-health mart exist.",
         },
         {
+            "COMPONENT": "Executive observability mart",
+            "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
+            "REQUIRED_OBJECT": "MART_EXECUTIVE_OBSERVABILITY",
+            "WHY_IT_MATTERS": "Serves the boss-ready Executive Landing graphics from one tiny precomputed result set instead of live-assembling heavy telemetry.",
+            "READY_CRITERIA": "Executive observability table, refresh procedure, and task are deployed.",
+        },
+        {
             "COMPONENT": "Procedure runtime context",
             "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
             "REQUIRED_OBJECT": "FACT_PROCEDURE_RUN",
             "WHY_IT_MATTERS": "Keeps stored procedure failures, runtime spikes, and child-query evidence scoped to database and schema.",
             "READY_CRITERIA": "Procedure run fact exists with DATABASE_NAME, SCHEMA_NAME, ENVIRONMENT, and PROCEDURE_NAME.",
-        },
-        {
-            "COMPONENT": "Change evidence integration",
-            "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
-            "REQUIRED_OBJECT": "OVERWATCH_SOURCE_CONTROL_CHANGE",
-            "WHY_IT_MATTERS": "Connects Snowflake drift to Terraform/Flyway/Git evidence and approval context.",
-            "READY_CRITERIA": "Source-control and ITSM evidence tables exist.",
-        },
-        {
-            "COMPONENT": "Change evidence feed ingress",
-            "REQUIRED_VERSION": OVERWATCH_SCHEMA_VERSION,
-            "REQUIRED_OBJECT": "OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE",
-            "WHY_IT_MATTERS": "Gives CI/CD a Snowflake landing point for Terraform/Flyway/Git evidence exports.",
-            "READY_CRITERIA": "Source-control and ITSM evidence stages plus CSV file format exist.",
         },
         {
             "COMPONENT": "Schema migration ledger",
@@ -322,15 +308,10 @@ WITH required_objects AS (
         ('No-touch automation', 'OVERWATCH_AUTOMATION_RUN', 'TABLE', '{version}'),
         ('No-touch automation', 'OVERWATCH_AUTOMATION_HEALTH_V', 'VIEW', '{version}'),
         ('No-touch automation', 'OVERWATCH_EXECUTIVE_PACKET', 'TABLE', '{version}'),
-        ('No-touch automation', 'OVERWATCH_EXTERNAL_CONTROL_FEED', 'TABLE', '{version}'),
         ('Cost proof mart', 'FACT_COST_DAILY', 'TABLE', '{version}'),
         ('Cost proof mart', 'FACT_COST_SOURCE_HEALTH_DAILY', 'TABLE', '{version}'),
+        ('Executive observability mart', 'MART_EXECUTIVE_OBSERVABILITY', 'TABLE', '{version}'),
         ('Procedure runtime context', 'FACT_PROCEDURE_RUN', 'TABLE', '{version}'),
-        ('Change evidence integration', 'OVERWATCH_SOURCE_CONTROL_CHANGE', 'TABLE', '{version}'),
-        ('Change evidence integration', 'OVERWATCH_ITSM_TICKET', 'TABLE', '{version}'),
-        ('Change evidence feed ingress', 'OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT', 'FILE FORMAT', '{version}'),
-        ('Change evidence feed ingress', 'OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE', 'STAGE', '{version}'),
-        ('Change evidence feed ingress', 'OVERWATCH_ITSM_TICKET_STAGE', 'STAGE', '{version}'),
         ('Schema migration ledger', 'OVERWATCH_SCHEMA_MIGRATION', 'TABLE', '{version}')
     AS t(component, object_name, object_type, required_version)
 ),
@@ -400,9 +381,9 @@ MERGE INTO OVERWATCH_SCHEMA_MIGRATION tgt
 USING (
   SELECT
     '{version}' AS MIGRATION_VERSION,
-    'Cost proof mart, procedure context, evidence feed health, alert automation, and migration ledger' AS MIGRATION_NAME,
+    'Executive observability mart, cost proof, procedure context, alert automation, and migration ledger' AS MIGRATION_NAME,
     'snowflake/OVERWATCH_MART_SETUP.sql' AS SOURCE_FILE,
-    'Baseline setup ledger row for the app release, including cost proof marts, procedure database/schema context, and Terraform/Jira evidence feed ingress.' AS NOTES
+    'Baseline setup ledger row for the app release, including the executive first-paint observability mart, cost proof marts, procedure database/schema context, alert automation, and migration tracking.' AS NOTES
 ) src
 ON tgt.MIGRATION_VERSION = src.MIGRATION_VERSION
 WHEN MATCHED THEN UPDATE SET

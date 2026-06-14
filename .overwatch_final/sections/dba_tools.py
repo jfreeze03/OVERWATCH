@@ -360,6 +360,905 @@ def _task_exists(session, db: str, schema: str, task_name: str):
         return None
 
 
+def _schema_compare_show_objects_sql(database: str, schema: str) -> str:
+    """Return the Snowflake command that lists every object visible in a schema."""
+    return f"SHOW OBJECTS IN SCHEMA {_qualified_name(database, schema)}"
+
+
+def _schema_compare_columns_sql(database: str, schema: str) -> str:
+    """Return column-level metadata so object compare also catches column drift."""
+    db_ident = safe_identifier(database)
+    schema_lit = sql_literal(schema, 300)
+    return f"""
+SELECT
+    'COLUMN' AS object_type,
+    c.table_name || '.' || c.column_name AS object_name,
+    c.table_name AS parent_object_name,
+    COALESCE(t.table_type, 'TABLE') AS parent_object_type,
+    c.ordinal_position AS ordinal_position,
+    c.data_type AS data_type,
+    c.character_maximum_length AS character_maximum_length,
+    c.numeric_precision AS numeric_precision,
+    c.numeric_scale AS numeric_scale,
+    c.datetime_precision AS datetime_precision,
+    c.is_nullable AS is_nullable,
+    c.column_default AS column_default,
+    c.comment AS comment,
+    c.data_type
+        || COALESCE('(' || c.character_maximum_length::VARCHAR || ')', '')
+        || COALESCE(' precision=' || c.numeric_precision::VARCHAR, '')
+        || COALESCE(' scale=' || c.numeric_scale::VARCHAR, '')
+        || COALESCE(' datetime_precision=' || c.datetime_precision::VARCHAR, '')
+        || ' nullable=' || COALESCE(c.is_nullable, 'UNKNOWN')
+        || COALESCE(' default=' || c.column_default, '') AS object_signature
+FROM {db_ident}.INFORMATION_SCHEMA.COLUMNS c
+LEFT JOIN {db_ident}.INFORMATION_SCHEMA.TABLES t
+  ON c.table_catalog = t.table_catalog
+ AND c.table_schema = t.table_schema
+ AND c.table_name = t.table_name
+WHERE UPPER(c.table_schema) = UPPER({schema_lit})
+""".strip()
+
+
+def _schema_compare_normalize_kind(value: object) -> str:
+    text = str(value or "OBJECT").strip().upper().replace("_", " ")
+    aliases = {
+        "BASE TABLE": "TABLE",
+        "TEMPORARY TABLE": "TABLE",
+        "TRANSIENT TABLE": "TABLE",
+        "MATERIALIZED VIEW": "MATERIALIZED VIEW",
+        "FILE FORMAT": "FILE FORMAT",
+        "DYNAMIC TABLE": "DYNAMIC TABLE",
+        "EXTERNAL TABLE": "EXTERNAL TABLE",
+        "ROW ACCESS POLICY": "ROW ACCESS POLICY",
+        "MASKING POLICY": "MASKING POLICY",
+    }
+    return aliases.get(text, text or "OBJECT")
+
+
+def _schema_compare_get_ddl_type(object_type: object) -> str:
+    kind = _schema_compare_normalize_kind(object_type)
+    mapping = {
+        "DYNAMIC TABLE": "DYNAMIC_TABLE",
+        "EXTERNAL TABLE": "EXTERNAL_TABLE",
+        "EVENT TABLE": "TABLE",
+        "FILE FORMAT": "FILE_FORMAT",
+        "MATERIALIZED VIEW": "MATERIALIZED_VIEW",
+        "MASKING POLICY": "MASKING_POLICY",
+        "ROW ACCESS POLICY": "ROW_ACCESS_POLICY",
+    }
+    if kind in mapping:
+        return mapping[kind]
+    if "PROCEDURE" in kind:
+        return "PROCEDURE"
+    if "FUNCTION" in kind:
+        return "FUNCTION"
+    if "VIEW" in kind:
+        return "VIEW"
+    if "TABLE" in kind:
+        return "TABLE"
+    if "STAGE" in kind:
+        return "STAGE"
+    if "SEQUENCE" in kind:
+        return "SEQUENCE"
+    if "PIPE" in kind:
+        return "PIPE"
+    if "STREAM" in kind:
+        return "STREAM"
+    if "TASK" in kind:
+        return "TASK"
+    if "TAG" in kind:
+        return "TAG"
+    return kind.replace(" ", "_")
+
+
+def _first_present_column(df: pd.DataFrame, *candidates: str) -> str | None:
+    columns = {str(col).upper(): str(col) for col in df.columns}
+    for candidate in candidates:
+        if str(candidate).upper() in columns:
+            return columns[str(candidate).upper()]
+    return None
+
+
+def _schema_compare_normalize_show_objects(
+    df: pd.DataFrame | None,
+    *,
+    database: str,
+    schema: str,
+    side: str,
+) -> pd.DataFrame:
+    """Normalize SHOW OBJECTS output into a compare-ready object inventory."""
+    empty_cols = [
+        "OBJECT_TYPE", "OBJECT_NAME", "PARENT_OBJECT_NAME", "PARENT_OBJECT_TYPE",
+        "OBJECT_SIGNATURE", "OBJECT_DETAIL", "ROW_COUNT", "BYTES", "PRESENT",
+        "SOURCE_SIDE", "DATABASE_NAME", "SCHEMA_NAME", "DATA_TYPE",
+        "CHARACTER_MAXIMUM_LENGTH", "NUMERIC_PRECISION", "NUMERIC_SCALE",
+        "DATETIME_PRECISION", "IS_NULLABLE", "COLUMN_DEFAULT", "COLUMN_COMMENT",
+        "ORDINAL_POSITION",
+    ]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=empty_cols)
+    frame = df.copy()
+    name_col = _first_present_column(frame, "NAME", "OBJECT_NAME")
+    kind_col = _first_present_column(frame, "KIND", "OBJECT_TYPE", "TYPE")
+    rows_col = _first_present_column(frame, "ROWS", "ROW_COUNT")
+    bytes_col = _first_present_column(frame, "BYTES")
+    comment_col = _first_present_column(frame, "COMMENT")
+    owner_col = _first_present_column(frame, "OWNER")
+    created_col = _first_present_column(frame, "CREATED_ON", "CREATED")
+
+    rows = []
+    for _, item in frame.iterrows():
+        name = str(item.get(name_col, "") if name_col else "").strip()
+        if not name:
+            continue
+        object_type = _schema_compare_normalize_kind(item.get(kind_col, "OBJECT") if kind_col else "OBJECT")
+        row_count = safe_int(item.get(rows_col, 0) if rows_col else 0)
+        bytes_value = safe_int(item.get(bytes_col, 0) if bytes_col else 0)
+        owner = str(item.get(owner_col, "") if owner_col else "").strip()
+        comment = str(item.get(comment_col, "") if comment_col else "").strip()
+        created = str(item.get(created_col, "") if created_col else "").strip()
+        detail_parts = [f"type={object_type}"]
+        if owner:
+            detail_parts.append(f"owner={owner}")
+        if comment:
+            detail_parts.append(f"comment={comment}")
+        if created:
+            detail_parts.append(f"created={created}")
+        rows.append({
+            "OBJECT_TYPE": object_type,
+            "OBJECT_NAME": name,
+            "PARENT_OBJECT_NAME": "",
+            "PARENT_OBJECT_TYPE": "",
+            "OBJECT_SIGNATURE": object_type,
+            "OBJECT_DETAIL": "; ".join(detail_parts),
+            "ROW_COUNT": row_count,
+            "BYTES": bytes_value,
+            "PRESENT": True,
+            "SOURCE_SIDE": side,
+            "DATABASE_NAME": database,
+            "SCHEMA_NAME": schema,
+            "DATA_TYPE": "",
+            "CHARACTER_MAXIMUM_LENGTH": "",
+            "NUMERIC_PRECISION": "",
+            "NUMERIC_SCALE": "",
+            "DATETIME_PRECISION": "",
+            "IS_NULLABLE": "",
+            "COLUMN_DEFAULT": "",
+            "COLUMN_COMMENT": "",
+            "ORDINAL_POSITION": "",
+        })
+    return pd.DataFrame(rows, columns=empty_cols)
+
+
+def _schema_compare_normalize_columns(
+    df: pd.DataFrame | None,
+    *,
+    database: str,
+    schema: str,
+    side: str,
+) -> pd.DataFrame:
+    """Normalize INFORMATION_SCHEMA.COLUMNS output into compare-ready child objects."""
+    empty_cols = [
+        "OBJECT_TYPE", "OBJECT_NAME", "PARENT_OBJECT_NAME", "PARENT_OBJECT_TYPE",
+        "OBJECT_SIGNATURE", "OBJECT_DETAIL", "ROW_COUNT", "BYTES", "PRESENT",
+        "SOURCE_SIDE", "DATABASE_NAME", "SCHEMA_NAME", "DATA_TYPE",
+        "CHARACTER_MAXIMUM_LENGTH", "NUMERIC_PRECISION", "NUMERIC_SCALE",
+        "DATETIME_PRECISION", "IS_NULLABLE", "COLUMN_DEFAULT", "COLUMN_COMMENT",
+        "ORDINAL_POSITION",
+    ]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=empty_cols)
+    frame = df.copy()
+    frame.columns = [str(col).upper() for col in frame.columns]
+    rows = []
+    for _, item in frame.iterrows():
+        object_name = str(item.get("OBJECT_NAME", "") or "").strip()
+        if not object_name:
+            continue
+        signature = str(item.get("OBJECT_SIGNATURE", "") or "").strip()
+        parent_type = _schema_compare_normalize_kind(item.get("PARENT_OBJECT_TYPE", "TABLE"))
+        detail_parts = [
+            f"ordinal={item.get('ORDINAL_POSITION', '')}",
+            f"type={item.get('DATA_TYPE', '')}",
+            f"nullable={item.get('IS_NULLABLE', '')}",
+        ]
+        if str(item.get("COLUMN_DEFAULT", "") or "").strip():
+            detail_parts.append(f"default={item.get('COLUMN_DEFAULT')}")
+        if str(item.get("COMMENT", "") or "").strip():
+            detail_parts.append(f"comment={item.get('COMMENT')}")
+        rows.append({
+            "OBJECT_TYPE": "COLUMN",
+            "OBJECT_NAME": object_name,
+            "PARENT_OBJECT_NAME": str(item.get("PARENT_OBJECT_NAME", "") or "").strip(),
+            "PARENT_OBJECT_TYPE": parent_type,
+            "OBJECT_SIGNATURE": signature,
+            "OBJECT_DETAIL": "; ".join(str(part) for part in detail_parts if str(part).strip()),
+            "ROW_COUNT": 0,
+            "BYTES": 0,
+            "PRESENT": True,
+            "SOURCE_SIDE": side,
+            "DATABASE_NAME": database,
+            "SCHEMA_NAME": schema,
+            "DATA_TYPE": str(item.get("DATA_TYPE", "") or "").strip(),
+            "CHARACTER_MAXIMUM_LENGTH": item.get("CHARACTER_MAXIMUM_LENGTH", ""),
+            "NUMERIC_PRECISION": item.get("NUMERIC_PRECISION", ""),
+            "NUMERIC_SCALE": item.get("NUMERIC_SCALE", ""),
+            "DATETIME_PRECISION": item.get("DATETIME_PRECISION", ""),
+            "IS_NULLABLE": str(item.get("IS_NULLABLE", "") or "").strip(),
+            "COLUMN_DEFAULT": str(item.get("COLUMN_DEFAULT", "") or "").strip(),
+            "COLUMN_COMMENT": str(item.get("COMMENT", "") or "").strip(),
+            "ORDINAL_POSITION": item.get("ORDINAL_POSITION", ""),
+        })
+    return pd.DataFrame(rows, columns=empty_cols)
+
+
+def _schema_compare_inventory(
+    objects_df: pd.DataFrame | None,
+    columns_df: pd.DataFrame | None,
+    *,
+    database: str,
+    schema: str,
+    side: str,
+) -> pd.DataFrame:
+    frames = [
+        _schema_compare_normalize_show_objects(objects_df, database=database, schema=schema, side=side),
+        _schema_compare_normalize_columns(columns_df, database=database, schema=schema, side=side),
+    ]
+    inventory = pd.concat(frames, ignore_index=True)
+    if inventory.empty:
+        return inventory
+    inventory["COMPARE_KEY"] = (
+        inventory["OBJECT_TYPE"].fillna("").astype(str).str.upper()
+        + "::"
+        + inventory["OBJECT_NAME"].fillna("").astype(str).str.upper()
+    )
+    return inventory.drop_duplicates(subset=["COMPARE_KEY"], keep="first")
+
+
+def _schema_compare_object_fqn(database: str, schema: str, object_name: str) -> str:
+    return _qualified_name(database, schema, object_name)
+
+
+def _schema_compare_numeric_text(value: object) -> str:
+    try:
+        if value is None or str(value).strip().lower() in {"", "nan", "none", "null"}:
+            return ""
+        number = float(value)
+        return str(int(number)) if number.is_integer() else str(number)
+    except Exception:
+        return ""
+
+
+def _schema_compare_column_type(row: pd.Series | dict, suffix: str) -> str:
+    data_type = str(row.get(f"DATA_TYPE_{suffix}") or row.get("DATA_TYPE") or "").strip().upper()
+    if not data_type:
+        return "VARIANT"
+    length = _schema_compare_numeric_text(
+        row.get(f"CHARACTER_MAXIMUM_LENGTH_{suffix}") or row.get("CHARACTER_MAXIMUM_LENGTH")
+    )
+    precision = _schema_compare_numeric_text(
+        row.get(f"NUMERIC_PRECISION_{suffix}") or row.get("NUMERIC_PRECISION")
+    )
+    scale = _schema_compare_numeric_text(
+        row.get(f"NUMERIC_SCALE_{suffix}") or row.get("NUMERIC_SCALE")
+    )
+    datetime_precision = _schema_compare_numeric_text(
+        row.get(f"DATETIME_PRECISION_{suffix}") or row.get("DATETIME_PRECISION")
+    )
+    if data_type in {"VARCHAR", "CHAR", "CHARACTER", "STRING", "TEXT", "BINARY"} and length:
+        return f"{data_type}({length})"
+    if data_type in {"NUMBER", "NUMERIC", "DECIMAL"} and precision and scale:
+        return f"{data_type}({precision},{scale})"
+    if data_type in {"NUMBER", "NUMERIC", "DECIMAL"} and precision:
+        return f"{data_type}({precision})"
+    if data_type.startswith("TIMESTAMP") and datetime_precision:
+        return f"{data_type}({datetime_precision})"
+    if data_type == "TIME" and datetime_precision:
+        return f"{data_type}({datetime_precision})"
+    return data_type
+
+
+def _schema_compare_missing_column_ddl(
+    row: pd.Series | dict,
+    source_db: str,
+    source_schema: str,
+    target_db: str,
+    target_schema: str,
+) -> str:
+    status = str(row.get("COMPARE_STATUS") or "")
+    suffix = "SOURCE" if status == "Only in source" else "TARGET"
+    to_db, to_schema = (
+        (target_db, target_schema)
+        if status == "Only in source"
+        else (source_db, source_schema)
+    )
+    object_name = str(row.get("OBJECT_NAME") or "").strip()
+    parent_name = str(row.get("PARENT_OBJECT_NAME") or object_name.split(".", 1)[0]).strip()
+    column_name = object_name.split(".", 1)[1].strip() if "." in object_name else object_name
+    if not parent_name or not column_name:
+        return ""
+    table_fqn = _schema_compare_object_fqn(to_db, to_schema, parent_name)
+    column_type = _schema_compare_column_type(row, suffix)
+    nullable = str(row.get(f"IS_NULLABLE_{suffix}") or row.get("IS_NULLABLE") or "").strip().upper()
+    default_value = str(row.get(f"COLUMN_DEFAULT_{suffix}") or row.get("COLUMN_DEFAULT") or "").strip()
+    comment = str(row.get(f"COLUMN_COMMENT_{suffix}") or row.get("COLUMN_COMMENT") or "").strip()
+    ddl_parts = [f"ALTER TABLE {table_fqn} ADD COLUMN {_quote_identifier(column_name)} {column_type}"]
+    if default_value:
+        ddl_parts.append(f"DEFAULT {default_value}")
+    if nullable == "NO":
+        ddl_parts.append("NOT NULL")
+    add_column_sql = " ".join(ddl_parts) + ";"
+    statements = [
+        f"-- {object_name} is missing; review against existing data before executing.",
+        add_column_sql,
+    ]
+    if comment:
+        statements.append(
+            f"COMMENT ON COLUMN {table_fqn}.{_quote_identifier(column_name)} IS {sql_literal(comment, 1000)};"
+        )
+    return "\n".join(statements)
+
+
+def _schema_compare_missing_ddl(
+    row: pd.Series | dict,
+    source_db: str,
+    source_schema: str,
+    target_db: str,
+    target_schema: str,
+) -> str:
+    """Build direct DDL where safe, otherwise SQL that retrieves Snowflake DDL."""
+    status = str(row.get("COMPARE_STATUS") or "")
+    if status not in {"Only in source", "Only in target"}:
+        return ""
+    object_type = str(row.get("OBJECT_TYPE") or "OBJECT")
+    object_name = str(row.get("OBJECT_NAME") or "").strip()
+    if not object_name:
+        return ""
+    from_db, from_schema, to_db, to_schema = (
+        (source_db, source_schema, target_db, target_schema)
+        if status == "Only in source"
+        else (target_db, target_schema, source_db, source_schema)
+    )
+    direction = (
+        f"create in target {to_db}.{to_schema} from source {from_db}.{from_schema}"
+        if status == "Only in source"
+        else f"create in source {to_db}.{to_schema} from target {from_db}.{from_schema}"
+    )
+    from_schema_fqn = _qualified_name(from_db, from_schema)
+    to_schema_fqn = _qualified_name(to_db, to_schema)
+
+    if object_type == "COLUMN":
+        return _schema_compare_missing_column_ddl(
+            row,
+            source_db=source_db,
+            source_schema=source_schema,
+            target_db=target_db,
+            target_schema=target_schema,
+        )
+
+    ddl_type = _schema_compare_get_ddl_type(object_type)
+    from_fqn = _schema_compare_object_fqn(from_db, from_schema, object_name)
+    return (
+        f"-- {object_type} {object_name} is missing; {direction}.\n"
+        f"-- Review before executing. GET_DDL preserves source definition; REPLACE retargets the schema name.\n"
+        f"SELECT REPLACE(GET_DDL({sql_literal(ddl_type)}, {sql_literal(from_fqn, 1000)}), "
+        f"{sql_literal(from_schema_fqn, 1000)}, {sql_literal(to_schema_fqn, 1000)}) AS DDL_STATEMENT;"
+    )
+
+
+def _schema_compare_fetch_missing_ddl_statements(
+    ddl_rows: pd.DataFrame,
+    *,
+    source_db: str,
+    source_schema: str,
+    target_db: str,
+    target_schema: str,
+    max_objects: int = 100,
+) -> pd.DataFrame:
+    """Fetch actual GET_DDL output for missing objects and keep safe fallbacks."""
+    if ddl_rows is None or ddl_rows.empty:
+        return ddl_rows
+    frame = ddl_rows.copy()
+    statements: list[str] = []
+    statuses: list[str] = []
+    for idx, (_, row) in enumerate(frame.iterrows()):
+        fallback = str(row.get("DDL_REVIEW_SQL") or "").strip()
+        object_type = str(row.get("OBJECT_TYPE") or "").upper()
+        if not fallback:
+            statements.append("")
+            statuses.append("No DDL needed")
+            continue
+        if object_type == "COLUMN":
+            statements.append(fallback)
+            statuses.append("Generated ADD COLUMN")
+            continue
+        if idx >= max_objects:
+            statements.append(f"-- DDL fetch cap reached. Run manually:\n{fallback}")
+            statuses.append("Manual GET_DDL required")
+            continue
+        try:
+            result = run_query_or_raise(
+                fallback,
+                section="Schema Compare",
+                ttl_key=f"schema_compare_get_ddl_{idx}_{source_db}_{source_schema}_{target_db}_{target_schema}",
+                tier="metadata",
+                use_cache=False,
+                max_rows=5,
+            )
+            if result is not None and not result.empty:
+                value = str(result.iloc[0].get("DDL_STATEMENT", "") or "").strip()
+                if not value:
+                    value = str(result.iloc[0, 0] or "").strip()
+                if value:
+                    statements.append(value.rstrip(";") + ";")
+                    statuses.append("Fetched GET_DDL")
+                    continue
+        except Exception as exc:
+            statuses.append(f"Manual GET_DDL required: {format_snowflake_error(exc)}")
+            statements.append(f"-- Could not fetch GET_DDL automatically. Run manually:\n{fallback}")
+            continue
+        statements.append(f"-- Could not fetch GET_DDL automatically. Run manually:\n{fallback}")
+        statuses.append("Manual GET_DDL required")
+    frame["DDL_STATEMENT"] = statements
+    frame["DDL_STATUS"] = statuses
+    return frame
+
+
+def _data_compare_tables_sql(database: str, schema: str) -> str:
+    """Return data-bearing tables visible in the selected schema."""
+    db_ident = safe_identifier(database)
+    schema_lit = sql_literal(schema, 300)
+    return f"""
+SELECT
+    table_name,
+    table_type,
+    row_count AS metadata_row_count,
+    bytes AS metadata_bytes,
+    created,
+    last_altered
+FROM {db_ident}.INFORMATION_SCHEMA.TABLES
+WHERE UPPER(table_schema) = UPPER({schema_lit})
+  AND (
+      UPPER(table_type) IN ('BASE TABLE', 'TRANSIENT TABLE', 'TEMPORARY TABLE', 'EXTERNAL TABLE', 'DYNAMIC TABLE')
+      OR UPPER(table_type) LIKE '%TABLE%'
+  )
+ORDER BY table_name
+""".strip()
+
+
+def _data_compare_where_clause(raw_filter: object) -> str:
+    """Return a bounded SELECT-only row filter clause."""
+    text = str(raw_filter or "").strip()
+    if not text:
+        return ""
+    upper = f" {text.upper()} "
+    blocked = (";", "--", "/*", "*/", " DROP ", " ALTER ", " INSERT ", " UPDATE ", " DELETE ", " MERGE ", " COPY ", " CALL ")
+    if any(token in upper for token in blocked):
+        raise ValueError("Row filter can only contain one SELECT predicate. Remove comments, semicolons, or write operations.")
+    return f"WHERE {text[:1200]}"
+
+
+def _data_compare_parse_identifiers(value: object) -> list[str]:
+    parts = []
+    for raw in str(value or "").replace("\n", ",").split(","):
+        text = raw.strip().strip('"')
+        if not text:
+            continue
+        parts.append(safe_identifier(text).upper())
+    return list(dict.fromkeys(parts))
+
+
+def _data_compare_normalize_tables(df: pd.DataFrame | None) -> dict[str, dict]:
+    if df is None or df.empty:
+        return {}
+    frame = df.copy()
+    frame.columns = [str(col).upper() for col in frame.columns]
+    name_col = _first_present_column(frame, "TABLE_NAME", "NAME")
+    if not name_col:
+        return {}
+    result = {}
+    for _, row in frame.iterrows():
+        name = str(row.get(name_col, "") or "").strip()
+        if not name:
+            continue
+        key = name.upper()
+        result[key] = {
+            "TABLE_NAME": name,
+            "TABLE_TYPE": str(row.get("TABLE_TYPE", "") or "").strip(),
+            "METADATA_ROW_COUNT": safe_int(row.get("METADATA_ROW_COUNT", row.get("ROW_COUNT", 0))),
+            "METADATA_BYTES": safe_int(row.get("METADATA_BYTES", row.get("BYTES", 0))),
+            "LAST_ALTERED": str(row.get("LAST_ALTERED", "") or ""),
+        }
+    return result
+
+
+def _data_compare_column_rows(
+    df: pd.DataFrame | None,
+    table_name: str,
+    excluded_columns: list[str] | None = None,
+) -> list[dict]:
+    if df is None or df.empty:
+        return []
+    frame = df.copy()
+    frame.columns = [str(col).upper() for col in frame.columns]
+    excluded = {str(col).upper() for col in (excluded_columns or [])}
+    rows = []
+    table_key = str(table_name or "").upper()
+    for _, row in frame.iterrows():
+        parent = str(row.get("PARENT_OBJECT_NAME", row.get("TABLE_NAME", "")) or "").strip()
+        if parent.upper() != table_key:
+            continue
+        object_name = str(row.get("OBJECT_NAME", "") or "").strip()
+        col_name = object_name.split(".", 1)[1] if "." in object_name else str(row.get("COLUMN_NAME", "") or "").strip()
+        if not col_name or col_name.upper() in excluded:
+            continue
+        rows.append({
+            "COLUMN_NAME": col_name,
+            "COLUMN_KEY": col_name.upper(),
+            "ORDINAL_POSITION": safe_int(row.get("ORDINAL_POSITION", 0)),
+            "DATA_TYPE": str(row.get("DATA_TYPE", "") or "").strip().upper(),
+            "COLUMN_TYPE": _schema_compare_column_type(row, ""),
+            "IS_NULLABLE": str(row.get("IS_NULLABLE", "") or "").strip().upper(),
+            "COLUMN_DEFAULT": str(row.get("COLUMN_DEFAULT", "") or "").strip(),
+        })
+    return sorted(rows, key=lambda item: (safe_int(item.get("ORDINAL_POSITION", 0)), str(item.get("COLUMN_NAME", ""))))
+
+
+def _data_compare_column_signature(row: dict) -> str:
+    return "|".join([
+        str(row.get("COLUMN_TYPE", "")).upper(),
+        str(row.get("IS_NULLABLE", "")).upper(),
+        str(row.get("COLUMN_DEFAULT", "")),
+    ])
+
+
+def _data_compare_supported_hash_column(row: dict) -> bool:
+    return str(row.get("DATA_TYPE", "") or "").upper() not in {"GEOGRAPHY", "GEOMETRY"}
+
+
+def _build_data_compare_plan(
+    source_tables: pd.DataFrame | None,
+    target_tables: pd.DataFrame | None,
+    source_columns: pd.DataFrame | None,
+    target_columns: pd.DataFrame | None,
+    *,
+    excluded_columns: list[str] | None = None,
+    table_filter: str = "",
+) -> pd.DataFrame:
+    source_table_map = _data_compare_normalize_tables(source_tables)
+    target_table_map = _data_compare_normalize_tables(target_tables)
+    filter_text = str(table_filter or "").strip().upper()
+    table_names = sorted(set(source_table_map) | set(target_table_map))
+    if filter_text:
+        table_names = [name for name in table_names if filter_text in name]
+
+    rows = []
+    for table_key in table_names:
+        source_meta = source_table_map.get(table_key, {})
+        target_meta = target_table_map.get(table_key, {})
+        table_name = str(source_meta.get("TABLE_NAME") or target_meta.get("TABLE_NAME") or table_key)
+        source_present = bool(source_meta)
+        target_present = bool(target_meta)
+        source_cols = _data_compare_column_rows(source_columns, table_name, excluded_columns)
+        target_cols = _data_compare_column_rows(target_columns, table_name, excluded_columns)
+        source_col_map = {row["COLUMN_KEY"]: row for row in source_cols}
+        target_col_map = {row["COLUMN_KEY"]: row for row in target_cols}
+        source_col_keys = [row["COLUMN_KEY"] for row in source_cols]
+        target_col_keys = [row["COLUMN_KEY"] for row in target_cols]
+        common_keys = [key for key in source_col_keys if key in target_col_map]
+        source_only = [source_col_map[key]["COLUMN_NAME"] for key in source_col_keys if key not in target_col_map]
+        target_only = [target_col_map[key]["COLUMN_NAME"] for key in target_col_keys if key not in source_col_map]
+        type_mismatch = [
+            source_col_map[key]["COLUMN_NAME"]
+            for key in common_keys
+            if _data_compare_column_signature(source_col_map[key]) != _data_compare_column_signature(target_col_map[key])
+        ]
+        unsupported = [
+            source_col_map[key]["COLUMN_NAME"]
+            for key in common_keys
+            if not _data_compare_supported_hash_column(source_col_map[key])
+            or not _data_compare_supported_hash_column(target_col_map[key])
+        ]
+        comparable_keys = [
+            key for key in common_keys
+            if key not in {col.upper() for col in type_mismatch}
+            and key not in {col.upper() for col in unsupported}
+        ]
+        comparable_columns = [source_col_map[key]["COLUMN_NAME"] for key in comparable_keys]
+        if not source_present:
+            status = "Missing in source"
+        elif not target_present:
+            status = "Missing in target"
+        elif not comparable_columns:
+            status = "No comparable columns"
+        elif source_only or target_only or type_mismatch or unsupported:
+            status = "Comparable with structure drift"
+        else:
+            status = "Ready"
+        rows.append({
+            "TABLE_NAME": table_name,
+            "COMPARE_STATUS": status,
+            "SOURCE_PRESENT": source_present,
+            "TARGET_PRESENT": target_present,
+            "SOURCE_METADATA_ROW_COUNT": safe_int(source_meta.get("METADATA_ROW_COUNT", 0)),
+            "TARGET_METADATA_ROW_COUNT": safe_int(target_meta.get("METADATA_ROW_COUNT", 0)),
+            "SOURCE_COLUMNS": len(source_cols),
+            "TARGET_COLUMNS": len(target_cols),
+            "COMPARABLE_COLUMN_COUNT": len(comparable_columns),
+            "COMPARABLE_COLUMNS": ", ".join(comparable_columns),
+            "SOURCE_ONLY_COLUMNS": ", ".join(source_only),
+            "TARGET_ONLY_COLUMNS": ", ".join(target_only),
+            "TYPE_MISMATCH_COLUMNS": ", ".join(type_mismatch),
+            "UNSUPPORTED_HASH_COLUMNS": ", ".join(unsupported),
+        })
+    rank = {
+        "Ready": 0,
+        "Comparable with structure drift": 1,
+        "No comparable columns": 2,
+        "Missing in target": 3,
+        "Missing in source": 4,
+    }
+    plan = pd.DataFrame(rows)
+    if plan.empty:
+        return pd.DataFrame(columns=[
+            "TABLE_NAME", "COMPARE_STATUS", "COMPARABLE_COLUMNS", "SOURCE_METADATA_ROW_COUNT",
+            "TARGET_METADATA_ROW_COUNT", "COMPARE_RANK",
+        ])
+    plan["COMPARE_RANK"] = plan["COMPARE_STATUS"].map(rank).fillna(9).astype(int)
+    return plan.sort_values(["COMPARE_RANK", "TABLE_NAME"]).reset_index(drop=True)
+
+
+def _data_compare_hash_sql(
+    database: str,
+    schema: str,
+    table: str,
+    columns: list[str],
+    row_filter: str = "",
+) -> str:
+    table_fqn = _qualified_name(database, schema, table)
+    where_clause = _data_compare_where_clause(row_filter)
+    if columns:
+        column_expr = ", ".join(_quote_identifier(col) for col in columns)
+        hash_expr = f"HASH_AGG({column_expr})"
+    else:
+        hash_expr = "NULL"
+    return f"""
+SELECT
+    COUNT(*) AS actual_row_count,
+    {hash_expr} AS data_hash
+FROM {table_fqn}
+{where_clause}
+""".strip()
+
+
+def _data_compare_bucket_sql(
+    source_db: str,
+    source_schema: str,
+    target_db: str,
+    target_schema: str,
+    table: str,
+    columns: list[str],
+    key_columns: list[str] | None = None,
+    row_filter: str = "",
+    buckets: int = 128,
+) -> str:
+    hash_columns = list(key_columns or columns)
+    if not hash_columns or not columns:
+        return f"-- Bucket compare for {table} needs comparable columns."
+    bucket_expr = f"MOD(ABS(HASH({', '.join(_quote_identifier(col) for col in hash_columns)})), {int(buckets)})"
+    data_expr = ", ".join(_quote_identifier(col) for col in columns)
+    where_clause = _data_compare_where_clause(row_filter)
+    source_fqn = _qualified_name(source_db, source_schema, table)
+    target_fqn = _qualified_name(target_db, target_schema, table)
+    return f"""
+WITH source_bucket AS (
+    SELECT {bucket_expr} AS bucket_id, COUNT(*) AS source_rows, HASH_AGG({data_expr}) AS source_hash
+    FROM {source_fqn}
+    {where_clause}
+    GROUP BY 1
+),
+target_bucket AS (
+    SELECT {bucket_expr} AS bucket_id, COUNT(*) AS target_rows, HASH_AGG({data_expr}) AS target_hash
+    FROM {target_fqn}
+    {where_clause}
+    GROUP BY 1
+)
+SELECT
+    COALESCE(s.bucket_id, t.bucket_id) AS bucket_id,
+    COALESCE(s.source_rows, 0) AS source_rows,
+    COALESCE(t.target_rows, 0) AS target_rows,
+    s.source_hash,
+    t.target_hash
+FROM source_bucket s
+FULL OUTER JOIN target_bucket t USING (bucket_id)
+WHERE COALESCE(s.source_rows, 0) <> COALESCE(t.target_rows, 0)
+   OR COALESCE(s.source_hash, 0) <> COALESCE(t.target_hash, 0)
+ORDER BY bucket_id;
+""".strip()
+
+
+def _data_compare_forensic_sql(
+    source_db: str,
+    source_schema: str,
+    target_db: str,
+    target_schema: str,
+    table: str,
+    columns: list[str],
+    key_columns: list[str] | None = None,
+    row_filter: str = "",
+    limit: int = 100,
+) -> str:
+    if not columns:
+        return f"-- Forensic compare for {table} needs comparable columns."
+    source_fqn = _qualified_name(source_db, source_schema, table)
+    target_fqn = _qualified_name(target_db, target_schema, table)
+    where_clause = _data_compare_where_clause(row_filter)
+    select_cols = ", ".join(_quote_identifier(col) for col in columns)
+    safe_limit = max(1, min(int(limit or 100), 1000))
+    keys = list(key_columns or [])
+    if keys:
+        key_select = ", ".join(_quote_identifier(col) for col in keys)
+        hash_select = ", ".join(_quote_identifier(col) for col in columns)
+        join_clause = " AND ".join(
+            f"s.{_quote_identifier(col)} IS NOT DISTINCT FROM t.{_quote_identifier(col)}"
+            for col in keys
+        )
+        key_projection = ", ".join(f"COALESCE(s.{_quote_identifier(col)}, t.{_quote_identifier(col)}) AS {_quote_identifier(col)}" for col in keys)
+        return f"""
+WITH source_rows AS (
+    SELECT {key_select}, HASH({hash_select}) AS source_row_hash
+    FROM {source_fqn}
+    {where_clause}
+),
+target_rows AS (
+    SELECT {key_select}, HASH({hash_select}) AS target_row_hash
+    FROM {target_fqn}
+    {where_clause}
+)
+SELECT
+    CASE
+        WHEN s.source_row_hash IS NULL THEN 'ONLY_IN_TARGET'
+        WHEN t.target_row_hash IS NULL THEN 'ONLY_IN_SOURCE'
+        ELSE 'ROW_HASH_MISMATCH'
+    END AS diff_type,
+    {key_projection},
+    s.source_row_hash,
+    t.target_row_hash
+FROM source_rows s
+FULL OUTER JOIN target_rows t
+  ON {join_clause}
+WHERE s.source_row_hash IS NULL
+   OR t.target_row_hash IS NULL
+   OR s.source_row_hash <> t.target_row_hash
+LIMIT {safe_limit};
+""".strip()
+    join_clause = " AND ".join(
+        f"s.{_quote_identifier(col)} IS NOT DISTINCT FROM t.{_quote_identifier(col)}"
+        for col in columns
+    )
+    projected_cols = ", ".join(
+        f"COALESCE(s.{_quote_identifier(col)}, t.{_quote_identifier(col)}) AS {_quote_identifier(col)}"
+        for col in columns
+    )
+    return f"""
+WITH source_counts AS (
+    SELECT {select_cols}, COUNT(*) AS source_duplicate_count
+    FROM {source_fqn}
+    {where_clause}
+    GROUP BY {select_cols}
+),
+target_counts AS (
+    SELECT {select_cols}, COUNT(*) AS target_duplicate_count
+    FROM {target_fqn}
+    {where_clause}
+    GROUP BY {select_cols}
+)
+SELECT
+    CASE
+        WHEN t.target_duplicate_count IS NULL THEN 'ONLY_IN_SOURCE'
+        WHEN s.source_duplicate_count IS NULL THEN 'ONLY_IN_TARGET'
+        ELSE 'DUPLICATE_COUNT_MISMATCH'
+    END AS diff_type,
+    {projected_cols},
+    COALESCE(s.source_duplicate_count, 0) AS source_duplicate_count,
+    COALESCE(t.target_duplicate_count, 0) AS target_duplicate_count
+FROM source_counts s
+FULL OUTER JOIN target_counts t
+  ON {join_clause}
+WHERE COALESCE(s.source_duplicate_count, 0) <> COALESCE(t.target_duplicate_count, 0)
+LIMIT {safe_limit};
+""".strip()
+
+
+def _data_compare_extract_summary(df: pd.DataFrame | None) -> tuple[int | None, str]:
+    if df is None or df.empty:
+        return None, ""
+    frame = df.copy()
+    frame.columns = [str(col).upper() for col in frame.columns]
+    row = frame.iloc[0]
+    return safe_int(row.get("ACTUAL_ROW_COUNT", 0)), str(row.get("DATA_HASH", "") or "")
+
+
+def _data_compare_outcome(source_count: int | None, target_count: int | None, source_hash: str, target_hash: str) -> str:
+    if source_count is None or target_count is None:
+        return "Unavailable"
+    if source_count != target_count:
+        return "Count mismatch"
+    if str(source_hash) != str(target_hash):
+        return "Hash mismatch"
+    return "Matched"
+
+
+def _build_schema_compare_frame(
+    source_inventory: pd.DataFrame,
+    target_inventory: pd.DataFrame,
+    *,
+    source_db: str,
+    source_schema: str,
+    target_db: str,
+    target_schema: str,
+) -> pd.DataFrame:
+    source = source_inventory.copy() if source_inventory is not None else pd.DataFrame()
+    target = target_inventory.copy() if target_inventory is not None else pd.DataFrame()
+    for frame in (source, target):
+        if "COMPARE_KEY" not in frame.columns:
+            frame["COMPARE_KEY"] = pd.Series(dtype=str)
+        if not frame.empty:
+            frame["COMPARE_KEY"] = (
+                frame["OBJECT_TYPE"].fillna("").astype(str).str.upper()
+                + "::"
+                + frame["OBJECT_NAME"].fillna("").astype(str).str.upper()
+            )
+    merged = target.merge(source, on="COMPARE_KEY", how="outer", suffixes=("_TARGET", "_SOURCE"))
+    if merged.empty:
+        return pd.DataFrame(columns=[
+            "COMPARE_STATUS", "OBJECT_TYPE", "OBJECT_NAME", "ROW_COUNT_TARGET",
+            "ROW_COUNT_SOURCE", "ROW_DIFF", "DDL_REVIEW_SQL",
+        ])
+
+    def _coalesce(row, name: str) -> object:
+        target_value = row.get(f"{name}_TARGET")
+        return target_value if pd.notna(target_value) and str(target_value).strip() else row.get(f"{name}_SOURCE")
+
+    merged["OBJECT_TYPE"] = merged.apply(lambda row: _coalesce(row, "OBJECT_TYPE"), axis=1)
+    merged["OBJECT_NAME"] = merged.apply(lambda row: _coalesce(row, "OBJECT_NAME"), axis=1)
+    merged["PARENT_OBJECT_NAME"] = merged.apply(lambda row: _coalesce(row, "PARENT_OBJECT_NAME"), axis=1)
+    merged["PARENT_OBJECT_TYPE"] = merged.apply(lambda row: _coalesce(row, "PARENT_OBJECT_TYPE"), axis=1)
+    target_present = merged.get("PRESENT_TARGET", pd.Series([False] * len(merged), index=merged.index)).fillna(False).astype(bool)
+    source_present = merged.get("PRESENT_SOURCE", pd.Series([False] * len(merged), index=merged.index)).fillna(False).astype(bool)
+    target_sig = merged.get("OBJECT_SIGNATURE_TARGET", pd.Series([""] * len(merged), index=merged.index)).fillna("").astype(str)
+    source_sig = merged.get("OBJECT_SIGNATURE_SOURCE", pd.Series([""] * len(merged), index=merged.index)).fillna("").astype(str)
+    merged["COMPARE_STATUS"] = "Matched"
+    merged.loc[source_present & ~target_present, "COMPARE_STATUS"] = "Only in source"
+    merged.loc[target_present & ~source_present, "COMPARE_STATUS"] = "Only in target"
+    merged.loc[source_present & target_present & target_sig.ne(source_sig), "COMPARE_STATUS"] = "Changed"
+    merged["ROW_COUNT_TARGET"] = merged.get("ROW_COUNT_TARGET", pd.Series([0] * len(merged), index=merged.index)).fillna(0).astype(float).astype(int)
+    merged["ROW_COUNT_SOURCE"] = merged.get("ROW_COUNT_SOURCE", pd.Series([0] * len(merged), index=merged.index)).fillna(0).astype(float).astype(int)
+    merged["ROW_DIFF"] = merged["ROW_COUNT_TARGET"] - merged["ROW_COUNT_SOURCE"]
+    merged["DDL_REVIEW_SQL"] = merged.apply(
+        lambda row: _schema_compare_missing_ddl(
+            row,
+            source_db=source_db,
+            source_schema=source_schema,
+            target_db=target_db,
+            target_schema=target_schema,
+        ),
+        axis=1,
+    )
+    status_rank = {"Only in source": 0, "Only in target": 1, "Changed": 2, "Matched": 9}
+    merged["COMPARE_RANK"] = merged["COMPARE_STATUS"].map(status_rank).fillna(5).astype(int)
+    columns = [
+        "COMPARE_STATUS", "OBJECT_TYPE", "OBJECT_NAME", "PARENT_OBJECT_NAME",
+        "PARENT_OBJECT_TYPE", "ROW_COUNT_TARGET", "ROW_COUNT_SOURCE", "ROW_DIFF",
+        "OBJECT_DETAIL_TARGET", "OBJECT_DETAIL_SOURCE", "DDL_REVIEW_SQL", "COMPARE_RANK",
+    ]
+    for column in columns:
+        if column not in merged.columns:
+            merged[column] = ""
+    return merged[columns].sort_values(["COMPARE_RANK", "OBJECT_TYPE", "OBJECT_NAME"]).reset_index(drop=True)
+
+
 def _show_to_df(session, stmt: str, force_refresh: bool = False) -> pd.DataFrame:
     return show_to_df(session, stmt, force_refresh=force_refresh)
 
@@ -388,7 +1287,6 @@ def _task_history_sql(session, time_predicate: str, limit: int = 500) -> str:
 
 def _setup_status_df(session) -> pd.DataFrame:
     checks = [
-        ("Saved Views", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_BOOKMARKS"),
         ("Annotation Windows", "TABLE", ALERT_DB, ALERT_SCHEMA, "OVERWATCH_ANNOTATIONS"),
         ("Alert History", "TABLE", ALERT_DB, ALERT_SCHEMA, ALERT_TABLE),
         ("Action Queue", "TABLE", ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE),
@@ -1128,7 +2026,10 @@ def render():
 
     if selected_tool == "Schema Compare":
         st.subheader("Schema Compare")
-        st.caption("Choose source and target databases first; schema choices are loaded from the selected database.")
+        st.caption(
+            "Compares every visible schema object from SHOW OBJECTS, plus column-level metadata from "
+            "INFORMATION_SCHEMA.COLUMNS. Missing objects get generated DDL statements for DBA review."
+        )
         refresh_schema_meta = st.button("Refresh database and schema choices", key="sc_refresh_metadata")
         scope_key = f"{get_active_company()}_{get_active_environment()}"
         database_cache_key = f"sc_database_options_{scope_key}"
@@ -1201,29 +2102,396 @@ def render():
                         "Enter databases that belong to the selected company view."
                     )
                     st.stop()
-                df_dev = run_query(
-                    f"SELECT table_name, row_count FROM {dev_db_safe}.INFORMATION_SCHEMA.TABLES WHERE table_schema={sql_literal(dev_sch)} AND table_type='BASE TABLE'",
-                    ttl_key=f"dba_schema_dev_{company}_{dev_db_safe}_{dev_sch}",
+                source_objects = run_query(
+                    _schema_compare_show_objects_sql(dev_db, dev_sch),
+                    ttl_key=f"dba_schema_objects_source_{company}_{dev_db_safe}_{dev_sch}",
                     tier="metadata",
                 )
-                df_prod = run_query(
-                    f"SELECT table_name, row_count FROM {prod_db_safe}.INFORMATION_SCHEMA.TABLES WHERE table_schema={sql_literal(prod_sch)} AND table_type='BASE TABLE'",
-                    ttl_key=f"dba_schema_prod_{company}_{prod_db_safe}_{prod_sch}",
+                target_objects = run_query(
+                    _schema_compare_show_objects_sql(prod_db, prod_sch),
+                    ttl_key=f"dba_schema_objects_target_{company}_{prod_db_safe}_{prod_sch}",
                     tier="metadata",
                 )
-                df_cmp  = df_prod.merge(df_dev, on="TABLE_NAME", how="outer", suffixes=("_PROD","_DEV"))
-                df_cmp["ROW_DIFF"] = df_cmp["ROW_COUNT_PROD"].fillna(0) - df_cmp["ROW_COUNT_DEV"].fillna(0)
+                source_columns = run_query(
+                    _schema_compare_columns_sql(dev_db, dev_sch),
+                    ttl_key=f"dba_schema_columns_source_{company}_{dev_db_safe}_{dev_sch}",
+                    tier="metadata",
+                )
+                target_columns = run_query(
+                    _schema_compare_columns_sql(prod_db, prod_sch),
+                    ttl_key=f"dba_schema_columns_target_{company}_{prod_db_safe}_{prod_sch}",
+                    tier="metadata",
+                )
+                source_inventory = _schema_compare_inventory(
+                    source_objects,
+                    source_columns,
+                    database=dev_db,
+                    schema=dev_sch,
+                    side="SOURCE",
+                )
+                target_inventory = _schema_compare_inventory(
+                    target_objects,
+                    target_columns,
+                    database=prod_db,
+                    schema=prod_sch,
+                    side="TARGET",
+                )
+                df_cmp = _build_schema_compare_frame(
+                    source_inventory,
+                    target_inventory,
+                    source_db=dev_db,
+                    source_schema=dev_sch,
+                    target_db=prod_db,
+                    target_schema=prod_sch,
+                )
+                missing_or_changed = df_cmp[df_cmp["COMPARE_STATUS"].ne("Matched")] if not df_cmp.empty else df_cmp
+                ddl_rows = df_cmp[df_cmp["DDL_REVIEW_SQL"].fillna("").astype(str).str.strip().ne("")] if not df_cmp.empty else df_cmp
+                ddl_statement_rows = _schema_compare_fetch_missing_ddl_statements(
+                    ddl_rows,
+                    source_db=dev_db,
+                    source_schema=dev_sch,
+                    target_db=prod_db,
+                    target_schema=prod_sch,
+                ) if ddl_rows is not None and not ddl_rows.empty else ddl_rows
+                render_shell_snapshot((
+                    ("Compared Objects", f"{len(df_cmp):,}"),
+                    ("Missing", f"{int(df_cmp['COMPARE_STATUS'].isin(['Only in source', 'Only in target']).sum()) if not df_cmp.empty else 0:,}"),
+                    ("Changed", f"{int(df_cmp['COMPARE_STATUS'].eq('Changed').sum()) if not df_cmp.empty else 0:,}"),
+                    ("DDL Scripts", f"{len(ddl_statement_rows):,}" if ddl_statement_rows is not None else "0"),
+                ))
                 render_priority_dataframe(
-                    df_cmp,
-                    title="Schema row-count differences",
-                    priority_columns=["TABLE_NAME", "ROW_COUNT_PROD", "ROW_COUNT_DEV", "ROW_DIFF"],
-                    sort_by=["ROW_DIFF"],
-                    ascending=False,
+                    missing_or_changed if missing_or_changed is not None and not missing_or_changed.empty else df_cmp,
+                    title="Schema object differences",
+                    priority_columns=[
+                        "COMPARE_STATUS", "OBJECT_TYPE", "OBJECT_NAME", "PARENT_OBJECT_TYPE",
+                        "ROW_COUNT_TARGET", "ROW_COUNT_SOURCE", "ROW_DIFF",
+                        "OBJECT_DETAIL_TARGET", "OBJECT_DETAIL_SOURCE",
+                    ],
+                    sort_by=["COMPARE_RANK", "OBJECT_TYPE", "OBJECT_NAME"],
+                    ascending=[True, True, True],
                     raw_label="All schema compare rows",
                 )
+                if ddl_statement_rows is not None and not ddl_statement_rows.empty:
+                    render_priority_dataframe(
+                        ddl_statement_rows,
+                        title="Generated missing-object DDL statements",
+                        priority_columns=[
+                            "COMPARE_STATUS", "OBJECT_TYPE", "OBJECT_NAME",
+                            "DDL_STATUS", "DDL_STATEMENT", "DDL_REVIEW_SQL",
+                        ],
+                        sort_by=["COMPARE_STATUS", "OBJECT_TYPE", "OBJECT_NAME"],
+                        ascending=[True, True, True],
+                        raw_label="All generated missing-object DDL statements",
+                        height=260,
+                    )
+                    ddl_script = "\n\n".join(
+                        ddl_statement_rows["DDL_STATEMENT"].fillna("").astype(str).str.strip().tolist()
+                    )
+                    st.download_button(
+                        "Download Missing Object DDL",
+                        ddl_script,
+                        file_name="schema_compare_missing_object_ddl.sql",
+                        mime="text/sql",
+                        key="schema_compare_missing_ddl_download",
+                    )
+                    with st.expander("Missing Object DDL Statements", expanded=False):
+                        st.code(ddl_script, language="sql")
+                else:
+                    st.success("No missing objects were found between the selected schemas.")
                 download_csv(df_cmp, "schema_compare.csv")
             except Exception as e:
                 st.error(f"Compare failed: {format_snowflake_error(e)}")
+
+    if selected_tool == "Data Compare":
+        st.subheader("Data Compare")
+        st.caption(
+            "Validates row-count sameness and data likeness between matching tables in two schemas. "
+            "Quick compare runs COUNT plus explicit-column HASH_AGG; mismatch rows get bucket and forensic SQL for DBA review."
+        )
+        refresh_data_meta = st.button("Refresh database and schema choices", key="dc_refresh_metadata")
+        scope_key = f"{get_active_company()}_{get_active_environment()}"
+        database_cache_key = f"dc_database_options_{scope_key}"
+        if refresh_data_meta or database_cache_key not in st.session_state:
+            st.session_state[database_cache_key] = load_database_options(
+                session,
+                company=get_active_company(),
+                force_refresh=bool(refresh_data_meta),
+            )
+        database_options = list(st.session_state.get(database_cache_key) or [])
+        if not database_options:
+            st.info("No scoped databases were returned by SHOW DATABASES. Enter database names manually or refresh after changing role.")
+        src_col, tgt_col = st.columns(2)
+        with src_col:
+            data_src_db = _select_option(
+                "Source database",
+                database_options,
+                "dc_source_db",
+                "DEV_DB",
+                allow_current_outside_options=False,
+            )
+            source_schema_cache_key = f"dc_schema_options_source_{scope_key}_{data_src_db}"
+            if refresh_data_meta or source_schema_cache_key not in st.session_state:
+                st.session_state[source_schema_cache_key] = load_schema_options(
+                    session,
+                    data_src_db,
+                    company=get_active_company(),
+                    force_refresh=bool(refresh_data_meta),
+                )
+            data_src_schema = _select_option(
+                "Source schema",
+                list(st.session_state.get(source_schema_cache_key) or []),
+                "dc_source_schema",
+                "PUBLIC",
+                allow_current_outside_options=False,
+            )
+        with tgt_col:
+            data_tgt_db = _select_option(
+                "Target database",
+                database_options,
+                "dc_target_db",
+                "PROD_DB",
+                allow_current_outside_options=False,
+            )
+            target_schema_cache_key = f"dc_schema_options_target_{scope_key}_{data_tgt_db}"
+            if refresh_data_meta or target_schema_cache_key not in st.session_state:
+                st.session_state[target_schema_cache_key] = load_schema_options(
+                    session,
+                    data_tgt_db,
+                    company=get_active_company(),
+                    force_refresh=bool(refresh_data_meta),
+                )
+            data_tgt_schema = _select_option(
+                "Target schema",
+                list(st.session_state.get(target_schema_cache_key) or []),
+                "dc_target_schema",
+                "PUBLIC",
+                allow_current_outside_options=False,
+            )
+
+        opt1, opt2, opt3 = st.columns([1, 1, 1])
+        with opt1:
+            data_table_filter = st.text_input(
+                "Table contains",
+                key="dc_table_filter",
+                placeholder="blank = all matching tables",
+            )
+        with opt2:
+            data_max_tables = st.number_input(
+                "Max tables to scan",
+                min_value=1,
+                max_value=100,
+                value=25,
+                step=5,
+                key="dc_max_tables",
+                help="COUNT/HASH scans can be expensive. Start small for large schemas.",
+            )
+        with opt3:
+            data_diff_limit = st.number_input(
+                "Forensic sample limit",
+                min_value=10,
+                max_value=1000,
+                value=100,
+                step=10,
+                key="dc_diff_limit",
+            )
+        excluded_columns_text = st.text_input(
+            "Excluded columns",
+            key="dc_excluded_columns",
+            placeholder="LOAD_TS, UPDATED_AT, AUDIT_ID",
+            help="Comma-separated columns excluded from HASH_AGG when timestamps or audit values are expected to differ.",
+        )
+        key_columns_text = st.text_input(
+            "Key columns for forensic SQL",
+            key="dc_key_columns",
+            placeholder="POLICY_ID, CLAIM_ID",
+            help="Optional. When supplied, mismatch SQL uses a key-based full outer join; otherwise it generates EXCEPT both directions.",
+        )
+        row_filter_text = st.text_input(
+            "Row filter",
+            key="dc_row_filter",
+            placeholder="BUSINESS_DATE >= '2026-01-01'",
+            help="Optional SELECT predicate applied to both sides. Leave blank for full-table compare.",
+        )
+        st.caption(
+            "Hashing is a fast detection signal, not a destructive action. For critical mismatches, run the generated bucket and forensic SQL."
+        )
+
+        if st.button("Run Quick Data Compare", key="dc_run"):
+            try:
+                source_db_safe = safe_identifier(data_src_db)
+                target_db_safe = safe_identifier(data_tgt_db)
+                if not (
+                    company_value_allowed(data_src_db, "database")
+                    and company_value_allowed(data_tgt_db, "database")
+                ):
+                    st.warning(
+                        f"Data Compare is scoped to {get_active_company()}. "
+                        "Enter databases that belong to the selected company view."
+                    )
+                    st.stop()
+                excluded_columns = _data_compare_parse_identifiers(excluded_columns_text)
+                key_columns = _data_compare_parse_identifiers(key_columns_text)
+                _data_compare_where_clause(row_filter_text)
+
+                source_tables = run_query(
+                    _data_compare_tables_sql(data_src_db, data_src_schema),
+                    ttl_key=f"dba_data_compare_tables_source_{company}_{source_db_safe}_{data_src_schema}",
+                    tier="metadata",
+                )
+                target_tables = run_query(
+                    _data_compare_tables_sql(data_tgt_db, data_tgt_schema),
+                    ttl_key=f"dba_data_compare_tables_target_{company}_{target_db_safe}_{data_tgt_schema}",
+                    tier="metadata",
+                )
+                source_columns = run_query(
+                    _schema_compare_columns_sql(data_src_db, data_src_schema),
+                    ttl_key=f"dba_data_compare_columns_source_{company}_{source_db_safe}_{data_src_schema}",
+                    tier="metadata",
+                )
+                target_columns = run_query(
+                    _schema_compare_columns_sql(data_tgt_db, data_tgt_schema),
+                    ttl_key=f"dba_data_compare_columns_target_{company}_{target_db_safe}_{data_tgt_schema}",
+                    tier="metadata",
+                )
+                plan = _build_data_compare_plan(
+                    source_tables,
+                    target_tables,
+                    source_columns,
+                    target_columns,
+                    excluded_columns=excluded_columns,
+                    table_filter=data_table_filter,
+                )
+                runnable = plan[
+                    plan["COMPARE_STATUS"].isin(["Ready", "Comparable with structure drift"])
+                    & plan["COMPARABLE_COLUMN_COUNT"].gt(0)
+                ].head(int(data_max_tables))
+                result_rows = []
+                scripts = []
+                for _, row in runnable.iterrows():
+                    table_name = str(row.get("TABLE_NAME") or "").strip()
+                    columns = [col.strip() for col in str(row.get("COMPARABLE_COLUMNS") or "").split(",") if col.strip()]
+                    try:
+                        source_summary = run_query(
+                            _data_compare_hash_sql(data_src_db, data_src_schema, table_name, columns, row_filter_text),
+                            ttl_key=f"dba_data_compare_source_hash_{company}_{source_db_safe}_{data_src_schema}_{table_name}",
+                            tier="historical",
+                            max_rows=5,
+                        )
+                        target_summary = run_query(
+                            _data_compare_hash_sql(data_tgt_db, data_tgt_schema, table_name, columns, row_filter_text),
+                            ttl_key=f"dba_data_compare_target_hash_{company}_{target_db_safe}_{data_tgt_schema}_{table_name}",
+                            tier="historical",
+                            max_rows=5,
+                        )
+                        source_count, source_hash = _data_compare_extract_summary(source_summary)
+                        target_count, target_hash = _data_compare_extract_summary(target_summary)
+                        outcome = _data_compare_outcome(source_count, target_count, source_hash, target_hash)
+                    except Exception as exc:
+                        source_count, target_count, source_hash, target_hash = None, None, "", ""
+                        outcome = f"Unavailable: {format_snowflake_error(exc)}"
+                    bucket_sql = _data_compare_bucket_sql(
+                        data_src_db,
+                        data_src_schema,
+                        data_tgt_db,
+                        data_tgt_schema,
+                        table_name,
+                        columns,
+                        key_columns=key_columns,
+                        row_filter=row_filter_text,
+                    )
+                    forensic_sql = _data_compare_forensic_sql(
+                        data_src_db,
+                        data_src_schema,
+                        data_tgt_db,
+                        data_tgt_schema,
+                        table_name,
+                        columns,
+                        key_columns=key_columns,
+                        row_filter=row_filter_text,
+                        limit=int(data_diff_limit),
+                    )
+                    script_block = (
+                        f"-- {table_name}: {outcome}\n"
+                        f"-- Bucket compare narrows the mismatch to hash buckets.\n{bucket_sql}\n\n"
+                        f"-- Forensic compare returns sample mismatch rows.\n{forensic_sql}"
+                    )
+                    scripts.append(script_block)
+                    result_rows.append({
+                        "TABLE_NAME": table_name,
+                        "DATA_COMPARE_STATUS": outcome,
+                        "STRUCTURE_STATUS": row.get("COMPARE_STATUS", ""),
+                        "SOURCE_ACTUAL_ROW_COUNT": source_count,
+                        "TARGET_ACTUAL_ROW_COUNT": target_count,
+                        "ROW_COUNT_DIFF": (
+                            int(target_count or 0) - int(source_count or 0)
+                            if source_count is not None and target_count is not None else None
+                        ),
+                        "SOURCE_DATA_HASH": source_hash,
+                        "TARGET_DATA_HASH": target_hash,
+                        "COMPARABLE_COLUMN_COUNT": row.get("COMPARABLE_COLUMN_COUNT", 0),
+                        "SOURCE_ONLY_COLUMNS": row.get("SOURCE_ONLY_COLUMNS", ""),
+                        "TARGET_ONLY_COLUMNS": row.get("TARGET_ONLY_COLUMNS", ""),
+                        "TYPE_MISMATCH_COLUMNS": row.get("TYPE_MISMATCH_COLUMNS", ""),
+                        "UNSUPPORTED_HASH_COLUMNS": row.get("UNSUPPORTED_HASH_COLUMNS", ""),
+                        "BUCKET_COMPARE_SQL": bucket_sql,
+                        "FORENSIC_DIFF_SQL": forensic_sql,
+                    })
+                results = pd.DataFrame(result_rows)
+                if not plan.empty:
+                    skipped = plan[~plan["TABLE_NAME"].isin(results["TABLE_NAME"].tolist() if not results.empty else [])]
+                else:
+                    skipped = plan
+                mismatches = results[results["DATA_COMPARE_STATUS"].ne("Matched")] if not results.empty else results
+                render_shell_snapshot((
+                    ("Tables Planned", f"{len(plan):,}"),
+                    ("Tables Scanned", f"{len(results):,}"),
+                    ("Matched", f"{int(results['DATA_COMPARE_STATUS'].eq('Matched').sum()) if not results.empty else 0:,}"),
+                    ("Needs Review", f"{len(mismatches):,}" if mismatches is not None else "0"),
+                ))
+                if not results.empty:
+                    render_priority_dataframe(
+                        results,
+                        title="Data compare results",
+                        priority_columns=[
+                            "TABLE_NAME", "DATA_COMPARE_STATUS", "STRUCTURE_STATUS",
+                            "SOURCE_ACTUAL_ROW_COUNT", "TARGET_ACTUAL_ROW_COUNT", "ROW_COUNT_DIFF",
+                            "COMPARABLE_COLUMN_COUNT", "SOURCE_ONLY_COLUMNS", "TARGET_ONLY_COLUMNS",
+                            "TYPE_MISMATCH_COLUMNS", "UNSUPPORTED_HASH_COLUMNS",
+                        ],
+                        sort_by=["DATA_COMPARE_STATUS", "TABLE_NAME"],
+                        ascending=[True, True],
+                        raw_label="All data compare result rows",
+                    )
+                    download_csv(results, "data_compare_results.csv")
+                else:
+                    st.info("No comparable tables were scanned. Check source/target schemas, table filter, or comparable columns.")
+                if skipped is not None and not skipped.empty:
+                    render_priority_dataframe(
+                        skipped,
+                        title="Tables not scanned",
+                        priority_columns=[
+                            "TABLE_NAME", "COMPARE_STATUS", "SOURCE_METADATA_ROW_COUNT",
+                            "TARGET_METADATA_ROW_COUNT", "SOURCE_ONLY_COLUMNS",
+                            "TARGET_ONLY_COLUMNS", "TYPE_MISMATCH_COLUMNS", "UNSUPPORTED_HASH_COLUMNS",
+                        ],
+                        sort_by=["COMPARE_RANK", "TABLE_NAME"],
+                        ascending=[True, True],
+                        raw_label="All planned table rows",
+                        height=220,
+                    )
+                if scripts:
+                    script_text = "\n\n".join(scripts)
+                    st.download_button(
+                        "Download Bucket and Forensic SQL",
+                        script_text,
+                        file_name="data_compare_mismatch_sql.sql",
+                        mime="text/sql",
+                        key="dc_download_sql",
+                    )
+                    with st.expander("Bucket and Forensic SQL", expanded=False):
+                        st.code(script_text, language="sql")
+            except Exception as e:
+                st.error(f"Data Compare failed: {format_snowflake_error(e)}")
 
     if selected_tool == "Recent Objects":
         st.subheader("Recent Objects")

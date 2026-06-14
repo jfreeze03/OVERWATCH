@@ -12,8 +12,17 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from sections.dba_tools import (  # noqa: E402
+    _build_data_compare_plan,
+    _build_schema_compare_frame,
     _build_warehouse_setting_plan,
     _current_role_allows_alter_account,
+    _data_compare_bucket_sql,
+    _data_compare_forensic_sql,
+    _data_compare_hash_sql,
+    _data_compare_tables_sql,
+    _schema_compare_columns_sql,
+    _schema_compare_inventory,
+    _schema_compare_show_objects_sql,
 )
 from sections.security_access import (  # noqa: E402
     _build_access_action_queue_record,
@@ -49,6 +58,198 @@ from utils.workload_audit import build_workload_recovery_audit_ddl  # noqa: E402
 
 
 class AdminControlTests(unittest.TestCase):
+    def test_data_compare_builds_explicit_hash_and_diff_sql(self):
+        table_sql = _data_compare_tables_sql("ALFA_EDW_DEV", "PUBLIC").upper()
+        hash_sql = _data_compare_hash_sql(
+            "ALFA_EDW_DEV",
+            "PUBLIC",
+            "POLICY_FACT",
+            ["POLICY_ID", "PREMIUM_AMT"],
+            "BUSINESS_DATE >= '2026-01-01'",
+        )
+        bucket_sql = _data_compare_bucket_sql(
+            "ALFA_EDW_DEV",
+            "PUBLIC",
+            "ALFA_EDW_PROD",
+            "PUBLIC",
+            "POLICY_FACT",
+            ["POLICY_ID", "PREMIUM_AMT"],
+            key_columns=["POLICY_ID"],
+        )
+        forensic_sql = _data_compare_forensic_sql(
+            "ALFA_EDW_DEV",
+            "PUBLIC",
+            "ALFA_EDW_PROD",
+            "PUBLIC",
+            "POLICY_FACT",
+            ["POLICY_ID", "PREMIUM_AMT"],
+            key_columns=["POLICY_ID"],
+            limit=50,
+        )
+        no_key_sql = _data_compare_forensic_sql(
+            "ALFA_EDW_DEV",
+            "PUBLIC",
+            "ALFA_EDW_PROD",
+            "PUBLIC",
+            "POLICY_FACT",
+            ["POLICY_ID", "PREMIUM_AMT"],
+            limit=50,
+        )
+
+        self.assertIn("INFORMATION_SCHEMA.TABLES", table_sql)
+        self.assertIn("HASH_AGG(\"POLICY_ID\", \"PREMIUM_AMT\")", hash_sql)
+        self.assertIn("COUNT(*) AS actual_row_count", hash_sql)
+        self.assertIn("WHERE BUSINESS_DATE >= '2026-01-01'", hash_sql)
+        self.assertIn("MOD(ABS(HASH(\"POLICY_ID\")), 128)", bucket_sql)
+        self.assertIn("FULL OUTER JOIN target_rows", forensic_sql)
+        self.assertIn("IS NOT DISTINCT FROM", forensic_sql)
+        self.assertIn("ROW_HASH_MISMATCH", forensic_sql)
+        self.assertIn("source_duplicate_count", no_key_sql)
+        self.assertIn("DUPLICATE_COUNT_MISMATCH", no_key_sql)
+
+    def test_data_compare_plan_flags_structure_drift_and_missing_tables(self):
+        source_tables = pd.DataFrame([
+            {"TABLE_NAME": "POLICY_FACT", "TABLE_TYPE": "BASE TABLE", "METADATA_ROW_COUNT": 10},
+            {"TABLE_NAME": "CLAIM_FACT", "TABLE_TYPE": "BASE TABLE", "METADATA_ROW_COUNT": 5},
+        ])
+        target_tables = pd.DataFrame([
+            {"TABLE_NAME": "POLICY_FACT", "TABLE_TYPE": "BASE TABLE", "METADATA_ROW_COUNT": 10},
+        ])
+        source_columns = pd.DataFrame([
+            {
+                "OBJECT_NAME": "POLICY_FACT.POLICY_ID",
+                "PARENT_OBJECT_NAME": "POLICY_FACT",
+                "ORDINAL_POSITION": 1,
+                "DATA_TYPE": "NUMBER",
+                "IS_NULLABLE": "NO",
+            },
+            {
+                "OBJECT_NAME": "POLICY_FACT.LOAD_TS",
+                "PARENT_OBJECT_NAME": "POLICY_FACT",
+                "ORDINAL_POSITION": 2,
+                "DATA_TYPE": "TIMESTAMP_NTZ",
+                "IS_NULLABLE": "YES",
+            },
+            {
+                "OBJECT_NAME": "CLAIM_FACT.CLAIM_ID",
+                "PARENT_OBJECT_NAME": "CLAIM_FACT",
+                "ORDINAL_POSITION": 1,
+                "DATA_TYPE": "NUMBER",
+                "IS_NULLABLE": "NO",
+            },
+        ])
+        target_columns = pd.DataFrame([
+            {
+                "OBJECT_NAME": "POLICY_FACT.POLICY_ID",
+                "PARENT_OBJECT_NAME": "POLICY_FACT",
+                "ORDINAL_POSITION": 1,
+                "DATA_TYPE": "NUMBER",
+                "IS_NULLABLE": "NO",
+            },
+        ])
+
+        plan = _build_data_compare_plan(
+            source_tables,
+            target_tables,
+            source_columns,
+            target_columns,
+            excluded_columns=[],
+        )
+        rows = {row["TABLE_NAME"]: row for _, row in plan.iterrows()}
+
+        self.assertEqual(rows["POLICY_FACT"]["COMPARE_STATUS"], "Comparable with structure drift")
+        self.assertEqual(rows["POLICY_FACT"]["COMPARABLE_COLUMNS"], "POLICY_ID")
+        self.assertEqual(rows["POLICY_FACT"]["SOURCE_ONLY_COLUMNS"], "LOAD_TS")
+        self.assertEqual(rows["CLAIM_FACT"]["COMPARE_STATUS"], "Missing in target")
+
+    def test_schema_compare_uses_all_schema_objects_and_columns(self):
+        objects_sql = _schema_compare_show_objects_sql("ALFA_EDW_DEV", "PUBLIC").upper()
+        columns_sql = _schema_compare_columns_sql("ALFA_EDW_DEV", "PUBLIC").upper()
+
+        self.assertIn("SHOW OBJECTS IN SCHEMA", objects_sql)
+        self.assertIn('"ALFA_EDW_DEV"."PUBLIC"', objects_sql)
+        self.assertIn("INFORMATION_SCHEMA.COLUMNS", columns_sql)
+        self.assertIn("LEFT JOIN", columns_sql)
+        self.assertNotIn("TABLE_TYPE='BASE TABLE'", columns_sql.replace(" ", ""))
+
+    def test_schema_compare_generates_review_sql_for_missing_objects(self):
+        source_objects = pd.DataFrame([
+            {"name": "POLICY_FACT", "kind": "TABLE", "rows": 10, "bytes": 2048, "owner": "SYSADMIN"},
+            {"name": "SP_LOAD_POLICY", "kind": "PROCEDURE", "owner": "SYSADMIN"},
+        ])
+        target_objects = pd.DataFrame([
+            {"name": "POLICY_FACT", "kind": "TABLE", "rows": 8, "bytes": 1024, "owner": "SYSADMIN"},
+        ])
+        source_columns = pd.DataFrame([
+            {
+                "OBJECT_NAME": "POLICY_FACT.POLICY_ID",
+                "PARENT_OBJECT_NAME": "POLICY_FACT",
+                "PARENT_OBJECT_TYPE": "TABLE",
+                "ORDINAL_POSITION": 1,
+                "DATA_TYPE": "NUMBER",
+                "IS_NULLABLE": "NO",
+                "OBJECT_SIGNATURE": "NUMBER nullable=NO",
+            },
+            {
+                "OBJECT_NAME": "POLICY_FACT.LOAD_TS",
+                "PARENT_OBJECT_NAME": "POLICY_FACT",
+                "PARENT_OBJECT_TYPE": "TABLE",
+                "ORDINAL_POSITION": 2,
+                "DATA_TYPE": "TIMESTAMP_NTZ",
+                "IS_NULLABLE": "YES",
+                "OBJECT_SIGNATURE": "TIMESTAMP_NTZ nullable=YES",
+            },
+        ])
+        target_columns = pd.DataFrame([
+            {
+                "OBJECT_NAME": "POLICY_FACT.POLICY_ID",
+                "PARENT_OBJECT_NAME": "POLICY_FACT",
+                "PARENT_OBJECT_TYPE": "TABLE",
+                "ORDINAL_POSITION": 1,
+                "DATA_TYPE": "NUMBER",
+                "IS_NULLABLE": "NO",
+                "OBJECT_SIGNATURE": "NUMBER nullable=NO",
+            },
+        ])
+
+        source_inventory = _schema_compare_inventory(
+            source_objects,
+            source_columns,
+            database="ALFA_EDW_DEV",
+            schema="PUBLIC",
+            side="SOURCE",
+        )
+        target_inventory = _schema_compare_inventory(
+            target_objects,
+            target_columns,
+            database="ALFA_EDW_PROD",
+            schema="PUBLIC",
+            side="TARGET",
+        )
+        compare = _build_schema_compare_frame(
+            source_inventory,
+            target_inventory,
+            source_db="ALFA_EDW_DEV",
+            source_schema="PUBLIC",
+            target_db="ALFA_EDW_PROD",
+            target_schema="PUBLIC",
+        )
+        rows = {
+            (row["OBJECT_TYPE"], row["OBJECT_NAME"]): row
+            for _, row in compare.iterrows()
+        }
+
+        self.assertEqual(rows[("PROCEDURE", "SP_LOAD_POLICY")]["COMPARE_STATUS"], "Only in source")
+        self.assertEqual(rows[("COLUMN", "POLICY_FACT.LOAD_TS")]["COMPARE_STATUS"], "Only in source")
+        self.assertIn("GET_DDL('PROCEDURE'", rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
+        self.assertIn("AS DDL_STATEMENT", rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
+        self.assertIn('"ALFA_EDW_DEV"."PUBLIC"."SP_LOAD_POLICY"', rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
+        self.assertIn('"ALFA_EDW_PROD"."PUBLIC"', rows[("PROCEDURE", "SP_LOAD_POLICY")]["DDL_REVIEW_SQL"])
+        self.assertIn(
+            'ALTER TABLE "ALFA_EDW_PROD"."PUBLIC"."POLICY_FACT" ADD COLUMN "LOAD_TS" TIMESTAMP_NTZ;',
+            rows[("COLUMN", "POLICY_FACT.LOAD_TS")]["DDL_REVIEW_SQL"],
+        )
+
     def test_admin_actions_default_on_for_full_privilege_roles(self):
         previous = dict(st.session_state)
         try:
@@ -416,15 +617,15 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_COST_SAVINGS_VERIFY", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_AUTOMATION_RUN", setup_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_EXECUTIVE_PACKET", setup_sql)
-        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_EXTERNAL_CONTROL_FEED", setup_sql)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_EXTERNAL_CONTROL_FEED", setup_sql)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_AUTOMATION_HEALTH_V", setup_sql)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_AUTOMATION", setup_sql)
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_AUTOMATION_REFRESH", setup_sql)
         self.assertIn("P_SEND_EMAIL BOOLEAN DEFAULT FALSE", setup_sql)
-        self.assertIn("CONTROL_M", setup_sql)
-        self.assertIn("FLYWAY_ROWS", setup_sql)
-        self.assertIn("FLYWAY_MIGRATION", setup_sql)
-        self.assertIn("TERRAFORM_DRIFT_MODE", setup_sql)
+        self.assertNotIn("TASK_STATUS_ROWS", setup_sql)
+        self.assertNotIn("FLYWAY_ROWS", setup_sql)
+        self.assertNotIn("FLYWAY_MIGRATION", setup_sql)
+        self.assertNotIn("DEPLOYMENT_DRIFT_MODE", setup_sql)
         self.assertIn("PRIMARY_EVIDENCE_READY", setup_sql)
         self.assertIn("OVERWATCH_COST_SAVINGS_VERIFY TASK HANDLES AUTO-CLOSE", setup_sql)
         self.assertIn("WAREHOUSE_METERING_HISTORY", setup_sql)
@@ -441,9 +642,9 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("CHANGE_TICKET_ID", setup_sql)
         self.assertIn("IAC_RECONCILIATION_STATE", setup_sql)
         self.assertIn("EXECUTION_AUDIT_STATE", setup_sql)
-        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_SOURCE_CONTROL_CHANGE", setup_sql)
-        self.assertIn("TERRAFORM_ADDRESS", setup_sql)
-        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_ITSM_TICKET", setup_sql)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_SOURCE_CONTROL_CHANGE", setup_sql)
+        self.assertNotIn("DEPLOYMENT_ADDRESS", setup_sql)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_APPROVAL", setup_sql)
         self.assertIn("APPROVAL_STATUS", setup_sql)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_CHANGE_CONTROL_OPERABILITY_DAILY", setup_sql)
         self.assertIn("CONTROL_SOURCE", setup_sql)
@@ -610,6 +811,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_REFRESH_CONTROL_ROOM",
                 "OVERWATCH_COST_GOVERNANCE_REFRESH",
                 "OVERWATCH_AUTOMATION_REFRESH",
+                "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH",
                 "OVERWATCH_LOAD_DAILY",
             },
         )
@@ -623,6 +825,7 @@ class AdminControlTests(unittest.TestCase):
                 "OVERWATCH_REFRESH_CONTROL_ROOM": "OVERWATCH_WH",
                 "OVERWATCH_COST_GOVERNANCE_REFRESH": "OVERWATCH_WH",
                 "OVERWATCH_AUTOMATION_REFRESH": "OVERWATCH_WH",
+                "OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH": "OVERWATCH_WH",
                 "OVERWATCH_LOAD_DAILY": "OVERWATCH_WH",
             },
         )

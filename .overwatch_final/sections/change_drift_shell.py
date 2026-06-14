@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, render_shell_workflows, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_change_drift_full_workspace_requested"
@@ -20,10 +20,8 @@ _FULL_WORKSPACE_STATE_KEYS = (
     "change_action_closure",
     "change_drift_evidence_trend",
     "change_drift_proof_sql",
-    "terraform_status",
-    "jira_status",
-    "source_control_status",
-    "itsm_ticket_status",
+    "change_lineage_status",
+    "change_data_movement_status",
 )
 
 _WORKFLOWS = (
@@ -31,16 +29,6 @@ _WORKFLOWS = (
         "WORKFLOW": "Object and access changes",
         "BUTTON_LABEL": "Open Object Changes",
         "MOVE": "Start with recent DDL, grants, ownership, policy, and actor evidence.",
-    },
-    {
-        "WORKFLOW": "Terraform evidence",
-        "BUTTON_LABEL": "Open Terraform",
-        "MOVE": "Match Terraform, Flyway, or Git deploy proof to Snowflake drift.",
-    },
-    {
-        "WORKFLOW": "Jira evidence",
-        "BUTTON_LABEL": "Open Jira",
-        "MOVE": "Match approved Jira or ITSM tickets to deployment and object-change evidence.",
     },
     {
         "WORKFLOW": "Schema and object drift",
@@ -51,6 +39,11 @@ _WORKFLOWS = (
         "WORKFLOW": "Data movement and replication",
         "BUTTON_LABEL": "Open Data Movement",
         "MOVE": "Review Snowpipe, dynamic tables, replication, and load freshness signals.",
+    },
+    {
+        "WORKFLOW": "Stored procedure lineage",
+        "BUTTON_LABEL": "Open Procedure Lineage",
+        "MOVE": "Trace stored procedure ownership, child SQL, runtime drift, and downstream impact.",
     },
     {
         "WORKFLOW": "Controlled DBA actions",
@@ -79,11 +72,7 @@ def _window_label() -> str:
 
 
 def _full_workspace_requested() -> bool:
-    if st.session_state.get(_BRIEF_MODE_KEY):
-        return False
-    if st.session_state.get(_FULL_WORKSPACE_KEY):
-        return True
-    return False
+    return full_workspace_requested(st.session_state, _FULL_WORKSPACE_KEY, _BRIEF_MODE_KEY)
 
 
 def _open_workspace(workflow: str | None = None) -> None:
@@ -115,28 +104,26 @@ def _render_back_to_brief_control() -> None:
             _return_to_brief()
 
 
-def _render_action_brief() -> None:
-    workspace_help = evidence_caption(
+def _render_status_strip() -> None:
+    detail = evidence_caption(
         st.session_state,
         _FULL_WORKSPACE_STATE_KEYS,
-        "The shell stays zero-query; change evidence loads only after a workflow is selected.",
+        "DDL, grants, schema drift, procedure lineage, replication, and controlled DBA action evidence open from the workflow grid.",
     )
-    with st.container(border=True):
-        label_col, detail_col, action_col = st.columns([1.0, 3.0, 1.8])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
-        with detail_col:
-            st.markdown("**Open Change & Drift when approval proof, drift, or DBA action evidence is needed.**")
-        with action_col:
-            if st.button(
-                "Open Change Workspace",
-                key="change_drift_shell_open",
-                help=workspace_help,
-                type="primary",
-                width="stretch",
-            ):
-                _open_workspace()
+    render_shell_status_strip(
+        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
+        headline="Change command view: Snowflake change proof, drift, lineage, and DBA action audit.",
+        detail=detail,
+    )
+
+
+def _render_kpi_row() -> None:
+    render_shell_kpi_row((
+        ("Scope", scope_label(_active_company(), _active_environment())),
+        ("Window", _window_label()),
+        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
+        ("Primary route", "Object changes"),
+    ))
 
 
 def _render_workflow_launchpad() -> None:
@@ -159,5 +146,6 @@ def render() -> None:
         return
 
     st.session_state.setdefault("change_drift_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
-    _render_action_brief()
+    _render_status_strip()
+    _render_kpi_row()
     _render_workflow_launchpad()

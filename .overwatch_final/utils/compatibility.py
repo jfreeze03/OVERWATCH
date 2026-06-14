@@ -567,7 +567,7 @@ def build_smoke_test_checklist() -> pd.DataFrame:
         ("Change & Drift", "Open Warehouse Settings", "Warehouse list auto-populates from selected company."),
         ("Change & Drift", "Open Dynamic Tables", "Missing optional columns show as limited data, not hard errors."),
         ("Change & Drift", "Open Task Graph Control", "Current-user stored procedure warning is informational, not blocking."),
-        ("Settings", "Open Settings and Saved Views", "No material-icon text leaks are visible."),
+        ("Settings", "Open Settings", "No material-icon text leaks are visible."),
         ("Company Selector", "Switch ALFA/Trexis/ALL", "Cache clears and all section data refreshes to the selected company."),
     ]
     return pd.DataFrame(rows, columns=["SECTION", "ACTION", "READY_CRITERIA"])

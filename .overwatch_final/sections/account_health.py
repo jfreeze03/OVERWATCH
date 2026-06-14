@@ -6,7 +6,7 @@ from datetime import datetime
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULTS
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_navigation_state
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
 
@@ -857,7 +857,7 @@ def _build_account_health_dba_checklist(
             "EVIDENCE": f"{change_count:,} object/access change signals in last 24h",
             "OWNER": "DBA / Security Owner",
             "ROUTE": "Change & Drift",
-            "NEXT_ACTION": "Validate query IDs against change tickets, approvers, and IaC/source-control state.",
+            "NEXT_ACTION": "Validate query IDs against change tickets, approvers, and release-note/rollback state.",
             "PROOF_REQUIRED": "query_id, approver, change ticket, dependency note",
         },
         {
@@ -1556,7 +1556,7 @@ def _account_health_morning_exception_rows(
             "Task failures",
             "Task graph",
             f"{safe_int(failed_tasks):,} failed task signal(s) in the loaded Account Health snapshot.",
-            "Open Workload Operations task graphs and capture Control-M/task recovery status.",
+            "Open Workload Operations task graphs and capture Snowflake task/task recovery status.",
             route="Workload Operations",
             priority=6,
         )
@@ -1743,25 +1743,11 @@ def _account_health_action_brief(checklist: pd.DataFrame | None) -> dict:
 
 def _render_account_health_action_brief(checklist: pd.DataFrame | None) -> None:
     brief = _account_health_action_brief(checklist)
-    with st.container(border=True):
-        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(str(brief["state"]))
-        with detail_col:
-            st.markdown(f"**{brief['headline']}**")
-            st.caption(str(brief["detail"]))
-        with action_col:
-            if st.button(str(brief["primary_label"]), key="account_health_action_brief_primary", width="stretch"):
-                target = str(brief["target"])
-                if target in ACCOUNT_HEALTH_PANES:
-                    st.session_state["account_health_active_view"] = target
-                    st.rerun()
-                else:
-                    _drill_to(target)
-            if st.button("Morning Brief", key="account_health_action_brief_report", width="stretch"):
-                st.session_state["account_health_active_view"] = "Morning Report"
-                st.rerun()
+    render_shell_status_strip(
+        state=brief["state"],
+        headline=brief["headline"],
+        detail=brief["detail"],
+    )
 
 
 def _build_account_health_dba_morning_brief(
@@ -1877,32 +1863,30 @@ def _render_account_health_operating_snapshot(
     control_mart_row,
 ) -> None:
     """Render the Account Health first-screen metrics without crowding the page."""
-    with st.container(border=True):
-        st.markdown("**Operating Snapshot**")
+    render_shell_kpi_row((
+        ("Health", f"{health_score:.0f} {score_label}".strip()),
+        ("Failures", f"{err_count:,}"),
+        ("Queue", f"{queued:,}"),
+        ("Cost 24h", f"${cost24:,.0f} ({pct_delta:+.1f}%)"),
+    ))
+    with st.expander("Secondary metrics and source", expanded=False):
         render_shell_snapshot((
-            ("Health", f"{health_score:.0f} {score_label}".strip()),
-            ("Failures", f"{err_count:,}"),
-            ("Queue", f"{queued:,}"),
-            ("Cost 24h", f"${cost24:,.0f} ({pct_delta:+.1f}%)"),
+            ("Active", f"{live_val:,}"),
+            ("Credits 24h", format_credits(last24)),
+            ("Storage", f"{stor_tb:.1f} TB"),
+            ("Failed Tasks", f"{failed_tasks:,}"),
         ))
-        with st.expander("Secondary metrics and source", expanded=False):
-            render_shell_snapshot((
-                ("Active", f"{live_val:,}"),
-                ("Credits 24h", format_credits(last24)),
-                ("Storage", f"{stor_tb:.1f} TB"),
-                ("Failed Tasks", f"{failed_tasks:,}"),
-            ))
-            st.caption(
-                " | ".join([
-                    metric_confidence_label("composite"),
-                    metric_confidence_label("exact") + " for source counts",
-                    hd.get("_control_mart_source", "Live source"),
-                    freshness_note(live_source),
-                ])
-            )
-            if control_mart_used:
-                st.caption(f"Snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
-            st.caption(f"Signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
+        st.caption(
+            " | ".join([
+                metric_confidence_label("composite"),
+                metric_confidence_label("exact") + " for source counts",
+                hd.get("_control_mart_source", "Live source"),
+                freshness_note(live_source),
+            ])
+        )
+        if control_mart_used:
+            st.caption(f"Snapshot: {control_mart_row.get('SNAPSHOT_TS', '')}")
+        st.caption(f"Signal detail source: {hd.get('_account_health_detail_source', 'Unknown')}")
 
 
 def _account_health_intervention_matrix(
@@ -2990,7 +2974,13 @@ def render():
 
         health_loaded = isinstance(st.session_state.get("health_data"), dict) and bool(st.session_state.get("health_data"))
         stale_scope = health_loaded and st.session_state.get("_health_filter_sig") != filter_sig
-        refresh_health = st.button("Load / Refresh Health", key="health_refresh")
+        auto_refresh_health = (
+            (not health_loaded or stale_scope)
+            and st.session_state.get("_account_health_auto_load_attempt_scope") != filter_sig
+        )
+        if auto_refresh_health:
+            st.session_state["_account_health_auto_load_attempt_scope"] = filter_sig
+        refresh_health = st.button("Load / Refresh Health", key="health_refresh") or auto_refresh_health
         if not refresh_health:
             if not health_loaded:
                 st.info("Health snapshot is not loaded. Load it when you need current Account Health evidence.")
@@ -3793,7 +3783,7 @@ def render():
             st.info("No tagged OVERWATCH monitoring cost found in the selected window.")
 
         if exceptions_only:
-            st.caption("Triage mode stops here to avoid loading lower-priority drilldowns.")
+            st.caption("Landing default stops here to avoid loading lower-priority drilldowns.")
             return
 
         st.divider()

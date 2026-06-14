@@ -541,7 +541,7 @@ FORWARD_PLATFORM_CONTROLS = (
         "OWNER_KEY": "COWORK_ARTIFACT_DEFAULT",
         "APPROVAL_GROUP": "Analytics Owner / DBA Lead",
         "PRIMARY_EVIDENCE": "CoWork Artifact inventory when available; Snowflake Intelligence usage; semantic view ownership; dashboard/share/access policy evidence",
-        "SOURCE_OBJECTS": "CoWork Artifacts, publishable dashboards, saved/shared AI outputs, governed live-data views",
+        "SOURCE_OBJECTS": "CoWork Artifacts, publishable dashboards, shared AI outputs, governed live-data views",
         "RISK_IF_MISSING": "Knowledge workers can create shared dashboards or artifacts that look official while bypassing certified metrics, data owner approval, or access-review evidence.",
         "DBA_DECISION": "Require owner, certified data source, semantic validation set, sensitivity classification, sharing scope, freshness SLA, and retirement plan before publishing artifacts broadly.",
         "AUTOMATION_BOUNDARY": "Inventory, readiness, and queue only. Do not publish, share, delete, or alter CoWork Artifacts from dashboard automation.",
@@ -633,7 +633,7 @@ FORWARD_PLATFORM_CONTROLS = (
         "APPROVAL_GROUP": "Change Advisory / DBA Lead",
         "PRIMARY_EVIDENCE": "CORTEX_CODE_CLI_USAGE_HISTORY; CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY; CORTEX_AISQL_USAGE_HISTORY",
         "SOURCE_OBJECTS": "Cortex Code, Cortex AISQL, AI-assisted SQL",
-        "RISK_IF_MISSING": "AI-assisted code or SQL can bypass source-control, approval, and deployment evidence.",
+        "RISK_IF_MISSING": "AI-assisted code or SQL can bypass owner approval, rollback proof, and verification evidence.",
         "DBA_DECISION": "Treat AI-generated DDL/SQL like any other change: ticket, source, reviewer, rollout, rollback, and verification.",
         "AUTOMATION_BOUNDARY": "Observe usage and route to Change & Drift. Do not execute generated changes automatically.",
         "MATCH_PRIORITY": 180,
@@ -692,8 +692,8 @@ class SectionDefinition:
 
 
 # Production navigation exposes only current DBA workflow sections. Legacy
-# redirect aliases below keep saved views and old bookmarks working without
-# making retired labels first-class navigation routes.
+# redirect aliases below keep deep links working without making retired labels
+# first-class navigation routes.
 SECTION_DEFINITIONS = (
     SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing_shell"),
     SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room_shell"),
@@ -781,7 +781,7 @@ SECTION_ALIASES = {
 
 
 def normalize_section_name(section: str) -> str:
-    """Return the current canonical section name for a route, bookmark, or alias."""
+    """Return the current canonical section name for a route or alias."""
     return SECTION_ALIASES.get(str(section or "").strip(), str(section or "").strip())
 
 

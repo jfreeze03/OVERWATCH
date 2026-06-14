@@ -7,7 +7,13 @@ import streamlit as st
 
 from config import ARCHITECTURE_OBJECTIVES, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, THRESHOLDS
 from sections.base import lazy_pandas, lazy_util as _lazy_util
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import (
+    render_data_freshness,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    with_loaded_at,
+)
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note
 
@@ -237,6 +243,27 @@ def _architecture_scope_meta(
     return meta
 
 
+def _architecture_loaded_meta(
+    company: str,
+    environment: str,
+    surface: str,
+    *,
+    days: int | None = None,
+    row_limit: int | None = None,
+    source: str = "",
+) -> dict:
+    return with_loaded_at(
+        _architecture_scope_meta(
+            company,
+            environment,
+            surface,
+            days=days,
+            row_limit=row_limit,
+        ),
+        source=source or surface,
+    )
+
+
 def _architecture_meta_matches(meta: dict | None, expected: dict | None) -> bool:
     if not isinstance(meta, dict) or not isinstance(expected, dict):
         return False
@@ -292,6 +319,26 @@ def _architecture_operating_snapshot(company: str, environment: str, state: dict
     }
 
 
+def _architecture_current_loaded_meta(company: str, environment: str, state: dict | None = None) -> dict:
+    state = state if state is not None else st.session_state
+    for item in ARCHITECTURE_BRIEF_SURFACES:
+        frame = state.get(item["frame_key"])
+        if not _architecture_frame_loaded(frame):
+            continue
+        expected = _architecture_scope_meta(
+            company,
+            environment,
+            item["surface"],
+            days=state.get(item.get("days_key")),
+            row_limit=state.get(item.get("limit_key")),
+            state=state,
+        )
+        meta = state.get(item["meta_key"])
+        if _architecture_meta_matches(meta, expected):
+            return dict(meta or {})
+    return {}
+
+
 def _render_architecture_action_brief(snapshot: dict) -> None:
     loaded = safe_int(snapshot.get("loaded"))
     stale = safe_int(snapshot.get("stale"))
@@ -309,19 +356,15 @@ def _render_architecture_action_brief(snapshot: dict) -> None:
         headline = "Choose the architecture question before loading evidence."
         detail = "Start with objectives, isolation, cache, clustering, or DR based on the DBA decision needed."
 
-    with st.container(border=True):
-        label_col, detail_col = st.columns([1.1, 4.6])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(state)
-        with detail_col:
-            st.markdown(f"**{headline}**")
-            st.caption(detail)
+    render_shell_status_strip(
+        state=state,
+        headline=headline,
+        detail=detail,
+    )
 
 
 def _render_architecture_operating_snapshot(snapshot: dict) -> None:
-    st.markdown("**Operating Snapshot**")
-    render_shell_snapshot((
+    render_shell_kpi_row((
         ("Company", str(snapshot.get("company") or "All")),
         ("Env", str(snapshot.get("environment") or "ALL")),
         ("Evidence", f"{safe_int(snapshot.get('loaded')):,}/{safe_int(snapshot.get('total')):,}"),
@@ -759,7 +802,12 @@ def _ensure_architecture_objectives_state(company: str, environment: str) -> pd.
         return current
     objectives = _architecture_objectives_frame(company)
     st.session_state["arch_objectives_df"] = objectives
-    st.session_state["arch_objectives_meta"] = expected
+    st.session_state["arch_objectives_meta"] = _architecture_loaded_meta(
+        company,
+        environment,
+        "Architecture objectives",
+        source="Config architecture objectives",
+    )
     return objectives
 
 
@@ -770,17 +818,25 @@ def _ensure_architecture_forward_controls_state(company: str, environment: str) 
         return current
     controls = build_forward_platform_control_register()
     st.session_state["arch_forward_controls"] = controls
-    st.session_state["arch_forward_controls_meta"] = expected
+    st.session_state["arch_forward_controls_meta"] = _architecture_loaded_meta(
+        company,
+        environment,
+        "Forward platform controls",
+        source="Forward platform controls",
+    )
     return controls
 
 
 def _refresh_architecture_source_health_state(company: str, environment: str) -> pd.DataFrame:
     source_health = _architecture_source_health_rows(st.session_state, company, environment)
     st.session_state["arch_source_health"] = source_health
-    st.session_state["arch_source_health_meta"] = _architecture_scope_meta(
-        company,
-        environment,
-        "Architecture source health",
+    st.session_state["arch_source_health_meta"] = with_loaded_at(
+        _architecture_scope_meta(
+            company,
+            environment,
+            "Architecture source health",
+        ),
+        source="Architecture source health",
     )
     return source_health
 
@@ -1467,7 +1523,12 @@ def _refresh_platform_futures_summary(company: str, environment: str) -> tuple[p
         source_health=source_health,
     )
     board = build_platform_futures_board(_platform_futures_frames(company, environment))
-    summary_meta = _architecture_scope_meta(company, environment, "Platform futures summary")
+    summary_meta = _architecture_loaded_meta(
+        company,
+        environment,
+        "Platform futures summary",
+        source="Platform futures summary",
+    )
     st.session_state["arch_agentic_ai_summary"] = agentic_summary
     st.session_state["arch_agentic_ai_scorecard"] = agentic_scorecard
     st.session_state["arch_agentic_ai_meta"] = summary_meta
@@ -1614,12 +1675,13 @@ def _render_platform_futures(company: str, environment: str) -> None:
                         company=company,
                         environment=environment,
                     )
-                    st.session_state["arch_adaptive_compute_meta"] = _architecture_scope_meta(
+                    st.session_state["arch_adaptive_compute_meta"] = _architecture_loaded_meta(
                         company,
                         environment,
                         "Adaptive compute advisor",
                         days=days,
                         row_limit=row_limit,
+                        source="Adaptive compute advisor",
                     )
                 except Exception as exc:
                     st.warning(f"Adaptive Compute advisor unavailable: {format_snowflake_error(exc)}")
@@ -1673,10 +1735,11 @@ def _render_platform_futures(company: str, environment: str) -> None:
             with render_load_status("Loading Cortex Agent and MCP inventory", "Agent and MCP inventory ready"):
                 try:
                     st.session_state["arch_ai_inventory"] = load_agent_mcp_inventory(get_session(), company, environment)
-                    st.session_state["arch_ai_inventory_meta"] = _architecture_scope_meta(
+                    st.session_state["arch_ai_inventory_meta"] = _architecture_loaded_meta(
                         company,
                         environment,
                         "AI agent and MCP inventory",
+                        source="AI agent and MCP inventory",
                     )
                 except Exception as exc:
                     st.warning(f"Agent and MCP inventory unavailable: {format_snowflake_error(exc)}")
@@ -1734,12 +1797,13 @@ def _render_platform_futures(company: str, environment: str) -> None:
                         company=company,
                         environment=environment,
                     )
-                    st.session_state["arch_ai_usage_meta"] = _architecture_scope_meta(
+                    st.session_state["arch_ai_usage_meta"] = _architecture_loaded_meta(
                         company,
                         environment,
                         "AI usage guardrails",
                         days=days,
                         row_limit=row_limit,
+                        source="AI usage guardrails",
                     )
                 except Exception as exc:
                     st.warning(f"AI usage guardrails unavailable: {format_snowflake_error(exc)}")
@@ -1785,10 +1849,11 @@ def _render_platform_futures(company: str, environment: str) -> None:
             with render_load_status("Loading AI security guardrails", "AI security guardrails ready"):
                 try:
                     st.session_state["arch_ai_security_guardrails"] = load_ai_security_guardrails(get_session())
-                    st.session_state["arch_ai_security_guardrails_meta"] = _architecture_scope_meta(
+                    st.session_state["arch_ai_security_guardrails_meta"] = _architecture_loaded_meta(
                         company,
                         environment,
                         "AI security guardrails",
+                        source="AI security guardrails",
                     )
                 except Exception as exc:
                     st.warning(f"AI security guardrails unavailable: {format_snowflake_error(exc)}")
@@ -1854,12 +1919,13 @@ def _render_platform_futures(company: str, environment: str) -> None:
                         company=company,
                         environment=environment,
                     )
-                    st.session_state["arch_openflow_meta"] = _architecture_scope_meta(
+                    st.session_state["arch_openflow_meta"] = _architecture_loaded_meta(
                         company,
                         environment,
                         "Openflow operations",
                         days=days,
                         row_limit=row_limit,
+                        source="Openflow operations",
                     )
                 except Exception as exc:
                     st.warning(f"Openflow operations unavailable: {format_snowflake_error(exc)}")
@@ -1905,10 +1971,11 @@ def _render_platform_futures(company: str, environment: str) -> None:
             with render_load_status("Loading Horizon and semantic readiness", "Horizon and semantic readiness ready"):
                 try:
                     st.session_state["arch_horizon_readiness"] = load_horizon_semantic_readiness(get_session())
-                    st.session_state["arch_horizon_meta"] = _architecture_scope_meta(
+                    st.session_state["arch_horizon_meta"] = _architecture_loaded_meta(
                         company,
                         environment,
                         "Horizon and semantic trust",
+                        source="Horizon and semantic trust",
                     )
                 except Exception as exc:
                     st.warning(f"Horizon and semantic readiness unavailable: {format_snowflake_error(exc)}")
@@ -2010,9 +2077,25 @@ def render():
         ])
     )
 
+    if st.session_state.get("architecture_readiness_pane") not in ARCHITECTURE_READINESS_PANES:
+        st.session_state["architecture_readiness_pane"] = ARCHITECTURE_READINESS_PANES[0]
+    active_pane_seed = str(st.session_state.get("architecture_readiness_pane") or ARCHITECTURE_READINESS_PANES[0])
+    if active_pane_seed == "Architecture Brief":
+        _ensure_architecture_objectives_state(company, environment)
+        _refresh_architecture_source_health_state(company, environment)
+
     snapshot = _architecture_operating_snapshot(company, environment)
     _render_architecture_action_brief(snapshot)
     _render_architecture_operating_snapshot(snapshot)
+    render_data_freshness(
+        _architecture_current_loaded_meta(company, environment),
+        source="Architecture readiness",
+        target_minutes=360,
+        delayed_note=(
+            "Architecture brief uses local objective/source-health rows; ACCOUNT_USAGE and SHOW evidence "
+            "load only after you choose a specific architecture workflow."
+        ),
+    )
 
     active_pane = render_workflow_selector(
         "Architecture readiness view",
@@ -2022,7 +2105,40 @@ def render():
     )
 
     if active_pane == "Architecture Brief":
-        st.caption("Choose a readiness view when you need owner proof, isolation evidence, cache tuning, clustering review, DR posture, or AI platform futures.")
+        objectives = st.session_state.get("arch_objectives_df")
+        if not _is_dataframe(objectives):
+            objectives = _ensure_architecture_objectives_state(company, environment)
+        source_health = _get_valid_architecture_source_health(company, environment)
+        if source_health is None:
+            source_health = _refresh_architecture_source_health_state(company, environment)
+        render_shell_snapshot((
+            ("Objectives", f"{len(objectives):,}"),
+            ("Sources", f"{len(source_health):,}"),
+            ("Loaded", f"{int(source_health['STATE'].eq('Loaded').sum()) if 'STATE' in source_health.columns else 0:,}"),
+            ("Review", f"{int(source_health['STATE'].isin(['Not Loaded', 'Stale']).sum()) if 'STATE' in source_health.columns else 0:,}"),
+        ))
+        render_priority_dataframe(
+            source_health,
+            title="Architecture evidence source health",
+            priority_columns=["STATE", "SURFACE", "SOURCE", "CONFIDENCE", "ROWS", "SCOPE", "NEXT_ACTION"],
+            sort_by=["STATE_RANK", "SURFACE"],
+            ascending=[True, True],
+            raw_label="All architecture source-health rows",
+            height=300,
+        )
+        render_priority_dataframe(
+            objectives,
+            title="Configured architecture objectives",
+            priority_columns=[
+                "COMPANY", "ENTITY_TYPE", "ENTITY_PATTERN", "WORKLOAD_CLASS",
+                "SERVICE_TIER", "EXPECTED_ENVIRONMENT", "RPO_MINUTES",
+                "RTO_MINUTES", "OWNER", "APPROVAL_GROUP", "ISOLATION_POLICY",
+            ],
+            sort_by=["COMPANY", "ENTITY_TYPE", "MATCH_PRIORITY"],
+            ascending=[True, True, False],
+            raw_label="All architecture objectives",
+            height=360,
+        )
         return
 
     if active_pane == "Workload Isolation":
@@ -2036,12 +2152,13 @@ def render():
             with render_load_status("Loading database-to-warehouse isolation evidence", "Isolation evidence ready"):
                 try:
                     st.session_state["arch_iso_df"] = _load_workload_isolation(get_session(), days, row_limit)
-                    st.session_state["arch_iso_meta"] = _architecture_scope_meta(
+                    st.session_state["arch_iso_meta"] = _architecture_loaded_meta(
                         company,
                         environment,
                         "Workload isolation",
                         days=days,
                         row_limit=row_limit,
+                        source="Workload isolation",
                     )
                 except Exception as exc:
                     st.warning(f"Isolation matrix unavailable: {format_snowflake_error(exc)}")
@@ -2088,11 +2205,12 @@ def render():
             with render_load_status("Loading table clustering candidates", "Clustering candidates ready"):
                 try:
                     st.session_state["arch_cluster_df"] = _load_clustering_strategy(get_session(), min_gb, row_limit)
-                    st.session_state["arch_cluster_meta"] = _architecture_scope_meta(
+                    st.session_state["arch_cluster_meta"] = _architecture_loaded_meta(
                         company,
                         environment,
                         "Clustering strategy",
                         row_limit=row_limit,
+                        source="Clustering strategy",
                     )
                 except Exception as exc:
                     st.warning(f"Clustering strategy unavailable: {format_snowflake_error(exc)}")
@@ -2145,12 +2263,13 @@ def render():
             with render_load_status("Loading warehouse cache evidence", "Cache evidence ready"):
                 try:
                     st.session_state["arch_cache_df"] = _load_cache_optimization(get_session(), days, row_limit)
-                    st.session_state["arch_cache_meta"] = _architecture_scope_meta(
+                    st.session_state["arch_cache_meta"] = _architecture_loaded_meta(
                         company,
                         environment,
                         "Cache optimization",
                         days=days,
                         row_limit=row_limit,
+                        source="Cache optimization",
                     )
                 except Exception as exc:
                     st.warning(f"Cache evidence unavailable: {format_snowflake_error(exc)}")
@@ -2248,11 +2367,12 @@ def render():
                     st.session_state["arch_dr_data"] = _load_dr_readiness(get_session(), days)
                     readiness = st.session_state["arch_dr_data"].get("readiness", pd.DataFrame())
                     st.session_state["arch_dr_readiness"] = readiness
-                    st.session_state["arch_dr_meta"] = _architecture_scope_meta(
+                    st.session_state["arch_dr_meta"] = _architecture_loaded_meta(
                         company,
                         environment,
                         "DR readiness",
                         days=days,
+                        source="DR readiness",
                     )
                 except Exception as exc:
                     st.warning(f"DR readiness unavailable: {format_snowflake_error(exc)}")

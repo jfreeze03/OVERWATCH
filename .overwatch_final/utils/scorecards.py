@@ -159,16 +159,16 @@ DBA_CONTROL_PLANE_SECTION_BASELINE = {
 }
 
 DBA_CONTROL_PLANE_SECTION_NEXT_MOVES = {
-    "Executive Landing": "Connect executive decisions to live ITSM/status proof so routed work can show verified closure back on the landing page.",
-    "DBA Control Room": "Connect the operating board to live ITSM ticket state and execution audit writes for verified auto-close.",
-    "Alert Center": "Replace placeholder owner rows with named ALFA on-call groups, enable the approved Snowflake notification integration, and sync alert lifecycle to ITSM.",
-    "Workload Operations": "Replace placeholder owner rows with named pipeline/procedure owners and wire recovery command-board rows to the ITSM ticket lifecycle.",
-    "Warehouse Health": "Connect warehouse control summaries to live owner/ITSM approval and auto-close verified setting-change evidence.",
+    "Executive Landing": "Connect executive decisions to live owner approval/status proof so routed work can show verified closure back on the landing page.",
+    "DBA Control Room": "Connect the operating board to live owner approval ticket state and execution audit writes for verified auto-close.",
+    "Alert Center": "Replace placeholder owner rows with named ALFA on-call groups, enable the approved Snowflake notification integration, and sync alert lifecycle to owner approval.",
+    "Workload Operations": "Replace placeholder owner rows with named pipeline/procedure owners and wire recovery command-board rows to the owner approval ticket lifecycle.",
+    "Warehouse Health": "Connect warehouse control summaries to live owner/owner approval approval and auto-close verified setting-change evidence.",
     "Architecture Readiness": "Persist architecture, Adaptive Compute, AI/MCP, AI-security, Openflow, Horizon, semantic-trust, and DR-drill evidence into fast summaries with verified closure history.",
-    "Cost & Contract": "Replace placeholder email/owner routes with named ALFA cost owners, ITSM approval, and verified savings auto-close.",
-    "Security Posture": "Connect IAM/ITSM approval state to verified auto-close for privileged grant and access-review actions.",
-    "Change & Drift": "Ingest live change tickets/source-control state, then auto-close verified approval and closure evidence from ITSM/deployment systems.",
-    "Account Health": "Connect queued checklist and access-hygiene actions to live IAM/ITSM approval state and verified auto-close.",
+    "Cost & Contract": "Replace placeholder email/owner routes with named ALFA cost owners, owner approval approval, and verified savings auto-close.",
+    "Security Posture": "Connect IAM/owner approval approval state to verified auto-close for privileged grant and access-review actions.",
+    "Change & Drift": "Use Snowflake change evidence, owner routing, rollback proof, and verified closure history without external change-system dependencies.",
+    "Account Health": "Connect queued checklist and access-hygiene actions to live IAM/owner approval approval state and verified auto-close.",
 }
 
 

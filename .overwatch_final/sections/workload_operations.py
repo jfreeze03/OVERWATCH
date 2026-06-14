@@ -10,7 +10,14 @@ import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
 from sections.base import lazy_util as _lazy_util
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import (
+    consume_section_autoload_request,
+    render_data_freshness,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    with_loaded_at,
+)
 from utils.evidence_mode import (
     TRIAGE_MODE_ALL_EVIDENCE,
     TRIAGE_MODE_INVESTIGATE,
@@ -61,6 +68,7 @@ safe_identifier = _lazy_util("safe_identifier")
 sql_literal = _lazy_util("sql_literal")
 render_mode_selector = _lazy_util("render_mode_selector")
 render_workflow_selector = _lazy_util("render_workflow_selector")
+render_priority_dataframe = _lazy_util("render_priority_dataframe")
 
 
 def get_active_company() -> str:
@@ -111,7 +119,7 @@ def render_operator_briefing(rows: Sequence[tuple[str, str]], *, columns: int = 
 
 WORKLOAD_OPERATIONS_VIEWS = ("Workload Brief", "Specialist Workflows")
 WORKLOAD_OPERATIONS_VIEW_DETAILS = {
-    "Workload Brief": "Default cockpit: action brief, operating snapshot, and task/job lanes without loading every specialist workflow.",
+    "Workload Brief": "Default cockpit: status strip, KPI row, and task/job lanes without loading every specialist workflow.",
     "Specialist Workflows": "Open live triage, query diagnosis, task graphs, stored procedures, pipeline health, or history search when evidence needs drilldown.",
 }
 WORKLOAD_OPERATIONS_FAST_ENTRY_VERSION = "2026-06-06-fast-brief-v1"
@@ -166,7 +174,7 @@ WORKLOAD_STATUS_LANES = (
         "label": "Task / job status",
         "workflow": "Task graphs",
         "button": "Open Task Graphs",
-        "detail": "Control-M and Snowflake task runs, retries, SLA risk, downstream impact, and owner.",
+        "detail": "Snowflake task and Snowflake task runs, retries, SLA risk, downstream impact, and owner.",
     },
     {
         "label": "Performance indicators",
@@ -229,44 +237,38 @@ def _snapshot_meta(company: str, environment: str, hours: int = 24) -> dict:
     return {"company": company, "environment": environment, "hours": int(hours)}
 
 
-def _control_feed_fqn() -> str:
-    return (
-        f"{safe_identifier(ALERT_DB)}."
-        f"{safe_identifier(ALERT_SCHEMA)}."
-        f"{safe_identifier('OVERWATCH_EXTERNAL_CONTROL_FEED')}"
-    )
+def _snapshot_meta_matches(meta: Mapping | None, expected: Mapping) -> bool:
+    if not isinstance(meta, Mapping):
+        return False
+    return all(meta.get(key) == value for key, value in expected.items())
 
 
 def _build_workload_task_status_sql(company: str, environment: str, *, hours: int = 24) -> str:
-    company_filter = ""
-    if str(company or "").upper() not in {"", "ALL"}:
-        company_filter = f"AND COMPANY = {sql_literal(str(company))}"
-    environment_filter = ""
-    if str(environment or "").upper() not in {"", "ALL"}:
-        environment_filter = f"AND COALESCE(ENVIRONMENT, 'No Database Context') = {sql_literal(str(environment))}"
     return f"""
         SELECT
-            COUNT(*) AS CONTROL_M_ROWS,
+            COUNT(*) AS TASK_STATUS_ROWS,
             COUNT_IF(
-                REGEXP_LIKE(UPPER(COALESCE(STATUS, '')), 'FAIL|ERROR|CANCEL|BLOCK')
-            ) AS CONTROL_M_FAILURE_ROWS,
+                UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED')
+                OR ERROR_MESSAGE IS NOT NULL
+            ) AS TASK_STATUS_FAILURE_ROWS,
             COUNT_IF(
-                REGEXP_LIKE(UPPER(COALESCE(STATUS, '')), 'MISSED|LATE|DELAY|OVERDUE|SLA|BREACH')
-            ) AS CONTROL_M_LATE_ROWS,
+                DATEDIFF('minute', SCHEDULED_TIME, COALESCE(COMPLETED_TIME, CURRENT_TIMESTAMP())) > 60
+                AND UPPER(COALESCE(STATE, '')) NOT IN ('SUCCEEDED', 'SUCCESS', 'COMPLETED')
+            ) AS TASK_STATUS_LATE_ROWS,
             COUNT_IF(
-                UPPER(COALESCE(SEVERITY, '')) IN ('CRITICAL', 'HIGH')
-                OR REGEXP_LIKE(UPPER(COALESCE(STATUS, '')), 'FAIL|ERROR|CANCEL|BLOCK|MISSED|LATE')
-            ) AS CONTROL_M_ALERT_ROWS,
+                UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR', 'CANCELLED')
+                OR ERROR_MESSAGE IS NOT NULL
+            ) AS TASK_STATUS_ALERT_ROWS,
             COUNT_IF(
-                UPPER(COALESCE(SEVERITY, '')) = 'MEDIUM'
-                OR REGEXP_LIKE(UPPER(COALESCE(STATUS, '')), 'WARN|DELAY|DEGRADED|SUSPENDED|WATCH')
-            ) AS CONTROL_M_WATCH_ROWS,
-            MAX(LAST_SEEN_AT) AS CONTROL_M_LAST_SEEN_AT
-        FROM {_control_feed_fqn()}
-        WHERE UPPER(COALESCE(SOURCE_SYSTEM, '')) = 'CONTROL_M'
-          AND COALESCE(LAST_SEEN_AT, FEED_TS, CURRENT_TIMESTAMP()) >= DATEADD('hour', -{int(hours)}, CURRENT_TIMESTAMP())
-          {company_filter}
-          {environment_filter}
+                UPPER(COALESCE(STATE, '')) IN ('SKIPPED', 'SCHEDULED')
+                OR (
+                    DATEDIFF('minute', SCHEDULED_TIME, COALESCE(COMPLETED_TIME, CURRENT_TIMESTAMP())) > 30
+                    AND UPPER(COALESCE(STATE, '')) NOT IN ('SUCCEEDED', 'SUCCESS', 'COMPLETED')
+                )
+            ) AS TASK_STATUS_WATCH_ROWS,
+            MAX(COALESCE(COMPLETED_TIME, QUERY_START_TIME, SCHEDULED_TIME)) AS TASK_STATUS_LAST_SEEN_AT
+        FROM SNOWFLAKE.ACCOUNT_USAGE.TASK_HISTORY
+        WHERE SCHEDULED_TIME >= DATEADD('hour', -{int(hours)}, CURRENT_TIMESTAMP())
     """
 
 
@@ -279,11 +281,17 @@ def _load_workload_task_snapshot(company: str, environment: str, *, hours: int =
             section="Workload Operations",
         )
         st.session_state["workload_operations_task_snapshot"] = snapshot
-        st.session_state["workload_operations_task_snapshot_meta"] = _snapshot_meta(company, environment, hours)
+        st.session_state["workload_operations_task_snapshot_meta"] = with_loaded_at(
+            _snapshot_meta(company, environment, hours),
+            source="Snowflake TASK_HISTORY status summary",
+        )
         st.session_state["workload_operations_task_snapshot_error"] = ""
     except Exception as exc:
         st.session_state["workload_operations_task_snapshot"] = None
-        st.session_state["workload_operations_task_snapshot_meta"] = _snapshot_meta(company, environment, hours)
+        st.session_state["workload_operations_task_snapshot_meta"] = with_loaded_at(
+            _snapshot_meta(company, environment, hours),
+            source="Snowflake TASK_HISTORY status summary",
+        )
         st.session_state["workload_operations_task_snapshot_error"] = format_snowflake_error(exc)
 
 
@@ -296,11 +304,17 @@ def _load_workload_snapshot(company: str, environment: str, *, hours: int = 24, 
             section="Workload Operations",
         )
         st.session_state["workload_operations_snapshot"] = snapshot
-        st.session_state["workload_operations_snapshot_meta"] = _snapshot_meta(company, environment, hours)
+        st.session_state["workload_operations_snapshot_meta"] = with_loaded_at(
+            _snapshot_meta(company, environment, hours),
+            source="Fast workload mart summary",
+        )
         st.session_state["workload_operations_snapshot_error"] = ""
     except Exception as exc:
         st.session_state["workload_operations_snapshot"] = None
-        st.session_state["workload_operations_snapshot_meta"] = _snapshot_meta(company, environment, hours)
+        st.session_state["workload_operations_snapshot_meta"] = with_loaded_at(
+            _snapshot_meta(company, environment, hours),
+            source="Fast workload mart summary",
+        )
         st.session_state["workload_operations_snapshot_error"] = format_snowflake_error(exc)
         if show_errors:
             st.info("Workload snapshot unavailable. Start with live triage or retry after source access is available.")
@@ -333,22 +347,22 @@ def _workload_task_summary(snapshot) -> dict:
     if snapshot is None or getattr(snapshot, "empty", True):
         return {
             "loaded": False,
-            "controlm_rows": 0,
-            "controlm_failures": 0,
-            "controlm_late": 0,
-            "controlm_alerts": 0,
-            "controlm_watch": 0,
+            "task_status_rows": 0,
+            "task_status_failures": 0,
+            "task_status_late": 0,
+            "task_status_alerts": 0,
+            "task_status_watch": 0,
             "last_seen": "",
         }
     row = snapshot.iloc[0].to_dict()
     return {
         "loaded": True,
-        "controlm_rows": safe_int(row.get("CONTROL_M_ROWS")),
-        "controlm_failures": safe_int(row.get("CONTROL_M_FAILURE_ROWS")),
-        "controlm_late": safe_int(row.get("CONTROL_M_LATE_ROWS")),
-        "controlm_alerts": safe_int(row.get("CONTROL_M_ALERT_ROWS")),
-        "controlm_watch": safe_int(row.get("CONTROL_M_WATCH_ROWS")),
-        "last_seen": str(row.get("CONTROL_M_LAST_SEEN_AT") or ""),
+        "task_status_rows": safe_int(row.get("TASK_STATUS_ROWS")),
+        "task_status_failures": safe_int(row.get("TASK_STATUS_FAILURE_ROWS")),
+        "task_status_late": safe_int(row.get("TASK_STATUS_LATE_ROWS")),
+        "task_status_alerts": safe_int(row.get("TASK_STATUS_ALERT_ROWS")),
+        "task_status_watch": safe_int(row.get("TASK_STATUS_WATCH_ROWS")),
+        "last_seen": str(row.get("TASK_STATUS_LAST_SEEN_AT") or ""),
     }
 
 
@@ -361,11 +375,11 @@ def _workload_status_lanes(summary: dict, task_summary: dict | None = None) -> l
     p95 = safe_float(summary.get("p95"))
     task_summary = task_summary or {}
     task_loaded = bool(task_summary.get("loaded"))
-    controlm_rows = safe_int(task_summary.get("controlm_rows"))
-    controlm_failures = safe_int(task_summary.get("controlm_failures"))
-    controlm_late = safe_int(task_summary.get("controlm_late"))
-    controlm_alerts = safe_int(task_summary.get("controlm_alerts"))
-    controlm_watch = safe_int(task_summary.get("controlm_watch"))
+    task_status_rows = safe_int(task_summary.get("task_status_rows"))
+    task_status_failures = safe_int(task_summary.get("task_status_failures"))
+    task_status_late = safe_int(task_summary.get("task_status_late"))
+    task_status_alerts = safe_int(task_summary.get("task_status_alerts"))
+    task_status_watch = safe_int(task_summary.get("task_status_watch"))
 
     lanes = []
     for lane in WORKLOAD_STATUS_LANES:
@@ -373,23 +387,23 @@ def _workload_status_lanes(summary: dict, task_summary: dict | None = None) -> l
         state = "Open live view"
         value = "Live route"
         if label == "Task / job status" and task_loaded:
-            if controlm_failures:
+            if task_status_failures:
                 state = "Review"
-                value = f"{controlm_failures:,} failed or blocked"
-            elif controlm_late:
+                value = f"{task_status_failures:,} failed or blocked"
+            elif task_status_late:
                 state = "SLA Risk"
-                value = f"{controlm_late:,} late or missed"
-            elif controlm_alerts:
+                value = f"{task_status_late:,} late or missed"
+            elif task_status_alerts:
                 state = "Review"
-                value = f"{controlm_alerts:,} scheduler alert"
-            elif controlm_watch:
+                value = f"{task_status_alerts:,} task alert"
+            elif task_status_watch:
                 state = "Watch"
-                value = f"{controlm_watch:,} watch row"
-            elif controlm_rows:
+                value = f"{task_status_watch:,} watch row"
+            elif task_status_rows:
                 state = "Ready"
-                value = f"{controlm_rows:,} feed rows"
+                value = f"{task_status_rows:,} task runs"
             else:
-                state = "No feed"
+                state = "No runs"
                 value = "Open task graph"
         elif loaded and label == "Task / job status":
             state = "Open live view"
@@ -417,11 +431,11 @@ def _workload_action_brief(
 ) -> dict:
     task_summary = task_summary or {}
     task_loaded = bool(task_summary.get("loaded"))
-    task_failures = safe_int(task_summary.get("controlm_failures"))
-    task_late = safe_int(task_summary.get("controlm_late"))
-    task_alerts = safe_int(task_summary.get("controlm_alerts"))
-    task_watch = safe_int(task_summary.get("controlm_watch"))
-    task_rows = safe_int(task_summary.get("controlm_rows"))
+    task_failures = safe_int(task_summary.get("task_status_failures"))
+    task_late = safe_int(task_summary.get("task_status_late"))
+    task_alerts = safe_int(task_summary.get("task_status_alerts"))
+    task_watch = safe_int(task_summary.get("task_status_watch"))
+    task_rows = safe_int(task_summary.get("task_status_rows"))
     if not summary.get("loaded") or not snapshot_current:
         state = "Refresh Needed" if not snapshot_current else "Not Loaded"
         detail = "Snapshot evidence is optional; live triage remains available for current running work."
@@ -438,8 +452,8 @@ def _workload_action_brief(
     if task_loaded and task_failures > 0:
         return {
             "state": "Job Review",
-            "headline": "Review failed or blocked Control-M jobs before query drilldown.",
-            "detail": f"{task_failures:,} failed/blocked scheduler row(s) in the loaded Control-M feed snapshot.",
+            "headline": "Review failed or blocked Snowflake task jobs before query drilldown.",
+            "detail": f"{task_failures:,} failed/blocked task run(s) in Snowflake TASK_HISTORY.",
             "primary_label": "Open Task Graphs",
             "workflow": "Task graphs",
             "refresh": False,
@@ -447,8 +461,8 @@ def _workload_action_brief(
     if task_loaded and task_late > 0:
         return {
             "state": "SLA Risk",
-            "headline": "Check late or missed scheduler jobs before declaring the workload healthy.",
-            "detail": f"{task_late:,} late, missed, overdue, or SLA-risk Control-M row(s) in the loaded feed snapshot.",
+            "headline": "Check late or missed task runs before declaring the workload healthy.",
+            "detail": f"{task_late:,} late, missed, overdue, or SLA-risk Snowflake task run(s) in TASK_HISTORY.",
             "primary_label": "Open Task Graphs",
             "workflow": "Task graphs",
             "refresh": False,
@@ -456,8 +470,8 @@ def _workload_action_brief(
     if task_loaded and task_alerts > 0:
         return {
             "state": "Job Review",
-            "headline": "Review high-severity Control-M scheduler alerts before query drilldown.",
-            "detail": f"{task_alerts:,} Control-M alert row(s) in the loaded scheduler feed snapshot.",
+            "headline": "Review high-severity Snowflake task alerts before query drilldown.",
+            "detail": f"{task_alerts:,} Snowflake task alert run(s) in TASK_HISTORY.",
             "primary_label": "Open Task Graphs",
             "workflow": "Task graphs",
             "refresh": False,
@@ -465,8 +479,8 @@ def _workload_action_brief(
     if task_loaded and task_watch > 0 and safe_int(summary.get("failed")) == 0:
         return {
             "state": "Job Watch",
-            "headline": "Check scheduler watch rows and Snowflake task status.",
-            "detail": f"{task_watch:,} Control-M watch row(s) across {task_rows:,} loaded scheduler feed row(s).",
+            "headline": "Check task watch rows and Snowflake task status.",
+            "detail": f"{task_watch:,} Snowflake task watch row(s) across {task_rows:,} recent task run(s).",
             "primary_label": "Open Task Graphs",
             "workflow": "Task graphs",
             "refresh": False,
@@ -547,15 +561,15 @@ def _build_workload_runbook_markdown(
         kpi_line = "Snapshot not loaded. Refresh the workload snapshot or start live triage."
     if task_summary.get("loaded"):
         task_line = (
-            f"Control-M feed rows={safe_int(task_summary.get('controlm_rows')):,}; "
-            f"failed_blocked={safe_int(task_summary.get('controlm_failures')):,}; "
-            f"late_or_missed={safe_int(task_summary.get('controlm_late')):,}; "
-            f"alerts={safe_int(task_summary.get('controlm_alerts')):,}; "
-            f"watch={safe_int(task_summary.get('controlm_watch')):,}; "
+            f"Snowflake TASK_HISTORY runs={safe_int(task_summary.get('task_status_rows')):,}; "
+            f"failed_blocked={safe_int(task_summary.get('task_status_failures')):,}; "
+            f"late_or_missed={safe_int(task_summary.get('task_status_late')):,}; "
+            f"alerts={safe_int(task_summary.get('task_status_alerts')):,}; "
+            f"watch={safe_int(task_summary.get('task_status_watch')):,}; "
             f"last_seen={task_summary.get('last_seen') or 'not reported'}"
         )
     else:
-        task_line = "Control-M feed snapshot not loaded; open Task graphs for Snowflake task status."
+        task_line = "Snowflake TASK_HISTORY snapshot not loaded; open Task graphs for task status."
 
     lines = [
         "# OVERWATCH Workload Operations Runbook",
@@ -579,7 +593,7 @@ def _build_workload_runbook_markdown(
         "## Triage Order",
         "1. Live triage: identify running, queued, blocked, or cancellable work.",
         "2. Query diagnosis: capture query ID, warehouse, user, role, database, schema, elapsed time, spill, and error text.",
-        "3. Task graphs: confirm Control-M and Snowflake task status, failed run, retry state, downstream blast radius, and owner.",
+        "3. Task graphs: confirm Snowflake task and Snowflake task status, failed run, retry state, downstream blast radius, and owner.",
         "4. Stored procedures: tie CALL history to query IDs, runtime drift, and cost attribution.",
         "5. Pipeline health: check load backlog, copy errors, task lag, and dynamic table refresh state.",
         "",
@@ -599,41 +613,24 @@ def _build_workload_runbook_markdown(
 
 
 def _render_workload_action_brief(company: str, environment: str, brief: dict) -> None:
-    with st.container(border=True):
-        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(str(brief.get("state") or "Review"))
-        with detail_col:
-            st.markdown(f"**{brief.get('headline') or 'Review workload evidence.'}**")
-            st.caption(str(brief.get("detail") or ""))
-        with action_col:
-            if st.button(str(brief.get("primary_label") or "Open Live Triage"), key="workload_ops_action_brief_primary", width="stretch"):
-                if bool(brief.get("refresh")):
-                    _load_workload_snapshot(company, environment, show_errors=True)
-                else:
-                    workflow = str(brief.get("workflow") or "Live triage")
-                    if workflow in WORKFLOWS:
-                        st.session_state["workload_operations_view"] = "Specialist Workflows"
-                        st.session_state["workload_operations_workflow"] = workflow
-                st.rerun()
-            if not bool(brief.get("refresh")):
-                if st.button("Refresh Snapshot", key="workload_ops_action_brief_refresh", width="stretch"):
-                    _load_workload_snapshot(company, environment, show_errors=True)
-                    st.rerun()
+    render_shell_status_strip(
+        state=brief.get("state") or "Review",
+        headline=brief.get("headline") or "Review workload evidence.",
+        detail=brief.get("detail") or "",
+    )
 
 
 def _render_workload_metric_rows(summary: dict) -> None:
     loaded = bool(summary.get("loaded"))
     if not loaded:
-        render_shell_snapshot((
+        render_shell_kpi_row((
             ("Scope", "Company"),
             ("Window", "24h"),
             ("Evidence", "Refresh"),
             ("Route", "Live triage"),
         ))
         return
-    render_shell_snapshot((
+    render_shell_kpi_row((
         ("Queries", f"{safe_int(summary.get('queries')):,}"),
         ("Failed", f"{safe_int(summary.get('failed')):,}"),
         ("Queued", f"{safe_int(summary.get('queued')):,}"),
@@ -682,16 +679,97 @@ def _render_workload_status_lanes(summary: dict, task_summary: dict | None = Non
                             st.rerun()
 
 
+def _render_workload_intelligence_contract(company: str, environment: str) -> None:
+    """Show the no-touch workload intelligence contracts before drilldown."""
+    import pandas as pd
+
+    from utils.operational_intelligence import (
+        build_ai_query_diagnosis_contract_rows,
+        build_data_reconciliation_runner_sql,
+        build_task_critical_path_brain_sql,
+    )
+
+    rows = pd.DataFrame(
+        [
+            {
+                "SIGNAL": "Task critical path",
+                "STATE": "Ready",
+                "PRIMARY_SOURCE": "TASK_HISTORY / INFORMATION_SCHEMA.TASK_HISTORY",
+                "WHY_IT_MATTERS": "Ranks failed, skipped, late, and long-running task graph paths before retry.",
+                "NEXT_ACTION": "Open Task graphs when a root task, child failure, or SLA risk appears.",
+            },
+            {
+                "SIGNAL": "Schema/data reconciliation",
+                "STATE": "Config-driven",
+                "PRIMARY_SOURCE": "INFORMATION_SCHEMA plus configured table checks",
+                "WHY_IT_MATTERS": "Compares row counts and hashes between database/schema pairs for sameness and likeness.",
+                "NEXT_ACTION": "Use DBA Tools data compare for target tables, then persist results in recon tables.",
+            },
+            {
+                "SIGNAL": "Fact-grounded AI query diagnosis",
+                "STATE": "Guarded",
+                "PRIMARY_SOURCE": "QUERY_HISTORY, profile facts, object context",
+                "WHY_IT_MATTERS": "Cortex recommendations must cite exact scan, spill, pruning, queue, and owner evidence.",
+                "NEXT_ACTION": "Open Query diagnosis only after a query_id or repeatable query hash is identified.",
+            },
+        ]
+    )
+    render_priority_dataframe(
+        rows,
+        title="Workload intelligence contracts",
+        priority_columns=[
+            "SIGNAL", "STATE", "PRIMARY_SOURCE", "WHY_IT_MATTERS", "NEXT_ACTION",
+        ],
+        raw_label="All workload intelligence contracts",
+        height=220,
+        max_rows=3,
+    )
+    with st.expander("Workload intelligence SQL and AI evidence contract", expanded=False):
+        sql_choice = st.selectbox(
+            "Preview",
+            ["Task critical path SQL", "Data reconciliation SQL", "AI query diagnosis evidence"],
+            key="workload_intelligence_contract_preview",
+        )
+        if sql_choice == "Task critical path SQL":
+            st.code(build_task_critical_path_brain_sql(hours=24), language="sql")
+        elif sql_choice == "Data reconciliation SQL":
+            st.code(build_data_reconciliation_runner_sql(), language="sql")
+        else:
+            render_priority_dataframe(
+                pd.DataFrame(build_ai_query_diagnosis_contract_rows()),
+                title="AI Query Diagnosis required evidence",
+                priority_columns=["EVIDENCE", "REQUIRED_FIELDS", "WHY_REQUIRED"],
+                raw_label="All AI query evidence fields",
+                height=280,
+                max_rows=6,
+            )
+    defer_source_note(
+        f"Workload intelligence contract shown for {company} / {environment}; SQL previews do not execute until the workflow is loaded."
+    )
+
+
 def _render_workload_snapshot(company: str, environment: str) -> None:
     hours = 24
     expected_meta = _snapshot_meta(company, environment, hours)
     snapshot = st.session_state.get("workload_operations_snapshot")
-    snapshot_current = st.session_state.get("workload_operations_snapshot_meta") == expected_meta
+    snapshot_meta = st.session_state.get("workload_operations_snapshot_meta")
+    snapshot_current = _snapshot_meta_matches(snapshot_meta, expected_meta)
     task_snapshot = st.session_state.get("workload_operations_task_snapshot")
-    task_snapshot_current = st.session_state.get("workload_operations_task_snapshot_meta") == expected_meta
+    task_snapshot_meta = st.session_state.get("workload_operations_task_snapshot_meta")
+    task_snapshot_current = _snapshot_meta_matches(task_snapshot_meta, expected_meta)
+    if (
+        consume_section_autoload_request("Workload Operations")
+        and not (snapshot_current and task_snapshot_current)
+    ):
+        st.caption("Workload Operations opened in fast mode. Refresh the snapshot when current task/query proof is needed.")
     err = st.session_state.get("workload_operations_snapshot_error", "")
     summary = _workload_snapshot_summary(snapshot if snapshot_current else None)
     task_summary = _workload_task_summary(task_snapshot if task_snapshot_current else None)
+    freshness_meta = {}
+    if summary.get("loaded") and snapshot_current:
+        freshness_meta = snapshot_meta if isinstance(snapshot_meta, Mapping) else {}
+    elif task_summary.get("loaded") and task_snapshot_current:
+        freshness_meta = task_snapshot_meta if isinstance(task_snapshot_meta, Mapping) else {}
     brief = _workload_action_brief(
         summary,
         snapshot_current=snapshot_current,
@@ -699,9 +777,20 @@ def _render_workload_snapshot(company: str, environment: str) -> None:
         task_summary=task_summary,
     )
     _render_workload_action_brief(company, environment, brief)
-    st.markdown("**Operating Snapshot**")
     _render_workload_metric_rows(summary)
+    render_data_freshness(
+        freshness_meta,
+        source="Workload snapshot",
+        target_minutes=30,
+        delayed_note="Workload snapshot uses mart and TASK_HISTORY summaries; open live triage for in-flight incidents.",
+    )
+    if err and not summary.get("loaded"):
+        defer_source_note("Workload snapshot unavailable.", str(err))
+    if st.button("Refresh Workload Snapshot", key="workload_operations_snapshot_refresh", type="primary"):
+        _load_workload_snapshot(company, environment, hours=hours)
+        st.rerun()
     _render_workload_status_lanes(summary, task_summary)
+    _render_workload_intelligence_contract(company, environment)
     with st.expander("Runbook export", expanded=False):
         st.caption("Download a copy-ready DBA runbook for the selected company and workload snapshot state.")
         st.download_button(
@@ -741,11 +830,11 @@ def render() -> None:
         columns=4,
     )
     if evidence_mode == TRIAGE_MODE_TRIAGE:
-        st.warning("Triage mode: start with running work, failures, SLA breaches, and release regressions.")
+        st.warning("Landing default: start with running work, failures, SLA breaches, and release regressions.")
     elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
-        defer_section_note("Evidence Mode: Investigate opens specialist workflows for contention and root-cause analysis.")
+        defer_section_note("Investigation detail opens specialist workflows for contention and root-cause analysis.")
     elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
-        defer_section_note("Evidence Mode: All Evidence opens Query diagnosis with root-cause context ready.")
+        defer_section_note("Full proof depth opens Query diagnosis with root-cause context ready.")
 
     active_view = render_mode_selector(
         "Workload Operations view",

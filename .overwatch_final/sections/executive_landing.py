@@ -8,10 +8,19 @@ import zipfile
 
 import streamlit as st
 
-from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DEFAULTS, DAY_WINDOW_OPTIONS
+from config import (
+    ACTION_QUEUE_TABLE,
+    ALERT_DB,
+    ALERT_SCHEMA,
+    DEFAULT_COMPANY,
+    DEFAULT_DAY_WINDOW,
+    DEFAULT_ENVIRONMENT,
+    DEFAULTS,
+    DAY_WINDOW_OPTIONS,
+)
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_navigation_state
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
 
@@ -26,12 +35,16 @@ get_environment_label = _lazy_util("get_environment_label")
 get_session_for_action = _lazy_util("get_session_for_action")
 load_action_queue = _lazy_util("load_action_queue")
 load_alert_history = _lazy_util("load_alert_history")
+mart_object_name = _lazy_util("mart_object_name")
 render_priority_dataframe = _lazy_util("render_priority_dataframe")
 run_query = _lazy_util("run_query")
+safe_identifier = _lazy_util("safe_identifier")
+sql_literal = _lazy_util("sql_literal")
 
 
 EXECUTIVE_LANDING_VERSION = "2026-06-05-boardroom-pptx-v1"
 PLATFORM_SUMMARY_STATE_KEY = "executive_landing_platform_summary"
+OBSERVABILITY_STATE_KEY = "executive_landing_observability_board"
 
 _PPTX_EMU_PER_INCH = 914400
 _PPTX_SLIDE_WIDTH = 12192000
@@ -344,6 +357,858 @@ def _money(value: float, *, signed: bool = False) -> str:
     if abs(number) >= 1000:
         return f"{prefix}${number:,.0f}"
     return f"{prefix}${number:,.2f}"
+
+
+def _company_filter_sql(alias: str = "") -> str:
+    company = _active_company()
+    if str(company or "").upper() == "ALL":
+        return ""
+    prefix = f"{alias}." if alias else ""
+    return f"AND {prefix}COMPANY = {sql_literal(company, 100)}"
+
+
+def _environment_filter_sql(alias: str = "") -> str:
+    environment = _active_environment()
+    if str(environment or "").upper() == "ALL":
+        return ""
+    prefix = f"{alias}." if alias else ""
+    return f"AND UPPER(COALESCE({prefix}ENVIRONMENT, 'ALL')) = {sql_literal(environment.upper(), 100)}"
+
+
+def _build_executive_observability_sql(
+    company: str,
+    environment: str,
+    days: int,
+    *,
+    credit_price: float,
+    ai_credit_price: float,
+) -> str:
+    """Return the tiny first-paint executive board query."""
+    days = max(1, int(days or DEFAULT_DAY_WINDOW))
+    _ = (credit_price, ai_credit_price)
+    company_value = "ALL" if str(company or "").upper() == "ALL" else str(company or DEFAULT_COMPANY)
+    environment_value = "ALL" if str(environment or "").upper() == "ALL" else str(environment or DEFAULT_ENVIRONMENT)
+    company_lit = sql_literal(company_value.upper(), 100)
+    environment_lit = sql_literal(environment_value.upper(), 100)
+    board_table = mart_object_name("MART_EXECUTIVE_OBSERVABILITY")
+    return f"""
+WITH candidate AS (
+    SELECT
+        PANEL,
+        METRIC,
+        DIMENSION,
+        PERIOD_START,
+        VALUE,
+        VALUE_USD,
+        UNIT,
+        SORT_ORDER,
+        COMPANY,
+        ENVIRONMENT,
+        SNAPSHOT_TS
+    FROM {board_table}
+    WHERE WINDOW_DAYS = {days}
+      AND UPPER(COMPANY) IN ({company_lit}, 'ALL')
+      AND (
+        UPPER(COALESCE(ENVIRONMENT, 'ALL')) = 'ALL'
+        OR UPPER(COALESCE(ENVIRONMENT, 'ALL')) = {environment_lit}
+      )
+      AND SNAPSHOT_TS >= DATEADD('DAY', -7, CURRENT_TIMESTAMP())
+),
+ranked AS (
+    SELECT
+        PANEL,
+        METRIC,
+        DIMENSION,
+        PERIOD_START,
+        VALUE,
+        VALUE_USD,
+        UNIT,
+        SORT_ORDER,
+        ROW_NUMBER() OVER (
+            PARTITION BY PANEL, METRIC, DIMENSION, PERIOD_START, SORT_ORDER
+            ORDER BY
+                IFF(UPPER(COMPANY) = {company_lit}, 0, 1),
+                IFF(UPPER(COALESCE(ENVIRONMENT, 'ALL')) = {environment_lit}, 0, 1),
+                SNAPSHOT_TS DESC
+        ) AS RN
+    FROM candidate
+)
+SELECT PANEL, METRIC, DIMENSION, PERIOD_START, VALUE, VALUE_USD, UNIT, SORT_ORDER
+FROM ranked
+WHERE RN = 1
+ORDER BY PANEL, SORT_ORDER, PERIOD_START, VALUE DESC
+"""
+
+
+def _observability_scope(company: str, environment: str, days: int) -> tuple[str, str, int]:
+    return str(company), str(environment), int(days)
+
+
+_OBS_COLUMNS = ["PANEL", "METRIC", "DIMENSION", "PERIOD_START", "VALUE", "VALUE_USD", "UNIT", "SORT_ORDER"]
+
+
+def _normalise_observability_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return pd.DataFrame(columns=_OBS_COLUMNS)
+    rows = frame.copy()
+    for column in _OBS_COLUMNS:
+        if column not in rows.columns:
+            rows[column] = None
+    return rows[_OBS_COLUMNS]
+
+
+def _observability_status_frame(statuses: list[dict]) -> pd.DataFrame:
+    rows = []
+    for idx, status in enumerate(statuses, start=1):
+        rows.append({
+            "PANEL": "SOURCE_STATUS",
+            "METRIC": str(status.get("state") or "Unknown"),
+            "DIMENSION": str(status.get("source") or "Unknown source"),
+            "PERIOD_START": None,
+            "VALUE": None,
+            "VALUE_USD": None,
+            "UNIT": str(status.get("detail") or ""),
+            "SORT_ORDER": 990 + idx,
+        })
+    return pd.DataFrame(rows, columns=_OBS_COLUMNS)
+
+
+def _build_executive_observability_query_parts(
+    company: str,
+    environment: str,
+    days: int,
+    *,
+    credit_price: float,
+    ai_credit_price: float,
+) -> list[tuple[str, str, str]]:
+    """Build independent fast queries so one missing source cannot blank the board."""
+    days = max(1, int(days or DEFAULT_DAY_WINDOW))
+    company_clause = "" if str(company or "").upper() == "ALL" else f"AND COMPANY = {sql_literal(company, 100)}"
+    env_clause = "" if str(environment or "").upper() == "ALL" else f"AND UPPER(COALESCE(ENVIRONMENT, 'ALL')) = {sql_literal(str(environment).upper(), 100)}"
+    cost_table = mart_object_name("FACT_COST_DAILY")
+    cortex_table = mart_object_name("FACT_CORTEX_DAILY")
+    query_table = mart_object_name("FACT_QUERY_HOURLY")
+    task_table = mart_object_name("FACT_TASK_RUN")
+    storage_table = mart_object_name("FACT_STORAGE_DAILY")
+    control_table = mart_object_name("MART_DBA_CONTROL_ROOM")
+    alert_table = f"{safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.{safe_identifier('ALERT_EVENTS')}"
+    queue_table = f"{safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.{safe_identifier(ACTION_QUEUE_TABLE)}"
+
+    cost_sql = f"""
+WITH cost_daily AS (
+    SELECT
+        USAGE_DATE,
+        COALESCE(SERVICE_CATEGORY, 'Unknown') AS SERVICE_CATEGORY,
+        COALESCE(SERVICE_TYPE, 'Unknown') AS SERVICE_TYPE,
+        SUM(COALESCE(CREDITS_BILLED, CREDITS_USED_COMPUTE, 0)) AS CREDITS,
+        SUM(COALESCE(
+            EST_COST_USD,
+            COALESCE(CREDITS_BILLED, CREDITS_USED_COMPUTE, 0) * {float(credit_price):.4f}
+        )) AS COST_USD,
+        MAX(LOAD_TS) AS LOAD_TS
+    FROM {cost_table}
+    WHERE USAGE_DATE >= DATEADD('MONTH', -6, CURRENT_DATE())
+      AND USAGE_DATE < CURRENT_DATE()
+      {company_clause}
+    GROUP BY USAGE_DATE, COALESCE(SERVICE_CATEGORY, 'Unknown'), COALESCE(SERVICE_TYPE, 'Unknown')
+),
+cost_current AS (
+    SELECT
+        SUM(IFF(USAGE_DATE >= DATEADD('DAY', -{days}, CURRENT_DATE()), CREDITS, 0)) AS CURRENT_CREDITS,
+        SUM(IFF(USAGE_DATE >= DATEADD('DAY', -{days * 2}, CURRENT_DATE()) AND USAGE_DATE < DATEADD('DAY', -{days}, CURRENT_DATE()), CREDITS, 0)) AS PRIOR_CREDITS,
+        SUM(IFF(USAGE_DATE >= DATEADD('DAY', -{days}, CURRENT_DATE()), COST_USD, 0)) AS CURRENT_COST_USD,
+        SUM(IFF(USAGE_DATE >= DATEADD('DAY', -{days * 2}, CURRENT_DATE()) AND USAGE_DATE < DATEADD('DAY', -{days}, CURRENT_DATE()), COST_USD, 0)) AS PRIOR_COST_USD,
+        MAX(LOAD_TS) AS LOAD_TS
+    FROM cost_daily
+),
+monthly_cost AS (
+    SELECT
+        DATE_TRUNC('MONTH', USAGE_DATE) AS PERIOD_START,
+        SUM(CREDITS) AS CREDITS,
+        SUM(COST_USD) AS COST_USD
+    FROM cost_daily
+    GROUP BY DATE_TRUNC('MONTH', USAGE_DATE)
+)
+SELECT 'KPI' AS PANEL, 'Credits Used' AS METRIC, 'Current window' AS DIMENSION, NULL::TIMESTAMP_NTZ AS PERIOD_START,
+       COALESCE(CURRENT_CREDITS, 0)::FLOAT AS VALUE, COALESCE(CURRENT_COST_USD, 0)::FLOAT AS VALUE_USD, 'credits_usd' AS UNIT, 1 AS SORT_ORDER
+FROM cost_current
+UNION ALL
+SELECT 'KPI', 'Spend Delta', 'Current vs prior', NULL::TIMESTAMP_NTZ,
+       COALESCE(CURRENT_CREDITS, 0) - COALESCE(PRIOR_CREDITS, 0),
+       COALESCE(CURRENT_COST_USD, 0) - COALESCE(PRIOR_COST_USD, 0), 'credits_usd', 2
+FROM cost_current
+UNION ALL
+SELECT 'DAILY_COST', 'Daily Spend', TO_VARCHAR(USAGE_DATE), TO_TIMESTAMP_NTZ(USAGE_DATE),
+       SUM(CREDITS), SUM(COST_USD), 'credits_usd', 101
+FROM cost_daily
+WHERE USAGE_DATE >= DATEADD('DAY', -{days}, CURRENT_DATE())
+GROUP BY USAGE_DATE
+UNION ALL
+SELECT 'MONTHLY_COST', 'Monthly Spend', TO_VARCHAR(PERIOD_START, 'YYYY-MM'), TO_TIMESTAMP_NTZ(PERIOD_START),
+       CREDITS, COST_USD, 'credits_usd', 201
+FROM monthly_cost
+UNION ALL
+SELECT 'FRESHNESS', 'Latest Load', 'Cost facts', MAX(LOAD_TS), NULL::FLOAT, NULL::FLOAT, 'timestamp', 901
+FROM cost_daily
+"""
+
+    cortex_sql = f"""
+WITH cortex_daily AS (
+    SELECT
+        USAGE_DATE,
+        SUM(COALESCE(CREDITS_USED, 0)) AS CREDITS,
+        SUM(COALESCE(EST_COST_USD, COALESCE(CREDITS_USED, 0) * {float(ai_credit_price):.4f})) AS COST_USD,
+        SUM(COALESCE(REQUEST_COUNT, 0)) AS REQUESTS,
+        MAX(LOAD_TS) AS LOAD_TS
+    FROM {cortex_table}
+    WHERE USAGE_DATE >= DATEADD('DAY', -{days}, CURRENT_DATE())
+      AND USAGE_DATE < CURRENT_DATE()
+      {company_clause}
+    GROUP BY USAGE_DATE
+)
+SELECT 'KPI' AS PANEL, 'Cortex Spend' AS METRIC, 'Current window' AS DIMENSION, NULL::TIMESTAMP_NTZ AS PERIOD_START,
+       COALESCE(SUM(CREDITS), 0)::FLOAT AS VALUE, COALESCE(SUM(COST_USD), 0)::FLOAT AS VALUE_USD, 'credits_usd' AS UNIT, 3 AS SORT_ORDER
+FROM cortex_daily
+UNION ALL
+SELECT 'FRESHNESS', 'Latest Load', 'Cortex facts', MAX(LOAD_TS), NULL::FLOAT, NULL::FLOAT, 'timestamp', 904
+FROM cortex_daily
+"""
+
+    query_sql = f"""
+WITH query_daily AS (
+    SELECT
+        TO_DATE(HOUR_START) AS USAGE_DATE,
+        SUM(COALESCE(QUERY_COUNT, 0)) AS QUERIES,
+        SUM(COALESCE(FAILED_COUNT, 0)) AS FAILED_QUERIES,
+        SUM(COALESCE(TOTAL_ELAPSED_MS, 0)) AS ELAPSED_MS,
+        SUM(COALESCE(TOTAL_QUEUED_MS, 0)) AS QUEUED_MS,
+        SUM(COALESCE(TOTAL_SPILL_BYTES, 0)) AS SPILL_BYTES,
+        SUM(COALESCE(TOTAL_BYTES_SCANNED, 0)) AS BYTES_SCANNED,
+        MAX(COALESCE(P95_EXECUTION_MS, 0)) AS P95_EXECUTION_MS,
+        MAX(LOAD_TS) AS LOAD_TS
+    FROM {query_table}
+    WHERE HOUR_START >= DATEADD('DAY', -{days}, CURRENT_TIMESTAMP())
+      {company_clause}
+      {env_clause}
+    GROUP BY TO_DATE(HOUR_START)
+),
+query_type AS (
+    SELECT
+        COALESCE(QUERY_TYPE, 'Unknown') AS QUERY_TYPE,
+        SUM(COALESCE(QUERY_COUNT, 0)) AS QUERIES
+    FROM {query_table}
+    WHERE HOUR_START >= DATEADD('DAY', -{days}, CURRENT_TIMESTAMP())
+      {company_clause}
+      {env_clause}
+    GROUP BY COALESCE(QUERY_TYPE, 'Unknown')
+),
+query_type_ranked AS (
+    SELECT QUERY_TYPE, QUERIES,
+           ROW_NUMBER() OVER (ORDER BY QUERIES DESC, QUERY_TYPE) AS RN
+    FROM query_type
+),
+warehouse_pressure AS (
+    SELECT
+        COALESCE(WAREHOUSE_NAME, 'Unknown') AS WAREHOUSE_NAME,
+        SUM(COALESCE(QUERY_COUNT, 0)) AS QUERIES,
+        SUM(COALESCE(TOTAL_QUEUED_MS, 0)) AS QUEUED_MS,
+        SUM(COALESCE(TOTAL_SPILL_BYTES, 0)) AS SPILL_BYTES,
+        MAX(COALESCE(P95_EXECUTION_MS, 0)) AS P95_EXECUTION_MS
+    FROM {query_table}
+    WHERE HOUR_START >= DATEADD('DAY', -{days}, CURRENT_TIMESTAMP())
+      {company_clause}
+      {env_clause}
+    GROUP BY COALESCE(WAREHOUSE_NAME, 'Unknown')
+),
+warehouse_pressure_ranked AS (
+    SELECT WAREHOUSE_NAME, QUERIES, QUEUED_MS, SPILL_BYTES, P95_EXECUTION_MS,
+           ROW_NUMBER() OVER (
+               ORDER BY QUEUED_MS DESC, SPILL_BYTES DESC, P95_EXECUTION_MS DESC, WAREHOUSE_NAME
+           ) AS RN
+    FROM warehouse_pressure
+)
+SELECT 'KPI' AS PANEL, 'Total Queries' AS METRIC, 'Current window' AS DIMENSION, NULL::TIMESTAMP_NTZ AS PERIOD_START,
+       COALESCE(SUM(QUERIES), 0)::FLOAT AS VALUE, NULL::FLOAT AS VALUE_USD, 'queries' AS UNIT, 4 AS SORT_ORDER
+FROM query_daily
+UNION ALL
+SELECT 'KPI', 'Avg Runtime', 'Current window', NULL::TIMESTAMP_NTZ,
+       COALESCE(SUM(ELAPSED_MS) / NULLIF(SUM(QUERIES), 0) / 1000, 0), NULL::FLOAT, 'seconds', 5
+FROM query_daily
+UNION ALL
+SELECT 'KPI', 'P95 Runtime', 'Current window', NULL::TIMESTAMP_NTZ,
+       COALESCE(MAX(P95_EXECUTION_MS) / 1000, 0), NULL::FLOAT, 'seconds', 6
+FROM query_daily
+UNION ALL
+SELECT 'KPI', 'Queue Time', 'Current window', NULL::TIMESTAMP_NTZ,
+       COALESCE(SUM(QUEUED_MS) / 1000, 0), NULL::FLOAT, 'seconds', 7
+FROM query_daily
+UNION ALL
+SELECT 'KPI', 'Remote Spill', 'Current window', NULL::TIMESTAMP_NTZ,
+       COALESCE(SUM(SPILL_BYTES) / POWER(1024, 3), 0), NULL::FLOAT, 'gb', 8
+FROM query_daily
+UNION ALL
+SELECT 'KPI', 'Failed Queries', 'Current window', NULL::TIMESTAMP_NTZ,
+       COALESCE(SUM(FAILED_QUERIES), 0), NULL::FLOAT, 'queries', 9
+FROM query_daily
+UNION ALL
+SELECT 'DAILY_WORKLOAD', 'Avg Runtime', TO_VARCHAR(USAGE_DATE), TO_TIMESTAMP_NTZ(USAGE_DATE),
+       COALESCE(ELAPSED_MS / NULLIF(QUERIES, 0) / 1000, 0), NULL::FLOAT, 'seconds', 301
+FROM query_daily
+UNION ALL
+SELECT 'DAILY_WORKLOAD', 'P95 Runtime', TO_VARCHAR(USAGE_DATE), TO_TIMESTAMP_NTZ(USAGE_DATE),
+       COALESCE(P95_EXECUTION_MS / 1000, 0), NULL::FLOAT, 'seconds', 302
+FROM query_daily
+UNION ALL
+SELECT 'DAILY_WORKLOAD', 'Queue Seconds', TO_VARCHAR(USAGE_DATE), TO_TIMESTAMP_NTZ(USAGE_DATE),
+       COALESCE(QUEUED_MS / 1000, 0), NULL::FLOAT, 'seconds', 303
+FROM query_daily
+UNION ALL
+SELECT 'QUERY_TYPE', 'Queries by Type', QUERY_TYPE, NULL::TIMESTAMP_NTZ,
+       QUERIES, NULL::FLOAT, 'queries', 401
+FROM query_type_ranked
+WHERE RN <= 8
+UNION ALL
+SELECT 'WAREHOUSE_PRESSURE', 'Queue Seconds', WAREHOUSE_NAME, NULL::TIMESTAMP_NTZ,
+       COALESCE(QUEUED_MS / 1000, 0), NULL::FLOAT, 'seconds', 501
+FROM warehouse_pressure_ranked
+WHERE RN <= 8
+UNION ALL
+SELECT 'WAREHOUSE_PRESSURE', 'Remote Spill GB', WAREHOUSE_NAME, NULL::TIMESTAMP_NTZ,
+       COALESCE(SPILL_BYTES / POWER(1024, 3), 0), NULL::FLOAT, 'gb', 502
+FROM warehouse_pressure_ranked
+WHERE RN <= 8
+UNION ALL
+SELECT 'FRESHNESS', 'Latest Load', 'Query facts', MAX(LOAD_TS), NULL::FLOAT, NULL::FLOAT, 'timestamp', 902
+FROM query_daily
+"""
+
+    task_sql = f"""
+WITH task_rollup AS (
+    SELECT
+        COUNT(*) AS TASK_RUNS,
+        COUNT_IF(UPPER(COALESCE(STATE, '')) IN ('FAILED', 'FAILED_WITH_ERROR')) AS FAILED_TASKS,
+        MAX(LOAD_TS) AS LOAD_TS
+    FROM {task_table}
+    WHERE SCHEDULED_TIME >= DATEADD('DAY', -{days}, CURRENT_TIMESTAMP())
+      {company_clause}
+      {env_clause}
+)
+SELECT 'KPI' AS PANEL, 'Failed Tasks' AS METRIC, 'Current window' AS DIMENSION, NULL::TIMESTAMP_NTZ AS PERIOD_START,
+       COALESCE(MAX(FAILED_TASKS), 0)::FLOAT AS VALUE, NULL::FLOAT AS VALUE_USD, 'tasks' AS UNIT, 10 AS SORT_ORDER
+FROM task_rollup
+UNION ALL
+SELECT 'FRESHNESS', 'Latest Load', 'Task facts', MAX(LOAD_TS), NULL::FLOAT, NULL::FLOAT, 'timestamp', 903
+FROM task_rollup
+"""
+
+    storage_sql = f"""
+WITH storage_rollup AS (
+    SELECT
+        SUM(COALESCE(EST_STORAGE_TB, 0)) AS STORAGE_TB,
+        SUM(COALESCE(EST_COST_USD, 0)) AS STORAGE_COST_USD,
+        MAX(LOAD_TS) AS LOAD_TS
+    FROM {storage_table}
+    WHERE SNAPSHOT_DATE >= DATEADD('DAY', -{days}, CURRENT_DATE())
+      {company_clause}
+      {env_clause}
+)
+SELECT 'KPI' AS PANEL, 'Storage' AS METRIC, 'Current snapshot' AS DIMENSION, NULL::TIMESTAMP_NTZ AS PERIOD_START,
+       COALESCE(MAX(STORAGE_TB), 0)::FLOAT AS VALUE, COALESCE(MAX(STORAGE_COST_USD), 0)::FLOAT AS VALUE_USD, 'tb_usd' AS UNIT, 13 AS SORT_ORDER
+FROM storage_rollup
+UNION ALL
+SELECT 'FRESHNESS', 'Latest Load', 'Storage facts', MAX(LOAD_TS), NULL::FLOAT, NULL::FLOAT, 'timestamp', 905
+FROM storage_rollup
+"""
+
+    control_sql = f"""
+WITH control_latest AS (
+    SELECT *
+    FROM {control_table}
+    WHERE SNAPSHOT_TS >= DATEADD('HOUR', -24, CURRENT_TIMESTAMP())
+      {company_clause}
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY COMPANY ORDER BY SNAPSHOT_TS DESC) = 1
+)
+SELECT 'KPI' AS PANEL, 'Platform Health' AS METRIC, 'Latest control room' AS DIMENSION, NULL::TIMESTAMP_NTZ AS PERIOD_START,
+       COALESCE(MAX(HEALTH_SCORE), 0)::FLOAT AS VALUE, NULL::FLOAT AS VALUE_USD, 'score' AS UNIT, 14 AS SORT_ORDER
+FROM control_latest
+"""
+
+    alert_sql = f"""
+SELECT 'KPI' AS PANEL, 'Critical High Alerts' AS METRIC, 'Current window' AS DIMENSION, NULL::TIMESTAMP_NTZ AS PERIOD_START,
+       COALESCE(COUNT_IF(UPPER(COALESCE(SEVERITY, '')) IN ('CRITICAL', 'HIGH')
+           AND UPPER(COALESCE(STATUS, 'NEW')) NOT IN ('RESOLVED', 'FIXED', 'IGNORED', 'CLOSED')), 0)::FLOAT AS VALUE,
+       NULL::FLOAT AS VALUE_USD, 'alerts' AS UNIT, 11 AS SORT_ORDER
+FROM {alert_table}
+WHERE EVENT_TS >= DATEADD('DAY', -{days}, CURRENT_TIMESTAMP())
+"""
+
+    queue_sql = f"""
+SELECT 'KPI' AS PANEL, 'Open Actions' AS METRIC, 'Current window' AS DIMENSION, NULL::TIMESTAMP_NTZ AS PERIOD_START,
+       COALESCE(COUNT_IF(UPPER(COALESCE(STATUS, 'NEW')) NOT IN ('FIXED', 'IGNORED', 'CLOSED', 'RESOLVED')), 0)::FLOAT AS VALUE,
+       NULL::FLOAT AS VALUE_USD, 'actions' AS UNIT, 12 AS SORT_ORDER
+FROM {queue_table}
+WHERE CREATED_AT >= DATEADD('DAY', -{days * 2}, CURRENT_TIMESTAMP())
+  {company_clause}
+"""
+
+    return [
+        ("cost", "Cost facts", cost_sql),
+        ("cortex", "Cortex facts", cortex_sql),
+        ("query", "Query performance facts", query_sql),
+        ("task", "Task facts", task_sql),
+        ("storage", "Storage facts", storage_sql),
+        ("control", "Platform health facts", control_sql),
+        ("alert", "Alert events", alert_sql),
+        ("queue", "Action queue", queue_sql),
+    ]
+
+
+def _load_executive_observability(
+    company: str,
+    environment: str,
+    days: int,
+    *,
+    credit_price: float,
+) -> bool:
+    ai_credit_price = safe_float(st.session_state.get("ai_credit_price", DEFAULTS.get("ai_credit_price", 2.20)), 2.20)
+    try:
+        board = run_query(
+            _build_executive_observability_sql(
+                company,
+                environment,
+                int(days),
+                credit_price=credit_price,
+                ai_credit_price=ai_credit_price,
+            ),
+            ttl_key=f"executive_observability_{company}_{environment}_{int(days)}",
+            tier="recent",
+            section="Executive Landing",
+        )
+        normalised = _normalise_observability_frame(board)
+        status = _observability_status_frame([{
+            "source": "MART_EXECUTIVE_OBSERVABILITY",
+            "state": "Loaded" if not normalised.empty else "No Rows",
+            "detail": (
+                f"{len(normalised):,} board row(s) loaded from the executive observability mart."
+                if not normalised.empty
+                else "The executive observability mart returned no rows for this scope."
+            ),
+        }])
+        normalised = pd.concat([normalised, status], ignore_index=True)
+        if not normalised.empty and "SORT_ORDER" in normalised.columns:
+            normalised["SORT_ORDER"] = pd.to_numeric(normalised["SORT_ORDER"], errors="coerce").fillna(9999)
+            normalised = normalised.sort_values(
+                ["PANEL", "SORT_ORDER", "DIMENSION"],
+                na_position="last",
+            ).reset_index(drop=True)
+        st.session_state[OBSERVABILITY_STATE_KEY] = {
+            "data": normalised,
+            "scope": _observability_scope(company, environment, int(days)),
+            "source": "MART_EXECUTIVE_OBSERVABILITY",
+            "error": "",
+        }
+        return not _obs_rows(normalised, "KPI").empty
+    except Exception as exc:
+        detail = format_snowflake_error(exc)
+        st.session_state[OBSERVABILITY_STATE_KEY] = {
+            "data": _observability_status_frame([{
+                "source": "MART_EXECUTIVE_OBSERVABILITY",
+                "state": "Unavailable",
+                "detail": detail,
+            }]),
+            "scope": _observability_scope(company, environment, int(days)),
+            "source": "MART_EXECUTIVE_OBSERVABILITY",
+            "error": detail,
+        }
+        return False
+
+
+def _current_observability_board(company: str, environment: str, days: int) -> tuple[pd.DataFrame, dict]:
+    payload = st.session_state.get(OBSERVABILITY_STATE_KEY)
+    if not isinstance(payload, dict):
+        return pd.DataFrame(), {}
+    if payload.get("scope") != _observability_scope(company, environment, int(days)):
+        return pd.DataFrame(), {}
+    data = payload.get("data")
+    return (data if isinstance(data, pd.DataFrame) else pd.DataFrame()), payload
+
+
+def _obs_rows(board: pd.DataFrame, panel: str, metric: str | None = None) -> pd.DataFrame:
+    if not isinstance(board, pd.DataFrame) or board.empty or "PANEL" not in board.columns:
+        return pd.DataFrame()
+    rows = board[board["PANEL"].astype(str).eq(panel)].copy()
+    if metric and "METRIC" in rows.columns:
+        rows = rows[rows["METRIC"].astype(str).eq(metric)].copy()
+    return rows
+
+
+def _obs_value(board: pd.DataFrame, metric: str, *, column: str = "VALUE", default: float = 0.0) -> float:
+    rows = _obs_rows(board, "KPI", metric)
+    if rows.empty or column not in rows.columns:
+        return default
+    return safe_float(rows.iloc[0].get(column), default)
+
+
+def _format_seconds(value: float) -> str:
+    seconds = safe_float(value)
+    if seconds >= 3600:
+        return f"{seconds / 3600:.1f}h"
+    if seconds >= 60:
+        return f"{seconds / 60:.1f}m"
+    return f"{seconds:.1f}s"
+
+
+def _format_gb(value: float) -> str:
+    gb = safe_float(value)
+    if gb >= 1024:
+        return f"{gb / 1024:.1f} TB"
+    return f"{gb:.1f} GB"
+
+
+def _has_observability_kpis(board: pd.DataFrame) -> bool:
+    return not _obs_rows(board, "KPI").empty
+
+
+def _obs_metric_loaded(board: pd.DataFrame, metric: str) -> bool:
+    return not _obs_rows(board, "KPI", metric).empty
+
+
+def _obs_money_label(board: pd.DataFrame, metric: str, *, column: str = "VALUE_USD", signed: bool = False) -> str:
+    if not _obs_metric_loaded(board, metric):
+        return "Not loaded"
+    return _money(_obs_value(board, metric, column=column), signed=signed)
+
+
+def _obs_count_label(board: pd.DataFrame, metric: str) -> str:
+    if not _obs_metric_loaded(board, metric):
+        return "Not loaded"
+    return f"{safe_int(_obs_value(board, metric)):,}"
+
+
+def _render_observability_source_status(board: pd.DataFrame) -> None:
+    statuses = _obs_rows(board, "SOURCE_STATUS")
+    if not isinstance(statuses, pd.DataFrame) or statuses.empty:
+        return
+    rows = statuses[["DIMENSION", "METRIC", "UNIT"]].copy()
+    rows = rows.rename(columns={"DIMENSION": "SOURCE", "METRIC": "STATE", "UNIT": "DETAIL"})
+    loaded = int(rows["STATE"].astype(str).eq("Loaded").sum()) if "STATE" in rows.columns else 0
+    unavailable = int(rows["STATE"].astype(str).eq("Unavailable").sum()) if "STATE" in rows.columns else 0
+    no_rows = int(rows["STATE"].astype(str).eq("No Rows").sum()) if "STATE" in rows.columns else 0
+    with st.expander(
+        f"Executive board source status: {loaded} loaded, {unavailable} unavailable, {no_rows} no rows",
+        expanded=unavailable > 0 and loaded == 0,
+    ):
+        render_priority_dataframe(
+            rows,
+            title="Executive board source status",
+            priority_columns=["SOURCE", "STATE", "DETAIL"],
+            sort_by=["STATE", "SOURCE"],
+            ascending=[True, True],
+            raw_label="All executive board source rows",
+            height=260,
+            max_rows=12,
+        )
+
+
+def _summary_from_observability(board: pd.DataFrame, *, credit_price: float) -> dict | None:
+    if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
+        return None
+    current_credits = _obs_value(board, "Credits Used")
+    cost_delta = _obs_value(board, "Spend Delta")
+    critical_high = safe_int(_obs_value(board, "Critical High Alerts"))
+    open_actions = safe_int(_obs_value(board, "Open Actions"))
+    failed_tasks = safe_int(_obs_value(board, "Failed Tasks"))
+    failed_queries = safe_int(_obs_value(board, "Failed Queries"))
+    score = _obs_value(board, "Platform Health", default=0)
+    prior_credits = max(0.0, current_credits - cost_delta)
+    summary = {
+        "current_credits": current_credits,
+        "prior_credits": prior_credits,
+        "cost_delta": cost_delta,
+        "top_increase_credits": max(cost_delta, 0.0),
+        "critical_high_alerts": critical_high,
+        "open_actions": open_actions,
+        "high_actions": critical_high,
+        "migration_blockers": 0,
+        "top_cost_driver": "Account spend",
+    }
+    scored = _with_platform_operating_score(summary, pd.DataFrame([
+        {"SOURCE": "Executive observability marts", "STATE": "Loaded", "EVIDENCE": "Precomputed board rows loaded."}
+    ]))
+    if score > 0:
+        scored["score"] = safe_int(score)
+        scored["raw_score"] = safe_float(score)
+        scored["state"] = _platform_score_state(score)
+    scored["failed_tasks"] = failed_tasks
+    scored["failed_queries"] = failed_queries
+    scored["current_spend_usd"] = _obs_value(board, "Credits Used", column="VALUE_USD", default=credits_to_dollars(current_credits, credit_price))
+    scored["cortex_spend_usd"] = _obs_value(board, "Cortex Spend", column="VALUE_USD")
+    scored["spill_gb"] = _obs_value(board, "Remote Spill")
+    scored["avg_runtime_sec"] = _obs_value(board, "Avg Runtime")
+    scored["p95_runtime_sec"] = _obs_value(board, "P95 Runtime")
+    return scored
+
+
+def _render_line_chart(
+    rows: pd.DataFrame,
+    *,
+    title: str,
+    y_column: str,
+    y_title: str,
+    color_column: str | None = None,
+    height: int = 210,
+) -> None:
+    st.markdown(f"**{title}**")
+    if rows is None or rows.empty or y_column not in rows.columns or "PERIOD_START" not in rows.columns:
+        st.caption("No precomputed rows loaded for this chart.")
+        return
+    chart_rows = rows.copy()
+    chart_rows["PERIOD_START"] = pd.to_datetime(chart_rows["PERIOD_START"], errors="coerce")
+    chart_rows[y_column] = pd.to_numeric(chart_rows[y_column], errors="coerce").fillna(0)
+    chart_rows = chart_rows.dropna(subset=["PERIOD_START"])
+    if chart_rows.empty:
+        st.caption("No precomputed rows loaded for this chart.")
+        return
+    alt = _altair()
+    color = alt.Color(f"{color_column}:N", title=None) if color_column and color_column in chart_rows.columns else alt.value("#29B5E8")
+    chart = (
+        alt.Chart(chart_rows)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("PERIOD_START:T", title=None),
+            y=alt.Y(f"{y_column}:Q", title=y_title),
+            color=color,
+            tooltip=[
+                alt.Tooltip("PERIOD_START:T", title="Period"),
+                alt.Tooltip(f"{y_column}:Q", title=y_title, format=",.2f"),
+                *([alt.Tooltip(f"{color_column}:N", title="Metric")] if color_column and color_column in chart_rows.columns else []),
+            ],
+        )
+        .properties(height=height)
+    )
+    st.altair_chart(chart, width="stretch")
+
+
+def _render_bar_chart(
+    rows: pd.DataFrame,
+    *,
+    title: str,
+    x_column: str,
+    y_column: str,
+    x_title: str,
+    color: str = "#29B5E8",
+    height: int = 220,
+) -> None:
+    st.markdown(f"**{title}**")
+    if rows is None or rows.empty or x_column not in rows.columns or y_column not in rows.columns:
+        st.caption("No precomputed rows loaded for this chart.")
+        return
+    chart_rows = rows.copy()
+    chart_rows[y_column] = pd.to_numeric(chart_rows[y_column], errors="coerce").fillna(0)
+    chart_rows[x_column] = chart_rows[x_column].astype(str)
+    chart_rows = chart_rows.sort_values(y_column, ascending=False).head(10)
+    if chart_rows.empty:
+        st.caption("No precomputed rows loaded for this chart.")
+        return
+    alt = _altair()
+    chart = (
+        alt.Chart(chart_rows)
+        .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3, color=color)
+        .encode(
+            x=alt.X(f"{y_column}:Q", title=x_title),
+            y=alt.Y(
+                f"{x_column}:N",
+                sort=alt.SortField(field=y_column, order="descending"),
+                title=None,
+                axis=alt.Axis(labelLimit=220),
+            ),
+            tooltip=[
+                alt.Tooltip(f"{x_column}:N", title="Group"),
+                alt.Tooltip(f"{y_column}:Q", title=x_title, format=",.2f"),
+            ],
+        )
+        .properties(height=height)
+    )
+    st.altair_chart(chart, width="stretch")
+
+
+def _render_executive_observability_board(
+    board: pd.DataFrame,
+    payload: dict,
+    *,
+    company: str,
+    environment: str,
+    days: int,
+    credit_price: float,
+) -> None:
+    error = str((payload or {}).get("error") or "").strip()
+    if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
+        render_shell_status_strip(
+            state="Setup Needed" if error else "Waiting",
+            headline="Executive observability board is ready for precomputed Snowflake facts.",
+            detail=(
+                error
+                if error
+                else "Run the OVERWATCH mart refresh to populate cost, query, task, storage, alert, and Cortex facts."
+            ),
+        )
+        render_shell_kpi_row((
+            ("Scope", f"{company} / {get_environment_label(environment, company)}"),
+            ("Window", f"{int(days)}d"),
+            ("Source", "Precomputed marts"),
+            ("Status", "No rows"),
+        ))
+        _render_observability_source_status(board)
+        return
+
+    current_spend = _obs_value(board, "Credits Used", column="VALUE_USD")
+    spend_delta = _obs_value(board, "Spend Delta", column="VALUE_USD")
+    cortex_spend = _obs_value(board, "Cortex Spend", column="VALUE_USD")
+    queries = _obs_value(board, "Total Queries")
+    avg_runtime = _obs_value(board, "Avg Runtime")
+    p95_runtime = _obs_value(board, "P95 Runtime")
+    queue_seconds = _obs_value(board, "Queue Time")
+    spill_gb = _obs_value(board, "Remote Spill")
+    failed_queries = _obs_value(board, "Failed Queries")
+    failed_tasks = _obs_value(board, "Failed Tasks")
+    critical_high = _obs_value(board, "Critical High Alerts")
+    open_actions = _obs_value(board, "Open Actions")
+    storage_tb = _obs_value(board, "Storage")
+    storage_cost = _obs_value(board, "Storage", column="VALUE_USD")
+    health = _obs_value(board, "Platform Health")
+    source_status = _obs_rows(board, "SOURCE_STATUS")
+    unavailable_sources = (
+        int(source_status["METRIC"].astype(str).eq("Unavailable").sum())
+        if isinstance(source_status, pd.DataFrame) and not source_status.empty and "METRIC" in source_status.columns
+        else 0
+    )
+    has_fact_trends = any(
+        not _obs_rows(board, panel).empty
+        for panel in ("DAILY_COST", "MONTHLY_COST", "DAILY_WORKLOAD", "QUERY_TYPE", "WAREHOUSE_PRESSURE")
+    )
+    status_state = "No Rows" if not has_fact_trends else (_platform_score_state(health) if health else "Loaded")
+    status_headline = (
+        "Executive board schema loaded, but the mart has no recent fact rows for this scope."
+        if not has_fact_trends
+        else "Snowflake observability summary loaded from precomputed OVERWATCH facts."
+    )
+    status_detail = (
+        "Run or verify the OVERWATCH mart refresh before using this view for leadership numbers."
+        if not has_fact_trends
+        else (
+            f"{int(days)}-day view: cost, Cortex, query runtime, queue pressure, spill, task health, and storage. "
+            "Alerts and action-queue counts remain Not loaded unless their secure app tables are available to this role. "
+            "Detailed proof stays in the specialist sections."
+        )
+    )
+    if unavailable_sources and has_fact_trends:
+        status_detail = f"{status_detail} {unavailable_sources} optional source(s) are unavailable."
+
+    render_shell_status_strip(
+        state=status_state,
+        headline=status_headline,
+        detail=status_detail,
+    )
+    render_shell_kpi_row((
+        ("Platform", f"{safe_int(health)}/100" if health else "Loaded"),
+        ("Spend", _obs_money_label(board, "Credits Used")),
+        ("Delta", _obs_money_label(board, "Spend Delta", signed=True)),
+        ("Cortex", _obs_money_label(board, "Cortex Spend")),
+    ))
+    render_shell_kpi_row((
+        ("Queries", _obs_count_label(board, "Total Queries")),
+        ("Avg Runtime", _format_seconds(avg_runtime) if _obs_metric_loaded(board, "Avg Runtime") else "Not loaded"),
+        ("P95 Runtime", _format_seconds(p95_runtime) if _obs_metric_loaded(board, "P95 Runtime") else "Not loaded"),
+        ("Remote Spill", _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "Not loaded"),
+    ))
+    render_shell_kpi_row((
+        ("Critical / High", _obs_count_label(board, "Critical High Alerts")),
+        ("Failed Queries", _obs_count_label(board, "Failed Queries")),
+        ("Failed Tasks", _obs_count_label(board, "Failed Tasks")),
+        ("Open Actions", _obs_count_label(board, "Open Actions")),
+    ))
+    render_shell_kpi_row((
+        ("Queue Time", _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "Not loaded"),
+        ("Storage", f"{safe_float(storage_tb):,.2f} TB" if _obs_metric_loaded(board, "Storage") else "Not loaded"),
+        ("Storage Cost", _obs_money_label(board, "Storage")),
+        ("Rate", f"${safe_float(credit_price):,.2f}/credit"),
+    ))
+
+    daily_cost = _obs_rows(board, "DAILY_COST").copy()
+    monthly_cost = _obs_rows(board, "MONTHLY_COST").copy()
+    daily_workload = _obs_rows(board, "DAILY_WORKLOAD").copy()
+    query_mix = _obs_rows(board, "QUERY_TYPE").copy()
+    warehouse_pressure = _obs_rows(board, "WAREHOUSE_PRESSURE").copy()
+
+    chart_cols = st.columns(2)
+    with chart_cols[0]:
+        _render_line_chart(
+            daily_cost,
+            title="Daily Spend",
+            y_column="VALUE_USD",
+            y_title="Estimated Cost USD",
+            height=210,
+        )
+    with chart_cols[1]:
+        _render_bar_chart(
+            monthly_cost,
+            title="Monthly Spend Summary",
+            x_column="DIMENSION",
+            y_column="VALUE_USD",
+            x_title="Estimated Cost USD",
+            color="#71D3DC",
+            height=210,
+        )
+
+    trend_cols = st.columns(2)
+    with trend_cols[0]:
+        _render_line_chart(
+            daily_workload,
+            title="Runtime and Queue Trend",
+            y_column="VALUE",
+            y_title="Seconds",
+            color_column="METRIC",
+            height=230,
+        )
+    with trend_cols[1]:
+        _render_bar_chart(
+            query_mix,
+            title="Queries by Type",
+            x_column="DIMENSION",
+            y_column="VALUE",
+            x_title="Queries",
+            color="#10B981",
+            height=230,
+        )
+
+    pressure = warehouse_pressure.copy()
+    if not pressure.empty:
+        pressure["PRESSURE_SCORE"] = pd.to_numeric(pressure["VALUE"], errors="coerce").fillna(0)
+        pressure = pressure.groupby("DIMENSION", as_index=False, sort=False)["PRESSURE_SCORE"].sum()
+    _render_bar_chart(
+        pressure,
+        title="Warehouse Pressure: Queue + Spill",
+        x_column="DIMENSION",
+        y_column="PRESSURE_SCORE",
+        x_title="Pressure Score",
+        color="#F97316",
+        height=260,
+    )
+
+    freshness = _obs_rows(board, "FRESHNESS")
+    if isinstance(freshness, pd.DataFrame) and not freshness.empty:
+        with st.expander("Board data freshness", expanded=False):
+            rows = freshness[["DIMENSION", "PERIOD_START", "UNIT"]].copy()
+            rows = rows.rename(columns={"DIMENSION": "SOURCE", "PERIOD_START": "LATEST_LOAD", "UNIT": "TYPE"})
+            render_priority_dataframe(
+                rows,
+                title="Precomputed source freshness",
+                priority_columns=["SOURCE", "LATEST_LOAD", "TYPE"],
+                raw_label="All executive board freshness rows",
+                height=180,
+                max_rows=8,
+            )
+    _render_observability_source_status(board)
 
 
 def _powerpoint_kpi_rows(
@@ -944,30 +1809,28 @@ def _render_powerpoint_slide_pack(
         )
 
 
-def _render_executive_action_brief(summary: dict | None, days: int) -> bool:
+def _render_executive_action_brief(summary: dict | None, days: int, *, show_strip: bool = True) -> bool:
     brief = _executive_action_brief(summary)
     button_help = " ".join(
         part for part in (str(brief.get("headline") or ""), str(brief.get("detail") or "")) if part
     )
-    with st.container(border=True):
-        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(str(brief["state"]))
-        with detail_col:
-            st.markdown(f"**{brief['headline']}**")
-        with action_col:
-            st.caption(f"{int(days)}-day window")
-            return bool(
-                st.button(
-                    "Load Executive Snapshot",
-                    key="executive_landing_load",
-                    help=button_help or None,
-                    type="primary",
-                    width="stretch",
-                )
+    if show_strip:
+        render_shell_status_strip(
+            state=brief["state"],
+            headline=brief["headline"],
+            detail=brief.get("detail") or f"{int(days)}-day window",
+        )
+    load_col, _ = st.columns([1.1, 4.0])
+    with load_col:
+        return bool(
+            st.button(
+                "Load Snapshot",
+                key="executive_landing_load",
+                help=button_help or None,
+                type="primary",
+                width="stretch",
             )
-    return False
+        )
 
 
 def _render_platform_operating_score(summary: dict | None) -> None:
@@ -979,7 +1842,7 @@ def _render_platform_operating_score(summary: dict | None) -> None:
     cap_value = safe_int(summary.get("score_cap"), 100)
     cap_label = "None" if cap_value >= 100 else f"{cap_value}/100"
     st.markdown("**Platform Operating Score**")
-    render_shell_snapshot((
+    render_shell_kpi_row((
         ("Score", f"{safe_int(summary.get('score'))}/100"),
         ("State", str(summary.get("state") or "Review")),
         ("Raw", f"{safe_float(summary.get('raw_score')):,.1f}/100"),
@@ -996,6 +1859,27 @@ def _render_platform_operating_score(summary: dict | None) -> None:
             height=260,
             max_rows=5,
         )
+
+
+def _render_command_intelligence_maturity() -> None:
+    from utils.operational_intelligence import build_god_tier_capability_rows
+
+    rows = pd.DataFrame(build_god_tier_capability_rows())
+    if rows.empty:
+        return
+    render_priority_dataframe(
+        rows.head(6),
+        title="Command center maturity priorities",
+        priority_columns=[
+            "RANK", "CAPABILITY", "STATUS", "WHERE_IT_LANDS",
+            "WHY_IT_MATTERS", "NEXT_ACTION",
+        ],
+        sort_by=["RANK"],
+        ascending=True,
+        raw_label="All command center maturity priorities",
+        height=240,
+        max_rows=6,
+    )
 
 
 def _render_executive_operating_snapshot(
@@ -1019,8 +1903,7 @@ def _render_executive_operating_snapshot(
             ("Alerts", f"{summary['critical_high_alerts']:,}"),
             ("Deploy", f"{summary['migration_blockers']:,}"),
         )
-    st.markdown("**Operating Snapshot**")
-    render_shell_snapshot(metrics)
+    render_shell_kpi_row(metrics)
 
 
 def _source_health_rows(snapshot: dict) -> pd.DataFrame:
@@ -1058,6 +1941,56 @@ def _source_health_rows(snapshot: dict) -> pd.DataFrame:
     )
 
 
+def _executive_snapshot_scope(company: str, environment: str, days: int) -> tuple[str, str, int]:
+    return str(company), str(environment), int(days)
+
+
+def _load_executive_snapshot(company: str, environment: str, days: int) -> bool:
+    session = get_session_for_action(
+        "load Executive Landing snapshot",
+        surface="Executive Landing",
+        offline_note="Executive Landing shell remains available without Snowflake.",
+    )
+    if session is None:
+        return False
+    st.session_state.pop(PLATFORM_SUMMARY_STATE_KEY, None)
+    snapshot = {"errors": []}
+    try:
+        snapshot["cost"] = run_query(
+            build_mart_cost_cockpit_sql(company, int(days)),
+            ttl_key=f"executive_cost_{company}_{days}",
+            tier="historical",
+            section="Executive Landing",
+        )
+    except Exception as exc:
+        snapshot["cost"] = pd.DataFrame()
+        snapshot["errors"].append(f"Cost summary unavailable: {format_snowflake_error(exc)}")
+    try:
+        snapshot["alerts"] = _load_alerts(session, company, environment, int(days))
+    except Exception as exc:
+        snapshot["alerts"] = pd.DataFrame()
+        snapshot["errors"].append(f"Alert evidence unavailable: {format_snowflake_error(exc)}")
+    try:
+        snapshot["queue"] = load_action_queue(session)
+    except Exception as exc:
+        snapshot["queue"] = pd.DataFrame()
+        snapshot["errors"].append(f"Action queue unavailable: {format_snowflake_error(exc)}")
+    try:
+        snapshot["migration"] = run_query(
+            build_schema_migration_status_sql(),
+            ttl_key="executive_migration_status",
+            tier="recent",
+            section="Executive Landing",
+        )
+    except Exception as exc:
+        snapshot["migration"] = pd.DataFrame()
+        snapshot["errors"].append(f"Migration ledger unavailable: {format_snowflake_error(exc)}")
+    snapshot["meta"] = {"company": company, "environment": environment, "days": int(days)}
+    st.session_state["executive_landing_snapshot"] = snapshot
+    st.session_state["_executive_landing_auto_load_scope"] = _executive_snapshot_scope(company, environment, days)
+    return True
+
+
 def _nav_button(
     label: str,
     section: str,
@@ -1080,7 +2013,7 @@ def render() -> None:
     environment = _active_environment()
     credit_price = _credit_price()
     defer_source_note(
-        "Executive Landing loads only on demand and uses fast summaries, alert/action evidence, and migration status."
+        "Executive Landing opens with precomputed observability facts; full snapshot/export detail stays action-gated."
     )
 
     window_col, _window_spacer = st.columns([1.2, 3.0])
@@ -1091,12 +2024,25 @@ def render() -> None:
             index=DAY_WINDOW_OPTIONS.index(DEFAULT_DAY_WINDOW),
             format_func=lambda value: f"{value} days",
         )
+    expected_scope = _executive_snapshot_scope(company, environment, int(days))
+    board, board_payload = _current_observability_board(company, environment, int(days))
+    if not isinstance(board, pd.DataFrame) or board.empty:
+        if st.session_state.get("_executive_landing_observability_scope") != expected_scope:
+            _load_executive_observability(
+                company,
+                environment,
+                int(days),
+                credit_price=credit_price,
+            )
+            st.session_state["_executive_landing_observability_scope"] = expected_scope
+            board, board_payload = _current_observability_board(company, environment, int(days))
+
     snapshot = st.session_state.get("executive_landing_snapshot")
     if isinstance(snapshot, dict) and not _snapshot_matches_scope(snapshot, company, environment, int(days)):
         defer_source_note("Loaded Executive Landing snapshot is for another scope. Reload the snapshot for the selected company, environment, and window.")
         st.session_state.pop(PLATFORM_SUMMARY_STATE_KEY, None)
         snapshot = None
-    summary = None
+    summary = _summary_from_observability(board, credit_price=credit_price)
     source_health = pd.DataFrame()
     if isinstance(snapshot, dict):
         source_health = _source_health_rows(snapshot)
@@ -1108,52 +2054,22 @@ def render() -> None:
         )
         summary = _with_platform_operating_score(summary, source_health)
         _persist_platform_summary(summary)
-    load = _render_executive_action_brief(summary, int(days))
-    _render_executive_operating_snapshot(summary, credit_price=credit_price, company=company, days=int(days))
+    elif summary:
+        _persist_platform_summary(summary)
+
+    _render_executive_observability_board(
+        board,
+        board_payload,
+        company=company,
+        environment=environment,
+        days=int(days),
+        credit_price=credit_price,
+    )
+    load = _render_executive_action_brief(summary, int(days), show_strip=False)
 
     if load:
-        session = get_session_for_action(
-            "load Executive Landing snapshot",
-            surface="Executive Landing",
-            offline_note="Executive Landing shell remains available without Snowflake.",
-        )
-        if session is None:
-            return
-        st.session_state.pop(PLATFORM_SUMMARY_STATE_KEY, None)
-        snapshot = {"errors": []}
-        try:
-            snapshot["cost"] = run_query(
-                build_mart_cost_cockpit_sql(company, int(days)),
-                ttl_key=f"executive_cost_{company}_{days}",
-                tier="historical",
-                section="Executive Landing",
-            )
-        except Exception as exc:
-            snapshot["cost"] = pd.DataFrame()
-            snapshot["errors"].append(f"Cost summary unavailable: {format_snowflake_error(exc)}")
-        try:
-            snapshot["alerts"] = _load_alerts(session, company, environment, int(days))
-        except Exception as exc:
-            snapshot["alerts"] = pd.DataFrame()
-            snapshot["errors"].append(f"Alert evidence unavailable: {format_snowflake_error(exc)}")
-        try:
-            snapshot["queue"] = load_action_queue(session)
-        except Exception as exc:
-            snapshot["queue"] = pd.DataFrame()
-            snapshot["errors"].append(f"Action queue unavailable: {format_snowflake_error(exc)}")
-        try:
-            snapshot["migration"] = run_query(
-                build_schema_migration_status_sql(),
-                ttl_key="executive_migration_status",
-                tier="recent",
-                section="Executive Landing",
-            )
-        except Exception as exc:
-            snapshot["migration"] = pd.DataFrame()
-            snapshot["errors"].append(f"Migration ledger unavailable: {format_snowflake_error(exc)}")
-        snapshot["meta"] = {"company": company, "environment": environment, "days": int(days)}
-        st.session_state["executive_landing_snapshot"] = snapshot
-        st.rerun()
+        if _load_executive_snapshot(company, environment, int(days)):
+            st.rerun()
 
     snapshot = st.session_state.get("executive_landing_snapshot")
     if not isinstance(snapshot, dict) or not _snapshot_matches_scope(snapshot, company, environment, int(days)):
@@ -1186,6 +2102,7 @@ def render() -> None:
         )
 
     _render_platform_operating_score(summary)
+    _render_command_intelligence_maturity()
 
     _render_powerpoint_slide_pack(
         summary,

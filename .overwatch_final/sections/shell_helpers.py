@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 
 import streamlit as st
 
@@ -39,6 +40,81 @@ _SNAPSHOT_VALUE_STYLE = (
     "margin-top:0.26rem;"
     "overflow-wrap:anywhere;"
 )
+_STATUS_STRIP_STYLE = (
+    "display:flex;"
+    "align-items:flex-start;"
+    "justify-content:space-between;"
+    "gap:0.75rem;"
+    "border:1px solid var(--border-subtle, rgba(41,181,232,0.18));"
+    "border-radius:8px;"
+    "background:rgba(var(--accent-rgb, 41,181,232),0.055);"
+    "padding:0.68rem 0.78rem;"
+    "margin:0.2rem 0 0.7rem;"
+)
+_STATUS_COPY_STYLE = (
+    "min-width:0;"
+)
+_STATUS_BADGE_STYLE = (
+    "display:inline-flex;"
+    "align-items:center;"
+    "white-space:nowrap;"
+    "border:1px solid var(--border-subtle, rgba(41,181,232,0.22));"
+    "border-radius:999px;"
+    "padding:0.22rem 0.5rem;"
+    "color:var(--text-primary, #eef8fb);"
+    "font-size:0.68rem;"
+    "font-weight:850;"
+    "text-transform:uppercase;"
+)
+_STATUS_HEADLINE_STYLE = (
+    "color:var(--text-primary, #eef8fb);"
+    "font-size:0.96rem;"
+    "font-weight:850;"
+    "line-height:1.28;"
+    "margin:0 0 0.18rem;"
+)
+_STATUS_DETAIL_STYLE = (
+    "color:var(--text-muted, #a8bdc8);"
+    "font-size:0.82rem;"
+    "line-height:1.42;"
+    "margin:0;"
+)
+_FRESHNESS_STRIP_STYLE = (
+    "display:flex;"
+    "align-items:flex-start;"
+    "justify-content:space-between;"
+    "gap:0.7rem;"
+    "border-top:1px solid var(--border-subtle, rgba(41,181,232,0.18));"
+    "border-bottom:1px solid var(--border-subtle, rgba(41,181,232,0.12));"
+    "padding:0.48rem 0.02rem;"
+    "margin:0.25rem 0 0.65rem;"
+)
+_FRESHNESS_LABEL_STYLE = (
+    "display:block;"
+    "color:var(--text-muted, #7b9cab);"
+    "font-size:0.62rem;"
+    "font-weight:850;"
+    "letter-spacing:0.06em;"
+    "text-transform:uppercase;"
+)
+_FRESHNESS_DETAIL_STYLE = (
+    "display:block;"
+    "color:var(--text-secondary, #b9d7e2);"
+    "font-size:0.78rem;"
+    "line-height:1.34;"
+    "margin-top:0.12rem;"
+)
+
+FRESHNESS_TARGET_MINUTES = {
+    "live": 5,
+    "pressure": 30,
+    "cost": 60,
+    "security": 60,
+    "change": 60,
+    "service": 120,
+    "storage": 360,
+    "historical": 360,
+}
 
 
 def evidence_loaded(state, keys: tuple[str, ...]) -> bool:
@@ -51,6 +127,110 @@ def evidence_label(state, keys: tuple[str, ...]) -> str:
 
 def action_state_label(state, keys: tuple[str, ...]) -> str:
     return "Loaded" if evidence_loaded(state, keys) else "Ready"
+
+
+def full_workspace_requested(state, workspace_key: str, brief_key: str) -> bool:
+    """Default section navigation to the real workspace unless brief mode is explicit."""
+    if state.get(brief_key):
+        return False
+    if state.get(workspace_key):
+        return True
+    state[workspace_key] = True
+    state[brief_key] = False
+    return True
+
+
+def consume_section_autoload_request(section: str) -> bool:
+    """Return True once when navigation asks a section to hydrate its fast landing data."""
+    requested = str(st.session_state.get("_overwatch_pending_autoload_section") or "").strip()
+    if requested != str(section or "").strip():
+        return False
+    st.session_state.pop("_overwatch_pending_autoload_section", None)
+    st.session_state.pop("_overwatch_pending_autoload_started_at", None)
+    return True
+
+
+def loaded_at_now() -> str:
+    """Timestamp section evidence when a user explicitly loads or refreshes it."""
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def with_loaded_at(meta: Mapping | None, *, source: str = "") -> dict:
+    """Return a mutable metadata copy with a loaded-at timestamp."""
+    enriched = dict(meta or {})
+    enriched["loaded_at"] = loaded_at_now()
+    if source:
+        enriched["source"] = source
+    return enriched
+
+
+def _parse_loaded_at(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def _format_age(minutes: float) -> str:
+    if minutes < 1:
+        return "just now"
+    if minutes < 90:
+        return f"{int(round(minutes))} min old"
+    hours = minutes / 60.0
+    if hours < 48:
+        return f"{hours:.1f} hr old"
+    return f"{hours / 24.0:.1f} days old"
+
+
+def freshness_state(meta: Mapping | None, *, target_minutes: int = 60) -> tuple[str, str]:
+    """Summarize evidence freshness without starting a Snowflake query."""
+    if not meta:
+        return "On demand", "No evidence has been loaded for this scope."
+    loaded_at = _parse_loaded_at((meta or {}).get("loaded_at"))
+    source = str((meta or {}).get("source") or "Loaded evidence").strip()
+    if loaded_at is None:
+        return "Loaded", f"{source}; age unavailable. Refresh before acting."
+    age_minutes = max(0.0, (datetime.now() - loaded_at).total_seconds() / 60.0)
+    if age_minutes <= max(1, int(target_minutes or 60)):
+        return "Current", f"{source}; loaded {_format_age(age_minutes)}."
+    return "Stale", f"{source}; loaded {_format_age(age_minutes)}. Refresh before acting."
+
+
+def render_data_freshness(
+    meta: Mapping | None,
+    *,
+    source: str,
+    target_minutes: int = 60,
+    delayed_note: str = "ACCOUNT_USAGE and mart sources can lag; use live tools for in-flight incidents.",
+) -> None:
+    """Render a compact freshness/status note for data-first sections."""
+    has_meta = bool(meta)
+    merged = dict(meta or {})
+    if source and has_meta and "source" not in merged:
+        merged["source"] = source
+    state, detail = freshness_state(merged if has_meta else None, target_minutes=target_minutes)
+    safe_state = html.escape(state)
+    safe_source = html.escape(str(source or merged.get("source") or "Evidence"))
+    safe_detail = html.escape(detail)
+    st.markdown(
+        (
+            f'<div class="ow-data-freshness" style="{_FRESHNESS_STRIP_STYLE}">'
+            "<div>"
+            f'<span style="{_FRESHNESS_LABEL_STYLE}">Data freshness - {safe_source}</span>'
+            f'<span style="{_FRESHNESS_DETAIL_STYLE}">{safe_detail}</span>'
+            "</div>"
+            f'<span class="ow-shell-status-badge" style="{_STATUS_BADGE_STYLE}">{safe_state}</span>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+    if delayed_note:
+        st.caption(str(delayed_note))
 
 
 def evidence_caption(state, keys: tuple[str, ...], unloaded_caption: str) -> str:
@@ -95,6 +275,35 @@ def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
         ),
         unsafe_allow_html=True,
     )
+
+
+def render_shell_status_strip(
+    *,
+    state: object,
+    headline: object,
+    detail: object = "",
+) -> None:
+    """Render the immediate section state before any workflow actions."""
+    safe_state = html.escape(str(state or "Ready"))
+    safe_headline = html.escape(str(headline or "Ready"))
+    safe_detail = html.escape(str(detail or ""))
+    st.markdown(
+        (
+            f'<div class="ow-shell-status-strip" style="{_STATUS_STRIP_STYLE}">'
+            f'<div style="{_STATUS_COPY_STYLE}">'
+            f'<p class="ow-shell-status-headline" style="{_STATUS_HEADLINE_STYLE}">{safe_headline}</p>'
+            f'<p class="ow-shell-status-detail" style="{_STATUS_DETAIL_STYLE}">{safe_detail}</p>'
+            "</div>"
+            f'<span class="ow-shell-status-badge" style="{_STATUS_BADGE_STYLE}">{safe_state}</span>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_shell_kpi_row(metrics: tuple[tuple[str, object], ...]) -> None:
+    """Render the shell KPI row with the existing compact card treatment."""
+    render_shell_snapshot(metrics)
 
 
 def _workflow_key_token(value: object, index: int) -> str:

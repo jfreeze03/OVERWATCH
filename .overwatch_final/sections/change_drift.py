@@ -9,7 +9,14 @@ import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
 from sections.base import lazy_pandas, lazy_util as _lazy_util
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import (
+    consume_section_autoload_request,
+    render_data_freshness,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    with_loaded_at,
+)
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -91,26 +98,22 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
 
 CHANGE_DRIFT_VIEWS = ("Change Brief", "Change Workflows")
 CHANGE_DRIFT_VIEW_DETAILS = {
-    "Change Brief": "Default cockpit: change action brief, operating snapshot, and exception-first launchpad.",
-    "Change Workflows": "Open object/access changes, stored procedure lineage, Terraform, Jira, schema drift, or deployment evidence.",
+    "Change Brief": "Default cockpit: status strip, KPI row, and compact exception-first workflow grid.",
+    "Change Workflows": "Open Snowflake object/access changes, stored procedure lineage, schema drift, data movement, or guarded DBA action evidence.",
 }
 CHANGE_DRIFT_BRIEF_FIRST_VERSION = 2
 
 WORKFLOWS = (
     "Object and access changes",
     "Schema and object drift",
-    "Terraform evidence",
-    "Jira evidence",
-    "Controlled DBA actions",
     "Data movement and replication",
     "Stored procedure lineage",
+    "Controlled DBA actions",
 )
 
 WORKFLOW_DETAILS = {
     "Object and access changes": "Who changed what, access movement, destructive DDL, and policy changes.",
-    "Schema and object drift": "Schema compare, object inventory, unused objects, and Terraform drift signals.",
-    "Terraform evidence": "Source-control, Terraform, and Flyway deploy evidence linked to Snowflake drift and Jira approval.",
-    "Jira evidence": "Jira/ITSM approvals, status, owner, and change-window evidence linked to deployments and Snowflake activity.",
+    "Schema and object drift": "Schema compare, object inventory, unused objects, and Snowflake-native drift signals.",
     "Controlled DBA actions": "Guarded admin actions, generated SQL, and operational controls.",
     "Data movement and replication": "Replication, dynamic tables, Snowpipe, data loading, and freshness risk.",
     "Stored procedure lineage": "Procedure ownership, child SQL, downstream objects, and runtime/cost drift.",
@@ -124,18 +127,6 @@ CHANGE_BRIEF_WORKFLOWS = (
         "WHEN": "Unknown actor, manual DDL, access movement",
     },
     {
-        "WORKFLOW": "Terraform evidence",
-        "BUTTON_LABEL": "Open Terraform",
-        "DBA_MOVE": "Match deploy evidence from Terraform, Flyway, or Git to Snowflake changes.",
-        "WHEN": "IaC deploys, source-control proof, drift review",
-    },
-    {
-        "WORKFLOW": "Jira evidence",
-        "BUTTON_LABEL": "Open Jira",
-        "DBA_MOVE": "Match approved Jira/ITSM tickets to deployment and object-change evidence.",
-        "WHEN": "Approval proof, ticket status, change windows",
-    },
-    {
         "WORKFLOW": "Schema and object drift",
         "BUTTON_LABEL": "Open Schema Drift",
         "DBA_MOVE": "Compare databases and schemas, then review orphaned or unmanaged objects.",
@@ -146,6 +137,12 @@ CHANGE_BRIEF_WORKFLOWS = (
         "BUTTON_LABEL": "Open Data Movement",
         "DBA_MOVE": "Review Snowpipe, dynamic tables, replication, and load freshness signals.",
         "WHEN": "Pipeline freshness, replication, load issues",
+    },
+    {
+        "WORKFLOW": "Stored procedure lineage",
+        "BUTTON_LABEL": "Open Procedure Lineage",
+        "DBA_MOVE": "Trace stored procedure ownership, child SQL, runtime drift, and downstream impact.",
+        "WHEN": "Procedure change, runtime drift, ownership review",
     },
     {
         "WORKFLOW": "Controlled DBA actions",
@@ -165,11 +162,6 @@ WORKFLOW_MODULES = {
 
 CHANGE_CONTROL_EVIDENCE_TABLE = "OVERWATCH_CHANGE_CONTROL_EVIDENCE"
 CHANGE_CONTROL_OPERABILITY_FACT_TABLE = "FACT_CHANGE_CONTROL_OPERABILITY_DAILY"
-CHANGE_SOURCE_CONTROL_TABLE = "OVERWATCH_SOURCE_CONTROL_CHANGE"
-CHANGE_ITSM_TICKET_TABLE = "OVERWATCH_ITSM_TICKET"
-CHANGE_FEED_CSV_FILE_FORMAT = "OVERWATCH_CHANGE_EVIDENCE_CSV_FORMAT"
-CHANGE_SOURCE_CONTROL_STAGE = "OVERWATCH_SOURCE_CONTROL_CHANGE_STAGE"
-CHANGE_ITSM_TICKET_STAGE = "OVERWATCH_ITSM_TICKET_STAGE"
 CHANGE_SCOPE_FILTER_KEYS = (
     "global_warehouse",
     "global_user",
@@ -179,7 +171,7 @@ CHANGE_SCOPE_FILTER_KEYS = (
     "global_end_date",
 )
 CHANGE_TICKET_PATTERN = re.compile(
-    r"\b(?:CHG|CHANGE|INC|REQ|RFC|JIRA)[-_]?\d+\b|\b[A-Z][A-Z0-9]+-\d+\b",
+    r"\b(?:CHG|CHANGE|INC|REQ|RFC|OWNER_APPROVAL)[-_]?\d+\b|\b[A-Z][A-Z0-9]+-\d+\b",
     re.IGNORECASE,
 )
 
@@ -190,333 +182,6 @@ def change_control_evidence_fqn(
     table: str = CHANGE_CONTROL_EVIDENCE_TABLE,
 ) -> str:
     return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
-
-
-def change_source_control_fqn(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHANGE_SOURCE_CONTROL_TABLE,
-) -> str:
-    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
-
-
-def change_itsm_ticket_fqn(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHANGE_ITSM_TICKET_TABLE,
-) -> str:
-    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(table)}"
-
-
-def change_feed_csv_file_format_fqn(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    file_format: str = CHANGE_FEED_CSV_FILE_FORMAT,
-) -> str:
-    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(file_format)}"
-
-
-def change_source_control_stage_fqn(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    stage: str = CHANGE_SOURCE_CONTROL_STAGE,
-) -> str:
-    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(stage)}"
-
-
-def change_itsm_ticket_stage_fqn(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    stage: str = CHANGE_ITSM_TICKET_STAGE,
-) -> str:
-    return f"{safe_identifier(db)}.{safe_identifier(schema)}.{safe_identifier(stage)}"
-
-
-def _change_integration_object_inventory_sql(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-) -> str:
-    names = ", ".join(
-        sql_literal(name, 200)
-        for name in (
-            CHANGE_SOURCE_CONTROL_TABLE,
-            CHANGE_ITSM_TICKET_TABLE,
-            CHANGE_CONTROL_EVIDENCE_TABLE,
-        )
-    )
-    return f"""
-SELECT UPPER(TABLE_NAME) AS TABLE_NAME
-FROM {safe_identifier(db)}.INFORMATION_SCHEMA.TABLES
-WHERE UPPER(TABLE_SCHEMA) = UPPER({sql_literal(schema, 200)})
-  AND UPPER(TABLE_NAME) IN ({names})
-""".strip()
-
-
-def _available_change_integration_tables(inventory: pd.DataFrame) -> set[str]:
-    if not isinstance(inventory, pd.DataFrame) or inventory.empty or "TABLE_NAME" not in inventory.columns:
-        return set()
-    return {str(name or "").upper() for name in inventory["TABLE_NAME"].tolist()}
-
-
-def _split_change_evidence_tables_ready(available_tables: set[str]) -> bool:
-    required = {CHANGE_SOURCE_CONTROL_TABLE, CHANGE_ITSM_TICKET_TABLE}
-    return required.issubset({str(name or "").upper() for name in available_tables})
-
-
-def build_change_source_control_ddl(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHANGE_SOURCE_CONTROL_TABLE,
-) -> str:
-    fqn = change_source_control_fqn(db=db, schema=schema, table=table)
-    return f"""CREATE TABLE IF NOT EXISTS {fqn} (
-    SNAPSHOT_TS          TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    COMPANY              VARCHAR(100),
-    ENVIRONMENT          VARCHAR(100),
-    SOURCE_SYSTEM        VARCHAR(80),
-    REPOSITORY           VARCHAR(500),
-    BRANCH_NAME          VARCHAR(500),
-    COMMIT_SHA           VARCHAR(120),
-    PR_ID                VARCHAR(120),
-    PR_URL               VARCHAR(1000),
-    CHANGE_TICKET_ID     VARCHAR(200),
-    OBJECT_DATABASE      VARCHAR(300),
-    OBJECT_SCHEMA        VARCHAR(300),
-    OBJECT_NAME          VARCHAR(500),
-    OBJECT_TYPE          VARCHAR(120),
-    OBJECT_FQN           VARCHAR(1000),
-    TERRAFORM_ADDRESS    VARCHAR(1000),
-    PLANNED_ACTION       VARCHAR(80),
-    APPLY_STATUS         VARCHAR(120),
-    DEPLOYED_BY          VARCHAR(300),
-    APPLY_TS             TIMESTAMP_NTZ,
-    EVIDENCE_URL         VARCHAR(1000),
-    NOTES                VARCHAR(4000)
-);"""
-
-
-def build_change_itsm_ticket_ddl(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHANGE_ITSM_TICKET_TABLE,
-) -> str:
-    fqn = change_itsm_ticket_fqn(db=db, schema=schema, table=table)
-    return f"""CREATE TABLE IF NOT EXISTS {fqn} (
-    SNAPSHOT_TS           TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    COMPANY               VARCHAR(100),
-    ENVIRONMENT           VARCHAR(100),
-    TICKET_ID             VARCHAR(200),
-    TICKET_URL            VARCHAR(1000),
-    SUMMARY               VARCHAR(2000),
-    STATUS                VARCHAR(120),
-    ASSIGNEE              VARCHAR(300),
-    REQUESTER             VARCHAR(300),
-    APPROVER              VARCHAR(300),
-    APPROVAL_STATUS       VARCHAR(120),
-    RISK                  VARCHAR(120),
-    CHANGE_WINDOW_START   TIMESTAMP_NTZ,
-    CHANGE_WINDOW_END     TIMESTAMP_NTZ,
-    LINKED_REPOSITORY     VARCHAR(500),
-    LINKED_COMMIT_SHA     VARCHAR(120),
-    LINKED_PR_URL         VARCHAR(1000),
-    UPDATED_AT            TIMESTAMP_NTZ,
-    NOTES                 VARCHAR(4000)
-);"""
-
-
-def build_change_source_control_migration_sql(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHANGE_SOURCE_CONTROL_TABLE,
-) -> list[str]:
-    fqn = change_source_control_fqn(db=db, schema=schema, table=table)
-    return [
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS SOURCE_SYSTEM VARCHAR(80)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS OBJECT_FQN VARCHAR(1000)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS TERRAFORM_ADDRESS VARCHAR(1000)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS EVIDENCE_URL VARCHAR(1000)",
-    ]
-
-
-def build_change_itsm_ticket_migration_sql(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHANGE_ITSM_TICKET_TABLE,
-) -> list[str]:
-    fqn = change_itsm_ticket_fqn(db=db, schema=schema, table=table)
-    return [
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS ENVIRONMENT VARCHAR(100)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS APPROVAL_STATUS VARCHAR(120)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LINKED_COMMIT_SHA VARCHAR(120)",
-        f"ALTER TABLE {fqn} ADD COLUMN IF NOT EXISTS LINKED_PR_URL VARCHAR(1000)",
-    ]
-
-
-def build_change_evidence_feed_stage_sql(db: str = ALERT_DB, schema: str = ALERT_SCHEMA) -> str:
-    file_format = change_feed_csv_file_format_fqn(db=db, schema=schema)
-    source_stage = change_source_control_stage_fqn(db=db, schema=schema)
-    ticket_stage = change_itsm_ticket_stage_fqn(db=db, schema=schema)
-    return f"""
-CREATE FILE FORMAT IF NOT EXISTS {file_format}
-  TYPE = CSV
-  FIELD_OPTIONALLY_ENCLOSED_BY = '"'
-  SKIP_HEADER = 1
-  NULL_IF = ('', 'NULL', 'null')
-  EMPTY_FIELD_AS_NULL = TRUE
-  TIMESTAMP_FORMAT = 'AUTO';
-
-CREATE STAGE IF NOT EXISTS {source_stage}
-  FILE_FORMAT = {file_format};
-
-CREATE STAGE IF NOT EXISTS {ticket_stage}
-  FILE_FORMAT = {file_format};
-""".strip()
-
-
-def build_change_source_control_feed_load_sql(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHANGE_SOURCE_CONTROL_TABLE,
-    stage: str = CHANGE_SOURCE_CONTROL_STAGE,
-) -> str:
-    fqn = change_source_control_fqn(db=db, schema=schema, table=table)
-    stage_fqn = change_source_control_stage_fqn(db=db, schema=schema, stage=stage)
-    return f"""
--- CSV column order:
--- SNAPSHOT_TS, COMPANY, ENVIRONMENT, SOURCE_SYSTEM, REPOSITORY, BRANCH_NAME,
--- COMMIT_SHA, PR_ID, PR_URL, CHANGE_TICKET_ID, OBJECT_DATABASE, OBJECT_SCHEMA,
--- OBJECT_NAME, OBJECT_TYPE, OBJECT_FQN, TERRAFORM_ADDRESS, PLANNED_ACTION,
--- APPLY_STATUS, DEPLOYED_BY, APPLY_TS, EVIDENCE_URL, NOTES
-COPY INTO {fqn} (
-    SNAPSHOT_TS,
-    COMPANY,
-    ENVIRONMENT,
-    SOURCE_SYSTEM,
-    REPOSITORY,
-    BRANCH_NAME,
-    COMMIT_SHA,
-    PR_ID,
-    PR_URL,
-    CHANGE_TICKET_ID,
-    OBJECT_DATABASE,
-    OBJECT_SCHEMA,
-    OBJECT_NAME,
-    OBJECT_TYPE,
-    OBJECT_FQN,
-    TERRAFORM_ADDRESS,
-    PLANNED_ACTION,
-    APPLY_STATUS,
-    DEPLOYED_BY,
-    APPLY_TS,
-    EVIDENCE_URL,
-    NOTES
-)
-FROM (
-    SELECT
-        COALESCE(TRY_TO_TIMESTAMP_NTZ($1), CURRENT_TIMESTAMP()) AS SNAPSHOT_TS,
-        $2::VARCHAR AS COMPANY,
-        $3::VARCHAR AS ENVIRONMENT,
-        COALESCE($4::VARCHAR, 'Terraform/Flyway/Git') AS SOURCE_SYSTEM,
-        $5::VARCHAR AS REPOSITORY,
-        $6::VARCHAR AS BRANCH_NAME,
-        $7::VARCHAR AS COMMIT_SHA,
-        $8::VARCHAR AS PR_ID,
-        $9::VARCHAR AS PR_URL,
-        $10::VARCHAR AS CHANGE_TICKET_ID,
-        $11::VARCHAR AS OBJECT_DATABASE,
-        $12::VARCHAR AS OBJECT_SCHEMA,
-        $13::VARCHAR AS OBJECT_NAME,
-        $14::VARCHAR AS OBJECT_TYPE,
-        $15::VARCHAR AS OBJECT_FQN,
-        $16::VARCHAR AS TERRAFORM_ADDRESS,
-        $17::VARCHAR AS PLANNED_ACTION,
-        $18::VARCHAR AS APPLY_STATUS,
-        $19::VARCHAR AS DEPLOYED_BY,
-        TRY_TO_TIMESTAMP_NTZ($20) AS APPLY_TS,
-        $21::VARCHAR AS EVIDENCE_URL,
-        $22::VARCHAR AS NOTES
-    FROM @{stage_fqn}
-)
-FILE_FORMAT = (
-  TYPE = CSV
-  FIELD_OPTIONALLY_ENCLOSED_BY = '"'
-  SKIP_HEADER = 1
-  NULL_IF = ('', 'NULL', 'null')
-  EMPTY_FIELD_AS_NULL = TRUE
-  TIMESTAMP_FORMAT = 'AUTO'
-)
-ON_ERROR = 'ABORT_STATEMENT';
-""".strip()
-
-
-def build_change_itsm_ticket_feed_load_sql(
-    db: str = ALERT_DB,
-    schema: str = ALERT_SCHEMA,
-    table: str = CHANGE_ITSM_TICKET_TABLE,
-    stage: str = CHANGE_ITSM_TICKET_STAGE,
-) -> str:
-    fqn = change_itsm_ticket_fqn(db=db, schema=schema, table=table)
-    stage_fqn = change_itsm_ticket_stage_fqn(db=db, schema=schema, stage=stage)
-    return f"""
--- CSV column order:
--- SNAPSHOT_TS, COMPANY, ENVIRONMENT, TICKET_ID, TICKET_URL, SUMMARY, STATUS,
--- ASSIGNEE, REQUESTER, APPROVER, APPROVAL_STATUS, RISK, CHANGE_WINDOW_START,
--- CHANGE_WINDOW_END, LINKED_REPOSITORY, LINKED_COMMIT_SHA, LINKED_PR_URL,
--- UPDATED_AT, NOTES
-COPY INTO {fqn} (
-    SNAPSHOT_TS,
-    COMPANY,
-    ENVIRONMENT,
-    TICKET_ID,
-    TICKET_URL,
-    SUMMARY,
-    STATUS,
-    ASSIGNEE,
-    REQUESTER,
-    APPROVER,
-    APPROVAL_STATUS,
-    RISK,
-    CHANGE_WINDOW_START,
-    CHANGE_WINDOW_END,
-    LINKED_REPOSITORY,
-    LINKED_COMMIT_SHA,
-    LINKED_PR_URL,
-    UPDATED_AT,
-    NOTES
-)
-FROM (
-    SELECT
-        COALESCE(TRY_TO_TIMESTAMP_NTZ($1), CURRENT_TIMESTAMP()) AS SNAPSHOT_TS,
-        $2::VARCHAR AS COMPANY,
-        $3::VARCHAR AS ENVIRONMENT,
-        $4::VARCHAR AS TICKET_ID,
-        $5::VARCHAR AS TICKET_URL,
-        $6::VARCHAR AS SUMMARY,
-        $7::VARCHAR AS STATUS,
-        $8::VARCHAR AS ASSIGNEE,
-        $9::VARCHAR AS REQUESTER,
-        $10::VARCHAR AS APPROVER,
-        $11::VARCHAR AS APPROVAL_STATUS,
-        $12::VARCHAR AS RISK,
-        TRY_TO_TIMESTAMP_NTZ($13) AS CHANGE_WINDOW_START,
-        TRY_TO_TIMESTAMP_NTZ($14) AS CHANGE_WINDOW_END,
-        $15::VARCHAR AS LINKED_REPOSITORY,
-        $16::VARCHAR AS LINKED_COMMIT_SHA,
-        $17::VARCHAR AS LINKED_PR_URL,
-        TRY_TO_TIMESTAMP_NTZ($18) AS UPDATED_AT,
-        $19::VARCHAR AS NOTES
-    FROM @{stage_fqn}
-)
-FILE_FORMAT = (
-  TYPE = CSV
-  FIELD_OPTIONALLY_ENCLOSED_BY = '"'
-  SKIP_HEADER = 1
-  NULL_IF = ('', 'NULL', 'null')
-  EMPTY_FIELD_AS_NULL = TRUE
-  TIMESTAMP_FORMAT = 'AUTO'
-)
-ON_ERROR = 'ABORT_STATEMENT';
-""".strip()
 
 
 def build_change_control_evidence_ddl(
@@ -825,10 +490,10 @@ def _change_has_source_state(state: dict) -> bool:
         "change_drift_evidence_trend_error",
         "change_action_closure",
         "change_action_closure_error",
-        "change_integration_terraform_status",
-        "change_integration_terraform_error",
-        "change_integration_jira_status",
-        "change_integration_jira_error",
+        "change_integration_deployment_status",
+        "change_integration_deployment_error",
+        "change_integration_owner_approval_status",
+        "change_integration_owner_approval_error",
     ):
         value = state.get(key)
         if isinstance(value, str):
@@ -898,26 +563,6 @@ def _change_source_health_rows(
             "source": "Action queue closure evidence",
             "confidence": "Workflow evidence",
             "error_key": "change_action_closure_error",
-        },
-        {
-            "surface": "Terraform evidence",
-            "frame_key": "change_integration_terraform_status",
-            "meta_key": "change_integration_terraform_meta",
-            "days_key": "change_integration_terraform_days",
-            "default_days": 14,
-            "source": f"Workflow evidence: {CHANGE_SOURCE_CONTROL_TABLE}",
-            "confidence": "Workflow evidence",
-            "error_key": "change_integration_terraform_error",
-        },
-        {
-            "surface": "Jira evidence",
-            "frame_key": "change_integration_jira_status",
-            "meta_key": "change_integration_jira_meta",
-            "days_key": "change_integration_jira_days",
-            "default_days": 14,
-            "source": f"Workflow evidence: {CHANGE_ITSM_TICKET_TABLE}",
-            "confidence": "Workflow evidence",
-            "error_key": "change_integration_jira_error",
         },
     ]
     rows = []
@@ -1035,14 +680,14 @@ def _change_owner_context(row: pd.Series | dict) -> dict:
 def _change_iac_state(row: pd.Series | dict) -> str:
     query_tag = str(row.get("QUERY_TAG") or "").lower()
     finding = str(row.get("FINDING_TYPE") or "").lower()
-    if any(token in query_tag for token in ("terraform", "iac", "liquibase", "flyway", "dbt", "deploy", "release")):
-        return "Codified / deployment-tagged"
+    if any(token in query_tag for token in ("approved", "rollback", "release")):
+        return "Approval proof tagged"
     if "drift" in finding:
-        return "Reconcile IaC"
+        return "Reconcile approval proof"
     severity = str(row.get("SEVERITY") or "").upper()
     if severity in {"CRITICAL", "HIGH"}:
-        return "Manual change - IaC proof required"
-    return "Review source-control state"
+        return "Manual change - rollback proof required"
+    return "Review approval evidence state"
 
 
 def _change_execution_audit_state(row: pd.Series | dict) -> str:
@@ -1087,7 +732,7 @@ def _change_control_readiness_for_row(row: pd.Series | dict) -> dict:
     if ticket_state.lower().startswith("missing"):
         blockers.append("change ticket evidence")
     if "required" in iac_state.lower() or "reconcile" in iac_state.lower():
-        blockers.append("source-control/IaC evidence")
+        blockers.append("approval/rollback evidence")
     if execution_state.lower().startswith("missing"):
         blockers.append("query_id proof")
 
@@ -1102,8 +747,8 @@ def _change_control_readiness_for_row(row: pd.Series | dict) -> dict:
 
     if "change ticket evidence" in blockers:
         next_action = "Attach the approved change ticket or mark the row as unauthorized drift before closure."
-    elif "source-control/IaC evidence" in blockers:
-        next_action = "Attach deployment/source-control evidence, codify the drift, or revert through approved deployment."
+    elif "approval/rollback evidence" in blockers:
+        next_action = "Attach approval notes, rollback proof, or revert through the approved change path."
     elif "query_id proof" in blockers:
         next_action = "Capture the Snowflake query_id and timestamp before accepting the change."
     elif readiness == "Route Blocked":
@@ -1156,7 +801,7 @@ def _enrich_change_control_evidence(readiness: pd.DataFrame) -> pd.DataFrame:
     missing_iac = view["IAC_RECONCILIATION_STATE"].fillna("").astype(str).str.contains("required|reconcile", case=False, na=False)
     missing_query = view["EXECUTION_AUDIT_STATE"].fillna("").astype(str).str.contains("missing", case=False, na=False)
     view.loc[missing_ticket, "CONTROL_GAP"] = "Missing change ticket evidence"
-    view.loc[missing_iac, "CONTROL_GAP"] = "Missing IaC reconciliation evidence"
+    view.loc[missing_iac, "CONTROL_GAP"] = "Missing approval or rollback evidence"
     view.loc[missing_query, "CONTROL_GAP"] = "Missing query_id proof"
     readiness_rows = view.apply(_change_control_readiness_for_row, axis=1)
     for column in [
@@ -1206,7 +851,7 @@ def _change_control_readiness_summary(readiness: pd.DataFrame) -> pd.DataFrame:
             readiness_label = "Route Blocked"
             rank = 0
         elif closure_blocked:
-            next_action = "Attach missing ticket, query, or source-control evidence before closure."
+            next_action = "Attach missing ticket, query, approval, or rollback evidence before closure."
             readiness_label = "Closure Blocked"
             rank = 1
         elif ready:
@@ -1345,7 +990,7 @@ def _change_operator_next_moves(
     if evidence_gaps:
         state = "Evidence Blocked"
         rank = 1
-        next_action = "Attach ticket, source-control/IaC, query_id, and blast-radius proof before closure."
+        next_action = "Attach ticket, approval note, rollback proof, query_id, and blast-radius proof before closure."
         count = evidence_gaps
     elif exception_count:
         state = "Review Ready"
@@ -1355,13 +1000,13 @@ def _change_operator_next_moves(
     else:
         state = "Clear"
         rank = 8
-        next_action = "No ticket, IaC, or query proof gap crossed the current thresholds."
+        next_action = "No ticket, rollback, approval, or query proof gap crossed the current thresholds."
         count = 0
     rows.append({
         "GATE": "Change proof",
         "STATE": state,
         "COUNT": count,
-        "PROOF_REQUIRED": "change ticket, query_id, source-control/IaC note, blast-radius evidence",
+        "PROOF_REQUIRED": "change ticket, query_id, approval note, rollback proof, blast-radius evidence",
         "NEXT_ACTION": next_action,
         "GATE_RANK": rank,
     })
@@ -1418,7 +1063,7 @@ def _change_operator_next_moves(
     if recovery_risk or recovery_sensitive:
         state = "Recovery Proof Required"
         rank = 3
-        next_action = "Attach restore, rollback, downstream dependency, and owner approval evidence before accepting this change."
+        next_action = "Attach restore, rollback, downstream dependency, and owner approval proof before accepting this change."
         count = max(recovery_risk, recovery_sensitive)
     else:
         state = "Clear"
@@ -1515,8 +1160,8 @@ def _change_action_for(finding_type: str) -> tuple[str, str, str]:
     if "drift" in value:
         return (
             "Drift",
-            "Compare the query with Terraform/IaC state; either codify the change or revert it through approved deployment.",
-            "-- Proof: QUERY_HISTORY non-IaC DDL/DCL query text and query tag.",
+            "Compare the query with approved change evidence; either retain owner approval and rollback proof or revert through the approved change path.",
+            "-- Proof: QUERY_HISTORY DDL/DCL query text, query tag, owner approval, and rollback proof.",
         )
     return (
         "Object",
@@ -1525,7 +1170,7 @@ def _change_action_for(finding_type: str) -> tuple[str, str, str]:
     )
 
 
-def _change_approval_for(finding_type: str) -> tuple[str, str, str]:
+def _owner_approval_for(finding_type: str) -> tuple[str, str, str]:
     value = str(finding_type or "").lower()
     if "drop" in value or "destructive" in value:
         return (
@@ -1549,7 +1194,7 @@ def _change_approval_for(finding_type: str) -> tuple[str, str, str]:
         return (
             "Requested",
             "DBA Lead / Platform Owner",
-            "Manual drift must be tied to a change ticket, codified in IaC, or reverted through deployment.",
+            "Manual drift must be tied to owner approval and rollback proof, or reverted through the approved change path.",
         )
     return (
         "Requested",
@@ -1668,7 +1313,7 @@ def _build_change_control_readiness(exceptions: pd.DataFrame) -> pd.DataFrame:
     if exceptions is None or exceptions.empty:
         return pd.DataFrame()
     view = _change_priority_view(exceptions).copy()
-    approval_rows = view.get("FINDING_TYPE", pd.Series(dtype=str)).apply(_change_approval_for)
+    approval_rows = view.get("FINDING_TYPE", pd.Series(dtype=str)).apply(_owner_approval_for)
     view["APPROVAL_REQUIRED"] = "Yes"
     view["OWNER_APPROVAL_STATUS"] = approval_rows.apply(lambda item: item[0])
     view["APPROVER"] = approval_rows.apply(lambda item: item[1])
@@ -1686,7 +1331,7 @@ def _build_change_control_readiness(exceptions: pd.DataFrame) -> pd.DataFrame:
     view["CONTROL_GAP"] = "Needs approver, change ticket, and blast-radius note"
     view.loc[query_missing, "CONTROL_GAP"] = "Missing query_id proof"
     view["CHANGE_CONTROL_STATE"] = "Validate Approval"
-    view.loc[finding.str.contains("drift", na=False), "CHANGE_CONTROL_STATE"] = "Reconcile IaC"
+    view.loc[finding.str.contains("drift", na=False), "CHANGE_CONTROL_STATE"] = "Reconcile approval proof"
     view.loc[high_risk, "CHANGE_CONTROL_STATE"] = "Approval Required"
     view.loc[query_missing, "CHANGE_CONTROL_STATE"] = "Proof Missing"
     return _enrich_change_control_evidence(view)
@@ -1699,7 +1344,7 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
     severity = str(row.get("SEVERITY") or "Medium")
     query_id = str(row.get("QUERY_ID") or "").strip()
     entity_type, action, generated_sql = _change_action_for(finding_type)
-    approval_status, approver, approval_note = _change_approval_for(finding_type)
+    approval_status, approver, approval_note = _owner_approval_for(finding_type)
     owner_context = _change_owner_context(row)
     ticket_id = _change_ticket_id(row)
     ticket_state = "ticket detected" if ticket_id else "missing ticket evidence"
@@ -1714,7 +1359,7 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
         generated_sql,
         f"-- Required proof: query_id={query_id or 'missing'}, approver, change ticket, and dependency/blast-radius note.",
         f"-- Ticket evidence: {ticket_id or 'missing'} ({ticket_state}).",
-        f"-- IaC/source-control state: {iac_state}.",
+        f"-- approval/rollback state: {iac_state}.",
         f"-- Execution audit state: {audit_state}.",
         "-- Read-only blast-radius check to run before approval:",
         blast_radius_query,
@@ -1745,12 +1390,12 @@ def _change_action_payload(row: pd.Series | dict, company: str, environment: str
         "Owner Approval Status": approval_status,
         "Owner Approval Note": (
             f"{approval_note} Ticket={ticket_id or 'missing'}; "
-            f"IaC={iac_state}; escalation={owner_context['escalation']}."
+            f"approval_rollback={iac_state}; escalation={owner_context['escalation']}."
         ),
         "Recovery Evidence": (
             f"Run blast-radius check before closure:\n{blast_radius_query}\n\n"
             f"Ticket evidence: {ticket_id or 'missing'}\n"
-            f"IaC/source-control evidence: {iac_state}\n"
+            f"approval/rollback evidence: {iac_state}\n"
             f"Execution audit: {audit_state}"
         ),
         "Recovery Audit State": audit_state,
@@ -1844,7 +1489,7 @@ def _change_intervention_matrix(
         elif missing_query or missing_ticket or iac_gap or closure_bad:
             state = "Evidence Block"
             rank = 1
-            decision = "Attach query_id, ticket/source-control evidence, and verification proof before accepting the change."
+            decision = "Attach query_id, ticket, approval, rollback, and verification proof before accepting the change."
         elif severity.upper() in {"CRITICAL", "HIGH"}:
             state = "Verify Now"
             rank = 2
@@ -1868,7 +1513,7 @@ def _change_intervention_matrix(
             "IAC_STATE": iac_state or "Missing",
             "CLOSURE_READINESS": closure_state,
             "NEXT_DECISION": decision,
-            "PROOF_REQUIRED": "query_id, change ticket, source-control/IaC note, blast-radius evidence, owner approval",
+            "PROOF_REQUIRED": "query_id, change ticket, release-note/rollback note, blast-radius evidence, owner approval",
             "NEXT_WORKFLOW": str(item.get("NEXT_WORKFLOW") or _change_workflow_for(item)),
             "_RANK": rank,
         })
@@ -1996,8 +1641,8 @@ def _change_action_brief(summary, exceptions, meta: dict, company: str, environm
     if manual_drift:
         return {
             "state": "Drift Watch",
-            "headline": "Compare manual changes against deployment evidence.",
-            "detail": f"{manual_drift:,} manual drift indicator(s) need source-control or ticket reconciliation.",
+            "headline": "Compare manual changes against approved evidence.",
+            "detail": f"{manual_drift:,} manual drift indicator(s) need owner approval, rollback proof, or ticket reconciliation.",
         }
     if score < 95:
         return {
@@ -2013,14 +1658,11 @@ def _change_action_brief(summary, exceptions, meta: dict, company: str, environm
 
 
 def _render_change_action_brief(brief: dict) -> None:
-    with st.container(border=True):
-        label_col, detail_col = st.columns([1.1, 4.6])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(str(brief.get("state") or "Review"))
-        with detail_col:
-            st.markdown(f"**{brief.get('headline') or 'Review change evidence.'}**")
-            st.caption(str(brief.get("detail") or ""))
+    render_shell_status_strip(
+        state=brief.get("state") or "Review",
+        headline=brief.get("headline") or "Review change evidence.",
+        detail=brief.get("detail") or "",
+    )
 
 
 def _change_operating_snapshot(summary, exceptions, meta: dict, company: str, environment: str, days: int) -> dict:
@@ -2053,17 +1695,16 @@ def _change_operating_snapshot(summary, exceptions, meta: dict, company: str, en
 
 
 def _render_change_operating_snapshot(snapshot: dict) -> None:
-    st.markdown("**Operating Snapshot**")
     loaded = bool(snapshot.get("loaded"))
     if not loaded:
-        render_shell_snapshot((
+        render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "14d")),
             ("Evidence", str(snapshot.get("evidence") or "Load brief")),
             ("Risk", str(snapshot.get("risk") or "On demand")),
         ))
         return
-    render_shell_snapshot((
+    render_shell_kpi_row((
         ("Objects", f"{safe_int(snapshot.get('object_changes')):,}"),
         ("Access", f"{safe_int(snapshot.get('access_changes')):,}"),
         ("Policy", f"{safe_int(snapshot.get('policy_owner')):,}"),
@@ -2159,7 +1800,7 @@ def _build_change_drift_markdown(
         f"- Owner changes: {safe_int(summary_row.get('OWNER_CHANGES', 0)):,}",
         f"- Policy/tag changes: {safe_int(summary_row.get('POLICY_CHANGES', 0)):,}",
         f"- Destructive changes: {safe_int(summary_row.get('DESTRUCTIVE_CHANGES', 0)):,}",
-        f"- Manual/non-IaC drift indicators: {safe_int(summary_row.get('MANUAL_DRIFT', 0)):,}",
+        f"- Manual/unapproved drift indicators: {safe_int(summary_row.get('MANUAL_DRIFT', 0)):,}",
         "",
         "## Exceptions",
         *exception_lines,
@@ -2167,11 +1808,11 @@ def _build_change_drift_markdown(
         "## DBA Follow-Up",
         "- Review destructive and policy changes first.",
         "- Validate grants, revokes, and ownership transfers against approved access requests.",
-        "- Compare manual/non-IaC changes with Terraform or deployment records.",
+        "- Compare manual changes with approved change records and rollback proof.",
         "- Save material exceptions to the OVERWATCH Action Queue for owner/status tracking.",
         "",
         "## Source Basis",
-        "Source: QUERY_HISTORY. DDL/DCL detection is text-pattern based, so it is strong for investigation but should be validated against source control and change tickets.",
+        "Source: QUERY_HISTORY. DDL/DCL detection is text-pattern based, so it is strong for investigation but should be validated against approved change records and verification proof.",
     ]
     return "\n".join(lines)
 
@@ -2184,7 +1825,7 @@ def _build_change_drift_sql(session, days: int, company: str) -> tuple[str, str]
     ))
     query_tag_expr = "query_tag" if "QUERY_TAG" in qh_cols else "NULL::VARCHAR"
     manual_drift_predicate = (
-        "AND COALESCE(query_tag, '') NOT ILIKE '%terraform%'"
+        "AND COALESCE(query_tag, '') NOT ILIKE '%deployment%'"
         if "QUERY_TAG" in qh_cols else ""
     )
     scope = _change_scope_clause(
@@ -2322,7 +1963,7 @@ def _build_mart_change_drift_sql(days: int, company: str) -> tuple[str, str]:
         COUNT_IF(change_category = 'OWNER') AS owner_changes,
         COUNT_IF(change_category = 'POLICY') AS policy_changes,
         COUNT_IF(change_category = 'DROP') AS destructive_changes,
-        COUNT_IF(COALESCE(query_tag, '') NOT ILIKE '%terraform%') AS manual_drift,
+        COUNT_IF(COALESCE(query_tag, '') NOT ILIKE '%deployment%') AS manual_drift,
         COUNT(DISTINCT user_name) AS actors,
         COUNT(DISTINCT database_name) AS affected_databases,
         COUNT_IF(database_name IS NULL) AS account_scope_changes
@@ -2361,7 +2002,7 @@ def _build_mart_change_drift_sql(days: int, company: str) -> tuple[str, str]:
     FROM {table}
     WHERE {base_where}
       AND change_category <> 'OTHER'
-      AND COALESCE(query_tag, '') NOT ILIKE '%terraform%'
+      AND COALESCE(query_tag, '') NOT ILIKE '%deployment%'
     ORDER BY
         CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
         start_time DESC
@@ -2497,7 +2138,7 @@ def _change_ticket_sql_expr(query_tag_col: str = "QUERY_TAG", query_text_col: st
     return (
         "UPPER(COALESCE(REGEXP_SUBSTR("
         f"COALESCE({query_tag_col}, '') || ' ' || COALESCE({query_text_col}, ''), "
-        "'(CHG|CHANGE|INC|REQ|RFC|JIRA)[-_]?[0-9]+|[A-Z][A-Z0-9]+-[0-9]+', 1, 1, 'i'"
+        "'(CHG|CHANGE|INC|REQ|RFC|OWNER_APPROVAL)[-_]?[0-9]+|[A-Z][A-Z0-9]+-[0-9]+', 1, 1, 'i'"
         "), ''))"
     )
 
@@ -2520,841 +2161,6 @@ def _change_object_where(days: int, company: str) -> list[str]:
     if object_scope:
         object_where.append(_bare_sql_predicate(object_scope))
     return object_where
-
-
-def _change_legacy_evidence_where(days: int, company: str, environment: str = "ALL") -> list[str]:
-    lookback = max(1, int(days or 14))
-    evidence_where = [f"SNAPSHOT_TS >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())"]
-    if str(company or "").upper() != "ALL":
-        evidence_where.append(f"COMPANY = {sql_literal(company, 100)}")
-    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
-    if env_clause:
-        evidence_where.append(_bare_sql_predicate(env_clause))
-    return evidence_where
-
-
-def _change_feed_scope_predicate(
-    event_expr: str,
-    days: int,
-    company: str,
-    environment: str = "ALL",
-) -> str:
-    lookback = max(1, int(days or 14))
-    parts = [f"{event_expr} >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())"]
-    if str(company or "").upper() != "ALL":
-        parts.append(f"COMPANY = {sql_literal(company, 100)}")
-    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
-    if env_clause:
-        parts.append(_bare_sql_predicate(env_clause))
-    return " AND ".join(parts)
-
-
-def _change_split_feed_health_sql(days: int, company: str, environment: str = "ALL") -> str:
-    source_table = change_source_control_fqn()
-    ticket_table = change_itsm_ticket_fqn()
-    source_event = "COALESCE(APPLY_TS, SNAPSHOT_TS)"
-    ticket_event = "COALESCE(UPDATED_AT, SNAPSHOT_TS)"
-    source_scope = _change_feed_scope_predicate(source_event, days, company, environment)
-    ticket_scope = _change_feed_scope_predicate(ticket_event, days, company, environment)
-    source_name = CHANGE_SOURCE_CONTROL_TABLE.replace("'", "''")
-    ticket_name = CHANGE_ITSM_TICKET_TABLE.replace("'", "''")
-    return f"""
-WITH source_stats AS (
-    SELECT
-        'Terraform/Flyway/Git evidence' AS FEED,
-        '{source_name}' AS TABLE_NAME,
-        COUNT(*) AS "ROWS",
-        COALESCE(COUNT_IF({source_scope}), 0) AS ACTIVE_SCOPE_ROWS,
-        MAX(SNAPSHOT_TS) AS LAST_SNAPSHOT_TS,
-        MAX({source_event}) AS LAST_EVENT_TS,
-        COALESCE(COUNT_IF(CHANGE_TICKET_ID IS NOT NULL AND TRIM(CHANGE_TICKET_ID) <> ''), 0) AS TICKET_KEY_ROWS,
-        COALESCE(COUNT_IF(COMMIT_SHA IS NOT NULL AND TRIM(COMMIT_SHA) <> ''), 0) AS LINK_KEY_ROWS,
-        COALESCE(COUNT_IF(EVIDENCE_URL IS NOT NULL AND TRIM(EVIDENCE_URL) <> ''), 0) AS EVIDENCE_URL_ROWS
-    FROM {source_table}
-),
-ticket_stats AS (
-    SELECT
-        'Jira tickets' AS FEED,
-        '{ticket_name}' AS TABLE_NAME,
-        COUNT(*) AS "ROWS",
-        COALESCE(COUNT_IF({ticket_scope}), 0) AS ACTIVE_SCOPE_ROWS,
-        MAX(SNAPSHOT_TS) AS LAST_SNAPSHOT_TS,
-        MAX({ticket_event}) AS LAST_EVENT_TS,
-        COALESCE(COUNT_IF(TICKET_ID IS NOT NULL AND TRIM(TICKET_ID) <> ''), 0) AS TICKET_KEY_ROWS,
-        COALESCE(COUNT_IF(LINKED_COMMIT_SHA IS NOT NULL AND TRIM(LINKED_COMMIT_SHA) <> ''), 0) AS LINK_KEY_ROWS,
-        COALESCE(COUNT_IF(TICKET_URL IS NOT NULL AND TRIM(TICKET_URL) <> ''), 0) AS EVIDENCE_URL_ROWS
-    FROM {ticket_table}
-),
-feed_stats AS (
-    SELECT * FROM source_stats
-    UNION ALL
-    SELECT * FROM ticket_stats
-)
-SELECT
-    FEED,
-    TABLE_NAME,
-    "ROWS",
-    ACTIVE_SCOPE_ROWS,
-    LAST_SNAPSHOT_TS,
-    LAST_EVENT_TS,
-    TICKET_KEY_ROWS,
-    LINK_KEY_ROWS,
-    EVIDENCE_URL_ROWS,
-    CASE
-        WHEN "ROWS" = 0 THEN 'Ready - Empty'
-        WHEN ACTIVE_SCOPE_ROWS = 0 THEN 'No Active Scope Rows'
-        WHEN LAST_EVENT_TS < DATEADD('day', -{max(1, int(days or 14))}, CURRENT_TIMESTAMP()) THEN 'Stale'
-        ELSE 'Flowing'
-    END AS FEED_STATE,
-    CASE
-        WHEN "ROWS" = 0 THEN 'Start the CI/Jira export feed into this table.'
-        WHEN ACTIVE_SCOPE_ROWS = 0 THEN 'Confirm company/environment mapping and selected lookback window.'
-        WHEN LAST_EVENT_TS < DATEADD('day', -{max(1, int(days or 14))}, CURRENT_TIMESTAMP()) THEN 'Check the upstream export schedule and refresh cadence.'
-        WHEN TICKET_KEY_ROWS = 0 THEN 'Add Jira/change ticket keys to the feed rows.'
-        WHEN LINK_KEY_ROWS = 0 THEN 'Add commit/object link keys so OVERWATCH can join evidence to Snowflake changes.'
-        ELSE 'Feed is queryable for the active scope.'
-    END AS NEXT_ACTION
-FROM feed_stats
-ORDER BY
-    CASE FEED_STATE
-        WHEN 'Ready - Empty' THEN 0
-        WHEN 'Stale' THEN 1
-        WHEN 'No Active Scope Rows' THEN 2
-        ELSE 8
-    END,
-    FEED
-""".strip()
-
-
-def _change_legacy_feed_health_sql(days: int, company: str, environment: str = "ALL") -> str:
-    evidence_table = change_control_evidence_fqn()
-    evidence_scope = " AND ".join(_change_legacy_evidence_where(days, company, environment))
-    return f"""
-SELECT
-    'Legacy change-control evidence' AS FEED,
-    '{CHANGE_CONTROL_EVIDENCE_TABLE}' AS TABLE_NAME,
-    COUNT(*) AS "ROWS",
-    COALESCE(COUNT_IF({evidence_scope}), 0) AS ACTIVE_SCOPE_ROWS,
-    MAX(SNAPSHOT_TS) AS LAST_SNAPSHOT_TS,
-    MAX(SNAPSHOT_TS) AS LAST_EVENT_TS,
-    COALESCE(COUNT_IF(CHANGE_TICKET_ID IS NOT NULL AND TRIM(CHANGE_TICKET_ID) <> ''), 0) AS TICKET_KEY_ROWS,
-    COALESCE(COUNT_IF(IAC_RECONCILIATION_STATE IS NOT NULL AND TRIM(IAC_RECONCILIATION_STATE) <> ''), 0) AS LINK_KEY_ROWS,
-    0 AS EVIDENCE_URL_ROWS,
-    CASE
-        WHEN COUNT(*) = 0 THEN 'Ready - Empty'
-        WHEN COUNT_IF({evidence_scope}) = 0 THEN 'No Active Scope Rows'
-        ELSE 'Legacy Flowing'
-    END AS FEED_STATE,
-    CASE
-        WHEN COUNT(*) = 0 THEN 'Deploy and feed the split Terraform/Jira evidence tables for full detail.'
-        WHEN COUNT_IF({evidence_scope}) = 0 THEN 'Confirm company/environment mapping and selected lookback window.'
-        ELSE 'Legacy evidence is queryable; split tables add repository, commit, PR, and ticket-window detail.'
-    END AS NEXT_ACTION
-FROM {evidence_table}
-""".strip()
-
-
-def _change_external_integration_ctes(days: int, company: str, environment: str = "ALL") -> str:
-    fact_table = mart_object_name("FACT_OBJECT_CHANGE")
-    source_table = change_source_control_fqn()
-    ticket_table = change_itsm_ticket_fqn()
-    lookback = max(1, int(days or 14))
-
-    object_where = _change_object_where(lookback, company)
-
-    source_where = [f"COALESCE(APPLY_TS, SNAPSHOT_TS) >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())"]
-    ticket_where = [f"COALESCE(UPDATED_AT, SNAPSHOT_TS) >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())"]
-    if str(company or "").upper() != "ALL":
-        source_where.append(f"COMPANY = {sql_literal(company, 100)}")
-        ticket_where.append(f"COMPANY = {sql_literal(company, 100)}")
-    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
-    if env_clause:
-        source_where.append(_bare_sql_predicate(env_clause))
-        ticket_where.append(_bare_sql_predicate(env_clause))
-
-    ticket_expr = _change_ticket_sql_expr("QUERY_TAG", "QUERY_TEXT")
-    source_match = """
-            (oc.CHANGE_TICKET_ID <> '' AND oc.CHANGE_TICKET_ID = sc.CHANGE_TICKET_ID)
-            OR (sc.COMMIT_SHA <> '' AND POSITION(sc.COMMIT_SHA IN oc.QUERY_TAG_UPPER) > 0)
-            OR (sc.OBJECT_MATCH_KEY <> '' AND POSITION(sc.OBJECT_MATCH_KEY IN oc.QUERY_TEXT_UPPER) > 0)
-            OR (
-                sc.OBJECT_DATABASE <> ''
-                AND sc.OBJECT_DATABASE = oc.DATABASE_NAME_UPPER
-                AND (sc.OBJECT_SCHEMA = '' OR sc.OBJECT_SCHEMA = oc.SCHEMA_NAME_UPPER)
-            )
-    """.strip()
-    return f"""
-WITH object_changes AS (
-    SELECT
-        START_TIME,
-        COMPANY,
-        COALESCE(ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
-        QUERY_ID,
-        USER_NAME,
-        ROLE_NAME,
-        DATABASE_NAME,
-        SCHEMA_NAME,
-        UPPER(COALESCE(DATABASE_NAME, '')) AS DATABASE_NAME_UPPER,
-        UPPER(COALESCE(SCHEMA_NAME, '')) AS SCHEMA_NAME_UPPER,
-        CHANGE_CATEGORY,
-        QUERY_TYPE,
-        QUERY_TAG,
-        QUERY_TEXT,
-        UPPER(COALESCE(QUERY_TAG, '')) AS QUERY_TAG_UPPER,
-        UPPER(COALESCE(QUERY_TEXT, '')) AS QUERY_TEXT_UPPER,
-        {ticket_expr} AS CHANGE_TICKET_ID,
-        COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME, DATABASE_NAME, QUERY_ID) AS ENTITY
-    FROM {fact_table}
-    WHERE {" AND ".join(object_where)}
-),
-source_control AS (
-    SELECT
-        COALESCE(APPLY_TS, SNAPSHOT_TS) AS EVENT_TS,
-        COMPANY,
-        COALESCE(ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
-        CASE
-            WHEN UPPER(COALESCE(SOURCE_SYSTEM, '')) LIKE '%FLYWAY%' THEN 'Flyway'
-            WHEN UPPER(COALESCE(SOURCE_SYSTEM, '')) LIKE '%TERRAFORM%' THEN 'Terraform/Git'
-            WHEN UPPER(COALESCE(SOURCE_SYSTEM, '')) LIKE '%GIT%' THEN 'Terraform/Git'
-            ELSE COALESCE(SOURCE_SYSTEM, 'Terraform/Flyway/Git')
-        END AS SOURCE_SYSTEM,
-        REPOSITORY,
-        BRANCH_NAME,
-        UPPER(COALESCE(COMMIT_SHA, '')) AS COMMIT_SHA,
-        PR_ID,
-        PR_URL,
-        UPPER(COALESCE(CHANGE_TICKET_ID, '')) AS CHANGE_TICKET_ID,
-        UPPER(COALESCE(OBJECT_DATABASE, '')) AS OBJECT_DATABASE,
-        UPPER(COALESCE(OBJECT_SCHEMA, '')) AS OBJECT_SCHEMA,
-        UPPER(COALESCE(OBJECT_NAME, '')) AS OBJECT_NAME,
-        OBJECT_TYPE,
-        UPPER(COALESCE(
-            OBJECT_FQN,
-            OBJECT_DATABASE || '.' || OBJECT_SCHEMA || '.' || OBJECT_NAME,
-            OBJECT_DATABASE || '.' || OBJECT_SCHEMA,
-            OBJECT_DATABASE,
-            ''
-        )) AS OBJECT_MATCH_KEY,
-        TERRAFORM_ADDRESS,
-        COALESCE(PLANNED_ACTION, '') AS PLANNED_ACTION,
-        COALESCE(APPLY_STATUS, '') AS APPLY_STATUS,
-        DEPLOYED_BY,
-        EVIDENCE_URL,
-        NOTES
-    FROM {source_table}
-    WHERE {" AND ".join(source_where)}
-),
-tickets AS (
-    SELECT
-        COALESCE(UPDATED_AT, SNAPSHOT_TS) AS EVENT_TS,
-        COMPANY,
-        COALESCE(ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
-        UPPER(COALESCE(TICKET_ID, '')) AS TICKET_ID,
-        TICKET_URL,
-        SUMMARY,
-        COALESCE(STATUS, '') AS STATUS,
-        ASSIGNEE,
-        REQUESTER,
-        APPROVER,
-        COALESCE(APPROVAL_STATUS, '') AS APPROVAL_STATUS,
-        RISK,
-        CHANGE_WINDOW_START,
-        CHANGE_WINDOW_END,
-        LINKED_REPOSITORY,
-        UPPER(COALESCE(LINKED_COMMIT_SHA, '')) AS LINKED_COMMIT_SHA,
-        LINKED_PR_URL,
-        NOTES
-    FROM {ticket_table}
-    WHERE {" AND ".join(ticket_where)}
-),
-object_flags AS (
-    SELECT
-        oc.*,
-        (
-            QUERY_TAG_UPPER ILIKE '%TERRAFORM%'
-            OR QUERY_TAG_UPPER ILIKE '%FLYWAY%'
-            OR QUERY_TAG_UPPER ILIKE '%IAC%'
-            OR QUERY_TAG_UPPER ILIKE '%DEPLOY%'
-            OR QUERY_TAG_UPPER ILIKE '%RELEASE%'
-        ) AS HAS_DEPLOYMENT_TAG,
-        EXISTS (
-            SELECT 1
-            FROM source_control sc
-            WHERE {source_match}
-        ) AS HAS_SOURCE_CONTROL,
-        EXISTS (
-            SELECT 1
-            FROM tickets t
-            WHERE oc.CHANGE_TICKET_ID <> '' AND t.TICKET_ID = oc.CHANGE_TICKET_ID
-        ) AS HAS_ITSM_TICKET
-    FROM object_changes oc
-),
-source_flags AS (
-    SELECT
-        sc.*,
-        EXISTS (
-            SELECT 1
-            FROM tickets t
-            WHERE sc.CHANGE_TICKET_ID <> '' AND t.TICKET_ID = sc.CHANGE_TICKET_ID
-        ) AS HAS_ITSM_TICKET,
-        EXISTS (
-            SELECT 1
-            FROM object_changes oc
-            WHERE {source_match}
-        ) AS HAS_OBSERVED_CHANGE
-    FROM source_control sc
-),
-ticket_flags AS (
-    SELECT
-        t.*,
-        (
-            UPPER(APPROVAL_STATUS) IN ('APPROVED', 'AUTHORIZED', 'APPROVE')
-            OR UPPER(STATUS) IN ('APPROVED', 'IMPLEMENTING', 'IN PROGRESS', 'DONE', 'CLOSED', 'RESOLVED')
-        ) AS IS_APPROVED_OR_ACTIVE,
-        EXISTS (
-            SELECT 1
-            FROM source_control sc
-            WHERE t.TICKET_ID <> '' AND sc.CHANGE_TICKET_ID = t.TICKET_ID
-        ) AS HAS_SOURCE_CONTROL,
-        EXISTS (
-            SELECT 1
-            FROM object_changes oc
-            WHERE t.TICKET_ID <> '' AND oc.CHANGE_TICKET_ID = t.TICKET_ID
-        ) AS HAS_OBSERVED_CHANGE
-    FROM tickets t
-)
-""".strip()
-
-
-def _change_legacy_integration_ctes(days: int, company: str, environment: str = "ALL") -> str:
-    fact_table = mart_object_name("FACT_OBJECT_CHANGE")
-    evidence_table = change_control_evidence_fqn()
-    object_where = _change_object_where(days, company)
-    evidence_where = _change_legacy_evidence_where(days, company, environment)
-    ticket_expr = _change_ticket_sql_expr("QUERY_TAG", "QUERY_TEXT")
-    return f"""
-WITH object_changes AS (
-    SELECT
-        START_TIME,
-        COMPANY,
-        COALESCE(ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
-        QUERY_ID,
-        USER_NAME,
-        ROLE_NAME,
-        DATABASE_NAME,
-        SCHEMA_NAME,
-        CHANGE_CATEGORY,
-        QUERY_TYPE,
-        QUERY_TAG,
-        QUERY_TEXT,
-        UPPER(COALESCE(QUERY_TAG, '')) AS QUERY_TAG_UPPER,
-        UPPER(COALESCE(QUERY_TEXT, '')) AS QUERY_TEXT_UPPER,
-        {ticket_expr} AS CHANGE_TICKET_ID,
-        COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME, DATABASE_NAME, QUERY_ID) AS ENTITY,
-        (
-            UPPER(COALESCE(QUERY_TAG, '')) ILIKE '%TERRAFORM%'
-            OR UPPER(COALESCE(QUERY_TAG, '')) ILIKE '%IAC%'
-            OR UPPER(COALESCE(QUERY_TAG, '')) ILIKE '%DEPLOY%'
-            OR UPPER(COALESCE(QUERY_TAG, '')) ILIKE '%RELEASE%'
-        ) AS HAS_DEPLOYMENT_TAG
-    FROM {fact_table}
-    WHERE {" AND ".join(object_where)}
-),
-legacy_evidence AS (
-    SELECT
-        SNAPSHOT_TS,
-        COMPANY,
-        COALESCE(ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
-        FINDING_TYPE,
-        SEVERITY,
-        ENTITY,
-        USER_NAME,
-        ROLE_NAME,
-        QUERY_ID,
-        QUERY_TAG,
-        CHANGE_CONTROL_STATE,
-        CONTROL_GAP,
-        UPPER(COALESCE(CHANGE_TICKET_ID, '')) AS CHANGE_TICKET_ID,
-        CHANGE_TICKET_STATE,
-        IAC_RECONCILIATION_STATE,
-        EXECUTION_AUDIT_STATE,
-        OWNER,
-        ESCALATION_TARGET,
-        APPROVER,
-        OWNER_APPROVAL_STATUS,
-        CHANGE_EVIDENCE_READINESS,
-        EVIDENCE_BLOCKERS,
-        NEXT_CONTROL_ACTION,
-        SOURCE
-    FROM {evidence_table}
-    WHERE {" AND ".join(evidence_where)}
-),
-legacy_source AS (
-    SELECT *
-    FROM legacy_evidence
-    WHERE
-        UPPER(COALESCE(SOURCE, '')) ILIKE '%TERRAFORM%'
-        OR UPPER(COALESCE(SOURCE, '')) ILIKE '%GIT%'
-        OR UPPER(COALESCE(SOURCE, '')) ILIKE '%SOURCE%'
-        OR NULLIF(TRIM(COALESCE(IAC_RECONCILIATION_STATE, '')), '') IS NOT NULL
-),
-legacy_tickets AS (
-    SELECT *
-    FROM legacy_evidence
-    WHERE
-        CHANGE_TICKET_ID <> ''
-        OR NULLIF(TRIM(COALESCE(CHANGE_TICKET_STATE, '')), '') IS NOT NULL
-        OR UPPER(COALESCE(SOURCE, '')) ILIKE '%JIRA%'
-        OR UPPER(COALESCE(SOURCE, '')) ILIKE '%ITSM%'
-)
-""".strip()
-
-
-def _change_legacy_integration_status_sql(days: int, company: str, environment: str = "ALL") -> str:
-    base = _change_legacy_integration_ctes(days, company, environment)
-    return f"""
-{base},
-status_rows AS (
-    SELECT
-        'Snowflake object changes' AS SURFACE,
-        CASE
-            WHEN COUNT(*) = 0 THEN 'No Rows'
-            WHEN COUNT_IF(CHANGE_TICKET_ID = '' AND NOT HAS_DEPLOYMENT_TAG) > 0 THEN 'Drift Gaps'
-            ELSE 'Covered'
-        END AS STATE,
-        COUNT(*) AS "ROWS",
-        COUNT_IF(HAS_DEPLOYMENT_TAG) AS SOURCE_MATCH_ROWS,
-        COUNT_IF(CHANGE_TICKET_ID <> '') AS TICKET_MATCH_ROWS,
-        COUNT_IF(CHANGE_TICKET_ID = '' AND NOT HAS_DEPLOYMENT_TAG) AS GAP_ROWS,
-        MAX(START_TIME) AS LAST_ACTIVITY_TS,
-        CASE
-            WHEN COUNT_IF(CHANGE_TICKET_ID = '' AND NOT HAS_DEPLOYMENT_TAG) > 0
-                THEN 'Deploy split Terraform/Jira evidence tables or attach ticket/source-control evidence in the legacy table.'
-            ELSE 'Observed Snowflake changes have a deployment tag or ticket reference.'
-        END AS NEXT_ACTION
-    FROM object_changes
-    UNION ALL
-    SELECT
-        'Terraform/Flyway/Git evidence' AS SURFACE,
-        CASE
-            WHEN COUNT(*) = 0 THEN 'No Rows'
-            WHEN COUNT_IF(
-                UPPER(COALESCE(IAC_RECONCILIATION_STATE, '')) IN ('', 'GAP', 'MISSING', 'UNMATCHED', 'UNKNOWN')
-                OR CHANGE_TICKET_ID = ''
-            ) > 0 THEN 'Evidence Gaps'
-            ELSE 'Covered'
-        END AS STATE,
-        COUNT(*) AS "ROWS",
-        COUNT_IF(UPPER(COALESCE(IAC_RECONCILIATION_STATE, '')) NOT IN ('', 'GAP', 'MISSING', 'UNMATCHED', 'UNKNOWN')) AS SOURCE_MATCH_ROWS,
-        COUNT_IF(CHANGE_TICKET_ID <> '') AS TICKET_MATCH_ROWS,
-        COUNT_IF(
-            UPPER(COALESCE(IAC_RECONCILIATION_STATE, '')) IN ('', 'GAP', 'MISSING', 'UNMATCHED', 'UNKNOWN')
-            OR CHANGE_TICKET_ID = ''
-        ) AS GAP_ROWS,
-        MAX(SNAPSHOT_TS) AS LAST_ACTIVITY_TS,
-        'Legacy evidence is in use. Deploy the split source-control table for repository, commit, PR, and Terraform address detail.' AS NEXT_ACTION
-    FROM legacy_source
-    UNION ALL
-    SELECT
-        'Jira tickets' AS SURFACE,
-        CASE
-            WHEN COUNT(*) = 0 THEN 'No Rows'
-            WHEN COUNT_IF(
-                UPPER(COALESCE(OWNER_APPROVAL_STATUS, '')) IN ('', 'PENDING', 'REQUESTED', 'REQUIRED')
-                OR UPPER(COALESCE(IAC_RECONCILIATION_STATE, '')) IN ('', 'GAP', 'MISSING', 'UNMATCHED', 'UNKNOWN')
-            ) > 0 THEN 'Approval Gaps'
-            ELSE 'Covered'
-        END AS STATE,
-        COUNT(*) AS "ROWS",
-        COUNT_IF(UPPER(COALESCE(IAC_RECONCILIATION_STATE, '')) NOT IN ('', 'GAP', 'MISSING', 'UNMATCHED', 'UNKNOWN')) AS SOURCE_MATCH_ROWS,
-        COUNT_IF(CHANGE_TICKET_ID <> '') AS TICKET_MATCH_ROWS,
-        COUNT_IF(
-            UPPER(COALESCE(OWNER_APPROVAL_STATUS, '')) IN ('', 'PENDING', 'REQUESTED', 'REQUIRED')
-            OR UPPER(COALESCE(IAC_RECONCILIATION_STATE, '')) IN ('', 'GAP', 'MISSING', 'UNMATCHED', 'UNKNOWN')
-        ) AS GAP_ROWS,
-        MAX(SNAPSHOT_TS) AS LAST_ACTIVITY_TS,
-        'Legacy evidence is in use. Deploy the split Jira/ITSM table for ticket URL, status, assignee, approval, and window detail.' AS NEXT_ACTION
-    FROM legacy_tickets
-)
-SELECT
-    SURFACE,
-    STATE,
-    CASE STATE
-        WHEN 'Drift Gaps' THEN 0
-        WHEN 'Evidence Gaps' THEN 1
-        WHEN 'Approval Gaps' THEN 1
-        WHEN 'Covered' THEN 8
-        WHEN 'No Rows' THEN 9
-        ELSE 5
-    END AS STATE_RANK,
-    "ROWS",
-    SOURCE_MATCH_ROWS,
-    TICKET_MATCH_ROWS,
-    GAP_ROWS,
-    LAST_ACTIVITY_TS,
-    NEXT_ACTION
-FROM status_rows
-ORDER BY STATE_RANK, GAP_ROWS DESC, SURFACE""".strip()
-
-
-def _change_integration_status_sql(days: int, company: str, environment: str = "ALL") -> str:
-    base = _change_external_integration_ctes(days, company, environment)
-    return f"""
-{base},
-status_rows AS (
-    SELECT
-        'Snowflake object changes' AS SURFACE,
-        CASE
-            WHEN COUNT(*) = 0 THEN 'No Rows'
-            WHEN COUNT_IF(NOT HAS_SOURCE_CONTROL AND NOT HAS_ITSM_TICKET AND NOT HAS_DEPLOYMENT_TAG) > 0 THEN 'Drift Gaps'
-            ELSE 'Covered'
-        END AS STATE,
-        COUNT(*) AS "ROWS",
-        COUNT_IF(HAS_SOURCE_CONTROL) AS SOURCE_MATCH_ROWS,
-        COUNT_IF(HAS_ITSM_TICKET) AS TICKET_MATCH_ROWS,
-        COUNT_IF(NOT HAS_SOURCE_CONTROL AND NOT HAS_ITSM_TICKET AND NOT HAS_DEPLOYMENT_TAG) AS GAP_ROWS,
-        MAX(START_TIME) AS LAST_ACTIVITY_TS,
-        CASE
-            WHEN COUNT_IF(NOT HAS_SOURCE_CONTROL AND NOT HAS_ITSM_TICKET AND NOT HAS_DEPLOYMENT_TAG) > 0
-                THEN 'Attach approved ticket or source-control evidence, codify the drift, or revert through approved deployment.'
-            ELSE 'Retain observed Snowflake change history with ticket/source-control evidence.'
-        END AS NEXT_ACTION
-    FROM object_flags
-    UNION ALL
-    SELECT
-        'Terraform/Flyway/Git evidence' AS SURFACE,
-        CASE
-            WHEN COUNT(*) = 0 THEN 'No Rows'
-            WHEN COUNT_IF(NOT HAS_ITSM_TICKET OR NOT HAS_OBSERVED_CHANGE) > 0 THEN 'Evidence Gaps'
-            ELSE 'Covered'
-        END AS STATE,
-        COUNT(*) AS "ROWS",
-        COUNT_IF(HAS_OBSERVED_CHANGE) AS SOURCE_MATCH_ROWS,
-        COUNT_IF(HAS_ITSM_TICKET) AS TICKET_MATCH_ROWS,
-        COUNT_IF(NOT HAS_ITSM_TICKET OR NOT HAS_OBSERVED_CHANGE) AS GAP_ROWS,
-        MAX(EVENT_TS) AS LAST_ACTIVITY_TS,
-        CASE
-            WHEN COUNT_IF(NOT HAS_ITSM_TICKET) > 0 THEN 'Link Terraform/Flyway/Git deploy evidence to Jira ticket keys.'
-            WHEN COUNT_IF(NOT HAS_OBSERVED_CHANGE) > 0 THEN 'Confirm applied source-control changes are visible in Snowflake object-change history.'
-            ELSE 'Terraform/Flyway/Git evidence is linked to observed Snowflake or Jira evidence.'
-        END AS NEXT_ACTION
-    FROM source_flags
-    UNION ALL
-    SELECT
-        'Jira tickets' AS SURFACE,
-        CASE
-            WHEN COUNT(*) = 0 THEN 'No Rows'
-            WHEN COUNT_IF(IS_APPROVED_OR_ACTIVE AND NOT HAS_SOURCE_CONTROL AND NOT HAS_OBSERVED_CHANGE) > 0 THEN 'Approval Gaps'
-            ELSE 'Covered'
-        END AS STATE,
-        COUNT(*) AS "ROWS",
-        COUNT_IF(HAS_SOURCE_CONTROL) AS SOURCE_MATCH_ROWS,
-        COUNT_IF(HAS_OBSERVED_CHANGE) AS TICKET_MATCH_ROWS,
-        COUNT_IF(IS_APPROVED_OR_ACTIVE AND NOT HAS_SOURCE_CONTROL AND NOT HAS_OBSERVED_CHANGE) AS GAP_ROWS,
-        MAX(EVENT_TS) AS LAST_ACTIVITY_TS,
-        CASE
-            WHEN COUNT_IF(IS_APPROVED_OR_ACTIVE AND NOT HAS_SOURCE_CONTROL AND NOT HAS_OBSERVED_CHANGE) > 0
-                THEN 'Link approved Jira changes to Terraform/Flyway/Git evidence or observed Snowflake change rows.'
-            ELSE 'Jira ticket evidence is linked to deployment or Snowflake activity.'
-        END AS NEXT_ACTION
-    FROM ticket_flags
-)
-SELECT
-    SURFACE,
-    STATE,
-    CASE STATE
-        WHEN 'Drift Gaps' THEN 0
-        WHEN 'Evidence Gaps' THEN 1
-        WHEN 'Approval Gaps' THEN 1
-        WHEN 'Covered' THEN 8
-        WHEN 'No Rows' THEN 9
-        ELSE 5
-    END AS STATE_RANK,
-    "ROWS",
-    SOURCE_MATCH_ROWS,
-    TICKET_MATCH_ROWS,
-    GAP_ROWS,
-    LAST_ACTIVITY_TS,
-    NEXT_ACTION
-FROM status_rows
-ORDER BY STATE_RANK, GAP_ROWS DESC, SURFACE""".strip()
-
-
-def _change_unmatched_evidence_sql(days: int, company: str, environment: str = "ALL") -> str:
-    base = _change_external_integration_ctes(days, company, environment)
-    return f"""
-{base},
-unmatched_rows AS (
-    SELECT
-        'Snowflake' AS EVIDENCE_SOURCE,
-        'Snowflake change missing external evidence' AS GAP_TYPE,
-        IFF(CHANGE_CATEGORY IN ('DROP', 'POLICY', 'OWNER'), 'High', IFF(CHANGE_CATEGORY = 'GRANT', 'Medium', 'Low')) AS SEVERITY,
-        ENTITY,
-        USER_NAME AS ACTOR,
-        CHANGE_TICKET_ID AS TICKET_ID,
-        NULL::VARCHAR AS REPOSITORY,
-        NULL::VARCHAR AS COMMIT_SHA,
-        NULL::VARCHAR AS PR_URL,
-        QUERY_ID,
-        START_TIME AS EVENT_TS,
-        QUERY_TAG,
-        'Attach Jira approval/source-control evidence or classify as unauthorized drift.' AS NEXT_ACTION
-    FROM object_flags
-    WHERE NOT HAS_SOURCE_CONTROL AND NOT HAS_ITSM_TICKET AND NOT HAS_DEPLOYMENT_TAG
-    UNION ALL
-    SELECT
-        SOURCE_SYSTEM AS EVIDENCE_SOURCE,
-        CASE
-            WHEN NOT HAS_ITSM_TICKET THEN SOURCE_SYSTEM || ' deploy missing Jira ticket'
-            ELSE SOURCE_SYSTEM || ' deploy not observed in Snowflake change history'
-        END AS GAP_TYPE,
-        IFF(UPPER(PLANNED_ACTION) IN ('DELETE', 'DESTROY', 'DROP'), 'High', 'Medium') AS SEVERITY,
-        COALESCE(NULLIF(OBJECT_MATCH_KEY, ''), TERRAFORM_ADDRESS, REPOSITORY, 'Source-control change') AS ENTITY,
-        DEPLOYED_BY AS ACTOR,
-        CHANGE_TICKET_ID AS TICKET_ID,
-        REPOSITORY,
-        COMMIT_SHA,
-        PR_URL,
-        NULL::VARCHAR AS QUERY_ID,
-        EVENT_TS,
-        NULL::VARCHAR AS QUERY_TAG,
-        IFF(
-            NOT HAS_ITSM_TICKET,
-            'Add Jira ticket key to the Terraform/Flyway/Git evidence row and deployment query tag.',
-            'Confirm query tag/object mapping or investigate why Snowflake did not record the applied change.'
-        ) AS NEXT_ACTION
-    FROM source_flags
-    WHERE NOT HAS_ITSM_TICKET OR NOT HAS_OBSERVED_CHANGE
-    UNION ALL
-    SELECT
-        'Jira' AS EVIDENCE_SOURCE,
-        'Approved Jira change missing deploy evidence' AS GAP_TYPE,
-        IFF(UPPER(RISK) IN ('HIGH', 'CRITICAL'), 'High', 'Medium') AS SEVERITY,
-        COALESCE(SUMMARY, TICKET_ID, 'Jira change') AS ENTITY,
-        COALESCE(ASSIGNEE, REQUESTER) AS ACTOR,
-        TICKET_ID,
-        LINKED_REPOSITORY AS REPOSITORY,
-        LINKED_COMMIT_SHA AS COMMIT_SHA,
-        LINKED_PR_URL AS PR_URL,
-        NULL::VARCHAR AS QUERY_ID,
-        EVENT_TS,
-        NULL::VARCHAR AS QUERY_TAG,
-        'Link the approved Jira change to Terraform/Flyway/Git evidence or observed Snowflake query history.' AS NEXT_ACTION
-    FROM ticket_flags
-    WHERE IS_APPROVED_OR_ACTIVE AND NOT HAS_SOURCE_CONTROL AND NOT HAS_OBSERVED_CHANGE
-)
-SELECT *
-FROM unmatched_rows
-ORDER BY
-    CASE SEVERITY WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END,
-    EVENT_TS DESC
-LIMIT 100""".strip()
-
-
-def _change_legacy_unmatched_evidence_sql(days: int, company: str, environment: str = "ALL") -> str:
-    base = _change_legacy_integration_ctes(days, company, environment)
-    return f"""
-{base},
-unmatched_rows AS (
-    SELECT
-        'Snowflake' AS EVIDENCE_SOURCE,
-        'Snowflake change missing external evidence' AS GAP_TYPE,
-        IFF(CHANGE_CATEGORY IN ('DROP', 'POLICY', 'OWNER'), 'High', IFF(CHANGE_CATEGORY = 'GRANT', 'Medium', 'Low')) AS SEVERITY,
-        ENTITY,
-        USER_NAME AS ACTOR,
-        CHANGE_TICKET_ID AS TICKET_ID,
-        NULL::VARCHAR AS REPOSITORY,
-        NULL::VARCHAR AS COMMIT_SHA,
-        NULL::VARCHAR AS PR_URL,
-        QUERY_ID,
-        START_TIME AS EVENT_TS,
-        QUERY_TAG,
-        'Deploy split evidence tables or attach ticket/source-control evidence for this observed Snowflake change.' AS NEXT_ACTION
-    FROM object_changes
-    WHERE CHANGE_TICKET_ID = '' AND NOT HAS_DEPLOYMENT_TAG
-    UNION ALL
-    SELECT
-        'Terraform/Git' AS EVIDENCE_SOURCE,
-        'Terraform/Git legacy evidence missing split-table detail' AS GAP_TYPE,
-        IFF(UPPER(COALESCE(SEVERITY, '')) IN ('HIGH', 'CRITICAL'), 'High', 'Medium') AS SEVERITY,
-        COALESCE(ENTITY, QUERY_ID, 'Legacy source-control evidence') AS ENTITY,
-        COALESCE(USER_NAME, OWNER) AS ACTOR,
-        CHANGE_TICKET_ID AS TICKET_ID,
-        NULL::VARCHAR AS REPOSITORY,
-        NULL::VARCHAR AS COMMIT_SHA,
-        NULL::VARCHAR AS PR_URL,
-        QUERY_ID,
-        SNAPSHOT_TS AS EVENT_TS,
-        QUERY_TAG,
-        COALESCE(NULLIF(NEXT_CONTROL_ACTION, ''), 'Deploy the split source-control evidence table and map repository/commit metadata.') AS NEXT_ACTION
-    FROM legacy_source
-    WHERE
-        CHANGE_TICKET_ID = ''
-        OR UPPER(COALESCE(IAC_RECONCILIATION_STATE, '')) IN ('', 'GAP', 'MISSING', 'UNMATCHED', 'UNKNOWN')
-    UNION ALL
-    SELECT
-        'Jira' AS EVIDENCE_SOURCE,
-        'Jira legacy evidence missing split-table detail' AS GAP_TYPE,
-        IFF(UPPER(COALESCE(SEVERITY, '')) IN ('HIGH', 'CRITICAL'), 'High', 'Medium') AS SEVERITY,
-        COALESCE(ENTITY, CHANGE_TICKET_ID, 'Legacy Jira evidence') AS ENTITY,
-        COALESCE(OWNER, USER_NAME) AS ACTOR,
-        CHANGE_TICKET_ID AS TICKET_ID,
-        NULL::VARCHAR AS REPOSITORY,
-        NULL::VARCHAR AS COMMIT_SHA,
-        NULL::VARCHAR AS PR_URL,
-        QUERY_ID,
-        SNAPSHOT_TS AS EVENT_TS,
-        QUERY_TAG,
-        COALESCE(NULLIF(NEXT_CONTROL_ACTION, ''), 'Deploy the split Jira/ITSM evidence table and map ticket approval metadata.') AS NEXT_ACTION
-    FROM legacy_tickets
-    WHERE
-        UPPER(COALESCE(OWNER_APPROVAL_STATUS, '')) IN ('', 'PENDING', 'REQUESTED', 'REQUIRED')
-        OR UPPER(COALESCE(IAC_RECONCILIATION_STATE, '')) IN ('', 'GAP', 'MISSING', 'UNMATCHED', 'UNKNOWN')
-)
-SELECT *
-FROM unmatched_rows
-ORDER BY
-    CASE SEVERITY WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END,
-    EVENT_TS DESC
-LIMIT 100""".strip()
-
-
-def _change_integration_timeline_sql(days: int, company: str, environment: str = "ALL") -> str:
-    fact_table = mart_object_name("FACT_OBJECT_CHANGE")
-    source_table = change_source_control_fqn()
-    ticket_table = change_itsm_ticket_fqn()
-    lookback = max(1, int(days or 14))
-
-    object_where = _change_object_where(lookback, company)
-
-    source_where = [f"COALESCE(APPLY_TS, SNAPSHOT_TS) >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())"]
-    ticket_where = [f"COALESCE(UPDATED_AT, SNAPSHOT_TS) >= DATEADD('day', -{lookback}, CURRENT_TIMESTAMP())"]
-    if str(company or "").upper() != "ALL":
-        source_where.append(f"COMPANY = {sql_literal(company, 100)}")
-        ticket_where.append(f"COMPANY = {sql_literal(company, 100)}")
-    env_clause = action_queue_environment_clause("ENVIRONMENT", environment)
-    if env_clause:
-        source_where.append(_bare_sql_predicate(env_clause))
-        ticket_where.append(_bare_sql_predicate(env_clause))
-
-    return f"""
-WITH timeline AS (
-    SELECT
-        TO_DATE(START_TIME) AS EVENT_DATE,
-        'Snowflake' AS EVENT_SOURCE,
-        CHANGE_CATEGORY AS EVENT_TYPE,
-        'Observed' AS EVENT_STATE,
-        COUNT(*) AS EVENT_COUNT,
-        COUNT_IF(CHANGE_CATEGORY IN ('DROP', 'POLICY', 'OWNER')) AS HIGH_RISK_COUNT,
-        MAX(START_TIME) AS LAST_EVENT_TS
-    FROM {fact_table}
-    WHERE {" AND ".join(object_where)}
-    GROUP BY TO_DATE(START_TIME), CHANGE_CATEGORY
-    UNION ALL
-    SELECT
-        TO_DATE(COALESCE(APPLY_TS, SNAPSHOT_TS)) AS EVENT_DATE,
-        COALESCE(SOURCE_SYSTEM, 'Terraform/Git') AS EVENT_SOURCE,
-        COALESCE(PLANNED_ACTION, 'Source-control change') AS EVENT_TYPE,
-        COALESCE(APPLY_STATUS, 'Recorded') AS EVENT_STATE,
-        COUNT(*) AS EVENT_COUNT,
-        COUNT_IF(UPPER(COALESCE(PLANNED_ACTION, '')) IN ('DELETE', 'DESTROY', 'DROP')) AS HIGH_RISK_COUNT,
-        MAX(COALESCE(APPLY_TS, SNAPSHOT_TS)) AS LAST_EVENT_TS
-    FROM {source_table}
-    WHERE {" AND ".join(source_where)}
-    GROUP BY TO_DATE(COALESCE(APPLY_TS, SNAPSHOT_TS)), COALESCE(SOURCE_SYSTEM, 'Terraform/Git'), COALESCE(PLANNED_ACTION, 'Source-control change'), COALESCE(APPLY_STATUS, 'Recorded')
-    UNION ALL
-    SELECT
-        TO_DATE(COALESCE(UPDATED_AT, SNAPSHOT_TS)) AS EVENT_DATE,
-        'Jira' AS EVENT_SOURCE,
-        COALESCE(STATUS, 'Ticket update') AS EVENT_TYPE,
-        COALESCE(APPROVAL_STATUS, 'Unknown approval') AS EVENT_STATE,
-        COUNT(*) AS EVENT_COUNT,
-        COUNT_IF(UPPER(COALESCE(RISK, '')) IN ('HIGH', 'CRITICAL')) AS HIGH_RISK_COUNT,
-        MAX(COALESCE(UPDATED_AT, SNAPSHOT_TS)) AS LAST_EVENT_TS
-    FROM {ticket_table}
-    WHERE {" AND ".join(ticket_where)}
-    GROUP BY TO_DATE(COALESCE(UPDATED_AT, SNAPSHOT_TS)), COALESCE(STATUS, 'Ticket update'), COALESCE(APPROVAL_STATUS, 'Unknown approval')
-)
-SELECT
-    EVENT_DATE,
-    EVENT_SOURCE,
-    EVENT_TYPE,
-    EVENT_STATE,
-    EVENT_COUNT,
-    HIGH_RISK_COUNT,
-    LAST_EVENT_TS
-FROM timeline
-ORDER BY EVENT_DATE DESC, EVENT_SOURCE, EVENT_TYPE
-LIMIT 500""".strip()
-
-
-def _change_legacy_integration_timeline_sql(days: int, company: str, environment: str = "ALL") -> str:
-    fact_table = mart_object_name("FACT_OBJECT_CHANGE")
-    evidence_table = change_control_evidence_fqn()
-    object_where = _change_object_where(days, company)
-    evidence_where = _change_legacy_evidence_where(days, company, environment)
-    return f"""
-WITH legacy_evidence AS (
-    SELECT *
-    FROM {evidence_table}
-    WHERE {" AND ".join(evidence_where)}
-),
-timeline AS (
-    SELECT
-        TO_DATE(START_TIME) AS EVENT_DATE,
-        'Snowflake' AS EVENT_SOURCE,
-        CHANGE_CATEGORY AS EVENT_TYPE,
-        'Observed' AS EVENT_STATE,
-        COUNT(*) AS EVENT_COUNT,
-        COUNT_IF(CHANGE_CATEGORY IN ('DROP', 'POLICY', 'OWNER')) AS HIGH_RISK_COUNT,
-        MAX(START_TIME) AS LAST_EVENT_TS
-    FROM {fact_table}
-    WHERE {" AND ".join(object_where)}
-    GROUP BY TO_DATE(START_TIME), CHANGE_CATEGORY
-    UNION ALL
-    SELECT
-        TO_DATE(SNAPSHOT_TS) AS EVENT_DATE,
-        'Terraform/Git (legacy)' AS EVENT_SOURCE,
-        COALESCE(FINDING_TYPE, 'Legacy evidence') AS EVENT_TYPE,
-        COALESCE(IAC_RECONCILIATION_STATE, CHANGE_EVIDENCE_READINESS, 'Recorded') AS EVENT_STATE,
-        COUNT(*) AS EVENT_COUNT,
-        COUNT_IF(UPPER(COALESCE(SEVERITY, '')) IN ('HIGH', 'CRITICAL')) AS HIGH_RISK_COUNT,
-        MAX(SNAPSHOT_TS) AS LAST_EVENT_TS
-    FROM legacy_evidence
-    WHERE
-        UPPER(COALESCE(SOURCE, '')) ILIKE '%TERRAFORM%'
-        OR UPPER(COALESCE(SOURCE, '')) ILIKE '%GIT%'
-        OR UPPER(COALESCE(SOURCE, '')) ILIKE '%SOURCE%'
-        OR NULLIF(TRIM(COALESCE(IAC_RECONCILIATION_STATE, '')), '') IS NOT NULL
-    GROUP BY TO_DATE(SNAPSHOT_TS), COALESCE(FINDING_TYPE, 'Legacy evidence'), COALESCE(IAC_RECONCILIATION_STATE, CHANGE_EVIDENCE_READINESS, 'Recorded')
-    UNION ALL
-    SELECT
-        TO_DATE(SNAPSHOT_TS) AS EVENT_DATE,
-        'Jira' AS EVENT_SOURCE,
-        COALESCE(CHANGE_TICKET_STATE, 'Legacy ticket evidence') AS EVENT_TYPE,
-        COALESCE(OWNER_APPROVAL_STATUS, CHANGE_EVIDENCE_READINESS, 'Recorded') AS EVENT_STATE,
-        COUNT(*) AS EVENT_COUNT,
-        COUNT_IF(UPPER(COALESCE(SEVERITY, '')) IN ('HIGH', 'CRITICAL')) AS HIGH_RISK_COUNT,
-        MAX(SNAPSHOT_TS) AS LAST_EVENT_TS
-    FROM legacy_evidence
-    WHERE
-        CHANGE_TICKET_ID IS NOT NULL
-        OR NULLIF(TRIM(COALESCE(CHANGE_TICKET_STATE, '')), '') IS NOT NULL
-        OR UPPER(COALESCE(SOURCE, '')) ILIKE '%JIRA%'
-        OR UPPER(COALESCE(SOURCE, '')) ILIKE '%ITSM%'
-    GROUP BY TO_DATE(SNAPSHOT_TS), COALESCE(CHANGE_TICKET_STATE, 'Legacy ticket evidence'), COALESCE(OWNER_APPROVAL_STATUS, CHANGE_EVIDENCE_READINESS, 'Recorded')
-)
-SELECT
-    EVENT_DATE,
-    EVENT_SOURCE,
-    EVENT_TYPE,
-    EVENT_STATE,
-    EVENT_COUNT,
-    HIGH_RISK_COUNT,
-    LAST_EVENT_TS
-FROM timeline
-ORDER BY EVENT_DATE DESC, EVENT_SOURCE, EVENT_TYPE
-LIMIT 500""".strip()
 
 
 def _change_action_queue_closure_sql(days: int, company: str, environment: str = "ALL") -> str:
@@ -3474,9 +2280,9 @@ SELECT
     LAST_ACTIVITY_TS,
     CASE
         WHEN OVERDUE_OPEN > 0 THEN 'Escalate the change owner and ticket before accepting more drift.'
-        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Attach query, ticket, IaC, and blast-radius evidence or reopen the action.'
+        WHEN FIXED_WITHOUT_VERIFICATION > 0 THEN 'Attach query, ticket, rollback, and blast-radius evidence or reopen the action.'
         WHEN OWNER_GAP_ROWS + TICKET_GAP_ROWS + APPROVER_GAP_ROWS + VERIFICATION_QUERY_GAP_ROWS + OWNER_APPROVAL_GAP_ROWS > 0 THEN 'Complete owner, ticket, approver, and verification metadata.'
-        WHEN OPEN_ACTIONS > 0 THEN 'Work the open change action and retain source-control or rollback proof.'
+        WHEN OPEN_ACTIONS > 0 THEN 'Work the open change action and retain approval or rollback proof.'
         ELSE 'Retain verified closure evidence for audit review.'
     END AS NEXT_ACTION
 FROM rollup
@@ -3598,295 +2404,6 @@ def _render_change_source_health(company: str, environment: str) -> None:
         )
 
 
-def _integration_mode_config(mode: str) -> dict:
-    if str(mode) == "Jira":
-        return {
-            "slug": "jira",
-            "title": "Jira Evidence",
-            "caption": (
-                "Load Jira/ITSM tickets ingested into Snowflake, then confirm each approved change links "
-                "to Terraform/Git deploy evidence or observed Snowflake activity. OVERWATCH does not need "
-                "Jira credentials at runtime."
-            ),
-            "lookback_label": "Jira evidence lookback (days)",
-            "load_label": "Load Jira Evidence",
-            "status_surfaces": {"Jira tickets", "Snowflake object changes"},
-            "timeline_sources": {"Jira", "Snowflake"},
-            "unmatched_gap_types": {
-                "Snowflake change missing external evidence",
-                "Terraform/Git deploy missing Jira ticket",
-                "Approved Jira change missing deploy evidence",
-            },
-            "setup_sql": build_change_itsm_ticket_ddl(),
-            "feed_stage_sql": build_change_evidence_feed_stage_sql(),
-            "feed_load_sql": build_change_itsm_ticket_feed_load_sql(),
-            "proof_placeholder": "-- Load Jira Evidence first.",
-            "stale_copy": "Loaded Jira evidence is stale for the active scope. Reload before acting.",
-            "unavailable_copy": (
-                "Jira evidence is not available yet. Deploy the ITSM evidence table and feed it from Jira, then reload."
-            ),
-            "empty_copy": "No unmatched Jira/Snowflake evidence rows found for the selected window.",
-            "coverage_title": "Jira and Snowflake evidence coverage",
-            "raw_label": "All Jira evidence coverage rows",
-        }
-    return {
-        "slug": "terraform",
-        "title": "Terraform Evidence",
-        "caption": (
-            "Load Terraform/Flyway/Git deploy evidence ingested into Snowflake, then confirm each applied change "
-            "links to Jira approval and observed Snowflake object-change history. OVERWATCH does not need "
-            "Git, Terraform, or Flyway credentials at runtime."
-        ),
-        "lookback_label": "Deployment evidence lookback (days)",
-        "load_label": "Load Terraform Evidence",
-        "status_surfaces": {"Terraform/Flyway/Git evidence", "Terraform/Git evidence", "Flyway evidence", "Snowflake object changes"},
-        "timeline_sources": {"Terraform/Git", "Git", "Terraform", "Flyway", "Snowflake"},
-        "unmatched_gap_types": {
-            "Snowflake change missing external evidence",
-            "Terraform/Git deploy missing Jira ticket",
-            "Terraform/Git deploy not observed in Snowflake change history",
-            "Terraform/Flyway/Git deploy missing Jira ticket",
-            "Terraform/Flyway/Git deploy not observed in Snowflake change history",
-            "Flyway deploy missing Jira ticket",
-            "Flyway deploy not observed in Snowflake change history",
-        },
-        "setup_sql": build_change_source_control_ddl(),
-        "feed_stage_sql": build_change_evidence_feed_stage_sql(),
-        "feed_load_sql": build_change_source_control_feed_load_sql(),
-        "proof_placeholder": "-- Load Terraform Evidence first.",
-        "stale_copy": "Loaded Terraform evidence is stale for the active scope. Reload before acting.",
-        "unavailable_copy": (
-            "Terraform/Flyway evidence is not available yet. Deploy the source-control evidence table and feed it from CI/Git/Flyway, then reload."
-        ),
-        "empty_copy": "No unmatched Terraform/Flyway/Snowflake evidence rows found for the selected window.",
-        "coverage_title": "Terraform, Flyway, and Snowflake evidence coverage",
-        "raw_label": "All deployment evidence coverage rows",
-    }
-
-
-def _filter_integration_frame(df: pd.DataFrame, mode: str, frame_kind: str) -> pd.DataFrame:
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame()
-    cfg = _integration_mode_config(mode)
-    view = df.copy()
-    if frame_kind == "status" and "SURFACE" in view.columns:
-        return view[view["SURFACE"].astype(str).isin(cfg["status_surfaces"])].copy()
-    if frame_kind == "timeline" and "EVENT_SOURCE" in view.columns:
-        sources = view["EVENT_SOURCE"].fillna("").astype(str)
-        if str(mode) == "Terraform":
-            mask = sources.eq("Snowflake") | sources.str.contains("Terraform|Git", case=False, regex=True)
-            return view[mask].copy()
-        return view[sources.isin(cfg["timeline_sources"])].copy()
-    if frame_kind == "unmatched" and "GAP_TYPE" in view.columns:
-        return view[view["GAP_TYPE"].astype(str).isin(cfg["unmatched_gap_types"])].copy()
-    return view
-
-
-def _render_change_external_integrations(company: str, environment: str, default_days: int, *, mode: str) -> None:
-    cfg = _integration_mode_config(mode)
-    slug = cfg["slug"]
-    prefix = f"change_integration_{slug}"
-
-    st.subheader(cfg["title"])
-    st.caption(cfg["caption"])
-    integration_days = day_window_selectbox(
-        cfg["lookback_label"],
-        key=f"{prefix}_days",
-        default=default_days,
-    )
-    if st.button(cfg["load_label"], key=f"{prefix}_load", width="stretch"):
-        try:
-            inventory_sql = _change_integration_object_inventory_sql()
-            inventory = run_query(
-                inventory_sql,
-                ttl_key=f"change_integration_inventory_{company}_{environment}",
-                tier="metadata",
-                section="Change & Drift",
-            )
-            available_tables = _available_change_integration_tables(inventory)
-            split_tables_ready = _split_change_evidence_tables_ready(available_tables)
-            if split_tables_ready:
-                status_sql = _change_integration_status_sql(integration_days, company, environment)
-                unmatched_sql = _change_unmatched_evidence_sql(integration_days, company, environment)
-                timeline_sql = _change_integration_timeline_sql(integration_days, company, environment)
-                feed_health_sql = _change_split_feed_health_sql(integration_days, company, environment)
-                st.session_state.pop(f"{prefix}_mode_note", None)
-            else:
-                missing = sorted(
-                    table
-                    for table in (CHANGE_SOURCE_CONTROL_TABLE, CHANGE_ITSM_TICKET_TABLE)
-                    if table.upper() not in available_tables
-                )
-                status_sql = _change_legacy_integration_status_sql(integration_days, company, environment)
-                unmatched_sql = _change_legacy_unmatched_evidence_sql(integration_days, company, environment)
-                timeline_sql = _change_legacy_integration_timeline_sql(integration_days, company, environment)
-                feed_health_sql = _change_legacy_feed_health_sql(integration_days, company, environment)
-                st.session_state[f"{prefix}_mode_note"] = (
-                    "Using legacy change-control evidence because the split evidence tables are not deployed yet. "
-                    f"Missing: {', '.join(missing)}."
-                )
-            feed_health = run_query(
-                feed_health_sql,
-                ttl_key=f"{prefix}_feed_health_{company}_{environment}_{integration_days}",
-                tier="standard",
-                section="Change & Drift",
-            )
-            raw_status = run_query(
-                status_sql,
-                ttl_key=f"{prefix}_status_{company}_{environment}_{integration_days}",
-                tier="standard",
-                section="Change & Drift",
-            )
-            raw_unmatched = run_query(
-                unmatched_sql,
-                ttl_key=f"{prefix}_unmatched_{company}_{environment}_{integration_days}",
-                tier="standard",
-                section="Change & Drift",
-            )
-            raw_timeline = run_query(
-                timeline_sql,
-                ttl_key=f"{prefix}_timeline_{company}_{environment}_{integration_days}",
-                tier="standard",
-                section="Change & Drift",
-            )
-            st.session_state[f"{prefix}_feed_health"] = feed_health
-            st.session_state[f"{prefix}_status"] = _filter_integration_frame(raw_status, mode, "status")
-            st.session_state[f"{prefix}_unmatched"] = _filter_integration_frame(raw_unmatched, mode, "unmatched")
-            st.session_state[f"{prefix}_timeline"] = _filter_integration_frame(raw_timeline, mode, "timeline")
-            st.session_state[f"{prefix}_sql"] = {
-                "feed_health": feed_health_sql,
-                "status": status_sql,
-                "unmatched": unmatched_sql,
-                "timeline": timeline_sql,
-            }
-            st.session_state[f"{prefix}_meta"] = _change_scope_meta(
-                company,
-                environment,
-                integration_days,
-            )
-            st.session_state.pop(f"{prefix}_error", None)
-        except Exception as exc:
-            st.session_state[f"{prefix}_feed_health"] = pd.DataFrame()
-            st.session_state[f"{prefix}_status"] = pd.DataFrame()
-            st.session_state[f"{prefix}_unmatched"] = pd.DataFrame()
-            st.session_state[f"{prefix}_timeline"] = pd.DataFrame()
-            st.session_state[f"{prefix}_error"] = format_snowflake_error(exc)
-            st.warning(cfg["unavailable_copy"])
-
-    expected_meta = _change_scope_meta(company, environment, integration_days)
-    feed_health = st.session_state.get(f"{prefix}_feed_health")
-    status = st.session_state.get(f"{prefix}_status")
-    timeline = st.session_state.get(f"{prefix}_timeline")
-    unmatched = st.session_state.get(f"{prefix}_unmatched")
-    current = _change_meta_matches(st.session_state.get(f"{prefix}_meta"), expected_meta)
-    mode_note = st.session_state.get(f"{prefix}_mode_note")
-    if mode_note and current:
-        st.info(mode_note)
-    if feed_health is not None and not feed_health.empty and current:
-        needs_feed = feed_health.get("FEED_STATE", pd.Series(dtype=str)).astype(str).isin(
-            ["Ready - Empty", "Stale", "No Active Scope Rows"]
-        ).sum()
-        render_shell_snapshot((
-            ("Feed Surfaces", f"{len(feed_health):,}"),
-            ("Feed Rows", f"{safe_int(feed_health.get('ROWS', pd.Series(dtype=int)).sum()):,}"),
-            ("Active Scope Rows", f"{safe_int(feed_health.get('ACTIVE_SCOPE_ROWS', pd.Series(dtype=int)).sum()):,}"),
-            ("Needs Attention", f"{safe_int(needs_feed):,}"),
-        ))
-        render_priority_dataframe(
-            feed_health,
-            title=f"{cfg['title']} feed health",
-            priority_columns=[
-                "FEED_STATE", "FEED", "ROWS", "ACTIVE_SCOPE_ROWS",
-                "LAST_EVENT_TS", "TICKET_KEY_ROWS", "LINK_KEY_ROWS",
-                "EVIDENCE_URL_ROWS", "NEXT_ACTION",
-            ],
-            sort_by=["FEED_STATE", "FEED"],
-            ascending=[True, True],
-            raw_label=f"All {cfg['title'].lower()} feed health rows",
-            height=200,
-        )
-    if status is not None and not status.empty and current:
-        matched = status.get("SOURCE_MATCH_ROWS", pd.Series(dtype=int)).sum() + status.get("TICKET_MATCH_ROWS", pd.Series(dtype=int)).sum()
-        render_shell_snapshot((
-            ("Evidence Surfaces", f"{len(status):,}"),
-            ("Rows", f"{safe_int(status.get('ROWS', pd.Series(dtype=int)).sum()):,}"),
-            ("Matched Evidence", f"{safe_int(matched):,}"),
-            ("Gaps", f"{safe_int(status.get('GAP_ROWS', pd.Series(dtype=int)).sum()):,}"),
-        ))
-        render_priority_dataframe(
-            status,
-            title=cfg["coverage_title"],
-            priority_columns=[
-                "STATE", "SURFACE", "ROWS", "SOURCE_MATCH_ROWS",
-                "TICKET_MATCH_ROWS", "GAP_ROWS", "LAST_ACTIVITY_TS", "NEXT_ACTION",
-            ],
-            sort_by=["STATE_RANK", "GAP_ROWS", "SURFACE"],
-            ascending=[True, False, True],
-            raw_label=cfg["raw_label"],
-            height=220,
-        )
-    elif status is not None and not current and not st.session_state.get(f"{prefix}_error"):
-        st.info(cfg["stale_copy"])
-
-    if unmatched is not None and not unmatched.empty and current:
-        render_priority_dataframe(
-            unmatched,
-            title=f"Unmatched {cfg['title'].lower()} rows",
-            priority_columns=[
-                "SEVERITY", "GAP_TYPE", "EVIDENCE_SOURCE", "ENTITY", "ACTOR",
-                "TICKET_ID", "REPOSITORY", "COMMIT_SHA", "PR_URL", "QUERY_ID",
-                "EVENT_TS", "NEXT_ACTION",
-            ],
-            sort_by=["SEVERITY", "EVENT_TS", "GAP_TYPE"],
-            ascending=[True, False, True],
-            raw_label=f"All unmatched {cfg['title'].lower()} rows",
-            height=300,
-        )
-    elif unmatched is not None and unmatched.empty and current and status is not None and not status.empty:
-        st.success(cfg["empty_copy"])
-
-    if timeline is not None and not timeline.empty and current:
-        chart = (
-            timeline.pivot_table(
-                index="EVENT_DATE",
-                columns="EVENT_SOURCE",
-                values="EVENT_COUNT",
-                aggfunc="sum",
-            )
-            .fillna(0)
-            .sort_index()
-        )
-        render_chart_with_data_toggle(
-            f"{cfg['title']} event timeline",
-            f"{prefix}_event_timeline",
-            lambda: st.bar_chart(chart),
-            timeline,
-            priority_columns=[
-                "EVENT_DATE", "EVENT_SOURCE", "EVENT_TYPE", "EVENT_STATE",
-                "EVENT_COUNT", "HIGH_RISK_COUNT", "LAST_EVENT_TS",
-            ],
-            sort_by=["EVENT_DATE", "EVENT_SOURCE"],
-            ascending=[False, True],
-            raw_label=f"All {cfg['title'].lower()} timeline rows",
-        )
-
-    if st.session_state.get(f"{prefix}_error"):
-        st.caption(
-            f"{cfg['title']} unavailable: {st.session_state.get(f'{prefix}_error')}"
-        )
-    with st.expander(f"{cfg['title']} table setup SQL", expanded=False):
-        st.code(cfg["setup_sql"], language="sql")
-    with st.expander(f"{cfg['title']} feed load SQL", expanded=False):
-        st.code(cfg["feed_stage_sql"], language="sql")
-        st.code(cfg["feed_load_sql"], language="sql")
-    with st.expander(f"{cfg['title']} proof SQL", expanded=False):
-        proof_sql = st.session_state.get(f"{prefix}_sql", {})
-        st.code(proof_sql.get("feed_health", cfg["proof_placeholder"]), language="sql")
-        st.code(proof_sql.get("status", cfg["proof_placeholder"]), language="sql")
-        st.code(proof_sql.get("unmatched", cfg["proof_placeholder"]), language="sql")
-        st.code(proof_sql.get("timeline", cfg["proof_placeholder"]), language="sql")
-
-
 def render() -> None:
     company = get_active_company()
     environment = get_active_environment()
@@ -3907,13 +2424,13 @@ def render() -> None:
         [
             ("First move", "Identify who changed what and whether it was approved."),
             ("Evidence", "Preserve query ID, actor, object, timestamp, and dependency context."),
-            ("Control", "Route drift to source control, owner review, or a guarded DBA action."),
+            ("Control", "Route drift to owner review, approval proof, rollback proof, or a guarded DBA action."),
             ("Output", "Build an audit-ready change narrative with blast-radius notes."),
         ],
         columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
-        st.warning("Triage mode: prioritize recent DDL, grant, owner, policy, replication, and task-control issues.")
+        st.warning("Landing default: prioritize recent DDL, grant, owner, policy, replication, and task-control issues.")
 
     days = safe_int(st.session_state.get("change_drift_brief_days", 14), 14)
     if days < 1 or days > 90:
@@ -3958,10 +2475,6 @@ def render() -> None:
             render_workflow_module(workflow, WORKFLOW_MODULES)
         elif workflow == "Stored procedure lineage":
             render_workflow_module(workflow, WORKFLOW_MODULES)
-        elif workflow == "Terraform evidence":
-            _render_change_external_integrations(company, environment, days, mode="Terraform")
-        elif workflow == "Jira evidence":
-            _render_change_external_integrations(company, environment, days, mode="Jira")
         elif workflow == "Schema and object drift":
             st.session_state["dba_tools_focus"] = "Governance"
             st.session_state["dba_tools_focus_tool"] = "Schema Compare"
@@ -3979,7 +2492,7 @@ def render() -> None:
             render_workflow_module(workflow, WORKFLOW_MODULES)
         return
 
-    if st.button("Load Change & Drift Brief", key="change_drift_brief_load", type="primary"):
+    def _load_change_drift_brief() -> None:
         try:
             summary_sql, exceptions_sql = _build_mart_change_drift_sql(days, company)
             source_label = "Fast change summary"
@@ -3998,10 +2511,10 @@ def render() -> None:
                 "exceptions": exceptions_sql,
             }
             st.session_state["change_drift_source"] = source_label
-            st.session_state["change_drift_meta"] = {
-                **_change_scope_meta(company, environment, days),
-                "source": source_label,
-            }
+            st.session_state["change_drift_meta"] = with_loaded_at(
+                _change_scope_meta(company, environment, days),
+                source=source_label,
+            )
             st.session_state.pop("change_drift_error", None)
         except Exception as exc:
             try:
@@ -4023,10 +2536,10 @@ def render() -> None:
                     "exceptions": exceptions_sql,
                 }
                 st.session_state["change_drift_source"] = source_label
-                st.session_state["change_drift_meta"] = {
-                    **_change_scope_meta(company, environment, days),
-                    "source": source_label,
-                }
+                st.session_state["change_drift_meta"] = with_loaded_at(
+                    _change_scope_meta(company, environment, days),
+                    source=source_label,
+                )
                 st.session_state.pop("change_drift_error", None)
                 st.info(f"Change summary unavailable from the fast source; used live QUERY_HISTORY fallback. {format_snowflake_error(exc)}")
             except Exception as live_exc:
@@ -4045,16 +2558,36 @@ def render() -> None:
                 tier="standard",
                 section="Change & Drift",
             )
-            st.session_state["change_control_operability_fact_meta"] = _change_scope_meta(company, environment, days)
+            st.session_state["change_control_operability_fact_meta"] = with_loaded_at(
+                _change_scope_meta(company, environment, days),
+                source="Change control operability fact",
+            )
             st.session_state.pop("change_control_operability_fact_error", None)
         except Exception as fact_exc:
             st.session_state["change_control_operability_fact"] = pd.DataFrame()
             st.session_state["change_control_operability_fact_error"] = format_snowflake_error(fact_exc)
 
+    expected_brief_meta = _change_scope_meta(company, environment, days)
+    summary = st.session_state.get("change_drift_summary")
+    meta = st.session_state.get("change_drift_meta", {})
+    brief_is_current = _change_meta_matches(meta, expected_brief_meta)
+    if consume_section_autoload_request("Change & Drift") and not (
+        summary is not None and not summary.empty and brief_is_current
+    ):
+        st.caption("Change & Drift opened in fast mode. Load the brief when current change-history proof is needed.")
+    render_data_freshness(
+        meta if brief_is_current and summary is not None and not summary.empty else {},
+        source=st.session_state.get("change_drift_source", "Change & Drift brief"),
+        target_minutes=60,
+        delayed_note="Fast change evidence uses OVERWATCH mart rows when available; live QUERY_HISTORY refresh is explicit.",
+    )
+
+    if st.button("Load Change & Drift Brief", key="change_drift_brief_load", type="primary"):
+        _load_change_drift_brief()
+
     summary = st.session_state.get("change_drift_summary")
     exceptions = st.session_state.get("change_drift_exceptions")
     meta = st.session_state.get("change_drift_meta", {})
-    expected_brief_meta = _change_scope_meta(company, environment, days)
     brief_is_current = _change_meta_matches(meta, expected_brief_meta)
     if summary is not None and not summary.empty and not brief_is_current:
         st.info("Loaded Change & Drift brief is stale for the active scope. Reload the brief before acting.")
@@ -4239,7 +2772,7 @@ def render() -> None:
                     )
             with setup_col:
                 defer_source_note(
-                    "Snapshot stores ticket, IaC, owner, approver, query-id, and blast-radius requirements for audit trend review."
+                        "Snapshot stores ticket, approval, rollback, owner, approver, query-id, and blast-radius requirements for audit trend review."
                 )
             with st.expander("Change Control Evidence Trend", expanded=False):
                 trend_days = day_window_selectbox(

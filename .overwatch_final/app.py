@@ -4,7 +4,6 @@
 #   - Role-based section visibility (ROLE_SECTIONS in config.py)
 #   - ALFA default company seeded before radio renders
 #   - Cache invalidation on company switch
-#   - Saved Views / Bookmarks sidebar panel
 # -----------------------------------------------------------------------------
 import streamlit as st
 import html
@@ -56,9 +55,6 @@ from utils.company_filter import (
 )
 from utils.admin import render_admin_mode_control
 from utils.evidence_mode import (
-    TRIAGE_MODE_ALL_EVIDENCE,
-    TRIAGE_MODE_INVESTIGATE,
-    TRIAGE_MODE_OPTIONS,
     TRIAGE_MODE_TRIAGE,
     evidence_mode_from_exceptions,
     exceptions_enabled_from_evidence_mode,
@@ -89,13 +85,6 @@ except ImportError:
         return end_date - timedelta(days=max_days - 1), end_date, True, max_days
 import utils.section_guidance as section_guidance
 
-TRIAGE_MODE_HELP = (
-    "Triage keeps the app focused on failures, cost spikes, queue pressure, suspicious access, "
-    "contract risk, and owner-ready action. Investigate opens broader root-cause context. "
-    "All Evidence keeps lower-priority supporting rows available."
-)
-
-
 def _lazy_query_call(name: str):
     def _call(*args, **kwargs):
         query_module = importlib.import_module("utils.query")
@@ -109,6 +98,8 @@ format_snowflake_error = _lazy_query_call("format_snowflake_error")
 
 
 _ASK_OVERWATCH_STATE_KEYS = (
+    "executive_landing_platform_summary",
+    "executive_landing_snapshot",
     "rec_recommendations",
     "rec_automation_board",
     "rec_action_queue",
@@ -187,18 +178,6 @@ def _snapshot_ask_overwatch_state(state) -> dict:
     return snapshot
 
 
-def _load_bookmark_helpers():
-    """Lazy-load saved-view helpers only when a bookmark action is requested."""
-    from utils.bookmarks import (
-        save_bookmark,
-        load_bookmarks,
-        apply_bookmark,
-        delete_bookmark,
-    )
-
-    return save_bookmark, load_bookmarks, apply_bookmark, delete_bookmark
-
-
 def _dev_reload_helpers_enabled() -> bool:
     """Return whether shared helper hot-reload checks should run."""
     try:
@@ -218,7 +197,7 @@ def _maybe_reload_dev_helpers() -> None:
     if getattr(display_module, "DISPLAY_VERSION", "") != "2026-06-05-chart-drillback-cost-v1":
         importlib.reload(display_module)
 
-    if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-03-bottom-notes-v1":
+    if getattr(workflows_module, "WORKFLOWS_VERSION", "") != "2026-06-09-load-status-guard-v1":
         importlib.reload(workflows_module)
         if hasattr(sections, "reload_loaded_sections"):
             sections.reload_loaded_sections()
@@ -231,7 +210,7 @@ if getattr(theme_module, "THEME_VERSION", "") != "2026-06-13-score-shell-white-t
     inject_theme = theme_module.inject_theme
     render_theme_picker = theme_module.render_theme_picker
 
-if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-06-03-bottom-notes-v1":
+if getattr(section_guidance, "SECTION_GUIDANCE_VERSION", "") != "2026-06-13-no-bottom-notes-v1":
     section_guidance = importlib.reload(section_guidance)
 
 _maybe_reload_dev_helpers()
@@ -303,15 +282,15 @@ def _apply_section_compatibility_state(section: str) -> None:
         st.session_state[key] = value
 
 
-def _reset_section_workspace_state(section: str) -> None:
-    """Return sidebar navigation to the lightweight brief shell for a section."""
+def _request_section_workspace_state(section: str) -> None:
+    """Open the selected section's data workspace from sidebar navigation."""
     target = _normalize_nav_section(section)
     state_keys = SECTION_WORKSPACE_STATE_KEYS.get(target)
     if not state_keys:
         return
     workspace_key, brief_key = state_keys
-    st.session_state[workspace_key] = False
-    st.session_state[brief_key] = True
+    st.session_state[workspace_key] = True
+    st.session_state[brief_key] = False
 
 
 def _section_requires_connection(section: str) -> bool:
@@ -323,10 +302,12 @@ def _queue_section_navigation(section: str) -> None:
     raw_section = str(section or "").strip()
     target = _normalize_nav_section(raw_section)
     current = _normalize_nav_section(st.session_state.get("nav_section", ""))
+    st.session_state["_overwatch_pending_autoload_section"] = target
+    st.session_state["_overwatch_pending_autoload_started_at"] = datetime.now().isoformat(timespec="seconds")
     if target != current:
         st.session_state["_overwatch_pending_section"] = target
         st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
-    _reset_section_workspace_state(target)
+    _request_section_workspace_state(target)
     _apply_section_compatibility_state(raw_section)
     st.session_state["nav_section"] = target
 
@@ -718,7 +699,7 @@ def _render_priority_brief_empty_state(scope_label: str) -> None:
         <div class="ow-priority-empty">
             <strong>Standing by</strong>
             <span>{safe_scope}</span>
-            <span>Load a workflow to rank evidence.</span>
+            <span>Open Executive Landing for the ranked platform brief.</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -814,7 +795,7 @@ SECTION_SUBTITLES = {
     "Architecture Readiness": "Isolation, clustering, cache, DR, and forward Snowflake architecture checks.",
     "Cost & Contract": "Spend attribution, contract utilization, chargeback, savings, and action queue.",
     "Security Posture": "Access posture, privileged grants, data sharing, and governance evidence.",
-    "Change & Drift": "Object changes, access changes, drift, approvals, and deployment evidence.",
+    "Change & Drift": "Object changes, access changes, drift, approvals, and rollback proof.",
 }
 
 
@@ -849,8 +830,6 @@ def _active_scope_chips(company: str) -> str:
         value = st.session_state.get(key)
         if value:
             chips.append(_chip(label, value, muted=True))
-    evidence_mode = _normalize_triage_mode(st.session_state.get("triage_view_mode"))
-    chips.append(_chip("Evidence", evidence_mode, muted=evidence_mode != TRIAGE_MODE_TRIAGE))
     return "".join(chips)
 
 
@@ -1025,17 +1004,9 @@ with st.sidebar:
         if st.button("Clear All Filters", key="global_filters_clear"):
             _clear_global_filters()
 
+    # Evidence depth is section-owned. Keep legacy session keys normalized for
+    # deep links only; do not expose a global operator knob.
     _ensure_triage_mode_state(resolve_role_profile(_get_current_role()) == "DBA")
-    selected_triage_mode = _normalize_triage_mode(st.session_state.get("triage_view_mode", TRIAGE_MODE_TRIAGE))
-    st.session_state["triage_view_mode"] = selected_triage_mode
-    st.selectbox(
-        "Evidence Mode",
-        TRIAGE_MODE_OPTIONS,
-        index=TRIAGE_MODE_OPTIONS.index(selected_triage_mode),
-        key="triage_view_mode",
-        help=TRIAGE_MODE_HELP,
-        on_change=_sync_exceptions_only_mode,
-    )
     _sync_exceptions_only_mode()
 
     st.divider()
@@ -1082,105 +1053,6 @@ with st.sidebar:
                 args=(section_name,),
                 help=_section_subtitle(section_name),
             )
-
-    st.divider()
-
-    # Saved views / bookmarks.
-    if _sidebar_panel_toggle("Saved Views", "saved_views"):
-        _session = st.session_state.get("sf_session")
-        saved_views_loaded = bool(st.session_state.get("_overwatch_saved_views_loaded"))
-        bookmarks = st.session_state.get("_overwatch_saved_views_cache", [])
-        if st.button(
-            "Refresh Saved Views" if saved_views_loaded else "Load Saved Views",
-            key="bm_load_saved_views",
-            width="stretch",
-            disabled=not connection_available,
-        ):
-            try:
-                _session = get_session()
-                _, load_bookmarks, _, _ = _load_bookmark_helpers()
-                bookmarks = load_bookmarks(_session)
-                st.session_state["_overwatch_saved_views_cache"] = bookmarks
-                st.session_state["_overwatch_saved_views_loaded"] = True
-                st.session_state["_overwatch_saved_views_loaded_at"] = datetime.now().strftime("%H:%M:%S")
-                saved_views_loaded = True
-                st.session_state.pop("_overwatch_connection_unavailable", None)
-            except StopException:
-                _session = None
-                st.session_state["_overwatch_connection_unavailable"] = True
-            except Exception as e:
-                _session = None
-                st.session_state["_overwatch_connection_unavailable"] = True
-                st.caption(f"Saved views unavailable until Snowflake is connected. {format_snowflake_error(e)}")
-
-        if not saved_views_loaded:
-            st.caption("Saved views are skipped during normal reruns. Load them only when you need to jump or manage views.")
-        elif bookmarks:
-            loaded_at = st.session_state.get("_overwatch_saved_views_loaded_at", "")
-            if loaded_at:
-                st.caption(f"Loaded at {loaded_at}. Click a bookmark to jump directly to that view.")
-            else:
-                st.caption("Click a bookmark to jump directly to that view.")
-            for bm in bookmarks:
-                shared_badge = " Shared" if bm["shared"] else ""
-                uses_badge   = f" - {bm['uses']}x" if bm["uses"] else ""
-                col_bm, col_del = st.columns([5, 1])
-                with col_bm:
-                    if st.button(
-                        f"{bm['name']}{shared_badge}{uses_badge}",
-                        key=f"bm_apply_{bm['id']}",
-                        help=f"Section: {bm['section']}\nCreated: {bm['created']}",
-                        width="stretch",
-                    ):
-                        if not _session:
-                            _session = get_session()
-                        _, _, apply_bookmark, _ = _load_bookmark_helpers()
-                        apply_bookmark(_session, bm)  # calls st.rerun()
-                with col_del:
-                    if st.button("Delete", key=f"bm_del_{bm['id']}", help="Delete bookmark"):
-                        if not _session:
-                            _session = get_session()
-                        _, _, _, delete_bookmark = _load_bookmark_helpers()
-                        if delete_bookmark(_session, bm["id"]):
-                            st.session_state.pop("_overwatch_saved_views_cache", None)
-                            st.session_state["_overwatch_saved_views_loaded"] = False
-                            st.rerun()
-        elif saved_views_loaded:
-            st.caption("No saved views yet.")
-
-        st.divider()
-        st.caption("Save current view")
-        new_bm_name = st.text_input(
-            "Bookmark name",
-            placeholder="e.g. Monday Credit Check",
-            label_visibility="collapsed",
-            key="bm_name_input",
-            max_chars=100,
-        )
-        bm_shared = st.checkbox("Share with all users", key="bm_shared_toggle")
-        if st.button("Save View", key="bm_save_btn"):
-            bookmark_name = str(st.session_state.get("bm_name_input") or new_bm_name or "").strip()
-            if not bookmark_name:
-                st.warning("Enter a bookmark name before saving.")
-            else:
-                if not _session:
-                    try:
-                        _session = get_session()
-                    except Exception:
-                        _session = None
-                if not _session:
-                    st.warning("Connect Snowflake before saving views.")
-                else:
-                    save_bookmark, _, _, _ = _load_bookmark_helpers()
-                    if save_bookmark(_session, bookmark_name, bm_shared):
-                        st.success(f"Saved '{bookmark_name}'")
-                        st.session_state.pop("bm_name_input", None)
-                        st.session_state.pop("_overwatch_saved_views_cache", None)
-                        st.session_state["_overwatch_saved_views_loaded"] = False
-                        st.rerun()
-
-        if _session:
-            st.caption("Saved View table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
 
     st.divider()
 
@@ -1275,9 +1147,7 @@ try:
     else:
         try:
             with section_slot.container():
-                section_guidance.clear_deferred_section_notes(active_section)
                 sections.dispatch(active_section)
-                section_guidance.render_deferred_section_notes(active_section)
             _mark_section_rendered(active_section, section_signature)
         except StopException:
             st.session_state["_overwatch_connection_unavailable"] = True
@@ -1294,8 +1164,11 @@ try:
                 )
             _mark_section_rendered(active_section, section_signature)
 finally:
-    with priority_brief_slot.container():
-        _render_top_priority_brief(active_section, active_company, current_role or "")
+    if active_section == "Executive Landing":
+        with priority_brief_slot.container():
+            _render_top_priority_brief(active_section, active_company, current_role or "")
+    else:
+        priority_brief_slot.empty()
     duration_ms = int((time.perf_counter() - section_render_started) * 1000)
     st.session_state["_overwatch_last_section_render_ms"] = duration_ms
     st.session_state["_overwatch_secondary_chrome_ready"] = True

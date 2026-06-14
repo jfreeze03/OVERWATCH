@@ -56,6 +56,7 @@ DBA_TOOL_GROUPS = {
         "Network & Sessions",
         "Unused Objects",
         "Schema Compare",
+        "Data Compare",
         "Recent Objects",
     ],
     "Cost & Setup": [

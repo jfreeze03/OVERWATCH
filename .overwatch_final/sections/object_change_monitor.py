@@ -122,7 +122,7 @@ def _change_route(change_type: object, category: str = "") -> tuple[str, str]:
     if "DRIFT" in text or "IAC" in text:
         return (
             "Change & Drift",
-            "Compare with Terraform/source control; codify the change or revert through approved deployment.",
+            "Validate owner approval, query evidence, and rollback proof before accepting the change.",
         )
     if "PROCEDURE" in text or "TASK" in text:
         return (
@@ -201,17 +201,17 @@ def render():
         qh_caps = {
             "query_tag_select": "query_tag" if "QUERY_TAG" in qh_cols else "NULL::VARCHAR AS query_tag",
             "drift_case": (
-                "WHEN query_tag ILIKE '%terraform%' THEN 'IaC managed'"
+                "WHEN query_tag ILIKE '%deployment%' THEN 'Approved deployment tagged'"
                 if "QUERY_TAG" in qh_cols else ""
             ),
             "drift_exclusion": (
-                "AND NOT (query_tag ILIKE '%terraform%')"
+                "AND NOT (query_tag ILIKE '%deployment%')"
                 if "QUERY_TAG" in qh_cols else ""
             ),
         }
         return qh_caps
     st.subheader("Object Change Audit")
-    st.caption("DDL, grants, roles, policy changes, and owner changes. Terraform evidence is consolidated in Change & Drift.")
+    st.caption("DDL, grants, roles, policy changes, and owner changes. Change evidence and rollback proof are handled in Change & Drift.")
 
     days = day_window_selectbox("Lookback", key="ocm_days", default=14)
     row_limit = st.slider("Max rows per scan", 100, 1000, 250, step=50, key="ocm_row_limit")
@@ -264,7 +264,7 @@ def render():
     """
     mart_drift_category = """
           AND c.change_category IN ('CREATE', 'ALTER', 'DROP', 'GRANT', 'OWNER', 'POLICY')
-          AND (c.query_tag IS NULL OR c.query_tag NOT ILIKE '%terraform%')
+          AND (c.query_tag IS NULL OR c.query_tag NOT ILIKE '%deployment%')
     """
 
     if active_view == "Objects":

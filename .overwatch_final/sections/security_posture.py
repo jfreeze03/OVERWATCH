@@ -8,7 +8,14 @@ import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULT_ENVIRONMENT
 from sections.base import lazy_pandas, lazy_util as _lazy_util
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import (
+    consume_section_autoload_request,
+    render_data_freshness,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    with_loaded_at,
+)
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -126,7 +133,7 @@ def render_workflow_module(workflow: str, workflow_modules: dict[str, str]) -> N
 
 SECURITY_POSTURE_VIEWS = ("Security Brief", "Evidence Readiness", "Access Workflows")
 SECURITY_POSTURE_VIEW_DETAILS = {
-    "Security Brief": "Default cockpit: security action brief, operating snapshot, and exception-first load path.",
+    "Security Brief": "Default cockpit: status strip, KPI row, and exception-first access workflow grid.",
     "Evidence Readiness": "Source health, privileged-grant readiness, control proof, and audit trust boundaries.",
     "Access Workflows": "Open privileged grants, dormant users, MFA/login risk, data sharing, and governance workflows.",
 }
@@ -1432,10 +1439,9 @@ def _security_exception_strip_rows(summary, exceptions, meta: dict, company: str
 
 
 def _render_security_exception_strip(rows: list[dict], *, loaded: bool = False) -> None:
-    st.markdown("**Exception Strip**")
     if not loaded:
-        st.caption("Load the security brief to populate exception signals.")
         return
+    st.markdown("**Exception Strip**")
     if not rows:
         st.success("No immediate security exceptions in the loaded summary.")
         return
@@ -1503,14 +1509,11 @@ def _security_action_brief(summary, exceptions, meta: dict, company: str, enviro
 
 
 def _render_security_action_brief(brief: dict) -> None:
-    with st.container(border=True):
-        label_col, detail_col = st.columns([1.1, 4.6])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(str(brief.get("state") or "Review"))
-        with detail_col:
-            st.markdown(f"**{brief.get('headline') or 'Review security evidence.'}**")
-            st.caption(str(brief.get("detail") or ""))
+    render_shell_status_strip(
+        state=brief.get("state") or "Review",
+        headline=brief.get("headline") or "Review security evidence.",
+        detail=brief.get("detail") or "",
+    )
 
 
 def _security_operating_snapshot(summary, meta: dict, company: str, environment: str, days: int) -> dict:
@@ -1538,16 +1541,15 @@ def _security_operating_snapshot(summary, meta: dict, company: str, environment:
 
 
 def _render_security_operating_snapshot(snapshot: dict) -> None:
-    st.markdown("**Operating Snapshot**")
     loaded = bool(snapshot.get("loaded"))
     if not loaded:
-        render_shell_snapshot((
+        render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "30d")),
             ("Evidence", str(snapshot.get("evidence") or "Load brief")),
         ))
         return
-    render_shell_snapshot((
+    render_shell_kpi_row((
         ("Failed", f"{safe_int(snapshot.get('failed')):,}"),
         ("MFA Gaps", f"{safe_int(snapshot.get('mfa_gaps')):,}"),
         ("Grant Changes", f"{safe_int(snapshot.get('grant_changes')):,}"),
@@ -2899,7 +2901,7 @@ def render() -> None:
         columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
-        st.warning("Triage mode: prioritize failed logins, MFA gaps, risky grants, and external exposure.")
+        st.warning("Landing default: prioritize failed logins, MFA gaps, risky grants, and external exposure.")
     render_workflow_guide(
         "Start with identity/access posture, open privilege sprawl for high-risk grants, "
         "then inspect data sharing when the question is external exposure or audit evidence.",
@@ -2908,25 +2910,6 @@ def render() -> None:
             ("Admin roles, ownership, grant option, or route blockers", "Use Privilege sprawl."),
             ("External consumers or shared data exposure", "Use Data sharing exposure."),
         ],
-    )
-
-    days = safe_int(st.session_state.get("security_posture_brief_days", 30), 30)
-    summary = st.session_state.get("security_posture_summary")
-    exceptions = st.session_state.get("security_posture_exceptions")
-    meta = st.session_state.get("security_posture_meta", {})
-    brief_slot = st.empty()
-    snapshot_slot = st.empty()
-    exception_slot = st.empty()
-    _paint_security_brief_chrome(
-        brief_slot,
-        snapshot_slot,
-        exception_slot,
-        summary,
-        exceptions,
-        meta,
-        company,
-        environment,
-        days,
     )
 
     days = day_window_selectbox(
@@ -2943,7 +2926,23 @@ def render() -> None:
         columns=3,
     )
     if active_view == "Security Brief":
-        _render_security_brief_launchpad()
+        summary = st.session_state.get("security_posture_summary")
+        exceptions = st.session_state.get("security_posture_exceptions")
+        meta = st.session_state.get("security_posture_meta", {})
+        brief_slot = st.empty()
+        snapshot_slot = st.empty()
+        exception_slot = st.empty()
+        _paint_security_brief_chrome(
+            brief_slot,
+            snapshot_slot,
+            exception_slot,
+            summary,
+            exceptions,
+            meta,
+            company,
+            environment,
+            days,
+        )
     if active_view == "Evidence Readiness":
         _render_security_source_health(company, environment)
         _render_privileged_grant_readiness(company, environment, days)
@@ -2962,7 +2961,7 @@ def render() -> None:
         render_workflow_module(workflow, WORKFLOW_MODULES)
         return
 
-    if st.button("Load Security Brief", key="security_posture_brief_load", type="primary"):
+    def _load_security_brief() -> None:
         session = None
         try:
             session = get_session()
@@ -2973,10 +2972,10 @@ def render() -> None:
                 tier="standard",
             )
             source = "Fast security summary; MFA/sharing: account history"
-            st.session_state["security_posture_meta"] = {
-                **_security_scope_meta(company, environment, days),
-                "source": source,
-            }
+            st.session_state["security_posture_meta"] = with_loaded_at(
+                _security_scope_meta(company, environment, days),
+                source=source,
+            )
             st.session_state["security_posture_source"] = source
             st.session_state.pop("security_posture_exceptions", None)
             st.session_state.pop("security_posture_exception_source", None)
@@ -2996,10 +2995,10 @@ def render() -> None:
                     tier="standard",
                 )
                 source = "Live fallback: SNOWFLAKE.ACCOUNT_USAGE"
-                st.session_state["security_posture_meta"] = {
-                    **_security_scope_meta(company, environment, days),
-                    "source": source,
-                }
+                st.session_state["security_posture_meta"] = with_loaded_at(
+                    _security_scope_meta(company, environment, days),
+                    source=source,
+                )
                 st.session_state["security_posture_source"] = source
                 st.session_state.pop("security_posture_exceptions", None)
                 st.session_state.pop("security_posture_exception_source", None)
@@ -3016,6 +3015,26 @@ def render() -> None:
                 st.session_state.pop("security_posture_exception_source", None)
                 st.session_state.pop("security_posture_exception_error", None)
                 st.error(f"Unable to load security brief: {format_snowflake_error(live_exc)}")
+
+    security_expected_meta = _security_scope_meta(company, environment, days)
+    summary = st.session_state.get("security_posture_summary")
+    meta = st.session_state.get("security_posture_meta", {})
+    security_current = (
+        summary is not None
+        and not summary.empty
+        and _security_meta_matches(meta, security_expected_meta)
+    )
+    if consume_section_autoload_request("Security Posture") and not security_current:
+        st.caption("Security posture opened in fast mode. Load the security brief when current account-history proof is needed.")
+    render_data_freshness(
+        meta if security_current else {},
+        source=st.session_state.get("security_posture_source", "Security brief"),
+        target_minutes=60,
+        delayed_note="Security summary uses fast OVERWATCH rows when available; live ACCOUNT_USAGE refresh is explicit.",
+    )
+
+    if st.button("Load Security Brief", key="security_posture_brief_load", type="primary"):
+        _load_security_brief()
         summary = st.session_state.get("security_posture_summary")
         exceptions = st.session_state.get("security_posture_exceptions")
         meta = st.session_state.get("security_posture_meta", {})
@@ -3030,6 +3049,8 @@ def render() -> None:
             environment,
             days,
         )
+
+    _render_security_brief_launchpad()
 
     summary = st.session_state.get("security_posture_summary")
     exceptions = st.session_state.get("security_posture_exceptions")

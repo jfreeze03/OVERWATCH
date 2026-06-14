@@ -11,14 +11,35 @@ those facts before it falls back to live account views. This keeps the app fast,
 keeps Snowflake cost predictable, and gives every recommendation an evidence
 path.
 
+## Telemetry Architecture Decision
+
+OVERWATCH production setup uses scheduled Snowflake tasks plus transient fact
+and mart tables as the default architecture. Permanent tables are reserved for
+configuration, acknowledgements, remediation logs, action history, suppression
+windows, and DBA-entered evidence that should not disappear if a reproducible
+mart is rebuilt.
+
+Dynamic Tables remain optional in `snowflake/PRECOMPUTE.sql`; they are not the
+base architecture because ACCOUNT_USAGE is already delayed, target lag is a
+freshness target rather than a fixed refresh interval, and each dynamic table
+needs warehouse-backed refresh budget. Materialized views are avoided for the
+main command center because the app needs multi-source, windowed, exception
+ranking logic with explicit error handling and audit logging.
+
+The Executive Landing page is the one deliberate first-paint aggregate:
+`MART_EXECUTIVE_OBSERVABILITY`. It is refreshed after the hourly load, Cortex
+load, Control Room, cost governance, and automation tasks so the first screen
+can show spend, Cortex cost, runtime, queueing, spill, failures, alerts,
+actions, storage, and platform score from one small query.
+
 ## Current Production Sections
 
 | Group | Sections | Primary job |
 |---|---|---|
 | Command Center | Executive Landing, DBA Control Room, Alert Center, Account Health | Morning triage, action queue, alert routing, leadership evidence. |
 | Financial Control | Cost & Contract | Spend explanation, warehouse/user/role attribution, Cortex spend, contract pacing, savings verification. |
-| Operations | Workload Operations, Warehouse Health | Query/task/procedure status, Control-M style pipeline evidence, warehouse pressure, settings review. |
-| Governance | Security Posture, Change & Drift | MFA/login/grant posture, object changes, Terraform/Jira/Flyway/Git evidence, schema compare. |
+| Operations | Workload Operations, Warehouse Health | Query/task/procedure status, Snowflake task style pipeline evidence, warehouse pressure, settings review. |
+| Governance | Security Posture, Change & Drift | MFA/login/grant posture, object changes, owner approval proof, rollback evidence, schema compare. |
 | Architecture | Architecture Readiness | Owner-backed readiness, source health, future Snowflake controls, control register evidence. |
 
 ## Daily Operating Model
@@ -79,6 +100,13 @@ That board sorts by severity, SLA age, owner, ticket state, business impact,
 source freshness, proof query, and remediation mode so the DBA can work the
 right item first instead of scanning a flat inbox.
 
+The command-intelligence hardening pass adds the ranked 12-item operating
+foundation from the COCO/Kiro review: root-cause correlation, task critical
+path, reconciliation, predictive FinOps, alert lifecycle, fact-grounded Cortex
+query diagnosis, OVERWATCH self-monitoring, optional precompute, compliance,
+multi-account readiness, persistent preferences, and runbooks. These are exposed
+as data-first panels and SQL contracts before deeper drilldown.
+
 `ALERT_DATA_QUALITY_CHECKS` is the metadata-driven table for freshness, row
 count, null-rate, duplicate, volume, and schema checks. DBAs and data owners can
 tune database/schema/table/column/check type/threshold/severity/owner/channel
@@ -88,6 +116,16 @@ Remediation is approval-gated by default. The app may recommend SQL or actions,
 but state-changing fixes must log trigger, approval, before/after state,
 rollback guidance, affected object/user/warehouse/task, and verification result
 in `ALERT_REMEDIATION_LOG`.
+
+Snowflake Value is automation-first. `OVERWATCH_VALUE_CANDIDATE_V` and
+`SP_OVERWATCH_AUTOMATE_VALUE_LOG` derive value candidates from fixed action
+queue items and resolved alert evidence so DBAs do not have to manually maintain
+the value log. Estimated value remains separate from verified value until
+post-period proof exists.
+
+Optional precompute is separated into `snowflake/PRECOMPUTE.sql`. Dynamic Tables
+must be approved for refresh lag, warehouse, ownership, and cost before use; the
+same file also includes fallback views.
 
 ## Quick Start
 
@@ -160,6 +198,13 @@ against `.overwatch_final`, `tests`, and documentation before release.
   closed-loop DBA operations.
 - [ALERT_COMMAND_CENTER_RUNBOOK.md](ALERT_COMMAND_CENTER_RUNBOOK.md) explains
   Alert Center setup, privileges, integrations, and daily DBA alert triage.
+- [docs/OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK.md](docs/OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK.md)
+  explains the 12 command-intelligence capabilities, data-first UI model,
+  automated value log, reconciliation approach, AI query diagnosis contract, and
+  precompute decision.
+- [docs/DATA_MODEL.md](docs/DATA_MODEL.md) summarizes the new command
+  intelligence, reconciliation, FinOps/value, compliance, and optional
+  precompute objects.
 - [UX_PRODUCTION_GUIDELINES.md](UX_PRODUCTION_GUIDELINES.md) documents current
   production UI standards.
 - [OVERWATCH_PROCESS_FOR_16_YEAR_OLD.md](OVERWATCH_PROCESS_FOR_16_YEAR_OLD.md)

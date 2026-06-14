@@ -5,6 +5,10 @@ from config import DEFAULTS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
 from sections.shell_helpers import render_shell_snapshot
 from utils import (
     build_app_runtime_cost_sql,
+    build_snowflake_value_auto_ddl,
+    build_snowflake_value_automation_health_sql,
+    build_snowflake_value_automation_rows,
+    build_snowflake_value_candidate_sql,
     format_snowflake_error,
     freshness_note,
     get_active_company,
@@ -94,6 +98,126 @@ def _load_snowflake_value_state(session, company: str, *, show_errors: bool = Tr
         return False
 
 
+def _load_snowflake_value_automation_state(company: str, *, show_errors: bool = True) -> bool:
+    try:
+        health = run_query(
+            build_snowflake_value_automation_health_sql(),
+            ttl_key=f"snowflake_value_automation_health_{company}",
+            tier="recent",
+            section="Snowflake Value",
+        )
+        candidates = run_query(
+            build_snowflake_value_candidate_sql(limit=100),
+            ttl_key=f"snowflake_value_candidates_{company}",
+            tier="recent",
+            section="Snowflake Value",
+        )
+        st.session_state["sf_value_automation_health"] = health
+        st.session_state["sf_value_automation_candidates"] = candidates
+        st.session_state["sf_value_automation_error"] = ""
+        st.session_state["sf_value_automation_meta"] = {"company": company}
+        return True
+    except Exception as exc:
+        st.session_state["sf_value_automation_health"] = None
+        st.session_state["sf_value_automation_candidates"] = None
+        st.session_state["sf_value_automation_error"] = format_snowflake_error(exc)
+        if show_errors:
+            st.info(
+                "Snowflake value automation views are not deployed yet. "
+                f"Run the latest setup DDL first. ({format_snowflake_error(exc)})"
+            )
+        return False
+
+
+def _render_value_automation_contract() -> None:
+    import pandas as pd
+
+    st.markdown("**Automated Value Capture**")
+    render_priority_dataframe(
+        pd.DataFrame(build_snowflake_value_automation_rows()),
+        title="Value signals OVERWATCH can capture without manual DBA entry",
+        priority_columns=[
+            "VALUE_SIGNAL", "EVIDENCE_SOURCE", "VALUE_STATE",
+            "CAPTURE_RULE", "WHY_IT_MATTERS",
+        ],
+        raw_label="All automated value sources",
+        height=240,
+        max_rows=4,
+    )
+    value_sql = build_snowflake_value_auto_ddl()
+    st.download_button(
+        "Download Value Automation SQL",
+        data=value_sql,
+        file_name="overwatch_value_automation.sql",
+        mime="text/sql",
+        key="download_snowflake_value_automation_sql",
+        width="stretch",
+    )
+    with st.expander("Value automation SQL preview", expanded=False):
+        st.code(value_sql, language="sql")
+
+
+def _render_value_automation_health(company: str) -> None:
+    load_meta = {"company": company}
+    if (
+        st.session_state.get("sf_value_automation_meta") != load_meta
+        and st.session_state.get("sf_value_automation_autoload_failed_meta") != load_meta
+    ):
+        if not _load_snowflake_value_automation_state(company, show_errors=False):
+            st.session_state["sf_value_automation_autoload_failed_meta"] = load_meta
+
+    if st.button("Load Value Automation Evidence", key="sf_value_automation_load", width="stretch"):
+        _load_snowflake_value_automation_state(company, show_errors=True)
+
+    health = st.session_state.get("sf_value_automation_health")
+    candidates = st.session_state.get("sf_value_automation_candidates")
+    err = st.session_state.get("sf_value_automation_error", "")
+    if health is None:
+        if err:
+            st.caption(f"Automation evidence unavailable for this role/context: {err}")
+        return
+    if health.empty:
+        st.info("Value automation health view returned no rows.")
+    else:
+        row = health.iloc[0]
+        render_shell_snapshot((
+            ("Candidates", f"{int(row.get('CANDIDATE_COUNT', 0) or 0):,}"),
+            ("Verified Candidates", f"{int(row.get('VERIFIED_CANDIDATE_COUNT', 0) or 0):,}"),
+            ("Candidate Value", f"${safe_float(row.get('CANDIDATE_MONTHLY_VALUE')):,.0f}/mo"),
+            ("Ledger Rows", f"{int(row.get('AUTOMATED_LEDGER_ROWS', 0) or 0):,}"),
+        ))
+        st.caption(str(row.get("NEXT_ACTION") or "Review value automation health."))
+        render_priority_dataframe(
+            health,
+            title="Value automation health",
+            priority_columns=[
+                "CANDIDATE_COUNT", "VERIFIED_CANDIDATE_COUNT",
+                "CANDIDATE_MONTHLY_VALUE", "VERIFIED_CANDIDATE_MONTHLY_VALUE",
+                "AUTOMATED_LEDGER_ROWS", "VERIFIED_LEDGER_ROWS",
+                "LATEST_RUN_TS", "LATEST_RUN_STATUS", "NEXT_ACTION",
+            ],
+            raw_label="All value automation health fields",
+            height=180,
+            max_rows=1,
+        )
+    if candidates is not None and not candidates.empty:
+        render_priority_dataframe(
+            candidates,
+            title="Current automated value candidates",
+            priority_columns=[
+                "VALUE_SOURCE", "EVIDENCE_SOURCE", "EVIDENCE_ID", "CATEGORY",
+                "ENTITY", "OWNER", "SAVINGS_MONTHLY", "VALUE_STATE",
+                "BUSINESS_IMPACT",
+            ],
+            sort_by=["VALUE_STATE", "SAVINGS_MONTHLY"],
+            ascending=[False, False],
+            raw_label="All value automation candidates",
+            height=260,
+            max_rows=10,
+        )
+        download_csv(candidates, "snowflake_value_automation_candidates.csv")
+
+
 def render():
     session = get_session()
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
@@ -101,11 +225,13 @@ def render():
 
     st.subheader("Snowflake Value")
     st.caption(
-        "Track verified Snowflake optimization wins from warehouse tuning, query fixes, storage cleanup, "
-        "task tuning, and other OVERWATCH recommendations."
+        "Track verified Snowflake optimization, reliability, and incident-prevention wins from evidence. "
+        "Manual entries stay available, but the preferred path is automated capture from action and alert proof."
     )
 
     st.info("Snowflake Value table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
+    _render_value_automation_contract()
+    _render_value_automation_health(company)
 
     load_meta = {"company": company}
     if (

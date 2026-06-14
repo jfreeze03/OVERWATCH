@@ -7,11 +7,25 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, render_shell_workflows, scope_label
+from sections.shell_helpers import (
+    action_state_label,
+    evidence_caption,
+    evidence_label,
+    evidence_loaded,
+    full_workspace_requested,
+    render_data_freshness,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    render_shell_workflows,
+    scope_label,
+)
 
 
 _FULL_WORKSPACE_KEY = "_dba_control_room_full_workspace_requested"
 _BRIEF_MODE_KEY = "_dba_control_room_brief_mode"
+_FAST_ENTRY_VERSION_KEY = "_dba_control_room_shell_fast_entry_version"
+_FAST_ENTRY_VERSION = 2
 _FULL_WORKSPACE_STATE_KEYS = (
     "dba_control_room_data",
     "dba_control_room_snapshot_result",
@@ -95,15 +109,88 @@ def _window_label() -> str:
 
 
 def _full_workspace_requested() -> bool:
-    if st.session_state.get(_BRIEF_MODE_KEY):
-        return False
+    """Keep DBA navigation lightweight; open the heavy workspace only from a selected DBA route."""
+    _ = full_workspace_requested
     if st.session_state.get(_FULL_WORKSPACE_KEY):
         return True
+    st.session_state.setdefault(_BRIEF_MODE_KEY, True)
     return False
+
+
+def _apply_fast_entry_default() -> None:
+    if st.session_state.get(_FAST_ENTRY_VERSION_KEY) == _FAST_ENTRY_VERSION:
+        return
+    st.session_state[_FULL_WORKSPACE_KEY] = False
+    st.session_state[_BRIEF_MODE_KEY] = True
+    st.session_state[_FAST_ENTRY_VERSION_KEY] = _FAST_ENTRY_VERSION
 
 
 def _loaded_evidence_available() -> bool:
     return evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
+
+
+def _frame_len(value: object) -> int:
+    if value is None:
+        return 0
+    try:
+        if bool(getattr(value, "empty", False)):
+            return 0
+    except Exception:
+        pass
+    try:
+        return max(0, int(len(value)))
+    except Exception:
+        return 0
+
+
+def _sum_column(frame: object, column: str) -> float:
+    try:
+        series = frame[column]
+        if hasattr(series, "sum"):
+            return _safe_float(series.sum())
+    except Exception:
+        return 0.0
+    return 0.0
+
+
+def _control_room_meta() -> dict:
+    meta = st.session_state.get("dba_control_room_meta")
+    if isinstance(meta, dict):
+        return dict(meta)
+    return {}
+
+
+def _loaded_data_snapshot() -> tuple[tuple[str, object], ...]:
+    data = st.session_state.get("dba_control_room_data")
+    if isinstance(data, dict) and data:
+        failed_queries = _frame_len(data.get("failed_queries"))
+        failed_tasks = _frame_len(data.get("task_failures"))
+        action_rows = _frame_len(data.get("action_queue"))
+        source_rows = _frame_len(data.get("source_health"))
+        return (
+            ("Failed Queries", f"{failed_queries:,}"),
+            ("Failed Tasks", f"{failed_tasks:,}"),
+            ("Action Rows", f"{action_rows:,}"),
+            ("Sources", f"{source_rows:,}" if source_rows else "Loaded"),
+        )
+
+    snapshot_result = st.session_state.get("dba_control_room_snapshot_result")
+    snapshot = getattr(snapshot_result, "data", None)
+    available = bool(getattr(snapshot_result, "available", False))
+    if available and _frame_len(snapshot):
+        return (
+            ("Failed Queries", f"{int(_sum_column(snapshot, 'FAILED_QUERIES_24H')):,}"),
+            ("Failed Tasks", f"{int(_sum_column(snapshot, 'FAILED_TASKS_24H')):,}"),
+            ("Credits 24h", f"{_sum_column(snapshot, 'CREDITS_24H'):,.1f}"),
+            ("Cortex 7d", f"${_sum_column(snapshot, 'CORTEX_COST_7D_USD'):,.0f}"),
+        )
+
+    return (
+        ("Fast Watch", "On demand"),
+        ("Morning", "On demand"),
+        ("Ops Board", "On demand"),
+        ("Release Gate", "On demand"),
+    )
 
 
 def _open_workspace(view: str | None = None) -> None:
@@ -133,28 +220,37 @@ def _render_back_to_brief_control() -> None:
             _return_to_brief()
 
 
-def _render_action_brief() -> None:
-    workspace_help = (
+def _render_status_strip() -> None:
+    detail = (
         evidence_caption(st.session_state, _FULL_WORKSPACE_STATE_KEYS, "")
         if _loaded_evidence_available()
-        else "Fast snapshot, source health, routed actions, and exports stay on demand."
+        else "Fast watch, source health, incidents, release gate, and handoff proof open from the workflow grid."
     )
-    with st.container(border=True):
-        label_col, detail_col, action_col = st.columns([1.0, 3.0, 1.8])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
-        with detail_col:
-            st.markdown("**Open the DBA workspace when a signal needs triage, release proof, or a handoff.**")
-        with action_col:
-            if st.button(
-                "Open DBA workspace",
-                key="dba_control_room_open_full_workspace",
-                help=workspace_help or None,
-                type="primary",
-                width="stretch",
-            ):
-                _open_workspace()
+    render_shell_status_strip(
+        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
+        headline="DBA command view: incidents, source health, release gates, and handoff risk.",
+        detail=detail,
+    )
+
+
+def _render_kpi_row() -> None:
+    render_shell_kpi_row((
+        ("Scope", scope_label(_active_company(), _active_environment())),
+        ("Window", _window_label()),
+        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
+        ("Primary route", "Fast Watch"),
+    ))
+
+
+def _render_command_snapshot() -> None:
+    st.markdown("**DBA Command Snapshot**")
+    render_data_freshness(
+        _control_room_meta(),
+        source=st.session_state.get("dba_control_room_source_mode", "DBA Control Room"),
+        target_minutes=30,
+        delayed_note="No Snowflake query runs from this shell. Open a DBA route when you need fresh evidence.",
+    )
+    render_shell_snapshot(_loaded_data_snapshot())
 
 
 def _render_workflow_launchpad() -> None:
@@ -171,6 +267,7 @@ def _render_workflow_launchpad() -> None:
 
 
 def render() -> None:
+    _apply_fast_entry_default()
     if _full_workspace_requested():
         _render_back_to_brief_control()
         _delegate_full_workspace()
@@ -178,5 +275,7 @@ def render() -> None:
 
     st.session_state.setdefault("dba_control_room_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
 
-    _render_action_brief()
+    _render_status_strip()
+    _render_kpi_row()
+    _render_command_snapshot()
     _render_workflow_launchpad()

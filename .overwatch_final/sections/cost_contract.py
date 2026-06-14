@@ -16,7 +16,14 @@ from config import (
     ETL_AUDIT_SCHEMA,
 )
 from sections.base import lazy_pandas, lazy_util as _lazy_util
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import (
+    consume_section_autoload_request,
+    render_data_freshness,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    with_loaded_at,
+)
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 
@@ -381,7 +388,6 @@ def _render_cost_splash_next_move(summary: dict) -> None:
                 width="stretch",
             ):
                 st.session_state["cost_contract_workflow"] = workflow
-                st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
                 st.rerun()
 
 
@@ -468,7 +474,6 @@ WORKFLOW_MODULES = {
 
 _DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
 _PENDING_DETAIL_WORKFLOW_KEY = "_cost_contract_pending_detail_workflow"
-_AUTO_OPEN_DETAIL_WORKFLOWS = frozenset({"Storage cost and retention"})
 _FULL_COCKPIT_BOARDS_KEY = "_cost_contract_full_cockpit_boards"
 _COST_SPLASH_KEY = "cost_contract_splash"
 _COST_SPLASH_AUTOLOAD_SCOPE_KEY = "_cost_contract_splash_autoload_scope"
@@ -4118,11 +4123,14 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_pr
 
 
 def _maybe_autoload_cost_splash(company: str, days: int, credit_price: float) -> dict:
-    """Use already-loaded cost overview data without starting Snowflake work on navigation."""
+    """Load a fast cost landing once after navigation; keep full proof explicit."""
     meta = _cost_splash_meta(company, days, credit_price)
     cached = st.session_state.get(_COST_SPLASH_KEY)
     if isinstance(cached, dict) and cached.get("meta") == meta and cached.get("loaded"):
         return cached
+    if consume_section_autoload_request("Cost & Contract"):
+        st.caption("Cost & Contract opened in fast mode. Refresh Cost when official metering proof is needed.")
+        return _empty_cost_splash(company, days, credit_price)
     return _cached_cost_splash(company, days, credit_price)
 
 
@@ -5178,14 +5186,11 @@ def _cost_action_brief(company: str, days: int, credit_price: float) -> dict:
 
 
 def _render_cost_action_brief(brief: dict) -> None:
-    with st.container(border=True):
-        label_col, detail_col = st.columns([1.1, 4.6])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(str(brief.get("state") or "Review"))
-        with detail_col:
-            st.markdown(f"**{brief.get('headline') or 'Review cost evidence.'}**")
-            st.caption(str(brief.get("detail") or ""))
+    render_shell_status_strip(
+        state=brief.get("state") or "Review",
+        headline=brief.get("headline") or "Review cost evidence.",
+        detail=brief.get("detail") or "",
+    )
 
 
 def _cost_operating_snapshot(company: str, days: int, credit_price: float) -> dict:
@@ -5220,22 +5225,93 @@ def _cost_operating_snapshot(company: str, days: int, credit_price: float) -> di
 
 
 def _render_cost_operating_snapshot(snapshot: dict) -> None:
-    st.markdown("**Operating Snapshot**")
     loaded = bool(snapshot.get("loaded"))
     if not loaded:
-        render_shell_snapshot((
+        render_shell_kpi_row((
             ("Spend", "On demand"),
             ("Delta", "Load proof"),
             ("Top Inc", "Load proof"),
             ("Actions", "Load queue"),
         ))
         return
-    render_shell_snapshot((
+    render_shell_kpi_row((
         ("Spend", f"${safe_float(snapshot.get('spend')):,.0f}"),
         ("Delta", f"{safe_float(snapshot.get('delta_pct')):+.1f}%"),
         ("Top Inc", f"{safe_float(snapshot.get('top_delta_credits')):+,.1f} cr"),
         ("Actions", f"{safe_int(snapshot.get('open_actions')):,}"),
     ))
+
+
+def _render_predictive_finops_contract(company: str, days: int, credit_price: float) -> None:
+    from utils.operational_intelligence import (
+        build_overwatch_self_monitoring_sql,
+        build_predictive_finops_sql,
+        build_snowflake_value_auto_ddl,
+        build_snowflake_value_automation_rows,
+    )
+
+    st.markdown("**Predictive FinOps and Value Automation**")
+    rows = pd.DataFrame(
+        [
+            {
+                "CONTROL": "Contract burn forecast",
+                "STATE": "Ready",
+                "EVIDENCE_SOURCE": "WAREHOUSE_METERING_HISTORY + OVERWATCH_SETTINGS",
+                "BUSINESS_VALUE": "Projects month-end burn before finance asks why the bill moved.",
+                "NEXT_ACTION": "Set MONTHLY_CONTRACT_CREDITS and work top driver/action queue first.",
+            },
+            {
+                "CONTROL": "Automated Snowflake value log",
+                "STATE": "Ready",
+                "EVIDENCE_SOURCE": "OVERWATCH_ACTION_QUEUE, ALERT_EVENTS, ROI ledger",
+                "BUSINESS_VALUE": "Captures verified DBA wins without depending on manual entry.",
+                "NEXT_ACTION": "Deploy value automation and keep estimated wins separate from verified wins.",
+            },
+            {
+                "CONTROL": "OVERWATCH self-monitoring",
+                "STATE": "Guarded",
+                "EVIDENCE_SOURCE": "QUERY_HISTORY query_tag=OVERWATCH%",
+                "BUSINESS_VALUE": "Proves the monitoring app is not creating hidden Snowflake cost.",
+                "NEXT_ACTION": "Review slow or failing app sections before adding live scans.",
+            },
+        ]
+    )
+    render_priority_dataframe(
+        rows,
+        title="FinOps controls to run before deeper cost drilldown",
+        priority_columns=[
+            "CONTROL", "STATE", "EVIDENCE_SOURCE", "BUSINESS_VALUE", "NEXT_ACTION",
+        ],
+        raw_label="All predictive FinOps controls",
+        height=220,
+        max_rows=3,
+    )
+    with st.expander("FinOps SQL contracts", expanded=False):
+        preview = st.selectbox(
+            "Preview",
+            ["Contract burn forecast", "Automated value log", "OVERWATCH self-monitoring"],
+            key="cost_contract_predictive_finops_sql_preview",
+        )
+        if preview == "Contract burn forecast":
+            st.code(build_predictive_finops_sql(days=max(30, int(days))), language="sql")
+        elif preview == "Automated value log":
+            st.code(build_snowflake_value_auto_ddl(), language="sql")
+            render_priority_dataframe(
+                pd.DataFrame(build_snowflake_value_automation_rows()),
+                title="Value log automation sources",
+                priority_columns=[
+                    "VALUE_SIGNAL", "EVIDENCE_SOURCE", "VALUE_STATE",
+                    "CAPTURE_RULE", "WHY_IT_MATTERS",
+                ],
+                raw_label="All value automation sources",
+                height=220,
+                max_rows=4,
+            )
+        else:
+            st.code(build_overwatch_self_monitoring_sql(days=7), language="sql")
+    defer_source_note(
+        f"Predictive FinOps scope: {company}, {int(days)}d window, ${safe_float(credit_price):,.2f}/credit."
+    )
 
 
 def _render_cost_watch_floor(company: str, credit_price: float) -> None:
@@ -5271,47 +5347,68 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     else:
         splash = _maybe_autoload_cost_splash(company, int(days), credit_price)
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
+    _render_predictive_finops_contract(company, int(days), credit_price)
 
     st.markdown("**Cost Proof Workspace**")
+    proof_data = st.session_state.get("cost_contract_cockpit")
+    proof_meta = st.session_state.get("cost_contract_cockpit_meta", {})
+    proof_current = (
+        _looks_like_frame(proof_data)
+        and not proof_data.empty
+        and proof_meta.get("company") == company
+        and proof_meta.get("days") == int(days)
+    )
+    render_data_freshness(
+        proof_meta if proof_current else {},
+        source=st.session_state.get("cost_contract_cockpit_source", "Cost proof workspace"),
+        target_minutes=60,
+        delayed_note="Cost proof uses mart or Dynamic Table summaries first; full ACCOUNT_USAGE proof refresh is explicit.",
+    )
     if st.button("Load Full Cost Proof", key="cost_contract_cockpit_load", type="primary"):
-            st.session_state.pop(_FULL_COCKPIT_BOARDS_KEY, None)
-            session = get_session_for_action(
-                "load the Cost Control Cockpit",
-                surface="Cost & Contract",
-                offline_note="Cost workflow navigation remains available without a live Snowflake connection.",
+        st.session_state.pop(_FULL_COCKPIT_BOARDS_KEY, None)
+        session = get_session_for_action(
+            "load the Cost Control Cockpit",
+            surface="Cost & Contract",
+            offline_note="Cost workflow navigation remains available without a live Snowflake connection.",
+        )
+        if session is None:
+            return
+        try:
+            st.session_state["cost_contract_cockpit"] = run_query(
+                build_mart_cost_cockpit_sql(company, int(days)),
+                ttl_key=f"cost_contract_cockpit_mart_{company}_{days}",
+                tier="historical",
+                section="Cost & Contract",
             )
-            if session is None:
-                return
+            st.session_state["cost_contract_cockpit_source"] = "Fast warehouse cost summary"
+            st.session_state["cost_contract_cockpit_meta"] = with_loaded_at(
+                {"company": company, "days": int(days)},
+                source="Fast warehouse cost summary",
+            )
+            st.session_state["cost_contract_cockpit_error"] = ""
+        except Exception as mart_exc:
             try:
                 st.session_state["cost_contract_cockpit"] = run_query(
-                    build_mart_cost_cockpit_sql(company, int(days)),
-                    ttl_key=f"cost_contract_cockpit_mart_{company}_{days}",
-                    tier="historical",
+                    _build_cost_cockpit_sql(company, int(days)),
+                    ttl_key=f"cost_contract_cockpit_{company}_{days}",
+                    tier="standard",
                     section="Cost & Contract",
                 )
-                st.session_state["cost_contract_cockpit_source"] = "Fast warehouse cost summary"
-                st.session_state["cost_contract_cockpit_meta"] = {"company": company, "days": int(days)}
+                st.session_state["cost_contract_cockpit_source"] = (
+                    "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
+                )
+                st.session_state["cost_contract_cockpit_meta"] = with_loaded_at(
+                    {"company": company, "days": int(days)},
+                    source="Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY",
+                )
                 st.session_state["cost_contract_cockpit_error"] = ""
-            except Exception as mart_exc:
-                try:
-                    st.session_state["cost_contract_cockpit"] = run_query(
-                        _build_cost_cockpit_sql(company, int(days)),
-                        ttl_key=f"cost_contract_cockpit_{company}_{days}",
-                        tier="standard",
-                        section="Cost & Contract",
-                    )
-                    st.session_state["cost_contract_cockpit_source"] = (
-                        "Live fallback: SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY"
-                    )
-                    st.session_state["cost_contract_cockpit_meta"] = {"company": company, "days": int(days)}
-                    st.session_state["cost_contract_cockpit_error"] = ""
-                except Exception as exc:
-                    st.session_state["cost_contract_cockpit_error"] = (
-                        f"Fast summary unavailable: {format_snowflake_error(mart_exc)}; "
-                        f"live fallback failed: {format_snowflake_error(exc)}"
-                    )
-                    st.session_state["cost_contract_cockpit"] = pd.DataFrame()
-                    st.session_state["cost_contract_queue"] = pd.DataFrame()
+            except Exception as exc:
+                st.session_state["cost_contract_cockpit_error"] = (
+                    f"Fast summary unavailable: {format_snowflake_error(mart_exc)}; "
+                    f"live fallback failed: {format_snowflake_error(exc)}"
+                )
+                st.session_state["cost_contract_cockpit"] = pd.DataFrame()
+                st.session_state["cost_contract_queue"] = pd.DataFrame()
             try:
                 st.session_state["cost_contract_run_rate"] = run_query(
                     build_mart_cost_run_rate_sql(company),
@@ -5598,15 +5695,17 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
             st.caption(evidence)
             if st.button(f"Open {workflow}", key=f"cost_contract_next_{idx}_{workflow}", width="stretch"):
                 st.session_state["cost_contract_workflow"] = workflow
-                st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
                 st.rerun()
 
 
 def render() -> None:
     company = get_active_company()
     credit_price = safe_float(get_credit_price()) or 3.68
-    if st.session_state.get("exceptions_only_mode") and "cost_contract_workflow" not in st.session_state:
-        st.session_state["cost_contract_workflow"] = "Explain bill / attribution / contract"
+    workflow_was_explicit = (
+        "cost_contract_workflow" in st.session_state
+        or _PENDING_DETAIL_WORKFLOW_KEY in st.session_state
+        or _DETAIL_WORKFLOW_KEY in st.session_state
+    )
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="allocated",
@@ -5622,7 +5721,7 @@ def render() -> None:
         columns=4,
     )
     if st.session_state.get("exceptions_only_mode"):
-        st.warning("Triage mode: prioritize bill deltas, open action queue items, and contract risk.")
+        st.warning("Landing default: prioritize bill deltas, open action queue items, and contract risk.")
     _render_cost_watch_floor(company, credit_price)
 
     workflow = render_workflow_selector(
@@ -5633,36 +5732,15 @@ def render() -> None:
         columns=5,
     )
 
-    pending_detail = st.session_state.get(_PENDING_DETAIL_WORKFLOW_KEY)
-    if pending_detail in WORKFLOWS:
-        if pending_detail != workflow:
-            st.session_state["cost_contract_workflow"] = pending_detail
-            st.session_state[_DETAIL_WORKFLOW_KEY] = pending_detail
-            st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)
-            st.rerun()
-        st.session_state[_DETAIL_WORKFLOW_KEY] = pending_detail
-        st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)
-    elif pending_detail:
-        st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)
+    routed_workflow = st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)
+    legacy_detail_workflow = st.session_state.pop(_DETAIL_WORKFLOW_KEY, None)
+    routed_workflow = routed_workflow if routed_workflow in WORKFLOWS else legacy_detail_workflow
+    if routed_workflow in WORKFLOWS and routed_workflow != workflow:
+        st.session_state["cost_contract_workflow"] = routed_workflow
+        st.rerun()
 
-    open_workflow = st.session_state.get(_DETAIL_WORKFLOW_KEY)
-    if workflow in _AUTO_OPEN_DETAIL_WORKFLOWS and open_workflow != workflow:
-        st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
-        open_workflow = workflow
-    if open_workflow not in WORKFLOWS:
-        open_workflow = ""
-        st.session_state.pop(_DETAIL_WORKFLOW_KEY, None)
+    if not workflow_was_explicit:
+        st.caption("Select a cost workflow above to open detailed proof for that lane.")
+        return
 
-    detail_cols = st.columns([1, 4])
-    with detail_cols[0]:
-        if st.button("Open detail", key="cost_contract_open_workflow_detail", width="stretch"):
-            st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
-            st.rerun()
-    with detail_cols[1]:
-        if open_workflow and open_workflow != workflow:
-            st.caption(f"Detail workspace is open for {open_workflow}. Select it again or open the current workflow.")
-        else:
-            st.caption(f"Selected workflow: {workflow}")
-
-    if open_workflow == workflow:
-        render_workflow_module(workflow, WORKFLOW_MODULES)
+    render_workflow_module(workflow, WORKFLOW_MODULES)

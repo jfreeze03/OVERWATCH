@@ -61,6 +61,8 @@ TOP_PRIORITY_BRIEF_DOMAINS = (
 )
 
 ASK_OVERWATCH_STATE_KEYS = (
+    "executive_landing_platform_summary",
+    "executive_landing_snapshot",
     "rec_recommendations",
     "rec_automation_board",
     "rec_action_queue",
@@ -417,6 +419,139 @@ def _cards_from_cost_operational_boards(state: Mapping, cards: list[dict]) -> No
                 "route": "Cost & Contract > Cost Governance SQL",
                 "category": "Cost Governance",
                 "value": _text(row, "STATE", default="Install Ready"),
+            })
+
+
+def _platform_score_severity(score: int) -> str:
+    if score < 70:
+        return "Critical"
+    if score < 80:
+        return "High"
+    if score < 90:
+        return "Medium"
+    if score < 100:
+        return "Watch"
+    return "Info"
+
+
+def _cards_from_executive_landing(state: Mapping, cards: list[dict]) -> None:
+    """Expose the data-first Executive Landing snapshot to Top Priority Brief."""
+    summary = state.get("executive_landing_platform_summary")
+    if isinstance(summary, Mapping):
+        score = safe_int(_value(summary, "score", "SCORE", default=0))
+        state_label = _text(summary, "state", "STATE", default="Review")
+        cap_value = safe_int(_value(summary, "score_cap", "SCORE_CAP", default=100), 100)
+        cap_reason = _text(summary, "cap_reason", "CAP_REASON", default="No hard cap applied.")
+        _append_card(cards, {
+            "surface": "Executive Landing",
+            "severity": _platform_score_severity(score),
+            "signal": "Platform operating score",
+            "entity": f"{score}/100 {state_label}",
+            "evidence": f"score={score}/100; cap={cap_value}/100; {cap_reason}",
+            "next_action": (
+                "Open Executive Landing score drivers, then route the lowest-scoring driver to the owning section."
+            ),
+            "proof": "Executive source health plus loaded cost, alert, action queue, and migration evidence.",
+            "do_not": "Do not present the score as healthy until capped or limited evidence sources are explained.",
+            "route": "Executive Landing > Platform Operating Score",
+            "category": "Executive Reliability Alerts Cost",
+            "value": str(max(0, 100 - score)),
+        })
+
+    snapshot = state.get("executive_landing_snapshot")
+    if not isinstance(snapshot, Mapping):
+        return
+
+    errors = snapshot.get("errors")
+    if isinstance(errors, (list, tuple)):
+        for err in [str(item).strip() for item in errors if str(item).strip()][:3]:
+            _append_card(cards, {
+                "surface": "Executive Landing - Source Health",
+                "severity": "Medium",
+                "signal": "Limited executive evidence",
+                "entity": "Executive snapshot",
+                "evidence": err,
+                "next_action": "Open Executive source health and reload or route the limited source before sign-off.",
+                "proof": "Executive source health table and source-specific Snowflake query error.",
+                "do_not": "Do not use limited executive evidence for leadership decisions without a source-health note.",
+                "route": "Executive Landing > Source Health",
+                "category": "Executive Evidence",
+                "value": "30",
+            })
+
+    cost = snapshot.get("cost")
+    if _is_df(cost):
+        row = cost.iloc[0]
+        current_credits = safe_float(_value(row, "CURRENT_CREDITS", default=0))
+        prior_credits = safe_float(_value(row, "PRIOR_CREDITS", default=0))
+        delta = current_credits - prior_credits
+        if delta > 0:
+            pct = delta / max(prior_credits, 1.0) if prior_credits else 0.0
+            top_driver = _text(row, "TOP_INCREASE_WAREHOUSE", default="top warehouse")
+            _append_card(cards, {
+                "surface": "Executive Landing - Cost Movement",
+                "severity": "High" if pct >= 0.20 else "Medium",
+                "signal": "Spend increase",
+                "entity": top_driver,
+                "evidence": (
+                    f"current={current_credits:,.2f} credits; prior={prior_credits:,.2f}; "
+                    f"delta={delta:+,.2f} credits."
+                ),
+                "next_action": "Open Cost & Contract and validate the top cost driver before budget or warehouse action.",
+                "proof": "Warehouse metering and cost cockpit rows for the same executive window.",
+                "do_not": "Do not resize or suspend based on aggregate spend without driver and workload evidence.",
+                "route": "Cost & Contract",
+                "category": "Cost",
+                "value": str(delta),
+            })
+
+    alerts = snapshot.get("alerts")
+    if _is_df(alerts):
+        view = alerts.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        if "STATUS" in view.columns:
+            open_mask = ~view["STATUS"].fillna("New").astype(str).str.title().isin(["Fixed", "Ignored", "Closed"])
+            view = view[open_mask]
+        if "SEVERITY" in view.columns:
+            view["_RANK"] = view["SEVERITY"].apply(_rank)
+        else:
+            view["_RANK"] = 9
+        for _, row in view.sort_values(["_RANK"], ascending=[True]).head(4).iterrows():
+            _append_card(cards, {
+                "surface": "Executive Landing - Alerts",
+                "severity": _text(row, "SEVERITY", default="Medium"),
+                "signal": _text(row, "ALERT_NAME", "SIGNAL", "CATEGORY", default="Open alert"),
+                "entity": _text(row, "ENTITY", "OBJECT_NAME", "WAREHOUSE_NAME", default="alert scope"),
+                "evidence": _text(row, "EVIDENCE", "MESSAGE", "DETAIL", default="Open executive alert in the loaded window."),
+                "next_action": _text(row, "NEXT_ACTION", default="Open Alert Center and confirm owner, SLA, and escalation proof."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Alert Center evidence row and source query result."),
+                "do_not": "Do not suppress executive alerts without owner, reason, and verification evidence.",
+                "route": _text(row, "ROUTE", default="Alert Center"),
+                "category": "Alerts",
+                "value": str(max(1, 10 - safe_int(row.get("_RANK", 9)))),
+            })
+
+    _cards_from_queue(snapshot.get("queue"), cards, surface="Executive Landing action queue")
+
+    migration = snapshot.get("migration")
+    if _is_df(migration):
+        view = migration.copy()
+        view.columns = [str(col).upper() for col in view.columns]
+        state_text = view.get("MIGRATION_STATE", pd.Series([""] * len(view), index=view.index)).fillna("").astype(str)
+        blockers = view[state_text.isin(["Blocked", "Version Drift"])]
+        for _, row in blockers.head(4).iterrows():
+            _append_card(cards, {
+                "surface": "Executive Landing - Deployment Trust",
+                "severity": "High",
+                "signal": _text(row, "MIGRATION_STATE", default="Migration blocker"),
+                "entity": _text(row, "OBJECT_NAME", "OBJECT_TYPE", "VERSION", default="deployment evidence"),
+                "evidence": _text(row, "EVIDENCE", "DETAIL", default="Setup or migration blocker loaded in Executive Landing."),
+                "next_action": "Resolve setup/deployment trust before leadership sign-off.",
+                "proof": "Schema migration status evidence and deployment decision record.",
+                "do_not": "Do not mark deployment-ready while migration blockers remain open.",
+                "route": "Setup Status",
+                "category": "Change Reliability",
+                "value": "40",
             })
 
 
@@ -854,7 +989,7 @@ def _cards_from_account_health(state: Mapping, cards: list[dict]) -> None:
                 "entity": _text(row, "ROUTE", "OWNER", default="Account Health"),
                 "evidence": _text(row, "EVIDENCE", default="Loaded checklist exception."),
                 "next_action": _text(row, "NEXT_ACTION", default="Queue or resolve this checklist exception with proof."),
-                "proof": _text(row, "PROOF_REQUIRED", default="Attach verification SQL and owner approval evidence."),
+                "proof": _text(row, "PROOF_REQUIRED", default="Attach verification SQL, owner approval, and rollback proof."),
                 "do_not": "Do not ignore checklist exceptions without verification and scope evidence.",
                 "route": _text(row, "ROUTE", default="Account Health"),
                 "category": "Reliability",
@@ -982,6 +1117,7 @@ def _cards_from_security_posture(state: Mapping, cards: list[dict]) -> None:
 def build_ask_overwatch_context(state: Mapping, *, max_cards: int = 30) -> list[dict]:
     """Collect loaded app evidence into cards that can safely answer operator questions."""
     cards: list[dict] = []
+    _cards_from_executive_landing(state, cards)
     _cards_from_recommendations(state, cards)
     _cards_from_automation_board(state, cards)
     _cards_from_cost_command_center(state, cards)

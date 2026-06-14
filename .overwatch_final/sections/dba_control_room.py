@@ -14,7 +14,13 @@ import streamlit as st
 from config import DEFAULT_ENVIRONMENT, DEFAULTS, SECTION_BY_TITLE, normalize_section_name
 from sections.base import lazy_pandas, lazy_util as _lazy_util, lazy_util_attr
 from sections.navigation import apply_navigation_state
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import (
+    consume_section_autoload_request,
+    render_data_freshness,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    with_loaded_at,
+)
 from utils.evidence_mode import (
     TRIAGE_MODE_ALL_EVIDENCE,
     TRIAGE_MODE_INVESTIGATE,
@@ -468,15 +474,15 @@ def _frame_or_empty(data: dict, key: str) -> pd.DataFrame:
     return value if isinstance(value, pd.DataFrame) else _empty_df()
 
 
-def _dba_controlm_task_summary(data: dict | None) -> dict:
-    """Normalize the bounded Control-M feed summary used by Workload Operations."""
+def _dba_task_status_task_summary(data: dict | None) -> dict:
+    """Normalize the bounded Snowflake TASK_HISTORY summary used by Workload Operations."""
     empty_summary = {
         "loaded": False,
-        "controlm_rows": 0,
-        "controlm_failures": 0,
-        "controlm_late": 0,
-        "controlm_alerts": 0,
-        "controlm_watch": 0,
+        "task_status_rows": 0,
+        "task_status_failures": 0,
+        "task_status_late": 0,
+        "task_status_alerts": 0,
+        "task_status_watch": 0,
         "last_seen": "",
     }
     if not isinstance(data, dict):
@@ -486,8 +492,8 @@ def _dba_controlm_task_summary(data: dict | None) -> dict:
     for key in (
         "workload_task_status",
         "workload_operations_task_snapshot",
-        "controlm_task_status",
-        "controlm_external_feed_summary",
+        "task_status_task_status",
+        "task_status_history_summary",
     ):
         candidate = _frame_or_empty(data, key)
         if not candidate.empty:
@@ -501,12 +507,12 @@ def _dba_controlm_task_summary(data: dict | None) -> dict:
     row = view.iloc[0]
     return {
         "loaded": True,
-        "controlm_rows": safe_int(_row_value(row, "CONTROL_M_ROWS", "CONTROLM_ROWS", default=0)),
-        "controlm_failures": safe_int(_row_value(row, "CONTROL_M_FAILURE_ROWS", "CONTROLM_FAILURES", default=0)),
-        "controlm_late": safe_int(_row_value(row, "CONTROL_M_LATE_ROWS", "CONTROLM_LATE", default=0)),
-        "controlm_alerts": safe_int(_row_value(row, "CONTROL_M_ALERT_ROWS", "CONTROLM_ALERTS", default=0)),
-        "controlm_watch": safe_int(_row_value(row, "CONTROL_M_WATCH_ROWS", "CONTROLM_WATCH", default=0)),
-        "last_seen": str(_row_value(row, "CONTROL_M_LAST_SEEN_AT", "LAST_SEEN", default="") or ""),
+        "task_status_rows": safe_int(_row_value(row, "TASK_STATUS_ROWS", default=0)),
+        "task_status_failures": safe_int(_row_value(row, "TASK_STATUS_FAILURE_ROWS", default=0)),
+        "task_status_late": safe_int(_row_value(row, "TASK_STATUS_LATE_ROWS", default=0)),
+        "task_status_alerts": safe_int(_row_value(row, "TASK_STATUS_ALERT_ROWS", default=0)),
+        "task_status_watch": safe_int(_row_value(row, "TASK_STATUS_WATCH_ROWS", default=0)),
+        "last_seen": str(_row_value(row, "TASK_STATUS_LAST_SEEN_AT", "LAST_SEEN", default="") or ""),
     }
 
 
@@ -1025,7 +1031,7 @@ def _evidence_freshness_core_surface(surface: object) -> bool:
 
 
 def _build_evidence_freshness_gate(source_health: pd.DataFrame | None) -> tuple[dict, pd.DataFrame]:
-    """Score loaded Control Room source health as release evidence coverage."""
+    """Score loaded Control Room source health as operational evidence coverage."""
     if source_health is None or source_health.empty:
         return {
             "surfaces": 0,
@@ -1933,24 +1939,32 @@ def _load_control_room(
         data["task_failures"] = _empty_df()
         data["task_failures_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
 
-    try:
-        from sections.workload_operations import _build_workload_task_status_sql
+    if include_deep_evidence and allow_live_fallback:
+        try:
+            from sections.workload_operations import _build_workload_task_status_sql
 
-        environment = get_active_environment()
-        data["workload_task_status"] = run_query(
-            _build_workload_task_status_sql(company, environment, hours=min(int(lookback_hours), 24)),
-            ttl_key=f"dba_control_room_{company}_{environment}_{lookback_hours}_workload_task_status",
-            tier="metadata",
-            section="DBA Control Room",
-        )
-        source_rows.append({"Source": "workload_task_status", "Mode": "Metadata"})
-    except Exception as exc:
+            environment = get_active_environment()
+            data["workload_task_status"] = run_query(
+                _build_workload_task_status_sql(company, environment, hours=min(int(lookback_hours), 24)),
+                ttl_key=f"dba_control_room_{company}_{environment}_{lookback_hours}_workload_task_status",
+                tier="metadata",
+                section="DBA Control Room",
+            )
+            source_rows.append({"Source": "workload_task_status", "Mode": "Snowflake task metadata"})
+        except Exception as exc:
+            data["workload_task_status"] = _empty_df()
+            data["workload_task_status_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
+            source_rows.append({
+                "Source": "workload_task_status",
+                "Mode": "Metadata unavailable",
+                "Message": "Snowflake TASK_HISTORY summary unavailable; verify ACCOUNT_USAGE access or refresh later.",
+            })
+    else:
         data["workload_task_status"] = _empty_df()
-        data["workload_task_status_error"] = pd.DataFrame({"ERROR": [format_snowflake_error(exc)]})
         source_rows.append({
             "Source": "workload_task_status",
-            "Mode": "Metadata unavailable",
-            "Message": "Control-M external feed summary unavailable; deploy or refresh the external control feed.",
+            "Mode": "Live fallback deferred" if allow_live_fallback else "Fast summary unavailable",
+            "Message": "Snowflake TASK_HISTORY summary runs only when deep evidence and live fallback are both enabled.",
         })
 
     try:
@@ -2163,7 +2177,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Severity": "Medium",
             "Signal": "Release gate needs review",
             "Evidence": f"{safe_int(release_summary.get('review')):,} release gate review item(s)",
-            "Action": "Review deployment evidence, source health, and task timeline before release signoff.",
+            "Action": "Review source health, task timeline, owner approval, and rollback proof before release signoff.",
             "Route": "DBA Control Room",
             "Workflow": "Release Gate",
         })
@@ -2803,7 +2817,7 @@ def _dba_section_proof_required(section: object, lowest_component: object = "") 
     if "WAREHOUSE" in name:
         return "capacity evidence, setting review snapshot, owner approval, rollback SQL, post-change verification"
     if "CHANGE" in name or "DRIFT" in name:
-        return "change ticket, query_id, source-control/IaC proof, blast-radius review, closure verification"
+        return "change ticket, query_id, release-note/rollback proof, blast-radius review, closure verification"
     if "COST" in name:
         return "allocated cost basis, owner chargeback, savings verification, finance-ready closure evidence"
     if "SECURITY" in name:
@@ -2877,7 +2891,7 @@ def _dba_incident_containment_action(incident_type: object) -> str:
     if "SECURITY" in incident:
         return "Preserve evidence, validate requester/approver, and avoid grant changes until owner route is clear."
     if "CHANGE" in incident:
-        return "Hold closure until ticket, query_id, source-control, and blast-radius proof are attached."
+        return "Hold closure until ticket, query_id, approval, rollback, and blast-radius proof are attached."
     if "CLOSURE" in incident:
         return "Reopen or block closure until verification, recovery, and approval evidence are present."
     if "EVIDENCE" in incident:
@@ -3546,7 +3560,7 @@ LIMIT 100;""",
     if "CHANGE" in route:
         return {
             "owner_route": "Change owner / DBA release reviewer",
-            "containment": "Hold closure until DDL query_id, ticket, source-control/IaC, blast radius, and owner approval are attached.",
+            "containment": "Hold closure until DDL query_id, ticket, release-note/rollback, blast radius, and owner approval are attached.",
             "candidate": "Queue the change with object dependency impact and rollback statement before marking it controlled.",
             "preflight_sql": f"""SELECT query_id, user_name, role_name, warehouse_name, database_name, schema_name,
        query_type, start_time, LEFT(query_text, 500) AS query_preview
@@ -4090,7 +4104,7 @@ def _dba_workload_morning_lanes(
     task_failures = data.get("task_failures", _empty_df())
     task_sla_cost = data.get("task_sla_cost", _empty_df())
     procedure_sla_cost = data.get("procedure_sla_cost", _empty_df())
-    controlm_summary = _dba_controlm_task_summary(data)
+    task_status_summary = _dba_task_status_task_summary(data)
     exception_context = _normalize_focus_frame(exceptions)
 
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
@@ -4156,73 +4170,73 @@ def _dba_workload_morning_lanes(
             state="Blocked Workload",
             why_now=f"{len(task_failures):,} failed task group(s){f': {task_names}' if task_names else ''}.",
             first_move=(
-                "Open Task graphs, inspect the latest TASK_HISTORY failure, confirm Control-M downstream state, "
+                "Open Task graphs, inspect the latest TASK_HISTORY failure, confirm Snowflake task downstream state, "
                 "then protect late SLAs before retrying."
             ),
-            proof_required="TASK_HISTORY success after latest failure, Control-M rerun/late state, and downstream refresh proof.",
+            proof_required="TASK_HISTORY success after latest failure, Snowflake task rerun/late state, and downstream refresh proof.",
             priority_score=96,
-            owner_route="Task owner / Control-M operator / DBA on-call",
+            owner_route="Task owner / Snowflake task operator / DBA on-call",
             go_no_go="No-Go for dependent loads until clean rerun and downstream proof are current.",
             source_signals="Task failures: mart/TASK_HISTORY",
         )
 
     if (
         (task_failures is None or task_failures.empty)
-        and controlm_summary.get("loaded")
+        and task_status_summary.get("loaded")
         and (
-            safe_int(controlm_summary.get("controlm_failures"))
-            or safe_int(controlm_summary.get("controlm_late"))
-            or safe_int(controlm_summary.get("controlm_alerts"))
-            or safe_int(controlm_summary.get("controlm_watch"))
+            safe_int(task_status_summary.get("task_status_failures"))
+            or safe_int(task_status_summary.get("task_status_late"))
+            or safe_int(task_status_summary.get("task_status_alerts"))
+            or safe_int(task_status_summary.get("task_status_watch"))
         )
     ):
-        controlm_rows = safe_int(controlm_summary.get("controlm_rows"))
-        controlm_failures = safe_int(controlm_summary.get("controlm_failures"))
-        controlm_late = safe_int(controlm_summary.get("controlm_late"))
-        controlm_alerts = safe_int(controlm_summary.get("controlm_alerts"))
-        controlm_watch = safe_int(controlm_summary.get("controlm_watch"))
-        last_seen = str(controlm_summary.get("last_seen") or "").strip()
-        if controlm_failures:
+        task_status_rows = safe_int(task_status_summary.get("task_status_rows"))
+        task_status_failures = safe_int(task_status_summary.get("task_status_failures"))
+        task_status_late = safe_int(task_status_summary.get("task_status_late"))
+        task_status_alerts = safe_int(task_status_summary.get("task_status_alerts"))
+        task_status_watch = safe_int(task_status_summary.get("task_status_watch"))
+        last_seen = str(task_status_summary.get("last_seen") or "").strip()
+        if task_status_failures:
             state = "Blocked Scheduler Work"
             priority = 97
-            go_no_go = "No-Go for dependent loads until failed/blocked Control-M jobs are explained and recovered."
-        elif controlm_late:
+            go_no_go = "No-Go for dependent loads until failed/blocked Snowflake task jobs are explained and recovered."
+        elif task_status_late:
             state = "Scheduler SLA Risk"
             priority = 92
-            go_no_go = "No-Go for SLA-complete claims until late or missed Control-M jobs are closed or rerouted."
-        elif controlm_alerts:
+            go_no_go = "No-Go for SLA-complete claims until late or missed Snowflake task jobs are closed or rerouted."
+        elif task_status_alerts:
             state = "Scheduler Alert"
             priority = 86
-            go_no_go = "Go only after high-severity Control-M alert rows have owner acknowledgement."
+            go_no_go = "Go only after high-severity Snowflake task alert rows have owner acknowledgement."
         else:
             state = "Scheduler Watch"
             priority = 74
             go_no_go = "Go for monitoring; escalate if watch rows become failed, blocked, late, or missed."
         evidence_bits = [
-            f"feed rows={controlm_rows:,}",
-            f"failed/blocked={controlm_failures:,}",
-            f"late/missed={controlm_late:,}",
-            f"alerts={controlm_alerts:,}",
-            f"watch={controlm_watch:,}",
+            f"feed rows={task_status_rows:,}",
+            f"failed/blocked={task_status_failures:,}",
+            f"late/missed={task_status_late:,}",
+            f"alerts={task_status_alerts:,}",
+            f"watch={task_status_watch:,}",
         ]
         if last_seen:
             evidence_bits.append(f"last_seen={last_seen}")
         add_lane(
             "Task graphs",
             state=state,
-            why_now=f"Control-M external feed: {'; '.join(evidence_bits)}.",
+            why_now=f"Snowflake TASK_HISTORY: {'; '.join(evidence_bits)}.",
             first_move=(
-                "Open Task graphs, match the Control-M job/run state to Snowflake TASK_HISTORY, identify downstream "
+                "Open Task graphs, match the Snowflake task job/run state to Snowflake TASK_HISTORY, identify downstream "
                 "SLA impact, then choose retry, reroute, or hold only with owner approval."
             ),
             proof_required=(
-                "Control-M feed row/status, matching TASK_HISTORY run, downstream dependency/SLA impact, "
+                "Snowflake TASK_HISTORY run/status, downstream dependency/SLA impact, "
                 "owner approval, and recovery SLA verification."
             ),
             priority_score=priority,
-            owner_route="Control-M operator / task owner / DBA on-call",
+            owner_route="Snowflake task operator / task owner / DBA on-call",
             go_no_go=go_no_go,
-            source_signals="Control-M external feed snapshot",
+            source_signals="Snowflake TASK_HISTORY summary",
         )
 
     if task_sla_cost is not None and not task_sla_cost.empty:
@@ -4620,13 +4634,13 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
             verify_next = "Verify blocked seconds stop increasing and dependent workload recovers before closure."
             execution_boundary = "No cleanup from Morning Brief; open Contention Center for manual SQL and verification."
     elif workflow == "Task graphs":
-        approval_gate = "Task owner, Control-M operator, and DBA on-call approval before retry, resume, or schedule change."
+        approval_gate = "Task owner, Snowflake task operator, and DBA on-call approval before retry, resume, or schedule change."
         evidence_package = (
-            "TASK_HISTORY failure/recovery rows, Control-M failed/blocked/late state, owner approval, "
+            "TASK_HISTORY failure/recovery rows, Snowflake task failed/blocked/late state, owner approval, "
             "downstream refresh proof, and recovery SLA status."
         )
         verify_next = (
-            "Verify next TASK_HISTORY run succeeded, Control-M job is closed or rerouted, and recovery SLA evidence "
+            "Verify next TASK_HISTORY run succeeded, Snowflake task job is closed or rerouted, and recovery SLA evidence "
             "is attached."
         )
         execution_boundary = "No task retry/resume from Morning Brief; use Task graphs guarded controls and typed confirmation."
@@ -4992,6 +5006,53 @@ def _render_command_queue_control(
     )
 
 
+def _render_dba_command_intelligence_contract() -> None:
+    """Show the command intelligence layer that DBA Control Room owns."""
+    from utils.operational_intelligence import (
+        build_detection_root_cause_sql,
+        build_god_tier_capability_rows,
+        build_precompute_contract_sql,
+        build_task_critical_path_brain_sql,
+    )
+
+    focus = {
+        "Detection and Root-Cause Engine",
+        "Task/Pipeline Critical Path Brain",
+        "Alert Lifecycle 2.0",
+        "OVERWATCH Self-Monitoring",
+        "Precomputed Mart / Dynamic Table Layer With Fallback",
+        "Architecture Docs and Runbooks",
+    }
+    rows = pd.DataFrame(
+        [row for row in build_god_tier_capability_rows() if row["CAPABILITY"] in focus]
+    )
+    render_priority_dataframe(
+        rows,
+        title="DBA command intelligence foundation",
+        priority_columns=[
+            "RANK", "CAPABILITY", "STATUS", "WHY_IT_MATTERS",
+            "NEXT_ACTION", "PRODUCTION_GUARDRAIL",
+        ],
+        sort_by=["RANK"],
+        ascending=True,
+        raw_label="All DBA command intelligence rows",
+        height=240,
+        max_rows=6,
+    )
+    with st.expander("DBA command SQL contracts", expanded=False):
+        preview = st.selectbox(
+            "Preview",
+            ["Root-cause correlation", "Task critical path", "Precompute fallback"],
+            key="dba_command_intelligence_sql_preview",
+        )
+        if preview == "Root-cause correlation":
+            st.code(build_detection_root_cause_sql(hours=24), language="sql")
+        elif preview == "Task critical path":
+            st.code(build_task_critical_path_brain_sql(hours=24), language="sql")
+        else:
+            st.code(build_precompute_contract_sql(), language="sql")
+
+
 def _control_room_score(
     exceptions: pd.DataFrame,
     row: pd.Series | dict,
@@ -5075,7 +5136,7 @@ def _dba_action_brief(
     if release_reviews:
         return {
             "state": "Review",
-            "headline": "Release evidence needs owner review.",
+            "headline": "Approval evidence needs owner review.",
             "detail": f"{release_reviews:,} review/not-loaded item(s).",
             "primary_label": "Open Gate",
             "target": "Release Gate",
@@ -5119,7 +5180,7 @@ def _dba_action_brief(
     return {
         "state": "Clear",
         "headline": "No immediate DBA blocker in this scope.",
-        "detail": "Keep Watch current or open Sources for release evidence.",
+        "detail": "Keep Watch current or open Sources for approval and rollback evidence.",
         "primary_label": "Open Watch",
         "target": "Fast Watch",
         "workflow": "",
@@ -5139,25 +5200,11 @@ def _render_dba_action_brief(
         queued_queries=queued_queries,
         failed_queries=failed_queries,
     )
-    with st.container(border=True):
-        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(str(brief["state"]))
-        with detail_col:
-            st.markdown(f"**{brief['headline']}**")
-            st.caption(str(brief["detail"]))
-        with action_col:
-            if st.button(str(brief["primary_label"]), key="dba_control_room_action_brief_primary", width="stretch"):
-                target = str(brief["target"])
-                if target in DBA_CONTROL_ROOM_PANES:
-                    st.session_state["dba_control_room_active_view"] = target
-                else:
-                    _jump(target, workflow=str(brief.get("workflow") or ""))
-                st.rerun()
-            if st.button("Alert Center", key="dba_control_room_action_brief_alerts", width="stretch"):
-                _jump("Alert Center")
-                st.rerun()
+    render_shell_status_strip(
+        state=brief["state"],
+        headline=brief["headline"],
+        detail=brief["detail"],
+    )
 
 
 def _dba_handoff_rows(
@@ -5541,14 +5588,14 @@ def _render_release_readiness_gate(
         ))
         render_priority_dataframe(
             source_gate,
-            title="Release evidence freshness by source",
+            title="Operational evidence freshness by source",
             priority_columns=[
                 "SURFACE", "GATE_STATE", "SEVERITY", "SOURCE_STATE", "MODE", "ROWS",
                 "RELEASE_IMPACT", "ROUTE", "WORKFLOW", "NEXT_ACTION", "PROOF_REQUIRED",
             ],
             sort_by=["GATE_RANK", "SURFACE"],
             ascending=[True, True],
-            raw_label="All release evidence freshness rows",
+            raw_label="All operational evidence freshness rows",
             height=300,
             max_rows=12,
         )
@@ -5746,11 +5793,11 @@ def render() -> None:
         columns=4,
     )
     if evidence_mode == TRIAGE_MODE_TRIAGE:
-        defer_section_note("Evidence Mode: Triage keeps this page on actionable issues and report-ready proof.")
+        defer_section_note("Landing default keeps this page on actionable issues and report-ready proof.")
     elif evidence_mode == TRIAGE_MODE_INVESTIGATE:
-        defer_section_note("Evidence Mode: Investigate opens deeper root-cause evidence defaults.")
+        defer_section_note("Investigation detail opens deeper root-cause evidence defaults.")
     elif evidence_mode == TRIAGE_MODE_ALL_EVIDENCE:
-        defer_section_note("Evidence Mode: All Evidence opens full detail and bounded live fallback defaults.")
+        defer_section_note("Full proof depth opens full detail and bounded live fallback defaults.")
 
     cortex_budget_usd = float(
         st.session_state.get(
@@ -5785,8 +5832,33 @@ def render() -> None:
         st.session_state.pop("dba_control_room_snapshot_scope_key", None)
         st.session_state.pop("dba_control_room_snapshot_result", None)
 
+    auto_load_fast_snapshot = consume_section_autoload_request("DBA Control Room")
+    if snapshot_scope_ok and auto_load_fast_snapshot and snapshot_result is None:
+        with render_load_status("Checking latest control-room summary snapshot", "Fast snapshot check ready"):
+            snapshot_result = load_latest_control_room_mart(company, max_age_hours=6)
+            st.session_state["dba_control_room_snapshot_scope_key"] = snapshot_scope_key
+            st.session_state["dba_control_room_snapshot_result"] = snapshot_result
+        if snapshot_result is not None and snapshot_result.available and not snapshot_result.data.empty:
+            snapshot = snapshot_result.data.copy()
+            st.session_state["dba_control_room_data"] = _control_room_snapshot_to_data(snapshot)
+            st.session_state["dba_control_room_company"] = company
+            st.session_state["dba_control_room_lookback"] = 24
+            st.session_state["dba_control_room_source_mode"] = "Fast summary snapshot"
+            st.session_state["dba_control_room_meta"] = with_loaded_at(
+                _dba_control_scope_meta(
+                    company,
+                    environment,
+                    24,
+                    safe_float(cortex_budget_usd),
+                    False,
+                    False,
+                ),
+                source=getattr(snapshot_result, "source", "Fast summary snapshot"),
+            )
+            _clear_dba_control_room_derived_state()
+
     if snapshot_scope_ok:
-        st.caption("Fast snapshot lookup is on demand to avoid startup Snowflake queries.")
+        st.caption("Fast snapshot loads automatically on section navigation; use refresh when current proof matters.")
         if st.button("Check Fast Snapshot", key="dba_control_room_check_snapshot"):
             with render_load_status("Checking latest control-room summary snapshot", "Fast snapshot check ready"):
                 snapshot_result = load_latest_control_room_mart(company, max_age_hours=6)
@@ -5808,13 +5880,16 @@ def render() -> None:
             st.session_state["dba_control_room_company"] = company
             st.session_state["dba_control_room_lookback"] = 24
             st.session_state["dba_control_room_source_mode"] = "Fast summary snapshot"
-            st.session_state["dba_control_room_meta"] = _dba_control_scope_meta(
-                company,
-                environment,
-                24,
-                safe_float(cortex_budget_usd),
-                False,
-                False,
+            st.session_state["dba_control_room_meta"] = with_loaded_at(
+                _dba_control_scope_meta(
+                    company,
+                    environment,
+                    24,
+                    safe_float(cortex_budget_usd),
+                    False,
+                    False,
+                ),
+                source=getattr(snapshot_result, "source", "Fast summary snapshot"),
             )
             _clear_dba_control_room_derived_state()
             st.rerun()
@@ -5884,13 +5959,16 @@ def render() -> None:
                 else "Fast triage summary"
             )
             st.session_state["dba_control_room_live_fallback"] = bool(allow_live_fallback)
-            st.session_state["dba_control_room_meta"] = _dba_control_scope_meta(
-                company,
-                environment,
-                int(lookback_hours),
-                safe_float(cortex_budget_usd),
-                bool(include_deep_evidence),
-                bool(allow_live_fallback),
+            st.session_state["dba_control_room_meta"] = with_loaded_at(
+                _dba_control_scope_meta(
+                    company,
+                    environment,
+                    int(lookback_hours),
+                    safe_float(cortex_budget_usd),
+                    bool(include_deep_evidence),
+                    bool(allow_live_fallback),
+                ),
+                source=st.session_state["dba_control_room_source_mode"],
             )
             _clear_dba_control_room_derived_state()
             if auto_build_ops:
@@ -5903,6 +5981,25 @@ def render() -> None:
         if investigation_mode
         else "Load Triage"
     )
+    auto_load_meta = _dba_control_scope_meta(
+        company,
+        environment,
+        int(lookback_hours),
+        safe_float(cortex_budget_usd),
+        bool(include_deep_evidence),
+        bool(allow_live_fallback),
+    )
+    loaded_control_meta = st.session_state.get("dba_control_room_meta", {})
+    control_current = bool(st.session_state.get("dba_control_room_data")) and all(
+        loaded_control_meta.get(key) == value for key, value in auto_load_meta.items()
+    )
+    render_data_freshness(
+        loaded_control_meta if control_current else {},
+        source=st.session_state.get("dba_control_room_source_mode", "DBA Control Room triage"),
+        target_minutes=30,
+        delayed_note="DBA Control Room shows cached triage immediately; live 24h fallbacks run only when enabled and loaded.",
+    )
+
     if st.button(load_label, key="dba_control_room_load", type="primary"):
         _load_control_room_evidence()
 
@@ -6015,6 +6112,7 @@ def render() -> None:
         queued_queries=queued_queries,
         failed_queries=failed_queries,
     )
+    _render_dba_command_intelligence_contract()
 
     st.divider()
 
@@ -6591,7 +6689,7 @@ def render() -> None:
                     key="dba_release_compare_report_download",
                 )
         else:
-            st.info("Choose release windows and run the comparison when you need post-release evidence.")
+            st.info("Choose release windows and run the comparison when you need post-change verification evidence.")
 
     elif active_view == "Executive Evidence":
         st.subheader("Report-Ready Brief")

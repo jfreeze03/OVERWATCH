@@ -3119,7 +3119,7 @@ def build_alert_optional_integrations() -> pd.DataFrame:
         ("Email notification integration", "SYSTEM$SEND_EMAIL alert digests and escalations", "Optional but useful for DBA on-call"),
         ("Webhook / Slack / Teams integration", "External routing when account and network policies allow it", "Optional; keep payloads logged"),
         ("Event tables with LOG_LEVEL >= ERROR", "Task graph and stored procedure error events", "Recommended for near-real-time pipeline failures"),
-        ("ITSM/Jira/Control-M bridge", "Incident tickets, owner assignment, workflow handoff", "Optional; use action queue until approved"),
+        ("owner approval/Owner approval/Snowflake task bridge", "Incident tickets, owner assignment, workflow handoff", "Optional; use action queue until approved"),
     ]
     return pd.DataFrame(rows, columns=["INTEGRATION", "CAPABILITY", "STATUS_NOTE"])
 

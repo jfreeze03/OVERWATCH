@@ -192,9 +192,6 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_mart_service_query_health_sql", "build_mart_service_warehouse_health_sql",
         "build_mart_service_login_health_sql", "build_mart_service_task_health_sql",
     ),
-    "bookmarks": (
-        "save_bookmark", "load_bookmarks", "apply_bookmark", "delete_bookmark",
-    ),
     "action_queue": (
         "make_action_id", "upsert_actions", "load_action_queue", "update_action_status",
         "action_queue_environment_clause", "action_queue_environment_values",
@@ -232,6 +229,20 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "recommendation_intelligence": (
         "duplicate_query_decision", "harden_recommendation",
         "harden_recommendation_rows", "warehouse_sizing_decision",
+    ),
+    "operational_intelligence": (
+        "GOD_TIER_CAPABILITY_VERSION",
+        "build_god_tier_capability_rows", "build_operational_intelligence_sql_catalog",
+        "build_detection_root_cause_sql", "build_task_critical_path_brain_sql",
+        "build_data_reconciliation_config_ddl", "build_data_reconciliation_runner_sql",
+        "build_predictive_finops_sql", "build_alert_lifecycle_sql",
+        "build_ai_query_diagnosis_contract_rows", "build_ai_query_diagnosis_prompt_contract",
+        "build_overwatch_self_monitoring_sql", "build_precompute_contract_sql",
+        "build_compliance_readiness_sql", "build_multi_account_org_sql",
+        "build_data_first_navigation_contract_sql", "build_snowflake_value_auto_ddl",
+        "build_snowflake_value_automation_rows", "build_snowflake_value_candidate_sql",
+        "build_snowflake_value_automation_health_sql",
+        "build_god_tier_setup_bundle_sql", "build_command_intelligence_runbook_markdown",
     ),
     "ask_overwatch": (
         "TOP_PRIORITY_BRIEF_DOMAINS", "answer_ask_overwatch",

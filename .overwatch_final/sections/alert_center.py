@@ -6,7 +6,14 @@ from datetime import datetime
 import streamlit as st
 
 from config import ALERT_DB, ALERT_SCHEMA, DAY_WINDOW_OPTIONS, DEFAULT_ALERT_EMAIL, DEFAULT_DAY_WINDOW
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import (
+    consume_section_autoload_request,
+    render_data_freshness,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    with_loaded_at,
+)
 
 
 ANNOTATION_TABLE = "OVERWATCH_ANNOTATIONS"
@@ -75,10 +82,11 @@ ALERT_CENTER_HEALTH_DETAIL_OPTIONS = (
     "Controls",
     "Owner Routes",
     "Owner Directory",
-    "Delivery & ITSM",
+    "Delivery & Action Queue",
 )
 
 ALERT_CENTER_BRIEF_FIRST_VERSION = 2
+ALERT_CENTER_DEFAULT_VIEW = "Command Center"
 
 ALERT_CENTER_BRIEF_WORKFLOWS = (
     {
@@ -132,8 +140,8 @@ ALERT_CENTER_BRIEF_WORKFLOWS = (
     {
         "VIEW": "Automation Readiness",
         "BUTTON_LABEL": "Open Automation",
-        "DBA_MOVE": "Review no-touch alert, Control-M, Jira, Terraform, and Flyway health.",
-        "WHEN": "Automation checks, external feed freshness",
+        "DBA_MOVE": "Review alert refresh, digest delivery, owner routing, and in-app action handoff readiness.",
+        "WHEN": "Automation checks, delivery proof, owner routing",
     },
     {
         "VIEW": "Setup & Runbook",
@@ -201,7 +209,7 @@ ALERT_CENTER_SOURCE_PLAN = {
     "automation_health": {
         "SOURCE": "No-touch automation health",
         "OBJECT": "OVERWATCH_AUTOMATION_HEALTH_V",
-        "WHY": "Scheduled run state and Control-M/Jira/Terraform/Flyway feed freshness",
+        "WHY": "Scheduled run state, digest preparation, owner routing, and action-queue freshness",
         "COST_GUARDRAIL": "Single-row health view",
     },
 }
@@ -395,16 +403,9 @@ def _load_center_data(
                   OWNER_ROUTES_UPDATED,
                   VERIFIED_SAVINGS_STATE,
                   ALERT_DIGEST_STATE,
-                  EXTERNAL_FEED_ROWS,
                   OPEN_ACTIONS,
                   VERIFIED_ACTIONS,
-                  CONTROL_M_ROWS,
-                  TERRAFORM_ROWS,
-                  FLYWAY_ROWS,
-                  GIT_ROWS,
-                  JIRA_ROWS,
                   LAST_DIGEST_TS,
-                  TERRAFORM_DRIFT_MODE,
                   NEXT_ACTION
                 FROM OVERWATCH_AUTOMATION_HEALTH_V
                 LIMIT 1
@@ -958,11 +959,8 @@ def _apply_queued_alert_center_view() -> None:
 def _apply_alert_center_brief_first_default() -> None:
     if st.session_state.get("_alert_center_brief_first_version") == ALERT_CENTER_BRIEF_FIRST_VERSION:
         return
-    if (
-        "alert_center_data" not in st.session_state
-        and st.session_state.get("alert_center_active_view") not in (None, "Alert Brief")
-    ):
-        st.session_state["alert_center_active_view"] = "Alert Brief"
+    if st.session_state.get("alert_center_active_view") in (None, "Alert Brief"):
+        st.session_state["alert_center_active_view"] = ALERT_CENTER_DEFAULT_VIEW
     st.session_state["_alert_center_brief_first_version"] = ALERT_CENTER_BRIEF_FIRST_VERSION
 
 
@@ -985,22 +983,87 @@ def _render_alert_center_brief_launchpad() -> None:
 
 
 def _render_alert_center_action_brief(brief: dict) -> None:
-    with st.container(border=True):
-        label_col, detail_col, action_col = st.columns([1.1, 3.2, 1.4])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(str(brief.get("state") or "Review"))
-        with detail_col:
-            st.markdown(f"**{brief.get('headline') or 'Review Alert Center evidence.'}**")
-            st.caption(str(brief.get("detail") or ""))
-        with action_col:
-            primary_label = str(brief.get("primary_label") or "").strip()
-            target = str(brief.get("target") or "Issue Inbox")
-            if primary_label and st.button(primary_label, key="alert_center_action_brief_primary", width="stretch"):
-                _queue_alert_center_view(target)
-            if primary_label and target != "Issue Inbox":
-                if st.button("Issue Inbox", key="alert_center_action_brief_inbox", width="stretch"):
-                    _queue_alert_center_view("Issue Inbox")
+    render_shell_status_strip(
+        state=brief.get("state") or "Review",
+        headline=brief.get("headline") or "Review Alert Center evidence.",
+        detail=brief.get("detail") or "",
+    )
+
+
+def _alert_center_scope_key(
+    active_view: str,
+    company: str,
+    environment: str,
+    days: int,
+    limit: int,
+    required_sources: set[str],
+) -> tuple:
+    return (
+        str(active_view),
+        str(company),
+        str(environment),
+        int(days),
+        int(limit),
+        tuple(sorted(required_sources)),
+    )
+
+
+def _alert_center_loaded_meta(data: dict | None, active_view: str) -> dict:
+    if not isinstance(data, dict):
+        return {}
+    meta = data.get("_freshness_meta")
+    if isinstance(meta, dict):
+        return meta
+    loaded_at = str(data.get("loaded_at") or "").strip()
+    if not loaded_at:
+        return {}
+    return {
+        "loaded_at": loaded_at,
+        "source": f"{active_view} loaded sources",
+    }
+
+
+def _load_alert_center_view_data(
+    active_view: str,
+    company: str,
+    environment: str,
+    days: int,
+    limit: int,
+    required_sources: set[str],
+) -> bool:
+    session = _alert_center_action_session(f"load {active_view}")
+    if session is None:
+        return False
+    st.session_state["alert_center_data"] = _load_center_data(
+        session,
+        company,
+        environment,
+        int(days),
+        int(limit),
+        sources=required_sources,
+    )
+    if isinstance(st.session_state.get("alert_center_data"), dict):
+        st.session_state["alert_center_data"]["_freshness_meta"] = with_loaded_at(
+            {
+                "view": active_view,
+                "company": company,
+                "environment": environment,
+                "days": int(days),
+                "limit": int(limit),
+                "sources": sorted(required_sources),
+            },
+            source=f"{active_view} loaded sources",
+        )
+    st.session_state["alert_center_scope"] = (company, environment, int(days), int(limit))
+    st.session_state["alert_center_loaded_scope_key"] = _alert_center_scope_key(
+        active_view,
+        company,
+        environment,
+        int(days),
+        int(limit),
+        required_sources,
+    )
+    return True
 
 
 def _render_alert_center_metric_rows(
@@ -1014,16 +1077,15 @@ def _render_alert_center_metric_rows(
     open_queue: int,
     loaded: bool = True,
 ) -> None:
-    st.markdown("**Operating Snapshot**")
     if not loaded:
-        render_shell_snapshot((
+        render_shell_kpi_row((
             ("Scope", "Company"),
             ("Window", "Selected"),
             ("Evidence", "Load view"),
             ("Route", "Issue Inbox"),
         ))
         return
-    render_shell_snapshot((
+    render_shell_kpi_row((
         ("Issues", f"{open_issues:,}"),
         ("Alerts", f"{open_alerts:,}"),
         ("Critical", f"{critical_high:,}"),
@@ -1410,11 +1472,11 @@ def _alert_integration_readiness_board(
         if ticket_col:
             tickets = int(queue[ticket_col].fillna("").astype(str).str.strip().ne("").sum())
     rows.append({
-        "CONTROL": "ITSM lifecycle sync",
+        "CONTROL": "Action queue lifecycle",
         "STATE": "Manual" if tickets == 0 else "Partial",
-        "EVIDENCE": f"{open_queue:,} open queue row(s); {tickets:,} ticket id(s) attached.",
-        "NEXT_ACTION": "Sync alert/action status to ITSM so acknowledgment, owner approval, and closure evidence are not manually reconciled.",
-        "OWNER": "DBA / ITSM Owner",
+        "EVIDENCE": f"{open_queue:,} open queue row(s); {tickets:,} owner reference id(s) attached.",
+        "NEXT_ACTION": "Use the in-app action queue for acknowledgement, assignment, comments, suppression, and closure proof.",
+        "OWNER": "DBA / Alert Owner",
     })
 
     placeholder_routes = int(owner_summary.get("placeholder_routes", 0) or 0)
@@ -1482,13 +1544,12 @@ def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
         part for part in [text_value("COMPANY", "ALL"), text_value("ENVIRONMENT", "ALL")] if part
     ) or "ALL / ALL"
     run_ts = text_value("RUN_TS", "Not Run")[:19]
-    feed_total = int_value("EXTERNAL_FEED_ROWS")
     open_actions = int_value("OPEN_ACTIONS")
     verified_actions = int_value("VERIFIED_ACTIONS")
 
     render_shell_snapshot((
         ("Last Run", run_ts),
-        ("External Rows", f"{feed_total:,}"),
+        ("Seeded", f"{int_value('ACTION_QUEUE_SEEDED'):,}"),
         ("Open Actions", f"{open_actions:,}"),
         ("Verified", f"{verified_actions:,}"),
     ))
@@ -1530,25 +1591,6 @@ def _render_no_touch_automation_health(automation_health: pd.DataFrame) -> None:
             "OWNER": "DBA On-Call",
         },
     ]
-
-    for feed, column, owner in [
-        ("Control-M", "CONTROL_M_ROWS", "Job Scheduler Owner"),
-        ("Jira", "JIRA_ROWS", "ITSM Owner"),
-        ("Terraform", "TERRAFORM_ROWS", "DevOps Owner"),
-        ("Flyway", "FLYWAY_ROWS", "DevOps Owner"),
-        ("Git", "GIT_ROWS", "DevOps Owner"),
-    ]:
-        count = int_value(column)
-        rows.append({
-            "STATE": "Ready" if count > 0 else "Needs Setup",
-            "CONTROL": f"{feed} evidence feed",
-            "EVIDENCE": f"{count:,} row(s) ingested.",
-            "NEXT_ACTION": (
-                f"Feed {feed} evidence into OVERWATCH_EXTERNAL_CONTROL_FEED."
-                if count == 0 else f"Keep {feed} evidence synchronized for drift and closure checks."
-            ),
-            "OWNER": owner,
-        })
 
     board = pd.DataFrame(rows)
     board["_STATE_RANK"] = board["STATE"].map({"Needs Setup": 0, "Review": 1, "Ready": 2}).fillna(9)
@@ -1768,9 +1810,29 @@ def _render_alert_morning_brief(alerts: pd.DataFrame, queue: pd.DataFrame) -> No
 
 def _render_alert_detection_catalog() -> None:
     from utils.alerts import build_alert_signal_query_catalog
+    from utils.operational_intelligence import (
+        build_god_tier_capability_rows,
+        build_operational_intelligence_sql_catalog,
+    )
 
     pd = _pd()
     st.subheader("Detection Catalog")
+    capability_rows = pd.DataFrame(build_god_tier_capability_rows())
+    _render_priority_dataframe(
+        capability_rows,
+        title="Command intelligence capability plan",
+        priority_columns=[
+            "RANK", "CAPABILITY", "STATUS", "WHERE_IT_LANDS",
+            "WHY_IT_MATTERS", "NEXT_ACTION", "SNOWFLAKE_SOURCES",
+            "PRODUCTION_GUARDRAIL",
+        ],
+        sort_by=["RANK"],
+        ascending=True,
+        raw_label="All command intelligence capabilities",
+        height=360,
+        max_rows=12,
+    )
+
     catalog = build_alert_signal_query_catalog(hours=24)
     category_options = ["All"] + sorted(catalog["CATEGORY"].dropna().astype(str).unique().tolist())
     selected_category = st.selectbox("Catalog category", category_options, key="alert_detection_catalog_category")
@@ -1790,6 +1852,18 @@ def _render_alert_detection_catalog() -> None:
         selected_signal = st.selectbox("Query preview", signal_options, key="alert_detection_catalog_signal")
         selected = visible[visible["SIGNAL"].astype(str) == selected_signal].iloc[0]
         st.code(str(selected.get("SQL", "")), language="sql")
+    sql_catalog = build_operational_intelligence_sql_catalog()
+    if sql_catalog:
+        with st.expander("God-tier SQL contracts", expanded=False):
+            sql_options = [str(row["SQL_NAME"]) for row in sql_catalog]
+            selected_sql_name = st.selectbox(
+                "Command intelligence SQL preview",
+                sql_options,
+                key="alert_command_intelligence_sql_preview",
+            )
+            selected_sql = next((row for row in sql_catalog if str(row["SQL_NAME"]) == selected_sql_name), sql_catalog[0])
+            st.caption(f"{selected_sql['CAPABILITY']} | {selected_sql['TELEMETRY']}")
+            st.code(str(selected_sql["SQL"]), language="sql")
     defer_source_note(
         "Detection Catalog is a setup preview only; these SQL templates are not executed until deployed as Snowflake ALERT/task logic."
     )
@@ -1802,6 +1876,7 @@ def _render_alert_notification_remediation(
     owner_directory: pd.DataFrame,
 ) -> None:
     from utils.alerts import build_alert_optional_integrations, build_alert_remediation_contract
+    from utils.operational_intelligence import build_snowflake_value_automation_rows
 
     pd = _pd()
     st.subheader("Notifications & Remediation")
@@ -1850,6 +1925,16 @@ def _render_alert_notification_remediation(
         raw_label="All notification controls",
         height=240,
     )
+    _render_priority_dataframe(
+        pd.DataFrame(build_snowflake_value_automation_rows()),
+        title="Automated Snowflake value capture",
+        priority_columns=[
+            "VALUE_SIGNAL", "EVIDENCE_SOURCE", "VALUE_STATE",
+            "CAPTURE_RULE", "WHY_IT_MATTERS",
+        ],
+        raw_label="All value automation rows",
+        height=220,
+    )
     if alerts.empty:
         st.info("Load alert history to preview remediation contracts for real alert rows.")
         contract = build_alert_remediation_contract({})
@@ -1896,6 +1981,11 @@ def _render_alert_setup_runbook() -> None:
         build_alert_signal_query_catalog,
         build_alert_threshold_seed_rows,
     )
+    from utils.operational_intelligence import (
+        build_command_intelligence_runbook_markdown,
+        build_god_tier_capability_rows,
+        build_god_tier_setup_bundle_sql,
+    )
 
     pd = _pd()
     st.subheader("Alert Command Center Setup")
@@ -1928,6 +2018,32 @@ def _render_alert_setup_runbook() -> None:
     )
     with st.expander("Event materialization SQL preview", expanded=False):
         st.code(event_sql, language="sql")
+
+    command_sql = build_god_tier_setup_bundle_sql()
+    st.download_button(
+        "Download Command Intelligence SQL",
+        data=command_sql,
+        file_name="overwatch_command_intelligence_setup.sql",
+        mime="text/sql",
+        key="download_command_intelligence_sql",
+        width="stretch",
+    )
+    with st.expander("Command intelligence SQL preview", expanded=False):
+        st.code(command_sql, language="sql")
+
+    _render_priority_dataframe(
+        pd.DataFrame(build_god_tier_capability_rows()),
+        title="God-tier rollout checklist",
+        priority_columns=[
+            "RANK", "CAPABILITY", "STATUS", "WHERE_IT_LANDS",
+            "OWNER", "NEXT_ACTION", "PRODUCTION_GUARDRAIL",
+        ],
+        sort_by=["RANK"],
+        ascending=True,
+        raw_label="All rollout rows",
+        height=300,
+        max_rows=12,
+    )
 
     thresholds = pd.DataFrame(build_alert_threshold_seed_rows())
     _render_priority_dataframe(
@@ -1964,6 +2080,8 @@ def _render_alert_setup_runbook() -> None:
     )
     with st.expander("DBA runbook", expanded=False):
         st.markdown(build_alert_command_center_runbook_markdown())
+    with st.expander("Command intelligence runbook", expanded=False):
+        st.markdown(build_command_intelligence_runbook_markdown())
 
 
 def render() -> None:
@@ -2019,22 +2137,32 @@ def render() -> None:
         )
     with c2:
         limit = st.selectbox("Rows", [50, 100, 200, 500], index=2)
+    data = st.session_state.get("alert_center_data")
+    expected_scope = (company, environment, int(days), int(limit))
+    loaded_sources = set(data.get("_loaded_sources") or []) if isinstance(data, dict) else set()
+    current_data = (
+        isinstance(data, dict)
+        and st.session_state.get("alert_center_scope") == expected_scope
+        and required_sources.issubset(loaded_sources)
+    )
+    if (
+        consume_section_autoload_request("Alert Center")
+        and active_view not in {"Suppression Windows", "Detection Catalog", "Setup & Runbook"}
+        and not current_data
+    ):
+        st.caption("Alert Center opened in fast mode. Load the active view when current alert proof is needed.")
+    render_data_freshness(
+        _alert_center_loaded_meta(data, active_view) if current_data else {},
+        source=f"{active_view} sources",
+        target_minutes=60,
+        delayed_note="Alert Center reads bounded alert/action sources on demand; ACCOUNT_USAGE-backed inputs can lag.",
+    )
     with c3:
         load_label = "Load Full Control Health" if active_view == "Control Health" else f"Load {active_view}"
         if st.button(load_label, key="alert_center_load", type="primary"):
-            session = _alert_center_action_session(f"load {active_view}")
-            if session is not None:
-                st.session_state["alert_center_data"] = _load_center_data(
-                    session,
-                    company,
-                    environment,
-                    int(days),
-                    int(limit),
-                    sources=required_sources,
-                )
-                st.session_state["alert_center_scope"] = (company, environment, int(days), int(limit))
+            if _load_alert_center_view_data(active_view, company, environment, int(days), int(limit), required_sources):
+                st.rerun()
 
-    data = st.session_state.get("alert_center_data")
     if not isinstance(data, dict):
         _render_alert_center_action_brief(_alert_center_pending_brief(active_view, required_sources))
         _render_alert_center_metric_rows(
@@ -2052,7 +2180,6 @@ def render() -> None:
         return
 
     loaded_scope = st.session_state.get("alert_center_scope")
-    expected_scope = (company, environment, int(days), int(limit))
     if loaded_scope != expected_scope:
         _render_alert_center_action_brief(_alert_center_pending_brief(active_view, required_sources))
         _render_alert_center_metric_rows(
@@ -2273,7 +2400,7 @@ def render() -> None:
                     raw_label="All owner directory rows",
                     height=300,
                 )
-        elif health_detail == "Delivery & ITSM":
+        elif health_detail == "Delivery & Action Queue":
             from utils import owner_directory_readiness_board
 
             directory_summary, _ = owner_directory_readiness_board(owner_directory)
@@ -2283,9 +2410,9 @@ def render() -> None:
                 delivery_log,
                 directory_summary,
             )
-            st.markdown("**Notification & ITSM Readiness**")
+            st.markdown("**Notification & Action Queue Readiness**")
             if integration_board.empty:
-                st.success("No delivery or ITSM integration blockers found for the loaded scope.")
+                st.success("No delivery or action-queue blockers found for the loaded scope.")
             else:
                 _render_priority_dataframe(
                     integration_board,
@@ -2379,7 +2506,7 @@ def render() -> None:
                 height=260,
             )
         defer_source_note(
-            "Automation Readiness is deliberately email-first until Snowflake notification integration and ITSM/Jira sync are approved."
+            "Automation Readiness is deliberately email-first until a governed Snowflake notification integration is approved."
         )
 
     elif active_view == "Issue Inbox":

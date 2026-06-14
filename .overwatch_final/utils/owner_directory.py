@@ -408,7 +408,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "DEFAULT_ROUTE": "Change & Drift",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 65,
-        "NOTES": "Default route for DDL, access drift, policy/tag, IaC, and change-control actions.",
+        "NOTES": "Default route for DDL, access drift, policy/tag, approval-proof, and change-control actions.",
     },
     {
         "OWNER_KEY": "SECURITY_DEFAULT",

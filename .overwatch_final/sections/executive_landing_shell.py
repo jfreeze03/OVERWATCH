@@ -8,7 +8,7 @@ import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
 from sections.navigation import apply_navigation_state
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, render_shell_workflows, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_loaded, full_workspace_requested, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows
 
 
 _FULL_WORKSPACE_KEY = "_executive_landing_full_workspace_requested"
@@ -96,11 +96,7 @@ def _window_label() -> str:
 
 
 def _full_workspace_requested() -> bool:
-    if st.session_state.get(_BRIEF_MODE_KEY):
-        return False
-    if st.session_state.get(_FULL_WORKSPACE_KEY):
-        return True
-    return False
+    return full_workspace_requested(st.session_state, _FULL_WORKSPACE_KEY, _BRIEF_MODE_KEY)
 
 
 def _open_workspace() -> None:
@@ -180,28 +176,17 @@ def _render_back_to_brief_control() -> None:
             _return_to_brief()
 
 
-def _render_action_brief() -> None:
-    snapshot_help = evidence_caption(
+def _render_status_strip() -> None:
+    detail = evidence_caption(
         st.session_state,
         _FULL_WORKSPACE_STATE_KEYS,
-        "The shell stays zero-query; PowerPoint evidence and live source health load only on demand.",
+        "Leadership snapshot, PowerPoint export, alert automation, FinOps, DBA queue, and setup proof open from the workflow grid.",
     )
-    with st.container(border=True):
-        label_col, detail_col, action_col = st.columns([1.0, 3.0, 1.8])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
-        with detail_col:
-            st.markdown("**Open Executive Snapshot when leaders need a board-ready status package.**")
-        with action_col:
-            if st.button(
-                "Open Executive Snapshot",
-                key="executive_landing_shell_open",
-                help=snapshot_help,
-                type="primary",
-                width="stretch",
-            ):
-                _open_workspace()
+    render_shell_status_strip(
+        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
+        headline="Executive command view: platform score, risk posture, FinOps, alerts, and DBA queue.",
+        detail=detail,
+    )
 
 
 def _render_platform_score_preview() -> None:
@@ -224,7 +209,11 @@ def _render_platform_score_preview() -> None:
             ("Cap", "Source health"),
         )
     st.markdown("**Platform Operating Score**")
-    render_shell_snapshot(metrics)
+    render_shell_kpi_row(metrics)
+
+
+def _render_kpi_row() -> None:
+    _render_platform_score_preview()
 
 
 def _render_workflow_launchpad() -> None:
@@ -247,6 +236,6 @@ def render() -> None:
         return
 
     st.session_state.setdefault("executive_landing_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
-    _render_action_brief()
-    _render_platform_score_preview()
+    _render_status_strip()
+    _render_kpi_row()
     _render_workflow_launchpad()

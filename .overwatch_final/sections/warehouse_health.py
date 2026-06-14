@@ -8,7 +8,14 @@ from sections.base import lazy_pandas, lazy_util as _lazy_util
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
 from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULT_COMPANY, DEFAULTS, DEFAULT_ENVIRONMENT, THRESHOLDS
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import (
+    consume_section_autoload_request,
+    render_data_freshness,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    with_loaded_at,
+)
 
 
 pd = lazy_pandas()
@@ -104,7 +111,7 @@ WAREHOUSE_HEALTH_BRIEF_WORKFLOWS = (
         "VIEW": "Workload Heatmap",
         "BUTTON_LABEL": "Open Heatmap",
         "DBA_MOVE": "Find peak hours and concurrency pressure by warehouse.",
-        "WHEN": "Scheduling, Control-M windows, or workload routing questions.",
+        "WHEN": "Scheduling, Snowflake task windows, or workload routing questions.",
     },
     {
         "VIEW": "Optimization Advisor",
@@ -394,14 +401,11 @@ def _warehouse_action_brief(company: str, environment: str, days: int) -> dict:
 
 
 def _render_warehouse_action_brief(brief: dict) -> None:
-    with st.container(border=True):
-        label_col, detail_col = st.columns([1.1, 4.6])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(str(brief.get("state") or "Review"))
-        with detail_col:
-            st.markdown(f"**{brief.get('headline') or 'Review warehouse evidence.'}**")
-            st.caption(str(brief.get("detail") or ""))
+    render_shell_status_strip(
+        state=brief.get("state") or "Review",
+        headline=brief.get("headline") or "Review warehouse evidence.",
+        detail=brief.get("detail") or "",
+    )
 
 
 def _warehouse_operating_snapshot(company: str, environment: str, days: int) -> dict:
@@ -428,16 +432,15 @@ def _warehouse_operating_snapshot(company: str, environment: str, days: int) -> 
 
 
 def _render_warehouse_operating_snapshot(snapshot: dict) -> None:
-    st.markdown("**Operating Snapshot**")
     loaded = bool(snapshot.get("loaded"))
     if not loaded:
-        render_shell_snapshot((
+        render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "14d")),
             ("Evidence", str(snapshot.get("evidence") or "Load overview")),
         ))
         return
-    render_shell_snapshot((
+    render_shell_kpi_row((
         ("Warehouses", f"{safe_int(snapshot.get('warehouses')):,}"),
         ("Queries", f"{safe_int(snapshot.get('queries')):,}"),
         ("Spill GB", f"{safe_float(snapshot.get('spill_gb')):,.1f}"),
@@ -3646,7 +3649,7 @@ def render():
         st.session_state["warehouse_health_support_panels_open"] = True
         st.rerun()
     if st.session_state.get("exceptions_only_mode") and warehouse_view != "Overview & Scaling":
-        st.caption("Triage mode keeps specialist warehouse workflows gated until selected for investigation.")
+        st.caption("Landing default keeps specialist warehouse workflows gated until selected for investigation.")
         return
 
     # -- OVERVIEW --------------------------------------------------------------
@@ -3654,7 +3657,7 @@ def render():
         st.subheader("Warehouse Health Overview")
         wh_days = day_window_selectbox("Lookback", key="wh_days", default=7)
 
-        if st.button("Load Warehouse Data", key="wh_load"):
+        def _load_warehouse_overview() -> None:
             try:
                 mart_sql = build_mart_warehouse_overview_sql(
                     wh_days,
@@ -3708,10 +3711,13 @@ def render():
                             metadata_session,
                             company,
                         )
-                        st.session_state["wh_settings_inventory_meta"] = _warehouse_scope_meta(
-                            company,
-                            environment,
-                            wh_days,
+                        st.session_state["wh_settings_inventory_meta"] = with_loaded_at(
+                            _warehouse_scope_meta(
+                                company,
+                                environment,
+                                wh_days,
+                            ),
+                            source="Warehouse guardrail metadata",
                         )
                         st.session_state.pop("wh_settings_inventory_error", None)
                 except Exception as metadata_exc:
@@ -3719,9 +3725,30 @@ def render():
                     st.session_state["wh_settings_inventory_error"] = format_snowflake_error(metadata_exc)
                 st.session_state["wh_df_wh"] = df_w
                 st.session_state["wh_df_wh_source"] = source
-                st.session_state["wh_df_wh_meta"] = _warehouse_scope_meta(company, environment, wh_days)
+                st.session_state["wh_df_wh_meta"] = with_loaded_at(
+                    _warehouse_scope_meta(company, environment, wh_days),
+                    source=source,
+                )
             except Exception as e:
                 st.warning(f"Warehouse overview unavailable in this role/context: {format_snowflake_error(e)}")
+
+        wh_expected_meta = _warehouse_scope_meta(company, environment, wh_days)
+        loaded_wh_meta = st.session_state.get("wh_df_wh_meta", {})
+        wh_current = (
+            st.session_state.get("wh_df_wh") is not None
+            and _warehouse_meta_matches(loaded_wh_meta, wh_expected_meta)
+        )
+        if consume_section_autoload_request("Warehouse Health") and not wh_current:
+            st.caption("Warehouse Health opened in fast mode. Load warehouse data when current capacity proof is needed.")
+        render_data_freshness(
+            loaded_wh_meta if wh_current else {},
+            source=st.session_state.get("wh_df_wh_source", "Warehouse overview"),
+            target_minutes=30,
+            delayed_note="Warehouse overview prefers fast mart evidence; live ACCOUNT_USAGE refresh is explicit.",
+        )
+
+        if st.button("Load Warehouse Data", key="wh_load"):
+            _load_warehouse_overview()
 
         if (
             st.session_state.get("wh_df_wh") is not None

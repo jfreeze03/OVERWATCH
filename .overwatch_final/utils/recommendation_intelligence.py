@@ -114,7 +114,7 @@ def recommendation_execution_contract(row: Mapping | pd.Series | dict) -> dict[s
         verify_next = "Verify remote spill, queue, elapsed time, and credits improve for the same workload after the fix."
         execution_boundary = "Do not upsize blindly; route through Query diagnosis or Warehouse Health capacity controls first."
     elif "TASK" in source_key and "FAIL" in source_key:
-        approval_gate = "Task owner, Control-M operator, and DBA on-call approval before retry, resume, or schedule change."
+        approval_gate = "Task owner, Snowflake task operator, and DBA on-call approval before retry, resume, or schedule change."
         evidence_package = (
             f"{entity} TASK_HISTORY failure/recovery rows, latest error signature, downstream impact, and owner approval."
         )

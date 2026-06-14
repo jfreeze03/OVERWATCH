@@ -50,7 +50,7 @@ TASK_CONTROL_VIEWS = (
 )
 
 TASK_CONTROL_DETAILS = {
-    "Job Status Brief": "Live Control-M handoff, task job status, performance indicators, and errors.",
+    "Job Status Brief": "Live Snowflake task handoff, task job status, performance indicators, and errors.",
     "Failure Console": "Failure patterns, query links, runbooks, and action queue handoff.",
     "SLA & Cost Drift": "Release-sensitive task duration and estimated credit regression review.",
     "Task History": "Run history, active task count, and raw task inventory.",
@@ -146,22 +146,6 @@ ETL_AUDIT_FQN = (
     f"{safe_identifier(ETL_AUDIT_DB)}."
     f"{safe_identifier(ETL_AUDIT_SCHEMA)}."
     f"{safe_identifier(ETL_AUDIT_TABLE)}"
-)
-
-CONTROL_FEED_FQN = (
-    f"{safe_identifier(ALERT_DB)}."
-    f"{safe_identifier(ALERT_SCHEMA)}."
-    f"{safe_identifier('OVERWATCH_EXTERNAL_CONTROL_FEED')}"
-)
-CONTROL_FEED_STAGE_FQN = (
-    f"{safe_identifier(ALERT_DB)}."
-    f"{safe_identifier(ALERT_SCHEMA)}."
-    f"{safe_identifier('OVERWATCH_CONTROL_M_FEED_STAGE')}"
-)
-CONTROL_FEED_JSON_FORMAT_FQN = (
-    f"{safe_identifier(ALERT_DB)}."
-    f"{safe_identifier(ALERT_SCHEMA)}."
-    f"{safe_identifier('OVERWATCH_CONTROL_M_JSON_FF')}"
 )
 
 ADMIN_AUDIT_FQN = (
@@ -1494,12 +1478,12 @@ def _build_task_ops_markdown(
     summary: dict,
     exceptions: pd.DataFrame,
 ) -> str:
-    handoff_state, handoff_note = _task_controlm_handoff_state(summary)
+    handoff_state, handoff_note = _task_task_status_handoff_state(summary)
     lines = [
         f"# OVERWATCH Task Graph Operations Brief - {company}",
         "",
         f"- Lookback: {days} days",
-        f"- Control-M handoff state: {handoff_state}",
+        f"- Snowflake task handoff state: {handoff_state}",
         f"- Handoff note: {handoff_note}",
         f"- Task graphs/tasks: {safe_int(summary.get('TOTAL_TASKS')):,}",
         f"- Task runs: {safe_int(summary.get('TOTAL_RUNS')):,}",
@@ -1520,7 +1504,7 @@ def _build_task_ops_markdown(
             "This is the Informatica Monitor replacement view: use it to find broken task graphs, "
             "failed sessions, suspended jobs, slow runs, linked procedures, and retry candidates. "
             "It should be the first stop before manually executing, resuming task graphs, or handing "
-            "job status to Control-M."
+            "job status to Snowflake task."
         ),
         "",
         "## Top Operational Exceptions",
@@ -1887,11 +1871,11 @@ def _build_task_ops_frames(
     return summary, exceptions, latest
 
 
-def _task_controlm_handoff_state(summary: dict) -> tuple[str, str]:
+def _task_task_status_handoff_state(summary: dict) -> tuple[str, str]:
     if safe_int(summary.get("P1_INCIDENTS")) or safe_int(summary.get("LATEST_FAILED_TASKS")):
         return "Needs Triage", "Latest task job status includes failed production evidence."
     if safe_int(summary.get("FAILED_RUNS")) or safe_int(summary.get("BLOCKED_RECOVERIES")):
-        return "Needs Triage", "Recent failures or blocked recoveries need owner-ready proof before Control-M handoff."
+        return "Needs Triage", "Recent failures or blocked recoveries need owner-ready proof before Snowflake task handoff."
     if (
         safe_int(summary.get("SUSPENDED_TASKS"))
         or safe_int(summary.get("LONG_RUNNING_TASKS"))
@@ -1899,7 +1883,7 @@ def _task_controlm_handoff_state(summary: dict) -> tuple[str, str]:
         or safe_int(summary.get("RECOVERY_SLA_BREACHES"))
     ):
         return "Watch", "Task jobs are running, but performance, suspension, or recovery indicators need review."
-    return "Ready", "Task jobs are ready for Control-M handoff in this scope."
+    return "Ready", "Task jobs are ready for Snowflake task handoff in this scope."
 
 
 def _state_distribution_text(df: pd.DataFrame, *, limit: int = 4) -> str:
@@ -1921,186 +1905,6 @@ def _latest_task_timestamp(latest: pd.DataFrame) -> str:
     return ""
 
 
-def _build_controlm_external_feed_sql(company: str, environment: str, days: int, limit: int = 100) -> str:
-    company_filter = ""
-    if str(company or "").upper() not in {"", "ALL"}:
-        company_filter = f"AND COMPANY = {sql_literal(str(company))}"
-    environment_filter = ""
-    if str(environment or "").upper() not in {"", "ALL"}:
-        environment_filter = f"AND COALESCE(ENVIRONMENT, 'No Database Context') = {sql_literal(str(environment))}"
-    return f"""
-        SELECT
-            SOURCE_SYSTEM,
-            EXTERNAL_ID,
-            COMPANY,
-            ENVIRONMENT,
-            OBJECT_TYPE,
-            OBJECT_NAME,
-            STATUS,
-            SEVERITY,
-            OWNER,
-            TICKET_ID,
-            EVIDENCE,
-            NEXT_ACTION,
-            LAST_SEEN_AT,
-            SEEN_COUNT
-        FROM {CONTROL_FEED_FQN}
-        WHERE UPPER(COALESCE(SOURCE_SYSTEM, '')) = 'CONTROL_M'
-          AND COALESCE(LAST_SEEN_AT, FEED_TS, CURRENT_TIMESTAMP()) >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
-          {company_filter}
-          {environment_filter}
-        ORDER BY
-            CASE UPPER(COALESCE(SEVERITY, ''))
-                WHEN 'CRITICAL' THEN 0
-                WHEN 'HIGH' THEN 1
-                WHEN 'MEDIUM' THEN 2
-                WHEN 'LOW' THEN 3
-                ELSE 4
-            END,
-            LAST_SEEN_AT DESC
-        LIMIT {int(limit)}
-    """
-
-
-def build_controlm_external_feed_setup_sql() -> str:
-    return f"""-- OVERWATCH external scheduler feed for Control-M job status
--- Run once as an admin role that can create objects in {safe_identifier(ALERT_DB)}.{safe_identifier(ALERT_SCHEMA)}.
--- Then automate the MERGE from Control-M, a REST bridge, Snowpipe, or a scheduled Snowflake task.
-
-CREATE TABLE IF NOT EXISTS {CONTROL_FEED_FQN} (
-    SOURCE_SYSTEM VARCHAR DEFAULT 'CONTROL_M',
-    EXTERNAL_ID VARCHAR NOT NULL,
-    COMPANY VARCHAR,
-    ENVIRONMENT VARCHAR,
-    OBJECT_TYPE VARCHAR,
-    OBJECT_NAME VARCHAR,
-    STATUS VARCHAR,
-    SEVERITY VARCHAR,
-    OWNER VARCHAR,
-    TICKET_ID VARCHAR,
-    EVIDENCE VARCHAR,
-    NEXT_ACTION VARCHAR,
-    LAST_SEEN_AT TIMESTAMP_LTZ,
-    SEEN_COUNT NUMBER(38, 0) DEFAULT 1,
-    FEED_TS TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP(),
-    RAW_PAYLOAD VARIANT,
-    CONSTRAINT OVERWATCH_EXTERNAL_CONTROL_FEED_PK
-        PRIMARY KEY (SOURCE_SYSTEM, EXTERNAL_ID) NOT ENFORCED
-);
-
-CREATE FILE FORMAT IF NOT EXISTS {CONTROL_FEED_JSON_FORMAT_FQN}
-    TYPE = JSON
-    STRIP_OUTER_ARRAY = TRUE;
-
-CREATE STAGE IF NOT EXISTS {CONTROL_FEED_STAGE_FQN}
-    FILE_FORMAT = {CONTROL_FEED_JSON_FORMAT_FQN};
-
--- Expected JSON keys:
--- job_id, company, environment, object_type, object_name, status, severity,
--- owner, ticket_id, evidence, next_action, last_seen_at, seen_count
-
-MERGE INTO {CONTROL_FEED_FQN} AS target
-USING (
-    SELECT
-        'CONTROL_M' AS SOURCE_SYSTEM,
-        COALESCE($1:job_id::VARCHAR, $1:external_id::VARCHAR) AS EXTERNAL_ID,
-        $1:company::VARCHAR AS COMPANY,
-        $1:environment::VARCHAR AS ENVIRONMENT,
-        COALESCE($1:object_type::VARCHAR, 'TASK') AS OBJECT_TYPE,
-        $1:object_name::VARCHAR AS OBJECT_NAME,
-        $1:status::VARCHAR AS STATUS,
-        $1:severity::VARCHAR AS SEVERITY,
-        $1:owner::VARCHAR AS OWNER,
-        $1:ticket_id::VARCHAR AS TICKET_ID,
-        $1:evidence::VARCHAR AS EVIDENCE,
-        $1:next_action::VARCHAR AS NEXT_ACTION,
-        TRY_TO_TIMESTAMP_LTZ($1:last_seen_at::VARCHAR) AS LAST_SEEN_AT,
-        COALESCE(TRY_TO_NUMBER($1:seen_count::VARCHAR), 1) AS SEEN_COUNT,
-        CURRENT_TIMESTAMP() AS FEED_TS,
-        $1 AS RAW_PAYLOAD
-    FROM @{CONTROL_FEED_STAGE_FQN}/control_m/
-) AS source
-ON target.SOURCE_SYSTEM = source.SOURCE_SYSTEM
-AND target.EXTERNAL_ID = source.EXTERNAL_ID
-WHEN MATCHED THEN UPDATE SET
-    COMPANY = source.COMPANY,
-    ENVIRONMENT = source.ENVIRONMENT,
-    OBJECT_TYPE = source.OBJECT_TYPE,
-    OBJECT_NAME = source.OBJECT_NAME,
-    STATUS = source.STATUS,
-    SEVERITY = source.SEVERITY,
-    OWNER = source.OWNER,
-    TICKET_ID = source.TICKET_ID,
-    EVIDENCE = source.EVIDENCE,
-    NEXT_ACTION = source.NEXT_ACTION,
-    LAST_SEEN_AT = source.LAST_SEEN_AT,
-    SEEN_COUNT = source.SEEN_COUNT,
-    FEED_TS = source.FEED_TS,
-    RAW_PAYLOAD = source.RAW_PAYLOAD
-WHEN NOT MATCHED THEN INSERT (
-    SOURCE_SYSTEM, EXTERNAL_ID, COMPANY, ENVIRONMENT, OBJECT_TYPE, OBJECT_NAME,
-    STATUS, SEVERITY, OWNER, TICKET_ID, EVIDENCE, NEXT_ACTION,
-    LAST_SEEN_AT, SEEN_COUNT, FEED_TS, RAW_PAYLOAD
-) VALUES (
-    source.SOURCE_SYSTEM, source.EXTERNAL_ID, source.COMPANY, source.ENVIRONMENT,
-    source.OBJECT_TYPE, source.OBJECT_NAME, source.STATUS, source.SEVERITY,
-    source.OWNER, source.TICKET_ID, source.EVIDENCE, source.NEXT_ACTION,
-    source.LAST_SEEN_AT, source.SEEN_COUNT, source.FEED_TS, source.RAW_PAYLOAD
-);
-"""
-
-
-def _load_controlm_external_feed(session, company: str, environment: str, days: int, ttl_prefix: str) -> pd.DataFrame:
-    try:
-        return run_query(
-            _build_controlm_external_feed_sql(company, environment, days),
-            ttl_key=f"{ttl_prefix}_controlm_feed_{company}_{environment}_{days}",
-            tier="metadata",
-            section="Task Management",
-        )
-    except Exception:
-        return pd.DataFrame()
-
-
-def _render_controlm_feed_setup() -> None:
-    setup_sql = build_controlm_external_feed_setup_sql()
-    with st.expander("Control-M feed setup", expanded=False):
-        st.caption(
-            "Create this landing table once, then automate status upserts from Control-M or a scheduler bridge. "
-            "Rows appear in the job status brief without manual app entry."
-        )
-        st.download_button(
-            "Download Control-M Feed SQL",
-            setup_sql,
-            file_name="overwatch_control_m_feed_setup.sql",
-            mime="text/sql",
-            key="task_ops_controlm_feed_setup_download",
-        )
-        st.code(setup_sql, language="sql")
-
-
-def _controlm_feed_status_text(feed: pd.DataFrame, *, limit: int = 4) -> str:
-    if feed is None or feed.empty or "STATUS" not in feed.columns:
-        return "No imported Control-M feed rows loaded."
-    counts = feed["STATUS"].fillna("UNKNOWN").astype(str).str.upper().value_counts()
-    return "; ".join(f"{status}: {count:,}" for status, count in counts.head(limit).items())
-
-
-def _controlm_feed_state(feed: pd.DataFrame) -> tuple[str, str]:
-    if feed is None or feed.empty:
-        return "Not Loaded", "Feed Control-M evidence into OVERWATCH_EXTERNAL_CONTROL_FEED for scheduler-side proof."
-    statuses = feed.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
-    severities = feed.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
-    if (
-        statuses.str.contains("FAIL|ERROR|CANCEL|BLOCK|MISSED|LATE", regex=True).any()
-        or severities.isin(["CRITICAL", "HIGH"]).any()
-    ):
-        return "Alert", "Imported Control-M evidence has failed, blocked, late, or high-severity job status."
-    if statuses.str.contains("WARN|DELAY|DEGRADED|SUSPENDED|WATCH", regex=True).any() or severities.isin(["MEDIUM"]).any():
-        return "Watch", "Imported Control-M evidence needs review before closure."
-    return "Ready", "Imported Control-M evidence is present for this scope."
-
-
 def _first_task_value(row: pd.Series, *columns: str) -> object:
     for column in columns:
         value = row.get(column)
@@ -2116,15 +1920,14 @@ def _first_task_value(row: pd.Series, *columns: str) -> object:
     return ""
 
 
-def _build_controlm_job_status_board(
+def _build_task_status_job_status_board(
     summary: dict,
     latest: pd.DataFrame,
     exceptions: pd.DataFrame,
-    controlm_feed: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    handoff_state, handoff_note = _task_controlm_handoff_state(summary)
+    handoff_state, handoff_note = _task_task_status_handoff_state(summary)
     perf_indicators = safe_int(summary.get("LONG_RUNNING_TASKS")) + safe_int(summary.get("COST_DRIFT_TASKS"))
-    error_rows = _build_controlm_error_board(exceptions, latest)
+    error_rows = _build_task_status_error_board(exceptions, latest)
     latest_timestamp = _latest_task_timestamp(latest)
     running = safe_int(summary.get("RUNNING_TASKS"))
     state_rank = {
@@ -2136,7 +1939,7 @@ def _build_controlm_job_status_board(
     }
     rows = [
         {
-            "CONTROL_M_VIEW": "Job Status",
+            "TASK_STATUS_VIEW": "Job Status",
             "STATE": handoff_state,
             "INDICATOR": "Latest task job state",
             "COUNT": safe_int(summary.get("TOTAL_TASKS")),
@@ -2145,7 +1948,7 @@ def _build_controlm_job_status_board(
             "NEXT_ACTION": handoff_note,
         },
         {
-            "CONTROL_M_VIEW": "Performance Indicators",
+            "TASK_STATUS_VIEW": "Performance Indicators",
             "STATE": "Watch" if perf_indicators else ("Running" if running else "Ready"),
             "INDICATOR": "Runtime or estimated-credit drift",
             "COUNT": perf_indicators,
@@ -2158,7 +1961,7 @@ def _build_controlm_job_status_board(
             "NEXT_ACTION": "Review latest duration, query profile, warehouse, and release changes before handoff.",
         },
         {
-            "CONTROL_M_VIEW": "Errors",
+            "TASK_STATUS_VIEW": "Errors",
             "STATE": "Alert" if not error_rows.empty else "Ready",
             "INDICATOR": "Recent task errors",
             "COUNT": len(error_rows),
@@ -2171,7 +1974,7 @@ def _build_controlm_job_status_board(
             "NEXT_ACTION": "Open Failure Console, verify root cause, then attach successful TASK_HISTORY proof.",
         },
         {
-            "CONTROL_M_VIEW": "Recovery",
+            "TASK_STATUS_VIEW": "Recovery",
             "STATE": "Alert" if safe_int(summary.get("BLOCKED_RECOVERIES")) else (
                 "Watch" if safe_int(summary.get("OPEN_RECOVERIES")) or safe_int(summary.get("RECOVERY_SLA_BREACHES")) else "Ready"
             ),
@@ -2183,36 +1986,15 @@ def _build_controlm_job_status_board(
                 f"target={safe_int(summary.get('RECOVERY_SLA_TARGET_HOURS')):,}h."
             ),
             "LAST_SEEN": latest_timestamp,
-            "NEXT_ACTION": "Keep Control-M closure blocked until recovery evidence and owner approval are visible.",
+            "NEXT_ACTION": "Keep Snowflake task closure blocked until recovery evidence and owner approval are visible.",
         },
     ]
-    if controlm_feed is not None and not controlm_feed.empty:
-        feed_state, feed_note = _controlm_feed_state(controlm_feed)
-        last_seen = ""
-        if "LAST_SEEN_AT" in controlm_feed.columns:
-            seen_values = pd.to_datetime(controlm_feed["LAST_SEEN_AT"], errors="coerce").dropna()
-            if not seen_values.empty:
-                last_seen = str(seen_values.max())
-        next_actions = [
-            str(value).strip()
-            for value in controlm_feed.get("NEXT_ACTION", pd.Series(dtype=str)).dropna().tolist()
-            if str(value).strip()
-        ]
-        rows.append({
-            "CONTROL_M_VIEW": "Scheduler Feed",
-            "STATE": feed_state,
-            "INDICATOR": "Imported Control-M evidence",
-            "COUNT": len(controlm_feed),
-            "EVIDENCE": _controlm_feed_status_text(controlm_feed),
-            "LAST_SEEN": last_seen,
-            "NEXT_ACTION": next_actions[0] if next_actions else feed_note,
-        })
     board = pd.DataFrame(rows)
     board["_RANK"] = board["STATE"].map(state_rank).fillna(9)
-    return board.sort_values(["_RANK", "CONTROL_M_VIEW"]).drop(columns=["_RANK"], errors="ignore")
+    return board.sort_values(["_RANK", "TASK_STATUS_VIEW"]).drop(columns=["_RANK"], errors="ignore")
 
 
-def _build_controlm_error_board(exceptions: pd.DataFrame, latest: pd.DataFrame) -> pd.DataFrame:
+def _build_task_status_error_board(exceptions: pd.DataFrame, latest: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
 
@@ -2501,7 +2283,6 @@ def _cache_task_ops_scope(
     inventory: pd.DataFrame,
     critical_paths: pd.DataFrame,
     recovery_sla: pd.DataFrame,
-    controlm_feed: pd.DataFrame,
     details_loaded: bool,
     *,
     days: int,
@@ -2513,7 +2294,6 @@ def _cache_task_ops_scope(
     st.session_state["task_ops_inventory"] = inventory
     st.session_state["task_ops_critical_paths"] = critical_paths
     st.session_state["task_ops_recovery_sla"] = recovery_sla
-    st.session_state["task_ops_controlm_feed"] = controlm_feed
     st.session_state["task_ops_query_details_loaded"] = details_loaded
     st.session_state["task_ops_loaded_days"] = int(days)
     st.session_state["task_ops_refresh_mode"] = refresh_mode
@@ -2522,10 +2302,9 @@ def _cache_task_ops_scope(
 
 
 def _render_task_ops_brief(session) -> None:
-    company = get_active_company()
     st.subheader("Task Graph Operations Cockpit")
     st.caption(
-        "Control-M handoff view for Snowflake task graphs: live job status, performance indicators, "
+        "Snowflake task handoff view for Snowflake task graphs: live job status, performance indicators, "
         "errors, suspended tasks, recovery proof, and the next operational workflow."
     )
     with st.container():
@@ -2544,13 +2323,6 @@ def _render_task_ops_brief(session) -> None:
                     include_live_runs=False,
                     allow_live_fallback=False,
                 )
-                controlm_feed = _load_controlm_external_feed(
-                    session,
-                    company,
-                    get_active_environment(),
-                    selected_days,
-                    "task_ops",
-                )
                 _cache_task_ops_scope(
                     summary,
                     exceptions,
@@ -2558,7 +2330,6 @@ def _render_task_ops_brief(session) -> None:
                     inventory,
                     critical_paths,
                     recovery_sla,
-                    controlm_feed,
                     details_loaded,
                     days=selected_days,
                     refresh_mode="summary snapshot",
@@ -2568,13 +2339,6 @@ def _render_task_ops_brief(session) -> None:
             summary, exceptions, latest, inventory, critical_paths, recovery_sla, details_loaded = _load_task_ops_scope(
                 session, selected_days, "task_ops", force_inventory_refresh=True, include_live_runs=True
             )
-            controlm_feed = _load_controlm_external_feed(
-                session,
-                company,
-                get_active_environment(),
-                selected_days,
-                "task_ops_live",
-            )
             _cache_task_ops_scope(
                 summary,
                 exceptions,
@@ -2582,7 +2346,6 @@ def _render_task_ops_brief(session) -> None:
                 inventory,
                 critical_paths,
                 recovery_sla,
-                controlm_feed,
                 details_loaded,
                 days=selected_days,
                 refresh_mode="live",
@@ -2593,18 +2356,16 @@ def _render_task_ops_brief(session) -> None:
             if st.session_state.get("task_ops_refresh_mode") in {None, "summary snapshot"}:
                 st.info(
                     "No task graph summary snapshot is available for this scope. "
-                    "Refresh live task job status for current Control-M handoff, performance, and error evidence."
+                    "Refresh live task job status for current Snowflake task handoff, performance, and error evidence."
                 )
             else:
-                st.info("Refresh live task job status to load Control-M handoff, performance, and error evidence.")
-            _render_controlm_feed_setup()
+                st.info("Refresh live task job status to load Snowflake task handoff, performance, and error evidence.")
             return
         exceptions = st.session_state.get("task_ops_exceptions", pd.DataFrame())
         latest = st.session_state.get("task_ops_latest", pd.DataFrame())
         inventory = st.session_state.get("task_ops_inventory", pd.DataFrame())
         critical_paths = st.session_state.get("task_ops_critical_paths", pd.DataFrame())
         recovery_sla = st.session_state.get("task_ops_recovery_sla", pd.DataFrame())
-        controlm_feed = st.session_state.get("task_ops_controlm_feed", pd.DataFrame())
         score = _task_ops_score(
             failed_runs=safe_int(summary.get("FAILED_RUNS")),
             suspended_tasks=safe_int(summary.get("SUSPENDED_TASKS")),
@@ -2654,14 +2415,14 @@ def _render_task_ops_brief(session) -> None:
         else:
             st.success("Operational: no dominant task graph risk signal in this scope.")
 
-        controlm_state, controlm_note = _task_controlm_handoff_state(summary)
-        controlm_board = _build_controlm_job_status_board(summary, latest, exceptions, controlm_feed)
-        controlm_errors = _build_controlm_error_board(exceptions, latest)
-        st.subheader("Control-M Job Status")
+        task_status_state, task_status_note = _task_task_status_handoff_state(summary)
+        task_status_board = _build_task_status_job_status_board(summary, latest, exceptions)
+        task_status_errors = _build_task_status_error_board(exceptions, latest)
+        st.subheader("Snowflake task Job Status")
         render_shell_snapshot((
-            ("Handoff State", controlm_state),
+            ("Handoff State", task_status_state),
             ("Running", f"{safe_int(summary.get('RUNNING_TASKS')):,}"),
-            ("Job Errors", f"{len(controlm_errors):,}"),
+            ("Job Errors", f"{len(task_status_errors):,}"),
             (
                 "Performance Indicators",
                 f"{safe_int(summary.get('LONG_RUNNING_TASKS')) + safe_int(summary.get('COST_DRIFT_TASKS')):,}",
@@ -2672,40 +2433,24 @@ def _render_task_ops_brief(session) -> None:
         if loaded_at:
             st.caption(
                 f"Last {refresh_mode} refresh: "
-                f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(loaded_at))} | {controlm_note}"
+                f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(loaded_at))} | {task_status_note}"
             )
         else:
-            st.caption(controlm_note)
+            st.caption(task_status_note)
         render_priority_dataframe(
-            controlm_board,
-            title="Control-M handoff status by operating lane",
-            priority_columns=["STATE", "CONTROL_M_VIEW", "INDICATOR", "COUNT", "EVIDENCE", "LAST_SEEN", "NEXT_ACTION"],
-            raw_label="All Control-M handoff rows",
+            task_status_board,
+            title="Snowflake task handoff status by operating lane",
+            priority_columns=["STATE", "TASK_STATUS_VIEW", "INDICATOR", "COUNT", "EVIDENCE", "LAST_SEEN", "NEXT_ACTION"],
+            raw_label="All Snowflake task handoff rows",
             height=220,
             max_rows=8,
         )
-        if controlm_feed is not None and not controlm_feed.empty:
-            render_priority_dataframe(
-                controlm_feed,
-                title="Imported Control-M evidence",
-                priority_columns=[
-                    "SEVERITY", "STATUS", "OBJECT_NAME", "OBJECT_TYPE", "OWNER",
-                    "TICKET_ID", "EVIDENCE", "NEXT_ACTION", "LAST_SEEN_AT", "SEEN_COUNT",
-                ],
-                sort_by=["SEVERITY", "LAST_SEEN_AT"],
-                ascending=[True, False],
-                raw_label="All imported Control-M feed rows",
-                max_rows=20,
-            )
-        else:
-            st.caption("No imported Control-M feed rows found for this scope. Snowflake task status is still shown above.")
-        _render_controlm_feed_setup()
-        if controlm_errors.empty:
+        if task_status_errors.empty:
             st.success("No recent task error signatures loaded for this scope.")
         else:
             render_priority_dataframe(
-                controlm_errors,
-                title="Recent task errors for Control-M",
+                task_status_errors,
+                title="Recent task errors for Snowflake task",
                 priority_columns=[
                     "INCIDENT_PRIORITY", "SEVERITY", "SOURCE", "TASK_NAME", "ROOT_TASK_NAME",
                     "STATE", "ERROR_SIGNATURE", "ERROR_MESSAGE", "QUERY_ID", "LAST_SEEN",
@@ -2713,7 +2458,7 @@ def _render_task_ops_brief(session) -> None:
                 ],
                 sort_by=["INCIDENT_PRIORITY", "SEVERITY", "LAST_SEEN"],
                 ascending=[True, True, False],
-                raw_label="All Control-M task error rows",
+                raw_label="All Snowflake task task error rows",
                 max_rows=20,
             )
 

@@ -171,7 +171,7 @@ class ScorecardTests(unittest.TestCase):
         self.assertGreaterEqual(max(row["SCORE"] for row in rows), 95)
         self.assertEqual(by_section["DBA Control Room"]["CAP_DRIVERS"], "none")
         self.assertIn("notification integration", by_section["Alert Center"]["NEXT_95_MOVE"])
-        self.assertIn("ITSM", by_section["Cost & Contract"]["NEXT_95_MOVE"])
+        self.assertIn("owner approval", by_section["Cost & Contract"]["NEXT_95_MOVE"])
 
 
 if __name__ == "__main__":

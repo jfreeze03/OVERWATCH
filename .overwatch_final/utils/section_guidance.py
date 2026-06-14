@@ -8,7 +8,7 @@ from functools import lru_cache
 import streamlit as st
 
 
-SECTION_GUIDANCE_VERSION = "2026-06-03-bottom-notes-v1"
+SECTION_GUIDANCE_VERSION = "2026-06-13-no-bottom-notes-v1"
 _DEFERRED_NOTES_PREFIX = "_overwatch_deferred_section_notes"
 _GUIDE_GRID_STYLE = (
     "display:grid;"
@@ -134,9 +134,9 @@ SECTION_OPERATING_GUIDE = {
     },
     "Change & Drift": {
         "first_move": "Find drift without ticket approval, recent access changes, and deployment-risk exceptions.",
-        "evidence": "Object/access change row, deployment or ITSM ticket, owner route, and rollback proof.",
+        "evidence": "Object/access change row, owner approval, owner route, and rollback proof.",
         "closure": "Close only when approval, implementation evidence, and post-change verification line up.",
-        "guardrail": "Treat unmatched drift as a control issue until source-control or ITSM evidence explains it.",
+        "guardrail": "Treat unmatched drift as a control issue until owner approval or rollback proof explains it.",
     },
 }
 
@@ -196,7 +196,7 @@ SECTION_EVIDENCE_CONTRACT = {
             "confidence": "Account-level exact",
             "decision_use": "Investigate failed logins, MFA gaps, and dormant-user risk.",
             "invalid_use": "Do not apply environment filters to login-only findings.",
-            "proof": "User, event time, login status, and IAM or owner approval evidence.",
+            "proof": "User, event time, login status, IAM approval, and owner proof.",
         },
         {
             "source": "Checklist and access-hygiene rows",
@@ -302,17 +302,17 @@ SECTION_EVIDENCE_CONTRACT = {
     ],
     "Change & Drift": [
         {
-            "source": "Object, grant, and deployment change evidence",
+            "source": "Object, grant, and approved change evidence",
             "confidence": "Delayed account metadata",
             "decision_use": "Find drift, unauthorized changes, and deployment-risk exceptions.",
             "invalid_use": "Do not assume unmatched drift is approved.",
-            "proof": "Change row, owner route, ticket/source-control reference, and rollback context.",
+            "proof": "Change row, owner route, ticket reference, approval proof, and rollback context.",
         },
         {
-            "source": "ITSM/source-control linkage",
-            "confidence": "Manual until integrated",
+            "source": "Owner approval and rollback evidence linkage",
+            "confidence": "Manual evidence retained inside OVERWATCH",
             "decision_use": "Separate explainable change from control failure.",
-            "invalid_use": "Do not auto-close drift without external approval proof.",
+            "invalid_use": "Do not auto-close drift without owner approval and verification proof.",
             "proof": "Approval, implementation evidence, verification result, and closure note.",
         },
     ],
@@ -376,32 +376,18 @@ def _notes_key(section: str) -> str:
 
 
 def clear_deferred_section_notes(section: str) -> None:
-    """Clear transient notes for the section before a fresh render."""
-    st.session_state[_notes_key(section)] = []
+    """Retained for compatibility; bottom section notes are no longer rendered."""
+    st.session_state.pop(_notes_key(section), None)
 
 
 def defer_section_note(note: str, *, section: str | None = None) -> None:
-    """Collect non-critical explanatory text for a bottom Notes / Evidence area."""
-    clean_note = " ".join(str(note or "").split())
-    if not clean_note:
-        return
-    active_section = section or st.session_state.get("_overwatch_active_section", "")
-    key = _notes_key(active_section)
-    notes = list(st.session_state.get(key, []))
-    if clean_note not in notes:
-        notes.append(clean_note)
-    st.session_state[key] = notes
+    """Compatibility no-op; generic section notes were removed from the app UI."""
+    return
 
 
 def defer_source_note(*parts: object, section: str | None = None) -> None:
-    """Collect source/freshness text without adding visual noise near metrics."""
-    clean_parts = [
-        _humanize_source_note(" ".join(str(part or "").split()))
-        for part in parts
-        if str(part or "").strip()
-    ]
-    if clean_parts:
-        defer_section_note(" | ".join(clean_parts), section=section)
+    """Compatibility no-op; source details now live in local freshness/KPI surfaces."""
+    return
 
 
 def _humanize_source_note(note: str) -> str:
@@ -421,26 +407,8 @@ def _humanize_source_note(note: str) -> str:
 
 
 def render_deferred_section_notes(section: str) -> None:
-    """Render deferred explanations and source contracts in one quiet bottom expander."""
-    guide_markup = _section_guide_markup(section)
-    contract_markup = _section_evidence_contract_markup(section)
-    notes = list(st.session_state.get(_notes_key(section), []))
-    if not notes and not guide_markup and not contract_markup:
-        return
-
-    note_items = "".join(f"<li>{html.escape(note)}</li>" for note in notes)
-    notes_markup = (
-        f"""
-        <div class="ow-section-notes">
-            <div class="ow-section-notes-title">Source Notes</div>
-            <ul>{note_items}</ul>
-        </div>
-        """
-        if notes
-        else ""
-    )
-    with st.expander("Notes / Evidence", expanded=False):
-        st.markdown(f"{notes_markup}{guide_markup}{contract_markup}", unsafe_allow_html=True)
+    """Retained for compatibility; the app no longer renders bottom notes/evidence drawers."""
+    clear_deferred_section_notes(section)
 
 
 @lru_cache(maxsize=16)

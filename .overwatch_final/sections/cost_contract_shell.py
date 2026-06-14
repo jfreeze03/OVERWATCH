@@ -7,13 +7,11 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, render_shell_snapshot, render_shell_workflows, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_cost_contract_full_workspace_requested"
 _BRIEF_MODE_KEY = "_cost_contract_brief_mode"
-_DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
-_PENDING_DETAIL_WORKFLOW_KEY = "_cost_contract_pending_detail_workflow"
 _COST_SPLASH_KEY = "cost_contract_splash"
 _FULL_WORKSPACE_STATE_KEYS = (
     _COST_SPLASH_KEY,
@@ -99,21 +97,14 @@ def _window_label() -> str:
 
 
 def _full_workspace_requested() -> bool:
-    if st.session_state.get(_BRIEF_MODE_KEY):
-        return False
-    if st.session_state.get(_FULL_WORKSPACE_KEY):
-        return True
-    return False
+    return full_workspace_requested(st.session_state, _FULL_WORKSPACE_KEY, _BRIEF_MODE_KEY)
 
 
-def _open_workspace(workflow: str | None = None, *, open_detail: bool = False) -> None:
+def _open_workspace(workflow: str | None = None) -> None:
     st.session_state[_BRIEF_MODE_KEY] = False
     st.session_state[_FULL_WORKSPACE_KEY] = True
     if workflow:
         st.session_state["cost_contract_workflow"] = workflow
-        if open_detail:
-            st.session_state[_DETAIL_WORKFLOW_KEY] = workflow
-            st.session_state[_PENDING_DETAIL_WORKFLOW_KEY] = workflow
     st.rerun()
 
 
@@ -136,34 +127,31 @@ def _render_back_to_brief_control() -> None:
             _return_to_brief()
 
 
-def _render_action_brief() -> None:
-    workspace_help = evidence_caption(
+def _render_status_strip() -> None:
+    detail = evidence_caption(
         st.session_state,
         _FULL_WORKSPACE_STATE_KEYS,
-        "The shell stays zero-query; the full cost splash and proof workspace load on demand.",
+        "Cost, Cortex, budget, contract, and verification proof are loaded when a workflow is opened.",
     )
-    with st.container(border=True):
-        label_col, detail_col, action_col = st.columns([1.0, 3.0, 1.8])
-        with label_col:
-            st.markdown("**Action Brief**")
-            st.caption(action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS))
-        with detail_col:
-            st.markdown("**Open Cost Overview when bill movement, Cortex spend, or contract risk needs proof.**")
-        with action_col:
-            if st.button(
-                "Open Cost Overview",
-                key="cost_contract_shell_open",
-                help=workspace_help,
-                type="primary",
-                width="stretch",
-            ):
-                _open_workspace("Explain bill / attribution / contract")
+    render_shell_status_strip(
+        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
+        headline="Cost command view: bill movement, Cortex spend, budget risk, and contract burn.",
+        detail=detail,
+    )
+
+
+def _render_kpi_row() -> None:
+    render_shell_kpi_row((
+        ("Scope", scope_label(_active_company(), _active_environment())),
+        ("Window", _window_label()),
+        ("Compute $/credit", f"{_credit_price():.2f}"),
+        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
+    ))
 
 
 def _render_workflow_launchpad() -> None:
     def _open(row):
-        workflow = str(row["WORKFLOW"])
-        _open_workspace(workflow, open_detail=workflow != "Explain bill / attribution / contract")
+        _open_workspace(str(row["WORKFLOW"]))
 
     render_shell_workflows(
         "Cost Investigation Workflows",
@@ -181,5 +169,6 @@ def render() -> None:
         return
 
     st.session_state.setdefault("cost_contract_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
-    _render_action_brief()
+    _render_status_strip()
+    _render_kpi_row()
     _render_workflow_launchpad()

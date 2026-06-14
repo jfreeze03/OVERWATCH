@@ -1219,6 +1219,31 @@ def _render_executive_observability_board(
             ("Source", "Precomputed marts"),
             ("Status", "No rows"),
         ))
+        st.markdown("**Executive Metric Board**")
+        render_shell_kpi_row((
+            ("Spend", "Not loaded"),
+            ("Delta", "Not loaded"),
+            ("Cortex", "Not loaded"),
+            ("30d Forecast", "Not loaded"),
+        ))
+        render_shell_kpi_row((
+            ("Queries", "Not loaded"),
+            ("Avg Runtime", "Not loaded"),
+            ("P95 Runtime", "Not loaded"),
+            ("Remote Spill", "Not loaded"),
+        ))
+        render_shell_kpi_row((
+            ("Critical / High", "Not loaded"),
+            ("Failed Queries", "Not loaded"),
+            ("Failed Tasks", "Not loaded"),
+            ("Open Actions", "Not loaded"),
+        ))
+        render_shell_kpi_row((
+            ("Queue Time", "Not loaded"),
+            ("Avg/day", "Not loaded"),
+            ("Storage", "Not loaded"),
+            ("Freshness", "Not loaded"),
+        ))
         _render_observability_source_status(board)
         return
 

@@ -2462,6 +2462,32 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY", setup_upper)
         self.assertIn("CREATE OR REPLACE TASK OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH", setup_upper)
         self.assertIn("CALL SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY()", setup_upper)
+        for panel in [
+            "'DAILY_COST'",
+            "'MONTHLY_COST'",
+            "'DAILY_WORKLOAD'",
+            "'QUERY_TYPE'",
+            "'WAREHOUSE_PRESSURE'",
+            "'FRESHNESS'",
+        ]:
+            self.assertIn(panel, setup_upper)
+        for metric in [
+            "'CREDITS USED'",
+            "'SPEND DELTA'",
+            "'CORTEX SPEND'",
+            "'TOTAL QUERIES'",
+            "'AVG RUNTIME'",
+            "'P95 RUNTIME'",
+            "'QUEUE TIME'",
+            "'REMOTE SPILL'",
+            "'FAILED QUERIES'",
+            "'FAILED TASKS'",
+            "'CRITICAL HIGH ALERTS'",
+            "'OPEN ACTIONS'",
+            "'STORAGE'",
+            "'PLATFORM HEALTH'",
+        ]:
+            self.assertIn(metric, setup_upper)
         self.assertIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY", setup_upper)
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY", setup_upper)
         self.assertIn("AI_CREDIT_PRICE_USD", setup_upper)

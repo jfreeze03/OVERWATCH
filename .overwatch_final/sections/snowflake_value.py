@@ -158,14 +158,6 @@ def _render_value_automation_contract() -> None:
 
 
 def _render_value_automation_health(company: str) -> None:
-    load_meta = {"company": company}
-    if (
-        st.session_state.get("sf_value_automation_meta") != load_meta
-        and st.session_state.get("sf_value_automation_autoload_failed_meta") != load_meta
-    ):
-        if not _load_snowflake_value_automation_state(company, show_errors=False):
-            st.session_state["sf_value_automation_autoload_failed_meta"] = load_meta
-
     if st.button("Load Value Automation Evidence", key="sf_value_automation_load", width="stretch"):
         _load_snowflake_value_automation_state(company, show_errors=True)
 
@@ -173,8 +165,16 @@ def _render_value_automation_health(company: str) -> None:
     candidates = st.session_state.get("sf_value_automation_candidates")
     err = st.session_state.get("sf_value_automation_error", "")
     if health is None:
+        render_shell_snapshot((
+            ("Candidates", "Not loaded"),
+            ("Verified Candidates", "Not loaded"),
+            ("Candidate Value", "Not loaded"),
+            ("Ledger Rows", "Not loaded"),
+        ))
         if err:
             st.caption(f"Automation evidence unavailable for this role/context: {err}")
+        else:
+            st.caption("Value automation health loads only when requested; scheduled Snowflake refresh owns recurring capture.")
         return
     if health.empty:
         st.info("Value automation health view returned no rows.")
@@ -219,7 +219,6 @@ def _render_value_automation_health(company: str) -> None:
 
 
 def render():
-    session = get_session()
     credit_price = st.session_state.get("credit_price", DEFAULTS["credit_price"])
     company = get_active_company()
 
@@ -233,19 +232,22 @@ def render():
     _render_value_automation_contract()
     _render_value_automation_health(company)
 
-    load_meta = {"company": company}
-    if (
-        st.session_state.get("sf_value_meta") != load_meta
-        and st.session_state.get("sf_value_autoload_failed_meta") != load_meta
-    ):
-        if not _load_snowflake_value_state(session, company, show_errors=False):
-            st.session_state["sf_value_autoload_failed_meta"] = load_meta
-
     if st.button("Load Snowflake Value", key="sf_value_load"):
+        session = get_session()
         _load_snowflake_value_state(session, company, show_errors=True)
 
     df_summary = st.session_state.get("sf_value_summary")
-    if df_summary is not None:
+    if df_summary is None:
+        render_shell_snapshot((
+            ("Monthly Value", "Not loaded"),
+            ("Annualized Value", "Not loaded"),
+            ("Actions Logged", "Not loaded"),
+            ("Verified Actions", "Not loaded"),
+            ("OVERWATCH Runtime Cost", "Not loaded"),
+            ("Value Multiple", "Not measured"),
+        ))
+        st.caption("Load Snowflake Value when ledger rows are needed. Automated capture should run in Snowflake so DBAs do not have to maintain this manually.")
+    else:
         if df_summary.empty:
             st.info("No Snowflake optimization value has been logged yet.")
         else:
@@ -356,6 +358,7 @@ def render():
         savings_monthly = round(savings_credits * 30 * credit_price, 2)
         actor = str(st.session_state.get("_overwatch_actor", "OVERWATCH") or "OVERWATCH")
         try:
+            session = get_session()
             if _value_table_has_company(session):
                 session.sql(f"""
                     INSERT INTO {VALUE_TABLE}

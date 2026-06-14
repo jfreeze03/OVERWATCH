@@ -12,6 +12,8 @@ from sections.shell_helpers import action_state_label, evidence_caption, evidenc
 
 _FULL_WORKSPACE_KEY = "_alert_center_full_workspace_requested"
 _BRIEF_MODE_KEY = "_alert_center_brief_mode"
+_FAST_ENTRY_VERSION_KEY = "_alert_center_shell_fast_entry_version"
+_FAST_ENTRY_VERSION = 1
 _FULL_WORKSPACE_STATE_KEYS = (
     "alert_center_data",
     "alert_center_annotations",
@@ -95,7 +97,63 @@ def _window_label() -> str:
 
 
 def _full_workspace_requested() -> bool:
-    return full_workspace_requested(st.session_state, _FULL_WORKSPACE_KEY, _BRIEF_MODE_KEY)
+    """Keep Alert navigation lightweight; load command evidence only from an explicit alert workflow."""
+    _ = full_workspace_requested
+    if st.session_state.get(_FULL_WORKSPACE_KEY):
+        return True
+    st.session_state.setdefault(_BRIEF_MODE_KEY, True)
+    return False
+
+
+def _apply_fast_entry_default() -> None:
+    if st.session_state.get(_FAST_ENTRY_VERSION_KEY) == _FAST_ENTRY_VERSION:
+        return
+    st.session_state[_FULL_WORKSPACE_KEY] = False
+    st.session_state[_BRIEF_MODE_KEY] = True
+    st.session_state[_FAST_ENTRY_VERSION_KEY] = _FAST_ENTRY_VERSION
+
+
+def _is_loaded_frame(value: object) -> bool:
+    return bool(hasattr(value, "empty") and not getattr(value, "empty", True))
+
+
+def _loaded_data() -> dict:
+    data = st.session_state.get("alert_center_data")
+    return data if isinstance(data, dict) else {}
+
+
+def _frame_count(data: dict, key: str) -> int:
+    frame = data.get(key)
+    if not _is_loaded_frame(frame):
+        return 0
+    try:
+        return len(frame)
+    except Exception:
+        return 0
+
+
+def _severity_count(data: dict, severities: tuple[str, ...]) -> int:
+    alerts = data.get("alerts")
+    if not _is_loaded_frame(alerts) or "SEVERITY" not in getattr(alerts, "columns", []):
+        return 0
+    try:
+        severity = alerts["SEVERITY"].fillna("").astype(str).str.title()
+        return int(severity.isin(list(severities)).sum())
+    except Exception:
+        return 0
+
+
+def _open_queue_count(data: dict) -> int:
+    queue = data.get("action_queue")
+    if not _is_loaded_frame(queue):
+        return 0
+    try:
+        if "STATUS" not in queue.columns:
+            return len(queue)
+        status = queue["STATUS"].fillna("").astype(str).str.title()
+        return int((~status.isin(["Fixed", "Ignored", "Closed"])).sum())
+    except Exception:
+        return len(queue) if hasattr(queue, "__len__") else 0
 
 
 def _open_workspace(view: str | None = None) -> None:
@@ -147,6 +205,39 @@ def _render_kpi_row() -> None:
     ))
 
 
+def _render_metric_board() -> None:
+    data = _loaded_data()
+    loaded = bool(data)
+    st.markdown("**Alert Metric Board**")
+    if not loaded:
+        render_shell_kpi_row((
+            ("Critical / High", "Not loaded"),
+            ("Warnings", "Not loaded"),
+            ("Open Actions", "Not loaded"),
+            ("Owners Ready", "Not loaded"),
+        ))
+        render_shell_kpi_row((
+            ("Delivery Ready", "Not loaded"),
+            ("Automation Health", "On demand"),
+            ("Suppressed", "On demand"),
+            ("Freshness", "Not loaded"),
+        ))
+        return
+
+    render_shell_kpi_row((
+        ("Critical / High", f"{_severity_count(data, ('Critical', 'High')):,}"),
+        ("Warnings", f"{_severity_count(data, ('Warning', 'Medium')):,}"),
+        ("Open Actions", f"{_open_queue_count(data):,}"),
+        ("Owners Ready", f"{_frame_count(data, 'owner_directory'):,}"),
+    ))
+    render_shell_kpi_row((
+        ("Delivery Ready", f"{_frame_count(data, 'delivery_log'):,}"),
+        ("Automation Health", "Loaded" if _is_loaded_frame(data.get("automation_health")) else "On demand"),
+        ("Rules", f"{_frame_count(data, 'rules'):,}"),
+        ("Freshness", "Loaded" if data.get("_freshness_meta") else "Loaded"),
+    ))
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workspace(str(row["VIEW"]))
@@ -161,6 +252,7 @@ def _render_workflow_launchpad() -> None:
 
 
 def render() -> None:
+    _apply_fast_entry_default()
     if _full_workspace_requested():
         _render_back_to_brief_control()
         _delegate_full_workspace()
@@ -169,4 +261,5 @@ def render() -> None:
     st.session_state.setdefault("alert_center_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _render_status_strip()
     _render_kpi_row()
+    _render_metric_board()
     _render_workflow_launchpad()

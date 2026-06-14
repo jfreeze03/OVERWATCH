@@ -29,6 +29,16 @@ audit behavior.
 | Workload Operations | Query/task facts and task history summaries | 30 min | Explicit live triage |
 
 The setup SQL seeds the same contract into `OVERWATCH_REFRESH_POLICY`.
+The UI should still render the metric frame immediately. If a Snowflake session
+or mart lookup would block the first paint, show the precomputed-board frame and
+let `Refresh Board` read the compact mart. Do not fall back to live account
+history scans from the executive landing page.
+
+The same first-paint rule applies to Cost & Contract, Alert Center, and
+Snowflake Value: show the board frame immediately, reuse already-loaded session
+state when present, and keep Snowflake reads behind explicit refresh/load
+actions or scheduled mart tasks. Silent UI autoloads are not allowed for these
+surfaces.
 
 ## When To Query Live Snowflake Metadata
 

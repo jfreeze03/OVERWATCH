@@ -98,6 +98,109 @@ def _window_label() -> str:
     return f"{int(DEFAULT_DAY_WINDOW)}d"
 
 
+def _is_loaded_frame(value: object) -> bool:
+    return bool(hasattr(value, "empty") and not getattr(value, "empty", True))
+
+
+def _first_row(value: object) -> object | None:
+    if not _is_loaded_frame(value):
+        return None
+    try:
+        return value.iloc[0]
+    except Exception:
+        return None
+
+
+def _float_value(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value if value is not None else default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_value(value: object, default: int = 0) -> int:
+    try:
+        return int(float(value if value is not None else default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _row_get(row: object | None, key: str, default: object = None) -> object:
+    if row is None:
+        return default
+    getter = getattr(row, "get", None)
+    if callable(getter):
+        return getter(key, default)
+    try:
+        return row[key]
+    except Exception:
+        return default
+
+
+def _money(value: object, *, signed: bool = False) -> str:
+    amount = _float_value(value)
+    if signed:
+        sign = "+" if amount >= 0 else "-"
+        return f"{sign}${abs(amount):,.0f}"
+    return f"${amount:,.0f}"
+
+
+def _loaded_cost_board() -> dict:
+    cockpit = st.session_state.get("cost_contract_cockpit")
+    cockpit_meta = st.session_state.get("cost_contract_cockpit_meta", {})
+    cockpit_row = _first_row(cockpit)
+    cockpit_loaded = (
+        cockpit_row is not None
+        and isinstance(cockpit_meta, dict)
+        and cockpit_meta.get("company") == _active_company()
+    )
+    run_rate_row = _first_row(st.session_state.get("cost_contract_run_rate"))
+    queue = st.session_state.get("cost_contract_queue")
+    queue_loaded = _is_loaded_frame(queue)
+
+    current_credits = _float_value(_row_get(cockpit_row, "CURRENT_CREDITS"))
+    prior_credits = _float_value(_row_get(cockpit_row, "PRIOR_CREDITS"))
+    spend = current_credits * _credit_price()
+    delta_spend = (current_credits - prior_credits) * _credit_price()
+    forecast_credits = _float_value(_row_get(run_rate_row, "PROJECTED_30D_FROM_7D"))
+    forecast = forecast_credits * _credit_price() if run_rate_row is not None else 0.0
+    top_driver = str(_row_get(cockpit_row, "TOP_INCREASE_WAREHOUSE", "Not loaded") or "Not loaded")
+    top_delta = _float_value(_row_get(cockpit_row, "TOP_INCREASE_CREDITS")) * _credit_price()
+
+    open_actions = high_actions = 0
+    est_savings = 0.0
+    if queue_loaded:
+        try:
+            status = queue["STATUS"].fillna("").astype(str).str.title() if "STATUS" in queue.columns else None
+            open_mask = ~status.isin(["Fixed", "Ignored", "Closed"]) if status is not None else None
+            open_actions = int(open_mask.sum()) if open_mask is not None else len(queue)
+            if "SEVERITY" in queue.columns and open_mask is not None:
+                severity = queue["SEVERITY"].fillna("").astype(str).str.title()
+                high_actions = int((severity.isin(["Critical", "High"]) & open_mask).sum())
+            if "EST_MONTHLY_SAVINGS" in queue.columns and open_mask is not None:
+                est_savings = _float_value(queue.loc[open_mask, "EST_MONTHLY_SAVINGS"].fillna(0).sum())
+        except Exception:
+            open_actions = len(queue) if hasattr(queue, "__len__") else 0
+
+    loaded_at = ""
+    if isinstance(cockpit_meta, dict):
+        loaded_at = str(cockpit_meta.get("loaded_at") or "").strip()
+    return {
+        "loaded": cockpit_loaded,
+        "spend": spend,
+        "delta_spend": delta_spend,
+        "forecast": forecast,
+        "top_driver": top_driver,
+        "top_delta": top_delta,
+        "open_actions": open_actions,
+        "high_actions": high_actions,
+        "est_savings": est_savings,
+        "cortex": "Loaded" if _is_loaded_frame(st.session_state.get("cortex_control_summary")) else "Not loaded",
+        "budget": "Loaded" if _is_loaded_frame(st.session_state.get("cost_contract_budget_command_center")) else "On demand",
+        "freshness": "Loaded" if loaded_at else "Not loaded",
+    }
+
+
 def _full_workspace_requested() -> bool:
     """Keep Cost navigation lightweight; open heavy proof only from a selected cost workflow."""
     _ = full_workspace_requested
@@ -164,6 +267,50 @@ def _render_kpi_row() -> None:
     ))
 
 
+def _render_metric_board() -> None:
+    board = _loaded_cost_board()
+    st.markdown("**Cost Metric Board**")
+    if not board["loaded"]:
+        render_shell_kpi_row((
+            ("Current Spend", "Not loaded"),
+            ("Delta", "Not loaded"),
+            ("30d Forecast", "Not loaded"),
+            ("Contract Pace", "Not loaded"),
+        ))
+        render_shell_kpi_row((
+            ("Cortex", "Not loaded"),
+            ("Top Driver", "Not loaded"),
+            ("Budget Risk", "On demand"),
+            ("Cost Freshness", "Not loaded"),
+        ))
+        render_shell_kpi_row((
+            ("Open Actions", "Not loaded"),
+            ("High Priority", "Not loaded"),
+            ("Open Est. Savings", "Not loaded"),
+            ("Value Log", "Automated setup"),
+        ))
+        return
+
+    render_shell_kpi_row((
+        ("Current Spend", _money(board["spend"])),
+        ("Delta", _money(board["delta_spend"], signed=True)),
+        ("30d Forecast", _money(board["forecast"]) if board["forecast"] else "Not loaded"),
+        ("Contract Pace", "Review" if board["forecast"] and board["forecast"] > board["spend"] else "Stable"),
+    ))
+    render_shell_kpi_row((
+        ("Cortex", board["cortex"]),
+        ("Top Driver", str(board["top_driver"])[:28]),
+        ("Driver Delta", _money(board["top_delta"], signed=True)),
+        ("Cost Freshness", board["freshness"]),
+    ))
+    render_shell_kpi_row((
+        ("Open Actions", f"{_int_value(board['open_actions']):,}"),
+        ("High Priority", f"{_int_value(board['high_actions']):,}"),
+        ("Open Est. Savings", _money(board["est_savings"])),
+        ("Budget Risk", board["budget"]),
+    ))
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workspace(str(row["WORKFLOW"]))
@@ -187,4 +334,5 @@ def render() -> None:
     st.session_state.setdefault("cost_contract_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _render_status_strip()
     _render_kpi_row()
+    _render_metric_board()
     _render_workflow_launchpad()

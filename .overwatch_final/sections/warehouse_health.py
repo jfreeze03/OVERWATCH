@@ -3739,7 +3739,7 @@ def render():
             and _warehouse_meta_matches(loaded_wh_meta, wh_expected_meta)
         )
         if consume_section_autoload_request("Warehouse Health") and not wh_current:
-            st.caption("Warehouse capacity opened in fast mode. Load warehouse data when current capacity proof is needed.")
+            st.caption("Warehouse capacity opened with a lightweight summary. Load warehouse data when current capacity proof is needed.")
         render_data_freshness(
             loaded_wh_meta if wh_current else {},
             source=st.session_state.get("wh_df_wh_source", "Warehouse overview"),

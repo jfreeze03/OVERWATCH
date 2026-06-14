@@ -2574,7 +2574,7 @@ def render() -> None:
     if consume_section_autoload_request("Change & Drift") and not (
         summary is not None and not summary.empty and brief_is_current
     ):
-        st.caption("Change Control opened in fast mode. Load the brief when current change-history proof is needed.")
+        st.caption("Change Control opened with a lightweight summary. Load the brief when current change-history proof is needed.")
     render_data_freshness(
         meta if brief_is_current and summary is not None and not summary.empty else {},
         source=st.session_state.get("change_drift_source", "Change-control brief"),

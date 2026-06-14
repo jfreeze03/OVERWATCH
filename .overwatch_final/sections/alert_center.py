@@ -1458,7 +1458,7 @@ def _alert_integration_readiness_board(
     rows.append({
         "CONTROL": "Snowflake notification integration",
         "STATE": "Manual",
-        "EVIDENCE": "Teams webhook is not available; email-first delivery uses a placeholder recipient until approved integration exists.",
+        "EVIDENCE": "Email-first delivery uses a placeholder recipient until an approved Snowflake notification integration exists.",
         "NEXT_ACTION": "Create approved email/notification integration and replace placeholder routing with production distribution lists.",
         "OWNER": "DBA / Platform",
     })
@@ -2145,12 +2145,21 @@ def render() -> None:
         and st.session_state.get("alert_center_scope") == expected_scope
         and required_sources.issubset(loaded_sources)
     )
+    alert_autoload_requested = consume_section_autoload_request("Alert Center")
     if (
-        consume_section_autoload_request("Alert Center")
+        alert_autoload_requested
         and active_view not in {"Suppression Windows", "Detection Catalog", "Setup & Runbook"}
         and not current_data
     ):
-        st.caption("Alert Center opened in fast mode. Load the active view when current alert proof is needed.")
+        st.caption("Alert Center loaded the active command view for first-pass triage.")
+        if _load_alert_center_view_data(active_view, company, environment, int(days), int(limit), required_sources):
+            data = st.session_state.get("alert_center_data")
+            loaded_sources = set(data.get("_loaded_sources") or []) if isinstance(data, dict) else set()
+            current_data = (
+                isinstance(data, dict)
+                and st.session_state.get("alert_center_scope") == expected_scope
+                and required_sources.issubset(loaded_sources)
+            )
     render_data_freshness(
         _alert_center_loaded_meta(data, active_view) if current_data else {},
         source=f"{active_view} sources",

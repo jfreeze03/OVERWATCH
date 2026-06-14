@@ -420,7 +420,7 @@ class NavigationIntegrityTests(unittest.TestCase):
             1,
         )[0]
         self.assertIn("_render_consolidated_service_posture()", service_posture_block)
-        self.assertIn("Use live 24h checks when needed", full_workspace_text)
+        self.assertIn("guarded live checks are reserved for explicit detail loads", full_workspace_text)
         self.assertNotIn("Allow live ACCOUNT_USAGE fallback queries", full_workspace_text)
 
     def test_alert_center_uses_fast_shell_module(self):
@@ -965,13 +965,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
 
         self.assertIn('_DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"', text)
-        self.assertIn('_FULL_COCKPIT_BOARDS_KEY = "_cost_contract_full_cockpit_boards"', text)
         self.assertNotIn('st.button("Open detail"', text)
         self.assertNotIn("if open_workflow == workflow:", text)
         self.assertIn("routed_workflow = st.session_state.pop(_PENDING_DETAIL_WORKFLOW_KEY, None)", text)
         self.assertIn("legacy_detail_workflow = st.session_state.pop(_DETAIL_WORKFLOW_KEY, None)", text)
-        self.assertIn('st.button("Open full cockpit boards"', text)
-        self.assertIn("st.session_state.pop(_FULL_COCKPIT_BOARDS_KEY, None)", text)
+        self.assertNotIn('st.button("Open full cockpit boards"', text)
+        self.assertNotIn("_FULL_COCKPIT_BOARDS_KEY", text)
         self.assertIn("render_workflow_module(workflow, WORKFLOW_MODULES)", text)
 
     def test_navigation_labels_are_plain_titles(self):

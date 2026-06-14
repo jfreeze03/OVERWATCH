@@ -272,6 +272,47 @@ def _snapshot_state(cost: pd.DataFrame, alerts: pd.DataFrame, queue: pd.DataFram
     })
 
 
+def _default_platform_summary() -> dict:
+    """Render an honest score frame before the executive mart or snapshot is loaded."""
+    source_health = pd.DataFrame([
+        {
+            "SOURCE": "Executive observability mart",
+            "STATE": "Limited",
+            "EVIDENCE": "Precomputed board rows are not loaded for this scope.",
+            "NEXT_ACTION": "Refresh the executive board after the OVERWATCH mart refresh completes.",
+        },
+        {
+            "SOURCE": "Cost summary",
+            "STATE": "Limited",
+            "EVIDENCE": "Cost facts are not loaded in this executive session yet.",
+            "NEXT_ACTION": "Open Cost & Contract or refresh the executive board for spend proof.",
+        },
+        {
+            "SOURCE": "Alert and action queue",
+            "STATE": "Limited",
+            "EVIDENCE": "Open alert and owner-action counts are not loaded yet.",
+            "NEXT_ACTION": "Open Alert Center or DBA Control Room for owner-ready triage.",
+        },
+        {
+            "SOURCE": "Setup and migration trust",
+            "STATE": "Limited",
+            "EVIDENCE": "Setup status is not loaded in this executive session yet.",
+            "NEXT_ACTION": "Open Governance & Security when setup proof is needed.",
+        },
+    ])
+    return _with_platform_operating_score({
+        "current_credits": 0.0,
+        "prior_credits": 0.0,
+        "cost_delta": 0.0,
+        "top_increase_credits": 0.0,
+        "critical_high_alerts": 0,
+        "open_actions": 0,
+        "high_actions": 0,
+        "migration_blockers": 0,
+        "top_cost_driver": "Not loaded",
+    }, source_health)
+
+
 def _decision_rows(summary: dict) -> pd.DataFrame:
     rows = [
         {
@@ -865,6 +906,23 @@ def _format_gb(value: float) -> str:
     return f"{gb:.1f} GB"
 
 
+def _format_metric_value(value: float, unit: str) -> str:
+    unit_key = str(unit or "").lower()
+    if "usd" in unit_key:
+        return _money(safe_float(value))
+    if unit_key == "seconds":
+        return _format_seconds(value)
+    if unit_key == "gb":
+        return _format_gb(value)
+    if unit_key == "score":
+        return f"{safe_int(value)}/100"
+    if unit_key in {"queries", "tasks", "alerts", "actions"}:
+        return f"{safe_int(value):,}"
+    if unit_key == "tb_usd":
+        return f"{safe_float(value):,.2f} TB"
+    return f"{safe_float(value):,.2f}"
+
+
 def _has_observability_kpis(board: pd.DataFrame) -> bool:
     return not _obs_rows(board, "KPI").empty
 
@@ -947,6 +1005,109 @@ def _summary_from_observability(board: pd.DataFrame, *, credit_price: float) -> 
     scored["avg_runtime_sec"] = _obs_value(board, "Avg Runtime")
     scored["p95_runtime_sec"] = _obs_value(board, "P95 Runtime")
     return scored
+
+
+def _executive_priority_rows(board: pd.DataFrame, *, days: int) -> pd.DataFrame:
+    """Convert the loaded KPI board into the first decisions leadership cares about."""
+    if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
+        return pd.DataFrame(
+            columns=["PRIORITY", "LANE", "STATE", "SIGNAL", "BUSINESS_IMPACT", "NEXT_ACTION", "ROUTE"]
+        )
+
+    current_spend = _obs_value(board, "Credits Used", column="VALUE_USD")
+    spend_delta = _obs_value(board, "Spend Delta", column="VALUE_USD")
+    cortex_spend = _obs_value(board, "Cortex Spend", column="VALUE_USD")
+    queries = safe_int(_obs_value(board, "Total Queries"))
+    p95_runtime = _obs_value(board, "P95 Runtime")
+    queue_seconds = _obs_value(board, "Queue Time")
+    spill_gb = _obs_value(board, "Remote Spill")
+    failed_queries = safe_int(_obs_value(board, "Failed Queries"))
+    failed_tasks = safe_int(_obs_value(board, "Failed Tasks"))
+    critical_high = safe_int(_obs_value(board, "Critical High Alerts"))
+    open_actions = safe_int(_obs_value(board, "Open Actions"))
+    storage_tb = _obs_value(board, "Storage")
+    month_end = current_spend / max(int(days), 1) * 30.0
+
+    rows = [
+        {
+            "PRIORITY": 1 if critical_high else 6,
+            "LANE": "Open risk",
+            "STATE": "Escalate" if critical_high else "Clear",
+            "SIGNAL": f"{critical_high:,} Critical/High alert(s), {open_actions:,} open owner action(s).",
+            "BUSINESS_IMPACT": "Security, reliability, or cost issue may already be visible to leadership.",
+            "NEXT_ACTION": "Open Alert Center and work owner, SLA, and remediation proof.",
+            "ROUTE": "Alert Center",
+        },
+        {
+            "PRIORITY": 2 if spend_delta > 0 else 7,
+            "LANE": "Cost movement",
+            "STATE": "Review" if spend_delta > 0 else "Stable",
+            "SIGNAL": f"{_money(current_spend)} spend, {_money(spend_delta, signed=True)} vs prior, {_money(month_end)} 30d pace.",
+            "BUSINESS_IMPACT": "Finance will ask why the bill moved and whether contract burn is changing.",
+            "NEXT_ACTION": "Open Cost & Contract and explain the top service or warehouse driver first.",
+            "ROUTE": "Cost & Contract",
+        },
+        {
+            "PRIORITY": 3 if failed_tasks else 8,
+            "LANE": "Pipeline reliability",
+            "STATE": "Recover" if failed_tasks else "Clear",
+            "SIGNAL": f"{failed_tasks:,} failed task(s) in the selected window.",
+            "BUSINESS_IMPACT": "Late or failed task graphs can break reporting and downstream data freshness.",
+            "NEXT_ACTION": "Open Workload Operations and inspect task graph, error, owner, and next run.",
+            "ROUTE": "Workload Operations",
+        },
+        {
+            "PRIORITY": 4 if failed_queries or queue_seconds or spill_gb else 9,
+            "LANE": "Performance pressure",
+            "STATE": "Tune" if failed_queries or queue_seconds or spill_gb else "Normal",
+            "SIGNAL": (
+                f"{failed_queries:,} failed query(s), {_format_seconds(queue_seconds)} queued, "
+                f"{_format_gb(spill_gb)} remote spill, p95 {_format_seconds(p95_runtime)}."
+            ),
+            "BUSINESS_IMPACT": "Slow or failing workloads burn credits and delay business reporting.",
+            "NEXT_ACTION": "Open DBA Control Room or Workload Operations before resizing warehouses.",
+            "ROUTE": "DBA Control Room",
+        },
+        {
+            "PRIORITY": 5 if cortex_spend else 10,
+            "LANE": "AI / Cortex spend",
+            "STATE": "Watch" if cortex_spend else "No spend",
+            "SIGNAL": f"{_money(cortex_spend)} Cortex spend across {queries:,} total query events.",
+            "BUSINESS_IMPACT": "AI usage can grow quickly without owner, quota, and access guardrails.",
+            "NEXT_ACTION": "Open Cost & Contract AI spend and validate top user/source before controls.",
+            "ROUTE": "Cost & Contract",
+        },
+        {
+            "PRIORITY": 11,
+            "LANE": "Storage footprint",
+            "STATE": "Track" if storage_tb else "No data",
+            "SIGNAL": f"{safe_float(storage_tb):,.2f} TB currently represented in the summary.",
+            "BUSINESS_IMPACT": "Storage/failsafe/stage growth becomes a contract and cleanup problem if ignored.",
+            "NEXT_ACTION": "Open Cost & Contract storage when growth or retention is questioned.",
+            "ROUTE": "Cost & Contract",
+        },
+    ]
+    out = pd.DataFrame(rows)
+    return out.sort_values(["PRIORITY", "LANE"]).reset_index(drop=True)
+
+
+def _render_executive_priority_board(board: pd.DataFrame, *, days: int) -> None:
+    rows = _executive_priority_rows(board, days=int(days))
+    if rows.empty:
+        return
+    render_priority_dataframe(
+        rows,
+        title="Executive signals to work first",
+        priority_columns=[
+            "PRIORITY", "LANE", "STATE", "SIGNAL",
+            "BUSINESS_IMPACT", "NEXT_ACTION", "ROUTE",
+        ],
+        sort_by=["PRIORITY"],
+        ascending=True,
+        raw_label="All executive priority rows",
+        height=300,
+        max_rows=12,
+    )
 
 
 def _render_line_chart(
@@ -1076,6 +1237,8 @@ def _render_executive_observability_board(
     storage_tb = _obs_value(board, "Storage")
     storage_cost = _obs_value(board, "Storage", column="VALUE_USD")
     health = _obs_value(board, "Platform Health")
+    month_end_forecast = current_spend / max(int(days), 1) * 30.0
+    avg_daily_spend = current_spend / max(int(days), 1)
     source_status = _obs_rows(board, "SOURCE_STATUS")
     unavailable_sources = (
         int(source_status["METRIC"].astype(str).eq("Unavailable").sum())
@@ -1129,10 +1292,11 @@ def _render_executive_observability_board(
     ))
     render_shell_kpi_row((
         ("Queue Time", _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "Not loaded"),
-        ("Storage", f"{safe_float(storage_tb):,.2f} TB" if _obs_metric_loaded(board, "Storage") else "Not loaded"),
-        ("Storage Cost", _obs_money_label(board, "Storage")),
-        ("Rate", f"${safe_float(credit_price):,.2f}/credit"),
+        ("30d Forecast", _money(month_end_forecast) if _obs_metric_loaded(board, "Credits Used") else "Not loaded"),
+        ("Avg/day", _money(avg_daily_spend) if _obs_metric_loaded(board, "Credits Used") else "Not loaded"),
+        ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "Not loaded"),
     ))
+    _render_executive_priority_board(board, days=int(days))
 
     daily_cost = _obs_rows(board, "DAILY_COST").copy()
     monthly_cost = _obs_rows(board, "MONTHLY_COST").copy()
@@ -2016,7 +2180,7 @@ def render() -> None:
         "Executive Landing opens with precomputed observability facts; full snapshot/export detail stays action-gated."
     )
 
-    window_col, _window_spacer = st.columns([1.2, 3.0])
+    window_col, refresh_col, _window_spacer = st.columns([1.2, 1.0, 2.2])
     with window_col:
         days = st.selectbox(
             "Executive window",
@@ -2024,18 +2188,24 @@ def render() -> None:
             index=DAY_WINDOW_OPTIONS.index(DEFAULT_DAY_WINDOW),
             format_func=lambda value: f"{value} days",
         )
+    with refresh_col:
+        refresh_board = st.button(
+            "Refresh Board",
+            key="executive_landing_observability_refresh",
+            type="primary",
+            width="stretch",
+        )
     expected_scope = _executive_snapshot_scope(company, environment, int(days))
     board, board_payload = _current_observability_board(company, environment, int(days))
-    if not isinstance(board, pd.DataFrame) or board.empty:
-        if st.session_state.get("_executive_landing_observability_scope") != expected_scope:
-            _load_executive_observability(
-                company,
-                environment,
-                int(days),
-                credit_price=credit_price,
-            )
-            st.session_state["_executive_landing_observability_scope"] = expected_scope
-            board, board_payload = _current_observability_board(company, environment, int(days))
+    if refresh_board:
+        _load_executive_observability(
+            company,
+            environment,
+            int(days),
+            credit_price=credit_price,
+        )
+        st.session_state["_executive_landing_observability_scope"] = expected_scope
+        board, board_payload = _current_observability_board(company, environment, int(days))
 
     snapshot = st.session_state.get("executive_landing_snapshot")
     if isinstance(snapshot, dict) and not _snapshot_matches_scope(snapshot, company, environment, int(days)):
@@ -2056,6 +2226,9 @@ def render() -> None:
         _persist_platform_summary(summary)
     elif summary:
         _persist_platform_summary(summary)
+    else:
+        summary = _default_platform_summary()
+        _persist_platform_summary(summary)
 
     _render_executive_observability_board(
         board,
@@ -2073,6 +2246,7 @@ def render() -> None:
 
     snapshot = st.session_state.get("executive_landing_snapshot")
     if not isinstance(snapshot, dict) or not _snapshot_matches_scope(snapshot, company, environment, int(days)):
+        _render_platform_operating_score(summary)
         return
 
     for err in snapshot.get("errors", []):

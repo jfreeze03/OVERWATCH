@@ -162,7 +162,7 @@ SECTION_EVIDENCE_CONTRACT = {
             "source": "Email delivery configuration",
             "confidence": "Email-first",
             "decision_use": "Confirm outbound alert path and escalation target.",
-            "invalid_use": "Do not claim Teams/webhook delivery until that integration exists.",
+            "invalid_use": "Do not claim external delivery until an approved Snowflake notification integration exists.",
             "proof": "Delivery target, digest or alert delivery log, and owner route.",
         },
     ],

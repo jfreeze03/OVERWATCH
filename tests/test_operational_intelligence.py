@@ -123,13 +123,17 @@ class OperationalIntelligenceTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         runbook = ROOT / "docs" / "OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK.md"
         data_model = ROOT / "docs" / "DATA_MODEL.md"
+        refresh_arch = ROOT / "docs" / "REFRESH_ARCHITECTURE.md"
         precompute = ROOT / "snowflake" / "PRECOMPUTE.sql"
         setup = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
         self.assertTrue(runbook.exists())
         self.assertTrue(data_model.exists())
+        self.assertTrue(refresh_arch.exists())
         self.assertTrue(precompute.exists())
         self.assertIn("OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK", readme)
+        self.assertIn("REFRESH_ARCHITECTURE", readme)
         self.assertIn("OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY", setup)
+        self.assertIn("OVERWATCH_REFRESH_POLICY", setup)
         self.assertIn("SP_OVERWATCH_AUTOMATE_VALUE_LOG", setup)
         self.assertIn("OVERWATCH_VALUE_AUTOMATION_HEALTH_V", setup)
 

@@ -474,7 +474,6 @@ WORKFLOW_MODULES = {
 
 _DETAIL_WORKFLOW_KEY = "_cost_contract_detail_workflow"
 _PENDING_DETAIL_WORKFLOW_KEY = "_cost_contract_pending_detail_workflow"
-_FULL_COCKPIT_BOARDS_KEY = "_cost_contract_full_cockpit_boards"
 _COST_SPLASH_KEY = "cost_contract_splash"
 _COST_SPLASH_AUTOLOAD_SCOPE_KEY = "_cost_contract_splash_autoload_scope"
 _COST_SPLASH_AUTOLOAD_BLOCKED_SCOPE_KEY = "_cost_contract_splash_autoload_blocked_scope"
@@ -4123,14 +4122,18 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_pr
 
 
 def _maybe_autoload_cost_splash(company: str, days: int, credit_price: float) -> dict:
-    """Load a fast cost landing once after navigation; keep full proof explicit."""
+    """Load a lightweight cost landing once after navigation; keep full proof explicit."""
     meta = _cost_splash_meta(company, days, credit_price)
     cached = st.session_state.get(_COST_SPLASH_KEY)
     if isinstance(cached, dict) and cached.get("meta") == meta and cached.get("loaded"):
         return cached
     if consume_section_autoload_request("Cost & Contract"):
-        st.caption("Cost & Contract opened in fast mode. Refresh Cost when official metering proof is needed.")
-        return _empty_cost_splash(company, days, credit_price)
+        st.session_state[_COST_SPLASH_AUTOLOAD_SCOPE_KEY] = meta
+        st.caption(
+            "Cost & Contract opened the cached cost overview. Refresh Overview loads official spend, "
+            "warehouse ranking, Cortex spend, and slide-ready evidence."
+        )
+        return _cached_cost_splash(company, days, credit_price)
     return _cached_cost_splash(company, days, credit_price)
 
 
@@ -5365,7 +5368,6 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         delayed_note="Cost proof uses mart or Dynamic Table summaries first; full ACCOUNT_USAGE proof refresh is explicit.",
     )
     if st.button("Load Full Cost Proof", key="cost_contract_cockpit_load", type="primary"):
-        st.session_state.pop(_FULL_COCKPIT_BOARDS_KEY, None)
         session = get_session_for_action(
             "load the Cost Control Cockpit",
             surface="Cost & Contract",
@@ -5590,13 +5592,6 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         credit_price,
         st.session_state.get("cost_contract_service_lens_error", ""),
     )
-    if not st.session_state.get(_FULL_COCKPIT_BOARDS_KEY):
-        if st.button("Open full cockpit boards", key="cost_contract_open_full_cockpit_boards"):
-            st.session_state[_FULL_COCKPIT_BOARDS_KEY] = True
-            st.rerun()
-        st.caption("Derived governance, incident, allocation, and drilldown boards are rendered only when opened.")
-        return
-
     _render_budget_anomaly_command_center(
         data,
         st.session_state.get("cost_contract_run_rate", pd.DataFrame()),
@@ -5701,11 +5696,6 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
 def render() -> None:
     company = get_active_company()
     credit_price = safe_float(get_credit_price()) or 3.68
-    workflow_was_explicit = (
-        "cost_contract_workflow" in st.session_state
-        or _PENDING_DETAIL_WORKFLOW_KEY in st.session_state
-        or _DETAIL_WORKFLOW_KEY in st.session_state
-    )
     render_signal_confidence(
         source="ACCOUNT_USAGE",
         confidence="allocated",
@@ -5738,9 +5728,5 @@ def render() -> None:
     if routed_workflow in WORKFLOWS and routed_workflow != workflow:
         st.session_state["cost_contract_workflow"] = routed_workflow
         st.rerun()
-
-    if not workflow_was_explicit:
-        st.caption("Select a cost workflow above to open detailed proof for that lane.")
-        return
 
     render_workflow_module(workflow, WORKFLOW_MODULES)

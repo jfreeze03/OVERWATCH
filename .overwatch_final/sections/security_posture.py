@@ -3027,7 +3027,7 @@ def render() -> None:
         and _security_meta_matches(meta, security_expected_meta)
     )
     if consume_section_autoload_request("Security Posture") and not security_current:
-        st.caption("Access & Security opened in fast mode. Load the security brief when current account-history proof is needed.")
+        st.caption("Access & Security opened with a lightweight summary. Load the security brief when current account-history proof is needed.")
     render_data_freshness(
         meta if security_current else {},
         source=st.session_state.get("security_posture_source", "Security brief"),

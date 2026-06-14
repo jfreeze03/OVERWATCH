@@ -6026,41 +6026,20 @@ def render() -> None:
             "Snapshot is company-level. Clear filters or load triage for this scoped view."
         )
 
-    mode_default_key = "_dba_control_room_evidence_mode_defaults"
+    mode_default_key = "_dba_control_room_detail_defaults"
     if st.session_state.get(mode_default_key) != evidence_mode:
         st.session_state["dba_control_room_include_deep_evidence"] = bool(investigation_mode)
         st.session_state["dba_control_room_allow_live_fallback"] = bool(all_evidence_mode)
         st.session_state[mode_default_key] = evidence_mode
 
-    with st.expander("Evidence options", expanded=bool(investigation_mode)):
-        cortex_budget_usd = st.number_input(
-            "Cortex monthly budget ($)",
-            min_value=1.0,
-            value=float(cortex_budget_usd),
-            step=250.0,
-            key="dba_control_room_cortex_budget_usd",
-            help="Used for Cortex exception thresholds and the exported DBA evidence packet.",
+    cortex_budget_usd = float(
+        st.session_state.get(
+            "dba_control_room_cortex_budget_usd",
+            st.session_state.get("cortex_control_budget_usd", 5000.0),
         )
-        include_deep_evidence = st.checkbox(
-            "Include deep evidence",
-            value=False,
-            key="dba_control_room_include_deep_evidence",
-            help=(
-                "Adds task run baselines, stored procedure SLA/cost evidence, and Cortex exception detail "
-                "to this Control Room load."
-            ),
-        )
-        allow_live_fallback = st.checkbox(
-            "Use live 24h checks when needed",
-            value=False,
-            key="dba_control_room_allow_live_fallback",
-            help=(
-                "Runs bounded 24h checks for credits, failed queries, and failed logins when summary evidence "
-                "is incomplete."
-            ),
-        )
-        if allow_live_fallback:
-            st.caption("Live checks are capped to the loaded 24-hour evidence window.")
+    )
+    include_deep_evidence = bool(st.session_state.get("dba_control_room_include_deep_evidence", False))
+    allow_live_fallback = bool(st.session_state.get("dba_control_room_allow_live_fallback", False))
     def _load_control_room_evidence(*, status_label: str = "Loading exception signals", auto_build_ops: bool = False) -> None:
         with render_load_status(status_label, "Control Room evidence ready"):
             session = get_session()
@@ -6101,9 +6080,9 @@ def render() -> None:
                 st.session_state["_dba_control_room_auto_build_ops"] = True
 
     load_label = (
-        "Load Full Evidence Packet"
+        "Load Full Detail Packet"
         if all_evidence_mode
-        else "Load Investigation Evidence"
+        else "Load Investigation Detail"
         if investigation_mode
         else "Load Triage"
     )
@@ -6123,7 +6102,7 @@ def render() -> None:
         loaded_control_meta if control_current else {},
         source=st.session_state.get("dba_control_room_source_mode", "DBA Control Room triage"),
         target_minutes=30,
-        delayed_note="DBA Control Room shows cached triage immediately; live 24h fallbacks run only when enabled and loaded.",
+        delayed_note="DBA Control Room shows cached triage immediately; guarded live checks are reserved for explicit detail loads.",
     )
 
     if st.button(load_label, key="dba_control_room_load", type="primary"):
@@ -6201,7 +6180,7 @@ def render() -> None:
     if source_mode == "Fast summary snapshot":
         st.caption("Snapshot loaded. Load triage when you need full exception detail.")
     elif source_mode == "Fast triage summary":
-        st.caption("Triage loaded. Use Evidence options when you need a deeper evidence packet.")
+        st.caption("Triage loaded. Specialist detail stays in the selected workflow panes.")
     elif "limited live fallback" in source_mode:
         st.caption("Triage loaded with bounded 24-hour live checks.")
 

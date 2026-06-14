@@ -66,7 +66,7 @@ USING (
     ('DETAIL_RETENTION_DAYS', '30', 'NUMBER', 'Retention for recent query/task/procedure detail marts.'),
     ('AGG_RETENTION_DAYS', '730', 'NUMBER', 'Retention for hourly and daily aggregate marts.'),
     ('SLA_DURATION_MULTIPLIER', '1.5', 'NUMBER', 'Flags task/procedure latest duration over this multiple of historical average.'),
-    ('DEFAULT_ALERT_EMAIL', 'dba-alerts@yourcompany.com', 'STRING', 'Default email recipient list for OVERWATCH alert messages until Teams/webhook delivery is configured.'),
+    ('DEFAULT_ALERT_EMAIL', 'dba-alerts@yourcompany.com', 'STRING', 'Default email recipient list for OVERWATCH alert messages until an approved Snowflake notification integration is configured.'),
     ('ALERT_DELIVERY_METHOD', 'EMAIL', 'STRING', 'Alert delivery channel used by the OVERWATCH anomaly task.'),
     ('ALERT_EMAIL_NOTIFICATION_INTEGRATION', 'OVERWATCH_EMAIL_INT', 'STRING', 'Approved Snowflake notification integration name for optional Alert Center email delivery.')
 ) src(SETTING_NAME, SETTING_VALUE, SETTING_TYPE, DESCRIPTION)
@@ -80,6 +80,63 @@ WHEN MATCHED THEN UPDATE SET
   DESCRIPTION = src.DESCRIPTION
 WHEN NOT MATCHED THEN INSERT (SETTING_NAME, SETTING_VALUE, SETTING_TYPE, DESCRIPTION)
 VALUES (src.SETTING_NAME, src.SETTING_VALUE, src.SETTING_TYPE, src.DESCRIPTION);
+
+CREATE TABLE IF NOT EXISTS OVERWATCH_REFRESH_POLICY (
+  POLICY_NAME             VARCHAR(200) PRIMARY KEY,
+  SURFACE                 VARCHAR(200) NOT NULL,
+  SOURCE_CLASS            VARCHAR(100) NOT NULL,
+  TARGET_FRESHNESS_MIN    NUMBER(10,0),
+  REFRESH_METHOD          VARCHAR(100) NOT NULL,
+  BASE_OBJECT             VARCHAR(500),
+  RETENTION_DAYS          NUMBER(10,0),
+  RUN_IN_FIRST_PAINT      BOOLEAN DEFAULT FALSE,
+  APPROVED_LIVE_FALLBACK  BOOLEAN DEFAULT FALSE,
+  WHY_THIS_POLICY         VARCHAR(1000),
+  OWNER                   VARCHAR(200),
+  UPDATED_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  UPDATED_BY              VARCHAR(200) DEFAULT CURRENT_USER()
+);
+
+MERGE INTO OVERWATCH_REFRESH_POLICY tgt
+USING (
+  SELECT * FROM VALUES
+    ('EXECUTIVE_OBSERVABILITY', 'Executive Landing', 'MART', 60, 'TASK_AFTER_FACT_LOADS', 'MART_EXECUTIVE_OBSERVABILITY', 35, TRUE, FALSE, 'Boss page reads one compact mart query on first paint: spend, Cortex, runtime, spill, tasks, alerts, actions, storage, and platform score.', 'DBA / Platform'),
+    ('DBA_CONTROL_ROOM_FAST', 'DBA Control Room', 'MART', 60, 'TASK_AFTER_HOURLY_FACTS', 'MART_DBA_CONTROL_ROOM', 35, TRUE, FALSE, 'Morning triage should render from a small control-room mart before any live ACCOUNT_USAGE detail scan.', 'DBA On-Call'),
+    ('COST_WATCH_FLOOR', 'Cost & Contract', 'MART_AND_BOUNDED_OFFICIAL_COST', 60, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_COST_DAILY; FACT_CORTEX_DAILY; WAREHOUSE_METERING_HISTORY', 730, TRUE, FALSE, 'Cost first paint shows lightweight spend, Cortex, and warehouse movement; full attribution proof is explicit.', 'DBA / FinOps'),
+    ('ALERT_COMMAND_VIEW', 'Alert Center', 'APP_TABLES', 15, 'TASK_OR_APP_WRITE', 'ALERT_EVENTS; ALERT_NOTIFICATION_LOG; OVERWATCH_ACTION_QUEUE', 180, TRUE, FALSE, 'Alert Center may auto-load bounded app tables on entry because they are small, owner-routed, and already deduplicated.', 'DBA / Alert Owner'),
+    ('WORKLOAD_SNAPSHOT', 'Workload Operations', 'MART_AND_TASK_HISTORY', 30, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_QUERY_HOURLY; FACT_TASK_RUN', 35, TRUE, FALSE, 'Workload first paint shows task/query pressure from compact facts; live triage is reserved for in-flight incidents.', 'DBA / Workload Owner'),
+    ('LIVE_TRIAGE', 'DBA Control Room / Workload Operations', 'NEAR_REAL_TIME', 5, 'ON_DEMAND_ONLY', 'INFORMATION_SCHEMA table functions; SHOW commands', 1, FALSE, TRUE, 'Near-real-time checks are useful during incidents but must stay explicit to avoid runaway monitoring cost.', 'DBA On-Call'),
+    ('DATA_RECONCILIATION', 'Workload Operations', 'ON_DEMAND_PROOF', NULL, 'APPROVAL_OR_OPERATOR_RUN', 'OVERWATCH_RECON_CONFIG; OVERWATCH_RECON_RUN', 365, FALSE, TRUE, 'Counts, hashes, and sampled diffs can be expensive and should run only for configured schema/database comparisons.', 'DBA / Data Owner'),
+    ('OPTIONAL_DYNAMIC_TABLES', 'Setup', 'OPTIONAL_PRECOMPUTE', 60, 'EXPLICIT_APPROVAL_ONLY', 'snowflake/PRECOMPUTE.sql', NULL, FALSE, FALSE, 'Dynamic Tables are optional accelerators, not the base architecture; approve warehouse, target lag, owner, and budget first.', 'DBA / Platform')
+) src(
+  POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
+  BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK,
+  WHY_THIS_POLICY, OWNER
+)
+ON tgt.POLICY_NAME = src.POLICY_NAME
+WHEN MATCHED THEN UPDATE SET
+  SURFACE = src.SURFACE,
+  SOURCE_CLASS = src.SOURCE_CLASS,
+  TARGET_FRESHNESS_MIN = src.TARGET_FRESHNESS_MIN,
+  REFRESH_METHOD = src.REFRESH_METHOD,
+  BASE_OBJECT = src.BASE_OBJECT,
+  RETENTION_DAYS = src.RETENTION_DAYS,
+  RUN_IN_FIRST_PAINT = src.RUN_IN_FIRST_PAINT,
+  APPROVED_LIVE_FALLBACK = src.APPROVED_LIVE_FALLBACK,
+  WHY_THIS_POLICY = src.WHY_THIS_POLICY,
+  OWNER = src.OWNER,
+  UPDATED_AT = CURRENT_TIMESTAMP(),
+  UPDATED_BY = CURRENT_USER()
+WHEN NOT MATCHED THEN INSERT (
+  POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
+  BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK,
+  WHY_THIS_POLICY, OWNER
+)
+VALUES (
+  src.POLICY_NAME, src.SURFACE, src.SOURCE_CLASS, src.TARGET_FRESHNESS_MIN, src.REFRESH_METHOD,
+  src.BASE_OBJECT, src.RETENTION_DAYS, src.RUN_IN_FIRST_PAINT, src.APPROVED_LIVE_FALLBACK,
+  src.WHY_THIS_POLICY, src.OWNER
+);
 
 CREATE TABLE IF NOT EXISTS OVERWATCH_SCHEMA_MIGRATION (
   MIGRATION_VERSION   VARCHAR(100) NOT NULL,

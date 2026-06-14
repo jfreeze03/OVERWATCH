@@ -31,6 +31,10 @@ load, Control Room, cost governance, and automation tasks so the first screen
 can show spend, Cortex cost, runtime, queueing, spill, failures, alerts,
 actions, storage, and platform score from one small query.
 
+The same decision is seeded in Snowflake as `OVERWATCH_REFRESH_POLICY`, which
+defines first-paint sources, target freshness, retention, live-fallback
+boundaries, and the owner for each surface.
+
 ## Current Production Sections
 
 | Group | Sections | Primary job |
@@ -202,5 +206,7 @@ against `.overwatch_final`, `tests`, and documentation before release.
 - [docs/DATA_MODEL.md](docs/DATA_MODEL.md) summarizes the new command
   intelligence, reconciliation, FinOps/value, compliance, and optional
   precompute objects.
+- [docs/REFRESH_ARCHITECTURE.md](docs/REFRESH_ARCHITECTURE.md) documents the
+  mart-first refresh policy, first-paint sources, and live-query boundaries.
 - [UX_PRODUCTION_GUIDELINES.md](UX_PRODUCTION_GUIDELINES.md) documents current
   production UI standards.

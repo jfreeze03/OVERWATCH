@@ -23,10 +23,10 @@ audit behavior.
 | Surface | First-paint source | Target freshness | Live fallback |
 |---|---|---:|---|
 | Executive Landing | `MART_EXECUTIVE_OBSERVABILITY` | 60 min | No |
-| DBA Control Room | `MART_DBA_CONTROL_ROOM` | 60 min | Explicit only |
-| Alert Center | `ALERT_EVENTS`, notification/action tables | 15 min | No |
-| Cost & Contract | Cost/Cortex facts plus bounded official cost lens | 60 min | Explicit proof refresh |
-| Workload Operations | Query/task facts and task history summaries | 30 min | Explicit live triage |
+| DBA Control Room | `MART_EXECUTIVE_OBSERVABILITY`, then `MART_DBA_CONTROL_ROOM` | 30-60 min | Explicit only |
+| Alert Center | `MART_EXECUTIVE_OBSERVABILITY`, `ALERT_EVENTS`, notification/action tables | 15-60 min | No |
+| Cost & Contract | `MART_EXECUTIVE_OBSERVABILITY`, cost/Cortex facts, bounded official cost lens | 60 min | Explicit proof refresh |
+| Workload Operations | `MART_EXECUTIVE_OBSERVABILITY`, query/task facts and task history summaries | 30-60 min | Explicit live triage |
 | Governance & Security | Access posture and change-control facts | 60 min | Explicit governance lane |
 | Snowflake Value | `OVERWATCH_VALUE_CANDIDATE_V`, `OVERWATCH_ROI_LOG` | 60 min | Explicit load only |
 
@@ -43,21 +43,21 @@ quality proof after the warehouse and notification integration are approved.
 They should guard the command center; they do not replace live incident triage.
 The UI should still render the metric frame immediately. If a Snowflake session
 or mart lookup would block the first paint, show the precomputed-board frame and
-let `Refresh Board` read the compact mart. Do not fall back to live account
-history scans from the executive landing page.
+let the global Refresh action read the compact mart. Do not fall back to live
+account-history scans from the executive landing page.
 
-Executive Landing is the only exception to the single-query ideal when the
-compact mart is unavailable. It may fall back to bounded OVERWATCH fact marts
-(`FACT_COST_DAILY`, `FACT_CORTEX_DAILY`, `FACT_QUERY_HOURLY`,
-`FACT_QUERY_DETAIL_RECENT`, task, storage, alert, and action tables) so the boss
-page can still show cost drivers, query/database/status mix, warehouse pressure,
-and run-rate facts without scanning raw `SNOWFLAKE.ACCOUNT_USAGE`.
+Executive Landing is not allowed to start raw `SNOWFLAKE.ACCOUNT_USAGE` scans on
+navigation. It may reuse already-loaded session values and then hydrate
+`MART_EXECUTIVE_OBSERVABILITY` only after explicit Refresh. If the compact mart
+is unavailable, the page still shows the graphics frame, scoped "not loaded"
+lanes, setup readiness contracts, and the next refresh/setup action.
 
-The same first-paint rule applies to Cost & Contract, Alert Center, and
-Snowflake Value: show the board frame immediately, reuse already-loaded session
-state when present, and keep Snowflake reads behind explicit refresh/load
-actions or scheduled mart tasks. Silent UI autoloads are not allowed for these
-surfaces.
+The same first-paint rule applies to DBA Control Room, Workload Operations, Cost
+& Contract, Alert Center, and Snowflake Value: show the board frame immediately,
+reuse already-loaded session state when present, and allow only compact
+precomputed mart reads during navigation. Raw `ACCOUNT_USAGE`,
+`INFORMATION_SCHEMA`, schema compare, data hash, remediation, and proof queries
+stay behind explicit refresh/load actions or scheduled Snowflake tasks.
 
 Primary sidebar navigation must land on the section board, not the heavy proof
 workspace. Drill-through buttons inside a board may open the detailed workspace
@@ -106,7 +106,7 @@ one-off DBA check.
 - schema/data hash comparisons
 - proof SQL previews
 - remediation forms
-- PowerPoint support data
+- presentation-export preparation
 - exhaustive alert history
 
 First paint should answer: what is wrong, what is expensive, what is late, what

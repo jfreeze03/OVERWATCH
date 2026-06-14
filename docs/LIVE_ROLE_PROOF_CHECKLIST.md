@@ -34,8 +34,9 @@ its operating lane.
 
 ## Section Smoke By Role
 
-- Executive Landing: first paint shows the platform score, executive summary
-  grid, KPI rows, and `Executive Pressure Index`.
+- Executive Landing: first paint shows the platform score, executive glance
+  KPIs, Snowflake Observability Wall, spend/runtime/cost-driver charts, and
+  setup readiness.
 - Every primary navigation surface: first paint shows a scoped command board
   before workflow buttons. Buttons should be drill-through, not the only way to
   see useful data.
@@ -43,8 +44,9 @@ its operating lane.
   toggles.
 - Alert Center: incident board loads; lifecycle audit requires a note and writes
   only `ALERT_ACKNOWLEDGEMENTS` and `ALERT_REMEDIATION_LOG`.
-- Cost & Contract: first view shows the cost load contract; heavy proof stays
-  behind explicit refresh.
+- Cost & Contract: first view shows the cost load contract, contract-burn
+  board, Cortex dollars, action queue, and Snowflake Value automation contract;
+  heavy proof stays behind explicit refresh.
 - Workload Operations: subsection navigation opens detail immediately.
 - Contention Center: top fix path displays route, blocker, waiter, precheck,
   manual SQL state, and verification guidance.

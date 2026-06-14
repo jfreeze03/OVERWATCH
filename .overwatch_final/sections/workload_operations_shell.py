@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
+from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
 from sections.shell_helpers import (
     action_state_label,
     evidence_caption,
@@ -21,12 +21,18 @@ from sections.shell_helpers import (
     render_signal_lane_board,
     scope_label,
 )
+from utils.command_board import load_or_reuse_command_board
 
 
 _FULL_WORKSPACE_KEY = "_workload_operations_full_workspace_requested"
 _BRIEF_MODE_KEY = "_workload_operations_brief_mode"
 _EXPLICIT_WORKFLOW_KEY = "_workload_operations_explicit_workflow_request"
+_COMMAND_BOARD_DATA_KEY = "workload_operations_command_board_data"
+_COMMAND_BOARD_SUMMARY_KEY = "workload_operations_command_board_summary"
+_COMMAND_BOARD_META_KEY = "workload_operations_command_board_meta"
+_COMMAND_BOARD_REFRESH_MARKER_KEY = "workload_operations_command_board_refresh_marker"
 _FULL_WORKSPACE_STATE_KEYS = (
+    _COMMAND_BOARD_SUMMARY_KEY,
     "workload_operations_snapshot",
     "workload_operations_task_snapshot",
     "workload_operations_snapshot_error",
@@ -95,6 +101,38 @@ def _window_label() -> str:
         days = max(1, (end - start).days + 1)
         return f"{days}d"
     return "Selected"
+
+
+def _window_days() -> int:
+    start = st.session_state.get("global_start_date")
+    end = st.session_state.get("global_end_date")
+    if isinstance(start, date) and isinstance(end, date):
+        return max(1, (end - start).days + 1)
+    return int(DEFAULT_DAY_WINDOW)
+
+
+def _command_summary() -> dict:
+    summary = st.session_state.get(_COMMAND_BOARD_SUMMARY_KEY)
+    if isinstance(summary, dict) and summary.get("loaded"):
+        return dict(summary)
+    return {}
+
+
+def _command_meta() -> dict:
+    meta = st.session_state.get(_COMMAND_BOARD_META_KEY)
+    return dict(meta) if isinstance(meta, dict) else {}
+
+
+def _load_command_board() -> None:
+    load_or_reuse_command_board(
+        data_key=_COMMAND_BOARD_DATA_KEY,
+        summary_key=_COMMAND_BOARD_SUMMARY_KEY,
+        meta_key=_COMMAND_BOARD_META_KEY,
+        refresh_marker_key=_COMMAND_BOARD_REFRESH_MARKER_KEY,
+        company=_active_company(),
+        environment=_active_environment(),
+        days=_window_days(),
+    )
 
 
 def _full_workspace_requested() -> bool:
@@ -171,6 +209,14 @@ def _gb_label(value: object) -> str:
     return f"{gb:,.1f} GB"
 
 
+def _summary_seconds_label(summary: dict, key: str) -> str:
+    return _seconds_label(summary.get(key))
+
+
+def _summary_gb_label(summary: dict, key: str) -> str:
+    return _gb_label(summary.get(key))
+
+
 def _open_workspace(workflow: str | None = None) -> None:
     st.session_state[_BRIEF_MODE_KEY] = False
     st.session_state[_FULL_WORKSPACE_KEY] = True
@@ -231,11 +277,13 @@ def _render_metric_board() -> None:
     freshness_meta = st.session_state.get("workload_operations_snapshot_meta")
     if not isinstance(freshness_meta, dict) or not freshness_meta:
         freshness_meta = st.session_state.get("workload_operations_task_snapshot_meta", {})
+    if not isinstance(freshness_meta, dict) or not freshness_meta:
+        freshness_meta = _command_meta()
 
     st.markdown("**Workload Metric Board**")
     render_refresh_contract(
         freshness_meta if isinstance(freshness_meta, dict) else {},
-        source="MART_DBA_CONTROL_ROOM / TASK_HISTORY",
+        source="MART_EXECUTIVE_OBSERVABILITY / MART_DBA_CONTROL_ROOM / TASK_HISTORY",
         target_minutes=30,
         refresh_method="Scheduled workload mart and task-history refresh",
         live_fallback="Explicit live triage",
@@ -245,16 +293,74 @@ def _render_metric_board() -> None:
         _workload_shell_lanes(snapshot_row, task_row),
         max_lanes=8,
     )
+    summary = _command_summary()
     render_shell_snapshot((
-        ("Queries", f"{_int_value(_row_get(snapshot_row, 'TOTAL_QUERIES')):,}" if snapshot_row is not None else "Not loaded"),
-        ("Failed Queries", f"{_int_value(_row_get(snapshot_row, 'FAILED_QUERIES')):,}" if snapshot_row is not None else "Not loaded"),
-        ("Queued Queries", f"{_int_value(_row_get(snapshot_row, 'QUEUED_QUERIES')):,}" if snapshot_row is not None else "Not loaded"),
-        ("Task Failures", f"{_int_value(_row_get(task_row, 'TASK_STATUS_FAILURE_ROWS')):,}" if task_row is not None else "Not loaded"),
+        ("Queries", f"{_int_value(_row_get(snapshot_row, 'TOTAL_QUERIES', summary.get('total_queries'))):,}" if snapshot_row is not None or summary else "Not loaded"),
+        ("Failed Queries", f"{_int_value(_row_get(snapshot_row, 'FAILED_QUERIES', summary.get('failed_queries'))):,}" if snapshot_row is not None or summary else "Not loaded"),
+        ("Queue Time", _seconds_label(_row_get(snapshot_row, "QUEUE_SECONDS", summary.get("queue_seconds"))) if snapshot_row is not None or summary else "Not loaded"),
+        ("Task Failures", f"{_int_value(_row_get(task_row, 'TASK_STATUS_FAILURE_ROWS', summary.get('failed_tasks'))):,}" if task_row is not None or summary else "Not loaded"),
     ))
 
 
 def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) -> tuple[dict[str, str], ...]:
     if snapshot_row is None and task_row is None:
+        summary = _command_summary()
+        if summary:
+            failed_queries = _int_value(summary.get("failed_queries"))
+            failed_tasks = _int_value(summary.get("failed_tasks"))
+            total_queries = _int_value(summary.get("total_queries"))
+            open_actions = _int_value(summary.get("open_actions"))
+            critical_high = _int_value(summary.get("critical_high_alerts"))
+            return (
+                {
+                    "label": "Query volume",
+                    "value": f"{total_queries:,}",
+                    "state": f"{failed_queries:,} failed",
+                    "detail": "MART_EXECUTIVE_OBSERVABILITY supplies first-paint query volume and failure pressure.",
+                },
+                {
+                    "label": "Runtime p95",
+                    "value": _summary_seconds_label(summary, "p95_runtime_sec"),
+                    "state": "Performance",
+                    "detail": "P95 runtime is the first signal for regressions before opening Query Diagnosis.",
+                },
+                {
+                    "label": "Queue pressure",
+                    "value": _summary_seconds_label(summary, "queue_seconds"),
+                    "state": "Capacity",
+                    "detail": f"Top queue warehouse: {summary.get('top_queue_warehouse') or 'Not loaded'}.",
+                },
+                {
+                    "label": "Remote spillage",
+                    "value": _summary_gb_label(summary, "remote_spill_gb"),
+                    "state": "Memory",
+                    "detail": f"Top spill warehouse: {summary.get('top_spill_warehouse') or 'Not loaded'}.",
+                },
+                {
+                    "label": "Task failures",
+                    "value": f"{failed_tasks:,}",
+                    "state": "Pipeline",
+                    "detail": "Failed task count routes into Task Graphs and the DBA morning queue.",
+                },
+                {
+                    "label": "Alert pressure",
+                    "value": f"{critical_high:,}",
+                    "state": "Risk",
+                    "detail": "Critical/high alert pressure should outrank routine optimization work.",
+                },
+                {
+                    "label": "Owner actions",
+                    "value": f"{open_actions:,}",
+                    "state": "Queue",
+                    "detail": "Open workload actions need owner, fix SQL, and verification.",
+                },
+                {
+                    "label": "Schema/data compare",
+                    "value": "Ready",
+                    "state": "Proof",
+                    "detail": "Compare all schema objects, generate missing DDL, then sample/hash data likeness.",
+                },
+            )
         return (
             {
                 "label": "Query volume",
@@ -364,12 +470,6 @@ def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) 
             "detail": "Compare all schema objects, generate missing DDL, then sample/hash data likeness.",
         },
     )
-    render_shell_snapshot((
-        ("Late Tasks", f"{_int_value(_row_get(task_row, 'TASK_STATUS_LATE_ROWS')):,}" if task_row is not None else "Not loaded"),
-        ("Contention", "Loaded" if _frame_len(st.session_state.get("contention_decision_rows")) else "On demand"),
-        ("Query Diagnosis", "Loaded" if _frame_len(st.session_state.get("query_analysis_df")) else "On demand"),
-        ("Pipeline Health", "Loaded" if _frame_len(st.session_state.get("pipeline_health_df")) else "On demand"),
-    ))
 
 
 def _render_contention_solution_board() -> None:
@@ -378,11 +478,12 @@ def _render_contention_solution_board() -> None:
     task_overlap = st.session_state.get("contention_task_overlap")
     long_dml = st.session_state.get("contention_long_dml")
     st.markdown("**Contention Solution Board**")
+    summary = _command_summary()
     render_shell_snapshot((
         ("Blocked/Waiting", f"{_frame_len(decision_rows):,}" if _frame_len(decision_rows) else "On demand"),
-        ("Lock Hotspots", f"{_frame_len(historical_waits):,}" if _frame_len(historical_waits) else "On demand"),
-        ("Task Overlap", f"{_frame_len(task_overlap):,}" if _frame_len(task_overlap) else "On demand"),
-        ("Long DML", f"{_frame_len(long_dml):,}" if _frame_len(long_dml) else "On demand"),
+        ("Queue Time", _summary_seconds_label(summary, "queue_seconds") if summary else "On demand"),
+        ("Remote Spill", _summary_gb_label(summary, "remote_spill_gb") if summary else "On demand"),
+        ("Task Failures", f"{_int_value(summary.get('failed_tasks')):,}" if summary else "On demand"),
     ))
     render_setup_health_board(
         "Contention Answer Model",
@@ -395,6 +496,36 @@ def _render_contention_solution_board() -> None:
         cadence="Live only after operator intent",
         fallback="Contention Center",
         owner="DBA Operations",
+    )
+    render_signal_lane_board(
+        "Safe Fix Contract",
+        (
+            {
+                "label": "Classify",
+                "value": "Lock vs queue",
+                "state": "Required",
+                "detail": "Blocked seconds route to transaction/task overlap; queued seconds route to capacity/concurrency.",
+            },
+            {
+                "label": "Identify blocker",
+                "value": "query_id/session",
+                "state": "Evidence",
+                "detail": "Never kill work from a symptom row; prove blocker, waiter, object, and owner first.",
+            },
+            {
+                "label": "Pick action",
+                "value": "Serialize / cancel / resize",
+                "state": "Decision",
+                "detail": "Prefer shortening transaction scope or task schedule separation before changing compute.",
+            },
+            {
+                "label": "Verify",
+                "value": "after-state SQL",
+                "state": "Audit",
+                "detail": "Close only after queue, blocked time, retries, and downstream task status improve.",
+            },
+        ),
+        max_lanes=4,
     )
 
 
@@ -418,6 +549,7 @@ def render() -> None:
         return
 
     st.session_state.setdefault("workload_operations_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
+    _load_command_board()
     _render_status_strip()
     _render_kpi_row()
     _render_metric_board()

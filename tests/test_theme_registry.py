@@ -14,12 +14,12 @@ class ThemeRegistryTests(unittest.TestCase):
     def test_theme_picker_order_and_default(self):
         self.assertEqual(
             list(theme.THEMES.keys()),
-            ["carbon", "terminal", "corporate"],
+            ["carbon", "terminal"],
         )
         labels = [value["label"] for value in theme.THEMES.values()]
         self.assertEqual(
             labels,
-            ["Snowflake Dark", "Snowflake White", "Henson"],
+            ["Snowflake Dark", "Snowflake White"],
         )
         self.assertEqual(theme._DEFAULT_THEME, "carbon")
         self.assertEqual(theme._normalize_theme_key(None), "carbon")
@@ -30,14 +30,18 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertNotIn("black_ice", theme.THEMES)
         self.assertNotIn("roll_tide", theme.THEMES)
         self.assertNotIn("war_eagle", theme.THEMES)
+        self.assertNotIn("corporate", theme.THEMES)
         self.assertNotIn("Graphite Ember", labels.values())
         self.assertNotIn("Midnight", labels.values())
         self.assertNotIn("Roll Tide", labels.values())
         self.assertNotIn("War Eagle", labels.values())
+        self.assertNotIn("Henson", labels.values())
         self.assertNotIn("roll_tide", theme._VARS)
         self.assertNotIn("war_eagle", theme._VARS)
+        self.assertNotIn("corporate", theme._VARS)
         self.assertNotIn("roll_tide", theme._THEME_EXTRAS)
         self.assertNotIn("war_eagle", theme._THEME_EXTRAS)
+        self.assertNotIn("corporate", theme._THEME_EXTRAS)
         cost_contract_text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
         self.assertNotIn('"roll_tide"', cost_contract_text)
         self.assertNotIn('"war_eagle"', cost_contract_text)
@@ -46,6 +50,8 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertEqual(theme._normalize_theme_key("midnight"), "carbon")
         self.assertEqual(theme._normalize_theme_key("roll_tide"), "carbon")
         self.assertEqual(theme._normalize_theme_key("war_eagle"), "carbon")
+        self.assertEqual(theme._normalize_theme_key("corporate"), "carbon")
+        self.assertEqual(theme._normalize_theme_key("henson"), "carbon")
 
     def test_theme_picker_uses_dropdown_not_radio(self):
         theme_text = (APP_ROOT / "theme.py").read_text(encoding="utf-8")
@@ -68,10 +74,6 @@ class ThemeRegistryTests(unittest.TestCase):
         )
         self.assertIn(
             '[data-testid="stSidebar"] .stButton > button[kind="primary"] p',
-            theme._THEME_EXTRAS["corporate"],
-        )
-        self.assertIn(
-            '[data-testid="stSidebar"] .stButton > button[kind="primary"] p',
             theme._THEME_EXTRAS["terminal"],
         )
         self.assertIn(
@@ -82,23 +84,15 @@ class ThemeRegistryTests(unittest.TestCase):
             '[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] .ow-live-pill',
             theme._STRUCTURAL_CSS,
         )
-        self.assertIn("background: linear-gradient(135deg, #7f0017, #b00020) !important", theme._THEME_EXTRAS["corporate"])
         self.assertIn("background: linear-gradient(135deg, #ffffff, #eaf6fb) !important", theme._THEME_EXTRAS["terminal"])
         self.assertIn('[data-testid="stButton"] button', theme._THEME_EXTRAS["terminal"])
         self.assertIn('button[data-testid^="stBaseButton"]', theme._THEME_EXTRAS["terminal"])
-        self.assertIn('[data-testid="stSidebar"] [data-testid="stExpander"] summary', theme._THEME_EXTRAS["corporate"])
         self.assertIn('[data-testid="stSidebar"] [data-testid="stExpander"] summary', theme._THEME_EXTRAS["terminal"])
-        self.assertIn("background: linear-gradient(135deg, #b00020, #8f001a) !important", theme._THEME_EXTRAS["corporate"])
         self.assertIn("background: linear-gradient(135deg, #0068b7, #00528f) !important", theme._THEME_EXTRAS["terminal"])
-        self.assertNotIn("background: linear-gradient(135deg, #7f0017, #b00020) !important", theme._THEME_EXTRAS["terminal"])
-        self.assertNotIn("background: linear-gradient(135deg, #b00020, #8f001a) !important", theme._THEME_EXTRAS["terminal"])
-        self.assertIn("color: #ffffff !important", theme._THEME_EXTRAS["corporate"])
         self.assertIn("color: #ffffff !important", theme._THEME_EXTRAS["terminal"])
-        self.assertIn('[data-testid="stExpander"] summary', theme._THEME_EXTRAS["corporate"])
         self.assertIn('[data-testid="stExpander"] summary', theme._THEME_EXTRAS["terminal"])
         self.assertIn("color: #102a43 !important", theme._THEME_EXTRAS["terminal"])
         light_theme_text = {
-            "corporate": ("#151f2c", "#64748b"),
             "terminal": ("#102a43", "#526b7a"),
         }
         for theme_key, (body_color, caption_color) in light_theme_text.items():
@@ -113,7 +107,6 @@ class ThemeRegistryTests(unittest.TestCase):
         expected_gradients = {
             "carbon": "background: linear-gradient(135deg, #0068b7, #003545) !important",
             "terminal": "background: linear-gradient(135deg, #0068b7, #00528f) !important",
-            "corporate": "background: linear-gradient(135deg, #b00020, #8f001a) !important",
         }
         for theme_key, gradient in expected_gradients.items():
             with self.subTest(theme=theme_key):
@@ -127,7 +120,7 @@ class ThemeRegistryTests(unittest.TestCase):
     def test_theme_targets_current_streamlit_button_dom(self):
         self.assertIn('button[data-testid^="stBaseButton"]', theme._STRUCTURAL_CSS)
         self.assertIn('[data-testid="stButton"] button', theme._STRUCTURAL_CSS)
-        for theme_key in ("carbon", "terminal", "corporate"):
+        for theme_key in ("carbon", "terminal"):
             with self.subTest(theme=theme_key):
                 extra = theme._THEME_EXTRAS[theme_key]
                 self.assertIn('button[data-testid^="stBaseButton"]', extra)

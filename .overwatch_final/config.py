@@ -19,6 +19,13 @@ DEFAULTS = {
     "rt_interval_sec": 30,
 }
 
+CREDIT_SOURCE_LABELS = {
+    "warehouse_metering": "Official warehouse metering",
+    "query_attribution": "Official query attribution",
+    "metering_history": "Official account metering",
+    "live_estimate": "Live estimate fallback",
+}
+
 DAY_WINDOW_OPTIONS = (1, 7, 14, 30, 60, 90)
 DEFAULT_DAY_WINDOW = 7
 

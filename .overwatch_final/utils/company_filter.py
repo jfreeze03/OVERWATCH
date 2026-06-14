@@ -1,4 +1,4 @@
-# utils/company_filter.py - multi-tenant company filtering for ALFA and Trexis.
+﻿# utils/company_filter.py - multi-tenant company filtering for ALFA and Trexis.
 #
 # Warehouse strategy:
 #   ALFA: every warehouse except the exact Trexis allowlist.
@@ -8,6 +8,7 @@
 #   Trexis: exact TRXS database families, split into PROD and DEV/SIT.
 #   ALL: no filter; get_company_case_expr() labels each row.
 import hashlib
+import re
 from datetime import datetime
 
 import streamlit as st
@@ -22,11 +23,38 @@ from config import (
 from .state_keys import PRESERVE_STATE_EXACT, PRESERVE_STATE_PREFIXES
 
 
+_SAFE_FILTER_PATTERN = re.compile(r"^[A-Za-z0-9_%@.\- ]{0,128}$")
+_BLOCKED_SQL_PATTERN = re.compile(
+    r"(;|--|/\*|\*/|\bUNION\b|\bSELECT\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bDROP\b|\bALTER\b|\bGRANT\b|\bREVOKE\b|\bCALL\b)",
+    re.IGNORECASE,
+)
+
+
 def sql_literal(value, max_len: int = 8000) -> str:
     if value is None:
         return "NULL"
     text = str(value).replace("\x00", "")[:max_len]
     return "'" + text.replace("'", "''") + "'"
+
+
+def validate_filter_input(value: object, *, max_len: int = 128) -> str:
+    """Return a conservative free-text filter value for sidebar search boxes."""
+    text = str(value or "").strip()[:max_len]
+    if not text:
+        return ""
+    text = re.sub(r"[^A-Za-z0-9_%@.\- ]", "", text)
+    if _BLOCKED_SQL_PATTERN.search(text) or not _SAFE_FILTER_PATTERN.match(text):
+        return ""
+    return text
+
+
+def assert_no_sql_injection(clause: str) -> str:
+    """Fail closed if a generated filter clause contains SQL-control tokens."""
+    text = str(clause or "")
+    stripped = re.sub(r"'(?:''|[^'])*'", "''", text)
+    if _BLOCKED_SQL_PATTERN.search(stripped):
+        raise ValueError("Unsafe SQL filter clause rejected")
+    return text
 
 
 def _match_any_sql(column: str, patterns: list[str]) -> str:
@@ -127,7 +155,7 @@ def _all_environment_db_patterns(environment: str) -> list[str]:
     return list(dict.fromkeys(str(value).upper() for value in values if value))
 
 
-# ── Cache invalidation ────────────────────────────────────────────────────────
+# Cache invalidation
 
 _METADATA_CACHE_PREFIXES = (
     "_overwatch_available_columns",
@@ -163,7 +191,7 @@ def invalidate_company_cache(
         st.session_state["_refresh_salt_global"] = datetime.now().isoformat()
 
 
-# ── WHERE clause builders ─────────────────────────────────────────────────────
+# WHERE clause builders
 
 def get_wh_filter_clause(column: str = "warehouse_name", company: str = None) -> str:
     """
@@ -171,7 +199,7 @@ def get_wh_filter_clause(column: str = "warehouse_name", company: str = None) ->
 
     ALFA:   explicit ALFA/shared warehouse allowlist, excluding Trexis
     Trexis: exact WH_TRXS_LOAD / QUERY / TRANSFORM / UNLOAD allowlist
-    ALL:    '' — no filter; use get_company_case_expr() to label rows instead
+    ALL:    '' - no filter; use get_company_case_expr() to label rows instead
     """
     cfg = get_company_cfg(company)
     include = cfg.get("wh_patterns", [])
@@ -214,11 +242,9 @@ def get_user_filter_clause(column: str = "user_name", company: str = None) -> st
     exclude = cfg.get("user_exclude_patterns", [])
     clauses = []
     if patterns:
-        like_parts = " OR ".join(f"{column} ILIKE '{p}'" for p in patterns)
-        clauses.append(f"({like_parts})")
+        clauses.append(f"({_match_any_sql(column, patterns)})")
     if exclude:
-        not_parts = " AND ".join(f"{column} NOT ILIKE '{p}'" for p in exclude)
-        clauses.append(f"({not_parts})")
+        clauses.append(f"({_exclude_all_sql(column, exclude)})")
     return "AND " + " AND ".join(clauses) if clauses else ""
 
 
@@ -352,7 +378,7 @@ def get_combined_filter_clause(
     return get_user_filter_clause(user_col, company).strip() if user_col else ""
 
 
-# ── ALL-mode classification expression ───────────────────────────────────────
+# ALL-mode classification expression
 
 def get_company_case_expr(
     wh_col: str = "warehouse_name",
@@ -363,7 +389,7 @@ def get_company_case_expr(
     SQL CASE expression that classifies every row as 'ALFA', 'Trexis',
     or 'Shared/Unclassified'.
 
-    Use this in ALL-mode queries so one query returns both companies labeled —
+    Use this in ALL-mode queries so one query returns both companies labeled -
     enabling split bar charts with green ALFA bars and purple Trexis bars.
 
     Trexis is checked first (more specific). Exact warehouse names are used
@@ -390,13 +416,14 @@ def get_company_case_expr(
     END"""
 
 
-# ── Global sidebar filter helpers ─────────────────────────────────────────────
+# Global sidebar filter helpers
 # These read from session_state keys set by the sidebar in app.py.
 
 def _text_filter_clause(value: str, column: str) -> str:
     """Build a safe ILIKE filter for a free-text sidebar input."""
-    value = (value or "").strip()
-    return f"AND {column} ILIKE {sql_literal('%' + value + '%')}" if value else ""
+    value = validate_filter_input(value)
+    clause = f"AND {column} ILIKE {sql_literal('%' + value + '%')}" if value else ""
+    return assert_no_sql_injection(clause) if clause else ""
 
 
 def get_global_date_clause(column: str = "start_time") -> str:

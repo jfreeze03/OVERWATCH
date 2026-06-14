@@ -11,7 +11,10 @@ sys.path.insert(0, str(APP_ROOT))
 import utils.query as query  # noqa: E402
 from utils.query import (  # noqa: E402
     ADMIN_SQL_READ_LIMIT_ROWS,
+    CACHE_TIERS,
+    QUERY_BUDGET_THRESHOLDS,
     STANDARD_SQL_READ_LIMIT_ROWS,
+    STATEMENT_TIMEOUTS_SECONDS,
     _inject_read_limit,
     _query_starts_with_read,
     safe_identifier,
@@ -86,35 +89,22 @@ class QueryGuardrailTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     safe_identifier(identifier, allow_qualified=True)
 
-    def test_query_cache_locks_are_bounded_stripes(self):
-        locks = {
-            query._get_query_cache_lock(
-                f"select {idx}",
-                cache_context=f"context_{idx}",
-                cache_salt=f"salt_{idx}",
-                tier="standard",
-            )
-            for idx in range(500)
-        }
+    def test_query_cache_lock_stripes_stay_removed(self):
+        query_text = (APP_ROOT / "utils" / "query.py").read_text(encoding="utf-8")
+        self.assertNotIn("import threading", query_text)
+        self.assertNotIn("_QUERY_CACHE_LOCK_STRIPE_COUNT", query_text)
+        self.assertNotIn("_QUERY_CACHE_LOCK_STRIPES", query_text)
+        self.assertNotIn("def _get_query_cache_lock", query_text)
+        self.assertNotIn("with _get_query_cache_lock", query_text)
 
-        self.assertLessEqual(len(locks), query._QUERY_CACHE_LOCK_STRIPE_COUNT)
-        self.assertEqual(len(query._QUERY_CACHE_LOCK_STRIPES), query._QUERY_CACHE_LOCK_STRIPE_COUNT)
-
-    def test_identical_cached_queries_share_the_same_lock(self):
-        first = query._get_query_cache_lock(
-            "select current_timestamp()",
-            cache_context="same_context",
-            cache_salt="same_salt",
-            tier="live",
-        )
-        second = query._get_query_cache_lock(
-            "select current_timestamp()",
-            cache_context="same_context",
-            cache_salt="same_salt",
-            tier="live",
-        )
-
-        self.assertIs(first, second)
+    def test_cache_timeout_and_budget_tiers_are_explicit(self):
+        self.assertEqual(CACHE_TIERS["standard"], 300)
+        self.assertEqual(CACHE_TIERS["historical"], 3600)
+        self.assertLess(STATEMENT_TIMEOUTS_SECONDS["live"], STATEMENT_TIMEOUTS_SECONDS["historical"])
+        self.assertIn("max_queries_per_render", QUERY_BUDGET_THRESHOLDS)
+        self.assertGreaterEqual(QUERY_BUDGET_THRESHOLDS["max_queries_per_render"], 10)
+        self.assertIs(query._TIER_FN["standard"], query._cached_standard)
+        self.assertIs(query._RAISE_TIER_FN["standard"], query._cached_raise_standard)
 
 
 if __name__ == "__main__":

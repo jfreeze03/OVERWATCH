@@ -1,4 +1,4 @@
-"""Lazy re-exports for shared OVERWATCH utilities.
+﻿"""Lazy re-exports for shared OVERWATCH utilities.
 
 Keep the historical ``from utils import ...`` API without importing every
 utility module during startup. This matters for Streamlit reruns because the
@@ -31,12 +31,13 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "cost": (
         "get_credit_price", "get_ai_credit_price", "get_storage_cost_per_tb", "format_credits",
-        "credits_to_dollars", "estimate_live_credits", "query_attribution_supported",
+        "credits_to_dollars", "_estimate_live_credits_fallback", "estimate_live_credits",
+        "query_attribution_supported",
         "build_metered_credit_cte", "build_idle_warehouse_sql",
         "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
         "build_cost_reconciliation_sql", "build_snowflake_service_cost_lens_sql",
         "metric_confidence_label",
-        "freshness_note", "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
+        "freshness_note", "CREDIT_RATES", "CREDIT_SOURCE_LABELS", "COMPUTE_CREDIT_CASE",
     ),
     "scorecards": (
         "clamp_score", "score_label", "bad_ratio_score", "trend_score",
@@ -79,12 +80,25 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "get_environment_case_expr", "environment_label_for_database",
         "get_company_case_expr", "get_company_scope_key", "company_scoped_query",
         "company_value_allowed", "environment_value_allowed", "invalidate_company_cache",
+        "validate_filter_input", "assert_no_sql_injection",
     ),
     "helpers": (
         "paginate_df", "safe_float", "safe_int",
     ),
     "primitives": (
         "safe_str", "safe_bool", "safe_strip_tz", "coerce_numeric",
+    ),
+    "sql_builder": (
+        "SafeQuery", "bind_identifier", "bind_fqn",
+    ),
+    "command_board": (
+        "COMMAND_BOARD_VERSION", "CommandBoard",
+        "board_rows", "build_executive_command_board_sql",
+        "build_pipeline_sla_summary_sql", "command_board_scope",
+        "empty_command_board", "load_executive_command_board",
+        "load_or_reuse_command_board", "load_setup_readiness",
+        "read_command_board_state", "store_command_board_state",
+        "summarize_command_board",
     ),
     "alerts": (
         "ALERT_OPEN_STATUSES", "ALERT_STATUS_CHOICES", "DEFAULT_ALERT_RECIPIENT",
@@ -230,10 +244,15 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "duplicate_query_decision", "harden_recommendation",
         "harden_recommendation_rows", "warehouse_sizing_decision",
     ),
+    "incident_correlation": (
+        "build_incident_correlation_sql",
+    ),
+    "predictive_sla": (
+        "build_predictive_sla_sql",
+    ),
     "operational_intelligence": (
-        "COMMAND_INTELLIGENCE_CAPABILITY_VERSION",
-        "GOD_TIER_CAPABILITY_VERSION",
-        "build_command_intelligence_capability_rows", "build_god_tier_capability_rows",
+        "COMMAND_INTELLIGENCE_VERSION",
+        "build_capability_register_rows",
         "build_operational_intelligence_sql_catalog",
         "build_detection_root_cause_sql", "build_task_critical_path_brain_sql",
         "build_data_reconciliation_config_ddl", "build_data_reconciliation_runner_sql",
@@ -244,7 +263,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_data_first_navigation_contract_sql", "build_snowflake_value_auto_ddl",
         "build_snowflake_value_automation_rows", "build_snowflake_value_candidate_sql",
         "build_snowflake_value_automation_health_sql",
-        "build_command_intelligence_setup_bundle_sql", "build_god_tier_setup_bundle_sql",
+        "build_capability_setup_sql",
         "build_command_intelligence_runbook_markdown",
     ),
     "ask_overwatch": (

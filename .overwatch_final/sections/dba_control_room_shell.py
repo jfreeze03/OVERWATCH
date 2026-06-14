@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, ENVIRONMENT_CONFIG
+from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DEFAULTS, ENVIRONMENT_CONFIG
 from sections.shell_helpers import (
     action_state_label,
     evidence_caption,
@@ -22,13 +22,19 @@ from sections.shell_helpers import (
     render_signal_lane_board,
     scope_label,
 )
+from utils.command_board import load_or_reuse_command_board
 
 
 _FULL_WORKSPACE_KEY = "_dba_control_room_full_workspace_requested"
 _BRIEF_MODE_KEY = "_dba_control_room_brief_mode"
 _FAST_ENTRY_VERSION_KEY = "_dba_control_room_shell_fast_entry_version"
 _FAST_ENTRY_VERSION = 2
+_COMMAND_BOARD_DATA_KEY = "dba_control_room_command_board_data"
+_COMMAND_BOARD_SUMMARY_KEY = "dba_control_room_command_board_summary"
+_COMMAND_BOARD_META_KEY = "dba_control_room_command_board_meta"
+_COMMAND_BOARD_REFRESH_MARKER_KEY = "dba_control_room_command_board_refresh_marker"
 _FULL_WORKSPACE_STATE_KEYS = (
+    _COMMAND_BOARD_SUMMARY_KEY,
     "dba_control_room_data",
     "dba_control_room_snapshot_result",
     "dba_control_room_incident_board",
@@ -110,6 +116,14 @@ def _window_label() -> str:
     return "24h"
 
 
+def _window_days() -> int:
+    start = st.session_state.get("global_start_date")
+    end = st.session_state.get("global_end_date")
+    if isinstance(start, date) and isinstance(end, date):
+        return max(1, (end - start).days + 1)
+    return int(DEFAULT_DAY_WINDOW)
+
+
 def _full_workspace_requested() -> bool:
     """Keep DBA navigation lightweight; open the heavy workspace only from a selected DBA route."""
     _ = full_workspace_requested
@@ -162,6 +176,32 @@ def _control_room_meta() -> dict:
     return {}
 
 
+def _command_summary() -> dict:
+    summary = st.session_state.get(_COMMAND_BOARD_SUMMARY_KEY)
+    if isinstance(summary, dict) and summary.get("loaded"):
+        return dict(summary)
+    return {}
+
+
+def _command_meta() -> dict:
+    meta = st.session_state.get(_COMMAND_BOARD_META_KEY)
+    return dict(meta) if isinstance(meta, dict) else {}
+
+
+def _load_command_board() -> None:
+    payload = load_or_reuse_command_board(
+        data_key=_COMMAND_BOARD_DATA_KEY,
+        summary_key=_COMMAND_BOARD_SUMMARY_KEY,
+        meta_key=_COMMAND_BOARD_META_KEY,
+        refresh_marker_key=_COMMAND_BOARD_REFRESH_MARKER_KEY,
+        company=_active_company(),
+        environment=_active_environment(),
+        days=_window_days(),
+    )
+    if payload.summary.get("loaded"):
+        st.session_state.setdefault("dba_control_room_source_mode", "MART_EXECUTIVE_OBSERVABILITY")
+
+
 def _loaded_data_snapshot() -> tuple[tuple[str, object], ...]:
     data = st.session_state.get("dba_control_room_data")
     if isinstance(data, dict) and data:
@@ -185,6 +225,15 @@ def _loaded_data_snapshot() -> tuple[tuple[str, object], ...]:
             ("Failed Tasks", f"{int(_sum_column(snapshot, 'FAILED_TASKS_24H')):,}"),
             ("Credits 24h", f"{_sum_column(snapshot, 'CREDITS_24H'):,.1f}"),
             ("Cortex 7d", f"${_sum_column(snapshot, 'CORTEX_COST_7D_USD'):,.0f}"),
+        )
+
+    summary = _command_summary()
+    if summary:
+        return (
+            ("Failed Queries", f"{int(_safe_float(summary.get('failed_queries'))):,}"),
+            ("Failed Tasks", f"{int(_safe_float(summary.get('failed_tasks'))):,}"),
+            ("Cost", f"${_safe_float(summary.get('current_cost_usd')):,.0f}"),
+            ("Open Actions", f"{int(_safe_float(summary.get('open_actions'))):,}"),
         )
 
     return (
@@ -314,6 +363,68 @@ def _dba_shell_lanes() -> tuple[dict[str, str], ...]:
             },
         )
 
+    summary = _command_summary()
+    if summary:
+        failed_queries = int(_safe_float(summary.get("failed_queries")))
+        failed_tasks = int(_safe_float(summary.get("failed_tasks")))
+        queue_seconds = _safe_float(summary.get("queue_seconds"))
+        spill_gb = _safe_float(summary.get("remote_spill_gb"))
+        p95 = _safe_float(summary.get("p95_runtime_sec"))
+        open_actions = int(_safe_float(summary.get("open_actions")))
+        critical_high = int(_safe_float(summary.get("critical_high_alerts")))
+        current_cost = _safe_float(summary.get("current_cost_usd"))
+        cortex = _safe_float(summary.get("cortex_cost_usd"))
+        return (
+            {
+                "label": "Incident pressure",
+                "value": f"{failed_queries + failed_tasks + critical_high:,}",
+                "state": "Now",
+                "detail": f"{failed_queries:,} failed querie(s), {failed_tasks:,} failed task(s), and {critical_high:,} critical/high alert(s).",
+            },
+            {
+                "label": "Queue pressure",
+                "value": f"{queue_seconds / 60.0:,.1f}m" if queue_seconds else "0m",
+                "state": "Capacity",
+                "detail": f"Top queue warehouse: {summary.get('top_queue_warehouse') or 'Not loaded'}.",
+            },
+            {
+                "label": "P95 runtime",
+                "value": f"{p95:,.1f}s" if p95 else "0s",
+                "state": "Performance",
+                "detail": "Use Query Diagnosis when p95 runtime and failure signals move together.",
+            },
+            {
+                "label": "Remote spillage",
+                "value": f"{spill_gb:,.1f} GB",
+                "state": "Memory",
+                "detail": f"Top spill warehouse: {summary.get('top_spill_warehouse') or 'Not loaded'}.",
+            },
+            {
+                "label": "Spend",
+                "value": f"${current_cost:,.0f}",
+                "state": f"Cortex ${cortex:,.0f}",
+                "detail": f"Top cost driver: {summary.get('top_cost_driver') or 'Not loaded'}.",
+            },
+            {
+                "label": "Action queue",
+                "value": f"{open_actions:,}",
+                "state": "Owners",
+                "detail": "Open actions should have owner, recommendation, business impact, and verification proof.",
+            },
+            {
+                "label": "Source freshness",
+                "value": f"{int(_safe_float(summary.get('freshness_sources'))):,}",
+                "state": f"{int(_safe_float(summary.get('stale_sources'))):,} stale",
+                "detail": "ACCOUNT_USAGE sources can lag; use live routes for active incidents.",
+            },
+            {
+                "label": "Live fallback",
+                "value": "Guarded",
+                "state": "Safe",
+                "detail": "Live checks stay explicit to avoid surprise Snowflake cost.",
+            },
+        )
+
     return (
         {
             "label": "Fast watch",
@@ -416,12 +527,13 @@ def _render_kpi_row() -> None:
 
 
 def _render_command_snapshot() -> None:
+    meta = _command_meta() or _control_room_meta()
     st.markdown("**DBA Command Snapshot**")
     render_refresh_contract(
-        _control_room_meta(),
-        source=st.session_state.get("dba_control_room_source_mode", "MART_DBA_CONTROL_ROOM"),
+        meta,
+        source=st.session_state.get("dba_control_room_source_mode", "MART_EXECUTIVE_OBSERVABILITY / MART_DBA_CONTROL_ROOM"),
         target_minutes=30,
-        refresh_method="Scheduled DBA control mart refresh",
+        refresh_method="Scheduled command mart refresh",
         live_fallback="Explicit DBA route",
     )
     render_signal_lane_board("DBA Command Board", _dba_shell_lanes(), max_lanes=8)
@@ -436,6 +548,12 @@ def _render_morning_route_board() -> None:
         failed_tasks = _frame_len(data.get("task_failures"))
         source_rows = _frame_len(data.get("source_health"))
         action_rows = _frame_len(data.get("action_queue"))
+    elif _command_summary():
+        summary = _command_summary()
+        failed_queries = int(_safe_float(summary.get("failed_queries")))
+        failed_tasks = int(_safe_float(summary.get("failed_tasks")))
+        source_rows = int(_safe_float(summary.get("freshness_sources")))
+        action_rows = int(_safe_float(summary.get("open_actions")))
     st.markdown("**Morning Route Board**")
     render_shell_snapshot((
         ("Incidents", f"{failed_queries + failed_tasks:,}" if failed_queries or failed_tasks else "On demand"),
@@ -479,6 +597,7 @@ def render() -> None:
 
     st.session_state.setdefault("dba_control_room_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
 
+    _load_command_board()
     _render_status_strip()
     _render_kpi_row()
     _render_command_snapshot()

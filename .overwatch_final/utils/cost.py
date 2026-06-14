@@ -1,18 +1,19 @@
 # utils/cost.py - Credit/dollar formatting + metered credit CTE builder
 import pandas as pd
 import streamlit as st
-from config import CREDIT_RATES, COMPUTE_CREDIT_CASE, DEFAULTS
+from config import CREDIT_RATES, CREDIT_SOURCE_LABELS, COMPUTE_CREDIT_CASE, DEFAULTS
 
 # Re-export for convenience
 __all__ = [
     "get_credit_price", "get_ai_credit_price", "get_storage_cost_per_tb",
-    "format_credits", "credits_to_dollars", "estimate_live_credits",
+    "format_credits", "credits_to_dollars",
+    "_estimate_live_credits_fallback", "estimate_live_credits",
     "query_attribution_supported",
     "build_metered_credit_cte", "build_idle_warehouse_sql",
     "build_monitoring_cost_sql", "build_app_runtime_cost_sql",
     "build_cost_reconciliation_sql", "build_snowflake_service_cost_lens_sql",
     "metric_confidence_label", "freshness_note",
-    "CREDIT_RATES", "COMPUTE_CREDIT_CASE",
+    "CREDIT_RATES", "CREDIT_SOURCE_LABELS", "COMPUTE_CREDIT_CASE",
 ]
 
 
@@ -178,8 +179,9 @@ def build_snowflake_service_cost_lens_sql(
     """
 
 
-def estimate_live_credits(row) -> float:
-    """Fallback estimator for LIVE queries where metering data is not yet available.
+def _estimate_live_credits_fallback(row) -> float:
+    """Last-resort live estimator used only before official metering arrives.
+
     Uses warehouse size credit rate times elapsed seconds / 3600.
     """
     size = row.get("WAREHOUSE_SIZE", "") or ""
@@ -188,6 +190,11 @@ def estimate_live_credits(row) -> float:
     )
     rate = CREDIT_RATES.get(size, 1)
     return round(rate * (exec_sec / 3600), 6)
+
+
+# Backward-compatible alias for older sections. New work should use official
+# metering first and call _estimate_live_credits_fallback only as a labeled gap.
+estimate_live_credits = _estimate_live_credits_fallback
 
 
 def query_attribution_supported(session) -> bool:

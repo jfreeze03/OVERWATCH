@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import sys
 import unittest
 
@@ -9,8 +9,8 @@ sys.path.insert(0, str(APP_ROOT))
 
 from utils.operational_intelligence import (  # noqa: E402
     build_alert_lifecycle_sql,
-    build_command_intelligence_capability_rows,
-    build_command_intelligence_setup_bundle_sql,
+    build_capability_register_rows,
+    build_capability_setup_sql,
     build_compliance_readiness_sql,
     build_operational_intelligence_sql_catalog,
     build_overwatch_self_monitoring_sql,
@@ -24,7 +24,7 @@ from utils.operational_intelligence import (  # noqa: E402
 
 class OperationalIntelligenceTests(unittest.TestCase):
     def test_command_intelligence_plan_contains_all_12_ranked_capabilities(self):
-        rows = build_command_intelligence_capability_rows()
+        rows = build_capability_register_rows()
         self.assertEqual(len(rows), 12)
         self.assertEqual([row["RANK"] for row in rows], list(range(1, 13)))
         capabilities = {row["CAPABILITY"] for row in rows}
@@ -111,7 +111,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
     def test_self_monitoring_and_precompute_contracts_are_deployable(self):
         self_monitoring = build_overwatch_self_monitoring_sql().upper()
         precompute = build_precompute_contract_sql().upper()
-        setup_bundle = build_command_intelligence_setup_bundle_sql().upper()
+        setup_bundle = build_capability_setup_sql().upper()
         self.assertIn("QUERY_TAG ILIKE 'OVERWATCH%'", self_monitoring)
         self.assertIn("CREATE DYNAMIC TABLE IF NOT EXISTS", precompute)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_QUERY_HEALTH_HOURLY_V", precompute)
@@ -151,7 +151,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in section_paths)
         for marker in [
-            "build_command_intelligence_capability_rows",
+            "build_capability_register_rows",
             "build_task_critical_path_brain_sql",
             "build_predictive_finops_sql",
             "build_snowflake_value_auto_ddl",

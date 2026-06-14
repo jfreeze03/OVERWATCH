@@ -10,15 +10,14 @@ from __future__ import annotations
 from textwrap import dedent
 
 
-COMMAND_INTELLIGENCE_CAPABILITY_VERSION = "2026.06.13-command-intelligence-v1"
-GOD_TIER_CAPABILITY_VERSION = COMMAND_INTELLIGENCE_CAPABILITY_VERSION
+COMMAND_INTELLIGENCE_VERSION = "2026.06.14-capability-register-v1"
 
 
 def _sql(text: str) -> str:
     return dedent(text).strip() + "\n"
 
 
-def build_command_intelligence_capability_rows() -> list[dict[str, object]]:
+def build_capability_register_rows() -> list[dict[str, object]]:
     """Return the ranked capability plan agreed from COCO/Kiro review."""
     return [
         {
@@ -154,11 +153,6 @@ def build_command_intelligence_capability_rows() -> list[dict[str, object]]:
             "PRODUCTION_GUARDRAIL": "Docs must match executable objects and tests before commit.",
         },
     ]
-
-
-def build_god_tier_capability_rows() -> list[dict[str, object]]:
-    """Backward-compatible alias for older tests/imports."""
-    return build_command_intelligence_capability_rows()
 
 
 def build_detection_root_cause_sql(hours: int = 24) -> str:
@@ -813,7 +807,7 @@ def build_data_first_navigation_contract_sql() -> str:
     return _sql("""
         -- Data-first navigation contract:
         -- 1. No saved-state table.
-        -- 2. No persisted global Evidence Mode or exception-mode preference.
+        -- 2. No persisted global evidence or exception preference.
         -- 3. Section navigation may hydrate only bounded fast summaries.
         -- 4. Heavy proof, remediation, and export actions remain explicit local actions.
     """)
@@ -1159,7 +1153,7 @@ def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
     ]
 
 
-def build_command_intelligence_setup_bundle_sql() -> str:
+def build_capability_setup_sql() -> str:
     """Return a single setup bundle for the new command-intelligence objects."""
     return "\n\n".join(
         [
@@ -1173,17 +1167,12 @@ def build_command_intelligence_setup_bundle_sql() -> str:
     ).strip() + "\n"
 
 
-def build_god_tier_setup_bundle_sql() -> str:
-    """Backward-compatible alias for older tests/imports."""
-    return build_command_intelligence_setup_bundle_sql()
-
-
 def build_command_intelligence_runbook_markdown() -> str:
     """Return a compact DBA runbook for the twelve capabilities."""
     lines = [
         "# OVERWATCH Command Intelligence Runbook",
         "",
-        f"Version: {COMMAND_INTELLIGENCE_CAPABILITY_VERSION}",
+        f"Version: {COMMAND_INTELLIGENCE_VERSION}",
         "",
         "## Operating Rule",
         "",
@@ -1191,7 +1180,7 @@ def build_command_intelligence_runbook_markdown() -> str:
         "",
         "## Priority Capabilities",
     ]
-    for row in build_command_intelligence_capability_rows():
+    for row in build_capability_register_rows():
         lines.extend(
             [
                 "",

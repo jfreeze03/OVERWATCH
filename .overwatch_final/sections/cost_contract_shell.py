@@ -21,6 +21,7 @@ from sections.shell_helpers import (
     render_signal_lane_board,
     scope_label,
 )
+from utils.command_board import load_or_reuse_command_board
 
 
 _FULL_WORKSPACE_KEY = "_cost_contract_full_workspace_requested"
@@ -28,6 +29,10 @@ _BRIEF_MODE_KEY = "_cost_contract_brief_mode"
 _FAST_ENTRY_VERSION_KEY = "_cost_contract_shell_fast_entry_version"
 _FAST_ENTRY_VERSION = 1
 _COST_SPLASH_KEY = "cost_contract_splash"
+_COMMAND_BOARD_DATA_KEY = "cost_contract_command_board_data"
+_COMMAND_BOARD_SUMMARY_KEY = "cost_contract_command_board_summary"
+_COMMAND_BOARD_META_KEY = "cost_contract_command_board_meta"
+_COMMAND_BOARD_REFRESH_MARKER_KEY = "cost_contract_command_board_refresh_marker"
 _FULL_WORKSPACE_STATE_KEYS = (
     _COST_SPLASH_KEY,
     "cost_contract_cockpit",
@@ -111,6 +116,15 @@ def _window_label() -> str:
     return f"{int(DEFAULT_DAY_WINDOW)}d"
 
 
+def _window_days() -> int:
+    selected_days = st.session_state.get("cost_contract_cockpit_window", DEFAULT_DAY_WINDOW)
+    try:
+        days = int(selected_days)
+    except (TypeError, ValueError):
+        days = int(DEFAULT_DAY_WINDOW)
+    return max(1, days if days in DAY_WINDOW_OPTIONS else int(DEFAULT_DAY_WINDOW))
+
+
 def _is_loaded_frame(value: object) -> bool:
     return bool(hasattr(value, "empty") and not getattr(value, "empty", True))
 
@@ -158,7 +172,21 @@ def _money(value: object, *, signed: bool = False) -> str:
     return f"${amount:,.0f}"
 
 
+def _load_command_board() -> dict:
+    payload = load_or_reuse_command_board(
+        data_key=_COMMAND_BOARD_DATA_KEY,
+        summary_key=_COMMAND_BOARD_SUMMARY_KEY,
+        meta_key=_COMMAND_BOARD_META_KEY,
+        refresh_marker_key=_COMMAND_BOARD_REFRESH_MARKER_KEY,
+        company=_active_company(),
+        environment=_active_environment(),
+        days=_window_days(),
+    )
+    return payload.summary
+
+
 def _loaded_cost_board() -> dict:
+    command_summary = _load_command_board()
     cockpit = st.session_state.get("cost_contract_cockpit")
     cockpit_meta = st.session_state.get("cost_contract_cockpit_meta", {})
     cockpit_row = _first_row(cockpit)
@@ -175,12 +203,24 @@ def _loaded_cost_board() -> dict:
     prior_credits = _float_value(_row_get(cockpit_row, "PRIOR_CREDITS"))
     spend = current_credits * _credit_price()
     delta_spend = (current_credits - prior_credits) * _credit_price()
+    if not cockpit_loaded and command_summary.get("loaded"):
+        current_credits = _float_value(command_summary.get("current_credits"))
+        prior_credits = _float_value(command_summary.get("prior_credits"))
+        spend = _float_value(command_summary.get("current_cost_usd")) or current_credits * _credit_price()
+        delta_spend = _float_value(command_summary.get("spend_delta_cost_usd")) or (current_credits - prior_credits) * _credit_price()
     forecast_credits = _float_value(_row_get(run_rate_row, "PROJECTED_30D_FROM_7D"))
     forecast = forecast_credits * _credit_price() if run_rate_row is not None else 0.0
     avg_daily_7d = _float_value(_row_get(run_rate_row, "AVG_DAILY_7D")) * _credit_price()
     run_rate_state = str(_row_get(run_rate_row, "RUN_RATE_STATE", "") or "").strip() or "Not loaded"
+    if command_summary.get("loaded") and not forecast:
+        avg_daily_7d = spend / max(1, int(DEFAULT_DAY_WINDOW))
+        forecast = avg_daily_7d * 30
+        run_rate_state = "Mart forecast"
     top_driver = str(_row_get(cockpit_row, "TOP_INCREASE_WAREHOUSE", "Not loaded") or "Not loaded")
     top_delta = _float_value(_row_get(cockpit_row, "TOP_INCREASE_CREDITS")) * _credit_price()
+    if not cockpit_loaded and command_summary.get("loaded"):
+        top_driver = str(command_summary.get("top_cost_driver") or "Not loaded")
+        top_delta = _float_value(command_summary.get("top_cost_driver_usd"))
 
     open_actions = high_actions = 0
     est_savings = 0.0
@@ -196,12 +236,16 @@ def _loaded_cost_board() -> dict:
                 est_savings = _float_value(queue.loc[open_mask, "EST_MONTHLY_SAVINGS"].fillna(0).sum())
         except Exception:
             open_actions = len(queue) if hasattr(queue, "__len__") else 0
+    elif command_summary.get("loaded"):
+        open_actions = _int_value(command_summary.get("open_actions"))
+        high_actions = _int_value(command_summary.get("high_actions"))
 
     loaded_at = ""
     if isinstance(cockpit_meta, dict):
         loaded_at = str(cockpit_meta.get("loaded_at") or "").strip()
     return {
-        "loaded": cockpit_loaded,
+        "loaded": cockpit_loaded or bool(command_summary.get("loaded")),
+        "source": "cost_cockpit" if cockpit_loaded else "MART_EXECUTIVE_OBSERVABILITY",
         "spend": spend,
         "delta_spend": delta_spend,
         "forecast": forecast,
@@ -212,9 +256,9 @@ def _loaded_cost_board() -> dict:
         "open_actions": open_actions,
         "high_actions": high_actions,
         "est_savings": est_savings,
-        "cortex": "Loaded" if _is_loaded_frame(st.session_state.get("cortex_control_summary")) else "Not loaded",
+        "cortex": _money(command_summary.get("cortex_cost_usd")) if command_summary.get("loaded") else ("Loaded" if _is_loaded_frame(st.session_state.get("cortex_control_summary")) else "Not loaded"),
         "budget": "Loaded" if _is_loaded_frame(st.session_state.get("cost_contract_budget_command_center")) else "On demand",
-        "freshness": "Loaded" if loaded_at else "Not loaded",
+        "freshness": "Loaded" if loaded_at or command_summary.get("loaded") else "Not loaded",
     }
 
 
@@ -395,8 +439,8 @@ def _render_metric_board() -> None:
     board = _loaded_cost_board()
     st.markdown("**Cost Metric Board**")
     render_refresh_contract(
-        st.session_state.get("cost_contract_cockpit_meta", {}),
-        source="FACT_COST_DAILY / FACT_CORTEX_DAILY",
+        st.session_state.get("cost_contract_cockpit_meta") or st.session_state.get(_COMMAND_BOARD_META_KEY, {}),
+        source=str(board.get("source") or "FACT_COST_DAILY / FACT_CORTEX_DAILY"),
         target_minutes=60,
         refresh_method="Scheduled cost and Cortex mart refresh",
         live_fallback="Explicit proof refresh",
@@ -474,6 +518,52 @@ def _render_executive_flow_board() -> None:
     )
 
 
+def _render_value_automation_board() -> None:
+    st.markdown("**Snowflake Value Automation**")
+    render_signal_lane_board(
+        "No-Touch Value Capture",
+        (
+            {
+                "label": "Candidate source",
+                "value": "OVERWATCH_VALUE_CANDIDATE_V",
+                "state": "Automated",
+                "detail": "Finds fixed cost actions and resolved alert-prevention value without DBA typing.",
+            },
+            {
+                "label": "Ledger target",
+                "value": "OVERWATCH_ROI_LOG",
+                "state": "Audited",
+                "detail": "Automated entries keep evidence source, evidence id, owner, and value state.",
+            },
+            {
+                "label": "Verifier",
+                "value": "ESTIMATED -> VERIFIED",
+                "state": "Guarded",
+                "detail": "Value stays estimated until post-period proof or closure evidence is present.",
+            },
+            {
+                "label": "Run control",
+                "value": "SP_OVERWATCH_AUTOMATE_VALUE_LOG",
+                "state": "Explicit",
+                "detail": "Procedure logs candidates, inserted rows, verified rows, status, and message.",
+            },
+        ),
+        max_lanes=4,
+    )
+    render_setup_health_board(
+        "Value Log Contract",
+        (
+            ("Candidate view", "OVERWATCH_VALUE_CANDIDATE_V"),
+            ("Health view", "OVERWATCH_VALUE_AUTOMATION_HEALTH_V"),
+            ("Run log", "OVERWATCH_VALUE_AUTOMATION_RUN"),
+            ("Ledger", "OVERWATCH_ROI_LOG"),
+        ),
+        cadence="60 min value candidate refresh",
+        fallback="Manual value entry remains optional, not required",
+        owner="DBA / FinOps",
+    )
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workspace(str(row["WORKFLOW"]))
@@ -495,8 +585,10 @@ def render() -> None:
         return
 
     st.session_state.setdefault("cost_contract_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
+    _load_command_board()
     _render_status_strip()
     _render_kpi_row()
     _render_metric_board()
     _render_executive_flow_board()
+    _render_value_automation_board()
     _render_workflow_launchpad()

@@ -1,4 +1,9 @@
-"""Fast first-paint shell for the Executive Landing route."""
+"""Executive Landing glance page.
+
+COCO/Kiro contract: this route is a boardroom glance page, not a workflow hub.
+It shows six leadership KPIs immediately, then one trend chart and one action
+table. Deeper investigation starts from the owning sections.
+"""
 
 from __future__ import annotations
 
@@ -6,65 +11,19 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
-from sections.navigation import apply_navigation_state
-from sections.shell_helpers import (
-    action_state_label,
-    evidence_caption,
-    evidence_loaded,
-    full_workspace_requested,
-    render_setup_health_board,
-    render_shell_kpi_row,
-    render_shell_status_strip,
-    render_shell_workflows,
-    render_signal_lane_board,
-)
+from config import DEFAULTS, DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
+from sections.shell_helpers import render_shell_status_strip, render_signal_lane_board
+from utils.command_board import board_rows, load_or_reuse_command_board, load_setup_readiness
 
 
-_FULL_WORKSPACE_KEY = "_executive_landing_full_workspace_requested"
 _BRIEF_MODE_KEY = "_executive_landing_brief_mode"
+_FULL_WORKSPACE_KEY = "_executive_landing_full_workspace_requested"
 _FULL_WORKSPACE_STATE_KEYS = ("executive_landing_snapshot",)
 _PLATFORM_SUMMARY_KEY = "executive_landing_platform_summary"
-
-_SECTION_WORKSPACE_KEYS = {
-    "Alert Center": ("_alert_center_full_workspace_requested", "_alert_center_brief_mode"),
-    "Cost & Contract": ("_cost_contract_full_workspace_requested", "_cost_contract_brief_mode"),
-    "DBA Control Room": ("_dba_control_room_full_workspace_requested", "_dba_control_room_brief_mode"),
-    "Change & Drift": ("_change_drift_full_workspace_requested", "_change_drift_brief_mode"),
-}
-
-_WORKFLOWS = (
-    {
-        "WORKFLOW": "Executive snapshot",
-        "BUTTON_LABEL": "Open Snapshot",
-        "MOVE": "Load leadership-ready risk, cost movement, action closure, and deployment trust evidence.",
-    },
-    {
-        "WORKFLOW": "PowerPoint export",
-        "BUTTON_LABEL": "Open PowerPoint",
-        "MOVE": "Prepare slide bullets, KPI rows, chart data, and a downloadable PowerPoint deck.",
-    },
-    {
-        "WORKFLOW": "Alert automation",
-        "BUTTON_LABEL": "Open Alerts",
-        "MOVE": "Jump to alert delivery readiness and owner escalation proof before leadership review.",
-    },
-    {
-        "WORKFLOW": "FinOps controls",
-        "BUTTON_LABEL": "Open FinOps",
-        "MOVE": "Open cost governance, verified savings, contract pacing, and budget-control evidence.",
-    },
-    {
-        "WORKFLOW": "DBA queue",
-        "BUTTON_LABEL": "Open DBA Queue",
-        "MOVE": "Review owned action items, closure status, and verification evidence.",
-    },
-    {
-        "WORKFLOW": "Setup status",
-        "BUTTON_LABEL": "Open Setup",
-        "MOVE": "Open deployment trust and setup blockers that may affect production readiness.",
-    },
-)
+_COMMAND_BOARD_KEY = "executive_landing_command_board"
+_COMMAND_BOARD_META_KEY = "executive_landing_command_board_meta"
+_COMMAND_BOARD_REFRESH_MARKER_KEY = "executive_landing_command_board_refresh_marker"
+_DEFAULT_MONTHLY_BUDGET_USD = 50_000.0
 
 
 def _active_company() -> str:
@@ -83,14 +42,7 @@ def _credit_price() -> float:
         return 3.68
 
 
-def _int_label(value: object, default: int = 0) -> str:
-    try:
-        return f"{int(round(float(value)))}"
-    except (TypeError, ValueError):
-        return f"{default}"
-
-
-def _float_value(value: object, default: float = 0.0) -> float:
+def _safe_float(value: object, default: float = 0.0) -> float:
     try:
         number = float(value if value is not None else default)
         return default if number != number else number
@@ -98,317 +50,477 @@ def _float_value(value: object, default: float = 0.0) -> float:
         return default
 
 
-def _window_label() -> str:
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(round(float(value if value is not None else default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _money(value: object) -> str:
+    return f"${_safe_float(value):,.0f}"
+
+
+def _window_days() -> int:
     selected_days = st.session_state.get("executive_landing_window", DEFAULT_DAY_WINDOW)
     try:
         days = int(selected_days)
     except (TypeError, ValueError):
         days = int(DEFAULT_DAY_WINDOW)
     if days in DAY_WINDOW_OPTIONS:
-        return f"{days}d"
+        return max(1, days)
     start = st.session_state.get("global_start_date")
     end = st.session_state.get("global_end_date")
     if isinstance(start, date) and isinstance(end, date):
-        return f"{max(1, (end - start).days + 1)}d"
-    return f"{int(DEFAULT_DAY_WINDOW)}d"
+        return max(1, (end - start).days + 1)
+    return max(1, int(DEFAULT_DAY_WINDOW))
 
 
-def _full_workspace_requested() -> bool:
-    return full_workspace_requested(st.session_state, _FULL_WORKSPACE_KEY, _BRIEF_MODE_KEY)
+def _summary() -> dict:
+    summary = st.session_state.get(_PLATFORM_SUMMARY_KEY)
+    return dict(summary) if isinstance(summary, dict) else {}
 
 
-def _open_workspace() -> None:
-    st.session_state[_BRIEF_MODE_KEY] = False
-    st.session_state[_FULL_WORKSPACE_KEY] = True
-    st.rerun()
+def _board():
+    board = st.session_state.get(_COMMAND_BOARD_KEY)
+    return board
 
 
-def _open_target_workspace(section: str) -> None:
-    workspace_keys = _SECTION_WORKSPACE_KEYS.get(section)
-    if not workspace_keys:
-        return
-    workspace_key, brief_key = workspace_keys
-    st.session_state[workspace_key] = True
-    st.session_state[brief_key] = False
+def _load_command_board() -> None:
+    days = _window_days()
+    company = _active_company()
+    environment = _active_environment()
+    load_or_reuse_command_board(
+        data_key=_COMMAND_BOARD_KEY,
+        summary_key=_PLATFORM_SUMMARY_KEY,
+        meta_key=_COMMAND_BOARD_META_KEY,
+        refresh_marker_key=_COMMAND_BOARD_REFRESH_MARKER_KEY,
+        company=company,
+        environment=environment,
+        days=days,
+    )
 
 
-def _navigate(section: str, state_updates: dict[str, str] | None = None, *, open_workspace: bool = True) -> None:
-    section = apply_navigation_state(section)
-    for key, value in (state_updates or {}).items():
-        st.session_state[key] = value
-    if open_workspace:
-        _open_target_workspace(section)
-    st.rerun()
+def _monthly_budget() -> float:
+    return _safe_float(st.session_state.get("executive_monthly_budget_usd"), _DEFAULT_MONTHLY_BUDGET_USD)
 
 
-def _open_workflow(workflow: str) -> None:
-    if workflow in {"Executive snapshot", "PowerPoint export"}:
-        _open_workspace()
-        return
-    if workflow == "Alert automation":
-        _navigate("Alert Center", {"alert_center_requested_view": "Automation Readiness"})
-        return
-    if workflow == "FinOps controls":
-        _navigate(
-            "Cost & Contract",
-            {
-                "cost_contract_workflow": "FinOps Control Center",
-                "_cost_contract_detail_workflow": "FinOps Control Center",
-                "_cost_contract_pending_detail_workflow": "FinOps Control Center",
-            },
-        )
-        return
-    if workflow == "DBA queue":
-        _navigate("DBA Control Room", {"dba_control_room_active_view": "Operations Board"})
-        return
-    if workflow == "Setup status":
-        _navigate(
-            "Change & Drift",
-            {
-                "change_drift_requested_view": "Change Workflows",
-                "change_drift_requested_workflow": "Controlled DBA actions",
-                "change_drift_workflow": "Controlled DBA actions",
-                "dba_tools_focus": "Cost",
-                "dba_tools_group_selector": "Cost & Setup",
-                "dba_tools_tool_selector_Cost & Setup": "Setup Status",
-            },
-        )
+def _current_spend(summary: dict) -> float:
+    return _safe_float(summary.get("current_cost_usd")) or _safe_float(summary.get("current_credits")) * _credit_price()
 
 
-def _delegate_full_workspace() -> None:
-    from sections import executive_landing
-
-    executive_landing.render()
+def _prior_spend(summary: dict) -> float:
+    return _safe_float(summary.get("prior_cost_usd")) or _safe_float(summary.get("prior_credits")) * _credit_price()
 
 
-def _return_to_brief() -> None:
-    st.session_state[_BRIEF_MODE_KEY] = True
-    st.session_state[_FULL_WORKSPACE_KEY] = False
-    st.rerun()
+def _trend_symbol(current: float, prior: float, *, reverse_good: bool = True) -> str:
+    if not prior:
+        return "flat"
+    pct = (current - prior) / abs(prior) * 100
+    if abs(pct) < 3:
+        return "flat"
+    if pct > 0:
+        return "up" if not reverse_good else "up risk"
+    return "down" if reverse_good else "down risk"
 
 
-def _render_back_to_brief_control() -> None:
-    control_col, _spacer = st.columns([1.0, 4.0])
-    with control_col:
-        if st.button("Back to Brief", key="executive_landing_shell_back_to_brief", width="stretch"):
-            _return_to_brief()
+def _pipeline_sla_pct(summary: dict) -> float:
+    return _safe_float(
+        summary.get("pipeline_sla_compliance_pct")
+        or st.session_state.get("executive_pipeline_sla_pct"),
+        0.0,
+    )
+
+
+def _oldest_alert_age(summary: dict) -> str:
+    text = str(summary.get("oldest_alert_age") or st.session_state.get("executive_oldest_alert_age") or "").strip()
+    return text or "Not loaded"
+
+
+def _executive_glance_kpis() -> tuple[dict[str, str], ...]:
+    summary = _summary()
+    days = _window_days()
+    spend = _current_spend(summary)
+    prior = _prior_spend(summary)
+    budget = _monthly_budget()
+    budget_pct = (spend / budget * 100) if budget else 0.0
+    daily_burn = spend / days if spend else 0.0
+    prior_daily = prior / days if prior else 0.0
+    critical_high = _safe_int(summary.get("critical_high_alerts"))
+    health_score = _safe_int(summary.get("score"), 0)
+    open_actions = _safe_int(summary.get("open_actions"))
+    high_actions = _safe_int(summary.get("high_actions"))
+    sla_pct = _pipeline_sla_pct(summary)
+    spend_state = "Over budget" if budget and budget_pct >= 100 else _trend_symbol(spend, prior)
+    burn_state = "Anomaly" if prior_daily and daily_burn > prior_daily * 1.25 else _trend_symbol(daily_burn, prior_daily)
+    return (
+        {
+            "label": "Total spend vs budget",
+            "value": f"{_money(spend)} / {_money(budget)}",
+            "state": f"{budget_pct:,.0f}%",
+            "detail": f"{spend_state}; compute rate ${_credit_price():.2f}/credit.",
+        },
+        {
+            "label": "Daily burn rate",
+            "value": _money(daily_burn),
+            "state": burn_state,
+            "detail": f"Today/current-window average vs 7d/prior average {_money(prior_daily)}.",
+        },
+        {
+            "label": "Open critical/high alerts",
+            "value": f"{critical_high:,}",
+            "state": "Risk",
+            "detail": f"Oldest age: {_oldest_alert_age(summary)}.",
+        },
+        {
+            "label": "Pipeline SLA compliance",
+            "value": f"{sla_pct:,.1f}%" if sla_pct else "Not loaded",
+            "state": "SLA",
+            "detail": "Percent of configured tables meeting freshness target.",
+        },
+        {
+            "label": "Platform Operating Score",
+            "value": f"{health_score}/100" if health_score else "Not loaded",
+            "state": str(summary.get("state") or "Evidence"),
+            "detail": str(summary.get("cap_reason") or "Weighted cost, alert, action, and freshness posture."),
+        },
+        {
+            "label": "Active issues in queue",
+            "value": f"{open_actions:,}",
+            "state": f"{high_actions:,} high",
+            "detail": "Owner-routed actions by severity; drill from DBA Control Room or Alert Center.",
+        },
+    )
+
+
+def _spend_trend_points() -> list[float]:
+    summary = _summary()
+    spend = _current_spend(summary)
+    prior = _prior_spend(summary)
+    if not spend and not prior:
+        return [0, 0, 0, 0, 0, 0, 0]
+    start = prior / 7.0 if prior else spend / 8.0
+    end = spend / 7.0 if spend else start
+    step = (end - start) / 6.0
+    return [round(max(0.0, start + step * idx), 2) for idx in range(7)]
+
+
+def _top_action_rows() -> list[dict[str, object]]:
+    summary = _summary()
+    critical_high = _safe_int(summary.get("critical_high_alerts"))
+    open_actions = _safe_int(summary.get("open_actions"))
+    high_actions = _safe_int(summary.get("high_actions"))
+    spend = _current_spend(summary)
+    prior = _prior_spend(summary)
+    rows = [
+        {
+            "Priority": 1,
+            "Action": "Resolve critical/high alert backlog",
+            "Owner": "DBA On-Call",
+            "Due": "Today" if critical_high else "Watch",
+            "Impact": f"{critical_high:,} critical/high open",
+        },
+        {
+            "Priority": 2,
+            "Action": "Work active owner action queue",
+            "Owner": "DBA Lead",
+            "Due": "Today" if high_actions else "This week",
+            "Impact": f"{open_actions:,} open / {high_actions:,} high",
+        },
+        {
+            "Priority": 3,
+            "Action": "Explain spend movement",
+            "Owner": "FinOps / DBA",
+            "Due": "Today" if spend > prior and prior else "Weekly review",
+            "Impact": f"{_money(spend - prior)} delta",
+        },
+        {
+            "Priority": 4,
+            "Action": "Verify pipeline freshness SLA",
+            "Owner": "Data Engineering",
+            "Due": "Today",
+            "Impact": f"{_pipeline_sla_pct(summary):,.1f}% compliance" if _pipeline_sla_pct(summary) else "SLA mart not loaded",
+        },
+        {
+            "Priority": 5,
+            "Action": "Refresh executive observability mart",
+            "Owner": "OVERWATCH Maintainer",
+            "Due": "Next refresh",
+            "Impact": "Keeps the glance page defensible",
+        },
+    ]
+    return rows[:5]
+
+
+def _executive_summary_text() -> str:
+    summary = _summary()
+    spend = _current_spend(summary)
+    budget = _monthly_budget()
+    budget_pct = (spend / budget * 100) if budget else 0.0
+    critical_high = _safe_int(summary.get("critical_high_alerts"))
+    sla_pct = _pipeline_sla_pct(summary)
+    health_score = _safe_int(summary.get("score"), 0)
+    return (
+        f"Snowflake spend is at {_money(spend)} of {_money(budget)} budget ({budget_pct:,.0f}%). "
+        f"{critical_high:,} critical/high alerts are open, oldest is {_oldest_alert_age(summary)}. "
+        f"Pipeline SLA compliance is {sla_pct:,.1f}%; platform health score is {health_score}/100."
+    )
+
+
+def _chart_frame(panel: str, metric: str, value_column: str = "VALUE_USD"):
+    rows = board_rows(_board(), panel, metric)
+    if rows.empty:
+        return rows
+    value_col = value_column if value_column in rows.columns else "VALUE"
+    label_col = "DIMENSION"
+    view = rows[[label_col, value_col]].copy()
+    view[value_col] = view[value_col].fillna(0)
+    view = view.rename(columns={label_col: "Label", value_col: metric}).set_index("Label")
+    return view
 
 
 def _render_status_strip() -> None:
-    detail = evidence_caption(
-        st.session_state,
-        _FULL_WORKSPACE_STATE_KEYS,
-        "Leadership snapshot, PowerPoint export, alert automation, FinOps, DBA queue, and setup proof open from the workflow grid.",
-    )
     render_shell_status_strip(
-        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
-        headline="Executive command view: platform score, risk posture, FinOps, alerts, and DBA queue.",
-        detail=detail,
+        state="Glance",
+        headline="Executive command board",
+        detail="Spend, burn, alerts, SLA, platform score, and owner queue.",
     )
 
 
-def _render_platform_score_preview() -> None:
-    summary = st.session_state.get(_PLATFORM_SUMMARY_KEY)
-    has_summary = isinstance(summary, dict) and evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
-    if has_summary:
-        cap_value = _int_label(summary.get("score_cap"), 100)
-        cap_label = "None" if cap_value == "100" else f"{cap_value}/100"
-        metrics = (
-            ("Score", f"{_int_label(summary.get('score'))}/100"),
-            ("State", str(summary.get("state") or "Review")),
-            ("Raw", f"{_int_label(summary.get('raw_score'))}/100"),
-            ("Cap", cap_label),
-        )
-    else:
-        metrics = (
-            ("Score", "Load snapshot"),
-            ("State", "Evidence gated"),
-            ("Drivers", "Cost / Alerts / Actions / Deploy"),
-            ("Cap", "Source health"),
-        )
-    st.markdown("**Platform Operating Score**")
-    render_shell_kpi_row(metrics)
+def _render_kpis() -> None:
+    render_signal_lane_board("Executive Glance KPIs", _executive_glance_kpis(), max_lanes=6)
 
 
-def _render_kpi_row() -> None:
-    _render_platform_score_preview()
+def _render_spend_trend() -> None:
+    st.markdown("**7-Day Spend Trend**")
+    daily = _chart_frame("DAILY_COST", "Daily Spend")
+    if getattr(daily, "empty", True):
+        st.line_chart({"Daily spend": _spend_trend_points()})
+        return
+    st.line_chart(daily)
 
 
-def _render_command_wall_preview() -> None:
-    summary = st.session_state.get(_PLATFORM_SUMMARY_KEY)
-    has_summary = isinstance(summary, dict) and evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
-    if has_summary:
-        metrics = (
-            ("Cost", f"${_float_value(summary.get('current_credits')) * _credit_price():,.0f}"),
-            ("Alerts", _int_label(summary.get("critical_high_alerts"))),
-            ("Actions", _int_label(summary.get("open_actions"))),
-            ("Deploy Risk", _int_label(summary.get("migration_blockers"))),
-        )
-    else:
-        metrics = (
-            ("Cost", "Board refresh"),
-            ("Alerts", "Board refresh"),
-            ("Actions", "Board refresh"),
-            ("Deploy Risk", "Board refresh"),
-        )
-    st.markdown("**Executive Command Wall**")
-    render_shell_kpi_row(metrics)
-    render_setup_health_board(
-        "Executive Mart Health",
-        (
-            ("Executive mart", "MART_EXECUTIVE_OBSERVABILITY"),
-            ("Cost facts", "FACT_COST_DAILY"),
-            ("Cortex facts", "FACT_CORTEX_DAILY"),
-            ("Alert facts", "ALERT_EVENTS"),
-        ),
-        cadence="60 min mart refresh",
-        fallback="No live ACCOUNT_USAGE scan on first paint",
-        owner="DBA / FinOps",
-    )
+def _render_observability_summary() -> None:
+    st.markdown("**Observability Summary**")
+    monthly = _chart_frame("MONTHLY_COST", "Monthly Spend")
+    daily_spend = _chart_frame("DAILY_COST", "Daily Spend")
+    workload = _chart_frame("DAILY_WORKLOAD", "P95 Runtime", "VALUE")
+    drivers = _chart_frame("COST_DRIVER", "Cost Drivers")
+    query_types = _chart_frame("QUERY_TYPE", "Queries by Type", "VALUE")
+    query_database = _chart_frame("QUERY_DATABASE", "Queries by Database", "VALUE")
+    exec_status = _chart_frame("EXEC_STATUS", "Execution Status", "VALUE")
+    pressure = _chart_frame("WAREHOUSE_PRESSURE", "Queue Seconds", "VALUE")
+    spill = _chart_frame("WAREHOUSE_PRESSURE", "Remote Spill GB", "VALUE")
+
+    st.caption("Credits, dollars, query health, failures, queueing, spill, and top workload mix in one executive view.")
+    render_signal_lane_board("Snowflake Observability Wall", _observability_wall_lanes(), max_lanes=12)
+
+    left, middle, right = st.columns(3)
+    with left:
+        st.caption("Daily spend")
+        if getattr(daily_spend, "empty", True):
+            st.line_chart({"Daily spend": _spend_trend_points()})
+        else:
+            st.line_chart(daily_spend)
+    with middle:
+        st.caption("Monthly spend")
+        if getattr(monthly, "empty", True):
+            st.info("Monthly spend waits on MART_EXECUTIVE_OBSERVABILITY.")
+        else:
+            st.bar_chart(monthly)
+    with right:
+        st.caption("Runtime pressure")
+        if getattr(workload, "empty", True):
+            st.info("Runtime trend waits on FACT_QUERY_HOURLY.")
+        else:
+            st.line_chart(workload)
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.caption("Top cost drivers")
+        if getattr(drivers, "empty", True):
+            st.info("Driver ranking not loaded.")
+        else:
+            st.dataframe(drivers.reset_index().head(5), hide_index=True, width="stretch")
+    with c2:
+        st.caption("Query mix")
+        if getattr(query_types, "empty", True):
+            st.info("Query type mix not loaded.")
+        else:
+            st.bar_chart(query_types.head(8))
+    with c3:
+        st.caption("Database mix")
+        if getattr(query_database, "empty", True):
+            st.info("Database mix not loaded.")
+        else:
+            st.bar_chart(query_database.head(8))
+    with c4:
+        st.caption("Execution status")
+        if getattr(exec_status, "empty", True):
+            st.info("Execution status not loaded.")
+        else:
+            st.bar_chart(exec_status.head(8))
+
+    p1, p2 = st.columns(2)
+    with p1:
+        st.caption("Warehouse queue")
+        if getattr(pressure, "empty", True):
+            st.info("Warehouse pressure not loaded.")
+        else:
+            st.bar_chart(pressure.head(8))
+    with p2:
+        st.caption("Warehouse spill")
+        if getattr(spill, "empty", True):
+            st.info("Spill pressure not loaded.")
+        else:
+            st.bar_chart(spill.head(8))
 
 
-def _executive_shell_lanes() -> tuple[dict[str, str], ...]:
-    summary = st.session_state.get(_PLATFORM_SUMMARY_KEY)
-    has_summary = isinstance(summary, dict) and evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
-    if not has_summary:
-        return (
-            {
-                "label": "Credits used / dollars",
-                "value": "Not loaded",
-                "state": "Refresh",
-                "detail": "MART_EXECUTIVE_OBSERVABILITY feeds the first-paint spend board.",
-            },
-            {
-                "label": "Cortex dollars",
-                "value": "Not loaded",
-                "state": "Refresh",
-                "detail": "FACT_CORTEX_DAILY keeps AI spend separate from warehouse compute.",
-            },
-            {
-                "label": "Alert pressure",
-                "value": "Not loaded",
-                "state": "Refresh",
-                "detail": "Critical/high alerts and open owner actions drive the risk score.",
-            },
-            {
-                "label": "DBA queue",
-                "value": "Not loaded",
-                "state": "Refresh",
-                "detail": "Morning actions, failed tasks, source health, and release blockers.",
-            },
-            {
-                "label": "Warehouse pressure",
-                "value": "Not loaded",
-                "state": "Refresh",
-                "detail": "Queue, runtime, spillage, and saturation roll into the pressure board.",
-            },
-            {
-                "label": "Contract burn",
-                "value": "Not loaded",
-                "state": "Refresh",
-                "detail": "Run-rate and forecast facts power the executive cost story.",
-            },
-            {
-                "label": "Reliability",
-                "value": "Not loaded",
-                "state": "Refresh",
-                "detail": "Task failures, late-risk, and incident handoff become leader-visible.",
-            },
-            {
-                "label": "Setup trust",
-                "value": "Not loaded",
-                "state": "Refresh",
-                "detail": "Source freshness and deployment blockers cap the platform score.",
-            },
-        )
-
-    score = _int_label(summary.get("score"))
-    current_spend = _float_value(summary.get("current_credits")) * _credit_price()
-    prior_spend = _float_value(summary.get("prior_credits")) * _credit_price()
-    delta = current_spend - prior_spend
-    critical_high = _int_label(summary.get("critical_high_alerts"))
-    open_actions = _int_label(summary.get("open_actions"))
-    high_actions = _int_label(summary.get("high_actions"))
-    deploy_blockers = _int_label(summary.get("migration_blockers"))
-    state = str(summary.get("state") or "Review")
+def _observability_wall_lanes() -> tuple[dict[str, str], ...]:
+    summary = _summary()
     return (
         {
-            "label": "Platform score",
-            "value": f"{score}/100",
-            "state": state,
-            "detail": str(summary.get("cap_reason") or "Cost, alerts, actions, and setup trust are scored together."),
+            "label": "Credits used",
+            "value": f"{_safe_float(summary.get('current_credits')):,.1f}",
+            "state": _money(summary.get("current_cost_usd")),
+            "detail": "Official warehouse metering, dollarized at the configured compute rate.",
         },
         {
-            "label": "Credits used / dollars",
-            "value": f"${current_spend:,.0f}",
-            "state": _window_label(),
-            "detail": f"Compute credits converted at ${_credit_price():.2f}/credit.",
+            "label": "Cortex dollars",
+            "value": _money(summary.get("cortex_cost_usd")),
+            "state": "AI",
+            "detail": "Cortex spend is separated from warehouse compute.",
         },
         {
-            "label": "Spend movement",
-            "value": f"{'+' if delta >= 0 else '-'}${abs(delta):,.0f}",
-            "state": "Delta",
-            "detail": "Movement versus the prior comparison window.",
+            "label": "Queries",
+            "value": f"{_safe_int(summary.get('total_queries')):,}",
+            "state": f"{_safe_int(summary.get('failed_queries')):,} failed",
+            "detail": "Query count, failures, and status mix are all sourced from query facts.",
         },
         {
-            "label": "Alert pressure",
-            "value": f"{critical_high} critical/high",
-            "state": "Risk",
-            "detail": f"{open_actions} open owner actions need routing or closure proof.",
+            "label": "P95 runtime",
+            "value": f"{_safe_float(summary.get('p95_runtime_sec')):,.1f}s",
+            "state": "Runtime",
+            "detail": "High p95 points to degraded workloads before users complain.",
         },
         {
-            "label": "DBA queue",
-            "value": f"{open_actions} open",
-            "state": "Actions",
-            "detail": f"{high_actions} high-priority actions are leadership-visible.",
+            "label": "Queue time",
+            "value": f"{_safe_float(summary.get('queue_seconds')) / 60.0:,.1f}m",
+            "state": "Capacity",
+            "detail": f"Top queued warehouse: {summary.get('top_queue_warehouse') or 'Not loaded'}.",
         },
         {
-            "label": "Deploy trust",
-            "value": f"{deploy_blockers} blocker(s)",
-            "state": "Setup",
-            "detail": "Setup and migration blockers cap the score until cleared.",
+            "label": "Remote spill",
+            "value": f"{_safe_float(summary.get('remote_spill_gb')):,.1f} GB",
+            "state": "Memory",
+            "detail": f"Top spill warehouse: {summary.get('top_spill_warehouse') or 'Not loaded'}.",
         },
         {
-            "label": "Contract burn",
-            "value": "Cost board",
-            "state": "Linked",
-            "detail": "Open Cost & Contract for forecast, budget, and verified value proof.",
+            "label": "Task failures",
+            "value": f"{_safe_int(summary.get('failed_tasks')):,}",
+            "state": "Pipeline",
+            "detail": "Failed task runs route into Workload Operations and DBA Control Room.",
         },
         {
-            "label": "Workload pressure",
-            "value": "Workload board",
-            "state": "Linked",
-            "detail": "Runtime, queue, spillage, and task status live in Workload Operations.",
+            "label": "Open alerts",
+            "value": f"{_safe_int(summary.get('critical_high_alerts')):,}",
+            "state": "Critical/high",
+            "detail": "Alert pressure is ranked before lower-value optimization work.",
+        },
+        {
+            "label": "Open actions",
+            "value": f"{_safe_int(summary.get('open_actions')):,}",
+            "state": f"{_safe_int(summary.get('high_actions')):,} high",
+            "detail": "Owner-routed queue items with evidence and verification.",
+        },
+        {
+            "label": "Storage",
+            "value": f"{_safe_float(summary.get('storage_tb')):,.1f} TB",
+            "state": _money(summary.get("storage_cost_usd")),
+            "detail": "Storage pressure is visible even when Cost & Contract is not opened.",
+        },
+        {
+            "label": "Top cost driver",
+            "value": str(summary.get("top_cost_driver") or "Not loaded")[:28],
+            "state": _money(summary.get("top_cost_driver_usd")),
+            "detail": "Largest current cost driver in the selected scope.",
+        },
+        {
+            "label": "Freshness",
+            "value": f"{_safe_int(summary.get('freshness_sources')):,}",
+            "state": f"{_safe_int(summary.get('stale_sources')):,} stale",
+            "detail": "Delayed telemetry is called out before action.",
         },
     )
 
 
-def _render_executive_summary_grid() -> None:
-    render_signal_lane_board("Executive Summary Grid", _executive_shell_lanes(), max_lanes=8)
+def _render_top_actions() -> None:
+    st.markdown("**Top 5 Action Items**")
+    st.dataframe(_top_action_rows(), hide_index=True, width="stretch")
 
 
-def _render_workflow_launchpad() -> None:
-    def _open(row):
-        _open_workflow(str(row["WORKFLOW"]))
+def _render_copy_summary() -> None:
+    summary = _executive_summary_text()
+    if st.button("Copy Executive Summary", key="executive_landing_copy_summary", width="stretch"):
+        st.session_state["executive_landing_copied_summary"] = summary
+    if st.session_state.get("executive_landing_copied_summary"):
+        st.code(st.session_state["executive_landing_copied_summary"], language="text")
 
-    render_shell_workflows(
-        "Executive Briefing Workflows",
-        _WORKFLOWS,
-        label_key="WORKFLOW",
-        key_prefix="executive_landing_shell",
-        on_open=_open,
+
+def _render_setup_readiness() -> None:
+    readiness = load_setup_readiness(use_live=bool(st.session_state.get("_refresh_salt_global")))
+    st.markdown("**Setup Readiness**")
+    if getattr(readiness, "empty", True):
+        st.info("Setup readiness contract is not loaded.")
+        return
+    state_col = "MIGRATION_STATE" if "MIGRATION_STATE" in readiness.columns else "STATE"
+    blocked = 0
+    drift = 0
+    ready = 0
+    try:
+        states = readiness[state_col].fillna("").astype(str).str.upper()
+        blocked = int(states.str.contains("BLOCK|MISSING|NOT CHECKED", regex=True).sum())
+        drift = int(states.str.contains("DRIFT", regex=False).sum())
+        ready = int(states.str.contains("READY", regex=False).sum())
+    except Exception:
+        pass
+    render_signal_lane_board(
+        "Snowflake Setup Health",
+        (
+            {
+                "label": "Ready contracts",
+                "value": f"{ready:,}",
+                "state": "Ready",
+                "detail": "Objects or setup contracts that match the current app expectation.",
+            },
+            {
+                "label": "Blocked / unknown",
+                "value": f"{blocked:,}",
+                "state": "Setup",
+                "detail": "Deploy or validate setup SQL before trusting production evidence.",
+            },
+            {
+                "label": "Version drift",
+                "value": f"{drift:,}",
+                "state": "Migration",
+                "detail": "Rerun matching migrations before presenting executive numbers.",
+            },
+        ),
+        max_lanes=3,
     )
+    priority = readiness.head(8)
+    st.dataframe(priority, hide_index=True, width="stretch")
 
 
 def render() -> None:
-    if _full_workspace_requested():
-        _render_back_to_brief_control()
-        _delegate_full_workspace()
-        return
-
+    st.session_state[_BRIEF_MODE_KEY] = True
+    st.session_state[_FULL_WORKSPACE_KEY] = False
     st.session_state.setdefault("executive_landing_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
+    _load_command_board()
     _render_status_strip()
-    _render_kpi_row()
-    _render_command_wall_preview()
-    _render_executive_summary_grid()
-    _render_workflow_launchpad()
+    _render_kpis()
+    _render_spend_trend()
+    _render_observability_summary()
+    _render_top_actions()
+    _render_setup_readiness()
+    _render_copy_summary()

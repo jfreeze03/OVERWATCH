@@ -4,12 +4,11 @@
 #   2. run_query_cached(): wrapped bare session.sql() in try/except
 #      (was unguarded - any Snowflake error caused an unhandled exception
 #      that crashed the entire section render with a red error page)
-#   3. Tiered cache TTLs: live=30s, recent=300s, historical=1800s, metadata=14400s
+#   3. Tiered cache TTLs: live=30s, standard=300s, historical=3600s, metadata=14400s
 #      (previous version had a single flat 300s TTL for all query types)
 import hashlib
 import os
 import re
-import threading
 import time
 import streamlit as st
 import pandas as pd
@@ -19,9 +18,19 @@ from .data import normalize_df
 
 CACHE_TIERS: dict[str, int] = {
     "live":       30,     # INFORMATION_SCHEMA - real-time, 30s stale is fine
+    "standard":   300,    # App marts and ordinary section reads - 5-min cache
     "recent":     300,    # ACCOUNT_USAGE last 4h - 5-min cache
-    "historical": 1800,   # ACCOUNT_USAGE 7d+ - 30-min cache
+    "historical": 3600,   # ACCOUNT_USAGE 7d+ - 60-min cache
     "metadata":   14400,  # SHOW WAREHOUSES, SHOW TASKS, USERS - 4-hour cache
+}
+
+STATEMENT_TIMEOUTS_SECONDS: dict[str, int] = {
+    "live": 30,
+    "metadata": 30,
+    "standard": 60,
+    "recent": 120,
+    "historical": 180,
+    "admin": 840,
 }
 
 STANDARD_RESULT_WARNING_ROWS = 5_000
@@ -31,11 +40,6 @@ ADMIN_RESULT_HARD_MB = 100.0
 STANDARD_SQL_READ_LIMIT_ROWS = STANDARD_RESULT_WARNING_ROWS
 ADMIN_SQL_READ_LIMIT_ROWS = ADMIN_RESULT_HARD_ROWS
 
-_QUERY_CACHE_LOCK_STRIPE_COUNT = 64
-_QUERY_CACHE_LOCK_STRIPES: tuple[threading.Lock, ...] = tuple(
-    threading.Lock() for _ in range(_QUERY_CACHE_LOCK_STRIPE_COUNT)
-)
-
 _RESULT_SIZE_DEEP_ROW_LIMIT = 5_000
 _RESULT_SIZE_SAMPLE_ROWS = 1_000
 
@@ -44,6 +48,7 @@ QUERY_BUDGET_THRESHOLDS = {
     "large_rows": 25_000,
     "large_result_mb": 25.0,
     "repeat_warning_count": 3,
+    "max_queries_per_render": 18,
 }
 
 
@@ -550,6 +555,54 @@ def _apply_overwatch_query_tag(session, query_tag: str) -> None:
     apply_overwatch_query_tag(session, query_tag)
 
 
+def _statement_timeout_for_tier(tier: str) -> int:
+    if _admin_actions_enabled():
+        return STATEMENT_TIMEOUTS_SECONDS["admin"]
+    return int(STATEMENT_TIMEOUTS_SECONDS.get(str(tier or "recent"), STATEMENT_TIMEOUTS_SECONDS["recent"]))
+
+
+def _apply_statement_timeout(session, tier: str) -> None:
+    """Apply a bounded Snowflake statement timeout for the current query tier."""
+    timeout = _statement_timeout_for_tier(tier)
+    try:
+        current_key = "_overwatch_statement_timeout_seconds"
+        if st.session_state.get(current_key) == timeout:
+            return
+        session.sql(f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {timeout}").collect()
+        st.session_state[current_key] = timeout
+    except Exception:
+        pass
+
+
+def _check_query_budget(tier: str, ttl_key: str, query_text: str) -> bool:
+    """Return False when a non-admin render has exceeded its query budget."""
+    if _admin_actions_enabled() or str(tier or "").lower() in {"metadata"}:
+        return True
+    try:
+        now = time.time()
+        window_key = "_overwatch_query_budget_window_started_at"
+        count_key = "_overwatch_query_budget_window_count"
+        warn_key = "_overwatch_query_budget_window_warned"
+        started = float(st.session_state.get(window_key, 0.0) or 0.0)
+        if not started or now - started > 20:
+            st.session_state[window_key] = now
+            st.session_state[count_key] = 0
+            st.session_state[warn_key] = False
+        st.session_state[count_key] = int(st.session_state.get(count_key, 0) or 0) + 1
+        limit = int(QUERY_BUDGET_THRESHOLDS["max_queries_per_render"])
+        if st.session_state[count_key] <= limit:
+            return True
+        if not st.session_state.get(warn_key):
+            st.warning(
+                "OVERWATCH query budget guardrail: this page is loading too many Snowflake queries at once. "
+                "Use a narrower filter or refresh the section after the current board finishes."
+            )
+            st.session_state[warn_key] = True
+        return False
+    except Exception:
+        return True
+
+
 def _execute_snowflake_query(
     query_text: str,
     query_tag: str = "",
@@ -560,6 +613,7 @@ def _execute_snowflake_query(
     executable_query = _inject_read_limit(query_text)
     session = get_session()
     _apply_overwatch_query_tag(session, query_tag)
+    _apply_statement_timeout(session, tier)
     result = normalize_df(session.sql(executable_query).to_pandas())
     return _apply_result_guard(executable_query, result, ttl_key=ttl_key, section=section, tier=tier)
 
@@ -586,14 +640,6 @@ def _cache_salt(ttl_key: str) -> str:
     global_salt = st.session_state.get("_refresh_salt_global", "")
     scoped_salt = st.session_state.get(f"_refresh_salt_{ttl_key}", "")
     return f"{global_salt}|{scoped_salt}"
-
-
-def _get_query_cache_lock(query_text: str, cache_context: str, cache_salt: str, tier: str) -> threading.Lock:
-    """Return a bounded process-wide lock stripe for in-flight cached queries."""
-    key_basis = "\n".join([str(tier or ""), str(cache_context or ""), str(cache_salt or ""), str(query_text or "")])
-    key = hashlib.sha1(key_basis.encode("utf-8", errors="ignore")).hexdigest()
-    stripe = int(key[:8], 16) % _QUERY_CACHE_LOCK_STRIPE_COUNT
-    return _QUERY_CACHE_LOCK_STRIPES[stripe]
 
 
 @st.cache_data(ttl=CACHE_TIERS["live"], show_spinner=False)
@@ -623,6 +669,22 @@ def _cached_recent(
 ) -> pd.DataFrame:
     try:
         return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section)
+    except Exception as e:
+        _show_query_warning("Data unavailable", e)
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=CACHE_TIERS["standard"], show_spinner=False)
+def _cached_standard(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
+    try:
+        return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="standard", section=_section)
     except Exception as e:
         _show_query_warning("Data unavailable", e)
         return pd.DataFrame()
@@ -684,6 +746,18 @@ def _cached_raise_recent(
     return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="recent", section=_section)
 
 
+@st.cache_data(ttl=CACHE_TIERS["standard"], show_spinner=False)
+def _cached_raise_standard(
+    query_text: str,
+    cache_context: str = "",
+    cache_salt: str = "",
+    _query_tag: str = "",
+    _ttl_key: str = "",
+    _section: str = "",
+) -> pd.DataFrame:
+    return _execute_snowflake_query(query_text, _query_tag, ttl_key=_ttl_key, tier="standard", section=_section)
+
+
 @st.cache_data(ttl=CACHE_TIERS["historical"], show_spinner=False)
 def _cached_raise_historical(
     query_text: str,
@@ -728,7 +802,7 @@ def run_query_cached(
 
 _TIER_FN = {
     "live":       _cached_live,
-    "standard":   _cached_historical,
+    "standard":   _cached_standard,
     "recent":     _cached_recent,
     "historical": _cached_historical,
     "metadata":   _cached_metadata,
@@ -737,7 +811,7 @@ _TIER_FN = {
 
 _RAISE_TIER_FN = {
     "live":       _cached_raise_live,
-    "standard":   _cached_raise_historical,
+    "standard":   _cached_raise_standard,
     "recent":     _cached_raise_recent,
     "historical": _cached_raise_historical,
     "metadata":   _cached_raise_metadata,
@@ -768,6 +842,8 @@ def _run_query_base(
     Returns:
         Normalized DataFrame. Empty DataFrame on any error (never raises).
     """
+    if not _check_query_budget(tier, ttl_key, query_text):
+        return pd.DataFrame()
     with st.spinner(spinner_msg):
         try:
             executable_query = _inject_read_limit(query_text, max_rows=max_rows)
@@ -776,8 +852,7 @@ def _run_query_base(
                 cache_salt = _cache_salt(ttl_key)
                 context = _cache_context()
                 fn   = _TIER_FN.get(tier, _cached_recent)
-                with _get_query_cache_lock(executable_query, context, cache_salt, tier):
-                    return fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
+                return fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
             # Bypass cache - always wrapped in try/except
             try:
                 return _execute_snowflake_query(executable_query, query_tag, ttl_key=ttl_key, tier=tier, section=section)
@@ -833,16 +908,18 @@ def run_query_or_raise(
     result = pd.DataFrame()
     query_tag = _build_overwatch_query_tag(section, ttl_key, tier)
     executable_query = _inject_read_limit(query_text, max_rows=max_rows)
+    if not _check_query_budget(tier, ttl_key, query_text):
+        return result
     try:
         if use_cache:
             cache_salt = _cache_salt(ttl_key)
             context = _cache_context()
             fn = _RAISE_TIER_FN.get(tier, _cached_raise_recent)
-            with _get_query_cache_lock(executable_query, context, cache_salt, tier):
-                result = fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
-                return result
+            result = fn(executable_query, context, cache_salt, query_tag, ttl_key, section)
+            return result
         session = get_session()
         _apply_overwatch_query_tag(session, query_tag)
+        _apply_statement_timeout(session, tier)
         result = normalize_df(session.sql(executable_query).to_pandas())
         return _apply_result_guard(executable_query, result, ttl_key=ttl_key, section=section, tier=tier)
     finally:

@@ -1,13 +1,11 @@
 from pathlib import Path
 from datetime import datetime
-from io import BytesIO
 import inspect
 import math
 import re
 import sys
 import unittest
 from unittest.mock import patch
-import zipfile
 
 import pandas as pd
 
@@ -95,14 +93,10 @@ from utils.evidence_mode import (  # noqa: E402
     normalize_evidence_mode,
 )
 from sections.executive_landing import (  # noqa: E402
-    _build_executive_snapshot_pptx,
     _build_executive_observability_query_parts,
     _build_executive_observability_sql,
     _build_platform_operating_score,
     _executive_pressure_rows,
-    _powerpoint_chart_rows,
-    _powerpoint_kpi_rows,
-    _powerpoint_slide_brief,
     _snapshot_matches_scope,
 )
 from sections.cost_center import (  # noqa: E402
@@ -134,16 +128,12 @@ from sections.cost_contract import (  # noqa: E402
     _build_cost_splash_cortex_sql,
     _build_cost_source_health_board,
     _build_cost_spike_root_cause_board,
-    _build_cost_snapshot_pptx,
     _build_native_cost_control_inventory,
     _build_resource_monitor_guardrail_sql,
     _build_savings_verification_task_summary,
     _build_attribution_gap_summary,
     _build_service_cost_lens_summary,
     _cost_spend_trend_rows,
-    _cost_snapshot_chart_rows,
-    _cost_snapshot_kpi_rows,
-    _cost_snapshot_slide_brief,
     _cost_splash_next_move,
     _cost_splash_summary,
     _cost_warehouse_ranking_rows,
@@ -531,86 +521,13 @@ class FormulaRegressionTests(unittest.TestCase):
                 stale_fallbacks.append(str(path.relative_to(ROOT)))
         self.assertEqual(stale_fallbacks, [])
 
-    def test_executive_powerpoint_pack_is_scope_bound_and_chart_ready(self):
-        summary = {
-            "score": 86,
-            "state": "Watch",
-            "current_credits": 125.0,
-            "prior_credits": 100.0,
-            "cost_delta": 25.0,
-            "top_increase_credits": 12.5,
-            "critical_high_alerts": 2,
-            "open_actions": 7,
-            "high_actions": 3,
-            "migration_blockers": 1,
-            "top_cost_driver": "WH_TRXS_TRANSFORM",
-        }
-        source_health = pd.DataFrame(
-            [
-                {"SOURCE": "Cost cockpit", "STATE": "Loaded"},
-                {"SOURCE": "Alert evidence", "STATE": "Loaded"},
-                {"SOURCE": "Action queue", "STATE": "No Rows"},
-                {"SOURCE": "Migration ledger", "STATE": "Loaded"},
-            ]
-        )
-
+    def test_executive_snapshot_scope_contract_and_pptx_removal(self):
         self.assertTrue(_snapshot_matches_scope({"meta": {"company": "Trexis", "environment": "DEV_ALL", "days": 30}}, "Trexis", "DEV_ALL", 30))
         self.assertFalse(_snapshot_matches_scope({"meta": {"company": "Trexis", "environment": "PROD", "days": 30}}, "Trexis", "DEV_ALL", 30))
-
-        kpi_rows = _powerpoint_kpi_rows(
-            summary,
-            company="Trexis",
-            environment_label="All DEV/SIT",
-            days=30,
-            credit_price=DEFAULTS["credit_price"],
-            source_health=source_health,
-        )
-        by_kpi = dict(zip(kpi_rows["KPI"], kpi_rows["VALUE"]))
-        self.assertEqual(by_kpi["Scope"], "Trexis / All DEV/SIT")
-        self.assertEqual(by_kpi["Sources loaded"], "3/4")
-        self.assertIn("$460", by_kpi["Current spend"])
-        self.assertIn("Watch", by_kpi["Executive state"])
-
-        chart_rows = _powerpoint_chart_rows(summary, credit_price=DEFAULTS["credit_price"])
-        self.assertEqual(set(chart_rows["CHART"]), {"Cost movement", "Risk and work"})
-        self.assertIn("Spend delta", set(chart_rows["METRIC"]))
-        self.assertAlmostEqual(
-            float(chart_rows.loc[chart_rows["METRIC"].eq("Spend delta"), "VALUE"].iloc[0]),
-            92.0,
-        )
-
-        brief = _powerpoint_slide_brief(
-            summary,
-            company="Trexis",
-            environment_label="All DEV/SIT",
-            days=30,
-            credit_price=DEFAULTS["credit_price"],
-        )
-        self.assertIn("OVERWATCH Executive KPI Brief - Trexis / All DEV/SIT / 30 days", brief)
-        self.assertIn("WH_TRXS_TRANSFORM", brief)
-        self.assertIn("Slide bullets:", brief)
-
-        deck = _build_executive_snapshot_pptx(
-            brief,
-            kpi_rows,
-            chart_rows,
-            company="Trexis",
-            environment_label="All DEV/SIT",
-            days=30,
-        )
-        self.assertGreater(len(deck), 1000)
-        with zipfile.ZipFile(BytesIO(deck)) as archive:
-            names = set(archive.namelist())
-            self.assertIn("[Content_Types].xml", names)
-            self.assertIn("ppt/presentation.xml", names)
-            self.assertIn("ppt/slides/slide1.xml", names)
-            self.assertIn("ppt/slides/slide2.xml", names)
-            slide1 = archive.read("ppt/slides/slide1.xml").decode("utf-8")
-            slide2 = archive.read("ppt/slides/slide2.xml").decode("utf-8")
-        self.assertIn("OVERWATCH Executive Snapshot", slide1)
-        self.assertIn("Trexis / All DEV/SIT / 30 days", slide1)
-        self.assertIn("Boardroom KPI Drivers", slide2)
-        self.assertIn("Risk and work", slide2)
+        text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+        self.assertNotIn("_build_executive_snapshot_pptx", text)
+        self.assertNotIn("Download PowerPoint", text)
+        self.assertNotIn("PowerPoint support data", text)
 
     def test_executive_platform_operating_score_is_capped_by_evidence(self):
         source_health = pd.DataFrame([
@@ -923,7 +840,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertEqual(service_summary["top_moving_service"], "SERVERLESS_TASK")
         self.assertAlmostEqual(service_summary["top_moving_delta"], -3.25)
 
-    def test_cost_contract_powerpoint_snapshot_builds_slide_ready_rows(self):
+    def test_cost_contract_summary_rows_stay_data_first_without_pptx(self):
         splash = {
             "cockpit": pd.DataFrame([{
                 "CURRENT_CREDITS": 100.0,
@@ -1021,41 +938,12 @@ class FormulaRegressionTests(unittest.TestCase):
         ])
         action_summary = {"open_actions": 3, "high_actions": 1, "estimated_savings": 250.0}
 
-        kpi_rows = _cost_snapshot_kpi_rows(
-            summary,
-            service_summary,
-            action_summary,
-            company="TREXIS",
-            environment_label="All Dev",
-            days=7,
-        )
         movement = _service_lens_movement_rows(service_lens, DEFAULTS["credit_price"])
-        chart_rows = _cost_snapshot_chart_rows(
-            summary,
-            action_summary,
-            service_lens=service_lens,
-            credit_price=DEFAULTS["credit_price"],
-        )
         trend_rows = _cost_spend_trend_rows(splash["trend"], DEFAULTS["credit_price"])
         ranking_rows = _cost_warehouse_ranking_rows(splash["warehouse_delta"], DEFAULTS["credit_price"])
-        brief = _cost_snapshot_slide_brief(
-            summary,
-            service_summary,
-            action_summary,
-            company="TREXIS",
-            environment_label="All Dev",
-            days=7,
-        )
 
-        self.assertIn("OVERWATCH Cost Snapshot - TREXIS / All Dev / 7 days", brief)
-        self.assertIn("WH_TRXS_LOAD", brief)
-        self.assertIn("SNOW_DTI_ANALYST", brief)
-        self.assertIn("CORTEX moved +4.25 credits", brief)
-        self.assertIn("Current spend", set(kpi_rows["KPI"]))
-        self.assertIn("Service move", set(kpi_rows["KPI"]))
         self.assertEqual(movement.iloc[0]["SERVICE_TYPE"], "CORTEX")
         self.assertAlmostEqual(float(movement.iloc[0]["COST_DELTA_USD"]), 6.6)
-        self.assertEqual(set(chart_rows["CHART"]), {"Spend bridge", "Driver dollars", "Work queue", "Service movement"})
         self.assertIn("SPEND_USD", trend_rows.columns)
         self.assertIn("ROLLING_SPEND_USD", trend_rows.columns)
         self.assertAlmostEqual(float(trend_rows.iloc[1]["SPEND_USD"]), 55.0)
@@ -1063,38 +951,10 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("DELTA_SPEND_USD", ranking_rows.columns)
         self.assertEqual(ranking_rows.iloc[0]["CURRENT_SPEND_LABEL"], "$184")
         self.assertEqual(ranking_rows.iloc[0]["DELTA_SPEND_LABEL"], "+$46")
-        spend_delta = chart_rows.loc[
-            (chart_rows["CHART"] == "Spend bridge") & (chart_rows["METRIC"] == "Spend delta"),
-            "VALUE",
-        ].iloc[0]
-        self.assertAlmostEqual(float(spend_delta), 73.6)
-        service_delta = chart_rows.loc[
-            (chart_rows["CHART"] == "Service movement") & (chart_rows["METRIC"] == "CORTEX"),
-            "VALUE",
-        ].iloc[0]
-        self.assertAlmostEqual(float(service_delta), 6.6)
-
-        deck = _build_cost_snapshot_pptx(
-            brief,
-            kpi_rows,
-            chart_rows,
-            company="TREXIS",
-            environment_label="All Dev",
-            days=7,
-        )
-        self.assertGreater(len(deck), 1000)
-        with zipfile.ZipFile(BytesIO(deck)) as archive:
-            names = set(archive.namelist())
-            self.assertIn("[Content_Types].xml", names)
-            self.assertIn("ppt/presentation.xml", names)
-            self.assertIn("ppt/slides/slide1.xml", names)
-            self.assertIn("ppt/slides/slide2.xml", names)
-            self.assertIn("ppt/slides/slide3.xml", names)
-            slide1 = archive.read("ppt/slides/slide1.xml").decode("utf-8")
-            slide3 = archive.read("ppt/slides/slide3.xml").decode("utf-8")
-        self.assertIn("OVERWATCH Cost Snapshot", slide1)
-        self.assertIn("TREXIS / All Dev / 7 days", slide1)
-        self.assertIn("Service movement", slide3)
+        text = (APP_ROOT / "sections" / "cost_contract.py").read_text(encoding="utf-8")
+        self.assertNotIn("_build_cost_snapshot_pptx", text)
+        self.assertNotIn("Download PowerPoint", text)
+        self.assertNotIn("PowerPoint support data", text)
 
     def test_query_attribution_support_requires_all_generated_sql_columns(self):
         import streamlit as st
@@ -2640,7 +2500,8 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SYSADMIN", checklist)
         self.assertIn("_DSA", checklist)
         self.assertIn("_DTI", checklist)
-        self.assertIn("EXECUTIVE PRESSURE INDEX", checklist)
+        self.assertIn("SNOWFLAKE OBSERVABILITY WALL", checklist)
+        self.assertIn("SNOWFLAKE VALUE AUTOMATION CONTRACT", checklist)
 
     def test_streamlit_deployment_decision_pins_entrypoints(self):
         decision = build_streamlit_deployment_decision()
@@ -7960,7 +7821,7 @@ class FormulaRegressionTests(unittest.TestCase):
         }
         snapshot = snapshot_ask_overwatch_state(state)
 
-        self.assertIn("_snapshot_ask_overwatch_state(st.session_state)", app_text)
+        self.assertNotIn("_snapshot_ask_overwatch_state(st.session_state)", app_text)
         self.assertNotIn("dict(st.session_state),", app_text)
         self.assertIn("rec_recommendations", snapshot)
         self.assertIn("rec_automation_board", snapshot)

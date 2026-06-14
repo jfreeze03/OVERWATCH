@@ -1,4 +1,4 @@
-# sections/alert_center.py - single alert inbox and email-first alert operations
+﻿# sections/alert_center.py - single alert inbox and email-first alert operations
 from __future__ import annotations
 
 from datetime import datetime
@@ -1955,13 +1955,13 @@ def _render_alert_morning_brief(alerts: pd.DataFrame, queue: pd.DataFrame) -> No
 def _render_alert_detection_catalog() -> None:
     from utils.alerts import build_alert_signal_query_catalog
     from utils.operational_intelligence import (
-        build_command_intelligence_capability_rows,
+        build_capability_register_rows,
         build_operational_intelligence_sql_catalog,
     )
 
     pd = _pd()
     st.subheader("Detection Catalog")
-    capability_rows = pd.DataFrame(build_command_intelligence_capability_rows())
+    capability_rows = pd.DataFrame(build_capability_register_rows())
     _render_priority_dataframe(
         capability_rows,
         title="Command intelligence capability plan",
@@ -2127,8 +2127,8 @@ def _render_alert_setup_runbook() -> None:
     )
     from utils.operational_intelligence import (
         build_command_intelligence_runbook_markdown,
-        build_command_intelligence_capability_rows,
-        build_command_intelligence_setup_bundle_sql,
+        build_capability_register_rows,
+        build_capability_setup_sql,
     )
 
     pd = _pd()
@@ -2163,7 +2163,7 @@ def _render_alert_setup_runbook() -> None:
     with st.expander("Event materialization SQL preview", expanded=False):
         st.code(event_sql, language="sql")
 
-    command_sql = build_command_intelligence_setup_bundle_sql()
+    command_sql = build_capability_setup_sql()
     st.download_button(
         "Download Command Intelligence SQL",
         data=command_sql,
@@ -2176,7 +2176,7 @@ def _render_alert_setup_runbook() -> None:
         st.code(command_sql, language="sql")
 
     _render_priority_dataframe(
-        pd.DataFrame(build_command_intelligence_capability_rows()),
+        pd.DataFrame(build_capability_register_rows()),
         title="Command intelligence rollout checklist",
         priority_columns=[
             "RANK", "CAPABILITY", "STATUS", "WHERE_IT_LANDS",

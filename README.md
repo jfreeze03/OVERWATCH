@@ -30,15 +30,23 @@ The Executive Landing page is the one deliberate first-paint aggregate:
 load, Control Room, cost governance, and automation tasks so the first screen
 can show spend, Cortex cost, runtime, queueing, spill, failures, alerts,
 actions, storage, platform score, ranked cost drivers, queries by database,
-execution status, and warehouse pressure from one small query. If that compact
-mart is empty or stale for the selected scope, the app falls back to bounded
-fact-mart queries before showing a no-data board.
+execution status, and warehouse pressure from one compact source. The app
+renders the board frame immediately and reuses cached/session values; an
+explicit Refresh hydrates the mart when Snowflake access is available. Raw
+`ACCOUNT_USAGE` scans are never part of Executive Landing first paint.
 
 Every primary navigation click now follows the same production UX pattern:
 status strip, scoped KPI row, then a compact command board with the most
 important signals already visible. Workflow buttons are secondary drill-through
 actions, not a required step before the DBA sees what is risky, expensive, late,
 or broken.
+
+The fast command surfaces share `MART_EXECUTIVE_OBSERVABILITY` as the tiny
+command-board backbone. Executive Landing uses it directly for the boardroom
+summary; DBA Control Room, Alert Center, Workload Operations, and Cost &
+Contract reuse the same cached/session board for spend, Cortex, queue, spill,
+failure, alert, action, and freshness signals before their deeper
+section-specific marts or proof workspaces are opened.
 
 The same decision is seeded in Snowflake as `OVERWATCH_REFRESH_POLICY`, which
 defines first-paint sources, target freshness, retention, live-fallback
@@ -49,6 +57,21 @@ prove required marts, alert audit tables, reconciliation tables, executive board
 panels, freshness rows, and caller context. Use
 `docs/LIVE_ROLE_PROOF_CHECKLIST.md` to validate the app as ACCOUNTADMIN/SYSADMIN,
 DSA, DTI, and report-style roles before calling a build production-ready.
+
+Production role setup now lives in `snowflake/OVERWATCH_ROLE_SETUP.sql`.
+Use `OVERWATCH_MONITOR` for read-only telemetry and `OVERWATCH_OPERATOR` only
+for approved acknowledgements, action updates, and logged remediation. Avoid
+running daily operations as ACCOUNTADMIN except for break-glass setup work.
+
+Additional Snowflake-native hardening contracts:
+
+- `snowflake/OVERWATCH_PIPELINE_SLA.sql` - metadata-driven pipeline freshness and SLA status.
+- `snowflake/OVERWATCH_FRESHNESS_ALERT.sql` - optional notification-only native alert for high-severity SLA misses.
+- `snowflake/OVERWATCH_EXECUTIVE_DIGEST.sql` - daily executive digest history and task scaffold.
+- `snowflake/OVERWATCH_TAG_SETUP.sql` - owner, cost-center, and criticality tags for allocation and routing.
+- `snowflake/OVERWATCH_AVAILABILITY.sql` - OVERWATCH self-health and freshness checks.
+- `docs/OVERWATCH_RECOVERY_RUNBOOK.md` - operator recovery checklist.
+- `CHANGELOG.md` - release-level change history.
 
 ## Current Production Sections
 
@@ -144,7 +167,8 @@ but state-changing fixes must log trigger, approval, before/after state,
 rollback guidance, affected object/user/warehouse/task, and verification result
 in `ALERT_REMEDIATION_LOG`.
 
-Snowflake Value is automation-first. `OVERWATCH_VALUE_CANDIDATE_V` and
+Snowflake Value is automation-first. `OVERWATCH_VALUE_CANDIDATE_V`,
+`OVERWATCH_VALUE_AUTOMATION_HEALTH_V`, `OVERWATCH_VALUE_AUTOMATION_RUN`, and
 `SP_OVERWATCH_AUTOMATE_VALUE_LOG` derive value candidates from fixed action
 queue items and resolved alert evidence so DBAs do not have to manually maintain
 the value log. Estimated value remains separate from verified value until

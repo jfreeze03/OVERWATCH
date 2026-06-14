@@ -84,6 +84,7 @@ except ImportError:
             return start_date, end_date, False, max_days
         return end_date - timedelta(days=max_days - 1), end_date, True, max_days
 import utils.section_guidance as section_guidance
+from version import BUILD_LABEL, __version__
 
 def _lazy_query_call(name: str):
     def _call(*args, **kwargs):
@@ -96,46 +97,6 @@ def _lazy_query_call(name: str):
 
 format_snowflake_error = _lazy_query_call("format_snowflake_error")
 
-
-_ASK_OVERWATCH_STATE_KEYS = (
-    "executive_landing_platform_summary",
-    "executive_landing_snapshot",
-    "rec_recommendations",
-    "rec_automation_board",
-    "rec_action_queue",
-    "cost_contract_queue",
-    "cost_contract_budget_command_summary",
-    "cost_contract_budget_command_center",
-    "cost_contract_native_control_summary",
-    "cost_contract_native_control_inventory",
-    "cost_contract_spike_root_cause_summary",
-    "cost_contract_spike_root_cause",
-    "cost_contract_change_cost_summary",
-    "cost_contract_change_cost_correlation",
-    "cost_contract_governance_alert_summary",
-    "cost_contract_governance_alerts",
-    "cost_contract_incident_timeline_summary",
-    "cost_contract_incident_timeline",
-    "cost_contract_mart_operability_summary",
-    "cost_contract_mart_operability",
-    "account_health_morning_exceptions",
-    "account_health_operator_gates",
-    "account_health_control_board",
-    "account_health_intervention_matrix",
-    "account_health_checklist",
-    "security_posture_summary",
-    "security_posture_exceptions",
-    "alert_center_data",
-    "dba_control_room_data",
-    "dba_control_room_incident_board",
-    "dba_control_room_handoff",
-    "arch_adaptive_compute",
-    "arch_ai_security_guardrails",
-    "arch_futures_board",
-    "arch_futures_adoption_gate",
-    "arch_agentic_ai_summary",
-    "arch_agentic_ai_scorecard",
-)
 
 CONNECTION_OPTIONAL_SECTIONS = {"Alert Center"}
 
@@ -161,17 +122,6 @@ def _seed_current_role_from_secrets() -> None:
         role = ""
     if role:
         st.session_state["_overwatch_current_role"] = role
-
-
-def _snapshot_ask_overwatch_state(state) -> dict:
-    snapshot = {}
-    for key in _ASK_OVERWATCH_STATE_KEYS:
-        try:
-            if key in state:
-                snapshot[key] = state.get(key)
-        except Exception:
-            continue
-    return snapshot
 
 
 def _dev_reload_helpers_enabled() -> bool:
@@ -653,109 +603,6 @@ def _render_topbar_filter_strip(active_company: str) -> str:
     return str(selected_company or active_company)
 
 
-_TOP_PRIORITY_BRIEF_DOMAINS = (
-    "All",
-    "Cost",
-    "Warehouse",
-    "Reliability",
-    "Alerts",
-    "Security",
-    "Change",
-    "Automation",
-    "AI Platform",
-)
-
-
-def _priority_brief_scope_label(active_section: str, company: str) -> str:
-    environment = get_environment_label(
-        st.session_state.get("global_environment", DEFAULT_ENVIRONMENT),
-        company,
-    )
-    return " / ".join(part for part in [company, environment, active_section] if part)
-
-
-def _priority_brief_row(card: dict) -> str:
-    rank = html.escape(str(card.get("rank", "")))
-    severity = html.escape(str(card.get("severity", "Medium")))
-    entity = html.escape(str(card.get("entity", "Snowflake")))
-    signal = html.escape(str(card.get("signal", "Priority finding")))
-    evidence = html.escape(str(card.get("evidence", ""))[:280])
-    next_action = html.escape(str(card.get("next_action", ""))[:240])
-    route = html.escape(str(card.get("route", card.get("surface", "OVERWATCH"))))
-    return f"""
-    <div class="ow-priority-brief-row">
-        <div class="ow-priority-brief-head">
-            <span class="ow-priority-rank">{rank}</span>
-            <span class="ow-priority-severity">{severity}</span>
-            <strong>{entity}</strong>
-            <span>{signal}</span>
-        </div>
-        <div class="ow-priority-evidence">{evidence}</div>
-        <div class="ow-priority-next">{next_action}</div>
-        <div class="ow-priority-route">{route}</div>
-    </div>
-    """
-
-
-def _render_priority_brief_empty_state(scope_label: str) -> None:
-    safe_scope = html.escape(scope_label)
-    st.markdown(
-        f"""
-        <div class="ow-priority-empty">
-            <strong>Standing by</strong>
-            <span>{safe_scope}</span>
-            <span>Open Executive Landing for the ranked platform brief.</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _render_top_priority_brief(active_section: str, company: str, role: str) -> None:
-    """Render loaded evidence as a deterministic morning-priority brief."""
-    loaded_state = _snapshot_ask_overwatch_state(st.session_state)
-    st.markdown(
-        """
-        <div class="ow-priority-brief-shell">
-            <div class="ow-filter-strip-kicker">Top Priority Brief</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    scope_label = _priority_brief_scope_label(active_section, company) + (f" / {role}" if role else "")
-    if not loaded_state:
-        _render_priority_brief_empty_state(scope_label)
-        return
-    brief_col, domain_col = st.columns([5.2, 1.4])
-    with domain_col:
-        selected_domain = st.selectbox(
-            "Brief domain",
-            _TOP_PRIORITY_BRIEF_DOMAINS,
-            key="top_priority_brief_domain",
-        )
-
-    with brief_col:
-        st.caption(scope_label)
-        try:
-            from utils.ask_overwatch import build_top_priority_brief_cards
-
-            cards = build_top_priority_brief_cards(
-                loaded_state,
-                domain=selected_domain,
-                limit=5,
-            )
-        except Exception:
-            st.warning("Priority brief could not read loaded evidence.")
-            return
-        if not cards:
-            st.caption("No priority evidence for the selected domain.")
-            return
-        st.markdown(
-            "".join(_priority_brief_row(card) for card in cards),
-            unsafe_allow_html=True,
-        )
-
-
 def _mark_section_rendered(section: str, signature: tuple) -> None:
     st.session_state["_overwatch_last_rendered_section"] = _normalize_nav_section(section)
     st.session_state["_overwatch_last_section_render_signature"] = signature
@@ -1113,6 +960,7 @@ with st.sidebar:
     st.divider()
 
     company_color = COMPANY_CONFIG.get(active_company, {}).get("color", "#38bdf8")
+    st.caption(f"OVERWATCH {__version__} - {BUILD_LABEL}")
     st.markdown(f"""
     <div style="font-size:0.65rem; color:#475569; text-align:center;">
         <div style="color:{company_color}; font-weight:700; margin-bottom:4px;">{active_company} view</div>
@@ -1122,10 +970,6 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 _maybe_clear_scope_cache_on_filter_change()
-active_section = _current_active_section(visible_sections)
-priority_brief_slot = st.empty()
-
-# Section dispatch.
 active_section = _current_active_section(visible_sections)
 st.session_state["_overwatch_active_section"] = active_section
 
@@ -1164,11 +1008,6 @@ try:
                 )
             _mark_section_rendered(active_section, section_signature)
 finally:
-    if active_section == "Executive Landing":
-        with priority_brief_slot.container():
-            _render_top_priority_brief(active_section, active_company, current_role or "")
-    else:
-        priority_brief_slot.empty()
     duration_ms = int((time.perf_counter() - section_render_started) * 1000)
     st.session_state["_overwatch_last_section_render_ms"] = duration_ms
     st.session_state["_overwatch_secondary_chrome_ready"] = True

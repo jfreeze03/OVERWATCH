@@ -1,4 +1,4 @@
-"""DBA Control Room - operational landing page for OVERWATCH.
+﻿"""DBA Control Room - operational landing page for OVERWATCH.
 
 This page is intentionally workflow-first. It summarizes exceptions that a DBA
 must triage, routes each signal to the right specialist tool, and creates
@@ -5134,7 +5134,7 @@ def _render_command_queue_control(
 def _render_dba_command_intelligence_contract() -> None:
     """Show the command intelligence layer that DBA Control Room owns."""
     from utils.operational_intelligence import (
-        build_command_intelligence_capability_rows,
+        build_capability_register_rows,
         build_detection_root_cause_sql,
         build_precompute_contract_sql,
         build_task_critical_path_brain_sql,
@@ -5149,7 +5149,7 @@ def _render_dba_command_intelligence_contract() -> None:
         "Architecture Docs and Runbooks",
     }
     rows = pd.DataFrame(
-        [row for row in build_command_intelligence_capability_rows() if row["CAPABILITY"] in focus]
+        [row for row in build_capability_register_rows() if row["CAPABILITY"] in focus]
     )
     render_priority_dataframe(
         rows,

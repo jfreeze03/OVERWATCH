@@ -17,6 +17,7 @@ from sections.shell_helpers import (
     evidence_label,
     full_workspace_requested,
     render_refresh_contract,
+    render_setup_health_board,
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
@@ -24,6 +25,7 @@ from sections.shell_helpers import (
     render_signal_lane_board,
     scope_label,
 )
+from utils.command_board import load_setup_readiness
 
 
 VIEWS = ("Security Posture", "Change & Drift")
@@ -182,6 +184,22 @@ def _frame_len(value: object) -> int:
         return 0
 
 
+def _setup_readiness_counts(frame: object) -> dict[str, int]:
+    counts = {"ready": 0, "blocked": 0, "drift": 0, "unknown": 0, "total": _frame_len(frame)}
+    if not counts["total"]:
+        return counts
+    try:
+        state_col = "MIGRATION_STATE" if "MIGRATION_STATE" in frame.columns else "STATE"
+        states = frame[state_col].fillna("").astype(str).str.upper()
+        counts["ready"] = int(states.str.contains("READY", regex=False).sum())
+        counts["blocked"] = int(states.str.contains("BLOCK|MISSING|NOT CHECKED", regex=True).sum())
+        counts["drift"] = int(states.str.contains("DRIFT", regex=False).sum())
+        counts["unknown"] = max(0, counts["total"] - counts["ready"] - counts["blocked"] - counts["drift"])
+    except Exception:
+        counts["unknown"] = counts["total"]
+    return counts
+
+
 def _governance_shell_lanes() -> tuple[dict[str, str], ...]:
     security_summary = _frame_len(st.session_state.get("security_posture_summary"))
     security_exceptions = _frame_len(st.session_state.get("security_posture_exceptions"))
@@ -312,6 +330,55 @@ def _render_metric_board() -> None:
     ))
 
 
+def _render_setup_readiness_board() -> None:
+    readiness = load_setup_readiness()
+    counts = _setup_readiness_counts(readiness)
+    render_signal_lane_board(
+        "Privilege & Setup Readiness",
+        (
+            {
+                "label": "Ready contracts",
+                "value": f"{counts['ready']:,}",
+                "state": "Ready",
+                "detail": "Expected Snowflake setup objects and migrations that match this app build.",
+            },
+            {
+                "label": "Blocked / unknown",
+                "value": f"{counts['blocked'] + counts['unknown']:,}",
+                "state": "Setup",
+                "detail": "Run setup validation before trusting privileged actions or executive metrics.",
+            },
+            {
+                "label": "Version drift",
+                "value": f"{counts['drift']:,}",
+                "state": "Migration",
+                "detail": "Migrations with version drift need DBA review before release.",
+            },
+            {
+                "label": "Role boundary",
+                "value": "MONITOR / OPERATOR",
+                "state": "Least privilege",
+                "detail": "Daily use should prefer OVERWATCH_MONITOR or OVERWATCH_OPERATOR, not ACCOUNTADMIN.",
+            },
+        ),
+        max_lanes=4,
+    )
+    render_setup_health_board(
+        "Snowflake Role Contract",
+        (
+            ("Read-only telemetry", "OVERWATCH_MONITOR"),
+            ("Approved operations", "OVERWATCH_OPERATOR"),
+            ("Break glass", "ACCOUNTADMIN only for setup"),
+            ("Validation", "OVERWATCH_MART_VALIDATION.sql"),
+        ),
+        cadence="After setup and every release",
+        fallback="Manual DBA validation",
+        owner="Security / DBA",
+    )
+    if _frame_len(readiness):
+        st.dataframe(readiness.head(6), hide_index=True, width="stretch")
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workspace(str(row["VIEW"]))
@@ -335,4 +402,5 @@ def render() -> None:
     _render_status_strip()
     _render_kpi_row()
     _render_metric_board()
+    _render_setup_readiness_board()
     _render_workflow_launchpad()

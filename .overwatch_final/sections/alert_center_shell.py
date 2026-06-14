@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
+from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
 from sections.shell_helpers import (
     action_state_label,
     evidence_caption,
@@ -21,13 +21,19 @@ from sections.shell_helpers import (
     render_signal_lane_board,
     scope_label,
 )
+from utils.command_board import load_or_reuse_command_board
 
 
 _FULL_WORKSPACE_KEY = "_alert_center_full_workspace_requested"
 _BRIEF_MODE_KEY = "_alert_center_brief_mode"
 _FAST_ENTRY_VERSION_KEY = "_alert_center_shell_fast_entry_version"
 _FAST_ENTRY_VERSION = 1
+_COMMAND_BOARD_DATA_KEY = "alert_center_command_board_data"
+_COMMAND_BOARD_SUMMARY_KEY = "alert_center_command_board_summary"
+_COMMAND_BOARD_META_KEY = "alert_center_command_board_meta"
+_COMMAND_BOARD_REFRESH_MARKER_KEY = "alert_center_command_board_refresh_marker"
 _FULL_WORKSPACE_STATE_KEYS = (
+    _COMMAND_BOARD_SUMMARY_KEY,
     "alert_center_data",
     "alert_center_annotations",
 )
@@ -109,6 +115,38 @@ def _window_label() -> str:
     return "Selected"
 
 
+def _window_days() -> int:
+    start = st.session_state.get("global_start_date")
+    end = st.session_state.get("global_end_date")
+    if isinstance(start, date) and isinstance(end, date):
+        return max(1, (end - start).days + 1)
+    return int(DEFAULT_DAY_WINDOW)
+
+
+def _command_summary() -> dict:
+    summary = st.session_state.get(_COMMAND_BOARD_SUMMARY_KEY)
+    if isinstance(summary, dict) and summary.get("loaded"):
+        return dict(summary)
+    return {}
+
+
+def _command_meta() -> dict:
+    meta = st.session_state.get(_COMMAND_BOARD_META_KEY)
+    return dict(meta) if isinstance(meta, dict) else {}
+
+
+def _load_command_board() -> None:
+    load_or_reuse_command_board(
+        data_key=_COMMAND_BOARD_DATA_KEY,
+        summary_key=_COMMAND_BOARD_SUMMARY_KEY,
+        meta_key=_COMMAND_BOARD_META_KEY,
+        refresh_marker_key=_COMMAND_BOARD_REFRESH_MARKER_KEY,
+        company=_active_company(),
+        environment=_active_environment(),
+        days=_window_days(),
+    )
+
+
 def _full_workspace_requested() -> bool:
     """Keep Alert navigation lightweight; load command evidence only from an explicit alert workflow."""
     _ = full_workspace_requested
@@ -143,6 +181,21 @@ def _frame_count(data: dict, key: str) -> int:
         return len(frame)
     except Exception:
         return 0
+
+
+def _int_value(value: object, default: int = 0) -> int:
+    try:
+        return int(float(value if value is not None else default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _money(value: object) -> str:
+    try:
+        amount = float(value if value is not None else 0.0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return f"${amount:,.0f}"
 
 
 def _severity_count(data: dict, severities: tuple[str, ...]) -> int:
@@ -182,6 +235,65 @@ def _category_count(data: dict, category_name: str) -> int:
 
 def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
     if not data:
+        summary = _command_summary()
+        if summary:
+            critical_high = _int_value(summary.get("critical_high_alerts"))
+            open_actions = _int_value(summary.get("open_actions"))
+            failed_tasks = _int_value(summary.get("failed_tasks"))
+            failed_queries = _int_value(summary.get("failed_queries"))
+            queue_seconds = _int_value(summary.get("queue_seconds"))
+            spend = _money(summary.get("current_cost_usd"))
+            cortex = _money(summary.get("cortex_cost_usd"))
+            return (
+                {
+                    "label": "Critical / high",
+                    "value": f"{critical_high:,}",
+                    "state": "Now",
+                    "detail": "Severity-ranked alert pressure loads from the executive command mart.",
+                },
+                {
+                    "label": "Open actions",
+                    "value": f"{open_actions:,}",
+                    "state": "Owners",
+                    "detail": "Owner-routed work should have business impact, action, and verification.",
+                },
+                {
+                    "label": "Pipeline reliability",
+                    "value": f"{failed_tasks:,}",
+                    "state": "Tasks",
+                    "detail": "Task failures route to Task Graphs and the DBA morning brief.",
+                },
+                {
+                    "label": "Performance risk",
+                    "value": f"{failed_queries:,}",
+                    "state": "Queries",
+                    "detail": f"Queue time is {queue_seconds / 60.0:,.1f} minutes across the selected window.",
+                },
+                {
+                    "label": "Cost / FinOps",
+                    "value": spend,
+                    "state": "Spend",
+                    "detail": f"Top driver: {summary.get('top_cost_driver') or 'Not loaded'}.",
+                },
+                {
+                    "label": "Cortex / AI",
+                    "value": cortex,
+                    "state": "AI",
+                    "detail": "AI spend is included in alert triage because runaway usage becomes an incident.",
+                },
+                {
+                    "label": "Source freshness",
+                    "value": f"{_int_value(summary.get('freshness_sources')):,}",
+                    "state": f"{_int_value(summary.get('stale_sources')):,} stale",
+                    "detail": "Delayed telemetry is labeled before anyone acts on it.",
+                },
+                {
+                    "label": "Remediation route",
+                    "value": "Approval gated",
+                    "state": "Safe",
+                    "detail": "Every fix needs SQL preview, approval mode, and audit logging.",
+                },
+            )
         return (
             {
                 "label": "Critical / high",
@@ -345,10 +457,11 @@ def _render_kpi_row() -> None:
 def _render_metric_board() -> None:
     data = _loaded_data()
     loaded = bool(data)
+    summary = _command_summary()
     st.markdown("**Alert Metric Board**")
     render_refresh_contract(
-        data.get("_freshness_meta") if isinstance(data, dict) else {},
-        source="ALERT_EVENTS / ALERT_ACTION_QUEUE",
+        data.get("_freshness_meta") if isinstance(data, dict) and data.get("_freshness_meta") else _command_meta(),
+        source="MART_EXECUTIVE_OBSERVABILITY / ALERT_EVENTS / ALERT_ACTION_QUEUE",
         target_minutes=15,
         refresh_method="Scheduled alert sweep and owner-routing refresh",
         live_fallback="No shell fallback",
@@ -356,16 +469,16 @@ def _render_metric_board() -> None:
     render_signal_lane_board("Alert Command Board", _alert_shell_lanes(data), max_lanes=8)
     if not loaded:
         render_shell_kpi_row((
-            ("Critical / High", "Not loaded"),
-            ("Warnings", "Not loaded"),
-            ("Open Actions", "Not loaded"),
-            ("Owners Ready", "Not loaded"),
+            ("Critical / High", f"{_int_value(summary.get('critical_high_alerts')):,}" if summary else "Not loaded"),
+            ("Failed Queries", f"{_int_value(summary.get('failed_queries')):,}" if summary else "Not loaded"),
+            ("Open Actions", f"{_int_value(summary.get('open_actions')):,}" if summary else "Not loaded"),
+            ("Spend", _money(summary.get("current_cost_usd")) if summary else "Not loaded"),
         ))
         render_shell_kpi_row((
-            ("Delivery Ready", "Not loaded"),
-            ("Automation Health", "On demand"),
-            ("Suppressed", "On demand"),
-            ("Freshness", "Not loaded"),
+            ("Task Failures", f"{_int_value(summary.get('failed_tasks')):,}" if summary else "Not loaded"),
+            ("Cortex", _money(summary.get("cortex_cost_usd")) if summary else "Not loaded"),
+            ("Fresh Sources", f"{_int_value(summary.get('freshness_sources')):,}" if summary else "Not loaded"),
+            ("Automation", "Approval gated"),
         ))
         return
 
@@ -396,6 +509,60 @@ def _render_lifecycle_board() -> None:
         except Exception:
             comments = 0
     st.markdown("**Alert Lifecycle Board**")
+    render_signal_lane_board(
+        "Lifecycle Control Loop",
+        (
+            {
+                "label": "Detect",
+                "value": "ALERT_EVENTS",
+                "state": "Signal",
+                "detail": "Severity, category, source freshness, owner route, and business impact are captured once.",
+            },
+            {
+                "label": "Deduplicate",
+                "value": "Alert key",
+                "state": "Noise control",
+                "detail": "Recurring symptoms attach to the same key before they become a wall of alerts.",
+            },
+            {
+                "label": "Acknowledge",
+                "value": "ALERT_ACKNOWLEDGEMENTS",
+                "state": "Owner",
+                "detail": "Ack rows prove who took responsibility and when escalation can pause.",
+            },
+            {
+                "label": "Suppress",
+                "value": "Windowed",
+                "state": "Temporary",
+                "detail": "Suppression must expire and keep rationale; permanent hiding is not a control.",
+            },
+            {
+                "label": "Remediate",
+                "value": "ALERT_REMEDIATION_LOG",
+                "state": "Approval",
+                "detail": "SQL/action preview, approval mode, before/after state, rollback, and verification are required.",
+            },
+            {
+                "label": "Notify",
+                "value": "ALERT_NOTIFICATION_LOG",
+                "state": "Routed",
+                "detail": "Email/webhook-ready routing is recorded even when integrations are not enabled.",
+            },
+            {
+                "label": "Resolve",
+                "value": "Closure proof",
+                "state": "Verified",
+                "detail": "Resolved means the condition cleared or the owner attached evidence, not just clicked away.",
+            },
+            {
+                "label": "Learn",
+                "value": "Threshold tuning",
+                "state": "Improve",
+                "detail": "Repeated false positives should update ALERT_THRESHOLDS or the detection query.",
+            },
+        ),
+        max_lanes=8,
+    )
     render_shell_kpi_row((
         ("Acknowledge", f"{acknowledged:,}" if acknowledged else "Table ready"),
         ("Suppress", "Window table"),
@@ -420,6 +587,18 @@ def _render_lifecycle_board() -> None:
         fallback="No live scan on shell",
         owner="DBA / Security / FinOps",
     )
+    render_setup_health_board(
+        "Alert Automation Contract",
+        (
+            ("Thresholds", "ALERT_THRESHOLDS"),
+            ("Notifications", "ALERT_NOTIFICATION_LOG"),
+            ("DQ rules", "ALERT_DATA_QUALITY_CHECKS"),
+            ("Native alerts", "OVERWATCH_NATIVE_ALERT_TEMPLATES.sql"),
+        ),
+        cadence="Native alert/task schedule",
+        fallback="In-app inbox remains available",
+        owner="DBA Lead",
+    )
 
 
 def _render_workflow_launchpad() -> None:
@@ -443,6 +622,7 @@ def render() -> None:
         return
 
     st.session_state.setdefault("alert_center_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
+    _load_command_board()
     _render_status_strip()
     _render_kpi_row()
     _render_metric_board()

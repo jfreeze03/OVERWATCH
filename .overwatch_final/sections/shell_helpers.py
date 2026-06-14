@@ -2,164 +2,10 @@
 
 from __future__ import annotations
 
-import html
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 
 import streamlit as st
-
-
-_SNAPSHOT_GRID_STYLE = (
-    "display:grid;"
-    "gap:0.65rem;"
-    "margin:0.35rem 0 0.85rem;"
-)
-_SNAPSHOT_CARD_STYLE = (
-    "min-width:0;"
-    "border:1px solid var(--border-subtle, rgba(41,181,232,0.18));"
-    "border-radius:8px;"
-    "background:rgba(var(--accent-rgb, 41,181,232),0.045);"
-    "padding:0.68rem 0.78rem;"
-)
-_SNAPSHOT_LABEL_STYLE = (
-    "display:block;"
-    "color:var(--text-muted, #7b9cab);"
-    "font-size:0.66rem;"
-    "font-weight:850;"
-    "letter-spacing:0.04em;"
-    "line-height:1.22;"
-    "text-transform:uppercase;"
-    "overflow-wrap:anywhere;"
-)
-_SNAPSHOT_VALUE_STYLE = (
-    "display:block;"
-    "color:var(--text-primary, #eef8fb);"
-    "font-size:0.96rem;"
-    "font-weight:850;"
-    "line-height:1.28;"
-    "margin-top:0.26rem;"
-    "overflow-wrap:anywhere;"
-)
-_LANE_GRID_STYLE = (
-    "display:grid;"
-    "grid-template-columns:repeat(auto-fit,minmax(11.5rem,1fr));"
-    "gap:0.68rem;"
-    "margin:0.35rem 0 0.9rem;"
-)
-_LANE_CARD_STYLE = (
-    "min-width:0;"
-    "border:1px solid var(--border-subtle, rgba(41,181,232,0.18));"
-    "border-radius:8px;"
-    "background:linear-gradient(180deg, rgba(var(--accent-rgb,41,181,232),0.06), rgba(var(--accent-rgb,41,181,232),0.025));"
-    "padding:0.72rem 0.78rem;"
-    "min-height:8.2rem;"
-    "display:flex;"
-    "flex-direction:column;"
-    "gap:0.32rem;"
-)
-_LANE_TOP_STYLE = (
-    "display:flex;"
-    "align-items:flex-start;"
-    "justify-content:space-between;"
-    "gap:0.5rem;"
-)
-_LANE_TITLE_STYLE = (
-    "color:var(--text-muted, #7b9cab);"
-    "font-size:0.66rem;"
-    "font-weight:850;"
-    "letter-spacing:0.05em;"
-    "line-height:1.22;"
-    "text-transform:uppercase;"
-    "overflow-wrap:anywhere;"
-)
-_LANE_STATE_STYLE = (
-    "white-space:nowrap;"
-    "border:1px solid var(--border-subtle, rgba(41,181,232,0.22));"
-    "border-radius:999px;"
-    "padding:0.14rem 0.4rem;"
-    "color:var(--text-primary, #eef8fb);"
-    "font-size:0.62rem;"
-    "font-weight:850;"
-    "line-height:1.2;"
-    "text-transform:uppercase;"
-)
-_LANE_VALUE_STYLE = (
-    "color:var(--text-primary, #eef8fb);"
-    "font-size:1.05rem;"
-    "font-weight:900;"
-    "line-height:1.22;"
-    "overflow-wrap:anywhere;"
-)
-_LANE_DETAIL_STYLE = (
-    "color:var(--text-secondary, #b9d7e2);"
-    "font-size:0.78rem;"
-    "line-height:1.35;"
-    "overflow-wrap:anywhere;"
-)
-_STATUS_STRIP_STYLE = (
-    "display:flex;"
-    "align-items:flex-start;"
-    "justify-content:space-between;"
-    "gap:0.75rem;"
-    "border:1px solid var(--border-subtle, rgba(41,181,232,0.18));"
-    "border-radius:8px;"
-    "background:rgba(var(--accent-rgb, 41,181,232),0.055);"
-    "padding:0.68rem 0.78rem;"
-    "margin:0.2rem 0 0.7rem;"
-)
-_STATUS_COPY_STYLE = (
-    "min-width:0;"
-)
-_STATUS_BADGE_STYLE = (
-    "display:inline-flex;"
-    "align-items:center;"
-    "white-space:nowrap;"
-    "border:1px solid var(--border-subtle, rgba(41,181,232,0.22));"
-    "border-radius:999px;"
-    "padding:0.22rem 0.5rem;"
-    "color:var(--text-primary, #eef8fb);"
-    "font-size:0.68rem;"
-    "font-weight:850;"
-    "text-transform:uppercase;"
-)
-_STATUS_HEADLINE_STYLE = (
-    "color:var(--text-primary, #eef8fb);"
-    "font-size:0.96rem;"
-    "font-weight:850;"
-    "line-height:1.28;"
-    "margin:0 0 0.18rem;"
-)
-_STATUS_DETAIL_STYLE = (
-    "color:var(--text-muted, #a8bdc8);"
-    "font-size:0.82rem;"
-    "line-height:1.42;"
-    "margin:0;"
-)
-_FRESHNESS_STRIP_STYLE = (
-    "display:flex;"
-    "align-items:flex-start;"
-    "justify-content:space-between;"
-    "gap:0.7rem;"
-    "border-top:1px solid var(--border-subtle, rgba(41,181,232,0.18));"
-    "border-bottom:1px solid var(--border-subtle, rgba(41,181,232,0.12));"
-    "padding:0.48rem 0.02rem;"
-    "margin:0.25rem 0 0.65rem;"
-)
-_FRESHNESS_LABEL_STYLE = (
-    "display:block;"
-    "color:var(--text-muted, #7b9cab);"
-    "font-size:0.62rem;"
-    "font-weight:850;"
-    "letter-spacing:0.06em;"
-    "text-transform:uppercase;"
-)
-_FRESHNESS_DETAIL_STYLE = (
-    "display:block;"
-    "color:var(--text-secondary, #b9d7e2);"
-    "font-size:0.78rem;"
-    "line-height:1.34;"
-    "margin-top:0.12rem;"
-)
 
 FRESHNESS_TARGET_MINUTES = {
     "live": 5,
@@ -171,6 +17,16 @@ FRESHNESS_TARGET_MINUTES = {
     "storage": 360,
     "historical": 360,
 }
+
+
+def _badge(label: object) -> None:
+    """Render a status badge with a native fallback for older Streamlit builds."""
+    text = str(label or "Ready")
+    badge = getattr(st, "badge", None)
+    if callable(badge):
+        badge(text)
+    else:
+        st.caption(text)
 
 
 def evidence_loaded(state, keys: tuple[str, ...]) -> bool:
@@ -270,21 +126,13 @@ def render_data_freshness(
     if source and has_meta and "source" not in merged:
         merged["source"] = source
     state, detail = freshness_state(merged if has_meta else None, target_minutes=target_minutes)
-    safe_state = html.escape(state)
-    safe_source = html.escape(str(source or merged.get("source") or "Evidence"))
-    safe_detail = html.escape(detail)
-    st.markdown(
-        (
-            f'<div class="ow-data-freshness" style="{_FRESHNESS_STRIP_STYLE}">'
-            "<div>"
-            f'<span style="{_FRESHNESS_LABEL_STYLE}">Data freshness - {safe_source}</span>'
-            f'<span style="{_FRESHNESS_DETAIL_STYLE}">{safe_detail}</span>'
-            "</div>"
-            f'<span class="ow-shell-status-badge" style="{_STATUS_BADGE_STYLE}">{safe_state}</span>'
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
+    with st.container(border=True):
+        detail_col, state_col = st.columns([4, 1])
+        with detail_col:
+            st.caption(f"Data freshness - {source or merged.get('source') or 'Evidence'}")
+            st.markdown(f"**{detail}**")
+        with state_col:
+            _badge(state)
     if delayed_note:
         st.caption(str(delayed_note))
 
@@ -323,7 +171,7 @@ def render_setup_health_board(
     """Render the mart/object contract that supports a data-first command board."""
     if not objects:
         return
-    st.markdown(f"**{html.escape(str(title))}**")
+    st.markdown(f"**{title}**")
     rows = list(objects[:4])
     render_shell_snapshot(tuple(rows))
     details = []
@@ -362,23 +210,13 @@ def render_shell_snapshot(metrics: tuple[tuple[str, object], ...]) -> None:
     """Render lightweight shell snapshot cards without the bulk of metric widgets."""
     if not metrics:
         return
-    cards = []
-    for label, value in metrics:
-        cards.append(
-            f'<div class="ow-shell-snapshot-card" style="{_SNAPSHOT_CARD_STYLE}">'
-            f'<span class="ow-shell-snapshot-label" style="{_SNAPSHOT_LABEL_STYLE}">{html.escape(str(label))}</span>'
-            f'<strong class="ow-shell-snapshot-value" style="{_SNAPSHOT_VALUE_STYLE}">{html.escape(str(value))}</strong>'
-            "</div>"
-        )
-    column_count = max(1, min(4, len(cards)))
-    st.markdown(
-        (
-            '<div class="ow-shell-snapshot-grid" '
-            f'style="{_SNAPSHOT_GRID_STYLE}grid-template-columns: repeat({column_count}, minmax(0, 1fr));">'
-            f'{"".join(cards)}</div>'
-        ),
-        unsafe_allow_html=True,
-    )
+    column_count = max(1, min(4, len(metrics)))
+    cols = st.columns(column_count)
+    for idx, (label, value) in enumerate(metrics):
+        with cols[idx % column_count]:
+            with st.container(border=True):
+                st.caption(str(label))
+                st.markdown(f"**{value}**")
 
 
 def render_shell_status_strip(
@@ -388,21 +226,14 @@ def render_shell_status_strip(
     detail: object = "",
 ) -> None:
     """Render the immediate section state before any workflow actions."""
-    safe_state = html.escape(str(state or "Ready"))
-    safe_headline = html.escape(str(headline or "Ready"))
-    safe_detail = html.escape(str(detail or ""))
-    st.markdown(
-        (
-            f'<div class="ow-shell-status-strip" style="{_STATUS_STRIP_STYLE}">'
-            f'<div style="{_STATUS_COPY_STYLE}">'
-            f'<p class="ow-shell-status-headline" style="{_STATUS_HEADLINE_STYLE}">{safe_headline}</p>'
-            f'<p class="ow-shell-status-detail" style="{_STATUS_DETAIL_STYLE}">{safe_detail}</p>'
-            "</div>"
-            f'<span class="ow-shell-status-badge" style="{_STATUS_BADGE_STYLE}">{safe_state}</span>'
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
+    with st.container(border=True):
+        copy_col, state_col = st.columns([4, 1])
+        with copy_col:
+            st.markdown(f"**{headline or 'Ready'}**")
+            if detail:
+                st.caption(str(detail))
+        with state_col:
+            _badge(state or "Ready")
 
 
 def render_shell_kpi_row(metrics: tuple[tuple[str, object], ...]) -> None:
@@ -420,27 +251,24 @@ def render_signal_lane_board(
     rows = [dict(row) for row in list(lanes or ())[: max(1, int(max_lanes or 12))]]
     if not rows:
         return
-    st.markdown(f"**{html.escape(str(title))}**")
-    cards = []
-    for row in rows:
-        label = html.escape(str(row.get("label") or row.get("LANE") or "Signal"))
-        value = html.escape(str(row.get("value") or row.get("VALUE") or "Not loaded"))
-        state = html.escape(str(row.get("state") or row.get("STATE") or "Review"))
-        detail = html.escape(str(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or ""))
-        cards.append(
-            f'<div class="ow-signal-lane-card" style="{_LANE_CARD_STYLE}">'
-            f'<div style="{_LANE_TOP_STYLE}">'
-            f'<span style="{_LANE_TITLE_STYLE}">{label}</span>'
-            f'<span style="{_LANE_STATE_STYLE}">{state}</span>'
-            "</div>"
-            f'<strong style="{_LANE_VALUE_STYLE}">{value}</strong>'
-            f'<span style="{_LANE_DETAIL_STYLE}">{detail}</span>'
-            "</div>"
-        )
-    st.markdown(
-        f'<div class="ow-signal-lane-grid" style="{_LANE_GRID_STYLE}">{"".join(cards)}</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"**{title}**")
+    column_count = max(1, min(4, len(rows)))
+    cols = st.columns(column_count)
+    for idx, row in enumerate(rows):
+        label = str(row.get("label") or row.get("LANE") or "Signal")
+        value = str(row.get("value") or row.get("VALUE") or "Not loaded")
+        state = str(row.get("state") or row.get("STATE") or "Review")
+        detail = str(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or "")
+        with cols[idx % column_count]:
+            with st.container(border=True):
+                top_cols = st.columns([3, 1])
+                with top_cols[0]:
+                    st.caption(label)
+                with top_cols[1]:
+                    _badge(state)
+                st.markdown(f"**{value}**")
+                if detail:
+                    st.caption(detail)
 
 
 def _workflow_key_token(value: object, index: int) -> str:
@@ -460,11 +288,11 @@ def render_shell_workflows(
     title_key: str | None = None,
     caption_key: str = "MOVE",
 ) -> None:
-    """Render all shell workflow launchers without a hidden More/Hide rerun."""
+    """Render all shell workflow launchers without a hidden expansion rerun."""
     rows = list(workflows or ())
     if not rows:
         return
-    st.markdown(f"**{html.escape(str(title))}**")
+    st.markdown(f"**{title}**")
     for start in range(0, len(rows), 3):
         chunk = rows[start:start + 3]
         cols = st.columns(len(chunk))
@@ -475,7 +303,7 @@ def render_shell_workflows(
             button_label = str(row.get("BUTTON_LABEL") or f"Open {heading}")
             key_token = _workflow_key_token(workflow_value, index)
             with col:
-                st.markdown(f"**{html.escape(str(heading))}**")
+                st.markdown(f"**{heading}**")
                 caption = str(row.get(caption_key) or "").strip()
                 if st.button(
                     button_label,

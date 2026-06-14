@@ -198,10 +198,27 @@ def _capture_current_role(sess) -> str:
         role = rows[0]["R"] if rows else ""
         role = str(role or "").upper()
         st.session_state["_overwatch_current_role"] = role
+        _warn_on_broad_role(role)
         return role
     except Exception:
         st.session_state.setdefault("_overwatch_current_role", "")
         return ""
+
+
+def _warn_on_broad_role(role: str) -> None:
+    """Warn once when OVERWATCH is running with a break-glass admin role."""
+    if str(role or "").upper() not in {"ACCOUNTADMIN", "ORGADMIN", "SECURITYADMIN"}:
+        return
+    try:
+        if st.session_state.get("_overwatch_broad_role_warning_shown"):
+            return
+        st.warning(
+            "OVERWATCH is running with a broad administrator role. "
+            "For production, use OVERWATCH_MONITOR for read-only telemetry and OVERWATCH_OPERATOR for approved actions."
+        )
+        st.session_state["_overwatch_broad_role_warning_shown"] = True
+    except Exception:
+        pass
 
 
 def _session_is_alive(sess) -> bool:

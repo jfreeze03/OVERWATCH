@@ -8,7 +8,7 @@ import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
 from sections.navigation import apply_navigation_state
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_loaded, full_workspace_requested, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_loaded, full_workspace_requested, render_setup_health_board, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows
 
 
 _FULL_WORKSPACE_KEY = "_executive_landing_full_workspace_requested"
@@ -78,6 +78,14 @@ def _int_label(value: object, default: int = 0) -> str:
         return f"{int(round(float(value)))}"
     except (TypeError, ValueError):
         return f"{default}"
+
+
+def _float_value(value: object, default: float = 0.0) -> float:
+    try:
+        number = float(value if value is not None else default)
+        return default if number != number else number
+    except (TypeError, ValueError):
+        return default
 
 
 def _window_label() -> str:
@@ -216,6 +224,39 @@ def _render_kpi_row() -> None:
     _render_platform_score_preview()
 
 
+def _render_command_wall_preview() -> None:
+    summary = st.session_state.get(_PLATFORM_SUMMARY_KEY)
+    has_summary = isinstance(summary, dict) and evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
+    if has_summary:
+        metrics = (
+            ("Cost", f"${_float_value(summary.get('current_credits')) * _credit_price():,.0f}"),
+            ("Alerts", _int_label(summary.get("critical_high_alerts"))),
+            ("Actions", _int_label(summary.get("open_actions"))),
+            ("Deploy Risk", _int_label(summary.get("migration_blockers"))),
+        )
+    else:
+        metrics = (
+            ("Cost", "Board refresh"),
+            ("Alerts", "Board refresh"),
+            ("Actions", "Board refresh"),
+            ("Deploy Risk", "Board refresh"),
+        )
+    st.markdown("**Executive Command Wall**")
+    render_shell_kpi_row(metrics)
+    render_setup_health_board(
+        "Executive Mart Health",
+        (
+            ("Executive mart", "MART_EXECUTIVE_OBSERVABILITY"),
+            ("Cost facts", "FACT_COST_DAILY"),
+            ("Cortex facts", "FACT_CORTEX_DAILY"),
+            ("Alert facts", "ALERT_EVENTS"),
+        ),
+        cadence="60 min mart refresh",
+        fallback="No live ACCOUNT_USAGE scan on first paint",
+        owner="DBA / FinOps",
+    )
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workflow(str(row["WORKFLOW"]))
@@ -238,4 +279,5 @@ def render() -> None:
     st.session_state.setdefault("executive_landing_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _render_status_strip()
     _render_kpi_row()
+    _render_command_wall_preview()
     _render_workflow_launchpad()

@@ -40,10 +40,39 @@ from utils.dba_tool_catalog import (
 )
 from utils.workflows import render_priority_dataframe, render_workflow_selector
 from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import render_setup_health_board
 
 
 def _load_button(label, key):
     return st.button(label, key=key)
+
+
+SCHEMA_COMPARE_OBJECT_COVERAGE = (
+    "TABLE",
+    "VIEW",
+    "MATERIALIZED VIEW",
+    "DYNAMIC TABLE",
+    "EXTERNAL TABLE",
+    "STAGE",
+    "FILE FORMAT",
+    "PIPE",
+    "STREAM",
+    "TASK",
+    "SEQUENCE",
+    "FUNCTION",
+    "PROCEDURE",
+    "MASKING POLICY",
+    "ROW ACCESS POLICY",
+    "TAG",
+)
+
+DATA_COMPARE_EXECUTION_STAGES = (
+    "metadata inventory",
+    "row count",
+    "explicit-column HASH_AGG",
+    "bucket isolate",
+    "forensic diff SQL",
+)
 
 
 def _typed_confirmation(prompt: str, expected: str, key: str) -> bool:
@@ -1171,6 +1200,52 @@ LIMIT {safe_limit};
 """.strip()
 
 
+def _schema_compare_coverage_label() -> str:
+    return ", ".join(SCHEMA_COMPARE_OBJECT_COVERAGE)
+
+
+def _render_schema_compare_command_model() -> None:
+    render_shell_snapshot((
+        ("Inventory", "SHOW OBJECTS"),
+        ("Columns", "INFORMATION_SCHEMA.COLUMNS"),
+        ("Coverage", "All visible schema objects"),
+        ("DDL", "GET_DDL + ADD COLUMN"),
+    ))
+    render_setup_health_board(
+        "Schema Compare Contract",
+        (
+            ("Object scope", "All visible schema objects"),
+            ("Column drift", "Column signature compare"),
+            ("Missing DDL", "GET_DDL retargeted"),
+            ("Coverage list", _schema_compare_coverage_label()),
+        ),
+        cadence="Operator-triggered metadata read",
+        fallback="Manual GET_DDL when privilege blocks fetch",
+        owner="Release DBA",
+    )
+
+
+def _render_data_compare_command_model() -> None:
+    render_shell_snapshot((
+        ("Stage 1", "Metadata inventory"),
+        ("Stage 2", "COUNT + HASH_AGG"),
+        ("Stage 3", "Bucket isolate"),
+        ("Stage 4", "Forensic diff SQL"),
+    ))
+    render_setup_health_board(
+        "Data Compare Contract",
+        (
+            ("Scope", "Database + schema"),
+            ("Detection", "Row count + hash"),
+            ("Isolation", "Bucket mismatch SQL"),
+            ("Proof", "Keyed or EXCEPT-style diff"),
+        ),
+        cadence="Operator-triggered bounded scans",
+        fallback="Reduce table count/filter for large schemas",
+        owner="Release DBA / Data Owner",
+    )
+
+
 def _data_compare_extract_summary(df: pd.DataFrame | None) -> tuple[int | None, str]:
     if df is None or df.empty:
         return None, ""
@@ -2030,6 +2105,7 @@ def render():
             "Compares every visible schema object from SHOW OBJECTS, plus column-level metadata from "
             "INFORMATION_SCHEMA.COLUMNS. Missing objects get generated DDL statements for DBA review."
         )
+        _render_schema_compare_command_model()
         refresh_schema_meta = st.button("Refresh database and schema choices", key="sc_refresh_metadata")
         scope_key = f"{get_active_company()}_{get_active_environment()}"
         database_cache_key = f"sc_database_options_{scope_key}"
@@ -2208,6 +2284,7 @@ def render():
             "Validates row-count sameness and data likeness between matching tables in two schemas. "
             "Quick compare runs COUNT plus explicit-column HASH_AGG; mismatch rows get bucket and forensic SQL for DBA review."
         )
+        _render_data_compare_command_model()
         refresh_data_meta = st.button("Refresh database and schema choices", key="dc_refresh_metadata")
         scope_key = f"{get_active_company()}_{get_active_environment()}"
         database_cache_key = f"dc_database_options_{scope_key}"
@@ -2419,6 +2496,7 @@ def render():
                     result_rows.append({
                         "TABLE_NAME": table_name,
                         "DATA_COMPARE_STATUS": outcome,
+                        "VALIDATION_STAGES": " > ".join(DATA_COMPARE_EXECUTION_STAGES),
                         "STRUCTURE_STATUS": row.get("COMPARE_STATUS", ""),
                         "SOURCE_ACTUAL_ROW_COUNT": source_count,
                         "TARGET_ACTUAL_ROW_COUNT": target_count,
@@ -2453,7 +2531,7 @@ def render():
                         results,
                         title="Data compare results",
                         priority_columns=[
-                            "TABLE_NAME", "DATA_COMPARE_STATUS", "STRUCTURE_STATUS",
+                            "TABLE_NAME", "DATA_COMPARE_STATUS", "VALIDATION_STAGES", "STRUCTURE_STATUS",
                             "SOURCE_ACTUAL_ROW_COUNT", "TARGET_ACTUAL_ROW_COUNT", "ROW_COUNT_DIFF",
                             "COMPARABLE_COLUMN_COUNT", "SOURCE_ONLY_COLUMNS", "TARGET_ONLY_COLUMNS",
                             "TYPE_MISMATCH_COLUMNS", "UNSUPPORTED_HASH_COLUMNS",

@@ -14,6 +14,7 @@ from sections.shell_helpers import (
     evidence_loaded,
     full_workspace_requested,
     render_refresh_contract,
+    render_setup_health_board,
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
@@ -254,6 +255,35 @@ def _render_command_snapshot() -> None:
     render_shell_snapshot(_loaded_data_snapshot())
 
 
+def _render_morning_route_board() -> None:
+    data = st.session_state.get("dba_control_room_data")
+    failed_queries = failed_tasks = source_rows = action_rows = 0
+    if isinstance(data, dict) and data:
+        failed_queries = _frame_len(data.get("failed_queries"))
+        failed_tasks = _frame_len(data.get("task_failures"))
+        source_rows = _frame_len(data.get("source_health"))
+        action_rows = _frame_len(data.get("action_queue"))
+    st.markdown("**Morning Route Board**")
+    render_shell_snapshot((
+        ("Incidents", f"{failed_queries + failed_tasks:,}" if failed_queries or failed_tasks else "On demand"),
+        ("Action Queue", f"{action_rows:,}" if action_rows else "On demand"),
+        ("Source Health", f"{source_rows:,}" if source_rows else "On demand"),
+        ("Release Gate", "Ready"),
+    ))
+    render_setup_health_board(
+        "DBA Mart Contract",
+        (
+            ("Control mart", "MART_DBA_CONTROL_ROOM"),
+            ("Live fallback", "Guarded 24h cap"),
+            ("Morning brief", "Priority queue"),
+            ("Closure proof", "Action evidence"),
+        ),
+        cadence="30-60 min mart refresh",
+        fallback="Explicit DBA route",
+        owner="DBA Operations",
+    )
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workspace(str(row["VIEW"]))
@@ -279,4 +309,5 @@ def render() -> None:
     _render_status_strip()
     _render_kpi_row()
     _render_command_snapshot()
+    _render_morning_route_board()
     _render_workflow_launchpad()

@@ -61,6 +61,21 @@ Use live or near-real-time metadata only for active incidents:
 Every live path should be bounded by time window, row limit, scope filters, and
 operator intent.
 
+## Compare Workflows
+
+Schema Compare is an operator-triggered metadata workflow. It uses `SHOW OBJECTS`
+for the selected schema so every visible schema object is inventoried, then
+joins `INFORMATION_SCHEMA.COLUMNS` to catch column-level drift. Missing schema
+objects generate review SQL through `GET_DDL`; missing columns generate explicit
+`ALTER TABLE ... ADD COLUMN` statements. Privilege gaps must degrade to manual
+`GET_DDL` review, not silent success.
+
+Data Compare is an operator-triggered bounded scan. The first pass compares
+matching tables by metadata, row count, and explicit-column `HASH_AGG`. A hash
+mismatch is not the final answer; it produces bucket-isolation SQL and keyed or
+set-style forensic SQL so the DBA can prove the rows that differ. Large schemas
+must start with table filters and maximum table caps.
+
 ## What Not To Load On First Paint
 
 - full `QUERY_HISTORY` row dumps

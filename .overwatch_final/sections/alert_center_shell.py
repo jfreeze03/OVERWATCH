@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_refresh_contract, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_refresh_contract, render_setup_health_board, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_alert_center_full_workspace_requested"
@@ -245,6 +245,45 @@ def _render_metric_board() -> None:
     ))
 
 
+def _render_lifecycle_board() -> None:
+    data = _loaded_data()
+    annotations = st.session_state.get("alert_center_annotations")
+    acknowledged = _frame_count(data, "acknowledgements")
+    remediation = _frame_count(data, "remediation_log")
+    notification = _frame_count(data, "notification_log")
+    comments = _frame_count(data, "comments") if isinstance(data, dict) else 0
+    if not comments and _is_loaded_frame(annotations):
+        try:
+            comments = len(annotations)
+        except Exception:
+            comments = 0
+    st.markdown("**Alert Lifecycle Board**")
+    render_shell_kpi_row((
+        ("Acknowledge", f"{acknowledged:,}" if acknowledged else "Table ready"),
+        ("Suppress", "Window table"),
+        ("Resolve", "Closure proof"),
+        ("Comments", f"{comments:,}" if comments else "Audit-ready"),
+    ))
+    render_shell_kpi_row((
+        ("Notify", f"{notification:,}" if notification else "Integration-ready"),
+        ("Remediate", f"{remediation:,}" if remediation else "Approval gated"),
+        ("Owner Route", f"{_frame_count(data, 'owner_directory'):,}" if data else "Config table"),
+        ("Dedup", "Alert key"),
+    ))
+    render_setup_health_board(
+        "Alert Object Contract",
+        (
+            ("Events", "ALERT_EVENTS"),
+            ("Ack", "ALERT_ACKNOWLEDGEMENTS"),
+            ("Remediation", "ALERT_REMEDIATION_LOG"),
+            ("Routing", "ALERT_OWNER_ROUTING"),
+        ),
+        cadence="15 min sweep",
+        fallback="No live scan on shell",
+        owner="DBA / Security / FinOps",
+    )
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workspace(str(row["VIEW"]))
@@ -269,4 +308,5 @@ def render() -> None:
     _render_status_strip()
     _render_kpi_row()
     _render_metric_board()
+    _render_lifecycle_board()
     _render_workflow_launchpad()

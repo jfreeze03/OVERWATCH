@@ -20,7 +20,7 @@ from config import (
 )
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_navigation_state
-from sections.shell_helpers import render_refresh_contract, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip
+from sections.shell_helpers import render_refresh_contract, render_setup_health_board, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
 
@@ -1204,6 +1204,20 @@ def _render_executive_observability_board(
     days: int,
     credit_price: float,
 ) -> None:
+    def _render_mart_health_contract() -> None:
+        render_setup_health_board(
+            "Executive Mart Health",
+            (
+                ("Executive mart", "MART_EXECUTIVE_OBSERVABILITY"),
+                ("Cost/Cortex", "FACT_COST_DAILY / FACT_CORTEX_DAILY"),
+                ("Workload", "QUERY / TASK facts"),
+                ("Alerts", "ALERT_EVENTS / action queue"),
+            ),
+            cadence="60 min scheduled refresh",
+            fallback="No live ACCOUNT_USAGE scan on first paint",
+            owner="DBA / FinOps / Security",
+        )
+
     error = str((payload or {}).get("error") or "").strip()
     if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
         render_shell_status_strip(
@@ -1228,7 +1242,9 @@ def _render_executive_observability_board(
             refresh_method="Scheduled OVERWATCH mart refresh",
             live_fallback="No",
         )
+        _render_mart_health_contract()
         st.markdown("**Executive Metric Board**")
+        st.markdown("**Executive Command Wall**")
         render_shell_kpi_row((
             ("Spend", "Not loaded"),
             ("Delta", "Not loaded"),
@@ -1313,6 +1329,8 @@ def _render_executive_observability_board(
         refresh_method="Scheduled OVERWATCH mart refresh",
         live_fallback="No",
     )
+    _render_mart_health_contract()
+    st.markdown("**Executive Command Wall**")
     render_shell_kpi_row((
         ("Platform", f"{safe_int(health)}/100" if health else "Loaded"),
         ("Spend", _obs_money_label(board, "Credits Used")),

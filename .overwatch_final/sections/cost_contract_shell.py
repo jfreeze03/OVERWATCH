@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_refresh_contract, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_refresh_contract, render_setup_health_board, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_cost_contract_full_workspace_requested"
@@ -164,6 +164,8 @@ def _loaded_cost_board() -> dict:
     delta_spend = (current_credits - prior_credits) * _credit_price()
     forecast_credits = _float_value(_row_get(run_rate_row, "PROJECTED_30D_FROM_7D"))
     forecast = forecast_credits * _credit_price() if run_rate_row is not None else 0.0
+    avg_daily_7d = _float_value(_row_get(run_rate_row, "AVG_DAILY_7D")) * _credit_price()
+    run_rate_state = str(_row_get(run_rate_row, "RUN_RATE_STATE", "") or "").strip() or "Not loaded"
     top_driver = str(_row_get(cockpit_row, "TOP_INCREASE_WAREHOUSE", "Not loaded") or "Not loaded")
     top_delta = _float_value(_row_get(cockpit_row, "TOP_INCREASE_CREDITS")) * _credit_price()
 
@@ -190,6 +192,8 @@ def _loaded_cost_board() -> dict:
         "spend": spend,
         "delta_spend": delta_spend,
         "forecast": forecast,
+        "avg_daily_7d": avg_daily_7d,
+        "run_rate_state": run_rate_state,
         "top_driver": top_driver,
         "top_delta": top_delta,
         "open_actions": open_actions,
@@ -318,6 +322,37 @@ def _render_metric_board() -> None:
     ))
 
 
+def _render_executive_flow_board() -> None:
+    board = _loaded_cost_board()
+    st.markdown("**Cost Executive Flow**")
+    if not board["loaded"]:
+        render_shell_kpi_row((
+            ("Burn", "Refresh cost board"),
+            ("Run Rate", "Refresh cost board"),
+            ("Driver", "Refresh cost board"),
+            ("Action Queue", "Refresh cost board"),
+        ))
+    else:
+        render_shell_kpi_row((
+            ("Burn", _money(board["spend"])),
+            ("Run Rate", _money(board["avg_daily_7d"]) if board["avg_daily_7d"] else board["run_rate_state"]),
+            ("Driver", str(board["top_driver"])[:28]),
+            ("Action Queue", f"{_int_value(board['open_actions']):,}"),
+        ))
+    render_setup_health_board(
+        "Cost Mart Contract",
+        (
+            ("Official metering", "FACT_COST_DAILY"),
+            ("AI spend", "FACT_CORTEX_DAILY"),
+            ("Forecast", "OVERWATCH_CONTRACT_BURN_FORECAST_V"),
+            ("Value", "OVERWATCH_VALUE_CANDIDATE_V"),
+        ),
+        cadence="60 min cost refresh",
+        fallback="Explicit proof refresh",
+        owner="FinOps / DBA",
+    )
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workspace(str(row["WORKFLOW"]))
@@ -342,4 +377,5 @@ def render() -> None:
     _render_status_strip()
     _render_kpi_row()
     _render_metric_board()
+    _render_executive_flow_board()
     _render_workflow_launchpad()

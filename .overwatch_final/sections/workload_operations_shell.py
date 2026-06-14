@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, full_workspace_requested, render_refresh_contract, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip, render_shell_workflows, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, full_workspace_requested, render_refresh_contract, render_setup_health_board, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip, render_shell_workflows, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_workload_operations_full_workspace_requested"
@@ -217,6 +217,32 @@ def _render_metric_board() -> None:
     ))
 
 
+def _render_contention_solution_board() -> None:
+    decision_rows = st.session_state.get("contention_decision_rows")
+    historical_waits = st.session_state.get("contention_historical_waits")
+    task_overlap = st.session_state.get("contention_task_overlap")
+    long_dml = st.session_state.get("contention_long_dml")
+    st.markdown("**Contention Solution Board**")
+    render_shell_snapshot((
+        ("Blocked/Waiting", f"{_frame_len(decision_rows):,}" if _frame_len(decision_rows) else "On demand"),
+        ("Lock Hotspots", f"{_frame_len(historical_waits):,}" if _frame_len(historical_waits) else "On demand"),
+        ("Task Overlap", f"{_frame_len(task_overlap):,}" if _frame_len(task_overlap) else "On demand"),
+        ("Long DML", f"{_frame_len(long_dml):,}" if _frame_len(long_dml) else "On demand"),
+    ))
+    render_setup_health_board(
+        "Contention Answer Model",
+        (
+            ("First proof", "Blocker/waiter map"),
+            ("Second proof", "Task overlap"),
+            ("Third proof", "Queue/spill"),
+            ("Fix contract", "Precheck + verify SQL"),
+        ),
+        cadence="Live only after operator intent",
+        fallback="Contention Center",
+        owner="DBA Operations",
+    )
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workspace(str(row["WORKFLOW"]))
@@ -240,4 +266,5 @@ def render() -> None:
     _render_status_strip()
     _render_kpi_row()
     _render_metric_board()
+    _render_contention_solution_board()
     _render_workflow_launchpad()

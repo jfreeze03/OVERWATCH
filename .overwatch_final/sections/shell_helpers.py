@@ -256,6 +256,31 @@ def render_refresh_contract(
     st.caption(f"{refresh_method}. {detail}")
 
 
+def render_setup_health_board(
+    title: str,
+    objects: Sequence[tuple[str, object]],
+    *,
+    cadence: str = "Scheduled",
+    fallback: str = "Explicit only",
+    owner: str = "DBA",
+) -> None:
+    """Render the mart/object contract that supports a data-first command board."""
+    if not objects:
+        return
+    st.markdown(f"**{html.escape(str(title))}**")
+    rows = list(objects[:4])
+    render_shell_snapshot(tuple(rows))
+    details = []
+    if cadence:
+        details.append(f"cadence: {cadence}")
+    if fallback:
+        details.append(f"fallback: {fallback}")
+    if owner:
+        details.append(f"owner: {owner}")
+    if details:
+        st.caption("; ".join(details))
+
+
 def evidence_caption(state, keys: tuple[str, ...], unloaded_caption: str) -> str:
     if evidence_loaded(state, keys):
         return "Loaded evidence is available; open the workspace to continue from the saved proof."

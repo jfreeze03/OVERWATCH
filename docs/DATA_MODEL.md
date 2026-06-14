@@ -19,6 +19,12 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 | `OVERWATCH_RECON_RUN` | Table | Count/hash/diff run results for configured reconciliation checks. |
 | `OVERWATCH_SCHEMA_DIFF_RESULT` | Table | Object-level differences and generated DDL for missing objects. |
 
+The app's interactive Schema Compare uses live metadata on demand rather than a
+first-paint mart: `SHOW OBJECTS` supplies all visible schema objects, while
+`INFORMATION_SCHEMA.COLUMNS` supplies column drift. Interactive Data Compare is
+also on demand and moves from row count to `HASH_AGG`, bucket isolation, and
+forensic diff SQL.
+
 ## FinOps and Value
 
 | Object | Type | Purpose |

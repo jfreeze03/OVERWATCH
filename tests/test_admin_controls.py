@@ -12,6 +12,8 @@ APP_ROOT = ROOT / ".overwatch_final"
 sys.path.insert(0, str(APP_ROOT))
 
 from sections.dba_tools import (  # noqa: E402
+    DATA_COMPARE_EXECUTION_STAGES,
+    SCHEMA_COMPARE_OBJECT_COVERAGE,
     _build_data_compare_plan,
     _build_schema_compare_frame,
     _build_warehouse_setting_plan,
@@ -171,6 +173,10 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("INFORMATION_SCHEMA.COLUMNS", columns_sql)
         self.assertIn("LEFT JOIN", columns_sql)
         self.assertNotIn("TABLE_TYPE='BASE TABLE'", columns_sql.replace(" ", ""))
+        self.assertIn("TASK", SCHEMA_COMPARE_OBJECT_COVERAGE)
+        self.assertIn("PROCEDURE", SCHEMA_COMPARE_OBJECT_COVERAGE)
+        self.assertIn("MASKING POLICY", SCHEMA_COMPARE_OBJECT_COVERAGE)
+        self.assertIn("explicit-column HASH_AGG", DATA_COMPARE_EXECUTION_STAGES)
 
     def test_schema_compare_generates_review_sql_for_missing_objects(self):
         source_objects = pd.DataFrame([

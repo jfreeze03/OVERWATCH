@@ -15,6 +15,7 @@ from sections.contention_center import (  # noqa: E402
     _focus_handoff_frame,
     _incident_cockpit_view,
     _live_incident_rows,
+    build_contention_solution_summary,
     build_contention_safe_action_contract,
     build_blocked_query_task_map_sql,
     build_live_query_incident_sql,
@@ -275,6 +276,47 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertIn("WAREHOUSE_NAME = 'WH_TRXS_QUERY'", queue_contract["PRECHECK_SQL"])
         self.assertIn("WAREHOUSE_LOAD_HISTORY", queue_contract["VERIFY_SQL"])
         self.assertIn("Do not cancel or abort", queue_contract["WHEN_NOT_TO_RUN"])
+
+    def test_contention_solution_summary_routes_fix_paths(self):
+        summary = build_contention_solution_summary(pd.DataFrame([
+            {
+                "SEVERITY": "Critical",
+                "SIGNAL": "Lock wait",
+                "BOTTLENECK_TYPE": "Lock wait / blocked transaction",
+                "TARGET_OBJECT": "APP_DB.CORE.FACT_POLICY",
+                "FIRST_MOVE": "Run blocker precheck SQL.",
+                "PROOF_REQUIRED": "LOCK_WAIT_HISTORY",
+                "OWNER_ROUTE": "Active Locks",
+                "CLEANUP_DECISION": "Abort blocker transaction candidate",
+            },
+            {
+                "SEVERITY": "High",
+                "SIGNAL": "Task overlap",
+                "BOTTLENECK_TYPE": "Task graph overlap / blocked task write",
+                "ENTITY": "LOAD_FACT_POLICY",
+                "FIRST_MOVE": "Set NO_OVERLAP.",
+                "PROOF_REQUIRED": "TASK_HISTORY",
+                "OWNER_ROUTE": "Task graphs",
+                "CLEANUP_DECISION": "Task schedule cleanup",
+            },
+            {
+                "SEVERITY": "Medium",
+                "SIGNAL": "Warehouse queueing",
+                "BOTTLENECK_TYPE": "Warehouse compute pressure",
+                "ENTITY": "WH_TRXS_LOAD",
+                "FIRST_MOVE": "Review concurrency.",
+                "PROOF_REQUIRED": "WAREHOUSE_LOAD_HISTORY",
+                "OWNER_ROUTE": "Cost & Contract",
+                "CLEANUP_DECISION": "No cancel - capacity review",
+            },
+        ]))
+
+        self.assertIn("Clean up blocker", set(summary["SOLUTION_ROUTE"]))
+        self.assertIn("Serialize task graph", set(summary["SOLUTION_ROUTE"]))
+        self.assertIn("Fix warehouse pressure", set(summary["SOLUTION_ROUTE"]))
+        blocker = summary[summary["SOLUTION_ROUTE"].eq("Clean up blocker")].iloc[0]
+        self.assertEqual(blocker["TOP_SEVERITY"], "Critical")
+        self.assertIn("FACT_POLICY", blocker["PRIMARY_ENTITY"])
 
     def test_cleanup_contract_view_surfaces_manual_guardrails(self):
         decisions = pd.DataFrame([{

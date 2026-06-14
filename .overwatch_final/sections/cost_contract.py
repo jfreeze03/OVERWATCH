@@ -391,6 +391,61 @@ def _render_cost_splash_next_move(summary: dict) -> None:
                 st.rerun()
 
 
+def _cost_executive_decision_stack(summary: dict, action_summary: dict) -> pd.DataFrame:
+    delta = safe_float(summary.get("spend_delta"))
+    projected = safe_float(summary.get("projected_30d_spend"))
+    spend = safe_float(summary.get("spend"))
+    cortex = safe_float(summary.get("cortex_spend"))
+    open_actions = safe_int(action_summary.get("open_actions"))
+    savings = safe_float(action_summary.get("estimated_savings"))
+    rows = [
+        {
+            "DECISION": "Explain bill movement",
+            "SIGNAL": _slide_money(delta, signed=True),
+            "FIRST_QUESTION": f"Is {summary.get('top_warehouse')} the real driver or just the largest warehouse mover?",
+            "OWNER": "DBA / FinOps",
+            "ROUTE": "Explain bill / attribution / contract",
+        },
+        {
+            "DECISION": "Validate contract burn",
+            "SIGNAL": _slide_money(projected),
+            "FIRST_QUESTION": "Does the 30-day run-rate fit the committed-use plan and budget guardrails?",
+            "OWNER": "FinOps",
+            "ROUTE": "FinOps Control Center",
+        },
+        {
+            "DECISION": "Review Cortex usage",
+            "SIGNAL": _slide_money(cortex),
+            "FIRST_QUESTION": f"Is {summary.get('top_cortex_user')} expected to be the top AI spender?",
+            "OWNER": "DBA / AI platform",
+            "ROUTE": "AI and Cortex spend",
+        },
+        {
+            "DECISION": "Close owned savings",
+            "SIGNAL": f"{open_actions:,} open / {_slide_money(savings)}/mo",
+            "FIRST_QUESTION": "Which recommendations have owner approval, baseline proof, and verification SQL?",
+            "OWNER": "DBA / Service owner",
+            "ROUTE": "Recommendations and action queue",
+        },
+    ]
+    frame = pd.DataFrame(rows)
+    if spend <= 0 and projected <= 0 and cortex <= 0 and not open_actions:
+        frame["SIGNAL"] = "Not loaded"
+    return frame
+
+
+def _render_cost_executive_decision_stack(summary: dict) -> None:
+    action_summary = _cost_snapshot_action_summary(st.session_state.get("cost_contract_queue", pd.DataFrame()))
+    render_priority_dataframe(
+        _cost_executive_decision_stack(summary, action_summary),
+        title="Cost executive decision stack",
+        priority_columns=["DECISION", "SIGNAL", "FIRST_QUESTION", "OWNER", "ROUTE"],
+        raw_label="All cost executive decision rows",
+        height=230,
+        max_rows=4,
+    )
+
+
 def _freshness_note(source: str) -> str:
     source_key = str(source or "").lower()
     if "information_schema" in source_key or source_key in {"live", "is"}:
@@ -5086,6 +5141,7 @@ def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: 
 
     _render_cost_splash_narrative(summary, days=int(days))
     _render_cost_splash_next_move(summary)
+    _render_cost_executive_decision_stack(summary)
 
     if splash.get("source"):
         proof_note = (

@@ -1265,6 +1265,107 @@ def _data_compare_outcome(source_count: int | None, target_count: int | None, so
     return "Matched"
 
 
+def _sql_number_expr(value: object) -> str:
+    if value is None:
+        return "NULL"
+    try:
+        if pd.isna(value):
+            return "NULL"
+    except Exception:
+        pass
+    text = str(value).strip()
+    if not text:
+        return "NULL"
+    try:
+        number = float(text)
+    except ValueError:
+        return "NULL"
+    if number.is_integer():
+        return str(int(number))
+    return str(number)
+
+
+def _schema_compare_persistence_sql(
+    compare: pd.DataFrame | None,
+    *,
+    source_db: str,
+    source_schema: str,
+    target_db: str,
+    target_schema: str,
+    owner: str = "",
+    severity: str = "MEDIUM",
+) -> str:
+    rows = compare.copy() if isinstance(compare, pd.DataFrame) else pd.DataFrame()
+    if rows.empty:
+        return "-- No schema compare rows available to persist."
+    if "COMPARE_STATUS" in rows.columns:
+        rows = rows[rows["COMPARE_STATUS"].fillna("").astype(str).ne("Matched")]
+    if rows.empty:
+        return "-- Schema compare matched; no difference rows to persist."
+    select_rows = []
+    for _, row in rows.iterrows():
+        generated_ddl = str(row.get("DDL_STATEMENT") or row.get("DDL_REVIEW_SQL") or "").strip()
+        select_rows.append(
+            "SELECT "
+            f"{sql_literal(source_db, 300)} AS SOURCE_DATABASE, "
+            f"{sql_literal(source_schema, 300)} AS SOURCE_SCHEMA, "
+            f"{sql_literal(target_db, 300)} AS TARGET_DATABASE, "
+            f"{sql_literal(target_schema, 300)} AS TARGET_SCHEMA, "
+            f"{sql_literal(row.get('OBJECT_TYPE', ''), 100)} AS OBJECT_TYPE, "
+            f"{sql_literal(row.get('OBJECT_NAME', ''), 1000)} AS OBJECT_NAME, "
+            f"{sql_literal(row.get('COMPARE_STATUS', ''), 100)} AS DIFF_TYPE, "
+            f"{sql_literal(generated_ddl, 16000)} AS GENERATED_DDL, "
+            f"{sql_literal(owner, 300)} AS OWNER, "
+            f"{sql_literal(str(severity or 'MEDIUM').upper(), 40)} AS SEVERITY"
+        )
+    select_sql = " UNION ALL\n".join(select_rows)
+    return f"""
+INSERT INTO OVERWATCH_SCHEMA_DIFF_RESULT (
+    SOURCE_DATABASE, SOURCE_SCHEMA, TARGET_DATABASE, TARGET_SCHEMA,
+    OBJECT_TYPE, OBJECT_NAME, DIFF_TYPE, GENERATED_DDL, OWNER, SEVERITY
+)
+{select_sql};
+""".strip()
+
+
+def _data_compare_persistence_sql(
+    results: pd.DataFrame | None,
+    *,
+    check_id: int | str | None = None,
+    recommended_action: str = "Review mismatches and run generated forensic SQL before release cutover.",
+) -> str:
+    rows = results.copy() if isinstance(results, pd.DataFrame) else pd.DataFrame()
+    if rows.empty:
+        return "-- No data compare result rows available to persist."
+    select_rows = []
+    check_expr = "NULL" if check_id in (None, "") else f"TRY_TO_NUMBER({sql_literal(str(check_id), 100)})"
+    for _, row in rows.iterrows():
+        status = str(row.get("DATA_COMPARE_STATUS") or "Unavailable").strip()
+        table_name = str(row.get("TABLE_NAME") or "Unknown table").strip()
+        mismatch = 0 if status == "Matched" else 1
+        table_action = f"{recommended_action} Table: {table_name}. Status: {status}."
+        select_rows.append(
+            "SELECT "
+            f"{check_expr} AS CHECK_ID, "
+            f"{sql_literal(status, 40)} AS RUN_STATUS, "
+            f"{_sql_number_expr(row.get('SOURCE_ACTUAL_ROW_COUNT'))} AS SOURCE_ROW_COUNT, "
+            f"{_sql_number_expr(row.get('TARGET_ACTUAL_ROW_COUNT'))} AS TARGET_ROW_COUNT, "
+            f"{sql_literal(row.get('SOURCE_DATA_HASH', ''), 200)} AS SOURCE_HASH, "
+            f"{sql_literal(row.get('TARGET_DATA_HASH', ''), 200)} AS TARGET_HASH, "
+            f"{mismatch} AS MISMATCH_COUNT, "
+            f"{sql_literal(row.get('FORENSIC_DIFF_SQL', ''), 16000)} AS SAMPLE_DIFF_SQL, "
+            f"{sql_literal(table_action, 2000)} AS RECOMMENDED_ACTION"
+        )
+    select_sql = " UNION ALL\n".join(select_rows)
+    return f"""
+INSERT INTO OVERWATCH_RECON_RUN (
+    CHECK_ID, RUN_STATUS, SOURCE_ROW_COUNT, TARGET_ROW_COUNT,
+    SOURCE_HASH, TARGET_HASH, MISMATCH_COUNT, SAMPLE_DIFF_SQL, RECOMMENDED_ACTION
+)
+{select_sql};
+""".strip()
+
+
 def _build_schema_compare_frame(
     source_inventory: pd.DataFrame,
     target_inventory: pd.DataFrame,
@@ -2275,6 +2376,44 @@ def render():
                 else:
                     st.success("No missing objects were found between the selected schemas.")
                 download_csv(df_cmp, "schema_compare.csv")
+                if missing_or_changed is not None and not missing_or_changed.empty:
+                    persistence_rows = missing_or_changed.copy()
+                    if ddl_statement_rows is not None and not ddl_statement_rows.empty:
+                        ddl_lookup = {
+                            (
+                                str(row.get("OBJECT_TYPE") or "").upper(),
+                                str(row.get("OBJECT_NAME") or "").upper(),
+                            ): str(row.get("DDL_STATEMENT") or "")
+                            for _, row in ddl_statement_rows.iterrows()
+                        }
+                        persistence_rows["DDL_STATEMENT"] = persistence_rows.apply(
+                            lambda row: ddl_lookup.get(
+                                (
+                                    str(row.get("OBJECT_TYPE") or "").upper(),
+                                    str(row.get("OBJECT_NAME") or "").upper(),
+                                ),
+                                str(row.get("DDL_REVIEW_SQL") or ""),
+                            ),
+                            axis=1,
+                        )
+                    schema_persist_sql = _schema_compare_persistence_sql(
+                        persistence_rows,
+                        source_db=dev_db,
+                        source_schema=dev_sch,
+                        target_db=prod_db,
+                        target_schema=prod_sch,
+                        owner="Release DBA",
+                        severity="MEDIUM",
+                    )
+                    st.download_button(
+                        "Download Schema Diff Log SQL",
+                        schema_persist_sql,
+                        file_name="schema_compare_persist_results.sql",
+                        mime="text/sql",
+                        key="schema_compare_persist_sql_download",
+                    )
+                    with st.expander("Schema Diff Log SQL", expanded=False):
+                        st.code(schema_persist_sql, language="sql")
             except Exception as e:
                 st.error(f"Compare failed: {format_snowflake_error(e)}")
 
@@ -2541,6 +2680,16 @@ def render():
                         raw_label="All data compare result rows",
                     )
                     download_csv(results, "data_compare_results.csv")
+                    recon_sql = _data_compare_persistence_sql(results)
+                    st.download_button(
+                        "Download Data Compare Run Log SQL",
+                        recon_sql,
+                        file_name="data_compare_persist_run.sql",
+                        mime="text/sql",
+                        key="dc_persist_sql_download",
+                    )
+                    with st.expander("Data Compare Run Log SQL", expanded=False):
+                        st.code(recon_sql, language="sql")
                 else:
                     st.info("No comparable tables were scanned. Check source/target schemas, table filter, or comparable columns.")
                 if skipped is not None and not skipped.empty:

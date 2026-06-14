@@ -1125,6 +1125,81 @@ def _add_safe_action_contracts(decision: pd.DataFrame) -> pd.DataFrame:
     return decision
 
 
+def build_contention_solution_summary(decision: pd.DataFrame | None) -> pd.DataFrame:
+    """Collapse detailed contention evidence into DBA-first solution routes."""
+    work = _safe_frame(decision)
+    columns = [
+        "SOLUTION_ROUTE",
+        "OPEN_SIGNALS",
+        "TOP_SEVERITY",
+        "PRIMARY_ENTITY",
+        "FIRST_ACTION",
+        "PROOF_REQUIRED",
+        "OWNER_ROUTE",
+    ]
+    if work.empty:
+        return pd.DataFrame(columns=columns)
+    if "_ROUTE_RANK" not in work.columns:
+        work = work.copy()
+        work["_ROUTE_RANK"] = work.get("SEVERITY", pd.Series([""] * len(work))).map(_severity_rank)
+    route_defs = (
+        (
+            "Clean up blocker",
+            work.get("CLEANUP_DECISION", pd.Series([""] * len(work))).astype(str).str.contains("Abort|Cancel", case=False, regex=True)
+            | work.get("BOTTLENECK_TYPE", pd.Series([""] * len(work))).astype(str).str.contains("lock|blocked transaction", case=False, regex=True),
+        ),
+        (
+            "Serialize task graph",
+            work.get("BOTTLENECK_TYPE", pd.Series([""] * len(work))).astype(str).str.contains("task", case=False, regex=False)
+            | work.get("SIGNAL", pd.Series([""] * len(work))).astype(str).str.contains("task", case=False, regex=False),
+        ),
+        (
+            "Shorten DML transaction",
+            work.get("BOTTLENECK_TYPE", pd.Series([""] * len(work))).astype(str).str.contains("Long DML", case=False, regex=False)
+            | work.get("SIGNAL", pd.Series([""] * len(work))).astype(str).str.contains("Long DML", case=False, regex=False),
+        ),
+        (
+            "Fix warehouse pressure",
+            work.get("OWNER_ROUTE", pd.Series([""] * len(work))).astype(str).str.contains("Cost & Contract|Warehouse", case=False, regex=True)
+            | work.get("SIGNAL", pd.Series([""] * len(work))).astype(str).str.contains("queue", case=False, regex=False),
+        ),
+    )
+    rows: list[dict[str, object]] = []
+    used = pd.Series([False] * len(work), index=work.index)
+    for route, mask in route_defs:
+        routed = work[mask.fillna(False)]
+        used = used | mask.fillna(False)
+        if routed.empty:
+            continue
+        top = routed.sort_values(["_ROUTE_RANK", "SIGNAL"], ascending=[True, True]).iloc[0]
+        rows.append({
+            "SOLUTION_ROUTE": route,
+            "OPEN_SIGNALS": len(routed),
+            "TOP_SEVERITY": str(top.get("SEVERITY") or "Watch"),
+            "PRIMARY_ENTITY": str(top.get("TARGET_OBJECT") or top.get("ENTITY") or ""),
+            "FIRST_ACTION": str(top.get("FIRST_MOVE") or top.get("NEXT_ACTION") or ""),
+            "PROOF_REQUIRED": str(top.get("PROOF_REQUIRED") or top.get("VERIFY_AFTER_FIX") or ""),
+            "OWNER_ROUTE": str(top.get("OWNER_ROUTE") or "Contention Center"),
+        })
+    remainder = work[~used]
+    if not remainder.empty:
+        top = remainder.sort_values(["_ROUTE_RANK", "SIGNAL"], ascending=[True, True]).iloc[0]
+        rows.append({
+            "SOLUTION_ROUTE": "Investigate remaining signal",
+            "OPEN_SIGNALS": len(remainder),
+            "TOP_SEVERITY": str(top.get("SEVERITY") or "Watch"),
+            "PRIMARY_ENTITY": str(top.get("TARGET_OBJECT") or top.get("ENTITY") or ""),
+            "FIRST_ACTION": str(top.get("FIRST_MOVE") or top.get("NEXT_ACTION") or ""),
+            "PROOF_REQUIRED": str(top.get("PROOF_REQUIRED") or top.get("VERIFY_AFTER_FIX") or ""),
+            "OWNER_ROUTE": str(top.get("OWNER_ROUTE") or "Contention Center"),
+        })
+    summary = pd.DataFrame(rows, columns=columns)
+    if summary.empty:
+        return summary
+    summary["_RANK"] = summary["TOP_SEVERITY"].map(_severity_rank)
+    return summary.sort_values(["_RANK", "OPEN_SIGNALS"], ascending=[True, False]).drop(columns=["_RANK"]).reset_index(drop=True)
+
+
 def _decision_rows(
     lock_waits: pd.DataFrame,
     task_overlap: pd.DataFrame,
@@ -1853,6 +1928,26 @@ def _render_brief() -> None:
     if decision.empty:
         st.info("Load contention evidence to rank blockers, task overlap, long DML, and warehouse pressure.")
         return
+    solution_summary = build_contention_solution_summary(decision)
+    if not solution_summary.empty:
+        render_priority_dataframe(
+            solution_summary,
+            title="Contention solution routes",
+            priority_columns=[
+                "SOLUTION_ROUTE",
+                "OPEN_SIGNALS",
+                "TOP_SEVERITY",
+                "PRIMARY_ENTITY",
+                "FIRST_ACTION",
+                "PROOF_REQUIRED",
+                "OWNER_ROUTE",
+            ],
+            sort_by=["TOP_SEVERITY", "OPEN_SIGNALS"],
+            ascending=[True, False],
+            max_rows=6,
+            raw_label="All contention solution routes",
+            height=220,
+        )
     _render_incident_cockpit(decision)
     _render_fix_plan_actions(decision)
     _render_cleanup_contract(decision)

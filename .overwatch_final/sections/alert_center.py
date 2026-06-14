@@ -2704,6 +2704,8 @@ def render() -> None:
                 from utils.alerts import (
                     ALERT_STATUS_CHOICES,
                     acknowledge_alert_escalation,
+                    build_alert_acknowledgement_insert_sql,
+                    build_alert_remediation_log_insert_sql,
                     update_alert_status,
                 )
 
@@ -2766,6 +2768,49 @@ def render() -> None:
                                 st.session_state.pop("alert_center_data", None)
                             except Exception as exc:
                                 st.error(f"Could not acknowledge escalation: {_format_snowflake_error(exc)}")
+                with st.expander("Command Center audit SQL", expanded=False):
+                    audit_alert = st.selectbox("Audit event ID", alert_ids, key="alert_center_audit_event_id")
+                    audit_status = st.selectbox(
+                        "Lifecycle status",
+                        list(ALERT_STATUS_CHOICES),
+                        key="alert_center_audit_status",
+                    )
+                    audit_owner = st.text_input(
+                        "Owner",
+                        key="alert_center_audit_owner",
+                        placeholder="DBA / FinOps / Security owner",
+                    )
+                    audit_note = st.text_area(
+                        "Audit note",
+                        key="alert_center_audit_note",
+                        placeholder="Ticket, investigation result, owner assignment, or remediation evidence.",
+                    )
+                    if len(str(audit_note or "").strip()) >= 5:
+                        audit_sql = "\n\n".join([
+                            build_alert_acknowledgement_insert_sql(
+                                event_id=audit_alert,
+                                alert_key=str(audit_alert),
+                                note=audit_note,
+                                actor=_alert_actor(),
+                                owner=audit_owner,
+                                status_after_ack=audit_status,
+                                next_checkpoint_hours=8,
+                            ),
+                            build_alert_remediation_log_insert_sql(
+                                event_id=audit_alert,
+                                alert_key=str(audit_alert),
+                                remediation_mode="RECOMMEND",
+                                action_type=f"Lifecycle status: {audit_status}",
+                                before_state="Alert reviewed from Alert Center.",
+                                after_state=str(audit_note),
+                                execution_status="RECORDED",
+                                rollback_guidance="Reopen the alert or add a follow-up acknowledgement if the condition returns.",
+                                actor=_alert_actor(),
+                            ),
+                        ])
+                        st.code(audit_sql, language="sql")
+                    else:
+                        st.caption("Enter an audit note to generate acknowledgement and remediation-log insert SQL.")
 
     elif active_view == "Email Delivery":
         st.subheader("Email Delivery Queue")

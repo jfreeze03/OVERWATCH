@@ -36,6 +36,13 @@ or mart lookup would block the first paint, show the precomputed-board frame and
 let `Refresh Board` read the compact mart. Do not fall back to live account
 history scans from the executive landing page.
 
+Executive Landing is the only exception to the single-query ideal when the
+compact mart is unavailable. It may fall back to bounded OVERWATCH fact marts
+(`FACT_COST_DAILY`, `FACT_CORTEX_DAILY`, `FACT_QUERY_HOURLY`,
+`FACT_QUERY_DETAIL_RECENT`, task, storage, alert, and action tables) so the boss
+page can still show cost drivers, query/database/status mix, warehouse pressure,
+and run-rate facts without scanning raw `SNOWFLAKE.ACCOUNT_USAGE`.
+
 The same first-paint rule applies to Cost & Contract, Alert Center, and
 Snowflake Value: show the board frame immediately, reuse already-loaded session
 state when present, and keep Snowflake reads behind explicit refresh/load
@@ -75,6 +82,12 @@ matching tables by metadata, row count, and explicit-column `HASH_AGG`. A hash
 mismatch is not the final answer; it produces bucket-isolation SQL and keyed or
 set-style forensic SQL so the DBA can prove the rows that differ. Large schemas
 must start with table filters and maximum table caps.
+
+Both compare workflows generate reviewable persistence SQL. Schema differences
+insert into `OVERWATCH_SCHEMA_DIFF_RESULT`; data compare runs insert into
+`OVERWATCH_RECON_RUN`. The app does not auto-write those records during a
+compare because the scan may be part of a release gate, an investigation, or a
+one-off DBA check.
 
 ## What Not To Load On First Paint
 

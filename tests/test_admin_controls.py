@@ -17,6 +17,7 @@ from sections.dba_tools import (  # noqa: E402
     _build_data_compare_plan,
     _build_schema_compare_frame,
     _build_warehouse_setting_plan,
+    _data_compare_persistence_sql,
     _current_role_allows_alter_account,
     _data_compare_bucket_sql,
     _data_compare_forensic_sql,
@@ -24,6 +25,7 @@ from sections.dba_tools import (  # noqa: E402
     _data_compare_tables_sql,
     _schema_compare_columns_sql,
     _schema_compare_inventory,
+    _schema_compare_persistence_sql,
     _schema_compare_show_objects_sql,
 )
 from sections.security_access import (  # noqa: E402
@@ -255,6 +257,40 @@ class AdminControlTests(unittest.TestCase):
             'ALTER TABLE "ALFA_EDW_PROD"."PUBLIC"."POLICY_FACT" ADD COLUMN "LOAD_TS" TIMESTAMP_NTZ;',
             rows[("COLUMN", "POLICY_FACT.LOAD_TS")]["DDL_REVIEW_SQL"],
         )
+
+    def test_schema_and_data_compare_generate_persistence_sql(self):
+        schema_sql = _schema_compare_persistence_sql(
+            pd.DataFrame([{
+                "COMPARE_STATUS": "Only in source",
+                "OBJECT_TYPE": "TABLE",
+                "OBJECT_NAME": "POLICY_FACT",
+                "DDL_STATEMENT": 'CREATE TABLE "ALFA_EDW_PROD"."PUBLIC"."POLICY_FACT" (POLICY_ID NUMBER);',
+            }]),
+            source_db="ALFA_EDW_DEV",
+            source_schema="PUBLIC",
+            target_db="ALFA_EDW_PROD",
+            target_schema="PUBLIC",
+            owner="Release DBA",
+            severity="HIGH",
+        ).upper()
+        recon_sql = _data_compare_persistence_sql(pd.DataFrame([{
+            "TABLE_NAME": "POLICY_FACT",
+            "DATA_COMPARE_STATUS": "Hash mismatch",
+            "SOURCE_ACTUAL_ROW_COUNT": 10,
+            "TARGET_ACTUAL_ROW_COUNT": 10,
+            "SOURCE_DATA_HASH": "abc",
+            "TARGET_DATA_HASH": "def",
+            "FORENSIC_DIFF_SQL": "SELECT * FROM DIFF_SAMPLE;",
+        }]), check_id=42).upper()
+
+        self.assertIn("INSERT INTO OVERWATCH_SCHEMA_DIFF_RESULT", schema_sql)
+        self.assertIn("ALFA_EDW_DEV", schema_sql)
+        self.assertIn("POLICY_FACT", schema_sql)
+        self.assertIn("CREATE TABLE", schema_sql)
+        self.assertIn("INSERT INTO OVERWATCH_RECON_RUN", recon_sql)
+        self.assertIn("TRY_TO_NUMBER('42')", recon_sql)
+        self.assertIn("HASH MISMATCH", recon_sql)
+        self.assertIn("SELECT * FROM DIFF_SAMPLE", recon_sql)
 
     def test_admin_actions_default_on_for_full_privilege_roles(self):
         previous = dict(st.session_state)

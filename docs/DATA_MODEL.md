@@ -10,6 +10,7 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 | `OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY` | Table | Ranked 12-item capability register used by setup/runbook review. |
 | `OVERWATCH_REFRESH_POLICY` | Table | Surface-by-surface refresh contract for first paint, retention, live fallback, and owner accountability. |
 | `OVERWATCH_SELF_MONITORING_V` | View | Summarizes app query tags, failures, latency, and bytes scanned by section. |
+| `MART_EXECUTIVE_OBSERVABILITY` | Transient mart | Boss-page metric wall: spend, Cortex, runtime, queue, spill, alerts, actions, storage, platform score, cost drivers, query database mix, execution status, and warehouse pressure. |
 
 ## Reconciliation
 
@@ -23,7 +24,9 @@ The app's interactive Schema Compare uses live metadata on demand rather than a
 first-paint mart: `SHOW OBJECTS` supplies all visible schema objects, while
 `INFORMATION_SCHEMA.COLUMNS` supplies column drift. Interactive Data Compare is
 also on demand and moves from row count to `HASH_AGG`, bucket isolation, and
-forensic diff SQL.
+forensic diff SQL. Both tools generate persistence SQL for their run evidence;
+DBAs review and execute that SQL when the compare should become release or
+incident proof.
 
 ## FinOps and Value
 

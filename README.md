@@ -29,7 +29,10 @@ The Executive Landing page is the one deliberate first-paint aggregate:
 `MART_EXECUTIVE_OBSERVABILITY`. It is refreshed after the hourly load, Cortex
 load, Control Room, cost governance, and automation tasks so the first screen
 can show spend, Cortex cost, runtime, queueing, spill, failures, alerts,
-actions, storage, and platform score from one small query.
+actions, storage, platform score, ranked cost drivers, queries by database,
+execution status, and warehouse pressure from one small query. If that compact
+mart is empty or stale for the selected scope, the app falls back to bounded
+fact-mart queries before showing a no-data board.
 
 The same decision is seeded in Snowflake as `OVERWATCH_REFRESH_POLICY`, which
 defines first-paint sources, target freshness, retention, live-fallback
@@ -88,6 +91,11 @@ tables:
 - `ALERT_THRESHOLDS`
 - `ALERT_OWNER_ROUTING`
 - `ALERT_DATA_QUALITY_CHECKS`
+
+Lifecycle actions should be written to the command-center audit tables. The app
+generates reviewable insert SQL for `ALERT_ACKNOWLEDGEMENTS` and
+`ALERT_REMEDIATION_LOG`; dangerous remediation remains approval-gated and
+logged rather than silently executed.
 
 The section covers security, Cost/FinOps, performance, task and pipeline,
 data-quality, and optimization alert families. Snowflake `ACCOUNT_USAGE` views

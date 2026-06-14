@@ -96,6 +96,7 @@ from utils.evidence_mode import (  # noqa: E402
 )
 from sections.executive_landing import (  # noqa: E402
     _build_executive_snapshot_pptx,
+    _build_executive_observability_query_parts,
     _build_executive_observability_sql,
     _build_platform_operating_score,
     _powerpoint_chart_rows,
@@ -410,6 +411,7 @@ from utils.alerts import (  # noqa: E402
     build_alert_digest_body,
     build_alert_digest_subject,
     build_alert_digest_summary,
+    build_alert_acknowledgement_insert_sql,
     build_alert_delivery_log_ddl,
     build_alert_delivery_log_insert_sql,
     build_alert_delivery_mark_sql,
@@ -427,6 +429,7 @@ from utils.alerts import (  # noqa: E402
     build_alert_morning_brief_rows,
     build_alert_optional_integrations,
     build_alert_owner_workload_board,
+    build_alert_remediation_log_insert_sql,
     build_alert_remediation_contract,
     build_alert_required_privileges,
     build_alert_rule_audit_ddl,
@@ -655,6 +658,26 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertNotIn("FACT_QUERY_HOURLY", sql)
         self.assertNotIn("FACT_COST_DAILY", sql)
         self.assertNotIn("SNOWFLAKE.ACCOUNT_USAGE", sql)
+
+    def test_executive_observability_fallback_and_mart_include_metric_wall_panels(self):
+        parts = _build_executive_observability_query_parts(
+            "ALFA",
+            "PROD",
+            30,
+            credit_price=3.68,
+            ai_credit_price=2.20,
+        )
+        combined = "\n".join(sql for _, _, sql in parts).upper()
+        setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
+
+        for panel in ["COST_DRIVER", "QUERY_DATABASE", "EXEC_STATUS"]:
+            self.assertIn(panel, combined)
+            self.assertIn(panel, setup_sql)
+
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", combined)
+        self.assertIn("FACT_QUERY_DETAIL_RECENT", setup_sql)
+        self.assertIn("FACT_COST_DAILY", combined)
+        self.assertIn("FACT_QUERY_HOURLY", combined)
 
     def test_priority_tables_add_cost_companions_for_credit_metrics(self):
         from utils.workflows import add_cost_companion_columns
@@ -9892,6 +9915,37 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("SECURITY_PRIVILEGE_ESCALATION", sql)
         self.assertIn("PIPELINE_TASK_FAILURE", sql)
         self.assertGreaterEqual(len(build_alert_threshold_seed_rows()), 7)
+
+    def test_alert_lifecycle_insert_sql_targets_command_center_audit_tables(self):
+        ack_sql = build_alert_acknowledgement_insert_sql(
+            event_id=123,
+            alert_key="SECURITY_PRIVILEGE_ESCALATION:USER1",
+            note="Ticket INC123 assigned to Security owner.",
+            actor="DBA_USER",
+            owner="Security",
+            status_after_ack="Acknowledged",
+            next_checkpoint_hours=4,
+        ).upper()
+        remediation_sql = build_alert_remediation_log_insert_sql(
+            event_id=123,
+            alert_key="SECURITY_PRIVILEGE_ESCALATION:USER1",
+            remediation_mode="APPROVAL_REQUIRED",
+            action_type="Revoke risky grant",
+            action_sql="REVOKE ROLE ACCOUNTADMIN FROM USER USER1;",
+            before_state="ACCOUNTADMIN granted",
+            execution_status="REQUESTED",
+            rollback_guidance="Re-grant only with SECURITYADMIN approval.",
+            actor="DBA_USER",
+        ).upper()
+
+        self.assertIn("INSERT INTO", ack_sql)
+        self.assertIn("ALERT_ACKNOWLEDGEMENTS", ack_sql)
+        self.assertIn("TRY_TO_NUMBER('123')", ack_sql)
+        self.assertIn("DATEADD('HOUR', 4, CURRENT_TIMESTAMP())", ack_sql)
+        self.assertIn("INSERT INTO", remediation_sql)
+        self.assertIn("ALERT_REMEDIATION_LOG", remediation_sql)
+        self.assertIn("APPROVAL_REQUIRED", remediation_sql)
+        self.assertIn("REVOKE ROLE ACCOUNTADMIN", remediation_sql)
 
     def test_alert_data_quality_config_and_event_materialization_sql_are_deployable(self):
         dq_ddl = build_alert_data_quality_checks_ddl().upper()

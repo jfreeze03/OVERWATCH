@@ -2274,6 +2274,108 @@ def _command_center_fqn(
     return f"{db}.{schema}.{object_name}"
 
 
+def _alert_event_id_expr(event_id: int | str) -> str:
+    return f"TRY_TO_NUMBER({sql_literal(str(event_id or '').strip(), 100)})"
+
+
+def build_alert_acknowledgement_insert_sql(
+    *,
+    event_id: int | str,
+    alert_key: str = "",
+    note: str,
+    actor: str = "OVERWATCH",
+    owner: str = "",
+    status_after_ack: str = "Acknowledged",
+    next_checkpoint_hours: int | None = None,
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+) -> str:
+    """Return an insert into ALERT_ACKNOWLEDGEMENTS for auditable alert lifecycle actions."""
+    note_clean = str(note or "").strip()
+    if len(note_clean) < 5:
+        raise ValueError("Alert acknowledgement requires a note with owner, ticket, or investigation context.")
+    checkpoint_expr = "NULL"
+    if next_checkpoint_hours is not None:
+        checkpoint_expr = f"DATEADD('hour', {max(1, int(next_checkpoint_hours))}, CURRENT_TIMESTAMP())"
+    return f"""
+INSERT INTO {_command_center_fqn("ALERT_ACKNOWLEDGEMENTS", db, schema)}
+    (EVENT_ID, ALERT_KEY, ACKNOWLEDGED_AT, ACKNOWLEDGED_BY, ACK_NOTE,
+     STATUS_AFTER_ACK, OWNER_ASSIGNED, NEXT_CHECKPOINT_AT)
+SELECT
+    {_alert_event_id_expr(event_id)} AS EVENT_ID,
+    {sql_literal(alert_key, 200)} AS ALERT_KEY,
+    CURRENT_TIMESTAMP() AS ACKNOWLEDGED_AT,
+    {sql_literal(actor, 200)} AS ACKNOWLEDGED_BY,
+    {sql_literal(note_clean, 4000)} AS ACK_NOTE,
+    {sql_literal(normalize_alert_status(status_after_ack), 40)} AS STATUS_AFTER_ACK,
+    NULLIF({sql_literal(owner, 200)}, '') AS OWNER_ASSIGNED,
+    {checkpoint_expr} AS NEXT_CHECKPOINT_AT;
+""".strip()
+
+
+def build_alert_remediation_log_insert_sql(
+    *,
+    event_id: int | str,
+    alert_key: str = "",
+    remediation_mode: str = "RECOMMEND",
+    action_type: str,
+    action_sql: str = "",
+    before_state: str = "",
+    after_state: str = "",
+    execution_status: str = "REQUESTED",
+    error_message: str = "",
+    rollback_guidance: str = "",
+    affected_user: str = "",
+    affected_object: str = "",
+    affected_warehouse: str = "",
+    affected_task: str = "",
+    verification_sql: str = "",
+    verification_result: str = "",
+    actor: str = "OVERWATCH",
+    approved_by: str = "",
+    db: str = ALERT_DB,
+    schema: str = ALERT_SCHEMA,
+) -> str:
+    """Return an insert into ALERT_REMEDIATION_LOG; callers still decide whether to execute."""
+    action_type_clean = str(action_type or "").strip()
+    if not action_type_clean:
+        raise ValueError("Alert remediation log requires an action type.")
+    mode = str(remediation_mode or "RECOMMEND").upper().replace(" ", "_")
+    if mode not in {"OFF", "RECOMMEND", "APPROVAL_REQUIRED", "AUTO"}:
+        mode = "RECOMMEND"
+    approved_at_expr = "CURRENT_TIMESTAMP()" if str(approved_by or "").strip() else "NULL"
+    approved_by_expr = f"NULLIF({sql_literal(approved_by, 200)}, '')"
+    return f"""
+INSERT INTO {_command_center_fqn("ALERT_REMEDIATION_LOG", db, schema)}
+    (EVENT_ID, ALERT_KEY, REQUESTED_AT, REQUESTED_BY, APPROVED_AT, APPROVED_BY,
+     REMEDIATION_MODE, ACTION_TYPE, ACTION_SQL, BEFORE_STATE, AFTER_STATE,
+     EXECUTION_STATUS, ERROR_MESSAGE, ROLLBACK_GUIDANCE, AFFECTED_USER,
+     AFFECTED_OBJECT, AFFECTED_WAREHOUSE, AFFECTED_TASK, VERIFICATION_SQL,
+     VERIFICATION_RESULT)
+SELECT
+    {_alert_event_id_expr(event_id)} AS EVENT_ID,
+    {sql_literal(alert_key, 200)} AS ALERT_KEY,
+    CURRENT_TIMESTAMP() AS REQUESTED_AT,
+    {sql_literal(actor, 200)} AS REQUESTED_BY,
+    {approved_at_expr} AS APPROVED_AT,
+    {approved_by_expr} AS APPROVED_BY,
+    {sql_literal(mode, 40)} AS REMEDIATION_MODE,
+    {sql_literal(action_type_clean, 100)} AS ACTION_TYPE,
+    {sql_literal(action_sql, 16000)} AS ACTION_SQL,
+    {sql_literal(before_state, 8000)} AS BEFORE_STATE,
+    {sql_literal(after_state, 8000)} AS AFTER_STATE,
+    {sql_literal(execution_status, 100)} AS EXECUTION_STATUS,
+    {sql_literal(error_message, 4000)} AS ERROR_MESSAGE,
+    {sql_literal(rollback_guidance, 4000)} AS ROLLBACK_GUIDANCE,
+    NULLIF({sql_literal(affected_user, 300)}, '') AS AFFECTED_USER,
+    NULLIF({sql_literal(affected_object, 500)}, '') AS AFFECTED_OBJECT,
+    NULLIF({sql_literal(affected_warehouse, 300)}, '') AS AFFECTED_WAREHOUSE,
+    NULLIF({sql_literal(affected_task, 500)}, '') AS AFFECTED_TASK,
+    {sql_literal(verification_sql, 16000)} AS VERIFICATION_SQL,
+    {sql_literal(verification_result, 8000)} AS VERIFICATION_RESULT;
+""".strip()
+
+
 def build_alert_threshold_seed_rows() -> list[dict[str, object]]:
     """Default alert thresholds used to seed the DBA-owned configuration table."""
     return [

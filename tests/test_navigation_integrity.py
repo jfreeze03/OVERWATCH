@@ -199,7 +199,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertNotIn('st.markdown("**Action Brief**")', shell_text)
                 self.assertNotIn("st.columns([1.0, 3.0, 1.8])", shell_text)
                 self.assertNotIn("st.columns([1.1, 3.2, 1.4])", shell_text)
-                if section == "DBA Control Room":
+                if section in {"DBA Control Room", "Cost & Contract"}:
                     self.assertIn("st.session_state.setdefault(_BRIEF_MODE_KEY, True)", shell_text)
                     self.assertIn("return False", shell_text)
                 else:
@@ -465,6 +465,16 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn('module_name = "sections.change_drift"', wrapper_text)
         self.assertIn('"sections.security_posture"', wrapper_text)
         self.assertIn("governance_security_view", wrapper_text)
+        self.assertIn("def _apply_fast_entry_default", wrapper_text)
+        self.assertIn("_FAST_ENTRY_VERSION = 1", wrapper_text)
+        self.assertIn("def _render_status_strip", wrapper_text)
+        self.assertIn("def _render_kpi_row", wrapper_text)
+        self.assertIn("Governance Investigation Lanes", wrapper_text)
+        self.assertIn("Open Security", wrapper_text)
+        self.assertIn("Open Change Control", wrapper_text)
+        self.assertIn("st.session_state.setdefault(_BRIEF_MODE_KEY, True)", wrapper_text)
+        self.assertIn("render_shell_status_strip(", wrapper_text)
+        self.assertIn("render_shell_workflows(", wrapper_text)
         self.assertIn("_security_posture_full_workspace_requested", wrapper_text)
         self.assertIn("_change_drift_full_workspace_requested", wrapper_text)
         self.assertIn("SECURITY_POSTURE_VIEWS", security_text)
@@ -511,6 +521,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("from sections import cost_contract", shell_text)
         self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
         self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
+        self.assertIn("def _apply_fast_entry_default", shell_text)
+        self.assertIn("_FAST_ENTRY_VERSION = 1", shell_text)
+        self.assertIn("st.session_state[_FULL_WORKSPACE_KEY] = False", shell_text)
+        self.assertIn("st.session_state.setdefault(_BRIEF_MODE_KEY, True)", shell_text)
+        render_preload = shell_text.split("def render() -> None:", 1)[1].split("if _full_workspace_requested():", 1)[0]
+        self.assertIn("_apply_fast_entry_default()", render_preload)
         self.assertNotIn("_DETAIL_WORKFLOW_KEY", shell_text)
         self.assertNotIn("_PENDING_DETAIL_WORKFLOW_KEY", shell_text)
         self.assertNotIn("import pandas", shell_import_block)
@@ -2322,6 +2338,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("ALERT_CENTER_BRIEF_FIRST_VERSION = 2", alert_center_text)
         self.assertIn('ALERT_CENTER_DEFAULT_VIEW = "Command Center"', alert_center_text)
         self.assertIn('consume_section_autoload_request("Alert Center")', alert_center_text)
+        alert_autoload_block = alert_center_text.split('alert_autoload_requested = consume_section_autoload_request("Alert Center")', 1)[1].split(
+            "render_data_freshness(",
+            1,
+        )[0]
+        self.assertIn("without live Snowflake reads", alert_autoload_block)
+        self.assertNotIn("_load_alert_center_view_data", alert_autoload_block)
+        self.assertNotIn("_alert_center_action_session", alert_autoload_block)
         self.assertIn("def _apply_alert_center_brief_first_default", alert_center_text)
         self.assertIn('st.session_state["alert_center_requested_view"] = view', alert_center_text)
         self.assertIn("_apply_queued_alert_center_view()", alert_center_text)
@@ -2672,6 +2695,12 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("render_data_freshness(", workload_operations_text)
         self.assertIn("Refresh Workload Snapshot", workload_operations_text)
         self.assertIn('consume_section_autoload_request("Workload Operations")', workload_operations_text)
+        workload_autoload_block = workload_operations_text.split('workload_autoload_requested = consume_section_autoload_request("Workload Operations")', 1)[1].split(
+            'err = st.session_state.get("workload_operations_snapshot_error", "")',
+            1,
+        )[0]
+        self.assertIn("without live Snowflake reads", workload_autoload_block)
+        self.assertNotIn("_load_workload_snapshot", workload_autoload_block)
         self.assertNotIn("_workload_operations_auto_load_attempt_scope", workload_operations_text)
         self.assertIn('st.session_state["workload_operations_workflow"] = "Live triage"', workload_render_default)
         self.assertIn('st.session_state["workload_operations_view"] = "Specialist Workflows"', workload_operations_text)

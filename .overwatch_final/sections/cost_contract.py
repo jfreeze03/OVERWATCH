@@ -5246,13 +5246,6 @@ def _render_cost_operating_snapshot(snapshot: dict) -> None:
 
 
 def _render_predictive_finops_contract(company: str, days: int, credit_price: float) -> None:
-    from utils.operational_intelligence import (
-        build_overwatch_self_monitoring_sql,
-        build_predictive_finops_sql,
-        build_snowflake_value_auto_ddl,
-        build_snowflake_value_automation_rows,
-    )
-
     st.markdown("**Predictive FinOps and Value Automation**")
     rows = pd.DataFrame(
         [
@@ -5289,29 +5282,55 @@ def _render_predictive_finops_contract(company: str, days: int, credit_price: fl
         height=220,
         max_rows=3,
     )
-    with st.expander("FinOps SQL contracts", expanded=False):
-        preview = st.selectbox(
-            "Preview",
-            ["Contract burn forecast", "Automated value log", "OVERWATCH self-monitoring"],
-            key="cost_contract_predictive_finops_sql_preview",
+    show_contracts = bool(st.session_state.get("cost_contract_show_finops_sql_contracts"))
+    action_cols = st.columns([1.2, 1.2, 2.6])
+    with action_cols[0]:
+        if not show_contracts and st.button(
+            "Open FinOps SQL Contracts",
+            key="cost_contract_open_finops_sql_contracts",
+            width="stretch",
+        ):
+            st.session_state["cost_contract_show_finops_sql_contracts"] = True
+            st.rerun()
+    with action_cols[1]:
+        if show_contracts and st.button(
+            "Hide FinOps SQL Contracts",
+            key="cost_contract_hide_finops_sql_contracts",
+            width="stretch",
+        ):
+            st.session_state["cost_contract_show_finops_sql_contracts"] = False
+            st.rerun()
+    if show_contracts:
+        from utils.operational_intelligence import (
+            build_overwatch_self_monitoring_sql,
+            build_predictive_finops_sql,
+            build_snowflake_value_auto_ddl,
+            build_snowflake_value_automation_rows,
         )
-        if preview == "Contract burn forecast":
-            st.code(build_predictive_finops_sql(days=max(30, int(days))), language="sql")
-        elif preview == "Automated value log":
-            st.code(build_snowflake_value_auto_ddl(), language="sql")
-            render_priority_dataframe(
-                pd.DataFrame(build_snowflake_value_automation_rows()),
-                title="Value log automation sources",
-                priority_columns=[
-                    "VALUE_SIGNAL", "EVIDENCE_SOURCE", "VALUE_STATE",
-                    "CAPTURE_RULE", "WHY_IT_MATTERS",
-                ],
-                raw_label="All value automation sources",
-                height=220,
-                max_rows=4,
+
+        with st.expander("FinOps SQL contracts", expanded=True):
+            preview = st.selectbox(
+                "Preview",
+                ["Contract burn forecast", "Automated value log", "OVERWATCH self-monitoring"],
+                key="cost_contract_predictive_finops_sql_preview",
             )
-        else:
-            st.code(build_overwatch_self_monitoring_sql(days=7), language="sql")
+            if preview == "Contract burn forecast":
+                st.code(build_predictive_finops_sql(days=max(30, int(days))), language="sql")
+            elif preview == "Automated value log":
+                st.code(build_snowflake_value_auto_ddl(), language="sql")
+                render_priority_dataframe(
+                    pd.DataFrame(build_snowflake_value_automation_rows()),
+                    title="Value log automation sources",
+                    priority_columns=[
+                        "VALUE_SIGNAL", "EVIDENCE_SOURCE", "VALUE_STATE",
+                        "CAPTURE_RULE", "WHY_IT_MATTERS",
+                    ],
+                    raw_label="All value automation sources",
+                    height=220,
+                    max_rows=4,
+                )
+            else:
+                st.code(build_overwatch_self_monitoring_sql(days=7), language="sql")
     defer_source_note(
         f"Predictive FinOps scope: {company}, {int(days)}d window, ${safe_float(credit_price):,.2f}/credit."
     )

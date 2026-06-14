@@ -2151,15 +2151,11 @@ def render() -> None:
         and active_view not in {"Suppression Windows", "Detection Catalog", "Setup & Runbook"}
         and not current_data
     ):
-        st.caption("Alert Center loaded the active command view for first-pass triage.")
-        if _load_alert_center_view_data(active_view, company, environment, int(days), int(limit), required_sources):
-            data = st.session_state.get("alert_center_data")
-            loaded_sources = set(data.get("_loaded_sources") or []) if isinstance(data, dict) else set()
-            current_data = (
-                isinstance(data, dict)
-                and st.session_state.get("alert_center_scope") == expected_scope
-                and required_sources.issubset(loaded_sources)
-            )
+        st.caption(
+            "Alert Center opened the command frame without live Snowflake reads. "
+            f"Load {active_view} when fresh alert proof is needed."
+        )
+        defer_source_note(f"Sources on load: {_alert_center_source_summary(required_sources)}")
     render_data_freshness(
         _alert_center_loaded_meta(data, active_view) if current_data else {},
         source=f"{active_view} sources",

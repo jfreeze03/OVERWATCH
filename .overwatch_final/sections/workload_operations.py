@@ -759,14 +759,10 @@ def _render_workload_snapshot(company: str, environment: str) -> None:
     task_snapshot_current = _snapshot_meta_matches(task_snapshot_meta, expected_meta)
     workload_autoload_requested = consume_section_autoload_request("Workload Operations")
     if workload_autoload_requested and not (snapshot_current and task_snapshot_current):
-        st.caption("Workload Operations loaded the fast task/query snapshot for first-pass triage.")
-        _load_workload_snapshot(company, environment, hours=hours)
-        snapshot = st.session_state.get("workload_operations_snapshot")
-        snapshot_meta = st.session_state.get("workload_operations_snapshot_meta")
-        snapshot_current = _snapshot_meta_matches(snapshot_meta, expected_meta)
-        task_snapshot = st.session_state.get("workload_operations_task_snapshot")
-        task_snapshot_meta = st.session_state.get("workload_operations_task_snapshot_meta")
-        task_snapshot_current = _snapshot_meta_matches(task_snapshot_meta, expected_meta)
+        st.caption(
+            "Workload Operations opened the command frame without live Snowflake reads. "
+            "Refresh Workload Snapshot when fresh task/query proof is needed."
+        )
     err = st.session_state.get("workload_operations_snapshot_error", "")
     summary = _workload_snapshot_summary(snapshot if snapshot_current else None)
     task_summary = _workload_task_summary(task_snapshot if task_snapshot_current else None)

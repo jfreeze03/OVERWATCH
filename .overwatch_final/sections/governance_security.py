@@ -10,6 +10,18 @@ import importlib
 
 import streamlit as st
 
+from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
+from sections.shell_helpers import (
+    action_state_label,
+    evidence_caption,
+    evidence_label,
+    full_workspace_requested,
+    render_shell_kpi_row,
+    render_shell_status_strip,
+    render_shell_workflows,
+    scope_label,
+)
+
 
 VIEWS = ("Security Posture", "Change & Drift")
 VIEW_LABELS = {
@@ -20,11 +32,59 @@ VIEW_HELP = {
     "Security Posture": "Login risk, privileged grants, role sprawl, data sharing, and access-review evidence.",
     "Change & Drift": "DDL, schema/object drift, procedure lineage, data movement, and guarded admin action evidence.",
 }
+_FULL_WORKSPACE_KEY = "_governance_security_full_workspace_requested"
+_BRIEF_MODE_KEY = "_governance_security_brief_mode"
+_FAST_ENTRY_VERSION_KEY = "_governance_security_fast_entry_version"
+_FAST_ENTRY_VERSION = 1
+_FULL_WORKSPACE_STATE_KEYS = (
+    "security_posture_summary",
+    "security_posture_exceptions",
+    "change_drift_summary",
+    "change_drift_exceptions",
+)
+_WORKFLOWS = (
+    {
+        "VIEW": "Security Posture",
+        "BUTTON_LABEL": "Open Security",
+        "MOVE": "Load login risk, privileged grants, public access, data sharing, and access-review proof.",
+    },
+    {
+        "VIEW": "Change & Drift",
+        "BUTTON_LABEL": "Open Change Control",
+        "MOVE": "Load DDL drift, schema compare, object change, procedure lineage, and rollback proof.",
+    },
+)
+
+
+def _active_company() -> str:
+    return str(st.session_state.get("active_company", DEFAULT_COMPANY) or DEFAULT_COMPANY)
+
+
+def _active_environment() -> str:
+    env = str(st.session_state.get("global_environment", DEFAULT_ENVIRONMENT) or DEFAULT_ENVIRONMENT)
+    return env if env in ENVIRONMENT_CONFIG else DEFAULT_ENVIRONMENT
 
 
 def _active_view() -> str:
     requested = str(st.session_state.get("governance_security_view") or VIEWS[0])
     return requested if requested in VIEWS else VIEWS[0]
+
+
+def _full_workspace_requested() -> bool:
+    """Keep Governance navigation lightweight; open detailed proof from a selected lane."""
+    _ = full_workspace_requested
+    if st.session_state.get(_FULL_WORKSPACE_KEY):
+        return True
+    st.session_state.setdefault(_BRIEF_MODE_KEY, True)
+    return False
+
+
+def _apply_fast_entry_default() -> None:
+    if st.session_state.get(_FAST_ENTRY_VERSION_KEY) == _FAST_ENTRY_VERSION:
+        return
+    st.session_state[_FULL_WORKSPACE_KEY] = False
+    st.session_state[_BRIEF_MODE_KEY] = True
+    st.session_state[_FAST_ENTRY_VERSION_KEY] = _FAST_ENTRY_VERSION
 
 
 def _prime_legacy_workspace(view: str) -> None:
@@ -34,6 +94,29 @@ def _prime_legacy_workspace(view: str) -> None:
         return
     st.session_state["_security_posture_full_workspace_requested"] = True
     st.session_state["_security_posture_brief_mode"] = False
+
+
+def _open_workspace(view: str) -> None:
+    st.session_state["governance_security_view"] = view
+    st.session_state[_BRIEF_MODE_KEY] = False
+    st.session_state[_FULL_WORKSPACE_KEY] = True
+    _prime_legacy_workspace(view)
+    st.rerun()
+
+
+def _return_to_brief() -> None:
+    st.session_state[_BRIEF_MODE_KEY] = True
+    st.session_state[_FULL_WORKSPACE_KEY] = False
+    st.session_state["_security_posture_full_workspace_requested"] = False
+    st.session_state["_change_drift_full_workspace_requested"] = False
+    st.rerun()
+
+
+def _render_back_to_brief_control() -> None:
+    control_col, _spacer = st.columns([1.0, 4.0])
+    with control_col:
+        if st.button("Back to Brief", key="governance_security_back_to_brief", width="stretch"):
+            _return_to_brief()
 
 
 def _render_view_selector() -> str:
@@ -52,10 +135,57 @@ def _render_view_selector() -> str:
     return str(selected)
 
 
-def render() -> None:
+def _delegate_full_workspace() -> None:
     view = _render_view_selector()
     _prime_legacy_workspace(view)
 
     module_name = "sections.change_drift" if view == "Change & Drift" else "sections.security_posture"
     module = importlib.import_module(module_name)
     module.render()
+
+
+def _render_status_strip() -> None:
+    detail = evidence_caption(
+        st.session_state,
+        _FULL_WORKSPACE_STATE_KEYS,
+        "Security and change proof are loaded only after choosing a governance lane.",
+    )
+    render_shell_status_strip(
+        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
+        headline="Governance command view: access risk, role posture, schema drift, and controlled change proof.",
+        detail=detail,
+    )
+
+
+def _render_kpi_row() -> None:
+    render_shell_kpi_row((
+        ("Scope", scope_label(_active_company(), _active_environment())),
+        ("Access", "On demand"),
+        ("Change", "On demand"),
+        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
+    ))
+
+
+def _render_workflow_launchpad() -> None:
+    def _open(row):
+        _open_workspace(str(row["VIEW"]))
+
+    render_shell_workflows(
+        "Governance Investigation Lanes",
+        _WORKFLOWS,
+        label_key="VIEW",
+        key_prefix="governance_security",
+        on_open=_open,
+    )
+
+
+def render() -> None:
+    _apply_fast_entry_default()
+    if _full_workspace_requested():
+        _render_back_to_brief_control()
+        _delegate_full_workspace()
+        return
+
+    _render_status_strip()
+    _render_kpi_row()
+    _render_workflow_launchpad()

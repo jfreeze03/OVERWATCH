@@ -12,6 +12,8 @@ from sections.shell_helpers import action_state_label, evidence_caption, evidenc
 
 _FULL_WORKSPACE_KEY = "_cost_contract_full_workspace_requested"
 _BRIEF_MODE_KEY = "_cost_contract_brief_mode"
+_FAST_ENTRY_VERSION_KEY = "_cost_contract_shell_fast_entry_version"
+_FAST_ENTRY_VERSION = 1
 _COST_SPLASH_KEY = "cost_contract_splash"
 _FULL_WORKSPACE_STATE_KEYS = (
     _COST_SPLASH_KEY,
@@ -97,7 +99,20 @@ def _window_label() -> str:
 
 
 def _full_workspace_requested() -> bool:
-    return full_workspace_requested(st.session_state, _FULL_WORKSPACE_KEY, _BRIEF_MODE_KEY)
+    """Keep Cost navigation lightweight; open heavy proof only from a selected cost workflow."""
+    _ = full_workspace_requested
+    if st.session_state.get(_FULL_WORKSPACE_KEY):
+        return True
+    st.session_state.setdefault(_BRIEF_MODE_KEY, True)
+    return False
+
+
+def _apply_fast_entry_default() -> None:
+    if st.session_state.get(_FAST_ENTRY_VERSION_KEY) == _FAST_ENTRY_VERSION:
+        return
+    st.session_state[_FULL_WORKSPACE_KEY] = False
+    st.session_state[_BRIEF_MODE_KEY] = True
+    st.session_state[_FAST_ENTRY_VERSION_KEY] = _FAST_ENTRY_VERSION
 
 
 def _open_workspace(workflow: str | None = None) -> None:
@@ -163,6 +178,7 @@ def _render_workflow_launchpad() -> None:
 
 
 def render() -> None:
+    _apply_fast_entry_default()
     if _full_workspace_requested():
         _render_back_to_brief_control()
         _delegate_full_workspace()

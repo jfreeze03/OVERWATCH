@@ -1,7 +1,6 @@
 # sections/workload_operations.py - consolidated DBA workload command center
 from __future__ import annotations
 
-import html
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from importlib import import_module
@@ -27,40 +26,6 @@ from utils.evidence_mode import (
 )
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_section_note, defer_source_note
-
-_LANE_CARD_STYLE = (
-    "min-height:7.1rem;"
-    "display:flex;"
-    "flex-direction:column;"
-    "gap:0.24rem;"
-)
-_LANE_LABEL_STYLE = (
-    "display:block;"
-    "color:var(--text-muted, #7b9cab);"
-    "font-size:0.66rem;"
-    "font-weight:850;"
-    "letter-spacing:0.05em;"
-    "line-height:1.2;"
-    "text-transform:uppercase;"
-    "overflow-wrap:anywhere;"
-)
-_LANE_STATE_STYLE = (
-    "display:block;"
-    "color:var(--text-primary, #eef8fb);"
-    "font-size:1.02rem;"
-    "font-weight:850;"
-    "line-height:1.2;"
-    "overflow-wrap:anywhere;"
-)
-_LANE_VALUE_STYLE = (
-    "display:block;"
-    "color:var(--accent2, #8deeff);"
-    "font-size:0.9rem;"
-    "font-weight:800;"
-    "line-height:1.25;"
-    "overflow-wrap:anywhere;"
-)
-
 
 build_mart_control_room_summary_sql = _lazy_util("build_mart_control_room_summary_sql")
 format_snowflake_error = _lazy_util("format_snowflake_error")
@@ -755,19 +720,9 @@ def _workload_command_lanes(summary: dict, task_summary: dict | None = None) -> 
 
 
 def _render_workload_lane_card(lane: dict) -> None:
-    label = html.escape(str(lane.get("label") or "Live lane"))
-    state = html.escape(str(lane.get("state") or "Review"))
-    value = html.escape(str(lane.get("value") or "Live route"))
-    st.markdown(
-        (
-            f'<div class="ow-workload-lane-card" style="{_LANE_CARD_STYLE}">'
-            f'<span class="ow-workload-lane-label" style="{_LANE_LABEL_STYLE}">{label}</span>'
-            f'<strong class="ow-workload-lane-state" style="{_LANE_STATE_STYLE}">{state}</strong>'
-            f'<span class="ow-workload-lane-value" style="{_LANE_VALUE_STYLE}">{value}</span>'
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
+    st.caption(str(lane.get("label") or "Live lane"))
+    st.markdown(f"**{lane.get('state') or 'Review'}**")
+    st.caption(str(lane.get("value") or "Live route"))
 
 
 def _render_workload_status_lanes(summary: dict, task_summary: dict | None = None) -> None:

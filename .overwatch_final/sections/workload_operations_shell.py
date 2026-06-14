@@ -7,19 +7,15 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
+from sections.native_readiness import render_workload_data_quality_board
 from sections.shell_helpers import (
-    action_state_label,
-    evidence_caption,
-    evidence_label,
     full_workspace_requested,
     render_refresh_contract,
     render_setup_health_board,
     render_shell_kpi_row,
     render_shell_snapshot,
-    render_shell_status_strip,
     render_shell_workflows,
     render_signal_lane_board,
-    scope_label,
 )
 from utils.command_board import load_or_reuse_command_board
 
@@ -247,28 +243,6 @@ def _render_back_to_brief_control() -> None:
             _return_to_brief()
 
 
-def _render_status_strip() -> None:
-    detail = evidence_caption(
-        st.session_state,
-        _FULL_WORKSPACE_STATE_KEYS,
-        "Task status, contention, query diagnosis, live triage, procedure, and pipeline proof open from the workflow grid.",
-    )
-    render_shell_status_strip(
-        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
-        headline="Workload command view: job status, contention, query pressure, and pipeline failures.",
-        detail=detail,
-    )
-
-
-def _render_kpi_row() -> None:
-    render_shell_kpi_row((
-        ("Scope", scope_label(_active_company(), _active_environment())),
-        ("Window", _window_label()),
-        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-        ("Primary route", "Task graphs"),
-    ))
-
-
 def _render_metric_board() -> None:
     snapshot = st.session_state.get("workload_operations_snapshot")
     task_snapshot = st.session_state.get("workload_operations_task_snapshot")
@@ -280,14 +254,7 @@ def _render_metric_board() -> None:
     if not isinstance(freshness_meta, dict) or not freshness_meta:
         freshness_meta = _command_meta()
 
-    st.markdown("**Workload Metric Board**")
-    render_refresh_contract(
-        freshness_meta if isinstance(freshness_meta, dict) else {},
-        source="MART_EXECUTIVE_OBSERVABILITY / MART_DBA_CONTROL_ROOM / TASK_HISTORY",
-        target_minutes=30,
-        refresh_method="Scheduled workload mart and task-history refresh",
-        live_fallback="Explicit live triage",
-    )
+    st.markdown("**Workload Command Board**")
     render_signal_lane_board(
         "Workload Command Board",
         _workload_shell_lanes(snapshot_row, task_row),
@@ -300,6 +267,13 @@ def _render_metric_board() -> None:
         ("Queue Time", _seconds_label(_row_get(snapshot_row, "QUEUE_SECONDS", summary.get("queue_seconds"))) if snapshot_row is not None or summary else "Not loaded"),
         ("Task Failures", f"{_int_value(_row_get(task_row, 'TASK_STATUS_FAILURE_ROWS', summary.get('failed_tasks'))):,}" if task_row is not None or summary else "Not loaded"),
     ))
+    render_refresh_contract(
+        freshness_meta if isinstance(freshness_meta, dict) else {},
+        source="MART_EXECUTIVE_OBSERVABILITY / MART_DBA_CONTROL_ROOM / TASK_HISTORY",
+        target_minutes=30,
+        refresh_method="Scheduled workload mart and task-history refresh",
+        live_fallback="Explicit live triage",
+    )
 
 
 def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) -> tuple[dict[str, str], ...]:
@@ -550,8 +524,7 @@ def render() -> None:
 
     st.session_state.setdefault("workload_operations_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _load_command_board()
-    _render_status_strip()
-    _render_kpi_row()
     _render_metric_board()
     _render_contention_solution_board()
+    render_workload_data_quality_board()
     _render_workflow_launchpad()

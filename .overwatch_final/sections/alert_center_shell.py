@@ -8,20 +8,15 @@ import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
 from sections.shell_helpers import (
-    action_state_label,
-    evidence_caption,
-    evidence_label,
-    evidence_loaded,
     full_workspace_requested,
     render_refresh_contract,
     render_setup_health_board,
     render_shell_kpi_row,
-    render_shell_status_strip,
     render_shell_workflows,
     render_signal_lane_board,
-    scope_label,
 )
 from utils.command_board import load_or_reuse_command_board
+from utils.native_snowflake import build_alert_object_registry_sql
 
 
 _FULL_WORKSPACE_KEY = "_alert_center_full_workspace_requested"
@@ -432,40 +427,11 @@ def _render_back_to_brief_control() -> None:
             _return_to_brief()
 
 
-def _render_status_strip() -> None:
-    detail = evidence_caption(
-        st.session_state,
-        _FULL_WORKSPACE_STATE_KEYS,
-        "Command center, morning brief, detection catalog, routing, notifications, and remediation proof open from the workflow grid.",
-    )
-    render_shell_status_strip(
-        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
-        headline="Alert command view: open risk, owners, source freshness, and remediation control.",
-        detail=detail,
-    )
-
-
-def _render_kpi_row() -> None:
-    render_shell_kpi_row((
-        ("Scope", scope_label(_active_company(), _active_environment())),
-        ("Window", _window_label()),
-        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-        ("Primary route", "Command Center"),
-    ))
-
-
 def _render_metric_board() -> None:
     data = _loaded_data()
     loaded = bool(data)
     summary = _command_summary()
-    st.markdown("**Alert Metric Board**")
-    render_refresh_contract(
-        data.get("_freshness_meta") if isinstance(data, dict) and data.get("_freshness_meta") else _command_meta(),
-        source="MART_EXECUTIVE_OBSERVABILITY / ALERT_EVENTS / ALERT_ACTION_QUEUE",
-        target_minutes=15,
-        refresh_method="Scheduled alert sweep and owner-routing refresh",
-        live_fallback="No shell fallback",
-    )
+    st.markdown("**Alert Command Board**")
     render_signal_lane_board("Alert Command Board", _alert_shell_lanes(data), max_lanes=8)
     if not loaded:
         render_shell_kpi_row((
@@ -494,6 +460,13 @@ def _render_metric_board() -> None:
         ("Rules", f"{_frame_count(data, 'rules'):,}"),
         ("Freshness", "Loaded" if data.get("_freshness_meta") else "Loaded"),
     ))
+    render_refresh_contract(
+        data.get("_freshness_meta") if isinstance(data, dict) and data.get("_freshness_meta") else _command_meta(),
+        source="MART_EXECUTIVE_OBSERVABILITY / ALERT_EVENTS / ALERT_ACTION_QUEUE",
+        target_minutes=15,
+        refresh_method="Scheduled alert sweep and owner-routing refresh",
+        live_fallback="No shell fallback",
+    )
 
 
 def _render_lifecycle_board() -> None:
@@ -599,6 +572,36 @@ def _render_lifecycle_board() -> None:
         fallback="In-app inbox remains available",
         owner="DBA Lead",
     )
+    render_signal_lane_board(
+        "Native Alert Registry",
+        (
+            {
+                "label": "Inventory",
+                "value": "SHOW ALERTS IN ACCOUNT",
+                "state": "Native",
+                "detail": "Tracks Snowflake ALERT objects, schedule, warehouse, and current state.",
+            },
+            {
+                "label": "Run proof",
+                "value": "ALERT_HISTORY",
+                "state": "Evidence",
+                "detail": "Recent alert executions, failures, and error messages prove the schedule is alive.",
+            },
+            {
+                "label": "Template",
+                "value": "OVERWATCH_NATIVE_ALERT_TEMPLATES.sql",
+                "state": "Deploy",
+                "detail": "Notification-only examples should stay approval-gated until routing is approved.",
+            },
+            {
+                "label": "SQL contract",
+                "value": "Registry ready",
+                "state": "Review",
+                "detail": build_alert_object_registry_sql().splitlines()[0],
+            },
+        ),
+        max_lanes=4,
+    )
 
 
 def _render_workflow_launchpad() -> None:
@@ -623,8 +626,6 @@ def render() -> None:
 
     st.session_state.setdefault("alert_center_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _load_command_board()
-    _render_status_strip()
-    _render_kpi_row()
     _render_metric_board()
     _render_lifecycle_board()
     _render_workflow_launchpad()

@@ -45,6 +45,17 @@ incident proof.
 |---|---|---|
 | `OVERWATCH_COMPLIANCE_READINESS_V` | View | Flags admin grants and high-access user activity from Snowflake metadata. |
 
+## Native Snowflake Proof Contracts
+
+| Source | Purpose |
+|---|---|
+| `SNOWFLAKE.ACCOUNT_USAGE.DATA_METRIC_FUNCTION_REFERENCES` | Registers Snowflake DMF data-quality checks, schedules, states, and stale/failed runs where DMFs are enabled. |
+| `SHOW ALERTS IN ACCOUNT` / `INFORMATION_SCHEMA.ALERT_HISTORY` | Proves native Snowflake ALERT objects exist, are scheduled, and have recent run history. |
+| `SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES` | Supports tag-based owner, cost-center, and criticality allocation instead of relying only on naming conventions. |
+| `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY` with `QUERY_TAG ILIKE 'OVERWATCH%'` | Measures OVERWATCH's own query count, failures, latency, bytes scanned, and section attribution. |
+| `EXECUTIVE_DIGEST_HISTORY` | Stores push-ready daily executive summaries that should match the Executive Landing command board. |
+| `SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY` | Optional ORGADMIN rollup for multi-account cost when organization privileges exist. |
+
 ## Optional Precompute
 
 `snowflake/PRECOMPUTE.sql` contains optional Dynamic Tables plus fallback views:

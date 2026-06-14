@@ -13,6 +13,15 @@ from config import CREDIT_SOURCE_LABELS  # noqa: E402
 from utils.company_filter import assert_no_sql_injection, validate_filter_input  # noqa: E402
 from utils.command_board import build_executive_command_board_sql, empty_command_board, summarize_command_board  # noqa: E402
 from utils.incident_correlation import build_incident_correlation_sql  # noqa: E402
+from utils.native_snowflake import (  # noqa: E402
+    build_alert_object_registry_sql,
+    build_data_quality_dmf_sql,
+    build_executive_digest_history_sql,
+    build_org_rollup_sql,
+    build_overwatch_self_cost_sql,
+    build_tag_allocation_sql,
+    native_capability_lanes,
+)
 from utils.predictive_sla import build_predictive_sla_sql  # noqa: E402
 from utils.sql_builder import SafeQuery, bind_fqn, bind_identifier  # noqa: E402
 
@@ -98,7 +107,10 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertEqual(summary["failed_tasks"], 2)
         self.assertEqual(summary["critical_high_alerts"], 3)
         self.assertEqual(summary["open_actions"], 5)
-        self.assertEqual(summary["score"], 91)
+        self.assertEqual(summary["score"], 47)
+        self.assertEqual(summary["score_cap"], 82)
+        self.assertIn("stale source", summary["cap_reason"])
+        self.assertEqual(summary["platform_score_drivers"][0]["DRIVER"], "Critical/high alerts")
         self.assertEqual(summary["top_cost_driver"], "WH_LOAD")
         self.assertEqual(summary["top_queue_warehouse"], "WH_QUERY")
         self.assertEqual(summary["top_spill_warehouse"], "WH_LOAD")
@@ -125,12 +137,17 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertIn("Snowflake Observability Wall", shell_text)
         self.assertIn("Setup Readiness", shell_text)
         self.assertIn("Platform Operating Score", shell_text)
+        self.assertIn("Platform Score Basis", shell_text)
+        self.assertIn("Platform Score Drivers", shell_text)
+        self.assertIn("render_native_readiness_board", shell_text)
+        self.assertIn("from sections.native_readiness import render_native_readiness_board", shell_text)
         self.assertIn("Top 5 Action Items", shell_text)
 
     def test_final_pass_shells_surface_operating_contracts_before_drilldown(self):
         cost_shell = (APP_ROOT / "sections" / "cost_contract_shell.py").read_text(encoding="utf-8")
         alert_shell = (APP_ROOT / "sections" / "alert_center_shell.py").read_text(encoding="utf-8")
         workload_shell = (APP_ROOT / "sections" / "workload_operations_shell.py").read_text(encoding="utf-8")
+        native_readiness = (APP_ROOT / "sections" / "native_readiness.py").read_text(encoding="utf-8")
         refresh_doc = (ROOT / "docs" / "REFRESH_ARCHITECTURE.md").read_text(encoding="utf-8")
 
         self.assertIn("Snowflake Value Automation", cost_shell)
@@ -146,11 +163,43 @@ class Production95ContractsTests(unittest.TestCase):
         self.assertIn("Safe Fix Contract", workload_shell)
         self.assertIn("Lock vs queue", workload_shell)
         self.assertIn("blocker, waiter, object, and owner", workload_shell)
+        self.assertIn("Data Quality & Compare Proof", native_readiness)
+        self.assertIn("Governance Native Sources", native_readiness)
+        self.assertIn("render_workload_data_quality_board()", workload_shell)
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("Raw", readme)
         self.assertIn("`ACCOUNT_USAGE` scans are never part of Executive Landing first paint", readme)
         self.assertIn("Executive Landing is not allowed to start raw `SNOWFLAKE.ACCOUNT_USAGE` scans", refresh_doc)
+
+    def test_native_snowflake_contracts_cover_coco_kiro_gaps(self):
+        lanes = native_capability_lanes()
+        labels = {row["label"] for row in lanes}
+        self.assertIn("Data Quality / DMF", labels)
+        self.assertIn("Native alerts", labels)
+        self.assertIn("Tag allocation", labels)
+        self.assertIn("OVERWATCH self-cost", labels)
+        self.assertIn("Executive digest", labels)
+        self.assertIn("Org rollup", labels)
+
+        sql_bundle = "\n".join([
+            build_data_quality_dmf_sql(),
+            build_alert_object_registry_sql(),
+            build_tag_allocation_sql(),
+            build_overwatch_self_cost_sql(),
+            build_executive_digest_history_sql(),
+            build_org_rollup_sql(),
+        ]).upper()
+        for marker in (
+            "DATA_METRIC_FUNCTION_REFERENCES",
+            "SHOW ALERTS IN ACCOUNT",
+            "ALERT_HISTORY",
+            "TAG_REFERENCES",
+            "QUERY_TAG ILIKE 'OVERWATCH%'",
+            "EXECUTIVE_DIGEST_HISTORY",
+            "ORGANIZATION_USAGE.METERING_DAILY_HISTORY",
+        ):
+            self.assertIn(marker, sql_bundle)
 
 
 if __name__ == "__main__":

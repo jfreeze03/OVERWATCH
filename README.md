@@ -73,6 +73,13 @@ Additional Snowflake-native hardening contracts:
 - `docs/OVERWATCH_RECOVERY_RUNBOOK.md` - operator recovery checklist.
 - `CHANGELOG.md` - release-level change history.
 
+The first-paint shells now expose native proof lanes for Snowflake Data Metric
+Functions, Snowflake ALERT objects, tag-based owner/cost allocation,
+OVERWATCH query-tag self-cost, executive digest history, and optional
+organization usage rollups. Those lanes are readiness contracts, not hidden
+live scans: unavailable privileges should produce friendly setup/fallback
+messages while the page still renders instantly.
+
 ## Current Production Sections
 
 | Group | Sections | Primary job |
@@ -151,11 +158,14 @@ source freshness, proof query, and remediation mode so the DBA can work the
 right item first instead of scanning a flat inbox.
 
 The command-intelligence hardening pass adds the ranked 12-item operating
-foundation from the COCO/Kiro review: root-cause correlation, task critical
+foundation from production review: root-cause correlation, task critical
 path, reconciliation, predictive FinOps, alert lifecycle, fact-grounded Cortex
 query diagnosis, OVERWATCH self-monitoring, optional precompute, compliance,
 multi-account readiness, no-saved-state navigation, and runbooks. These are
-exposed as data-first panels and SQL contracts before deeper drilldown.
+exposed as data-first panels and SQL contracts before deeper drilldown. The
+Platform Operating Score is evidence-based; it is computed from the current
+cost, alert, failure, owner-queue, queueing, spill, and freshness signals rather
+than accepting a self-scored mart value as truth.
 
 `ALERT_DATA_QUALITY_CHECKS` is the metadata-driven table for freshness, row
 count, null-rate, duplicate, volume, and schema checks. DBAs and data owners can

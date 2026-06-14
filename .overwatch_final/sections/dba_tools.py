@@ -3883,12 +3883,11 @@ SHOW PARAMETERS LIKE '%AI%'     IN ACCOUNT;
                         state_icon = "Started" if state=="started" else "Suspended" if state=="suspended" else "Unknown"
                         lr_icon    = "Succeeded" if lr_st=="SUCCEEDED" else ("Failed" if lr_st=="FAILED" else "Pending")
 
+                        prefix = "    " if indent else ""
+                        suffix = f" - {err}" if err and err != "nan" else ""
                         st.markdown(
-                            f"{'&nbsp;'*4 if indent else ''}{indent}"
-                            f"{state_icon} **{name}** &nbsp; {lr_icon} last: {lr_st} "
-                            f"({int(dur)}s)"
-                            f"{' - ' + err if err and err != 'nan' else ''}",
-                            unsafe_allow_html=True,
+                            f"{prefix}{indent}{state_icon} **{name}** | {lr_icon} last: {lr_st} "
+                            f"({int(dur)}s){suffix}"
                         )
 
                     render_priority_dataframe(

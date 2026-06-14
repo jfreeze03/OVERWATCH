@@ -42,6 +42,7 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
     "scorecards": (
         "clamp_score", "score_label", "bad_ratio_score", "trend_score",
         "weighted_score", "burn_trend_label", "executive_health_score",
+        "platform_operating_score_from_signals",
         "service_health_scorecard", "dba_control_plane_readiness_score",
         "dba_effective_readiness_score", "dba_deployment_label",
         "dba_control_plane_section_scorecards", "dba_control_plane_component_rows",
@@ -99,6 +100,13 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "load_or_reuse_command_board", "load_setup_readiness",
         "read_command_board_state", "store_command_board_state",
         "summarize_command_board",
+    ),
+    "native_snowflake": (
+        "NATIVE_SNOWFLAKE_CONTRACT_VERSION",
+        "native_capability_lanes", "native_capability_setup_objects",
+        "build_data_quality_dmf_sql", "build_alert_object_registry_sql",
+        "build_tag_allocation_sql", "build_overwatch_self_cost_sql",
+        "build_executive_digest_history_sql", "build_org_rollup_sql",
     ),
     "alerts": (
         "ALERT_OPEN_STATUSES", "ALERT_STATUS_CHOICES", "DEFAULT_ALERT_RECIPIENT",

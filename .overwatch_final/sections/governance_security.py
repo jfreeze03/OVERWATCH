@@ -11,19 +11,14 @@ import importlib
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
+from sections.native_readiness import render_governance_native_proof_board
 from sections.shell_helpers import (
-    action_state_label,
-    evidence_caption,
-    evidence_label,
     full_workspace_requested,
     render_refresh_contract,
     render_setup_health_board,
-    render_shell_kpi_row,
     render_shell_snapshot,
-    render_shell_status_strip,
     render_shell_workflows,
     render_signal_lane_board,
-    scope_label,
 )
 from utils.command_board import load_setup_readiness
 
@@ -147,28 +142,6 @@ def _delegate_full_workspace() -> None:
     module_name = "sections.change_drift" if view == "Change & Drift" else "sections.security_posture"
     module = importlib.import_module(module_name)
     module.render()
-
-
-def _render_status_strip() -> None:
-    detail = evidence_caption(
-        st.session_state,
-        _FULL_WORKSPACE_STATE_KEYS,
-        "Security and change proof are loaded only after choosing a governance lane.",
-    )
-    render_shell_status_strip(
-        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
-        headline="Governance command view: access risk, role posture, schema drift, and controlled change proof.",
-        detail=detail,
-    )
-
-
-def _render_kpi_row() -> None:
-    render_shell_kpi_row((
-        ("Scope", scope_label(_active_company(), _active_environment())),
-        ("Access", "On demand"),
-        ("Change", "On demand"),
-        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-    ))
 
 
 def _frame_len(value: object) -> int:
@@ -313,14 +286,7 @@ def _render_metric_board() -> None:
     security_meta = st.session_state.get("security_posture_meta")
     change_meta = st.session_state.get("change_drift_meta")
     freshness_meta = security_meta if isinstance(security_meta, dict) and security_meta else change_meta
-    st.markdown("**Governance Metric Board**")
-    render_refresh_contract(
-        freshness_meta if isinstance(freshness_meta, dict) else {},
-        source="SECURITY_POSTURE / CHANGE_DRIFT facts",
-        target_minutes=60,
-        refresh_method="Scheduled access and change-control refresh",
-        live_fallback="Explicit governance lane",
-    )
+    st.markdown("**Governance Command Board**")
     render_signal_lane_board("Governance Command Board", _governance_shell_lanes(), max_lanes=8)
     render_shell_snapshot((
         ("Security Summary", "Loaded" if _frame_len(st.session_state.get("security_posture_summary")) else "On demand"),
@@ -328,6 +294,13 @@ def _render_metric_board() -> None:
         ("Change Summary", "Loaded" if _frame_len(st.session_state.get("change_drift_summary")) else "On demand"),
         ("Change Exceptions", f"{_frame_len(st.session_state.get('change_drift_exceptions')):,}" if _frame_len(st.session_state.get("change_drift_exceptions")) else "On demand"),
     ))
+    render_refresh_contract(
+        freshness_meta if isinstance(freshness_meta, dict) else {},
+        source="SECURITY_POSTURE / CHANGE_DRIFT facts",
+        target_minutes=60,
+        refresh_method="Scheduled access and change-control refresh",
+        live_fallback="Explicit governance lane",
+    )
 
 
 def _render_setup_readiness_board() -> None:
@@ -399,8 +372,7 @@ def render() -> None:
         _delegate_full_workspace()
         return
 
-    _render_status_strip()
-    _render_kpi_row()
     _render_metric_board()
     _render_setup_readiness_board()
+    render_governance_native_proof_board()
     _render_workflow_launchpad()

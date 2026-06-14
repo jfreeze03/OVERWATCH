@@ -57,64 +57,64 @@ DBA_CONTROL_PLANE_COMPONENTS = tuple(item["key"] for item in DBA_CONTROL_PLANE_R
 
 DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS = {
     "Executive Landing": {
-        "domain_coverage": 94,
-        "data_correctness": 89,
-        "actionability": 91,
-        "admin_safety_audit": 86,
-        "performance_mart": 92,
-        "workflow_ux": 94,
-        "governance_ownership": 86,
-        "tests_operability": 90,
+        "domain_coverage": 86,
+        "data_correctness": 80,
+        "actionability": 82,
+        "admin_safety_audit": 72,
+        "performance_mart": 84,
+        "workflow_ux": 84,
+        "governance_ownership": 74,
+        "tests_operability": 82,
     },
     "DBA Control Room": {
-        "domain_coverage": 93,
-        "data_correctness": 88,
-        "actionability": 93,
-        "admin_safety_audit": 87,
-        "performance_mart": 89,
-        "workflow_ux": 91,
-        "governance_ownership": 87,
-        "tests_operability": 91,
+        "domain_coverage": 82,
+        "data_correctness": 78,
+        "actionability": 85,
+        "admin_safety_audit": 74,
+        "performance_mart": 78,
+        "workflow_ux": 76,
+        "governance_ownership": 72,
+        "tests_operability": 82,
     },
     "Alert Center": {
-        "domain_coverage": 92,
-        "data_correctness": 88,
-        "actionability": 92,
-        "admin_safety_audit": 86,
-        "performance_mart": 91,
-        "workflow_ux": 91,
-        "governance_ownership": 88,
-        "tests_operability": 92,
+        "domain_coverage": 82,
+        "data_correctness": 80,
+        "actionability": 84,
+        "admin_safety_audit": 76,
+        "performance_mart": 82,
+        "workflow_ux": 80,
+        "governance_ownership": 76,
+        "tests_operability": 84,
     },
     "Workload Operations": {
-        "domain_coverage": 93,
-        "data_correctness": 88,
-        "actionability": 93,
-        "admin_safety_audit": 87,
-        "performance_mart": 89,
-        "workflow_ux": 91,
-        "governance_ownership": 87,
-        "tests_operability": 91,
+        "domain_coverage": 84,
+        "data_correctness": 78,
+        "actionability": 86,
+        "admin_safety_audit": 74,
+        "performance_mart": 78,
+        "workflow_ux": 76,
+        "governance_ownership": 72,
+        "tests_operability": 82,
     },
     "Cost & Contract": {
-        "domain_coverage": 94,
-        "data_correctness": 91,
-        "actionability": 93,
-        "admin_safety_audit": 88,
-        "performance_mart": 91,
-        "workflow_ux": 93,
-        "governance_ownership": 88,
-        "tests_operability": 92,
+        "domain_coverage": 86,
+        "data_correctness": 84,
+        "actionability": 86,
+        "admin_safety_audit": 78,
+        "performance_mart": 82,
+        "workflow_ux": 80,
+        "governance_ownership": 76,
+        "tests_operability": 84,
     },
     "Governance & Security": {
-        "domain_coverage": 91,
-        "data_correctness": 88,
-        "actionability": 90,
-        "admin_safety_audit": 87,
-        "performance_mart": 88,
-        "workflow_ux": 89,
-        "governance_ownership": 87,
-        "tests_operability": 91,
+        "domain_coverage": 80,
+        "data_correctness": 78,
+        "actionability": 80,
+        "admin_safety_audit": 76,
+        "performance_mart": 76,
+        "workflow_ux": 74,
+        "governance_ownership": 78,
+        "tests_operability": 82,
     },
 }
 
@@ -174,6 +174,104 @@ def dba_deployment_label(score: float) -> str:
     if score >= 80:
         return "Action Required"
     return "Blocked"
+
+
+def platform_operating_score_from_signals(metrics: dict) -> dict:
+    """Evidence-based executive platform score from current command-board signals."""
+    current_cost = float(metrics.get("current_cost_usd", 0) or 0)
+    prior_cost = float(metrics.get("prior_cost_usd", 0) or 0)
+    spend_delta = float(metrics.get("spend_delta_cost_usd", current_cost - prior_cost) or 0)
+    critical_high = float(metrics.get("critical_high_alerts", 0) or 0)
+    open_actions = float(metrics.get("open_actions", 0) or 0)
+    failed_tasks = float(metrics.get("failed_tasks", 0) or 0)
+    failed_queries = float(metrics.get("failed_queries", 0) or 0)
+    queue_seconds = float(metrics.get("queue_seconds", 0) or 0)
+    remote_spill_gb = float(metrics.get("remote_spill_gb", 0) or 0)
+    stale_sources = float(metrics.get("stale_sources", 0) or 0)
+    freshness_sources = float(metrics.get("freshness_sources", 0) or 0)
+
+    spend_pct = spend_delta / max(abs(prior_cost), 1.0) if spend_delta > 0 else 0.0
+    penalties = {
+        "Cost movement": min(18.0, spend_pct * 35.0),
+        "Critical/high alerts": min(24.0, critical_high * 8.0),
+        "Open owner actions": min(18.0, open_actions * 1.2),
+        "Task failures": min(18.0, failed_tasks * 4.0),
+        "Query failures": min(14.0, failed_queries * 0.8),
+        "Queue pressure": min(10.0, queue_seconds / 600.0),
+        "Remote spill": min(8.0, remote_spill_gb / 25.0),
+        "Stale sources": min(18.0, stale_sources * 6.0),
+    }
+    raw_score = clamp_score(100.0 - sum(penalties.values()))
+
+    caps: list[tuple[float, str]] = []
+    if stale_sources:
+        caps.append((82.0, f"{int(stale_sources)} stale source(s) in the command mart."))
+    if critical_high:
+        caps.append((85.0, f"{int(critical_high)} critical/high alert(s) are open."))
+    if failed_tasks:
+        caps.append((88.0, f"{int(failed_tasks)} failed task run(s) in scope."))
+    if open_actions >= 10:
+        caps.append((90.0, f"{int(open_actions)} owner action(s) remain open."))
+    if freshness_sources <= 0:
+        caps.append((78.0, "No freshness proof rows were available for the command board."))
+
+    score_cap = min((cap for cap, _reason in caps), default=100.0)
+    cap_reason = next((reason for cap, reason in sorted(caps, key=lambda item: item[0]) if cap == score_cap), "")
+    final_score = clamp_score(min(raw_score, score_cap))
+    drivers = [
+        {
+            "DRIVER": name,
+            "STATE": "Ready" if penalty <= 0 else "Review",
+            "SCORE_IMPACT": round(-penalty, 1),
+            "EVIDENCE": _platform_driver_evidence(name, metrics),
+            "NEXT_ACTION": _platform_driver_action(name),
+        }
+        for name, penalty in penalties.items()
+        if penalty > 0
+    ]
+    drivers.sort(key=lambda row: (row["SCORE_IMPACT"], row["DRIVER"]))
+    return {
+        "score": int(round(final_score)),
+        "raw_score": raw_score,
+        "state": score_label(final_score),
+        "score_cap": int(round(score_cap)),
+        "cap_reason": cap_reason or "No hard cap applied.",
+        "platform_score_drivers": drivers,
+    }
+
+
+def _platform_driver_evidence(driver: str, metrics: dict) -> str:
+    if driver == "Cost movement":
+        return f"${float(metrics.get('spend_delta_cost_usd', 0) or 0):,.0f} spend movement."
+    if driver == "Critical/high alerts":
+        return f"{int(float(metrics.get('critical_high_alerts', 0) or 0)):,} critical/high alert(s)."
+    if driver == "Open owner actions":
+        return f"{int(float(metrics.get('open_actions', 0) or 0)):,} open owner action(s)."
+    if driver == "Task failures":
+        return f"{int(float(metrics.get('failed_tasks', 0) or 0)):,} failed task run(s)."
+    if driver == "Query failures":
+        return f"{int(float(metrics.get('failed_queries', 0) or 0)):,} failed query signal(s)."
+    if driver == "Queue pressure":
+        return f"{float(metrics.get('queue_seconds', 0) or 0) / 60.0:,.1f} queued minute(s)."
+    if driver == "Remote spill":
+        return f"{float(metrics.get('remote_spill_gb', 0) or 0):,.1f} GB remote spill."
+    if driver == "Stale sources":
+        return f"{int(float(metrics.get('stale_sources', 0) or 0)):,} stale source(s)."
+    return "Evidence available in command board summary."
+
+
+def _platform_driver_action(driver: str) -> str:
+    actions = {
+        "Cost movement": "Open Cost & Contract and prove the top cost driver before changing budgets.",
+        "Critical/high alerts": "Open Alert Center and assign owner, SLA, and remediation state.",
+        "Open owner actions": "Open DBA Control Room and work the owner action queue.",
+        "Task failures": "Open Workload Operations task graphs and inspect failed root/child task evidence.",
+        "Query failures": "Open Query Diagnosis with failed query evidence and owner route.",
+        "Queue pressure": "Open Workload Operations and separate capacity queueing from lock contention.",
+        "Remote spill": "Open Query Diagnosis and inspect joins, scans, and warehouse memory pressure.",
+        "Stale sources": "Refresh or repair the scheduled mart task before acting on stale evidence.",
+    }
+    return actions.get(driver, "Open the owning command surface and attach proof.")
 
 
 def bad_ratio_score(total: float, bad: float, penalty: float = 100.0) -> float:

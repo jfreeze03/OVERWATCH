@@ -259,15 +259,13 @@ def render_signal_lane_board(
         value = str(row.get("value") or row.get("VALUE") or "Not loaded")
         state = str(row.get("state") or row.get("STATE") or "Review")
         detail = str(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or "")
+        show_detail = bool(row.get("show_detail") or row.get("SHOW_DETAIL"))
         with cols[idx % column_count]:
             with st.container(border=True):
-                top_cols = st.columns([3, 1])
-                with top_cols[0]:
-                    st.caption(label)
-                with top_cols[1]:
-                    _badge(state)
+                st.caption(label)
+                _badge(state)
                 st.markdown(f"**{value}**")
-                if detail:
+                if detail and show_detail:
                     st.caption(detail)
 
 

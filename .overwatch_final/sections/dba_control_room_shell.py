@@ -8,19 +8,12 @@ import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DEFAULTS, ENVIRONMENT_CONFIG
 from sections.shell_helpers import (
-    action_state_label,
-    evidence_caption,
-    evidence_label,
-    evidence_loaded,
     full_workspace_requested,
     render_refresh_contract,
     render_setup_health_board,
-    render_shell_kpi_row,
     render_shell_snapshot,
-    render_shell_status_strip,
     render_shell_workflows,
     render_signal_lane_board,
-    scope_label,
 )
 from utils.command_board import load_or_reuse_command_board
 
@@ -139,10 +132,6 @@ def _apply_fast_entry_default() -> None:
     st.session_state[_FULL_WORKSPACE_KEY] = False
     st.session_state[_BRIEF_MODE_KEY] = True
     st.session_state[_FAST_ENTRY_VERSION_KEY] = _FAST_ENTRY_VERSION
-
-
-def _loaded_evidence_available() -> bool:
-    return evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
 
 
 def _frame_len(value: object) -> int:
@@ -504,31 +493,11 @@ def _render_back_to_brief_control() -> None:
             _return_to_brief()
 
 
-def _render_status_strip() -> None:
-    detail = (
-        evidence_caption(st.session_state, _FULL_WORKSPACE_STATE_KEYS, "")
-        if _loaded_evidence_available()
-        else "Fast watch, source health, incidents, release gate, and handoff proof open from the workflow grid."
-    )
-    render_shell_status_strip(
-        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
-        headline="DBA command view: incidents, source health, release gates, and handoff risk.",
-        detail=detail,
-    )
-
-
-def _render_kpi_row() -> None:
-    render_shell_kpi_row((
-        ("Scope", scope_label(_active_company(), _active_environment())),
-        ("Window", _window_label()),
-        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
-        ("Primary route", "Fast Watch"),
-    ))
-
-
 def _render_command_snapshot() -> None:
     meta = _command_meta() or _control_room_meta()
     st.markdown("**DBA Command Snapshot**")
+    render_signal_lane_board("DBA Command Board", _dba_shell_lanes(), max_lanes=8)
+    render_shell_snapshot(_loaded_data_snapshot())
     render_refresh_contract(
         meta,
         source=st.session_state.get("dba_control_room_source_mode", "MART_EXECUTIVE_OBSERVABILITY / MART_DBA_CONTROL_ROOM"),
@@ -536,8 +505,6 @@ def _render_command_snapshot() -> None:
         refresh_method="Scheduled command mart refresh",
         live_fallback="Explicit DBA route",
     )
-    render_signal_lane_board("DBA Command Board", _dba_shell_lanes(), max_lanes=8)
-    render_shell_snapshot(_loaded_data_snapshot())
 
 
 def _render_morning_route_board() -> None:
@@ -598,8 +565,6 @@ def render() -> None:
     st.session_state.setdefault("dba_control_room_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
 
     _load_command_board()
-    _render_status_strip()
-    _render_kpi_row()
     _render_command_snapshot()
     _render_morning_route_board()
     _render_workflow_launchpad()

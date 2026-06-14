@@ -2548,7 +2548,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OVERWATCH_ALERTS", sql)
         self.assertIn("WAREHOUSE = OVERWATCH_WH", sql)
 
-    def test_budget_governance_board_tracks_summit_budget_capabilities(self):
+    def test_budget_governance_board_tracks_budget_control_capabilities(self):
         summary, board = _build_budget_governance_board()
         capabilities = set(board["CAPABILITY"])
         self.assertEqual(

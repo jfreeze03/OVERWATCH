@@ -78,6 +78,24 @@ Use live or near-real-time metadata only for active incidents:
 Every live path should be bounded by time window, row limit, scope filters, and
 operator intent.
 
+## Native Proof Lanes
+
+The production hardening strategy expects the command center to show whether
+native Snowflake controls exist before a DBA trusts the dashboard. The app
+therefore exposes setup/readiness lanes for:
+
+- Data Metric Functions via `DATA_METRIC_FUNCTION_REFERENCES`
+- Snowflake ALERT object inventory and `ALERT_HISTORY`
+- owner/cost/criticality tags via `TAG_REFERENCES`
+- OVERWATCH self-cost via app `QUERY_TAG`
+- daily executive digest history
+- optional organization usage cost rollups
+
+These checks are not first-paint live scans. They are either setup contracts,
+scheduled facts, or explicit drill-through checks. If the active role lacks a
+view, the UI should label the source as unavailable rather than silently
+pretending the control exists.
+
 ## Compare Workflows
 
 Schema Compare is an operator-triggered metadata workflow. It uses `SHOW OBJECTS`

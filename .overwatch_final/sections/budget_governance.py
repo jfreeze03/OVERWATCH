@@ -28,7 +28,7 @@ from utils.workflows import (
 )
 
 
-BUDGET_GOVERNANCE_VERSION = "2026-06-02-summit-budget-controls-v1"
+BUDGET_GOVERNANCE_VERSION = "2026-06-14-budget-controls-v2"
 AI_BUDGET_TAG = "OVERWATCH_BUDGET_SCOPE"
 AI_QUOTA_TABLE = "OVERWATCH_AI_USER_QUOTA"
 AI_USAGE_VIEW = "OVERWATCH_AI_USER_MONTHLY_USAGE_V"
@@ -38,7 +38,7 @@ BUDGET_ACTION_PROC = "SP_OVERWATCH_BUDGET_CUSTOM_ACTION"
 BUDGET_ACTION_BRIDGE = "OVERWATCH_BUDGET_ACTION_BRIDGE"
 
 
-SUMMIT_CAPABILITIES = (
+BUDGET_CONTROL_CAPABILITIES = (
     {
         "CAPABILITY": "Cost Controls for AI",
         "STATE": "Ready to Deploy",
@@ -146,7 +146,7 @@ def _budget_governance_score(board: pd.DataFrame) -> dict:
 
 
 def _build_budget_governance_board() -> tuple[dict, pd.DataFrame]:
-    board = pd.DataFrame(SUMMIT_CAPABILITIES)
+    board = pd.DataFrame(BUDGET_CONTROL_CAPABILITIES)
     board["_STATE_RANK"] = board["STATE"].map({
         "Gap": 0,
         "Partial": 1,
@@ -669,11 +669,11 @@ def render() -> None:
 
     render_priority_dataframe(
         board,
-        title="Summit capability coverage",
+        title="Budget control coverage",
         priority_columns=["STATE", "CAPABILITY", "OVERWATCH_CONTROL", "STRICT_GAP", "DBA_NEXT_MOVE"],
         sort_by=["STATE", "CAPABILITY"],
         ascending=[True, True],
-        raw_label="All budget governance capabilities",
+        raw_label="All budget governance controls",
         max_rows=6,
         height=260,
     )

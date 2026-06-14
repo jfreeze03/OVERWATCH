@@ -18,6 +18,7 @@ from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULT_DAY_WINDOW
 from .deployment import build_schema_migration_contract, build_schema_migration_status_sql
 from .mart import mart_object_name
 from .query import run_query, sql_literal
+from .scorecards import platform_operating_score_from_signals
 
 
 COMMAND_BOARD_VERSION = "2026-06-14-command-board-v1"
@@ -246,7 +247,7 @@ def summarize_command_board(board: pd.DataFrame) -> dict[str, object]:
     stale_sources = 0
     if not freshness.empty and "PERIOD_START" in freshness.columns:
         stale_sources = int(freshness["PERIOD_START"].isna().sum())
-    return {
+    summary = {
         "loaded": not rows.empty,
         "current_credits": current_credits,
         "current_cost_usd": current_cost,
@@ -268,9 +269,6 @@ def summarize_command_board(board: pd.DataFrame) -> dict[str, object]:
         "high_actions": _safe_int(_metric_value(rows, "Critical High Alerts")),
         "storage_tb": _metric_value(rows, "Storage"),
         "storage_cost_usd": _metric_value(rows, "Storage", "VALUE_USD"),
-        "score": _safe_int(_metric_value(rows, "Platform Health")),
-        "state": "Loaded" if not rows.empty else "Not loaded",
-        "cap_reason": "Executive observability mart: cost, Cortex, workload, task, alert, action, storage, and source freshness.",
         "top_cost_driver": cost_driver,
         "top_cost_driver_credits": driver_credits,
         "top_cost_driver_usd": driver_cost,
@@ -282,6 +280,18 @@ def summarize_command_board(board: pd.DataFrame) -> dict[str, object]:
         "freshness_sources": int(len(freshness)),
         "stale_sources": stale_sources,
     }
+    score = platform_operating_score_from_signals(summary)
+    summary.update({
+        "score": score["score"],
+        "raw_score": score["raw_score"],
+        "state": score["state"] if not rows.empty else "Not loaded",
+        "score_cap": score["score_cap"],
+        "cap_reason": score["cap_reason"] if not rows.empty else (
+            "Executive observability mart is not loaded for this scope."
+        ),
+        "platform_score_drivers": score["platform_score_drivers"],
+    })
+    return summary
 
 
 def load_executive_command_board(

@@ -1,6 +1,6 @@
 """Executive Landing glance page.
 
-COCO/Kiro contract: this route is a boardroom glance page, not a workflow hub.
+Production contract: this route is a boardroom glance page, not a workflow hub.
 It shows six leadership KPIs immediately, then one trend chart and one action
 table. Deeper investigation starts from the owning sections.
 """
@@ -12,7 +12,8 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULTS, DEFAULT_COMPANY, DEFAULT_DAY_WINDOW, DEFAULT_ENVIRONMENT, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
-from sections.shell_helpers import render_shell_status_strip, render_signal_lane_board
+from sections.native_readiness import render_native_readiness_board
+from sections.shell_helpers import render_signal_lane_board
 from utils.command_board import board_rows, load_or_reuse_command_board, load_setup_readiness
 
 
@@ -279,16 +280,47 @@ def _chart_frame(panel: str, metric: str, value_column: str = "VALUE_USD"):
     return view
 
 
-def _render_status_strip() -> None:
-    render_shell_status_strip(
-        state="Glance",
-        headline="Executive command board",
-        detail="Spend, burn, alerts, SLA, platform score, and owner queue.",
+def _render_kpis() -> None:
+    render_signal_lane_board("Executive Glance KPIs", _executive_glance_kpis(), max_lanes=6)
+
+
+def _platform_score_driver_lanes() -> tuple[dict[str, str], ...]:
+    drivers = _summary().get("platform_score_drivers")
+    if not isinstance(drivers, list) or not drivers:
+        return (
+            {
+                "label": "Score basis",
+                "value": "No penalties",
+                "state": "Ready",
+                "detail": "Platform score is computed from spend, alerts, owner queue, failures, queueing, spill, and freshness.",
+            },
+        )
+    lanes: list[dict[str, str]] = []
+    for driver in drivers[:4]:
+        if not isinstance(driver, dict):
+            continue
+        impact = _safe_float(driver.get("SCORE_IMPACT"))
+        evidence = str(driver.get("EVIDENCE") or "").strip()
+        action = str(driver.get("NEXT_ACTION") or "").strip()
+        lanes.append({
+            "label": str(driver.get("DRIVER") or "Score driver"),
+            "value": f"{impact:+.1f} pts",
+            "state": str(driver.get("STATE") or "Review"),
+            "detail": " ".join(part for part in (evidence, action) if part),
+        })
+    return tuple(lanes) or (
+        {
+            "label": "Score basis",
+            "value": "No penalties",
+            "state": "Ready",
+            "detail": "Platform score has no active penalty drivers for this command-board scope.",
+        },
     )
 
 
-def _render_kpis() -> None:
-    render_signal_lane_board("Executive Glance KPIs", _executive_glance_kpis(), max_lanes=6)
+def _render_platform_score_basis() -> None:
+    st.markdown("**Platform Score Basis**")
+    render_signal_lane_board("Platform Score Drivers", _platform_score_driver_lanes(), max_lanes=4)
 
 
 def _render_spend_trend() -> None:
@@ -512,15 +544,20 @@ def _render_setup_readiness() -> None:
     st.dataframe(priority, hide_index=True, width="stretch")
 
 
+def _render_native_snowflake_readiness() -> None:
+    render_native_readiness_board()
+
+
 def render() -> None:
     st.session_state[_BRIEF_MODE_KEY] = True
     st.session_state[_FULL_WORKSPACE_KEY] = False
     st.session_state.setdefault("executive_landing_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _load_command_board()
-    _render_status_strip()
     _render_kpis()
+    _render_platform_score_basis()
     _render_spend_trend()
     _render_observability_summary()
     _render_top_actions()
     _render_setup_readiness()
+    _render_native_snowflake_readiness()
     _render_copy_summary()

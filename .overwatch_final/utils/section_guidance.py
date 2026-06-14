@@ -273,20 +273,37 @@ def _section_guide_markup(section: str) -> str:
 
 def render_section_operating_guide(section: str) -> None:
     """Render a collapsed SOP strip for the active DBA section."""
-    markup = _section_guide_markup(section)
-    if not markup:
+    guide = SECTION_OPERATING_GUIDE.get(str(section))
+    if not guide:
         return
     with st.expander("DBA Playbook", expanded=False):
-        st.markdown(markup, unsafe_allow_html=True)
+        items = (
+            ("First DBA move", _guide_value(section, "first_move")),
+            ("Evidence standard", _guide_value(section, "evidence")),
+            ("Closure rule", _guide_value(section, "closure")),
+            ("Safety boundary", _guide_value(section, "guardrail")),
+        )
+        cols = st.columns(2)
+        for idx, (label, detail) in enumerate(items):
+            with cols[idx % 2]:
+                with st.container(border=True):
+                    st.caption(label)
+                    st.markdown(f"**{detail}**")
 
 
 def render_section_evidence_contract(section: str) -> None:
     """Render the trust boundary for the active DBA section."""
-    markup = _section_evidence_contract_markup(section)
-    if not markup:
+    rows = SECTION_EVIDENCE_CONTRACT.get(str(section))
+    if not rows:
         return
     with st.expander("Evidence Contract", expanded=False):
-        st.markdown(markup, unsafe_allow_html=True)
+        for row in rows:
+            with st.container(border=True):
+                st.markdown(f"**{row['source']}**")
+                st.caption(f"Source basis: {row['confidence']}")
+                st.caption(f"Decision use: {row['decision_use']}")
+                st.caption(f"Invalid use: {row['invalid_use']}")
+                st.caption(f"Closure proof: {row['proof']}")
 
 
 def _notes_key(section: str) -> str:
@@ -356,9 +373,27 @@ def _section_evidence_contract_markup(section: str) -> str:
 
 def render_section_reference(section: str) -> None:
     """Render the hidden section reference material without adding default page noise."""
-    guide_markup = _section_guide_markup(section)
-    contract_markup = _section_evidence_contract_markup(section)
-    if not guide_markup and not contract_markup:
+    guide = SECTION_OPERATING_GUIDE.get(str(section))
+    contract = SECTION_EVIDENCE_CONTRACT.get(str(section))
+    if not guide and not contract:
         return
     with st.expander("Details", expanded=False):
-        st.markdown(f"{guide_markup}{contract_markup}", unsafe_allow_html=True)
+        if guide:
+            st.markdown("**DBA Playbook**")
+            for label, detail in (
+                ("First DBA move", _guide_value(section, "first_move")),
+                ("Evidence standard", _guide_value(section, "evidence")),
+                ("Closure rule", _guide_value(section, "closure")),
+                ("Safety boundary", _guide_value(section, "guardrail")),
+            ):
+                st.caption(label)
+                st.markdown(f"**{detail}**")
+        if contract:
+            st.markdown("**Evidence Contract**")
+            for row in contract:
+                with st.container(border=True):
+                    st.markdown(f"**{row['source']}**")
+                    st.caption(f"Source basis: {row['confidence']}")
+                    st.caption(f"Decision use: {row['decision_use']}")
+                    st.caption(f"Invalid use: {row['invalid_use']}")
+                    st.caption(f"Closure proof: {row['proof']}")

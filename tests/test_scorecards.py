@@ -145,20 +145,23 @@ class ScorecardTests(unittest.TestCase):
         rows = scorecards.dba_control_plane_section_scorecards()
         by_section = {row["SECTION"]: row for row in rows}
 
-        self.assertEqual(by_section["DBA Control Room"]["SCORE"], 90.0)
-        self.assertEqual(by_section["DBA Control Room"]["EFFECTIVE_SCORE"], 90.0)
-        self.assertEqual(by_section["DBA Control Room"]["LABEL"], "Near Target")
-        self.assertEqual(by_section["DBA Control Room"]["DEPLOYMENT_LABEL"], "Ready With Watch")
+        self.assertEqual(by_section["Executive Landing"]["SCORE"], 80.6)
+        self.assertEqual(by_section["Executive Landing"]["LABEL"], "Operational")
+        self.assertEqual(by_section["Executive Landing"]["LOWEST_COMPONENT"], "Admin Safety & Audit")
+        self.assertEqual(by_section["DBA Control Room"]["SCORE"], 78.7)
+        self.assertEqual(by_section["DBA Control Room"]["EFFECTIVE_SCORE"], 78.7)
+        self.assertEqual(by_section["DBA Control Room"]["LABEL"], "Pilot")
+        self.assertEqual(by_section["DBA Control Room"]["DEPLOYMENT_LABEL"], "Blocked")
         self.assertEqual(by_section["DBA Control Room"]["GATE_DRIVERS"], "none")
-        self.assertEqual(by_section["Alert Center"]["SCORE"], 89.9)
+        self.assertEqual(by_section["Alert Center"]["SCORE"], 80.4)
         self.assertEqual(by_section["Alert Center"]["LABEL"], "Operational")
-        self.assertEqual(by_section["Workload Operations"]["SCORE"], 90.0)
-        self.assertEqual(by_section["Workload Operations"]["LABEL"], "Near Target")
-        self.assertEqual(by_section["Cost & Contract"]["SCORE"], 91.4)
-        self.assertEqual(by_section["Cost & Contract"]["LABEL"], "Near Target")
-        self.assertEqual(by_section["Governance & Security"]["SCORE"], 88.9)
-        self.assertEqual(by_section["Governance & Security"]["LABEL"], "Operational")
-        self.assertEqual(by_section["Governance & Security"]["CAP_DRIVERS"], "none")
+        self.assertEqual(by_section["Workload Operations"]["SCORE"], 79.2)
+        self.assertEqual(by_section["Workload Operations"]["LABEL"], "Pilot")
+        self.assertEqual(by_section["Cost & Contract"]["SCORE"], 82.4)
+        self.assertEqual(by_section["Cost & Contract"]["LABEL"], "Operational")
+        self.assertEqual(by_section["Governance & Security"]["SCORE"], 78.0)
+        self.assertEqual(by_section["Governance & Security"]["LABEL"], "Pilot")
+        self.assertIn("data correctness/scope", by_section["Governance & Security"]["CAP_DRIVERS"])
         self.assertEqual(
             set(by_section),
             {
@@ -171,10 +174,30 @@ class ScorecardTests(unittest.TestCase):
             },
         )
         self.assertLess(max(row["SCORE"] for row in rows), 95)
+        self.assertLess(max(row["SCORE"] for row in rows), 85)
         self.assertTrue(all(row["LOWEST_COMPONENT"] for row in rows))
-        self.assertEqual(by_section["DBA Control Room"]["CAP_DRIVERS"], "none")
+        self.assertIn("governance/ownership", by_section["DBA Control Room"]["CAP_DRIVERS"])
         self.assertIn("notification integration", by_section["Alert Center"]["NEXT_95_MOVE"])
         self.assertIn("owner approval", by_section["Cost & Contract"]["NEXT_95_MOVE"])
+
+    def test_platform_operating_score_uses_current_signals_not_mart_self_score(self):
+        result = scorecards.platform_operating_score_from_signals({
+            "current_cost_usd": 368,
+            "prior_cost_usd": 323.84,
+            "spend_delta_cost_usd": 44.16,
+            "critical_high_alerts": 3,
+            "open_actions": 5,
+            "failed_tasks": 2,
+            "failed_queries": 4,
+            "queue_seconds": 300,
+            "remote_spill_gb": 8.5,
+            "freshness_sources": 1,
+        })
+
+        self.assertEqual(result["score"], 53)
+        self.assertEqual(result["state"], "Critical")
+        self.assertEqual(result["score_cap"], 85)
+        self.assertEqual(result["platform_score_drivers"][0]["DRIVER"], "Critical/high alerts")
 
 
 if __name__ == "__main__":

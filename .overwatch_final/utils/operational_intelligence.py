@@ -18,7 +18,7 @@ def _sql(text: str) -> str:
 
 
 def build_capability_register_rows() -> list[dict[str, object]]:
-    """Return the ranked capability plan agreed from COCO/Kiro review."""
+    """Return the ranked production capability plan."""
     return [
         {
             "RANK": 1,

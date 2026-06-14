@@ -8,20 +8,20 @@ import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
 from sections.shell_helpers import (
-    action_state_label,
-    evidence_caption,
-    evidence_label,
-    evidence_loaded,
     full_workspace_requested,
     render_refresh_contract,
     render_setup_health_board,
     render_shell_kpi_row,
-    render_shell_status_strip,
     render_shell_workflows,
     render_signal_lane_board,
-    scope_label,
 )
 from utils.command_board import load_or_reuse_command_board
+from utils.native_snowflake import (
+    build_executive_digest_history_sql,
+    build_org_rollup_sql,
+    build_overwatch_self_cost_sql,
+    build_tag_allocation_sql,
+)
 
 
 _FULL_WORKSPACE_KEY = "_cost_contract_full_workspace_requested"
@@ -413,97 +413,54 @@ def _render_back_to_brief_control() -> None:
             _return_to_brief()
 
 
-def _render_status_strip() -> None:
-    detail = evidence_caption(
-        st.session_state,
-        _FULL_WORKSPACE_STATE_KEYS,
-        "Cost, Cortex, budget, contract, and verification proof are loaded when a workflow is opened.",
-    )
-    render_shell_status_strip(
-        state=action_state_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS),
-        headline="Cost command view: bill movement, Cortex spend, budget risk, and contract burn.",
-        detail=detail,
-    )
-
-
-def _render_kpi_row() -> None:
+def _render_metric_board() -> None:
+    board = _loaded_cost_board()
+    st.markdown("**Cost Command Board**")
+    if not board["loaded"]:
+        render_shell_kpi_row((
+            ("Current Spend", "Awaiting mart"),
+            ("Delta", "Awaiting mart"),
+            ("30d Forecast", "Awaiting mart"),
+            ("Contract Pace", "Awaiting mart"),
+        ))
+        render_shell_kpi_row((
+            ("Cortex", "Awaiting mart"),
+            ("Top Driver", "Awaiting mart"),
+            ("Budget Risk", "On demand"),
+            ("Cost Freshness", "Awaiting mart"),
+        ))
+    else:
+        render_shell_kpi_row((
+            ("Current Spend", _money(board["spend"])),
+            ("Delta", _money(board["delta_spend"], signed=True)),
+            ("30d Forecast", _money(board["forecast"]) if board["forecast"] else "Not loaded"),
+            ("Contract Pace", "Review" if board["forecast"] and board["forecast"] > board["spend"] else "Stable"),
+        ))
+        render_shell_kpi_row((
+            ("Cortex", board["cortex"]),
+            ("Top Driver", str(board["top_driver"])[:28]),
+            ("Driver Delta", _money(board["top_delta"], signed=True)),
+            ("Cost Freshness", board["freshness"]),
+        ))
+    render_signal_lane_board("Cost Signals", _cost_shell_lanes(board), max_lanes=8)
     render_shell_kpi_row((
-        ("Scope", scope_label(_active_company(), _active_environment())),
-        ("Window", _window_label()),
-        ("Compute $/credit", f"{_credit_price():.2f}"),
-        ("Evidence", evidence_label(st.session_state, _FULL_WORKSPACE_STATE_KEYS)),
+        ("Open Actions", f"{_int_value(board.get('open_actions')):,}" if board["loaded"] else "Awaiting mart"),
+        ("High Priority", f"{_int_value(board.get('high_actions')):,}" if board["loaded"] else "Awaiting mart"),
+        ("Open Est. Savings", _money(board.get("est_savings")) if board["loaded"] else "Awaiting mart"),
+        ("Value Log", "Automated setup"),
     ))
 
 
-def _render_metric_board() -> None:
+def _render_cost_source_contract() -> None:
     board = _loaded_cost_board()
-    st.markdown("**Cost Metric Board**")
+    meta = st.session_state.get("cost_contract_cockpit_meta") or st.session_state.get(_COMMAND_BOARD_META_KEY, {})
     render_refresh_contract(
-        st.session_state.get("cost_contract_cockpit_meta") or st.session_state.get(_COMMAND_BOARD_META_KEY, {}),
+        meta if board.get("loaded") and isinstance(meta, dict) else {},
         source=str(board.get("source") or "FACT_COST_DAILY / FACT_CORTEX_DAILY"),
         target_minutes=60,
         refresh_method="Scheduled cost and Cortex mart refresh",
         live_fallback="Explicit proof refresh",
     )
-    render_signal_lane_board("Cost Command Board", _cost_shell_lanes(board), max_lanes=8)
-    if not board["loaded"]:
-        render_shell_kpi_row((
-            ("Current Spend", "Not loaded"),
-            ("Delta", "Not loaded"),
-            ("30d Forecast", "Not loaded"),
-            ("Contract Pace", "Not loaded"),
-        ))
-        render_shell_kpi_row((
-            ("Cortex", "Not loaded"),
-            ("Top Driver", "Not loaded"),
-            ("Budget Risk", "On demand"),
-            ("Cost Freshness", "Not loaded"),
-        ))
-        render_shell_kpi_row((
-            ("Open Actions", "Not loaded"),
-            ("High Priority", "Not loaded"),
-            ("Open Est. Savings", "Not loaded"),
-            ("Value Log", "Automated setup"),
-        ))
-        return
-
-    render_shell_kpi_row((
-        ("Current Spend", _money(board["spend"])),
-        ("Delta", _money(board["delta_spend"], signed=True)),
-        ("30d Forecast", _money(board["forecast"]) if board["forecast"] else "Not loaded"),
-        ("Contract Pace", "Review" if board["forecast"] and board["forecast"] > board["spend"] else "Stable"),
-    ))
-    render_shell_kpi_row((
-        ("Cortex", board["cortex"]),
-        ("Top Driver", str(board["top_driver"])[:28]),
-        ("Driver Delta", _money(board["top_delta"], signed=True)),
-        ("Cost Freshness", board["freshness"]),
-    ))
-    render_shell_kpi_row((
-        ("Open Actions", f"{_int_value(board['open_actions']):,}"),
-        ("High Priority", f"{_int_value(board['high_actions']):,}"),
-        ("Open Est. Savings", _money(board["est_savings"])),
-        ("Budget Risk", board["budget"]),
-    ))
-
-
-def _render_executive_flow_board() -> None:
-    board = _loaded_cost_board()
-    st.markdown("**Cost Executive Flow**")
-    if not board["loaded"]:
-        render_shell_kpi_row((
-            ("Burn", "Refresh cost board"),
-            ("Run Rate", "Refresh cost board"),
-            ("Driver", "Refresh cost board"),
-            ("Action Queue", "Refresh cost board"),
-        ))
-    else:
-        render_shell_kpi_row((
-            ("Burn", _money(board["spend"])),
-            ("Run Rate", _money(board["avg_daily_7d"]) if board["avg_daily_7d"] else board["run_rate_state"]),
-            ("Driver", str(board["top_driver"])[:28]),
-            ("Action Queue", f"{_int_value(board['open_actions']):,}"),
-        ))
     render_setup_health_board(
         "Cost Mart Contract",
         (
@@ -516,6 +473,25 @@ def _render_executive_flow_board() -> None:
         fallback="Explicit proof refresh",
         owner="FinOps / DBA",
     )
+
+
+def _render_executive_flow_board() -> None:
+    board = _loaded_cost_board()
+    st.markdown("**Cost Executive Flow**")
+    if not board["loaded"]:
+        render_shell_kpi_row((
+            ("Burn", "Awaiting mart"),
+            ("Run Rate", "Awaiting mart"),
+            ("Driver", "Awaiting mart"),
+            ("Action Queue", "Awaiting mart"),
+        ))
+    else:
+        render_shell_kpi_row((
+            ("Burn", _money(board["spend"])),
+            ("Run Rate", _money(board["avg_daily_7d"]) if board["avg_daily_7d"] else board["run_rate_state"]),
+            ("Driver", str(board["top_driver"])[:28]),
+            ("Action Queue", f"{_int_value(board['open_actions']):,}"),
+        ))
 
 
 def _render_value_automation_board() -> None:
@@ -564,6 +540,52 @@ def _render_value_automation_board() -> None:
     )
 
 
+def _render_cost_native_proof_board() -> None:
+    st.markdown("**Cost Allocation & OVERWATCH Cost Proof**")
+    render_signal_lane_board(
+        "Native Cost Proof",
+        (
+            {
+                "label": "Tag allocation",
+                "value": "TAG_REFERENCES",
+                "state": "Owner",
+                "detail": "Use owner, cost-center, and criticality tags instead of only warehouse naming rules.",
+            },
+            {
+                "label": "Self-cost",
+                "value": "QUERY_TAG",
+                "state": "App cost",
+                "detail": "OVERWATCH must prove its own queries, p95, failures, bytes scanned, and cost by section.",
+            },
+            {
+                "label": "Executive digest",
+                "value": "EXECUTIVE_DIGEST_HISTORY",
+                "state": "Push",
+                "detail": "Daily digest rows should match the Executive Landing board and owner action count.",
+            },
+            {
+                "label": "Org rollup",
+                "value": "ORGANIZATION_USAGE",
+                "state": "Optional",
+                "detail": "Only expose multi-account cost when the role has organization usage privileges.",
+            },
+        ),
+        max_lanes=4,
+    )
+    render_setup_health_board(
+        "Native Cost SQL Contracts",
+        (
+            ("Tag query", build_tag_allocation_sql().splitlines()[0]),
+            ("Self-cost", build_overwatch_self_cost_sql().splitlines()[0]),
+            ("Digest", build_executive_digest_history_sql().splitlines()[0]),
+            ("Org rollup", build_org_rollup_sql().splitlines()[0]),
+        ),
+        cadence="60 min command mart plus daily digest",
+        fallback="Single-account metering remains valid",
+        owner="FinOps / OVERWATCH Maintainer",
+    )
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workspace(str(row["WORKFLOW"]))
@@ -586,9 +608,9 @@ def render() -> None:
 
     st.session_state.setdefault("cost_contract_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _load_command_board()
-    _render_status_strip()
-    _render_kpi_row()
     _render_metric_board()
     _render_executive_flow_board()
-    _render_value_automation_board()
+    _render_cost_source_contract()
     _render_workflow_launchpad()
+    _render_value_automation_board()
+    _render_cost_native_proof_board()

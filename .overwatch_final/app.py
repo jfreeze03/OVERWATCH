@@ -278,15 +278,24 @@ def _apply_section_compatibility_state(section: str) -> None:
         st.session_state[key] = value
 
 
-def _request_section_workspace_state(section: str) -> None:
-    """Open the selected section's data workspace from sidebar navigation."""
+def _request_section_board_state(section: str) -> None:
+    """Make sidebar navigation land on the section board before detailed proof."""
     target = _normalize_nav_section(section)
     state_keys = SECTION_WORKSPACE_STATE_KEYS.get(target)
     if not state_keys:
         return
     workspace_key, brief_key = state_keys
-    st.session_state[workspace_key] = True
-    st.session_state[brief_key] = False
+    if target == "Executive Landing":
+        st.session_state[workspace_key] = True
+        st.session_state[brief_key] = False
+        return
+    st.session_state[workspace_key] = False
+    st.session_state[brief_key] = True
+    if target == "Governance & Security":
+        st.session_state["_security_posture_full_workspace_requested"] = False
+        st.session_state["_security_posture_brief_mode"] = True
+        st.session_state["_change_drift_full_workspace_requested"] = False
+        st.session_state["_change_drift_brief_mode"] = True
 
 
 def _section_requires_connection(section: str) -> bool:
@@ -298,12 +307,12 @@ def _queue_section_navigation(section: str) -> None:
     raw_section = str(section or "").strip()
     target = _normalize_nav_section(raw_section)
     current = _normalize_nav_section(st.session_state.get("nav_section", ""))
-    st.session_state["_overwatch_pending_autoload_section"] = target
-    st.session_state["_overwatch_pending_autoload_started_at"] = datetime.now().isoformat(timespec="seconds")
+    st.session_state.pop("_overwatch_pending_autoload_section", None)
+    st.session_state.pop("_overwatch_pending_autoload_started_at", None)
     if target != current:
         st.session_state["_overwatch_pending_section"] = target
         st.session_state["_overwatch_section_transition_started_at"] = datetime.now().isoformat(timespec="seconds")
-    _request_section_workspace_state(target)
+    _request_section_board_state(target)
     _apply_section_compatibility_state(raw_section)
     st.session_state["nav_section"] = target
 
@@ -1043,7 +1052,6 @@ with st.sidebar:
                 width="stretch",
                 on_click=_set_section,
                 args=(section_name,),
-                help=_section_subtitle(section_name),
             )
 
     st.divider()

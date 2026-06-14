@@ -2,7 +2,7 @@
 import streamlit as st
 
 from config import DEFAULTS, ETL_AUDIT_DB, ETL_AUDIT_SCHEMA
-from sections.shell_helpers import render_shell_snapshot
+from sections.shell_helpers import render_refresh_contract, render_shell_snapshot, with_loaded_at
 from utils import (
     build_app_runtime_cost_sql,
     build_snowflake_value_auto_ddl,
@@ -87,7 +87,7 @@ def _load_snowflake_value_state(session, company: str, *, show_errors: bool = Tr
         st.session_state["sf_value_summary"] = df_summary
         st.session_state["sf_value_detail"] = df_detail
         st.session_state["sf_value_app_cost"] = df_app_cost
-        st.session_state["sf_value_meta"] = {"company": company}
+        st.session_state["sf_value_meta"] = with_loaded_at({"company": company}, source="OVERWATCH_ROI_LOG")
         return True
     except Exception as e:
         st.session_state["sf_value_summary"] = None
@@ -115,7 +115,10 @@ def _load_snowflake_value_automation_state(company: str, *, show_errors: bool = 
         st.session_state["sf_value_automation_health"] = health
         st.session_state["sf_value_automation_candidates"] = candidates
         st.session_state["sf_value_automation_error"] = ""
-        st.session_state["sf_value_automation_meta"] = {"company": company}
+        st.session_state["sf_value_automation_meta"] = with_loaded_at(
+            {"company": company},
+            source="OVERWATCH_VALUE_AUTOMATION_HEALTH_V / OVERWATCH_VALUE_CANDIDATE_V",
+        )
         return True
     except Exception as exc:
         st.session_state["sf_value_automation_health"] = None
@@ -155,6 +158,24 @@ def _render_value_automation_contract() -> None:
     )
     with st.expander("Value automation SQL preview", expanded=False):
         st.code(value_sql, language="sql")
+
+
+def _render_value_setup_health() -> None:
+    meta = st.session_state.get("sf_value_automation_meta") or st.session_state.get("sf_value_meta") or {}
+    st.markdown("**Value Automation Setup Health**")
+    render_refresh_contract(
+        meta if isinstance(meta, dict) else {},
+        source="OVERWATCH_VALUE_CANDIDATE_V / OVERWATCH_ROI_LOG",
+        target_minutes=60,
+        refresh_method="Scheduled SP_OVERWATCH_AUTOMATE_VALUE_LOG task",
+        live_fallback="Explicit load only",
+    )
+    render_shell_snapshot((
+        ("Candidate View", "OVERWATCH_VALUE_CANDIDATE_V"),
+        ("Health View", "OVERWATCH_VALUE_AUTOMATION_HEALTH_V"),
+        ("Ledger", "OVERWATCH_ROI_LOG"),
+        ("Run Log", "OVERWATCH_VALUE_AUTOMATION_RUN"),
+    ))
 
 
 def _render_value_automation_health(company: str) -> None:
@@ -229,6 +250,7 @@ def render():
     )
 
     st.info("Snowflake Value table setup is managed by `snowflake/OVERWATCH_MART_SETUP.sql`.")
+    _render_value_setup_health()
     _render_value_automation_contract()
     _render_value_automation_health(company)
 

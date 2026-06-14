@@ -27,6 +27,8 @@ audit behavior.
 | Alert Center | `ALERT_EVENTS`, notification/action tables | 15 min | No |
 | Cost & Contract | Cost/Cortex facts plus bounded official cost lens | 60 min | Explicit proof refresh |
 | Workload Operations | Query/task facts and task history summaries | 30 min | Explicit live triage |
+| Governance & Security | Access posture and change-control facts | 60 min | Explicit governance lane |
+| Snowflake Value | `OVERWATCH_VALUE_CANDIDATE_V`, `OVERWATCH_ROI_LOG` | 60 min | Explicit load only |
 
 The setup SQL seeds the same contract into `OVERWATCH_REFRESH_POLICY`.
 The UI should still render the metric frame immediately. If a Snowflake session
@@ -39,6 +41,12 @@ Snowflake Value: show the board frame immediately, reuse already-loaded session
 state when present, and keep Snowflake reads behind explicit refresh/load
 actions or scheduled mart tasks. Silent UI autoloads are not allowed for these
 surfaces.
+
+Primary sidebar navigation must land on the section board, not the heavy proof
+workspace. Drill-through buttons inside a board may open the detailed workspace
+because that is an explicit operator action. Every board should show its refresh
+contract: source, freshness state, target SLA, and whether a live fallback is
+allowed.
 
 ## When To Query Live Snowflake Metadata
 

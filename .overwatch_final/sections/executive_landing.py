@@ -20,7 +20,7 @@ from config import (
 )
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_navigation_state
-from sections.shell_helpers import render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip
+from sections.shell_helpers import render_refresh_contract, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
 
@@ -846,6 +846,7 @@ def _load_executive_observability(
             "data": normalised,
             "scope": _observability_scope(company, environment, int(days)),
             "source": "MART_EXECUTIVE_OBSERVABILITY",
+            "loaded_at": datetime.now().isoformat(timespec="seconds"),
             "error": "",
         }
         return not _obs_rows(normalised, "KPI").empty
@@ -859,6 +860,7 @@ def _load_executive_observability(
             }]),
             "scope": _observability_scope(company, environment, int(days)),
             "source": "MART_EXECUTIVE_OBSERVABILITY",
+            "loaded_at": datetime.now().isoformat(timespec="seconds"),
             "error": detail,
         }
         return False
@@ -1219,6 +1221,13 @@ def _render_executive_observability_board(
             ("Source", "Precomputed marts"),
             ("Status", "No rows"),
         ))
+        render_refresh_contract(
+            payload,
+            source="MART_EXECUTIVE_OBSERVABILITY",
+            target_minutes=60,
+            refresh_method="Scheduled OVERWATCH mart refresh",
+            live_fallback="No",
+        )
         st.markdown("**Executive Metric Board**")
         render_shell_kpi_row((
             ("Spend", "Not loaded"),
@@ -1296,6 +1305,13 @@ def _render_executive_observability_board(
         state=status_state,
         headline=status_headline,
         detail=status_detail,
+    )
+    render_refresh_contract(
+        payload,
+        source="MART_EXECUTIVE_OBSERVABILITY",
+        target_minutes=60,
+        refresh_method="Scheduled OVERWATCH mart refresh",
+        live_fallback="No",
     )
     render_shell_kpi_row((
         ("Platform", f"{safe_int(health)}/100" if health else "Loaded"),

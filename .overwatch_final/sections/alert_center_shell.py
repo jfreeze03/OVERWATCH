@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_refresh_contract, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_alert_center_full_workspace_requested"
@@ -209,6 +209,13 @@ def _render_metric_board() -> None:
     data = _loaded_data()
     loaded = bool(data)
     st.markdown("**Alert Metric Board**")
+    render_refresh_contract(
+        data.get("_freshness_meta") if isinstance(data, dict) else {},
+        source="ALERT_EVENTS / ALERT_ACTION_QUEUE",
+        target_minutes=15,
+        refresh_method="Scheduled alert sweep and owner-routing refresh",
+        live_fallback="No shell fallback",
+    )
     if not loaded:
         render_shell_kpi_row((
             ("Critical / High", "Not loaded"),

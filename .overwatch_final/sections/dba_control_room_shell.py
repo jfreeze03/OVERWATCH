@@ -13,7 +13,7 @@ from sections.shell_helpers import (
     evidence_label,
     evidence_loaded,
     full_workspace_requested,
-    render_data_freshness,
+    render_refresh_contract,
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
@@ -244,11 +244,12 @@ def _render_kpi_row() -> None:
 
 def _render_command_snapshot() -> None:
     st.markdown("**DBA Command Snapshot**")
-    render_data_freshness(
+    render_refresh_contract(
         _control_room_meta(),
-        source=st.session_state.get("dba_control_room_source_mode", "DBA Control Room"),
+        source=st.session_state.get("dba_control_room_source_mode", "MART_DBA_CONTROL_ROOM"),
         target_minutes=30,
-        delayed_note="No Snowflake query runs from this shell. Open a DBA route when you need fresh evidence.",
+        refresh_method="Scheduled DBA control mart refresh",
+        live_fallback="Explicit DBA route",
     )
     render_shell_snapshot(_loaded_data_snapshot())
 

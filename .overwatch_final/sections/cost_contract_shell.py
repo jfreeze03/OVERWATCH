@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_refresh_contract, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_cost_contract_full_workspace_requested"
@@ -270,6 +270,13 @@ def _render_kpi_row() -> None:
 def _render_metric_board() -> None:
     board = _loaded_cost_board()
     st.markdown("**Cost Metric Board**")
+    render_refresh_contract(
+        st.session_state.get("cost_contract_cockpit_meta", {}),
+        source="FACT_COST_DAILY / FACT_CORTEX_DAILY",
+        target_minutes=60,
+        refresh_method="Scheduled cost and Cortex mart refresh",
+        live_fallback="Explicit proof refresh",
+    )
     if not board["loaded"]:
         render_shell_kpi_row((
             ("Current Spend", "Not loaded"),

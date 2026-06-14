@@ -233,6 +233,29 @@ def render_data_freshness(
         st.caption(str(delayed_note))
 
 
+def render_refresh_contract(
+    meta: Mapping | None,
+    *,
+    source: str,
+    target_minutes: int = 60,
+    refresh_method: str = "Scheduled Snowflake refresh",
+    live_fallback: str = "No shell fallback",
+) -> None:
+    """Render the board refresh contract without starting a Snowflake query."""
+    has_meta = bool(meta)
+    merged = dict(meta or {})
+    if source and has_meta and "source" not in merged:
+        merged["source"] = source
+    state, detail = freshness_state(merged if has_meta else None, target_minutes=target_minutes)
+    render_shell_snapshot((
+        ("Source", source or merged.get("source") or "Precomputed facts"),
+        ("Freshness", state),
+        ("Target SLA", f"{max(1, int(target_minutes or 60))} min"),
+        ("Live fallback", live_fallback),
+    ))
+    st.caption(f"{refresh_method}. {detail}")
+
+
 def evidence_caption(state, keys: tuple[str, ...], unloaded_caption: str) -> str:
     if evidence_loaded(state, keys):
         return "Loaded evidence is available; open the workspace to continue from the saved proof."

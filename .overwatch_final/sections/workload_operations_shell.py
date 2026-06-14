@@ -7,7 +7,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, full_workspace_requested, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
+from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, full_workspace_requested, render_refresh_contract, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip, render_shell_workflows, scope_label
 
 
 _FULL_WORKSPACE_KEY = "_workload_operations_full_workspace_requested"
@@ -85,7 +85,53 @@ def _window_label() -> str:
 
 
 def _full_workspace_requested() -> bool:
-    return full_workspace_requested(st.session_state, _FULL_WORKSPACE_KEY, _BRIEF_MODE_KEY)
+    """Keep Workload navigation data-first; open full proof only from a workflow."""
+    _ = full_workspace_requested
+    if st.session_state.get(_FULL_WORKSPACE_KEY):
+        return True
+    st.session_state.setdefault(_BRIEF_MODE_KEY, True)
+    return False
+
+
+def _frame_len(value: object) -> int:
+    try:
+        if value is None or bool(getattr(value, "empty", False)):
+            return 0
+    except Exception:
+        if value is None:
+            return 0
+    try:
+        return max(0, int(len(value)))
+    except Exception:
+        return 0
+
+
+def _first_row(value: object) -> object | None:
+    if not _frame_len(value):
+        return None
+    try:
+        return value.iloc[0]
+    except Exception:
+        return None
+
+
+def _row_get(row: object | None, key: str, default: object = None) -> object:
+    if row is None:
+        return default
+    getter = getattr(row, "get", None)
+    if callable(getter):
+        return getter(key, default)
+    try:
+        return row[key]
+    except Exception:
+        return default
+
+
+def _int_value(value: object, default: int = 0) -> int:
+    try:
+        return int(float(value if value is not None else default))
+    except (TypeError, ValueError):
+        return default
 
 
 def _open_workspace(workflow: str | None = None) -> None:
@@ -140,6 +186,37 @@ def _render_kpi_row() -> None:
     ))
 
 
+def _render_metric_board() -> None:
+    snapshot = st.session_state.get("workload_operations_snapshot")
+    task_snapshot = st.session_state.get("workload_operations_task_snapshot")
+    snapshot_row = _first_row(snapshot)
+    task_row = _first_row(task_snapshot)
+    freshness_meta = st.session_state.get("workload_operations_snapshot_meta")
+    if not isinstance(freshness_meta, dict) or not freshness_meta:
+        freshness_meta = st.session_state.get("workload_operations_task_snapshot_meta", {})
+
+    st.markdown("**Workload Metric Board**")
+    render_refresh_contract(
+        freshness_meta if isinstance(freshness_meta, dict) else {},
+        source="MART_DBA_CONTROL_ROOM / TASK_HISTORY",
+        target_minutes=30,
+        refresh_method="Scheduled workload mart and task-history refresh",
+        live_fallback="Explicit live triage",
+    )
+    render_shell_snapshot((
+        ("Queries", f"{_int_value(_row_get(snapshot_row, 'TOTAL_QUERIES')):,}" if snapshot_row is not None else "Not loaded"),
+        ("Failed Queries", f"{_int_value(_row_get(snapshot_row, 'FAILED_QUERIES')):,}" if snapshot_row is not None else "Not loaded"),
+        ("Queued Queries", f"{_int_value(_row_get(snapshot_row, 'QUEUED_QUERIES')):,}" if snapshot_row is not None else "Not loaded"),
+        ("Task Failures", f"{_int_value(_row_get(task_row, 'TASK_STATUS_FAILURE_ROWS')):,}" if task_row is not None else "Not loaded"),
+    ))
+    render_shell_snapshot((
+        ("Late Tasks", f"{_int_value(_row_get(task_row, 'TASK_STATUS_LATE_ROWS')):,}" if task_row is not None else "Not loaded"),
+        ("Contention", "Loaded" if _frame_len(st.session_state.get("contention_decision_rows")) else "On demand"),
+        ("Query Diagnosis", "Loaded" if _frame_len(st.session_state.get("query_analysis_df")) else "On demand"),
+        ("Pipeline Health", "Loaded" if _frame_len(st.session_state.get("pipeline_health_df")) else "On demand"),
+    ))
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workspace(str(row["WORKFLOW"]))
@@ -162,4 +239,5 @@ def render() -> None:
     st.session_state.setdefault("workload_operations_shell_seen_at", datetime.now().isoformat(timespec="seconds"))
     _render_status_strip()
     _render_kpi_row()
+    _render_metric_board()
     _render_workflow_launchpad()

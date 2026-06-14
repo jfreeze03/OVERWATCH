@@ -2786,7 +2786,7 @@ def render() -> None:
                         placeholder="Ticket, investigation result, owner assignment, or remediation evidence.",
                     )
                     if len(str(audit_note or "").strip()) >= 5:
-                        audit_sql = "\n\n".join([
+                        audit_sql_parts = [
                             build_alert_acknowledgement_insert_sql(
                                 event_id=audit_alert,
                                 alert_key=str(audit_alert),
@@ -2807,8 +2807,25 @@ def render() -> None:
                                 rollback_guidance="Reopen the alert or add a follow-up acknowledgement if the condition returns.",
                                 actor=_alert_actor(),
                             ),
-                        ])
+                        ]
+                        audit_sql = "\n\n".join(audit_sql_parts)
                         st.code(audit_sql, language="sql")
+                        if st.button(
+                            "Record Lifecycle Audit",
+                            key="alert_center_record_lifecycle_audit",
+                            help="Writes the acknowledgement and remediation-log rows shown above. No remediation SQL is executed.",
+                            width="stretch",
+                        ):
+                            try:
+                                session = _alert_center_action_session("record alert lifecycle audit")
+                                if session is None:
+                                    return
+                                for statement in audit_sql_parts:
+                                    session.sql(statement).collect()
+                                st.success(f"Lifecycle audit recorded for alert {audit_alert}. Reload the Alert Center to refresh.")
+                                st.session_state.pop("alert_center_data", None)
+                            except Exception as exc:
+                                st.error(f"Could not record lifecycle audit: {_format_snowflake_error(exc)}")
                     else:
                         st.caption("Enter an audit note to generate acknowledgement and remediation-log insert SQL.")
 

@@ -31,6 +31,10 @@ audit behavior.
 | Snowflake Value | `OVERWATCH_VALUE_CANDIDATE_V`, `OVERWATCH_ROI_LOG` | 60 min | Explicit load only |
 
 The setup SQL seeds the same contract into `OVERWATCH_REFRESH_POLICY`.
+Run `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup to verify the
+first-paint mart, required panels, alert lifecycle tables, compare/recon tables,
+refresh policy, and caller context. Role-level proof belongs in
+`docs/LIVE_ROLE_PROOF_CHECKLIST.md`.
 The UI should still render the metric frame immediately. If a Snowflake session
 or mart lookup would block the first paint, show the precomputed-board frame and
 let `Refresh Board` read the compact mart. Do not fall back to live account

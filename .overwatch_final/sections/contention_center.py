@@ -1200,6 +1200,55 @@ def build_contention_solution_summary(decision: pd.DataFrame | None) -> pd.DataF
     return summary.sort_values(["_RANK", "OPEN_SIGNALS"], ascending=[True, False]).drop(columns=["_RANK"]).reset_index(drop=True)
 
 
+def build_contention_top_fix_path(decision: pd.DataFrame | None) -> pd.DataFrame:
+    """Return the single safest top-path row for the current contention incident."""
+    work = _safe_frame(decision)
+    columns = [
+        "TOP_ROUTE",
+        "TOP_SEVERITY",
+        "ENTITY",
+        "BLOCKER",
+        "WAITER",
+        "FIRST_SAFE_MOVE",
+        "CLEANUP_DECISION",
+        "APPROVAL_GATE",
+        "PRECHECK_REQUIRED",
+        "MANUAL_SQL_STATE",
+        "VERIFY_AFTER",
+        "WHEN_NOT_TO_RUN",
+    ]
+    if work.empty:
+        return pd.DataFrame(columns=columns)
+    if "_ROUTE_RANK" not in work.columns:
+        work = work.copy()
+        work["_ROUTE_RANK"] = work.get("SEVERITY", pd.Series([""] * len(work))).map(_severity_rank)
+    for sort_column in ("HANDOFF_MATCH", "SIGNAL"):
+        if sort_column not in work.columns:
+            work[sort_column] = ""
+    top = work.sort_values(["_ROUTE_RANK", "HANDOFF_MATCH", "SIGNAL"], ascending=[True, False, True]).iloc[0]
+    manual_sql = str(top.get("MANUAL_ACTION_SQL") or "").strip()
+    precheck_sql = str(top.get("PRECHECK_SQL") or "").strip()
+    verify_sql = str(top.get("VERIFY_SQL") or "").strip()
+    rows = [{
+        "TOP_ROUTE": str(top.get("OWNER_ROUTE") or "Contention Center"),
+        "TOP_SEVERITY": str(top.get("SEVERITY") or "Watch"),
+        "ENTITY": str(top.get("TARGET_OBJECT") or top.get("ENTITY") or top.get("WAREHOUSE_NAME") or ""),
+        "BLOCKER": _incident_blocker(top),
+        "WAITER": _incident_waiter(top),
+        "FIRST_SAFE_MOVE": str(top.get("FIRST_MOVE") or top.get("NEXT_ACTION") or ""),
+        "CLEANUP_DECISION": str(top.get("CLEANUP_DECISION") or "Evidence review"),
+        "APPROVAL_GATE": str(top.get("APPROVAL_GATE") or "Owner approval and current evidence required."),
+        "PRECHECK_REQUIRED": "Yes" if precheck_sql else "Load live evidence first",
+        "MANUAL_SQL_STATE": "Available after approval" if manual_sql else "No cancel/abort SQL",
+        "VERIFY_AFTER": str(top.get("VERIFY_AFTER_CLEANUP") or top.get("VERIFY_AFTER_FIX") or "Re-run contention evidence."),
+        "WHEN_NOT_TO_RUN": str(top.get("WHEN_NOT_TO_RUN") or "Do not run state-changing SQL without current blocker/waiter proof."),
+        "PRECHECK_SQL": precheck_sql,
+        "MANUAL_ACTION_SQL": manual_sql,
+        "VERIFY_SQL": verify_sql,
+    }]
+    return pd.DataFrame(rows)
+
+
 def _decision_rows(
     lock_waits: pd.DataFrame,
     task_overlap: pd.DataFrame,
@@ -1888,6 +1937,45 @@ def _render_cleanup_contract(decision: pd.DataFrame) -> None:
     )
 
 
+def _render_contention_top_fix_path(decision: pd.DataFrame) -> None:
+    path = build_contention_top_fix_path(decision)
+    if path.empty:
+        return
+    row = path.iloc[0]
+    st.markdown("**Top Fix Path**")
+    render_shell_snapshot((
+        ("Route", str(row.get("TOP_ROUTE") or "Contention Center")),
+        ("Severity", str(row.get("TOP_SEVERITY") or "Watch")),
+        ("Manual SQL", str(row.get("MANUAL_SQL_STATE") or "No cancel/abort SQL")),
+        ("Precheck", str(row.get("PRECHECK_REQUIRED") or "Required")),
+    ))
+    render_priority_dataframe(
+        path,
+        title="Current best contention fix path",
+        priority_columns=[
+            "TOP_ROUTE", "TOP_SEVERITY", "ENTITY", "BLOCKER", "WAITER",
+            "FIRST_SAFE_MOVE", "CLEANUP_DECISION", "APPROVAL_GATE",
+            "PRECHECK_REQUIRED", "MANUAL_SQL_STATE", "VERIFY_AFTER", "WHEN_NOT_TO_RUN",
+        ],
+        sort_by=["TOP_SEVERITY", "TOP_ROUTE"],
+        ascending=[True, True],
+        raw_label="All top fix path rows",
+        height=220,
+        max_rows=1,
+    )
+    sql_parts = [
+        ("Precheck SQL", str(row.get("PRECHECK_SQL") or "").strip()),
+        ("Manual Action SQL", str(row.get("MANUAL_ACTION_SQL") or "").strip()),
+        ("Verify SQL", str(row.get("VERIFY_SQL") or "").strip()),
+    ]
+    if any(sql for _, sql in sql_parts):
+        with st.expander("Top Fix SQL Pack", expanded=False):
+            for label, sql in sql_parts:
+                if sql:
+                    st.markdown(f"**{label}**")
+                    st.code(sql, language="sql")
+
+
 def _render_metric_strip() -> None:
     locks = _safe_frame(st.session_state.get("contention_active_locks"))
     waits = _safe_frame(st.session_state.get("contention_historical_waits"))
@@ -1928,6 +2016,7 @@ def _render_brief() -> None:
     if decision.empty:
         st.info("Load contention evidence to rank blockers, task overlap, long DML, and warehouse pressure.")
         return
+    _render_contention_top_fix_path(decision)
     solution_summary = build_contention_solution_summary(decision)
     if not solution_summary.empty:
         render_priority_dataframe(

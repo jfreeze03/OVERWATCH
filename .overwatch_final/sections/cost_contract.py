@@ -5117,8 +5117,25 @@ def _render_powerpoint_snapshot_gate(splash: dict, *, company: str, days: int, c
         _render_powerpoint_cost_snapshot(splash, company=company, days=int(days), credit_price=credit_price)
 
 
+def _render_cost_load_contract(splash: dict, *, days: int) -> None:
+    loaded = bool(splash.get("loaded"))
+    source = str(splash.get("source") or "Cost/Cortex facts and session cache").strip()
+    proof_state = "Full proof loaded" if splash.get("full_proof") else "Compact board loaded" if loaded else "Board frame only"
+    render_shell_snapshot((
+        ("First View", "Cached board" if loaded else "No Snowflake scan"),
+        ("Proof State", proof_state),
+        ("Window", f"{int(days)}d"),
+        ("Live Fallback", "Explicit only"),
+    ))
+    st.caption(
+        f"Cost first paint uses {source}. Heavy warehouse ranking, run-rate proof, service cost, "
+        "and PowerPoint support stay behind Refresh Overview or the specialist workflow buttons."
+    )
+
+
 def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: float) -> None:
     st.markdown("**Cost Overview**")
+    _render_cost_load_contract(splash, days=int(days))
     if not splash.get("loaded"):
         st.caption("Refresh Overview loads official spend, warehouse ranking, Cortex spend, and slide-ready evidence.")
         render_shell_snapshot((

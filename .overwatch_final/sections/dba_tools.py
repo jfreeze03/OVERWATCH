@@ -1366,6 +1366,76 @@ INSERT INTO OVERWATCH_RECON_RUN (
 """.strip()
 
 
+def _recon_config_insert_sql(
+    *,
+    check_name: str,
+    source_db: str,
+    source_schema: str,
+    target_db: str,
+    target_schema: str,
+    table_pattern: str = "%",
+    key_columns: str = "",
+    exclude_columns: str = "",
+    where_clause: str = "",
+    hash_bucket_count: int = 64,
+    check_mode: str = "COUNT_AND_HASH",
+    severity: str = "MEDIUM",
+    owner: str = "Release DBA",
+    enabled: bool = True,
+) -> str:
+    enabled_sql = "TRUE" if enabled else "FALSE"
+    return f"""
+INSERT INTO OVERWATCH_RECON_CONFIG (
+    CHECK_NAME, SOURCE_DATABASE, SOURCE_SCHEMA, TARGET_DATABASE, TARGET_SCHEMA,
+    TABLE_PATTERN, KEY_COLUMNS, EXCLUDE_COLUMNS, WHERE_CLAUSE, HASH_BUCKET_COUNT,
+    CHECK_MODE, SEVERITY, OWNER, ENABLED
+)
+SELECT
+    {sql_literal(check_name, 300)} AS CHECK_NAME,
+    {sql_literal(source_db, 300)} AS SOURCE_DATABASE,
+    {sql_literal(source_schema, 300)} AS SOURCE_SCHEMA,
+    {sql_literal(target_db, 300)} AS TARGET_DATABASE,
+    {sql_literal(target_schema, 300)} AS TARGET_SCHEMA,
+    {sql_literal(table_pattern or '%', 300)} AS TABLE_PATTERN,
+    {sql_literal(key_columns, 2000)} AS KEY_COLUMNS,
+    {sql_literal(exclude_columns, 2000)} AS EXCLUDE_COLUMNS,
+    {sql_literal(where_clause, 4000)} AS WHERE_CLAUSE,
+    {max(1, int(hash_bucket_count or 64))} AS HASH_BUCKET_COUNT,
+    {sql_literal(str(check_mode or 'COUNT_AND_HASH').upper(), 50)} AS CHECK_MODE,
+    {sql_literal(str(severity or 'MEDIUM').upper(), 40)} AS SEVERITY,
+    {sql_literal(owner, 300)} AS OWNER,
+    {enabled_sql} AS ENABLED;
+""".strip()
+
+
+def _recon_history_sql(days: int = 30) -> str:
+    days = max(1, int(days or 30))
+    return f"""
+SELECT
+    r.RUN_ID,
+    r.RUN_TS,
+    c.CHECK_NAME,
+    c.SOURCE_DATABASE,
+    c.SOURCE_SCHEMA,
+    c.TARGET_DATABASE,
+    c.TARGET_SCHEMA,
+    c.TABLE_PATTERN,
+    c.CHECK_MODE,
+    c.OWNER,
+    c.SEVERITY,
+    r.RUN_STATUS,
+    r.SOURCE_ROW_COUNT,
+    r.TARGET_ROW_COUNT,
+    r.MISMATCH_COUNT,
+    r.RECOMMENDED_ACTION
+FROM OVERWATCH_RECON_RUN r
+LEFT JOIN OVERWATCH_RECON_CONFIG c
+  ON r.CHECK_ID = c.CHECK_ID
+WHERE r.RUN_TS >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+ORDER BY r.RUN_TS DESC, r.RUN_ID DESC;
+""".strip()
+
+
 def _build_schema_compare_frame(
     source_inventory: pd.DataFrame,
     target_inventory: pd.DataFrame,
@@ -2266,6 +2336,32 @@ def render():
                 "PUBLIC",
                 allow_current_outside_options=False,
             )
+        schema_config_sql = _recon_config_insert_sql(
+            check_name=f"Schema compare {dev_db}.{dev_sch} to {prod_db}.{prod_sch}",
+            source_db=dev_db,
+            source_schema=dev_sch,
+            target_db=prod_db,
+            target_schema=prod_sch,
+            table_pattern="%",
+            check_mode="SCHEMA_OBJECT_DDL",
+            severity="MEDIUM",
+            owner="Release DBA",
+        )
+        config_cols = st.columns([1.0, 1.0, 3.0])
+        with config_cols[0]:
+            st.download_button(
+                "Download Compare Config SQL",
+                schema_config_sql,
+                file_name="schema_compare_register_check.sql",
+                mime="text/sql",
+                key="schema_compare_config_sql_download",
+                width="stretch",
+            )
+        with config_cols[1]:
+            with st.expander("Config SQL", expanded=False):
+                st.code(schema_config_sql, language="sql")
+        with config_cols[2]:
+            st.caption("Register this schema-pair check in OVERWATCH_RECON_CONFIG when the comparison is part of a release gate.")
         if st.button("Compare Schemas", key="sc_run"):
             try:
                 dev_db_safe = safe_identifier(dev_db)
@@ -2531,6 +2627,46 @@ def render():
         st.caption(
             "Hashing is a fast detection signal, not a destructive action. For critical mismatches, run the generated bucket and forensic SQL."
         )
+        data_config_sql = _recon_config_insert_sql(
+            check_name=f"Data compare {data_src_db}.{data_src_schema} to {data_tgt_db}.{data_tgt_schema}",
+            source_db=data_src_db,
+            source_schema=data_src_schema,
+            target_db=data_tgt_db,
+            target_schema=data_tgt_schema,
+            table_pattern=f"%{data_table_filter.strip()}%" if str(data_table_filter or "").strip() else "%",
+            key_columns=key_columns_text,
+            exclude_columns=excluded_columns_text,
+            where_clause=row_filter_text,
+            hash_bucket_count=128,
+            check_mode="COUNT_HASH_BUCKET_FORENSIC",
+            severity="MEDIUM",
+            owner="Release DBA",
+        )
+        recon_history_sql = _recon_history_sql(days=30)
+        config_cols = st.columns([1.0, 1.0, 1.0, 2.0])
+        with config_cols[0]:
+            st.download_button(
+                "Download Data Check Config SQL",
+                data_config_sql,
+                file_name="data_compare_register_check.sql",
+                mime="text/sql",
+                key="data_compare_config_sql_download",
+                width="stretch",
+            )
+        with config_cols[1]:
+            st.download_button(
+                "Download Recon History SQL",
+                recon_history_sql,
+                file_name="data_compare_recon_history.sql",
+                mime="text/sql",
+                key="data_compare_history_sql_download",
+                width="stretch",
+            )
+        with config_cols[2]:
+            with st.expander("Config SQL", expanded=False):
+                st.code(data_config_sql, language="sql")
+        with config_cols[3]:
+            st.caption("Register recurring reconciliation checks in OVERWATCH_RECON_CONFIG; review prior runs from OVERWATCH_RECON_RUN.")
 
         if st.button("Run Quick Data Compare", key="dc_run"):
             try:

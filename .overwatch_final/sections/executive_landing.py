@@ -1261,6 +1261,162 @@ def _render_executive_priority_board(board: pd.DataFrame, *, days: int) -> None:
     )
 
 
+def _executive_pressure_rows(board: pd.DataFrame) -> pd.DataFrame:
+    """Return one-page pressure lanes from the compact executive mart."""
+    columns = [
+        "LANE", "STATE", "VALUE", "PRESSURE_SCORE", "WHY_IT_MATTERS",
+        "OWNER_ROUTE", "NEXT_ACTION",
+    ]
+    if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
+        return pd.DataFrame(columns=columns)
+
+    current_spend = _obs_value(board, "Credits Used", column="VALUE_USD")
+    spend_delta = _obs_value(board, "Spend Delta", column="VALUE_USD")
+    cortex_spend = _obs_value(board, "Cortex Spend", column="VALUE_USD")
+    queue_seconds = _obs_value(board, "Queue Time")
+    spill_gb = _obs_value(board, "Remote Spill")
+    failed_queries = _obs_value(board, "Failed Queries")
+    failed_tasks = _obs_value(board, "Failed Tasks")
+    critical_high = _obs_value(board, "Critical High Alerts")
+    open_actions = _obs_value(board, "Open Actions")
+    storage_tb = _obs_value(board, "Storage")
+    platform_health = _obs_value(board, "Platform Health")
+
+    def capped(value: float, threshold: float) -> float:
+        if threshold <= 0:
+            return 0.0
+        return min(max(safe_float(value) / threshold * 100.0, 0.0), 100.0)
+
+    rows = [
+        {
+            "LANE": "Platform health",
+            "STATE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "Not loaded",
+            "VALUE": f"{safe_int(platform_health)}/100" if _obs_metric_loaded(board, "Platform Health") else "Not loaded",
+            "PRESSURE_SCORE": max(0.0, 100.0 - safe_float(platform_health)) if _obs_metric_loaded(board, "Platform Health") else 0.0,
+            "WHY_IT_MATTERS": "Rolls cost, risk, workload, setup, and evidence caps into one board-level pressure signal.",
+            "OWNER_ROUTE": "Executive Landing",
+            "NEXT_ACTION": "Open the highest pressure lane below before specialist drilldown.",
+        },
+        {
+            "LANE": "Cost movement",
+            "STATE": "Rising" if spend_delta > 0 else "Flat / down",
+            "VALUE": _money(spend_delta, signed=True) if _obs_metric_loaded(board, "Spend Delta") else "Not loaded",
+            "PRESSURE_SCORE": capped(max(spend_delta, 0.0), max(current_spend * 0.20, 500.0)),
+            "WHY_IT_MATTERS": "Leadership asks first why the bill moved and whether the increase has an owner.",
+            "OWNER_ROUTE": "Cost & Contract",
+            "NEXT_ACTION": "Open Cost & Contract when this lane is above 40.",
+        },
+        {
+            "LANE": "Cortex spend",
+            "STATE": "Spend active" if cortex_spend > 0 else "No spend",
+            "VALUE": _money(cortex_spend) if _obs_metric_loaded(board, "Cortex Spend") else "Not loaded",
+            "PRESSURE_SCORE": capped(cortex_spend, 500.0),
+            "WHY_IT_MATTERS": "AI spend can grow without warehouse-style owner habits or quota guardrails.",
+            "OWNER_ROUTE": "Cost & Contract",
+            "NEXT_ACTION": "Review top AI user/source and quota posture.",
+        },
+        {
+            "LANE": "Queue pressure",
+            "STATE": "Queued" if queue_seconds > 0 else "Clear",
+            "VALUE": _format_seconds(queue_seconds) if _obs_metric_loaded(board, "Queue Time") else "Not loaded",
+            "PRESSURE_SCORE": capped(queue_seconds, 3600.0),
+            "WHY_IT_MATTERS": "Queue time turns into missed SLAs, frustrated users, and sometimes wasteful resize decisions.",
+            "OWNER_ROUTE": "DBA Control Room",
+            "NEXT_ACTION": "Check warehouse pressure and contention before resizing.",
+        },
+        {
+            "LANE": "Spillage",
+            "STATE": "Spilling" if spill_gb > 0 else "Clear",
+            "VALUE": _format_gb(spill_gb) if _obs_metric_loaded(board, "Remote Spill") else "Not loaded",
+            "PRESSURE_SCORE": capped(spill_gb, 100.0),
+            "WHY_IT_MATTERS": "Remote spill is a strong signal for poor pruning, oversized joins, and warehouse pressure.",
+            "OWNER_ROUTE": "Workload Operations",
+            "NEXT_ACTION": "Open Query Diagnosis for the top spilling SQL patterns.",
+        },
+        {
+            "LANE": "Reliability",
+            "STATE": "Failures" if failed_queries or failed_tasks else "Clear",
+            "VALUE": f"{safe_int(failed_queries):,} query / {safe_int(failed_tasks):,} task",
+            "PRESSURE_SCORE": capped(safe_float(failed_queries) + safe_float(failed_tasks) * 5.0, 25.0),
+            "WHY_IT_MATTERS": "Failed query and task volume predicts missed reporting, reruns, and support tickets.",
+            "OWNER_ROUTE": "DBA Control Room",
+            "NEXT_ACTION": "Work failed production tasks and repeat query failures first.",
+        },
+        {
+            "LANE": "Alerts and actions",
+            "STATE": "Open risk" if critical_high or open_actions else "Clear",
+            "VALUE": f"{safe_int(critical_high):,} critical/high; {safe_int(open_actions):,} actions",
+            "PRESSURE_SCORE": min(safe_float(critical_high) * 12.0 + safe_float(open_actions) * 3.0, 100.0),
+            "WHY_IT_MATTERS": "Unowned alert/action backlog is where small warnings become incidents.",
+            "OWNER_ROUTE": "Alert Center",
+            "NEXT_ACTION": "Acknowledge, assign, suppress, or resolve the oldest high-impact rows.",
+        },
+        {
+            "LANE": "Storage footprint",
+            "STATE": "Track" if storage_tb > 0 else "No data",
+            "VALUE": f"{safe_float(storage_tb):,.2f} TB" if _obs_metric_loaded(board, "Storage") else "Not loaded",
+            "PRESSURE_SCORE": capped(storage_tb, 50.0),
+            "WHY_IT_MATTERS": "Storage, failsafe, and stages become contract noise when growth lacks lifecycle controls.",
+            "OWNER_ROUTE": "Cost & Contract",
+            "NEXT_ACTION": "Review storage growth and cleanup candidates when this lane climbs.",
+        },
+    ]
+    out = pd.DataFrame(rows, columns=columns)
+    return out.sort_values(["PRESSURE_SCORE", "LANE"], ascending=[False, True]).reset_index(drop=True)
+
+
+def _render_executive_pressure_board(board: pd.DataFrame) -> None:
+    rows = _executive_pressure_rows(board)
+    if rows.empty:
+        return
+    st.markdown("**Executive Pressure Index**")
+    render_shell_kpi_row((
+        ("Highest Pressure", str(rows.iloc[0].get("LANE") or "Loaded")),
+        ("Score", f"{safe_float(rows.iloc[0].get('PRESSURE_SCORE')):,.0f}/100"),
+        ("Owner Route", str(rows.iloc[0].get("OWNER_ROUTE") or "Executive Landing")),
+        ("State", str(rows.iloc[0].get("STATE") or "Review")),
+    ))
+    chart_rows = rows.copy()
+    chart_rows["PRESSURE_SCORE"] = pd.to_numeric(chart_rows["PRESSURE_SCORE"], errors="coerce").fillna(0.0)
+    alt = _altair()
+    chart = (
+        alt.Chart(chart_rows)
+        .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3, color="#29B5E8")
+        .encode(
+            x=alt.X("PRESSURE_SCORE:Q", title="Pressure Score", scale=alt.Scale(domain=[0, 100])),
+            y=alt.Y(
+                "LANE:N",
+                sort=alt.SortField(field="PRESSURE_SCORE", order="descending"),
+                title=None,
+                axis=alt.Axis(labelLimit=180),
+            ),
+            tooltip=[
+                alt.Tooltip("LANE:N", title="Lane"),
+                alt.Tooltip("STATE:N", title="State"),
+                alt.Tooltip("VALUE:N", title="Value"),
+                alt.Tooltip("PRESSURE_SCORE:Q", title="Pressure", format=",.0f"),
+                alt.Tooltip("OWNER_ROUTE:N", title="Owner route"),
+                alt.Tooltip("NEXT_ACTION:N", title="Next action"),
+            ],
+        )
+        .properties(height=250)
+    )
+    st.altair_chart(chart, width="stretch")
+    render_priority_dataframe(
+        rows,
+        title="Executive pressure details",
+        priority_columns=[
+            "LANE", "STATE", "VALUE", "PRESSURE_SCORE",
+            "OWNER_ROUTE", "WHY_IT_MATTERS", "NEXT_ACTION",
+        ],
+        sort_by=["PRESSURE_SCORE", "LANE"],
+        ascending=[False, True],
+        raw_label="All executive pressure rows",
+        height=250,
+        max_rows=8,
+    )
+
+
 def _render_line_chart(
     rows: pd.DataFrame,
     *,
@@ -1513,6 +1669,7 @@ def _render_executive_observability_board(
         ("Avg/day", _money(avg_daily_spend) if _obs_metric_loaded(board, "Credits Used") else "Not loaded"),
         ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "Not loaded"),
     ))
+    _render_executive_pressure_board(board)
     _render_executive_priority_board(board, days=int(days))
 
     daily_cost = _obs_rows(board, "DAILY_COST").copy()

@@ -99,6 +99,7 @@ from sections.executive_landing import (  # noqa: E402
     _build_executive_observability_query_parts,
     _build_executive_observability_sql,
     _build_platform_operating_score,
+    _executive_pressure_rows,
     _powerpoint_chart_rows,
     _powerpoint_kpi_rows,
     _powerpoint_slide_brief,
@@ -678,6 +679,31 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("FACT_QUERY_DETAIL_RECENT", setup_sql)
         self.assertIn("FACT_COST_DAILY", combined)
         self.assertIn("FACT_QUERY_HOURLY", combined)
+
+    def test_executive_pressure_index_uses_loaded_mart_kpis(self):
+        board = pd.DataFrame([
+            {"PANEL": "KPI", "METRIC": "Platform Health", "VALUE": 68, "VALUE_USD": 0},
+            {"PANEL": "KPI", "METRIC": "Credits Used", "VALUE": 1200, "VALUE_USD": 4416},
+            {"PANEL": "KPI", "METRIC": "Spend Delta", "VALUE": 200, "VALUE_USD": 736},
+            {"PANEL": "KPI", "METRIC": "Cortex Spend", "VALUE": 30, "VALUE_USD": 66},
+            {"PANEL": "KPI", "METRIC": "Queue Time", "VALUE": 900, "VALUE_USD": 0},
+            {"PANEL": "KPI", "METRIC": "Remote Spill", "VALUE": 150, "VALUE_USD": 0},
+            {"PANEL": "KPI", "METRIC": "Failed Queries", "VALUE": 3, "VALUE_USD": 0},
+            {"PANEL": "KPI", "METRIC": "Failed Tasks", "VALUE": 2, "VALUE_USD": 0},
+            {"PANEL": "KPI", "METRIC": "Critical High Alerts", "VALUE": 4, "VALUE_USD": 0},
+            {"PANEL": "KPI", "METRIC": "Open Actions", "VALUE": 7, "VALUE_USD": 0},
+            {"PANEL": "KPI", "METRIC": "Storage", "VALUE": 8, "VALUE_USD": 184},
+        ])
+
+        pressure = _executive_pressure_rows(board)
+        lanes = set(pressure["LANE"])
+
+        self.assertIn("Cost movement", lanes)
+        self.assertIn("Spillage", lanes)
+        self.assertIn("Alerts and actions", lanes)
+        self.assertIn("OWNER_ROUTE", pressure.columns)
+        self.assertGreater(float(pressure.iloc[0]["PRESSURE_SCORE"]), 0)
+        self.assertLessEqual(float(pressure["PRESSURE_SCORE"].max()), 100)
 
     def test_priority_tables_add_cost_companions_for_credit_metrics(self):
         from utils.workflows import add_cost_companion_columns
@@ -2578,6 +2604,39 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("No-touch automation", set(contract["COMPONENT"]))
         self.assertNotIn("Flyway", " ".join(contract["WHY_IT_MATTERS"].astype(str)))
         self.assertIn("Cost proof mart", set(contract["COMPONENT"]))
+
+    def test_mart_validation_and_live_role_checklist_cover_deployment_proof(self):
+        validation_sql = (ROOT / "snowflake" / "OVERWATCH_MART_VALIDATION.sql").read_text(encoding="utf-8").upper()
+        checklist = (ROOT / "docs" / "LIVE_ROLE_PROOF_CHECKLIST.md").read_text(encoding="utf-8").upper()
+
+        for required in [
+            "MART_EXECUTIVE_OBSERVABILITY",
+            "OVERWATCH_REFRESH_POLICY",
+            "ALERT_ACKNOWLEDGEMENTS",
+            "ALERT_REMEDIATION_LOG",
+            "OVERWATCH_RECON_CONFIG",
+            "OVERWATCH_SCHEMA_DIFF_RESULT",
+            "FACT_TASK_RUN",
+            "FACT_TASK_CRITICAL_PATH",
+        ]:
+            self.assertIn(required, validation_sql)
+
+        for panel in [
+            "DAILY_COST",
+            "MONTHLY_COST",
+            "QUERY_DATABASE",
+            "EXEC_STATUS",
+            "WAREHOUSE_PRESSURE",
+            "SOURCE_STATUS",
+        ]:
+            self.assertIn(panel, validation_sql)
+
+        self.assertIn("CURRENT_ROLE()", validation_sql)
+        self.assertIn("ACCOUNTADMIN", checklist)
+        self.assertIn("SYSADMIN", checklist)
+        self.assertIn("_DSA", checklist)
+        self.assertIn("_DTI", checklist)
+        self.assertIn("EXECUTIVE PRESSURE INDEX", checklist)
 
     def test_streamlit_deployment_decision_pins_entrypoints(self):
         decision = build_streamlit_deployment_decision()

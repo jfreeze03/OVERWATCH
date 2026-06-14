@@ -23,6 +23,8 @@ from sections.dba_tools import (  # noqa: E402
     _data_compare_forensic_sql,
     _data_compare_hash_sql,
     _data_compare_tables_sql,
+    _recon_config_insert_sql,
+    _recon_history_sql,
     _schema_compare_columns_sql,
     _schema_compare_inventory,
     _schema_compare_persistence_sql,
@@ -291,6 +293,32 @@ class AdminControlTests(unittest.TestCase):
         self.assertIn("TRY_TO_NUMBER('42')", recon_sql)
         self.assertIn("HASH MISMATCH", recon_sql)
         self.assertIn("SELECT * FROM DIFF_SAMPLE", recon_sql)
+
+        config_sql = _recon_config_insert_sql(
+            check_name="Policy cutover count/hash",
+            source_db="ALFA_EDW_DEV",
+            source_schema="PUBLIC",
+            target_db="ALFA_EDW_PROD",
+            target_schema="PUBLIC",
+            table_pattern="%POLICY%",
+            key_columns="POLICY_ID",
+            exclude_columns="LOAD_TS",
+            where_clause="BUSINESS_DATE >= '2026-01-01'",
+            hash_bucket_count=128,
+            check_mode="COUNT_HASH_BUCKET_FORENSIC",
+            severity="HIGH",
+            owner="Release DBA",
+        ).upper()
+        history_sql = _recon_history_sql(days=14).upper()
+
+        self.assertIn("INSERT INTO OVERWATCH_RECON_CONFIG", config_sql)
+        self.assertIn("POLICY CUTOVER COUNT/HASH", config_sql)
+        self.assertIn("%POLICY%", config_sql)
+        self.assertIn("COUNT_HASH_BUCKET_FORENSIC", config_sql)
+        self.assertIn("BUSINESS_DATE >= ''2026-01-01''", config_sql)
+        self.assertIn("FROM OVERWATCH_RECON_RUN R", history_sql)
+        self.assertIn("LEFT JOIN OVERWATCH_RECON_CONFIG C", history_sql)
+        self.assertIn("DATEADD('DAY', -14", history_sql)
 
     def test_admin_actions_default_on_for_full_privilege_roles(self):
         previous = dict(st.session_state)

@@ -38,6 +38,12 @@ The same decision is seeded in Snowflake as `OVERWATCH_REFRESH_POLICY`, which
 defines first-paint sources, target freshness, retention, live-fallback
 boundaries, and the owner for each surface.
 
+Use `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup or release changes to
+prove required marts, alert audit tables, reconciliation tables, executive board
+panels, freshness rows, and caller context. Use
+`docs/LIVE_ROLE_PROOF_CHECKLIST.md` to validate the app as ACCOUNTADMIN/SYSADMIN,
+DSA, DTI, and report-style roles before calling a build production-ready.
+
 ## Current Production Sections
 
 | Group | Sections | Primary job |

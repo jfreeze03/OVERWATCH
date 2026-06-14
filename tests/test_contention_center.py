@@ -17,6 +17,7 @@ from sections.contention_center import (  # noqa: E402
     _live_incident_rows,
     build_contention_solution_summary,
     build_contention_safe_action_contract,
+    build_contention_top_fix_path,
     build_blocked_query_task_map_sql,
     build_live_query_incident_sql,
     build_live_task_graphs_sql,
@@ -184,6 +185,14 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertIn("DBA on-call", first["INCIDENT_OWNER"])
         self.assertIn("Run precheck SQL", first["DECISION_GATE"])
         self.assertIn("VERIFY_SQL", cockpit.columns)
+
+        top_path = build_contention_top_fix_path(decisions)
+        self.assertEqual(top_path.iloc[0]["TOP_ROUTE"], "Active Locks")
+        self.assertEqual(top_path.iloc[0]["TOP_SEVERITY"], "Critical")
+        self.assertEqual(top_path.iloc[0]["BLOCKER"], "transaction tx_blocker_123")
+        self.assertEqual(top_path.iloc[0]["MANUAL_SQL_STATE"], "Available after approval")
+        self.assertIn("LOCK_WAIT_HISTORY", top_path.iloc[0]["PRECHECK_SQL"])
+        self.assertIn("RECENT_WAIT_EVENTS", top_path.iloc[0]["VERIFY_SQL"])
 
     def test_decision_rows_separate_warehouse_queueing_from_locks(self):
         decisions = _decision_rows(

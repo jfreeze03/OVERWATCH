@@ -164,7 +164,7 @@ SHOW_CHECKS: tuple[tuple[str, str, str], ...] = (
     ("Warehouse inventory", "SHOW WAREHOUSES", "Warehouse Settings Manager"),
     ("Task inventory", "SHOW TASKS IN ACCOUNT", "Task Graph Control"),
     ("Dynamic table inventory", "SHOW DYNAMIC TABLES IN ACCOUNT", "Dynamic Tables"),
-    ("User inventory", "SHOW USERS", "Security posture and dormant user checks"),
+    ("User inventory", "SHOW USERS", "Access & Security and dormant user checks"),
 )
 
 

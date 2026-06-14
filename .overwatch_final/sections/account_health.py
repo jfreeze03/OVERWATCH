@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import streamlit as st
 from datetime import datetime
-from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULTS
+from config import ALERT_DB, ALERT_SCHEMA, ACTION_QUEUE_TABLE, DEFAULTS, normalize_section_name
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_navigation_state
 from sections.shell_helpers import render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip
@@ -38,6 +38,11 @@ load_latest_control_room_mart = _lazy_util("load_latest_control_room_mart")
 mart_source_caption = _lazy_util("mart_source_caption")
 build_mart_account_health_storage_sql = _lazy_util("build_mart_account_health_storage_sql")
 build_mart_account_health_cost_drivers_sql = _lazy_util("build_mart_account_health_cost_drivers_sql")
+
+
+def _canonical_account_route(route: object) -> str:
+    text = str(route or "DBA Control Room").strip()
+    return normalize_section_name(text) or "DBA Control Room"
 build_mart_account_health_change_sql = _lazy_util("build_mart_account_health_change_sql")
 build_mart_control_room_task_failures_sql = _lazy_util("build_mart_control_room_task_failures_sql")
 build_mart_control_room_warehouse_pressure_sql = _lazy_util("build_mart_control_room_warehouse_pressure_sql")
@@ -826,7 +831,7 @@ def _build_account_health_dba_checklist(
             "SEVERITY": "High" if queued_count > 20 else ("Medium" if queued_count > 0 else "Info"),
             "EVIDENCE": f"{queued_count:,} queued/running pressure signals",
             "OWNER": "DBA / Platform",
-            "ROUTE": "Warehouse Health",
+            "ROUTE": "Cost & Contract",
             "NEXT_ACTION": "Confirm whether pressure is sizing, concurrency, lock, or workload-shape driven before changing warehouses.",
             "PROOF_REQUIRED": "warehouse, queued time, query count, before/after setting",
         },
@@ -856,7 +861,7 @@ def _build_account_health_dba_checklist(
             "SEVERITY": "Medium" if change_count > 0 else "Info",
             "EVIDENCE": f"{change_count:,} object/access change signals in last 24h",
             "OWNER": "DBA / Security Owner",
-            "ROUTE": "Change & Drift",
+            "ROUTE": "Governance & Security",
             "NEXT_ACTION": "Validate query IDs against change tickets, approvers, and release-note/rollback state.",
             "PROOF_REQUIRED": "query_id, approver, change ticket, dependency note",
         },
@@ -1283,7 +1288,7 @@ def _account_health_control_board(
             "CHECK_NAME": "Account access hygiene",
             "STATUS": "Needs DBA",
             "SEVERITY": "High" if high else "Medium",
-            "ROUTE": "Security Posture",
+            "ROUTE": "Governance & Security",
             "OWNER": "DBA / Security",
             "ESCALATION_TARGET": "Security Lead",
             "ENVIRONMENT_SCOPE": "No Database Context",
@@ -1518,7 +1523,7 @@ def _account_health_morning_exception_rows(
         entity: str,
         evidence: str,
         next_action: str,
-        route: str = "Account Health",
+        route: str = "DBA Control Room",
         priority: int = 50,
     ) -> None:
         rows.append({
@@ -1528,7 +1533,7 @@ def _account_health_morning_exception_rows(
             "ENTITY": entity,
             "EVIDENCE": evidence,
             "NEXT_ACTION": next_action,
-            "ROUTE": route,
+            "ROUTE": _canonical_account_route(route),
         })
 
     if safe_float(health_score) < 75:
@@ -1567,7 +1572,7 @@ def _account_health_morning_exception_rows(
             "Warehouses",
             f"{safe_int(queued):,} queued workload signal(s) are visible in the loaded snapshot.",
             "Review warehouse pressure before resizing or changing workload routing.",
-            route="Warehouse Health",
+            route="Cost & Contract",
             priority=20,
         )
     if safe_float(pct_delta) > 30:
@@ -1600,7 +1605,7 @@ def _account_health_morning_exception_rows(
                 str(row.get("GATE") or "Account Health gate"),
                 f"{safe_int(row.get('COUNT', 0)):,} row(s) need attention. Proof: {row.get('PROOF_REQUIRED', '')}",
                 str(row.get("NEXT_ACTION") or "Open the Account Health gate and validate evidence."),
-                route="Account Health",
+                route="DBA Control Room",
                 priority=2 + rank,
             )
 
@@ -1619,7 +1624,7 @@ def _account_health_morning_exception_rows(
                     str(row.get("SURFACE") or row.get("ROUTE") or "Account Health"),
                     str(row.get("NEXT_DECISION") or row.get("NEXT_CONTROL_ACTION") or "DBA intervention required."),
                     str(row.get("PROOF_REQUIRED") or "Attach owner, ticket, approval, and verification evidence."),
-                    route=str(row.get("ROUTE") or "Account Health"),
+                    route=_canonical_account_route(row.get("ROUTE")),
                     priority=12 + safe_int(row.get("_RANK", 9)),
                 )
 
@@ -1638,7 +1643,7 @@ def _account_health_morning_exception_rows(
                 str(row.get("CHECK_NAME") or "Account Health control"),
                 str(row.get("NEXT_CONTROL_ACTION") or row.get("QUEUE_BLOCKERS") or "Control board review required."),
                 str(row.get("PROOF_REQUIRED") or "Attach source and closure proof."),
-                route=str(row.get("ROUTE") or "Account Health"),
+                route=_canonical_account_route(row.get("ROUTE")),
                 priority=16 + safe_int(row.get("_RANK", 9)),
             )
 
@@ -1656,7 +1661,7 @@ def _account_health_morning_exception_rows(
                 str(row.get("ROUTE") or row.get("OWNER") or "Account Health"),
                 str(row.get("EVIDENCE") or "Checklist exception needs review."),
                 str(row.get("NEXT_ACTION") or "Queue or resolve the checklist exception with proof."),
-                route=str(row.get("ROUTE") or "Account Health"),
+                route=_canonical_account_route(row.get("ROUTE")),
                 priority=24 + safe_int(row.get("_RANK", 9)),
             )
 
@@ -1685,7 +1690,7 @@ def _render_account_health_exception_strip(rows: pd.DataFrame | None) -> None:
         entity = str(row.get("ENTITY") or "Account")
         evidence = str(row.get("EVIDENCE") or "")
         next_action = str(row.get("NEXT_ACTION") or "")
-        route = str(row.get("ROUTE") or "Account Health")
+        route = _canonical_account_route(row.get("ROUTE"))
         message = f"{severity}: {signal} - {entity}. {evidence} Next: {next_action} Route: {route}."
         if severity.upper() in {"CRITICAL", "HIGH"}:
             st.warning(message)
@@ -1727,7 +1732,7 @@ def _account_health_action_brief(checklist: pd.DataFrame | None) -> dict:
             "workflow": "",
         }
     row = actionable.iloc[0]
-    route = str(row.get("ROUTE") or "Account Health")
+    route = _canonical_account_route(row.get("ROUTE"))
     check = str(row.get("CHECK") or "Account Health")
     action = str(row.get("NEXT_ACTION") or "Review the owning workflow.")
     evidence = str(row.get("EVIDENCE") or "")
@@ -1974,7 +1979,7 @@ def _account_health_intervention_matrix(
             "INTERVENTION_STATE": state,
             "SURFACE": "Account Access Hygiene",
             "SEVERITY": "High" if high_rows else "Medium",
-            "ROUTE": "Security Posture",
+            "ROUTE": "Governance & Security",
             "OWNER": "DBA / Security",
             "CONTROL_STATE": "High-risk access review" if high_rows else "Access hygiene review",
             "QUEUE_READINESS": "Needs Routing Data" if route_blocks else "Ready to Queue",
@@ -1994,7 +1999,7 @@ def _account_health_intervention_matrix(
                 "INTERVENTION_STATE": "Fact Review",
                 "SURFACE": "Account Health control summary",
                 "SEVERITY": "Medium",
-                "ROUTE": "Account Health",
+                "ROUTE": "DBA Control Room",
                 "OWNER": "DBA",
                 "CONTROL_STATE": "Summary blocker",
                 "QUEUE_READINESS": "Review",
@@ -2014,7 +2019,7 @@ def _account_health_intervention_matrix(
                 "INTERVENTION_STATE": "Checklist Review",
                 "SURFACE": "Daily DBA checklist",
                 "SEVERITY": "Medium",
-                "ROUTE": "Account Health",
+                "ROUTE": "DBA Control Room",
                 "OWNER": "DBA",
                 "CONTROL_STATE": "Checklist issue",
                 "QUEUE_READINESS": "Review",
@@ -3639,7 +3644,7 @@ def render():
             ("Live", "Workload Operations", "Live triage"),
             ("Query", "Workload Operations", "Query diagnosis"),
             ("Cost", "Cost & Contract", None),
-            ("DBA", "Change & Drift", None),
+            ("DBA", "Governance & Security", None),
         ]):
             with qnav_cols[idx]:
                 st.button(lbl, key=f"jump_{lbl}", on_click=_jump, args=(tgt, workflow), width="stretch")
@@ -3827,13 +3832,13 @@ def render():
                     key="ah_warehouse_pressure", title="Warehouse pressure drill-down",
                     drilldown_column="warehouse_name", lookback_hours=24, top_n=8,
                 )
-                st.markdown("**Jump to Warehouse Health:**")
+                st.markdown("**Jump to Cost & Contract:**")
                 wh_cols = st.columns(min(len(df_wp), 4))
                 for idx, wh_row in df_wp.head(4).iterrows():
                     wh_name = wh_row["WAREHOUSE_NAME"]
                     with wh_cols[idx % 4]:
                         if st.button(wh_name, key=f"ah_wh_drill_{wh_name}"):
-                            _drill_to("Warehouse Health", wh_filter=wh_name)
+                            _drill_to("Cost & Contract", wh_filter=wh_name)
         except Exception as e:
             st.caption(f"Warehouse pressure unavailable: {format_snowflake_error(e)}")
 

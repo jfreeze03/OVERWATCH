@@ -211,7 +211,7 @@ def render():
         }
         return qh_caps
     st.subheader("Object Change Audit")
-    st.caption("DDL, grants, roles, policy changes, and owner changes. Change evidence and rollback proof are handled in Change & Drift.")
+    st.caption("DDL, grants, roles, policy changes, and owner changes. Change evidence and rollback proof are handled in Governance & Security change control.")
 
     days = day_window_selectbox("Lookback", key="ocm_days", default=14)
     row_limit = st.slider("Max rows per scan", 100, 1000, 250, step=50, key="ocm_row_limit")

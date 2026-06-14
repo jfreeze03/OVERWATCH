@@ -279,7 +279,7 @@ def _build_query_optimization_candidates(query_text: str, evidence: dict | None 
             candidates,
             "Warehouse queue pressure",
             f"Queued overload is {queued_sec:,.1f}s.",
-            "Separate compute contention from SQL shape first: open Live triage/Warehouse Health, compare active queries on the same warehouse, and check WAREHOUSE_LOAD_HISTORY before resizing or rewriting SQL.",
+            "Separate compute contention from SQL shape first: open Live triage/Cost & Contract, compare active queries on the same warehouse, and check WAREHOUSE_LOAD_HISTORY before resizing or rewriting SQL.",
             "Verify QUEUED_OVERLOAD_TIME drops for the rerun and p95 queue stays below the local SLA.",
         )
     if remote_spill_gb >= max(THRESHOLDS["spill_warning_gb"], 1):
@@ -418,7 +418,7 @@ def _build_query_diagnosis_action_contract(
             owner_handoff = "DBA plus task/job owner"
         elif signal == "Warehouse queue pressure":
             root_cause = "Warehouse concurrency pressure"
-            action_decision = "Route to Warehouse Health"
+            action_decision = "Route to Cost & Contract"
             first_move = (
                 f"Check WAREHOUSE_LOAD_HISTORY and active queries on {warehouse}; compare queue time to "
                 "concurrent task/job windows."

@@ -568,7 +568,7 @@ def _build_usage_change_explanation(data: dict, days: int, credit_price: float) 
             "MOVEMENT": f"{top.get('WAREHOUSE_NAME', 'Unknown')} moved {top_delta:+,.2f} credits ({_format_pct_delta(top_pct)})",
             "DOLLAR_IMPACT": f"${credits_to_dollars(top_delta, credit_price):+,.0f}",
             "EVIDENCE": "Warehouse-level current/prior movement from the fast hourly summary.",
-            "NEXT_ACTION": "Open Warehouse Health for queue, spill, p95, and setting evidence before changing capacity.",
+            "NEXT_ACTION": "Open Cost & Contract for queue, spill, p95, setting, and dollar evidence before changing capacity.",
         })
     else:
         rows.append({
@@ -602,7 +602,7 @@ def _build_usage_change_explanation(data: dict, days: int, credit_price: float) 
         "MOVEMENT": f"{failed:,.0f} failed queries, {queued:,.0f} queued queries, {pressured:,.0f} pressured warehouses",
         "DOLLAR_IMPACT": "Service risk",
         "EVIDENCE": "Query, task, and warehouse pressure signals for the same selected window.",
-        "NEXT_ACTION": "Use Service Health and Warehouse Health when cost movement coincides with failures or queueing.",
+        "NEXT_ACTION": "Use DBA Control Room and Cost & Contract when cost movement coincides with failures or queueing.",
     })
     return pd.DataFrame(rows)
 

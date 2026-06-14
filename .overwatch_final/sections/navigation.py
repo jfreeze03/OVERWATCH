@@ -18,10 +18,7 @@ SECTION_WORKSPACE_STATE_KEYS = {
     "Alert Center": ("_alert_center_full_workspace_requested", "_alert_center_brief_mode"),
     "Cost & Contract": ("_cost_contract_full_workspace_requested", "_cost_contract_brief_mode"),
     "Workload Operations": ("_workload_operations_full_workspace_requested", "_workload_operations_brief_mode"),
-    "Warehouse Health": ("_warehouse_health_full_workspace_requested", "_warehouse_health_brief_mode"),
-    "Security Posture": ("_security_posture_full_workspace_requested", "_security_posture_brief_mode"),
-    "Change & Drift": ("_change_drift_full_workspace_requested", "_change_drift_brief_mode"),
-    "Architecture Readiness": ("_architecture_readiness_full_workspace_requested", "_architecture_readiness_brief_mode"),
+    "Governance & Security": ("_governance_security_full_workspace_requested", "_governance_security_brief_mode"),
 }
 
 

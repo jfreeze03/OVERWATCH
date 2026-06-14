@@ -184,7 +184,7 @@ HORIZON_SEMANTIC_PROBES = (
         "SURFACE": "Cortex Code CLI Usage",
         "OBJECT_NAME": "SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY",
         "MANDATORY": False,
-        "DBA_ACTION": "Route AI-assisted code activity into Change & Drift when DDL, grants, or deployment SQL is involved.",
+        "DBA_ACTION": "Route AI-assisted code activity into Governance & Security change control when DDL, grants, or deployment SQL is involved.",
     },
     {
         "CONTROL_AREA": "AI Change Governance",

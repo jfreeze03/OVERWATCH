@@ -1016,7 +1016,7 @@ def _warehouse_cost_control_action(
         f"-- Warehouse: {wh}\n"
         f"-- Current credits: {current:,.4f}; prior credits: {prior:,.4f}; delta credits: {delta:,.4f}\n"
         "-- If idle dominates: review auto-suspend and query schedule.\n"
-        "-- If queue/spill dominates: use Warehouse Health and reviewed Warehouse Settings Manager before changing size/scaling.\n"
+        "-- If queue/spill dominates: use Cost & Contract warehouse capacity evidence and the reviewed Warehouse Settings Manager before changing size/scaling.\n"
         "-- If workload growth dominates: route to query/procedure owner for tuning."
     )
     proof = _warehouse_cost_verification_sql(wh)

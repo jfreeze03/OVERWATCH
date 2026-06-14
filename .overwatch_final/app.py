@@ -143,13 +143,9 @@ SECTION_WORKSPACE_STATE_KEYS = {
     "Executive Landing": ("_executive_landing_full_workspace_requested", "_executive_landing_brief_mode"),
     "DBA Control Room": ("_dba_control_room_full_workspace_requested", "_dba_control_room_brief_mode"),
     "Alert Center": ("_alert_center_full_workspace_requested", "_alert_center_brief_mode"),
-    "Account Health": ("_account_health_full_workspace_requested", "_account_health_brief_mode"),
     "Cost & Contract": ("_cost_contract_full_workspace_requested", "_cost_contract_brief_mode"),
     "Workload Operations": ("_workload_operations_full_workspace_requested", "_workload_operations_brief_mode"),
-    "Warehouse Health": ("_warehouse_health_full_workspace_requested", "_warehouse_health_brief_mode"),
-    "Security Posture": ("_security_posture_full_workspace_requested", "_security_posture_brief_mode"),
-    "Change & Drift": ("_change_drift_full_workspace_requested", "_change_drift_brief_mode"),
-    "Architecture Readiness": ("_architecture_readiness_full_workspace_requested", "_architecture_readiness_brief_mode"),
+    "Governance & Security": ("_governance_security_full_workspace_requested", "_governance_security_brief_mode"),
 }
 
 
@@ -789,13 +785,9 @@ SECTION_SUBTITLES = {
     "Executive Landing": "Board-ready risk, cost movement, action closure, and deployment trust.",
     "DBA Control Room": "Morning triage, route readiness, source health, and release risk.",
     "Alert Center": "Consolidated incidents, email digests, annotation history, and alert setup.",
-    "Account Health": "Daily DBA checklist, source readiness, user hygiene, and account posture.",
     "Workload Operations": "Query history, task graphs, stored procedures, pipeline health, and runbooks.",
-    "Warehouse Health": "Warehouse pressure, capacity controls, setting review, and efficiency evidence.",
-    "Architecture Readiness": "Isolation, clustering, cache, DR, and forward Snowflake architecture checks.",
     "Cost & Contract": "Spend attribution, contract utilization, chargeback, savings, and action queue.",
-    "Security Posture": "Access posture, privileged grants, data sharing, and governance evidence.",
-    "Change & Drift": "Object changes, access changes, drift, approvals, and rollback proof.",
+    "Governance & Security": "Access risk, grant posture, schema drift, controlled DBA actions, and rollback proof.",
 }
 
 

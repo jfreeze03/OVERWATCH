@@ -854,7 +854,7 @@ def render() -> None:
             ("A job is late or failed", "Use Task graphs, then drill into the stored procedure and query IDs."),
             ("A table or task is bottlenecked", "Use Contention Center to separate lock waits from warehouse queueing before resizing."),
             ("A release increased runtime", "Use Stored procedures and the DBA Control Room release compare."),
-            ("A warehouse is under pressure", "Use Live triage first, then Warehouse Health."),
+            ("A warehouse is under pressure", "Use Live triage first, then Cost & Contract capacity evidence."),
             ("A user asks what happened", "Use Query diagnosis history search to find and document evidence."),
         ],
     )

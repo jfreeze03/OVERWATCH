@@ -1344,7 +1344,7 @@ def _warehouse_setting_control_board(
 
         if overdue:
             state, rank = "Closure Overdue", 0
-            next_action = "Escalate overdue Warehouse Health action before approving more setting changes."
+            next_action = "Escalate overdue warehouse capacity action before approving more setting changes."
         elif fixed_without_verification or closure_rank in {1, 2}:
             state, rank = "Closure Evidence Blocked", 1
             next_action = str(closure_row.get("NEXT_ACTION") or "Attach verification proof before closing warehouse work.")
@@ -1765,7 +1765,7 @@ def _warehouse_operator_next_moves(
     if closure_blockers:
         state = "Blocked"
         rank = 0
-        next_action = "Escalate overdue or unverified Warehouse Health work before approving more setting changes."
+        next_action = "Escalate overdue or unverified warehouse capacity work before approving more setting changes."
         count = closure_blockers
     elif exception_count and close.empty:
         state = "Load Closure Analytics"
@@ -2597,7 +2597,7 @@ def _build_warehouse_capacity_markdown(
         "",
         "## Settings Change Readiness",
         (
-            "- Warehouse Health findings are not direct change orders. Route setting changes through "
+            "- Warehouse capacity findings are not direct change orders. Route setting changes through "
             "the guarded warehouse settings workflow so current values, owner approval, rollback SQL, "
             "and post-change verification are captured."
         ),
@@ -3170,7 +3170,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                 )
             with st.expander("Warehouse Action Closure Analytics", expanded=False):
                 defer_source_note(
-                    "Uses Warehouse Health action-queue rows to show which capacity or efficiency actions are open, "
+                    "Uses Cost & Contract warehouse action-queue rows to show which capacity or efficiency actions are open, "
                     "overdue, missing owner approval, or closed without verification evidence."
                 )
                 closure_days = day_window_selectbox(
@@ -3222,7 +3222,7 @@ def _render_capacity_brief(company: str, environment: str) -> None:
                 elif closure is not None and not closure.empty and not closure_current:
                     st.info("Loaded warehouse closure analytics are stale for the active scope. Reload closure analytics before acting.")
                 elif closure is not None:
-                    st.info("No Warehouse Health action-queue rows found for the selected scope.")
+                    st.info("No warehouse capacity action-queue rows found for the selected scope.")
             with st.expander("Warehouse Execution Audit Evidence", expanded=False):
                 audit = st.session_state.get("wh_setting_execution_audit")
                 audit_current = _warehouse_meta_matches(
@@ -3629,7 +3629,7 @@ def render():
         columns=4,
     )
     warehouse_view = render_workflow_selector(
-        "Warehouse Health workflow",
+        "Warehouse capacity workflow",
         "warehouse_health_view",
         WAREHOUSE_HEALTH_VIEWS,
         WAREHOUSE_HEALTH_DETAILS,
@@ -3654,7 +3654,7 @@ def render():
 
     # -- OVERVIEW --------------------------------------------------------------
     if warehouse_view == "Overview & Scaling":
-        st.subheader("Warehouse Health Overview")
+        st.subheader("Warehouse Capacity Overview")
         wh_days = day_window_selectbox("Lookback", key="wh_days", default=7)
 
         def _load_warehouse_overview() -> None:
@@ -3739,7 +3739,7 @@ def render():
             and _warehouse_meta_matches(loaded_wh_meta, wh_expected_meta)
         )
         if consume_section_autoload_request("Warehouse Health") and not wh_current:
-            st.caption("Warehouse Health opened in fast mode. Load warehouse data when current capacity proof is needed.")
+            st.caption("Warehouse capacity opened in fast mode. Load warehouse data when current capacity proof is needed.")
         render_data_freshness(
             loaded_wh_meta if wh_current else {},
             source=st.session_state.get("wh_df_wh_source", "Warehouse overview"),

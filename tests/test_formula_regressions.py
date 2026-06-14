@@ -1171,7 +1171,7 @@ class FormulaRegressionTests(unittest.TestCase):
             detail_source="Fast summary",
         )
         brief = _account_health_action_brief(checklist)
-        self.assertEqual(brief["target"], "Warehouse Health")
+        self.assertEqual(brief["target"], "Cost & Contract")
         self.assertEqual(brief["state"], "Needs DBA")
         self.assertIn("Queue pressure review", brief["detail"])
 
@@ -1805,7 +1805,7 @@ class FormulaRegressionTests(unittest.TestCase):
         contract = _build_query_diagnosis_action_contract(candidates, evidence, query_text)
 
         by_signal = {row["SIGNAL"]: row for row in contract}
-        self.assertEqual(by_signal["Warehouse queue pressure"]["ACTION_DECISION"], "Route to Warehouse Health")
+        self.assertEqual(by_signal["Warehouse queue pressure"]["ACTION_DECISION"], "Route to Cost & Contract")
         self.assertIn("WH_TRXS_QUERY", by_signal["Warehouse queue pressure"]["FIRST_OPERATOR_MOVE"])
         self.assertIn("Do not rewrite SQL as the first fix", by_signal["Warehouse queue pressure"]["DO_NOT_DO"])
         self.assertEqual(by_signal["Remote spill"]["ACTION_DECISION"], "Inspect operator stats before rerun")
@@ -2108,10 +2108,10 @@ class FormulaRegressionTests(unittest.TestCase):
             "VALUE_AT_RISK_USD": 220.0,
             "EVIDENCE": "ALFA_WH is the current top warehouse mover; resource monitors are useful only for warehouse credit control.",
             "DBA_DECISION": "Review warehouse-level resource monitor assignment for the top mover, but use Budgets for serverless, AI, and shared resources.",
-            "NEXT_ACTION": "Open Warehouse Health or Change & Drift controls to review monitor assignment and threshold SQL after owner approval.",
+            "NEXT_ACTION": "Open Cost & Contract and Governance & Security controls to review monitor assignment and threshold SQL after owner approval.",
             "PROOF_REQUIRED": "SHOW RESOURCE MONITORS; SHOW WAREHOUSES LIKE ALFA_WH;",
             "DO_NOT_DO": "Do not use resource monitors as AI/serverless budget controls; Snowflake budgets are the correct surface there.",
-            "ROUTE": "Warehouse Health > Settings / Cost & Contract > Budget governance",
+            "ROUTE": "Cost & Contract > Recommendations and action queue / Budget governance",
         }])
         state = {"cost_contract_budget_command_center": board}
 
@@ -2312,7 +2312,7 @@ class FormulaRegressionTests(unittest.TestCase):
             "EVIDENCE": "ALFA_WH is the current top warehouse mover.",
             "NEXT_ACTION": "Review resource monitor assignment after owner approval.",
             "PROOF_REQUIRED": "SHOW RESOURCE MONITORS; SELECT * FROM FACT_WAREHOUSE_HOURLY;",
-            "ROUTE": "Warehouse Health > Settings / Cost & Contract > Budget governance",
+            "ROUTE": "Cost & Contract > Recommendations and action queue / Budget governance",
         }])
         root = pd.DataFrame([{
             "SEVERITY": "High",
@@ -3003,8 +3003,8 @@ class FormulaRegressionTests(unittest.TestCase):
             queued_queries=734,
             failed_queries=0,
         )
-        self.assertEqual(routed["target"], "Warehouse Health")
-        self.assertEqual(routed["workflow"], "Queue pressure")
+        self.assertEqual(routed["target"], "Cost & Contract")
+        self.assertEqual(routed["workflow"], "Recommendations and action queue")
         self.assertIn("Check warehouse sizing", routed["headline"])
 
         queue_only = _dba_action_brief(
@@ -3013,7 +3013,7 @@ class FormulaRegressionTests(unittest.TestCase):
             queued_queries=25,
             failed_queries=0,
         )
-        self.assertEqual(queue_only["target"], "Warehouse Health")
+        self.assertEqual(queue_only["target"], "Cost & Contract")
         self.assertIn("25 queued", queue_only["detail"])
 
     def test_dba_control_room_snapshot_is_only_available_for_unfiltered_all_environment(self):
@@ -3189,16 +3189,16 @@ class FormulaRegressionTests(unittest.TestCase):
         rollup = _command_queue_closure_readiness(queue, today="2026-05-31")
         by_route = {row["ROUTE"]: row for _, row in rollup.iterrows()}
 
-        self.assertEqual(by_route["Security Posture"]["CLOSURE_READINESS"], "Overdue closure")
-        self.assertEqual(by_route["Security Posture"]["OVERDUE_OPEN"], 1)
-        self.assertEqual(by_route["Security Posture"]["OWNER_GAP_ROWS"], 1)
-        self.assertEqual(by_route["Security Posture"]["TICKET_GAP_ROWS"], 1)
-        self.assertEqual(by_route["Account Health"]["CLOSURE_READINESS"], "Fixed without verification")
-        self.assertEqual(by_route["Account Health"]["FIXED_WITHOUT_VERIFICATION"], 1)
-        self.assertEqual(by_route["Account Health"]["RECOVERY_RISK_ROWS"], 1)
-        self.assertEqual(by_route["Warehouse Health"]["CLOSURE_READINESS"], "Verified closure")
-        self.assertEqual(by_route["Warehouse Health"]["VERIFIED_CLOSURES"], 1)
-        self.assertIn("Attach verification", by_route["Account Health"]["NEXT_CONTROL_ACTION"])
+        self.assertEqual(by_route["Governance & Security"]["CLOSURE_READINESS"], "Overdue closure")
+        self.assertEqual(by_route["Governance & Security"]["OVERDUE_OPEN"], 1)
+        self.assertEqual(by_route["Governance & Security"]["OWNER_GAP_ROWS"], 1)
+        self.assertEqual(by_route["Governance & Security"]["TICKET_GAP_ROWS"], 1)
+        self.assertEqual(by_route["DBA Control Room"]["CLOSURE_READINESS"], "Fixed without verification")
+        self.assertEqual(by_route["DBA Control Room"]["FIXED_WITHOUT_VERIFICATION"], 1)
+        self.assertEqual(by_route["DBA Control Room"]["RECOVERY_RISK_ROWS"], 1)
+        self.assertEqual(by_route["Cost & Contract"]["CLOSURE_READINESS"], "Verified closure")
+        self.assertEqual(by_route["Cost & Contract"]["VERIFIED_CLOSURES"], 1)
+        self.assertIn("Attach verification", by_route["DBA Control Room"]["NEXT_CONTROL_ACTION"])
 
     def test_dba_control_room_operability_board_joins_scores_with_live_blockers(self):
         queue = pd.DataFrame([
@@ -3268,16 +3268,15 @@ class FormulaRegressionTests(unittest.TestCase):
         board = _dba_section_operability_board(section_rows, command_queue, closure)
         by_section = {row["SECTION"]: row for _, row in board.iterrows()}
 
-        self.assertEqual(by_section["Warehouse Health"]["OPERABILITY_STATE"], "Escalate Now")
-        self.assertEqual(by_section["Warehouse Health"]["OVERDUE"], 1)
-        self.assertGreaterEqual(by_section["Warehouse Health"]["CLOSURE_BLOCKERS"], 1)
-        self.assertIn("Escalate overdue", by_section["Warehouse Health"]["NEXT_CONTROL_ACTION"])
-        self.assertIn("rollback SQL", by_section["Warehouse Health"]["PROOF_REQUIRED"])
-        self.assertEqual(by_section["Cost & Contract"]["OPERABILITY_STATE"], "Work Open Actions")
+        self.assertEqual(by_section["Cost & Contract"]["OPERABILITY_STATE"], "Escalate Now")
+        self.assertEqual(by_section["Cost & Contract"]["OVERDUE"], 1)
+        self.assertGreaterEqual(by_section["Cost & Contract"]["CLOSURE_BLOCKERS"], 1)
+        self.assertIn("Escalate overdue", by_section["Cost & Contract"]["NEXT_CONTROL_ACTION"])
+        self.assertIn("rollback SQL", by_section["Cost & Contract"]["PROOF_REQUIRED"])
         self.assertEqual(by_section["Cost & Contract"]["EXECUTION_READY"], 1)
-        self.assertEqual(by_section["Security Posture"]["OPERABILITY_STATE"], "Build Toward 95")
-        self.assertIn("Connect IAM", by_section["Security Posture"]["NEXT_CONTROL_ACTION"])
-        self.assertIn("least-privilege", by_section["Security Posture"]["PROOF_REQUIRED"])
+        self.assertEqual(by_section["Governance & Security"]["OPERABILITY_STATE"], "Build Toward 95")
+        self.assertIn("Connect IAM", by_section["Governance & Security"]["NEXT_CONTROL_ACTION"])
+        self.assertIn("least-privilege", by_section["Governance & Security"]["PROOF_REQUIRED"])
 
     def test_dba_operations_priority_index_ranks_hot_route_first(self):
         raw_queue = pd.DataFrame([
@@ -3353,9 +3352,9 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         top = priority_index.iloc[0]
 
-        self.assertEqual(top["SECTION"], "Warehouse Health")
+        self.assertEqual(top["SECTION"], "Cost & Contract")
         self.assertEqual(top["OPERATIONS_PRIORITY_STATE"], "Contain Now")
-        self.assertGreater(top["PRIORITY_SCORE"], priority_index.iloc[1]["PRIORITY_SCORE"])
+        self.assertEqual(len(priority_index), 1)
         self.assertIn("Queue or warehouse pressure", top["WHY_NOW"])
         self.assertIn("Stabilize", top["FIRST_MOVE"])
         self.assertIn("rollback SQL", top["PROOF_REQUIRED"])
@@ -3454,7 +3453,7 @@ class FormulaRegressionTests(unittest.TestCase):
         by_type = {row["INCIDENT_TYPE"]: row for _, row in board.iterrows()}
 
         self.assertEqual(by_type["Warehouse Capacity"]["STATUS"], "Containment Required")
-        self.assertIn("Warehouse Health", by_type["Warehouse Capacity"]["AFFECTED_ROUTES"])
+        self.assertIn("Cost & Contract", by_type["Warehouse Capacity"]["AFFECTED_ROUTES"])
         self.assertIn("Stabilize queue", by_type["Warehouse Capacity"]["CONTAINMENT_ACTION"])
         self.assertIn("Contain", by_type["Warehouse Capacity"]["SLA_TARGET"])
         self.assertIn("Evidence Quality", by_type)
@@ -3500,8 +3499,8 @@ class FormulaRegressionTests(unittest.TestCase):
                 "Severity": "High",
                 "Signal": "Queue or warehouse pressure",
                 "Evidence": "80 queued queries; 1 pressured warehouse",
-                "Action": "Open Warehouse Health and validate capacity pressure.",
-                "Route": "Warehouse Health",
+                "Action": "Open Cost & Contract and validate capacity pressure.",
+                "Route": "Cost & Contract",
                 "Workflow": "",
             }
         ])
@@ -3586,7 +3585,7 @@ class FormulaRegressionTests(unittest.TestCase):
                 "INCIDENT_TYPE": "Warehouse Capacity",
                 "SEVERITY": "High",
                 "STATUS": "Containment Required",
-                "AFFECTED_ROUTES": "Warehouse Health",
+                "AFFECTED_ROUTES": "Cost & Contract",
                 "SIGNALS": "Queue or warehouse pressure",
                 "CONTAINMENT_ACTION": "Stabilize queue/spill pressure first.",
                 "SLA_TARGET": "Contain within 30 minutes.",
@@ -3630,13 +3629,13 @@ class FormulaRegressionTests(unittest.TestCase):
         )
         by_route = {row["ROUTE"]: row for _, row in packet.iterrows()}
 
-        self.assertEqual(packet.iloc[0]["ROUTE"], "Change & Drift")
-        self.assertEqual(by_route["Change & Drift"]["ESCALATION_LEVEL"], "Escalate Now")
-        self.assertIn("No-Go", by_route["Change & Drift"]["GO_NO_GO"])
-        self.assertIn("Change owner", by_route["Change & Drift"]["OWNER_ROUTE"])
-        self.assertEqual(by_route["Warehouse Health"]["ESCALATION_LEVEL"], "Escalate Now")
-        self.assertIn("Incident Board", by_route["Warehouse Health"]["SOURCE_SIGNALS"])
-        self.assertIn("Stabilize queue", by_route["Warehouse Health"]["FIRST_MOVE"])
+        self.assertEqual(packet.iloc[0]["ROUTE"], "Governance & Security")
+        self.assertEqual(by_route["Governance & Security"]["ESCALATION_LEVEL"], "Escalate Now")
+        self.assertIn("No-Go", by_route["Governance & Security"]["GO_NO_GO"])
+        self.assertIn("Change owner", by_route["Governance & Security"]["OWNER_ROUTE"])
+        self.assertEqual(by_route["Cost & Contract"]["ESCALATION_LEVEL"], "Escalate Now")
+        self.assertIn("Incident Board", by_route["Cost & Contract"]["SOURCE_SIGNALS"])
+        self.assertIn("Stabilize queue", by_route["Cost & Contract"]["FIRST_MOVE"])
         self.assertIn("No-Go", by_route["Source Health"]["GO_NO_GO"])
         self.assertTrue(packet["AUTO_GENERATED"].eq("Yes").all())
 
@@ -5422,7 +5421,7 @@ class FormulaRegressionTests(unittest.TestCase):
             summary_row=summary_row,
             exceptions=exceptions,
         )
-        self.assertIn("OVERWATCH Change & Drift Brief - ALFA", md)
+        self.assertIn("OVERWATCH Change Control Brief - ALFA", md)
         self.assertIn("Control state:", md)
         self.assertNotIn("Control score", md)
         self.assertIn("## Source Basis", md)
@@ -7667,7 +7666,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Failed logins", signals)
         self.assertIn("Grant-change volume", signals)
         self.assertIn("Shared data exposure", signals)
-        self.assertEqual(security_cards[0]["surface"], "Security Posture")
+        self.assertEqual(security_cards[0]["surface"], "Governance & Security")
         mfa_card = next(card for card in security_cards if card["signal"] == "MFA gaps")
         self.assertIn("MFA", mfa_card["evidence"])
 
@@ -7702,7 +7701,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         security_cards = build_top_priority_brief_cards(state, domain="Security", limit=3)
 
-        self.assertEqual(security_cards[0]["surface"], "Security Posture - Exceptions")
+        self.assertEqual(security_cards[0]["surface"], "Governance & Security - Security Exceptions")
         self.assertEqual(security_cards[0]["signal"], "MFA Gap")
         self.assertEqual(security_cards[0]["entity"], "USER_HIGH")
         self.assertIn("No Database Context", security_cards[0]["evidence"])
@@ -7742,7 +7741,7 @@ class FormulaRegressionTests(unittest.TestCase):
 
         cards = build_top_priority_brief_cards(state, domain="Reliability", limit=4)
 
-        self.assertEqual(cards[0]["surface"], "Account Health - Morning Exceptions")
+        self.assertEqual(cards[0]["surface"], "DBA Control Room - Morning Exceptions")
         self.assertEqual(cards[0]["signal"], "Closure Blocked")
         self.assertIn("Escalate overdue closures", cards[0]["next_action"])
         self.assertIn("Route Blocked", {card["signal"] for card in cards})
@@ -8666,7 +8665,7 @@ class FormulaRegressionTests(unittest.TestCase):
         ])
         cards = build_ask_overwatch_context({"arch_futures_adoption_gate": gate})
 
-        self.assertEqual(cards[0]["surface"], "Architecture Readiness - Expert Adoption Gate")
+        self.assertEqual(cards[0]["surface"], "Governance & Security - Expert Adoption Gate")
         self.assertEqual(cards[0]["signal"], "Evidence Gaps")
         self.assertIn("readiness=75", cards[0]["evidence"])
         self.assertIn("Load or persist", cards[0]["next_action"])
@@ -8698,7 +8697,7 @@ class FormulaRegressionTests(unittest.TestCase):
             environment="PROD",
         )
 
-        self.assertEqual(cards[0]["surface"], "Architecture Readiness - Agentic AI Governance Cockpit")
+        self.assertEqual(cards[0]["surface"], "Governance & Security - Agentic AI Governance Cockpit")
         self.assertEqual(cards[0]["signal"], "Evidence Gaps")
         self.assertIn("Shared Artifact", cards[0]["evidence"])
         self.assertIn("CoWork Artifact Governance", result["answer"])
@@ -8724,7 +8723,7 @@ class FormulaRegressionTests(unittest.TestCase):
         ])
         cards = build_ask_overwatch_context({"arch_adaptive_compute": advisor})
 
-        self.assertEqual(cards[0]["surface"], "Architecture Readiness - Adaptive Compute Advisor")
+        self.assertEqual(cards[0]["surface"], "Governance & Security - Adaptive Compute Advisor")
         self.assertEqual(cards[0]["signal"], "Pilot Candidate")
         self.assertIn("BI_COMPUTE_WH", cards[0]["entity"])
         self.assertIn("credits=84.5", cards[0]["evidence"])
@@ -8746,7 +8745,7 @@ class FormulaRegressionTests(unittest.TestCase):
         ])
         cards = build_ask_overwatch_context({"arch_ai_security_guardrails": guardrails})
 
-        self.assertEqual(cards[0]["surface"], "Architecture Readiness - AI Security Guardrails")
+        self.assertEqual(cards[0]["surface"], "Governance & Security - AI Security Guardrails")
         self.assertEqual(cards[0]["signal"], "PUBLIC AI grant")
         self.assertIn("PUBLIC USE AI FUNCTIONS", cards[0]["entity"])
         self.assertIn("blanket AI/Cortex access", cards[0]["evidence"])
@@ -8766,7 +8765,7 @@ class FormulaRegressionTests(unittest.TestCase):
         cards = build_ask_overwatch_context({"dba_operations_priority_index": priority_index})
 
         self.assertEqual(cards[0]["surface"], "DBA Operations Priority")
-        self.assertEqual(cards[0]["entity"], "Warehouse Health")
+        self.assertEqual(cards[0]["entity"], "Cost & Contract")
         self.assertIn("Queue or warehouse pressure", cards[0]["evidence"])
         self.assertIn("Stabilize", cards[0]["next_action"])
 
@@ -8800,7 +8799,7 @@ class FormulaRegressionTests(unittest.TestCase):
         cards = build_ask_overwatch_context({"dba_operator_runbook": plan})
 
         self.assertEqual(cards[0]["surface"], "DBA Operator Runbook")
-        self.assertEqual(cards[0]["entity"], "Warehouse Health")
+        self.assertEqual(cards[0]["entity"], "Cost & Contract")
         self.assertIn("Evidence current", cards[0]["evidence"])
         self.assertIn("Stabilize", cards[0]["next_action"])
 

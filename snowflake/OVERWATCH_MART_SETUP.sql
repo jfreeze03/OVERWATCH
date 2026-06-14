@@ -229,25 +229,25 @@ USING (
     ('COST_VERIFIER_TASK', 'TASK', '*OVERWATCH_COST_SAVINGS_VERIFY*', 'DBA / FinOps', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'FinOps Backup', 'FinOps Lead', 'FinOps Lead', 'Cost & Contract', 'Tier 0', 200, 'Owner route for the scheduled savings-verification task.'),
     ('TASK_DEFAULT', 'TASK', '*', 'DBA / Pipeline Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Pipeline Owner Backup', 'Pipeline Owner', 'DBA Lead', 'Workload Operations', 'Tier 0', 70, 'Default route for failed or late task graph recovery.'),
     ('PROCEDURE_DEFAULT', 'PROCEDURE', '*', 'DBA / Procedure Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Procedure Owner Backup', 'Procedure Owner', 'DBA Lead', 'Workload Operations', 'Tier 1', 70, 'Default route for stored procedure runtime, orchestration, and cost regressions.'),
-    ('WAREHOUSE_DEFAULT', 'WAREHOUSE', '*', 'DBA / Platform', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Platform DBA Backup', 'Platform DBA Lead', 'DBA Lead', 'Warehouse Health', 'Tier 1', 60, 'Default route for warehouse pressure, capacity, and setting-change controls.'),
-    ('OVERWATCH_WH_EXECUTION', 'WAREHOUSE', 'OVERWATCH_WH', 'OVERWATCH Platform Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead / OVERWATCH Platform Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 215, 'Dedicated OVERWATCH Streamlit app execution warehouse; monitor separately from business workload warehouses.'),
-    ('COMPUTE_WH_EXECUTION', 'WAREHOUSE', 'COMPUTE_WH', 'OVERWATCH Platform Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead / OVERWATCH Platform Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 205, 'Legacy OVERWATCH mart task and utility warehouse; monitor separately from business workload warehouses.'),
-    ('ADAPTIVE_COMPUTE_DEFAULT', 'ADAPTIVE_COMPUTE', '*', 'DBA / Platform Architecture', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'FinOps Backup', 'DBA Lead / FinOps Lead', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 158, 'Default route for Adaptive Compute candidate review, pilot approval, cost baseline, and rollback proof.'),
-    ('ALFA_EDW_PROD_DATABASE', 'DATABASE', 'ALFA_EDW_PROD', 'ALFA EDW Data Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Data Platform Backup', 'DBA Lead / ALFA EDW Data Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 0', 220, 'Owner route for PROD EDW isolation, clustering, cache, and DR architecture decisions.'),
-    ('ALFA_EDW_DEV_DATABASES', 'DATABASE', 'ALFA_EDW_%', 'ALFA Development Data Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Development Platform Backup', 'DBA Lead / Development Platform Owner', 'DBA Lead', 'Architecture Readiness', 'Tier 2', 120, 'Fallback route for ALFA DEV/Sandbox EDW database architecture decisions.'),
-    ('ARCHITECTURE_DEFAULT', 'ARCHITECTURE', '*', 'DBA / Platform Architecture', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead', 'DBA Lead', 'Architecture Readiness', 'Tier 1', 65, 'Fallback route for architecture objective, workload isolation, clustering, cache, and DR findings.'),
-    ('AI_AGENT_DEFAULT', 'AI_AGENT', '*', 'DBA / AI Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 160, 'Default route for Cortex Agent inventory, Snowflake Intelligence usage, MCP tool exposure, and AI governance actions.'),
-    ('MCP_SERVER_DEFAULT', 'MCP_SERVER', '*', 'DBA / AI Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 170, 'Default route for MCP server owner, tool-scope, role-scope, and blast-radius review.'),
-    ('CORTEX_SENSE_DEFAULT', 'CORTEX_SENSE', '*', 'DBA / AI Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Data Governance Backup', 'DBA Lead / Data Governance Lead', 'Data Governance Lead', 'Architecture Readiness', 'Tier 0', 168, 'Default route for Cortex Sense shared context, business definitions, semantic source, connector, citation, and regression-test governance.'),
-    ('COWORK_ARTIFACT_DEFAULT', 'COWORK_ARTIFACT', '*', 'DBA / Analytics Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Analytics Owner Backup', 'Analytics Owner / DBA Lead', 'Analytics Owner', 'Architecture Readiness', 'Tier 1', 166, 'Default route for CoWork Artifact publisher, certified source, sharing scope, freshness, sensitivity, and retirement governance.'),
+    ('WAREHOUSE_DEFAULT', 'WAREHOUSE', '*', 'DBA / Platform', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Platform DBA Backup', 'Platform DBA Lead', 'DBA Lead', 'Cost & Contract', 'Tier 1', 60, 'Default route for warehouse pressure, capacity, and setting-change controls.'),
+    ('OVERWATCH_WH_EXECUTION', 'WAREHOUSE', 'OVERWATCH_WH', 'OVERWATCH Platform Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead / OVERWATCH Platform Owner', 'DBA Lead', 'Governance & Security', 'Tier 1', 215, 'Dedicated OVERWATCH Streamlit app execution warehouse; monitor separately from business workload warehouses.'),
+    ('COMPUTE_WH_EXECUTION', 'WAREHOUSE', 'COMPUTE_WH', 'OVERWATCH Platform Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead / OVERWATCH Platform Owner', 'DBA Lead', 'Governance & Security', 'Tier 1', 205, 'Legacy OVERWATCH mart task and utility warehouse; monitor separately from business workload warehouses.'),
+    ('ADAPTIVE_COMPUTE_DEFAULT', 'ADAPTIVE_COMPUTE', '*', 'DBA / Platform Architecture', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'FinOps Backup', 'DBA Lead / FinOps Lead', 'DBA Lead', 'Governance & Security', 'Tier 1', 158, 'Default route for Adaptive Compute candidate review, pilot approval, cost baseline, and rollback proof.'),
+    ('ALFA_EDW_PROD_DATABASE', 'DATABASE', 'ALFA_EDW_PROD', 'ALFA EDW Data Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Data Platform Backup', 'DBA Lead / ALFA EDW Data Owner', 'DBA Lead', 'Governance & Security', 'Tier 0', 220, 'Owner route for PROD EDW isolation, clustering, cache, and DR architecture decisions.'),
+    ('ALFA_EDW_DEV_DATABASES', 'DATABASE', 'ALFA_EDW_%', 'ALFA Development Data Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Development Platform Backup', 'DBA Lead / Development Platform Owner', 'DBA Lead', 'Governance & Security', 'Tier 2', 120, 'Fallback route for ALFA DEV/Sandbox EDW database architecture decisions.'),
+    ('ARCHITECTURE_DEFAULT', 'ARCHITECTURE', '*', 'DBA / Platform Architecture', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Platform DBA Backup', 'DBA Lead', 'DBA Lead', 'Governance & Security', 'Tier 1', 65, 'Fallback route for architecture objective, workload isolation, clustering, cache, and DR findings.'),
+    ('AI_AGENT_DEFAULT', 'AI_AGENT', '*', 'DBA / AI Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Governance & Security', 'Tier 0', 160, 'Default route for Cortex Agent inventory, Snowflake Intelligence usage, MCP tool exposure, and AI governance actions.'),
+    ('MCP_SERVER_DEFAULT', 'MCP_SERVER', '*', 'DBA / AI Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Governance & Security', 'Tier 0', 170, 'Default route for MCP server owner, tool-scope, role-scope, and blast-radius review.'),
+    ('CORTEX_SENSE_DEFAULT', 'CORTEX_SENSE', '*', 'DBA / AI Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Data Governance Backup', 'DBA Lead / Data Governance Lead', 'Data Governance Lead', 'Governance & Security', 'Tier 0', 168, 'Default route for Cortex Sense shared context, business definitions, semantic source, connector, citation, and regression-test governance.'),
+    ('COWORK_ARTIFACT_DEFAULT', 'COWORK_ARTIFACT', '*', 'DBA / Analytics Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Analytics Owner Backup', 'Analytics Owner / DBA Lead', 'Analytics Owner', 'Governance & Security', 'Tier 1', 166, 'Default route for CoWork Artifact publisher, certified source, sharing scope, freshness, sensitivity, and retirement governance.'),
     ('AI_COST_DEFAULT', 'AI_USAGE', '*', 'DBA / FinOps', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'FinOps Backup', 'FinOps Lead / DBA Lead', 'FinOps Lead', 'Cost & Contract', 'Tier 1', 155, 'Default route for AI token-credit spend, Snowflake Intelligence usage, and Cortex Agent cost guardrails.'),
-    ('AI_SECURITY_DEFAULT', 'AI_SECURITY', '*', 'DBA / AI Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Architecture Readiness', 'Tier 0', 156, 'Default route for Cortex AI Guardrails, PUBLIC AI access, per-function privileges, and sensitive-data report readiness.'),
-    ('OPENFLOW_DEFAULT', 'OPENFLOW', '*', 'DBA / Integration Platform', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Data Engineering Backup', 'Data Engineering Lead / DBA Lead', 'Data Engineering Lead', 'Architecture Readiness', 'Tier 1', 150, 'Default route for Openflow runtime, data-plane, auth, cost, and recovery evidence.'),
-    ('HORIZON_GOVERNANCE_DEFAULT', 'GOVERNANCE_VIEW', '*', 'DBA / Data Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Security Backup', 'Data Governance Lead / Security Approver', 'Data Governance Lead', 'Security Posture', 'Tier 0', 145, 'Default route for Horizon catalog, classification, policy, lineage, access-history, and governance-readiness gaps.'),
-    ('SEMANTIC_TRUST_DEFAULT', 'SEMANTIC_TRUST', '*', 'DBA / Analytics Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Analytics Owner Backup', 'Analytics Owner / DBA Lead', 'Analytics Owner', 'Architecture Readiness', 'Tier 1', 140, 'Default route for semantic model ownership, certification, verified query tests, and AI answer trust.'),
-    ('BCDR_DRILL_DEFAULT', 'BCDR_DRILL', '*', 'DBA / Platform Architecture', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Infrastructure Backup', 'DBA Lead / Infrastructure Owner', 'Infrastructure Owner', 'Architecture Readiness', 'Tier 0', 135, 'Default route for DR drill ledger, recovery proof, RPO/RTO validation, and failover/replication evidence.'),
-    ('AI_CHANGE_GOVERNANCE_DEFAULT', 'AI_CHANGE_GOVERNANCE', '*', 'DBA Change Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Change Advisory Backup', 'Change Advisory / DBA Lead', 'DBA Lead / Change Advisory', 'Change & Drift', 'Tier 0', 130, 'Default route for Cortex Code, AISQL, and AI-assisted admin change governance.'),
-    ('SECURITY_DEFAULT', 'SECURITY', '*', 'DBA / Security', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Security Backup', 'Security Approver', 'Security Lead', 'Security Posture', 'Tier 0', 60, 'Default route for grant, revoke, role, and rights controls.'),
+    ('AI_SECURITY_DEFAULT', 'AI_SECURITY', '*', 'DBA / AI Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Security Backup', 'DBA Lead / Security Approver', 'Security Lead', 'Governance & Security', 'Tier 0', 156, 'Default route for Cortex AI Guardrails, PUBLIC AI access, per-function privileges, and sensitive-data report readiness.'),
+    ('OPENFLOW_DEFAULT', 'OPENFLOW', '*', 'DBA / Integration Platform', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Data Engineering Backup', 'Data Engineering Lead / DBA Lead', 'Data Engineering Lead', 'Governance & Security', 'Tier 1', 150, 'Default route for Openflow runtime, data-plane, auth, cost, and recovery evidence.'),
+    ('HORIZON_GOVERNANCE_DEFAULT', 'GOVERNANCE_VIEW', '*', 'DBA / Data Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Security Backup', 'Data Governance Lead / Security Approver', 'Data Governance Lead', 'Governance & Security', 'Tier 0', 145, 'Default route for Horizon catalog, classification, policy, lineage, access-history, and governance-readiness gaps.'),
+    ('SEMANTIC_TRUST_DEFAULT', 'SEMANTIC_TRUST', '*', 'DBA / Analytics Governance', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Analytics Owner Backup', 'Analytics Owner / DBA Lead', 'Analytics Owner', 'Governance & Security', 'Tier 1', 140, 'Default route for semantic model ownership, certification, verified query tests, and AI answer trust.'),
+    ('BCDR_DRILL_DEFAULT', 'BCDR_DRILL', '*', 'DBA / Platform Architecture', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Infrastructure Backup', 'DBA Lead / Infrastructure Owner', 'Infrastructure Owner', 'Governance & Security', 'Tier 0', 135, 'Default route for DR drill ledger, recovery proof, RPO/RTO validation, and failover/replication evidence.'),
+    ('AI_CHANGE_GOVERNANCE_DEFAULT', 'AI_CHANGE_GOVERNANCE', '*', 'DBA Change Owner', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Change Advisory Backup', 'Change Advisory / DBA Lead', 'DBA Lead / Change Advisory', 'Governance & Security', 'Tier 0', 130, 'Default route for Cortex Code, AISQL, and AI-assisted admin change governance.'),
+    ('SECURITY_DEFAULT', 'SECURITY', '*', 'DBA / Security', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'Security Backup', 'Security Approver', 'Security Lead', 'Governance & Security', 'Tier 0', 60, 'Default route for grant, revoke, role, and rights controls.'),
     ('ALERT_DEFAULT', 'ALERT', '*', 'DBA', 'dba-alerts@yourcompany.com', 'DBA On-Call', 'DBA Backup', 'DBA Lead', 'DBA Lead', 'Alert Center', 'Tier 1', 10, 'Fallback route for alerts without a more specific owner.')
 ) src(OWNER_KEY, ENTITY_TYPE, ENTITY_PATTERN, OWNER_NAME, OWNER_EMAIL, ONCALL_PRIMARY,
       ONCALL_SECONDARY, APPROVAL_GROUP, ESCALATION_TARGET, DEFAULT_ROUTE, SERVICE_TIER,
@@ -523,7 +523,7 @@ USING (
     ('HORIZON_GOVERNANCE_READINESS', 'Horizon Governance Readiness', 'DBA / Data Governance', 'HORIZON_GOVERNANCE_DEFAULT', 'Data Governance Lead / Security Approver', 'DATA_CLASSIFICATION_LATEST, POLICY_REFERENCES, ACCESS_HISTORY, OBJECT_DEPENDENCIES', 'Classification, policies, lineage, access history', 'The account may not be ready to prove classification, policy coverage, lineage, and access behavior across engines.', 'Make governance observability visible before adopting broader Horizon, Marketplace, or cross-engine access patterns.', 'Readiness only. Do not change policies or tags automatically.', 210),
     ('SEMANTIC_TRUST_VALIDATION', 'Semantic Trust & Verified Query Testing', 'DBA / Analytics Governance', 'SEMANTIC_TRUST_DEFAULT', 'Analytics Owner / DBA Lead', 'SEMANTIC_VIEWS, SEMANTIC_TABLES, SEMANTIC_METRICS', 'Semantic model metadata', 'Agent or analyst answers can look authoritative while using unowned or untested semantic definitions.', 'Require owner, certified model, test query set, freshness proof, and regression checks before trusted use.', 'Validate and queue only. Do not rewrite semantic models automatically.', 200),
     ('BCDR_DRILL_LEDGER', 'BCDR Drill Ledger', 'DBA / Platform Architecture', 'BCDR_DRILL_DEFAULT', 'DBA Lead / Infrastructure Owner', 'SHOW FAILOVER GROUPS; SHOW REPLICATION GROUPS; REPLICATION_GROUP_USAGE_HISTORY; BACKUP_OPERATION_HISTORY', 'Failover groups, replication groups, backup operation history', 'DR can be configured but unproven, with no RPO/RTO drill record or recovery owner.', 'Keep a drill ledger with protected scope, target account, last success, failure notes, and next drill date.', 'Never execute failover from dashboard automation.', 190),
-    ('AI_CHANGE_GOVERNANCE', 'AI Change Governance', 'DBA Change Owner', 'AI_CHANGE_GOVERNANCE_DEFAULT', 'Change Advisory / DBA Lead', 'CORTEX_CODE_CLI_USAGE_HISTORY; CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY; CORTEX_AISQL_USAGE_HISTORY', 'Cortex Code, Cortex AISQL, AI-assisted SQL', 'AI-assisted code or SQL can bypass owner approval, rollback proof, and verification evidence.', 'Treat AI-generated DDL/SQL like any other change: ticket, reviewer, rollout, rollback, and verification.', 'Observe usage and route to Change & Drift. Do not execute generated changes automatically.', 180)
+    ('AI_CHANGE_GOVERNANCE', 'AI Change Governance', 'DBA Change Owner', 'AI_CHANGE_GOVERNANCE_DEFAULT', 'Change Advisory / DBA Lead', 'CORTEX_CODE_CLI_USAGE_HISTORY; CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY; CORTEX_AISQL_USAGE_HISTORY', 'Cortex Code, Cortex AISQL, AI-assisted SQL', 'AI-assisted code or SQL can bypass owner approval, rollback proof, and verification evidence.', 'Treat AI-generated DDL/SQL like any other change: ticket, reviewer, rollout, rollback, and verification.', 'Observe usage and route to Governance & Security change control. Do not execute generated changes automatically.', 180)
 ) src(CONTROL_ID, CONTROL_AREA, OWNER, OWNER_KEY, APPROVAL_GROUP, PRIMARY_EVIDENCE,
       SOURCE_OBJECTS, RISK_IF_MISSING, DBA_DECISION, AUTOMATION_BOUNDARY, MATCH_PRIORITY)
 ON UPPER(tgt.CONTROL_ID) = UPPER(src.CONTROL_ID)
@@ -1395,13 +1395,13 @@ VALUES
 MERGE INTO ALERT_CONFIG tgt
 USING (
   SELECT * FROM VALUES
-    ('SECURITY_FAILED_LOGIN_SPIKE', 'Security', 'Failed login spike', 'High', 'DBA / Security', 'Security Posture', 'DBA_SECURITY'),
-    ('SECURITY_PRIVILEGE_ESCALATION', 'Security', 'Privileged role grant', 'Critical', 'Security Approver', 'Security Posture', 'DBA_SECURITY'),
+    ('SECURITY_FAILED_LOGIN_SPIKE', 'Security', 'Failed login spike', 'High', 'DBA / Security', 'Governance & Security', 'DBA_SECURITY'),
+    ('SECURITY_PRIVILEGE_ESCALATION', 'Security', 'Privileged role grant', 'Critical', 'Security Approver', 'Governance & Security', 'DBA_SECURITY'),
     ('COST_WAREHOUSE_CREDIT_SPIKE', 'Cost / FinOps', 'Warehouse credit spike', 'High', 'DBA / FinOps', 'Cost & Contract', 'FINOPS'),
     ('PERF_QUEUE_PRESSURE', 'Performance', 'Warehouse queue pressure', 'High', 'DBA / Platform', 'Workload Operations', 'DBA_ONCALL'),
     ('PIPELINE_TASK_FAILURE', 'Task / Pipeline', 'Production task failure', 'Critical', 'DBA / Pipeline Owner', 'Workload Operations', 'PIPELINE_ONCALL'),
     ('DQ_FRESHNESS_SLA', 'Data Quality', 'Freshness SLA missed', 'High', 'Data Owner', 'Workload Operations', 'DATA_QUALITY'),
-    ('OPT_UNUSED_WAREHOUSE', 'Optimization', 'Unused or oversized warehouse', 'Medium', 'DBA / FinOps', 'Optimization Advisor', 'FINOPS')
+    ('OPT_UNUSED_WAREHOUSE', 'Optimization', 'Unused or oversized warehouse', 'Medium', 'DBA / FinOps', 'Cost & Contract', 'FINOPS')
 ) src(ALERT_KEY, CATEGORY, SIGNAL_NAME, DEFAULT_SEVERITY, OWNER, ROUTE, NOTIFICATION_CHANNEL)
 ON tgt.ALERT_KEY = src.ALERT_KEY
 WHEN MATCHED THEN UPDATE SET
@@ -1597,18 +1597,18 @@ USING (
     ('QUERY_HIGH_ERROR_RATE', 'Reliability', 'High Query Error Rate', 'High', 8, 'DBA / Workload Owner', 'Workload Operations', 'Group failures by error code/query text and assign the owning team.'),
     ('TASK_FAILURE', 'Reliability', 'Task Failure', 'High', 8, 'DBA / Pipeline Owner', 'Workload Operations', 'Review task graph impact, retry only after root cause, and verify the next run.'),
     ('PROCEDURE_FAILURE_OR_SPIKE', 'Reliability', 'Stored Procedure Failure / Runtime Spike', 'High', 8, 'DBA / Procedure Owner', 'Workload Operations', 'Compare release windows, inspect child queries, and verify runtime/cost return to baseline.'),
-    ('WAREHOUSE_PRESSURE', 'Capacity', 'Warehouse Pressure', 'Medium', 24, 'DBA / Platform', 'Warehouse Health', 'Inspect queue/spill evidence and route changed-only warehouse setting recommendations.'),
-    ('GRANT_REVOKE_ACTIVITY', 'Change Control', 'Grant/Revoke Activity', 'Medium', 24, 'DBA / Security', 'Security Posture', 'Verify least-privilege approval, owner, ticket, approver, and review date.'),
-    ('WAREHOUSE_SETTING_CHANGE', 'Change Control', 'Warehouse Setting Change', 'Medium', 24, 'DBA / Platform', 'Change & Drift', 'Verify changed-only SQL, approval, rollback SQL, and post-change evidence.'),
-    ('SECURITY_PRIVILEGE_ESCALATION', 'Security', 'Privileged Role Grant', 'Critical', 4, 'Security Approver', 'Security Posture', 'Validate ticket, approver, MFA posture, service-account purpose, and review date before accepting privileged role expansion.'),
-    ('SECURITY_SENSITIVE_EXPORT', 'Security', 'Sensitive Access Or Export', 'High', 8, 'DBA / Security', 'Security Posture', 'Inspect source IP, role, query_id, destination stage, object access, masking policy coverage, and owner approval.'),
+    ('WAREHOUSE_PRESSURE', 'Capacity', 'Warehouse Pressure', 'Medium', 24, 'DBA / Platform', 'Cost & Contract', 'Inspect queue/spill evidence and route changed-only warehouse setting recommendations.'),
+    ('GRANT_REVOKE_ACTIVITY', 'Change Control', 'Grant/Revoke Activity', 'Medium', 24, 'DBA / Security', 'Governance & Security', 'Verify least-privilege approval, owner, ticket, approver, and review date.'),
+    ('WAREHOUSE_SETTING_CHANGE', 'Change Control', 'Warehouse Setting Change', 'Medium', 24, 'DBA / Platform', 'Governance & Security', 'Verify changed-only SQL, approval, rollback SQL, and post-change evidence.'),
+    ('SECURITY_PRIVILEGE_ESCALATION', 'Security', 'Privileged Role Grant', 'Critical', 4, 'Security Approver', 'Governance & Security', 'Validate ticket, approver, MFA posture, service-account purpose, and review date before accepting privileged role expansion.'),
+    ('SECURITY_SENSITIVE_EXPORT', 'Security', 'Sensitive Access Or Export', 'High', 8, 'DBA / Security', 'Governance & Security', 'Inspect source IP, role, query_id, destination stage, object access, masking policy coverage, and owner approval.'),
     ('PERF_QUERY_PRESSURE', 'Performance', 'Query Pressure', 'High', 8, 'DBA / Platform', 'Workload Operations', 'Open Query Diagnosis or Contention Center with query_id, queue/spill/lock evidence, owner, and specific optimization path.'),
     ('PIPELINE_COPY_FAILURE', 'Task / Pipeline', 'Copy Load Failure', 'High', 8, 'DBA / Data Engineering', 'Workload Operations', 'Group by table/stage/error, fix load cause, confirm downstream task graph freshness, and document SLA recovery.'),
     ('DQ_FRESHNESS_SLA', 'Data Quality', 'Freshness SLA Missed', 'High', 8, 'Data Owner', 'Workload Operations', 'Use configured database/schema/table/column/check threshold, prove latest update/load volume, and route to data owner.'),
-    ('OPT_UNUSED_OR_OVERSIZED_WAREHOUSE', 'Optimization', 'Unused Or Oversized Warehouse', 'Medium', 24, 'DBA / FinOps', 'Optimization Advisor', 'Attach metering/query evidence, owner approval, rollback SQL, and expected savings before changing warehouse settings.'),
+    ('OPT_UNUSED_OR_OVERSIZED_WAREHOUSE', 'Optimization', 'Unused Or Oversized Warehouse', 'Medium', 24, 'DBA / FinOps', 'Cost & Contract', 'Attach metering/query evidence, owner approval, rollback SQL, and expected savings before changing warehouse settings.'),
     ('WAREHOUSE_COST_MOVEMENT', 'Cost Control', 'WAREHOUSE_COST_MOVEMENT', 'High', 8, 'DBA / FinOps', 'Cost & Contract', 'Explain the 7d warehouse cost movement, assign the owner, and route verified action only after proof.'),
     ('CORTEX_BUDGET_AND_QUOTA', 'Cost Control', 'CORTEX_BUDGET_AND_QUOTA', 'Medium', 24, 'DBA / AI FinOps', 'Cost & Contract', 'Review shared AI budget, per-user quota, first/last usage, and access expansion before enforcing controls.'),
-    ('CHANGE_COST_CORRELATION', 'Cost Control', 'CHANGE_COST_CORRELATION', 'High', 8, 'DBA / FinOps', 'Change & Drift', 'Compare warehouse change query_id, actor, ticket, rollback evidence, and cost movement before tuning.')
+    ('CHANGE_COST_CORRELATION', 'Cost Control', 'CHANGE_COST_CORRELATION', 'High', 8, 'DBA / FinOps', 'Governance & Security', 'Compare warehouse change query_id, actor, ticket, rollback evidence, and cost movement before tuning.')
 ) src(RULE_ID, CATEGORY, ALERT_TYPE, DEFAULT_SEVERITY, SLA_HOURS, OWNER, ROUTE, RUNBOOK)
 ON tgt.RULE_ID = src.RULE_ID
 WHEN MATCHED THEN UPDATE SET
@@ -2078,7 +2078,7 @@ USING (
     (6, 'Fact-Grounded AI Query Diagnosis', 'Contract', 'Workload Operations, Query diagnosis', 'Cortex recommendations must cite exact scan, spill, pruning, queue, and owner evidence.', 'Pass query evidence, table context, and expected output shape into the prompt contract.', 'QUERY_HISTORY, QUERY_PROFILE when available, ACCESS_HISTORY, TABLE_STORAGE_METRICS', 'DBA / Query Owner', 'No generic AI answer; recommendations must cite exact metrics and SQL evidence.'),
     (7, 'OVERWATCH Self-Monitoring', 'New', 'Cost & Contract, Alert Center Setup', 'The monitoring app must prove its own query cost, failures, cache behavior, and slow sections.', 'Tag every app query and summarize runtime cost and errors by section.', 'QUERY_HISTORY query_tag=OVERWATCH%, WAREHOUSE_METERING_HISTORY', 'OVERWATCH Maintainer', 'Use bounded windows and mart rollups so monitoring does not become the cost problem.'),
     (8, 'Precomputed Mart / Dynamic Table Layer With Fallback', 'Foundation', 'Setup, DBA Control Room, Cost & Contract', 'Keeps first paint fast and makes live ACCOUNT_USAGE scans explicit instead of accidental.', 'Add optional dynamic tables where supported and fallback views/tasks everywhere else.', 'ACCOUNT_USAGE, Dynamic Tables, Streams/Tasks, OVERWATCH_FACT tables', 'DBA Platform', 'Never auto-enable expensive refresh without warehouse, lag, and cost approval.'),
-    (9, 'Compliance Readiness Scorecard', 'New', 'Security Posture, Executive Landing', 'Leaders need defensible evidence for admin grants, dormant users, policy drift, and risky shares.', 'Materialize compliance controls with evidence rows and owner remediation paths.', 'GRANTS_TO_USERS, GRANTS_TO_ROLES, LOGIN_HISTORY, ACCESS_HISTORY, POLICIES, SHARES', 'Security Engineer', 'Scorecard is a risk register, not a substitute for security approval.'),
+    (9, 'Compliance Readiness Scorecard', 'New', 'Governance & Security, Executive Landing', 'Leaders need defensible evidence for admin grants, dormant users, policy drift, and risky shares.', 'Materialize compliance controls with evidence rows and owner remediation paths.', 'GRANTS_TO_USERS, GRANTS_TO_ROLES, LOGIN_HISTORY, ACCESS_HISTORY, POLICIES, SHARES', 'Security Engineer', 'Scorecard is a risk register, not a substitute for security approval.'),
     (10, 'Multi-Account / Org View', 'Contract', 'Executive Landing, Cost & Contract', 'Cost and risk should roll up above one account when leadership owns multiple Snowflake accounts.', 'Provide optional ORGADMIN views and a no-ORG fallback that stays single-account.', 'ORGANIZATION_USAGE, ACCOUNT_USAGE, account registry config', 'Snowflake Platform Owner', 'Hide org views when the role lacks organization usage privileges.'),
     (11, 'Data-First Navigation Contract', 'Foundation', 'App shell, every primary section', 'DBAs should see scoped KPIs, risks, and summaries on first section click without saved-state persistence or mode toggles.', 'Keep section autoload bounded to fast summaries and make heavy proof an explicit local action.', 'Streamlit session state, fast OVERWATCH summaries, ACCOUNT_USAGE fallback', 'OVERWATCH Maintainer', 'Do not persist navigation state or create saved-state tables; unknown roles stay restrictive.'),
     (12, 'Architecture Docs and Runbooks', 'New', 'README, Setup & Runbook', 'A production DBA command center needs setup, privileges, failure modes, rollback, and operating rules.', 'Keep a DBA runbook, data model map, precompute decision, and remediation safety model with the code.', 'Repository docs, setup SQL, migration ledger', 'DBA Lead', 'Docs must match executable objects and tests before commit.')
@@ -4223,7 +4223,7 @@ BEGIN
       0 AS VERIFIED_CLOSURES,
       0 AS OWNER_APPROVAL_GAP_ROWS,
       CASE
-        WHEN q.QUEUE_PRESSURE_ROWS > 0 THEN 'Open Warehouse Health, inspect queue evidence, and route changed-only scaling recommendations.'
+        WHEN q.QUEUE_PRESSURE_ROWS > 0 THEN 'Open Cost & Contract, inspect queue evidence, and route changed-only scaling recommendations.'
         WHEN q.SPILL_PRESSURE_ROWS > 0 THEN 'Inspect top spilling query shapes before increasing warehouse size.'
         WHEN q.HIGH_LATENCY_ROWS > 0 THEN 'Review p95 latency, warehouse size, and workload burst pattern.'
         ELSE 'No warehouse capacity action needed for this snapshot.'
@@ -4517,7 +4517,7 @@ BEGIN
       COALESCE(ENVIRONMENT, 'No Database Context') AS ENVIRONMENT,
       'Action Queue' AS CONTROL_SOURCE,
       COALESCE(ENTITY_NAME, 'Daily DBA checklist') AS CHECK_NAME,
-      MAX_BY(COALESCE(CATEGORY, 'Account Health'), COALESCE(UPDATED_AT, CREATED_AT)) AS ROUTE,
+      MAX_BY(COALESCE(CATEGORY, 'DBA Control Room'), COALESCE(UPDATED_AT, CREATED_AT)) AS ROUTE,
       MAX_BY(SEVERITY, COALESCE(UPDATED_AT, CREATED_AT)) AS SEVERITY,
       CASE
         WHEN COUNT_IF(COALESCE(UPPER(STATUS), 'OPEN') NOT IN ('FIXED', 'IGNORED') AND DUE_DATE < CURRENT_DATE()) > 0 THEN 'Closure Overdue'
@@ -4551,7 +4551,7 @@ BEGIN
         OR (UPPER(COALESCE(RECOVERY_SLA_STATE, '')) IN ('OPEN FAILURE', 'RECOVERY SLA BREACH') AND LENGTH(TRIM(COALESCE(RECOVERY_EVIDENCE, ''))) = 0)
       ) AS RECOVERY_RISK_ROWS,
       CASE
-        WHEN COUNT_IF(COALESCE(UPPER(STATUS), 'OPEN') NOT IN ('FIXED', 'IGNORED') AND DUE_DATE < CURRENT_DATE()) > 0 THEN 'Escalate overdue Account Health checklist action with owner, ticket, and proof.'
+        WHEN COUNT_IF(COALESCE(UPPER(STATUS), 'OPEN') NOT IN ('FIXED', 'IGNORED') AND DUE_DATE < CURRENT_DATE()) > 0 THEN 'Escalate overdue DBA Control Room checklist action with owner, ticket, and proof.'
         WHEN COUNT_IF(COALESCE(UPPER(STATUS), '') = 'FIXED' AND (UPPER(COALESCE(VERIFICATION_STATUS, '')) <> 'VERIFIED' OR LENGTH(TRIM(COALESCE(VERIFICATION_RESULT, ''))) < 15)) > 0 THEN 'Attach verification notes/result or reopen the checklist action.'
         WHEN COUNT_IF(COALESCE(UPPER(STATUS), 'OPEN') NOT IN ('FIXED', 'IGNORED')) > 0 THEN 'Work the open checklist action and attach proof before closing.'
         ELSE 'Retain verified closure evidence for audit trend review.'
@@ -4569,7 +4569,7 @@ BEGIN
       'No Database Context' AS ENVIRONMENT,
       'Access Hygiene Fact' AS CONTROL_SOURCE,
       'Failed login hygiene' AS CHECK_NAME,
-      'Security Posture' AS ROUTE,
+      'Governance & Security' AS ROUTE,
       CASE WHEN SUM(FAILURE_COUNT) >= 10 OR COUNT(DISTINCT USER_NAME) >= 3 THEN 'High' ELSE 'Medium' END AS SEVERITY,
       CASE WHEN SUM(FAILURE_COUNT) >= 10 OR COUNT(DISTINCT USER_NAME) >= 3 THEN 'High-Risk Access Review' ELSE 'Access Hygiene Watch' END AS CONTROL_STATE,
       CASE WHEN SUM(FAILURE_COUNT) >= 10 OR COUNT(DISTINCT USER_NAME) >= 3 THEN 2 ELSE 6 END AS CONTROL_RANK,
@@ -4600,7 +4600,7 @@ BEGIN
       'No Database Context' AS ENVIRONMENT,
       'Access Hygiene Fact' AS CONTROL_SOURCE,
       'Privileged role grant hygiene' AS CHECK_NAME,
-      'Security Posture' AS ROUTE,
+      'Governance & Security' AS ROUTE,
       'High' AS SEVERITY,
       'High-Risk Access Review' AS CONTROL_STATE,
       2 AS CONTROL_RANK,
@@ -5764,7 +5764,7 @@ candidates AS (
     WAREHOUSE_NAME,
     ROUND(TOTAL_QUEUED_MS / 1000, 0) || ' queued seconds; p95 execution ' || ROUND(P95_EXECUTION_MS / 1000, 0) || 's in the last 24 hours.',
     ROUND(TOTAL_QUEUED_MS / 1000, 0) || ' queued seconds; p95 execution ' || ROUND(P95_EXECUTION_MS / 1000, 0) || 's in the last 24 hours.',
-    'Open Warehouse Health, inspect pressure evidence, and route changed-only warehouse setting recommendations.',
+    'Open Cost & Contract, inspect pressure evidence, and route changed-only warehouse setting recommendations.',
     'SELECT * FROM FACT_QUERY_HOURLY WHERE WAREHOUSE_NAME = ''' || WAREHOUSE_NAME || ''' ORDER BY HOUR_START DESC LIMIT 100;',
     'DBA'
   FROM warehouse_pressure
@@ -5837,7 +5837,7 @@ candidates AS (
     COALESCE(DATABASE_NAME || '.' || SCHEMA_NAME, ROLE_NAME, USER_NAME, 'Account grant activity'),
     CHANGE_COUNT || ' grant/revoke statement(s) by ' || COALESCE(USER_NAME, 'unknown user') || ' using role ' || COALESCE(ROLE_NAME, 'unknown role') || '.',
     CHANGE_COUNT || ' grant/revoke statement(s) by ' || COALESCE(USER_NAME, 'unknown user') || ' using role ' || COALESCE(ROLE_NAME, 'unknown role') || '.',
-    'Open Security Posture, verify least-privilege approval, owner, ticket, and review date.',
+    'Open Governance & Security, verify least-privilege approval, owner, ticket, and review date.',
     'SELECT * FROM FACT_OBJECT_CHANGE WHERE START_TIME >= DATEADD(''hour'', -24, CURRENT_TIMESTAMP()) AND (QUERY_TYPE ILIKE ''GRANT%'' OR QUERY_TYPE ILIKE ''REVOKE%'') ORDER BY START_TIME DESC LIMIT 100;',
     'DBA'
   FROM grant_changes

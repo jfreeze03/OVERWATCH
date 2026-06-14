@@ -910,7 +910,7 @@ def _failure_diagnosis(error_text: object, query_text: object = "") -> dict[str,
         return {
             "CATEGORY": "Warehouse / Runtime Capacity",
             "PROBABLE_CAUSE": "The task may be blocked by warehouse state, timeout, memory pressure, or capacity limits.",
-            "RECOMMENDED_ACTION": "Check Warehouse Health for queue/spill pressure, resume or resize only after confirming workload demand.",
+            "RECOMMENDED_ACTION": "Check Cost & Contract warehouse capacity evidence for queue/spill pressure; resume or resize only after confirming workload demand.",
         }
     if any(token in combined for token in ["LOCK", "TRANSACTION", "DEADLOCK", "BLOCKED"]):
         return {

@@ -289,6 +289,13 @@ def _jump(title: str, *, warehouse: str = "", user: str = "", workflow: str = ""
             st.session_state["dba_control_room_active_view"] = workflow
         elif title == "Cost & Contract":
             st.session_state["cost_contract_workflow"] = workflow
+        elif title == "Governance & Security":
+            if workflow == "Security Posture":
+                st.session_state["governance_security_view"] = "Security Posture"
+            else:
+                st.session_state["governance_security_view"] = "Change & Drift"
+                st.session_state["change_drift_workflow"] = workflow
+                st.session_state["change_drift_requested_workflow"] = workflow
         elif title == "Security Posture":
             st.session_state["security_posture_workflow"] = workflow
         elif title == "Change & Drift":
@@ -976,8 +983,8 @@ def _evidence_surface_route(surface: object) -> tuple[str, str, str]:
         )
     if "warehouse" in text:
         return (
-            "Warehouse Health",
-            "Overview & Scaling",
+            "Cost & Contract",
+            "Recommendations and action queue",
             "warehouse overview, pressure, settings, and metering evidence",
         )
     if "credit" in text or "cost" in text or "cortex" in text:
@@ -988,14 +995,14 @@ def _evidence_surface_route(surface: object) -> tuple[str, str, str]:
         )
     if "object" in text or "change" in text or "grant" in text:
         return (
-            "Change & Drift",
+            "Governance & Security",
             "Object and access changes",
             "object-change, grant-change, ticket, and blast-radius evidence",
         )
     if "login" in text or "security" in text:
         return (
-            "Account Health",
-            "Security posture",
+            "Governance & Security",
+            "Security Posture",
             "login, privilege, MFA, and access-review evidence",
         )
     if "alert" in text or "action_queue" in text or "action queue" in text:
@@ -2201,8 +2208,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Signal": "Queue or warehouse pressure",
             "Evidence": f"{queued_queries:,} queued queries; {len(wh):,} pressured warehouses",
             "Action": "Check warehouse sizing, clustering, and concurrency pressure.",
-            "Route": "Warehouse Health",
-            "Workflow": "",
+            "Route": "Cost & Contract",
+            "Workflow": "Recommendations and action queue",
         })
     if spill_queries:
         rows.append({
@@ -2210,8 +2217,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Signal": "Remote spill",
             "Evidence": f"{spill_queries:,} queries spilled to remote storage",
             "Action": "Inspect spilling queries before resizing.",
-            "Route": "Warehouse Health",
-            "Workflow": "",
+            "Route": "Cost & Contract",
+            "Workflow": "Recommendations and action queue",
         })
     if p95 >= 120:
         rows.append({
@@ -2292,8 +2299,8 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Signal": "Failed logins",
             "Evidence": f"{len(logins):,} recent failed login records",
             "Action": "Review source IPs, user posture, MFA, and client versions.",
-            "Route": "Security Posture",
-            "Workflow": "Access posture",
+            "Route": "Governance & Security",
+            "Workflow": "Security Posture",
         })
     if not changes.empty:
         rows.append({
@@ -2301,7 +2308,7 @@ def _severity_rows(data: dict, credit_price: float) -> pd.DataFrame:
             "Signal": "Object or grant changes",
             "Evidence": f"{len(changes):,} recent DDL/access changes",
             "Action": "Validate expected change windows and ownership.",
-            "Route": "Change & Drift",
+            "Route": "Governance & Security",
             "Workflow": "Object and access changes",
         })
     if not queue.empty:
@@ -2355,16 +2362,34 @@ def _command_queue_route(category: object) -> str:
     if "COST" in value:
         return "Cost & Contract"
     if "ACCOUNT" in value or "CHECKLIST" in value:
-        return "Account Health"
+        return "DBA Control Room"
     if "TASK" in value or "PROCEDURE" in value or "RELIABILITY" in value:
         return "Workload Operations"
     if "SECURITY" in value or "ACCESS" in value or "GRANT" in value:
-        return "Security Posture"
+        return "Governance & Security"
     if "CHANGE" in value or "DRIFT" in value or "GOVERNANCE" in value:
-        return "Change & Drift"
+        return "Governance & Security"
     if "WAREHOUSE" in value or "CAPACITY" in value:
-        return "Warehouse Health"
+        return "Cost & Contract"
     return "Alert Center"
+
+
+def _canonical_dba_route(route: object) -> str:
+    """Fold retired route labels into the current six-surface command model."""
+    text = str(route or "").strip()
+    return normalize_section_name(text) or "DBA Control Room"
+
+
+def _normalize_section_score_rows(sections: pd.DataFrame) -> pd.DataFrame:
+    """Normalize legacy section score rows and keep the most conservative duplicate."""
+    if sections is None or sections.empty or "SECTION" not in sections.columns:
+        return sections
+    normalized = sections.copy()
+    normalized["SECTION"] = normalized["SECTION"].apply(_canonical_dba_route)
+    normalized["_SECTION_SCORE"] = pd.to_numeric(normalized.get("SCORE", 0), errors="coerce").fillna(0)
+    normalized = normalized.sort_values(["SECTION", "_SECTION_SCORE"], ascending=[True, True])
+    normalized = normalized.drop_duplicates("SECTION", keep="first")
+    return normalized.drop(columns=["_SECTION_SCORE"], errors="ignore")
 
 
 def _command_owner_entity_type(row: pd.Series | dict) -> str:
@@ -2779,7 +2804,8 @@ def _command_queue_route_readiness(queue: pd.DataFrame) -> pd.DataFrame:
     if queue is None or queue.empty:
         return _empty_df()
     rows: list[dict] = []
-    for route, group in queue.groupby(queue.get("ROUTE", pd.Series(["Unrouted"] * len(queue), index=queue.index)).fillna("Unrouted")):
+    route_series = queue.get("ROUTE", pd.Series(["Unrouted"] * len(queue), index=queue.index)).fillna("Unrouted").apply(_canonical_dba_route)
+    for route, group in queue.groupby(route_series):
         summary = _command_queue_summary(group)
         if summary["overdue"]:
             next_action = "Escalate overdue items and attach owner/ticket evidence."
@@ -2819,7 +2845,7 @@ def _dba_section_proof_required(section: object, lowest_component: object = "") 
     if "CHANGE" in name or "DRIFT" in name:
         return "change ticket, query_id, release-note/rollback proof, blast-radius review, closure verification"
     if "COST" in name:
-        return "allocated cost basis, owner chargeback, savings verification, finance-ready closure evidence"
+        return "allocated cost basis, warehouse capacity evidence, owner chargeback, savings verification, rollback SQL, finance-ready closure evidence"
     if "SECURITY" in name:
         return "role/grant owner, approver, ticket, least-privilege verification, access closure proof"
     if "ACCOUNT" in name:
@@ -2837,10 +2863,10 @@ def _dba_incident_type(route: object, signal: object) -> str:
     route_text = str(route or "").upper()
     signal_text = str(signal or "").upper()
     text = f"{route_text} {signal_text}"
-    if any(token in text for token in ("CREDIT", "COST", "CORTEX", "AI")):
-        return "Cost Runaway"
     if any(token in text for token in ("WAREHOUSE", "QUEUE", "SPILL", "CAPACITY", "LATENCY")):
         return "Warehouse Capacity"
+    if any(token in text for token in ("CREDIT", "COST", "CORTEX", "AI")):
+        return "Cost Runaway"
     if any(token in text for token in ("TASK", "PROCEDURE", "PIPELINE", "SLA", "REGRESSION")):
         return "Workload Reliability"
     if any(token in text for token in ("QUERY FAIL", "FAILED QUERY", "P95", "DURATION")):
@@ -2921,7 +2947,7 @@ def _dba_incident_board(
     source_exceptions = exceptions if exceptions is not None else _empty_df()
     if not source_exceptions.empty:
         for _, item in _priority_exceptions(source_exceptions).head(12).iterrows():
-            route = str(item.get("Route") or item.get("ROUTE") or item.get("Domain") or "DBA Control Room")
+            route = _canonical_dba_route(item.get("Route") or item.get("ROUTE") or item.get("Domain") or "DBA Control Room")
             signal = str(item.get("Signal") or item.get("SIGNAL") or "Control-room signal")
             severity = str(item.get("Severity") or item.get("SEVERITY") or "Medium")
             incident_type = _dba_incident_type(route, signal)
@@ -3139,17 +3165,18 @@ def _dba_section_operability_board(
 ) -> pd.DataFrame:
     """Join static 95-readiness with live command/closure blockers by DBA route."""
     sections = section_rows.copy() if section_rows is not None and not section_rows.empty else pd.DataFrame(dba_control_plane_section_scorecards())
+    sections = _normalize_section_score_rows(sections)
     if sections.empty:
         return _empty_df()
 
     route_readiness = _command_queue_route_readiness(command_queue) if command_queue is not None and not command_queue.empty else _empty_df()
     closure = closure_rollup.copy() if closure_rollup is not None and not closure_rollup.empty else _empty_df()
     route_by_name = {
-        str(row.get("ROUTE") or ""): row
+        _canonical_dba_route(row.get("ROUTE") or ""): row
         for _, row in route_readiness.iterrows()
     } if not route_readiness.empty else {}
     closure_by_name = {
-        str(row.get("ROUTE") or ""): row
+        _canonical_dba_route(row.get("ROUTE") or ""): row
         for _, row in closure.iterrows()
     } if not closure.empty else {}
     source_gate = _dba_source_health_deployment_gate(source_health)
@@ -3349,13 +3376,34 @@ def _dba_operations_priority_index(
                 matched_incidents.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
                 .map(status_points).fillna(0).sum()
             )
-            worst = matched_incidents.sort_values(
-                by=["SEVERITY"],
-                key=lambda series: series.fillna("").astype(str).str.upper().map(
-                    {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-                ).fillna(4),
-            ).iloc[0]
-            worst_signal = str(worst.get("SIGNALS") or worst.get("SIGNAL") or "")
+            ordered_incidents = matched_incidents.copy()
+            ordered_incidents["_SEVERITY_RANK"] = (
+                ordered_incidents.get("SEVERITY", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+                .map({"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}).fillna(4)
+            )
+            ordered_incidents["_STATUS_RANK"] = (
+                ordered_incidents.get("STATUS", pd.Series(dtype=str)).fillna("").astype(str).str.upper()
+                .map({"CONTAINMENT REQUIRED": 0, "EVIDENCE REFRESH REQUIRED": 1, "INVESTIGATE NOW": 2, "TRIAGE": 3, "MONITOR": 4})
+                .fillna(5)
+            )
+            incident_text = (
+                ordered_incidents.get("INCIDENT_TYPE", pd.Series(dtype=str)).fillna("").astype(str)
+                + " "
+                + ordered_incidents.get("SIGNALS", pd.Series(dtype=str)).fillna("").astype(str)
+            ).str.upper()
+            ordered_incidents["_LIVE_CAPACITY_RANK"] = incident_text.str.contains("QUEUE|WAREHOUSE|SPILL|CAPACITY", regex=True).map({True: 0, False: 1})
+            ordered_incidents = ordered_incidents.sort_values(
+                ["_SEVERITY_RANK", "_STATUS_RANK", "_LIVE_CAPACITY_RANK"],
+                ascending=[True, True, True],
+                kind="mergesort",
+            )
+            worst = ordered_incidents.iloc[0]
+            signal_bits: list[str] = []
+            for _, incident_row in ordered_incidents.head(3).iterrows():
+                signal = str(incident_row.get("SIGNALS") or incident_row.get("SIGNAL") or "").strip()
+                if signal and signal not in signal_bits:
+                    signal_bits.append(signal)
+            worst_signal = "; ".join(signal_bits)
             worst_status = str(worst.get("STATUS") or "")
             incident_containment = str(worst.get("CONTAINMENT_ACTION") or "")
         else:
@@ -3495,7 +3543,7 @@ def _dba_runbook_route_templates(section: object, lookback_hours: int) -> dict:
     if "WAREHOUSE" in route:
         return {
             "owner_route": "Warehouse owner / DBA capacity reviewer",
-            "containment": "Use Warehouse Health to isolate the exact warehouse, workload, queue, and spill pattern before any setting change.",
+            "containment": "Use Cost & Contract to isolate the exact warehouse, workload, queue, spill, and dollar pattern before any setting change.",
             "candidate": "Use Warehouse Settings Manager only after owner approval; prefer the smallest targeted setting change with rollback SQL.",
             "preflight_sql": f"""SELECT warehouse_name, COUNT(*) AS queries,
        SUM(COALESCE(queued_overload_time, 0)) / 1000 AS queued_sec,
@@ -3548,7 +3596,7 @@ LIMIT 100;""",
         return {
             "owner_route": "Security approver / DBA access reviewer",
             "containment": "Preserve login/grant evidence and avoid grant changes until requester, approver, and least-privilege proof are clear.",
-            "candidate": "Route grant/revoke work through Security Posture with ticket, owner, approver, and before/after role evidence.",
+            "candidate": "Route grant/revoke work through Governance & Security with ticket, owner, approver, and before/after role evidence.",
             "preflight_sql": f"""SELECT event_timestamp, user_name, client_ip, reported_client_type, error_code, error_message
 FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
 WHERE event_timestamp >= DATEADD('hour', -{hours}, CURRENT_TIMESTAMP())
@@ -3608,6 +3656,72 @@ LIMIT 100;""",
         "verification_sql": "SELECT CURRENT_TIMESTAMP() AS verification_required_at;",
         "rollback_sql": "SELECT 'Rollback boundary must be documented before execution.' AS rollback_boundary;",
     }
+
+
+def _dba_template_route_for_signal(
+    route: object,
+    *,
+    state: object = "",
+    why_now: object = "",
+    first_move: object = "",
+    proof_required: object = "",
+    source_signal: object = "",
+    workflow: object = "",
+) -> str:
+    """Keep consolidated routes visible while preserving specialist ownership context."""
+    route_text = _canonical_dba_route(route)
+    context = " ".join(
+        str(part or "")
+        for part in (route, route_text, state, why_now, first_move, proof_required, source_signal, workflow)
+    ).upper()
+    if route_text == "Governance & Security":
+        if any(token in context for token in (
+            "CHANGE",
+            "DRIFT",
+            "DDL",
+            "DEPLOY",
+            "RELEASE",
+            "ROLLBACK",
+            "MIGRATION",
+            "OBJECT",
+            "SCHEMA",
+        )):
+            return "Change & Drift"
+        if any(token in context for token in (
+            "ARCHITECTURE",
+            "PLATFORM",
+            "TOPOLOGY",
+            "ADOPTION",
+            "CAPABILITY",
+            "CLUSTERING",
+            "CACHE",
+            "DISASTER",
+        )):
+            return "Architecture Readiness"
+        if any(token in context for token in (
+            "SECURITY",
+            "ACCESS",
+            "GRANT",
+            "ROLE",
+            "LOGIN",
+            "MFA",
+            "PRIVILEGE",
+            "MASKING",
+            "ROW ACCESS",
+            "SHARE",
+        )):
+            return "Security Posture"
+    if route_text == "Cost & Contract" and any(token in context for token in (
+        "WAREHOUSE",
+        "CAPACITY",
+        "QUEUE",
+        "SPILL",
+        "OVERLOAD",
+        "SUSPEND",
+        "RESIZE",
+    )):
+        return "Warehouse Health"
+    return route_text
 
 
 def _dba_operator_runbook(
@@ -3849,10 +3963,19 @@ def _dba_escalation_packet(
         sla_target: object = "",
         workflow: object = "",
     ) -> None:
-        route_text = str(route or "DBA Control Room").strip() or "DBA Control Room"
+        route_text = _canonical_dba_route(route)
         key = route_text.upper()
-        templates = _dba_runbook_route_templates(route_text, hours)
         source_text = str(source_signal or "").strip()
+        template_route = _dba_template_route_for_signal(
+            route_text,
+            state=state,
+            why_now=why_now,
+            first_move=first_move,
+            proof_required=proof_required,
+            source_signal=source_text,
+            workflow=workflow,
+        )
+        templates = _dba_runbook_route_templates(template_route, hours)
         incoming_priority = safe_float(priority)
         current = rows_by_route.get(key)
         if current is None:
@@ -3879,6 +4002,7 @@ def _dba_escalation_packet(
             current["WHY_NOW"] = str(why_now or current.get("WHY_NOW") or "")
             current["FIRST_MOVE"] = str(first_move or current.get("FIRST_MOVE") or "")
             current["PROOF_REQUIRED"] = str(proof_required or current.get("PROOF_REQUIRED") or _dba_section_proof_required(route_text))
+            current["OWNER_ROUTE"] = templates["owner_route"]
             current["SLA_TARGET"] = str(sla_target or current.get("SLA_TARGET") or "")
             current["WORKFLOW"] = str(workflow or current.get("WORKFLOW") or route_text)
 
@@ -3941,7 +4065,7 @@ def _dba_escalation_packet(
             .isin(["BLOCKED", "REVIEW", "NOT LOADED", "DEFERRED"])
         ]
         for _, item in gated.iterrows():
-            route = str(item.get("ROUTE") or "DBA Control Room")
+            route = _canonical_dba_route(item.get("ROUTE") or "DBA Control Room")
             state = str(item.get("STATE") or "Release Gate")
             upsert(
                 route,
@@ -4656,17 +4780,17 @@ def _dba_morning_execution_contract(row: dict | pd.Series | None) -> dict[str, s
         approval_gate = "Procedure owner and DBA release reviewer approval before procedure or schedule changes."
         evidence_package = "Procedure run baseline, latest CALL query ID, change/ticket context, owner approval, and rollback path."
         verify_next = "Verify latest CALL returns inside runtime/cost baseline and dependent task graph remains clean."
-        execution_boundary = "Do not alter procedure code from Morning Brief; route through Stored procedures and Change & Drift."
-    elif route == "Change & Drift":
+        execution_boundary = "Do not alter procedure code from Morning Brief; route through Stored procedures and Governance & Security."
+    elif route in {"Change & Drift", "Governance & Security"}:
         approval_gate = "Change owner, DBA release reviewer, and ticket approval before release or schema remediation."
         evidence_package = "Migration ledger, DDL/grant diff, ticket, reviewer, rollback SQL, and post-change verification."
         verify_next = "Reload release gate and source health; required objects and ledger version must be Ready."
         execution_boundary = "Do not execute DDL from Morning Brief; run approved release remediation from the governed runbook."
-    elif route == "Warehouse Health":
+    elif route in {"Warehouse Health", "Cost & Contract"}:
         approval_gate = "Warehouse owner and DBA capacity reviewer approval before resize, isolation, or monitor changes."
         evidence_package = "Warehouse load, queue/spill trend, metering impact, owner approval, rollback setting, and post-change proof."
         verify_next = "Verify queued load, spill, and cost movement after the capacity or isolation decision."
-        execution_boundary = "No warehouse DDL from Morning Brief; use Warehouse Health guarded settings workflow."
+        execution_boundary = "No warehouse DDL from Morning Brief; use Cost & Contract guarded capacity workflow."
 
     closure_rule = (
         f"{state}: keep this row open until approval, evidence package, and verification are attached."
@@ -5146,8 +5270,10 @@ def _dba_action_brief(
     priority = _priority_exceptions(exceptions if exceptions is not None else _empty_df()).head(1)
     if not priority.empty:
         first = priority.iloc[0]
-        route = str(first.get("Route", "") or "DBA Control Room")
+        route = _canonical_dba_route(first.get("Route", "") or "DBA Control Room")
         workflow = str(first.get("Workflow", "") or "")
+        if route == "Cost & Contract" and workflow in {"", "Queue pressure"}:
+            workflow = "Recommendations and action queue"
         signal = str(first.get("Signal", "") or "Exception")
         action = str(first.get("Action", "") or "Review the routed workflow.")
         return {
@@ -5164,9 +5290,9 @@ def _dba_action_brief(
             "state": "Watch",
             "headline": "Queue pressure is the next route to verify.",
             "detail": f"{queued_queries:,} queued queries in the loaded window.",
-            "primary_label": "Open Warehouse Health",
-            "target": "Warehouse Health",
-            "workflow": "Queue pressure",
+            "primary_label": "Open Cost & Contract",
+            "target": "Cost & Contract",
+            "workflow": "Recommendations and action queue",
         }
     if failed_queries:
         return {
@@ -5270,7 +5396,7 @@ def _dba_handoff_rows(
             | (pd.to_numeric(closure.get("CLOSURE_BLOCKER_ROWS", pd.Series([0] * len(closure))), errors="coerce").fillna(0) > 0)
         ].head(5)
         for _, item in blocked.iterrows():
-            route = str(item.get("ROUTE") or "DBA Control Room")
+            route = _canonical_dba_route(item.get("ROUTE") or "DBA Control Room")
             rows.append({
                 "PRIORITY_RANK": safe_int(item.get("CLOSURE_RANK", 3)),
                 "LANE": route,
@@ -5621,8 +5747,8 @@ def _render_release_readiness_gate(
             _jump("Workload Operations", workflow="Task graphs")
             st.rerun()
     with r2:
-        if st.button("Open Change & Drift", key="dba_release_gate_open_change", width="stretch"):
-            _jump("Change & Drift", workflow="Object and access changes")
+        if st.button("Open Governance & Security", key="dba_release_gate_open_change", width="stretch"):
+            _jump("Governance & Security", workflow="Object and access changes")
             st.rerun()
     with r3:
         if st.button("Open Source Health", key="dba_release_gate_open_source_health", width="stretch"):
@@ -6402,8 +6528,8 @@ def render() -> None:
                     [""] + wh_df["WAREHOUSE_NAME"].dropna().astype(str).tolist(),
                     key="dba_control_room_wh_select",
                 )
-                if sel_wh and st.button("Open Warehouse Health", key="dba_control_room_open_wh"):
-                    _jump("Warehouse Health", warehouse=sel_wh)
+                if sel_wh and st.button("Open Cost & Contract", key="dba_control_room_open_wh"):
+                    _jump("Cost & Contract", workflow="Recommendations and action queue", warehouse=sel_wh)
             else:
                 st.success("No warehouse pressure detected by the control-room thresholds.")
 
@@ -6426,16 +6552,16 @@ def render() -> None:
             for label, title, workflow in [
                 ("Cost & Contract", "Cost & Contract", "Explain bill / attribution / contract"),
                 ("AI / Cortex Spend", "Cost & Contract", "AI and Cortex spend"),
-                ("Warehouse Health", "Warehouse Health", ""),
+                ("Warehouse Capacity", "Cost & Contract", "Recommendations and action queue"),
             ]:
                 if st.button(label, key=f"dba_control_cost_{label}", width="stretch"):
                     _jump(title, workflow=workflow)
         with r3:
             st.subheader("Security and Governance")
             st.write("Login posture, grants, data sharing, object changes, procedure lineage, drift checks, and admin controls.")
-            for title, workflow in [("Security Posture", "Access posture"), ("Change & Drift", "Object and access changes")]:
+            for title, workflow in [("Security Posture", "Security Posture"), ("Object Changes", "Object and access changes")]:
                 if st.button(title, key=f"dba_control_security_{title}", width="stretch"):
-                    _jump(title, workflow=workflow)
+                    _jump("Governance & Security", workflow=workflow)
 
         st.divider()
         st.subheader("Exception Detail Samples")

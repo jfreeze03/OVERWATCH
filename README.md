@@ -1,9 +1,8 @@
 # OVERWATCH
 
 OVERWATCH is a production Streamlit command center for Snowflake DBA operations.
-It brings account health, cost control, workload triage, warehouse governance,
-security posture, change evidence, architecture readiness, and executive
-briefing into one DBA-owned workflow.
+It brings executive observability, DBA triage, alerts, FinOps, workload
+operations, security, and change evidence into one DBA-owned workflow.
 
 The app is intentionally mart-first. Snowflake account telemetry is collected
 into compact OVERWATCH facts by scheduled tasks, and the Streamlit app reads
@@ -36,22 +35,20 @@ actions, storage, and platform score from one small query.
 
 | Group | Sections | Primary job |
 |---|---|---|
-| Command Center | Executive Landing, DBA Control Room, Alert Center, Account Health | Morning triage, action queue, alert routing, leadership evidence. |
-| Financial Control | Cost & Contract | Spend explanation, warehouse/user/role attribution, Cortex spend, contract pacing, savings verification. |
-| Operations | Workload Operations, Warehouse Health | Query/task/procedure status, Snowflake task style pipeline evidence, warehouse pressure, settings review. |
-| Governance | Security Posture, Change & Drift | MFA/login/grant posture, object changes, owner approval proof, rollback evidence, schema compare. |
-| Architecture | Architecture Readiness | Owner-backed readiness, source health, future Snowflake controls, control register evidence. |
+| Command Center | Executive Landing, DBA Control Room, Alert Center | Leadership summary, morning triage, incident queue, alert routing, and action closure. |
+| Financial Control | Cost & Contract | Spend explanation, warehouse/user/role attribution, Cortex spend, contract pacing, savings verification, storage, and optimization. |
+| Operations | Workload Operations | Query/task/procedure status, contention, pipeline evidence, SLA risk, schema/data compare, and runbooks. |
+| Governance | Governance & Security | MFA/login/grant posture, object changes, owner approval proof, rollback evidence, schema compare, and controlled DBA actions. |
 
 ## Daily Operating Model
 
-1. Open DBA Control Room for the top priority brief and exception queue.
+1. Open Executive Landing for the board-ready health, cost, alert, and workload summary.
 2. Use the topbar filters for company, environment, date window, warehouse, and
    user scope.
-3. Start with exceptions. Load secondary evidence only when the exception,
-   owner, or audit proof requires it.
+3. Open DBA Control Room for the morning priority queue and incident handoff.
 4. Route actions through the action queue with owner, severity, proof query,
    rollback evidence, and verification status.
-5. Use Executive Landing when leadership needs a paste-ready summary.
+5. Use the specialist sections only when the summary shows a real exception or executive question.
 
 ## Cost Formula Contract
 
@@ -207,7 +204,3 @@ against `.overwatch_final`, `tests`, and documentation before release.
   precompute objects.
 - [UX_PRODUCTION_GUIDELINES.md](UX_PRODUCTION_GUIDELINES.md) documents current
   production UI standards.
-- [OVERWATCH_PROCESS_FOR_16_YEAR_OLD.md](OVERWATCH_PROCESS_FOR_16_YEAR_OLD.md)
-  explains the process in plain language.
-- [OVERWATCH_PROCESS_FOR_GAME_OF_THRONES_FANS.md](OVERWATCH_PROCESS_FOR_GAME_OF_THRONES_FANS.md)
-  explains the process with Game of Thrones-style analogies.

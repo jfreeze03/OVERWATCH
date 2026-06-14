@@ -152,22 +152,24 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual(by_section["DBA Control Room"]["GATE_DRIVERS"], "none")
         self.assertEqual(by_section["Alert Center"]["SCORE"], 97.0)
         self.assertEqual(by_section["Alert Center"]["LABEL"], "95 Target")
-        self.assertEqual(by_section["Warehouse Health"]["SCORE"], 96.3)
-        self.assertEqual(by_section["Warehouse Health"]["LABEL"], "95 Target")
-        self.assertEqual(by_section["Architecture Readiness"]["SCORE"], 97.5)
-        self.assertEqual(by_section["Architecture Readiness"]["LABEL"], "95 Target")
         self.assertEqual(by_section["Workload Operations"]["SCORE"], 96.5)
         self.assertEqual(by_section["Workload Operations"]["LABEL"], "95 Target")
         self.assertEqual(by_section["Cost & Contract"]["SCORE"], 99.2)
         self.assertEqual(by_section["Cost & Contract"]["LABEL"], "95 Target")
-        self.assertEqual(by_section["Security Posture"]["SCORE"], 95.7)
-        self.assertEqual(by_section["Security Posture"]["LABEL"], "95 Target")
-        self.assertEqual(by_section["Security Posture"]["CAP_DRIVERS"], "none")
-        self.assertEqual(by_section["Change & Drift"]["SCORE"], 96.3)
-        self.assertEqual(by_section["Change & Drift"]["LABEL"], "95 Target")
-        self.assertEqual(by_section["Change & Drift"]["CAP_DRIVERS"], "none")
-        self.assertEqual(by_section["Account Health"]["SCORE"], 96.5)
-        self.assertEqual(by_section["Account Health"]["LABEL"], "95 Target")
+        self.assertEqual(by_section["Governance & Security"]["SCORE"], 96.3)
+        self.assertEqual(by_section["Governance & Security"]["LABEL"], "95 Target")
+        self.assertEqual(by_section["Governance & Security"]["CAP_DRIVERS"], "none")
+        self.assertEqual(
+            set(by_section),
+            {
+                "Executive Landing",
+                "DBA Control Room",
+                "Alert Center",
+                "Workload Operations",
+                "Cost & Contract",
+                "Governance & Security",
+            },
+        )
         self.assertGreaterEqual(max(row["SCORE"] for row in rows), 95)
         self.assertEqual(by_section["DBA Control Room"]["CAP_DRIVERS"], "none")
         self.assertIn("notification integration", by_section["Alert Center"]["NEXT_95_MOVE"])

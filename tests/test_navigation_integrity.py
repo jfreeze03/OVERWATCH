@@ -87,13 +87,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(PRIMARY_SECTIONS, primary_sections)
         self.assertEqual(primary_sections, flattened)
         self.assertEqual(ALL_SECTIONS, defined)
-        self.assertIn("Account Health", ALL_SECTIONS)
-        self.assertIn("Account Health", SECTION_MODULES)
-        self.assertIn("Account Health", PRIMARY_NAV_HIDDEN_SECTIONS)
+        self.assertEqual(len(ALL_SECTIONS), 6)
+        self.assertNotIn("Account Health", ALL_SECTIONS)
         self.assertNotIn("Account Health", flattened)
+        self.assertFalse(PRIMARY_NAV_HIDDEN_SECTIONS)
         self.assertEqual(
             list(NAV_GROUPS),
-            ["COMMAND CENTER", "FINANCIAL CONTROL", "OPERATIONS", "GOVERNANCE", "ARCHITECTURE"],
+            ["COMMAND CENTER", "FINANCIAL CONTROL", "OPERATIONS", "GOVERNANCE"],
         )
         self.assertEqual(set(ALL_SECTIONS), set(SECTION_MODULES))
         self.assertEqual(
@@ -173,7 +173,8 @@ class NavigationIntegrityTests(unittest.TestCase):
             for section, module_path in SECTION_MODULES.items()
             if module_path.endswith("_shell")
         }
-        self.assertEqual(set(shell_modules), set(ALL_SECTIONS))
+        self.assertEqual(set(shell_modules), set(ALL_SECTIONS) - {"Governance & Security"})
+        self.assertEqual(SECTION_MODULES["Governance & Security"], "sections.governance_security")
         helper_text = (APP_ROOT / "sections" / "shell_helpers.py").read_text(encoding="utf-8")
         self.assertIn("def full_workspace_requested", helper_text)
         self.assertIn("if state.get(brief_key):\n        return False", helper_text)
@@ -454,99 +455,20 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("alert_center_requested_view", shell_text)
         self.assertIn("ALERT_CENTER_PANES", full_workspace_text)
 
-    def test_warehouse_health_uses_fast_shell_module(self):
-        self.assertEqual(SECTION_MODULES["Warehouse Health"], "sections.warehouse_health_shell")
-        shell_text = (APP_ROOT / "sections" / "warehouse_health_shell.py").read_text(encoding="utf-8")
-        full_workspace_text = (APP_ROOT / "sections" / "warehouse_health.py").read_text(encoding="utf-8")
-        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
+    def test_governance_security_consolidates_security_and_change_surfaces(self):
+        self.assertEqual(SECTION_MODULES["Governance & Security"], "sections.governance_security")
+        wrapper_text = (APP_ROOT / "sections" / "governance_security.py").read_text(encoding="utf-8")
+        security_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
+        change_text = (APP_ROOT / "sections" / "change_drift.py").read_text(encoding="utf-8")
 
-        self.assertIn("def _delegate_full_workspace", shell_text)
-        self.assertIn("from sections import warehouse_health", shell_text)
-        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
-        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
-        self.assertNotIn("import pandas", shell_import_block)
-        self.assertNotIn("from utils", shell_import_block)
-        self.assertNotIn("import utils", shell_import_block)
-        self.assertIn("def _render_status_strip", shell_text)
-        self.assertIn("def _render_kpi_row", shell_text)
-        self.assertNotIn("def _render_operating_snapshot", shell_text)
-        self.assertIn("Warehouse Investigation Workflows", shell_text)
-        self.assertNotIn("Open Warehouse Workspace", shell_text)
-        self.assertIn("Open Efficiency", shell_text)
-        self.assertIn("Open Spill", shell_text)
-        self.assertIn("def _admin_audit_fqn", full_workspace_text)
-
-    def test_security_posture_uses_fast_shell_module(self):
-        self.assertEqual(SECTION_MODULES["Security Posture"], "sections.security_posture_shell")
-        shell_text = (APP_ROOT / "sections" / "security_posture_shell.py").read_text(encoding="utf-8")
-        full_workspace_text = (APP_ROOT / "sections" / "security_posture.py").read_text(encoding="utf-8")
-        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
-
-        self.assertIn("def _delegate_full_workspace", shell_text)
-        self.assertIn("from sections import security_posture", shell_text)
-        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
-        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
-        self.assertNotIn("import pandas", shell_import_block)
-        self.assertNotIn("from utils", shell_import_block)
-        self.assertNotIn("import utils", shell_import_block)
-        self.assertIn("def _render_status_strip", shell_text)
-        self.assertIn("def _render_kpi_row", shell_text)
-        self.assertNotIn("def _render_operating_snapshot", shell_text)
-        self.assertIn("Security Investigation Workflows", shell_text)
-        self.assertIn("MFA & Login Review", shell_text)
-        self.assertIn("Open MFA Review", shell_text)
-        self.assertNotIn("Open Security Workspace", shell_text)
-        self.assertIn("Open Privileges", shell_text)
-        self.assertIn("Open Sharing", shell_text)
-        self.assertIn("SECURITY_POSTURE_VIEWS", full_workspace_text)
-
-    def test_architecture_readiness_uses_fast_shell_module(self):
-        self.assertEqual(SECTION_MODULES["Architecture Readiness"], "sections.architecture_readiness_shell")
-        shell_text = (APP_ROOT / "sections" / "architecture_readiness_shell.py").read_text(encoding="utf-8")
-        full_workspace_text = (APP_ROOT / "sections" / "architecture_readiness.py").read_text(encoding="utf-8")
-        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
-
-        self.assertIn("def _delegate_full_workspace", shell_text)
-        self.assertIn("from sections import architecture_readiness", shell_text)
-        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
-        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
-        self.assertNotIn("import pandas", shell_import_block)
-        self.assertNotIn("from utils", shell_import_block)
-        self.assertNotIn("import utils", shell_import_block)
-        self.assertIn("def _render_status_strip", shell_text)
-        self.assertIn("def _render_kpi_row", shell_text)
-        self.assertNotIn("def _render_operating_snapshot", shell_text)
-        self.assertIn("Architecture Investigation Workflows", shell_text)
-        self.assertNotIn("Open Architecture Workspace", shell_text)
-        self.assertIn("Open Isolation", shell_text)
-        self.assertIn("Open Clustering", shell_text)
-        self.assertIn("Open Cache", shell_text)
-        self.assertIn("Open AI Futures", shell_text)
-        self.assertIn("ARCHITECTURE_READINESS_PANES", full_workspace_text)
-
-    def test_change_drift_uses_fast_shell_module(self):
-        self.assertEqual(SECTION_MODULES["Change & Drift"], "sections.change_drift_shell")
-        shell_text = (APP_ROOT / "sections" / "change_drift_shell.py").read_text(encoding="utf-8")
-        full_workspace_text = (APP_ROOT / "sections" / "change_drift.py").read_text(encoding="utf-8")
-        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
-
-        self.assertIn("def _delegate_full_workspace", shell_text)
-        self.assertIn("from sections import change_drift", shell_text)
-        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
-        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
-        self.assertNotIn("import pandas", shell_import_block)
-        self.assertNotIn("from utils", shell_import_block)
-        self.assertNotIn("import utils", shell_import_block)
-        self.assertIn("def _render_status_strip", shell_text)
-        self.assertIn("def _render_kpi_row", shell_text)
-        self.assertNotIn("def _render_operating_snapshot", shell_text)
-        self.assertIn("Change Investigation Workflows", shell_text)
-        self.assertNotIn("Open Change Workspace", shell_text)
-        self.assertIn("Open Object Changes", shell_text)
-        self.assertNotIn("Open Deployment", shell_text)
-        self.assertNotIn("Open Owner approval", shell_text)
-        self.assertIn("Open Schema Drift", shell_text)
-        self.assertIn("CHANGE_DRIFT_VIEWS", full_workspace_text)
+        self.assertIn('VIEWS = ("Security Posture", "Change & Drift")', wrapper_text)
+        self.assertIn('module_name = "sections.change_drift"', wrapper_text)
+        self.assertIn('"sections.security_posture"', wrapper_text)
+        self.assertIn("governance_security_view", wrapper_text)
+        self.assertIn("_security_posture_full_workspace_requested", wrapper_text)
+        self.assertIn("_change_drift_full_workspace_requested", wrapper_text)
+        self.assertIn("SECURITY_POSTURE_VIEWS", security_text)
+        self.assertIn("CHANGE_DRIFT_VIEWS", change_text)
 
     def test_workload_operations_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["Workload Operations"], "sections.workload_operations_shell")
@@ -578,38 +500,6 @@ class NavigationIntegrityTests(unittest.TestCase):
             'st.session_state.get("workload_operations_view") == "Specialist Workflows" and not explicit_workflow_request',
             full_workspace_text,
         )
-
-    def test_account_health_uses_fast_shell_module(self):
-        self.assertEqual(SECTION_MODULES["Account Health"], "sections.account_health_shell")
-        shell_text = (APP_ROOT / "sections" / "account_health_shell.py").read_text(encoding="utf-8")
-        full_workspace_text = (APP_ROOT / "sections" / "account_health.py").read_text(encoding="utf-8")
-        shell_import_block = shell_text.split("def _delegate_full_workspace", 1)[0]
-
-        self.assertIn("def _delegate_full_workspace", shell_text)
-        self.assertIn("from sections import account_health", shell_text)
-        self.assertIn("_FULL_WORKSPACE_KEY", shell_text)
-        self.assertIn("_FULL_WORKSPACE_STATE_KEYS", shell_text)
-        self.assertNotIn("import pandas", shell_import_block)
-        self.assertNotIn("from utils", shell_import_block)
-        self.assertNotIn("import utils", shell_import_block)
-        self.assertIn("def _render_status_strip", shell_text)
-        self.assertIn("def _render_kpi_row", shell_text)
-        self.assertNotIn("def _render_operating_snapshot", shell_text)
-        self.assertIn("Account Health Workflows", shell_text)
-        self.assertNotIn("Open Account Health", shell_text)
-        self.assertIn("Open Health Detail", shell_text)
-        self.assertIn("Open Morning Brief", shell_text)
-        self.assertIn('"TITLE": "DBA Morning Brief"', shell_text)
-        self.assertNotIn("Open Executive Briefing", shell_text)
-        self.assertNotIn("Open Resource Monitors", shell_text)
-        self.assertIn("render_shell_workflows(", shell_text)
-        self.assertIn('title_key="TITLE"', shell_text)
-        self.assertNotIn("More Account Health Workflows", shell_text)
-        self.assertNotIn("Hide Account Health Workflows", shell_text)
-        self.assertIn("account_health_active_view", shell_text)
-        self.assertIn("ACCOUNT_HEALTH_PANES", full_workspace_text)
-        self.assertIn('ACCOUNT_HEALTH_PANES = (\n    "Overview",\n    "Morning Report",\n)', full_workspace_text)
-        self.assertIn("ACCOUNT_HEALTH_PANE_LABELS", full_workspace_text)
 
     def test_cost_contract_uses_fast_shell_module(self):
         self.assertEqual(SECTION_MODULES["Cost & Contract"], "sections.cost_contract_shell")
@@ -659,6 +549,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertNotIn("Account Health", sections)
         self.assertIn("Workload Operations", ROLE_SECTIONS["ANALYST"])
         self.assertIn("Workload Operations", ROLE_SECTIONS["MANAGER"])
+        self.assertIn("Governance & Security", ROLE_SECTIONS["ANALYST"])
         self.assertNotIn("Security Posture", ROLE_SECTIONS["ANALYST"])
         self.assertNotIn("Change & Drift", ROLE_SECTIONS["ANALYST"])
         self.assertEqual(ROLE_SECTIONS["MANAGER"], primary_sections)
@@ -717,11 +608,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         )
         self.assertEqual(SECTION_ALIASES["Credit Contract"], SECTION_BY_TITLE["Cost & Contract"])
         self.assertEqual(SECTION_ALIASES["Cost Center"], SECTION_BY_TITLE["Cost & Contract"])
-        self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Security Posture"])
-        self.assertEqual(SECTION_ALIASES["DBA Tools"], SECTION_BY_TITLE["Change & Drift"])
-        self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Warehouse Health"])
-        self.assertEqual(SECTION_ALIASES["Architecture"], SECTION_BY_TITLE["Architecture Readiness"])
-        self.assertEqual(SECTION_ALIASES["Disaster Recovery"], SECTION_BY_TITLE["Architecture Readiness"])
+        self.assertEqual(SECTION_ALIASES["Security & Access"], SECTION_BY_TITLE["Governance & Security"])
+        self.assertEqual(SECTION_ALIASES["DBA Tools"], SECTION_BY_TITLE["Governance & Security"])
+        self.assertEqual(SECTION_ALIASES["Optimization"], SECTION_BY_TITLE["Cost & Contract"])
+        self.assertEqual(SECTION_ALIASES["Warehouse Health"], SECTION_BY_TITLE["Cost & Contract"])
+        self.assertEqual(SECTION_ALIASES["Architecture"], SECTION_BY_TITLE["Governance & Security"])
+        self.assertEqual(SECTION_ALIASES["Architecture Readiness"], SECTION_BY_TITLE["Governance & Security"])
+        self.assertEqual(SECTION_ALIASES["Disaster Recovery"], SECTION_BY_TITLE["Governance & Security"])
         self.assertEqual(SECTION_ALIASES["Executive Briefing"], SECTION_BY_TITLE["Executive Landing"])
         self.assertNotIn("LEGACY_SECTION_ALIASES", (APP_ROOT / "config.py").read_text(encoding="utf-8"))
 
@@ -748,10 +641,12 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertLessEqual(set(sections), set(ALL_SECTIONS))
         self.assertIn("Executive Landing", EXPERIENCE_VIEW_SECTIONS["Executive"])
         self.assertIn("Cost & Contract", EXPERIENCE_VIEW_SECTIONS["FinOps"])
-        self.assertIn("Security Posture", EXPERIENCE_VIEW_SECTIONS["Security"])
+        self.assertIn("Governance & Security", EXPERIENCE_VIEW_SECTIONS["Security"])
         for profile, sections in EXPERIENCE_VIEW_SECTIONS.items():
             with self.subTest(hidden_section_experience=profile):
                 self.assertNotIn("Account Health", sections)
+                self.assertNotIn("Warehouse Health", sections)
+                self.assertNotIn("Architecture Readiness", sections)
         for profile, views in ROLE_EXPERIENCE_VIEWS.items():
             with self.subTest(role_experience=profile):
                 self.assertTrue(views)
@@ -823,10 +718,13 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("Alert Center", visible_titles)
         self.assertIn("Workload Operations", visible_titles)
         self.assertIn("Cost & Contract", visible_titles)
-        self.assertIn("Security Posture", visible_titles)
-        self.assertIn("Change & Drift", visible_titles)
-        self.assertIn("Architecture Readiness", visible_titles)
+        self.assertIn("Governance & Security", visible_titles)
         for retired_title in (
+            "Account Health",
+            "Warehouse Health",
+            "Architecture Readiness",
+            "Security Posture",
+            "Change & Drift",
             "Query Workbench",
             "Live Monitor",
             "Detailed Diagnosis",
@@ -1312,8 +1210,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertNotIn("best practice", " ".join(guide.values()).lower())
         self.assertIn("Database-attributed cost is Allocated/Estimated", SECTION_OPERATING_GUIDE["Cost & Contract"]["guardrail"])
         self.assertIn("Email is the active channel", SECTION_OPERATING_GUIDE["Alert Center"]["guardrail"])
-        self.assertIn("Login-only findings have no database context", SECTION_OPERATING_GUIDE["Account Health"]["guardrail"])
-        self.assertIn("clustering-depth", SECTION_OPERATING_GUIDE["Architecture Readiness"]["guardrail"])
+        self.assertIn("Do not revoke access", SECTION_OPERATING_GUIDE["Governance & Security"]["guardrail"])
         self.assertIn(".ow-section-guide", theme_text)
         self.assertIn(".ow-workload-lane-card", theme_text)
         self.assertIn(".ow-workload-lane-state", theme_text)
@@ -1345,15 +1242,16 @@ class NavigationIntegrityTests(unittest.TestCase):
                     self.assertTrue(str(row["confidence"]).strip())
                     for key in ("decision_use", "invalid_use", "proof"):
                         self.assertGreaterEqual(len(str(row[key]).split()), 3)
-        self.assertIn("Allocated/Estimated", SECTION_EVIDENCE_CONTRACT["Cost & Contract"][1]["confidence"])
-        self.assertIn("Email-first", SECTION_EVIDENCE_CONTRACT["Alert Center"][1]["confidence"])
-        self.assertIn("Do not apply environment filters", SECTION_EVIDENCE_CONTRACT["Account Health"][0]["invalid_use"])
-        self.assertIn("Do not split exact spend by database", SECTION_EVIDENCE_CONTRACT["Warehouse Health"][0]["invalid_use"])
-        architecture_invalid_uses = " ".join(
-            row["invalid_use"] for row in SECTION_EVIDENCE_CONTRACT["Architecture Readiness"]
+        self.assertTrue(
+            any("Allocated/Estimated" in row["confidence"] for row in SECTION_EVIDENCE_CONTRACT["Cost & Contract"])
         )
-        self.assertIn("Do not run clustering-depth", architecture_invalid_uses)
-        self.assertIn("Do not auto-change agents", architecture_invalid_uses)
+        self.assertIn("Email-first", SECTION_EVIDENCE_CONTRACT["Alert Center"][1]["confidence"])
+        self.assertIn("Do not split exact spend by database", SECTION_EVIDENCE_CONTRACT["Cost & Contract"][0]["invalid_use"])
+        governance_invalid_uses = " ".join(
+            row["invalid_use"] for row in SECTION_EVIDENCE_CONTRACT["Governance & Security"]
+        )
+        self.assertIn("Do not revoke access", governance_invalid_uses)
+        self.assertIn("Do not assume unmatched drift is approved", governance_invalid_uses)
         self.assertIn(".ow-evidence-contract", theme_text)
         self.assertIn("lru_cache", guidance_text)
         self.assertIn("@lru_cache(maxsize=16)", guidance_text)
@@ -2732,7 +2630,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("_open_contention_owner_route", contention_center_text)
         self.assertIn('st.session_state["workload_operations_workflow"] = "Task graphs"', contention_center_text)
         self.assertIn('st.session_state["workload_operations_workflow"] = "Query diagnosis"', contention_center_text)
-        self.assertIn('apply_navigation_state("Warehouse Health")', contention_center_text)
+        self.assertIn('apply_navigation_state("Cost & Contract")', contention_center_text)
         self.assertNotIn('st.radio(\n        "Query analysis view"', query_analysis_text)
         self.assertNotIn(chr(0x2500), query_analysis_text)
         self.assertNotIn(chr(0x1F50D), query_analysis_text)
@@ -2899,7 +2797,10 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertIn("OBJECT_CHANGE_PANES", object_change_text)
         self.assertIn("_query_history_drift_caps()", object_change_text)
         self.assertNotIn('"Deployment Drift",', object_change_text)
-        self.assertIn("Change evidence and rollback proof are handled in Change & Drift", object_change_text)
+        self.assertIn(
+            "Change evidence and rollback proof are handled in Governance & Security change control",
+            object_change_text,
+        )
         self.assertIn("ADOPTION_ANALYTICS_PANES", adoption_text)
         self.assertIn("PLATFORM_TOPOLOGY_PANES", platform_text)
         self.assertIn("render_chart_with_data_toggle", platform_text)

@@ -112,7 +112,7 @@ def recommendation_execution_contract(row: Mapping | pd.Series | dict) -> dict[s
             f"{entity} remote-spill rows, top spilling query IDs, query profile/operator evidence, queue trend, and cost impact."
         )
         verify_next = "Verify remote spill, queue, elapsed time, and credits improve for the same workload after the fix."
-        execution_boundary = "Do not upsize blindly; route through Query diagnosis or Warehouse Health capacity controls first."
+        execution_boundary = "Do not upsize blindly; route through Query diagnosis or Cost & Contract capacity controls first."
     elif "TASK" in source_key and "FAIL" in source_key:
         approval_gate = "Task owner, Snowflake task operator, and DBA on-call approval before retry, resume, or schedule change."
         evidence_package = (
@@ -143,7 +143,7 @@ def recommendation_execution_contract(row: Mapping | pd.Series | dict) -> dict[s
             f"{entity} warehouse size, query count, credits, queue time, remote spill, cache, owner approval, and rollback path."
         )
         verify_next = "Verify queue, spill, runtime, failure rate, and credits against the same workload window after the change."
-        execution_boundary = "Optimization Advisor is advisory; run warehouse changes only through Warehouse Health guarded controls."
+        execution_boundary = "Optimization Advisor is advisory; run warehouse changes only through Cost & Contract guarded controls."
     elif changes_state:
         approval_gate = f"{owner} and DBA approver approval before running generated SQL."
         evidence_package = evidence or "Recommendation evidence, generated SQL, owner approval, rollback path, and proof query."
@@ -215,7 +215,7 @@ def harden_recommendation(rec: Mapping | pd.Series | dict) -> dict:
         )
         evidence = f"{entity}: {spill_gb:,.2f} GB remote spill in the recommendation window."
         safe_next = (
-            "Open Warehouse Health > Capacity Brief, identify the query IDs causing spill, and decide between SQL tuning, "
+            "Open Cost & Contract > Recommendations and action queue, identify the query IDs causing spill, and decide between SQL tuning, "
             "workload isolation, or a one-step warehouse size validation."
         )
         proof = "Show remote spill GB and queue time trend lower after the change; attach top query IDs used for diagnosis."
@@ -383,7 +383,7 @@ def automation_readiness_for_row(row: Mapping | pd.Series | dict, *, source_surf
         mode = "Workflow closure"
     elif safe_guided and not blockers:
         lane = "Ready for Guided Execution"
-        next_step = "Use Change & Drift controls or the owning workflow to run the reviewed SQL path, then execute the verification query."
+        next_step = "Use Governance & Security controls or the owning workflow to run the reviewed SQL path, then execute the verification query."
         mode = "Guided action"
     elif safe_guided and set(blockers) <= {"owner approval", "approver"}:
         lane = "Approval Required"
@@ -470,7 +470,7 @@ def build_automation_readiness_board(
 
 
 def warehouse_sizing_decision(row: Mapping | pd.Series | dict) -> dict:
-    """Classify Warehouse Health sizing evidence without generic upsize advice."""
+    """Classify warehouse sizing evidence without generic upsize advice."""
     warehouse = _entity(row)
     size = _text(row, "WAREHOUSE_SIZE", "Warehouse Size", default="unknown size")
     spill = _num(row, "REMOTE_SPILL_GB", "Remote Spill GB")

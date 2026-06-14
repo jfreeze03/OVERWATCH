@@ -1789,7 +1789,7 @@ def _build_change_drift_markdown(
     else:
         exception_lines.append("- No change/drift exceptions crossed the configured thresholds.")
     lines = [
-        f"# OVERWATCH Change & Drift Brief - {company}",
+        f"# OVERWATCH Change Control Brief - {company}",
         "",
         f"Lookback window: {days} day(s).",
         f"Control state: {_change_drift_rating(score)}.",
@@ -2451,7 +2451,7 @@ def render() -> None:
         default=14,
     )
     active_view = render_mode_selector(
-        "Change & Drift view",
+        "Change-control view",
         "change_drift_view",
         CHANGE_DRIFT_VIEWS,
         default=CHANGE_DRIFT_VIEWS[0],
@@ -2574,15 +2574,15 @@ def render() -> None:
     if consume_section_autoload_request("Change & Drift") and not (
         summary is not None and not summary.empty and brief_is_current
     ):
-        st.caption("Change & Drift opened in fast mode. Load the brief when current change-history proof is needed.")
+        st.caption("Change Control opened in fast mode. Load the brief when current change-history proof is needed.")
     render_data_freshness(
         meta if brief_is_current and summary is not None and not summary.empty else {},
-        source=st.session_state.get("change_drift_source", "Change & Drift brief"),
+        source=st.session_state.get("change_drift_source", "Change-control brief"),
         target_minutes=60,
         delayed_note="Fast change evidence uses OVERWATCH mart rows when available; live QUERY_HISTORY refresh is explicit.",
     )
 
-    if st.button("Load Change & Drift Brief", key="change_drift_brief_load", type="primary"):
+    if st.button("Load Change Control Brief", key="change_drift_brief_load", type="primary"):
         _load_change_drift_brief()
 
     summary = st.session_state.get("change_drift_summary")
@@ -2590,7 +2590,7 @@ def render() -> None:
     meta = st.session_state.get("change_drift_meta", {})
     brief_is_current = _change_meta_matches(meta, expected_brief_meta)
     if summary is not None and not summary.empty and not brief_is_current:
-        st.info("Loaded Change & Drift brief is stale for the active scope. Reload the brief before acting.")
+        st.info("Loaded Change Control brief is stale for the active scope. Reload the brief before acting.")
     if (
         summary is not None
         and not summary.empty
@@ -2659,7 +2659,7 @@ def render() -> None:
         st.divider()
 
         if exceptions is not None and not exceptions.empty:
-            st.subheader("Change & Drift Exceptions")
+            st.subheader("Change Control Exceptions")
             priority_exceptions = _change_priority_view(exceptions)
             render_priority_dataframe(
                 priority_exceptions,
@@ -2828,7 +2828,7 @@ def render() -> None:
                     st.code(build_change_control_evidence_ddl(), language="sql")
             with st.expander("Change Action Closure Analytics", expanded=False):
                 defer_source_note(
-                    "Uses Change & Drift action-queue rows to show open, overdue, unapproved, "
+                    "Uses Change Control action-queue rows to show open, overdue, unapproved, "
                     "or closed-without-verification change-control work."
                 )
                 closure_days = day_window_selectbox(
@@ -2886,7 +2886,7 @@ def render() -> None:
                 ):
                     st.info("Loaded change closure analytics are stale for the active scope. Reload closure analytics before acting.")
                 elif closure is not None and closure_current:
-                    st.info("No Change & Drift action-queue rows found for the selected scope.")
+                    st.info("No Change Control action-queue rows found for the selected scope.")
             if st.button("Save Change Exceptions to Action Queue", key="change_drift_queue"):
                 _queue_change_exceptions(get_session(), exceptions)
         elif exceptions is not None:

@@ -1380,7 +1380,7 @@ def render():
                 str(focus),
                 "Use the matching tab group below first; other tools remain available when needed.",
             )
-            st.info(f"Change & Drift focus: {focus}. {focus_hint}")
+            st.info(f"Governance & Security focus: {focus}. {focus_hint}")
         with st.expander("Guarded Admin Operating Model", expanded=not bool(focus)):
             risk_a, risk_b, risk_c = st.columns(3)
             with risk_a:

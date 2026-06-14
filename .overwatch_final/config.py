@@ -202,7 +202,7 @@ def static_database_options(
         return (env_key,)
     return tuple(dict.fromkeys((*ALFA_PROD_DATABASES, *ALFA_DEV_DATABASES, *TREXIS_DATABASES, "ADMIN")))
 
-# Manual architecture objectives used by Architecture Readiness. These are not
+# Manual architecture objectives used by Governance & Security architecture checks. These are not
 # discovered from Snowflake; update them when ALFA/Trexis database families,
 # execution warehouses, RPO/RTO expectations, or workload isolation policy
 # changes.
@@ -635,7 +635,7 @@ FORWARD_PLATFORM_CONTROLS = (
         "SOURCE_OBJECTS": "Cortex Code, Cortex AISQL, AI-assisted SQL",
         "RISK_IF_MISSING": "AI-assisted code or SQL can bypass owner approval, rollback proof, and verification evidence.",
         "DBA_DECISION": "Treat AI-generated DDL/SQL like any other change: ticket, source, reviewer, rollout, rollback, and verification.",
-        "AUTOMATION_BOUNDARY": "Observe usage and route to Change & Drift. Do not execute generated changes automatically.",
+        "AUTOMATION_BOUNDARY": "Observe usage and route to Governance & Security change control. Do not execute generated changes automatically.",
         "MATCH_PRIORITY": 180,
     },
 )
@@ -691,25 +691,19 @@ class SectionDefinition:
         return self.title
 
 
-# Production navigation exposes only current DBA workflow sections. Legacy
-# redirect aliases below keep deep links working without making retired labels
-# first-class navigation routes.
+# Production navigation exposes only the command-center surfaces that should be
+# first-class in front of DBAs and leadership. Legacy redirect aliases below
+# keep deep links working without keeping weak standalone pages alive.
 SECTION_DEFINITIONS = (
     SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing_shell"),
     SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room_shell"),
     SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center_shell"),
-    SectionDefinition("COMMAND CENTER", "home", "Account Health", "sections.account_health_shell"),
     SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract_shell"),
     SectionDefinition("OPERATIONS", "work", "Workload Operations", "sections.workload_operations_shell"),
-    SectionDefinition("OPERATIONS", "warehouse", "Warehouse Health", "sections.warehouse_health_shell"),
-    SectionDefinition("GOVERNANCE", "security", "Security Posture", "sections.security_posture_shell"),
-    SectionDefinition("GOVERNANCE", "change", "Change & Drift", "sections.change_drift_shell"),
-    SectionDefinition("ARCHITECTURE", "map", "Architecture Readiness", "sections.architecture_readiness_shell"),
+    SectionDefinition("GOVERNANCE", "security", "Governance & Security", "sections.governance_security"),
 )
 
-PRIMARY_NAV_HIDDEN_SECTIONS = frozenset({
-    "Account Health",
-})
+PRIMARY_NAV_HIDDEN_SECTIONS = frozenset()
 
 NAV_GROUPS: dict[str, list[str]] = {}
 for _section in SECTION_DEFINITIONS:
@@ -743,31 +737,72 @@ SECTION_REDIRECTS = {
     "Alerts": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
     "Alert History": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
     "Alert Configuration": _CANONICAL_SECTION_BY_TITLE["Alert Center"],
-    "Adoption Analytics": _CANONICAL_SECTION_BY_TITLE["Security Posture"],
+    "Adoption Analytics": _CANONICAL_SECTION_BY_TITLE["Executive Landing"],
     "Storage Monitor": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
-    "Platform Topology": _CANONICAL_SECTION_BY_TITLE["Change & Drift"],
-    "Security & Access": _CANONICAL_SECTION_BY_TITLE["Security Posture"],
-    "Data Sharing": _CANONICAL_SECTION_BY_TITLE["Security Posture"],
-    "Who Changed What?": _CANONICAL_SECTION_BY_TITLE["Change & Drift"],
-    "DBA Tools": _CANONICAL_SECTION_BY_TITLE["Change & Drift"],
+    "Platform Topology": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Security Posture": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Security & Access": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Data Sharing": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Change & Drift": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Who Changed What?": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "DBA Tools": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
     "Command Center": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
-    "Optimization": _CANONICAL_SECTION_BY_TITLE["Warehouse Health"],
-    "Architecture": _CANONICAL_SECTION_BY_TITLE["Architecture Readiness"],
-    "Platform Architecture": _CANONICAL_SECTION_BY_TITLE["Architecture Readiness"],
-    "Workload Isolation": _CANONICAL_SECTION_BY_TITLE["Architecture Readiness"],
-    "Clustering Strategy": _CANONICAL_SECTION_BY_TITLE["Architecture Readiness"],
-    "Cache Optimization": _CANONICAL_SECTION_BY_TITLE["Architecture Readiness"],
-    "DR Readiness": _CANONICAL_SECTION_BY_TITLE["Architecture Readiness"],
-    "Disaster Recovery": _CANONICAL_SECTION_BY_TITLE["Architecture Readiness"],
+    "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Optimization": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Architecture Readiness": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Architecture": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Platform Architecture": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Workload Isolation": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Clustering Strategy": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Cache Optimization": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "DR Readiness": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Disaster Recovery": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
 }
 RETIRED_SECTION_REDIRECTS = {
     "Account Health": _CANONICAL_SECTION_BY_TITLE["DBA Control Room"],
+    "Warehouse Health": _CANONICAL_SECTION_BY_TITLE["Cost & Contract"],
+    "Architecture Readiness": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Security Posture": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
+    "Change & Drift": _CANONICAL_SECTION_BY_TITLE["Governance & Security"],
 }
 SECTION_ROUTE_STATE = {
     "Account Health": {
         "dba_control_room_active_view": "Morning Brief",
         "_dba_control_room_full_workspace_requested": True,
         "_dba_control_room_brief_mode": False,
+    },
+    "Warehouse Health": {
+        "cost_contract_workflow": "Recommendations and action queue",
+        "_cost_contract_full_workspace_requested": True,
+        "_cost_contract_brief_mode": False,
+    },
+    "Optimization": {
+        "cost_contract_workflow": "Recommendations and action queue",
+        "_cost_contract_full_workspace_requested": True,
+        "_cost_contract_brief_mode": False,
+    },
+    "Security Posture": {
+        "governance_security_view": "Security Posture",
+        "_governance_security_full_workspace_requested": True,
+    },
+    "Change & Drift": {
+        "governance_security_view": "Change & Drift",
+        "_governance_security_full_workspace_requested": True,
+    },
+    "Who Changed What?": {
+        "governance_security_view": "Change & Drift",
+        "change_drift_requested_workflow": "Object and access changes",
+        "_governance_security_full_workspace_requested": True,
+    },
+    "DBA Tools": {
+        "governance_security_view": "Change & Drift",
+        "change_drift_requested_workflow": "Controlled DBA actions",
+        "_governance_security_full_workspace_requested": True,
+    },
+    "Architecture Readiness": {
+        "governance_security_view": "Change & Drift",
+        "change_drift_requested_workflow": "Schema and object drift",
+        "_governance_security_full_workspace_requested": True,
     },
 }
 SECTION_BY_TITLE = dict(_CANONICAL_SECTION_BY_TITLE)
@@ -808,9 +843,8 @@ ROLE_SECTIONS = {
         "DBA Control Room",
         "Alert Center",
         "Workload Operations",
-        "Warehouse Health",
-        "Architecture Readiness",
         "Cost & Contract",
+        "Governance & Security",
     ),
     "MANAGER": list(PRIMARY_SECTIONS),
     "REPORT": _sections_by_title(
@@ -818,9 +852,8 @@ ROLE_SECTIONS = {
         "DBA Control Room",
         "Alert Center",
         "Workload Operations",
-        "Warehouse Health",
-        "Architecture Readiness",
         "Cost & Contract",
+        "Governance & Security",
     ),
     "DBA": list(PRIMARY_SECTIONS),
     "SYSADMIN": list(PRIMARY_SECTIONS),
@@ -875,23 +908,20 @@ EXPERIENCE_VIEW_SECTIONS = {
     "FinOps": _sections_by_title(
         "Executive Landing",
         "Cost & Contract",
-        "Warehouse Health",
         "Alert Center",
-        "Change & Drift",
+        "Governance & Security",
     ),
     "Security": _sections_by_title(
         "Executive Landing",
         "Alert Center",
-        "Security Posture",
-        "Change & Drift",
+        "Governance & Security",
     ),
     "Platform": _sections_by_title(
         "Executive Landing",
         "DBA Control Room",
         "Workload Operations",
-        "Warehouse Health",
-        "Architecture Readiness",
-        "Change & Drift",
+        "Cost & Contract",
+        "Governance & Security",
     ),
 }
 

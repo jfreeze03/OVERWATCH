@@ -112,7 +112,7 @@ def build_god_tier_capability_rows() -> list[dict[str, object]]:
             "RANK": 9,
             "CAPABILITY": "Compliance Readiness Scorecard",
             "STATUS": "New",
-            "WHERE_IT_LANDS": "Security Posture, Executive Landing",
+            "WHERE_IT_LANDS": "Governance & Security, Executive Landing",
             "WHY_IT_MATTERS": "Leaders need a defensible view of admin grants, dormant users, policy drift, and risky shares.",
             "NEXT_ACTION": "Materialize compliance controls with evidence rows and owner remediation paths.",
             "SNOWFLAKE_SOURCES": "GRANTS_TO_USERS, GRANTS_TO_ROLES, LOGIN_HISTORY, ACCESS_HISTORY, POLICIES, SHARES",
@@ -240,7 +240,7 @@ def build_detection_root_cause_sql(hours: int = 24) -> str:
             CASE
                 WHEN signal_family = 'TASK_PIPELINE' THEN 'Open Workload Operations task graph and inspect child failure/root task.'
                 WHEN signal_family = 'PERFORMANCE' THEN 'Open Query diagnosis or Contention Center with the sample query_id.'
-                WHEN signal_family = 'SECURITY' THEN 'Open Security Posture and verify IP, role, MFA, and service account behavior.'
+                WHEN signal_family = 'SECURITY' THEN 'Open Governance & Security and verify IP, role, MFA, and service account behavior.'
                 ELSE 'Open Alert Center incident board.'
             END AS recommended_action
         FROM all_signals

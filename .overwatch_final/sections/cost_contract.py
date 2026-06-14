@@ -1310,7 +1310,7 @@ def _build_cost_period_explanation(
         "ANSWER": f"{top_wh} is the largest loaded increase at {top_delta:+,.2f} credits.",
         "DOLLAR_IMPACT": f"${credits_to_dollars(top_delta, credit_price):+,.0f}",
         "EVIDENCE": "Cost cockpit current/prior warehouse movement.",
-        "NEXT_ACTION": "Open Warehouse Health to confirm queue, spill, p95, and setting evidence for that warehouse.",
+        "NEXT_ACTION": "Open Cost & Contract recommendations to confirm queue, spill, p95, settings, and dollar evidence for that warehouse.",
     })
     rows.append({
         "QUESTION": "Is this a short spike or trend?",
@@ -2587,10 +2587,10 @@ def _build_budget_anomaly_command_center(
         "Resource Monitor",
         f"{top_wh} is the current top warehouse mover; resource monitors are useful only for warehouse credit control.",
         "Review warehouse-level resource monitor assignment for the top mover, but use Budgets for serverless, AI, and shared resources.",
-        "Open Warehouse Health or Change & Drift controls to review monitor assignment and threshold SQL after owner approval.",
+        "Open Cost & Contract and Governance & Security controls to review monitor assignment and threshold SQL after owner approval.",
         "SHOW RESOURCE MONITORS; SHOW WAREHOUSES LIKE top warehouse; WAREHOUSE_METERING_HISTORY.",
         "Do not use resource monitors as AI/serverless budget controls; Snowflake budgets are the correct surface there.",
-        "Warehouse Health > Settings / Cost & Contract > Budget governance",
+        "Cost & Contract > Recommendations and action queue / Budget governance",
         top_delta_dollars,
     )
     ai_severity = "High" if cortex_projection > 0 or cortex_exceptions > 0 else "Medium"
@@ -3231,11 +3231,11 @@ def _build_change_cost_correlation_board(
             "Change evidence not loaded",
             top_wh or "Cost scope",
             f"Top warehouse delta {top_delta:+,.2f} credits; 7d vs 30d {pct_vs_30d_float:+.1f}%.",
-            "No loaded Change & Drift exceptions.",
-            "Cost movement cannot be cleared of change-correlation risk until Change & Drift is loaded for the same scope.",
-            "Load Change & Drift Brief, then compare warehouse, query_id, task/procedure, DDL, grant, and policy events to the cost spike.",
-            "Change & Drift exceptions plus Cost Cockpit/run-rate evidence for the same company/environment window.",
-            "Change & Drift > Object and access changes",
+            "No loaded Governance & Security change exceptions.",
+            "Cost movement cannot be cleared of change-correlation risk until Governance & Security is loaded for the same scope.",
+            "Load Governance & Security change evidence, then compare warehouse, query_id, task/procedure, DDL, grant, and policy events to the cost spike.",
+            "Governance & Security change exceptions plus Cost Cockpit/run-rate evidence for the same company/environment window.",
+            "Governance & Security > Object and access changes",
             0,
         )
     else:
@@ -3263,7 +3263,7 @@ def _build_change_cost_correlation_board(
             "A cost spike near warehouse/task/procedure drift must be treated as a root-cause candidate until query/change proof clears it.",
             "Review query_id, actor, warehouse settings, task/procedure runtime, and rollback evidence before tuning or raising budget.",
             "Change exception query_id, WAREHOUSE_METERING_HISTORY, QUERY_HISTORY, task/procedure history, and post-change proof.",
-            "Change & Drift > Controlled DBA actions",
+            "Governance & Security > Controlled DBA actions",
             0,
         )
         add(
@@ -3275,7 +3275,7 @@ def _build_change_cost_correlation_board(
             "High-severity DDL/DCL/policy changes near cost movement require a bill explanation, not just a cost chart.",
             "Attach change ticket, query_id, actor, object, and blast-radius proof to the cost incident.",
             "Change-control readiness, object/change evidence, and Cost & Contract root-cause board.",
-            "Change & Drift > Object and access changes",
+            "Governance & Security > Object and access changes",
             1,
         )
         add(
@@ -3286,7 +3286,7 @@ def _build_change_cost_correlation_board(
             f"{access_ai_changes:,} grant/role/policy/tag/AI-related change row(s) loaded.",
             "AI spend jumps can be caused by access expansion, tag mistakes, or policy changes as much as workload growth.",
             "Compare Cortex first/last usage to access and tag changes before enforcing per-user quotas.",
-            "Cortex usage history, Change & Drift grants/policy rows, budget tag assignments.",
+            "Cortex usage history, Governance & Security grants/policy rows, budget tag assignments.",
             "Cost & Contract > AI and Cortex spend",
             2,
         )
@@ -3303,7 +3303,7 @@ def _build_change_cost_correlation_board(
             "Do not close a cost incident as remediated while related change-control routes or closures are blocked.",
             "Work change-control blockers before declaring the cost spike explained or resolved.",
             "FACT_CHANGE_CONTROL_OPERABILITY_DAILY with route/closure blocked counts and verified closures.",
-            "Change & Drift > Change Control Summary",
+            "Governance & Security > Change Control Summary",
             3,
         )
 
@@ -3322,7 +3322,7 @@ def _build_change_cost_correlation_board(
         "medium": medium,
         "top_correlation": str(top.get("CORRELATION") or "Change/cost correlation"),
         "top_entity": str(top.get("ENTITY") or "Unknown"),
-        "top_action": str(top.get("NEXT_ACTION") or "Load Change & Drift and compare to Cost & Contract."),
+        "top_action": str(top.get("NEXT_ACTION") or "Load Governance & Security and compare to Cost & Contract."),
     }, board.drop(columns=["_SEVERITY_RANK", "_RANK"], errors="ignore").reset_index(drop=True)
 
 
@@ -3437,7 +3437,7 @@ def _build_cost_governance_alert_rows(
                 message=_cost_alert_message(row, "EVIDENCE", default="A recent change may explain cost movement."),
                 suggested_action=_cost_alert_message(row, "NEXT_ACTION", default="Compare change evidence to cost movement before tuning."),
                 proof_query=_cost_alert_message(row, "PROOF_REQUIRED", default="Attach change query_id, actor, ticket, and cost proof."),
-                route=_cost_alert_message(row, "ROUTE", default="Change & Drift"),
+                route=_cost_alert_message(row, "ROUTE", default="Governance & Security"),
                 owner="DBA / FinOps",
                 value_at_risk=0.0,
                 source_surface="Change + Cost Correlation",
@@ -3550,7 +3550,7 @@ def _build_cost_incident_timeline(
             _cost_alert_message(corr, "EVIDENCE", default="Change/cost correlation evidence loaded."),
             _cost_alert_message(corr, "NEXT_ACTION", default="Compare change evidence to the cost window before closure."),
             _cost_alert_message(corr, "PROOF_REQUIRED", default="Attach change query_id, actor, ticket, and cost proof."),
-            _cost_alert_message(corr, "ROUTE", default="Change & Drift"),
+            _cost_alert_message(corr, "ROUTE", default="Governance & Security"),
         )
     else:
         add(
@@ -3558,10 +3558,10 @@ def _build_cost_incident_timeline(
             "Medium",
             "Change correlation checked",
             top_wh,
-            "Change & Drift evidence is not loaded for this cost movement.",
-            "Load Change & Drift for the same company/environment before closing the incident as workload-only.",
-            "FACT_OBJECT_CHANGE or Change & Drift exception rows.",
-            "Change & Drift",
+            "Governance & Security evidence is not loaded for this cost movement.",
+            "Load Governance & Security for the same company/environment before closing the incident as workload-only.",
+            "FACT_OBJECT_CHANGE or Governance & Security exception rows.",
+            "Governance & Security",
         )
 
     if isinstance(alert_rows, pd.DataFrame) and not alert_rows.empty:

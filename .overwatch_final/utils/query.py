@@ -218,25 +218,25 @@ def _infer_telemetry_section(section: str = "", ttl_key: str = "") -> str:
 
     key = str(ttl_key or "").lower()
     prefix_map = [
-        ("account_health", "Account Health"),
-        ("ah_", "Account Health"),
+        ("account_health", "DBA Control Room"),
+        ("ah_", "DBA Control Room"),
         ("cc_", "Cost & Contract"),
         ("uo_", "DBA Control Room"),
-        ("wh_", "Warehouse Health"),
+        ("wh_", "Cost & Contract"),
         ("lm_", "Workload Operations"),
         ("qa_", "Workload Operations"),
         ("qs_", "Workload Operations"),
         ("dba_control_room_", "DBA Control Room"),
-        ("dba_", "Change & Drift"),
+        ("dba_", "Governance & Security"),
         ("tm_", "Workload Operations"),
-        ("sec_", "Security Posture"),
-        ("sp_", "Change & Drift"),
+        ("sec_", "Governance & Security"),
+        ("sp_", "Governance & Security"),
         ("rec_", "Cost & Contract"),
         ("cortex_", "Cost & Contract"),
         ("storage_", "Cost & Contract"),
         ("pipe_", "Workload Operations"),
         ("value_", "Cost & Contract"),
-        ("arch_", "Architecture Readiness"),
+        ("arch_", "Governance & Security"),
     ]
     for prefix, label in prefix_map:
         if key.startswith(prefix):

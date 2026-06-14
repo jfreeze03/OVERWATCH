@@ -96,29 +96,11 @@ SECTION_OPERATING_GUIDE = {
         "closure": "Acknowledge or resolve with reason, owner route, and email delivery proof.",
         "guardrail": "Email is the active channel; do not imply Teams delivery until the webhook exists.",
     },
-    "Account Health": {
-        "first_move": "Clear checklist failures, source gaps, and access-hygiene blockers before lower-priority hygiene.",
-        "evidence": "Checklist row, ACCOUNT_USAGE/IAM context, owner route, and proof query.",
-        "closure": "Queue or close with verification result, approval context, and recovery SLA status.",
-        "guardrail": "Login-only findings have no database context, so environment filters must not be implied.",
-    },
     "Workload Operations": {
         "first_move": "Start with running, queued, failed, or late tasks/procedures and their linked query IDs.",
         "evidence": "Task graph, task history, CALL/query history, SLA baseline, and root-cause category.",
         "closure": "Document recovery within SLA, failed dependency, rerun/cancel decision, and owner handoff.",
         "guardrail": "Do not execute, retry, suspend, or cancel without the exact task/query identity and rollback path.",
-    },
-    "Warehouse Health": {
-        "first_move": "Separate queue pressure, spill, latency, and cost drift before proposing setting changes.",
-        "evidence": "WAREHOUSE_METERING_HISTORY, QUERY_HISTORY, owner readiness, and before/after baseline.",
-        "closure": "Approve only with ticket, rollback SQL, baseline pressure, and post-change verification.",
-        "guardrail": "Warehouse cost is exact at warehouse grain; database split is allocated when warehouses are shared.",
-    },
-    "Architecture Readiness": {
-        "first_move": "Review isolation, clustering, cache, DR, Adaptive Compute, AI/MCP, AI security, Openflow, and governance-readiness gaps before approving new platform patterns.",
-        "evidence": "QUERY_HISTORY, TABLES, WAREHOUSE_METERING_HISTORY, SHOW warehouse/replication/agent/MCP/grant metadata, AI settings, AI/Openflow usage views, owner route, and proof SQL.",
-        "closure": "Queue findings with proof SQL, owner approval, RPO/RTO or performance baseline, and verification plan.",
-        "guardrail": "Do not run clustering-depth, failover, adaptive warehouse conversion, AI security grant/parameter changes, agent/MCP, Openflow, semantic, or architecture-changing DDL without explicit DBA review.",
     },
     "Cost & Contract": {
         "first_move": "Work contract burn risk and verified savings actions before cosmetic spend breakdowns.",
@@ -126,17 +108,11 @@ SECTION_OPERATING_GUIDE = {
         "closure": "Close savings only after current spend beats baseline and owner approval is recorded.",
         "guardrail": "Database-attributed cost is Allocated/Estimated unless exact warehouse metering supports it.",
     },
-    "Security Posture": {
-        "first_move": "Review privileged grants, dormant access, MFA/login risk, and data-sharing exposure.",
-        "evidence": "Grant row, login/share evidence, owner route, approval ticket, and blast-radius note.",
-        "closure": "Mark complete only after access review approval and verification proof are attached.",
-        "guardrail": "Do not revoke or narrow access without inheritance, role-chain, and workload impact review.",
-    },
-    "Change & Drift": {
-        "first_move": "Find drift without ticket approval, recent access changes, and deployment-risk exceptions.",
-        "evidence": "Object/access change row, owner approval, owner route, and rollback proof.",
-        "closure": "Close only when approval, implementation evidence, and post-change verification line up.",
-        "guardrail": "Treat unmatched drift as a control issue until owner approval or rollback proof explains it.",
+    "Governance & Security": {
+        "first_move": "Review privileged access, login risk, schema drift, and unapproved object changes before lower-priority governance cleanup.",
+        "evidence": "ACCOUNT_USAGE grants, login history, object change rows, owner approval, and rollback proof.",
+        "closure": "Close only when access approval, implementation evidence, verification result, and rollback context are attached.",
+        "guardrail": "Do not revoke access, approve drift, run DDL, or change governance policy without owner and workload impact review.",
     },
 }
 
@@ -190,22 +166,6 @@ SECTION_EVIDENCE_CONTRACT = {
             "proof": "Delivery target, digest or alert delivery log, and owner route.",
         },
     ],
-    "Account Health": [
-        {
-            "source": "Login/authentication evidence",
-            "confidence": "Account-level exact",
-            "decision_use": "Investigate failed logins, MFA gaps, and dormant-user risk.",
-            "invalid_use": "Do not apply environment filters to login-only findings.",
-            "proof": "User, event time, login status, IAM approval, and owner proof.",
-        },
-        {
-            "source": "Checklist and access-hygiene rows",
-            "confidence": "Scoped when database context exists",
-            "decision_use": "Queue account hygiene and access cleanup actions.",
-            "invalid_use": "Do not close hygiene items without verification result.",
-            "proof": "Checklist row, owner route, proof query, and recovery SLA state.",
-        },
-    ],
     "Workload Operations": [
         {
             "source": "TASK_HISTORY and query/CALL history",
@@ -222,53 +182,14 @@ SECTION_EVIDENCE_CONTRACT = {
             "proof": "Before/after runtime, status, failed dependency, and SLA result.",
         },
     ],
-    "Warehouse Health": [
+    "Cost & Contract": [
         {
             "source": "WAREHOUSE_METERING_HISTORY",
             "confidence": "Exact warehouse cost",
-            "decision_use": "Measure warehouse spend, idle waste, and before/after changes.",
+            "decision_use": "Measure spend, contract burn, idle waste, and before/after warehouse changes.",
             "invalid_use": "Do not split exact spend by database from shared warehouse metering.",
             "proof": "Warehouse, metered credits, baseline window, and post-change window.",
         },
-        {
-            "source": "QUERY_HISTORY pressure signals",
-            "confidence": "Operationally exact at query grain",
-            "decision_use": "Separate queue pressure, spill, latency, and workload shape.",
-            "invalid_use": "Do not resize solely from one pressure signal.",
-            "proof": "Queue/spill/runtime trend, owner approval, rollback SQL, and verification.",
-        },
-    ],
-    "Architecture Readiness": [
-        {
-            "source": "Architecture objective register",
-            "confidence": "Manual owner and RPO/RTO objective",
-            "decision_use": "Confirm intended workload class, owner route, isolation policy, and recovery target.",
-            "invalid_use": "Do not treat unregistered workloads as approved architecture patterns.",
-            "proof": "Objective row, owner route, approval group, RPO/RTO, and verification query.",
-        },
-        {
-            "source": "QUERY_HISTORY workload, cache, and routing evidence",
-            "confidence": "Delayed Snowflake metadata",
-            "decision_use": "Decide whether to isolate workloads, tune cache behavior, or leave shared routing alone.",
-            "invalid_use": "Do not move database workloads from aggregate rows without owner and app impact review.",
-            "proof": "Database, warehouse, users/roles, queue/spill/cache evidence, and owner approval.",
-        },
-        {
-            "source": "TABLES and replication/failover metadata",
-            "confidence": "Manual validation required",
-            "decision_use": "Rank clustering and DR readiness gaps for DBA review.",
-            "invalid_use": "Do not run clustering-depth, failover, or DDL automatically from dashboard findings.",
-            "proof": "Selected-table clustering proof SQL, failover/replication inventory, RPO/RTO, and drill evidence.",
-        },
-        {
-            "source": "Adaptive Compute, CoWork Artifact, Cortex Sense, Agent, MCP, Snowflake Intelligence, Openflow, Horizon, semantic, and AI-change readiness evidence",
-            "confidence": "Delayed metadata plus capability visibility",
-            "decision_use": "Decide whether emerging Snowflake capabilities are owner-approved, budgeted, and auditable.",
-            "invalid_use": "Do not auto-change agents, MCP servers, Openflow runtimes, semantic models, DR controls, or AI-generated SQL. Do not auto-convert warehouses.",
-            "proof": "SHOW inventory, ACCOUNT_USAGE rows, owner route, budget/approval note, and verification query.",
-        },
-    ],
-    "Cost & Contract": [
         {
             "source": "Warehouse metering and contract settings",
             "confidence": "Exact metering plus manual contract input",
@@ -284,7 +205,7 @@ SECTION_EVIDENCE_CONTRACT = {
             "proof": "Attribution rule, query/database evidence, owner approval, and savings result.",
         },
     ],
-    "Security Posture": [
+    "Governance & Security": [
         {
             "source": "ACCOUNT_USAGE grants, roles, shares, and login history",
             "confidence": "Delayed account metadata",
@@ -299,8 +220,6 @@ SECTION_EVIDENCE_CONTRACT = {
             "invalid_use": "Do not mark reviewed when owner or approval evidence is missing.",
             "proof": "Owner route, approver, approval note, and post-change validation.",
         },
-    ],
-    "Change & Drift": [
         {
             "source": "Object, grant, and approved change evidence",
             "confidence": "Delayed account metadata",

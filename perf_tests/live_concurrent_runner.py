@@ -26,9 +26,9 @@ DEFAULT_OUTPUT_DIR = pathlib.Path(__file__).resolve().parent / "results"
 DEFAULT_SECTIONS = [
     "DBA Control Room",
     "Alert Center",
-    "Warehouse Health",
-    "Change & Drift",
     "Cost & Contract",
+    "Workload Operations",
+    "Governance & Security",
 ]
 
 # Default live actions must match the current top-level DBA landing flow. Deep

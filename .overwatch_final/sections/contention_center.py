@@ -654,7 +654,7 @@ def _contention_fix_fields(signal: str, row: dict | pd.Series | None = None) -> 
     elif "WAREHOUSE QUEUE" in signal_text or "QUEUEING" in signal_text:
         fields.update({
             "BOTTLENECK_TYPE": "Warehouse queue pressure",
-            "OWNER_ROUTE": "Warehouse Health",
+            "OWNER_ROUTE": "Cost & Contract",
             "FIRST_MOVE": "Check active query concurrency and WAREHOUSE_LOAD_HISTORY before changing SQL or task ordering.",
             "SAFE_FIX": "Use workload isolation, multi-cluster, or right-sized compute only when queued load is present and blocked seconds are not the dominant signal.",
             "COMPUTE_DECISION": "This is compute concurrency evidence; resizing or isolation may help if lock waits are not driving the delay.",
@@ -949,12 +949,12 @@ def build_contention_safe_action_contract(row: dict | pd.Series | None, signal: 
         warehouse_name=warehouse,
     )
 
-    if route == "Warehouse Health" or ("QUEUE" in signal_text and blocked <= 0 and queued > 0):
+    if route in {"Warehouse Health", "Cost & Contract"} or ("QUEUE" in signal_text and blocked <= 0 and queued > 0):
         action_type = "No cancel - capacity review"
-        readiness = "Route to Warehouse Health"
+        readiness = "Route to Cost & Contract"
         approval_gate = "Warehouse owner approval required before resize, isolation, or schedule change. No cleanup SQL."
         audit_evidence = "Save warehouse load history before and after, owner decision, change ticket, and cost note."
-        recovery_plan = "Use Warehouse Health capacity/isolation runbook, then verify queued load and blocked load fall."
+        recovery_plan = "Use Cost & Contract capacity/isolation evidence, then verify queued load and blocked load fall."
         execution_boundary = "No cancel or abort SQL is generated for pure warehouse queueing."
         verification = "Verify AVG_QUEUED_LOAD and QUEUED_OVERLOAD_TIME fall after capacity or isolation change."
         precheck_sql = _contention_precheck_sql(
@@ -1318,7 +1318,7 @@ def _live_incident_rows(
         if blocked <= 0 and queued <= 0 and str(_first_value(row_dict, "EXECUTION_STATUS", default="")).upper() not in {"RUNNING", "QUEUED", "BLOCKED"}:
             continue
         severity = "Critical" if blocked >= 300 else "High" if blocked >= 60 else "Medium" if queued > 0 else "Watch"
-        owner_route = "Active Locks" if blocked > 0 else "Warehouse Health" if queued > 0 else "Query diagnosis"
+        owner_route = "Active Locks" if blocked > 0 else "Cost & Contract" if queued > 0 else "Query diagnosis"
         first_move = (
             "Run active locks, identify blocker transaction/session, and stop overlapping writers to the same target."
             if blocked > 0
@@ -1394,7 +1394,7 @@ def _live_incident_rows(
             "SAFE_FIX": "Use warehouse isolation or multi-cluster for queue pressure; use lock/task remediation when blocked load is present.",
             "COMPUTE_DECISION": "Queue pressure can justify compute changes only when lock waits are not the primary signal.",
             "PROOF_REQUIRED": "WAREHOUSE_LOAD_HISTORY AVG_BLOCKED/AVG_QUEUED_LOAD and matching live query blocked/queued seconds.",
-            "OWNER_ROUTE": "Warehouse Health",
+            "OWNER_ROUTE": "Cost & Contract",
             "QUERY_ID": "",
             "WAREHOUSE_NAME": warehouse,
             "TARGET_OBJECT": "",
@@ -1579,8 +1579,9 @@ def _open_contention_owner_route(row: pd.Series | dict) -> None:
             st.session_state["ai_query_id"] = query_id
         if target_object:
             st.session_state["ai_object_ctx"] = target_object
-    elif route == "Warehouse Health":
-        apply_navigation_state("Warehouse Health")
+    elif route in {"Warehouse Health", "Cost & Contract"}:
+        apply_navigation_state("Cost & Contract")
+        st.session_state["cost_contract_workflow"] = "Recommendations and action queue"
     else:
         st.session_state["contention_center_view"] = "Brief"
     st.rerun()
@@ -1657,7 +1658,7 @@ def _incident_owner_route(route: str) -> str:
         return "DBA on-call + blocker owner"
     if route_text == "Task graphs":
         return "Task owner / scheduler"
-    if route_text == "Warehouse Health":
+    if route_text in {"Warehouse Health", "Cost & Contract"}:
         return "Warehouse owner"
     if route_text == "Query diagnosis":
         return "Query owner / DBA performance reviewer"
@@ -1673,7 +1674,7 @@ def _incident_blocker(row: dict | pd.Series) -> str:
         return f"transaction {blocker_tx}"
     if transaction_id:
         return f"transaction {transaction_id}"
-    if route == "Warehouse Health":
+    if route in {"Warehouse Health", "Cost & Contract"}:
         return "No blocker proven"
     if route == "Task graphs":
         entity = str(_first_value(row, "ENTITY", default="task graph")).strip()
@@ -1695,7 +1696,7 @@ def _incident_waiter(row: dict | pd.Series) -> str:
         return f"query {waiter_query}"
     if waiter_tx:
         return f"transaction {waiter_tx}"
-    if route == "Warehouse Health":
+    if route in {"Warehouse Health", "Cost & Contract"}:
         return "Queued workload"
     if route == "Task graphs":
         return "Overlapping graph run"
@@ -1707,7 +1708,7 @@ def _incident_decision_gate(row: dict | pd.Series) -> str:
     route = str(_first_value(row, "OWNER_ROUTE", default=""))
     if manual_sql:
         return "Run precheck SQL, confirm owner approval, then use manual cleanup SQL only if blocker/waiter evidence matches."
-    if route == "Warehouse Health":
+    if route in {"Warehouse Health", "Cost & Contract"}:
         return "Do not cancel; prove queued load and absence of blocker locks before compute change."
     if route == "Task graphs":
         return "Route schedule or overlap fix; do not cancel the task graph from this cockpit."

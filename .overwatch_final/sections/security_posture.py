@@ -1450,7 +1450,9 @@ def _render_security_exception_strip(rows: list[dict], *, loaded: bool = False) 
         signal = str(row.get("signal") or "Security signal")
         entity = str(row.get("entity") or "Scope")
         detail = str(row.get("detail") or "")
-        route = str(row.get("route") or "Security Posture")
+        route = str(row.get("route") or "Governance & Security / Access & Security")
+        if route == "Security Posture":
+            route = "Governance & Security / Access & Security"
         if severity.lower() in {"critical", "high"}:
             st.warning(f"{severity}: {signal} - {entity}. {detail} Route: {route}.")
         else:
@@ -2918,7 +2920,7 @@ def render() -> None:
         default=30,
     )
     active_view = render_mode_selector(
-        "Security posture view",
+        "Access & Security view",
         "security_posture_view",
         SECURITY_POSTURE_VIEWS,
         default=SECURITY_POSTURE_VIEWS[0],
@@ -3025,7 +3027,7 @@ def render() -> None:
         and _security_meta_matches(meta, security_expected_meta)
     )
     if consume_section_autoload_request("Security Posture") and not security_current:
-        st.caption("Security posture opened in fast mode. Load the security brief when current account-history proof is needed.")
+        st.caption("Access & Security opened in fast mode. Load the security brief when current account-history proof is needed.")
     render_data_freshness(
         meta if security_current else {},
         source=st.session_state.get("security_posture_source", "Security brief"),
@@ -3076,11 +3078,11 @@ def render() -> None:
             shared_databases=shared_databases,
         )
         if score < 85:
-            st.warning("Security posture needs DBA review before this can be called clean.")
+            st.warning("Access & Security needs DBA review before this can be called clean.")
         elif score < 95:
-            st.info("Security posture is usable, but there are findings worth reviewing.")
+            st.info("Access & Security is usable, but there are findings worth reviewing.")
         else:
-            st.success("Security posture is strong for the selected window.")
+            st.success("Access & Security is strong for the selected window.")
         defer_source_note(meta.get("source", "SNOWFLAKE.ACCOUNT_USAGE"))
         st.divider()
         with st.expander("Load Secondary Security Evidence", expanded=False):
@@ -3239,7 +3241,7 @@ def render() -> None:
                     )
                 with st.expander("Security Action Closure Analytics", expanded=False):
                     defer_source_note(
-                        "Uses Security Posture action-queue rows to show open, overdue, unapproved, "
+                        "Uses Access & Security action-queue rows to show open, overdue, unapproved, "
                         "or closed-without-verification security work."
                     )
                     closure_days = day_window_selectbox(
@@ -3292,7 +3294,7 @@ def render() -> None:
                         with st.expander("Security Closure Query", expanded=False):
                             st.code(st.session_state.get("security_action_closure_sql", ""), language="sql")
                     elif closure is not None:
-                        st.info("No Security Posture action-queue rows found for the selected scope.")
+                        st.info("No Access & Security action-queue rows found for the selected scope.")
         elif exceptions is not None:
             st.success("No security exceptions crossed the default thresholds.")
         brief_md = _build_security_brief_markdown(

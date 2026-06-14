@@ -631,7 +631,7 @@ def _build_procedure_reliability_action(row: pd.Series, company: str, source: st
         f"-- Orchestration status: {row.get('ORCHESTRATION_STATUS', '')}\n"
         f"-- Owner review: {row.get('OWNER_REVIEW', '')}\n"
         "-- Inspect child queries, recent procedure changes, warehouse size, and task graph schedule.\n"
-        "-- If code changed, redeploy through the approved release path; if runtime capacity changed, use Warehouse Health first."
+        "-- If code changed, redeploy through the approved release path; if runtime capacity changed, use Cost & Contract warehouse capacity evidence first."
     )
     finding = f"{signal}: {proc}. {detail}"
     verification_query = _procedure_verification_sql(row)[:8000]

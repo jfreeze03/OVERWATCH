@@ -24,11 +24,8 @@ DEFAULT_SECTIONS = [
     "DBA Control Room",
     "Alert Center",
     "Workload Operations",
-    "Warehouse Health",
-    "Architecture Readiness",
     "Cost & Contract",
-    "Security Posture",
-    "Change & Drift",
+    "Governance & Security",
 ]
 
 

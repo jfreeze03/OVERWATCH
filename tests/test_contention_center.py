@@ -215,7 +215,7 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertEqual(by_signal["Long DML lock window"]["OWNER_ROUTE"], "Query diagnosis")
         self.assertEqual(by_signal["Long DML lock window"]["TARGET_OBJECT"], "APP_DB.CORE.FACT_POLICY")
         self.assertIn("batch", by_signal["Long DML lock window"]["SAFE_FIX"].lower())
-        self.assertEqual(by_signal["Warehouse queueing"]["OWNER_ROUTE"], "Warehouse Health")
+        self.assertEqual(by_signal["Warehouse queueing"]["OWNER_ROUTE"], "Cost & Contract")
         self.assertIn("compute concurrency", by_signal["Warehouse queueing"]["COMPUTE_DECISION"])
         self.assertIn("AVG_QUEUED_LOAD", by_signal["Warehouse queueing"]["PROOF_REQUIRED"])
         self.assertEqual(by_signal["Warehouse queueing"]["CLEANUP_DECISION"], "No cancel - capacity review")
@@ -236,7 +236,7 @@ class ContentionCenterTests(unittest.TestCase):
         })
         queue_contract = build_contention_safe_action_contract({
             "SIGNAL": "Warehouse queueing",
-            "OWNER_ROUTE": "Warehouse Health",
+            "OWNER_ROUTE": "Cost & Contract",
             "WAREHOUSE_NAME": "WH_TRXS_QUERY",
             "MAX_QUEUED_LOAD": 2.5,
         })
@@ -400,7 +400,7 @@ class ContentionCenterTests(unittest.TestCase):
         self.assertEqual(by_signal["Live blocked query"]["OWNER_ROUTE"], "Active Locks")
         self.assertEqual(by_signal["Live blocked query"]["TARGET_OBJECT"], "APP_DB.CORE.FACT_POLICY")
         self.assertIn("transaction fix first", by_signal["Live blocked query"]["COMPUTE_DECISION"].lower())
-        self.assertEqual(by_signal["Live warehouse queueing"]["OWNER_ROUTE"], "Warehouse Health")
+        self.assertEqual(by_signal["Live warehouse queueing"]["OWNER_ROUTE"], "Cost & Contract")
         self.assertEqual(by_signal["Current task graph"]["OWNER_ROUTE"], "Task graphs")
         self.assertIn("OVERLAP_POLICY = NO_OVERLAP", by_signal["Current task graph"]["SAFE_FIX"])
         self.assertIn("WAREHOUSE_LOAD_HISTORY", by_signal["Live warehouse pressure"]["PROOF_REQUIRED"])

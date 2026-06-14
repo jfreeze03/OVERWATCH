@@ -24,6 +24,14 @@ OWNER_CONTEXT_COLUMNS = [
     "OWNER_EVIDENCE",
 ]
 
+CANONICAL_OWNER_ROUTES = {
+    "Account Health": "DBA Control Room",
+    "Warehouse Health": "Cost & Contract",
+    "Architecture Readiness": "Governance & Security",
+    "Security Posture": "Governance & Security",
+    "Change & Drift": "Governance & Security",
+}
+
 PLACEHOLDER_ROUTE_VALUES = {
     "",
     "DBA",
@@ -135,7 +143,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Platform DBA Backup",
         "APPROVAL_GROUP": "Platform DBA Lead",
         "ESCALATION_TARGET": "DBA Lead",
-        "DEFAULT_ROUTE": "Warehouse Health",
+        "DEFAULT_ROUTE": "Cost & Contract",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 60,
         "NOTES": "Default route for warehouse pressure, capacity, and setting-change controls.",
@@ -150,7 +158,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Platform DBA Backup",
         "APPROVAL_GROUP": "DBA Lead / OVERWATCH Platform Owner",
         "ESCALATION_TARGET": "DBA Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 215,
         "NOTES": "Dedicated OVERWATCH Streamlit app execution warehouse; monitor separately from business workload warehouses.",
@@ -165,7 +173,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Platform DBA Backup",
         "APPROVAL_GROUP": "DBA Lead / OVERWATCH Platform Owner",
         "ESCALATION_TARGET": "DBA Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 205,
         "NOTES": "Legacy OVERWATCH summary task and utility warehouse; monitor separately from business workload warehouses.",
@@ -180,7 +188,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "FinOps Backup",
         "APPROVAL_GROUP": "DBA Lead / FinOps Lead",
         "ESCALATION_TARGET": "DBA Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 158,
         "NOTES": "Default route for Adaptive Compute candidate review, pilot approval, cost baseline, and rollback proof.",
@@ -195,7 +203,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Data Platform Backup",
         "APPROVAL_GROUP": "DBA Lead / ALFA EDW Data Owner",
         "ESCALATION_TARGET": "DBA Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 220,
         "NOTES": "Owner route for PROD EDW isolation, clustering, cache, and DR architecture decisions.",
@@ -210,7 +218,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Development Platform Backup",
         "APPROVAL_GROUP": "DBA Lead / Development Platform Owner",
         "ESCALATION_TARGET": "DBA Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 2",
         "MATCH_PRIORITY": 120,
         "NOTES": "Fallback route for ALFA DEV/Sandbox EDW database architecture decisions.",
@@ -225,7 +233,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Platform DBA Backup",
         "APPROVAL_GROUP": "DBA Lead",
         "ESCALATION_TARGET": "DBA Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 65,
         "NOTES": "Fallback route for architecture objective, workload isolation, clustering, cache, and DR findings.",
@@ -240,7 +248,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Security Backup",
         "APPROVAL_GROUP": "DBA Lead / Security Approver",
         "ESCALATION_TARGET": "Security Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 160,
         "NOTES": "Default route for Cortex Agent inventory, Snowflake Intelligence usage, MCP tool exposure, and AI governance actions.",
@@ -255,7 +263,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Security Backup",
         "APPROVAL_GROUP": "DBA Lead / Security Approver",
         "ESCALATION_TARGET": "Security Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 170,
         "NOTES": "Default route for MCP server owner, tool-scope, role-scope, and blast-radius review.",
@@ -270,7 +278,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Data Governance Backup",
         "APPROVAL_GROUP": "DBA Lead / Data Governance Lead",
         "ESCALATION_TARGET": "Data Governance Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 168,
         "NOTES": "Default route for Cortex Sense shared context, business definitions, semantic source, connector, citation, and regression-validation governance.",
@@ -285,7 +293,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Analytics Owner Backup",
         "APPROVAL_GROUP": "Analytics Owner / DBA Lead",
         "ESCALATION_TARGET": "Analytics Owner",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 166,
         "NOTES": "Default route for CoWork Artifact publisher, certified source, sharing scope, freshness, sensitivity, and retirement governance.",
@@ -315,7 +323,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Security Backup",
         "APPROVAL_GROUP": "DBA Lead / Security Approver",
         "ESCALATION_TARGET": "Security Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 156,
         "NOTES": "Default route for Cortex AI Guardrails, PUBLIC AI access, per-function privileges, and sensitive-data report readiness.",
@@ -330,7 +338,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Data Engineering Backup",
         "APPROVAL_GROUP": "Data Engineering Lead / DBA Lead",
         "ESCALATION_TARGET": "Data Engineering Lead",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 150,
         "NOTES": "Default route for Openflow runtime, data-plane, auth, cost, and recovery evidence.",
@@ -345,7 +353,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Security Backup",
         "APPROVAL_GROUP": "Data Governance Lead / Security Approver",
         "ESCALATION_TARGET": "Data Governance Lead",
-        "DEFAULT_ROUTE": "Security Posture",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 145,
         "NOTES": "Default route for Horizon catalog, classification, policy, lineage, access-history, and governance-readiness gaps.",
@@ -360,7 +368,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Analytics Owner Backup",
         "APPROVAL_GROUP": "Analytics Owner / DBA Lead",
         "ESCALATION_TARGET": "Analytics Owner",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 140,
         "NOTES": "Default route for semantic model ownership, certification, verified query validation, and AI answer trust.",
@@ -375,7 +383,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Infrastructure Backup",
         "APPROVAL_GROUP": "DBA Lead / Infrastructure Owner",
         "ESCALATION_TARGET": "Infrastructure Owner",
-        "DEFAULT_ROUTE": "Architecture Readiness",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 135,
         "NOTES": "Default route for DR drill ledger, recovery proof, RPO/RTO validation, and failover/replication evidence.",
@@ -390,7 +398,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Change Advisory Backup",
         "APPROVAL_GROUP": "Change Advisory / DBA Lead",
         "ESCALATION_TARGET": "DBA Lead / Change Advisory",
-        "DEFAULT_ROUTE": "Change & Drift",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 130,
         "NOTES": "Default route for Cortex Code, AISQL, and AI-assisted admin change governance.",
@@ -405,7 +413,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Change Advisory Backup",
         "APPROVAL_GROUP": "Change Advisory / Data Owner",
         "ESCALATION_TARGET": "DBA Lead / Security Owner",
-        "DEFAULT_ROUTE": "Change & Drift",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 65,
         "NOTES": "Default route for DDL, access drift, policy/tag, approval-proof, and change-control actions.",
@@ -420,7 +428,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Security Backup",
         "APPROVAL_GROUP": "Security Approver",
         "ESCALATION_TARGET": "Security Lead",
-        "DEFAULT_ROUTE": "Security Posture",
+        "DEFAULT_ROUTE": "Governance & Security",
         "SERVICE_TIER": "Tier 0",
         "MATCH_PRIORITY": 60,
         "NOTES": "Default route for grant, revoke, role, and rights controls.",
@@ -435,7 +443,7 @@ DEFAULT_OWNER_DIRECTORY = [
         "ONCALL_SECONDARY": "Platform DBA Backup",
         "APPROVAL_GROUP": "DBA Lead",
         "ESCALATION_TARGET": "DBA Lead",
-        "DEFAULT_ROUTE": "Account Health",
+        "DEFAULT_ROUTE": "DBA Control Room",
         "SERVICE_TIER": "Tier 1",
         "MATCH_PRIORITY": 50,
         "NOTES": "Default route for daily DBA checklist, account health closure, and control-room readiness gaps.",
@@ -484,7 +492,7 @@ def owner_directory_view_fqn(
 
 def default_owner_directory() -> pd.DataFrame:
     """Return the built-in owner/on-call defaults as a dataframe."""
-    return pd.DataFrame(DEFAULT_OWNER_DIRECTORY)
+    return _normalize_owner_routes(pd.DataFrame(DEFAULT_OWNER_DIRECTORY))
 
 
 def _seed_values_sql() -> str:
@@ -502,7 +510,7 @@ def _seed_values_sql() -> str:
                 sql_literal(row.get("ONCALL_SECONDARY"), 200),
                 sql_literal(row.get("APPROVAL_GROUP"), 200),
                 sql_literal(row.get("ESCALATION_TARGET"), 200),
-                sql_literal(row.get("DEFAULT_ROUTE"), 200),
+                sql_literal(_canonical_owner_route(row.get("DEFAULT_ROUTE")), 200),
                 sql_literal(row.get("SERVICE_TIER"), 50),
                 str(int(row.get("MATCH_PRIORITY", 0))),
                 sql_literal(row.get("NOTES"), 2000),
@@ -606,7 +614,7 @@ def load_owner_directory(section: str = "Owner Directory") -> pd.DataFrame:
             section=section,
         )
         if df is not None and not df.empty:
-            return df
+            return _normalize_owner_routes(df)
     except Exception:
         pass
     return default_owner_directory()
@@ -614,6 +622,20 @@ def load_owner_directory(section: str = "Owner Directory") -> pd.DataFrame:
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _canonical_owner_route(route: Any) -> str:
+    route_text = _text(route)
+    return CANONICAL_OWNER_ROUTES.get(route_text, route_text)
+
+
+def _normalize_owner_routes(directory: pd.DataFrame | None) -> pd.DataFrame:
+    if directory is None:
+        return pd.DataFrame()
+    normalized = directory.copy()
+    if "DEFAULT_ROUTE" in normalized.columns:
+        normalized["DEFAULT_ROUTE"] = normalized["DEFAULT_ROUTE"].apply(_canonical_owner_route)
+    return normalized
 
 
 def _upper(value: Any) -> str:
@@ -693,7 +715,7 @@ def owner_directory_readiness_board(
             "ONCALL_PRIMARY": oncall,
             "APPROVAL_GROUP": approval,
             "ESCALATION_TARGET": escalation,
-            "DEFAULT_ROUTE": row.get("DEFAULT_ROUTE", ""),
+            "DEFAULT_ROUTE": _canonical_owner_route(row.get("DEFAULT_ROUTE", "")),
             "SERVICE_TIER": tier,
             "MATCH_PRIORITY": row.get("MATCH_PRIORITY", ""),
             "ROUTE_STATE": route_state,

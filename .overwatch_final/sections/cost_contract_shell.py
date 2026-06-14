@@ -7,7 +7,20 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_refresh_contract, render_setup_health_board, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
+from sections.shell_helpers import (
+    action_state_label,
+    evidence_caption,
+    evidence_label,
+    evidence_loaded,
+    full_workspace_requested,
+    render_refresh_contract,
+    render_setup_health_board,
+    render_shell_kpi_row,
+    render_shell_status_strip,
+    render_shell_workflows,
+    render_signal_lane_board,
+    scope_label,
+)
 
 
 _FULL_WORKSPACE_KEY = "_cost_contract_full_workspace_requested"
@@ -205,6 +218,113 @@ def _loaded_cost_board() -> dict:
     }
 
 
+def _cost_shell_lanes(board: dict | None = None) -> tuple[dict[str, str], ...]:
+    board = board or _loaded_cost_board()
+    if not board.get("loaded"):
+        return (
+            {
+                "label": "Current spend",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "Official metering facts load the first-paint spend board.",
+            },
+            {
+                "label": "Spend movement",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "Compare current window against the prior period before explaining burn.",
+            },
+            {
+                "label": "30d run rate",
+                "value": "Not loaded",
+                "state": "Forecast",
+                "detail": "Projected spend comes from the scheduled contract-burn mart.",
+            },
+            {
+                "label": "Cortex dollars",
+                "value": "Not loaded",
+                "state": "AI",
+                "detail": "Cortex usage is isolated from warehouse compute for cost truth.",
+            },
+            {
+                "label": "Top driver",
+                "value": "Not loaded",
+                "state": "Attribution",
+                "detail": "Warehouse, service, and user/role drivers explain movement.",
+            },
+            {
+                "label": "Action queue",
+                "value": "Not loaded",
+                "state": "Owners",
+                "detail": "Recommendations require owner, expected savings, and verification proof.",
+            },
+            {
+                "label": "Budget risk",
+                "value": "On demand",
+                "state": "Governance",
+                "detail": "Budgets and quota controls load with the FinOps workflow.",
+            },
+            {
+                "label": "Value log",
+                "value": "Automated",
+                "state": "Proof",
+                "detail": "Candidate savings are generated from metering and action evidence.",
+            },
+        )
+    delta = _float_value(board.get("delta_spend"))
+    driver = str(board.get("top_driver") or "No driver")
+    return (
+        {
+            "label": "Current spend",
+            "value": _money(board.get("spend")),
+            "state": _window_label(),
+            "detail": f"Compute credits at ${_credit_price():.2f}/credit.",
+        },
+        {
+            "label": "Spend movement",
+            "value": _money(delta, signed=True),
+            "state": "Delta",
+            "detail": "Movement versus prior comparison window.",
+        },
+        {
+            "label": "30d run rate",
+            "value": _money(board.get("forecast")) if _float_value(board.get("forecast")) else str(board.get("run_rate_state") or "Not loaded"),
+            "state": "Forecast",
+            "detail": f"7d average daily spend: {_money(board.get('avg_daily_7d'))}.",
+        },
+        {
+            "label": "Cortex dollars",
+            "value": str(board.get("cortex") or "Not loaded"),
+            "state": "AI",
+            "detail": "Cortex spend uses the AI-specific metering rate and facts.",
+        },
+        {
+            "label": "Top driver",
+            "value": driver[:32],
+            "state": _money(board.get("top_delta"), signed=True),
+            "detail": "Largest warehouse/service movement in the current scope.",
+        },
+        {
+            "label": "Action queue",
+            "value": f"{_int_value(board.get('open_actions')):,} open",
+            "state": f"{_int_value(board.get('high_actions')):,} high",
+            "detail": f"Open estimated savings: {_money(board.get('est_savings'))}.",
+        },
+        {
+            "label": "Budget risk",
+            "value": str(board.get("budget") or "On demand"),
+            "state": "Governance",
+            "detail": "Budget and resource monitor controls are routed through FinOps.",
+        },
+        {
+            "label": "Freshness",
+            "value": str(board.get("freshness") or "Not loaded"),
+            "state": "Source",
+            "detail": "Shell uses mart/cache facts; live scans stay behind explicit proof.",
+        },
+    )
+
+
 def _full_workspace_requested() -> bool:
     """Keep Cost navigation lightweight; open heavy proof only from a selected cost workflow."""
     _ = full_workspace_requested
@@ -281,6 +401,7 @@ def _render_metric_board() -> None:
         refresh_method="Scheduled cost and Cortex mart refresh",
         live_fallback="Explicit proof refresh",
     )
+    render_signal_lane_board("Cost Command Board", _cost_shell_lanes(board), max_lanes=8)
     if not board["loaded"]:
         render_shell_kpi_row((
             ("Current Spend", "Not loaded"),

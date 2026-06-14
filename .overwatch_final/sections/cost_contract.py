@@ -22,6 +22,7 @@ from sections.shell_helpers import (
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
+    render_signal_lane_board,
     with_loaded_at,
 )
 from utils.primitives import safe_float, safe_int
@@ -4310,6 +4311,120 @@ def _cost_splash_summary(splash: dict, credit_price: float, days: int) -> dict:
     }
 
 
+def _cost_command_lanes(splash: dict, *, credit_price: float, days: int) -> list[dict[str, str]]:
+    """Return Cost & Contract first-paint lanes from loaded state or honest placeholders."""
+    if not splash.get("loaded"):
+        return [
+            {
+                "label": "Credits / dollars",
+                "value": "Not loaded",
+                "state": "Metering",
+                "detail": "Refresh Overview loads official service spend or warehouse metering.",
+            },
+            {
+                "label": "Spend movement",
+                "value": "Not loaded",
+                "state": "Delta",
+                "detail": "Compares selected window to the prior window before tuning.",
+            },
+            {
+                "label": "30d run rate",
+                "value": "Not loaded",
+                "state": "Forecast",
+                "detail": "Projected burn appears after cost facts load.",
+            },
+            {
+                "label": "Cortex dollars",
+                "value": "Not loaded",
+                "state": "AI",
+                "detail": "AI usage uses the configured Cortex credit rate and fact rows.",
+            },
+            {
+                "label": "Top warehouse",
+                "value": "Not loaded",
+                "state": "Driver",
+                "detail": "Warehouse movement is ranked after metering proof loads.",
+            },
+            {
+                "label": "Cloud services",
+                "value": "Not loaded",
+                "state": "Ratio",
+                "detail": "Official service lens separates compute and cloud-services cost.",
+            },
+            {
+                "label": "Action queue",
+                "value": "Not loaded",
+                "state": "Savings",
+                "detail": "Owner-approved fixes and verified value load from the queue.",
+            },
+            {
+                "label": "Source basis",
+                "value": "Not loaded",
+                "state": "Trust",
+                "detail": "Exact totals and allocated estimates stay labeled separately.",
+            },
+        ]
+
+    summary = _cost_splash_summary(splash, credit_price, days)
+    queue = splash.get("queue", pd.DataFrame())
+    action_summary = _cost_snapshot_action_summary(queue if _looks_like_frame(queue) else pd.DataFrame())
+    cloud_ratio = (
+        safe_float(summary.get("cloud_services_credits")) / max(safe_float(summary.get("compute_credits")), 1.0) * 100
+        if safe_float(summary.get("compute_credits")) or safe_float(summary.get("cloud_services_credits"))
+        else 0.0
+    )
+    return [
+        {
+            "label": "Credits / dollars",
+            "value": f"{safe_float(summary.get('current_credits')):,.1f} cr / ${safe_float(summary.get('spend')):,.0f}",
+            "state": "Metering",
+            "detail": str(summary.get("cost_basis") or "Warehouse metering total"),
+        },
+        {
+            "label": "Spend movement",
+            "value": f"{safe_float(summary.get('delta_pct')):+.1f}% / ${safe_float(summary.get('spend_delta')):+,.0f}",
+            "state": "Delta",
+            "detail": f"Prior spend: ${safe_float(summary.get('prior_spend')):,.0f}.",
+        },
+        {
+            "label": "30d run rate",
+            "value": f"${safe_float(summary.get('projected_30d_spend')):,.0f}",
+            "state": str(summary.get("run_rate_state") or "Forecast"),
+            "detail": f"Average/day: ${safe_float(summary.get('avg_daily')):,.0f}.",
+        },
+        {
+            "label": "Cortex dollars",
+            "value": f"${safe_float(summary.get('cortex_spend')):,.0f}",
+            "state": "AI",
+            "detail": f"Top user: {summary.get('top_cortex_user')}; {safe_int(summary.get('cortex_requests')):,} request(s).",
+        },
+        {
+            "label": "Top warehouse",
+            "value": str(summary.get("top_warehouse") or "No warehouse"),
+            "state": "Driver",
+            "detail": f"{safe_float(summary.get('top_warehouse_delta_credits')):+,.1f} cr / ${safe_float(summary.get('top_warehouse_delta_spend')):+,.0f}.",
+        },
+        {
+            "label": "Cloud services",
+            "value": f"{cloud_ratio:,.1f}%",
+            "state": "Ratio",
+            "detail": f"{safe_float(summary.get('cloud_services_credits')):,.1f} cloud-services credits.",
+        },
+        {
+            "label": "Action queue",
+            "value": f"{safe_int(action_summary.get('open_actions')):,} open / ${safe_float(action_summary.get('estimated_savings')):,.0f}",
+            "state": "Savings",
+            "detail": f"{safe_int(action_summary.get('high_actions')):,} critical/high action(s).",
+        },
+        {
+            "label": "Source basis",
+            "value": str(summary.get("cost_basis") or "Metering"),
+            "state": "Trust",
+            "detail": "Official totals, metered totals, and allocated attribution remain separate.",
+        },
+    ]
+
+
 def _slide_money(value: float, *, signed: bool = False) -> str:
     amount = safe_float(value)
     if signed:
@@ -5136,6 +5251,11 @@ def _render_cost_load_contract(splash: dict, *, days: int) -> None:
 def _render_cost_splash(splash: dict, *, company: str, days: int, credit_price: float) -> None:
     st.markdown("**Cost Overview**")
     _render_cost_load_contract(splash, days=int(days))
+    render_signal_lane_board(
+        "Cost Command Board",
+        _cost_command_lanes(splash, credit_price=credit_price, days=int(days)),
+        max_lanes=8,
+    )
     if not splash.get("loaded"):
         st.caption("Refresh Overview loads official spend, warehouse ranking, Cortex spend, and slide-ready evidence.")
         render_shell_snapshot((

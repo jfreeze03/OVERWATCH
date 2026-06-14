@@ -34,7 +34,11 @@ its operating lane.
 
 ## Section Smoke By Role
 
-- Executive Landing: first paint shows KPI rows and `Executive Pressure Index`.
+- Executive Landing: first paint shows the platform score, executive summary
+  grid, KPI rows, and `Executive Pressure Index`.
+- Every primary navigation surface: first paint shows a scoped command board
+  before workflow buttons. Buttons should be drill-through, not the only way to
+  see useful data.
 - DBA Control Room: morning queue loads without saved views or hidden workflow
   toggles.
 - Alert Center: incident board loads; lifecycle audit requires a note and writes
@@ -44,7 +48,7 @@ its operating lane.
 - Workload Operations: subsection navigation opens detail immediately.
 - Contention Center: top fix path displays route, blocker, waiter, precheck,
   manual SQL state, and verification guidance.
-- DBA Tools: Schema Compare registers schema-object checks; Data Compare
+- Workload Operations: Schema Compare registers schema-object checks; Data Compare
   registers count/hash/bucket/forensic checks and exposes recon history SQL.
 
 ## Failure Rules

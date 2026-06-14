@@ -19,6 +19,7 @@ from sections.shell_helpers import (
     render_data_freshness,
     render_shell_snapshot,
     render_shell_status_strip,
+    render_signal_lane_board,
     with_loaded_at,
 )
 from utils.evidence_mode import (
@@ -5133,8 +5134,8 @@ def _render_command_queue_control(
 def _render_dba_command_intelligence_contract() -> None:
     """Show the command intelligence layer that DBA Control Room owns."""
     from utils.operational_intelligence import (
+        build_command_intelligence_capability_rows,
         build_detection_root_cause_sql,
-        build_god_tier_capability_rows,
         build_precompute_contract_sql,
         build_task_critical_path_brain_sql,
     )
@@ -5148,7 +5149,7 @@ def _render_dba_command_intelligence_contract() -> None:
         "Architecture Docs and Runbooks",
     }
     rows = pd.DataFrame(
-        [row for row in build_god_tier_capability_rows() if row["CAPABILITY"] in focus]
+        [row for row in build_command_intelligence_capability_rows() if row["CAPABILITY"] in focus]
     )
     render_priority_dataframe(
         rows,
@@ -5331,6 +5332,123 @@ def _render_dba_action_brief(
         headline=brief["headline"],
         detail=brief["detail"],
     )
+
+
+def _dba_command_lanes(
+    *,
+    loaded: bool,
+    failed_queries: int = 0,
+    queued_queries: int = 0,
+    failed_tasks: int = 0,
+    period_credits: float = 0.0,
+    credit_delta: float = 0.0,
+    regression_count: int = 0,
+    cortex_exception_count: int = 0,
+    source_issue_count: int = 0,
+    open_actions: int = 0,
+) -> list[dict[str, str]]:
+    """Return the one-look DBA control room lanes."""
+    if not loaded:
+        return [
+            {
+                "label": "Failed queries",
+                "value": "Not loaded",
+                "state": "Reliability",
+                "detail": "Load triage or use the fast snapshot for recent failures.",
+            },
+            {
+                "label": "Queue pressure",
+                "value": "Not loaded",
+                "state": "Capacity",
+                "detail": "Queue rows route to warehouse pressure and contention checks.",
+            },
+            {
+                "label": "Failed tasks",
+                "value": "Not loaded",
+                "state": "Pipeline",
+                "detail": "Task graph failures drive morning recovery order.",
+            },
+            {
+                "label": "Credits 24h",
+                "value": "Not loaded",
+                "state": "Cost",
+                "detail": "Cost movement stays tied to metering facts.",
+            },
+            {
+                "label": "Runtime regressions",
+                "value": "Not loaded",
+                "state": "SLA",
+                "detail": "Task/procedure drift compares latest runs to baseline.",
+            },
+            {
+                "label": "Cortex exceptions",
+                "value": "Not loaded",
+                "state": "AI",
+                "detail": "AI spend/control exceptions stay quota-aware.",
+            },
+            {
+                "label": "Source health",
+                "value": "On demand",
+                "state": "Trust",
+                "detail": "Refresh before export or owner action.",
+            },
+            {
+                "label": "Command queue",
+                "value": "On demand",
+                "state": "Owner work",
+                "detail": "Owner, approval, ticket, and verification proof.",
+            },
+        ]
+    return [
+        {
+            "label": "Failed queries",
+            "value": f"{safe_int(failed_queries):,}",
+            "state": "Reliability" if failed_queries else "Clear",
+            "detail": "Repeat failures route to Query diagnosis or Alert Center.",
+        },
+        {
+            "label": "Queue pressure",
+            "value": f"{safe_int(queued_queries):,}",
+            "state": "Capacity" if queued_queries else "Clear",
+            "detail": "Check contention and workload class before resizing.",
+        },
+        {
+            "label": "Failed tasks",
+            "value": f"{safe_int(failed_tasks):,}",
+            "state": "Pipeline" if failed_tasks else "Clear",
+            "detail": "Task graph root cause comes before retry or resume.",
+        },
+        {
+            "label": "Credits 24h",
+            "value": format_credits(period_credits),
+            "state": "Cost",
+            "detail": f"{safe_float(credit_delta):+.1f}% versus prior period.",
+        },
+        {
+            "label": "Runtime regressions",
+            "value": f"{safe_int(regression_count):,}",
+            "state": "SLA" if regression_count else "Clear",
+            "detail": "Task/procedure drift needs owner and release context.",
+        },
+        {
+            "label": "Cortex exceptions",
+            "value": f"{safe_int(cortex_exception_count):,}",
+            "state": "AI" if cortex_exception_count else "Clear",
+            "detail": "Review owner, model/source, quota, and spend path.",
+        },
+        {
+            "label": "Source health",
+            "value": f"{safe_int(source_issue_count):,}",
+            "state": "Trust" if source_issue_count else "Ready",
+            "detail": "Unavailable or stale evidence blocks confident action.",
+        },
+        {
+            "label": "Command queue",
+            "value": f"{safe_int(open_actions):,}",
+            "state": "Owner work" if open_actions else "Clear",
+            "detail": "No action closes without approval and verification proof.",
+        },
+    ]
 
 
 def _dba_handoff_rows(
@@ -6122,6 +6240,11 @@ def render() -> None:
             _render_consolidated_service_posture()
             return
     if not data:
+        render_signal_lane_board(
+            "DBA Command Board",
+            _dba_command_lanes(loaded=False),
+            max_lanes=8,
+        )
         st.divider()
         active_view = render_workflow_selector(
             "DBA Control Room view",
@@ -6211,11 +6334,33 @@ def render() -> None:
 
     failed_queries = safe_int(row.get("FAILED_QUERIES", 0))
     queued_queries = safe_int(row.get("QUEUED_QUERIES", 0))
+    failed_tasks = safe_int(row.get("FAILED_TASKS", row.get("FAILED_TASK_RUNS", 0)))
+    source_issue_count = 0
+    if not release_source_health.empty and "STATE" in release_source_health.columns:
+        source_issue_count = int(
+            release_source_health["STATE"].fillna("").astype(str).isin(["Unavailable", "Stale"]).sum()
+        )
     _render_dba_action_brief(
         release_gate_summary,
         exceptions,
         queued_queries=queued_queries,
         failed_queries=failed_queries,
+    )
+    render_signal_lane_board(
+        "DBA Command Board",
+        _dba_command_lanes(
+            loaded=True,
+            failed_queries=failed_queries,
+            queued_queries=queued_queries,
+            failed_tasks=failed_tasks,
+            period_credits=period_credits,
+            credit_delta=credit_delta,
+            regression_count=regression_count,
+            cortex_exception_count=0 if cortex_exceptions.empty else len(cortex_exceptions),
+            source_issue_count=source_issue_count,
+            open_actions=0,
+        ),
+        max_lanes=8,
     )
     _render_dba_command_intelligence_contract()
 

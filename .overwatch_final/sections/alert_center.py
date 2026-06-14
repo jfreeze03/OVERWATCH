@@ -12,6 +12,7 @@ from sections.shell_helpers import (
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
+    render_signal_lane_board,
     with_loaded_at,
 )
 
@@ -1100,6 +1101,149 @@ def _render_alert_center_metric_rows(
             ))
 
 
+def _alert_command_lanes(
+    *,
+    active_view: str,
+    required_sources: set[str],
+    alerts: object | None = None,
+    queue: object | None = None,
+    issues: object | None = None,
+    delivery_log: object | None = None,
+    loaded: bool = False,
+) -> list[dict[str, str]]:
+    """Return the alert command center lanes without loading new data."""
+    if not loaded:
+        source_text = ", ".join(sorted(required_sources)) if required_sources else "no source load required"
+        return [
+            {
+                "label": "Critical / high",
+                "value": "Not loaded",
+                "state": "Severity",
+                "detail": f"{active_view} will read: {source_text}.",
+            },
+            {
+                "label": "Overdue SLA",
+                "value": "Not loaded",
+                "state": "Aging",
+                "detail": "Open alerts need owner, acknowledgement, suppression, or resolution.",
+            },
+            {
+                "label": "Security risk",
+                "value": "Not loaded",
+                "state": "Security",
+                "detail": "Failed logins, risky grants, exfiltration, and policy drift route here.",
+            },
+            {
+                "label": "Cost / FinOps",
+                "value": "Not loaded",
+                "state": "Spend",
+                "detail": "Runaway spend, warehouse spikes, Cortex spend, and budget risk.",
+            },
+            {
+                "label": "Performance",
+                "value": "Not loaded",
+                "state": "Queries",
+                "detail": "Long, queued, failed, spilling, and blocked query signals.",
+            },
+            {
+                "label": "Pipeline reliability",
+                "value": "Not loaded",
+                "state": "Tasks",
+                "detail": "Failed, skipped, late, or suspended task/procedure paths.",
+            },
+            {
+                "label": "Data quality",
+                "value": "Configured",
+                "state": "Rules",
+                "detail": "Metadata-driven freshness, row count, null, duplicate, and schema checks.",
+            },
+            {
+                "label": "Notification route",
+                "value": "Not loaded",
+                "state": "Delivery",
+                "detail": "Email/webhook/native-alert delivery remains audit-backed.",
+            },
+        ]
+
+    pd = _pd()
+    alerts = alerts if isinstance(alerts, pd.DataFrame) else pd.DataFrame()
+    queue = queue if isinstance(queue, pd.DataFrame) else pd.DataFrame()
+    issues = issues if isinstance(issues, pd.DataFrame) else pd.DataFrame()
+    delivery_log = delivery_log if isinstance(delivery_log, pd.DataFrame) else pd.DataFrame()
+    open_alerts = _open_alert_mask(alerts) if not alerts.empty else pd.Series(dtype=bool)
+    severity = alerts.get("SEVERITY", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str) if not alerts.empty else pd.Series(dtype=str)
+    category = alerts.get("CATEGORY", pd.Series(index=alerts.index, dtype=str)).fillna("").astype(str).str.upper() if not alerts.empty else pd.Series(dtype=str)
+    critical_high = int((severity.isin(["Critical", "High"]) & open_alerts).sum()) if not alerts.empty else 0
+    overdue = 0
+    if not alerts.empty and "SLA_STATE" in alerts.columns:
+        overdue = int((alerts["SLA_STATE"].fillna("").astype(str).eq("Overdue") & open_alerts).sum())
+    open_queue = 0
+    if not queue.empty and "STATUS" in queue.columns:
+        open_queue = int((~queue["STATUS"].fillna("New").astype(str).str.title().isin(["Fixed", "Ignored"])).sum())
+    delivery_failures = 0
+    if not delivery_log.empty and "DELIVERY_STATUS" in delivery_log.columns:
+        delivery_failures = int(delivery_log["DELIVERY_STATUS"].fillna("").astype(str).str.upper().str.contains("FAILED|ERROR|BOUNCED", regex=True).sum())
+
+    def cat_count(*needles: str) -> int:
+        if category.empty:
+            return 0
+        mask = pd.Series(False, index=category.index)
+        for needle in needles:
+            mask = mask | category.str.contains(needle, regex=False)
+        return int((mask & open_alerts).sum())
+
+    return [
+        {
+            "label": "Critical / high",
+            "value": f"{critical_high:,}",
+            "state": "Severity" if critical_high else "Clear",
+            "detail": f"{int(open_alerts.sum()) if not open_alerts.empty else 0:,} open alert(s) in loaded scope.",
+        },
+        {
+            "label": "Overdue SLA",
+            "value": f"{overdue:,}",
+            "state": "Aging" if overdue else "Clear",
+            "detail": "Overdue high-severity rows should be acknowledged or escalated first.",
+        },
+        {
+            "label": "Security risk",
+            "value": f"{cat_count('SECURITY'):,}",
+            "state": "Security",
+            "detail": "Login, privilege, sharing, and access anomalies.",
+        },
+        {
+            "label": "Cost / FinOps",
+            "value": f"{cat_count('COST', 'FINOPS'):,}",
+            "state": "Spend",
+            "detail": "Warehouse, Cortex, service-cost, and budget risk signals.",
+        },
+        {
+            "label": "Performance",
+            "value": f"{cat_count('PERFORMANCE', 'QUERY', 'WAREHOUSE'):,}",
+            "state": "Queries",
+            "detail": "Long, queued, failed, spilling, and blocked queries.",
+        },
+        {
+            "label": "Pipeline reliability",
+            "value": f"{cat_count('TASK', 'PIPELINE', 'PROCEDURE'):,}",
+            "state": "Tasks",
+            "detail": "Task/procedure failures, late runs, and recovery alerts.",
+        },
+        {
+            "label": "Action queue",
+            "value": f"{open_queue:,}",
+            "state": "Owner work",
+            "detail": f"{len(issues):,} unified issue row(s) loaded.",
+        },
+        {
+            "label": "Delivery failures",
+            "value": f"{delivery_failures:,}",
+            "state": "Delivery" if delivery_failures else "Ready",
+            "detail": f"{len(delivery_log):,} notification audit row(s).",
+        },
+    ]
+
+
 def _alert_center_exception_rows(
     *,
     alerts: pd.DataFrame,
@@ -1811,13 +1955,13 @@ def _render_alert_morning_brief(alerts: pd.DataFrame, queue: pd.DataFrame) -> No
 def _render_alert_detection_catalog() -> None:
     from utils.alerts import build_alert_signal_query_catalog
     from utils.operational_intelligence import (
-        build_god_tier_capability_rows,
+        build_command_intelligence_capability_rows,
         build_operational_intelligence_sql_catalog,
     )
 
     pd = _pd()
     st.subheader("Detection Catalog")
-    capability_rows = pd.DataFrame(build_god_tier_capability_rows())
+    capability_rows = pd.DataFrame(build_command_intelligence_capability_rows())
     _render_priority_dataframe(
         capability_rows,
         title="Command intelligence capability plan",
@@ -1854,7 +1998,7 @@ def _render_alert_detection_catalog() -> None:
         st.code(str(selected.get("SQL", "")), language="sql")
     sql_catalog = build_operational_intelligence_sql_catalog()
     if sql_catalog:
-        with st.expander("God-tier SQL contracts", expanded=False):
+        with st.expander("Command intelligence SQL contracts", expanded=False):
             sql_options = [str(row["SQL_NAME"]) for row in sql_catalog]
             selected_sql_name = st.selectbox(
                 "Command intelligence SQL preview",
@@ -1983,8 +2127,8 @@ def _render_alert_setup_runbook() -> None:
     )
     from utils.operational_intelligence import (
         build_command_intelligence_runbook_markdown,
-        build_god_tier_capability_rows,
-        build_god_tier_setup_bundle_sql,
+        build_command_intelligence_capability_rows,
+        build_command_intelligence_setup_bundle_sql,
     )
 
     pd = _pd()
@@ -2019,7 +2163,7 @@ def _render_alert_setup_runbook() -> None:
     with st.expander("Event materialization SQL preview", expanded=False):
         st.code(event_sql, language="sql")
 
-    command_sql = build_god_tier_setup_bundle_sql()
+    command_sql = build_command_intelligence_setup_bundle_sql()
     st.download_button(
         "Download Command Intelligence SQL",
         data=command_sql,
@@ -2032,8 +2176,8 @@ def _render_alert_setup_runbook() -> None:
         st.code(command_sql, language="sql")
 
     _render_priority_dataframe(
-        pd.DataFrame(build_god_tier_capability_rows()),
-        title="God-tier rollout checklist",
+        pd.DataFrame(build_command_intelligence_capability_rows()),
+        title="Command intelligence rollout checklist",
         priority_columns=[
             "RANK", "CAPABILITY", "STATUS", "WHERE_IT_LANDS",
             "OWNER", "NEXT_ACTION", "PRODUCTION_GUARDRAIL",
@@ -2111,6 +2255,11 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
+        render_signal_lane_board(
+            "Alert Command Board",
+            _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
+            max_lanes=8,
+        )
         _render_alert_center_brief_launchpad()
         st.caption("Each workflow loads only the sources listed on its load button; no Alert Center data is fetched by the brief itself.")
         return
@@ -2180,6 +2329,11 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
+        render_signal_lane_board(
+            "Alert Command Board",
+            _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
+            max_lanes=8,
+        )
         st.info(f"Load {active_view} when ready.")
         defer_source_note(f"Sources on load: {_alert_center_source_summary(required_sources)}")
         return
@@ -2197,6 +2351,11 @@ def render() -> None:
             open_queue=0,
             loaded=False,
         )
+        render_signal_lane_board(
+            "Alert Command Board",
+            _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
+            max_lanes=8,
+        )
         st.warning("Company, environment, or window changed after this load. Reload before triaging alerts.")
         defer_source_note(f"Loaded scope: {loaded_scope or 'none'} | Current scope: {expected_scope}")
         return
@@ -2213,6 +2372,11 @@ def render() -> None:
             email_logged=0,
             open_queue=0,
             loaded=False,
+        )
+        render_signal_lane_board(
+            "Alert Command Board",
+            _alert_command_lanes(active_view=active_view, required_sources=required_sources, loaded=False),
+            max_lanes=8,
         )
         st.info(f"Load {active_view} to fetch missing source(s).")
         defer_source_note(f"Missing Alert Center source(s): {_alert_center_source_summary(set(missing_sources))}")
@@ -2310,6 +2474,19 @@ def render() -> None:
         email_ready=email_ready_count,
         email_logged=email_logged_count,
         open_queue=open_queue_count,
+    )
+    render_signal_lane_board(
+        "Alert Command Board",
+        _alert_command_lanes(
+            active_view=active_view,
+            required_sources=required_sources,
+            alerts=alerts,
+            queue=queue,
+            issues=issues,
+            delivery_log=delivery_log,
+            loaded=True,
+        ),
+        max_lanes=8,
     )
     _render_alert_center_exception_strip(exception_rows)
 

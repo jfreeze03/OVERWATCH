@@ -34,6 +34,12 @@ execution status, and warehouse pressure from one small query. If that compact
 mart is empty or stale for the selected scope, the app falls back to bounded
 fact-mart queries before showing a no-data board.
 
+Every primary navigation click now follows the same production UX pattern:
+status strip, scoped KPI row, then a compact command board with the most
+important signals already visible. Workflow buttons are secondary drill-through
+actions, not a required step before the DBA sees what is risky, expensive, late,
+or broken.
+
 The same decision is seeded in Snowflake as `OVERWATCH_REFRESH_POLICY`, which
 defines first-paint sources, target freshness, retention, live-fallback
 boundaries, and the owner for each surface.
@@ -58,10 +64,11 @@ DSA, DTI, and report-style roles before calling a build production-ready.
 1. Open Executive Landing for the board-ready health, cost, alert, and workload summary.
 2. Use the topbar filters for company, environment, date window, warehouse, and
    user scope.
-3. Open DBA Control Room for the morning priority queue and incident handoff.
-4. Route actions through the action queue with owner, severity, proof query,
+3. Scan the command board on any section before drilling into workflows.
+4. Open DBA Control Room for the morning priority queue and incident handoff.
+5. Route actions through the action queue with owner, severity, proof query,
    rollback evidence, and verification status.
-5. Use the specialist sections only when the summary shows a real exception or executive question.
+6. Use the specialist sections only when the summary shows a real exception or executive question.
 
 ## Cost Formula Contract
 
@@ -110,6 +117,11 @@ telemetry. Near-real-time operations should use `INFORMATION_SCHEMA` table
 functions, Snowflake alert objects, task graph notifications, and event tables
 where the account supports them.
 
+Optional deployable native-alert examples live in
+`snowflake/OVERWATCH_NATIVE_ALERT_TEMPLATES.sql`. Keep those notification-only
+until the monitoring warehouse, notification integration, owner routing, and
+Alert Center lifecycle logs are approved.
+
 The Command Center now promotes open alert rows into an incident action board.
 That board sorts by severity, SLA age, owner, ticket state, business impact,
 source freshness, proof query, and remediation mode so the DBA can work the
@@ -119,8 +131,8 @@ The command-intelligence hardening pass adds the ranked 12-item operating
 foundation from the COCO/Kiro review: root-cause correlation, task critical
 path, reconciliation, predictive FinOps, alert lifecycle, fact-grounded Cortex
 query diagnosis, OVERWATCH self-monitoring, optional precompute, compliance,
-multi-account readiness, persistent preferences, and runbooks. These are exposed
-as data-first panels and SQL contracts before deeper drilldown.
+multi-account readiness, no-saved-state navigation, and runbooks. These are
+exposed as data-first panels and SQL contracts before deeper drilldown.
 
 `ALERT_DATA_QUALITY_CHECKS` is the metadata-driven table for freshness, row
 count, null-rate, duplicate, volume, and schema checks. DBAs and data owners can
@@ -141,6 +153,10 @@ post-period proof exists.
 Optional precompute is separated into `snowflake/PRECOMPUTE.sql`. Dynamic Tables
 must be approved for refresh lag, warehouse, ownership, and cost before use; the
 same file also includes fallback views.
+
+Run `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup to verify required
+objects, executive board panels, source freshness, refresh-policy targets,
+alert lifecycle/audit tables, reconciliation proof, and caller context.
 
 ## Quick Start
 

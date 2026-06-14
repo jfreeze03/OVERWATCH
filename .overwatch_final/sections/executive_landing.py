@@ -20,7 +20,14 @@ from config import (
 )
 from sections.base import lazy_pandas, lazy_util as _lazy_util
 from sections.navigation import apply_navigation_state
-from sections.shell_helpers import render_refresh_contract, render_setup_health_board, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip
+from sections.shell_helpers import (
+    render_refresh_contract,
+    render_setup_health_board,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    render_signal_lane_board,
+)
 from utils.primitives import safe_float, safe_int
 from utils.section_guidance import defer_source_note
 
@@ -1365,8 +1372,196 @@ def _executive_pressure_rows(board: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values(["PRESSURE_SCORE", "LANE"], ascending=[False, True]).reset_index(drop=True)
 
 
+def _executive_pressure_placeholder_rows() -> pd.DataFrame:
+    """Return the executive pressure frame when the mart has not loaded yet."""
+    return pd.DataFrame(
+        [
+            {
+                "LANE": "Platform health",
+                "STATE": "Not loaded",
+                "VALUE": "Not loaded",
+                "PRESSURE_SCORE": 0.0,
+                "WHY_IT_MATTERS": "Platform score needs loaded cost, workload, alert, and setup facts before it is decision-grade.",
+                "OWNER_ROUTE": "Executive Landing",
+                "NEXT_ACTION": "Run or verify the OVERWATCH mart refresh.",
+            },
+            {
+                "LANE": "Cost movement",
+                "STATE": "Not loaded",
+                "VALUE": "Not loaded",
+                "PRESSURE_SCORE": 0.0,
+                "WHY_IT_MATTERS": "Spend movement is the first leadership question and must come from metering facts.",
+                "OWNER_ROUTE": "Cost & Contract",
+                "NEXT_ACTION": "Load FACT_COST_DAILY and MART_EXECUTIVE_OBSERVABILITY.",
+            },
+            {
+                "LANE": "Cortex spend",
+                "STATE": "Not loaded",
+                "VALUE": "Not loaded",
+                "PRESSURE_SCORE": 0.0,
+                "WHY_IT_MATTERS": "AI spend needs explicit owner and quota visibility.",
+                "OWNER_ROUTE": "Cost & Contract",
+                "NEXT_ACTION": "Load FACT_CORTEX_DAILY or mark Cortex unavailable for this account.",
+            },
+            {
+                "LANE": "Runtime and queue",
+                "STATE": "Not loaded",
+                "VALUE": "Not loaded",
+                "PRESSURE_SCORE": 0.0,
+                "WHY_IT_MATTERS": "Runtime, queue, and spill show whether the platform is hurting users.",
+                "OWNER_ROUTE": "Workload Operations",
+                "NEXT_ACTION": "Refresh QUERY_HISTORY rollups for the active scope.",
+            },
+            {
+                "LANE": "Reliability",
+                "STATE": "Not loaded",
+                "VALUE": "Not loaded",
+                "PRESSURE_SCORE": 0.0,
+                "WHY_IT_MATTERS": "Failed queries, failed tasks, and missed runs are the fastest path to incident risk.",
+                "OWNER_ROUTE": "DBA Control Room",
+                "NEXT_ACTION": "Refresh task, procedure, and alert facts.",
+            },
+            {
+                "LANE": "Alerts and actions",
+                "STATE": "Not loaded",
+                "VALUE": "Not loaded",
+                "PRESSURE_SCORE": 0.0,
+                "WHY_IT_MATTERS": "Open critical/high alerts and unowned action queue rows drive the morning command queue.",
+                "OWNER_ROUTE": "Alert Center",
+                "NEXT_ACTION": "Load ALERT_EVENTS and OVERWATCH_ACTION_QUEUE summaries.",
+            },
+        ]
+    )
+
+
+def _executive_summary_lanes(board: pd.DataFrame, *, days: int, credit_price: float) -> list[dict[str, str]]:
+    """Return the dense boss-page metric lanes without running a live query."""
+    _ = credit_price
+    if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
+        return [
+            {
+                "label": "Credits used / dollars",
+                "value": "Not loaded",
+                "state": "Mart",
+                "detail": "Load MART_EXECUTIVE_OBSERVABILITY for official/metered spend.",
+            },
+            {
+                "label": "Cortex dollars",
+                "value": "Not loaded",
+                "state": "AI",
+                "detail": "Uses Cortex fact rows where account telemetry is available.",
+            },
+            {
+                "label": "Monthly run rate",
+                "value": "Not loaded",
+                "state": "Forecast",
+                "detail": "Projected from the selected board window after facts load.",
+            },
+            {
+                "label": "Queries / avg runtime",
+                "value": "Not loaded",
+                "state": "Workload",
+                "detail": "Query count and runtime rollups come from hourly facts.",
+            },
+            {
+                "label": "P95 runtime / queue",
+                "value": "Not loaded",
+                "state": "SLA",
+                "detail": "Queue and p95 runtime tell leadership whether users feel pain.",
+            },
+            {
+                "label": "Remote spillage",
+                "value": "Not loaded",
+                "state": "SQL shape",
+                "detail": "Highlights memory pressure, join shape, and pruning problems.",
+            },
+            {
+                "label": "Alerts / failed tasks",
+                "value": "Not loaded",
+                "state": "Reliability",
+                "detail": "Critical/high alerts and failed task facts drive the DBA queue.",
+            },
+            {
+                "label": "Warehouse pressure",
+                "value": "Not loaded",
+                "state": "Capacity",
+                "detail": "Summarizes queue plus spill before anyone resizes compute.",
+            },
+        ]
+
+    current_spend = _obs_value(board, "Credits Used", column="VALUE_USD")
+    cortex_spend = _obs_value(board, "Cortex Spend", column="VALUE_USD")
+    queries = _obs_value(board, "Total Queries")
+    avg_runtime = _obs_value(board, "Avg Runtime")
+    p95_runtime = _obs_value(board, "P95 Runtime")
+    queue_seconds = _obs_value(board, "Queue Time")
+    spill_gb = _obs_value(board, "Remote Spill")
+    critical_high = _obs_value(board, "Critical High Alerts")
+    failed_tasks = _obs_value(board, "Failed Tasks")
+    failed_queries = _obs_value(board, "Failed Queries")
+    storage_tb = _obs_value(board, "Storage")
+    month_end_forecast = current_spend / max(int(days), 1) * 30.0
+    pressure = _obs_rows(board, "WAREHOUSE_PRESSURE")
+    warehouse_pressure = 0.0
+    if isinstance(pressure, pd.DataFrame) and not pressure.empty and "VALUE" in pressure.columns:
+        warehouse_pressure = safe_float(pd.to_numeric(pressure["VALUE"], errors="coerce").fillna(0).sum())
+
+    return [
+        {
+            "label": "Credits used / dollars",
+            "value": _obs_money_label(board, "Credits Used"),
+            "state": "Cost",
+            "detail": "Current selected-window spend from the executive mart.",
+        },
+        {
+            "label": "Cortex dollars",
+            "value": _obs_money_label(board, "Cortex Spend"),
+            "state": "AI",
+            "detail": "AI usage cost at the configured Cortex credit rate.",
+        },
+        {
+            "label": "Monthly run rate",
+            "value": _money(month_end_forecast) if _obs_metric_loaded(board, "Credits Used") else "Not loaded",
+            "state": "Forecast",
+            "detail": f"Projected from {int(days)} day(s); confirm against complete-day metering.",
+        },
+        {
+            "label": "Queries / avg runtime",
+            "value": f"{safe_int(queries):,} / {_format_seconds(avg_runtime)}",
+            "state": "Workload",
+            "detail": f"{safe_int(failed_queries):,} failed query row(s) in the loaded scope.",
+        },
+        {
+            "label": "P95 runtime / queue",
+            "value": f"{_format_seconds(p95_runtime)} / {_format_seconds(queue_seconds)}",
+            "state": "SLA",
+            "detail": "Use Workload Operations before capacity changes.",
+        },
+        {
+            "label": "Remote spillage",
+            "value": _format_gb(spill_gb),
+            "state": "SQL shape",
+            "detail": "High spill means tune query shape or warehouse pressure evidence.",
+        },
+        {
+            "label": "Alerts / failed tasks",
+            "value": f"{safe_int(critical_high):,} / {safe_int(failed_tasks):,}",
+            "state": "Reliability",
+            "detail": "Critical/high alert count and failed task count.",
+        },
+        {
+            "label": "Warehouse pressure",
+            "value": f"{warehouse_pressure:,.0f}",
+            "state": "Capacity",
+            "detail": f"Storage footprint: {safe_float(storage_tb):,.2f} TB.",
+        },
+    ]
+
+
 def _render_executive_pressure_board(board: pd.DataFrame) -> None:
     rows = _executive_pressure_rows(board)
+    if rows.empty and isinstance(board, pd.DataFrame) and {"LANE", "STATE", "VALUE", "PRESSURE_SCORE"}.issubset(set(board.columns)):
+        rows = board.copy()
     if rows.empty:
         return
     st.markdown("**Executive Pressure Index**")
@@ -1549,6 +1744,11 @@ def _render_executive_observability_board(
         )
         _render_mart_health_contract()
         st.markdown("**Executive Metric Board**")
+        render_signal_lane_board(
+            "Executive Summary Grid",
+            _executive_summary_lanes(board, days=int(days), credit_price=credit_price),
+            max_lanes=8,
+        )
         st.markdown("**Executive Command Wall**")
         render_shell_kpi_row((
             ("Spend", "Not loaded"),
@@ -1574,6 +1774,7 @@ def _render_executive_observability_board(
             ("Storage", "Not loaded"),
             ("Freshness", "Not loaded"),
         ))
+        _render_executive_pressure_board(_executive_pressure_placeholder_rows())
         _render_observability_source_status(board)
         return
 
@@ -1669,6 +1870,11 @@ def _render_executive_observability_board(
         ("Avg/day", _money(avg_daily_spend) if _obs_metric_loaded(board, "Credits Used") else "Not loaded"),
         ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "Not loaded"),
     ))
+    render_signal_lane_board(
+        "Executive Summary Grid",
+        _executive_summary_lanes(board, days=int(days), credit_price=credit_price),
+        max_lanes=8,
+    )
     _render_executive_pressure_board(board)
     _render_executive_priority_board(board, days=int(days))
 
@@ -2435,9 +2641,9 @@ def _render_platform_operating_score(summary: dict | None) -> None:
 
 
 def _render_command_intelligence_maturity() -> None:
-    from utils.operational_intelligence import build_god_tier_capability_rows
+    from utils.operational_intelligence import build_command_intelligence_capability_rows
 
-    rows = pd.DataFrame(build_god_tier_capability_rows())
+    rows = pd.DataFrame(build_command_intelligence_capability_rows())
     if rows.empty:
         return
     render_priority_dataframe(

@@ -231,8 +231,10 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "harden_recommendation_rows", "warehouse_sizing_decision",
     ),
     "operational_intelligence": (
+        "COMMAND_INTELLIGENCE_CAPABILITY_VERSION",
         "GOD_TIER_CAPABILITY_VERSION",
-        "build_god_tier_capability_rows", "build_operational_intelligence_sql_catalog",
+        "build_command_intelligence_capability_rows", "build_god_tier_capability_rows",
+        "build_operational_intelligence_sql_catalog",
         "build_detection_root_cause_sql", "build_task_critical_path_brain_sql",
         "build_data_reconciliation_config_ddl", "build_data_reconciliation_runner_sql",
         "build_predictive_finops_sql", "build_alert_lifecycle_sql",
@@ -242,7 +244,8 @@ _EXPORT_GROUPS: dict[str, tuple[str, ...]] = {
         "build_data_first_navigation_contract_sql", "build_snowflake_value_auto_ddl",
         "build_snowflake_value_automation_rows", "build_snowflake_value_candidate_sql",
         "build_snowflake_value_automation_health_sql",
-        "build_god_tier_setup_bundle_sql", "build_command_intelligence_runbook_markdown",
+        "build_command_intelligence_setup_bundle_sql", "build_god_tier_setup_bundle_sql",
+        "build_command_intelligence_runbook_markdown",
     ),
     "ask_overwatch": (
         "TOP_PRIORITY_BRIEF_DOMAINS", "answer_ask_overwatch",

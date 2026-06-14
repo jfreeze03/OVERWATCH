@@ -55,68 +55,70 @@ DBA_CONTROL_PLANE_RUBRIC = (
 
 DBA_CONTROL_PLANE_COMPONENTS = tuple(item["key"] for item in DBA_CONTROL_PLANE_RUBRIC)
 
-DBA_CONTROL_PLANE_SECTION_BASELINE = {
+DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS = {
     "Executive Landing": {
-        "domain_coverage": 96,
-        "data_correctness": 96,
-        "actionability": 98,
-        "admin_safety_audit": 96,
-        "performance_mart": 98,
-        "workflow_ux": 98,
-        "governance_ownership": 97,
-        "tests_operability": 98,
+        "domain_coverage": 94,
+        "data_correctness": 89,
+        "actionability": 91,
+        "admin_safety_audit": 86,
+        "performance_mart": 92,
+        "workflow_ux": 94,
+        "governance_ownership": 86,
+        "tests_operability": 90,
     },
     "DBA Control Room": {
-        "domain_coverage": 96,
-        "data_correctness": 95,
-        "actionability": 98,
-        "admin_safety_audit": 96,
-        "performance_mart": 96,
-        "workflow_ux": 97,
-        "governance_ownership": 97,
-        "tests_operability": 97,
+        "domain_coverage": 93,
+        "data_correctness": 88,
+        "actionability": 93,
+        "admin_safety_audit": 87,
+        "performance_mart": 89,
+        "workflow_ux": 91,
+        "governance_ownership": 87,
+        "tests_operability": 91,
     },
     "Alert Center": {
-        "domain_coverage": 95,
-        "data_correctness": 97,
-        "actionability": 98,
-        "admin_safety_audit": 96,
-        "performance_mart": 98,
-        "workflow_ux": 98,
-        "governance_ownership": 98,
-        "tests_operability": 100,
+        "domain_coverage": 92,
+        "data_correctness": 88,
+        "actionability": 92,
+        "admin_safety_audit": 86,
+        "performance_mart": 91,
+        "workflow_ux": 91,
+        "governance_ownership": 88,
+        "tests_operability": 92,
     },
     "Workload Operations": {
-        "domain_coverage": 96,
-        "data_correctness": 95,
-        "actionability": 99,
-        "admin_safety_audit": 96,
-        "performance_mart": 96,
-        "workflow_ux": 96,
-        "governance_ownership": 97,
-        "tests_operability": 98,
+        "domain_coverage": 93,
+        "data_correctness": 88,
+        "actionability": 93,
+        "admin_safety_audit": 87,
+        "performance_mart": 89,
+        "workflow_ux": 91,
+        "governance_ownership": 87,
+        "tests_operability": 91,
     },
     "Cost & Contract": {
-        "domain_coverage": 99,
-        "data_correctness": 99,
-        "actionability": 100,
-        "admin_safety_audit": 98,
-        "performance_mart": 99,
-        "workflow_ux": 100,
-        "governance_ownership": 99,
-        "tests_operability": 100,
+        "domain_coverage": 94,
+        "data_correctness": 91,
+        "actionability": 93,
+        "admin_safety_audit": 88,
+        "performance_mart": 91,
+        "workflow_ux": 93,
+        "governance_ownership": 88,
+        "tests_operability": 92,
     },
     "Governance & Security": {
-        "domain_coverage": 95,
-        "data_correctness": 96,
-        "actionability": 98,
-        "admin_safety_audit": 96,
-        "performance_mart": 96,
-        "workflow_ux": 97,
-        "governance_ownership": 96,
-        "tests_operability": 99,
+        "domain_coverage": 91,
+        "data_correctness": 88,
+        "actionability": 90,
+        "admin_safety_audit": 87,
+        "performance_mart": 88,
+        "workflow_ux": 89,
+        "governance_ownership": 87,
+        "tests_operability": 91,
     },
 }
+
+DBA_CONTROL_PLANE_SECTION_BASELINE = DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS
 
 DBA_CONTROL_PLANE_SECTION_NEXT_MOVES = {
     "Executive Landing": "Connect executive decisions to live owner approval/status proof so routed work can show verified closure back on the landing page.",
@@ -343,7 +345,7 @@ def dba_control_plane_section_scorecards(
     deployment_gates: dict | None = None,
 ) -> list[dict]:
     """Return strict readiness rows for the DBA workflow sections."""
-    section_scores = section_scores or DBA_CONTROL_PLANE_SECTION_BASELINE
+    section_scores = section_scores or DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS
     deployment_gates = deployment_gates or {}
     rows = []
     for section, scores in section_scores.items():
@@ -381,7 +383,7 @@ def dba_control_plane_section_scorecards(
 
 def dba_control_plane_component_rows(section_scores: dict | None = None) -> list[dict]:
     """Return component-level readiness rows for section diagnostics."""
-    section_scores = section_scores or DBA_CONTROL_PLANE_SECTION_BASELINE
+    section_scores = section_scores or DBA_CONTROL_PLANE_SECTION_READINESS_INPUTS
     rows = []
     for section, scores in section_scores.items():
         result = dba_control_plane_readiness_score(scores)

@@ -35,6 +35,12 @@ Run `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup to verify the
 first-paint mart, required panels, alert lifecycle tables, compare/recon tables,
 refresh policy, and caller context. Role-level proof belongs in
 `docs/LIVE_ROLE_PROOF_CHECKLIST.md`.
+
+Optional Snowflake ALERT templates live in
+`snowflake/OVERWATCH_NATIVE_ALERT_TEMPLATES.sql`. Use them to notify on stale
+marts, critical/high alert backlog, failed task materialization, or missing data
+quality proof after the warehouse and notification integration are approved.
+They should guard the command center; they do not replace live incident triage.
 The UI should still render the metric frame immediately. If a Snowflake session
 or mart lookup would block the first paint, show the precomputed-board frame and
 let `Refresh Board` read the compact mart. Do not fall back to live account

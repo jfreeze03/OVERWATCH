@@ -1,23 +1,24 @@
 """Snowflake-native command intelligence contracts for OVERWATCH.
 
-These helpers keep the "god tier" roadmap executable without forcing every
-section to import Snowflake or pandas during Streamlit startup. The UI uses the
-rows and SQL previews immediately; the setup script can materialize the same
-contracts as governed Snowflake objects.
+These helpers keep the production hardening backlog executable without forcing
+every section to import Snowflake or pandas during Streamlit startup. The UI
+uses the rows and SQL previews immediately; the setup script can materialize
+the same contracts as governed Snowflake objects.
 """
 from __future__ import annotations
 
 from textwrap import dedent
 
 
-GOD_TIER_CAPABILITY_VERSION = "2026.06.13-command-intelligence-v1"
+COMMAND_INTELLIGENCE_CAPABILITY_VERSION = "2026.06.13-command-intelligence-v1"
+GOD_TIER_CAPABILITY_VERSION = COMMAND_INTELLIGENCE_CAPABILITY_VERSION
 
 
 def _sql(text: str) -> str:
     return dedent(text).strip() + "\n"
 
 
-def build_god_tier_capability_rows() -> list[dict[str, object]]:
+def build_command_intelligence_capability_rows() -> list[dict[str, object]]:
     """Return the ranked capability plan agreed from COCO/Kiro review."""
     return [
         {
@@ -46,7 +47,7 @@ def build_god_tier_capability_rows() -> list[dict[str, object]]:
             "RANK": 3,
             "CAPABILITY": "Data Quality and Reconciliation Center",
             "STATUS": "New",
-            "WHERE_IT_LANDS": "Workload Operations, DBA Tools",
+            "WHERE_IT_LANDS": "Workload Operations",
             "WHY_IT_MATTERS": "Compares row counts, hash buckets, schema drift, freshness, and sample diffs by database/schema.",
             "NEXT_ACTION": "Create metadata-driven reconciliation rules and store per-table results.",
             "SNOWFLAKE_SOURCES": "INFORMATION_SCHEMA, QUERY_HISTORY, configured table checks",
@@ -153,6 +154,11 @@ def build_god_tier_capability_rows() -> list[dict[str, object]]:
             "PRODUCTION_GUARDRAIL": "Docs must match executable objects and tests before commit.",
         },
     ]
+
+
+def build_god_tier_capability_rows() -> list[dict[str, object]]:
+    """Backward-compatible alias for older tests/imports."""
+    return build_command_intelligence_capability_rows()
 
 
 def build_detection_root_cause_sql(hours: int = 24) -> str:
@@ -394,7 +400,7 @@ def build_data_reconciliation_runner_sql() -> str:
     return _sql("""
         -- Generates bounded count/hash SQL by configured schema pair.
         -- ACCOUNT_USAGE.TABLES lets one query enumerate across databases. It is
-        -- delayed telemetry; use SHOW/INFORMATION_SCHEMA in DBA Tools for live
+        -- delayed telemetry; use SHOW/INFORMATION_SCHEMA in Workload Operations for live
         -- object work.
         WITH source_tables AS (
             SELECT
@@ -1153,7 +1159,7 @@ def build_operational_intelligence_sql_catalog() -> list[dict[str, str]]:
     ]
 
 
-def build_god_tier_setup_bundle_sql() -> str:
+def build_command_intelligence_setup_bundle_sql() -> str:
     """Return a single setup bundle for the new command-intelligence objects."""
     return "\n\n".join(
         [
@@ -1167,12 +1173,17 @@ def build_god_tier_setup_bundle_sql() -> str:
     ).strip() + "\n"
 
 
+def build_god_tier_setup_bundle_sql() -> str:
+    """Backward-compatible alias for older tests/imports."""
+    return build_command_intelligence_setup_bundle_sql()
+
+
 def build_command_intelligence_runbook_markdown() -> str:
     """Return a compact DBA runbook for the twelve capabilities."""
     lines = [
         "# OVERWATCH Command Intelligence Runbook",
         "",
-        f"Version: {GOD_TIER_CAPABILITY_VERSION}",
+        f"Version: {COMMAND_INTELLIGENCE_CAPABILITY_VERSION}",
         "",
         "## Operating Rule",
         "",
@@ -1180,7 +1191,7 @@ def build_command_intelligence_runbook_markdown() -> str:
         "",
         "## Priority Capabilities",
     ]
-    for row in build_god_tier_capability_rows():
+    for row in build_command_intelligence_capability_rows():
         lines.extend(
             [
                 "",

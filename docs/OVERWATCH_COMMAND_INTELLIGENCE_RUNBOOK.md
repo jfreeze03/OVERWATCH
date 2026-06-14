@@ -22,13 +22,13 @@ route work, export proof, or preview guarded SQL.
 |---:|---|---|---|
 | 1 | Detection and Root-Cause Engine | Alert Center, DBA Control Room | Correlate query, task, login, cost, and object-change symptoms into one incident route. |
 | 2 | Task/Pipeline Critical Path Brain | Workload Operations | Rank root task, child failure, retry pattern, late risk, and downstream blast radius. |
-| 3 | Data Quality and Reconciliation Center | Workload Operations, DBA Tools | Compare schema/database pairs with counts, hash buckets, freshness, schema drift, and sampled diffs. |
+| 3 | Data Quality and Reconciliation Center | Workload Operations | Compare schema/database pairs with counts, hash buckets, freshness, schema drift, and sampled diffs. |
 | 4 | Predictive FinOps and Automated Value Log | Cost & Contract, Snowflake Value | Forecast contract burn and auto-capture verified DBA value from evidence. |
 | 5 | Alert Lifecycle 2.0 | Alert Center | Acknowledge, assign, suppress, resolve, comment, route, and audit alert work. |
 | 6 | Fact-Grounded AI Query Diagnosis | Workload Operations | Use Cortex only with exact query/profile/object evidence and required verification SQL. |
 | 7 | OVERWATCH Self-Monitoring | Cost & Contract, Setup | Track app query cost, failures, slow sections, and tagged runtime behavior. |
 | 8 | Precomputed Mart / Dynamic Table Layer With Fallback | Setup | Keep first paint fast; make live ACCOUNT_USAGE scans explicit. |
-| 9 | Compliance Readiness Scorecard | Security Posture, Executive Landing | Show admin grants, access spikes, dormant activity, and risky posture with owner actions. |
+| 9 | Compliance Readiness Scorecard | Governance & Security, Executive Landing | Show admin grants, access spikes, dormant activity, and risky posture with owner actions. |
 | 10 | Multi-Account / Org View | Executive Landing, Cost & Contract | Optional org-level rollup when the Snowflake role has organization usage privileges. |
 | 11 | Data-First Navigation Contract | App shell, every primary section | Show scoped KPIs and summaries on first section click without saved-state persistence or global mode toggles. |
 | 12 | Architecture Docs and Runbooks | Repo docs, Setup & Runbook | Keep setup, privileges, failure modes, rollback, and operating rules with the code. |
@@ -113,6 +113,9 @@ Use fallback views/tasks when:
 - Create/alter privileges in the OVERWATCH database/schema for setup objects.
 - Task/warehouse ownership or delegated privileges for scheduled refresh.
 - Notification integration privileges only if external notifications are used.
+- Optional Snowflake ALERT objects can be deployed from
+  `snowflake/OVERWATCH_NATIVE_ALERT_TEMPLATES.sql` after the monitoring
+  warehouse, integration, owner route, and audit tables are approved.
 
 ## Daily DBA Flow
 

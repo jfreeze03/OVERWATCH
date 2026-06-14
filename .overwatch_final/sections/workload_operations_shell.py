@@ -7,7 +7,20 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, full_workspace_requested, render_refresh_contract, render_setup_health_board, render_shell_kpi_row, render_shell_snapshot, render_shell_status_strip, render_shell_workflows, scope_label
+from sections.shell_helpers import (
+    action_state_label,
+    evidence_caption,
+    evidence_label,
+    full_workspace_requested,
+    render_refresh_contract,
+    render_setup_health_board,
+    render_shell_kpi_row,
+    render_shell_snapshot,
+    render_shell_status_strip,
+    render_shell_workflows,
+    render_signal_lane_board,
+    scope_label,
+)
 
 
 _FULL_WORKSPACE_KEY = "_workload_operations_full_workspace_requested"
@@ -134,6 +147,30 @@ def _int_value(value: object, default: int = 0) -> int:
         return default
 
 
+def _float_value(value: object, default: float = 0.0) -> float:
+    try:
+        number = float(value if value is not None else default)
+        return default if number != number else number
+    except (TypeError, ValueError):
+        return default
+
+
+def _seconds_label(value: object) -> str:
+    seconds = _float_value(value)
+    if not seconds:
+        return "Not loaded"
+    if seconds < 90:
+        return f"{seconds:,.1f}s"
+    return f"{seconds / 60.0:,.1f}m"
+
+
+def _gb_label(value: object) -> str:
+    gb = _float_value(value)
+    if not gb:
+        return "0 GB"
+    return f"{gb:,.1f} GB"
+
+
 def _open_workspace(workflow: str | None = None) -> None:
     st.session_state[_BRIEF_MODE_KEY] = False
     st.session_state[_FULL_WORKSPACE_KEY] = True
@@ -203,12 +240,130 @@ def _render_metric_board() -> None:
         refresh_method="Scheduled workload mart and task-history refresh",
         live_fallback="Explicit live triage",
     )
+    render_signal_lane_board(
+        "Workload Command Board",
+        _workload_shell_lanes(snapshot_row, task_row),
+        max_lanes=8,
+    )
     render_shell_snapshot((
         ("Queries", f"{_int_value(_row_get(snapshot_row, 'TOTAL_QUERIES')):,}" if snapshot_row is not None else "Not loaded"),
         ("Failed Queries", f"{_int_value(_row_get(snapshot_row, 'FAILED_QUERIES')):,}" if snapshot_row is not None else "Not loaded"),
         ("Queued Queries", f"{_int_value(_row_get(snapshot_row, 'QUEUED_QUERIES')):,}" if snapshot_row is not None else "Not loaded"),
         ("Task Failures", f"{_int_value(_row_get(task_row, 'TASK_STATUS_FAILURE_ROWS')):,}" if task_row is not None else "Not loaded"),
     ))
+
+
+def _workload_shell_lanes(snapshot_row: object | None, task_row: object | None) -> tuple[dict[str, str], ...]:
+    if snapshot_row is None and task_row is None:
+        return (
+            {
+                "label": "Query volume",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "MART_DBA_CONTROL_ROOM supplies bounded workload facts.",
+            },
+            {
+                "label": "Runtime p95",
+                "value": "Not loaded",
+                "state": "Performance",
+                "detail": "P95 runtime points to degraded query shapes and warehouse pressure.",
+            },
+            {
+                "label": "Queue pressure",
+                "value": "Not loaded",
+                "state": "Capacity",
+                "detail": "Queue seconds separate compute saturation from bad SQL.",
+            },
+            {
+                "label": "Remote spillage",
+                "value": "Not loaded",
+                "state": "Memory",
+                "detail": "Remote spill usually means inefficient joins, scans, or undersized compute.",
+            },
+            {
+                "label": "Task failures",
+                "value": "Not loaded",
+                "state": "Pipeline",
+                "detail": "Task graph failures and late runs become DBA work immediately.",
+            },
+            {
+                "label": "Late task risk",
+                "value": "Not loaded",
+                "state": "SLA",
+                "detail": "Late tasks are more important than generic task counts.",
+            },
+            {
+                "label": "Contention",
+                "value": "On demand",
+                "state": "Root cause",
+                "detail": "Blocked/waiting, table hotspots, task overlap, and fix SQL load together.",
+            },
+            {
+                "label": "Schema/data compare",
+                "value": "On demand",
+                "state": "Proof",
+                "detail": "Schema compare, DDL generation, row counts, and hashing stay in one workflow.",
+            },
+        )
+
+    total_queries = _int_value(_row_get(snapshot_row, "TOTAL_QUERIES"))
+    failed_queries = _int_value(_row_get(snapshot_row, "FAILED_QUERIES"))
+    queued_queries = _int_value(_row_get(snapshot_row, "QUEUED_QUERIES"))
+    spill_queries = _int_value(_row_get(snapshot_row, "REMOTE_SPILL_QUERIES"))
+    p95 = _row_get(snapshot_row, "P95_ELAPSED_SEC")
+    failed_tasks = _int_value(_row_get(task_row, "TASK_STATUS_FAILURE_ROWS"))
+    late_tasks = _int_value(_row_get(task_row, "TASK_STATUS_LATE_ROWS"))
+    watch_tasks = _int_value(_row_get(task_row, "TASK_STATUS_WATCH_ROWS"))
+    return (
+        {
+            "label": "Query volume",
+            "value": f"{total_queries:,}",
+            "state": f"{failed_queries:,} failed",
+            "detail": "Failed query count should route into Query Diagnosis before escalation.",
+        },
+        {
+            "label": "Runtime p95",
+            "value": _seconds_label(p95),
+            "state": "Performance",
+            "detail": "Use query history and plan evidence before changing warehouse size.",
+        },
+        {
+            "label": "Queue pressure",
+            "value": f"{queued_queries:,}",
+            "state": "Capacity",
+            "detail": "Queue pressure means inspect saturation, concurrency, and workload windows.",
+        },
+        {
+            "label": "Remote spillage",
+            "value": f"{spill_queries:,} query(s)",
+            "state": "Memory",
+            "detail": "Spill is a SQL-shape and warehouse-sizing signal, not just a cost metric.",
+        },
+        {
+            "label": "Task failures",
+            "value": f"{failed_tasks:,}",
+            "state": "Pipeline",
+            "detail": "Failed root/child task status routes into the morning command queue.",
+        },
+        {
+            "label": "Late task risk",
+            "value": f"{late_tasks:,}",
+            "state": "SLA",
+            "detail": f"{watch_tasks:,} additional task run(s) are on the watch list.",
+        },
+        {
+            "label": "Contention",
+            "value": f"{_frame_len(st.session_state.get('contention_decision_rows')):,}" if _frame_len(st.session_state.get("contention_decision_rows")) else "On demand",
+            "state": "Root cause",
+            "detail": "Lock waits, task overlap, long DML, and queue evidence are handled together.",
+        },
+        {
+            "label": "Schema/data compare",
+            "value": "Ready",
+            "state": "Proof",
+            "detail": "Compare all schema objects, generate missing DDL, then sample/hash data likeness.",
+        },
+    )
     render_shell_snapshot((
         ("Late Tasks", f"{_int_value(_row_get(task_row, 'TASK_STATUS_LATE_ROWS')):,}" if task_row is not None else "Not loaded"),
         ("Contention", "Loaded" if _frame_len(st.session_state.get("contention_decision_rows")) else "On demand"),

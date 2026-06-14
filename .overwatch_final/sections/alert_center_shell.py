@@ -7,7 +7,20 @@ from datetime import date, datetime
 import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, ENVIRONMENT_CONFIG
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_label, evidence_loaded, full_workspace_requested, render_refresh_contract, render_setup_health_board, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows, scope_label
+from sections.shell_helpers import (
+    action_state_label,
+    evidence_caption,
+    evidence_label,
+    evidence_loaded,
+    full_workspace_requested,
+    render_refresh_contract,
+    render_setup_health_board,
+    render_shell_kpi_row,
+    render_shell_status_strip,
+    render_shell_workflows,
+    render_signal_lane_board,
+    scope_label,
+)
 
 
 _FULL_WORKSPACE_KEY = "_alert_center_full_workspace_requested"
@@ -156,6 +169,130 @@ def _open_queue_count(data: dict) -> int:
         return len(queue) if hasattr(queue, "__len__") else 0
 
 
+def _category_count(data: dict, category_name: str) -> int:
+    alerts = data.get("alerts")
+    if not _is_loaded_frame(alerts) or "CATEGORY" not in getattr(alerts, "columns", []):
+        return 0
+    try:
+        category = alerts["CATEGORY"].fillna("").astype(str).str.upper()
+        return int(category.str.contains(category_name.upper(), regex=False).sum())
+    except Exception:
+        return 0
+
+
+def _alert_shell_lanes(data: dict) -> tuple[dict[str, str], ...]:
+    if not data:
+        return (
+            {
+                "label": "Critical / high",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "Severity-ranked incidents should be visible on first click.",
+            },
+            {
+                "label": "Overdue SLA",
+                "value": "Not loaded",
+                "state": "SLA",
+                "detail": "Aged unresolved alerts need escalation before they become outages.",
+            },
+            {
+                "label": "Security risk",
+                "value": "Not loaded",
+                "state": "Security",
+                "detail": "Login, grant, access, sharing, and policy risks get their own lane.",
+            },
+            {
+                "label": "Cost / FinOps",
+                "value": "Not loaded",
+                "state": "Spend",
+                "detail": "Cost anomalies and runaway spend route to owners with savings proof.",
+            },
+            {
+                "label": "Performance",
+                "value": "Not loaded",
+                "state": "Workload",
+                "detail": "Queue, spill, runtime, and contention alerts are DBA-actionable.",
+            },
+            {
+                "label": "Pipeline reliability",
+                "value": "Not loaded",
+                "state": "Tasks",
+                "detail": "Task graph, load, dynamic table, and SLA alerts belong here.",
+            },
+            {
+                "label": "Data quality",
+                "value": "Not loaded",
+                "state": "Trust",
+                "detail": "Freshness, row count, null, duplicate, and schema checks are metadata-driven.",
+            },
+            {
+                "label": "Remediation route",
+                "value": "Approval gated",
+                "state": "Safe",
+                "detail": "Every fix needs SQL preview, approval mode, and audit logging.",
+            },
+        )
+
+    critical_high = _severity_count(data, ("Critical", "High"))
+    warnings = _severity_count(data, ("Warning", "Medium"))
+    overdue = _category_count(data, "SLA") + _category_count(data, "OVERDUE")
+    security = _category_count(data, "SECURITY")
+    cost = _category_count(data, "COST") + _category_count(data, "FINOPS")
+    performance = _category_count(data, "PERFORMANCE") + _category_count(data, "QUERY")
+    pipeline = _category_count(data, "PIPELINE") + _category_count(data, "TASK")
+    quality = _category_count(data, "QUALITY") + _category_count(data, "FRESHNESS")
+    return (
+        {
+            "label": "Critical / high",
+            "value": f"{critical_high:,}",
+            "state": "Now",
+            "detail": f"{warnings:,} warning/medium alert(s) stay below the command lane.",
+        },
+        {
+            "label": "Overdue SLA",
+            "value": f"{overdue:,}" if overdue else "0",
+            "state": "SLA",
+            "detail": "SLA misses should route before lower-severity optimization work.",
+        },
+        {
+            "label": "Security risk",
+            "value": f"{security:,}",
+            "state": "Security",
+            "detail": "Failed logins, grants, sharing, sensitive access, and policy changes.",
+        },
+        {
+            "label": "Cost / FinOps",
+            "value": f"{cost:,}",
+            "state": "Spend",
+            "detail": "Cost anomalies need forecast, driver, and owner remediation evidence.",
+        },
+        {
+            "label": "Performance",
+            "value": f"{performance:,}",
+            "state": "Workload",
+            "detail": "Queue, spill, runtime, and contention alerts route to Workload Operations.",
+        },
+        {
+            "label": "Pipeline reliability",
+            "value": f"{pipeline:,}",
+            "state": "Tasks",
+            "detail": "Task graph failures, skipped runs, COPY issues, and late data arrivals.",
+        },
+        {
+            "label": "Data quality",
+            "value": f"{quality:,}",
+            "state": "Trust",
+            "detail": "Metadata-driven checks catch bad data before consumer incidents.",
+        },
+        {
+            "label": "Remediation route",
+            "value": f"{_open_queue_count(data):,} open",
+            "state": "Approval",
+            "detail": "Only approved safe actions should execute; all actions log proof.",
+        },
+    )
+
+
 def _open_workspace(view: str | None = None) -> None:
     st.session_state[_BRIEF_MODE_KEY] = False
     st.session_state[_FULL_WORKSPACE_KEY] = True
@@ -216,6 +353,7 @@ def _render_metric_board() -> None:
         refresh_method="Scheduled alert sweep and owner-routing refresh",
         live_fallback="No shell fallback",
     )
+    render_signal_lane_board("Alert Command Board", _alert_shell_lanes(data), max_lanes=8)
     if not loaded:
         render_shell_kpi_row((
             ("Critical / High", "Not loaded"),

@@ -40,6 +40,62 @@ _SNAPSHOT_VALUE_STYLE = (
     "margin-top:0.26rem;"
     "overflow-wrap:anywhere;"
 )
+_LANE_GRID_STYLE = (
+    "display:grid;"
+    "grid-template-columns:repeat(auto-fit,minmax(11.5rem,1fr));"
+    "gap:0.68rem;"
+    "margin:0.35rem 0 0.9rem;"
+)
+_LANE_CARD_STYLE = (
+    "min-width:0;"
+    "border:1px solid var(--border-subtle, rgba(41,181,232,0.18));"
+    "border-radius:8px;"
+    "background:linear-gradient(180deg, rgba(var(--accent-rgb,41,181,232),0.06), rgba(var(--accent-rgb,41,181,232),0.025));"
+    "padding:0.72rem 0.78rem;"
+    "min-height:8.2rem;"
+    "display:flex;"
+    "flex-direction:column;"
+    "gap:0.32rem;"
+)
+_LANE_TOP_STYLE = (
+    "display:flex;"
+    "align-items:flex-start;"
+    "justify-content:space-between;"
+    "gap:0.5rem;"
+)
+_LANE_TITLE_STYLE = (
+    "color:var(--text-muted, #7b9cab);"
+    "font-size:0.66rem;"
+    "font-weight:850;"
+    "letter-spacing:0.05em;"
+    "line-height:1.22;"
+    "text-transform:uppercase;"
+    "overflow-wrap:anywhere;"
+)
+_LANE_STATE_STYLE = (
+    "white-space:nowrap;"
+    "border:1px solid var(--border-subtle, rgba(41,181,232,0.22));"
+    "border-radius:999px;"
+    "padding:0.14rem 0.4rem;"
+    "color:var(--text-primary, #eef8fb);"
+    "font-size:0.62rem;"
+    "font-weight:850;"
+    "line-height:1.2;"
+    "text-transform:uppercase;"
+)
+_LANE_VALUE_STYLE = (
+    "color:var(--text-primary, #eef8fb);"
+    "font-size:1.05rem;"
+    "font-weight:900;"
+    "line-height:1.22;"
+    "overflow-wrap:anywhere;"
+)
+_LANE_DETAIL_STYLE = (
+    "color:var(--text-secondary, #b9d7e2);"
+    "font-size:0.78rem;"
+    "line-height:1.35;"
+    "overflow-wrap:anywhere;"
+)
 _STATUS_STRIP_STYLE = (
     "display:flex;"
     "align-items:flex-start;"
@@ -352,6 +408,39 @@ def render_shell_status_strip(
 def render_shell_kpi_row(metrics: tuple[tuple[str, object], ...]) -> None:
     """Render the shell KPI row with the existing compact card treatment."""
     render_shell_snapshot(metrics)
+
+
+def render_signal_lane_board(
+    title: str,
+    lanes: Sequence[Mapping[str, object]],
+    *,
+    max_lanes: int = 12,
+) -> None:
+    """Render a dense dashboard lane board without starting new data work."""
+    rows = [dict(row) for row in list(lanes or ())[: max(1, int(max_lanes or 12))]]
+    if not rows:
+        return
+    st.markdown(f"**{html.escape(str(title))}**")
+    cards = []
+    for row in rows:
+        label = html.escape(str(row.get("label") or row.get("LANE") or "Signal"))
+        value = html.escape(str(row.get("value") or row.get("VALUE") or "Not loaded"))
+        state = html.escape(str(row.get("state") or row.get("STATE") or "Review"))
+        detail = html.escape(str(row.get("detail") or row.get("DETAIL") or row.get("next") or row.get("NEXT_ACTION") or ""))
+        cards.append(
+            f'<div class="ow-signal-lane-card" style="{_LANE_CARD_STYLE}">'
+            f'<div style="{_LANE_TOP_STYLE}">'
+            f'<span style="{_LANE_TITLE_STYLE}">{label}</span>'
+            f'<span style="{_LANE_STATE_STYLE}">{state}</span>'
+            "</div>"
+            f'<strong style="{_LANE_VALUE_STYLE}">{value}</strong>'
+            f'<span style="{_LANE_DETAIL_STYLE}">{detail}</span>'
+            "</div>"
+        )
+    st.markdown(
+        f'<div class="ow-signal-lane-grid" style="{_LANE_GRID_STYLE}">{"".join(cards)}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _workflow_key_token(value: object, index: int) -> str:

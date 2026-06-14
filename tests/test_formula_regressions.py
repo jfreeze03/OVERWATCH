@@ -2632,6 +2632,10 @@ class FormulaRegressionTests(unittest.TestCase):
             self.assertIn(panel, validation_sql)
 
         self.assertIn("CURRENT_ROLE()", validation_sql)
+        self.assertIn("SOURCE_CLASS AS FIRST_PAINT_SOURCE", validation_sql)
+        self.assertIn("APPROVED_LIVE_FALLBACK AS LIVE_FALLBACK_ALLOWED", validation_sql)
+        self.assertIn("REFRESH_STATE", validation_sql)
+        self.assertIn("TARGET_FRESHNESS_MIN AS TARGET_FRESHNESS_MINUTES", validation_sql)
         self.assertIn("ACCOUNTADMIN", checklist)
         self.assertIn("SYSADMIN", checklist)
         self.assertIn("_DSA", checklist)

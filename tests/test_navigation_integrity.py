@@ -181,6 +181,7 @@ class NavigationIntegrityTests(unittest.TestCase):
         self.assertEqual(SECTION_MODULES["Governance & Security"], "sections.governance_security")
         helper_text = (APP_ROOT / "sections" / "shell_helpers.py").read_text(encoding="utf-8")
         self.assertIn("def full_workspace_requested", helper_text)
+        self.assertIn("def render_signal_lane_board", helper_text)
         self.assertIn("if state.get(brief_key):\n        return False", helper_text)
         self.assertIn("state[workspace_key] = True", helper_text)
         self.assertIn("state[brief_key] = False", helper_text)
@@ -199,6 +200,7 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertIn("from sections.shell_helpers import", shell_text)
                 self.assertIn("render_shell_status_strip", shell_text)
                 self.assertIn("render_shell_kpi_row", shell_text)
+                self.assertIn("render_signal_lane_board", shell_text)
                 self.assertNotIn("st.metric(", shell_text)
                 self.assertNotIn('st.markdown("**Action Brief**")', shell_text)
                 self.assertNotIn("st.columns([1.0, 3.0, 1.8])", shell_text)
@@ -236,6 +238,9 @@ class NavigationIntegrityTests(unittest.TestCase):
                 self.assertNotIn("st.caption(\n                evidence_caption", status_block)
                 self.assertNotIn("st.caption(\n                (", status_block)
                 self.assertNotIn('st.caption("Ready")', shell_text)
+        governance_text = (APP_ROOT / "sections" / "governance_security.py").read_text(encoding="utf-8")
+        self.assertIn("render_signal_lane_board", governance_text)
+        self.assertIn("Governance Command Board", governance_text)
 
     def test_shell_evidence_label_reflects_loaded_state(self):
         keys = ("loaded_frame", "loaded_error")

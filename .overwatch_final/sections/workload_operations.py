@@ -16,6 +16,7 @@ from sections.shell_helpers import (
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
+    render_signal_lane_board,
     with_loaded_at,
 )
 from utils.evidence_mode import (
@@ -638,6 +639,121 @@ def _render_workload_metric_rows(summary: dict) -> None:
     ))
 
 
+def _workload_command_lanes(summary: dict, task_summary: dict | None = None) -> list[dict[str, str]]:
+    """Return one-look workload lanes from already-loaded state."""
+    task_summary = task_summary or {}
+    loaded = bool(summary.get("loaded"))
+    task_loaded = bool(task_summary.get("loaded"))
+    if not loaded and not task_loaded:
+        return [
+            {
+                "label": "Query volume",
+                "value": "Not loaded",
+                "state": "Workload",
+                "detail": "Refresh Workload Snapshot for bounded query-history rollups.",
+            },
+            {
+                "label": "Runtime p95",
+                "value": "Not loaded",
+                "state": "Performance",
+                "detail": "Shows user pain before any warehouse or SQL change.",
+            },
+            {
+                "label": "Queue pressure",
+                "value": "Not loaded",
+                "state": "Capacity",
+                "detail": "Use live triage only for in-flight queue or cancellation work.",
+            },
+            {
+                "label": "Remote spill",
+                "value": "Not loaded",
+                "state": "SQL shape",
+                "detail": "Spill points to join, pruning, memory, or warehouse pressure.",
+            },
+            {
+                "label": "Task graph failures",
+                "value": "Not loaded",
+                "state": "Pipeline",
+                "detail": "Root/child task status drives recovery order.",
+            },
+            {
+                "label": "Late task risk",
+                "value": "Not loaded",
+                "state": "SLA",
+                "detail": "Late/missed runs should appear before detail drilldown.",
+            },
+            {
+                "label": "Contention",
+                "value": "On demand",
+                "state": "Locks",
+                "detail": "Open Contention Center for blockers, locks, and long DML.",
+            },
+            {
+                "label": "Schema/data compare",
+                "value": "On demand",
+                "state": "Reconcile",
+                "detail": "Run configured count/hash checks only when needed.",
+            },
+        ]
+    failed = safe_int(summary.get("failed"))
+    queued = safe_int(summary.get("queued"))
+    spill = safe_int(summary.get("spill"))
+    p95 = safe_float(summary.get("p95"))
+    task_failures = safe_int(task_summary.get("task_status_failures"))
+    task_late = safe_int(task_summary.get("task_status_late"))
+    task_watch = safe_int(task_summary.get("task_status_watch"))
+    return [
+        {
+            "label": "Query volume",
+            "value": f"{safe_int(summary.get('queries')):,}",
+            "state": "Workload",
+            "detail": f"{failed:,} failed query row(s) in the loaded scope.",
+        },
+        {
+            "label": "Runtime p95",
+            "value": f"{p95:,.1f}s",
+            "state": "Review" if p95 >= 60.0 else "Ready",
+            "detail": "Use Query diagnosis when p95 regresses or repeats by query hash.",
+        },
+        {
+            "label": "Queue pressure",
+            "value": f"{queued:,}",
+            "state": "Capacity" if queued else "Clear",
+            "detail": "Separate queue from lock/contention before resizing.",
+        },
+        {
+            "label": "Remote spill",
+            "value": f"{spill:,}",
+            "state": "SQL shape" if spill else "Clear",
+            "detail": "Spill rows route to Query diagnosis with profile evidence.",
+        },
+        {
+            "label": "Task graph failures",
+            "value": f"{task_failures:,}",
+            "state": "Pipeline" if task_failures else "Ready",
+            "detail": f"{safe_int(task_summary.get('task_status_rows')):,} task status row(s) loaded.",
+        },
+        {
+            "label": "Late task risk",
+            "value": f"{task_late:,}",
+            "state": "SLA" if task_late else "Clear",
+            "detail": f"{task_watch:,} watch row(s) remain in the task lane.",
+        },
+        {
+            "label": "Contention",
+            "value": "Open live view",
+            "state": "Locks",
+            "detail": "Use blockers/locks only when in-flight or long DML evidence exists.",
+        },
+        {
+            "label": "Schema/data compare",
+            "value": "Configured",
+            "state": "Reconcile",
+            "detail": "Compare inventory, counts, hashes, buckets, then sampled diffs.",
+        },
+    ]
+
+
 def _render_workload_lane_card(lane: dict) -> None:
     label = html.escape(str(lane.get("label") or "Live lane"))
     state = html.escape(str(lane.get("state") or "Review"))
@@ -779,6 +895,11 @@ def _render_workload_snapshot(company: str, environment: str) -> None:
     )
     _render_workload_action_brief(company, environment, brief)
     _render_workload_metric_rows(summary)
+    render_signal_lane_board(
+        "Workload Command Board",
+        _workload_command_lanes(summary, task_summary),
+        max_lanes=8,
+    )
     render_data_freshness(
         freshness_meta,
         source="Workload snapshot",

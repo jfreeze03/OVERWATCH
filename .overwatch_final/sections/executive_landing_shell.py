@@ -8,7 +8,17 @@ import streamlit as st
 
 from config import DEFAULT_COMPANY, DEFAULT_ENVIRONMENT, DEFAULTS, DEFAULT_DAY_WINDOW, DAY_WINDOW_OPTIONS, ENVIRONMENT_CONFIG
 from sections.navigation import apply_navigation_state
-from sections.shell_helpers import action_state_label, evidence_caption, evidence_loaded, full_workspace_requested, render_setup_health_board, render_shell_kpi_row, render_shell_status_strip, render_shell_workflows
+from sections.shell_helpers import (
+    action_state_label,
+    evidence_caption,
+    evidence_loaded,
+    full_workspace_requested,
+    render_setup_health_board,
+    render_shell_kpi_row,
+    render_shell_status_strip,
+    render_shell_workflows,
+    render_signal_lane_board,
+)
 
 
 _FULL_WORKSPACE_KEY = "_executive_landing_full_workspace_requested"
@@ -257,6 +267,126 @@ def _render_command_wall_preview() -> None:
     )
 
 
+def _executive_shell_lanes() -> tuple[dict[str, str], ...]:
+    summary = st.session_state.get(_PLATFORM_SUMMARY_KEY)
+    has_summary = isinstance(summary, dict) and evidence_loaded(st.session_state, _FULL_WORKSPACE_STATE_KEYS)
+    if not has_summary:
+        return (
+            {
+                "label": "Credits used / dollars",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "MART_EXECUTIVE_OBSERVABILITY feeds the first-paint spend board.",
+            },
+            {
+                "label": "Cortex dollars",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "FACT_CORTEX_DAILY keeps AI spend separate from warehouse compute.",
+            },
+            {
+                "label": "Alert pressure",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "Critical/high alerts and open owner actions drive the risk score.",
+            },
+            {
+                "label": "DBA queue",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "Morning actions, failed tasks, source health, and release blockers.",
+            },
+            {
+                "label": "Warehouse pressure",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "Queue, runtime, spillage, and saturation roll into the pressure board.",
+            },
+            {
+                "label": "Contract burn",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "Run-rate and forecast facts power the executive cost story.",
+            },
+            {
+                "label": "Reliability",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "Task failures, late-risk, and incident handoff become leader-visible.",
+            },
+            {
+                "label": "Setup trust",
+                "value": "Not loaded",
+                "state": "Refresh",
+                "detail": "Source freshness and deployment blockers cap the platform score.",
+            },
+        )
+
+    score = _int_label(summary.get("score"))
+    current_spend = _float_value(summary.get("current_credits")) * _credit_price()
+    prior_spend = _float_value(summary.get("prior_credits")) * _credit_price()
+    delta = current_spend - prior_spend
+    critical_high = _int_label(summary.get("critical_high_alerts"))
+    open_actions = _int_label(summary.get("open_actions"))
+    high_actions = _int_label(summary.get("high_actions"))
+    deploy_blockers = _int_label(summary.get("migration_blockers"))
+    state = str(summary.get("state") or "Review")
+    return (
+        {
+            "label": "Platform score",
+            "value": f"{score}/100",
+            "state": state,
+            "detail": str(summary.get("cap_reason") or "Cost, alerts, actions, and setup trust are scored together."),
+        },
+        {
+            "label": "Credits used / dollars",
+            "value": f"${current_spend:,.0f}",
+            "state": _window_label(),
+            "detail": f"Compute credits converted at ${_credit_price():.2f}/credit.",
+        },
+        {
+            "label": "Spend movement",
+            "value": f"{'+' if delta >= 0 else '-'}${abs(delta):,.0f}",
+            "state": "Delta",
+            "detail": "Movement versus the prior comparison window.",
+        },
+        {
+            "label": "Alert pressure",
+            "value": f"{critical_high} critical/high",
+            "state": "Risk",
+            "detail": f"{open_actions} open owner actions need routing or closure proof.",
+        },
+        {
+            "label": "DBA queue",
+            "value": f"{open_actions} open",
+            "state": "Actions",
+            "detail": f"{high_actions} high-priority actions are leadership-visible.",
+        },
+        {
+            "label": "Deploy trust",
+            "value": f"{deploy_blockers} blocker(s)",
+            "state": "Setup",
+            "detail": "Setup and migration blockers cap the score until cleared.",
+        },
+        {
+            "label": "Contract burn",
+            "value": "Cost board",
+            "state": "Linked",
+            "detail": "Open Cost & Contract for forecast, budget, and verified value proof.",
+        },
+        {
+            "label": "Workload pressure",
+            "value": "Workload board",
+            "state": "Linked",
+            "detail": "Runtime, queue, spillage, and task status live in Workload Operations.",
+        },
+    )
+
+
+def _render_executive_summary_grid() -> None:
+    render_signal_lane_board("Executive Summary Grid", _executive_shell_lanes(), max_lanes=8)
+
+
 def _render_workflow_launchpad() -> None:
     def _open(row):
         _open_workflow(str(row["WORKFLOW"]))
@@ -280,4 +410,5 @@ def render() -> None:
     _render_status_strip()
     _render_kpi_row()
     _render_command_wall_preview()
+    _render_executive_summary_grid()
     _render_workflow_launchpad()

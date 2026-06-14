@@ -19,6 +19,7 @@ from sections.shell_helpers import (
     render_shell_snapshot,
     render_shell_status_strip,
     render_shell_workflows,
+    render_signal_lane_board,
     scope_label,
 )
 
@@ -194,6 +195,177 @@ def _loaded_data_snapshot() -> tuple[tuple[str, object], ...]:
     )
 
 
+def _dba_shell_lanes() -> tuple[dict[str, str], ...]:
+    data = st.session_state.get("dba_control_room_data")
+    if isinstance(data, dict) and data:
+        failed_queries = _frame_len(data.get("failed_queries"))
+        failed_tasks = _frame_len(data.get("task_failures"))
+        action_rows = _frame_len(data.get("action_queue"))
+        source_rows = _frame_len(data.get("source_health"))
+        incident_rows = _frame_len(data.get("incident_board")) or failed_queries + failed_tasks
+        release_rows = _frame_len(data.get("release_gate"))
+        return (
+            {
+                "label": "Incidents",
+                "value": f"{incident_rows:,}",
+                "state": "Now",
+                "detail": f"{failed_queries:,} query failures and {failed_tasks:,} task failures in the loaded board.",
+            },
+            {
+                "label": "Action queue",
+                "value": f"{action_rows:,}",
+                "state": "Owners",
+                "detail": "Open work should have owner, action, evidence, and closure state.",
+            },
+            {
+                "label": "Source health",
+                "value": f"{source_rows:,}" if source_rows else "Loaded",
+                "state": "Freshness",
+                "detail": "Stale or missing sources block confident DBA decisions.",
+            },
+            {
+                "label": "Release gate",
+                "value": f"{release_rows:,}" if release_rows else "Ready",
+                "state": "Deploy",
+                "detail": "Deployment blockers and rollback proof stay visible before release.",
+            },
+            {
+                "label": "Morning route",
+                "value": "Loaded",
+                "state": "Brief",
+                "detail": "Prioritize incidents, source gaps, release blockers, then cost/control work.",
+            },
+            {
+                "label": "Service posture",
+                "value": "Loaded",
+                "state": "Ops",
+                "detail": "Query, warehouse, login, task, and load posture roll up here.",
+            },
+            {
+                "label": "Handoff proof",
+                "value": "Available",
+                "state": "Audit",
+                "detail": "Operator notes should survive shift changes and leadership review.",
+            },
+            {
+                "label": "Live fallback",
+                "value": "Guarded",
+                "state": "Safe",
+                "detail": "Live Snowflake scans stay behind an explicit DBA route.",
+            },
+        )
+
+    snapshot_result = st.session_state.get("dba_control_room_snapshot_result")
+    snapshot = getattr(snapshot_result, "data", None)
+    available = bool(getattr(snapshot_result, "available", False))
+    if available and _frame_len(snapshot):
+        failed_queries = int(_sum_column(snapshot, "FAILED_QUERIES_24H"))
+        failed_tasks = int(_sum_column(snapshot, "FAILED_TASKS_24H"))
+        credits = _sum_column(snapshot, "CREDITS_24H")
+        cortex = _sum_column(snapshot, "CORTEX_COST_7D_USD")
+        return (
+            {
+                "label": "Failed queries",
+                "value": f"{failed_queries:,}",
+                "state": "24h",
+                "detail": "Start with repeated failures and high-impact users/warehouses.",
+            },
+            {
+                "label": "Failed tasks",
+                "value": f"{failed_tasks:,}",
+                "state": "24h",
+                "detail": "Task failures route into morning brief and incident handoff.",
+            },
+            {
+                "label": "Credits 24h",
+                "value": f"{credits:,.1f}",
+                "state": f"${credits * _credit_price():,.0f}",
+                "detail": "Compute burn is visible without opening Cost & Contract.",
+            },
+            {
+                "label": "Cortex 7d",
+                "value": f"${cortex:,.0f}",
+                "state": "AI",
+                "detail": "AI exceptions and cost patterns route to DBA action.",
+            },
+            {
+                "label": "Incident pressure",
+                "value": f"{failed_queries + failed_tasks:,}",
+                "state": "Route",
+                "detail": "Failures become prioritized DBA work, not passive charts.",
+            },
+            {
+                "label": "Source health",
+                "value": "Snapshot",
+                "state": "Freshness",
+                "detail": "Refresh before acting if the control-room source is stale.",
+            },
+            {
+                "label": "Release gate",
+                "value": "Ready",
+                "state": "Deploy",
+                "detail": "Open the gate route for pre-release proof and blockers.",
+            },
+            {
+                "label": "Live fallback",
+                "value": "Guarded",
+                "state": "Safe",
+                "detail": "Use live routes only for current incidents.",
+            },
+        )
+
+    return (
+        {
+            "label": "Fast watch",
+            "value": "On demand",
+            "state": "Refresh",
+            "detail": "Failed queries, tasks, credits, and source health load from the DBA mart.",
+        },
+        {
+            "label": "Morning brief",
+            "value": "On demand",
+            "state": "Route",
+            "detail": "Build the operator packet from failures, blockers, and owner actions.",
+        },
+        {
+            "label": "Incident board",
+            "value": "On demand",
+            "state": "Ops",
+            "detail": "Incidents need impact, owner, next action, and verification proof.",
+        },
+        {
+            "label": "Release gate",
+            "value": "On demand",
+            "state": "Deploy",
+            "detail": "Gate deployment on task recovery, schema migration, and rollback proof.",
+        },
+        {
+            "label": "Source health",
+            "value": "On demand",
+            "state": "Freshness",
+            "detail": "Freshness protects decisions from stale ACCOUNT_USAGE sources.",
+        },
+        {
+            "label": "Service posture",
+            "value": "On demand",
+            "state": "Health",
+            "detail": "Query execution, warehouses, login/auth, tasks, and data loading.",
+        },
+        {
+            "label": "Handoff proof",
+            "value": "On demand",
+            "state": "Audit",
+            "detail": "Shift handoff should explain what happened and what to do next.",
+        },
+        {
+            "label": "Live fallback",
+            "value": "Guarded",
+            "state": "Safe",
+            "detail": "Live checks stay explicit to avoid surprise Snowflake cost.",
+        },
+    )
+
+
 def _open_workspace(view: str | None = None) -> None:
     st.session_state[_BRIEF_MODE_KEY] = False
     st.session_state[_FULL_WORKSPACE_KEY] = True
@@ -252,6 +424,7 @@ def _render_command_snapshot() -> None:
         refresh_method="Scheduled DBA control mart refresh",
         live_fallback="Explicit DBA route",
     )
+    render_signal_lane_board("DBA Command Board", _dba_shell_lanes(), max_lanes=8)
     render_shell_snapshot(_loaded_data_snapshot())
 
 

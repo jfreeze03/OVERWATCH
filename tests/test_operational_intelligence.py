@@ -9,9 +9,9 @@ sys.path.insert(0, str(APP_ROOT))
 
 from utils.operational_intelligence import (  # noqa: E402
     build_alert_lifecycle_sql,
+    build_command_intelligence_capability_rows,
+    build_command_intelligence_setup_bundle_sql,
     build_compliance_readiness_sql,
-    build_god_tier_capability_rows,
-    build_god_tier_setup_bundle_sql,
     build_operational_intelligence_sql_catalog,
     build_overwatch_self_monitoring_sql,
     build_predictive_finops_sql,
@@ -23,8 +23,8 @@ from utils.operational_intelligence import (  # noqa: E402
 
 
 class OperationalIntelligenceTests(unittest.TestCase):
-    def test_god_tier_plan_contains_all_12_ranked_capabilities(self):
-        rows = build_god_tier_capability_rows()
+    def test_command_intelligence_plan_contains_all_12_ranked_capabilities(self):
+        rows = build_command_intelligence_capability_rows()
         self.assertEqual(len(rows), 12)
         self.assertEqual([row["RANK"] for row in rows], list(range(1, 13)))
         capabilities = {row["CAPABILITY"] for row in rows}
@@ -111,7 +111,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
     def test_self_monitoring_and_precompute_contracts_are_deployable(self):
         self_monitoring = build_overwatch_self_monitoring_sql().upper()
         precompute = build_precompute_contract_sql().upper()
-        setup_bundle = build_god_tier_setup_bundle_sql().upper()
+        setup_bundle = build_command_intelligence_setup_bundle_sql().upper()
         self.assertIn("QUERY_TAG ILIKE 'OVERWATCH%'", self_monitoring)
         self.assertIn("CREATE DYNAMIC TABLE IF NOT EXISTS", precompute)
         self.assertIn("CREATE OR REPLACE VIEW OVERWATCH_QUERY_HEALTH_HOURLY_V", precompute)
@@ -125,13 +125,16 @@ class OperationalIntelligenceTests(unittest.TestCase):
         data_model = ROOT / "docs" / "DATA_MODEL.md"
         refresh_arch = ROOT / "docs" / "REFRESH_ARCHITECTURE.md"
         precompute = ROOT / "snowflake" / "PRECOMPUTE.sql"
+        native_alerts = ROOT / "snowflake" / "OVERWATCH_NATIVE_ALERT_TEMPLATES.sql"
         setup = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
         self.assertTrue(runbook.exists())
         self.assertTrue(data_model.exists())
         self.assertTrue(refresh_arch.exists())
         self.assertTrue(precompute.exists())
+        self.assertTrue(native_alerts.exists())
         self.assertIn("OVERWATCH_COMMAND_INTELLIGENCE_RUNBOOK", readme)
         self.assertIn("REFRESH_ARCHITECTURE", readme)
+        self.assertIn("OVERWATCH_NATIVE_ALERT_TEMPLATES", readme)
         self.assertIn("OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY", setup)
         self.assertIn("OVERWATCH_REFRESH_POLICY", setup)
         self.assertIn("SP_OVERWATCH_AUTOMATE_VALUE_LOG", setup)
@@ -148,7 +151,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
         ]
         text = "\n".join(path.read_text(encoding="utf-8") for path in section_paths)
         for marker in [
-            "build_god_tier_capability_rows",
+            "build_command_intelligence_capability_rows",
             "build_task_critical_path_brain_sql",
             "build_predictive_finops_sql",
             "build_snowflake_value_auto_ddl",
@@ -156,6 +159,7 @@ class OperationalIntelligenceTests(unittest.TestCase):
             "build_ai_query_diagnosis_contract_rows",
         ]:
             self.assertIn(marker, text)
+        self.assertNotIn("God-tier", text)
 
 
 if __name__ == "__main__":

@@ -141,23 +141,23 @@ class ScorecardTests(unittest.TestCase):
         self.assertEqual(result["label"], "Ready With Watch")
         self.assertEqual(result["gate_drivers"][0]["GATE"], "Source Health")
 
-    def test_dba_section_baseline_is_strict_and_repeatable(self):
+    def test_dba_section_baseline_requires_live_proof_before_95(self):
         rows = scorecards.dba_control_plane_section_scorecards()
         by_section = {row["SECTION"]: row for row in rows}
 
-        self.assertEqual(by_section["DBA Control Room"]["SCORE"], 96.4)
-        self.assertEqual(by_section["DBA Control Room"]["EFFECTIVE_SCORE"], 96.4)
-        self.assertEqual(by_section["DBA Control Room"]["LABEL"], "95 Target")
-        self.assertEqual(by_section["DBA Control Room"]["DEPLOYMENT_LABEL"], "Ready")
+        self.assertEqual(by_section["DBA Control Room"]["SCORE"], 90.0)
+        self.assertEqual(by_section["DBA Control Room"]["EFFECTIVE_SCORE"], 90.0)
+        self.assertEqual(by_section["DBA Control Room"]["LABEL"], "Near Target")
+        self.assertEqual(by_section["DBA Control Room"]["DEPLOYMENT_LABEL"], "Ready With Watch")
         self.assertEqual(by_section["DBA Control Room"]["GATE_DRIVERS"], "none")
-        self.assertEqual(by_section["Alert Center"]["SCORE"], 97.0)
-        self.assertEqual(by_section["Alert Center"]["LABEL"], "95 Target")
-        self.assertEqual(by_section["Workload Operations"]["SCORE"], 96.5)
-        self.assertEqual(by_section["Workload Operations"]["LABEL"], "95 Target")
-        self.assertEqual(by_section["Cost & Contract"]["SCORE"], 99.2)
-        self.assertEqual(by_section["Cost & Contract"]["LABEL"], "95 Target")
-        self.assertEqual(by_section["Governance & Security"]["SCORE"], 96.3)
-        self.assertEqual(by_section["Governance & Security"]["LABEL"], "95 Target")
+        self.assertEqual(by_section["Alert Center"]["SCORE"], 89.9)
+        self.assertEqual(by_section["Alert Center"]["LABEL"], "Operational")
+        self.assertEqual(by_section["Workload Operations"]["SCORE"], 90.0)
+        self.assertEqual(by_section["Workload Operations"]["LABEL"], "Near Target")
+        self.assertEqual(by_section["Cost & Contract"]["SCORE"], 91.4)
+        self.assertEqual(by_section["Cost & Contract"]["LABEL"], "Near Target")
+        self.assertEqual(by_section["Governance & Security"]["SCORE"], 88.9)
+        self.assertEqual(by_section["Governance & Security"]["LABEL"], "Operational")
         self.assertEqual(by_section["Governance & Security"]["CAP_DRIVERS"], "none")
         self.assertEqual(
             set(by_section),
@@ -170,7 +170,8 @@ class ScorecardTests(unittest.TestCase):
                 "Governance & Security",
             },
         )
-        self.assertGreaterEqual(max(row["SCORE"] for row in rows), 95)
+        self.assertLess(max(row["SCORE"] for row in rows), 95)
+        self.assertTrue(all(row["LOWEST_COMPONENT"] for row in rows))
         self.assertEqual(by_section["DBA Control Room"]["CAP_DRIVERS"], "none")
         self.assertIn("notification integration", by_section["Alert Center"]["NEXT_95_MOVE"])
         self.assertIn("owner approval", by_section["Cost & Contract"]["NEXT_95_MOVE"])

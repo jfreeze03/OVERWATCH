@@ -21,6 +21,7 @@ from sections.shell_helpers import (
     render_shell_snapshot,
     render_shell_status_strip,
     render_shell_workflows,
+    render_signal_lane_board,
     scope_label,
 )
 
@@ -181,6 +182,115 @@ def _frame_len(value: object) -> int:
         return 0
 
 
+def _governance_shell_lanes() -> tuple[dict[str, str], ...]:
+    security_summary = _frame_len(st.session_state.get("security_posture_summary"))
+    security_exceptions = _frame_len(st.session_state.get("security_posture_exceptions"))
+    change_summary = _frame_len(st.session_state.get("change_drift_summary"))
+    change_exceptions = _frame_len(st.session_state.get("change_drift_exceptions"))
+    if not any((security_summary, security_exceptions, change_summary, change_exceptions)):
+        return (
+            {
+                "label": "Privileged access",
+                "value": "On demand",
+                "state": "Security",
+                "detail": "ACCOUNTADMIN, SECURITYADMIN, SYSADMIN, ORGADMIN, future grants, and ownership changes.",
+            },
+            {
+                "label": "Login anomalies",
+                "value": "On demand",
+                "state": "Security",
+                "detail": "Failed spikes, odd hours, unusual source IP, and dormant users suddenly active.",
+            },
+            {
+                "label": "Sensitive access",
+                "value": "On demand",
+                "state": "Access",
+                "detail": "ACCESS_HISTORY and query evidence flag sensitive object access spikes.",
+            },
+            {
+                "label": "Public grants",
+                "value": "On demand",
+                "state": "Risk",
+                "detail": "Broad grants, shares, stages, integrations, and policy drift stay visible.",
+            },
+            {
+                "label": "Schema drift",
+                "value": "On demand",
+                "state": "Change",
+                "detail": "All schema objects are compared, and missing-object DDL can be generated.",
+            },
+            {
+                "label": "Data likeness",
+                "value": "On demand",
+                "state": "Compare",
+                "detail": "Row counts, samples, checksums, and hash tiers support schema/database comparisons.",
+            },
+            {
+                "label": "Guarded actions",
+                "value": "Approval",
+                "state": "Safe",
+                "detail": "Revokes, suspends, and recovery SQL require preview and audit proof.",
+            },
+            {
+                "label": "Audit trail",
+                "value": "On demand",
+                "state": "Proof",
+                "detail": "Every exception needs owner, action, before/after state, and closure evidence.",
+            },
+        )
+
+    return (
+        {
+            "label": "Security summary",
+            "value": f"{security_summary:,}" if security_summary else "Loaded",
+            "state": "Access",
+            "detail": "Login risk, privileged grants, sharing, and access-review signals.",
+        },
+        {
+            "label": "Security exceptions",
+            "value": f"{security_exceptions:,}",
+            "state": "Risk",
+            "detail": "Exceptions should have owner, investigation steps, and closure proof.",
+        },
+        {
+            "label": "Change summary",
+            "value": f"{change_summary:,}" if change_summary else "Loaded",
+            "state": "Change",
+            "detail": "DDL, schema/object drift, procedure lineage, and controlled DBA actions.",
+        },
+        {
+            "label": "Change exceptions",
+            "value": f"{change_exceptions:,}",
+            "state": "Drift",
+            "detail": "Unexpected object/schema changes route to review before release.",
+        },
+        {
+            "label": "Schema compare",
+            "value": "Ready",
+            "state": "All objects",
+            "detail": "Missing object DDL generation is part of the compare contract.",
+        },
+        {
+            "label": "Data likeness",
+            "value": "Ready",
+            "state": "Counts/hash",
+            "detail": "Compare row counts first, then sampled/full hashes by table risk tier.",
+        },
+        {
+            "label": "Guarded actions",
+            "value": "Approval",
+            "state": "Safe",
+            "detail": "SQL previews and remediation audit logs are mandatory before change.",
+        },
+        {
+            "label": "Audit trail",
+            "value": "Evidence",
+            "state": "Proof",
+            "detail": "Use OWNER, QUERY_ID, object, before/after state, and verification result.",
+        },
+    )
+
+
 def _render_metric_board() -> None:
     security_meta = st.session_state.get("security_posture_meta")
     change_meta = st.session_state.get("change_drift_meta")
@@ -193,6 +303,7 @@ def _render_metric_board() -> None:
         refresh_method="Scheduled access and change-control refresh",
         live_fallback="Explicit governance lane",
     )
+    render_signal_lane_board("Governance Command Board", _governance_shell_lanes(), max_lanes=8)
     render_shell_snapshot((
         ("Security Summary", "Loaded" if _frame_len(st.session_state.get("security_posture_summary")) else "On demand"),
         ("Security Exceptions", f"{_frame_len(st.session_state.get('security_posture_exceptions')):,}" if _frame_len(st.session_state.get("security_posture_exceptions")) else "On demand"),

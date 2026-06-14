@@ -14,6 +14,7 @@ from sections.shell_helpers import (
     render_shell_kpi_row,
     render_shell_snapshot,
     render_shell_status_strip,
+    render_signal_lane_board,
     with_loaded_at,
 )
 from utils.primitives import safe_float, safe_int
@@ -1559,6 +1560,111 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
     ))
 
 
+def _security_command_lanes(snapshot: dict) -> list[dict[str, str]]:
+    """Return Governance & Security first-paint lanes."""
+    if not snapshot.get("loaded"):
+        return [
+            {
+                "label": "Failed logins",
+                "value": "Not loaded",
+                "state": "Identity",
+                "detail": "Load brief for login spikes, unusual sources, and failed auth.",
+            },
+            {
+                "label": "MFA gaps",
+                "value": "Not loaded",
+                "state": "Access",
+                "detail": "Review active users without exposed MFA signal.",
+            },
+            {
+                "label": "Grant changes",
+                "value": "Not loaded",
+                "state": "Privilege",
+                "detail": "Admin grants, ownership, and future grants route here.",
+            },
+            {
+                "label": "Shared data",
+                "value": "Not loaded",
+                "state": "Exposure",
+                "detail": "Shares, external stages, and broad grants need owner proof.",
+            },
+            {
+                "label": "Policy posture",
+                "value": "On demand",
+                "state": "Governance",
+                "detail": "Masking, row access, network policy, and integration drift.",
+            },
+            {
+                "label": "Sensitive access",
+                "value": "On demand",
+                "state": "Audit",
+                "detail": "ACCESS_HISTORY and bytes-written signals identify risky access.",
+            },
+            {
+                "label": "Access review",
+                "value": "On demand",
+                "state": "Owner",
+                "detail": "Privileged grants must have owner and review evidence.",
+            },
+            {
+                "label": "Closure proof",
+                "value": "On demand",
+                "state": "Audit",
+                "detail": "Revokes, approvals, and rollback guidance stay logged.",
+            },
+        ]
+    return [
+        {
+            "label": "Failed logins",
+            "value": f"{safe_int(snapshot.get('failed')):,}",
+            "state": "Identity" if safe_int(snapshot.get("failed")) else "Clear",
+            "detail": "Inspect spikes, service accounts, unusual sources, and business-hour drift.",
+        },
+        {
+            "label": "MFA gaps",
+            "value": f"{safe_int(snapshot.get('mfa_gaps')):,}",
+            "state": "Access" if safe_int(snapshot.get("mfa_gaps")) else "Clear",
+            "detail": "Prioritize active users and privileged roles.",
+        },
+        {
+            "label": "Grant changes",
+            "value": f"{safe_int(snapshot.get('grant_changes')):,}",
+            "state": "Privilege" if safe_int(snapshot.get("grant_changes")) else "Clear",
+            "detail": "Review ACCOUNTADMIN/SYSADMIN/SECURITYADMIN and ownership drift.",
+        },
+        {
+            "label": "Shared data",
+            "value": f"{safe_int(snapshot.get('shared_databases')):,}",
+            "state": "Exposure" if safe_int(snapshot.get("shared_databases")) else "Clear",
+            "detail": "Validate consumers, business owner, and data classification.",
+        },
+        {
+            "label": "Policy posture",
+            "value": "Open workflow",
+            "state": "Governance",
+            "detail": "Masking, row access, network policies, integrations, and shares.",
+        },
+        {
+            "label": "Sensitive access",
+            "value": "Open workflow",
+            "state": "Audit",
+            "detail": "ACCESS_HISTORY and output-volume anomalies need exact proof.",
+        },
+        {
+            "label": "Access review",
+            "value": "Open workflow",
+            "state": "Owner",
+            "detail": "Use Privilege sprawl before revoking or narrowing grants.",
+        },
+        {
+            "label": "Closure proof",
+            "value": "Queue/audit",
+            "state": "Audit",
+            "detail": "Every fix needs owner, approval, before/after state, and rollback guidance.",
+        },
+    ]
+
+
 def _queue_security_workflow(workflow: str) -> None:
     if workflow in WORKFLOWS:
         st.session_state["security_posture_requested_view"] = "Access Workflows"
@@ -1622,8 +1728,14 @@ def _paint_security_brief_chrome(
             _security_action_brief(summary, exceptions, meta, company, environment, days)
         )
     with snapshot_slot.container():
+        snapshot = _security_operating_snapshot(summary, meta, company, environment, days)
         _render_security_operating_snapshot(
-            _security_operating_snapshot(summary, meta, company, environment, days)
+            snapshot
+        )
+        render_signal_lane_board(
+            "Governance & Security Command Board",
+            _security_command_lanes(snapshot),
+            max_lanes=8,
         )
     if exception_slot is not None:
         loaded = (

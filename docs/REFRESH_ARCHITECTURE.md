@@ -27,10 +27,10 @@ audit behavior.
 | Workload Operations | `MART_EXECUTIVE_OBSERVABILITY`, query/task facts and task history summaries | 30-60 min | Explicit live triage |
 | Security Monitoring | Access posture and security facts | 60 min | Explicit drilldown only |
 
-The setup SQL seeds the same contract into `OVERWATCH_REFRESH_POLICY`.
-Run `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup to verify the
-first-paint mart, required panels, alert lifecycle tables, compare/recon tables,
-refresh policy, and caller context. Role-level proof belongs in
+The refresh contract stays in this document and in the read-only validation SQL
+instead of a static mart table. Run `snowflake/OVERWATCH_MART_VALIDATION.sql`
+after setup to verify the first-paint mart, required panels, alert lifecycle
+tables, compare/recon tables, refresh contract, and caller context. Role-level proof belongs in
 `docs/LIVE_ROLE_PROOF_CHECKLIST.md`.
 
 The UI should still render the metric frame immediately. If a Snowflake session

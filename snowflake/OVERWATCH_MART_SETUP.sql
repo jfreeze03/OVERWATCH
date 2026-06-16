@@ -113,63 +113,6 @@ WHEN MATCHED THEN UPDATE SET
 WHEN NOT MATCHED THEN INSERT (SETTING_NAME, SETTING_VALUE, SETTING_TYPE, DESCRIPTION)
 VALUES (src.SETTING_NAME, src.SETTING_VALUE, src.SETTING_TYPE, src.DESCRIPTION);
 
-CREATE TABLE IF NOT EXISTS OVERWATCH_REFRESH_POLICY (
-  POLICY_NAME             VARCHAR(200) PRIMARY KEY,
-  SURFACE                 VARCHAR(200) NOT NULL,
-  SOURCE_CLASS            VARCHAR(100) NOT NULL,
-  TARGET_FRESHNESS_MIN    NUMBER(10,0),
-  REFRESH_METHOD          VARCHAR(100) NOT NULL,
-  BASE_OBJECT             VARCHAR(500),
-  RETENTION_DAYS          NUMBER(10,0),
-  RUN_IN_FIRST_PAINT      BOOLEAN DEFAULT FALSE,
-  APPROVED_LIVE_FALLBACK  BOOLEAN DEFAULT FALSE,
-  WHY_THIS_POLICY         VARCHAR(1000),
-  OWNER                   VARCHAR(200),
-  UPDATED_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-  UPDATED_BY              VARCHAR(200) DEFAULT CURRENT_USER()
-);
-
-MERGE INTO OVERWATCH_REFRESH_POLICY tgt
-USING (
-  SELECT * FROM VALUES
-    ('EXECUTIVE_OBSERVABILITY', 'Executive Landing', 'MART', 60, 'TASK_AFTER_FACT_LOADS', 'MART_EXECUTIVE_OBSERVABILITY', 35, TRUE, FALSE, 'Boss page reads one compact mart query on first paint: spend, Cortex, runtime, spill, tasks, alerts, actions, storage, and platform score.', 'DBA / Platform'),
-    ('DBA_CONTROL_ROOM_FAST', 'DBA Control Room', 'MART', 60, 'TASK_AFTER_HOURLY_FACTS', 'MART_DBA_CONTROL_ROOM', 35, TRUE, FALSE, 'Morning triage should render from a small control-room mart before any live ACCOUNT_USAGE detail scan.', 'DBA On-Call'),
-    ('COST_WATCH_FLOOR', 'Cost & Contract', 'MART_AND_BOUNDED_OFFICIAL_COST', 60, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_COST_DAILY; FACT_CORTEX_DAILY; WAREHOUSE_METERING_HISTORY', 730, TRUE, FALSE, 'Cost first paint shows lightweight spend, Cortex, and warehouse movement; full attribution proof is explicit.', 'DBA / Cost owner'),
-    ('ALERT_COMMAND_VIEW', 'Alert Center', 'APP_TABLES', 15, 'TASK_OR_APP_WRITE', 'ALERT_EVENTS; ALERT_NOTIFICATION_LOG; OVERWATCH_ACTION_QUEUE', 180, TRUE, FALSE, 'Alert Center may auto-load bounded app tables on entry because they are small, owner-routed, and already deduplicated.', 'DBA / Alert Owner'),
-    ('WORKLOAD_SNAPSHOT', 'Workload Operations', 'MART_AND_TASK_HISTORY', 30, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_QUERY_HOURLY; FACT_TASK_RUN', 35, TRUE, FALSE, 'Workload first paint shows task/query pressure from compact facts; live triage is reserved for in-flight incidents.', 'DBA / Workload Owner'),
-    ('LIVE_TRIAGE', 'DBA Control Room / Workload Operations', 'NEAR_REAL_TIME', 5, 'ON_DEMAND_ONLY', 'INFORMATION_SCHEMA table functions; SHOW commands', 1, FALSE, TRUE, 'Near-real-time checks are useful during incidents but must stay explicit to avoid runaway monitoring cost.', 'DBA On-Call'),
-    ('DATA_RECONCILIATION', 'Workload Operations', 'ON_DEMAND_PROOF', NULL, 'APPROVAL_OR_OPERATOR_RUN', 'OVERWATCH_RECON_CONFIG; OVERWATCH_RECON_RUN', 365, FALSE, TRUE, 'Counts, hashes, and sampled diffs can be expensive and should run only for configured schema/database comparisons.', 'DBA / Data Owner'),
-    ('CONSOLIDATED_DDL', 'Setup', 'MART_SETUP', 60, 'SINGLE_DDL_DOCUMENT', 'snowflake/OVERWATCH_MART_SETUP.sql', NULL, FALSE, FALSE, 'All deployable Snowflake objects live in the consolidated mart setup file.', 'DBA / Platform')
-) src(
-  POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
-  BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK,
-  WHY_THIS_POLICY, OWNER
-)
-ON tgt.POLICY_NAME = src.POLICY_NAME
-WHEN MATCHED THEN UPDATE SET
-  SURFACE = src.SURFACE,
-  SOURCE_CLASS = src.SOURCE_CLASS,
-  TARGET_FRESHNESS_MIN = src.TARGET_FRESHNESS_MIN,
-  REFRESH_METHOD = src.REFRESH_METHOD,
-  BASE_OBJECT = src.BASE_OBJECT,
-  RETENTION_DAYS = src.RETENTION_DAYS,
-  RUN_IN_FIRST_PAINT = src.RUN_IN_FIRST_PAINT,
-  APPROVED_LIVE_FALLBACK = src.APPROVED_LIVE_FALLBACK,
-  WHY_THIS_POLICY = src.WHY_THIS_POLICY,
-  OWNER = src.OWNER,
-  UPDATED_AT = CURRENT_TIMESTAMP(),
-  UPDATED_BY = CURRENT_USER()
-WHEN NOT MATCHED THEN INSERT (
-  POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
-  BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK,
-  WHY_THIS_POLICY, OWNER
-)
-VALUES (
-  src.POLICY_NAME, src.SURFACE, src.SOURCE_CLASS, src.TARGET_FRESHNESS_MIN, src.REFRESH_METHOD,
-  src.BASE_OBJECT, src.RETENTION_DAYS, src.RUN_IN_FIRST_PAINT, src.APPROVED_LIVE_FALLBACK,
-  src.WHY_THIS_POLICY, src.OWNER
-);
-
 CREATE TABLE IF NOT EXISTS OVERWATCH_SCHEMA_MIGRATION (
   MIGRATION_VERSION   VARCHAR(100) NOT NULL,
   MIGRATION_NAME      VARCHAR(300) NOT NULL,
@@ -194,74 +137,6 @@ WHEN MATCHED THEN UPDATE SET
   NOTES = src.NOTES
 WHEN NOT MATCHED THEN INSERT (MIGRATION_VERSION, MIGRATION_NAME, SOURCE_FILE, NOTES)
 VALUES (src.MIGRATION_VERSION, src.MIGRATION_NAME, src.SOURCE_FILE, src.NOTES);
-
-CREATE TABLE IF NOT EXISTS OVERWATCH_COMPANY_SCOPE (
-  COMPANY              VARCHAR(100) NOT NULL,
-  SCOPE_TYPE           VARCHAR(100) NOT NULL,
-  SCOPE_PATTERN        VARCHAR(500) NOT NULL,
-  MATCH_MODE           VARCHAR(20) DEFAULT 'ILIKE', -- ILIKE, NOT_ILIKE, EQUALS
-  ENVIRONMENT          VARCHAR(50),
-  IS_ACTIVE            BOOLEAN DEFAULT TRUE,
-  NOTES                VARCHAR(1000),
-  CREATED_AT           TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-  CREATED_BY           VARCHAR(200) DEFAULT CURRENT_USER()
-);
-
-MERGE INTO OVERWATCH_COMPANY_SCOPE tgt
-USING (
-  SELECT * FROM VALUES
-    ('ALFA',   'WAREHOUSE', 'WH_TRXS_LOAD',          'NOT_ILIKE', NULL, 'Exclude exact Trexis warehouse from ALFA.'),
-    ('ALFA',   'WAREHOUSE', 'WH_TRXS_QUERY',         'NOT_ILIKE', NULL, 'Exclude exact Trexis warehouse from ALFA.'),
-    ('ALFA',   'WAREHOUSE', 'WH_TRXS_TRANSFORM',     'NOT_ILIKE', NULL, 'Exclude exact Trexis warehouse from ALFA.'),
-    ('ALFA',   'WAREHOUSE', 'WH_TRXS_UNLOAD',        'NOT_ILIKE', NULL, 'Exclude exact Trexis warehouse from ALFA.'),
-    ('ALFA',   'DATABASE',  'TRXS_ABC_METADATA_DEV', 'NOT_ILIKE', 'DEV_ALL', 'Exclude exact Trexis database from ALFA.'),
-    ('ALFA',   'DATABASE',  'TRXS_ABC_METADATA_PRD', 'NOT_ILIKE', 'PROD', 'Exclude exact Trexis database from ALFA.'),
-    ('ALFA',   'DATABASE',  'TRXS_ABC_METADATA_SIT', 'NOT_ILIKE', 'DEV_ALL', 'Exclude exact Trexis database from ALFA.'),
-    ('ALFA',   'DATABASE',  'TRXS_EDW_DEV',          'NOT_ILIKE', 'DEV_ALL', 'Exclude exact Trexis database from ALFA.'),
-    ('ALFA',   'DATABASE',  'TRXS_EDW_PRD',          'NOT_ILIKE', 'PROD', 'Exclude exact Trexis database from ALFA.'),
-    ('ALFA',   'DATABASE',  'TRXS_EDW_SIT',          'NOT_ILIKE', 'DEV_ALL', 'Exclude exact Trexis database from ALFA.'),
-    ('ALFA',   'DATABASE',  'TRXS_GW_DATA_DEV',      'NOT_ILIKE', 'DEV_ALL', 'Exclude exact Trexis database from ALFA.'),
-    ('ALFA',   'DATABASE',  'TRXS_GW_DATA_PRD',      'NOT_ILIKE', 'PROD', 'Exclude exact Trexis database from ALFA.'),
-    ('ALFA',   'DATABASE',  'TRXS_GW_DATA_SIT',      'NOT_ILIKE', 'DEV_ALL', 'Exclude exact Trexis database from ALFA.'),
-    ('ALFA',   'DATABASE',  'ALFA%',                 'ILIKE',     NULL, 'ALFA database naming convention.'),
-    ('ALFA',   'DATABASE',  'ADMIN',                 'ILIKE',     NULL, 'Shared admin database used by ALFA DBAs.'),
-    ('ALFA',   'DATABASE',  'ALFA_EDW_PROD',         'EQUALS',    'PROD', 'ALFA PROD EDW database.'),
-    ('ALFA',   'DATABASE',  'ALFA_EDW_MGM',          'EQUALS',    'PROD', 'ALFA PRE-PROD EDW database.'),
-    ('ALFA',   'DATABASE',  'ALFA_EDW_DEV',          'EQUALS',    'ALFA_EDW_DEV', 'ALFA DEV EDW database.'),
-    ('ALFA',   'DATABASE',  'ALFA_EDW_SAN',          'EQUALS',    'ALFA_EDW_SAN', 'ALFA SAN EDW database.'),
-    ('ALFA',   'DATABASE',  'ALFA_EDW_PHX',          'EQUALS',    'ALFA_EDW_PHX', 'ALFA PHX EDW database.'),
-    ('ALFA',   'DATABASE',  'ALFA_EDW_SEA',          'EQUALS',    'ALFA_EDW_SEA', 'ALFA SEA EDW database.'),
-    ('ALFA',   'DATABASE',  'ALFA_EDW_SIT',          'EQUALS',    'ALFA_EDW_SIT', 'ALFA SIT EDW database.'),
-    ('Trexis', 'WAREHOUSE', 'WH_TRXS_LOAD',          'EQUALS',    NULL, 'Trexis warehouse.'),
-    ('Trexis', 'WAREHOUSE', 'WH_TRXS_QUERY',         'EQUALS',    NULL, 'Trexis warehouse.'),
-    ('Trexis', 'WAREHOUSE', 'WH_TRXS_TRANSFORM',     'EQUALS',    NULL, 'Trexis warehouse.'),
-    ('Trexis', 'WAREHOUSE', 'WH_TRXS_UNLOAD',        'EQUALS',    NULL, 'Trexis warehouse.'),
-    ('Trexis', 'DATABASE',  'TRXS_ABC_METADATA_DEV', 'EQUALS',    'DEV_ALL', 'Trexis DEV database.'),
-    ('Trexis', 'DATABASE',  'TRXS_ABC_METADATA_PRD', 'EQUALS',    'PROD', 'Trexis PROD database.'),
-    ('Trexis', 'DATABASE',  'TRXS_ABC_METADATA_SIT', 'EQUALS',    'DEV_ALL', 'Trexis SIT database.'),
-    ('Trexis', 'DATABASE',  'TRXS_EDW_DEV',          'EQUALS',    'DEV_ALL', 'Trexis DEV database.'),
-    ('Trexis', 'DATABASE',  'TRXS_EDW_PRD',          'EQUALS',    'PROD', 'Trexis PROD database.'),
-    ('Trexis', 'DATABASE',  'TRXS_EDW_SIT',          'EQUALS',    'DEV_ALL', 'Trexis SIT database.'),
-    ('Trexis', 'DATABASE',  'TRXS_GW_DATA_DEV',      'EQUALS',    'DEV_ALL', 'Trexis DEV database.'),
-    ('Trexis', 'DATABASE',  'TRXS_GW_DATA_PRD',      'EQUALS',    'PROD', 'Trexis PROD database.'),
-    ('Trexis', 'DATABASE',  'TRXS_GW_DATA_SIT',      'EQUALS',    'DEV_ALL', 'Trexis SIT database.')
-) src(COMPANY, SCOPE_TYPE, SCOPE_PATTERN, MATCH_MODE, ENVIRONMENT, NOTES)
-ON tgt.COMPANY = src.COMPANY
-AND tgt.SCOPE_TYPE = src.SCOPE_TYPE
-AND tgt.SCOPE_PATTERN = src.SCOPE_PATTERN
-AND tgt.MATCH_MODE = src.MATCH_MODE
-WHEN NOT MATCHED THEN INSERT (COMPANY, SCOPE_TYPE, SCOPE_PATTERN, MATCH_MODE, ENVIRONMENT, NOTES)
-VALUES (src.COMPANY, src.SCOPE_TYPE, src.SCOPE_PATTERN, src.MATCH_MODE, src.ENVIRONMENT, src.NOTES);
-
-UPDATE OVERWATCH_COMPANY_SCOPE
-SET IS_ACTIVE = FALSE
-WHERE SCOPE_TYPE = 'WAREHOUSE'
-  AND SCOPE_PATTERN = 'WH_TRXS_%';
-
-UPDATE OVERWATCH_COMPANY_SCOPE
-SET IS_ACTIVE = FALSE
-WHERE SCOPE_TYPE = 'DATABASE'
-  AND SCOPE_PATTERN = 'TRXS_%';
 
 CREATE TABLE IF NOT EXISTS OVERWATCH_OWNER_TAG_NAMES (
   TAG_NAME             VARCHAR(300) PRIMARY KEY,
@@ -1527,61 +1402,13 @@ BEGIN
     :started_at, :P_COMPANY, :P_ENVIRONMENT, 'PRIMARY_EVIDENCE_READY', :seeded_rows,
     :routed_rows, 'Action queue records closure telemetry', :digest_state, :packet_id,
     'OVERWATCH mart task graph refreshes snapshots automatically',
-    'Role-based Experience View and exceptions-first DBA defaults are app seeded',
+    'Admin-only access and exceptions-first DBA defaults are app seeded',
     'Review OVERWATCH_AUTOMATION_HEALTH_V for the latest no-touch automation run.'
   );
 
   RETURN 'OVERWATCH automation refreshed: seeded=' || seeded_rows || ', routed=' || routed_rows || ', digest=' || digest_state;
 END;
 $$;
-
-CREATE TABLE IF NOT EXISTS OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY (
-  RANK                  NUMBER PRIMARY KEY,
-  CAPABILITY            VARCHAR(200),
-  STATUS                VARCHAR(80),
-  WHERE_IT_LANDS         VARCHAR(500),
-  WHY_IT_MATTERS         VARCHAR(2000),
-  NEXT_ACTION            VARCHAR(2000),
-  SNOWFLAKE_SOURCES      VARCHAR(2000),
-  OWNER                  VARCHAR(300),
-  PRODUCTION_GUARDRAIL   VARCHAR(2000),
-  UPDATED_AT             TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-);
-
-MERGE INTO OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY tgt
-USING (
-  SELECT * FROM VALUES
-    (1, 'Detection and Root-Cause Engine', 'Foundation', 'Alert Center, DBA Control Room', 'Finds the shared cause behind cost, query, task, login, and object-change symptoms.', 'Materialize signal correlation and route one incident instead of disconnected alerts.', 'QUERY_HISTORY, TASK_HISTORY, LOGIN_HISTORY, ACCESS_HISTORY, WAREHOUSE_METERING_HISTORY', 'DBA On-Call', 'Correlation is evidence ranking only; remediation remains review-gated.'),
-    (2, 'Task/Pipeline Critical Path Brain', 'Foundation', 'Workload Operations, DBA Morning Brief', 'Shows root task, child failure, late-risk, retry pattern, and downstream blast radius.', 'Use task graph facts before retrying, resuming, or calling a pipeline healthy.', 'TASK_HISTORY, INFORMATION_SCHEMA.TASK_HISTORY, EVENT TABLES', 'DBA / Data Engineering', 'Retry and resume actions require owner policy and run ledger proof.'),
-    (3, 'Data Quality and Reconciliation Center', 'New', 'Workload Operations, DBA Tools', 'Compares row counts, hash buckets, schema drift, freshness, and sample diffs by database/schema.', 'Create metadata-driven reconciliation rules and store per-table results.', 'INFORMATION_SCHEMA, QUERY_HISTORY, configured table checks', 'DBA / Data Owner', 'Hash large tables by bucket/key, then sample mismatches before full scans.'),
-    (4, 'Cost Run-Rate and Attribution Monitor', 'Foundation', 'Cost & Contract', 'Forecasts burn, ranks cost drivers, and keeps leadership out of raw ACCOUNT_USAGE scans.', 'Use run-rate facts, top-driver movement, and action queue telemetry before changing warehouses.', 'WAREHOUSE_METERING_HISTORY, METERING_DAILY_HISTORY, OVERWATCH_ACTION_QUEUE', 'DBA / Cost owner', 'Run-rate projections are monitoring signals, not automatic remediation authority.'),
-    (5, 'Alert Lifecycle 2.0', 'Foundation', 'Alert Center', 'Turns alerts into acknowledged, owned, suppressed, resolved, commented, and audited work.', 'Normalize lifecycle state and route repeated issues to the same owner/action.', 'ALERT_EVENTS, ALERT_ACKNOWLEDGEMENTS, ALERT_RUN_HISTORY, ALERT_REMEDIATION_LOG', 'DBA Lead', 'Deduplicate aggressively and show freshness/source lag on every board.'),
-    (6, 'Fact-Grounded AI Query Diagnosis', 'Contract', 'Workload Operations, Query diagnosis', 'Cortex recommendations must cite exact scan, spill, pruning, queue, and owner evidence.', 'Pass query evidence, table context, and expected output shape into the prompt contract.', 'QUERY_HISTORY, QUERY_PROFILE when available, ACCESS_HISTORY, TABLE_STORAGE_METRICS', 'DBA / Query Owner', 'No generic AI answer; recommendations must cite exact metrics and SQL evidence.'),
-    (7, 'OVERWATCH Self-Monitoring', 'New', 'Cost & Contract, Alert Center Setup', 'The monitoring app must prove its own query cost, failures, cache behavior, and slow sections.', 'Tag every app query and summarize runtime cost and errors by section.', 'QUERY_HISTORY query_tag=OVERWATCH%, WAREHOUSE_METERING_HISTORY', 'OVERWATCH Maintainer', 'Use bounded windows and mart rollups so monitoring does not become the cost problem.'),
-    (8, 'Scheduled Mart Layer With Fallback', 'Foundation', 'Setup, DBA Control Room, Cost & Contract', 'Keeps first paint fast and makes live ACCOUNT_USAGE scans explicit instead of accidental.', 'Refresh scheduled fact and mart tables through the consolidated setup task graph.', 'ACCOUNT_USAGE, Streams/Tasks, OVERWATCH fact tables', 'DBA Platform', 'Do not add parallel DDL setup paths outside the consolidated mart setup.'),
-    (9, 'Security Monitoring Scorecard', 'New', 'Security Monitoring, Executive Landing', 'Leaders need defensible evidence for admin grants, dormant users, policy drift, and risky shares.', 'Materialize security controls with evidence rows and remediation paths.', 'GRANTS_TO_USERS, GRANTS_TO_ROLES, LOGIN_HISTORY, ACCESS_HISTORY, POLICIES, SHARES', 'Security Engineer', 'Scorecard is a risk register, not a substitute for security review.'),
-    (10, 'Multi-Account / Org View', 'Contract', 'Executive Landing, Cost & Contract', 'Cost and risk should roll up above one account when leadership owns multiple Snowflake accounts.', 'Provide optional ORGADMIN views and a no-ORG fallback that stays single-account.', 'ORGANIZATION_USAGE, ACCOUNT_USAGE, account registry config', 'Snowflake Platform Owner', 'Hide org views when the role lacks organization usage privileges.'),
-    (11, 'Data-First Navigation Contract', 'Foundation', 'App shell, every primary section', 'DBAs should see scoped KPIs, risks, and summaries on first section click without saved-state persistence or mode toggles.', 'Keep section autoload bounded to fast summaries and make heavy proof an explicit local action.', 'Streamlit session state, fast OVERWATCH summaries, ACCOUNT_USAGE fallback', 'OVERWATCH Maintainer', 'Do not persist navigation state or create saved-state tables; unknown roles stay restrictive.'),
-    (12, 'Monitoring Docs and Runbooks', 'New', 'README, Setup & Runbook', 'A production DBA command center needs setup, privileges, failure modes, rollback, and operating rules.', 'Keep a DBA runbook, data model map, precompute decision, and remediation safety model with the code.', 'Repository docs, setup SQL, migration ledger', 'DBA Lead', 'Docs must match executable objects and tests before commit.')
-) src(RANK, CAPABILITY, STATUS, WHERE_IT_LANDS, WHY_IT_MATTERS, NEXT_ACTION, SNOWFLAKE_SOURCES, OWNER, PRODUCTION_GUARDRAIL)
-ON tgt.RANK = src.RANK
-WHEN MATCHED THEN UPDATE SET
-  CAPABILITY = src.CAPABILITY,
-  STATUS = src.STATUS,
-  WHERE_IT_LANDS = src.WHERE_IT_LANDS,
-  WHY_IT_MATTERS = src.WHY_IT_MATTERS,
-  NEXT_ACTION = src.NEXT_ACTION,
-  SNOWFLAKE_SOURCES = src.SNOWFLAKE_SOURCES,
-  OWNER = src.OWNER,
-  PRODUCTION_GUARDRAIL = src.PRODUCTION_GUARDRAIL,
-  UPDATED_AT = CURRENT_TIMESTAMP()
-WHEN NOT MATCHED THEN INSERT (
-  RANK, CAPABILITY, STATUS, WHERE_IT_LANDS, WHY_IT_MATTERS, NEXT_ACTION,
-  SNOWFLAKE_SOURCES, OWNER, PRODUCTION_GUARDRAIL
-) VALUES (
-  src.RANK, src.CAPABILITY, src.STATUS, src.WHERE_IT_LANDS, src.WHY_IT_MATTERS,
-  src.NEXT_ACTION, src.SNOWFLAKE_SOURCES, src.OWNER, src.PRODUCTION_GUARDRAIL
-);
 
 CREATE TABLE IF NOT EXISTS OVERWATCH_RECON_CONFIG (
   CHECK_ID             NUMBER AUTOINCREMENT PRIMARY KEY,
@@ -1629,48 +1456,6 @@ CREATE TABLE IF NOT EXISTS OVERWATCH_SCHEMA_DIFF_RESULT (
   OWNER                VARCHAR(300),
   SEVERITY             VARCHAR(40)
 );
-
-CREATE OR REPLACE VIEW OVERWATCH_COMPLIANCE_READINESS_V AS
-WITH admin_grants AS (
-    SELECT GRANTEE_NAME AS USER_NAME, ROLE AS GRANTED_ROLE, CREATED_ON
-    FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS
-    WHERE DELETED_ON IS NULL
-      AND ROLE IN ('ACCOUNTADMIN', 'SECURITYADMIN', 'SYSADMIN', 'ORGADMIN')
-),
-recent_access AS (
-    SELECT USER_NAME, COUNT(*) AS ACCESSED_OBJECTS
-    FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY
-    WHERE QUERY_START_TIME >= DATEADD('DAY', -30, CURRENT_TIMESTAMP())
-    GROUP BY USER_NAME
-),
-recent_logins AS (
-    SELECT USER_NAME, COUNT_IF(IS_SUCCESS = 'YES') AS SUCCESSFUL_LOGINS
-    FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY
-    WHERE EVENT_TIMESTAMP >= DATEADD('DAY', -30, CURRENT_TIMESTAMP())
-    GROUP BY USER_NAME
-),
-rollup AS (
-    SELECT
-        COALESCE(a.USER_NAME, l.USER_NAME, r.USER_NAME) AS USER_NAME,
-        LISTAGG(DISTINCT a.GRANTED_ROLE, ', ') WITHIN GROUP (ORDER BY a.GRANTED_ROLE) AS ADMIN_ROLES,
-        MAX(l.SUCCESSFUL_LOGINS) AS SUCCESSFUL_LOGINS,
-        MAX(r.ACCESSED_OBJECTS) AS ACCESSED_OBJECTS
-    FROM admin_grants a
-    FULL OUTER JOIN recent_logins l ON a.USER_NAME = l.USER_NAME
-    FULL OUTER JOIN recent_access r ON COALESCE(a.USER_NAME, l.USER_NAME) = r.USER_NAME
-    GROUP BY COALESCE(a.USER_NAME, l.USER_NAME, r.USER_NAME)
-)
-SELECT
-    USER_NAME,
-    ADMIN_ROLES,
-    SUCCESSFUL_LOGINS,
-    ACCESSED_OBJECTS,
-    CASE
-        WHEN ADMIN_ROLES IS NOT NULL THEN 'HIGH'
-        WHEN SUCCESSFUL_LOGINS > 0 AND ACCESSED_OBJECTS > 1000 THEN 'MEDIUM'
-        ELSE 'LOW'
-    END AS SEVERITY
-FROM rollup;
 
 -- -----------------------------------------------------------------------------
 -- 3. Transient mart tables

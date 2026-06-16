@@ -2191,10 +2191,11 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_DAILY", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS FACT_COST_SOURCE_HEALTH_DAILY", setup_upper)
         self.assertIn("CREATE TRANSIENT TABLE IF NOT EXISTS MART_EXECUTIVE_OBSERVABILITY", setup_upper)
-        self.assertIn("CREATE TABLE IF NOT EXISTS OVERWATCH_REFRESH_POLICY", setup_upper)
         self.assertIn("EXECUTIVE_OBSERVABILITY", setup_upper)
-        self.assertIn("RUN_IN_FIRST_PAINT", setup_upper)
-        self.assertIn("CONSOLIDATED_DDL", setup_upper)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS OVERWATCH_REFRESH_POLICY", setup_upper)
+        self.assertNotIn("OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY", setup_upper)
+        self.assertNotIn("OVERWATCH_COMPANY_SCOPE", setup_upper)
+        self.assertNotIn("OVERWATCH_COMPLIANCE_READINESS_V", setup_upper)
         self.assertNotIn("OPTIONAL_DYNAMIC_TABLES", setup_upper)
         self.assertIn("ALTER TABLE IF EXISTS FACT_COST_DAILY ADD COLUMN IF NOT EXISTS RATE_USD", setup_upper)
         self.assertIn("CREATE OR REPLACE PROCEDURE SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY", setup_upper)
@@ -2300,7 +2301,6 @@ class FormulaRegressionTests(unittest.TestCase):
 
         for required in [
             "MART_EXECUTIVE_OBSERVABILITY",
-            "OVERWATCH_REFRESH_POLICY",
             "ALERT_ACKNOWLEDGEMENTS",
             "ALERT_REMEDIATION_LOG",
             "OVERWATCH_RECON_CONFIG",
@@ -2325,6 +2325,7 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("APPROVED_LIVE_FALLBACK AS LIVE_FALLBACK_ALLOWED", validation_sql)
         self.assertIn("REFRESH_STATE", validation_sql)
         self.assertIn("TARGET_FRESHNESS_MIN AS TARGET_FRESHNESS_MINUTES", validation_sql)
+        self.assertNotIn("OVERWATCH_REFRESH_POLICY", validation_sql)
         self.assertIn("SNOW_ACCOUNTADMINS", checklist)
         self.assertIn("SNOW_SYSADMINS", checklist)
         self.assertNotIn("_DSA", checklist)
@@ -3824,7 +3825,7 @@ class FormulaRegressionTests(unittest.TestCase):
         setup_sql = (ROOT / "snowflake" / "OVERWATCH_MART_SETUP.sql").read_text(encoding="utf-8").upper()
         self.assertIn("CREATE OR REPLACE FUNCTION OVERWATCH_DATABASE_ENVIRONMENT", setup_sql)
         self.assertIn("UPPER(DATABASE_NAME) = 'ALFA_EDW_PROD'", setup_sql)
-        self.assertIn("'ALFA_EDW_PROD',         'EQUALS',    'PROD'", setup_sql)
+        self.assertNotIn("OVERWATCH_COMPANY_SCOPE", setup_sql)
 
         env_tables = [
             "FACT_QUERY_HOURLY",

@@ -10,15 +10,15 @@ not a live database dependency graph.
 
 | Object type | Count |
 | --- | ---: |
-| Tables | 63 |
+| Tables | 59 |
 | Procedures | 9 |
 | Tasks | 8 |
-| Views | 4 |
-| Total | 84 |
+| Views | 3 |
+| Total | 79 |
 
-Objects with direct app references: 63.
+Objects with direct app references: 62.
 
-Objects without direct app references: 21. Most of these are refresh procedures, scheduled
+Objects without direct app references: 17. Most of these are refresh procedures, scheduled
 tasks, or support tables used inside the setup SQL.
 
 ## Keep
@@ -50,6 +50,19 @@ removed or replaced.
 | `OVERWATCH_LOAD_AUDIT` | Refresh bookkeeping written by setup procedures. It is not surfaced today, but it is useful for live refresh troubleshooting. |
 | `OVERWATCH_OWNER_TAG_NAMES`, `DIM_COST_OWNER_TAG` | Owner tag configuration and snapshot used in chargeback fact construction. Keep only if chargeback by owner tag remains in scope. |
 
+## Pruned Metadata Objects
+
+These were removed from the deployable setup because the app does not read them
+and the same information is already maintained in docs, Python config, or
+read-only validation SQL.
+
+| Object | Replacement |
+| --- | --- |
+| `OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY` | Capability direction remains in docs and app code, not a static mart table. |
+| `OVERWATCH_REFRESH_POLICY` | Refresh contract remains in `docs/REFRESH_ARCHITECTURE.md` and inline validation SQL. |
+| `OVERWATCH_COMPANY_SCOPE` | Company/scope filtering remains in app config and Python scope helpers. |
+| `OVERWATCH_COMPLIANCE_READINESS_V` | Security Monitoring reads native Snowflake telemetry directly or through relevant future facts. |
+
 ## Retire Or Merge Candidates
 
 These have no direct app reference and look more like metadata/control-plane scaffolding
@@ -57,10 +70,6 @@ than DBA monitoring surfaces. Remove only after updating tests and validation SQ
 
 | Object | Recommendation |
 | --- | --- |
-| `OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY` | Candidate to remove. It is a runbook capability register, not a runtime monitoring mart. |
-| `OVERWATCH_REFRESH_POLICY` | Candidate to move to documentation. The app does not read it; static docs already define refresh policy. |
-| `OVERWATCH_COMPANY_SCOPE` | Candidate to remove or replace with app config-driven scope. The current app uses Python config/company filters, not this table. |
-| `OVERWATCH_COMPLIANCE_READINESS_V` | Candidate to remove unless Security Monitoring begins reading it. It is docs-only in the current scan. |
 | `FACT_MONITORING_COST_DAILY` | Candidate to merge with `FACT_COST_DAILY` / `MART_EXECUTIVE_OBSERVABILITY` if no unique app-facing metric remains. It is loaded in setup but not read by the app. |
 
 ## Next Pruning Rule

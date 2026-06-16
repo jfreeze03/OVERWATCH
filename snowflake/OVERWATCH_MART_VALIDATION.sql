@@ -5,7 +5,6 @@
 -- 1) Required command-center objects.
 WITH required_objects AS (
     SELECT * FROM VALUES
-        ('TABLE', 'OVERWATCH_REFRESH_POLICY'),
         ('TABLE', 'MART_EXECUTIVE_OBSERVABILITY'),
         ('TABLE', 'FACT_COST_DAILY'),
         ('TABLE', 'FACT_CORTEX_DAILY'),
@@ -88,7 +87,22 @@ WHERE PANEL = 'FRESHNESS'
 GROUP BY COMPANY, ENVIRONMENT, WINDOW_DAYS, DIMENSION
 ORDER BY AGE_MINUTES DESC NULLS FIRST, SOURCE_NAME;
 
--- 4) Refresh-policy contract for first paint and live fallback.
+-- 4) Refresh contract for first paint and live fallback.
+WITH refresh_contract AS (
+    SELECT * FROM VALUES
+        ('EXECUTIVE_OBSERVABILITY', 'Executive Landing', 'MART', 60, 'TASK_AFTER_FACT_LOADS', 'MART_EXECUTIVE_OBSERVABILITY', 35, TRUE, FALSE, 'Executive Landing reads one compact mart query on first paint.', 'DBA / Platform'),
+        ('DBA_CONTROL_ROOM_FAST', 'DBA Control Room', 'MART', 60, 'TASK_AFTER_HOURLY_FACTS', 'MART_DBA_CONTROL_ROOM', 35, TRUE, FALSE, 'Morning triage renders from a small control-room mart before live ACCOUNT_USAGE detail.', 'DBA On-Call'),
+        ('COST_WATCH_FLOOR', 'Cost & Contract', 'MART_AND_BOUNDED_OFFICIAL_COST', 60, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_COST_DAILY; FACT_CORTEX_DAILY; WAREHOUSE_METERING_HISTORY', 730, TRUE, FALSE, 'Cost first paint shows lightweight spend, Cortex, and warehouse movement; full attribution proof is explicit.', 'DBA / Cost owner'),
+        ('ALERT_COMMAND_VIEW', 'Alert Center', 'APP_TABLES', 15, 'TASK_OR_APP_WRITE', 'ALERT_EVENTS; ALERT_NOTIFICATION_LOG; OVERWATCH_ACTION_QUEUE', 180, TRUE, FALSE, 'Alert Center may auto-load bounded app tables because they are small, routed, and deduplicated.', 'DBA / Alert Owner'),
+        ('WORKLOAD_SNAPSHOT', 'Workload Operations', 'MART_AND_TASK_HISTORY', 30, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_QUERY_HOURLY; FACT_TASK_RUN', 35, TRUE, FALSE, 'Workload first paint shows task/query pressure from compact facts; live triage is explicit.', 'DBA / Workload Owner'),
+        ('LIVE_TRIAGE', 'DBA Control Room / Workload Operations', 'NEAR_REAL_TIME', 5, 'ON_DEMAND_ONLY', 'INFORMATION_SCHEMA table functions; SHOW commands', 1, FALSE, TRUE, 'Near-real-time checks stay explicit to avoid runaway monitoring cost.', 'DBA On-Call'),
+        ('DATA_RECONCILIATION', 'Workload Operations', 'ON_DEMAND_PROOF', NULL, 'OPERATOR_RUN', 'OVERWATCH_RECON_CONFIG; OVERWATCH_RECON_RUN', 365, FALSE, TRUE, 'Schema and data comparison proof can be expensive and runs only on operator request.', 'DBA / Data Owner')
+    AS t(
+        POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
+        BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK,
+        WHY_THIS_POLICY, OWNER
+    )
+)
 SELECT
     POLICY_NAME,
     SURFACE,
@@ -100,11 +114,25 @@ SELECT
     BASE_OBJECT,
     OWNER,
     WHY_THIS_POLICY AS WHY_THIS_DECISION
-FROM OVERWATCH_REFRESH_POLICY
+FROM refresh_contract
 ORDER BY RUN_IN_FIRST_PAINT DESC, SURFACE;
 
--- 5) Refresh-policy freshness enforcement proof.
-WITH freshness AS (
+-- 5) Refresh freshness enforcement proof.
+WITH refresh_contract AS (
+    SELECT * FROM VALUES
+        ('EXECUTIVE_OBSERVABILITY', 'Executive Landing', 'MART', 60, 'TASK_AFTER_FACT_LOADS', 'MART_EXECUTIVE_OBSERVABILITY', 35, TRUE, FALSE),
+        ('DBA_CONTROL_ROOM_FAST', 'DBA Control Room', 'MART', 60, 'TASK_AFTER_HOURLY_FACTS', 'MART_DBA_CONTROL_ROOM', 35, TRUE, FALSE),
+        ('COST_WATCH_FLOOR', 'Cost & Contract', 'MART_AND_BOUNDED_OFFICIAL_COST', 60, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_COST_DAILY; FACT_CORTEX_DAILY; WAREHOUSE_METERING_HISTORY', 730, TRUE, FALSE),
+        ('ALERT_COMMAND_VIEW', 'Alert Center', 'APP_TABLES', 15, 'TASK_OR_APP_WRITE', 'ALERT_EVENTS; ALERT_NOTIFICATION_LOG; OVERWATCH_ACTION_QUEUE', 180, TRUE, FALSE),
+        ('WORKLOAD_SNAPSHOT', 'Workload Operations', 'MART_AND_TASK_HISTORY', 30, 'TASK_PLUS_EXPLICIT_REFRESH', 'FACT_QUERY_HOURLY; FACT_TASK_RUN', 35, TRUE, FALSE),
+        ('LIVE_TRIAGE', 'DBA Control Room / Workload Operations', 'NEAR_REAL_TIME', 5, 'ON_DEMAND_ONLY', 'INFORMATION_SCHEMA table functions; SHOW commands', 1, FALSE, TRUE),
+        ('DATA_RECONCILIATION', 'Workload Operations', 'ON_DEMAND_PROOF', NULL, 'OPERATOR_RUN', 'OVERWATCH_RECON_CONFIG; OVERWATCH_RECON_RUN', 365, FALSE, TRUE)
+    AS t(
+        POLICY_NAME, SURFACE, SOURCE_CLASS, TARGET_FRESHNESS_MIN, REFRESH_METHOD,
+        BASE_OBJECT, RETENTION_DAYS, RUN_IN_FIRST_PAINT, APPROVED_LIVE_FALLBACK
+    )
+),
+freshness AS (
     SELECT
         'Executive Landing' AS SURFACE,
         MAX(SNAPSHOT_TS) AS LATEST_REFRESH_TS
@@ -122,7 +150,7 @@ policy AS (
         MAX(IFF(RUN_IN_FIRST_PAINT, 1, 0)) AS FIRST_PAINT_REQUIRED,
         MAX(IFF(APPROVED_LIVE_FALLBACK, 1, 0)) AS LIVE_FALLBACK_ALLOWED,
         LISTAGG(POLICY_NAME, ', ') WITHIN GROUP (ORDER BY POLICY_NAME) AS POLICY_NAMES
-    FROM OVERWATCH_REFRESH_POLICY
+    FROM refresh_contract
     WHERE RUN_IN_FIRST_PAINT
     GROUP BY SURFACE
 )

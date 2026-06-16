@@ -46,9 +46,10 @@ Contract reuse the same cached/session board for spend, Cortex, queue, spill,
 failure, alert, action, and freshness signals before their deeper
 section-specific marts or proof workspaces are opened.
 
-The same decision is seeded in Snowflake as `OVERWATCH_REFRESH_POLICY`, which
-defines first-paint sources, target freshness, retention, live-fallback
-boundaries, and the owner for each surface.
+The same decision is documented in `docs/REFRESH_ARCHITECTURE.md` and checked by
+`snowflake/OVERWATCH_MART_VALIDATION.sql`, which defines first-paint sources,
+target freshness, live-fallback boundaries, and the owner for each surface
+without adding a static policy table to the mart schema.
 
 Use `snowflake/OVERWATCH_MART_VALIDATION.sql` after setup or release changes to
 prove required marts, alert audit tables, reconciliation tables, executive board

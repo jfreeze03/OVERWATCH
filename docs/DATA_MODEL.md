@@ -7,10 +7,11 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 
 | Object | Type | Purpose |
 |---|---|---|
-| `OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY` | Table | Ranked 12-item capability register used by setup/runbook review. |
-| `OVERWATCH_REFRESH_POLICY` | Table | Surface-by-surface refresh contract for first paint, retention, live fallback, and owner accountability. |
 | `OVERWATCH_SELF_MONITORING_V` | View | Summarizes app query tags, failures, latency, and bytes scanned by section. |
 | `MART_EXECUTIVE_OBSERVABILITY` | Transient mart | Executive monitoring wall: spend, Cortex, runtime, queue, spill, alerts, actions, storage, cost drivers, query database mix, execution status, and warehouse pressure. |
+
+The refresh contract and capability notes now live in documentation and
+validation SQL instead of static mart tables.
 
 ## Reconciliation
 
@@ -36,12 +37,6 @@ incident proof.
 | `FACT_CORTEX_DAILY` | Transient fact | Cortex AI request, credit, and estimated-dollar facts. |
 | `FACT_COST_MONITORING_SIGNAL` | Transient fact | Ranked cost movement and Cortex signals consumed by Cost & Contract and Alert Center. |
 | `FACT_COST_INCIDENT_TIMELINE` | Transient fact | Ordered cost incident timeline for root cause, alerting, and action status. |
-
-## Security and Compliance
-
-| Object | Type | Purpose |
-|---|---|---|
-| `OVERWATCH_COMPLIANCE_READINESS_V` | View | Flags admin grants and high-access user activity from Snowflake metadata. |
 
 ## Native Snowflake Proof Contracts
 

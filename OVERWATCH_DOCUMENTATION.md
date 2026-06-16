@@ -39,19 +39,12 @@ operations: detect, route, act, verify, and retain evidence.
 Legacy bookmarks and saved views may still redirect to the current sections, but
 production documentation and navigation should use only the names above.
 
-## User Roles And Experience Views
+## Admin Role Access
 
-The app uses experience views to reduce risk and noise:
-
-| Experience view | Intended audience | Access intent |
-|---|---|---|
-| DBA | Full DBA/admin operator | Full enabled admin control, action routing, evidence, and guarded execution paths. |
-| Manager | DSA-style manager | Broad health, cost, security, governance, and action status without needing every admin control first. |
-| Analyst | DTI-style analyst | Workload Operations and analysis surfaces needed to investigate query, task, and warehouse behavior. |
-| Executive | Leadership | Executive Landing, high-level health, cost, open risk, and report-ready evidence. |
-
-The DBA role must retain the strongest confirmation, audit, rollback, and
-verification requirements because it can trigger production-impacting actions.
+The app is an admin/DBA monitoring command center. Access is intended for
+`SNOW_ACCOUNTADMINS` and `SNOW_SYSADMINS`, with local demo fallback only for
+browser testing. Production-impacting actions retain confirmation, audit,
+rollback, and verification requirements.
 
 ## Global Filters
 

@@ -114,7 +114,7 @@ database context remain `No Database Context`.
 The scope classifier should be kept in sync across:
 
 1. `.overwatch_final/config.py`
-2. `OVERWATCH_COMPANY_SCOPE`
+2. Python company-scope helpers
 3. environment classifier SQL
 4. navigation/filter tests
 5. cost and chargeback regression tests

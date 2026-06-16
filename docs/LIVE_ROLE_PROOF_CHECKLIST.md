@@ -13,7 +13,7 @@ outside Snowflake's privilege model.
    `MONTHLY_COST`, `DAILY_WORKLOAD`, `COST_DRIVER`, `QUERY_TYPE`,
    `QUERY_DATABASE`, `EXEC_STATUS`, `WAREHOUSE_PRESSURE`, `FRESHNESS`, and
    `SOURCE_STATUS` panels.
-3. Confirm `OVERWATCH_REFRESH_POLICY` marks Executive Landing as
+3. Confirm the validation SQL refresh-contract rows mark Executive Landing as
    `RUN_IN_FIRST_PAINT = TRUE` and live fallback as `FALSE`.
 4. Confirm Alert Center audit tables exist:
    `ALERT_EVENTS`, `ALERT_ACKNOWLEDGEMENTS`, `ALERT_REMEDIATION_LOG`,

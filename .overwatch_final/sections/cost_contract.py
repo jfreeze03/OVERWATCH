@@ -1378,7 +1378,7 @@ def _build_cost_source_health_board(
         _loaded_rows(cockpit),
         "Current/prior movement loaded from fast warehouse metering summary or live Account Usage."
         if _loaded_rows(cockpit) else "Warehouse movement is available after Cost Cockpit refresh.",
-        "Load Cost Cockpit before explaining usage movement.",
+        "Refresh cost proof before explaining usage movement.",
         "ACCOUNT_USAGE warehouse metering latency applies; summary refresh is preferred.",
     )
     _add_source_health_row(
@@ -1776,14 +1776,14 @@ def _build_cost_control_coverage_board(
         "Exact warehouse metering",
         "Ready" if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Load Needed",
         "Cockpit has exact current/prior warehouse credits." if _has_columns(cockpit, ["CURRENT_CREDITS", "PRIOR_CREDITS"]) else "Exact warehouse movement is available after Cost Cockpit refresh.",
-        "Load Cost Cockpit before explaining any usage movement.",
+        "Refresh cost proof before explaining any usage movement.",
     )
     _add_coverage_row(
         rows,
         "7-day average and YOY",
         "Ready" if _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"]) else "Load Needed",
         "Run-rate lens has complete-day 7d average and prior-year comparison." if _has_columns(run_rate, ["AVG_DAILY_7D", "YOY_7D_PCT", "YOY_30D_PCT"]) else "Run-rate and YOY trend context is available after refresh.",
-        "Load Cost Cockpit to populate complete-day run-rate and YOY telemetry.",
+        "Refresh cost proof to populate complete-day run-rate and YOY telemetry.",
     )
     _add_coverage_row(
         rows,
@@ -1880,7 +1880,7 @@ def _build_cost_allocation_trust_board(
         "Contract and warehouse totals",
         "Exact" if exact_loaded and run_rate_loaded else "Load Needed",
         "Warehouse metering and complete-day run-rate/YOY are loaded." if exact_loaded and run_rate_loaded else "Exact warehouse totals or complete-day run-rate telemetry is missing.",
-        "Load Cost Cockpit before defending run-rate pace, 7-day average, or YOY movement.",
+        "Refresh cost proof before defending run-rate pace, 7-day average, or YOY movement.",
     )
 
     company_env_loaded = _has_columns(chargeback, ["COMPANY", "ENVIRONMENT"]) or _has_columns(explorer, ["COMPANY", "ENVIRONMENT_ROLLUP"])
@@ -2204,7 +2204,7 @@ def _render_cost_drilldown_command_map(
     )
     if board.empty:
         return
-    st.markdown("**Cost Drilldown Command Map**")
+    st.markdown("**Cost Drilldown Readiness**")
     render_shell_snapshot((
         ("Ready", f"{summary['ready']:,}"),
         ("Review", f"{summary['review']:,}"),
@@ -2220,7 +2220,7 @@ def _render_cost_drilldown_command_map(
         ],
         sort_by=["COMMAND_PRIORITY", "DRILLDOWN"],
         ascending=[True, True],
-        raw_label="All cost drilldown command rows",
+        raw_label="All cost drilldown readiness rows",
         height=280,
         max_rows=10,
     )
@@ -3023,7 +3023,7 @@ def _build_cost_incident_timeline(
             "Root cause candidate",
             top_wh,
             "Root-cause board has not been loaded for this incident window.",
-            "Load Cost Cockpit root-cause telemetry before assigning savings or tuning work.",
+            "Refresh cost proof telemetry before assigning savings or tuning work.",
             "Cost Spike Root Cause board.",
             "Cost & Contract",
         )
@@ -3098,7 +3098,7 @@ def _build_cost_incident_timeline(
         "event_count": int(len(board)),
         "critical_high": int(board["SEVERITY"].isin(["Critical", "High"]).sum()) if not board.empty else 0,
         "top_step": str(board.iloc[0].get("INCIDENT_STEP") if not board.empty else "No incident timeline"),
-        "next_action": str(board.iloc[0].get("NEXT_ACTION") if not board.empty else "Load Cost Cockpit."),
+        "next_action": str(board.iloc[0].get("NEXT_ACTION") if not board.empty else "Refresh cost proof."),
     }
     return summary, board
 
@@ -3276,7 +3276,14 @@ def _render_change_cost_correlation_board(
     )
 
 
-def _load_cost_splash_query(mart_sql: str, live_sql: str, ttl_key: str, *, section: str = "Cost & Contract") -> tuple[pd.DataFrame, str, str]:
+def _load_cost_splash_query(
+    mart_sql: str,
+    live_sql: str,
+    ttl_key: str,
+    *,
+    section: str = "Cost & Contract",
+    allow_live_fallback: bool = True,
+) -> tuple[pd.DataFrame, str, str]:
     try:
         frame = run_query_or_raise(
             mart_sql,
@@ -3286,6 +3293,8 @@ def _load_cost_splash_query(mart_sql: str, live_sql: str, ttl_key: str, *, secti
         )
         return frame, "Fast summary", ""
     except Exception as mart_exc:
+        if not allow_live_fallback:
+            return pd.DataFrame(), "", f"Fast summary unavailable: {format_snowflake_error(mart_exc)}"
         try:
             frame = run_query_or_raise(
                 live_sql,
@@ -3370,6 +3379,7 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_pr
             build_mart_cost_cockpit_sql(company, int(days)),
             _build_cost_cockpit_sql(company, int(days)),
             f"cost_splash_cockpit_{company}_{days}",
+            allow_live_fallback=full_proof,
         )
     trend = pd.DataFrame()
     trend_source = trend_error = ""
@@ -3387,21 +3397,26 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_pr
         _build_cost_splash_warehouse_delta_sql(company, int(days), mart=True),
         _build_cost_splash_warehouse_delta_sql(company, int(days), mart=False),
         f"cost_splash_warehouse_delta_{company}_{days}",
+        allow_live_fallback=full_proof,
     )
     cortex, cortex_source, cortex_error = _load_cost_splash_query(
         _build_cost_splash_cortex_sql(company, int(days), get_current_ai_credit_price(), mart=True),
         _build_cost_splash_cortex_sql(company, int(days), get_current_ai_credit_price(), mart=False),
         f"cost_splash_cortex_{company}_{days}",
+        allow_live_fallback=full_proof,
     )
-    service_costs, service_source, service_error = _load_cost_splash_live_query(
-        build_snowflake_service_cost_lens_sql(
-            int(days),
-            credit_price,
-            ai_credit_price=get_current_ai_credit_price(),
-        ),
-        f"cost_splash_official_service_lens_{company}_{days}_{credit_price}",
-        "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
-    )
+    service_costs = pd.DataFrame()
+    service_source = service_error = ""
+    if full_proof:
+        service_costs, service_source, service_error = _load_cost_splash_live_query(
+            build_snowflake_service_cost_lens_sql(
+                int(days),
+                credit_price,
+                ai_credit_price=get_current_ai_credit_price(),
+            ),
+            f"cost_splash_official_service_lens_{company}_{days}_{credit_price}",
+            "Official Cost Monitor: SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY",
+        )
     run_rate = pd.DataFrame()
     run_rate_source = run_rate_error = ""
     if full_proof:
@@ -3409,6 +3424,7 @@ def _ensure_cost_splash(company: str, days: int, credit_price: float, *, full_pr
             build_mart_cost_run_rate_sql(company),
             _build_cost_run_rate_sql(company),
             f"cost_splash_run_rate_{company}",
+            allow_live_fallback=full_proof,
         )
     errors = [err for err in (cockpit_error, trend_error, delta_error, cortex_error, service_error, run_rate_error) if err]
     source_parts = [src for src in (service_source, trend_source, cockpit_source, delta_source, cortex_source, run_rate_source) if src]
@@ -3438,10 +3454,10 @@ def _maybe_autoload_cost_splash(company: str, days: int, credit_price: float) ->
     if consume_section_autoload_request("Cost & Contract"):
         st.session_state[_COST_SPLASH_AUTOLOAD_SCOPE_KEY] = meta
         st.caption(
-            "Cost & Contract opened the cached cost overview. Refresh Overview loads official spend, "
-            "warehouse ranking, Cortex spend, and cost telemetry."
+            "Cost & Contract opened fast summary facts. Refresh Overview loads official spend, "
+            "warehouse ranking, Cortex spend, and proof telemetry."
         )
-        return _cached_cost_splash(company, days, credit_price)
+        return _ensure_cost_splash(company, days, credit_price, full_proof=False)
     return _cached_cost_splash(company, days, credit_price)
 
 
@@ -3921,7 +3937,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         splash = _maybe_autoload_cost_splash(company, int(days), credit_price)
     _render_cost_splash(splash, company=company, days=int(days), credit_price=credit_price)
 
-    st.markdown("**Cost Detail Workspace**")
+    st.markdown("**Cost Proof Refresh**")
     proof_data = st.session_state.get("cost_contract_cockpit")
     proof_meta = st.session_state.get("cost_contract_cockpit_meta", {})
     proof_current = (
@@ -3936,7 +3952,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
         target_minutes=60,
         delayed_note="Cost detail uses fast summaries first; full account-history refresh is explicit.",
     )
-    if st.button("Load Cost Detail", key="cost_contract_cockpit_load", type="primary"):
+    if st.button("Refresh Cost Proof", key="cost_contract_cockpit_load", type="primary"):
         session = get_session_for_action(
             "load the Cost Control Cockpit",
             surface="Cost & Contract",
@@ -4049,7 +4065,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
                 st.session_state["cost_contract_service_lens_error"] = format_snowflake_error(exc)
                 st.session_state["cost_contract_service_lens_source"] = ""
     defer_section_note(
-        "Cost cockpit: Load it to decide whether to explain the bill, work the action queue, inspect Cortex spend, or tune cost controls."
+        "Cost proof refresh is optional; use it when you need account-history evidence behind the fast cost summary."
     )
 
     data = st.session_state.get("cost_contract_cockpit")
@@ -4068,7 +4084,7 @@ def _render_cost_watch_floor(company: str, credit_price: float) -> None:
     ):
         st.info(
             f"Loaded cockpit data is for {int(loaded_days)} days; selected window is {int(days)} days. "
-            "Click Load Cost Cockpit to refresh the watch floor."
+            "Refresh cost proof before acting on detailed telemetry."
         )
     if (
         not data_is_frame

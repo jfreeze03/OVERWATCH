@@ -1675,7 +1675,7 @@ def _change_operating_snapshot(summary, exceptions, meta: dict, company: str, en
             "loaded": False,
             "scope": str(company or "All"),
             "window": f"{safe_int(days, 14):d}d",
-            "evidence": "Load brief",
+            "evidence": "Fast facts pending",
             "risk": "On demand",
         }
 
@@ -1699,7 +1699,7 @@ def _render_change_operating_snapshot(snapshot: dict) -> None:
         render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "14d")),
-            ("Telemetry", str(snapshot.get("evidence") or "Load brief")),
+            ("Telemetry", str(snapshot.get("evidence") or "Fast facts pending")),
             ("Risk", str(snapshot.get("risk") or "On demand")),
         ))
         return

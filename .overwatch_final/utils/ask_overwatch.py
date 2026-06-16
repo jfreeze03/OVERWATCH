@@ -421,7 +421,7 @@ def _cards_from_executive_landing(state: Mapping, cards: list[dict]) -> None:
             ),
             "proof": "Executive data health plus loaded cost, alert, action queue, and deployment status.",
             "do_not": "Do not present the state as healthy until limited evidence inputs are explained.",
-            "route": "Executive Landing > Executive Command Wall",
+            "route": "Executive Landing > Snowflake Observability Wall",
             "category": "Executive Reliability Alerts Cost",
             "value": state_label,
         })

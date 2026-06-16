@@ -10,7 +10,7 @@ layer. The full source of truth remains `snowflake/OVERWATCH_MART_SETUP.sql`.
 | `OVERWATCH_COMMAND_INTELLIGENCE_CAPABILITY` | Table | Ranked 12-item capability register used by setup/runbook review. |
 | `OVERWATCH_REFRESH_POLICY` | Table | Surface-by-surface refresh contract for first paint, retention, live fallback, and owner accountability. |
 | `OVERWATCH_SELF_MONITORING_V` | View | Summarizes app query tags, failures, latency, and bytes scanned by section. |
-| `MART_EXECUTIVE_OBSERVABILITY` | Transient mart | Boss-page metric wall: spend, Cortex, runtime, queue, spill, alerts, actions, storage, platform score, cost drivers, query database mix, execution status, and warehouse pressure. |
+| `MART_EXECUTIVE_OBSERVABILITY` | Transient mart | Executive monitoring wall: spend, Cortex, runtime, queue, spill, alerts, actions, storage, cost drivers, query database mix, execution status, and warehouse pressure. |
 
 ## Reconciliation
 

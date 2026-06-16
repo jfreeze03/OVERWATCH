@@ -32,15 +32,14 @@ outside Snowflake's privilege model.
 
 ## Section Smoke By Role
 
-- Executive Landing: first paint shows the platform score, executive glance
-  KPIs, Snowflake Observability Wall, spend/runtime/cost-driver charts, and
-  setup readiness.
-- Every primary navigation surface: first paint shows a scoped command board
+- Executive Landing: first paint shows executive glance KPIs, Snowflake Observability Wall,
+  spend/runtime/cost-driver charts, and data freshness.
+- Every primary navigation surface: first paint shows a scoped signal summary
   before workflow buttons. Buttons should be drill-through, not the only way to
   see useful data.
-- DBA Control Room: morning queue loads without saved views or hidden workflow
+- DBA Control Room: morning queue renders without saved views or hidden workflow
   toggles.
-- Alert Center: incident board loads; lifecycle audit requires a note and writes
+- Alert Center: incident summary renders; lifecycle audit requires a note and writes
   only `ALERT_ACKNOWLEDGEMENTS` and `ALERT_REMEDIATION_LOG`.
 - Cost & Contract: first view shows spend, run-rate pace, Cortex dollars,
   cost-driver signals, and the action queue; heavy proof stays behind explicit

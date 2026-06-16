@@ -1465,9 +1465,9 @@ def _security_action_brief(summary, exceptions, meta: dict, company: str, enviro
                 "detail": "Loaded telemetry does not match the active company, environment, filters, or lookback.",
             }
         return {
-            "state": "Ready",
-            "headline": "Load identity, grant, MFA, and sharing telemetry.",
-            "detail": "The brief stays quiet until you request the selected scope.",
+            "state": "Fast Summary",
+            "headline": "Security posture is ready for review.",
+            "detail": "Fast security facts are attempted automatically; live account-history proof stays behind refresh.",
         }
 
     row = summary.iloc[0]
@@ -1520,7 +1520,7 @@ def _security_operating_snapshot(summary, meta: dict, company: str, environment:
             "loaded": False,
             "scope": str(company or "All"),
             "window": f"{safe_int(days, 30):d}d",
-            "evidence": "Load brief",
+            "evidence": "Fast facts pending",
             "focus": "Access",
         }
     row = summary.iloc[0]
@@ -1539,7 +1539,7 @@ def _render_security_operating_snapshot(snapshot: dict) -> None:
         render_shell_kpi_row((
             ("Scope", str(snapshot.get("scope") or "All")),
             ("Window", str(snapshot.get("window") or "30d")),
-                    ("Telemetry", str(snapshot.get("evidence") or "Load brief")),
+            ("Telemetry", str(snapshot.get("evidence") or "Fast facts pending")),
         ))
         return
     render_shell_kpi_row((
@@ -1556,25 +1556,25 @@ def _security_command_lanes(snapshot: dict) -> list[dict[str, str]]:
         return [
             {
                 "label": "Failed logins",
-                "value": "On demand",
+                "value": "Pending",
                 "state": "Identity",
-                "detail": "Load brief for login spikes, unusual sources, and failed auth.",
+                "detail": "Fast summary checks login spikes, unusual sources, and failed auth before live proof.",
             },
             {
                 "label": "MFA gaps",
-                "value": "On demand",
+                "value": "Pending",
                 "state": "Access",
                 "detail": "Review active users without exposed MFA signal.",
             },
             {
                 "label": "Grant changes",
-                "value": "On demand",
+                "value": "Pending",
                 "state": "Privilege",
                 "detail": "Admin grants, ownership, and future grants route here.",
             },
             {
                 "label": "Shared data",
-                "value": "On demand",
+                "value": "Pending",
                 "state": "Exposure",
                 "detail": "Shares, external stages, and broad grants stay visible for review.",
             },
@@ -1686,20 +1686,20 @@ def _security_brief_workflow_rows() -> list[dict[str, str]]:
 
 
 def _render_security_brief_launchpad() -> None:
-    st.markdown("**Security Investigation Workflows**")
-    rows = _security_brief_workflow_rows()
-    cols = st.columns(3)
-    for col, row in zip(cols, rows):
-        with col:
-            st.markdown(f"**{row['WORKFLOW']}**")
-            help_text = f"{row['DBA_MOVE']} When: {row['WHEN']}"
-            if st.button(
-                row["BUTTON_LABEL"],
-                key=f"security_brief_{row['WORKFLOW']}",
-                help=help_text,
-                width="stretch",
-            ):
-                _queue_security_workflow(row["WORKFLOW"])
+    with st.expander("Security drilldowns", expanded=False):
+        rows = _security_brief_workflow_rows()
+        cols = st.columns(3)
+        for col, row in zip(cols, rows):
+            with col:
+                st.markdown(f"**{row['WORKFLOW']}**")
+                help_text = f"{row['DBA_MOVE']} When: {row['WHEN']}"
+                if st.button(
+                    row["BUTTON_LABEL"],
+                    key=f"security_brief_{row['WORKFLOW']}",
+                    help=help_text,
+                    width="stretch",
+                ):
+                    _queue_security_workflow(row["WORKFLOW"])
 
 
 def _paint_security_brief_chrome(
@@ -3084,7 +3084,7 @@ def render() -> None:
         render_workflow_module(workflow, WORKFLOW_MODULES)
         return
 
-    def _load_security_brief() -> None:
+    def _load_security_brief(*, allow_live_fallback: bool = True, quiet: bool = False) -> None:
         session = None
         try:
             session = get_session()
@@ -3100,6 +3100,7 @@ def render() -> None:
                 source=source,
             )
             st.session_state["security_posture_source"] = source
+            st.session_state.pop("security_posture_summary_error", None)
             st.session_state.pop("security_posture_exceptions", None)
             st.session_state.pop("security_posture_exception_source", None)
             st.session_state.pop("security_posture_exception_error", None)
@@ -3109,6 +3110,24 @@ def render() -> None:
                 "exceptions": exceptions_sql,
             }
         except Exception as exc:
+            if not allow_live_fallback:
+                st.session_state["security_posture_summary"] = pd.DataFrame()
+                st.session_state["security_posture_meta"] = with_loaded_at(
+                    _security_scope_meta(company, environment, days),
+                    source="Fast security summary unavailable",
+                )
+                st.session_state["security_posture_source"] = "Fast security summary unavailable"
+                st.session_state["security_posture_summary_error"] = format_snowflake_error(exc)
+                st.session_state.pop("security_posture_exceptions", None)
+                st.session_state.pop("security_posture_exception_source", None)
+                st.session_state.pop("security_posture_exception_error", None)
+                _hide_security_proof_tables()
+                if not quiet:
+                    st.info(
+                        "Fast security summary is unavailable for this scope. "
+                        "Use Refresh Security Brief for bounded live account-history proof."
+                    )
+                return
             try:
                 session = session or get_session()
                 summary_sql, exceptions_sql = _build_security_summary_sql(session, days, company)
@@ -3123,6 +3142,7 @@ def render() -> None:
                     source=source,
                 )
                 st.session_state["security_posture_source"] = source
+                st.session_state.pop("security_posture_summary_error", None)
                 st.session_state.pop("security_posture_exceptions", None)
                 st.session_state.pop("security_posture_exception_source", None)
                 st.session_state.pop("security_posture_exception_error", None)
@@ -3131,7 +3151,8 @@ def render() -> None:
                     "summary": summary_sql,
                     "exceptions": exceptions_sql,
                 }
-                st.info(f"Security summary unavailable from the fast summary; used bounded live account history. {format_snowflake_error(exc)}")
+                if not quiet:
+                    st.info(f"Security summary unavailable from the fast summary; used bounded live account history. {format_snowflake_error(exc)}")
             except Exception as live_exc:
                 st.session_state["security_posture_summary"] = pd.DataFrame()
                 st.session_state.pop("security_posture_exceptions", None)
@@ -3147,8 +3168,29 @@ def render() -> None:
         and not summary.empty
         and _security_meta_matches(meta, security_expected_meta)
     )
+    if active_view == "Security Brief" and not security_current:
+        _load_security_brief(allow_live_fallback=False, quiet=True)
+        summary = st.session_state.get("security_posture_summary")
+        exceptions = st.session_state.get("security_posture_exceptions")
+        meta = st.session_state.get("security_posture_meta", {})
+        security_current = (
+            summary is not None
+            and not summary.empty
+            and _security_meta_matches(meta, security_expected_meta)
+        )
+        _paint_security_brief_chrome(
+            brief_slot,
+            snapshot_slot,
+            exception_slot,
+            summary,
+            exceptions,
+            meta,
+            company,
+            environment,
+            days,
+        )
     if consume_section_autoload_request("Security Posture") and not security_current:
-        st.caption("Access & Security opened with a lightweight summary. Load the security brief when current account-history detail is needed.")
+        st.caption("Access & Security opened with fast security facts. Refresh the security brief when current account-history proof is needed.")
     render_data_freshness(
         meta if security_current else {},
         source=st.session_state.get("security_posture_source", "Security brief"),
@@ -3156,8 +3198,12 @@ def render() -> None:
         delayed_note="Security summary uses fast OVERWATCH rows when available; live ACCOUNT_USAGE refresh is explicit.",
     )
 
-    if st.button("Load Security Brief", key="security_posture_brief_load", type="primary"):
-        _load_security_brief()
+    summary_error = str(st.session_state.get("security_posture_summary_error", "") or "")
+    if summary_error and not security_current:
+        defer_source_note(f"Fast security summary unavailable: {summary_error}")
+
+    if st.button("Refresh Security Brief", key="security_posture_brief_load", type="primary"):
+        _load_security_brief(allow_live_fallback=True, quiet=False)
         summary = st.session_state.get("security_posture_summary")
         exceptions = st.session_state.get("security_posture_exceptions")
         meta = st.session_state.get("security_posture_meta", {})

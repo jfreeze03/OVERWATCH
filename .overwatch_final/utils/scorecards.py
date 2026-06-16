@@ -165,7 +165,7 @@ def dba_deployment_label(score: float) -> str:
 
 
 def platform_operating_score_from_signals(metrics: dict) -> dict:
-    """Evidence-based executive platform score from current command-board signals."""
+    """Evidence-based executive state from current monitoring signals."""
     current_cost = float(metrics.get("current_cost_usd", 0) or 0)
     prior_cost = float(metrics.get("prior_cost_usd", 0) or 0)
     spend_delta = float(metrics.get("spend_delta_cost_usd", current_cost - prior_cost) or 0)
@@ -361,7 +361,7 @@ def dba_control_plane_readiness_score(component_scores: dict) -> dict:
 
 
 def dba_effective_readiness_score(readiness_score: float, gates: dict | None = None) -> dict:
-    """Apply live deployment gates to a section's built-readiness score.
+    """Apply live deployment gates to a section's health state.
 
     The base score answers whether the section is built as a DBA control plane.
     This effective score answers whether the currently loaded deployment state

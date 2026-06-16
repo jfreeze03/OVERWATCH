@@ -28,20 +28,20 @@ The Executive Landing page is the one deliberate first-paint aggregate:
 `MART_EXECUTIVE_OBSERVABILITY`. It is refreshed after the hourly load, Cortex
 load, Control Room, cost monitoring, and automation tasks so the first screen
 can show spend, Cortex cost, runtime, queueing, spill, failures, alerts,
-actions, storage, platform score, ranked cost drivers, queries by database,
-execution status, and warehouse pressure from one compact source. The app
-renders the board frame immediately and reuses cached/session values; an
-explicit Refresh hydrates the mart when Snowflake access is available. Raw
+actions, storage, ranked cost drivers, queries by database, execution status,
+and warehouse pressure from one compact source. The app renders the monitoring
+summary immediately and reuses cached/session values; an explicit Refresh
+hydrates the mart when Snowflake access is available. Raw
 `ACCOUNT_USAGE` scans are never part of Executive Landing first paint.
 
 Every primary navigation click now follows the same production UX pattern:
-status strip, scoped KPI row, then a compact command board with the most
-important signals already visible. Workflow buttons are secondary drill-through
+status strip, scoped KPI row, then a compact signal summary with the most
+important monitoring facts already visible. Workflow buttons are secondary drill-through
 actions, not a required step before the DBA sees what is risky, expensive, late,
 or broken.
 
-The fast command surfaces share `MART_EXECUTIVE_OBSERVABILITY` as the tiny
-command-board backbone. Executive Landing uses it directly for the boardroom
+The fast monitoring surfaces share `MART_EXECUTIVE_OBSERVABILITY` as the tiny
+summary backbone. Executive Landing uses it directly for the executive
 summary; DBA Control Room, Alert Center, Workload Operations, and Cost &
 Contract reuse the same cached/session board for spend, Cortex, queue, spill,
 failure, alert, action, and freshness signals before their deeper
@@ -70,7 +70,7 @@ Supporting operations documents:
 - `docs/OVERWATCH_RECOVERY_RUNBOOK.md` - operator recovery checklist.
 - `CHANGELOG.md` - release-level change history.
 
-The first-paint shells expose monitoring lanes for Snowflake Data Metric
+The first-paint summaries expose monitoring lanes for Snowflake Data Metric
 Functions, Snowflake ALERT objects, OVERWATCH query-tag self-cost, and optional
 organization usage rollups. Those lanes are readiness contracts, not hidden
 live scans: unavailable privileges should produce friendly setup/fallback
@@ -87,10 +87,10 @@ messages while the page still renders instantly.
 
 ## Daily Operating Model
 
-1. Open Executive Landing for the board-ready health, cost, alert, and workload summary.
+1. Open Executive Landing for the observability health, cost, alert, and workload summary.
 2. Use the topbar filters for company, environment, date window, warehouse, and
    user scope.
-3. Scan the command board on any section before drilling into workflows.
+3. Scan the signal summary on any section before drilling into workflows.
 4. Open DBA Control Room for the morning priority queue and incident handoff.
 5. Route actions through the action queue with owner, severity, proof query,
    rollback evidence, and verification status.
@@ -148,15 +148,11 @@ That board sorts by severity, SLA age, owner, ticket state, business impact,
 source freshness, proof query, and remediation mode so the DBA can work the
 right item first instead of scanning a flat inbox.
 
-The command-intelligence hardening pass adds the ranked 12-item operating
-foundation from production review: root-cause correlation, task critical
-path, reconciliation, cost run-rate monitoring, alert lifecycle, fact-grounded
-Cortex query diagnosis, OVERWATCH self-monitoring, security monitoring,
-multi-account readiness, no-saved-state navigation, and runbooks. These are
-exposed as data-first panels and SQL contracts before deeper drilldown. The
-Platform Operating Score is evidence-based; it is computed from the current
-cost, alert, failure, action-queue, queueing, spill, and freshness signals rather
-than accepting a self-scored mart value as truth.
+The command-intelligence hardening pass keeps the monitoring foundation focused:
+root-cause correlation, task critical path, reconciliation, cost run-rate
+monitoring, alert lifecycle, fact-grounded Cortex query diagnosis, security
+activity, optional org rollups, no-saved-state navigation, and runbooks. These
+are exposed as data-first panels and SQL contracts before deeper drilldown.
 
 `ALERT_DATA_QUALITY_CHECKS` is the metadata-driven table for freshness, row
 count, null-rate, duplicate, volume, and schema checks. DBAs and data owners can

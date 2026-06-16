@@ -132,14 +132,16 @@ class ThemeRegistryTests(unittest.TestCase):
         self.assertIn("box-shadow: none !important", carbon_extra)
         self.assertIn("background: linear-gradient(135deg, #003f73, #0068b7) !important", carbon_extra)
 
-    def test_executive_shell_charts_use_theme_aware_axis_colors(self):
-        shell_text = (APP_ROOT / "sections" / "executive_landing_shell.py").read_text(encoding="utf-8")
-        self.assertIn("def _chart_theme_tokens", shell_text)
-        self.assertIn('theme_key == "carbon"', shell_text)
-        self.assertIn('"label": "#9bddea"', shell_text)
-        self.assertIn('"label": "#31566b"', shell_text)
-        self.assertIn('labelColor=colors["label"]', shell_text)
-        self.assertIn('titleColor=colors["title"]', shell_text)
+    def test_executive_landing_charts_use_shared_theme_surface(self):
+        executive_text = (APP_ROOT / "sections" / "executive_landing.py").read_text(encoding="utf-8")
+
+        self.assertFalse((APP_ROOT / "sections" / "executive_landing_shell.py").exists())
+        self.assertIn("def _render_line_chart", executive_text)
+        self.assertIn("def _render_bar_chart", executive_text)
+        self.assertIn('alt.value("#29B5E8")', executive_text)
+        self.assertIn('st.altair_chart(chart, width="stretch")', executive_text)
+        self.assertIn(".vega-embed svg text", theme._STRUCTURAL_CSS)
+        self.assertIn("fill: var(--text-secondary) !important;", theme._STRUCTURAL_CSS)
 
     def test_light_themes_pin_custom_shell_text_contrast(self):
         self.assertIn(

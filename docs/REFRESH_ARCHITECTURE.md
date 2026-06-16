@@ -42,18 +42,18 @@ Executive Landing is not allowed to start raw `SNOWFLAKE.ACCOUNT_USAGE` scans on
 navigation. It may reuse already-loaded session values and then hydrate
 `MART_EXECUTIVE_OBSERVABILITY` only after explicit Refresh. If the compact mart
 is unavailable, the page still shows the graphics frame, scoped "not loaded"
-lanes, setup readiness contracts, and the next refresh/setup action.
+lanes, data freshness status, and the next refresh action.
 
 The same first-paint rule applies to DBA Control Room, Workload Operations, Cost
-& Contract, Alert Center, and Security Monitoring: show the board frame immediately,
+& Contract, Alert Center, and Security Monitoring: show the summary frame immediately,
 reuse already-loaded session state when present, and allow only compact
 precomputed mart reads during navigation. Raw `ACCOUNT_USAGE`,
 `INFORMATION_SCHEMA`, schema compare, data hash, remediation, and proof queries
 stay behind explicit refresh/load actions or scheduled Snowflake tasks.
 
-Primary sidebar navigation must land on the section board, not the heavy proof
-workspace. Drill-through buttons inside a board may open the detailed workspace
-because that is an explicit operator action. Every board should show its refresh
+Primary sidebar navigation must land on the section summary, not the heavy proof
+workspace. Drill-through buttons inside a summary may open the detailed workspace
+because that is an explicit operator action. Every summary should show its refresh
 contract: source, freshness state, target SLA, and whether a live fallback is
 allowed.
 
@@ -70,11 +70,11 @@ Use live or near-real-time metadata only for active incidents:
 Every live path should be bounded by time window, row limit, scope filters, and
 operator intent.
 
-## Native Proof Lanes
+## Native Snowflake Signals
 
-The production hardening strategy expects the command center to show whether
-native Snowflake controls exist before a DBA trusts the dashboard. The app
-therefore exposes setup/readiness lanes for:
+The production hardening strategy expects the command center to label native
+Snowflake signal availability clearly. Where the role has privileges, the app
+can summarize:
 
 - Data Metric Functions via `DATA_METRIC_FUNCTION_REFERENCES`
 - Snowflake ALERT object inventory and `ALERT_HISTORY`

@@ -264,7 +264,7 @@ class SectionDefinition:
 # first-class in front of DBAs and leadership. Legacy redirect aliases below
 # keep deep links working without keeping weak standalone pages alive.
 SECTION_DEFINITIONS = (
-    SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing_shell"),
+    SectionDefinition("COMMAND CENTER", "briefcase", "Executive Landing", "sections.executive_landing"),
     SectionDefinition("COMMAND CENTER", "target", "DBA Control Room", "sections.dba_control_room"),
     SectionDefinition("COMMAND CENTER", "bell", "Alert Center", "sections.alert_center"),
     SectionDefinition("FINANCIAL CONTROL", "cost", "Cost & Contract", "sections.cost_contract"),

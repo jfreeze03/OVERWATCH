@@ -36,7 +36,7 @@ DEFAULT_SECTIONS = [
 # but they should not appear as skipped work in the broad concurrency profile.
 DEFAULT_LOAD_BUTTONS = {
     "Alert Center": "Load Issue Inbox",
-    "Cost & Contract": "Load Cost Cockpit",
+    "Cost & Contract": "Refresh Cost Proof",
 }
 
 VISIBLE_ERROR_PATTERNS = (

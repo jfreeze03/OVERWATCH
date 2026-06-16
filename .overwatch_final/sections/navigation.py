@@ -43,7 +43,7 @@ def request_section_workspace(section: str) -> None:
         st.session_state["cost_contract_workflow"] = "Usage attribution and run-rate"
     elif target == "Workload Operations":
         st.session_state["workload_operations_workflow"] = "Query investigation"
-        st.session_state["workload_operations_query_focus"] = "AI Query Diagnosis"
+        st.session_state["workload_operations_query_focus"] = "Contention Telemetry"
     elif target == "Security Monitoring":
         st.session_state["security_posture_view"] = "Security Brief"
         st.session_state["security_posture_workflow"] = "Access posture"

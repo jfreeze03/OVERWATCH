@@ -176,15 +176,15 @@ class PerformanceFrameworkTests(unittest.TestCase):
         unsafe_tokens = ("Grant", "Save", "Queue", "Send", "Retry", "Suspend", "Resume", "Cancel", "Drop", "Alter")
 
         self.assertIn("DEFAULT_LOAD_BUTTONS", runner_text)
-        self.assertEqual(runner.DEFAULT_LOAD_BUTTONS["Cost & Contract"], "Load Cost Cockpit")
+        self.assertEqual(runner.DEFAULT_LOAD_BUTTONS["Cost & Contract"], "Refresh Cost Proof")
         self.assertEqual(runner.DEFAULT_LOAD_BUTTONS["Alert Center"], "Load Issue Inbox")
         self.assertIn("Alert Center: `Load Issue Inbox`", readme)
-        self.assertIn("Cost & Contract: `Load Cost Cockpit`", readme)
+        self.assertIn("Cost & Contract: `Refresh Cost Proof`", readme)
         self.assertNotIn("Account Health", runner.DEFAULT_LOAD_BUTTONS)
         self.assertNotIn("Warehouse Health", runner.DEFAULT_LOAD_BUTTONS)
         self.assertNotIn("Change & Drift", runner.DEFAULT_LOAD_BUTTONS)
         for label in runner.DEFAULT_LOAD_BUTTONS.values():
-            self.assertTrue(label.startswith("Load"))
+            self.assertTrue(label.startswith(("Load", "Refresh")))
             self.assertFalse(any(token in label for token in unsafe_tokens), label)
 
     def test_live_concurrent_runner_fail_mode_waits_full_button_timeout(self):
@@ -219,8 +219,8 @@ class PerformanceFrameworkTests(unittest.TestCase):
         samples = [
             runner.StepSample(1, 1, "App Shell", "initial_load", 500.0, True),
             runner.StepSample(1, 1, "Cost & Contract", "section_nav", 900.0, True),
-            runner.StepSample(1, 1, "Cost & Contract", "load_button:Load Cost Cockpit", 3000.0, True),
-            runner.StepSample(2, 1, "Cost & Contract", "load_button:Load Cost Cockpit", 5000.0, False, "boom"),
+            runner.StepSample(1, 1, "Cost & Contract", "load_button:Refresh Cost Proof", 3000.0, True),
+            runner.StepSample(2, 1, "Cost & Contract", "load_button:Refresh Cost Proof", 5000.0, False, "boom"),
             runner.StepSample(2, 1, "Warehouse Health", "load_button:Load Capacity Brief", 8.0, True, skipped=True),
         ]
         args = runner.parse_args([
@@ -237,5 +237,5 @@ class PerformanceFrameworkTests(unittest.TestCase):
         self.assertEqual(summary["skipped"], 1)
         self.assertEqual(summary["errors"], 1)
         self.assertIn("Cost & Contract", summary["by_section"])
-        self.assertIn("load_button:Load Cost Cockpit", summary["by_action"])
+        self.assertIn("load_button:Refresh Cost Proof", summary["by_action"])
         self.assertIn(summary["readiness_state"], {"PASS", "WATCH"})

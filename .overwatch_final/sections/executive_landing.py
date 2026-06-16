@@ -281,14 +281,14 @@ def _default_platform_summary() -> dict:
         {
             "SOURCE": "Executive observability summary",
             "STATE": "Limited",
-            "EVIDENCE": "Executive board rows are available after refresh for this scope.",
-            "NEXT_ACTION": "Refresh the executive board when current leadership context is needed.",
+            "EVIDENCE": "Executive summary rows are available after refresh for this scope.",
+            "NEXT_ACTION": "Refresh the executive summary when current leadership context is needed.",
         },
         {
             "SOURCE": "Cost summary",
             "STATE": "Limited",
             "EVIDENCE": "Cost facts are available after executive refresh.",
-            "NEXT_ACTION": "Open Cost & Contract or refresh the executive board for spend context.",
+            "NEXT_ACTION": "Open Cost & Contract or refresh the executive summary for spend context.",
         },
         {
             "SOURCE": "Alert and action queue",
@@ -354,7 +354,7 @@ def _executive_action_brief(summary: dict | None) -> dict[str, str]:
     if not summary:
         return {
             "state": "Ready",
-            "headline": "Open a board-ready snapshot when leadership telemetry is needed.",
+            "headline": "Open an executive snapshot when leadership telemetry is needed.",
             "detail": "Risk, spend movement, closure work, and deployment trust stay behind one explicit load.",
         }
     if summary["critical_high_alerts"] or summary["high_actions"] or summary["migration_blockers"]:
@@ -932,7 +932,7 @@ def _load_executive_observability_from_parts(
                 "source": label,
                 "state": "Loaded" if not normalised.empty else "No Rows",
                 "detail": (
-                    f"{len(normalised):,} board row(s) loaded."
+                    f"{len(normalised):,} summary row(s) loaded."
                     if not normalised.empty else "No rows for this scope."
                 ),
             })
@@ -949,7 +949,7 @@ def _load_executive_observability_from_parts(
         company=company,
         environment=environment,
         days=int(days),
-        source="Executive fact marts",
+        source="Executive monitoring facts",
         error="" if any(status.get("state") == "Loaded" for status in statuses) else "No executive fact sources loaded.",
     )
 
@@ -980,7 +980,7 @@ def _load_executive_observability(
             "source": "MART_EXECUTIVE_OBSERVABILITY",
             "state": "Loaded" if not normalised.empty else "No Rows",
             "detail": (
-                f"{len(normalised):,} board row(s) loaded from the executive observability mart."
+                f"{len(normalised):,} summary row(s) loaded from the executive observability mart."
                 if not normalised.empty
                 else "The executive observability mart returned no rows for this scope."
             ),
@@ -1107,16 +1107,16 @@ def _render_observability_source_status(board: pd.DataFrame) -> None:
     unavailable = int(rows["STATE"].astype(str).eq("Unavailable").sum()) if "STATE" in rows.columns else 0
     no_rows = int(rows["STATE"].astype(str).eq("No Rows").sum()) if "STATE" in rows.columns else 0
     with st.expander(
-        f"Executive board input status: {loaded} loaded, {unavailable} unavailable, {no_rows} no rows",
+        f"Executive summary input status: {loaded} loaded, {unavailable} unavailable, {no_rows} no rows",
         expanded=unavailable > 0 and loaded == 0,
     ):
         render_priority_dataframe(
             rows,
-            title="Executive board input status",
+            title="Executive summary input status",
             priority_columns=["INPUT", "STATE", "DETAIL"],
             sort_by=["STATE", "INPUT"],
             ascending=[True, True],
-            raw_label="All executive board input rows",
+            raw_label="All executive summary input rows",
             height=260,
             max_rows=12,
         )
@@ -1145,7 +1145,7 @@ def _summary_from_observability(board: pd.DataFrame, *, credit_price: float) -> 
         "top_cost_driver": "Account spend",
     }
     scored = _with_platform_operating_score(summary, pd.DataFrame([
-        {"SOURCE": "Executive observability marts", "STATE": "Loaded", "EVIDENCE": "Monitoring summary rows loaded."}
+        {"SOURCE": "Executive observability facts", "STATE": "Loaded", "EVIDENCE": "Monitoring summary rows loaded."}
     ]))
     if score > 0:
         scored["score"] = safe_int(score)
@@ -1296,7 +1296,7 @@ def _executive_pressure_rows(board: pd.DataFrame) -> pd.DataFrame:
             "STATE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "On demand",
             "VALUE": _platform_score_state(platform_health) if _obs_metric_loaded(board, "Platform Health") else "On demand",
             "PRESSURE_SCORE": max(0.0, 100.0 - safe_float(platform_health)) if _obs_metric_loaded(board, "Platform Health") else 0.0,
-            "WHY_IT_MATTERS": "Rolls cost, risk, workload, and telemetry quality into one board-level pressure signal.",
+            "WHY_IT_MATTERS": "Rolls cost, risk, workload, and telemetry quality into one summary-level pressure signal.",
             "OWNER_ROUTE": "Executive Landing",
             "NEXT_ACTION": "Open the highest pressure lane below before specialist drilldown.",
         },
@@ -1451,7 +1451,7 @@ def _executive_summary_lanes(board: pd.DataFrame, *, days: int, credit_price: fl
                 "label": "Monthly run rate",
                 "value": "On demand",
                 "state": "Forecast",
-                "detail": "Projected from the selected board window after facts load.",
+                "detail": "Projected from the selected summary window after facts load.",
             },
             {
                 "label": "Queries / avg runtime",
@@ -1682,7 +1682,7 @@ def _render_executive_observability_board(
     if not isinstance(board, pd.DataFrame) or board.empty or not _has_observability_kpis(board):
         render_shell_status_strip(
             state="Refresh Needed" if error else "Waiting",
-            headline="Executive observability board is ready for precomputed Snowflake facts.",
+            headline="Executive observability summary is ready for precomputed Snowflake facts.",
             detail=(
                 error
                 if error
@@ -1702,13 +1702,13 @@ def _render_executive_observability_board(
             refresh_method="Scheduled data refresh",
             live_fallback="On demand",
         )
-        st.markdown("**Executive Metric Board**")
+        st.markdown("**Executive Metric Summary**")
         render_signal_lane_board(
             "Executive Summary Grid",
             _executive_summary_lanes(board, days=int(days), credit_price=credit_price),
             max_lanes=8,
         )
-        st.markdown("**Executive Command Wall**")
+        st.markdown("**Snowflake Observability Wall**")
         render_shell_kpi_row((
             ("Spend", "On demand"),
             ("Delta", "On demand"),
@@ -1775,7 +1775,7 @@ def _render_executive_observability_board(
     )
     status_state = "No Rows" if not has_fact_trends else (_platform_score_state(health) if health else "Loaded")
     status_headline = (
-        "Executive board schema loaded, but the mart has no recent fact rows for this scope."
+        "Executive summary schema loaded, but the mart has no recent fact rows for this scope."
         if not has_fact_trends
         else "Snowflake observability summary loaded from precomputed OVERWATCH facts."
     )
@@ -1803,7 +1803,7 @@ def _render_executive_observability_board(
         refresh_method="Scheduled data refresh",
         live_fallback="On demand",
     )
-    st.markdown("**Executive Command Wall**")
+    st.markdown("**Snowflake Observability Wall**")
     render_shell_kpi_row((
         ("Platform", _platform_score_state(health) if health else "Loaded"),
         ("Spend", _obs_money_label(board, "Credits Used")),
@@ -1829,7 +1829,7 @@ def _render_executive_observability_board(
         ("Storage", f"{safe_float(storage_tb):,.2f} TB / {_money(storage_cost)}" if _obs_metric_loaded(board, "Storage") else "On demand"),
     ))
     render_signal_lane_board(
-        "Executive Summary Grid",
+        "Executive Summary Signals",
         _executive_summary_lanes(board, days=int(days), credit_price=credit_price),
         max_lanes=8,
     )
@@ -1934,14 +1934,14 @@ def _render_executive_observability_board(
 
     freshness = _obs_rows(board, "FRESHNESS")
     if isinstance(freshness, pd.DataFrame) and not freshness.empty:
-        with st.expander("Board data freshness", expanded=False):
+        with st.expander("Summary data freshness", expanded=False):
             rows = freshness[["DIMENSION", "PERIOD_START", "UNIT"]].copy()
             rows = rows.rename(columns={"DIMENSION": "INPUT", "PERIOD_START": "LATEST_LOAD", "UNIT": "TYPE"})
             render_priority_dataframe(
                 rows,
-                title="Board data freshness",
+                title="Summary data freshness",
                 priority_columns=["INPUT", "LATEST_LOAD", "TYPE"],
-                raw_label="All executive board freshness rows",
+                raw_label="All executive summary freshness rows",
                 height=180,
                 max_rows=8,
             )
@@ -2116,13 +2116,26 @@ def render() -> None:
         )
     with refresh_col:
         refresh_board = st.button(
-            "Refresh Board",
+            "Refresh Summary",
             key="executive_landing_observability_refresh",
             type="primary",
             width="stretch",
         )
     expected_scope = _executive_snapshot_scope(company, environment, int(days))
     board, board_payload = _current_observability_board(company, environment, int(days))
+    autoload_scope_key = "_executive_landing_observability_autoload_scope"
+    if (
+        (not isinstance(board, pd.DataFrame) or board.empty)
+        and st.session_state.get(autoload_scope_key) != expected_scope
+    ):
+        _load_executive_observability(
+            company,
+            environment,
+            int(days),
+            credit_price=credit_price,
+        )
+        st.session_state[autoload_scope_key] = expected_scope
+        board, board_payload = _current_observability_board(company, environment, int(days))
     if refresh_board:
         _load_executive_observability(
             company,

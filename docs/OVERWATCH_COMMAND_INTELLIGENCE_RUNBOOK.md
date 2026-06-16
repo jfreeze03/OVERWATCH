@@ -26,12 +26,12 @@ route work, export proof, or preview guarded SQL.
 | 4 | Cost Run-Rate and Attribution Monitor | Cost & Contract | Forecast contract burn and rank top cost drivers from metering facts. |
 | 5 | Alert Lifecycle 2.0 | Alert Center | Acknowledge, assign, suppress, resolve, comment, route, and audit alert work. |
 | 6 | Fact-Grounded AI Query Diagnosis | Workload Operations | Use Cortex only with exact query/profile/object evidence and required verification SQL. |
-| 7 | OVERWATCH Self-Monitoring | Cost & Contract, Setup | Track app query cost, failures, slow sections, and tagged runtime behavior. |
-| 8 | Scheduled Mart Layer With Fallback | Setup | Keep first paint fast; make live ACCOUNT_USAGE scans explicit. |
-| 9 | Security Monitoring Scorecard | Security Monitoring, Executive Landing | Show admin grants, access spikes, dormant activity, risky shares, and risky posture with action evidence. |
+| 7 | OVERWATCH Query-Tag Cost Controls | Cost & Contract | Track app-attributed query cost when query tags are available, without exposing benchmark telemetry in the UI. |
+| 8 | Scheduled Mart Layer | Snowflake setup | Keep first paint fast; make live ACCOUNT_USAGE scans explicit. |
+| 9 | Security Activity Monitoring | Security Monitoring, Executive Landing | Show admin grants, access spikes, dormant activity, risky shares, and action evidence. |
 | 10 | Multi-Account / Org View | Executive Landing, Cost & Contract | Optional org-level rollup when the Snowflake role has organization usage privileges. |
 | 11 | Data-First Navigation Contract | App shell, every primary section | Show scoped KPIs and summaries on first section click without saved-state persistence or global mode toggles. |
-| 12 | Monitoring Docs and Runbooks | Repo docs, Setup & Runbook | Keep setup, privileges, failure modes, rollback, and operating rules with the code. |
+| 12 | Monitoring Docs and Runbooks | Repo docs | Keep setup, privileges, failure modes, rollback, and operating rules with the code. |
 
 ## Cost Run-Rate Monitoring
 
@@ -97,7 +97,7 @@ honest and easier to support.
 
 ## Daily DBA Flow
 
-1. Open Executive Landing for platform score and top maturity blockers.
+1. Open Executive Landing for spend, workload, alert, and pressure signals.
 2. Open DBA Control Room for root-cause, critical path, and morning queue.
 3. Open Alert Center for alert lifecycle and detection catalog.
 4. Open Workload Operations for task, contention, query, and reconciliation work.

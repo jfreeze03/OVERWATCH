@@ -243,7 +243,7 @@ def _request_section_detail_state(section: str) -> None:
         return
     if target == "Workload Operations":
         st.session_state["workload_operations_workflow"] = "Query investigation"
-        st.session_state["workload_operations_query_focus"] = "AI Query Diagnosis"
+        st.session_state["workload_operations_query_focus"] = "Contention Telemetry"
         return
     if target == "Security Monitoring":
         st.session_state["security_posture_view"] = "Security Brief"
@@ -688,7 +688,6 @@ def _render_app_header(section: str, company: str, credit_price: float, role: st
     now_label = datetime.now().strftime("%Y-%m-%d %H:%M")
     safe_section = html.escape(section)
     safe_subtitle = html.escape(_section_subtitle(section), quote=True)
-    safe_role = html.escape(role[:24] or "DBA")
     safe_icon = html.escape(str(icon).upper())
     scope_chips = _active_scope_chips(company)
     left, right = st.columns([5.4, 1.6])
@@ -713,7 +712,6 @@ def _render_app_header(section: str, company: str, credit_price: float, role: st
             f"""
             <div class="ow-run-context">
                 <div>{html.escape(now_label)}</div>
-                <div>{safe_role}</div>
                 <div>${float(credit_price):.2f}/credit</div>
             </div>
             """,
@@ -888,9 +886,7 @@ with st.sidebar:
     current_role = _get_current_role()
     admin_access_allowed = _admin_access_is_allowed(current_role, connection_available)
     visible_sections = _current_visible_sections()
-    role_label = current_role[:20] or "DBA"
 
-    st.caption(f"{role_label} - Admin command center")
     if not admin_access_allowed:
         st.warning("Switch to SNOW_ACCOUNTADMINS or SNOW_SYSADMINS to open monitoring sections.")
 
@@ -988,12 +984,6 @@ st.session_state["_overwatch_active_section"] = active_section
 section_signature = _section_render_signature(active_section, active_company, current_role)
 section_slot = st.empty()
 show_transition = _should_show_section_transition(section_signature)
-if _section_body_reset_needed(section_signature):
-    with _fresh_section_container(section_slot):
-        _render_section_transition_state(active_section)
-    st.session_state["_overwatch_section_body_reset_signature"] = section_signature
-    st.session_state["_overwatch_secondary_chrome_ready"] = False
-    st.rerun()
 
 section_render_started = time.perf_counter()
 if show_transition:

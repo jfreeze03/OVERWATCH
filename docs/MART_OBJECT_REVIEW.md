@@ -2,7 +2,7 @@
 
 Static scan date: 2026-06-16
 
-This review inventories the deployable Snowflake objects in `snowflake/OVERWATCH_MART_SETUP.sql`
+This review inventories deployable Snowflake objects in `snowflake/OVERWATCH_MART_SETUP.sql`
 and cross-checks them against `.overwatch_final` app references. It is a static code scan,
 not a live database dependency graph.
 
@@ -16,10 +16,13 @@ not a live database dependency graph.
 | Views | 3 |
 | Total | 79 |
 
-Objects with direct app references: 62.
+Objects with direct `.overwatch_final` references: 62.
 
-Objects without direct app references: 17. Most of these are refresh procedures, scheduled
-tasks, or support tables used inside the setup SQL.
+Objects without direct `.overwatch_final` references: 17. Most are scheduled refresh
+procedures/tasks or setup-support tables that are referenced by the setup SQL itself.
+
+Objects without `.overwatch_final` or test references: 7. All seven are refresh plumbing
+or one overlapping cost fact candidate.
 
 ## Keep
 
@@ -30,31 +33,44 @@ These are directly used by app surfaces, validation, or core persisted DBA workf
 | `MART_EXECUTIVE_OBSERVABILITY`, `MART_DBA_CONTROL_ROOM` | Fast first-paint telemetry for Executive Landing and DBA Control Room. |
 | `FACT_COST_DAILY`, `FACT_CORTEX_DAILY`, `FACT_QUERY_HOURLY`, `FACT_QUERY_DETAIL_RECENT`, `FACT_WAREHOUSE_HOURLY` | Main cost, Cortex, workload, and warehouse health marts used by Cost & Contract, workload, query, and warehouse sections. |
 | `FACT_TASK_RUN`, `FACT_TASK_CRITICAL_PATH`, `FACT_PROCEDURE_RUN`, `DIM_TASK_SNAPSHOT`, `DIM_PROCEDURE_SNAPSHOT`, `DIM_TABLE_SNAPSHOT` | Task/procedure health, task graph blast radius, stored procedure context, and workload reliability. |
+| `FACT_COST_SOURCE_HEALTH_DAILY`, `FACT_COST_MONITORING_SIGNAL`, `FACT_COST_INCIDENT_TIMELINE` | Cost telemetry health, ranked cost movement signals, and cost incident timeline. Keep while cost advisor/RCA metrics settle. |
 | `OVERWATCH_ACTION_QUEUE`, `OVERWATCH_ALERTS`, `OVERWATCH_ADMIN_ACTION_AUDIT`, alert rule/log tables | Alert Center, recommendations, action queue, admin audit, and delivery/remediation history. |
 | `OVERWATCH_RECON_CONFIG`, `OVERWATCH_RECON_RUN`, `OVERWATCH_SCHEMA_DIFF_RESULT` | Schema/data compare persistence and generated DDL review. |
-| `OVERWATCH_WAREHOUSE_SETTING_REVIEW`, `FACT_WAREHOUSE_OPERABILITY_DAILY` | Warehouse change review, settings audit, and capacity/control telemetry. |
-| `OVERWATCH_WORKLOAD_RECOVERY_AUDIT`, `OVERWATCH_WORKLOAD_RECOVERY_AUDIT_LATEST_V` | Task/procedure recovery evidence and latest recovery status. |
+| `OVERWATCH_WAREHOUSE_SETTING_REVIEW`, `FACT_WAREHOUSE_OPERABILITY_DAILY` | Warehouse settings audit, safe setting review, and capacity telemetry. |
+| `OVERWATCH_WORKLOAD_RECOVERY_AUDIT`, `OVERWATCH_WORKLOAD_RECOVERY_AUDIT_LATEST_V` | Task/procedure recovery status and latest recovery state. |
+| `FACT_SECURITY_OPERABILITY_DAILY`, `FACT_ACCOUNT_HEALTH_OPERABILITY_DAILY`, `FACT_LOGIN_DAILY`, `FACT_GRANT_DAILY` | Security and account-health telemetry used by admin monitoring surfaces. |
+| `FACT_STORAGE_DAILY`, `FACT_COPY_LOAD_DAILY`, `FACT_OBJECT_CHANGE`, `FACT_CHANGE_CONTROL_OPERABILITY_DAILY` | Storage, load, object-change, and operability facts. Keep while corresponding monitoring code/tests still reference them. |
 
-## Keep As Internal Plumbing
+## Keep As Refresh Plumbing
 
-These do not have direct app reads, but they drive scheduled mart refresh or internal
-refresh bookkeeping. They should not be removed unless their downstream facts are also
-removed or replaced.
+These do not have direct app reads, but they drive scheduled mart refresh or refresh
+bookkeeping. Do not remove them unless their downstream facts are removed or replaced.
 
 | Object | Current purpose |
 | --- | --- |
-| `SP_OVERWATCH_LOAD_HOURLY`, `SP_OVERWATCH_LOAD_DAILY`, `SP_OVERWATCH_LOAD_CORTEX` | Load the hourly, daily, and Cortex facts consumed by app marts. |
+| `SP_OVERWATCH_LOAD_HOURLY`, `SP_OVERWATCH_LOAD_DAILY`, `SP_OVERWATCH_LOAD_CORTEX` | Load hourly, daily, and Cortex facts consumed by app marts. |
 | `SP_OVERWATCH_REFRESH_CONTROL_ROOM`, `SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY`, `SP_OVERWATCH_REFRESH_AUTOMATION` | Refresh compact summary marts/views used by first-paint surfaces and automation health. |
+| `SP_OVERWATCH_REFRESH_COST_MONITORING`, `OVERWATCH_COST_MONITORING_REFRESH` | Refresh cost monitoring signal and incident timeline facts. |
 | `SP_OVERWATCH_PRUNE` | Retention cleanup for transient facts. |
-| `OVERWATCH_LOAD_HOURLY`, `OVERWATCH_LOAD_DAILY`, `OVERWATCH_LOAD_CORTEX`, `OVERWATCH_REFRESH_CONTROL_ROOM`, `OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH`, `OVERWATCH_AUTOMATION_REFRESH` | Scheduled wrappers around the refresh procedures. |
-| `OVERWATCH_LOAD_AUDIT` | Refresh bookkeeping written by setup procedures. It is not surfaced today, but it is useful for live refresh troubleshooting. |
-| `OVERWATCH_OWNER_TAG_NAMES`, `DIM_COST_OWNER_TAG` | Owner tag configuration and snapshot used in chargeback fact construction. Keep only if chargeback by owner tag remains in scope. |
+| `OVERWATCH_LOAD_HOURLY`, `OVERWATCH_LOAD_DAILY`, `OVERWATCH_LOAD_CORTEX`, `OVERWATCH_REFRESH_CONTROL_ROOM`, `OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH`, `OVERWATCH_AUTOMATION_REFRESH` | Scheduled wrappers around refresh procedures. |
+| `OVERWATCH_LOAD_AUDIT` | Refresh bookkeeping written by setup procedures. It is not surfaced today, but remains useful for live refresh troubleshooting. |
+
+## Keep As Setup Support
+
+These are not primary UI surfaces. Keep them only while their dependent facts,
+tests, or setup logic still need them.
+
+| Object | Current purpose |
+| --- | --- |
+| `OVERWATCH_SETTINGS`, `OVERWATCH_SCHEMA_MIGRATION`, `OVERWATCH_USAGE_LOG` | Settings, deployment/version state, and optional app usage bookkeeping. |
+| `OVERWATCH_OWNER_TAG_NAMES`, `DIM_COST_OWNER_TAG` | Owner tag configuration and snapshot used in chargeback fact construction. Candidate to remove only if owner-tag chargeback is removed from scope. |
+| `OVERWATCH_DBA_CHECKLIST_HISTORY`, `OVERWATCH_CHANGE_CONTROL_EVIDENCE` | Referenced by app code/tests today. Review separately if those remaining workflows are retired from the admin monitoring product. |
+| `OVERWATCH_EXECUTIVE_PACKET`, `OVERWATCH_AUTOMATION_RUN`, `OVERWATCH_AUTOMATION_HEALTH_V` | Automation/executive packet support objects. Keep while deployment and validation contracts still test them. |
 
 ## Pruned Metadata Objects
 
-These were removed from the deployable setup because the app does not read them
-and the same information is already maintained in docs, Python config, or
-read-only validation SQL.
+These were already removed from the deployable setup because the app does not read them
+and the same information is maintained in docs, Python config, or read-only validation SQL.
 
 | Object | Replacement |
 | --- | --- |
@@ -65,12 +81,38 @@ read-only validation SQL.
 
 ## Retire Or Merge Candidates
 
-These have no direct app reference and look more like metadata/control-plane scaffolding
-than DBA monitoring surfaces. Remove only after updating tests and validation SQL.
+These are the safest next review targets. They should not be removed by table count alone.
 
 | Object | Recommendation |
 | --- | --- |
-| `FACT_MONITORING_COST_DAILY` | Candidate to merge with `FACT_COST_DAILY` / `MART_EXECUTIVE_OBSERVABILITY` if no unique app-facing metric remains. It is loaded in setup but not read by the app. |
+| `FACT_MONITORING_COST_DAILY` | Candidate to merge with `FACT_COST_DAILY` / `MART_EXECUTIVE_OBSERVABILITY` if no unique app-facing metric remains. It is loaded in setup but has no direct `.overwatch_final` or test reference. |
+| `OVERWATCH_OWNER_TAG_NAMES`, `DIM_COST_OWNER_TAG` | Candidate only if owner-tag chargeback is intentionally retired. Otherwise keep as setup support. |
+| `OVERWATCH_DBA_CHECKLIST_HISTORY`, `OVERWATCH_CHANGE_CONTROL_EVIDENCE` | Candidate only after confirming the remaining app/test references are intentionally out of scope. |
+| `OVERWATCH_EXECUTIVE_PACKET`, `OVERWATCH_AUTOMATION_RUN`, `OVERWATCH_AUTOMATION_HEALTH_V` | Candidate only if automation packet persistence is retired from deployment validation. |
+
+## Current No-App-Reference List
+
+These 17 objects do not have direct `.overwatch_final` references in the static scan:
+
+| Object | Disposition |
+| --- | --- |
+| `DIM_COST_OWNER_TAG` | Setup support. |
+| `FACT_MONITORING_COST_DAILY` | Retire/merge candidate. |
+| `OVERWATCH_AUTOMATION_REFRESH` | Refresh task. |
+| `OVERWATCH_EXECUTIVE_OBSERVABILITY_REFRESH` | Refresh task. |
+| `OVERWATCH_LOAD_AUDIT` | Refresh bookkeeping. |
+| `OVERWATCH_LOAD_CORTEX` | Refresh task. |
+| `OVERWATCH_LOAD_DAILY` | Refresh task. |
+| `OVERWATCH_LOAD_HOURLY` | Refresh task. |
+| `OVERWATCH_OWNER_TAG_NAMES` | Setup support. |
+| `OVERWATCH_REFRESH_CONTROL_ROOM` | Refresh task. |
+| `SP_OVERWATCH_LOAD_CORTEX` | Refresh procedure. |
+| `SP_OVERWATCH_LOAD_DAILY` | Refresh procedure. |
+| `SP_OVERWATCH_LOAD_HOURLY` | Refresh procedure. |
+| `SP_OVERWATCH_PRUNE` | Retention procedure. |
+| `SP_OVERWATCH_REFRESH_AUTOMATION` | Refresh procedure. |
+| `SP_OVERWATCH_REFRESH_CONTROL_ROOM` | Refresh procedure. |
+| `SP_OVERWATCH_REFRESH_EXECUTIVE_OBSERVABILITY` | Refresh procedure. |
 
 ## Next Pruning Rule
 
@@ -82,5 +124,6 @@ Do not prune by table count alone. For each candidate, confirm:
 4. No required audit/history retention purpose.
 5. A replacement exists, or the feature is intentionally out of product scope.
 
-The highest-confidence cleanup pass is to remove metadata-only objects first, then merge
-overlapping cost facts after the new cost efficiency/RCA metrics settle.
+The highest-confidence cleanup pass remains `FACT_MONITORING_COST_DAILY`, because it is
+the only current candidate with no direct app/test reference and an obvious replacement
+family in the cost facts and executive mart.

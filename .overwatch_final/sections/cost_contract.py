@@ -1658,6 +1658,53 @@ def _cost_advisor_add_row(
     })
 
 
+_COST_ADVISOR_ACTION_MAP = {
+    "Failed query waste": ("Fix failed workload", "Recommendations and action queue"),
+    "Warehouse pressure": ("Investigate pressure before capacity change", "Usage attribution and run-rate"),
+    "Warehouse right-size review": ("Review right-size or suspend policy", "Usage attribution and run-rate"),
+    "Automatic clustering": ("Validate clustering value", "Usage attribution and run-rate"),
+    "Attribution gap": ("Reconcile spend attribution", "Usage attribution and run-rate"),
+    "Service spend movement": ("Map non-warehouse service spend", "Usage attribution and run-rate"),
+    "Storage retention": ("Review storage retention", "Storage cost and retention"),
+    "Storage failsafe": ("Review storage lifecycle", "Storage cost and retention"),
+}
+
+
+def _cost_advisor_action_for(category: str) -> tuple[str, str]:
+    return _COST_ADVISOR_ACTION_MAP.get(
+        str(category or "").strip(),
+        ("Investigate cost signal", "Recommendations and action queue"),
+    )
+
+
+def _decorate_cost_advisor_board(board: pd.DataFrame) -> pd.DataFrame:
+    """Add action-oriented columns to advisor rows without changing the telemetry source."""
+    if board.empty:
+        return board
+    decorated = board.copy()
+    actions = decorated.get("CATEGORY", pd.Series([""] * len(decorated), index=decorated.index)).apply(
+        _cost_advisor_action_for
+    )
+    decorated["ACTION_TYPE"] = actions.apply(lambda item: item[0])
+    decorated["WORKFLOW_ROUTE"] = actions.apply(lambda item: item[1])
+    decorated["PRIMARY_METRIC"] = decorated.apply(
+        lambda row: (
+            f"${safe_float(row.get('EST_MONTHLY_SAVINGS_USD')):,.0f}/mo savings"
+            if safe_float(row.get("EST_MONTHLY_SAVINGS_USD")) > 0
+            else f"${abs(safe_float(row.get('EST_MONTHLY_IMPACT_USD'))):,.0f}/mo value at risk"
+        ),
+        axis=1,
+    )
+    decorated["EXECUTION_MODE"] = decorated["ESTIMATE_TYPE"].fillna("").astype(str).apply(
+        lambda value: (
+            "Savings candidate"
+            if "saving" in value.lower() or "recoverable" in value.lower()
+            else "Investigation"
+        )
+    )
+    return decorated
+
+
 def _build_cost_advisor_board(
     *,
     efficiency_summary: pd.DataFrame | None,
@@ -1953,6 +2000,7 @@ def _build_cost_advisor_board(
             "estimated_monthly_impact": 0.0,
         }, board
 
+    board = _decorate_cost_advisor_board(board)
     priority_rank = {"High": 0, "Medium": 1, "Low": 2}
     board["_PRIORITY_RANK"] = board["PRIORITY"].map(priority_rank).fillna(9)
     board["_IMPACT_SORT"] = pd.to_numeric(board["EST_MONTHLY_IMPACT_USD"], errors="coerce").fillna(0).abs()
@@ -2014,6 +2062,52 @@ def _cost_advisor_category_summary(board: pd.DataFrame | None) -> pd.DataFrame:
     priority_labels = {0: "High", 1: "Medium", 2: "Low"}
     summary["TOP_PRIORITY"] = summary["_PRIORITY_RANK"].map(priority_labels).fillna("Low")
     summary["_SORT_VALUE"] = summary["EST_MONTHLY_SAVINGS_USD"].abs() + summary["EST_MONTHLY_IMPACT_USD"].abs()
+    summary = summary.sort_values(
+        ["_PRIORITY_RANK", "EST_MONTHLY_SAVINGS_USD", "_SORT_VALUE"],
+        ascending=[True, False, False],
+    )
+    return summary[columns].reset_index(drop=True)
+
+
+def _cost_advisor_action_summary(board: pd.DataFrame | None) -> pd.DataFrame:
+    columns = [
+        "ACTION_TYPE", "WORKFLOW_ROUTE", "TOP_PRIORITY", "FINDINGS", "HIGH_FINDINGS",
+        "EST_MONTHLY_SAVINGS_USD", "EST_MONTHLY_IMPACT_USD", "NEXT_MOVE",
+    ]
+    if not _looks_like_frame(board) or board.empty:
+        return pd.DataFrame(columns=columns)
+    view = _decorate_cost_advisor_board(board)
+    for column in ("ACTION_TYPE", "WORKFLOW_ROUTE", "SAFE_NEXT_ACTION"):
+        if column not in view.columns:
+            view[column] = ""
+    view["EST_MONTHLY_SAVINGS_USD"] = pd.to_numeric(
+        view.get("EST_MONTHLY_SAVINGS_USD", pd.Series([0] * len(view), index=view.index)),
+        errors="coerce",
+    ).fillna(0).clip(lower=0)
+    view["EST_MONTHLY_IMPACT_USD"] = pd.to_numeric(
+        view.get("EST_MONTHLY_IMPACT_USD", pd.Series([0] * len(view), index=view.index)),
+        errors="coerce",
+    ).fillna(0).abs()
+    priority = view.get("SEVERITY", view.get("PRIORITY", pd.Series(["Low"] * len(view), index=view.index)))
+    view["_PRIORITY"] = priority.fillna("Low").astype(str).str.title()
+    rank_map = {"High": 0, "Medium": 1, "Low": 2}
+    view["_PRIORITY_RANK"] = view["_PRIORITY"].map(rank_map).fillna(9).astype(int)
+    view["_HIGH"] = view["_PRIORITY"].eq("High").astype(int)
+    summary = (
+        view.groupby(["ACTION_TYPE", "WORKFLOW_ROUTE"], dropna=False)
+        .agg(
+            FINDINGS=("ACTION_TYPE", "size"),
+            HIGH_FINDINGS=("_HIGH", "sum"),
+            EST_MONTHLY_SAVINGS_USD=("EST_MONTHLY_SAVINGS_USD", "sum"),
+            EST_MONTHLY_IMPACT_USD=("EST_MONTHLY_IMPACT_USD", "sum"),
+            _PRIORITY_RANK=("_PRIORITY_RANK", "min"),
+            NEXT_MOVE=("SAFE_NEXT_ACTION", "first"),
+        )
+        .reset_index()
+    )
+    priority_labels = {0: "High", 1: "Medium", 2: "Low"}
+    summary["TOP_PRIORITY"] = summary["_PRIORITY_RANK"].map(priority_labels).fillna("Low")
+    summary["_SORT_VALUE"] = summary["EST_MONTHLY_SAVINGS_USD"] + summary["EST_MONTHLY_IMPACT_USD"]
     summary = summary.sort_values(
         ["_PRIORITY_RANK", "EST_MONTHLY_SAVINGS_USD", "_SORT_VALUE"],
         ascending=[True, False, False],
@@ -2099,12 +2193,28 @@ def _render_cost_advisor_board(
     st.caption(
         "Advisor findings are conservative and telemetry-backed. Savings are estimates; pressure and attribution rows are investigation/value-at-risk signals."
     )
+    action_summary = _cost_advisor_action_summary(board)
+    if not action_summary.empty:
+        render_priority_dataframe(
+            action_summary,
+            title="Cost advisor action rollup",
+            priority_columns=[
+                "TOP_PRIORITY", "ACTION_TYPE", "WORKFLOW_ROUTE", "FINDINGS", "HIGH_FINDINGS",
+                "EST_MONTHLY_SAVINGS_USD", "EST_MONTHLY_IMPACT_USD", "NEXT_MOVE",
+            ],
+            sort_by=["TOP_PRIORITY", "EST_MONTHLY_SAVINGS_USD", "EST_MONTHLY_IMPACT_USD"],
+            ascending=[True, False, False],
+            raw_label="All cost advisor action groups",
+            height=260,
+            max_rows=8,
+        )
     _render_cost_advisor_category_chart(board)
     render_priority_dataframe(
         board,
         title="Ranked cost advisor findings",
         priority_columns=[
-            "SEVERITY", "CATEGORY", "ENTITY", "ESTIMATE_TYPE",
+            "SEVERITY", "ACTION_TYPE", "WORKFLOW_ROUTE", "CATEGORY", "ENTITY", "EXECUTION_MODE", "PRIMARY_METRIC",
+            "ESTIMATE_TYPE",
             "EST_MONTHLY_SAVINGS_USD", "EST_MONTHLY_IMPACT_USD",
             "TELEMETRY_SUMMARY", "SAFE_NEXT_ACTION", "VALIDATION_NEEDED", "DO_NOT_DO", "CONFIDENCE",
         ],

@@ -728,6 +728,115 @@ def _build_procedure_sla_frames(runs: pd.DataFrame) -> tuple[dict, pd.DataFrame,
     return summary, exception_df, latest
 
 
+def _procedure_analysis_summary(
+    latest: pd.DataFrame | None,
+    exceptions: pd.DataFrame | None,
+) -> tuple[dict, pd.DataFrame]:
+    """Build a compact advisor view from already loaded procedure telemetry."""
+    latest_view = latest.copy() if latest is not None and not latest.empty else pd.DataFrame()
+    exception_view = exceptions.copy() if exceptions is not None and not exceptions.empty else pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def proc_name(row: pd.Series) -> str:
+        return str(row.get("PROCEDURE_CONTEXT") or row.get("PROCEDURE_NAME") or row.get("PROCEDURE") or "Unknown procedure")
+
+    def priority_for(row: pd.Series) -> str:
+        severity = str(row.get("SEVERITY") or row.get("OPTIMIZATION_SEVERITY") or "").title()
+        if severity in {"Critical", "High"}:
+            return "High"
+        if severity == "Medium" or safe_float(row.get("OPTIMIZATION_SCORE")) >= 50:
+            return "Medium"
+        return "Low"
+
+    def add_row(row: pd.Series, *, signal: str, state: str) -> None:
+        proc = proc_name(row)
+        key = (proc.upper(), signal.upper())
+        if key in seen:
+            return
+        seen.add(key)
+        runtime = safe_float(row.get("LATEST_ELAPSED_SEC", row.get("TOTAL_ELAPSED_SEC")))
+        baseline_runtime = safe_float(row.get("AVG_ELAPSED_SEC"))
+        credits = safe_float(row.get("EST_TOTAL_CREDITS", row.get("METERED_CREDITS")))
+        runtime_change = safe_float(row.get("RUNTIME_CHANGE_PCT"))
+        cost_change = safe_float(row.get("COST_CHANGE_PCT"))
+        issue = str(row.get("OPTIMIZATION_ISSUE") or signal)
+        rows.append({
+            "PRIORITY": priority_for(row),
+            "STATE": state,
+            "PROCEDURE_CONTEXT": proc,
+            "SIGNAL": signal,
+            "OPTIMIZATION_ISSUE": issue,
+            "LATEST_RUNTIME_SEC": runtime,
+            "BASELINE_RUNTIME_SEC": baseline_runtime,
+            "RUNTIME_CHANGE_PCT": runtime_change,
+            "EST_TOTAL_CREDITS": credits,
+            "COST_CHANGE_PCT": cost_change,
+            "DOWNSTREAM_QUERY_COUNT": safe_int(row.get("DOWNSTREAM_QUERY_COUNT")),
+            "ACTION_TYPE": (
+                "Fix runtime regression"
+                if "RUNTIME" in signal.upper()
+                else "Review cost regression"
+                if "COST" in signal.upper()
+                else "Optimize child workload"
+            ),
+            "SAFE_NEXT_ACTION": str(
+                row.get("SAFE_NEXT_ACTION")
+                or row.get("RECOMMENDED_ACTION")
+                or "Compare the latest CALL to baseline and inspect child-query telemetry."
+            ),
+            "PROOF_REQUIRED": str(
+                row.get("PROOF_REQUIRED")
+                or "Next CALL should return within runtime/cost baseline with linked query history."
+            ),
+            "DO_NOT_DO": str(
+                row.get("DO_NOT_DO")
+                or "Do not retry or redeploy blindly without comparing release, warehouse, and child-query evidence."
+            ),
+            "_SORT": {"High": 0, "Medium": 1, "Low": 2}.get(priority_for(row), 9),
+            "_SCORE": safe_float(row.get("OPTIMIZATION_SCORE")),
+        })
+
+    if not exception_view.empty:
+        for _, row in exception_view.iterrows():
+            add_row(row, signal=str(row.get("SIGNAL") or "Procedure regression"), state="Review")
+
+    if not latest_view.empty:
+        for column in ("OPTIMIZATION_SCORE", "TOTAL_ELAPSED_SEC", "EST_TOTAL_CREDITS"):
+            if column not in latest_view.columns:
+                latest_view[column] = 0.0
+        for _, row in latest_view.sort_values(
+            ["OPTIMIZATION_SCORE", "TOTAL_ELAPSED_SEC", "EST_TOTAL_CREDITS"],
+            ascending=[False, False, False],
+        ).head(12).iterrows():
+            score = safe_float(row.get("OPTIMIZATION_SCORE"))
+            severity = str(row.get("OPTIMIZATION_SEVERITY") or "").title()
+            if score < 25 and severity not in {"Critical", "High", "Medium"}:
+                continue
+            add_row(row, signal="Procedure optimization signal", state="Investigate")
+
+    if not rows:
+        return {
+            "procedures": safe_int(latest_view["PROC_SCOPE_KEY"].nunique()) if "PROC_SCOPE_KEY" in latest_view.columns else 0,
+            "findings": 0,
+            "high": 0,
+            "runtime_regressions": 0,
+            "cost_regressions": 0,
+        }, pd.DataFrame()
+    board = pd.DataFrame(rows).sort_values(
+        ["_SORT", "_SCORE", "LATEST_RUNTIME_SEC", "EST_TOTAL_CREDITS"],
+        ascending=[True, False, False, False],
+    ).drop(columns=["_SORT", "_SCORE"], errors="ignore").reset_index(drop=True)
+    signals = board["SIGNAL"].fillna("").astype(str).str.upper()
+    return {
+        "procedures": int(board["PROCEDURE_CONTEXT"].nunique()),
+        "findings": int(len(board)),
+        "high": int(board["PRIORITY"].eq("High").sum()),
+        "runtime_regressions": int(signals.str.contains("RUNTIME").sum()),
+        "cost_regressions": int(signals.str.contains("COST").sum()),
+    }, board
+
+
 def _procedure_owner(row: pd.Series) -> str:
     return str(
         row.get("PROCEDURE_OWNER")
@@ -1182,6 +1291,32 @@ def render():
                 else "credits are estimated from warehouse size, elapsed seconds, and cloud services credits"
             )
             defer_source_note(metric_confidence_label(confidence), sla_source, f"{credit_note}.")
+            advisor_summary, advisor_board = _procedure_analysis_summary(latest, exceptions)
+            st.session_state["sp_analysis_summary"] = advisor_summary
+            st.session_state["sp_analysis_board"] = advisor_board
+            if not advisor_board.empty:
+                st.markdown("**Procedure Analysis Summary**")
+                render_shell_snapshot((
+                    ("Findings", f"{safe_int(advisor_summary.get('findings')):,}"),
+                    ("High Priority", f"{safe_int(advisor_summary.get('high')):,}"),
+                    ("Runtime Regressions", f"{safe_int(advisor_summary.get('runtime_regressions')):,}"),
+                    ("Cost Regressions", f"{safe_int(advisor_summary.get('cost_regressions')):,}"),
+                ))
+                render_priority_dataframe(
+                    advisor_board,
+                    title="Procedure advisor signals",
+                    priority_columns=[
+                        "PRIORITY", "STATE", "PROCEDURE_CONTEXT", "SIGNAL", "ACTION_TYPE",
+                        "OPTIMIZATION_ISSUE", "LATEST_RUNTIME_SEC", "BASELINE_RUNTIME_SEC",
+                        "RUNTIME_CHANGE_PCT", "EST_TOTAL_CREDITS", "COST_CHANGE_PCT",
+                        "DOWNSTREAM_QUERY_COUNT", "SAFE_NEXT_ACTION", "PROOF_REQUIRED", "DO_NOT_DO",
+                    ],
+                    sort_by=["PRIORITY", "LATEST_RUNTIME_SEC", "EST_TOTAL_CREDITS"],
+                    ascending=[True, False, False],
+                    raw_label="All procedure advisor signals",
+                    height=320,
+                    max_rows=12,
+                )
             if exceptions.empty:
                 st.success("No procedure runtime or cost regressions crossed the default thresholds.")
             else:

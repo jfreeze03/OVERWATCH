@@ -103,6 +103,7 @@ from sections.cost_center import (  # noqa: E402
 from sections.cost_contract import (  # noqa: E402
     _build_change_cost_correlation_board,
     _build_cost_advisor_board,
+    _cost_advisor_action_summary,
     _cost_advisor_category_summary,
     _build_cost_allocation_trust_board,
     _build_cost_closure_analytics,
@@ -250,6 +251,7 @@ from sections.security_access import (  # noqa: E402
 )
 from sections.stored_proc_tracker import (  # noqa: E402
     _add_procedure_optimization_columns,
+    _procedure_analysis_summary,
     _build_procedure_reliability_action,
     _build_procedure_reliability_slo_board,
     _build_procedure_sla_frames,
@@ -297,6 +299,7 @@ from sections.warehouse_health import (  # noqa: E402
     _warehouse_intervention_matrix,
     _warehouse_operator_next_moves,
     _build_warehouse_guardrail_coverage,
+    _warehouse_setting_action_plan,
     _build_warehouse_capacity_markdown,
     _queue_efficiency_findings,
     _queue_capacity_findings,
@@ -968,6 +971,9 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("Storage failsafe", categories)
         self.assertIn("TELEMETRY_SUMMARY", board.columns)
         self.assertIn("VALIDATION_NEEDED", board.columns)
+        self.assertIn("ACTION_TYPE", board.columns)
+        self.assertIn("WORKFLOW_ROUTE", board.columns)
+        self.assertIn("PRIMARY_METRIC", board.columns)
         pressure = advisor_row("Warehouse pressure", "SPILLING_WH")
         right_size = advisor_row("Warehouse right-size review", "LOW_PRESSURE_WH")
         service = advisor_row("Service spend movement", "SERVERLESS_TASK")
@@ -989,6 +995,13 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertGreater(failed_summary["EST_MONTHLY_SAVINGS_USD"], 0)
         storage_summary = category_summary[category_summary["CATEGORY"].eq("Storage failsafe")].iloc[0]
         self.assertGreater(storage_summary["EST_MONTHLY_IMPACT_USD"], 0)
+        action_summary = _cost_advisor_action_summary(board)
+        self.assertFalse(action_summary.empty)
+        self.assertIn("ACTION_TYPE", action_summary.columns)
+        self.assertIn("WORKFLOW_ROUTE", action_summary.columns)
+        self.assertIn("Fix failed workload", set(action_summary["ACTION_TYPE"]))
+        self.assertIn("Review storage retention", set(action_summary["ACTION_TYPE"]))
+        self.assertGreater(action_summary["EST_MONTHLY_IMPACT_USD"].sum(), 0)
 
     def test_cost_contract_summary_rows_stay_data_first_without_pptx(self):
         splash = {
@@ -5611,6 +5624,15 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("queued_timeout=0", by_wh["BI_COMPUTE_WH"]["EVIDENCE"])
         self.assertIn("timeout settings", by_wh["BI_COMPUTE_WH"]["PROOF_REQUIRED"])
         self.assertLess(summary["score"], 80)
+        setting_plan = _warehouse_setting_action_plan(board)
+        action_types = set(setting_plan["ACTION_TYPE"])
+        self.assertIn("Resource monitor coverage", action_types)
+        self.assertIn("Auto-suspend review", action_types)
+        self.assertIn("Timeout guardrail review", action_types)
+        self.assertIn("Capacity change review", action_types)
+        self.assertIn("Cost movement review", action_types)
+        self.assertIn("ROLLBACK_CHECK", setting_plan.columns)
+        self.assertIn("SAFE_SETTING_MOVE", setting_plan.columns)
 
     def test_warehouse_guardrail_coverage_marks_missing_metadata_as_data_gap(self):
         overview = pd.DataFrame(
@@ -6807,6 +6829,15 @@ class FormulaRegressionTests(unittest.TestCase):
         self.assertIn("OPTIMIZATION_ISSUE", exceptions.columns)
         self.assertIn("SAFE_NEXT_ACTION", exceptions.columns)
         self.assertGreater(latest.iloc[0]["OPTIMIZATION_SCORE"], 0)
+        advisor_summary, advisor_board = _procedure_analysis_summary(latest, exceptions)
+        self.assertEqual(advisor_summary["runtime_regressions"], 1)
+        self.assertEqual(advisor_summary["cost_regressions"], 1)
+        self.assertGreaterEqual(advisor_summary["findings"], 2)
+        self.assertIn("ACTION_TYPE", advisor_board.columns)
+        self.assertIn("SAFE_NEXT_ACTION", advisor_board.columns)
+        self.assertIn("DO_NOT_DO", advisor_board.columns)
+        self.assertIn("Fix runtime regression", set(advisor_board["ACTION_TYPE"]))
+        self.assertIn("Review cost regression", set(advisor_board["ACTION_TYPE"]))
 
     def test_procedure_optimization_triage_prioritizes_spill_pruning_and_regressions(self):
         row = pd.Series({

@@ -1425,6 +1425,8 @@ def _build_warehouse_guardrail_coverage(
             settings_row,
             ("STATEMENT_QUEUED_TIMEOUT_IN_SECONDS", "STATEMENT_QUEUED_TIMEOUT"),
         )
+        statement_timeout = None
+        queued_timeout = None
         if not statement_timeout_known and not queued_timeout_known:
             timeout_state = "Unknown"
             timeout_action = "Load warehouse metadata to verify statement and queued timeout guardrails."
@@ -1552,8 +1554,12 @@ def _build_warehouse_guardrail_coverage(
             "GUARDRAIL_SCORE": score,
             "SEVERITY": severity,
             "RESOURCE_MONITOR_STATE": monitor_state,
+            "RESOURCE_MONITOR": str(monitor_value or "") if monitor_known else "",
             "AUTO_SUSPEND_STATE": suspend_state,
+            "AUTO_SUSPEND_SEC": auto_suspend if suspend_known else None,
             "TIMEOUT_STATE": timeout_state,
+            "STATEMENT_TIMEOUT_SEC": statement_timeout,
+            "QUEUED_TIMEOUT_SEC": queued_timeout,
             "ESCALATION_ROUTE_STATE": route_state,
             "CAPACITY_STATE": capacity_state,
             "COST_STATE": cost_state,
@@ -1582,6 +1588,113 @@ def _build_warehouse_guardrail_coverage(
         "score": int(round(float(pd.to_numeric(board["GUARDRAIL_SCORE"], errors="coerce").fillna(0).mean()))),
     }
     return summary, board
+
+
+def _warehouse_setting_action_plan(guardrail_board: pd.DataFrame | None) -> pd.DataFrame:
+    """Return advisory setting moves from loaded guardrail coverage."""
+    columns = [
+        "PRIORITY", "WAREHOUSE_NAME", "ACTION_TYPE", "CURRENT_STATE", "CURRENT_SETTING",
+        "SAFE_SETTING_MOVE", "WHY", "PROOF_REQUIRED", "ROLLBACK_CHECK",
+    ]
+    if guardrail_board is None or getattr(guardrail_board, "empty", True):
+        return pd.DataFrame(columns=columns)
+    view = guardrail_board.copy()
+    rows: list[dict[str, object]] = []
+
+    def add_row(
+        source: pd.Series,
+        *,
+        action_type: str,
+        state_col: str,
+        current_setting: str,
+        safe_move: str,
+        why: str,
+        rollback_check: str,
+    ) -> None:
+        state = str(source.get(state_col) or "Unknown")
+        if state not in {"Blocked", "Review", "Unknown"} and state != "Data Missing":
+            return
+        priority = "High" if state == "Blocked" else "Medium" if state in {"Review", "Unknown", "Data Missing"} else "Low"
+        rows.append({
+            "PRIORITY": priority,
+            "WAREHOUSE_NAME": source.get("WAREHOUSE_NAME", "Unknown warehouse"),
+            "ACTION_TYPE": action_type,
+            "CURRENT_STATE": state,
+            "CURRENT_SETTING": current_setting,
+            "SAFE_SETTING_MOVE": safe_move,
+            "WHY": why,
+            "PROOF_REQUIRED": source.get("PROOF_REQUIRED", ""),
+            "ROLLBACK_CHECK": rollback_check,
+            "_SORT": {"High": 0, "Medium": 1, "Low": 2}.get(priority, 9),
+            "_SCORE": safe_float(source.get("GUARDRAIL_SCORE")),
+            "_CREDITS": safe_float(source.get("METERED_CREDITS")),
+        })
+
+    for _, row in view.iterrows():
+        wh = str(row.get("WAREHOUSE_NAME") or "Unknown warehouse")
+        add_row(
+            row,
+            action_type="Resource monitor coverage",
+            state_col="RESOURCE_MONITOR_STATE",
+            current_setting=str(row.get("RESOURCE_MONITOR") or "not loaded / not set"),
+            safe_move="Assign or confirm a resource monitor before treating the warehouse as guarded.",
+            why=f"{wh} cannot be considered cost-guarded without monitor coverage for active or rising usage.",
+            rollback_check="Confirm monitor assignment in SHOW WAREHOUSES and verify no unexpected suspension events.",
+        )
+        add_row(
+            row,
+            action_type="Auto-suspend review",
+            state_col="AUTO_SUSPEND_STATE",
+            current_setting=str(row.get("AUTO_SUSPEND_SEC") if row.get("AUTO_SUSPEND_SEC") is not None else "not loaded"),
+            safe_move="Review idle burn and workload latency, then test one conservative AUTO_SUSPEND change.",
+            why=f"{wh} has auto-suspend coverage that needs DBA review before cost tuning.",
+            rollback_check="Compare idle credits, p95 runtime, queue seconds, and failed queries after the next complete window.",
+        )
+        add_row(
+            row,
+            action_type="Timeout guardrail review",
+            state_col="TIMEOUT_STATE",
+            current_setting=(
+                f"statement={row.get('STATEMENT_TIMEOUT_SEC') if row.get('STATEMENT_TIMEOUT_SEC') is not None else 'not loaded'}, "
+                f"queued={row.get('QUEUED_TIMEOUT_SEC') if row.get('QUEUED_TIMEOUT_SEC') is not None else 'not loaded'}"
+            ),
+            safe_move="Set or confirm statement and queued timeout guardrails before workload growth.",
+            why=f"{wh} needs timeout context so capacity changes do not mask runaway or queued workloads.",
+            rollback_check="Verify queue failures, p95 runtime, and timeout errors stay inside the expected range.",
+        )
+        add_row(
+            row,
+            action_type="Capacity change review",
+            state_col="CAPACITY_STATE",
+            current_setting=(
+                f"queue={safe_float(row.get('AVG_QUEUED_SEC')):,.1f}s, "
+                f"spill={safe_float(row.get('TOTAL_REMOTE_SPILL_GB')):,.1f} GB, "
+                f"p95={safe_float(row.get('P95_ELAPSED_SEC')):,.1f}s"
+            ),
+            safe_move="Inspect top query profiles before resizing, changing clusters, or enabling acceleration.",
+            why=f"{wh} has loaded queue, spill, or latency pressure that may be query shape rather than warehouse size.",
+            rollback_check="After any setting change, confirm credits, queue, remote spill, p95, and failures in the same workload window.",
+        )
+        add_row(
+            row,
+            action_type="Cost movement review",
+            state_col="COST_STATE",
+            current_setting=(
+                f"credits={safe_float(row.get('METERED_CREDITS')):,.1f}, "
+                f"delta={safe_float(row.get('CREDIT_DELTA')):+,.1f}"
+            ),
+            safe_move="Explain credit movement before changing suspend, size, or routing policy.",
+            why=f"{wh} has material spend movement that should be separated from performance pressure.",
+            rollback_check="Confirm the next completed window shows lower burn without higher queue, spill, or failure rates.",
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    plan = pd.DataFrame(rows).sort_values(
+        ["_SORT", "_SCORE", "_CREDITS", "WAREHOUSE_NAME", "ACTION_TYPE"],
+        ascending=[True, True, False, True, True],
+    )
+    return plan[columns].reset_index(drop=True)
 
 
 def _warehouse_frame_sum(frame: pd.DataFrame | None, column: str) -> int:
@@ -3669,6 +3782,24 @@ def render():
                     max_rows=12,
                 )
                 download_csv(guardrail_board, "warehouse_guardrail_coverage.csv")
+                setting_plan = _warehouse_setting_action_plan(guardrail_board)
+                st.session_state["wh_settings_action_plan"] = setting_plan
+                if not setting_plan.empty:
+                    st.subheader("Warehouse Setting Action Plan")
+                    render_priority_dataframe(
+                        setting_plan,
+                        title="Recommended warehouse setting controls",
+                        priority_columns=[
+                            "PRIORITY", "WAREHOUSE_NAME", "ACTION_TYPE", "CURRENT_STATE",
+                            "CURRENT_SETTING", "SAFE_SETTING_MOVE", "WHY", "ROLLBACK_CHECK",
+                        ],
+                        sort_by=["PRIORITY", "WAREHOUSE_NAME", "ACTION_TYPE"],
+                        ascending=[True, True, True],
+                        raw_label="All warehouse setting action rows",
+                        height=320,
+                        max_rows=12,
+                    )
+                    download_csv(setting_plan, "warehouse_setting_action_plan.csv")
                 if st.session_state.get("wh_settings_inventory_error"):
                     defer_source_note(
                         "Warehouse metadata was unavailable for resource-monitor, timeout, and auto-suspend checks: "
